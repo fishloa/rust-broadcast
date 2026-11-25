@@ -17,12 +17,13 @@
 //! demuxer actually recovered — so it bites a demuxer that finds the wrong
 //! packet or off-by-one boundary, not just "some non-empty config".
 
+use crate::ts_mux_stage;
 use crate::ts_psi::{first_section, parse_pat, payload_offset, pid_of, pusi_of};
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use isobmff::MHADecoderConfigurationRecord;
+use transmux::TsDemux;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
-use transmux::{TsDemux, TsMux};
 
 const TS: usize = 188;
 
@@ -361,7 +362,7 @@ fn ts_mux_round_trip_preserves_samples_stream_type_and_descriptor() {
             unreachable!()
         };
 
-        let ts2 = TsMux::new().package(&media).expect("mux IR back to TS");
+        let ts2 = ts_mux_stage::mux(&media);
 
         let es2 = find_mpegh_es(&ts2);
         assert_eq!(

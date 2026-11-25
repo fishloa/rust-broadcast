@@ -195,7 +195,7 @@ pub enum Error {
     /// at most 16 video and 32 audio elementary streams can be numbered in one
     /// program. A 17th video stream would take `0xF0` (`ECM_stream`) and a 33rd
     /// audio stream `0xE0` — inside the video range — so the muxer refuses
-    /// rather than mislabelling the stream (`TsMux` output, audit r05-W22).
+    /// rather than mislabelling the stream (`TsMuxStage` output, audit r05-W22).
     #[error("too many {family} elementary streams: {max} is the stream_id family limit")]
     TooManyElementaryStreams {
         /// The `stream_id` family that overflowed (`"video"` or `"audio"`).

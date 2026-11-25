@@ -6880,8 +6880,7 @@ impl<'a> Unpackage for TsDemux<'a> {
 pub(crate) mod tests {
     use super::*;
     use crate::ir::DataIdentity;
-    use crate::ts_mux::TsMux;
-    use broadcast_common::{Package, Parse};
+    use broadcast_common::Parse;
 
     use broadcast_common::timescale::Timescale;
 
@@ -6996,14 +6995,12 @@ pub(crate) mod tests {
     /// afterward (resync proof) rather than being wedged or OOMing.
     #[test]
     fn runaway_pes_without_payload_unit_start_is_bounded_not_unbounded() {
-        use crate::TsMux;
         use crate::media::{Media, Track};
         use crate::pipeline::{CodecConfig, Sample, TrackSpec};
         use crate::rtp_sdp::avc_config_from_sprop;
-        use broadcast_common::Package;
 
         // A tiny real single-video-track TS (PAT + PMT + a few PES access
-        // units), muxed by this crate's own `TsMux` — registers one H.264 ES
+        // units), muxed by this crate's own `TsMuxStage` — registers one H.264 ES
         // (`Carrier::Pes`) at the single-track convention PID (`ES_PID_BASE`
         // in `ts_mux.rs`, `0x0100`).
         const ES_PID: Pid = Pid::from_const(0x0100);
@@ -7030,7 +7027,8 @@ pub(crate) mod tests {
             .expect("valid timing");
         let track = Track::new(spec, samples);
         let media = Media::new(vec![track], VIDEO_TIMESCALE);
-        let ts_bytes = TsMux::default().package(&media).expect("mux to TS");
+        let ts_bytes = crate::ts_mux::mux_media_with(&media, Some(crate::DEFAULT_PSI_INTERVAL))
+            .expect("mux to TS");
 
         let mut demux = StreamingTsDemux::new();
         demux.feed(&ts_bytes).expect("valid timing");
@@ -7040,7 +7038,7 @@ pub(crate) mod tests {
         while demux.poll_event().is_some() {}
         assert!(
             demux.streams.contains_key(&ES_PID),
-            "expected the muxed video ES at PID {ES_PID:#06X} — TsMux's ES_PID_BASE convention"
+            "expected the muxed video ES at PID {ES_PID:#06X} — TsMuxStage's ES_PID_BASE convention"
         );
 
         // Now flood that PID with continuation-only packets (pusi = 0): the
@@ -7113,7 +7111,7 @@ pub(crate) mod tests {
     /// The B8 attack (media plane step 2 fix wave 3): a PMT declares two
     /// PIDs — PID A (rank 0, H.264) whose parameter sets never arrive (a
     /// broken encoder, not malice: every sample here is deliberately
-    /// non-sync so `TsMux` never injects SPS/PPS in-band), and PID B (rank
+    /// non-sync so `TsMuxStage` never injects SPS/PPS in-band), and PID B (rank
     /// 1, opaque data) whose config resolves on its very first access unit.
     /// PID A's `ConfigProbe` never resolves, so it stays `Probing` forever;
     /// before this fix its `backlog` grew without bound, and — because
@@ -7124,11 +7122,9 @@ pub(crate) mod tests {
     /// or being unblocked once the other is abandoned) it actually takes.
     #[test]
     fn probe_backlog_is_bounded_for_both_the_never_resolving_pid_and_its_collateral_pid() {
-        use crate::TsMux;
         use crate::media::{Media, Track};
         use crate::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
         use crate::rtp_sdp::avc_config_from_sprop;
-        use broadcast_common::Package;
 
         // Comfortably more than MAX_PROBE_BACKLOG_BYTES per track (~4.9 MiB).
         const SAMPLE_BYTES: usize = 4096;
@@ -7188,7 +7184,8 @@ pub(crate) mod tests {
         let data_track = Track::new(data_spec, data_samples);
 
         let media = Media::new(vec![video_track, data_track], VIDEO_TIMESCALE);
-        let ts_bytes = TsMux::default().package(&media).expect("mux to TS");
+        let ts_bytes = crate::ts_mux::mux_media_with(&media, Some(crate::DEFAULT_PSI_INTERVAL))
+            .expect("mux to TS");
 
         let mut demux = StreamingTsDemux::new();
         demux.feed(&ts_bytes).expect("valid timing");
@@ -7266,11 +7263,9 @@ pub(crate) mod tests {
     /// never fired), so `track_id` must be `None`.
     #[test]
     fn track_abandoned_config_unrecoverable_fires_at_finish() {
-        use crate::TsMux;
         use crate::media::{Media, Track};
         use crate::pipeline::{CodecConfig, Sample, TrackSpec};
         use crate::rtp_sdp::avc_config_from_sprop;
-        use broadcast_common::Package;
 
         const PID_A: Pid = Pid::from_const(0x0100);
         let frame_dur = VIDEO_TIMESCALE.get() / 30;
@@ -7300,7 +7295,8 @@ pub(crate) mod tests {
             .expect("valid timing");
         let video_track = Track::new(video_spec, video_samples);
         let media = Media::new(vec![video_track], VIDEO_TIMESCALE);
-        let ts_bytes = TsMux::default().package(&media).expect("mux to TS");
+        let ts_bytes = crate::ts_mux::mux_media_with(&media, Some(crate::DEFAULT_PSI_INTERVAL))
+            .expect("mux to TS");
 
         let mut demux = StreamingTsDemux::new();
         demux.feed(&ts_bytes).expect("valid timing");
@@ -7671,11 +7667,9 @@ pub(crate) mod tests {
         audio_head: bool,
         resolve_last: bool,
     ) -> Vec<u8> {
-        use crate::TsMux;
         use crate::media::{Media, Track};
         use crate::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
         use crate::rtp_sdp::avc_config_from_sprop;
-        use broadcast_common::Package;
 
         let frame_dur = VIDEO_TIMESCALE.get() / 30;
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
@@ -7746,9 +7740,11 @@ pub(crate) mod tests {
                 samples,
             ));
         }
-        TsMux::default()
-            .package(&Media::new(tracks, VIDEO_TIMESCALE))
-            .expect("mux to TS")
+        crate::ts_mux::mux_media_with(
+            &Media::new(tracks, VIDEO_TIMESCALE),
+            Some(crate::DEFAULT_PSI_INTERVAL),
+        )
+        .expect("mux to TS")
     }
 
     /// TrackAdded source PIDs seen while feeding `ts` (no `finish()`: a live
@@ -9275,7 +9271,7 @@ pub(crate) mod tests {
             .map(|sample| {
                 let mut au = Vec::new();
                 for nal in crate::annexb::iter_length_prefixed_nals(&sample.data)
-                    .expect("TsMux writes valid NAL prefixes")
+                    .expect("TsMuxStage writes valid NAL prefixes")
                 {
                     au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
                     au.extend_from_slice(nal);
@@ -9755,7 +9751,7 @@ pub(crate) mod tests {
         };
         let first = &video.samples[0].data;
         let nals = crate::annexb::iter_length_prefixed_nals(first)
-            .expect("TsMux writes valid NAL prefixes");
+            .expect("TsMuxStage writes valid NAL prefixes");
         let sps = nals
             .iter()
             .find(|n| (n[0] & NAL_TYPE_MASK) == AVC_NAL_SPS)
@@ -10555,7 +10551,7 @@ pub(crate) mod tests {
             .map(|sample| {
                 let mut au = Vec::new();
                 for nal in crate::annexb::iter_length_prefixed_nals(&sample.data)
-                    .expect("TsMux writes valid NAL prefixes")
+                    .expect("TsMuxStage writes valid NAL prefixes")
                 {
                     au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
                     au.extend_from_slice(nal);
@@ -10709,7 +10705,7 @@ pub(crate) mod tests {
             .map(|sample| {
                 let mut au = Vec::new();
                 for nal in crate::annexb::iter_length_prefixed_nals(&sample.data)
-                    .expect("TsMux writes valid NAL prefixes")
+                    .expect("TsMuxStage writes valid NAL prefixes")
                 {
                     au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
                     au.extend_from_slice(nal);
@@ -10986,11 +10982,9 @@ pub(crate) mod tests {
     /// of both. A counter restart at a `payload_unit_start` is not truncation.
     #[test]
     fn concatenated_segments_seam_keeps_every_access_unit() {
-        use crate::TsMux;
         use crate::media::{Media, Track};
         use crate::pipeline::{CodecConfig, Sample, TrackSpec};
         use crate::rtp_sdp::avc_config_from_sprop;
-        use broadcast_common::Package;
 
         let frame_dur = VIDEO_TIMESCALE.get() / 25;
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
@@ -11018,7 +11012,8 @@ pub(crate) mod tests {
         // Two separately muxed copies of the same track, concatenated as a
         // segmenter would emit (and as `transmux/tests/it/ts_hls.rs` does): each
         // begins with its own PAT/PMT and its own counter sequence.
-        let segment = TsMux::default().package(&media).expect("mux to TS");
+        let segment = crate::ts_mux::mux_media_with(&media, Some(crate::DEFAULT_PSI_INTERVAL))
+            .expect("mux to TS");
         let mut concatenated = segment.clone();
         concatenated.extend_from_slice(&segment);
 
@@ -11230,7 +11225,7 @@ pub(crate) mod tests {
     ///
     /// Real elementary-stream bytes: the H.264 access units are the real
     /// `Media` samples recovered from `fixtures/ts/h264-aac.ts` and re-emitted
-    /// through the crate's own `TsMux` PES packetiser, with the timing flags
+    /// through the crate's own `TsMuxStage` PES packetiser, with the timing flags
     /// of every second PES cleared. The frame period is a real one (the
     /// fixture's own 25 fps cadence, 3600 ticks of 90 kHz).
     #[test]
@@ -11246,7 +11241,7 @@ pub(crate) mod tests {
         let media = TsDemux::new().demux(&source).expect("demux h264-aac.ts");
 
         /// Frame period of the fixture's video track, in 90 kHz ticks — the
-        /// real cadence `TsMux` stamps its PES headers from.
+        /// real cadence `TsMuxStage` stamps its PES headers from.
         const FRAME_PERIOD: i64 = 3600;
         const UNSTAMPED_EVERY: usize = 2;
 
@@ -11279,12 +11274,12 @@ pub(crate) mod tests {
             .expect("the fixture's AVC track is stamped");
         let mut headers = 0usize;
         for (i, sample) in video.samples.iter().enumerate() {
-            // The demux wants Annex B in each access unit; `TsMux` writes
+            // The demux wants Annex B in each access unit; `TsMuxStage` writes
             // length-prefixed samples, so rebuild the Annex B form from the
             // sample's own NALs.
             let mut au = Vec::new();
             let nals = crate::annexb::iter_length_prefixed_nals(&sample.data)
-                .expect("TsMux writes valid 4-byte-length NAL prefixes");
+                .expect("TsMuxStage writes valid 4-byte-length NAL prefixes");
             for nal in nals {
                 au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
                 au.extend_from_slice(nal);
@@ -13166,7 +13161,7 @@ pub(crate) mod tests {
     /// The whole contract for one stream: every frame byte-exact, count equal,
     /// PTS == the frame-exact rule, no `Discontinuity`, identical through the
     /// batch demuxer and the streaming one fed in arbitrary chunk splits, and
-    /// zero gaps after a `TsMux` round trip.
+    /// zero gaps after a `TsMuxStage` round trip.
     fn assert_carry_contract(
         label: &str,
         stream_type: u8,
@@ -13232,8 +13227,9 @@ pub(crate) mod tests {
             assert_eq!((got, d), (whole.clone(), 0), "{label}: feed chunk {chunk}");
         }
 
-        // TsMux round trip: zero gaps.
-        let ts2 = TsMux::new().package(&media).expect("remux to TS");
+        // TS muxer round trip: zero gaps.
+        let ts2 = crate::ts_mux::mux_media_with(&media, Some(crate::DEFAULT_PSI_INTERVAL))
+            .expect("remux to TS");
         let (again, disc2) = observe(&ts2, ts2.len());
         assert_eq!(disc2, 0, "{label}: remux has no Discontinuity");
         assert_eq!(again.len(), whole.len(), "{label}: remux frame count");
@@ -15229,11 +15225,9 @@ pub(crate) mod tests {
 
     #[test]
     fn the_pes_cap_is_exclusive_and_names_the_live_track() {
-        use crate::TsMux;
         use crate::media::{Media as IrMedia, Track as IrTrack};
         use crate::pipeline::{CodecConfig, Sample, TrackSpec};
         use crate::rtp_sdp::avc_config_from_sprop;
-        use broadcast_common::Package;
 
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let spec = TrackSpec::new(
@@ -15258,7 +15252,8 @@ pub(crate) mod tests {
             })
             .collect();
         let media = IrMedia::new(alloc::vec![IrTrack::new(spec, samples)], VIDEO_TIMESCALE);
-        let ts_bytes = TsMux::default().package(&media).expect("mux to TS");
+        let ts_bytes = crate::ts_mux::mux_media_with(&media, Some(crate::DEFAULT_PSI_INTERVAL))
+            .expect("mux to TS");
 
         let mut demux = StreamingTsDemux::new();
         demux.feed(&ts_bytes).expect("feed");

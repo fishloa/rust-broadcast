@@ -9,6 +9,8 @@
 #![cfg(feature = "std")]
 
 use crate::bit_writer::BitWriter;
+use crate::ts_hls_stage;
+use crate::ts_mux_stage;
 use broadcast_common::error::InvalidValue;
 use broadcast_common::mux::{Package, Unpackage};
 use broadcast_common::{Parse, Serialize};
@@ -715,9 +717,7 @@ fn ts_output_keeps_every_sei_byte_identical_and_keeps_the_flag() {
     let Some((media, source)) = source_media() else {
         return;
     };
-    let bytes = transmux::ts_mux::TsMux::default()
-        .package(&media)
-        .expect("ts mux");
+    let bytes = ts_mux_stage::mux(&media);
     let back = TsDemux::new().unpackage(&bytes).expect("ts demux");
     assert_eq!(seis_in_display_order(&back).len(), FRAMES);
     assert_eq!(seis_in_display_order(&back), source);
@@ -729,9 +729,7 @@ fn ts_hls_segments_keep_every_sei_byte_identical() {
     let Some((media, source)) = source_media() else {
         return;
     };
-    let out = transmux::ts_hls::TsHlsPackager::default()
-        .package(&media)
-        .expect("ts hls");
+    let out = ts_hls_stage::hls(&media, 6);
     let joined: Vec<u8> = out.segments.concat();
     let back = TsDemux::new().unpackage(&joined).expect("ts demux");
     assert_eq!(seis_in_display_order(&back), source);
@@ -804,13 +802,7 @@ fn ffprobe_reports_hdr10plus_side_data_on_every_frame_of_our_ts_output() {
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/hdr10plus-ts");
     std::fs::create_dir_all(&dir).unwrap();
     let file = dir.join("out.ts");
-    std::fs::write(
-        &file,
-        transmux::ts_mux::TsMux::default()
-            .package(&media)
-            .expect("ts mux"),
-    )
-    .unwrap();
+    std::fs::write(&file, ts_mux_stage::mux(&media)).unwrap();
     let Some(text) = ffprobe_frames(&file) else {
         eprintln!(
             "SKIP ffprobe_reports_hdr10plus_side_data_on_every_frame_of_our_ts_output: ffprobe not usable"
@@ -834,13 +826,7 @@ fn ffprobe_reports_hdr10plus_side_data_on_every_frame_of_our_ts_output() {
         }
     }
     let control_file = dir.join("control.ts");
-    std::fs::write(
-        &control_file,
-        transmux::ts_mux::TsMux::default()
-            .package(&control)
-            .expect("ts mux"),
-    )
-    .unwrap();
+    std::fs::write(&control_file, ts_mux_stage::mux(&control)).unwrap();
     let control_text = ffprobe_frames(&control_file).expect("ffprobe");
     assert_eq!(control_text.matches("[FRAME]").count(), FRAMES);
     assert_eq!(control_text.matches(FFPROBE_SIDE_DATA).count(), 0);

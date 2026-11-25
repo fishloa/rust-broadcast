@@ -9,9 +9,10 @@
 //! altered by emulation prevention) per capture is the independent Python
 //! extractor's frame count (`private/fixtures/captions/*/*.cc_data.txt` line count).
 
+use crate::ts_mux_stage;
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
-use transmux::{Media, TsDemux, TsMux};
+use transmux::{Media, TsDemux};
 
 /// The captures live in the private submodule (their media licence is unclear,
 /// see `private/fixtures/captions/PROVENANCE.md`): `true` (after a loud notice)
@@ -75,7 +76,7 @@ fn assert_carried(ts_path: &str, reference_path: &str) {
         "{ts_path}: captions seen on demux"
     );
 
-    let remuxed = TsMux::new().package(&media).expect("mux the IR back to TS");
+    let remuxed = ts_mux_stage::mux(&media);
     let media2 = TsDemux::new().unpackage(&remuxed).expect("re-demux");
     assert_eq!(
         marker_count(&media2),

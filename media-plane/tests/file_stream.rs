@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Stage, Timestamp};
+use broadcast_common::{Stage, Timestamp};
 use media_plane::file_source::{
     FileIngestSession, FileReaderError, PassRange, advance_offsets, probe_and_demux,
 };
@@ -33,6 +33,24 @@ struct Emitted {
     duration: Option<u32>,
     sync: bool,
     data: Vec<u8>,
+}
+
+/// Mux a whole `Media` through one TS muxer stage.
+fn mux_ts(media: &Media) -> Vec<u8> {
+    let mut stage = transmux::TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
+    let out = transmux::mux_stage::drive_media(
+        &mut stage,
+        media,
+        broadcast_common::stage::Timestamp::ZERO,
+    )
+    .expect("mux to TS");
+    let mut bytes = Vec::new();
+    for output in out {
+        if let transmux::mux_stage::MuxOutput::Bytes(chunk) = output {
+            bytes.extend_from_slice(&chunk);
+        }
+    }
+    bytes
 }
 
 fn emitted(event: SessionEvent) -> Option<Emitted> {
@@ -373,9 +391,7 @@ fn sparse_ts() -> Vec<u8> {
         vec![data_track(1, video), data_track(2, sparse)],
         timescale(90_000),
     );
-    transmux::TsMux::new()
-        .package(&media)
-        .expect("mux sparse TS")
+    mux_ts(&media)
 }
 
 /// A TS whose video runs at real 90 kHz presentation times (0..5 s) and whose
@@ -405,17 +421,13 @@ fn out_of_range_pts_ts() -> Vec<u8> {
         vec![data_track(1, video), data_track(2, data)],
         timescale(90_000),
     );
-    transmux::TsMux::new()
-        .package(&media)
-        .expect("mux out-of-range TS")
+    mux_ts(&media)
 }
 
 /// A TS with a PAT/PMT (one declared track) and no access units at all.
 fn psi_only_ts() -> Vec<u8> {
     let media = Media::new(vec![data_track(1, Vec::new())], timescale(90_000));
-    transmux::TsMux::new()
-        .package(&media)
-        .expect("mux PSI-only TS")
+    mux_ts(&media)
 }
 
 /// The PES timestamp fields in `bytes` as `(byte offset, 5-byte field)`.

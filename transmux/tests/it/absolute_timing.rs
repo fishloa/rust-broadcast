@@ -24,6 +24,7 @@
 //! walk, a WebM cluster/block-timecode walk, or the RTP header timestamps),
 //! never against the demuxer's own bookkeeping.
 
+use crate::ts_mux_stage;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use transmux::TrackId;
@@ -302,7 +303,7 @@ fn ts_rollover_survives_ts_ir_ts_round_trip() {
     let first_dts = TS_WRAP - 2 * FRAME_DUR;
     let ts = synth_ts_crossing_wrap(first_dts, N);
     let ir = TsDemux::new().unpackage(&ts).expect("demux");
-    let ts2 = transmux::TsMux::new().package(&ir).expect("re-mux to TS");
+    let ts2 = ts_mux_stage::mux(&ir);
     let ir2 = TsDemux::new().unpackage(&ts2).expect("re-demux");
 
     let deltas = |m: &Media| -> Vec<i64> {

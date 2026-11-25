@@ -528,12 +528,30 @@ pub mod test_support {
     #[cfg(test)]
     use broadcast_common::timescale::Timescale;
     use std::num::NonZeroUsize;
-    use transmux::TsMux;
+    use transmux::TsMuxStage;
     use transmux::media::Track;
     use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
+    }
+
+    /// Mux a whole `Media` through one TS muxer stage, collecting its bytes.
+    pub fn mux_ts(media: &transmux::Media) -> Vec<u8> {
+        let mut stage = TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
+        let outputs = transmux::mux_stage::drive_media(
+            &mut stage,
+            media,
+            broadcast_common::stage::Timestamp::ZERO,
+        )
+        .expect("mux to TS");
+        let mut bytes = Vec::new();
+        for output in outputs {
+            if let transmux::mux_stage::MuxOutput::Bytes(chunk) = output {
+                bytes.extend_from_slice(&chunk);
+            }
+        }
+        bytes
     }
 
     /// Ring capacities small enough for a loopback test.
@@ -606,7 +624,6 @@ pub mod test_support {
         count: u32,
         gop: u32,
     ) -> Vec<u8> {
-        use broadcast_common::Package;
         let spec = track_spec(track_id);
         let frame_dur =
             u32::try_from(broadcast_common::clock33::PTS_HZ / u64::from(FRAME_RATE_FPS))
@@ -628,7 +645,7 @@ pub mod test_support {
             .expect("valid timing");
         let track = Track::new(spec, samples);
         let media = transmux::media::Media::new(vec![track], transmux::VIDEO_CLOCK_TIMESCALE);
-        TsMux::default().package(&media).expect("mux to TS")
+        mux_ts(&media)
     }
 }
 
@@ -1004,7 +1021,6 @@ mod tests {
 
     /// [`stalled_head_ts_bytes`] with `head_aus` access units on the stalled head.
     fn stalled_head_ts_bytes_n(head_aus: u32) -> Vec<u8> {
-        use broadcast_common::Package;
         use transmux::media::{Media, Track};
         use transmux::pipeline::{CodecConfig, DataCarriage, DataIdentity};
         let dur = 3000u32;
@@ -1038,9 +1054,7 @@ mod tests {
                 samples(600, 32, true),
             ),
         ];
-        transmux::TsMux::default()
-            .package(&Media::new(tracks, timescale(90_000)))
-            .expect("mux to TS")
+        super::test_support::mux_ts(&Media::new(tracks, timescale(90_000)))
     }
 
     /// **Round-3 audit A, end to end.** A stalled non-video head (never

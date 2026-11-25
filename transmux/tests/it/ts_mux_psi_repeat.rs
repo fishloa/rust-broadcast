@@ -11,10 +11,11 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use broadcast_common::{Package, Unpackage};
+use crate::ts_mux_stage;
+use broadcast_common::Unpackage;
 use dvb_conformance::{ConformanceMonitor, Indicator};
 use mpeg_ts::ts::TsPacket;
-use transmux::{Media, TsDemux, TsMux};
+use transmux::{DEFAULT_PSI_INTERVAL, Media, TsDemux, TsMuxStage};
 
 const PKT: usize = 188;
 const PAT_PID: u16 = 0x0000;
@@ -124,13 +125,15 @@ const FIXTURES: &[&str] = &["h264-aac.ts", "h264-aac-40s.ts"];
 fn default_repeats_pat_and_pmt_within_the_interval() {
     for &name in FIXTURES {
         let media = demux(&fixture(name));
-        let out = TsMux::new().package(&media).unwrap();
+        let out = ts_mux_stage::mux(&media);
         for pid in [PAT_PID, PMT_PID] {
             let occ = psi_occurrences(&out, pid);
             assert!(occ.len() > 2, "{name} pid {pid:#x}: only {} PSI", occ.len());
             let gap = max_gap(&occ);
             assert!(
-                gap <= TsMux::new().psi_interval_ticks().unwrap_or(u64::MAX)
+                gap <= TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL))
+                    .psi_interval_ticks()
+                    .unwrap_or(u64::MAX)
                     + crate::ts_mux_psi_repeat::SAMPLE_SLACK_TICKS,
                 "{name} pid {pid:#x}: gap {gap}"
             );
@@ -143,7 +146,7 @@ fn default_repeats_pat_and_pmt_within_the_interval() {
 #[test]
 fn configured_interval_is_honoured() {
     let media = demux(&fixture("h264-aac-40s.ts"));
-    let mux = |iv| TsMux::new().with_psi_interval(iv).package(&media).unwrap();
+    let mux = |iv| ts_mux_stage::mux_with(&media, iv);
     let pats = |ts: &[u8]| psi_occurrences(ts, PAT_PID);
     assert_eq!(
         pats(&mux(Some(Duration::ZERO))).len(),
@@ -163,7 +166,7 @@ fn configured_interval_is_honoured() {
 #[test]
 fn repeats_are_identical_sections_with_unchanged_pmt_version() {
     let media = demux(&fixture("h264-aac-40s.ts"));
-    let out = TsMux::new().package(&media).unwrap();
+    let out = ts_mux_stage::mux(&media);
     for pid in [PAT_PID, PMT_PID] {
         let occ = psi_occurrences(&out, pid);
         assert!(occ.len() > 2);
@@ -176,11 +179,8 @@ fn repeats_are_identical_sections_with_unchanged_pmt_version() {
 fn whole_file_round_trip_is_unchanged_but_for_psi_repeats() {
     for &name in FIXTURES {
         let media = demux(&fixture(name));
-        let once = TsMux::new()
-            .with_psi_interval(None)
-            .package(&media)
-            .unwrap();
-        let periodic = TsMux::new().package(&media).unwrap();
+        let once = ts_mux_stage::mux_with(&media, None);
+        let periodic = ts_mux_stage::mux(&media);
         // Dropping every PSI packet after the leading block reproduces the
         // once-only output byte for byte: media packets are untouched.
         let lead = packets(&once)
@@ -215,11 +215,8 @@ fn stream_cut_at_packet_aligned_offsets_still_yields_all_tracks() {
     let media = demux(&fixture("h264-aac-40s.ts"));
     let want = media.tracks.len();
     assert!(want >= 2);
-    let out = TsMux::new().package(&media).unwrap();
-    let once = TsMux::new()
-        .with_psi_interval(None)
-        .package(&media)
-        .unwrap();
+    let out = ts_mux_stage::mux(&media);
+    let once = ts_mux_stage::mux_with(&media, None);
     let n = out.len() / PKT;
     // Packet 6 = 1128 bytes in: the zenith-tv failure offset.
     for k in [6, 7, 13, 50, 99, n / 3, n / 2, 2 * n / 3] {
@@ -238,7 +235,7 @@ fn stream_cut_at_packet_aligned_offsets_still_yields_all_tracks() {
 fn tr101290_pat_pmt_and_continuity_checks_pass() {
     for &name in FIXTURES {
         let media = demux(&fixture(name));
-        let out = TsMux::new().package(&media).unwrap();
+        let out = ts_mux_stage::mux(&media);
         let mut mon = ConformanceMonitor::new();
         let mut now = 0u64;
         let mut bad: Vec<String> = Vec::new();

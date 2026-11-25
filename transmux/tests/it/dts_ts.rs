@@ -9,12 +9,13 @@
 //! internals), rather than calling `transmux::split_dts_core_frames` — so it
 //! actually bites a splitter that misses or duplicates frames.
 
+use crate::ts_mux_stage;
 use crate::ts_psi::{first_section, parse_pat, parse_pmt, payload_offset, pid_of, pusi_of};
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use isobmff::DtsSpecificBox;
+use transmux::TsDemux;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
-use transmux::{TsDemux, TsMux};
 
 const TS: usize = 188;
 
@@ -313,7 +314,7 @@ fn ts_mux_round_trip_preserves_samples_and_stream_type() {
     let media = demux_fixture();
     let track1 = dts_track(&media);
 
-    let ts2 = TsMux::new().package(&media).expect("mux IR back to TS");
+    let ts2 = ts_mux_stage::mux(&media);
 
     // PMT must carry a DTS elementary stream with stream_type 0x82.
     let (_dts_pid2, stream_type2) = find_dts_pid(&ts2);

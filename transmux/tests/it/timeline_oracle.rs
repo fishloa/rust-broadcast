@@ -15,12 +15,13 @@ use std::process::Command;
 use test_fixtures::process::tool_available;
 use transmux::TrackId;
 
+use crate::ts_mux_stage;
 use broadcast_common::{Package, Unpackage};
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::progressive::ProgressiveMux;
 use transmux::ts_demux::TsDemux;
-use transmux::{Repackage, SmoothPackager, TsMux};
+use transmux::{Repackage, SmoothPackager};
 
 // ── ffprobe readings of the input fixture (90 kHz ticks) ────────────────────
 
@@ -160,7 +161,7 @@ fn ts_first_stamps(ts: &[u8]) -> ((i64, i64), (i64, i64)) {
 #[test]
 fn ts_mux_keeps_inter_track_offset() {
     let media = input_media();
-    let out = TsMux::new().package(&media).expect("TsMux");
+    let out = ts_mux_stage::mux(&media);
     let ((v_pts, v_dts), (a_pts, _)) = ts_first_stamps(&out);
     // Every stamp relative to the earliest output DTS must equal the input's
     // relative to its earliest DTS (a common shift is allowed, nothing else).

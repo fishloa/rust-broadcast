@@ -6,11 +6,12 @@
 //! 300 468 §6.2.19/§6.4.11 and carried through a real `TsMux` -> `TsDemux`
 //! round trip so the descriptors travel inside a real PMT.
 
-use broadcast_common::{Package, Unpackage};
+use crate::ts_mux_stage;
+use broadcast_common::Unpackage;
 use mpeg_ts::pid::Pid;
 use transmux::{
     AudioMetadata, AudioRole, AudioType, CodecConfig, EditorialClassification, HeAacProfile,
-    MixType, TsDemux, TsMux,
+    MixType, TsDemux,
 };
 
 const TAG_ISO_639: u8 = 0x0A;
@@ -145,7 +146,7 @@ fn synthetic_pmt_through_tsmux() {
             .find(|t| is_audio(&t.spec.config))
             .expect("audio track");
         audio.spec.es_info_descriptors = loop_bytes;
-        let muxed = TsMux::new().package(&media).unwrap();
+        let muxed = ts_mux_stage::mux(&media);
         let back = TsDemux::new().unpackage(&muxed).unwrap();
         let meta = back
             .tracks
