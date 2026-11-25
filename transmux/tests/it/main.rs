@@ -43,6 +43,7 @@ mod dash_audit22;
 #[cfg(feature = "std")]
 mod dash_mpd;
 mod dash_xsd;
+mod data_identity_map;
 mod degraded_at_track;
 mod demux_timing_invariant;
 mod display_afd;

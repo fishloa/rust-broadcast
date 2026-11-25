@@ -36,7 +36,9 @@
 //! # ES_info descriptor passthrough policy (issue #775)
 //!
 //! Every track's inherited PMT `ES_info` descriptor-loop bytes
-//! ([`TrackSpec::es_info_descriptors`](crate::pipeline::TrackSpec::es_info_descriptors))
+//! ([`TrackSpec::es_info_descriptors`]; a [`CodecConfig::Data`] track's come
+//! from its [`DataIdentity::Ts`] identity, so a mapped identity's descriptors
+//! reach the PMT)
 //! are carried into the re-muxed PMT, not only an opaque
 //! [`CodecConfig::Data`] track's — a track loses no information just because
 //! this crate understood its codec. The policy is a **deny-list, not an
@@ -532,7 +534,10 @@ pub(crate) struct EsPlan {
     /// non-HEVC streams.
     hevc_vps_sps_pps: Vec<Vec<u8>>,
     /// PMT ES_info descriptor-loop bytes to emit for this stream: the
-    /// track's inherited [`TrackSpec::es_info_descriptors`](crate::pipeline::TrackSpec::es_info_descriptors)
+    /// track's inherited descriptors
+    /// ([`TrackSpec::es_info_descriptors`](crate::pipeline::TrackSpec::es_info_descriptors),
+    /// or a [`CodecConfig::Data`] track's
+    /// [`DataIdentity::Ts`](crate::pipeline::DataIdentity::Ts) descriptors)
     /// merged with this muxer's own synthesised descriptors (issue #576,
     /// #579), per the module doc's ES_info passthrough policy (issue #775) —
     /// `CA_descriptor` denied, everything else passed through de-duplicated
@@ -1139,6 +1144,19 @@ fn plan_plans(specs: &[TrackSpec]) -> Result<(Vec<EsPlan>, Vec<usize>)> {
     let mut next_pid = ES_PID_BASE.value();
     let (mut n_video, mut n_audio) = (0u8, 0u8);
     for (idx, spec) in specs.iter().enumerate() {
+        // A data track carries the identity of the container it came from;
+        // the TS muxer places only a TS elementary-stream identity. The other
+        // identities are a named refusal, not a silent skip: an opaque track
+        // the caller meant to carry must not vanish from the output.
+        if let CodecConfig::Data { identity } = &spec.config
+            && !matches!(identity, DataIdentity::Ts { .. })
+        {
+            return Err(Error::DataIdentityMismatch {
+                track: spec.track_id,
+                have: identity.name(),
+                want: "ts",
+            });
+        }
         let Some(kind) = EsKind::from_config(&spec.config) else {
             continue; // uncarriable codec: skip, never fatal.
         };
@@ -1222,7 +1240,18 @@ fn plan_plans(specs: &[TrackSpec]) -> Result<(Vec<EsPlan>, Vec<usize>)> {
             }
             _ => Vec::new(),
         };
-        let descriptors = merge_es_info_descriptors(&spec.es_info_descriptors, &synthesized)?;
+        // A mapped data track's descriptor loop is on its identity, so a
+        // `DataIdentityStage`-rewritten track reaches the PMT with the target
+        // descriptors. A spec that carries the loop only on
+        // `TrackSpec::es_info_descriptors` (the demux mirror) still works: the
+        // identity's copy is preferred when it has one.
+        let inherited = match &spec.config {
+            CodecConfig::Data {
+                identity: DataIdentity::Ts { descriptors, .. },
+            } if !descriptors.is_empty() => descriptors.as_slice(),
+            _ => spec.es_info_descriptors.as_slice(),
+        };
+        let descriptors = merge_es_info_descriptors(inherited, &synthesized)?;
         plans.push(EsPlan {
             pid: Pid::try_new(next_pid).map_err(|_| {
                 Error::InvalidInput("too many tracks: elementary PID exceeds 0x1FFF")
