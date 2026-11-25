@@ -11,7 +11,7 @@ use std::hint::black_box;
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use transmux::annexb::{annexb_to_length_prefixed, length_prefixed_to_annexb};
-use transmux::{CodecConfig, StreamingTsDemux, TsDemux};
+use transmux::{CodecConfig, StreamingTsDemux};
 
 // ── Fixtures (shared /fixtures/ts/) ─────────────────────────────────────────
 
@@ -24,7 +24,7 @@ fn fixture(name: &str) -> Vec<u8> {
 
 /// The fixture's H.264 access units, back in Annex B form.
 fn avc_access_units(ts: &[u8]) -> Vec<Vec<u8>> {
-    let media = TsDemux::new().demux(ts).expect("fixture demuxes");
+    let media = test_harness::collect::media_from_ts(ts).expect("fixture demuxes");
     media
         .tracks
         .iter()

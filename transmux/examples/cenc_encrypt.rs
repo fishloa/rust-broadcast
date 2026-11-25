@@ -65,14 +65,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(feature = "cenc")]
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    use broadcast_common::Unpackage;
     use broadcast_common::stage::Stage;
     use broadcast_hls::cenc_ext_x_key;
     use transmux::cenc_segment::protect_init_segment;
     use transmux::pipeline::CodecConfig;
     use transmux::{
         CencEncryptStage, CencScheme, DashPackager, EncryptConfig, IvGen, Media, SubsamplePolicy,
-        TrackProtection, TsDemux, select_tracks_by,
+        TrackProtection, select_tracks_by,
     };
 
     // A test KID/key (never a real production key) — the standard `cbcs`
@@ -108,8 +107,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("read {} bytes from {}\n", ts.len(), path.display());
 
     // 2. Demux to the neutral IR, keeping only the AVC video track.
-    let mut demux = TsDemux::new();
-    let media: Media = demux.unpackage(&ts[..])?;
+
+    let media: Media = test_harness::collect::media_from_ts(&ts[..])?;
     let media = select_tracks_by(&media, |t| matches!(t.spec.config, CodecConfig::Avc { .. }))?;
     println!(
         "demuxed IR: {} track(s), {} sample(s)",

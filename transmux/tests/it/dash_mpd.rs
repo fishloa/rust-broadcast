@@ -22,18 +22,16 @@
 //! compile this test rather than skipping it.
 #![cfg(feature = "cenc")]
 
+use isobmff::cenc::TrackEncryptionBox;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
-
-use broadcast_common::Unpackage;
-use isobmff::cenc::TrackEncryptionBox;
 use transmux::pipeline::CodecConfig;
 use transmux::{
     Addressing, CencScheme, ConstantIvSenc, ContentProtectionSystem, DashPackager,
     InbandEventStream, MP4_PROTECTION_SCHEME_URI, Media, Sample, Segmenter, TrackProtection,
-    TrackSegments, TrackSpec, TsDemux,
+    TrackSegments, TrackSpec,
 };
 
 // ---------------------------------------------------------------------------
@@ -49,8 +47,8 @@ fn fixtures_dir() -> PathBuf {
 
 fn demux_media() -> Media {
     let ts = std::fs::read(fixtures_dir().join("ts/h264-aac.ts")).expect("h264-aac.ts fixture");
-    let mut demux = TsDemux::new();
-    demux.unpackage(&ts[..]).expect("demux h264-aac.ts")
+
+    test_harness::collect::media_from_ts(&ts[..]).expect("demux h264-aac.ts")
 }
 
 /// Cut `media` into real CMAF media segments with [`Segmenter`], pushing

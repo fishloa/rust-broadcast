@@ -14,12 +14,12 @@
 
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize};
 use bytes::Bytes;
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use test_fixtures::ffprobe;
 use transmux::TrackId;
-use transmux::{CodecConfig, FlvDemux, FlvError, FlvMuxStage};
+use transmux::{CodecConfig, FlvError, FlvMuxStage, StreamingFlvDemux};
 
 /// The track specs of `media`, the shape the per-spec FLV helpers take.
 fn specs(media: &transmux::Media) -> Vec<transmux::TrackSpec> {
@@ -86,8 +86,7 @@ fn ref_mp4_avcc(mp4: &[u8]) -> Vec<u8> {
 
 #[test]
 fn enumerate_two_tracks_avc_320x240_and_aac() {
-    let mut demux = FlvDemux::new();
-    let media = demux.unpackage(FLV.as_slice()).expect("demux av.flv");
+    let media = test_harness::collect::media_from_flv(FLV.as_slice()).expect("demux av.flv");
 
     assert_eq!(media.tracks.len(), 2, "must enumerate 2 tracks (AVC + AAC)");
 
@@ -110,8 +109,7 @@ fn enumerate_two_tracks_avc_320x240_and_aac() {
 
 #[test]
 fn avcc_matches_ref_mp4_and_asc_decodes() {
-    let mut demux = FlvDemux::new();
-    let media = demux.unpackage(FLV.as_slice()).expect("demux av.flv");
+    let media = test_harness::collect::media_from_flv(FLV.as_slice()).expect("demux av.flv");
 
     // avcC from the FLV.as_slice()-demuxed config, serialized to its box body.
     let CodecConfig::Avc { config, .. } = media.tracks[0].config() else {
@@ -162,8 +160,7 @@ fn avcc_matches_ref_mp4_and_asc_decodes() {
 
 #[test]
 fn timestamps_and_keyframes_match_oracle() {
-    let mut demux = FlvDemux::new();
-    let media = demux.unpackage(FLV.as_slice()).expect("demux av.flv");
+    let media = test_harness::collect::media_from_flv(FLV.as_slice()).expect("demux av.flv");
 
     let ora = ffprobe::packets("flv/av.packets.csv");
     let vid_ora = ffprobe::of_type(&ora, "video");
@@ -227,13 +224,11 @@ fn check_timing(samples: &[transmux::Sample], ora: &[&ffprobe::PacketRow], kind:
 
 #[test]
 fn flv_round_trip_preserves_samples_and_timing() {
-    let mut demux = FlvDemux::new();
-    let media = demux.unpackage(FLV.as_slice()).expect("demux av.flv");
+    let media = test_harness::collect::media_from_flv(FLV.as_slice()).expect("demux av.flv");
 
     let flv2 = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), &media);
 
-    let mut demux2 = FlvDemux::new();
-    let media2 = demux2.unpackage(&flv2).expect("re-demux FLV.as_slice()");
+    let media2 = test_harness::collect::media_from_flv(&flv2).expect("re-demux FLV.as_slice()");
 
     assert_eq!(media2.tracks.len(), 2, "round-trip track count");
     for (a, b) in media.tracks.iter().zip(&media2.tracks) {
@@ -285,8 +280,7 @@ fn flv_round_trip_preserves_samples_and_timing() {
 
 #[test]
 fn cross_hub_flv_to_cmaf() {
-    let mut demux = FlvDemux::new();
-    let media = demux.unpackage(FLV.as_slice()).expect("demux av.flv");
+    let media = test_harness::collect::media_from_flv(FLV.as_slice()).expect("demux av.flv");
     let flv_nals: Vec<Bytes> = media.tracks[0]
         .samples
         .iter()
@@ -357,8 +351,7 @@ fn cross_hub_flv_to_cmaf() {
 /// negative check, not a coincidence of one byte value).
 #[test]
 fn streaming_payloads_are_flv_shaped_not_ts_shaped() {
-    let mut demux = FlvDemux::new();
-    let media = demux.unpackage(FLV.as_slice()).expect("demux av.flv");
+    let media = test_harness::collect::media_from_flv(FLV.as_slice()).expect("demux av.flv");
 
     // --- Sequence headers: sent once, up front ---
     let headers =
@@ -506,8 +499,8 @@ fn package_rescales_non_ms_timescales() {
     const FRAME_TICKS: u32 = 3_000; // 30 fps at 90 kHz
 
     // One AVC `avc1` from the real fixture, so the muxer has a valid config.
-    let mut demux = FlvDemux::new();
-    let source = demux.unpackage(FLV.as_slice()).expect("demux av.flv");
+
+    let source = test_harness::collect::media_from_flv(FLV.as_slice()).expect("demux av.flv");
     let CodecConfig::Avc { config, .. } = source.tracks[0].config() else {
         panic!("fixture track 0 must be AVC");
     };
@@ -594,8 +587,7 @@ fn flv_nalu_tags(flv: &[u8]) -> (Vec<u32>, Vec<i32>) {
 /// truncation (r04-W12).
 #[test]
 fn package_rejects_oversized_composition_time() {
-    let mut demux = FlvDemux::new();
-    let source = demux.unpackage(FLV.as_slice()).expect("demux av.flv");
+    let source = test_harness::collect::media_from_flv(FLV.as_slice()).expect("demux av.flv");
     let CodecConfig::Avc { config, .. } = source.tracks[0].config() else {
         panic!("fixture track 0 must be AVC");
     };
@@ -639,8 +631,7 @@ fn package_rejects_oversized_composition_time() {
 /// like `FlvMuxStage` does (#1129).
 #[test]
 fn frame_payloads_reject_out_of_range_timestamps() {
-    let mut demux = FlvDemux::new();
-    let source = demux.unpackage(FLV.as_slice()).expect("demux av.flv");
+    let source = test_harness::collect::media_from_flv(FLV.as_slice()).expect("demux av.flv");
     let CodecConfig::Avc { config, .. } = source.tracks[0].config() else {
         panic!("fixture track 0 must be AVC");
     };
@@ -686,10 +677,7 @@ fn frame_payloads_reject_out_of_range_timestamps() {
 /// `FlvDemux::unpackage` discarded every good tag that preceded the tail.
 #[test]
 fn truncated_final_tag_keeps_complete_prefix() {
-    let mut demux = FlvDemux::new();
-    let full = demux
-        .unpackage(FLV.as_slice())
-        .expect("demux intact av.flv");
+    let full = test_harness::collect::media_from_flv(FLV.as_slice()).expect("demux intact av.flv");
     let full_video = full.tracks[0].samples.len();
     let full_audio = full.tracks[1].samples.len();
     assert!(full_video > 5 && full_audio > 5, "fixture has real content");
@@ -708,9 +696,7 @@ fn truncated_final_tag_keeps_complete_prefix() {
     );
     let truncated = &FLV.as_slice()[..cut];
 
-    let mut demux = FlvDemux::new();
-    let media = demux
-        .unpackage(truncated)
+    let media = test_harness::collect::media_from_flv(truncated)
         .expect("truncated tail must not fail the whole demux");
 
     assert_eq!(
@@ -756,9 +742,8 @@ fn incomplete_first_tag_still_errors() {
     bytes.push(9); // Video tag
     bytes.extend_from_slice(&[0x00, 0x03, 0xE8]); // DataSize = 1000
     bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0]); // Timestamp + StreamID
-    let mut demux = FlvDemux::new();
-    let err = demux
-        .unpackage(&bytes)
+
+    let err = test_harness::collect::media_from_flv(&bytes)
         .expect_err("an incomplete first tag must be reported");
     assert!(
         matches!(
@@ -800,10 +785,8 @@ fn aac_channel_count_uses_table_1_19() {
     let oracle_rate: u32 = cols[2].parse().expect("oracle sample rate");
     assert_eq!(oracle_channels, 8, "ffprobe oracle says 8 channels (7.1)");
 
-    let mut demux = FlvDemux::new();
-    let media = demux
-        .unpackage(FLV_7_1.as_slice())
-        .expect("demux aac-7-1.flv");
+    let media =
+        test_harness::collect::media_from_flv(FLV_7_1.as_slice()).expect("demux aac-7-1.flv");
     let CodecConfig::Aac {
         channel_count,
         sample_rate,
@@ -884,9 +867,7 @@ fn oversized_avc_dimensions_are_rejected() {
     static OVERSIZE: std::sync::LazyLock<Vec<u8>> =
         std::sync::LazyLock::new(|| test_fixtures::read("flv/oversize-dims.flv"));
 
-    let mut demux = FlvDemux::new();
-    let err = demux
-        .unpackage(OVERSIZE.as_slice())
+    let err = test_harness::collect::media_from_flv(OVERSIZE.as_slice())
         .expect_err("a 65 536-wide SPS must be rejected, not truncated");
     // Bites: `as u16` folded 65536 to 0 and `unpackage` returned `Ok`.
     assert!(
@@ -950,8 +931,7 @@ fn maximum_representable_width_still_parses() {
         &[0x17, 0x01, 0x00, 0x00, 0x00, 0, 0, 0, 2, 0x09, 0x10],
     );
 
-    let mut demux = FlvDemux::new();
-    let media = demux.unpackage(&flv).expect("65 520-wide SPS parses");
+    let media = test_harness::collect::media_from_flv(&flv).expect("65 520-wide SPS parses");
     let CodecConfig::Avc { width, height, .. } = media.tracks[0].config() else {
         panic!("track 0 must be AVC");
     };
@@ -977,7 +957,7 @@ fn push_flv_tag(out: &mut Vec<u8>, tag_type: u8, timestamp: u32, body: &[u8]) {
 // ---------------------------------------------------------------------------
 
 /// A tag whose body overruns the buffer ends the walk, and the caller can tell:
-/// `last_walk_was_truncated()` reports it, so a truncated capture is not
+/// `ended_inside_a_tag()` reports it, so a truncated capture is not
 /// indistinguishable from a complete one.
 #[test]
 fn truncated_tail_is_reported_through_the_public_api() {
@@ -989,30 +969,29 @@ fn truncated_tail_is_reported_through_the_public_api() {
         .expect("fixture has a 368-byte audio tag");
     let cut = audio_start + 11 + 100;
 
-    let mut demux = FlvDemux::new();
-    let media = demux
-        .unpackage(&FLV.as_slice()[..cut])
+    let media = test_harness::collect::media_from_flv(&FLV.as_slice()[..cut])
         .expect("truncated tail tolerated");
     assert_eq!(media.tracks.len(), 2, "the good prefix survives");
+
+    // The flag is a property of the stream end, so one demuxer drives one
+    // stream: a fresh instance per input reports each stream correctly.
+    let truncated = |bytes: &[u8]| {
+        let mut demux = StreamingFlvDemux::new();
+        demux.feed(bytes).expect("feed the stream");
+        demux.finish().expect("the fixture is complete");
+        demux.ended_inside_a_tag()
+    };
     assert!(
-        demux.last_walk_was_truncated(),
+        truncated(&FLV.as_slice()[..cut]),
         "the cut in the last tag's body must be reported"
     );
-
-    // Bites the other way too: a complete file reports false, and the flag is
-    // reset per call on a reused demuxer.
-    let mut demux = FlvDemux::new();
-    demux.unpackage(FLV.as_slice()).expect("intact fixture");
     assert!(
-        !demux.last_walk_was_truncated(),
+        !truncated(FLV.as_slice()),
         "a complete file is not truncated"
     );
-    demux.unpackage(&FLV.as_slice()[..cut]).expect("truncated");
-    assert!(demux.last_walk_was_truncated(), "flag tracks the last call");
-    demux.unpackage(FLV.as_slice()).expect("intact again");
     assert!(
-        !demux.last_walk_was_truncated(),
-        "the flag must not be stale across calls"
+        !truncated(FLV.as_slice()),
+        "a complete file stays untruncated"
     );
 }
 
@@ -1021,8 +1000,7 @@ fn truncated_tail_is_reported_through_the_public_api() {
 /// is redundant (§E.4.1), so it is kept and nothing is reported.
 #[test]
 fn tag_missing_only_its_previous_tag_size_is_accepted() {
-    let mut demux = FlvDemux::new();
-    let full = demux.unpackage(FLV.as_slice()).expect("intact fixture");
+    let full = test_harness::collect::media_from_flv(FLV.as_slice()).expect("intact fixture");
     let full_video = full.tracks[0].samples.len();
     let full_audio = full.tracks[1].samples.len();
 
@@ -1033,17 +1011,18 @@ fn tag_missing_only_its_previous_tag_size_is_accepted() {
     push_flv_tag(&mut extended, 8, 61999, &[0xAF, 0x01, 0x00, 0x77, 0x88]);
     let body_only = &extended[..extended.len() - 4];
 
-    let mut demux = FlvDemux::new();
-    let media = demux
-        .unpackage(body_only)
+    let media = test_harness::collect::media_from_flv(body_only)
         .expect("a body-complete final tag is not truncated");
     assert_eq!(
         (media.tracks[0].samples.len(), media.tracks[1].samples.len()),
         (full_video, full_audio + 1),
         "every sample, including the new final tag's, is kept"
     );
+    let mut demux = StreamingFlvDemux::new();
+    demux.feed(body_only).expect("feed the stream");
+    demux.finish().expect("the fixture is complete");
     assert!(
-        !demux.last_walk_was_truncated(),
+        !demux.ended_inside_a_tag(),
         "a missing PreviousTagSize is not a truncated tail"
     );
 }
@@ -1054,17 +1033,15 @@ fn tag_missing_only_its_previous_tag_size_is_accepted() {
 
 /// `timescale == 0` used to make every tag's timestamp 0 (the `ticks_to_ms`
 /// placeholder), silently flattening the whole file onto one instant. It is now
-/// an error. `RtpDepacketiser` has produced timescale-0 tracks, so this is
-/// reachable, not hypothetical.
+/// an error. The whole-input demuxers produced timescale-0 tracks, so this
+/// was reachable, not hypothetical.
 /// `on_metadata_body` is the only `onMetaData` body the workspace writes: the
 /// script tag `FlvMuxStage` emits for this fixture, and the one a live RTMP push
 /// frames, differ only by the `duration` the file knows and a live stream
 /// does not. Bites if either writer grows its own property list again.
 #[test]
 fn on_metadata_body_is_the_tag_flv_mux_writes_minus_the_live_duration() {
-    let media = FlvDemux::new()
-        .unpackage(FLV.as_slice())
-        .expect("fixture FLV");
+    let media = test_harness::collect::media_from_flv(FLV.as_slice()).expect("fixture FLV");
     let flv = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), &media);
     let header = <rtmp_runtime::flv::FlvHeader as Parse>::parse(&flv).expect("FLV header");
     let script = rtmp_runtime::flv::tags(&flv, &header)
@@ -1130,9 +1107,7 @@ fn script_duration_key_len() -> usize {
 fn on_metadata_body_carries_the_flv_e5_audio_properties() {
     use rtmp_runtime::amf0::Amf0Value;
 
-    let media = FlvDemux::new()
-        .unpackage(FLV.as_slice())
-        .expect("fixture FLV");
+    let media = test_harness::collect::media_from_flv(FLV.as_slice()).expect("fixture FLV");
     let Some(CodecConfig::Aac {
         sample_rate,
         channel_count,

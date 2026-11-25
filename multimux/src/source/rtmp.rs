@@ -682,7 +682,9 @@ impl Stage for RtmpIngestSession {
     }
 
     fn finish(&mut self) -> Result<()> {
-        self.demux.finish();
+        if let Err(error) = self.demux.finish() {
+            tracing::warn!(error = %error, "rtmp: the published FLV stream ended incomplete");
+        }
         self.drain_demux();
         Ok(())
     }

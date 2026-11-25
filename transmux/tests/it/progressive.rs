@@ -17,10 +17,9 @@
 use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 
-use broadcast_common::{Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize};
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
-use transmux::ts_demux::TsDemux;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -255,7 +254,7 @@ fn fixture(rel: &[&str]) -> Vec<u8> {
 
 fn demux_media() -> Media {
     let ts = fixture(&["fixtures", "ts", "h264-aac.ts"]);
-    TsDemux::new().unpackage(&ts).expect("demux ts")
+    test_harness::collect::media_from_ts(&ts).expect("demux ts")
 }
 
 fn ref_mp4() -> Vec<u8> {

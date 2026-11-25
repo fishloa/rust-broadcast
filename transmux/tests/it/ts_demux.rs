@@ -12,9 +12,8 @@
 
 use std::path::PathBuf;
 
-use broadcast_common::{Serialize, Unpackage};
+use broadcast_common::Serialize;
 use test_fixtures::ffprobe;
-use transmux::TsDemux;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
@@ -66,7 +65,7 @@ fn split_length_prefixed(lp: &[u8]) -> Vec<&[u8]> {
 #[test]
 fn enumerates_two_tracks_h264_then_aac() {
     let ts = load_ts();
-    let media: Media = TsDemux::new().unpackage(&ts).expect("demux must succeed");
+    let media: Media = test_harness::collect::media_from_ts(&ts).expect("demux must succeed");
 
     assert_eq!(media.tracks.len(), 2, "must demux exactly 2 tracks");
     match &media.tracks[0].spec.config {
@@ -93,7 +92,7 @@ fn enumerates_two_tracks_h264_then_aac() {
 #[test]
 fn timestamps_and_sync_flags_match_csv_oracle() {
     let ts = load_ts();
-    let media = TsDemux::new().unpackage(&ts).expect("demux");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux");
     let rows = ffprobe::packets("ts/demux-oracle/h264-aac.packets.csv");
 
     let video_oracle = ffprobe::of_type(&rows, "video");
@@ -213,7 +212,7 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
 #[test]
 fn built_config_matches_ref_mp4_byte_for_byte() {
     let ts = load_ts();
-    let media = TsDemux::new().unpackage(&ts).expect("demux");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux");
     let ref_mp4 = load_ref_mp4();
 
     // --- avcC: serialize the demuxed AVCDecoderConfigurationRecord (the box
@@ -320,7 +319,7 @@ fn extract_esds_asc(esds_body: &[u8]) -> Option<Vec<u8>> {
 #[test]
 fn video_sample_payloads_match_ref_mp4() {
     let ts = load_ts();
-    let media = TsDemux::new().unpackage(&ts).expect("demux");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux");
 
     // TS → IR → CMAF fMP4.
     let fmp4 = crate::cmaf::package(&media).expect("package to CMAF");

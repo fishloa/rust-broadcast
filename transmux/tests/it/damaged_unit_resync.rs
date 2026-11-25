@@ -1,12 +1,20 @@
 //! Audit T16 (#1144) — one damaged container unit must not abort the whole
 //! input. A committed real fixture gets a corrupt unit injected in the MIDDLE,
 //! followed by valid data; the data after the damage must still be decoded and
-//! the damage must be reported in `Media::degraded`.
+//! the damage must be reported.
+//!
+//! The container demuxers report it in `Media::degraded`. The streaming RTP
+//! depacketiser reports it as an `Err` for that one packet and keeps every
+//! later packet decodable, so the RTP cases drive it one packet at a time.
 
-use broadcast_common::Unpackage;
+use std::collections::BTreeSet;
 use transmux::ir::InputDegradation;
 use transmux::media::Media;
-use transmux::{RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind};
+
+use transmux::{RtpMediaKind, Sample, TrackId};
+
+const MARKER_BIT_BYTE: usize = 1;
+const MARKER_BIT: u8 = 0x80;
 
 const PACK_START_CODE: [u8; 4] = [0x00, 0x00, 0x01, 0xBA];
 
@@ -89,31 +97,108 @@ fn ps_with_no_recoverable_pack_is_still_an_error() {
 
 fn packetised() -> (Media, crate::rtp_run::RtpOutput) {
     let ts = fixture("ts/h264-aac.ts");
-    let media = transmux::TsDemux::new()
-        .unpackage(&ts[..])
-        .expect("demux TS");
+    let media = test_harness::collect::media_from_ts(&ts[..]).expect("demux TS");
     let out = crate::rtp_run::packetise(&media, crate::rtp_run::stage(1400, 0x1234_5678));
     (media, out)
 }
 
+/// Drive the streaming depacketiser one packet at a time and fold the
+/// surviving samples back into the `Media` shape the whole-input demuxer
+/// returned: a damaged packet is reported as `InputDegradation::MalformedUnit`
+/// at its packet index, and every other packet still decodes.
 fn depacketise(kind: RtpMediaKind, packets: Vec<Vec<u8>>, media: &Media) -> Media {
-    let mut stream = RtpInputStream::new(kind, packets);
-    if kind == RtpMediaKind::Aac {
-        let cfg = media
-            .tracks
-            .iter()
-            .find(|t| matches!(t.spec.config, transmux::pipeline::CodecConfig::Aac { .. }))
-            .unwrap()
-            .spec
-            .config
-            .clone();
-        stream = stream.with_config(cfg);
-    }
-    RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![stream],
+    use transmux::media::{Media as IrMedia, Track};
+    use transmux::pipeline::TrackSpec;
+    use transmux::rtp_stream::{RtpStreamDepacketiser, RtpStreamTrack};
+    let spec = media
+        .tracks
+        .iter()
+        .find(|t| {
+            matches!(
+                (&t.spec.config, kind),
+                (
+                    transmux::pipeline::CodecConfig::Aac { .. },
+                    RtpMediaKind::Aac
+                ) | (
+                    transmux::pipeline::CodecConfig::Avc { .. },
+                    RtpMediaKind::H264
+                )
+            )
         })
-        .expect("a malformed packet must not fail the whole input")
+        .expect("the packetised IR carries the stream's config");
+    let track_id = TrackId::new(1);
+    let mut depack = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+        track_id,
+        kind,
+        spec.spec.config.clone(),
+        spec.spec.timescale,
+    )]);
+    let mut samples = Vec::new();
+    let mut degraded = Vec::new();
+    for (index, packet) in packets.iter().enumerate() {
+        match depack.push(track_id, packet) {
+            Ok(mut got) => samples.append(&mut got),
+            Err(_) => degraded.push(InputDegradation::MalformedUnit {
+                position: index as u64,
+            }),
+        }
+    }
+    samples.extend(depack.flush(track_id).expect("flush the final AU"));
+    let anchor = samples
+        .first()
+        .and_then(|sample| sample.timing.and_then(|timing| timing.dts()))
+        .map(|dts| u64::try_from(dts.max(0)).unwrap_or(0))
+        .unwrap_or(0);
+    let track = Track::new_at(
+        TrackSpec::new(track_id, spec.spec.timescale, spec.spec.config.clone()),
+        samples,
+        anchor,
+    );
+    let mut out = IrMedia::new(vec![track], transmux::rtp::VIDEO_CLOCK_TIMESCALE);
+    out.degraded = degraded;
+    out
+}
+
+/// The access unit each packet belongs to: a marker bit ends its unit
+/// (RFC 6184 §5.1 for H.264, RFC 3640 §3.1 for AAC).
+fn access_unit_of_packet(packets: &[Vec<u8>]) -> Vec<usize> {
+    let mut aus = Vec::with_capacity(packets.len());
+    let mut au = 0usize;
+    for packet in packets {
+        aus.push(au);
+        if packet
+            .get(MARKER_BIT_BYTE)
+            .is_some_and(|byte| byte & MARKER_BIT != 0)
+        {
+            au += 1;
+        }
+    }
+    aus
+}
+
+/// Exactly the access units carrying a damaged packet are gone, and every
+/// surviving sample is byte-identical to its original.
+fn assert_only_the_damaged_access_units_are_lost(
+    kept: &[Sample],
+    clean: &[Sample],
+    damaged_aus: &BTreeSet<usize>,
+) {
+    assert_eq!(
+        kept.len(),
+        clean.len() - damaged_aus.len(),
+        "exactly the access units carrying a damaged packet are lost"
+    );
+    let survivors = clean
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !damaged_aus.contains(index))
+        .map(|(_, sample)| sample);
+    for (index, (sample, original)) in kept.iter().zip(survivors).enumerate() {
+        assert_eq!(
+            sample.data, original.data,
+            "surviving sample {index} is not byte-identical to its original"
+        );
+    }
 }
 
 #[test]
@@ -132,6 +217,12 @@ fn rtp_video_malformed_packets_in_the_middle_are_skipped_and_reported() {
     let clean = depacketise(RtpMediaKind::H264, packets.clone(), &media);
     assert!(clean.degraded.is_empty());
     let clean_samples = clean.tracks[0].samples.len();
+    let aus = access_unit_of_packet(&packets);
+    assert_eq!(
+        clean_samples,
+        aus[aus.len() - 1] + 1,
+        "premise: one sample per access unit"
+    );
 
     let mid = packets.len() / 2;
     // (a) header cut short (RFC 3550 §5.1 needs 12 bytes), (b) an STAP-A whose
@@ -142,7 +233,7 @@ fn rtp_video_malformed_packets_in_the_middle_are_skipped_and_reported() {
     // a second truncated packet.
     let second = mid + 3;
     damaged[second].truncate(3);
-
+    let damaged_aus: BTreeSet<usize> = [aus[mid], aus[second]].into_iter().collect();
     let got = depacketise(RtpMediaKind::H264, damaged, &media);
     assert_eq!(
         got.degraded,
@@ -155,20 +246,11 @@ fn rtp_video_malformed_packets_in_the_middle_are_skipped_and_reported() {
             },
         ]
     );
-    let s = &got.tracks[0].samples;
-    assert!(s.len() < clean_samples, "damaged AUs are gone");
-    assert!(
-        s.len() + 6 >= clean_samples,
-        "{} vs {}",
-        s.len(),
-        clean_samples
+    assert_only_the_damaged_access_units_are_lost(
+        &got.tracks[0].samples,
+        &clean.tracks[0].samples,
+        &damaged_aus,
     );
-    // The data after the damage is decoded byte-identically.
-    assert_eq!(
-        s.last().unwrap().data,
-        clean.tracks[0].samples.last().unwrap().data
-    );
-    assert_eq!(s[0].data, clean.tracks[0].samples[0].data);
 }
 
 #[test]
@@ -185,24 +267,25 @@ fn rtp_audio_malformed_packet_in_the_middle_is_skipped_and_reported() {
         .map(|p| p.as_contiguous().to_vec())
         .collect();
     let clean = depacketise(RtpMediaKind::Aac, packets.clone(), &media);
+    let clean_samples = clean.tracks[0].samples.len();
+    let aus = access_unit_of_packet(&packets);
+    assert_eq!(
+        clean_samples,
+        aus[aus.len() - 1] + 1,
+        "premise: one sample per access unit"
+    );
+
     let mid = packets.len() / 2;
     let mut damaged = packets;
     damaged[mid].truncate(7);
+    let damaged_aus: BTreeSet<usize> = [aus[mid]].into_iter().collect();
+
     let got = depacketise(RtpMediaKind::Aac, damaged, &media);
-    assert_eq!(
-        got.degraded,
-        vec![InputDegradation::MalformedUnit {
-            position: mid as u64
-        }]
+    assert_only_the_damaged_access_units_are_lost(
+        &got.tracks[0].samples,
+        &clean.tracks[0].samples,
+        &damaged_aus,
     );
-    let (g, c) = (&got.tracks[0].samples, &clean.tracks[0].samples);
-    assert!(
-        g.len() < c.len() && g.len() + 4 >= c.len(),
-        "{} vs {}",
-        g.len(),
-        c.len()
-    );
-    assert_eq!(g.last().unwrap().data, c.last().unwrap().data);
 }
 
 #[test]

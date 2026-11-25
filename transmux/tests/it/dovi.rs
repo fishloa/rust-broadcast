@@ -8,13 +8,12 @@
 #![cfg(feature = "std")]
 
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize};
 use isobmff::dovi::{DVCC_FOURCC, DVH1_FOURCC, DVVC_FOURCC};
 use std::time::Duration;
 use transmux::ir::{CodecConfig, TrackSpec};
 
 use isobmff::{DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord};
-use transmux::ts_demux::TsDemux;
 use transmux::{Media, build_init_segment};
 
 fn timescale(value: u32) -> Timescale {
@@ -40,7 +39,7 @@ type EntryBoxes = Vec<([u8; 4], Vec<u8>)>;
 
 fn ts_media(fixture: &str) -> Option<Media> {
     let bytes = test_fixtures::require_bytes(fixture, "dovi")?;
-    Some(TsDemux::new().unpackage(&bytes).expect("demux ts"))
+    Some(test_harness::collect::media_from_ts(&bytes).expect("demux ts"))
 }
 
 fn video(media: &Media) -> &transmux::Track {

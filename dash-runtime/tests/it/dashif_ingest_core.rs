@@ -1,4 +1,3 @@
-use broadcast_common::Unpackage;
 use dash_runtime::address::template::substitute;
 use dash_runtime::ingest::classify;
 use dash_runtime::ingest::{
@@ -6,12 +5,11 @@ use dash_runtime::ingest::{
     ObjectKind, RequestMeta, SegmentDisposition,
 };
 use transmux::dash::DashPackager;
-use transmux::ts_demux::TsDemux;
 
 fn demux_media() -> transmux::media::Media {
     let ts = test_fixtures::read("ts/h264-aac.ts");
-    let mut demux = TsDemux::new();
-    demux.unpackage(&ts[..]).expect("demux")
+
+    test_harness::collect::media_from_ts(&ts[..]).expect("demux")
 }
 
 fn build_mpd() -> String {

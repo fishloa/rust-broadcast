@@ -42,14 +42,12 @@
 
 #![cfg(feature = "cenc")]
 
+use broadcast_common::stage::{Stage, Timestamp};
 use test_alloc::ThreadCounting;
 use test_harness::collect::MediaSelectExt;
-
-use broadcast_common::Unpackage;
-use broadcast_common::stage::{Stage, Timestamp};
 use transmux::{
     CencEncryptStage, CencScheme, CodecConfig, EncryptConfig, Media, RtpPacketiserStage, Sample,
-    SubsamplePolicy, TsDemux,
+    SubsamplePolicy,
 };
 
 // Counts every allocation/deallocation made **by the calling thread**; thread-local
@@ -71,8 +69,8 @@ fn snapshot_counters() -> (usize, usize, usize) {
 /// tests use), narrowed to its single AVC video track.
 fn clear_video_media() -> Media {
     let bytes = test_fixtures::read("ts/h264/main.ts");
-    let mut demux = TsDemux::new();
-    let media = demux.unpackage(bytes.as_slice()).expect("demux main.ts");
+
+    let media = test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux main.ts");
     media
         .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("AVC video track present")

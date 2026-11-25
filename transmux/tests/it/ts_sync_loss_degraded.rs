@@ -6,9 +6,6 @@
 //! because `TsResync` silently skipped the 188 bytes and the batch wrapper
 //! also threw every `InputDegraded` event away. Fixtures load only through
 //! `test_fixtures`.
-
-use broadcast_common::Unpackage;
-use transmux::TsDemux;
 use transmux::ir::{DemuxEvent, InputDegradation};
 use transmux::media::Media;
 use transmux::ts_demux::StreamingTsDemux;
@@ -72,7 +69,7 @@ fn non_sync_loss(m: &Media) -> Vec<InputDegradation> {
 }
 
 fn demux(bytes: &[u8]) -> Media {
-    TsDemux::new().unpackage(bytes).expect("demux")
+    test_harness::collect::media_from_ts(bytes).expect("demux")
 }
 
 #[test]

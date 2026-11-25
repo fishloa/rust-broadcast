@@ -10,17 +10,15 @@
 //! `fixtures/ts/gulli-opengop.ts`, plus (skipped cleanly when absent) the
 //! `france-tnt-uhf32-si-audio.ts` from the private fixtures repo (the whole
 //! capture's non-video packets).
-
-use broadcast_common::Unpackage;
+use transmux::Ec3SyncframeInfo;
 use transmux::ac3_syncframe::{split_eac3_syncframe_ranges, split_eac3_syncframes};
 use transmux::pipeline::CodecConfig;
-use transmux::{Ec3SyncframeInfo, TsDemux};
 
 const AC3_SYNC: [u8; 2] = [0x0B, 0x77];
 
 /// Per E-AC-3 track: `(samples, whole-frame timeline gaps)`.
 fn check(label: &str, ts: &[u8]) -> Vec<(usize, usize)> {
-    let media = TsDemux::new().unpackage(ts).expect("demux");
+    let media = test_harness::collect::media_from_ts(ts).expect("demux");
     let mut out = Vec::new();
     for track in &media.tracks {
         let CodecConfig::Eac3 { config, .. } = &track.spec.config else {
@@ -96,9 +94,7 @@ fn committed_real_eac3_captures_unchanged() {
 /// the buffer — both the access-unit split and the syncframe ranges.
 #[test]
 fn a_truncated_last_eac3_frame_is_dropped() {
-    let media = TsDemux::new()
-        .unpackage(&committed("dolby/eac3.ts"))
-        .expect("demux");
+    let media = test_harness::collect::media_from_ts(&committed("dolby/eac3.ts")).expect("demux");
     let track = media
         .tracks
         .iter()

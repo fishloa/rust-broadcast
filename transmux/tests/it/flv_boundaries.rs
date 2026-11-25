@@ -6,11 +6,9 @@
 //! never a value recomputed from the code under test.
 #![cfg(feature = "std")]
 
+use broadcast_common::Parse;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Unpackage};
-use transmux::{
-    CodecConfig, FlvDemux, FlvError, FlvMuxStage, Media, Sample, Track, TrackId, TrackSpec,
-};
+use transmux::{CodecConfig, FlvError, FlvMuxStage, Media, Sample, Track, TrackId, TrackSpec};
 
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType, tags};
 use transmux::ir::DataIdentity;
@@ -20,8 +18,7 @@ fn timescale(value: u32) -> Timescale {
 }
 
 fn source_media() -> Media {
-    FlvDemux::new()
-        .unpackage(test_fixtures::read("flv/av.flv").as_slice())
+    test_harness::collect::media_from_flv(test_fixtures::read("flv/av.flv").as_slice())
         .expect("demux the real av.flv fixture")
 }
 
@@ -392,8 +389,7 @@ fn an_unsupported_codec_is_named_in_the_mux_error() {
 }
 
 fn header_short_read(len: usize) -> FlvError {
-    FlvDemux::new()
-        .unpackage(&vec![0u8; len])
+    test_harness::collect::media_from_flv(&vec![0u8; len])
         .expect_err("a header this short cannot demux")
 }
 
@@ -419,7 +415,7 @@ fn a_header_shorter_than_nine_bytes_is_a_header_short_read() {
 fn a_nine_byte_header_alone_is_a_tag_short_read() {
     let header = &flv_prefix()[..9];
     let FlvError::Codec(transmux::Error::BufferTooShort(short)) =
-        FlvDemux::new().unpackage(header).expect_err("no tag")
+        test_harness::collect::media_from_flv(header).expect_err("no tag")
     else {
         panic!("wrong variant");
     };
@@ -433,7 +429,7 @@ fn a_bad_signature_is_reported_with_its_bytes() {
     let mut bytes = flv_prefix();
     bytes[..3].copy_from_slice(b"XYZ");
     assert_eq!(
-        FlvDemux::new().unpackage(&bytes).unwrap_err(),
+        test_harness::collect::media_from_flv(&bytes).unwrap_err(),
         FlvError::BadSignature(*b"XYZ")
     );
 }
@@ -442,9 +438,8 @@ fn a_bad_signature_is_reported_with_its_bytes() {
 fn a_header_data_offset_past_the_buffer_is_a_short_read() {
     let mut bytes = flv_prefix();
     bytes[5..9].copy_from_slice(&100u32.to_be_bytes());
-    let FlvError::Codec(transmux::Error::BufferTooShort(short)) = FlvDemux::new()
-        .unpackage(&bytes)
-        .expect_err("DataOffset past the buffer")
+    let FlvError::Codec(transmux::Error::BufferTooShort(short)) =
+        test_harness::collect::media_from_flv(&bytes).expect_err("DataOffset past the buffer")
     else {
         panic!("wrong variant");
     };
@@ -458,10 +453,10 @@ fn a_header_data_offset_below_the_header_is_named() {
     let mut bytes = flv_prefix();
     bytes[5..9].copy_from_slice(&4u32.to_be_bytes());
     assert_eq!(
-        FlvDemux::new().unpackage(&bytes).unwrap_err(),
-        FlvError::Codec(transmux::Error::InvalidInput(
-            "FLV header DataOffset below the header"
-        ))
+        test_harness::collect::media_from_flv(&bytes).unwrap_err(),
+        FlvError::Header(rtmp_runtime::RtmpError::Malformed {
+            what: "FLV header DataOffset"
+        })
     );
 }
 
@@ -471,9 +466,8 @@ fn an_incomplete_first_tag_reports_the_overrun() {
     bytes.push(9);
     bytes.extend_from_slice(&[0x00, 0x03, 0xE8]);
     bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0]);
-    let FlvError::Codec(transmux::Error::BufferTooShort(short)) = FlvDemux::new()
-        .unpackage(&bytes)
-        .expect_err("incomplete first tag")
+    let FlvError::Codec(transmux::Error::BufferTooShort(short)) =
+        test_harness::collect::media_from_flv(&bytes).expect_err("incomplete first tag")
     else {
         panic!("wrong variant");
     };
@@ -491,7 +485,7 @@ fn a_video_tag_shorter_than_its_header_is_skipped() {
     for body in [Vec::new(), vec![0x17], vec![0x17, 0x01, 0x00, 0x00]] {
         let flv = flv_with(&[(9, 0, body.clone())]);
         assert_eq!(
-            FlvDemux::new().unpackage(&flv).unwrap_err(),
+            test_harness::collect::media_from_flv(&flv).unwrap_err(),
             FlvError::NoSupportedTrack,
             "body {body:?}"
         );
@@ -504,7 +498,7 @@ fn a_five_byte_video_tag_carries_an_empty_access_unit() {
         (9, 0, sequence_body(9, 0)),
         (9, 0, vec![0x17, 0x01, 0x00, 0x00, 0x00]),
     ]);
-    let media = FlvDemux::new().unpackage(&flv).expect("5-byte NALU tag");
+    let media = test_harness::collect::media_from_flv(&flv).expect("5-byte NALU tag");
     assert_eq!(media.tracks.len(), 1);
     assert_eq!(media.tracks[0].samples.len(), 1);
     assert!(media.tracks[0].samples[0].data.is_empty());
@@ -514,7 +508,7 @@ fn a_five_byte_video_tag_carries_an_empty_access_unit() {
 fn an_audio_tag_shorter_than_two_bytes_is_skipped() {
     let flv = flv_with(&[(8, 0, vec![0xAF])]);
     assert_eq!(
-        FlvDemux::new().unpackage(&flv).unwrap_err(),
+        test_harness::collect::media_from_flv(&flv).unwrap_err(),
         FlvError::NoSupportedTrack
     );
 }
@@ -522,8 +516,7 @@ fn an_audio_tag_shorter_than_two_bytes_is_skipped() {
 #[test]
 fn a_two_byte_audio_tag_carries_an_empty_access_unit() {
     let mut flv = test_fixtures::read("flv/av.flv");
-    let before = FlvDemux::new()
-        .unpackage(flv.as_slice())
+    let before = test_harness::collect::media_from_flv(flv.as_slice())
         .expect("real fixture")
         .tracks
         .iter()
@@ -532,7 +525,7 @@ fn a_two_byte_audio_tag_carries_an_empty_access_unit() {
         .samples
         .len();
     push_tag(&mut flv, 8, 100_000, &[0xAF, 0x01]);
-    let media = FlvDemux::new().unpackage(&flv).expect("2-byte audio tag");
+    let media = test_harness::collect::media_from_flv(&flv).expect("2-byte audio tag");
     let track = media
         .tracks
         .iter()
@@ -543,19 +536,20 @@ fn a_two_byte_audio_tag_carries_an_empty_access_unit() {
 }
 
 #[test]
-fn a_second_avc_sequence_header_does_not_replace_the_first() {
+fn a_second_avc_sequence_header_updates_the_track() {
     let first = sequence_body(9, 0);
     let mut second = first.clone();
     second[6] = first[6] ^ 0x01;
     let nalu = vec![0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x09];
-    let flv = flv_with(&[(9, 0, first.clone()), (9, 0, second), (9, 0, nalu)]);
-    let media = FlvDemux::new()
-        .unpackage(&flv)
-        .expect("two sequence headers");
+    let flv = flv_with(&[(9, 0, first.clone()), (9, 0, second.clone()), (9, 0, nalu)]);
+    let media = test_harness::collect::media_from_flv(&flv).expect("two sequence headers");
     let CodecConfig::Avc { config, .. } = media.tracks[0].config() else {
         panic!("track 0 must be AVC");
     };
-    assert_eq!(config.config.profile_indication, first[6]);
+    assert_eq!(
+        config.config.profile_indication, second[6],
+        "the streaming demuxer treats a later sequence header as a track update"
+    );
 }
 
 #[test]
@@ -569,9 +563,7 @@ fn an_empty_avc_sequence_header_is_skipped_without_damage() {
             vec![0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x09],
         ),
     ]);
-    let media = FlvDemux::new()
-        .unpackage(&flv)
-        .expect("empty then real header");
+    let media = test_harness::collect::media_from_flv(&flv).expect("empty then real header");
     assert!(
         media.degraded.is_empty(),
         "an empty header is skipped, not damage"
@@ -590,9 +582,7 @@ fn the_last_sample_repeats_the_second_to_last_forward_delta() {
             vec![0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x09],
         ));
     }
-    let media = FlvDemux::new()
-        .unpackage(&flv_with(&tags))
-        .expect("six samples");
+    let media = test_harness::collect::media_from_flv(&flv_with(&tags)).expect("six samples");
     let durations: Vec<u32> = media.tracks[0]
         .samples
         .iter()

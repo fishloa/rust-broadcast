@@ -9,12 +9,9 @@
 //! Gates (each bites):
 //! 1. RTMP → IR equals FLV → IR (track/sample counts + per-sample sizes).
 //! 2. IR → RTMP wire → IR preserves every sample (no raw passthrough).
-
-use broadcast_common::Unpackage;
 use rtmp_runtime::chunk::{ChunkWriter, Message};
 use rtmp_runtime::message::MessageTypeId;
-use transmux::FlvDemux;
-use transmux::rtmp::{RtmpDemux, RtmpMuxStage};
+use transmux::rtmp::RtmpMuxStage;
 
 static FLV: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
@@ -31,8 +28,8 @@ fn rtmp_demux_matches_flv_demux() {
     const CHUNK: usize = 128;
 
     // Ground truth: FLV → IR directly.
-    let mut flv_demux = FlvDemux::new();
-    let flv_media = flv_demux.unpackage(FLV.as_slice()).expect("FLV → IR");
+
+    let flv_media = test_harness::collect::media_from_flv(FLV.as_slice()).expect("FLV → IR");
 
     // Split av.flv into FLV tags (reuse the same walk the FLV spoke uses).
     let tags = split_flv(FLV.as_slice());
@@ -76,8 +73,8 @@ fn rtmp_demux_matches_flv_demux() {
     for message in &messages {
         wire.extend_from_slice(&writer.write(message).expect("chunk message"));
     }
-    let mut rtmp_demux = RtmpDemux::new();
-    let rtmp_media = rtmp_demux.unpackage(&wire).expect("RTMP → IR");
+
+    let rtmp_media = test_harness::collect::media_from_rtmp(&wire).expect("RTMP → IR");
 
     // Track count equal.
     assert_eq!(
@@ -113,14 +110,12 @@ fn rtmp_demux_matches_flv_demux() {
 /// bodies re-framed as RTMP messages, then de-chunked and FLV-routed back.
 #[test]
 fn rtmp_mux_round_trip_preserves_samples() {
-    let mut flv_demux = FlvDemux::new();
-    let media = flv_demux.unpackage(FLV.as_slice()).expect("FLV → IR");
+    let media = test_harness::collect::media_from_flv(FLV.as_slice()).expect("FLV → IR");
 
     let wire = crate::mux_bytes::mux_bytes(&mut RtmpMuxStage::new(), &media);
     assert!(!wire.is_empty(), "muxed RTMP wire is non-empty");
 
-    let mut demux = RtmpDemux::new();
-    let back = demux.unpackage(&wire).expect("RTMP wire → IR");
+    let back = test_harness::collect::media_from_rtmp(&wire).expect("RTMP wire → IR");
 
     assert_eq!(
         back.tracks.len(),

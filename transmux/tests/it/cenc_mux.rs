@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::{Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize};
 use isobmff::cenc::{
     ProtectionSchemeInfoBox, SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox, SampleEncryptionBox,
     SampleEncryptionEntry,
@@ -29,9 +29,7 @@ use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
 use transmux::cenc_segment::protect_init_segment;
-use transmux::{
-    CencEncryptStage, CencScheme, CodecConfig, EncryptConfig, Media, SubsamplePolicy, TsDemux,
-};
+use transmux::{CencEncryptStage, CencScheme, CodecConfig, EncryptConfig, Media, SubsamplePolicy};
 
 const KID: [u8; 16] = [
     0xa7, 0xe6, 0x1c, 0x37, 0x3e, 0x21, 0x90, 0x33, 0xc2, 0x10, 0x91, 0xfa, 0x60, 0x7b, 0xf3, 0xb8,
@@ -70,8 +68,8 @@ fn clear_video_media() -> Option<Media> {
         return None;
     }
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
-    let mut demux = TsDemux::new();
-    let media = demux.unpackage(bytes.as_slice()).expect("demux main.ts");
+
+    let media = test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux main.ts");
     Some(
         media
             .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
@@ -924,9 +922,7 @@ fn two_trafs_and_a_trailing_opaque_child_decrypt_to_the_clear_samples() {
     // AVC + AAC: `fixtures/ts/h264/main.ts` is video-only, so this test needs
     // the A/V capture.
     let bytes = test_fixtures::read("ts/h264-aac.ts");
-    let media = TsDemux::new()
-        .unpackage(bytes.as_slice())
-        .expect("demux h264-aac.ts");
+    let media = test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux h264-aac.ts");
     // AVC video + AAC audio: two tracks, so the moof carries two trafs.
     let mut media = media
         .select_tracks_by(|t| {
@@ -1087,9 +1083,7 @@ fn non_cenc_typed_saiz_is_not_treated_as_an_existing_cenc_triple() {
 #[test]
 fn two_protect_calls_keep_both_enca_and_encv_entries() {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
-    let media = TsDemux::new()
-        .unpackage(bytes.as_slice())
-        .expect("demux h264-aac.ts");
+    let media = test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux h264-aac.ts");
     let mut media = media
         .select_tracks_by(|t| {
             matches!(t.spec.config, CodecConfig::Avc { .. })

@@ -18,11 +18,9 @@ use crate::ts_psi::{payload_offset, pid_of, pusi_of};
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 use transmux::TrackId;
-
-use broadcast_common::Unpackage;
 use transmux::ir::DataIdentity;
 use transmux::pipeline::CodecConfig;
-use transmux::{DemuxEvent, Media, StreamingTsDemux, TsDemux};
+use transmux::{DemuxEvent, Media, StreamingTsDemux};
 
 const TS_PACKET_LEN: usize = 188;
 const SYNC_BYTE: u8 = 0x47;
@@ -193,7 +191,7 @@ fn every_track_carries_its_pmt_pid_and_es_info() {
         "independent PAT/PMT walk must find exactly the 6 documented elementary streams"
     );
 
-    let media = TsDemux::new().unpackage(&ts).expect("demux france2.ts");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux france2.ts");
     assert_eq!(
         media.tracks.len(),
         6,
@@ -230,7 +228,7 @@ fn every_track_carries_its_pmt_pid_and_es_info() {
 #[test]
 fn audio_language_and_subtitle_descriptors_recoverable() {
     let ts = fixture_bytes();
-    let media = TsDemux::new().unpackage(&ts).expect("demux france2.ts");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux france2.ts");
 
     let track_for_pid = |pid: u16| {
         media
@@ -298,7 +296,7 @@ fn streaming_demux_track_added_matches_batch_provenance() {
     }
     assert_eq!(streamed.len(), 6, "6 TrackAdded events expected");
 
-    let batch = TsDemux::new().unpackage(&ts).expect("demux france2.ts");
+    let batch = test_harness::collect::media_from_ts(&ts).expect("demux france2.ts");
     assert_eq!(batch.tracks.len(), streamed.len());
 
     for track in &batch.tracks {
@@ -330,7 +328,7 @@ fn streaming_demux_track_added_matches_batch_provenance() {
 #[test]
 fn fmp4_round_trip_has_no_ts_provenance() {
     let ts = fixture_bytes();
-    let demuxed = TsDemux::new().unpackage(&ts).expect("demux france2.ts");
+    let demuxed = test_harness::collect::media_from_ts(&ts).expect("demux france2.ts");
 
     let video_track = demuxed
         .tracks

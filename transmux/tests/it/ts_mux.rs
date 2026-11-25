@@ -14,12 +14,11 @@ use crate::ts_mux_stage;
 use crate::ts_psi::{
     first_section, parse_pat, parse_pmt, payload_offset, pid_of, pusi_of, split_lp,
 };
+use broadcast_common::Serialize;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Serialize, Unpackage};
 use mpeg_ts::ts::TsPacket;
 use test_fixtures::process::tool_available;
 use transmux::TrackId;
-use transmux::TsDemux;
 use transmux::ir::DataIdentity;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
@@ -39,9 +38,9 @@ fn load_ts() -> Vec<u8> {
 /// output bytes.
 fn pipeline() -> (Media, Vec<u8>, Media) {
     let ts = load_ts();
-    let ir = TsDemux::new().unpackage(&ts).expect("demux fixture");
+    let ir = test_harness::collect::media_from_ts(&ts).expect("demux fixture");
     let ts2 = ts_mux_stage::mux(&ir);
-    let ir2 = TsDemux::new().unpackage(&ts2).expect("re-demux mux output");
+    let ir2 = test_harness::collect::media_from_ts(&ts2).expect("re-demux mux output");
     (ir, ts2, ir2)
 }
 
@@ -477,7 +476,7 @@ fn packet_pcr_90k(pkt: &[u8]) -> Option<u64> {
 /// driven by the test rather than the fixture's own frame rate.
 fn ac3_media(spacing_ticks: i64) -> Media {
     let ts = std::fs::read(test_fixtures::path("ts/dolby/ac3.ts")).expect("ac3 fixture must exist");
-    let mut ir = TsDemux::new().unpackage(&ts).expect("demux AC-3 fixture");
+    let mut ir = test_harness::collect::media_from_ts(&ts).expect("demux AC-3 fixture");
     let t = ir.tracks.get_mut(0).expect("one AC-3 track");
     let scale = t.spec.timescale.get() as i64;
     // 4 samples, `spacing_ticks` apart (the first at 0).
@@ -614,7 +613,7 @@ fn too_many_elementary_streams_is_refused() {
 
     let fixture = std::fs::read(test_fixtures::path("ts/h264-aac.ts"))
         .expect("h264-aac.ts fixture must exist");
-    let ir = TsDemux::new().unpackage(&fixture).expect("demux fixture");
+    let ir = test_harness::collect::media_from_ts(&fixture).expect("demux fixture");
     let video = ir
         .tracks
         .iter()

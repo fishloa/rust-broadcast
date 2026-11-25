@@ -60,7 +60,7 @@ use multimux::route::RouteHandle;
 pub mod hls_pull_probe;
 use hls_pull_probe::{Probe, observed, pull_samples};
 use transmux::ll_hls::LlHlsSegmenter;
-use transmux::{CodecConfig, FragmentTrackData, Sample, TrackSpec, TsDemux};
+use transmux::{CodecConfig, FragmentTrackData, Sample, TrackSpec};
 
 // ── Fixture + scratch-dir plumbing (mirrors transmux/tests/golden_gate.rs) ──
 
@@ -79,7 +79,7 @@ fn scratch_dir(name: &str) -> PathBuf {
 /// `TRACK_ID` const, which matches for the same reason).
 fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
     let ts = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
-    let media = TsDemux::new().demux(&ts).expect("demux h264-aac.ts");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux h264-aac.ts");
     let video = media
         .tracks
         .into_iter()

@@ -13,9 +13,8 @@
 
 use std::path::PathBuf;
 
-use broadcast_common::{Parse, Unpackage};
+use broadcast_common::Parse;
 use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
-use transmux::TsDemux;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::validate::{SegmentOrigin, Severity, validate_init_segment, validate_media_segment};
@@ -64,7 +63,7 @@ fn hevc_nal_type(nal: &[u8]) -> Option<u8> {
 #[test]
 fn demuxes_hevc_track_with_ffprobe_dims_and_wellformed_hvcc() {
     let ts = load_ts("main.ts");
-    let media: Media = TsDemux::new().unpackage(&ts).expect("demux must succeed");
+    let media: Media = test_harness::collect::media_from_ts(&ts).expect("demux must succeed");
 
     let track = hevc_track(&media);
     let (config, width, height) = match &track.spec.config {
@@ -147,7 +146,7 @@ fn demuxes_hevc_track_with_ffprobe_dims_and_wellformed_hvcc() {
 #[test]
 fn ts_to_cmaf_validates_with_hvc1_sample_entry() {
     let ts = load_ts("main.ts");
-    let media = TsDemux::new().unpackage(&ts).expect("demux");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux");
 
     let cmaf = crate::cmaf::package(&media).expect("package to CMAF");
 
@@ -213,7 +212,7 @@ fn contains_ascii(haystack: &[u8], needle: &[u8; 4]) -> bool {
 #[test]
 fn main10_reflects_ten_bit_depth() {
     let ts = load_ts("main10.ts");
-    let media = TsDemux::new().unpackage(&ts).expect("demux");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux");
     let track = hevc_track(&media);
 
     let record = match &track.spec.config {

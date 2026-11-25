@@ -9,10 +9,9 @@
 
 use crate::ts_psi::{parse_pmt, payload_offset, pid_of, pusi_of};
 use broadcast_common::Stage;
-use broadcast_common::Unpackage;
 use broadcast_common::stage::Timestamp;
 use transmux::mux_stage::{MuxInput, MuxOutput};
-use transmux::{DEFAULT_PSI_INTERVAL, DemuxEvent, StreamingTsDemux, TsDemux, TsMuxStage};
+use transmux::{DEFAULT_PSI_INTERVAL, DemuxEvent, StreamingTsDemux, TsMuxStage};
 
 const PMT_PID: u16 = 0x1000;
 
@@ -61,9 +60,7 @@ fn interleaved(media: &transmux::Media) -> Vec<(usize, transmux::Sample)> {
 
 /// Samples a demuxer recovers, keyed by a stable track fingerprint.
 fn recovered(ts: &[u8]) -> (usize, usize) {
-    let media = TsDemux::new()
-        .unpackage(ts)
-        .expect("re-muxed stream demuxes");
+    let media = test_harness::collect::media_from_ts(ts).expect("re-muxed stream demuxes");
     let video = media
         .tracks
         .iter()
@@ -80,7 +77,7 @@ fn recovered(ts: &[u8]) -> (usize, usize) {
 #[test]
 fn a_mid_stream_track_addition_emits_a_new_pmt_and_continues() {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
-    let media = TsDemux::new().unpackage(bytes.as_slice()).expect("demux");
+    let media = test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux");
     let video = media
         .tracks
         .iter()

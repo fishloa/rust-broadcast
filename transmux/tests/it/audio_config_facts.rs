@@ -15,14 +15,12 @@
 //! | `legacy/mpeg2-mp2.ts` | mp2, 44100 Hz, 1 ch, 384000 b/s |
 //! | `dts/dts-core.ts` | dts, 48000 Hz, 2 ch, 768000 b/s |
 //! | `dolby/ac3.ts` | ac3, 44100 Hz, 1 ch, 192000 b/s |
-
-use broadcast_common::Unpackage;
-use transmux::{CodecConfig, Media, TsDemux};
+use transmux::{CodecConfig, Media};
 
 fn demux(rel: &str) -> Media {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-    TsDemux::new().unpackage(&bytes).expect("demux fixture")
+    test_harness::collect::media_from_ts(&bytes).expect("demux fixture")
 }
 
 /// The first audio track whose config matches `pick`.

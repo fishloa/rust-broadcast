@@ -13,11 +13,8 @@ use crate::support::hdr_route::{
     Source, attribute, joined_mp4, load, master_text, ok, route_app, route_app_from, scratch,
     validator_comments, video_codec,
 };
-use test_fixtures::process::tool_available;
-
-use broadcast_common::mux::Unpackage;
 use broadcast_hls::MasterPlaylist;
-use transmux::ts_demux::TsDemux;
+use test_fixtures::process::tool_available;
 
 const HDR10PLUS: &str = "video/hdr10plus/tos-256x144-hdr10plus.ts";
 const HDR10: &str = "video/hdr10/meridian-hdr10-60f.ts";
@@ -121,7 +118,7 @@ async fn every_fmp4_sample_of_the_route_keeps_its_hdr10plus_sei_byte_identical()
     }
     let source = {
         let bytes = test_fixtures::require_bytes(HDR10PLUS, "hdr10plus_route").unwrap();
-        hdr10plus_seis_by_pts(&TsDemux::new().unpackage(&bytes).unwrap())
+        hdr10plus_seis_by_pts(&test_harness::collect::media_from_ts(&bytes).unwrap())
     };
     assert_eq!(source.len(), FRAMES);
     let file = joined_mp4(&route_app(HDR10PLUS), &scratch("hdr10plus-passthrough")).await;

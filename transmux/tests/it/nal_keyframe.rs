@@ -1,7 +1,7 @@
 //! Gate for the public NAL-type / IDR-IRAP keyframe helper (issue #517).
 //!
 //! Real fixtures only for the positive cases:
-//! - `fixtures/ts/h264-aac.ts` (AVC) — demuxed via [`TsDemux`]; the helper's
+//! - `fixtures/ts/h264-aac.ts` (AVC) — demuxed via `StreamingTsDemux`; the helper's
 //!   verdict on each length-prefixed sample must agree with the demuxer's own
 //!   `is_sync` flag AND with the committed ffprobe keyframe oracle.
 //! - `fixtures/ts/hevc/main.ts` (HEVC) — access units reassembled by PES
@@ -11,7 +11,6 @@
 
 use std::path::PathBuf;
 
-use transmux::TsDemux;
 use transmux::nal::{NalCodec, access_unit_is_keyframe, is_keyframe_nal, nal_unit_type};
 use transmux::pipeline::CodecConfig;
 
@@ -42,7 +41,7 @@ fn oracle_video_keyframe_count() -> usize {
 #[test]
 fn avc_keyframes_agree_with_demuxer_and_oracle() {
     let ts = std::fs::read(fixtures_dir().join("ts/h264-aac.ts")).expect("h264-aac.ts fixture");
-    let media = TsDemux::new().demux(&ts).expect("demux h264-aac.ts");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux h264-aac.ts");
 
     // Find the AVC video track.
     let video = media

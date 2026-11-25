@@ -4,11 +4,10 @@
 #![cfg(feature = "std")]
 
 use crate::ts_mux_stage;
-use broadcast_common::Unpackage;
 use transmux::annexb::iter_length_prefixed_nals;
 use transmux::ir::{CodecConfig, DemuxEvent, InputDegradation};
 use transmux::nal::{NalCodec, nal_unit_type};
-use transmux::{Media, StreamingTsDemux, Track, TsDemux};
+use transmux::{Media, StreamingTsDemux, Track};
 
 fn fixture() -> Vec<u8> {
     test_fixtures::read("ts/hevc/main.ts")
@@ -55,9 +54,7 @@ fn video_track_mut(media: &mut Media) -> &mut Track {
 }
 
 fn damaged_ts(insert_clean_copy: bool) -> Vec<u8> {
-    let mut media = TsDemux::new()
-        .unpackage(fixture().as_slice())
-        .expect("demux");
+    let mut media = test_harness::collect::media_from_ts(fixture().as_slice()).expect("demux");
     {
         let track = video_track_mut(&mut media);
         let original = nals(&track.samples[0].data);
@@ -87,9 +84,7 @@ fn damaged_ts(insert_clean_copy: bool) -> Vec<u8> {
 }
 
 fn clean_config() -> CodecConfig {
-    let mut media = TsDemux::new()
-        .unpackage(fixture().as_slice())
-        .expect("demux");
+    let mut media = test_harness::collect::media_from_ts(fixture().as_slice()).expect("demux");
     video_track_mut(&mut media).config().clone()
 }
 

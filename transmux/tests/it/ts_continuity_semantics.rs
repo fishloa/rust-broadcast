@@ -34,12 +34,10 @@
 //!   `ts/hotbird-mhp-si.ts` 21 608 (private; PID 0x0690 carries the PCR - three PCR-only-different repeats are legal duplicates, the script masks the 6 PCR bytes like TS H.222.0 §2.4.3.3): see each
 //!   test for the per-PID table.
 
-use std::collections::BTreeMap;
-
-use broadcast_common::Unpackage;
 use mpeg_ts::pid::Pid;
+use std::collections::BTreeMap;
 use transmux::pipeline::CodecConfig;
-use transmux::{DemuxEvent, InputDegradation, StreamingTsDemux, TsDemux};
+use transmux::{DemuxEvent, InputDegradation, StreamingTsDemux};
 
 const TS: usize = 188;
 /// Trailing null packets that let the resynchroniser lock (see [`gaps`]).
@@ -222,7 +220,7 @@ fn media_degraded_at_carries_the_pid_parallel_to_degraded() {
     for _ in 0..PAD {
         bytes.extend_from_slice(&pay(0x1FFF, 0));
     }
-    let media = TsDemux::new().unpackage(&bytes).unwrap();
+    let media = test_harness::collect::media_from_ts(&bytes).unwrap();
     assert_eq!(media.degraded.len(), 1);
     assert_eq!(media.degraded_at.len(), media.degraded.len());
     assert_eq!(media.degraded_at[0].kind, media.degraded[0]);
@@ -258,7 +256,7 @@ fn orf3_carousel_damage_is_all_on_pid_0x1c90() {
         return;
     };
     let bytes = std::fs::read(path).unwrap();
-    let media = TsDemux::new().unpackage(&bytes).unwrap();
+    let media = test_harness::collect::media_from_ts(&bytes).unwrap();
     assert_eq!(per_pid(&media), expect(&[(0x1C90, 187)]));
     // 180 excess repeats (got == last) + 7 real gaps
     let repeats = media
@@ -277,7 +275,7 @@ fn check_capture(rel: &str, total: usize, table: &[(u16, usize)]) {
         return;
     };
     let bytes = std::fs::read(path).unwrap();
-    let media = TsDemux::new().unpackage(&bytes).unwrap();
+    let media = test_harness::collect::media_from_ts(&bytes).unwrap();
     assert_eq!(per_pid(&media), expect(table), "{rel}");
     assert_eq!(per_pid(&media).values().sum::<usize>(), total, "{rel}");
 }
@@ -501,7 +499,7 @@ fn without(ts: &[u8], drop: usize) -> Vec<u8> {
 }
 
 fn video_sample_lens(ts: &[u8]) -> Vec<usize> {
-    let media = TsDemux::new().unpackage(ts).expect("demux");
+    let media = test_harness::collect::media_from_ts(ts).expect("demux");
     let v = media
         .tracks
         .iter()

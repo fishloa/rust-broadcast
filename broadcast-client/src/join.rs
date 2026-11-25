@@ -69,7 +69,6 @@ impl VideoJoin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Unpackage;
     use transmux::Track;
 
     fn video_track(fixture: &str) -> Track {
@@ -142,7 +141,7 @@ mod tests {
     #[test]
     fn avc_keeps_the_nal_aware_join() {
         let data = test_fixtures::read("ts/h264-aac.ts");
-        let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
+        let media = test_harness::collect::media_from_ts(&data[..]).unwrap();
         let video = media
             .tracks
             .iter()

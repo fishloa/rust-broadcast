@@ -15,13 +15,10 @@
 mod paff_gen;
 
 use crate::ts_mux_stage;
-use broadcast_common::Unpackage;
 use transmux::pipeline::CodecConfig;
 use transmux::slice_header::{AvcSliceHeader, decode_avc_slice_pps, parse_avc_slice_header};
 use transmux::sps::decode_avc_slice_sps;
-use transmux::{
-    DemuxEvent, Media, StreamingTsDemux, TsDemux, iter_annexb_nals, iter_length_prefixed_nals,
-};
+use transmux::{DemuxEvent, Media, StreamingTsDemux, iter_annexb_nals, iter_length_prefixed_nals};
 
 const FRAMES: usize = 12;
 const FRAME_PERIOD: i64 = 3600;
@@ -56,13 +53,12 @@ fn avc_samples(m: &Media) -> Vec<S> {
 }
 
 fn batch(ts: &[u8]) -> Vec<S> {
-    avc_samples(&TsDemux::new().unpackage(ts).expect("batch demux"))
+    avc_samples(&test_harness::collect::media_from_ts(ts).expect("batch demux"))
 }
 
 fn streaming(ts: &[u8], chunk: usize) -> Vec<S> {
     // Only the AVC track (a capture may carry audio too).
-    let video_id = TsDemux::new()
-        .unpackage(ts)
+    let video_id = test_harness::collect::media_from_ts(ts)
         .expect("batch demux")
         .tracks
         .iter()
@@ -230,7 +226,7 @@ fn streaming_equals_batch_at_every_chunk_size() {
 #[test]
 fn remux_through_ts_and_fmp4_stays_one_sample_per_frame() {
     for g in [gen_tff(), gen_bff()] {
-        let ir = TsDemux::new().unpackage(&g.ts).unwrap();
+        let ir = test_harness::collect::media_from_ts(&g.ts).unwrap();
         // TS -> IR -> TS -> IR
         let ts2 = ts_mux_stage::mux(&ir);
         let r = batch(&ts2);
@@ -403,7 +399,7 @@ fn ffmpeg_decodes_the_generated_and_demuxed_streams_to_the_expected_frames() {
         decode("gen.ts", &g.ts) == g.yuv,
         "generator stream decodes to the expected yuv"
     );
-    let ir = TsDemux::new().unpackage(&g.ts).unwrap();
+    let ir = test_harness::collect::media_from_ts(&g.ts).unwrap();
     let remuxed = ts_mux_stage::mux(&ir);
     assert!(
         decode("remux.ts", &remuxed) == g.yuv,
@@ -428,7 +424,7 @@ fn progressive_and_non_field_streams_are_unaffected() {
         .filter(|e| e.path().extension().is_some_and(|x| x == "ts"))
     {
         let bytes = std::fs::read(e.path()).unwrap();
-        let media = TsDemux::new().unpackage(&bytes).unwrap();
+        let media = test_harness::collect::media_from_ts(&bytes).unwrap();
         let Some(t) = media
             .tracks
             .iter()

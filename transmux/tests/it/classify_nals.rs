@@ -2,16 +2,14 @@
 //! over the real field-coded broadcast capture `ts/gulli-opengop.ts`: it must
 //! agree with `classify_au` on every sample, reproduce the capture's known
 //! 146 frame-pairs + 1 lone field split, and report `Unknown` for no slice.
-
-use broadcast_common::Unpackage;
+use transmux::iter_length_prefixed_nals;
 use transmux::pipeline::CodecConfig;
 use transmux::slice_header::{AvcParamSets, AvcPicture};
-use transmux::{TsDemux, iter_length_prefixed_nals};
 
 #[test]
 fn classify_nals_agrees_with_classify_au_on_a_real_paff_capture() {
     let ts = test_fixtures::read("ts/gulli-opengop.ts");
-    let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
+    let media = test_harness::collect::media_from_ts(&ts[..]).expect("demux");
     let track = media
         .tracks
         .iter()

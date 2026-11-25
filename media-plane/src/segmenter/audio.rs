@@ -716,11 +716,8 @@ mod follower_tests {
     }
 
     fn aac_spec(track_id: TrackId) -> TrackSpec {
-        use broadcast_common::mux::Unpackage;
         let bytes = test_fixtures::read("ts/h264-aac.ts");
-        let media = transmux::TsDemux::new()
-            .unpackage(&bytes)
-            .expect("demux the fixture");
+        let media = test_harness::collect::media_from_ts(&bytes).expect("demux the fixture");
         let mut spec = media
             .tracks
             .iter()

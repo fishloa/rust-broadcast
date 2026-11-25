@@ -7,11 +7,9 @@
 #![cfg(feature = "std")]
 
 use broadcast_common::timescale::Timescale;
+use broadcast_smooth::SmoothManifest;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-use broadcast_common::Unpackage;
-use broadcast_smooth::SmoothManifest;
 use std::time::Duration;
 use transmux::dash::{
     Addressing, ContentProtectionSystem, DVB_DASH_PROFILE_PREFIX, DVB_HDR_DMI_SCHEME,
@@ -22,7 +20,6 @@ use transmux::dash::{
 use isobmff::WvttSampleEntry;
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
-use transmux::ts_demux::TsDemux;
 use transmux::{
     AspectRatioIdc, Media, MediaKind, Sample, SmoothPackager, Track, TrackId, TrackSpec,
     playready_wrmheader,
@@ -56,7 +53,7 @@ fn fixtures() -> PathBuf {
 
 fn media() -> transmux::media::Media {
     let ts = fs::read(fixtures().join("ts/h264-aac.ts")).expect("ts fixture");
-    TsDemux::new().unpackage(&ts[..]).expect("demux")
+    test_harness::collect::media_from_ts(&ts[..]).expect("demux")
 }
 
 /// The fixture media with HDR10+ (ST 2094-40) announced on every track.
@@ -73,7 +70,7 @@ fn all_hdr10plus(mut media: Media) -> Media {
 /// DVB-DASH HDR `SupplementalProperty` writers.
 fn hevc_hdr10plus_media() -> Option<Media> {
     let ts = test_fixtures::require_bytes("video/hdr10plus/tos-256x144-hdr10plus.ts", "hdr10plus")?;
-    let mut media = TsDemux::new().unpackage(&ts[..]).expect("demux hdr10plus");
+    let mut media = test_harness::collect::media_from_ts(&ts[..]).expect("demux hdr10plus");
     media
         .tracks
         .retain(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }));

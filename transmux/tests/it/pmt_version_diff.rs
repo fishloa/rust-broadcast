@@ -19,14 +19,14 @@
 //! exercising the real PMT-declaration-order promotion path
 //! (`StreamingTsDemux::try_promote_ready`), not a shortcut around it.
 
-use broadcast_common::{Unpackage, crc32_mpeg2};
+use broadcast_common::crc32_mpeg2;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{
     AdaptationFieldControl, ContinuityCounter, ScramblingControl, TS_PACKET_SIZE, TsHeader,
 };
 use transmux::TrackId;
 use transmux::pipeline::TrackSpec;
-use transmux::{AbandonReason, CodecConfig, DemuxEvent, StreamingTsDemux, TsDemux};
+use transmux::{AbandonReason, CodecConfig, DemuxEvent, StreamingTsDemux};
 
 // ── Fixture constants ───────────────────────────────────────────────────────
 
@@ -739,9 +739,8 @@ fn real_ac3_syncframes() -> Vec<Vec<u8>> {
     let path = test_fixtures::path("ts/dolby/ac3.ts");
     let bytes =
         std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-    let media = TsDemux::new()
-        .unpackage(&bytes)
-        .expect("demux fixtures/ts/dolby/ac3.ts");
+    let media =
+        test_harness::collect::media_from_ts(&bytes).expect("demux fixtures/ts/dolby/ac3.ts");
     let track = media
         .tracks
         .iter()
@@ -840,7 +839,7 @@ fn codec_reclassification_rebuilds_the_probe_instead_of_panicking() {
 fn real_avc_sps_pps() -> (Vec<u8>, Vec<u8>) {
     let path = test_fixtures::path("ts/h264-aac.ts");
     let source = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let media = TsDemux::new().unpackage(&source[..]).expect("demux");
+    let media = test_harness::collect::media_from_ts(&source[..]).expect("demux");
     let video = media
         .tracks
         .iter()

@@ -274,10 +274,7 @@ impl Demux {
     fn finish(&mut self) -> Result<(), FileReaderError> {
         match self {
             Demux::Ts(demux) => demux.finish().map_err(FileReaderError::Demux),
-            Demux::Flv(demux) => {
-                demux.finish();
-                Ok(())
-            }
+            Demux::Flv(demux) => demux.finish().map_err(FileReaderError::Flv),
             Demux::Mp4(demux) => demux.finish().map_err(FileReaderError::Demux),
             Demux::Ps(demux) => demux.finish().map_err(FileReaderError::Demux),
             Demux::Matroska(demux) => demux.finish().map_err(FileReaderError::Demux),

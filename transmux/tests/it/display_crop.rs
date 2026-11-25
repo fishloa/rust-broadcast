@@ -171,8 +171,7 @@ fn streaming_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
 }
 
 fn batch_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
-    use transmux::ts_demux::TsDemux;
-    let media = TsDemux::new().demux(data).expect("batch");
+    let media = test_harness::collect::media_from_ts(data).expect("batch");
     media
         .tracks
         .iter()

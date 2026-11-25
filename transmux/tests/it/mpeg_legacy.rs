@@ -14,7 +14,6 @@ use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use test_fixtures::ffprobe;
 use transmux::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use transmux::pipeline::CodecConfig;
-use transmux::ts_demux::TsDemux;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -186,8 +185,8 @@ fn fmp4_sample_fidelity_mpeg_audio() {
 #[test]
 fn ts_demux_broadcast_pair() {
     let ts = fixture(&["ts", "legacy", "mpeg2-mp2.ts"]);
-    let mut demux = TsDemux::new();
-    let media = demux.demux(&ts).expect("demux ts");
+
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux ts");
 
     assert_eq!(media.tracks.len(), 2, "exactly 2 tracks");
 
@@ -322,8 +321,8 @@ fn ts_demux_broadcast_pair() {
 #[test]
 fn ts_config_from_real_es() {
     let ts = fixture(&["ts", "legacy", "mpeg2-mp2.ts"]);
-    let mut demux = TsDemux::new();
-    let media = demux.demux(&ts).expect("demux ts");
+
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux ts");
     let video = &media.tracks[0];
     let audio = &media.tracks[1];
 
@@ -400,8 +399,8 @@ fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
 #[test]
 fn mpeg_audio_resyncs_across_pes_boundaries() {
     let ts = fixture(&["ts", "legacy", "mpeg2-mp2-pes-misaligned.ts"]);
-    let mut demux = TsDemux::new();
-    let media = demux.demux(&ts).expect("demux misaligned ts");
+
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux misaligned ts");
 
     assert_eq!(media.tracks.len(), 1, "one audio track");
     let audio = &media.tracks[0];

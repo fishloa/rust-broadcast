@@ -8,11 +8,9 @@ use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use broadcast_common::mux::Unpackage;
 use media_plane::ProgramId;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use tower::ServiceExt;
-use transmux::ts_demux::TsDemux;
 
 use crate::support::shared_it::nz;
 use media_plane::segmenter::ProgramSegmenter;
@@ -36,7 +34,7 @@ const EXPECTED_MASTER: &str = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=16000000,AVE
 #[tokio::test]
 async fn master_without_captions_is_unchanged() {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
-    let media = TsDemux::new().unpackage(&bytes).expect("demux fixture");
+    let media = test_harness::collect::media_from_ts(&bytes).expect("demux fixture");
     let trunk = Trunk::new(
         TrunkConfig::default()
             .with_timed_capacity(nz(RING))

@@ -15,13 +15,13 @@
 //! this stream (an AC-3 syncframe was not an independent substream), so the TS
 //! demux produced no track.
 
-use broadcast_common::{Serialize, Unpackage};
+use broadcast_common::Serialize;
 use isobmff::Ec3SpecificBox;
 use transmux::ac3_syncframe::{
     Ec3SyncframeInfo, ec3_specific_box_from_syncframes, split_eac3_syncframes,
 };
 use transmux::pipeline::CodecConfig;
-use transmux::{DemuxEvent, Media, StreamingTsDemux, TsDemux};
+use transmux::{DemuxEvent, Media, StreamingTsDemux};
 
 const AU_COUNT: usize = 157;
 const AC3_CORE_LEN: usize = 2304;
@@ -179,9 +179,8 @@ fn assert_ts_recovers_the_stream(name: &str) {
         .map(|u| u.data)
         .collect();
 
-    let media = TsDemux::new()
-        .unpackage(&ts)
-        .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+    let media =
+        test_harness::collect::media_from_ts(&ts).unwrap_or_else(|e| panic!("{name}: {e:?}"));
     let track = eac3_track(&media);
     let got: Vec<&[u8]> = track.samples.iter().map(|s| &s.data[..]).collect();
     assert_eq!(got.len(), want.len(), "{name}: one sample per access unit");

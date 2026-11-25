@@ -1,10 +1,9 @@
 use crate::support;
 
 use broadcast_client::{AUDIO_TRACK_ID_OFFSET, Event};
-use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use support::hls_host::{Host, Reply, SEC, full, hls_config, ts_segment};
-use transmux::{CmafMuxStage, FragmentCut, TrackId, TsDemux, build_init_segment};
+use transmux::{CmafMuxStage, FragmentCut, TrackId, build_init_segment};
 
 const PLAYLIST_URL: &str = "http://origin.test/hls/index.m3u8";
 const BLOCKING_URL: &str = "http://origin.test/hls/index.m3u8?_HLS_msn=3&_HLS_part=0";
@@ -184,7 +183,7 @@ const MOVIE_TIMESCALE: Timescale = broadcast_common::timescale!(1_000);
 
 fn cmaf_with_track_ids(first_id: u32) -> (Vec<u8>, Vec<u8>) {
     let data = test_fixtures::read("ts/h264-aac.ts");
-    let mut media = TsDemux::new().unpackage(&data[..]).expect("demux");
+    let mut media = test_harness::collect::media_from_ts(&data[..]).expect("demux");
     for (n, track) in media.tracks.iter_mut().enumerate() {
         track.spec.track_id = TrackId::new(first_id + u32::try_from(n).expect("small"));
     }

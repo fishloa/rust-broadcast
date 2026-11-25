@@ -8,14 +8,12 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use broadcast_common::mux::Unpackage;
 use broadcast_hls::MediaPlaylist;
 use media_plane::ProgramId;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use test_fixtures::process::msv;
 use tower::ServiceExt;
 use transmux::pipeline::{Sample, TrackSpec};
-use transmux::ts_demux::TsDemux;
 
 use media_plane::segmenter::ProgramSegmenter;
 use multimux::origin::{AppState, router};
@@ -40,7 +38,7 @@ pub struct Source {
 
 pub fn load(fixture: &str) -> Vec<Source> {
     let bytes = test_fixtures::require_bytes(fixture, "hevc_route").expect("fixture");
-    let media = TsDemux::new().unpackage(&bytes).expect("demux fixture");
+    let media = test_harness::collect::media_from_ts(&bytes).expect("demux fixture");
     media
         .tracks
         .into_iter()

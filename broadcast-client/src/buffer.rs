@@ -950,9 +950,8 @@ impl Feeder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Unpackage;
     use broadcast_common::clock33::PCR_HZ;
-    use transmux::{LiveJoin, TsDemux};
+    use transmux::LiveJoin;
 
     const FIXTURE: &str = "ts/h264-aac.ts";
     const FAR_PTS_DURATION: u32 = 3_000;
@@ -964,7 +963,7 @@ mod tests {
 
     fn streams() -> Streams {
         let data = test_fixtures::read(FIXTURE);
-        let media = TsDemux::new().unpackage(&data[..]).unwrap();
+        let media = test_harness::collect::media_from_ts(&data[..]).unwrap();
         let mut video = None;
         let mut audio = None;
         for track in media.tracks {

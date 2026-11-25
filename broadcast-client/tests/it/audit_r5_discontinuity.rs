@@ -254,7 +254,6 @@ fn a_discontinuity_in_a_two_pid_stream_loses_nothing() {
 
 #[test]
 fn pat_aligned_segments_deliver_the_whole_file_demux_byte_for_byte() {
-    use broadcast_common::Unpackage;
     let Some(b) =
         test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "pat_aligned_segments")
     else {
@@ -263,7 +262,7 @@ fn pat_aligned_segments_deliver_the_whole_file_demux_byte_for_byte() {
     let b = &b[..b.len() / TS_PACKET * TS_PACKET];
     let segs = split_at_pat(b, SEGMENTS + 1);
     let live = run(&segs, None);
-    let media = transmux::TsDemux::new().unpackage(b).unwrap();
+    let media = test_harness::collect::media_from_ts(b).unwrap();
     let mut whole: BTreeMap<u16, Vec<Vec<u8>>> = BTreeMap::new();
     for t in &media.tracks {
         let pid = t.spec.source_pid.unwrap().value();

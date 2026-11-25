@@ -12,7 +12,6 @@ use hls_runtime::server::{HlsOrigin, HlsOriginConfig};
 use media_plane::trunk::{Trunk, TrunkConfig};
 use transmux::Container;
 use transmux::ir::{ColourDescription, DisplayGeometry, VideoFormat, VideoSignalType};
-use transmux::ts_demux::TsDemux;
 use transmux::{CodecConfig, TrackId, TrackSpec};
 
 use crate::dummy_avc_config::dummy_avc_config;
@@ -196,7 +195,7 @@ fn real_sdr_capture_omits_video_range() {
     ) else {
         return;
     };
-    let media = TsDemux::new().demux(&data).expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let specs: Vec<TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
     let trunk = Trunk::new(
         TrunkConfig::default()
@@ -224,7 +223,7 @@ fn real_sdr_krone_omits_video_range() {
     else {
         return;
     };
-    let media = TsDemux::new().demux(&data).expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let specs: Vec<TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
     let trunk = Trunk::new(
         TrunkConfig::default()

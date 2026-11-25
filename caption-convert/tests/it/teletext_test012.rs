@@ -4,10 +4,8 @@
 //! 889 (type 0x02, subtitles); only 889 carries the text of TSDuck's
 //! reference SRT, so that is the page decoded here.
 #![cfg(feature = "teletext")]
-
-use broadcast_common::Unpackage;
 use caption_convert::{Cue, TeletextToWebVtt};
-use transmux::{CodecConfig, TsDemux};
+use transmux::CodecConfig;
 
 const WHO: &str = "caption-convert teletext_test012";
 const TELETEXT_PID: u16 = 0x42C;
@@ -17,7 +15,7 @@ const PAGE: u8 = 0x89;
 fn samples() -> Option<Vec<(u64, Vec<u8>)>> {
     let path = test_fixtures::tsduck("input/test-012.ts", WHO)?;
     let bytes = std::fs::read(&path).expect("read test-012.ts");
-    let media = TsDemux::new().unpackage(&bytes).expect("demux test-012.ts");
+    let media = test_harness::collect::media_from_ts(&bytes).expect("demux test-012.ts");
     let track = media
         .tracks
         .iter()

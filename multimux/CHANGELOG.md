@@ -2,14 +2,19 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- `FileReaderConfig::max_file_bytes`, `with_max_file_bytes` and
+  `DEFAULT_MAX_FILE_BYTES` are deleted: every container streams from disk in
+  bounded memory, so the whole-file cap applied to nothing.
+
 ### Changed
 
 - A Program Stream file source streams through `media_plane`'s
   `StreamContainer::MpegPs` / `transmux::StreamingPsDemux`, and a Matroska/WebM
   source through `StreamContainer::Matroska` /
   `transmux::MatroskaDemux`; live memory is the session's `FileStreamLimits`,
-  never the file's length, so `FileReaderConfig::max_file_bytes` applies to
-  nothing.
+  never the file's length.
 - Push outputs mux one sample at a time through one per-connection muxer:
   `PushTransport::media_muxer()` hands out a `MediaMuxer` (announce the track
   set, feed one drained sample, flush at an idle boundary), and

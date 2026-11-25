@@ -20,7 +20,6 @@ use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::http::StatusCode;
-use broadcast_common::mux::Unpackage;
 use test_fixtures::process::msv;
 use tower::ServiceExt;
 
@@ -32,7 +31,6 @@ use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use transmux::pipeline::Sample;
-use transmux::ts_demux::TsDemux;
 
 use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::shared_it::nz;
@@ -84,7 +82,7 @@ struct Rig {
 impl Rig {
     fn build() -> Option<Self> {
         let bytes = test_fixtures::require_bytes(FIXTURE, "ts_hls_gap_oracle")?;
-        let media = TsDemux::new().unpackage(&bytes).expect("demux fixture");
+        let media = test_harness::collect::media_from_ts(&bytes).expect("demux fixture");
         let tracks: Vec<Track> = media
             .tracks
             .into_iter()

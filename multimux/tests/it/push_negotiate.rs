@@ -21,7 +21,6 @@ fn timescale(value: u32) -> Timescale {
 }
 
 use crate::support::shared_it::nz;
-use broadcast_common::Unpackage;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use multimux::config::{PushFormat, ReconnectPolicy};
 use multimux::push::{RtmpTransport, RtmpTransportConfig, drive_push};
@@ -29,7 +28,6 @@ use rtmp_runtime::server::{ServerEvent, ServerSession};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use transmux::FlvDemux;
 use transmux::ir::TrackSpec;
 
 static FLV: std::sync::LazyLock<Vec<u8>> =
@@ -61,10 +59,8 @@ fn opaque_spec(track_id: TrackId) -> TrackSpec {
 
 #[tokio::test]
 async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
-    let mut demux = FlvDemux::new();
-    let media = demux
-        .unpackage(FLV.as_slice())
-        .expect("demux av.flv fixture");
+    let media =
+        test_harness::collect::media_from_flv(FLV.as_slice()).expect("demux av.flv fixture");
     assert_eq!(media.tracks.len(), 2, "fixture must carry AVC + AAC");
 
     // A real `Trunk`, exactly as a driver-backed ingest route mints one --
@@ -131,9 +127,8 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
             // (2 tracks) or framed it (3, which the assertion catches). The
             // `GUARD` read timeout is the backstop if a regression means a
             // track never arrives at all.
-            let carried = FlvDemux::new()
-                .unpackage(&flv_bytes)
-                .map(|m| m.tracks.len())
+            let carried = test_harness::collect::media_from_flv(&flv_bytes)
+                .map(|m| m.tracks.iter().filter(|t| !t.samples.is_empty()).count())
                 .unwrap_or(0);
             if carried >= 2 && flv_bytes.len() > 4096 {
                 break;
@@ -210,9 +205,8 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
     // would either fail to demux or recover garbage frames; if `negotiate`
     // had refused the *whole* push over one non-carriable track (an
     // overly blunt fix), no media would ever have arrived at all.
-    let mut demux2 = FlvDemux::new();
-    let media2 = demux2
-        .unpackage(&flv_bytes)
+
+    let media2 = test_harness::collect::media_from_flv(&flv_bytes)
         .expect("re-demux the RTMP-received FLV.as_slice() tags");
     assert_eq!(
         media2.tracks.len(),

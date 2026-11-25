@@ -131,11 +131,10 @@ impl Declaration {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Unpackage;
 
     fn specs() -> (TrackSpec, TrackSpec) {
         let data = test_fixtures::read("ts/h264-aac.ts");
-        let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
+        let media = test_harness::collect::media_from_ts(&data[..]).unwrap();
         let mut video = None;
         let mut audio = None;
         for t in media.tracks {

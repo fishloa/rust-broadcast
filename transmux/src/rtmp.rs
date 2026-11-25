@@ -9,38 +9,32 @@
 //! the protocol control messages (§5.4) and AMF0 commands (§7) — lives in the
 //! `rtmp-runtime` crate ([`rtmp_runtime::handshake`],
 //! [`rtmp_runtime::chunk`], [`rtmp_runtime::message`], [`rtmp_runtime::amf0`]).
-//! This module is only the container spoke that bridges it to the [`Media`] IR.
+//! This module is only the container spoke that bridges it to the mux stage;
+//! the demux side is `rtmp-runtime`'s session engine feeding
+//! [`StreamingFlvDemux`](crate::flv_stream::StreamingFlvDemux).
 //!
 //! RTMP carries FLV-format audio/video: an RTMP **Audio (type 8)** message body
 //! is an FLV `AudioTagHeader`+data and a **Video (type 9)** message body is an
 //! FLV `VideoTagHeader`+data (Adobe FLV v10.1 Annex E §E.4.2 / §E.4.3). So this
-//! spoke reuses the crate's FLV spoke ([`crate::flv::FlvDemux`] /
-//! [`crate::flv::FlvMuxStage`]) to reach the [`Media`] IR rather than re-implementing
-//! FLV parsing:
-//!
-//! - [`RtmpDemux`] ([`Unpackage`]): de-frames the chunk stream (§5.3),
-//!   reassembles complete messages, collects the A/V (and script) message
-//!   bodies, rebuilds an FLV byte stream from them, and hands it to
-//!   [`FlvDemux`] → [`Media`].
-//! - [`RtmpMuxStage`] ([`Stage`]): runs the same FLV tag pipeline
-//!   [`crate::flv::FlvMuxStage`] does, wraps each tag body as an RTMP message
-//!   and chunks it (§5.3), one message at a time.
+//! spoke reuses the crate's FLV tag pipeline rather than re-implementing FLV
+//! parsing: [`RtmpMuxStage`] ([`Stage`]) runs the same FLV tag pipeline
+//! [`crate::flv::FlvMuxStage`] does, wraps each tag body as an RTMP message
+//! and chunks it (§5.3), one message at a time. The demux side de-frames the
+//! chunk stream in `rtmp-runtime` and feeds the emitted FLV tags to
+//! [`StreamingFlvDemux`](crate::flv_stream::StreamingFlvDemux).
 //!
 //! `no_std` + `alloc`.
 
 use alloc::collections::VecDeque;
-use alloc::vec::Vec;
 
 use broadcast_common::stage::{Stage, Timestamp};
-use broadcast_common::{Serialize, Unpackage};
 use rtmp_runtime::chunk::{
-    ChunkAssembler, ChunkWriter, DEFAULT_CHUNK_SIZE_VALUE, MAX_CHUNK_SIZE, MAX_MESSAGE_LEN, Message,
+    ChunkWriter, DEFAULT_CHUNK_SIZE_VALUE, MAX_CHUNK_SIZE, MAX_MESSAGE_LEN, Message,
 };
-use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
+use rtmp_runtime::flv::TagType;
 use rtmp_runtime::message::{ChunkSize, MessageTypeId, ProtocolControl};
 
-use crate::flv::{FlvDemux, FlvError, FlvTagStream, OutTag};
-use crate::media::Media;
+use crate::flv::{FlvError, FlvTagStream, OutTag};
 use crate::mux_stage::{MuxInput, MuxOutput};
 
 // ---------------------------------------------------------------------------
@@ -92,7 +86,7 @@ pub enum RtmpFlvError {
         size: usize,
     },
     /// A tag body exceeded `rtmp_runtime::chunk::MAX_MESSAGE_LEN`; the message
-    /// would be rejected by [`RtmpDemux`] on the other end.
+    /// would be rejected by a peer on the other end.
     #[error("RTMP message body {len} bytes exceeds the {max}-byte message limit")]
     MessageTooLarge {
         /// The tag body length.
@@ -129,97 +123,6 @@ impl From<rtmp_runtime::RtmpError> for RtmpFlvError {
 // ---------------------------------------------------------------------------
 // FLV bridge: rebuild / split FLV from A/V message bodies
 // ---------------------------------------------------------------------------
-
-/// Build an FLV byte stream from A/V (and script) tag bodies with timestamps.
-/// `(tag_type, timestamp_ms, body)` — the body is exactly an FLV tag payload
-/// (which for A/V equals the RTMP message body).
-///
-/// # Errors
-///
-/// Returns [`RtmpFlvError::FieldOverflow`] if a tag body is 16 MiB (2^24) or larger —
-/// `DataSize` is a UI24 field (Adobe FLV v10.1 Annex E §E.4.1) and cannot represent it.
-fn build_flv(
-    tags: &[(TagType, u32, Vec<u8>)],
-    has_video: bool,
-    has_audio: bool,
-) -> Result<Vec<u8>, RtmpFlvError> {
-    let mut out = FlvHeader::new(has_audio, has_video).try_to_bytes()?;
-    for (tag_type, timestamp, body) in tags {
-        let tag = FlvTag::new(*tag_type, *timestamp, body);
-        out.extend_from_slice(&tag.try_to_bytes()?);
-    }
-    Ok(out)
-}
-
-// ---------------------------------------------------------------------------
-// RtmpDemux — Unpackage<Input = &[u8]>
-// ---------------------------------------------------------------------------
-
-/// Demux an RTMP chunk stream into a [`Media`] (Adobe RTMP 1.0).
-///
-/// Reassembles the chunk stream (§5.3), collects the Audio (type 8) / Video
-/// (type 9) / data (type 18 `onMetaData`) message bodies — which are FLV tag
-/// bodies — rebuilds an FLV byte stream from them, and routes it through
-/// [`FlvDemux`] to the IR. Protocol control and command
-/// messages are consumed by the reassembly (Set Chunk Size adjusts the chunk
-/// size) and otherwise ignored for the media path.
-///
-/// The input is the post-handshake chunk stream (drive the handshake with
-/// [`rtmp_runtime::handshake`] first if needed).
-#[derive(Debug, Default, Clone)]
-pub struct RtmpDemux<'a> {
-    _marker: core::marker::PhantomData<&'a [u8]>,
-}
-
-impl RtmpDemux<'_> {
-    /// Create a new demuxer.
-    pub fn new() -> Self {
-        Self {
-            _marker: core::marker::PhantomData,
-        }
-    }
-}
-
-impl<'a> Unpackage for RtmpDemux<'a> {
-    type Input = &'a [u8];
-    type Media = Media;
-    type Error = RtmpFlvError;
-
-    fn unpackage(&mut self, input: &'a [u8]) -> Result<Media, RtmpFlvError> {
-        let mut assembler = ChunkAssembler::new();
-        assembler.feed(input);
-        let mut tags: Vec<(TagType, u32, Vec<u8>)> = Vec::new();
-        let mut has_video = false;
-        let mut has_audio = false;
-        while let Some(m) = assembler.next_message()? {
-            match m.message_type_id {
-                MessageTypeId::SetChunkSize => {
-                    if let Some(ProtocolControl::SetChunkSize(size)) =
-                        ProtocolControl::from_message(&m)?
-                    {
-                        assembler.compact();
-                        assembler.set_chunk_size(size);
-                    }
-                }
-                MessageTypeId::Audio => {
-                    has_audio = true;
-                    tags.push((TagType::Audio, m.timestamp.millis(), m.payload));
-                }
-                MessageTypeId::Video => {
-                    has_video = true;
-                    tags.push((TagType::Video, m.timestamp.millis(), m.payload));
-                }
-                MessageTypeId::DataAmf0 => {
-                    tags.push((TagType::Script, m.timestamp.millis(), m.payload));
-                }
-                _ => { /* control / command / user-control — not media */ }
-            }
-        }
-        let flv = build_flv(&tags, has_video, has_audio)?;
-        let mut demux = FlvDemux::new();
-        demux.unpackage(&flv).map_err(RtmpFlvError::Flv)
-    }
-}
 
 // ---------------------------------------------------------------------------
 // RtmpMuxStage — Stage<In = MuxInput, Out = MuxOutput>
@@ -428,21 +331,22 @@ impl Stage for RtmpMuxStage {
 mod tests {
     use super::*;
 
-    /// The same UI24 `DataSize` overflow, via the FLV bridge `build_flv`
-    /// (unpackage path).
+    /// A tag body of 2^24 bytes cannot be described by the UI24 `DataSize`
+    /// (§E.4.1): the shared FLV tag codec refuses it.
     #[test]
-    fn build_flv_oversized_tag_errors() {
-        let tags = alloc::vec![(TagType::Video, 0u32, alloc::vec![0u8; 1 << 24])];
-        let err = build_flv(&tags, true, false).unwrap_err();
+    fn a_tag_body_past_the_ui24_data_size_is_refused() {
+        use broadcast_common::Serialize as _;
+        let body = alloc::vec![0u8; 1 << 24];
+        let err = rtmp_runtime::flv::FlvTag::new(rtmp_runtime::flv::TagType::Video, 0, &body)
+            .try_to_bytes()
+            .unwrap_err();
         assert!(
             matches!(
                 err,
-                RtmpFlvError::Rtmp(rtmp_runtime::RtmpError::FieldOverflow(
-                    broadcast_common::len::FieldOverflow {
-                        field: "DataSize",
-                        ..
-                    }
-                ))
+                rtmp_runtime::RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "DataSize",
+                    ..
+                })
             ),
             "expected FieldOverflow for DataSize, got {err:?}"
         );

@@ -8,8 +8,6 @@
 //! muxer would refuse the first sample with [`Error::PlanMismatch`]; feeding the
 //! same `Media` to both passes is what makes the two agree, so every test here
 //! drives both from one demux.
-
-use broadcast_common::Unpackage;
 use broadcast_common::stage::{Stage, Timestamp};
 use bytes::Bytes;
 use isobmff::writer::{Interleave, Layout, MovieHeader, Sink};
@@ -17,7 +15,6 @@ use transmux::media::Media;
 use transmux::mux_stage::{MuxInput, drive_media};
 use transmux::plan_pass::PlanPass;
 use transmux::progressive::ProgressiveMuxStage;
-use transmux::ts_demux::TsDemux;
 use transmux::{Error, TrackId};
 
 /// One interleaved chunk of the CLI's layout, in milliseconds.
@@ -28,9 +25,7 @@ const REORDER_WINDOW: u64 = 1024 * 1024;
 
 fn demux() -> Media {
     let data = test_fixtures::read("ts/h264-aac.ts");
-    TsDemux::new()
-        .unpackage(data.as_slice())
-        .expect("demux h264-aac.ts")
+    test_harness::collect::media_from_ts(data.as_slice()).expect("demux h264-aac.ts")
 }
 
 fn layout(faststart: bool, sink: Sink) -> Layout {

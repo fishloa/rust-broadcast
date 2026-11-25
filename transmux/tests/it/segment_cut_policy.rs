@@ -6,11 +6,10 @@
 //! bytes only where a fixture cannot supply the type (CRA, IDR_N_LP/W_RADL).
 
 use crate::ts_hls_stage;
-use broadcast_common::Unpackage;
 use transmux::media::Media;
 use transmux::mux_stage::SegmentOut;
 use transmux::{
-    CodecConfig, NalCodec, Sample, SegmentCutPolicy, StreamingTsHlsSegmenter, TrackSpec, TsDemux,
+    CodecConfig, NalCodec, Sample, SegmentCutPolicy, StreamingTsHlsSegmenter, TrackSpec,
     access_unit_is_idr,
 };
 
@@ -42,7 +41,7 @@ fn video(rel: &str) -> Option<Video> {
 
 fn video_at(path: &std::path::Path) -> Option<Video> {
     let bytes = std::fs::read(path).ok()?;
-    let ir: Media = TsDemux::new().unpackage(&bytes).expect("demux fixture");
+    let ir: Media = test_harness::collect::media_from_ts(&bytes).expect("demux fixture");
     ir.tracks.into_iter().find_map(|t| {
         let codec = match t.spec.config {
             CodecConfig::Avc { .. } => NalCodec::Avc,
@@ -171,9 +170,7 @@ fn oracle_cuts(samples: &[Sample], timescale: u32) -> Vec<usize> {
 }
 
 fn first_video_sample_is_idr(segment: &SegmentOut, codec: NalCodec) -> bool {
-    let ir = TsDemux::new()
-        .unpackage(&segment.bytes)
-        .expect("demux segment");
+    let ir = test_harness::collect::media_from_ts(&segment.bytes).expect("demux segment");
     let track = ir
         .tracks
         .iter()
@@ -347,8 +344,7 @@ fn idr_only_first_segment_starts_at_first_idr_dropping_leading_aus() {
         first_video_sample_is_idr(&strict.segments[0], v.codec),
         "first segment must open on the first IDR"
     );
-    let first_seg_samples = TsDemux::new()
-        .unpackage(&strict.segments[0].bytes)
+    let first_seg_samples = test_harness::collect::media_from_ts(&strict.segments[0].bytes)
         .expect("demux")
         .tracks
         .iter()
@@ -367,8 +363,7 @@ fn idr_only_first_segment_starts_at_first_idr_dropping_leading_aus() {
         .segments
         .iter()
         .map(|s| {
-            TsDemux::new()
-                .unpackage(&s.bytes)
+            test_harness::collect::media_from_ts(&s.bytes)
                 .expect("demux")
                 .tracks
                 .iter()

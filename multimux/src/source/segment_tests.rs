@@ -534,9 +534,8 @@ fn resolve_resource(route: &RouteHandle, program: ProgramId, name: &str) -> byte
 
 /// The AAC track spec of the public `h264-aac.ts` capture, renumbered.
 fn aac_track_spec(track_id: TrackId) -> TrackSpec {
-    use broadcast_common::Unpackage;
     let ts = test_fixtures::read("ts/h264-aac.ts");
-    let media = transmux::TsDemux::new().unpackage(&ts).expect("demux TS");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux TS");
     let mut spec = media
         .tracks
         .iter()

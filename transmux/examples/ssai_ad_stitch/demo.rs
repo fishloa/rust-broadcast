@@ -66,7 +66,7 @@ use std::fs;
 use std::path::PathBuf;
 use transmux::TrackId;
 
-use broadcast_common::{Serialize, Unpackage};
+use broadcast_common::Serialize;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 use isobmff::emsg::{EmsgBox, PresentationTime};
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
@@ -78,8 +78,7 @@ use timed_metadata::convert::{EmsgConfig, SCTE35_SCHEME};
 use timed_metadata::{DateRange, TimeAnchor, Timeline};
 use transmux::{
     Addressing, CodecConfig, DashPackager, FragmentTrackData, InbandEventStream, Media, Sample,
-    SplicePoint, Track, TsDemux, build_init_segment, build_media_segment,
-    build_media_segment_with_events,
+    SplicePoint, Track, build_init_segment, build_media_segment, build_media_segment_with_events,
 };
 
 /// This example's base fixture is H.264/AVC video; used to tell the video
@@ -217,7 +216,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     // 1. Read the real base fixture and demux it once.
     // ------------------------------------------------------------------
     let base_ts_bytes = fs::read(fixture_path("ts/h264-aac.ts"))?;
-    let source: Media = TsDemux::new().unpackage(&base_ts_bytes[..])?;
+    let source: Media = test_harness::collect::media_from_ts(&base_ts_bytes[..])?;
 
     let video_idx = source
         .tracks

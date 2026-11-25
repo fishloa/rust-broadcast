@@ -4,10 +4,8 @@
 //! observed from the real captures and cross-checked against the slice headers
 //! (`field_pic_flag`/`bottom_field_flag`) and SEI `pic_struct` those streams
 //! actually carry; the synthetic HEVC/HRD layouts live in `sps.rs`'s tests.
-
-use broadcast_common::Unpackage;
 use std::path::PathBuf;
-use transmux::{Media, PicStruct, PictureFacts, TsDemux, VideoScan, video_picture_facts};
+use transmux::{Media, PicStruct, PictureFacts, VideoScan, video_picture_facts};
 
 fn fixture(rel: &str) -> PathBuf {
     test_fixtures::root().join("..").join(rel)
@@ -16,7 +14,7 @@ fn fixture(rel: &str) -> PathBuf {
 /// The track of `rel` that has a video scan, with its per-sample facts.
 fn facts_of(rel: &str) -> (VideoScan, Vec<PictureFacts>) {
     let ts = std::fs::read(fixture(rel)).expect("fixture");
-    let m: Media = TsDemux::new().unpackage(&ts).expect("demux");
+    let m: Media = test_harness::collect::media_from_ts(&ts).expect("demux");
     let t = m
         .tracks
         .iter()
@@ -117,7 +115,7 @@ fn synthetic_paff_reports_parity_of_the_first_field() {
 #[test]
 fn non_video_and_garbage_yield_none() {
     let ts = std::fs::read(fixture("fixtures/ts/h264-aac.ts")).unwrap();
-    let m = TsDemux::new().unpackage(&ts).unwrap();
+    let m = test_harness::collect::media_from_ts(&ts).unwrap();
     let audio = m
         .tracks
         .iter()

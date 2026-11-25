@@ -448,7 +448,7 @@ fn program_date_time_ms(seg: &MediaSegment) -> Option<i64> {
 ///   advertises an `EXT-X-MAP` (HLS v3, the dominant legacy/IPTV form —
 ///   self-contained `.ts` segments carrying their own PAT/PMT/PES, no
 ///   separate init resource) routes each fetched Part/Segment through
-///   [`transmux::TsDemux`] instead, content-sniffed by the MPEG-TS sync byte
+///   [`transmux::StreamingTsDemux`] instead, content-sniffed by the MPEG-TS sync byte
 ///   rather than blocked on an init fetch that will never come. The first
 ///   successfully demuxed segment's recovered
 ///   [`TrackSpec`]s synthesize the one [`Output::Init`] this crate's contract

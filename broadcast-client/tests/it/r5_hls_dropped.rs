@@ -55,8 +55,7 @@ fn dropped(events: &[Event]) -> Vec<(TrackId, Option<u8>)> {
 }
 
 fn unmuxable_tracks(ts: &[u8]) -> Vec<(TrackId, Option<u8>)> {
-    use broadcast_common::Unpackage;
-    let media = transmux::TsDemux::new().unpackage(ts).unwrap();
+    let media = test_harness::collect::media_from_ts(ts).unwrap();
     media
         .tracks
         .iter()

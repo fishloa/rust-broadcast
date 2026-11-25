@@ -1404,6 +1404,9 @@ pub const TABLE: &[Crate] = &[
             // `Other(String)` kept verbatim), not a fixed spec label set; the
             // error that carries it (`RtmpUrlError`) is skipped above.
             "Scheme",
+            // What an incremental FLV caller should do with its buffer: a
+            // control-flow answer, not a spec field with token labels.
+            "ResyncDecision",
             // Data-carrying ADT (§8.2 AMF0 value types): each variant holds its own
             // payload (Number(f64), Utf8String<'a>, Object(..), ...), so a static
             // label would be lossy — callers match the typed variant instead. See

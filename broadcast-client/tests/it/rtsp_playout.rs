@@ -1,10 +1,10 @@
 use crate::support;
 
 use broadcast_client::{BufferEvent, Config, Event};
+use broadcast_common::Serialize;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::{Serialize, Unpackage};
 use support::rtsp_host::{BASE_URL, Host, MediaFixture, Server};
-use transmux::{CodecConfig, TrackSpec, TsDemux};
+use transmux::{CodecConfig, TrackSpec};
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -59,8 +59,7 @@ fn avc_dims(specs: &[TrackSpec]) -> Option<(u16, u16)> {
 }
 
 fn ts_dims() -> (u16, u16) {
-    let media = TsDemux::new()
-        .unpackage(&test_fixtures::read("ts/h264-aac.ts"))
+    let media = test_harness::collect::media_from_ts(&test_fixtures::read("ts/h264-aac.ts"))
         .expect("demux");
     let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     avc_dims(&specs).expect("ts video spec")

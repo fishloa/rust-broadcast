@@ -37,7 +37,7 @@
 //!
 //! Per the #563 boundary (a parallel branch owns `ts_demux.rs`/`media.rs`/
 //! `pipeline.rs`), no `TrackSpec`/`Sample`/`CodecConfig` is ever hand-built —
-//! every value asserted here comes from [`TsDemux`]'s own demux output.
+//! every value asserted here comes from `StreamingTsDemux`'s own demux output.
 //! `AVCDecoderConfigurationRecord.chroma_format`/`bit_depth_*_minus8` are not
 //! currently populated by `ts_demux.rs` for AVC tracks (it hardcodes `None`;
 //! HEVC's `HEVCDecoderConfigurationRecord` *is* fully populated) — that wiring
@@ -47,8 +47,6 @@
 //! (`record.sps[0]`), which is unaffected by that gap.
 
 use crate::bit_writer::BitWriter;
-use broadcast_common::Unpackage;
-use transmux::TsDemux;
 use transmux::media::{Media, Track};
 use transmux::pipeline::CodecConfig;
 use transmux::validate::{Severity, validate_init_segment};
@@ -219,8 +217,7 @@ fn load_ts(path: &std::path::Path) -> Vec<u8> {
 
 fn demux(path: &std::path::Path) -> Media {
     let ts = load_ts(path);
-    TsDemux::new()
-        .unpackage(&ts)
+    test_harness::collect::media_from_ts(&ts)
         .unwrap_or_else(|e| panic!("{path:?}: demux must succeed: {e:?}"))
 }
 

@@ -8,7 +8,6 @@
 //! assertively with `!has_video`, telling us to update the interop table.
 
 #![cfg(feature = "cenc")]
-use broadcast_common::Unpackage;
 use std::path::PathBuf;
 use std::process::Command;
 use test_harness::collect::MediaSelectExt;
@@ -30,9 +29,7 @@ const KEY: [u8; 16] = [
 
 fn clear_video_media() -> Media {
     let bytes = test_fixtures::read("ts/h264/main.ts");
-    let media = transmux::TsDemux::new()
-        .unpackage(bytes.as_slice())
-        .expect("demux");
+    let media = test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux");
     media
         .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("avc")

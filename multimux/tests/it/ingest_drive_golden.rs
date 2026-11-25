@@ -109,9 +109,7 @@ const FIRST_SEQUENCE: u16 = 1;
 /// access units it will send — the first of which carries an IDR.
 fn whip_source() -> (transmux::TrackSpec, Vec<transmux::Sample>) {
     let ts = test_fixtures::read(WHIP_SOURCE);
-    let media = transmux::TsDemux::new()
-        .demux(&ts)
-        .expect("demux the capture");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux the capture");
     let video = media
         .tracks
         .into_iter()

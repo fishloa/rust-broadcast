@@ -7,11 +7,10 @@
 //! segment, then audio joins through `add_track`.
 
 use crate::ts_hls_stage;
-use broadcast_common::Unpackage;
 use broadcast_common::crc32_mpeg2;
 use transmux::mux_stage::SegmentOut;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::{DemuxEvent, StreamingTsDemux, StreamingTsHlsSegmenter, TsDemux};
+use transmux::{DemuxEvent, StreamingTsDemux, StreamingTsHlsSegmenter};
 
 const TS_PACKET_SIZE: usize = 188;
 const PMT_PID: u16 = 0x1000;
@@ -64,7 +63,7 @@ struct Run {
 fn run() -> Run {
     let path = test_fixtures::path("ts/h264-aac.ts");
     let ts = std::fs::read(path).expect("h264-aac.ts fixture");
-    let ir = TsDemux::new().unpackage(&ts).expect("demux fixture");
+    let ir = test_harness::collect::media_from_ts(&ts).expect("demux fixture");
     let vpos = ir
         .tracks
         .iter()

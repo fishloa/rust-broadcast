@@ -505,7 +505,7 @@ async fn the_transport_muxes_through_its_own_streaming_mux() {
         .expect("connect must not hang")
         .expect("connect");
     let ts = test_fixtures::read("ts/h264-aac.ts");
-    let mut media = transmux::TsDemux::new().demux(&ts).expect("demux fixture");
+    let mut media = test_harness::collect::media_from_ts(&ts).expect("demux fixture");
     for track in &mut media.tracks {
         track.samples.truncate(2);
     }

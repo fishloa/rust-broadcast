@@ -15,12 +15,11 @@ use broadcast_common::timescale::Timescale;
 use std::path::PathBuf;
 use transmux::TrackId;
 
-use broadcast_common::{Parse, Unpackage};
+use broadcast_common::Parse;
 use transmux::aac_asc::AudioSpecificConfig;
 use transmux::dash::{DashPackager, MPD_NAMESPACE};
 use transmux::pipeline::CodecConfig;
 use transmux::sps::rfc6381_avc1;
-use transmux::ts_demux::TsDemux;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -40,8 +39,8 @@ fn fixtures_dir() -> PathBuf {
 fn demux_media() -> transmux::media::Media {
     let ts = std::fs::read(fixtures_dir().join("ts/h264-aac.ts"))
         .expect("h264-aac.ts fixture must exist");
-    let mut demux = TsDemux::new();
-    demux.unpackage(&ts[..]).expect("demux h264-aac.ts")
+
+    test_harness::collect::media_from_ts(&ts[..]).expect("demux h264-aac.ts")
 }
 
 fn build_mpd() -> String {
@@ -559,7 +558,7 @@ fn adaptation_sets_have_unique_ids_and_split_by_codec_family() {
     aac.spec.es_info_descriptors = lang_es_info(b"eng");
 
     let ac3_ts = std::fs::read(fixtures_dir().join("ts/dolby/ac3.ts")).expect("ac3 fixture");
-    let ac3_ir = TsDemux::new().unpackage(&ac3_ts[..]).expect("demux ac3");
+    let ac3_ir = test_harness::collect::media_from_ts(&ac3_ts[..]).expect("demux ac3");
     let mut ac3 = ac3_ir.tracks[0].clone();
     ac3.spec.track_id = TrackId::new(3);
     ac3.spec.es_info_descriptors = lang_es_info(b"eng");

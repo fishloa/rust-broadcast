@@ -101,9 +101,7 @@ fn answer(session: &mut ServerSession, request: &[u8]) -> Option<Vec<u8>> {
 /// packetiser covers whole seven-packet RTP packets and a final partial one.
 fn ts_batch() -> Vec<bytes::Bytes> {
     let ts = std::fs::read(fixture_path("ts/h264-aac.ts")).expect("h264-aac.ts fixture");
-    let media = transmux::TsDemux::new()
-        .demux(&ts)
-        .expect("demux h264-aac.ts");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux h264-aac.ts");
     let mut second = media.clone();
     for track in &mut second.tracks {
         track.samples.retain(|sample| {

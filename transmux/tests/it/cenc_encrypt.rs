@@ -38,12 +38,12 @@ use broadcast_common::timescale::Timescale;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::{Serialize, Stage, Unpackage};
+use broadcast_common::{Serialize, Stage};
 use bytes::Bytes;
+use transmux::Media;
 use transmux::{
     CencEncryptStage, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy, Track,
 };
-use transmux::{Media, TsDemux};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -65,9 +65,7 @@ const KEY_B: [u8; 16] = [
 /// [`counter_ivs_are_unique_across_every_track`]).
 fn clear_multi_track_media() -> Media {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
-    TsDemux::new()
-        .unpackage(bytes.as_slice())
-        .expect("demux h264-aac.ts")
+    test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux h264-aac.ts")
 }
 
 /// Every per-sample IV recorded across every track of `media`, in (track,
@@ -164,9 +162,7 @@ fn counter_ivs_are_unique_across_every_track() {
 /// track is precisely how the cross-track keystream-reuse defect shipped green.
 fn clear_video_media() -> Media {
     let bytes = test_fixtures::read("ts/h264/main.ts");
-    let media = TsDemux::new()
-        .unpackage(bytes.as_slice())
-        .expect("demux main.ts");
+    let media = test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux main.ts");
     media
         .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("AVC video track present")
@@ -1093,9 +1089,8 @@ fn ctr_iv_spacing_counts_subsample_protected_bytes() {
 
 fn hevc_media() -> Media {
     let bytes = test_fixtures::read("ts/hevc/main.ts");
-    let media = TsDemux::new()
-        .unpackage(bytes.as_slice())
-        .expect("demux ts/hevc/main.ts");
+    let media =
+        test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux ts/hevc/main.ts");
     media
         .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }))
         .expect("HEVC video track present")

@@ -20,7 +20,6 @@ use transmux::TrackId;
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, TrackSpec, build_init_segment, build_media_segment,
 };
-use transmux::ts_demux::TsDemux;
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -200,7 +199,7 @@ fn iframe_master_d3prime_unavailable_omitted() {
     let Some(data) = test_fixtures::require_bytes("ts/h264-aac.ts", "iframe") else {
         return;
     };
-    let media = TsDemux::new().demux(&data).expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let init = build_init_segment(&specs, media.movie_timescale).expect("init");
     let audio = media

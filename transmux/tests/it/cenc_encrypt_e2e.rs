@@ -36,12 +36,10 @@
 
 #![cfg(feature = "cenc")]
 
+use bytes::Bytes;
 use std::path::PathBuf;
 use std::process::Command;
 use test_harness::collect::MediaSelectExt;
-
-use broadcast_common::Unpackage;
-use bytes::Bytes;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
     CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, KeyMap, Media, SubsamplePolicy,
@@ -83,8 +81,8 @@ fn clear_video_media() -> Option<Media> {
         return None;
     }
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
-    let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(bytes.as_slice()).expect("demux main.ts");
+
+    let media = test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux main.ts");
     Some(
         media
             .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))

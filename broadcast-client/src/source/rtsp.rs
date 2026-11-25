@@ -1279,7 +1279,6 @@ impl RtspSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Unpackage;
 
     fn rtsp_source(url: &Url) -> RtspSource {
         RtspSource::new(url, &TsConfig::default(), 0, Timestamp::ZERO)
@@ -1531,9 +1530,7 @@ mod tests {
         source.take_actions();
         source.tracks.push(track_init());
         let data = test_fixtures::read("ts/h264-aac.ts");
-        let media = transmux::TsDemux::new()
-            .unpackage(&data[..])
-            .expect("demux the fixture");
+        let media = test_harness::collect::media_from_ts(&data[..]).expect("demux the fixture");
         let sps = media
             .tracks
             .iter()

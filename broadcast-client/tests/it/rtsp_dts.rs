@@ -1,7 +1,6 @@
 use crate::support;
 
 use broadcast_client::{Config, Event};
-use broadcast_common::Unpackage;
 use broadcast_common::stage::Timestamp;
 use support::rtsp_host::{BASE_URL, Host, Server, interleaved};
 
@@ -266,9 +265,7 @@ fn the_rtp_composition_offsets_match_the_transport_stream_of_the_same_encode() {
     let Some(ts) = test_fixtures::require_bytes(PYRAMID_TS, "rtsp_dts") else {
         return;
     };
-    let media = transmux::TsDemux::new()
-        .unpackage(&ts[..])
-        .expect("demux ts");
+    let media = test_harness::collect::media_from_ts(&ts[..]).expect("demux ts");
     let video = media
         .tracks
         .iter()

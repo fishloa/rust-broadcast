@@ -17,11 +17,10 @@
 //! declare the audio track in the PMT and actually carry its PES data.
 
 use crate::ts_hls_stage;
-use broadcast_common::Unpackage;
 use transmux::media::Media;
 use transmux::mux_stage::SegmentOut;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::{StreamingTsHlsSegmenter, TrackId, TsDemux};
+use transmux::{StreamingTsHlsSegmenter, TrackId};
 
 fn load_ts() -> Vec<u8> {
     let path = test_fixtures::path("ts/h264-aac.ts");
@@ -29,7 +28,7 @@ fn load_ts() -> Vec<u8> {
 }
 
 fn demux(ts: &[u8]) -> Media {
-    TsDemux::new().unpackage(ts).expect("demux TS")
+    test_harness::collect::media_from_ts(ts).expect("demux TS")
 }
 
 /// Demux one produced `.ts` segment back through the batch demuxer so we can
@@ -37,9 +36,7 @@ fn demux(ts: &[u8]) -> Media {
 /// actually carries — the only way to independently verify `add_track`
 /// genuinely changed the muxed output, not just the in-memory track list.
 fn demux_segment(bytes: &[u8]) -> Media {
-    TsDemux::new()
-        .unpackage(bytes)
-        .expect("demux produced segment")
+    test_harness::collect::media_from_ts(bytes).expect("demux produced segment")
 }
 
 fn is_avc(c: &CodecConfig) -> bool {

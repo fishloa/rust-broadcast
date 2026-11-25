@@ -585,6 +585,7 @@ dependencies = [
  "mpeg-ts",
  "serde",
  "test-fixtures",
+ "test-harness",
  "thiserror 2.0.21",
  "timed-metadata",
  "transmux",

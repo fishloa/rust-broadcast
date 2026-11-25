@@ -900,25 +900,36 @@ fn fmp4_video_rate(segment: &[u8], video_track_id: TrackId, timescale: Timescale
 }
 
 /// Mean video frame rate of a self-initialising MPEG-TS `segment` from the
-/// demuxed video samples' DTS deltas (PTS when a sample has no DTS), which
-/// `TsDemux` unwraps through `broadcast_common::clock33`.
+/// demuxed video samples' ticks, which `StreamingTsDemux` unwraps through
+/// `broadcast_common::clock33`.
 fn ts_video_rate(segment: &[u8]) -> Option<u32> {
-    let media = transmux::ts_demux::TsDemux::new().demux(segment).ok()?;
-    let track = media
-        .tracks
-        .iter()
-        .find(|track| track.spec.config.is_video())?;
-    let ticks: u64 = track
-        .samples
-        .iter()
-        .filter_map(|sample| sample.timing.and_then(|t| t.duration()))
-        .map(u64::from)
-        .sum();
-    segment_frame_rate_millihertz(
-        u64::try_from(track.samples.len()).ok()?,
-        ticks,
-        track.spec.timescale,
-    )
+    let mut demux = transmux::StreamingTsDemux::new();
+    demux.feed(segment).ok()?;
+    demux.finish().ok()?;
+    let mut video: Option<(TrackId, Timescale)> = None;
+    let mut samples: u64 = 0;
+    let mut ticks: u64 = 0;
+    while let Some(event) = demux.poll_event() {
+        match event {
+            transmux::DemuxEvent::TrackAdded(spec) if spec.config.is_video() => {
+                video = Some((spec.track_id, spec.timescale));
+            }
+            transmux::DemuxEvent::Sample {
+                track_id, sample, ..
+            } if Some(track_id) == video.map(|(id, _)| id) => {
+                samples += 1;
+                ticks += u64::from(
+                    sample
+                        .timing
+                        .and_then(|timing| timing.duration())
+                        .unwrap_or(0),
+                );
+            }
+            _ => {}
+        }
+    }
+    let (_, timescale) = video?;
+    segment_frame_rate_millihertz(samples, ticks, timescale)
 }
 
 /// Compute the byte length of the leading I-frame slice of `segment`'s first

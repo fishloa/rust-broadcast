@@ -739,10 +739,8 @@ fn tenc_iv_fields(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Unpackage;
 
     use crate::media::Media;
-    use crate::ts_demux::TsDemux;
 
     const KID: [u8; 16] = [
         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
@@ -755,8 +753,8 @@ mod tests {
 
     fn clear_media() -> Media {
         let bytes = test_fixtures::read("ts/h264/main.ts");
-        let mut demux = TsDemux::new();
-        let media = demux.unpackage(bytes.as_slice()).expect("demux main.ts");
+
+        let media = crate::test_media::media_from_ts(bytes.as_slice()).expect("demux main.ts");
         crate::repackage::select_tracks_by(&media, |t| {
             matches!(t.spec.config, CodecConfig::Avc { .. })
         })
@@ -765,10 +763,8 @@ mod tests {
 
     fn multi_track_media() -> Media {
         let bytes = test_fixtures::read("ts/h264-aac.ts");
-        let mut demux = TsDemux::new();
-        let media = demux
-            .unpackage(bytes.as_slice())
-            .expect("demux h264-aac.ts");
+
+        let media = crate::test_media::media_from_ts(bytes.as_slice()).expect("demux h264-aac.ts");
         assert!(media.tracks.len() > 1, "a multi-track fixture");
         media
     }

@@ -1,7 +1,6 @@
 //! Streaming RTP depayloader — RFC 6184 (H.264) / RFC 3640 (AAC).
 //!
-//! Stateful counterpart to [`crate::rtp::RtpDepacketiser`]: fed RTP packets
-//! incrementally via [`RtpStreamDepacketiser::push`], it emits fully-timed
+//! The one RTP depayloader: fed RTP packets incrementally via [`RtpStreamDepacketiser::push`], it emits fully-timed
 //! [`Sample`]s (real per-AU `duration` from RTP-timestamp deltas, `is_sync`
 //! from IDR detection) carrying the real [`CodecConfig`] supplied at
 //! construction (e.g. from [`crate::rtp_sdp`]).
@@ -181,6 +180,7 @@
 
 use crate::TrackId;
 use crate::error::{Error, Result};
+use crate::ir::SampleTiming;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtcp::SenderReport;
 use crate::rtp::{RtpMediaKind, parse_rtp_header, reassemble_audio, reassemble_video};
@@ -227,6 +227,13 @@ const MAX_AU_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 /// input (audit-ingest #4; `MAX_AU_BUFFER_BYTES` above is one of the fixes),
 /// and RTP is untrusted remote input over UDP, so a fifth was not an option.
 pub const DEFAULT_REORDER_DEPTH: usize = 16;
+
+/// Second octet of the fixed RTP header (RFC 3550 §5.1): its high bit is the
+/// marker.
+const RTP_MARKER_BYTE: usize = 1;
+
+/// The marker bit (RFC 3550 §5.1): the last packet of an access unit sets it.
+const RTP_MARKER_BIT: u8 = 0x80;
 
 /// Loss/reorder signal from [`RtpStreamDepacketiser`] (RFC 3550 §5.1
 /// sequence-number semantics; see the module docs' "Loss and reorder
@@ -595,6 +602,20 @@ impl SeqState {
     }
 }
 
+/// What an unparseable RTP packet still said about the access unit it ended:
+/// its marker bit lives in the second octet (RFC 3550 §5.1), so it survives
+/// the loss of everything after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LostPacketMarker {
+    /// Set: the packet ended its access unit, so the unit after the hole is a
+    /// new one.
+    EndsUnit,
+    /// Clear: its access unit continues after the hole.
+    Continues,
+    /// Too few bytes arrived to read the octet.
+    Unreadable,
+}
+
 /// Per-track mutable depacketisation state.
 struct TrackState {
     kind: RtpMediaKind,
@@ -609,6 +630,16 @@ struct TrackState {
     /// [`MAX_AU_BUFFER_BYTES`] can be enforced without re-summing the vec on
     /// every packet.
     cur_bytes: usize,
+    /// RTP timestamp of an access unit a sequence gap already cut in two: the
+    /// packets that keep arriving under it are the rest of that unit, so they
+    /// are discarded instead of reassembled into a partial sample.
+    damaged_ts: Option<u32>,
+    /// What each packet that could not be parsed said about the access unit
+    /// it ended, oldest first: every such packet leaves a permanent hole, and
+    /// the holes surface (through the reorder buffer) in the order they were
+    /// made, so the gap that surfaces takes the oldest hint. Bounded by the
+    /// reorder window, after which a hole's origin no longer matters.
+    lost_markers: VecDeque<LostPacketMarker>,
     /// Unwrapped 64-bit form of the most recently completed AU's timestamp.
     last_unwrapped: Option<u64>,
     /// Unwrapped 64-bit form of this track's very first completed AU's
@@ -658,6 +689,8 @@ struct TrackState {
     /// SPS/PPS known for this track (config plus in-band), to read
     /// `field_pic_flag` from slice headers.
     param_sets: AvcParamSets,
+    /// Decode-step duration assignment for the emitted video samples.
+    timing: DecodeStepDurations,
 }
 
 /// One track's RTCP Sender Report wallclock anchor (RFC 3550 §6.4.1): the NTP
@@ -867,6 +900,81 @@ fn sample_is_field_picture(param_sets: &mut AvcParamSets, sample: &Sample) -> bo
         .unwrap_or(false)
 }
 
+/// Assign each emitted video sample its decode-step duration:
+/// `next.dts - dts` for every non-final sample, and the last forward step for
+/// the final one — the rule the batch demuxer applied. One sample is held until
+/// the step to its successor is known; a run of zero steps waits for the first
+/// positive step to seed it (the batch path's `previous_nonzero_duration`),
+/// bounded by [`MAX_REORDER_WINDOW`].
+#[derive(Default)]
+struct DecodeStepDurations {
+    held: Vec<Sample>,
+    last_step: Option<u32>,
+    min_step: Option<u32>,
+}
+
+impl DecodeStepDurations {
+    fn push(&mut self, sample: Sample, out: &mut Vec<Sample>) {
+        let Some(dts) = sample.timing.and_then(|t| t.dts()) else {
+            out.push(sample);
+            return;
+        };
+        if let Some(prev) = self
+            .held
+            .last()
+            .and_then(|s| s.timing.and_then(|t| t.dts()))
+        {
+            let step = dts.saturating_sub(prev);
+            if step > 0 {
+                let step = u32::try_from(step).unwrap_or(u32::MAX);
+                self.last_step = Some(step);
+                self.min_step = Some(self.min_step.map_or(step, |min| min.min(step)));
+                for held in self.held.drain(..) {
+                    out.push(with_duration(held, Some(step)));
+                }
+                self.held.push(sample);
+                return;
+            }
+        }
+        self.held.push(sample);
+        if self.held.len() > MAX_REORDER_WINDOW {
+            let held = self.held.remove(0);
+            out.push(with_duration(held, self.fallback()));
+        }
+    }
+
+    fn finish(&mut self, out: &mut Vec<Sample>) {
+        let held = core::mem::take(&mut self.held);
+        let single = held.len() == 1;
+        let step = self.fallback().or(single.then_some(1));
+        for held in held {
+            out.push(with_duration(held, step));
+        }
+        self.last_step = None;
+        self.min_step = None;
+    }
+
+    /// The span for a sample whose successor is not known: the smallest
+    /// positive step observed, then the last one. A forward step larger than
+    /// the frame period is a gap in the stream, not the cadence.
+    fn fallback(&self) -> Option<u32> {
+        self.min_step.or(self.last_step)
+    }
+}
+
+/// Replace a sample's timing with the same `dts`/`pts` and the given span.
+fn with_duration(mut sample: Sample, duration: Option<u32>) -> Sample {
+    if let Some(timing) = sample.timing.as_mut() {
+        let dts = timing.dts().unwrap_or_default();
+        let pts = timing.pts().unwrap_or_default();
+        *timing = match duration {
+            Some(duration) => SampleTiming::timed_with_duration(dts, pts, duration),
+            None => SampleTiming::timed(dts, pts),
+        };
+    }
+    sample
+}
+
 /// Run a track's freshly emitted samples through its decode-timestamp
 /// derivation (video only; see [`crate::rtp_dts`]).
 fn derive_dts(
@@ -899,7 +1007,18 @@ fn derive_dts(
             dts: e.dts,
         });
     }
-    out
+    if st.reordered {
+        let mut timed = Vec::with_capacity(out.len());
+        for s in out {
+            st.timing.push(s, &mut timed);
+        }
+        if finish {
+            st.timing.finish(&mut timed);
+        }
+        timed
+    } else {
+        out
+    }
 }
 
 /// Ticks of the VUI `time_scale` clock per frame: a frame spans two field
@@ -948,6 +1067,8 @@ impl RtpStreamDepacketiser {
                         cur_ts: None,
                         cur_pkts: Vec::new(),
                         cur_bytes: 0,
+                        damaged_ts: None,
+                        lost_markers: VecDeque::new(),
                         last_unwrapped: None,
                         first_unwrapped: None,
                         pending: Vec::new(),
@@ -963,6 +1084,7 @@ impl RtpStreamDepacketiser {
                         seq: SeqState::default(),
                         dts: DtsDeriver::new(reorder_depth),
                         param_sets,
+                        timing: DecodeStepDurations::default(),
                     },
                 )
             })
@@ -1148,12 +1270,33 @@ impl RtpStreamDepacketiser {
     /// is random per source instance). No `SequenceGap` is raised: nothing
     /// was lost, the sender simply renumbered.
     pub fn push(&mut self, track_id: TrackId, rtp_packet: &[u8]) -> Result<Vec<Sample>> {
-        let hdr = parse_rtp_header(rtp_packet)?;
         let RtpStreamDepacketiser {
             tracks,
             loss_events,
             ..
         } = self;
+        let hdr = match parse_rtp_header(rtp_packet) {
+            Ok(hdr) => hdr,
+            Err(err) => {
+                // The packet is lost, but the octet that carries the marker
+                // survives whenever the header is not cut inside its first
+                // two bytes; the sequence gap it leaves uses it to tell
+                // whether the unit after the hole is whole or the rest of
+                // this one.
+                if let Some((_, st)) = tracks.iter_mut().find(|(id, _)| *id == track_id) {
+                    let marker = match rtp_packet.get(RTP_MARKER_BYTE) {
+                        Some(octet) if octet & RTP_MARKER_BIT != 0 => LostPacketMarker::EndsUnit,
+                        Some(_) => LostPacketMarker::Continues,
+                        None => LostPacketMarker::Unreadable,
+                    };
+                    if st.lost_markers.len() >= st.reorder_depth.saturating_add(1) {
+                        st.lost_markers.pop_front();
+                    }
+                    st.lost_markers.push_back(marker);
+                }
+                return Err(err);
+            }
+        };
         let Some((_, st)) = tracks.iter_mut().find(|(id, _)| *id == track_id) else {
             return Ok(Vec::new());
         };
@@ -1182,6 +1325,8 @@ impl RtpStreamDepacketiser {
             st.cur_pkts.clear();
             st.cur_bytes = 0;
             st.cur_ts = None;
+            st.damaged_ts = None;
+            st.lost_markers.clear();
             st.last_unwrapped = None;
             st.first_unwrapped = None;
             st.sr_anchor = None;
@@ -1200,10 +1345,28 @@ impl RtpStreamDepacketiser {
         if let Some((expected, got)) = adm.gap {
             // The AU under construction, if any, is now known-incomplete:
             // drop it rather than hand a merged, malformed sample
-            // downstream (issue #779).
+            // downstream (issue #779). With nothing under construction (the
+            // previous unit ended on its marker), the lost packet was this
+            // unit's first one, so that unit is incomplete too — and a unit
+            // missing its head is indistinguishable from a complete one.
+            st.damaged_ts = match st.cur_ts.take() {
+                Some(cur) => {
+                    st.lost_markers.pop_front();
+                    Some(cur)
+                }
+                None => {
+                    if st.lost_markers.pop_front() == Some(LostPacketMarker::EndsUnit) {
+                        None
+                    } else {
+                        adm.released
+                            .first()
+                            .and_then(|packet| parse_rtp_header(packet).ok())
+                            .map(|header| header.timestamp)
+                    }
+                }
+            };
             st.cur_pkts.clear();
             st.cur_bytes = 0;
-            st.cur_ts = None;
             loss_events.push_back(RtpLossEvent::SequenceGap {
                 track_id,
                 ssrc: hdr.ssrc,
@@ -1236,6 +1399,20 @@ impl RtpStreamDepacketiser {
         // `hdr` borrows the packet, which is moved into the AU buffer below.
         let marker = hdr.marker;
 
+        // A packet continuing an AU a sequence gap already cut in two still
+        // carries that AU's timestamp: it is a fragment of a unit that can
+        // never be reassembled complete, so it is dropped with it.
+        if let Some(damaged) = st.damaged_ts {
+            if damaged != ts {
+                st.damaged_ts = None;
+            } else {
+                if marker {
+                    st.damaged_ts = None;
+                }
+                return Ok(());
+            }
+        }
+
         // A timestamp change while packets are buffered means the previous
         // timestamp's packets already form a complete AU (defensive: covers
         // a dropped/missing marker bit).
@@ -1264,8 +1441,12 @@ impl RtpStreamDepacketiser {
             });
         }
 
-        // The video marker bit ends an AU immediately (RFC 6184 §5.1).
-        if matches!(st.kind, RtpMediaKind::H264) && marker {
+        // The marker bit ends an AU immediately for both payload formats
+        // (RFC 6184 §5.1 for H.264, RFC 3640 §3.1 for AAC). Draining here
+        // rather than waiting for the next packet's timestamp change keeps a
+        // completed AU out of the accumulator a lost packet later would
+        // discard.
+        if marker {
             Self::drain_complete_or_discard(st, loss_events, track_id, out);
             st.cur_ts = None;
         }
@@ -1317,9 +1498,9 @@ impl RtpStreamDepacketiser {
 
         if let Some((expected, got, released)) = st.seq.force_resolve() {
             let ssrc = st.seq.ssrc.unwrap_or(0);
+            st.damaged_ts = st.cur_ts.take();
             st.cur_pkts.clear();
             st.cur_bytes = 0;
-            st.cur_ts = None;
             loss_events.push_back(RtpLossEvent::SequenceGap {
                 track_id,
                 ssrc,
@@ -1335,6 +1516,8 @@ impl RtpStreamDepacketiser {
             Self::drain_complete_or_discard(st, loss_events, track_id, &mut out);
             st.cur_ts = None;
         }
+        st.damaged_ts = None;
+        st.lost_markers.clear();
         Self::drain_pending(st, loss_events, track_id, &mut out)?;
         Ok(derive_dts(st, loss_events, track_id, out, true))
     }
@@ -1347,6 +1530,27 @@ impl RtpStreamDepacketiser {
     ) -> Result<()> {
         if st.reordered && st.kind == RtpMediaKind::H264 {
             Self::resolve_window(st, loss_events, track_id, out, true)?;
+        } else if st.kind == RtpMediaKind::H264 {
+            let step = (st.last_duration != 0)
+                .then_some(st.last_duration)
+                .or(st.declared_duration);
+            if let Some(step) = step {
+                for p in st.pending.drain(..) {
+                    let ts = to_ticks(p.unwrapped_ts);
+                    out.push(Sample::new(
+                        p.data,
+                        Some(ts),
+                        Some(ts),
+                        Some(step),
+                        p.is_sync,
+                    )?);
+                }
+            } else if st.pending.len() > 1 {
+                for p in st.pending.drain(..) {
+                    let ts = to_ticks(p.unwrapped_ts);
+                    out.push(Sample::new(p.data, Some(ts), Some(ts), Some(1), p.is_sync)?);
+                }
+            }
         } else if let Some(duration) = known_duration(st) {
             for (index, p) in st.pending.drain(..).enumerate() {
                 let offset = u64::from(duration) * index as u64;
@@ -1410,12 +1614,14 @@ impl RtpStreamDepacketiser {
             if !ready {
                 break;
             }
-            let Some(duration) = successor
+            let duration = match successor
                 .or(period)
                 .and_then(|d| u32::try_from(d).ok())
                 .filter(|&d| d > 0)
-            else {
-                break;
+            {
+                Some(duration) => duration,
+                None if drain_all => 1,
+                None => break,
             };
             let p = st.pending.remove(0);
             let ts = to_ticks(p.unwrapped_ts);
@@ -1537,7 +1743,40 @@ impl RtpStreamDepacketiser {
                     .pending
                     .last()
                     .is_some_and(|p| p.unwrapped_ts == unwrapped);
-            if !same_packet_group && !st.pending.is_empty() {
+            if st.kind == RtpMediaKind::H264 && !st.pending.is_empty() {
+                let last_ts = st
+                    .pending
+                    .last()
+                    .map(|p| p.unwrapped_ts)
+                    .unwrap_or(unwrapped);
+                let forward = unwrapped.saturating_sub(last_ts);
+                let step = if forward > 0 {
+                    u32::try_from(forward).ok().filter(|&d| d > 0)
+                } else {
+                    (st.last_duration != 0)
+                        .then_some(st.last_duration)
+                        .or(st.declared_duration)
+                };
+                if let Some(step) = step {
+                    if forward > 0 {
+                        st.last_duration = step;
+                    }
+                    for p in st.pending.drain(..) {
+                        let ts = to_ticks(p.unwrapped_ts);
+                        out.push(Sample::new(
+                            p.data,
+                            Some(ts),
+                            Some(ts),
+                            Some(step),
+                            p.is_sync,
+                        )?);
+                    }
+                } else if st.pending.len() > MAX_REORDER_WINDOW {
+                    let p = st.pending.remove(0);
+                    let ts = to_ticks(p.unwrapped_ts);
+                    out.push(Sample::new(p.data, Some(ts), Some(ts), Some(1), p.is_sync)?);
+                }
+            } else if !same_packet_group && !st.pending.is_empty() {
                 let prev_ts = st.pending[0].unwrapped_ts;
                 // Duration = the *forward* step to this AU's presentation
                 // time. On a stream whose presentation order is its wire order

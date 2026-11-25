@@ -239,7 +239,7 @@ fn target_duration_violations_ignores_a_segment_exactly_at_the_target() {
 
 fn specs_from(fixture: &str, only_video: bool) -> Option<Vec<transmux::TrackSpec>> {
     let data = test_fixtures::require_bytes(fixture, "origin_state")?;
-    let media = transmux::ts_demux::TsDemux::new().demux(&data).ok()?;
+    let media = test_harness::collect::media_from_ts(&data).ok()?;
     Some(
         media
             .tracks

@@ -756,6 +756,102 @@ pub struct ResyncWalk<'a> {
     pub truncated_tail: Option<(usize, usize, usize)>,
 }
 
+/// What an incremental caller should do with the bytes at the front of its
+/// buffer — see [`resync_decision`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ResyncDecision {
+    /// The front is the start of a consistent tag chain: parse it normally.
+    Tag,
+    /// More input is needed before the front can be decided. The buffer must
+    /// hold at least this many bytes in total.
+    Need(usize),
+    /// The front bytes are damaged: skip this many and decide again. The skip
+    /// is one span, reported once by the caller.
+    Skip(usize),
+}
+
+/// Decide what to do with the bytes at the front of a streaming buffer, using
+/// the same consistency rule [`tags_resync`] walks with.
+///
+/// Unlike [`tags_resync`], nothing is retained here: the caller keeps the
+/// buffer and acts on the decision, so a streaming demux can resynchronise
+/// while holding at most the bytes one candidate tag's own header declares.
+#[must_use]
+pub fn resync_decision(input: &[u8], at_eof: bool) -> ResyncDecision {
+    if input.len() < FLV_TAG_HEADER_LEN {
+        return ResyncDecision::Need(FLV_TAG_HEADER_LEN);
+    }
+    // A complete tag whose own trailing `PreviousTagSize` agrees with its
+    // header is whole: it needs no second opinion from the tag after it, so a
+    // streaming caller does not have to wait for that tag's header.
+    if let Ok(header) = FlvTagHeader::parse(input) {
+        let total = header.total_len();
+        if input.len() >= total && FlvTag::parse(&input[..total]).is_ok() {
+            return ResyncDecision::Tag;
+        }
+    }
+    if tag_chain_holds(input, 0, false) {
+        if !at_eof {
+            // The chain "holds" here only because the header after this tag has
+            // not arrived yet. Waiting for it is what tells a real tag from a
+            // damaged one whose declared body runs into the next tag.
+            let next = FLV_TAG_HEADER_LEN
+                .saturating_add(tag_data_size(input, 0))
+                .saturating_add(FLV_PREV_TAG_SIZE_LEN);
+            if next.saturating_add(FLV_TAG_HEADER_LEN) > input.len() {
+                return ResyncDecision::Need(next.saturating_add(FLV_TAG_HEADER_LEN));
+            }
+        }
+        return ResyncDecision::Tag;
+    }
+    // A plausible header whose own body has not fully arrived is a tag still
+    // being read, not damage: wait for exactly that body.
+    if plausible_tag_header(input, 0, false) {
+        let body_end = FLV_TAG_HEADER_LEN.saturating_add(tag_data_size(input, 0));
+        if body_end > input.len() {
+            return ResyncDecision::Need(body_end.saturating_add(FLV_PREV_TAG_SIZE_LEN));
+        }
+    }
+    for at in 1..input.len() {
+        if !plausible_tag_header(input, at, true) {
+            continue;
+        }
+        let body_end = at
+            .saturating_add(FLV_TAG_HEADER_LEN)
+            .saturating_add(tag_data_size(input, at));
+        if body_end > input.len() {
+            if at_eof {
+                continue;
+            }
+            // An earlier plausible tag may be the resync point; a later
+            // candidate must not preempt it, so wait for this one's body.
+            return ResyncDecision::Need(body_end.saturating_add(FLV_PREV_TAG_SIZE_LEN));
+        }
+        if !at_eof
+            && body_end
+                .saturating_add(FLV_PREV_TAG_SIZE_LEN)
+                .saturating_add(FLV_TAG_HEADER_LEN)
+                > input.len()
+        {
+            // The candidate's body is complete, but the header that would
+            // prove its chain has not fully arrived: accepting it now could
+            // lock onto a stray byte pattern inside a damaged tag, and a LATER
+            // candidate must not preempt this earlier one (a whole-buffer walk
+            // decides the earliest first). Wait for this one.
+            return ResyncDecision::Need(
+                body_end
+                    .saturating_add(FLV_PREV_TAG_SIZE_LEN)
+                    .saturating_add(FLV_TAG_HEADER_LEN),
+            );
+        }
+        if tag_chain_holds(input, at, true) {
+            return ResyncDecision::Skip(at);
+        }
+    }
+    ResyncDecision::Need(input.len().saturating_add(1))
+}
+
 /// Walk an FLV stream's tags tolerantly, from `header`'s first tag.
 ///
 /// Unlike the strict [`tags`], a stream whose framing is damaged part-way
@@ -1023,6 +1119,36 @@ mod tests {
         assert_eq!(
             bytes,
             [8, 0x01, 0x02, 0x03, 0x0B, 0x0C, 0x0D, 0x0A, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn resync_decision_keeps_waits_and_skips_to_the_same_chain() {
+        // A whole tag at the front is kept, with or without the header that
+        // follows it.
+        let good = tag(TagType::Audio, 0, b"abc");
+        assert_eq!(resync_decision(&good, false), ResyncDecision::Tag);
+        assert_eq!(resync_decision(&good, true), ResyncDecision::Tag);
+        // A partial header just asks for the header bytes.
+        assert_eq!(
+            resync_decision(&good[..5], false),
+            ResyncDecision::Need(FLV_TAG_HEADER_LEN)
+        );
+        // Garbage before a consistent chain is one span to skip up to it.
+        let mut damaged = vec![0xFFu8; 7];
+        damaged.extend_from_slice(&good);
+        assert_eq!(
+            resync_decision(&damaged, false),
+            ResyncDecision::Need(7 + 11 + 3 + FLV_PREV_TAG_SIZE_LEN + FLV_TAG_HEADER_LEN),
+            "the candidate's chain needs its following header before it is trusted"
+        );
+        assert_eq!(resync_decision(&damaged, true), ResyncDecision::Skip(7));
+        // A plausible header whose declared body has not arrived asks for the
+        // bytes that body needs, not a skip.
+        let declared = tag(TagType::Video, 0, &[0u8; 40]);
+        assert_eq!(
+            resync_decision(&declared[..FLV_TAG_HEADER_LEN + 4], false),
+            ResyncDecision::Need(FLV_TAG_HEADER_LEN + 40 + FLV_PREV_TAG_SIZE_LEN)
         );
     }
 

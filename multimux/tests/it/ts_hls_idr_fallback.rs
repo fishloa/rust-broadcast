@@ -6,20 +6,18 @@
 //! demuxed; status and metrics come from the admin API and `/metrics`.
 #![cfg(feature = "test-seams")]
 
-use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
-
-use broadcast_common::Unpackage;
 use multimux::config::{
     AdminSpec, Config, InputSpec, OutputAuthSpec, Route, TsHlsCutPolicy, TsHlsIdrFallback,
 };
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
+use std::net::SocketAddr;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 use transmux::media::{Media, Track};
 use transmux::pipeline::{CodecConfig, Sample};
-use transmux::{NalCodec, TsDemux, access_unit_is_idr};
+use transmux::{NalCodec, access_unit_is_idr};
 
 use crate::support::listener;
 use listener::bind_tcp;
@@ -249,7 +247,7 @@ impl Drop for Server {
 }
 
 fn video_samples(bytes: &[u8]) -> Vec<Sample> {
-    let ir: Media = TsDemux::new().unpackage(bytes).expect("demux");
+    let ir: Media = test_harness::collect::media_from_ts(bytes).expect("demux");
     ir.tracks
         .into_iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
@@ -452,7 +450,7 @@ async fn never_keeps_the_strict_behaviour_but_reports_it() {
 
 fn looped_ts(rel: &str, tag: &str, skip: usize, reps: usize) -> PathBuf {
     let bytes = std::fs::read(test_fixtures::path(rel)).expect("fixture");
-    let ir: Media = TsDemux::new().unpackage(&bytes).expect("demux fixture");
+    let ir: Media = test_harness::collect::media_from_ts(&bytes).expect("demux fixture");
     let track = ir
         .tracks
         .into_iter()

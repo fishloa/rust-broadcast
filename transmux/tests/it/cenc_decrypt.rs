@@ -11,8 +11,6 @@
 #![cfg(feature = "cenc")]
 
 use crate::box_walk::{SAMPLE_TABLE_CONTAINERS, find_box_range};
-use broadcast_common::Unpackage;
-use transmux::TsDemux;
 use transmux::annexb::iter_length_prefixed_nals;
 use transmux::cenc_decrypt::{CencDecryptStage, CencScheme, KeyMap};
 use transmux::{CodecConfig, Media};
@@ -92,8 +90,8 @@ fn decrypt_matches_cleartext_ts() {
     let decrypted = nal_payloads(&decrypt(&media, &keys()).tracks[0].samples);
 
     let ts = read(CLEAR_TS);
-    let mut td = TsDemux::new();
-    let clear_media = { td.unpackage(&ts).expect("demux cleartext TS") };
+
+    let clear_media = { test_harness::collect::media_from_ts(&ts).expect("demux cleartext TS") };
     let clear = nal_payloads(&clear_media.tracks[0].samples);
 
     assert_eq!(
@@ -127,8 +125,9 @@ fn wrong_key_does_not_match() {
     );
 
     let ts = read(CLEAR_TS);
-    let mut td = TsDemux::new();
-    let clear = { nal_payloads(&td.unpackage(&ts).unwrap().tracks[0].samples) };
+
+    let clear =
+        { nal_payloads(&test_harness::collect::media_from_ts(&ts).unwrap().tracks[0].samples) };
     assert_ne!(bad_nals, clear, "wrong key must not reproduce cleartext");
 }
 

@@ -479,6 +479,20 @@ pub enum DemuxEvent {
         /// when the container has one.
         provenance: EventProvenance,
     },
+    /// A streaming demuxer skipped a span of input it could not parse and
+    /// resynchronised after it (audit T16, #1144): one event per skipped span,
+    /// carrying its byte offset and length. The TS demuxer's own
+    /// [`InputDegradation::SyncLoss`] says the same thing through
+    /// [`DemuxEvent::InputDegraded`]; this variant exists for a container
+    /// whose damage is a byte span outside the TS event vocabulary (FLV tag
+    /// framing), so it never fabricates a track or a PID.
+    #[non_exhaustive]
+    DamagedSpan {
+        /// Byte offset of the first skipped byte, from the start of the input.
+        offset: u64,
+        /// Number of bytes skipped before the stream was re-locked.
+        dropped_bytes: u64,
+    },
     /// Every currently-known declared track has resolved: none is still
     /// pending config recovery. By the time this fires,
     /// [`DemuxEvent::TrackAdded`] has already been (or is about to be, in the
@@ -491,8 +505,8 @@ pub enum DemuxEvent {
     /// This means "the declared track set is stable", which requires the
     /// container to *have* an up-front track declaration in the first place
     /// (MPEG-2 TS: the PMT). A container without one — FLV/RTMP, whose
-    /// `TypeFlags` header bits are informational only and not trusted even by
-    /// the one-shot [`crate::flv::FlvDemux`] — legitimately never emits this;
+    /// `TypeFlags` header bits are informational only and are not trusted even
+    /// by the streaming FLV demuxer — legitimately never emits this;
     /// that asymmetry is for the media plane's ingress layer to handle
     /// explicitly (e.g. gating on the first [`DemuxEvent::Sample`] instead),
     /// not something this event can paper over by pretending every container
@@ -643,6 +657,15 @@ impl DemuxEvent {
             track,
             kind,
             provenance,
+        }
+    }
+
+    /// Construct a [`DemuxEvent::DamagedSpan`] — see
+    /// [`Self::clock_reference`] for why this variant needs a constructor.
+    pub fn damaged_span(offset: u64, dropped_bytes: u64) -> Self {
+        DemuxEvent::DamagedSpan {
+            offset,
+            dropped_bytes,
         }
     }
 

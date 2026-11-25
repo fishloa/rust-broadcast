@@ -1737,10 +1737,11 @@ fn drive_seekable<R: Read + Seek>(
                     sink(event, Some(crate::flv::FLV_TIMESCALE))?;
                 }
             }
-            demux.finish();
+            let finished = demux.finish();
             while let Some(event) = demux.poll_event() {
                 sink(event, Some(crate::flv::FLV_TIMESCALE))?;
             }
+            finished.map_err(|error| crate::Error::InvalidInput(flv_reason(error)))?;
             Ok(())
         }
         Container::Mp4 => {
@@ -1849,10 +1850,11 @@ fn drive_forward<R: Read>(
                     sink(event, Some(crate::flv::FLV_TIMESCALE))?;
                 }
             }
-            demux.finish();
+            let finished = demux.finish();
             while let Some(event) = demux.poll_event() {
                 sink(event, Some(crate::flv::FLV_TIMESCALE))?;
             }
+            finished.map_err(|error| crate::Error::InvalidInput(flv_reason(error)))?;
             Ok(())
         }
         Container::Mp4 => {

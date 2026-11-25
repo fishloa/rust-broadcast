@@ -28,13 +28,11 @@
 //! Fixtures load through `test_fixtures` and SKIP, never fail, when the
 //! private submodule is not checked out.
 #![cfg(feature = "std")]
-
-use broadcast_common::Unpackage;
 use transmux::ir::{
     ActiveFormatDescription, AspectRatioIdc, DisplayChangeSet, DisplayGeometry, DisplayInfo,
     TrackId, TrackSpec,
 };
-use transmux::ts_demux::{DemuxEvent, StreamingTsDemux, TsDemux};
+use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 fn read(fixture: &str) -> Option<Vec<u8>> {
     test_fixtures::require_bytes(fixture, "display_change")
@@ -211,7 +209,7 @@ fn assert_initial(video: &[&Seen], sar: AspectRatioIdc) {
 /// Batch `Media`: every video sample carries a tag; the tags form the same
 /// two geometries in the same order as the streaming sequence.
 fn assert_batch(data: &[u8], from: AspectRatioIdc, to: AspectRatioIdc, track: TrackId) {
-    let media = TsDemux::new().unpackage(data).expect("batch demux");
+    let media = test_harness::collect::media_from_ts(data).expect("batch demux");
     let t = media
         .tracks
         .iter()

@@ -26,8 +26,6 @@
 //! 10-hour offset), a controlled composition-offset pattern, a 4-deep splice
 //! chain with non-exact-dividing rescales, or an untimed section-carried
 //! track — each needs values chosen to make the property observable.
-
-use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use core::time::Duration;
 use isobmff::box_types::parse_box;
@@ -37,9 +35,7 @@ use test_harness::collect::{concat, splice_insert};
 use transmux::TrackId;
 use transmux::ir::DataIdentity;
 use transmux::pipeline::DataCarriage;
-use transmux::{
-    CodecConfig, Media, Sample, Segmenter, Track, TrackSpec, TsDemux, snap_to_preceding_sync,
-};
+use transmux::{CodecConfig, Media, Sample, Segmenter, Track, TrackSpec, snap_to_preceding_sync};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -1064,7 +1060,7 @@ fn concat_leaves_untimed_section_samples_as_none() {
 fn splice_insert_rebases_real_fixture_onto_the_join() {
     let path = test_fixtures::path("ts/h264-aac.ts");
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let source: Media = TsDemux::new().unpackage(&bytes[..]).expect("TS demux");
+    let source: Media = test_harness::collect::media_from_ts(&bytes[..]).expect("TS demux");
 
     let vi = source
         .tracks

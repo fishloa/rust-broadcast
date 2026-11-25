@@ -8,8 +8,6 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 
 use crate::sdp_session;
-use broadcast_common::Unpackage;
-use transmux::TsDemux;
 
 fn check(name: &str, actual: &str) {
     if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
@@ -29,7 +27,7 @@ fn check(name: &str, actual: &str) {
 #[test]
 fn rtp_session_sdp_matches_golden() {
     let ts = fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("ts fixture");
-    let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
+    let media = test_harness::collect::media_from_ts(&ts[..]).expect("demux");
     let out = crate::rtp_run::packetise(&media, crate::rtp_run::stage(1400, 0x1234_5678));
     check(
         "golden/rtp/rtp-sdp-h264-aac.sdp",

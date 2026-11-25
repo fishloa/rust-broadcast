@@ -160,8 +160,6 @@ mod ps_demux_copies {
 
 mod ts_demux_copies {
     use super::bytes_allocated;
-    use broadcast_common::Unpackage;
-    use transmux::TsDemux;
 
     /// r04-O10: each completed PES payload was copied (`pes.payload.to_vec()`)
     /// before being probed/pushed, though a live track only reads it. Total
@@ -170,7 +168,7 @@ mod ts_demux_copies {
     fn ts_demux_copies_of_the_payload() {
         let bytes = test_fixtures::read("ts/h264-aac.ts");
         let (media, allocated) =
-            bytes_allocated(|| TsDemux::new().unpackage(bytes.as_slice()).unwrap());
+            bytes_allocated(|| test_harness::collect::media_from_ts(bytes.as_slice()).unwrap());
         drop(media);
         let x100 = allocated * 100 / bytes.len();
         eprintln!("ts demux h264-aac.ts: {allocated} bytes allocated = {x100}/100 x input");
@@ -182,12 +180,11 @@ mod ts_demux_copies {
 
 mod rtp_stream_copies {
     use super::bytes_allocated;
-    use broadcast_common::Unpackage;
     use test_harness::collect::MediaSelectExt;
     use transmux::TrackId;
     use transmux::pipeline::CodecConfig;
     use transmux::rtp::RtpMediaKind;
-    use transmux::{RtpPacketiserStage, RtpStreamDepacketiser, RtpStreamTrack, TsDemux};
+    use transmux::{RtpPacketiserStage, RtpStreamDepacketiser, RtpStreamTrack};
 
     /// r04-O7: every in-order RTP packet was copied twice on the way into the AU
     /// buffer (`SeqState::admit`, then `push_one`). Bytes allocated by the push
@@ -195,7 +192,7 @@ mod rtp_stream_copies {
     #[test]
     fn rtp_push_copies_each_packet_once() {
         let data = test_fixtures::read("ts/h264-aac.ts");
-        let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
+        let media = test_harness::collect::media_from_ts(data.as_slice()).unwrap();
         let video = media
             .tracks
             .iter()
@@ -311,9 +308,8 @@ mod progressive_support;
 
 mod muxer_buffering {
     use super::bytes_allocated;
-    use broadcast_common::Unpackage;
     use transmux::mux_stage::{MuxOutput, drive_media};
-    use transmux::{DEFAULT_PSI_INTERVAL, MkvMuxStage, TsDemux, TsMuxStage};
+    use transmux::{DEFAULT_PSI_INTERVAL, MkvMuxStage, TsMuxStage};
 
     /// Mux a whole `Media` through a fresh TS stage and collect its bytes.
     fn mux_ts(media: &transmux::Media) -> Vec<u8> {
@@ -341,7 +337,7 @@ mod muxer_buffering {
     #[test]
     fn muxers_copy_the_output_few_times() {
         let data = test_fixtures::read("ts/h264-aac.ts");
-        let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
+        let media = test_harness::collect::media_from_ts(data.as_slice()).unwrap();
         let cases: [(&str, Vec<u8>, usize); 3] = {
             let (prog, a1) = bytes_allocated(|| super::progressive_support::package(&media, true));
             let (mkv, a2) = bytes_allocated(|| {

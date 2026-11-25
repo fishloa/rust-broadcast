@@ -1,13 +1,11 @@
 //! `ClientSession` in play mode against the sans-IO play peer: command sequence, FLV media
 //! (checked against the one-shot FLV demux of the same real capture), chunk-size changes,
 //! acknowledgements, pings, end of stream and error statuses.
-
-use broadcast_common::Unpackage;
 use rtmp_runtime::amf0::{Amf0Value, Command};
 use rtmp_runtime::chunk::Message;
 use rtmp_runtime::client::{ClientEvent, ClientMode, ClientSession, RtmpClientConfig};
 use rtmp_runtime::message::{MessageTypeId, UserControl};
-use transmux::{FlvDemux, Media, StreamingFlvDemux};
+use transmux::{Media, StreamingFlvDemux};
 
 use super::rtmp_play_peer::{PLAY_STREAM_ID, PeerConfig, PlayPeer, Seen};
 
@@ -107,7 +105,7 @@ fn fixture_tags() -> Vec<(u8, u32, Vec<u8>)> {
 fn streaming_media(flv: &[u8]) -> Vec<(u32, Vec<transmux::Sample>)> {
     let mut demux = StreamingFlvDemux::new();
     demux.feed(flv).expect("streaming demux");
-    demux.finish();
+    demux.finish().expect("the fixture is complete");
     let mut by_track: std::collections::BTreeMap<u32, Vec<transmux::Sample>> = Default::default();
     while let Some(ev) = demux.poll_event() {
         if let transmux::DemuxEvent::Sample {
@@ -122,7 +120,7 @@ fn streaming_media(flv: &[u8]) -> Vec<(u32, Vec<transmux::Sample>)> {
 
 fn direct_media() -> Media {
     let flv = test_fixtures::read(FIXTURE);
-    FlvDemux::new().unpackage(&flv[..]).expect("one-shot demux")
+    test_harness::collect::media_from_flv(&flv[..]).expect("one-shot demux")
 }
 
 fn play_all(rig: &mut Rig) {

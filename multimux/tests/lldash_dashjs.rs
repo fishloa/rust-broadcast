@@ -50,7 +50,7 @@ use multimux::output::Output as MmOutput;
 use multimux::output::ll_dash::LlDashOutput;
 use multimux::route::RouteHandle;
 use transmux::ll_hls::LlHlsSegmenter;
-use transmux::{CodecConfig, Sample, TrackSpec, TsDemux};
+use transmux::{CodecConfig, Sample, TrackSpec};
 
 const TARGET_DURATION: Duration = Duration::from_secs(1);
 const PART_TARGET_MS: u32 = 120;
@@ -102,7 +102,7 @@ fn harness_ready() -> bool {
 /// `SegmentTemplate` addresses.
 fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
     let ts = std::fs::read(fixture_path()).expect("h264-aac.ts fixture must exist");
-    let media = TsDemux::new().demux(&ts).expect("demux h264-aac.ts");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux h264-aac.ts");
     let video = media
         .tracks
         .into_iter()

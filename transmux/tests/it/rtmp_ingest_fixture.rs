@@ -11,10 +11,8 @@
 //! committed bytes through the sans-IO session plus `transmux::FlvDemux`, so
 //! it runs under `--all-features` (and `--no-default-features`) without the
 //! `tokio` feature.
-
-use broadcast_common::Unpackage;
 use rtmp_runtime::server::{ServerEvent, ServerSession};
-use transmux::{CodecConfig, FlvDemux};
+use transmux::CodecConfig;
 
 const FIXTURE: &str = "rtmp/obs-publish.bin";
 
@@ -114,9 +112,7 @@ fn emitted_flv_decodes_through_flv_demux_to_h264_aac_media() {
         "concatenated Media.flv must start with the FLV file header"
     );
 
-    let mut demux = FlvDemux::new();
-    let media = demux
-        .unpackage(&flv_bytes)
+    let media = test_harness::collect::media_from_flv(&flv_bytes)
         .expect("transmux::FlvDemux must decode the ServerSession-emitted FLV");
 
     assert_eq!(

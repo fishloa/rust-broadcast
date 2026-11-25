@@ -8,12 +8,10 @@
 #![cfg(feature = "std")]
 
 use crate::ts_mux_stage;
-use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use isobmff::ChromaticityXy;
 use transmux::codec_config_ext::HevcRecordCodecInfo;
 use transmux::ir::{CodecConfig, TrackSpec};
-use transmux::ts_demux::TsDemux;
 use transmux::{HdrStaticMetadata, build_init_segment};
 
 fn timescale(value: u32) -> Timescale {
@@ -33,7 +31,7 @@ const STSD_PREFIX: usize = 8;
 const CONTAINERS: [[u8; 4]; 6] = [*b"moov", *b"trak", *b"mdia", *b"minf", *b"stbl", *b"stsd"];
 
 fn video_track(bytes: &[u8]) -> TrackSpec {
-    let media = TsDemux::new().unpackage(bytes).expect("demux");
+    let media = test_harness::collect::media_from_ts(bytes).expect("demux");
     media
         .tracks
         .iter()
@@ -249,7 +247,7 @@ fn demux_keeps_only_declarative_sei_messages_in_the_hvcc_array() {
     let Some(bytes) = test_fixtures::require_bytes(TS, "hdr10") else {
         return;
     };
-    let mut media = TsDemux::new().unpackage(&bytes[..]).expect("demux");
+    let mut media = test_harness::collect::media_from_ts(&bytes[..]).expect("demux");
     let idx = media
         .tracks
         .iter()

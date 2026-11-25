@@ -221,9 +221,7 @@ fn file_input_matches_the_bytes_core() {
 /// the track, and with the mapping its opaque samples survive byte-for-byte.
 #[test]
 fn gopro_gpmd_maps_into_ts() {
-    use broadcast_common::Unpackage;
     use transmux::ir::{CodecConfig, DataCarriage, DataIdentity};
-    use transmux::ts_demux::TsDemux;
 
     let Some(path) = test_fixtures::private("mp4/camera/gopro-hero6-ble.mp4") else {
         eprintln!("SKIP gopro_gpmd_maps_into_ts: private fixture not checked out");
@@ -295,7 +293,7 @@ fn gopro_gpmd_maps_into_ts() {
     let Output::Bytes(ts) = run_bytes(&input, &mapped).expect("mapped gpmd reaches TS") else {
         panic!("TS output must be bytes");
     };
-    let round = TsDemux::new().unpackage(&ts).expect("demux the TS output");
+    let round = test_harness::collect::media_from_ts(&ts).expect("demux the TS output");
     let carried = round
         .tracks
         .iter()

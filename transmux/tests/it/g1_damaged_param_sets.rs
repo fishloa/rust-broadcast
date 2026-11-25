@@ -1,4 +1,3 @@
-use broadcast_common::Unpackage;
 use transmux::ir::DemuxEvent;
 use transmux::ts_demux::StreamingTsDemux;
 
@@ -154,6 +153,6 @@ fn g1_audio_only_stray_damaged_video_yields_no_video_track() {
         eprintln!("skipping: fixture missing");
         return;
     };
-    let media = transmux::TsDemux::new().unpackage(&bytes).unwrap();
+    let media = test_harness::collect::media_from_ts(&bytes).unwrap();
     assert_eq!(media.tracks.len(), 26, "phantom video track added");
 }

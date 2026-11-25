@@ -2,8 +2,6 @@
 //! carrying all five XML specials (`& < > " '`) must be escaped on the wire
 //! (exact output asserted) and must read back to the original string.
 #![cfg(feature = "std")]
-
-use broadcast_common::Unpackage;
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
 use quick_xml::escape::resolve_predefined_entity;
@@ -11,7 +9,6 @@ use quick_xml::events::Event;
 use std::time::Duration;
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::playready_wrmheader;
-use transmux::ts_demux::TsDemux;
 
 /// All five XML specials in one string.
 const SPECIALS: &str = "a&b<c>d\"e'f";
@@ -21,9 +18,7 @@ const SPECIALS_ATTR: &str = "a&amp;b&lt;c&gt;d&quot;e&apos;f";
 fn demux_media() -> transmux::media::Media {
     let path = test_fixtures::path("ts/h264-aac.ts");
     let ts = std::fs::read(path).expect("h264-aac.ts fixture must exist");
-    TsDemux::new()
-        .unpackage(&ts[..])
-        .expect("demux h264-aac.ts")
+    test_harness::collect::media_from_ts(&ts[..]).expect("demux h264-aac.ts")
 }
 
 /// Collect `(element, attribute, value)` for every start tag via quick-xml.

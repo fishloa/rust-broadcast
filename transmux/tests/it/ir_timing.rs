@@ -7,19 +7,17 @@
 //! `TsDemux` internals under test.
 
 use broadcast_common::timescale::Timescale;
+use mpeg_pes::PesAssembler;
 use mpeg_ts::pid::Pid;
+use mpeg_ts::ts::{SectionReassembler, TsPacket};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::Unpackage;
-use mpeg_pes::PesAssembler;
-use mpeg_ts::ts::{SectionReassembler, TsPacket};
-
 use transmux::ir::DataIdentity;
 use transmux::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
-use transmux::{Ec3SyncframeInfo, Error, Media, PcrSample, Track, TsDemux};
+use transmux::{Ec3SyncframeInfo, Error, Media, PcrSample, Track};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -43,9 +41,7 @@ fn read_fixture(rel: &str) -> Vec<u8> {
 }
 
 fn demux(data: &[u8]) -> Media {
-    TsDemux::new()
-        .unpackage(data)
-        .expect("TS demux must succeed")
+    test_harness::collect::media_from_ts(data).expect("TS demux must succeed")
 }
 
 // ── Independent PES-reassembly oracle ────────────────────────────────────────

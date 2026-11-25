@@ -7,7 +7,7 @@
 //! [`MuxOutput::Bytes`]. A caller that still holds a whole
 //! [`Media`](crate::ir::Media) drives it through
 //! [`drive_media`](crate::mux_stage::drive_media). It is the byte-level inverse
-//! of [`TsDemux`](crate::TsDemux): a `TsMuxStage → TsDemux` round-trip recovers
+//! of [`StreamingTsDemux`](crate::StreamingTsDemux): a `TsMuxStage → StreamingTsDemux` round-trip recovers
 //! an equivalent IR (same tracks, codec configs, coded NAL payloads, frame
 //! counts, and per-sample timing).
 //!
@@ -31,7 +31,7 @@
 //!   §2.4.4.9 — long-form sections with a trailing `CRC_32`
 //!   ([`broadcast_common::crc32_mpeg2`]).
 //! - **stream_type → codec**: ISO/IEC 13818-1 Table 2-34 + ETSI TS 101 154 §G
-//!   (AC-3 / E-AC-3 / DTS user-private assignments) — mirrors [`TsDemux`](crate::TsDemux).
+//!   (AC-3 / E-AC-3 / DTS user-private assignments) — mirrors [`StreamingTsDemux`](crate::StreamingTsDemux).
 //!
 //! # ES_info descriptor passthrough policy (issue #775)
 //!
@@ -1400,7 +1400,7 @@ fn hevc_parameter_sets(
 /// HLS media segments without an `#EXT-X-DISCONTINUITY` between them form one
 /// continuous transport stream, so a client concatenating them sees a CC jump
 /// on every PID at each boundary otherwise (TR 101 290 indicator 1.4), and this
-/// crate's own [`TsDemux`](crate::TsDemux) reports `InputDegraded` on it.
+/// crate's own [`StreamingTsDemux`](crate::StreamingTsDemux) reports `InputDegraded` on it.
 pub(crate) fn mux_tracks_at_continuing(
     tracks: &[Track],
     samples: &[&[Sample]],
@@ -1939,7 +1939,7 @@ fn build_es_payload(plan: &EsPlan, sample: &Sample) -> Result<Vec<u8>> {
 /// not already carry an SPS so the TS video AU is independently decodable.
 ///
 /// When the IR sample already carries its SPS/PPS in-band (as a
-/// [`TsDemux`](crate::TsDemux)-sourced keyframe does — it preserves every NAL of
+/// [`StreamingTsDemux`](crate::StreamingTsDemux)-sourced keyframe does — it preserves every NAL of
 /// the access unit) nothing is inserted, so the length↔Annex B round-trip stays
 /// byte-identical NAL-for-NAL. Inserted parameter sets are placed after a leading
 /// Access Unit Delimiter (ISO/IEC 14496-10 §7.4.1.2.3 AU order), each with a
@@ -2322,7 +2322,7 @@ fn write_af_packet(
 /// The PES optional header is hand-built per ISO/IEC 13818-1 §2.4.3.7 (mpeg-pes
 /// exposes only a parser + a `#[non_exhaustive]` [`mpeg_pes::PesHeader`], so it
 /// cannot be constructed externally); the emitted bytes round-trip through
-/// [`mpeg_pes::PesPacket::parse`], which the [`TsDemux`](crate::TsDemux) uses.
+/// [`mpeg_pes::PesPacket::parse`], which the [`StreamingTsDemux`](crate::StreamingTsDemux) uses.
 ///
 /// # Errors
 ///

@@ -10,13 +10,11 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use broadcast_common::mux::Unpackage;
 use broadcast_hls::{ClosedCaptionsRef, InstreamId, MasterPlaylist, MediaType};
 use hls_runtime::server::ClosedCaptionDecl;
 use media_plane::ProgramId;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use tower::ServiceExt;
-use transmux::ts_demux::TsDemux;
 
 use crate::support::shared_it::nz;
 use media_plane::segmenter::ProgramSegmenter;
@@ -145,7 +143,7 @@ fn build_with(
     if let Some(descriptor) = video_descriptor {
         bytes = with_video_es_descriptor(&bytes, descriptor);
     }
-    let media = TsDemux::new().unpackage(&bytes).expect("demux fixture");
+    let media = test_harness::collect::media_from_ts(&bytes).expect("demux fixture");
     let trunk = Trunk::new(
         TrunkConfig::default()
             .with_timed_capacity(nz(RING))

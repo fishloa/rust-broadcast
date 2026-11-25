@@ -12,11 +12,9 @@ use crate::bit_writer::BitWriter;
 use crate::ts_hls_stage;
 use crate::ts_mux_stage;
 use broadcast_common::error::InvalidValue;
-use broadcast_common::mux::Unpackage;
 use broadcast_common::{Parse, Serialize};
 use transmux::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
 use transmux::ir::{CodecConfig, Media};
-use transmux::ts_demux::TsDemux;
 use transmux::{
     AdditionalWindow, BezierToneMapping, ColorVolumeTransform, DistributionPoint,
     Hdr10PlusMetadata, OverlapProcessOption, PeakLuminanceTable, WindowRegion,
@@ -94,7 +92,7 @@ fn first_sei_decodes_to_the_values_ffprobe_reports() {
 }
 
 fn display_order_sample_seis(ts: &[u8]) -> Vec<Vec<u8>> {
-    let media = TsDemux::new().unpackage(ts).expect("demux");
+    let media = test_harness::collect::media_from_ts(ts).expect("demux");
     let track = media
         .tracks
         .iter()
@@ -666,7 +664,7 @@ fn seis_in_display_order(media: &Media) -> Vec<Vec<u8>> {
 
 fn source_media() -> Option<(Media, Vec<Vec<u8>>)> {
     let ts = test_fixtures::require_bytes(TS, "hdr10plus")?;
-    let media = TsDemux::new().unpackage(&ts).expect("demux");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux");
     let seis = seis_in_display_order(&media);
     assert_eq!(seis.len(), FRAMES);
     Some((media, seis))
@@ -693,7 +691,7 @@ fn track_flag_is_clear_for_streams_without_hdr10plus() {
         let Some(bytes) = test_fixtures::require_bytes(fixture, "hdr10plus") else {
             continue;
         };
-        let media = TsDemux::new().unpackage(&bytes).expect("demux");
+        let media = test_harness::collect::media_from_ts(&bytes).expect("demux");
         assert!(!hevc_track(&media).spec.hdr10plus, "{fixture}");
     }
 }
@@ -718,7 +716,7 @@ fn ts_output_keeps_every_sei_byte_identical_and_keeps_the_flag() {
         return;
     };
     let bytes = ts_mux_stage::mux(&media);
-    let back = TsDemux::new().unpackage(&bytes).expect("ts demux");
+    let back = test_harness::collect::media_from_ts(&bytes).expect("ts demux");
     assert_eq!(seis_in_display_order(&back).len(), FRAMES);
     assert_eq!(seis_in_display_order(&back), source);
     assert!(hevc_track(&back).spec.hdr10plus);
@@ -731,7 +729,7 @@ fn ts_hls_segments_keep_every_sei_byte_identical() {
     };
     let out = ts_hls_stage::hls(&media, 6);
     let joined: Vec<u8> = out.segments.concat();
-    let back = TsDemux::new().unpackage(&joined).expect("ts demux");
+    let back = test_harness::collect::media_from_ts(&joined).expect("ts demux");
     assert_eq!(seis_in_display_order(&back), source);
 }
 
@@ -775,7 +773,7 @@ fn dash_without_hdr10plus_carries_no_hdr_metadata_property() {
         let Some(bytes) = test_fixtures::require_bytes(fixture, "hdr10plus") else {
             continue;
         };
-        let media = TsDemux::new().unpackage(&bytes).expect("demux");
+        let media = test_harness::collect::media_from_ts(&bytes).expect("demux");
         let text = mpd(&media, Some(DVB_PROFILE));
         assert!(!text.contains("hdr"), "{fixture}\n{text}");
     }

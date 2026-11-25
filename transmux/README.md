@@ -29,7 +29,7 @@ Editions: where a spec is vendored in `private/specs/` the edition is verified a
 | Microsoft [MS-SSTR] Smooth Streaming | Vendored `ms_sstr_smooth_streaming_protocol` | Manifest, fragments, `tfxd`, text streams, parse | Partial | H.264 video and AAC-LC audio (and text) only |
 | RFC 3550 RTP/RTCP, RFC 6184 H.264, RFC 3640 AAC, RFC 6597 KLV, RFC 8866 SDP | RFC editions as numbered (3550, 3551, 6184 vendored) | Packetise and depacketise, SDP fmtp to codec config | Partial | Low-delay H.264 and one-AU-per-packet AAC for the live depacketiser |
 | RFC 9559 Matroska, RFC 8794 EBML | Vendored | WebM and Matroska demux, MKV mux, laced blocks | Partial | |
-| Adobe FLV v10.1 and RTMP 1.0 | Vendored | FLV demux and mux, RTMP chunk stream and AMF0 transport | Partial | H.264 and AAC only; `FlvDemux` silently skips other tracks |
+| Adobe FLV v10.1 and RTMP 1.0 | Vendored | FLV demux and mux, RTMP chunk stream and AMF0 transport | Partial | H.264 and AAC only; the FLV demuxer silently skips other tracks |
 | ITU-T H.264, H.265, H.266, H.262 | As cited (H.26x vendored) | SPS/PPS/VPS decode, `avcC`/`hvcC`/`vvcC`, NAL classification, keyframe detection | Config headers only | No slice or bitstream decode |
 | ETSI TS 102 366 AC-3/E-AC-3, TS 103 190 AC-4, TS 102 114 DTS, ETSI TS 101 154 | TS 102 366 v1.4.1, TS 103 190-1 v1.4.1, TS 102 114 v1.6.1, TS 101 154 v2.10.1 (vendored) | `dac3`/`dec3`/`dac4`/`ddts`, BSI parse, E-AC-3 dependent substreams | Config headers only | |
 | GY/T 420-2025 Annex A (AVS3 video and Audio Vivid), AVS2 | As cited | `av3c`, `lavc`/`la2c`, `av2c`, `dca3`, sample groups `telg`/`lrap`/`a3lg` | Partial | `lidx`, `av3l` and the `av3a` init-segment wiring are not modelled |
@@ -43,15 +43,15 @@ Rows are the demux inputs, columns the mux outputs. A cell is "yes" when every c
 
 | Input \ Output | CMAF/fMP4 | Progressive MP4 | TS | MKV | CMAF-HLS / LL-HLS | TS-HLS | DASH / LL-DASH | Smooth | FLV / RTMP |
 |---|---|---|---|---|---|---|---|---|---|
-| MPEG-2 TS (`TsDemux`, `StreamingTsDemux`) | yes | yes | yes | AVC, HEVC, AAC, AC-3, E-AC-3 | yes | carriable TS codecs | yes | AVC + AAC | AVC + AAC |
+| MPEG-2 TS (`StreamingTsDemux`) | yes | yes | yes | AVC, HEVC, AAC, AC-3, E-AC-3 | yes | carriable TS codecs | yes | AVC + AAC | AVC + AAC |
 | fMP4/CMAF (`Mp4Demux`) | yes | yes | carriable TS codecs only (others dropped, not an error) | listed MKV codecs | yes | carriable TS codecs | yes | AVC + AAC (+ text) | AVC + AAC |
 | Progressive MP4 (`Mp4Demux`) | yes | yes | carriable TS codecs | listed MKV codecs | yes | carriable TS codecs | yes | AVC + AAC | AVC + AAC |
 | MPEG-PS (`StreamingPsDemux`) | yes | yes | yes | listed MKV codecs | yes | carriable TS codecs | yes | AVC + AAC | AVC + AAC |
 | WebM / Matroska (`MatroskaDemux`) | not VP8, Vorbis | not VP8, Vorbis | carriable TS codecs | yes (round-trips VP8 and Vorbis) | not VP8, Vorbis | carriable TS codecs | not VP8, Vorbis | AVC + AAC | AVC + AAC |
-| FLV (`FlvDemux`) | yes | yes | yes | yes | yes | yes | yes | yes | yes |
-| RTMP (`RtmpDemux`) | yes | yes | yes | yes | yes | yes | yes | yes | yes |
+| FLV (`StreamingFlvDemux`) | yes | yes | yes | yes | yes | yes | yes | yes | yes |
+| RTMP (rtmp-runtime session engine) | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 
-Notes. The TS-carriable codecs are AVC, HEVC, MPEG-2 video, AAC, MPEG-1/2 audio, AC-3, E-AC-3, DTS, MPEG-H and opaque `Data`; VVC, AV1, VP9, Opus, FLAC, AC-4, subtitles, VP8 and Vorbis have no TS mapping in this crate, and `TsMuxStage` drops such a track rather than erroring. The MKV mux carries AVC, HEVC, VP9, VP8, AV1, AAC, Opus, Vorbis, AC-3 and E-AC-3. `FlvMuxStage` and `RtmpMuxStage` carry only AVC video and AAC audio and reject any other codec with `FlvError::UnsupportedCodec` (RTMP/FLV errors are `RtmpFlvError`); `SmoothPackager` likewise rejects everything but H.264, AAC-LC and text. `FlvDemux` skips non-AVC video and non-AAC audio with no track and no error, whereas `TsDemux` never drops a stream (unknown stream types become opaque `Data` tracks). Where a cell names only some codecs, whether a track outside that set is rejected or dropped is per output (for TS it is dropped); this README does not enumerate it for MKV. Live producers also exist: `Segmenter` (CMAF), `LlHlsSegmenter`, `StreamingTsHlsSegmenter`, `LlSegmenter` / `LlDashPackager`.
+Notes. The TS-carriable codecs are AVC, HEVC, MPEG-2 video, AAC, MPEG-1/2 audio, AC-3, E-AC-3, DTS, MPEG-H and opaque `Data`; VVC, AV1, VP9, Opus, FLAC, AC-4, subtitles, VP8 and Vorbis have no TS mapping in this crate, and `TsMuxStage` drops such a track rather than erroring. The MKV mux carries AVC, HEVC, VP9, VP8, AV1, AAC, Opus, Vorbis, AC-3 and E-AC-3. `FlvMuxStage` and `RtmpMuxStage` carry only AVC video and AAC audio and reject any other codec with `FlvError::UnsupportedCodec` (RTMP/FLV errors are `RtmpFlvError`); `SmoothPackager` likewise rejects everything but H.264, AAC-LC and text. the FLV demuxer skips non-AVC video and non-AAC audio with no track and no error, whereas the TS demuxer never drops a stream (unknown stream types become opaque `Data` tracks). Where a cell names only some codecs, whether a track outside that set is rejected or dropped is per output (for TS it is dropped); this README does not enumerate it for MKV. Live producers also exist: `Segmenter` (CMAF), `LlHlsSegmenter`, `StreamingTsHlsSegmenter`, `LlSegmenter` / `LlDashPackager`.
 
 MPEG-H over TS: the synthesized `MPEG-H_3dAudio_descriptor` (H.222.0 Table 2-121) writes `interactivityEnabled` = 0 and `compatibleProfileSetsPresent` = 1 (no compatible-set list) because the IR carries neither. The descriptor's 6-bit `referenceChannelLayout` is taken from the `mhaC` byte; a value above `0x3F` cannot be represented there and is written as `0` (unspecified) instead of failing the mux.
 
@@ -105,11 +105,37 @@ transmux = { version = "0.33", features = ["serde"] }
 Demux a real H.264 plus AAC broadcast capture once, then mux the same IR to CMAF, a DASH manifest and back to TS:
 
 ```rust
-use broadcast_common::Unpackage;
-use transmux::{CmafMuxStage, DashPackager, FragmentCut, Media, TsDemux, TsMuxStage};
+use transmux::{
+    CmafMuxStage, DashPackager, DemuxEvent, FragmentCut, Media, StreamingTsDemux, Track,
+    TsMuxStage,
+};
+
+/// Fold a whole TS buffer through the one streaming demuxer.
+fn media_from_ts(bytes: &[u8]) -> Media {
+    let mut demux = StreamingTsDemux::new().with_strict_pmt_order();
+    demux.feed(bytes).unwrap();
+    demux.finish().unwrap();
+    let mut tracks: Vec<Track> = Vec::new();
+    let mut index = std::collections::BTreeMap::new();
+    while let Some(event) = demux.poll_event() {
+        match event {
+            DemuxEvent::TrackAdded(spec) => {
+                index.insert(spec.track_id, tracks.len());
+                tracks.push(Track::new(spec, Vec::new()));
+            }
+            DemuxEvent::Sample { track_id, sample, .. } => {
+                if let Some(&i) = index.get(&track_id) {
+                    tracks[i].samples.push(sample);
+                }
+            }
+            _ => {}
+        }
+    }
+    Media::new(tracks, transmux::rtp::VIDEO_CLOCK_TIMESCALE)
+}
 
 let ts = std::fs::read("../fixtures/ts/h264-aac.ts").unwrap();
-let media: Media = TsDemux::new().unpackage(&ts[..]).unwrap();
+let media: Media = media_from_ts(&ts);
 assert!(media.tracks.len() >= 2, "an H.264 video and an AAC audio track");
 
 let mut stage = CmafMuxStage::new(media.movie_timescale, FragmentCut::OnFlush, 1);
@@ -136,7 +162,7 @@ let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
 let mpd: String = DashPackager::default().render(&specs, &log).unwrap();
 assert!(mpd.contains("<MPD"));
 
-// And back: the TS muxer stage is the byte-level inverse of TsDemux.
+// And back: the TS muxer stage is the byte-level inverse of the demuxer.
 let mut stage = transmux::TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
 let out = transmux::mux_stage::drive_media(
     &mut stage,
@@ -150,7 +176,7 @@ for item in out {
         ts_again.extend_from_slice(&chunk);
     }
 }
-let again = TsDemux::new().unpackage(&ts_again[..]).unwrap();
+let again = media_from_ts(&ts_again);
 assert_eq!(again.tracks.len(), media.tracks.len());
 ```
 
@@ -194,13 +220,13 @@ Input detection uses `container-probe`, which scores structural evidence over th
 ## What is implemented, by area
 
 - **Hub IR** (`ir`): `Media`, `Track`, `TrackSpec`, `CodecConfig`, `Sample`, `DemuxEvent`. Sample `dts` and `pts` are absolute `Option<i64>` ticks in the track timescale, `duration` is `Option<u32>`, `data` is `bytes::Bytes`. 33-bit MPEG-2 and 32-bit RTP wrap is unrolled once at the demux edge. Typed ids `TrackId(u32)` and `ProgramNumber(u16)`; `TrackSpec::source_pid` is `Option<mpeg_ts::pid::Pid>`. `TrackSpec::display: Option<DisplayGeometry>` carries a video track's display geometry (coded size and the cropped output rectangle `output_rect` (H.264 frame cropping / H.265 conformance window), plus the H.265 `default_display_rect` suggestion; the SPS VUI sample aspect ratio as a typed `AspectRatioIdc` with `sample_aspect_ratio() -> Option<(u16, u16)>`; `overscan_appropriate`; and `video_signal` with `video_format`, the full-range flag and a typed colour description — `ColourPrimaries` / `TransferCharacteristics` / `MatrixCoefficients`, so a player knows BT.709 from BT.601 without guessing, plus `full_range()` and the spec's inferred-default accessors), derived by `TrackSpec::new` from the first SPS in the `avcC`/`hvcC`, so an anamorphic SD picture (SAR 64:45 or 16:11) can be shown at its correct shape. The **per-picture** state is `Sample::display: Option<Arc<DisplayInfo>>` (every video access unit of the TS and PS demuxers carries the geometry of the SPS its slices activate — `None` means "not tracked", never "unchanged"), and a change is announced by `DemuxEvent::DisplayChanged { display, changed: DisplayChangeSet, dts, pts, random_access, .. }`, placed before the first sample that shows the new shape and sharing its `Arc`, preceded by `TrackUpdated` when the codec-config bytes changed at the same access unit; both survive batch `Media`, IR transforms and a `media-plane` `Trunk`.
-- **Demux:** `TsDemux` and `StreamingTsDemux` (PPS tracked by id, E-AC-3 waits for a whole access unit, open-GOP random access points marked; an E-AC-3 probe resolves early when its frame chain breaks or after 16 chained frames, and a PID still probing after 512 access units no longer holds back later PIDs, so a damaged capture still yields every track), `Mp4Demux` (the streaming MP4 stage: `seekable` answers byte-range demands itself, `sequential` reads forward-only input in bounded units, both emit `DemuxEvent`s), `StreamingPsDemux` (the streaming MPEG-PS stage over `mpeg_ps::PsScanner`; it holds one PES and one access unit), `MatroskaDemux` (the streaming Matroska/WebM stage over `broadcast_matroska::reader::Reader`: seekable byte ranges or forward-only input, one sample per laced frame), `FlvDemux`, `RtmpDemux`. Damaged units no longer abort a one-shot demux: they are reported in `Media::degraded` as `InputDegradation::MalformedUnit`; a TS with broken sync bytes, garbage between packets, a truncated tail, transport errors or continuity gaps reports `SyncLoss`, `TruncatedPacket`, `TransportError` or `ContinuityGap`. `Media::degraded_at` carries the PID and packet index of each entry (TS), so damage on an unused data PID can be told from damage on a kept track. `ContinuityGap` is per PID, payload-bearing non-null packets only, ISO/IEC 13818-1 §2.4.3.3: a counter jump, a same-counter packet that is not a byte-identical repeat (PCR excepted), or any identical repeat beyond the one legal duplicate (one entry per excess packet); a signalled `discontinuity_indicator` suppresses the entry.
+- **Demux:** `StreamingTsDemux` (PPS tracked by id, E-AC-3 waits for a whole access unit, open-GOP random access points marked; an E-AC-3 probe resolves early when its frame chain breaks or after 16 chained frames, and a PID still probing after 512 access units no longer holds back later PIDs, so a damaged capture still yields every track), `Mp4Demux` (the streaming MP4 stage: `seekable` answers byte-range demands itself, `sequential` reads forward-only input in bounded units, both emit `DemuxEvent`s), `StreamingPsDemux` (the streaming MPEG-PS stage over `mpeg_ps::PsScanner`; it holds one PES and one access unit), `MatroskaDemux` (the streaming Matroska/WebM stage over `broadcast_matroska::reader::Reader`: seekable byte ranges or forward-only input, one sample per laced frame), `StreamingFlvDemux`, and RTMP through `rtmp-runtime`'s session engine feeding it. Damaged container units are reported in `Media::degraded` as `InputDegradation::MalformedUnit` (a caller that folds a streaming demux's events does so with `test_harness::collect`); a TS with broken sync bytes, garbage between packets, a truncated tail, transport errors or continuity gaps reports `SyncLoss`, `TruncatedPacket`, `TransportError` or `ContinuityGap`. `Media::degraded_at` carries the PID and packet index of each entry (TS), so damage on an unused data PID can be told from damage on a kept track. `ContinuityGap` is per PID, payload-bearing non-null packets only, ISO/IEC 13818-1 §2.4.3.3: a counter jump, a same-counter packet that is not a byte-identical repeat (PCR excepted), or any identical repeat beyond the one legal duplicate (one entry per excess packet); a signalled `discontinuity_indicator` suppresses the entry.
 - **Mux and packaging:** `CmafMuxStage`, `ProgressiveMuxStage` (with the `PlanPass` that records its sample plan), `TsMuxStage` (the one TS muxer stage), and the incremental muxer stages `MkvMuxStage`, `FlvMuxStage`, `RtmpMuxStage` (plus the segmenter stages), `HlsPackager`, `StreamingTsHlsSegmenter`, `DashPackager` (static and live, auto `ContentProtection`), `LlDashPackager`, `SmoothPackager`, `build_init_segment`, `build_media_segment`.
 - **Live segmenters:** `Segmenter`, `LlHlsSegmenter` (parts before the segment closes, `set_start_time_ns`), `StreamingTsHlsSegmenter` (rolling playlist, `with_start_sequence`, `TsContinuity`, `set_start_time_ns`), `LlSegmenter`.
 - **Container boxes (ISO/IEC 14496-12:2026, ISO/IEC 14496-15:2017):** `AVCParameterSampleEntry` (avcp sample entry and `AVCParameterSample`), `TrackReferenceBox` (tref, with `AVCP_REFERENCE_TYPE`), `DataEntry` (url/urn/imdt/snim data entries in dref), `SubSampleInformationBoxV2` and `SubSampleReferenceTableBox` (ssrt), `HEVCSampleEntry::array_completeness_violations`.
 - **Transforms:** `Repackage`; the sample stages `RebaseStage`/`OffsetStage`/`GapStage` (timeline conditioning), `TrickPlayStage` (I-frame-only derivation) and `SpliceStage` driven by `SplicePlan` (keyframe-snapped concat/splice).
 - **DASH:** `DashPackager` and `LlDashPackager` render the MPD through `broadcast_dash::Mpd::to_xml`. The MPD reader, the `xs:duration` reader and writer, the segment-template grammar and `BaseURL` resolution live in `broadcast-dash` and `dash-runtime`.
-- **RTP:** `RtpPacketiserStage`, `packetise_video_sample`, `sdp_media`, `RtpDepacketiser`, `RtpStreamDepacketiser`, `rtp::rescale_ts`, `sdp_track` (module `rtp_sdp`: one SDP media section read as a playable track), `rtp_align::TrackAligner` (RTCP Sender Report A/V alignment, wrap-safe), KLV over RTP.
+- **RTP:** `RtpPacketiserStage`, `packetise_video_sample`, `sdp_media`, `RtpStreamDepacketiser`, `rtp::rescale_ts`, `sdp_track` (module `rtp_sdp`: one SDP media section read as a playable track), `rtp_align::TrackAligner` (RTCP Sender Report A/V alignment, wrap-safe), KLV over RTP.
 - **Shared live-pipeline definitions:** `Container` (`Fmp4`, `MpegTs`, `WebVtt`), `audio_profile` (operator-declared HE-AAC profiles and `apply_overrides`), `stitch::Stitcher` (one continuous timeline across reported discontinuities) and the `timeline` jump detector (`JumpDetector`, `TimelineJumpConfig`).
 - **Validation:** `validate_init_segment`, `validate_media_segment`, `validate_cmaf_track` yielding `ConformanceIssue`.
 - **Caption detection:** `CaptionDetector`, `DetectedCaption` (`Cea608(Cea608Channel)` / `Cea708(u8)`), `declared_caption_services` and `DetectedCaption::declared_language` for CEA-608/708 caption discovery from a video track's PMT loop and sample data (issue #1428).
@@ -214,7 +240,7 @@ Container only, never a codec. Sans-IO pull and push APIs, zero-copy sample fan-
 
 ## Related crates
 
-Depends on `broadcast-common` (`Parse`/`Serialize`, the `Stage` contract, and `Unpackage` for the batch demuxers), `broadcast-hls`, `isobmff`, `mpeg-ts`, `mpeg-pes`, `mpeg-ps`, `rtp-packet` (RTP and RTCP), `dvb-si` (typed PMT audio metadata) and optionally `container-probe`. Consumed by `media-plane` (IR and `TrackId`), `hls-runtime`, `rtmp-runtime` (dev), `multimux` and `media-doctor`. Python bindings (`transmux-py`) live outside the workspace.
+Depends on `broadcast-common` (`Parse`/`Serialize`, the `Stage` contract, and `Unpackage`), `broadcast-hls`, `isobmff`, `mpeg-ts`, `mpeg-pes`, `mpeg-ps`, `rtp-packet` (RTP and RTCP), `dvb-si` (typed PMT audio metadata) and optionally `container-probe`. Consumed by `media-plane` (IR and `TrackId`), `hls-runtime`, `rtmp-runtime` (dev), `multimux` and `media-doctor`. Python bindings (`transmux-py`) live outside the workspace.
 
 ## MSRV and licence
 

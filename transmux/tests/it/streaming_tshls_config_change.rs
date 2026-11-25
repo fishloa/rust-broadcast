@@ -5,12 +5,11 @@
 
 use crate::hub_fixtures::video_track;
 use crate::ts_hls_stage;
-use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use broadcast_hls::MediaPlaylist;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
-use transmux::{Sample, StreamingTsHlsSegmenter, TsDemux, UpdateTrackOutcome};
+use transmux::{Sample, StreamingTsHlsSegmenter, UpdateTrackOutcome};
 
 fn load_ts() -> Vec<u8> {
     let path = test_fixtures::path("ts/h264-aac.ts");
@@ -18,7 +17,7 @@ fn load_ts() -> Vec<u8> {
 }
 
 fn demux(ts: &[u8]) -> Media {
-    TsDemux::new().unpackage(ts).expect("demux TS")
+    test_harness::collect::media_from_ts(ts).expect("demux TS")
 }
 
 fn count_discontinuities(playlist: &str) -> usize {

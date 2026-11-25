@@ -3,11 +3,10 @@
 #![cfg(feature = "std")]
 
 use crate::ts_mux_stage;
-use broadcast_common::Unpackage;
 use std::sync::Arc;
 use transmux::annexb::iter_length_prefixed_nals;
 use transmux::ir::{ActiveFormatDescription, AfdPersistence, BarData, CodecConfig, DisplayInfo};
-use transmux::ts_demux::{DemuxEvent, StreamingTsDemux, TsDemux};
+use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 use transmux::{Media, Track};
 
 fn avc_track_mut(media: &mut Media) -> &mut Track {
@@ -98,7 +97,7 @@ fn hevc_afd_nal(code: u8, active: bool, prefix: bool) -> Vec<u8> {
 
 fn build_avc_from_n(fixture: &str, sei_per_au: &[Vec<Vec<u8>>], n: Option<usize>) -> Vec<u8> {
     let data = test_fixtures::require_bytes(fixture, "display_afd").expect(fixture);
-    let mut media = TsDemux::new().unpackage(&data).expect("demux");
+    let mut media = test_harness::collect::media_from_ts(&data).expect("demux");
     let track = avc_track_mut(&mut media);
     for (i, sample) in track.samples.iter_mut().enumerate() {
         let mut v = strip_afd_sei(&sample.data);
@@ -125,7 +124,7 @@ fn build_avc(sei_per_au: &[Vec<Vec<u8>>]) -> Vec<u8> {
 
 fn build_hevc(sei_per_au: &[Vec<Vec<u8>>]) -> Vec<u8> {
     let data = test_fixtures::require_bytes("ts/hevc/main.ts", "display_afd").expect("hevc");
-    let mut media = TsDemux::new().unpackage(&data).expect("demux");
+    let mut media = test_harness::collect::media_from_ts(&data).expect("demux");
     let track = hevc_track_mut(&mut media);
     for (i, sample) in track.samples.iter_mut().enumerate() {
         let mut v = strip_hevc_afd_sei(&sample.data);
@@ -163,8 +162,7 @@ fn bar_of(d: &DisplayInfo) -> Option<BarData> {
 }
 
 fn run_stream(ts: &[u8], policy: AfdPersistence) -> Vec<Seen> {
-    let video_id = TsDemux::new()
-        .unpackage(ts)
+    let video_id = test_harness::collect::media_from_ts(ts)
         .expect("batch")
         .tracks
         .iter()
@@ -276,7 +274,7 @@ fn afd_mid_gop_change() {
     }
     assert_eq!(samples[2].arc, c.arc);
     // batch
-    let media = TsDemux::new().unpackage(&ts).expect("batch");
+    let media = test_harness::collect::media_from_ts(&ts).expect("batch");
     let track = media
         .tracks
         .iter()
@@ -530,8 +528,7 @@ fn afd_first_wins_in_one_au() {
 fn hevc_prefix_sei_afd_works() {
     let sei = vec![vec![hevc_afd_nal(9, true, true)]];
     let ts = build_hevc(&sei);
-    let video_id = TsDemux::new()
-        .unpackage(&ts)
+    let video_id = test_harness::collect::media_from_ts(&ts)
         .expect("batch")
         .tracks
         .iter()
@@ -569,8 +566,7 @@ fn hevc_prefix_sei_afd_works() {
 fn hevc_suffix_sei_ignored() {
     let sei = vec![vec![hevc_afd_nal(9, true, false)]];
     let ts = build_hevc(&sei);
-    let video_id = TsDemux::new()
-        .unpackage(&ts)
+    let video_id = test_harness::collect::media_from_ts(&ts)
         .expect("batch")
         .tracks
         .iter()
@@ -608,8 +604,7 @@ fn hevc_prefix_plus_suffix_keeps_prefix() {
         hevc_afd_nal(10, true, false),
     ]];
     let ts = build_hevc(&sei);
-    let video_id = TsDemux::new()
-        .unpackage(&ts)
+    let video_id = test_harness::collect::media_from_ts(&ts)
         .expect("batch")
         .tracks
         .iter()
@@ -651,10 +646,12 @@ fn batch_tsdemux_afd_persistence_changes_the_result() {
     let ts = build_avc_from_n("ts/h264-aac.ts", &sei, Some(26));
 
     let last_afd = |policy| {
-        let media = TsDemux::new()
-            .with_afd_persistence(policy)
-            .unpackage(&ts)
-            .expect("batch demux");
+        let media = test_harness::collect::media_from_ts_with_afd(
+            &ts,
+            test_harness::collect::WHOLE_INPUT,
+            policy,
+        )
+        .expect("whole-input demux");
         let track = media
             .tracks
             .iter()

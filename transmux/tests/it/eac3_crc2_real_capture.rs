@@ -13,12 +13,10 @@
 //! Revert-verified: with the `crc2` check in `Ec3SyncframeInfo::
 //! from_ac3_independent` disabled, both tests fail (the false headers parse
 //! and the demuxed track loses its eighth frame).
-
-use broadcast_common::Unpackage;
 use broadcast_common::error::InvalidValue;
+use transmux::Error;
 use transmux::ac3_syncframe::{Ac3SyncframeInfo, Ec3SyncframeInfo};
 use transmux::pipeline::CodecConfig;
-use transmux::{Error, TsDemux};
 
 const CAPTURES: [&str; 3] = ["m6-single.ts", "m6-discontinuity.ts", "m6-duplicate.ts"];
 const PID: u16 = 0x82;
@@ -92,7 +90,7 @@ fn false_ac3_headers_in_the_real_payload_are_rejected_by_crc2() {
 #[test]
 fn the_real_eac3_frame_after_a_false_header_is_recovered() {
     for name in CAPTURES {
-        let media = TsDemux::new().unpackage(&capture(name)).expect("demux");
+        let media = test_harness::collect::media_from_ts(&capture(name)).expect("demux");
         let track = media
             .tracks
             .iter()

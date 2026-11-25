@@ -3,13 +3,13 @@ use url::Url;
 
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
 use broadcast_client::{Action, Config, ConnId, Event, Session};
+use broadcast_common::Serialize;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::{Serialize, Unpackage};
 use rtsp_runtime::transport::{Transport, TransportSpec};
 use rtsp_types::{Message, StatusCode, Version, headers};
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
-use transmux::{RtpPacketiserStage, Sample, SenderReport, TsDemux};
+use transmux::{RtpPacketiserStage, Sample, SenderReport};
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -115,7 +115,7 @@ impl MediaFixture {
 
     pub fn demux() -> transmux::Media {
         let data = test_fixtures::read(FIXTURE);
-        TsDemux::new().unpackage(&data[..]).expect("demux fixture")
+        test_harness::collect::media_from_ts(&data[..]).expect("demux fixture")
     }
 
     pub fn from_media(media: &transmux::Media) -> Self {

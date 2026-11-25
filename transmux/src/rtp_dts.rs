@@ -101,6 +101,17 @@ pub(crate) struct DtsDeriver {
     last_dts: Option<i64>,
     anchored: bool,
     field_coded: bool,
+    /// The previous access unit's presentation time (wire order), and whether
+    /// any step has gone backward. A stream whose presentation order is its
+    /// wire order needs no decode-timeline reconstruction: its decode time is
+    /// its presentation time, exactly as the batch path returns it.
+    last_wire_pts: Option<i64>,
+    saw_backward: bool,
+    /// Whether the reorder depth came from the stream's own declaration rather
+    /// than the start-of-run probe. A declared depth is honoured even for a
+    /// stream that shows no reorder yet; a probed zero depth means the wire
+    /// order is the presentation order.
+    declared: bool,
 }
 
 impl DtsDeriver {
@@ -113,6 +124,9 @@ impl DtsDeriver {
             last_dts: None,
             anchored: false,
             field_coded: false,
+            last_wire_pts: None,
+            saw_backward: false,
+            declared: declared.is_some(),
         }
     }
 
@@ -128,6 +142,7 @@ impl DtsDeriver {
 
     pub(crate) fn set_declared(&mut self, declared: Option<usize>) {
         if self.seen == 0 && self.held.is_empty() {
+            self.declared = declared.is_some();
             self.depth = declared.map(|n| {
                 let n = n.min(MAX_REORDER_DEPTH);
                 if self.field_coded {
@@ -150,6 +165,11 @@ impl DtsDeriver {
             out.push(sample);
             return;
         };
+        let pts = sample.timing.and_then(|t| t.pts()).unwrap_or_default();
+        if self.last_wire_pts.is_some_and(|prev| pts < prev) {
+            self.saw_backward = true;
+        }
+        self.last_wire_pts = Some(pts);
         if self.depth.is_none() {
             self.held.push(sample);
             if self.held.len() >= PROBE_AUS {
@@ -181,6 +201,15 @@ impl DtsDeriver {
         self.window.clear();
         self.last_dts = None;
         self.anchored = false;
+        self.last_wire_pts = None;
+        self.saw_backward = false;
+    }
+
+    /// A stream with no backward step whose depth was probed as zero presents
+    /// in decode order: its decode time is its presentation time, exactly as
+    /// the batch path returns it.
+    fn presentation_order_is_wire_order(&self) -> bool {
+        !self.saw_backward && !self.declared && self.depth == Some(0)
     }
 
     fn settle_probe(
@@ -226,6 +255,15 @@ impl DtsDeriver {
         }
         self.seen += 1;
         let mut sample = sample;
+        if self.presentation_order_is_wire_order() {
+            let dts = self.window.remove(0);
+            self.last_dts = Some(dts);
+            if let Some(t) = sample.timing.as_mut() {
+                *t = t.with_composition(dts, pts);
+            }
+            out.push(sample);
+            return;
+        }
         let smallest = self.window[0];
         let prev = self.last_dts.unwrap_or(i64::MIN);
         let dts = if smallest > prev {
@@ -273,6 +311,22 @@ impl DtsDeriver {
             .unwrap_or(1);
         let held = core::mem::take(&mut self.held);
         let last = held.len().saturating_sub(1);
+        if self.presentation_order_is_wire_order() {
+            for mut s in held {
+                let dts = self.window.remove(0);
+                let pts = s.timing.and_then(|t| t.pts()).unwrap_or(dts);
+                self.last_dts = Some(dts);
+                if let Some(t) = s.timing.as_mut() {
+                    *t = t.with_composition(dts, pts);
+                }
+                out.push(s);
+            }
+            self.anchored = true;
+            if !pop_last {
+                self.window.clear();
+            }
+            return;
+        }
         for (j, mut s) in held.into_iter().enumerate() {
             let dts = if j < depth {
                 let behind = i64::try_from(depth - j).unwrap_or(i64::MAX);

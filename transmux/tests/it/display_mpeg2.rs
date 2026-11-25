@@ -31,7 +31,7 @@ use std::sync::Arc;
 use transmux::ir::{
     ActiveFormatDescription, CodecConfig, DisplayChangeSet, DisplayInfo, TrackId, UserDataCarriage,
 };
-use transmux::ts_demux::{DemuxEvent, StreamingTsDemux, TsDemux};
+use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 fn read(fixture: &str) -> Option<Vec<u8>> {
     test_fixtures::require_bytes(fixture, "display_mpeg2")
@@ -210,7 +210,7 @@ fn test_205_afd_14_and_16_11() {
     let Some(ts) = read("suites/tsduck/input/test-205.ts") else {
         return;
     };
-    let media = TsDemux::new().demux(&ts).expect("batch demux");
+    let media = test_harness::collect::media_from_ts(&ts).expect("batch demux");
     let track_id = mpeg2_track(&media, 704, 576);
     let spec = media
         .tracks
@@ -311,7 +311,7 @@ fn test_108_two_afd_values_two_tracks() {
     let Some(ts) = read("suites/tsduck/input/test-108.ts") else {
         return;
     };
-    let media = TsDemux::new().demux(&ts).expect("batch demux");
+    let media = test_harness::collect::media_from_ts(&ts).expect("batch demux");
     // Oracle: 0x208 (720x576) carries AFD 8, 0x201 carries 10; both SAR 64:45.
     let tracks: Vec<TrackId> = media
         .tracks
@@ -363,7 +363,7 @@ fn test_040_afd_10_and_afd_8_per_track() {
     let Some(ts) = read("suites/tsduck/input/test-040.ts") else {
         return;
     };
-    let media = TsDemux::new().demux(&ts).expect("batch demux");
+    let media = test_harness::collect::media_from_ts(&ts).expect("batch demux");
     // Oracle: 0x51 = 704x480 10:11 with AFD 10, 0x31 = 1280x720 1:1 with AFD 8.
     let hd = mpeg2_track(&media, 1280, 720);
     let sd = media
@@ -445,7 +445,7 @@ fn mpeg2_without_afd_is_unchanged_behaviour() {
     let Some(ts) = read("ts/legacy/mpeg2-mp2.ts") else {
         return;
     };
-    let media = TsDemux::new().demux(&ts).expect("batch demux");
+    let media = test_harness::collect::media_from_ts(&ts).expect("batch demux");
     let track_id = mpeg2_track(&media, 320, 240);
     let track = media
         .tracks

@@ -38,14 +38,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `repackage`: the streaming `Repackage::run` now honours `Repackage::trim`, holding samples until every announced track has produced its first sample and the window's lower edge has snapped back to a keyframe, then applying the one `trim` rule. `Repackage::window_hold` bounds that hold in bytes; past it the run fails with the new `Error::RepackageWindowHoldExceeded`.
 - `payload`: a caller-owned `PayloadRegistry` holds object-safe `PayloadDecoder`s and renders one opaque data-track sample as named `PayloadValue`s (`PayloadScalar` is text, signed/unsigned integer, float, bytes, a POSIX-epoch-microsecond timestamp or a boolean). Each plug-in is a cargo feature; `St0601Decoder` (feature `motion-imagery-metadata`) claims a data track whose sample starts with the MISB ST 0601 Universal Label and returns its items as `tag_<n>` values plus `checksum_valid`, the tag-1 running-sum check reported as a value rather than as a decode error.
 - `data_identity`: `DataIdentityMap` is a caller-built table from a source track to the `DataIdentity` it should carry in the output, and `DataIdentityStage` rewrites that data track's `MuxInput::Track` announcement while passing samples and every other input through unchanged. There is no library-chosen default: an unmapped data track reaches the muxer with its own identity.
+- `StreamingFlvDemux` resynchronises past FLV tag framing it cannot parse and keeps the tags after the damage, instead of stopping at the first damaged tag and losing the tail. It decides with `rtmp_runtime::flv::resync_decision`, the incremental form of the same consistency rule the whole-buffer `tags_resync` walks with, so the stage never holds more than one tag's declared size plus the bytes needed to validate the next tag header. Damage is reported on the event stream as the new `DemuxEvent::DamagedSpan { offset, dropped_bytes }` (one event per skipped span), which `test_harness::collect` folds into `Media::degraded`.
+- `StreamingFlvDemux::finish` diagnoses an input that ends before it can yield anything: a header shorter than 9/13 bytes, a `DataOffset` past the input and an incomplete first tag are `FlvError::Codec(BufferTooShort)`, and a complete input carrying no supported track is `FlvError::NoSupportedTrack`. Everything decodable is queued before the error.
 
 ### Breaking
+- `TsDemux`, `FlvDemux`, `RtmpDemux` and `RtpDepacketiser` (and their
+  `Unpackage` impls) are deleted: `StreamingTsDemux`, `StreamingFlvDemux` and
+  `RtpStreamDepacketiser` are the only demuxers, and RTMP ingest is
+  `rtmp-runtime`'s session engine feeding `StreamingFlvDemux`. `RtpInput`,
+  `RtpInputStream`, `RtpTimingWarning` and `MAX_TIMING_WARNINGS` go with them.
+  Each deleted demuxer's output is pinned by a per-container baseline
+  (`fixtures/{ts,flv,rtmp}/demux-baseline.txt`, plus the private TS corpus)
+  that the streaming stages reproduce fed in 1-byte, one-packet/natural and
+  64 KiB chunks. `test_harness::collect` gained `media_from_ts`,
+  `media_from_flv`, `media_from_rtmp` and `media_from_rtp` for tests that need
+  a whole `Media`.
 - `WebmDemux` and its `Unpackage` impl are deleted; `MatroskaDemux` is the one
   Matroska/WebM demuxer (a `Stage`, like `Mp4Demux` and `StreamingPsDemux`).
   `--max-whole-input-bytes` and `CliError::WholeInputTooLarge` are deleted.
 - `PsDemux` and its `Unpackage` impl are deleted; `StreamingPsDemux` is the one
   Program Stream demuxer. The CLI streams a PS input like every other
   container, and `media-plane` / `multimux` stream PS files with no size cap.
+- `StreamingFlvDemux::finish` returns `Result<(), FlvError>`: a live source logs the error and keeps ingesting, a file tool returns it. `StreamingFlvDemux::last_walk_was_truncated` is renamed `ended_inside_a_tag` (a tail cut inside a tag after at least one complete tag is still not an error, only observable), and `DemuxEvent` gained the non-exhaustive `DamagedSpan` variant.
 - `cli::Opts` gained `data_identity: DataIdentityMap` (construct with `..Opts::default()`); `cli::Args` gained `--data-identity`. CMAF output of an input longer than `--segment-duration` now has several fragments rather than one.
 - `Error::RepackageWindowNeedsWholeInput` is removed: the streaming `Repackage::run` accepts a window, bounded by `Repackage::window_hold` (`Error::RepackageWindowHoldExceeded`).
 - `mux_stage`: an untimed head (samples that state a span but no timestamp, before the first timestamped sample) is now ordered before that first timed sample in `drive_media`, rather than at its instant. A track whose head plays before a video picture therefore sorts where it plays.
@@ -312,6 +326,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
  builds against `motion-imagery-metadata` 0.2 (was 0.1). `LocalSetItem::value_typed()` returns that crate's `St0601Value`, so a consumer naming its types moves to 0.2 with it; 0.2 types tag 81/115/116/121/122/127/128/130/138/139/141/142 packs through new accessors and drops the `St0903VmtiItem::AlgorithmSeries`/`OntologySeries` variants.
 
 ### Fixed
+- `RtpStreamDepacketiser` keeps every access unit and gives each one its decode-step duration. A sequence gap now drops the unit under construction and, when the lost packet's marker bit says its unit continued, the remainder of that unit too, so a partial access unit is never handed downstream as a sample; the final unit's duration falls back to the smallest positive decode step rather than the last one. The marker bit ends an access unit for AAC as well as H.264 (it previously waited for the next packet's timestamp change), and a declared reorder depth of zero is honoured.
 - The CLI's `--decrypt` streams: the demux events pass through `CencDecryptStage`
   on their way to the muxer (`CliStream` owns the stage and feeds every
   `Track`/`Sample` into it), so each protected sample is deciphered and written

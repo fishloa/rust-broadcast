@@ -6,10 +6,10 @@
 
 use std::collections::BTreeMap;
 
+use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::{Stage, Unpackage};
 use transmux::mux_stage::{MuxInput, MuxOutput};
-use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, TsDemux, TsMuxStage};
+use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, TsMuxStage};
 
 use crate::ts_mux_stage;
 
@@ -19,7 +19,7 @@ const PMT_PID: u16 = 0x1000;
 
 fn media(rel: &str) -> Media {
     let bytes = test_fixtures::read(rel);
-    TsDemux::new().unpackage(bytes.as_slice()).expect("demux")
+    test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux")
 }
 
 fn pid(p: &[u8]) -> u16 {

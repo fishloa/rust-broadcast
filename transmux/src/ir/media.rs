@@ -115,7 +115,7 @@ pub struct Media {
     pub movie_timescale: broadcast_common::timescale::Timescale,
     /// PCR timeline recovered from the source, in wire order
     /// ([`PcrSample`], ISO/IEC 13818-1 §2.4.3.4). Empty for every demuxer that
-    /// does not read a TS adaptation field (i.e. every non-[`TsDemux`](crate::ts_demux::TsDemux) source).
+    /// does not read a TS adaptation field (i.e. every non-[`StreamingTsDemux`](crate::ts_demux::StreamingTsDemux) source).
     pub pcr: Vec<PcrSample>,
     /// Tracks the demuxer found in the source container but could not model
     /// (media plane step-2 fix wave 1, B2/B3) — always empty unless the

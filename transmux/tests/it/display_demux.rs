@@ -8,7 +8,6 @@ use transmux::ir::{
     AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, VideoFormat, VideoSignalType,
 };
 use transmux::pipeline;
-use transmux::ts_demux::TsDemux;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -16,7 +15,7 @@ fn timescale(value: u32) -> Timescale {
 
 fn avc_spec(fixture: &str) -> Option<TrackSpec> {
     let data = test_fixtures::require_bytes(fixture, "display_demux")?;
-    let media = TsDemux::new().demux(&data).ok()?;
+    let media = test_harness::collect::media_from_ts(&data).ok()?;
     media
         .tracks
         .into_iter()
@@ -211,7 +210,7 @@ fn neither_box_display_unchanged() {
         Some(d) => d,
         None => return,
     };
-    let media = TsDemux::new().demux(&data).expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let track = media
         .tracks
         .iter()
@@ -231,7 +230,7 @@ fn display_none_with_pasp_creates_display() {
         Some(d) => d,
         None => return,
     };
-    let media = TsDemux::new().demux(&data).expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let track = media
         .tracks
         .iter()
@@ -406,7 +405,7 @@ fn annexb_access_unit(nals: &[Vec<u8>]) -> Vec<u8> {
 /// codec config), so only the samples are synthetic.
 fn avc_track_spec() -> Option<TrackSpec> {
     let data = test_fixtures::require_bytes("ts/h264-aac.ts", "display_demux")?;
-    let media = TsDemux::new().demux(&data).ok()?;
+    let media = test_harness::collect::media_from_ts(&data).ok()?;
     media
         .tracks
         .into_iter()

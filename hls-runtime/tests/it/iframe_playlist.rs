@@ -20,7 +20,6 @@ use transmux::TrackId;
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, TrackSpec, build_init_segment, build_media_segment,
 };
-use transmux::ts_demux::TsDemux;
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -259,7 +258,7 @@ fn iframe_audio_first_leading_skipped() {
     let Some(data) = test_fixtures::require_bytes("ts/h264-aac.ts", "iframe") else {
         return;
     };
-    let media = TsDemux::new().demux(&data).expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let init = build_init_segment(&specs, media.movie_timescale).expect("init");
     let audio = media
@@ -337,7 +336,7 @@ fn iframe_audio_first_after_entry_not_found() {
     let Some(data) = test_fixtures::require_bytes("ts/h264-aac.ts", "iframe") else {
         return;
     };
-    let media = TsDemux::new().demux(&data).expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let init = build_init_segment(&specs, media.movie_timescale).expect("init");
     let audio = media
@@ -396,7 +395,7 @@ fn iframe_nonsync_first_video_leading_skipped() {
     let Some(data) = test_fixtures::require_bytes("ts/h264-aac.ts", "iframe") else {
         return;
     };
-    let media = TsDemux::new().demux(&data).expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let init = build_init_segment(&specs, media.movie_timescale).expect("init");
     let video = media
@@ -468,7 +467,7 @@ fn iframe_nonsync_first_video_after_entry_not_found() {
     let Some(data) = test_fixtures::require_bytes("ts/h264-aac.ts", "iframe") else {
         return;
     };
-    let media = TsDemux::new().demux(&data).expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let init = build_init_segment(&specs, media.movie_timescale).expect("init");
     let video = media

@@ -13,9 +13,14 @@ use std::collections::BTreeMap;
 use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
 use transmux::{
-    AbandonReason, DemuxEvent, Media, Sample, SkippedTrack, SplicePlan, SplicePoint, SpliceStage,
-    Track, TrackId, TrickPlayStage,
+    AbandonReason, AfdPersistence, DegradationRecord, DemuxEvent, InputDegradation, Media,
+    PcrSample, Sample, SkippedTrack, SplicePlan, SplicePoint, SpliceStage, StreamingFlvDemux,
+    StreamingTsDemux, Track, TrackId, TrickPlayStage,
 };
+
+/// Feed a whole buffer to a stage in one piece (`[u8]::chunks` of this size
+/// yields exactly one chunk).
+pub const WHOLE_INPUT: usize = usize::MAX;
 
 /// Movie timescale [`media_from_events`] uses when the event stream names none
 /// (no event carries it). The caller that knows the real value overwrites it.
@@ -92,6 +97,9 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Media {
                 track_id, reason, ..
             } => skipped.push(skipped_from_reason(reason, track_id)),
             DemuxEvent::InputDegraded { kind, .. } => degraded.push(kind),
+            DemuxEvent::DamagedSpan { offset, .. } => {
+                degraded.push(InputDegradation::MalformedUnit { position: offset })
+            }
             _ => {}
         }
     }
@@ -244,6 +252,216 @@ pub fn media_from_ps(bytes: &[u8], chunk: usize) -> Result<Media, transmux::Erro
     let mut media = media_from_events(events);
     media.movie_timescale = transmux::rtp::VIDEO_CLOCK_TIMESCALE;
     Ok(media)
+}
+
+/// Drive [`StreamingTsDemux`] over a whole in-memory MPEG-2 TS image in one
+/// feed and fold its events into a [`Media`], exactly as the deleted
+/// whole-input `TsDemux::demux` did: strict PMT track order, the program
+/// `ClockReference`s as [`PcrSample`]s, and every damage record resolved
+/// against the final track set by source PID.
+///
+/// A whole small fixture in memory is fine **here only**: this crate is a test
+/// harness. The stage itself never holds the input.
+pub fn media_from_ts(bytes: &[u8]) -> Result<Media, transmux::Error> {
+    media_from_ts_chunked(bytes, WHOLE_INPUT)
+}
+
+/// [`media_from_ts`] fed in `chunk`-sized pieces (the streaming-gate form).
+pub fn media_from_ts_chunked(bytes: &[u8], chunk: usize) -> Result<Media, transmux::Error> {
+    media_from_ts_with_afd(bytes, chunk, AfdPersistence::UntilReplaced)
+}
+
+/// [`media_from_ts_chunked`] with an explicit AFD persistence policy.
+pub fn media_from_ts_with_afd(
+    bytes: &[u8],
+    chunk: usize,
+    afd: AfdPersistence,
+) -> Result<Media, transmux::Error> {
+    let mut demux = StreamingTsDemux::new()
+        .with_afd_persistence(afd)
+        .with_strict_pmt_order();
+    for piece in bytes.chunks(chunk.max(1)) {
+        demux.feed(piece)?;
+    }
+    demux.finish()?;
+
+    let mut tracks: Vec<Track> = Vec::new();
+    let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
+    let mut pcr: Vec<PcrSample> = Vec::new();
+    let mut degraded: Vec<InputDegradation> = Vec::new();
+    let mut degraded_at: Vec<DegradationRecord> = Vec::new();
+    while let Some(event) = demux.poll_event() {
+        match event {
+            DemuxEvent::TrackAdded(spec) => {
+                index_by_id.insert(spec.track_id, tracks.len());
+                tracks.push(Track::new(spec, Vec::new()));
+            }
+            DemuxEvent::TrackUpdated(spec) => {
+                if let Some(&index) = index_by_id.get(&spec.track_id) {
+                    tracks[index].spec = spec;
+                }
+            }
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
+                if let Some(&index) = index_by_id.get(&track_id) {
+                    let track = &mut tracks[index];
+                    if track.samples.is_empty()
+                        && let Some(dts) = sample.timing.and_then(|timing| timing.dts())
+                    {
+                        track.start_decode_time = u64::try_from(dts).unwrap_or(0);
+                    }
+                    track.samples.push(sample);
+                }
+            }
+            DemuxEvent::ClockReference {
+                pcr: wire,
+                discontinuous,
+                provenance,
+                ..
+            } => {
+                if let (Some(wire), Some(pid), Some(packet_index)) =
+                    (wire, provenance.pid, provenance.packet_index)
+                {
+                    pcr.push(PcrSample::new(wire, pid, packet_index, discontinuous));
+                }
+            }
+            DemuxEvent::InputDegraded {
+                track,
+                kind,
+                provenance,
+                ..
+            } => {
+                degraded.push(kind);
+                degraded_at.push(DegradationRecord::new(kind, track, provenance));
+            }
+            DemuxEvent::TrackRemoved { .. }
+            | DemuxEvent::TrackAbandoned { .. }
+            | DemuxEvent::Discontinuity { .. }
+            | DemuxEvent::TracksResolved { .. }
+            | DemuxEvent::DisplayChanged { .. } => {}
+            _ => {}
+        }
+    }
+    for record in &mut degraded_at {
+        if record.track.is_none()
+            && let Some(pid) = record.provenance.pid
+            && let Some(t) = tracks.iter().find(|t| t.spec.source_pid == Some(pid))
+        {
+            record.track = Some(t.spec.track_id);
+        }
+    }
+    let mut media = Media::new(tracks, transmux::rtp::VIDEO_CLOCK_TIMESCALE).with_pcr(pcr);
+    media.degraded = degraded;
+    media.degraded_at = degraded_at;
+    Ok(media)
+}
+
+/// Drive [`StreamingFlvDemux`] over a whole in-memory FLV image and fold its
+/// events into a [`Media`] on FLV's 1 kHz clock.
+///
+/// A whole small fixture in memory is fine **here only**: this crate is a test
+/// harness. The stage itself never holds the input.
+///
+/// # Errors
+///
+/// The first structural error the stage reports (bad signature, implausible
+/// header, corrupt codec config).
+pub fn media_from_flv(bytes: &[u8]) -> Result<Media, transmux::flv::FlvError> {
+    media_from_flv_chunked(bytes, WHOLE_INPUT)
+}
+
+/// [`media_from_flv`] fed in `chunk`-sized pieces.
+///
+/// # Errors
+///
+/// The first structural error the stage reports.
+pub fn media_from_flv_chunked(
+    bytes: &[u8],
+    chunk: usize,
+) -> Result<Media, transmux::flv::FlvError> {
+    let mut demux = StreamingFlvDemux::new();
+    for piece in bytes.chunks(chunk.max(1)) {
+        demux.feed(piece)?;
+    }
+    demux.finish()?;
+    let mut events = Vec::new();
+    while let Some(event) = demux.poll_event() {
+        events.push(event);
+    }
+    let mut media = media_from_events(events);
+    if let Some(track) = media.tracks.first() {
+        media.movie_timescale = track.spec.timescale;
+    }
+    Ok(media)
+}
+
+/// Drive the RTMP chunk reassembly and the streaming FLV demux over a whole
+/// post-handshake RTMP chunk stream, folding the result into a [`Media`].
+///
+/// The reassembly half is exactly what the deleted whole-input `RtmpDemux` did:
+/// collect the Audio (type 8), Video (type 9) and `onMetaData` (type 18)
+/// message bodies, rebuild an FLV byte stream from them, and demux that.
+///
+/// # Errors
+///
+/// An RTMP wire error, a rebuilt tag body too large for FLV's UI24
+/// `DataSize`, or the FLV stage's own error.
+pub fn media_from_rtmp(bytes: &[u8]) -> Result<Media, transmux::RtmpFlvError> {
+    media_from_rtmp_chunked(bytes, WHOLE_INPUT)
+}
+
+/// [`media_from_rtmp`] fed in `chunk`-sized pieces.
+///
+/// # Errors
+///
+/// An RTMP wire error, a rebuilt tag body too large for FLV's UI24
+/// `DataSize`, or the FLV stage's own error.
+pub fn media_from_rtmp_chunked(
+    bytes: &[u8],
+    chunk: usize,
+) -> Result<Media, transmux::RtmpFlvError> {
+    use broadcast_common::Serialize as _;
+    use rtmp_runtime::chunk::ChunkAssembler;
+    use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
+    use rtmp_runtime::message::{MessageTypeId, ProtocolControl};
+
+    let mut assembler = ChunkAssembler::new();
+    let mut tags: Vec<(TagType, u32, Vec<u8>)> = Vec::new();
+    let mut has_video = false;
+    let mut has_audio = false;
+    for piece in bytes.chunks(chunk.max(1)) {
+        assembler.feed(piece);
+        while let Some(message) = assembler.next_message()? {
+            match message.message_type_id {
+                MessageTypeId::SetChunkSize => {
+                    if let Some(ProtocolControl::SetChunkSize(size)) =
+                        ProtocolControl::from_message(&message)?
+                    {
+                        assembler.compact();
+                        assembler.set_chunk_size(size);
+                    }
+                }
+                MessageTypeId::Audio => {
+                    has_audio = true;
+                    tags.push((TagType::Audio, message.timestamp.millis(), message.payload));
+                }
+                MessageTypeId::Video => {
+                    has_video = true;
+                    tags.push((TagType::Video, message.timestamp.millis(), message.payload));
+                }
+                MessageTypeId::DataAmf0 => {
+                    tags.push((TagType::Script, message.timestamp.millis(), message.payload));
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut flv = FlvHeader::new(has_audio, has_video).try_to_bytes()?;
+    for (tag_type, timestamp, body) in &tags {
+        flv.extend_from_slice(&FlvTag::new(*tag_type, *timestamp, body).try_to_bytes()?);
+    }
+    media_from_flv(&flv).map_err(transmux::RtmpFlvError::Flv)
 }
 
 /// The result of driving a [`SplicePlan`] over whole medias: the joined media
@@ -486,4 +704,261 @@ pub fn media_from_matroska(bytes: &[u8], mode: CollectMode) -> Result<Media, tra
     let mut media = media_from_events(events);
     media.movie_timescale = transmux::matroska_demux::IR_TIMESCALE;
     Ok(media)
+}
+
+/// One RTP stream handed to [`media_from_rtp`]: its payload format, its
+/// packets in arrival order, and the codec config / clock the SDP would carry.
+///
+/// The clock rules are the ones the deleted whole-input demuxer enforced:
+/// an MPEG-4 audio stream's RTP clock is its sampling rate (RFC 3640 §3.1),
+/// H.264's is 90 kHz (RFC 6184 §8.1), and a config for one payload format on a
+/// stream of the other is a caller mistake.
+pub struct RtpTestStream {
+    /// The payload format carried on the stream.
+    pub kind: transmux::RtpMediaKind,
+    /// The stream's RTP clock rate in Hz.
+    pub clock_rate: u32,
+    /// The codec configuration (required for AAC).
+    pub config: Option<transmux::CodecConfig>,
+    /// The RTP packets, in arrival (sequence) order.
+    pub packets: Vec<Vec<u8>>,
+    /// Whether [`Self::with_clock_rate`] asserted the rate.
+    clock_rate_explicit: bool,
+}
+
+impl RtpTestStream {
+    /// A stream carrying `kind` with no codec config and its format's default
+    /// clock (90 kHz for H.264, 44.1 kHz for AAC).
+    pub fn new(kind: transmux::RtpMediaKind, packets: Vec<Vec<u8>>) -> Self {
+        Self {
+            kind,
+            clock_rate: match kind {
+                transmux::RtpMediaKind::H264 => transmux::rtp::VIDEO_CLOCK_RATE,
+                _ => transmux::DEFAULT_AAC_CLOCK_RATE,
+            },
+            config: None,
+            packets,
+            clock_rate_explicit: false,
+        }
+    }
+
+    /// Set the stream's codec configuration; for AAC an unasserted clock is
+    /// replaced by the config's own sampling rate.
+    #[must_use]
+    pub fn with_config(mut self, config: transmux::CodecConfig) -> Self {
+        if let transmux::CodecConfig::Aac { sample_rate, .. } = &config
+            && !self.clock_rate_explicit
+        {
+            self.clock_rate = *sample_rate;
+        }
+        self.config = Some(config);
+        self
+    }
+
+    /// Assert an explicit RTP clock rate (Hz).
+    #[must_use]
+    pub fn with_clock_rate(mut self, clock_rate: u32) -> Self {
+        self.clock_rate = clock_rate;
+        self.clock_rate_explicit = true;
+        self
+    }
+
+    /// Validate the kind/clock/config against each other, returning the clock.
+    ///
+    /// # Errors
+    ///
+    /// A zero clock, an AAC config on a non-AAC stream (or vice versa), or a
+    /// declared clock that disagrees with the config's sampling rate.
+    fn validated_clock_rate(
+        &self,
+    ) -> Result<broadcast_common::timescale::Timescale, transmux::Error> {
+        use transmux::Error;
+        match &self.config {
+            Some(transmux::CodecConfig::Aac { sample_rate, .. }) => {
+                if self.kind != transmux::RtpMediaKind::Aac {
+                    return Err(Error::InvalidInput(
+                        "an RTP stream carrying an AAC config must have kind Aac",
+                    ));
+                }
+                if self.clock_rate != *sample_rate {
+                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                        field: "rtp_clock_rate",
+                        value: u64::from(self.clock_rate),
+                        reason: "an MPEG-4 audio stream's RTP clock rate is its sampling rate",
+                    }));
+                }
+                Ok(broadcast_common::timescale::Timescale::try_new(
+                    *sample_rate,
+                )?)
+            }
+            Some(transmux::CodecConfig::Avc { .. }) => {
+                if self.kind != transmux::RtpMediaKind::H264 {
+                    return Err(Error::InvalidInput(
+                        "an RTP stream carrying an AVC config must have kind H264",
+                    ));
+                }
+                if self.clock_rate != transmux::rtp::VIDEO_CLOCK_RATE {
+                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                        field: "rtp_clock_rate",
+                        value: u64::from(self.clock_rate),
+                        reason: "RFC 6184 §8.1 fixes the H.264 RTP clock rate at 90 kHz",
+                    }));
+                }
+                Ok(transmux::rtp::VIDEO_CLOCK_TIMESCALE)
+            }
+            Some(_) | None => {
+                if self.clock_rate == 0 {
+                    return Err(Error::InvalidInput("RTP stream has no clock rate"));
+                }
+                Ok(broadcast_common::timescale::Timescale::try_new(
+                    self.clock_rate,
+                )?)
+            }
+        }
+    }
+}
+
+/// The streams [`media_from_rtp`] depacketises.
+pub struct RtpTestInput {
+    /// One entry per RTP stream, in track-id order.
+    pub streams: Vec<RtpTestStream>,
+}
+
+/// Drive [`RtpStreamDepacketiser`](transmux::rtp_stream::RtpStreamDepacketiser)
+/// over one whole packet flow per stream and fold the samples into a [`Media`].
+///
+/// # Errors
+///
+/// An AAC stream without its `AudioSpecificConfig`, an invalid clock rate, or
+/// whatever the depacketiser reports.
+pub fn media_from_rtp(input: RtpTestInput) -> Result<Media, transmux::Error> {
+    media_from_rtp_with_events(input).map(|(media, _)| media)
+}
+
+/// [`media_from_rtp`] also returning the depacketiser's loss/reorder events,
+/// drained after the last packet.
+///
+/// # Errors
+///
+/// As [`media_from_rtp`].
+pub fn media_from_rtp_with_events(
+    input: RtpTestInput,
+) -> Result<(Media, Vec<transmux::RtpLossEvent>), transmux::Error> {
+    let streams = input.streams;
+    use transmux::rtp_stream::{RtpStreamDepacketiser, RtpStreamTrack};
+    let mut tracks = Vec::with_capacity(streams.len());
+    for (index, stream) in streams.iter().enumerate() {
+        let track_id = TrackId::new(u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1));
+        let clock = stream.validated_clock_rate()?;
+        let config = match (&stream.config, stream.kind) {
+            (Some(config), _) => config.clone(),
+            (None, transmux::RtpMediaKind::H264) => rtp_placeholder_avc_config(),
+            (None, transmux::RtpMediaKind::Aac) => {
+                return Err(transmux::Error::InvalidInput(
+                    "an AAC RTP stream needs its AudioSpecificConfig",
+                ));
+            }
+            (None, _) => {
+                return Err(transmux::Error::InvalidInput(
+                    "an RTP stream needs its codec config",
+                ));
+            }
+        };
+        tracks.push(RtpStreamTrack::new(track_id, stream.kind, config, clock));
+    }
+    let mut depack = RtpStreamDepacketiser::new(tracks);
+    let mut per_track: Vec<Vec<Sample>> = vec![Vec::new(); streams.len()];
+    for (index, stream) in streams.iter().enumerate() {
+        let track_id = TrackId::new(u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1));
+        for packet in &stream.packets {
+            per_track[index].extend(depack.push(track_id, packet)?);
+        }
+        per_track[index].extend(depack.flush(track_id)?);
+    }
+    let mut events = Vec::new();
+    while let Some(event) = depack.poll_loss_event() {
+        events.push(event);
+    }
+    // The streaming depacketiser emits each track's timestamps relative to its
+    // first unwrapped presentation time, so a reordered video track's derived
+    // `dts` can start below zero. The whole-input fold zero-based the whole
+    // `Media` at its lowest decode instant (the IR's `start_decode_time` is a
+    // `u64` that must equal the first sample's `dts`), so translate every
+    // sample by that one constant, exactly as the deleted batch path did.
+    let origin = per_track
+        .iter()
+        .flat_map(|samples| samples.iter())
+        .filter_map(|sample| sample.timing.and_then(|timing| timing.dts()))
+        .min()
+        .unwrap_or(0)
+        .min(0);
+    for samples in &mut per_track {
+        for sample in samples.iter_mut() {
+            if let Some(timing) = sample.timing {
+                let dts = timing.dts().map(|dts| (dts - origin).max(0));
+                let pts = timing.pts().map(|pts| (pts - origin).max(0));
+                let duration = timing.duration();
+                let (Some(dts), Some(pts), Some(duration)) = (dts, pts, duration) else {
+                    continue;
+                };
+                sample.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
+                    dts, pts, duration,
+                ));
+            }
+        }
+    }
+    let specs: Vec<transmux::TrackSpec> = streams
+        .iter()
+        .enumerate()
+        .map(|(index, stream)| {
+            let track_id = TrackId::new(u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1));
+            let clock = stream
+                .validated_clock_rate()
+                .unwrap_or(transmux::rtp::VIDEO_CLOCK_TIMESCALE);
+            let config = match (&stream.config, stream.kind) {
+                (Some(config), _) => config.clone(),
+                (None, _) => rtp_placeholder_avc_config(),
+            };
+            (track_id, config, clock)
+        })
+        .map(|(track_id, config, clock)| transmux::TrackSpec::new(track_id, clock, config))
+        .collect();
+    let built = specs
+        .into_iter()
+        .zip(per_track)
+        .map(|(spec, samples)| {
+            let anchor = samples
+                .first()
+                .and_then(|sample| sample.timing.and_then(|timing| timing.dts()))
+                .map(|dts| u64::try_from(dts.max(0)).unwrap_or(0))
+                .unwrap_or(0);
+            Track::new_at(spec, samples, anchor)
+        })
+        .collect();
+    Ok((
+        Media::new(built, transmux::rtp::VIDEO_CLOCK_TIMESCALE),
+        events,
+    ))
+}
+
+/// Minimal AVC config for a stream whose parameter sets live in the SDP.
+fn rtp_placeholder_avc_config() -> transmux::CodecConfig {
+    use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+    transmux::CodecConfig::Avc {
+        config: AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            profile_indication: 0,
+            profile_compatibility: 0,
+            level_indication: 0,
+            length_size_minus_one: 3,
+            sps: Vec::new(),
+            pps: Vec::new(),
+            chroma_format: None,
+            bit_depth_luma_minus8: None,
+            bit_depth_chroma_minus8: None,
+            sps_ext: Vec::new(),
+        }),
+        width: 0,
+        height: 0,
+    }
 }

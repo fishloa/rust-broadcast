@@ -4,7 +4,6 @@ use broadcast_common::timescale::Timescale;
 use transmux::TrackSpec;
 use transmux::ir::{AspectRatioIdc, CodecConfig};
 use transmux::pipeline;
-use transmux::ts_demux::TsDemux;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -12,7 +11,7 @@ fn timescale(value: u32) -> Timescale {
 
 fn spec_from_fixture(fixture: &str) -> Option<TrackSpec> {
     let data = test_fixtures::require_bytes(fixture, "display_tkhd")?;
-    let media = TsDemux::new().demux(&data).ok()?;
+    let media = test_harness::collect::media_from_ts(&data).ok()?;
     media
         .tracks
         .into_iter()

@@ -103,18 +103,6 @@ pub enum FileReaderError {
         /// The file-type label the metadata reported.
         kind: &'static str,
     },
-    /// A whole-file read exceeded the configured size cap. No container is
-    /// read whole any more, so nothing raises this today; the variant is kept
-    /// until Phase 6 removes the cap field and this error with it.
-    #[error("file {path:?} is {size} bytes, over the {max} byte cap")]
-    FileTooLarge {
-        /// The path that exceeds the cap.
-        path: PathBuf,
-        /// The file's actual byte length.
-        size: u64,
-        /// The configured cap (the configured `max_file_bytes`).
-        max: usize,
-    },
     /// The file was a different container when a looping reader re-probed it
     /// for the next pass — a streaming session drives one demuxer for its
     /// whole run and cannot switch containers mid-run.
@@ -641,8 +629,10 @@ fn demux_streaming_ts(bytes: &[u8]) -> Result<Media, DemuxError> {
 fn demux_streaming_flv(bytes: &[u8]) -> Result<Media, DemuxError> {
     let mut demux = StreamingFlvDemux::new();
     demux.feed(bytes).map_err(DemuxError::Flv)?;
-    demux.finish();
-    collect_streaming_media(&mut demux, |d| d.poll_event())
+    let finished = demux.finish().map_err(DemuxError::Flv);
+    let media = collect_streaming_media(&mut demux, |d| d.poll_event());
+    finished?;
+    media
 }
 
 /// Drain every [`DemuxEvent`] into a [`Media`]: `TrackAdded` becomes a

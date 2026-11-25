@@ -448,7 +448,6 @@ mod custom_dispatch_driver_backed {
     use multimux::route::RouteHandle;
     use multimux::source::{DriverProgress, advance_route};
     use multimux::{Backoff, supervise_driver};
-    use transmux::TsDemux;
     use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
     fn nz(n: usize) -> NonZeroUsize {
@@ -463,7 +462,7 @@ mod custom_dispatch_driver_backed {
     fn real_video_track_and_samples() -> (TrackSpec, Vec<Sample>) {
         let ts =
             std::fs::read(fixture_path("ts/h264-aac.ts")).expect("h264-aac.ts fixture must exist");
-        let media = TsDemux::new().demux(&ts).expect("demux h264-aac.ts");
+        let media = test_harness::collect::media_from_ts(&ts).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .into_iter()

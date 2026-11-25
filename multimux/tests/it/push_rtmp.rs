@@ -24,14 +24,11 @@
 //! wrong container framing to accidentally produce a byte-identical
 //! round-trip.
 
-use std::time::Duration;
-
-use broadcast_common::Unpackage;
 use multimux::push::{PushTransport, RtmpTransport, RtmpTransportConfig};
 use rtmp_runtime::server::{ServerEvent, ServerSession};
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use transmux::FlvDemux;
 use transmux::ir::TrackSpec;
 
 static FLV: std::sync::LazyLock<Vec<u8>> =
@@ -44,10 +41,8 @@ const GUARD: Duration = Duration::from_secs(15);
 
 #[tokio::test]
 async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
-    let mut demux = FlvDemux::new();
-    let media = demux
-        .unpackage(FLV.as_slice())
-        .expect("demux av.flv fixture");
+    let media =
+        test_harness::collect::media_from_flv(FLV.as_slice()).expect("demux av.flv fixture");
     assert_eq!(media.tracks.len(), 2, "fixture must carry AVC + AAC");
 
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
@@ -151,9 +146,8 @@ async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
     // (the pre-#934 defect) would not survive this round-trip: either
     // `FlvDemux` errors outright on a malformed AVCVIDEOPACKET/AACAUDIODATA
     // body, or the recovered sample boundaries/bytes simply don't match.
-    let mut demux2 = FlvDemux::new();
-    let media2 = demux2
-        .unpackage(&flv_bytes)
+
+    let media2 = test_harness::collect::media_from_flv(&flv_bytes)
         .expect("re-demux the RTMP-received FLV.as_slice() tags");
     assert_eq!(
         media2.tracks.len(),

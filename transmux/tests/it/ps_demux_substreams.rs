@@ -18,8 +18,6 @@
 //! counter the demuxer maintains for itself.
 
 use std::path::PathBuf;
-
-use broadcast_common::Unpackage;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
@@ -765,12 +763,10 @@ fn long_zero_run_before_the_first_start_code_stays_aligned() {
 /// conversion is the test's job. The NAL bytes themselves are the capture's
 /// own — nothing is synthesised.
 fn real_h264_annexb_au() -> Vec<u8> {
-    use transmux::TsDemux;
     let ts = h264_ts();
-    let mut demux = TsDemux::new();
-    let media = demux
-        .unpackage(&ts[..])
-        .expect("demux the H.264/AAC TS fixture");
+
+    let media =
+        test_harness::collect::media_from_ts(&ts[..]).expect("demux the H.264/AAC TS fixture");
     let video = media
         .tracks
         .iter()

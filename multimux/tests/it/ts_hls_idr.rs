@@ -9,18 +9,16 @@
 //! `GET` and demuxed to check which picture it starts on.
 #![cfg(feature = "test-seams")]
 
-use std::net::SocketAddr;
-use std::path::PathBuf;
-use std::time::Duration;
-
-use broadcast_common::Unpackage;
 use multimux::config::{AdminSpec, Config, InputSpec, OutputAuthSpec, Route, TsHlsCutPolicy};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
+use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::time::Duration;
 use transmux::media::{Media, Track};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::{NalCodec, TsDemux, access_unit_is_idr};
+use transmux::{NalCodec, access_unit_is_idr};
 
 use crate::support::listener;
 use listener::bind_tcp;
@@ -54,7 +52,7 @@ const MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
 
 fn france2_video() -> (TrackSpec, Vec<Sample>) {
     let bytes = std::fs::read(test_fixtures::path("ts/france2.ts")).expect("france2.ts fixture");
-    let ir = TsDemux::new().unpackage(&bytes).expect("demux france2");
+    let ir = test_harness::collect::media_from_ts(&bytes).expect("demux france2");
     let track = ir
         .tracks
         .into_iter()
@@ -175,9 +173,7 @@ async fn playlist_with_segments(
 }
 
 fn ts_segment_starts_on_idr(bytes: &[u8]) -> bool {
-    let ir = TsDemux::new()
-        .unpackage(bytes)
-        .expect("demux served segment");
+    let ir = test_harness::collect::media_from_ts(bytes).expect("demux served segment");
     let video = ir
         .tracks
         .iter()

@@ -7,8 +7,6 @@
 //! `ts/h264/main.ts` fixture, then patched at the box level where a specific
 //! (malformed or unusual) fragment shape is the subject under test.
 #![cfg(feature = "cenc")]
-
-use broadcast_common::Unpackage;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::movie_fragment::TrackFragmentRunBox;
 use test_harness::collect::MediaSelectExt;
@@ -17,7 +15,7 @@ use transmux::cenc_encrypt::CencEncryptStage;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
     CencScheme, CodecConfig, EncryptConfig, KeyMap, Media, Sample, SubsamplePolicy, Track, TrackId,
-    TrackSpec, TsDemux,
+    TrackSpec,
 };
 
 const KID: [u8; 16] = [
@@ -29,9 +27,8 @@ const KEY: [u8; 16] = [
 
 fn clear_video_media() -> Media {
     let bytes = test_fixtures::read("ts/h264/main.ts");
-    let media = TsDemux::new()
-        .unpackage(bytes.as_slice())
-        .expect("demux ts/h264/main.ts");
+    let media =
+        test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux ts/h264/main.ts");
     media
         .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("AVC video track present")

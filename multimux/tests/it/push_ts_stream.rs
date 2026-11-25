@@ -29,9 +29,7 @@ use multimux::push::{PushTransport, SrtTransport, SrtTransportConfig};
 use srt_runtime::HandshakeConfig;
 use srt_runtime::io::{SocketStats, SrtListener, SrtSocketConfig};
 use transmux::mux_stage::{MuxInput, MuxOutput};
-use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, TsDemux, TsMuxStage};
-
-use broadcast_common::Unpackage;
+use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, TsMuxStage};
 
 const PKT: usize = 188;
 const PAT_PID: u16 = 0x0000;
@@ -55,7 +53,7 @@ fn fixture(rel: &str) -> Vec<u8> {
 }
 
 fn demux(rel: &str) -> Media {
-    TsDemux::new().unpackage(&fixture(rel)).expect("demux")
+    test_harness::collect::media_from_ts(&fixture(rel)).expect("demux")
 }
 
 /// Every sample of `media`, in decode order across tracks (what a live feed

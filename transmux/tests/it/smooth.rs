@@ -13,7 +13,7 @@
 use broadcast_common::timescale::Timescale;
 use std::path::PathBuf;
 
-use broadcast_common::{Parse, Unpackage};
+use broadcast_common::Parse;
 use broadcast_smooth::{SmoothManifest, StreamType};
 use isobmff::box_types::parse_box;
 use transmux::aac_asc::AudioSpecificConfig;
@@ -21,7 +21,6 @@ use transmux::media::Media;
 use transmux::pipeline::{CodecConfig, build_init_segment};
 use transmux::smooth::{FOURCC_AACL, FOURCC_H264, SmoothPackager, TFXD_UUID};
 use transmux::track_spec_from_quality_level;
-use transmux::ts_demux::TsDemux;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -38,8 +37,8 @@ fn fixtures_dir() -> PathBuf {
 fn demux_media() -> Media {
     let ts = std::fs::read(fixtures_dir().join("ts/h264-aac.ts"))
         .expect("h264-aac.ts fixture must exist");
-    let mut demux = TsDemux::new();
-    demux.unpackage(&ts[..]).expect("demux h264-aac.ts")
+
+    test_harness::collect::media_from_ts(&ts[..]).expect("demux h264-aac.ts")
 }
 
 /// One Smooth packaging run: the manifest plus the fragments the segmenter

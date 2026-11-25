@@ -728,10 +728,9 @@ mod tests {
     }
 
     fn teletext_fixture() -> Option<Vec<(u64, Vec<u8>)>> {
-        use broadcast_common::mux::Unpackage;
         let path = test_fixtures::tsduck("input/test-012.ts", "media-plane")?;
         let bytes = std::fs::read(path).ok()?;
-        let media = transmux::TsDemux::new().unpackage(&bytes).ok()?;
+        let media = test_harness::collect::media_from_ts(&bytes).ok()?;
         let track = media
             .tracks
             .iter()

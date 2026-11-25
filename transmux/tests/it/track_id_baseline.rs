@@ -41,9 +41,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-
-use broadcast_common::Unpackage;
-use transmux::{FlvDemux, Media, TsDemux};
+use transmux::Media;
 
 /// Largest capture demuxed in a PR run. It keeps the `test-013` (9.4 MB) and
 /// `test-089` captures that pin #1255/#1579; the full 40 MB corpus runs when
@@ -76,7 +74,7 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 fn demux(path: &Path, bytes: &[u8]) -> Option<Media> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
-        "ts" | "m2ts" => TsDemux::new().unpackage(bytes).ok(),
+        "ts" | "m2ts" => test_harness::collect::media_from_ts(bytes).ok(),
         "mp4" | "m4s" | "m4a" | "m4v" | "cmfv" | "cmfa" => test_harness::collect::media_from_mp4(
             bytes,
             test_harness::collect::CollectMode::Seekable,
@@ -87,7 +85,7 @@ fn demux(path: &Path, bytes: &[u8]) -> Option<Media> {
             test_harness::collect::CollectMode::Seekable,
         )
         .ok(),
-        "flv" => FlvDemux::new().unpackage(bytes).ok(),
+        "flv" => test_harness::collect::media_from_flv(bytes).ok(),
         "ps" | "mpg" | "mpeg" => test_harness::collect::media_from_ps(bytes, 4096).ok(),
         _ => None,
     }

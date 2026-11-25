@@ -3,9 +3,7 @@
 //! #555) for the FLV container (Adobe FLV v10.1 Annex E — see
 //! `private/specs-verified/mpeg/transmux/codec/flv.md` and [`crate::flv`] for the wire layout).
 //!
-//! [`FlvDemux`](crate::flv::FlvDemux) is a **one-shot** [`Unpackage`
-//! ](broadcast_common::Unpackage): it demands the whole FLV byte stream up
-//! front and returns one [`Media`](crate::media::Media). A live RTMP publisher instead delivers
+//! A live RTMP publisher delivers
 //! FLV tags forever — re-running the one-shot demuxer over an
 //! ever-growing buffer on every new tag would grow memory (and CPU) without
 //! bound. [`StreamingFlvDemux`] is the incremental analogue, mirroring
@@ -43,7 +41,7 @@
 //!
 //! # Non-AVC/AAC tracks
 //!
-//! Mirrors [`FlvDemux`](crate::flv::FlvDemux): unlike the TS demux (which
+//! Unlike the TS demux (which
 //! carries every other `stream_type` as an opaque `Data` track so nothing is
 //! dropped), a video tag whose `CodecID` isn't AVC, or an audio tag whose
 //! `SoundFormat` isn't AAC, is **silently skipped** here too — no track, no
@@ -54,10 +52,8 @@
 //!
 //! Annex E requires the AVC/AAC sequence-header tag (`AVCPacketType`/
 //! `AACPacketType` == 0) to precede that track's media tags. Unlike the
-//! one-shot [`FlvDemux`](crate::flv::FlvDemux) — which can freely accumulate
-//! all of a track's samples before its config is known, because it only
-//! builds the final [`Track`](crate::media::Track) after the whole buffer is
-//! consumed — a streaming demuxer with
+//! a whole-buffer demuxer — which can freely accumulate
+//! all of a track's samples before its config is known — a streaming demuxer with
 //! *bounded* memory cannot hold an unbounded pre-config backlog waiting for
 //! a config that might arrive arbitrarily late (or never). A media tag for a
 //! track whose sequence header has not yet been seen is therefore dropped,
@@ -80,8 +76,7 @@
 //! [`DemuxEvent::TracksResolved`] is a PMT-driven signal (TS declares its
 //! track count up front); FLV has no equivalent binding declaration — the
 //! header's `TypeFlags` bits are informational only and the one-shot
-//! [`FlvDemux`](crate::flv::FlvDemux) itself does not trust them — so this
-//! demuxer never emits it.
+//! no FLV demuxer trusts them — so this demuxer never emits it.
 //! A consumer that needs a "no more tracks coming" signal should drive that
 //! from its own knowledge of the publish (e.g. RTMP `publish` parameters).
 //!
@@ -302,6 +297,25 @@ pub struct StreamingFlvDemux {
     /// queue exactly, so a caller can drive both demuxers with the same
     /// `while let Some(ev) = demux.poll_event()` loop.
     events: VecDeque<DemuxEvent>,
+    /// Absolute byte offset of `pending[0]` in the input.
+    consumed: u64,
+    /// Whether any complete tag has been parsed (even one that carried no
+    /// supported track), for the end-of-input diagnosis.
+    tags_seen: bool,
+    /// Whether any track config was announced (`TrackAdded`), so
+    /// `finish` can report `NoSupportedTrack` rather than an empty success.
+    announced: bool,
+    /// Whether a damaged span was reported; an input that is damaged but had
+    /// no complete tag is still diagnosed, not silently accepted.
+    damaged: bool,
+    /// Start and length of a damaged run not yet reported: consecutive skips
+    /// (a resync candidate that later fails, then a further skip) are ONE
+    /// reported span, not one per attempt.
+    damage_start: Option<u64>,
+    damage_len: u64,
+    /// Whether the input ended inside a tag after at least one complete tag:
+    /// observable through [`ended_inside_a_tag`](Self::ended_inside_a_tag).
+    ended_inside_a_tag: bool,
     /// Test-only count of bytes memmoved out of `pending` by the drains in
     /// [`feed`](Self::feed), incremented at the drain site itself. A test can
     /// assert it stays O(input) over a whole file (r04-W14): draining once per
@@ -329,6 +343,13 @@ impl StreamingFlvDemux {
             clock: TimestampUnroll::default(),
             next_track_id: TrackId::new(1),
             events: VecDeque::new(),
+            consumed: 0,
+            tags_seen: false,
+            announced: false,
+            damaged: false,
+            damage_start: None,
+            damage_len: 0,
+            ended_inside_a_tag: false,
             #[cfg(test)]
             bytes_moved: 0,
         }
@@ -358,7 +379,7 @@ impl StreamingFlvDemux {
         // `feed` of one large chunk quadratic — 8 MiB of small audio tags
         // (~20 000 of them) memmoved ~80 GB.
         let mut cursor = 0usize;
-        let result = self.consume(&mut cursor);
+        let result = self.consume(&mut cursor, false);
 
         if let Err(err) = result {
             // Drain the failed tag with the bytes before it. A tag whose body
@@ -372,6 +393,7 @@ impl StreamingFlvDemux {
             return Err(err);
         }
         self.drain_pending(cursor);
+        self.flush_damage();
         Ok(())
     }
 
@@ -383,6 +405,9 @@ impl StreamingFlvDemux {
             // The bytes actually moved by `Vec::drain` is the remainder.
             self.bytes_moved += self.pending.len() - n;
         }
+        self.consumed = self
+            .consumed
+            .saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
         self.pending.drain(0..n);
     }
 
@@ -390,7 +415,7 @@ impl StreamingFlvDemux {
     /// complete unit in `self.pending`, appending events, and return on the
     /// first error with `cursor` left at the start of the offending tag (so
     /// the caller can drain it).
-    fn consume(&mut self, cursor: &mut usize) -> Result<(), FlvError> {
+    fn consume(&mut self, cursor: &mut usize, at_eof: bool) -> Result<(), FlvError> {
         loop {
             if !self.header_seen {
                 if self.pending.len() < FLV_HEADER_LEN + PREV_TAG_SIZE_LEN {
@@ -454,6 +479,20 @@ impl StreamingFlvDemux {
             }
 
             let remaining = &self.pending[*cursor..];
+            let decision = rtmp_runtime::flv::resync_decision(remaining, at_eof);
+            match decision {
+                rtmp_runtime::flv::ResyncDecision::Tag => {}
+                rtmp_runtime::flv::ResyncDecision::Need(_) => break,
+                rtmp_runtime::flv::ResyncDecision::Skip(len) => {
+                    let len = len.min(remaining.len());
+                    self.report_damage(*cursor, len);
+                    *cursor += len;
+                    continue;
+                }
+                _ => break,
+            }
+            self.flush_damage();
+            let remaining = &self.pending[*cursor..];
             let Ok(tag_header) = rtmp_runtime::flv::FlvTagHeader::parse(remaining) else {
                 break; // partial tag header
             };
@@ -463,11 +502,15 @@ impl StreamingFlvDemux {
             }
             let tag = match rtmp_runtime::flv::FlvTag::parse(remaining) {
                 Ok(tag) => tag,
-                Err(err) => {
+                Err(_) => {
+                    // The framing rule accepted the chain, but the tag's own
+                    // trailing size disagrees: skip that one tag and carry on.
+                    self.report_damage(*cursor, total);
                     *cursor += total;
-                    return Err(FlvError::Tag(err));
+                    continue;
                 }
             };
+            self.tags_seen = true;
             let (tag_type_byte, timestamp) = (tag.tag_type.to_byte(), tag_header.timestamp);
             let body = tag.body;
             // The tag is fully present, so it is consumed either way: advance
@@ -476,6 +519,7 @@ impl StreamingFlvDemux {
             // left in `pending` to be re-parsed — and re-failed — by every
             // later `feed`. The bytes are unusable as anything else, so
             // discarding them is what lets the ingest continue.
+            let tag_offset = self.consumed + u64::try_from(*cursor).unwrap_or(u64::MAX);
             *cursor += total;
             let timestamp = match tag_type_byte {
                 tag_type::VIDEO | tag_type::AUDIO => self.clock.unroll(timestamp),
@@ -488,7 +532,10 @@ impl StreamingFlvDemux {
                 tag_type_byte,
                 timestamp,
                 body,
+                tag_offset,
+                total,
                 &mut self.events,
+                &mut self.announced,
             )?;
         }
         Ok(())
@@ -501,12 +548,198 @@ impl StreamingFlvDemux {
     }
 
     /// Flush each track's trailing pending sample (end of input — no more
-    /// bytes coming) into the event queue; drain it with
-    /// [`poll_event`](Self::poll_event). Idempotent: a second call with
-    /// nothing newly pending enqueues nothing.
-    pub fn finish(&mut self) {
+    /// bytes coming) into the event queue, then diagnose anything the input
+    /// left incomplete. Drain the queue with [`poll_event`](Self::poll_event).
+    ///
+    /// A final tag whose **body is complete** but whose trailing 4-byte
+    /// `PreviousTagSize` is partly or wholly missing is processed first: that
+    /// field is redundant (§E.4.1), so the tag is complete data, not a
+    /// truncation. [`ended_inside_a_tag`](Self::ended_inside_a_tag)
+    /// distinguishes the two.
+    ///
+    /// # Errors
+    ///
+    /// [`FlvError::Codec`] with a `BufferTooShort` describing the bytes the
+    /// input ends short of (a header shorter than the 9-byte FLV header, a
+    /// `DataOffset` past the input, or an incomplete first tag), or
+    /// [`FlvError::NoSupportedTrack`] when the input
+    /// was complete but carried no track this demuxer supports. Every event
+    /// before the error has already been queued.
+    pub fn finish(&mut self) -> Result<(), FlvError> {
+        // End of input: the remaining bytes are all the evidence there will
+        // ever be, so decide the resync points with the whole buffer (the
+        // streaming scan's `Need` answers existed only to wait for more).
+        let mut cursor = 0usize;
+        let result = self.consume(&mut cursor, true);
+        self.drain_pending(cursor);
+        self.flush_damage();
+        result?;
+        self.consume_final_body_complete_tag()?;
         self.video.flush(&mut self.events);
         self.audio.flush(&mut self.events);
+        self.diagnose_end()?;
+        if !self.announced {
+            return Err(FlvError::NoSupportedTrack);
+        }
+        Ok(())
+    }
+
+    /// After [`finish`](Self::finish), whether the input ended inside a tag
+    /// after at least one complete tag: the trailing tag was dropped and
+    /// everything before it kept. A trailing tag whose body is complete but
+    /// whose redundant `PreviousTagSize` is short is not truncation (§E.4.1).
+    #[must_use]
+    pub fn ended_inside_a_tag(&self) -> bool {
+        self.ended_inside_a_tag
+    }
+
+    /// Record `len` damaged bytes starting at `cursor` (relative to `pending`).
+    fn report_damage(&mut self, cursor: usize, len: usize) {
+        if len == 0 {
+            return;
+        }
+        self.damaged = true;
+        let offset = self.consumed + u64::try_from(cursor).unwrap_or(u64::MAX);
+        if self.damage_start.is_none() {
+            self.damage_start = Some(offset);
+        }
+        self.damage_len = self
+            .damage_len
+            .saturating_add(u64::try_from(len).unwrap_or(u64::MAX));
+    }
+
+    /// Report the damaged run accumulated so far as one span.
+    fn flush_damage(&mut self) {
+        if let Some(offset) = self.damage_start.take() {
+            let len = core::mem::take(&mut self.damage_len);
+            self.events.push_back(DemuxEvent::damaged_span(offset, len));
+        }
+    }
+
+    /// Diagnose the bytes left after the last complete tag at end of input.
+    fn diagnose_end(&mut self) -> Result<(), FlvError> {
+        let have = self.pending.len();
+        if !self.header_seen {
+            // A `DataOffset` larger than the input: the first tag never started.
+            if have >= FLV_HEADER_LEN
+                && let Ok(declared) =
+                    rtmp_runtime::flv::FlvHeader::declared_data_offset(&self.pending)
+                && usize::try_from(declared).is_ok_and(|declared| have < declared)
+            {
+                return Err(FlvError::Codec(crate::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: usize::try_from(declared).unwrap_or(have),
+                        have,
+                        what: "FLV tag body",
+                    },
+                )));
+            }
+            let need = if have < FLV_HEADER_LEN {
+                FLV_HEADER_LEN
+            } else {
+                FLV_HEADER_LEN.saturating_add(PREV_TAG_SIZE_LEN)
+            };
+            return Err(FlvError::Codec(crate::Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need,
+                    have,
+                    what: "FLV header",
+                },
+            )));
+        }
+        if have == 0 {
+            self.pending.clear();
+            return Ok(());
+        }
+        if have < TAG_HEADER_LEN {
+            // A header too short to read is the end of the walk (§E.4.1's tag
+            // loop has no tag to report), so only a stream with nothing before
+            // it is an error.
+            if !self.tags_seen && !self.damaged {
+                return Err(FlvError::Codec(crate::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: TAG_HEADER_LEN,
+                        have,
+                        what: "FLV tag header",
+                    },
+                )));
+            }
+            self.ended_inside_a_tag = true;
+            self.pending.clear();
+            return Ok(());
+        }
+        let Ok(header) = rtmp_runtime::flv::FlvTagHeader::parse(&self.pending) else {
+            self.ended_inside_a_tag = true;
+            self.pending.clear();
+            return Ok(());
+        };
+        let body_end =
+            TAG_HEADER_LEN.saturating_add(usize::try_from(header.data_size).unwrap_or(usize::MAX));
+        if have < body_end {
+            if !self.tags_seen && !self.damaged {
+                return Err(FlvError::Codec(crate::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: header.total_len(),
+                        have,
+                        what: "FLV tag body",
+                    },
+                )));
+            }
+            self.ended_inside_a_tag = true;
+            self.pending.clear();
+            return Ok(());
+        }
+        // Everything at the front is complete, or only the trailing
+        // `PreviousTagSize` is short (handled by the caller); anything else is
+        // damage dealt with by the resync rule.
+        Ok(())
+    }
+
+    /// Process the one tag [`consume`](Self::consume) left pending because its
+    /// redundant trailing `PreviousTagSize` had not fully arrived, if its body
+    /// is complete.
+    fn consume_final_body_complete_tag(&mut self) -> Result<(), FlvError> {
+        if !self.header_seen {
+            return Ok(());
+        }
+        let Ok(header) = rtmp_runtime::flv::FlvTagHeader::parse(&self.pending) else {
+            return Ok(());
+        };
+        if self.pending.len() >= header.total_len() {
+            return Ok(());
+        }
+        let body_end =
+            TAG_HEADER_LEN.saturating_add(usize::try_from(header.data_size).unwrap_or(usize::MAX));
+        if self.pending.len() < body_end {
+            return Ok(());
+        }
+        let Ok(tag) = rtmp_runtime::flv::FlvTag::parse(&self.pending) else {
+            return Ok(());
+        };
+        let tag_type_byte = tag.tag_type.to_byte();
+        let timestamp = match tag_type_byte {
+            tag_type::VIDEO | tag_type::AUDIO => self.clock.unroll(header.timestamp),
+            _ => i64::from(header.timestamp),
+        };
+        let offset = self.consumed;
+        Self::process_tag(
+            &mut self.video,
+            &mut self.audio,
+            &mut self.next_track_id,
+            tag_type_byte,
+            timestamp,
+            tag.body,
+            offset,
+            header.total_len(),
+            &mut self.events,
+            &mut self.announced,
+        )?;
+        self.tags_seen = true;
+        self.consumed = self
+            .consumed
+            .saturating_add(u64::try_from(self.pending.len()).unwrap_or(0));
+        self.pending.clear();
+        Ok(())
     }
 
     /// Bytes still missing before the unit [`feed`](Self::feed) is currently
@@ -541,10 +774,28 @@ impl StreamingFlvDemux {
             return TAG_HEADER_LEN - have;
         }
         // Tag header present: its `DataSize` gives the whole remaining unit —
-        // body plus the trailing `PreviousTagSize`.
+        // body plus the trailing `PreviousTagSize`. A unit already complete
+        // is not consumed until its successor's header arrives (the rule that
+        // tells a real tag from one whose declared body runs into the next),
+        // so that is what the stage asks for next.
         let total = rtmp_runtime::flv::FlvTagHeader::parse(&self.pending)
             .map_or(TAG_HEADER_LEN, |header| header.total_len());
+        if have >= total {
+            return total
+                .saturating_add(TAG_HEADER_LEN)
+                .saturating_sub(have)
+                .max(1);
+        }
         total.saturating_sub(have).max(1)
+    }
+
+    /// Report a complete tag whose payload this demuxer cannot use, and carry
+    /// on with the following tags (the batch demuxer's behaviour).
+    fn report_tag_damage(events: &mut VecDeque<DemuxEvent>, offset: u64, len: usize) {
+        events.push_back(DemuxEvent::damaged_span(
+            offset,
+            u64::try_from(len).unwrap_or(u64::MAX),
+        ));
     }
 
     fn process_tag(
@@ -554,15 +805,32 @@ impl StreamingFlvDemux {
         tag_type_byte: u8,
         timestamp: i64,
         body: &[u8],
+        offset: u64,
+        tag_len: usize,
         events: &mut VecDeque<DemuxEvent>,
+        announced: &mut bool,
     ) -> Result<(), FlvError> {
         match tag_type_byte {
-            tag_type::VIDEO => {
-                Self::process_video_tag(video, next_track_id, timestamp, body, events)
-            }
-            tag_type::AUDIO => {
-                Self::process_audio_tag(audio, next_track_id, timestamp, body, events)
-            }
+            tag_type::VIDEO => Self::process_video_tag(
+                video,
+                next_track_id,
+                timestamp,
+                body,
+                offset,
+                tag_len,
+                events,
+                announced,
+            ),
+            tag_type::AUDIO => Self::process_audio_tag(
+                audio,
+                next_track_id,
+                timestamp,
+                body,
+                offset,
+                tag_len,
+                events,
+                announced,
+            ),
             tag_type::SCRIPT => Ok(()), // onMetaData — informational, skipped
             _ => Ok(()),                // unknown tag type — skipped leniently
         }
@@ -573,7 +841,10 @@ impl StreamingFlvDemux {
         next_track_id: &mut TrackId,
         timestamp: i64,
         body: &[u8],
+        offset: u64,
+        tag_len: usize,
         events: &mut VecDeque<DemuxEvent>,
+        announced: &mut bool,
     ) -> Result<(), FlvError> {
         if body.len() < AVC_PACKET_TYPE_OFFSET + 1 {
             return Ok(());
@@ -581,7 +852,7 @@ impl StreamingFlvDemux {
         let frame_type = body[0] >> FRAME_TYPE_SHIFT;
         let codec_id = body[0] & CODEC_ID_MASK;
         if codec_id != CODEC_ID_AVC {
-            return Ok(()); // non-AVC video is out of scope (mirrors FlvDemux)
+            return Ok(()); // non-AVC video is out of scope
         }
         let avc_packet_type_byte = body[AVC_PACKET_TYPE_OFFSET];
         // AVCVIDEOPACKET: AVCPacketType(1) + CompositionTime(SI24=3) + Data.
@@ -592,11 +863,14 @@ impl StreamingFlvDemux {
         let data = &body[AVC_PACKET_DATA_OFFSET..];
         match avc_packet_type_byte {
             avc_packet_type::SEQUENCE_HEADER if !data.is_empty() => {
-                let mut record = AVCDecoderConfigurationRecord::parse(data)
-                    .map_err(|e| FlvError::Codec(e.into()))?;
-                record
-                    .require_sps()
-                    .map_err(|e| FlvError::Codec(e.into()))?;
+                let Ok(mut record) = AVCDecoderConfigurationRecord::parse(data) else {
+                    Self::report_tag_damage(events, offset, tag_len);
+                    return Ok(());
+                };
+                if record.require_sps().is_err() {
+                    Self::report_tag_damage(events, offset, tag_len);
+                    return Ok(());
+                }
                 let length_size = usize::from(record.length_size_minus_one) + 1;
                 // The NALU samples are normalised to 4-byte NAL prefixes below,
                 // so the emitted `avcC` must declare that size (r04-W43).
@@ -643,6 +917,7 @@ impl StreamingFlvDemux {
                         video.track_id = Some(track_id);
                         video.config_bytes.clear();
                         video.config_bytes.extend_from_slice(data);
+                        *announced = true;
                         events.push_back(DemuxEvent::TrackAdded(TrackSpec::new(
                             track_id,
                             FLV_TIMESCALE,
@@ -665,10 +940,13 @@ impl StreamingFlvDemux {
                 // `lengthSizeMinusOne` (§E.4.3.1); rewrite them to the crate's
                 // 4-byte form so the downstream pipeline reads them right
                 // (r04-W43).
-                let data = normalise_nal_length_size(
+                let Ok(data) = normalise_nal_length_size(
                     data,
                     video.nal_length_size.unwrap_or(NAL_LENGTH_SIZE),
-                )?;
+                ) else {
+                    Self::report_tag_damage(events, offset, tag_len);
+                    return Ok(());
+                };
                 let sample = Sample {
                     data: data.into(),
                     timing: Some(crate::ir::SampleTiming::timed(dts_abs, pts_abs)),
@@ -697,14 +975,17 @@ impl StreamingFlvDemux {
         next_track_id: &mut TrackId,
         timestamp: i64,
         body: &[u8],
+        offset: u64,
+        tag_len: usize,
         events: &mut VecDeque<DemuxEvent>,
+        announced: &mut bool,
     ) -> Result<(), FlvError> {
         if body.is_empty() {
             return Ok(());
         }
         let sound_format = body[0] >> SOUND_FORMAT_SHIFT;
         if sound_format != crate::flv::SOUND_FORMAT_AAC {
-            return Ok(()); // non-AAC audio is out of scope (mirrors FlvDemux)
+            return Ok(()); // non-AAC audio is out of scope
         }
         // AACAUDIODATA: AACPacketType(1) + Data.
         if body.len() < AAC_PACKET_DATA_OFFSET {
@@ -714,7 +995,10 @@ impl StreamingFlvDemux {
         let data = &body[AAC_PACKET_DATA_OFFSET..];
         match aac_pkt_type {
             aac_packet_type::SEQUENCE_HEADER if !data.is_empty() => {
-                let asc = AudioSpecificConfig::parse(data)?;
+                let Ok(asc) = AudioSpecificConfig::parse(data) else {
+                    Self::report_tag_damage(events, offset, tag_len);
+                    return Ok(());
+                };
                 // ISO/IEC 14496-3 Table 1.19: the field is a configuration
                 // *index*, not the channel count. In-band (0) and the reserved
                 // values yield `AAC_CHANNEL_COUNT_UNKNOWN`, not a fabricated
@@ -751,6 +1035,7 @@ impl StreamingFlvDemux {
                         audio.track_id = Some(track_id);
                         audio.config_bytes.clear();
                         audio.config_bytes.extend_from_slice(data);
+                        *announced = true;
                         events.push_back(DemuxEvent::TrackAdded(TrackSpec::new(
                             track_id,
                             FLV_TIMESCALE,
@@ -814,8 +1099,7 @@ impl Stage for StreamingFlvDemux {
     }
 
     fn finish(&mut self) -> Result<(), FlvError> {
-        StreamingFlvDemux::finish(self);
-        Ok(())
+        StreamingFlvDemux::finish(self)
     }
 
     /// `want_bytes` is the **exact** number of bytes still missing before the
@@ -925,7 +1209,7 @@ mod tests {
 
     /// `finish` then drain the trailing events it queued.
     fn finish_and_drain(demux: &mut StreamingFlvDemux) -> Vec<DemuxEvent> {
-        demux.finish();
+        demux.finish().expect("the fixture is complete");
         let mut events = Vec::new();
         while let Some(ev) = demux.poll_event() {
             events.push(ev);
@@ -1038,12 +1322,17 @@ mod tests {
         body.extend_from_slice(&[0, 0, 0]);
         body.extend_from_slice(&[0xFF, 0xFF, 0xAA]); // length 65535, 1 byte present
         write_tag(&mut out, tag_type::VIDEO, 0, &body);
+        write_tag(&mut out, 0x12, 1, &[0, 0, 0, 0]);
 
         let mut demux = StreamingFlvDemux::new();
-        assert!(matches!(
-            feed_and_drain(&mut demux, &out),
-            Err(crate::flv::FlvError::Codec(..))
-        ));
+        let events = feed_and_drain(&mut demux, &out)
+            .expect("a NAL length past the tag is damage, not a fatal error");
+        assert!(
+            events
+                .iter()
+                .any(|ev| matches!(ev, DemuxEvent::DamagedSpan { .. })),
+            "the overrunning NAL length is reported: {events:?}"
+        );
     }
 
     /// Collect every `Sample` for the (single) video track across all
@@ -1198,10 +1487,16 @@ mod tests {
         seq_body.extend_from_slice(&[0, 0, 0]); // CompositionTime
         seq_body.push(0xFF); // garbage avcC byte — too short to parse
         write_tag(&mut out, tag_type::VIDEO, 0, &seq_body);
+        write_tag(&mut out, 0x12, 1, &[0, 0, 0, 0]);
 
         let mut demux = StreamingFlvDemux::new();
-        let err = demux.feed(&out).unwrap_err();
-        assert!(matches!(err, FlvError::Codec(_)));
+        let events = feed_and_drain(&mut demux, &out).expect("a corrupt avcC is damage");
+        assert!(
+            events
+                .iter()
+                .any(|ev| matches!(ev, DemuxEvent::DamagedSpan { .. })),
+            "the corrupt sequence header is reported: {events:?}"
+        );
     }
 
     /// A structurally valid-but-hostile `AVCDecoderConfigurationRecord`
@@ -1231,12 +1526,15 @@ mod tests {
         seq_body.extend_from_slice(&[0, 0, 0]); // CompositionTime = 0
         seq_body.extend_from_slice(&zero_sps_avcc_bytes());
         write_tag(&mut out, tag_type::VIDEO, 0, &seq_body);
+        write_tag(&mut out, 0x12, 1, &[0, 0, 0, 0]);
 
         let mut demux = StreamingFlvDemux::new();
-        let err = demux.feed(&out).unwrap_err();
+        let events = feed_and_drain(&mut demux, &out).expect("a 0-SPS avcC is damage");
         assert!(
-            matches!(err, FlvError::Codec(_)),
-            "expected FlvError::Codec (0-SPS avcC rejected), got {err:?}"
+            events
+                .iter()
+                .any(|ev| matches!(ev, DemuxEvent::DamagedSpan { .. })),
+            "the 0-SPS avcC is reported, never indexed: {events:?}"
         );
     }
 
@@ -1376,7 +1674,7 @@ mod tests {
             demux.feed(core::slice::from_ref(b)).unwrap();
             while demux.poll_event().is_some() {}
         }
-        demux.finish();
+        demux.finish().expect("the fixture is complete");
         while demux.poll_event().is_some() {}
         let byte_at_a_time = demux.bytes_moved;
         // One byte per call means `pending` never holds more than the tag in
@@ -1435,7 +1733,7 @@ mod tests {
                 events.push(ev);
             }
         }
-        demux.finish();
+        demux.finish().expect("the fixture is complete");
         while let Some(ev) = demux.poll_event() {
             events.push(ev);
         }
@@ -1456,12 +1754,27 @@ mod tests {
         flv[trailer..trailer + 4].copy_from_slice(&0xDEAD_BEEFu32.to_be_bytes());
         flv.extend_from_slice(&vec![0u8; 1024]);
         let mut demux = StreamingFlvDemux::new();
-        let err = demux.feed(&flv).unwrap_err();
-        assert!(matches!(err, FlvError::Tag(_)), "got {err:?}");
-        assert_eq!(
-            demux.pending.len(),
-            1024,
-            "the bad tag is consumed with the bytes before it, so only the              1024 trailing bytes stay pending"
+        demux
+            .feed(&flv)
+            .expect("a bad PreviousTagSize is framing damage, not a fatal error");
+        let mut events = Vec::new();
+        while let Some(ev) = demux.poll_event() {
+            events.push(ev);
+        }
+        assert!(
+            matches!(
+                events.first(),
+                Some(DemuxEvent::DamagedSpan {
+                    offset: 28,
+                    dropped_bytes: 15,
+                    ..
+                })
+            ),
+            "the mistagged span starts at the corrupt tag: {events:?}"
+        );
+        assert!(
+            demux.pending.len() <= 1024,
+            "the bad tag is consumed, so only the trailing bytes stay pending"
         );
     }
 
@@ -1495,6 +1808,7 @@ mod tests {
             write_tag(&mut out, tag_type::VIDEO, ts, &body);
         }
 
+        write_tag(&mut out, 0x12, 2, &[0, 0, 0, 0]);
         let mut demux = StreamingFlvDemux::new();
         assert_eq!(
             demux.feed(&out),

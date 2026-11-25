@@ -6,8 +6,6 @@
 //! `fixtures/captions/gen_cc_data_reference.py`): per field, the channel bit of
 //! the last control code routes each text pair, XDS is skipped, and DTVCC
 //! packets are split into service blocks.
-
-use broadcast_common::Unpackage;
 use cc_data::decode::Cea608Channel;
 use dvb_si::descriptors::atsc_caption_service::{AtscCaptionKind, AtscCaptionService};
 use dvb_si::text::LangCode;
@@ -17,13 +15,11 @@ use isobmff::{
 };
 use transmux::ir::DataCarriage;
 use transmux::ir::DataIdentity;
-use transmux::{CaptionDetector, CodecConfig, DetectedCaption, TsDemux, declared_caption_services};
+use transmux::{CaptionDetector, CodecConfig, DetectedCaption, declared_caption_services};
 
 fn detect(fixture: &str, test: &str) -> Option<Vec<DetectedCaption>> {
     let data = test_fixtures::require_bytes(fixture, test)?;
-    let media = TsDemux::new()
-        .unpackage(data.as_slice())
-        .expect("demux fixture");
+    let media = test_harness::collect::media_from_ts(data.as_slice()).expect("demux fixture");
     let video = media
         .tracks
         .iter()
@@ -102,9 +98,7 @@ const ATSC_DECLARED: &str = "suites/tsduck/input/test-040.ts";
 
 fn atsc_video_descriptors(test: &str) -> Option<Vec<u8>> {
     let data = test_fixtures::require_bytes(ATSC_DECLARED, test)?;
-    let media = TsDemux::new()
-        .unpackage(data.as_slice())
-        .expect("demux fixture");
+    let media = test_harness::collect::media_from_ts(data.as_slice()).expect("demux fixture");
     let video = media
         .tracks
         .iter()

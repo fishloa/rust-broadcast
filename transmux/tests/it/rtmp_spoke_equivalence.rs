@@ -11,10 +11,10 @@
 //! back to its messages and compared against the FLV tags the FLV path
 //! writes, which is the only thing that would notice.
 
-use broadcast_common::{Parse, Unpackage};
+use broadcast_common::Parse;
 use rtmp_runtime::chunk::ChunkAssembler;
 use rtmp_runtime::message::{ChunkSize, MessageTypeId, ProtocolControl};
-use transmux::{FlvDemux, FlvMuxStage, Media, RtmpDemux, RtmpMuxStage};
+use transmux::{FlvMuxStage, Media, RtmpMuxStage};
 
 const FIXTURES: &[&str] = &["flv/av.flv", "flv/aac-7-1.flv"];
 
@@ -87,9 +87,9 @@ fn sample_bytes(media: &Media) -> Vec<Vec<Vec<u8>>> {
 /// drops that script-only difference from the IR, so the comparison isolates
 /// what the RTMP chunking round trip has to preserve.
 fn normalised_media(bytes: &[u8]) -> Media {
-    let media = FlvDemux::new().unpackage(bytes).expect("fixture FLV → IR");
+    let media = test_harness::collect::media_from_flv(bytes).expect("fixture FLV → IR");
     let flv = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), &media);
-    FlvDemux::new().unpackage(&flv).expect("FLV → IR")
+    test_harness::collect::media_from_flv(&flv).expect("FLV → IR")
 }
 
 #[test]
@@ -153,8 +153,7 @@ fn the_rtmp_spoke_carries_the_same_media_as_the_flv_spoke() {
                 "{rel} at chunk size {chunk_size}: every FLV tag crosses as one message"
             );
 
-            let rtmp_media = RtmpDemux::new()
-                .unpackage(&wire)
+            let rtmp_media = test_harness::collect::media_from_rtmp(&wire)
                 .unwrap_or_else(|e| panic!("{rel} at chunk size {chunk_size}: RTMP → IR: {e}"));
 
             assert_eq!(
@@ -229,9 +228,8 @@ fn the_largest_chunk_size_round_trips_through_the_demuxer() {
         )),
         "the announced size is the maximum, not a clamped one"
     );
-    let demuxed = RtmpDemux::new()
-        .unpackage(&wire)
-        .expect("a MAX_CHUNK_SIZE stream demuxes");
+    let demuxed =
+        test_harness::collect::media_from_rtmp(&wire).expect("a MAX_CHUNK_SIZE stream demuxes");
     assert_eq!(sample_bytes(&demuxed), sample_bytes(&media));
 }
 
@@ -292,8 +290,7 @@ fn longest_message_at_medium_sample() -> usize {
 /// A [`Media`] carrying the fixture's AVC config and one video sample of
 /// `sample_len` bytes.
 fn media_with_video_sample(sample_len: usize) -> Media {
-    let source = FlvDemux::new()
-        .unpackage(test_fixtures::read(FIXTURES[0]).as_slice())
+    let source = test_harness::collect::media_from_flv(test_fixtures::read(FIXTURES[0]).as_slice())
         .expect("fixture FLV → IR");
     let video = source
         .tracks
@@ -418,7 +415,7 @@ fn a_set_chunk_size_with_the_reserved_bit_set_is_rejected() {
         })
         .expect("the chunk writer frames the hostile control message");
     assert!(matches!(
-        RtmpDemux::new().unpackage(&wire),
+        test_harness::collect::media_from_rtmp(&wire),
         Err(transmux::rtmp::RtmpFlvError::Rtmp(
             rtmp_runtime::RtmpError::ChunkSizeOutOfRange { value }
         )) if value == RESERVED_BIT_CHUNK_SIZE

@@ -308,3 +308,17 @@ ffmpeg -loglevel error -i <fixture> -c:v copy -bsf:v filter_units=pass_types=7 -
   `tsp -I file fixtures/ts/h264-aac.ts -P pat --nit 16 -O file fixtures/ts/pat-with-nit.ts`.
   Used as the input for the TSDuck oracle tests in `ts-fix/tests/it/tsduck_oracle.rs`. Same licence as
   its source fixture (the workspace licence).
+
+## Streaming-first demux baseline
+
+- `demux-baseline.txt` — the streaming-first Phase 6 slice 2 differential gate
+  (orchestrator p6s2). Per public `fixtures/ts/**/*.ts`/`*.m2ts` file it records
+  each demuxed track's codec, timescale, sample count, first/last PTS and DTS,
+  sync-sample count, an FNV-1a 64 over the concatenated coded sample bytes, an
+  FNV-1a 64 over the per-sample `(dts, pts, duration)` sequence and the track's
+  `start_decode_time`, then the movie timescale, PCR count, degraded and skipped
+  reports. Produced by running `transmux`'s whole-buffer `TsDemux` from
+  `origin/main` at commit `54ea69378` over the files as committed. The
+  streaming `StreamingTsDemux` must reproduce every line byte-for-byte, fed in
+  1-byte, 188-byte and 64 KiB chunks
+  (`transmux/tests/it/ts_demux_baseline.rs`).

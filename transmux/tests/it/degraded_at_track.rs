@@ -15,12 +15,12 @@
 //! PMT does not declare. The real-capture test is
 //! `ts/orf3-dvbs2-raw-zenith-tv.ts` (private).
 
-use broadcast_common::{Unpackage, crc32_mpeg2};
+use broadcast_common::crc32_mpeg2;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{
     AdaptationFieldControl, ContinuityCounter, ScramblingControl, TS_PACKET_SIZE, TsHeader,
 };
-use transmux::{DemuxEvent, InputDegradation, StreamingTsDemux, TsDemux};
+use transmux::{DemuxEvent, InputDegradation, StreamingTsDemux};
 
 const PMT_PID: Pid = Pid::from_const(0x1000);
 const DSMCC_PID: Pid = Pid::from_const(0x0300);
@@ -93,7 +93,7 @@ fn stream() -> Vec<u8> {
 
 #[test]
 fn batch_degraded_at_resolves_the_data_track_announced_at_finish() {
-    let media = TsDemux::new().unpackage(&stream()).unwrap();
+    let media = test_harness::collect::media_from_ts(&stream()).unwrap();
     let track = media
         .tracks
         .iter()
@@ -110,7 +110,7 @@ fn batch_degraded_at_resolves_the_data_track_announced_at_finish() {
 
 #[test]
 fn a_pid_without_a_track_stays_none() {
-    let media = TsDemux::new().unpackage(&stream()).unwrap();
+    let media = test_harness::collect::media_from_ts(&stream()).unwrap();
     let on_undeclared: Vec<_> = media
         .degraded_at
         .iter()
@@ -149,9 +149,7 @@ fn orf3_every_record_on_a_track_pid_names_that_track() {
     else {
         return;
     };
-    let media = TsDemux::new()
-        .unpackage(&std::fs::read(path).unwrap())
-        .unwrap();
+    let media = test_harness::collect::media_from_ts(&std::fs::read(path).unwrap()).unwrap();
     let carousel = media
         .tracks
         .iter()

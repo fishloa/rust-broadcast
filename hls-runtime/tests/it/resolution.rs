@@ -13,7 +13,6 @@ use hls_runtime::server::{HlsOrigin, HlsOriginConfig};
 use media_plane::trunk::{Trunk, TrunkConfig};
 use transmux::Container;
 use transmux::ir::AspectRatioIdc;
-use transmux::ts_demux::TsDemux;
 use transmux::{CodecConfig, TrackSpec};
 
 fn nz(n: usize) -> NonZeroUsize {
@@ -46,7 +45,7 @@ fn render(origin: &HlsOrigin) -> String {
 
 fn specs_from_fixture(fixture: &str) -> Option<Vec<TrackSpec>> {
     let data = test_fixtures::require_bytes(fixture, "resolution")?;
-    let media = TsDemux::new().demux(&data).ok()?;
+    let media = test_harness::collect::media_from_ts(&data).ok()?;
     Some(media.tracks.into_iter().map(|t| t.spec).collect())
 }
 
