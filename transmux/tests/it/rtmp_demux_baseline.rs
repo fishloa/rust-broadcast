@@ -9,13 +9,10 @@
 //! and summary must equal the recorded lines exactly; a capture the demuxer
 //! refused whole must be refused with the same error.
 
-#[path = "support/demux_baseline.rs"]
-mod demux_baseline;
-
 #[test]
 fn every_rtmp_capture_reproduces_the_whole_input_baseline() {
     let text = test_fixtures::read_to_string("rtmp/demux-baseline.txt");
-    let sections = demux_baseline::parse(&text);
+    let sections = crate::demux_baseline::parse(&text);
     assert!(
         !sections.is_empty(),
         "the golden must cover every RTMP capture"
@@ -31,7 +28,7 @@ fn every_rtmp_capture_reproduces_the_whole_input_baseline() {
                         "{} at chunk {chunk}: streamed but the baseline records an error",
                         section.file
                     );
-                    let (tracks, summary) = demux_baseline::summarize(&media);
+                    let (tracks, summary) = crate::demux_baseline::summarize(&media);
                     assert_eq!(
                         tracks, section.tracks,
                         "{} at chunk {chunk}: per-track samples differ from the baseline",

@@ -22,8 +22,7 @@ fn ts(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
 }
 use broadcast_client::{Action, AvSync, BufferEvent, Config, ConnId, Event, Session, Status};
-use broadcast_common::Unpackage;
-use transmux::{CodecConfig, TsDemux};
+use transmux::CodecConfig;
 
 #[path = "support/truth.rs"]
 mod truth;
@@ -461,8 +460,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         .expect("run ffmpeg remux");
     assert!(status.success(), "ffmpeg could not remux the source to TS");
     let truth = Truth::from_media(
-        &TsDemux::new()
-            .unpackage(&fs::read(&truth_ts).expect("read truth.ts")[..])
+        &test_harness::collect::media_from_ts(&fs::read(&truth_ts).expect("read truth.ts")[..])
             .expect("demux truth.ts"),
     );
     let mut publisher = Command::new(ffmpeg);

@@ -11,7 +11,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use broadcast_common::Timestamp;
-use broadcast_common::mux::Unpackage;
 use media_plane::ingress::HandshakePolicy;
 use media_plane::trunk::{SampleCursor, SampleCursorItem, TrunkConfig};
 use multimux::route::{RouteConfig, RouteHandle};
@@ -21,7 +20,6 @@ use tokio::net::{TcpListener, TcpStream};
 use transmux::FragmentTrackData;
 use transmux::dash::DashPackager;
 use transmux::pipeline::{build_init_segment, build_media_segment};
-use transmux::ts_demux::TsDemux;
 
 /// Every blocking wait below is bounded.
 const GUARD: Duration = Duration::from_secs(10);
@@ -57,7 +55,7 @@ struct Feed {
 /// would use.
 fn feed() -> Feed {
     let ts = test_fixtures::read("ts/h264-aac.ts");
-    let media = TsDemux::new().unpackage(&ts[..]).expect("demux fixture");
+    let media = test_harness::collect::media_from_ts(&ts[..]).expect("demux fixture");
     let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let mpd = DashPackager::default()
         .render(&specs, &test_harness::collect::segment_log(&media))

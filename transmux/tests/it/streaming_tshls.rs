@@ -14,14 +14,13 @@
 use crate::hub_fixtures;
 use crate::hub_fixtures::dummy_avc_config;
 use crate::ts_hls_stage;
-use broadcast_common::Unpackage;
 use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 use transmux::media::Media;
 use transmux::mux_stage::SegmentOut;
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
-use transmux::{CodecConfig, Sample, StreamingTsHlsSegmenter, TrackSpec, TsDemux};
+use transmux::{CodecConfig, Sample, StreamingTsHlsSegmenter, TrackSpec};
 
 // ── Fixture + pipeline ───────────────────────────────────────────────────────
 
@@ -35,7 +34,7 @@ fn load_ts() -> Vec<u8> {
 }
 
 fn demux(ts: &[u8]) -> Media {
-    TsDemux::new().unpackage(ts).expect("demux TS")
+    test_harness::collect::media_from_ts(ts).expect("demux TS")
 }
 
 fn track_specs(ir: &Media) -> Vec<TrackSpec> {

@@ -27,10 +27,9 @@
 //! (`tsTeletextDemux.cpp::processTeletextPage`, `colStart`/`colStop`) and
 //! this crate display only the text inside the box, so the lines are compared
 //! exactly.
-use broadcast_common::Unpackage;
 use dvb_vbi::{DataField, DataUnitPayload, TeletextDataField};
 use timed_metadata::webvtt::TeletextCueExtractor;
-use transmux::{CodecConfig, TsDemux};
+use transmux::CodecConfig;
 
 /// Teletext PID declared in the fixture's PMT (`teletext_descriptor`, tag
 /// `0x56`, `teletext_type` `0x02` subtitle page, magazine 8 / page `0x88`).
@@ -41,8 +40,7 @@ const TELETEXT_PID: u16 = 0x0101;
 /// every Teletext frame on [`TELETEXT_PID`] through this crate's own
 /// extractor.
 fn decode_via_this_crate(ts_bytes: &[u8]) -> Vec<timed_metadata::webvtt::Cue> {
-    let media = TsDemux::new()
-        .unpackage(ts_bytes)
+    let media = test_harness::collect::media_from_ts(ts_bytes)
         .expect("demux the committed Teletext TS fixture");
     let track = media
         .tracks

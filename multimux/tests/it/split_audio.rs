@@ -12,14 +12,12 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use broadcast_common::mux::Unpackage;
 use broadcast_hls::{MediaPlaylist, MediaSequence, PartIndex};
 use hls_runtime::server::AudioRenditionDecl;
 use media_plane::ProgramId;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use tower::ServiceExt;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::ts_demux::TsDemux;
 use transmux::validate::{SegmentOrigin, Severity, validate_init_segment, validate_media_segment};
 
 use crate::support::shared;
@@ -67,7 +65,7 @@ impl Source {
 
 fn load(fixture: &str) -> Vec<Source> {
     let bytes = test_fixtures::read(fixture);
-    let media = TsDemux::new().unpackage(&bytes).expect("demux fixture");
+    let media = test_harness::collect::media_from_ts(&bytes).expect("demux fixture");
     media
         .tracks
         .into_iter()
@@ -688,7 +686,7 @@ async fn split_audio_parts_at_23_976_fps_keep_the_85_percent_floor() {
     else {
         return;
     };
-    let media = TsDemux::new().unpackage(&hevc).expect("demux fixture");
+    let media = test_harness::collect::media_from_ts(&hevc).expect("demux fixture");
     let video = media
         .tracks
         .into_iter()

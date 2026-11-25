@@ -1,10 +1,11 @@
 //! FLV (Flash Video) container spoke — Adobe Flash Video File Format
 //! Specification **v10.1, Annex E**; see `private/specs-verified/mpeg/transmux/codec/flv.md`.
 //!
-//! FLV is a hub spoke like [`TsDemux`](crate::TsDemux) / [`MatroskaDemux`](crate::MatroskaDemux):
-//! [`FlvDemux`] ([`Unpackage`]) parses an FLV byte stream into the neutral
-//! [`Media`] IR, and [`FlvMuxStage`] ([`Stage`]) muxes its tracks and samples
-//! back into FLV incrementally. transmux carries the FLV mainstream — **H.264/AVC video + AAC audio**
+//! FLV is a hub spoke like [`StreamingTsDemux`](crate::StreamingTsDemux) /
+//! [`MatroskaDemux`](crate::MatroskaDemux): the incremental
+//! [`StreamingFlvDemux`](crate::flv_stream::StreamingFlvDemux) parses an FLV
+//! byte stream into events on the neutral IR, and [`FlvMuxStage`]
+//! ([`Stage`]) muxes its tracks and samples back into FLV incrementally. transmux carries the FLV mainstream — **H.264/AVC video + AAC audio**
 //! (Annex E §E.4.3.2 / §E.4.2.2) — reusing the existing
 //! [`CodecConfig::Avc`] / [`CodecConfig::Aac`]; no new codec variant.
 //!
@@ -13,7 +14,7 @@
 //! whose `CodecID` isn't AVC, or an audio tag whose `SoundFormat` isn't AAC,
 //! is **silently skipped** here — no track, no error, no other signal that
 //! data was discarded (see the `continue` sites in
-//! [`FlvDemux::unpackage`](Unpackage::unpackage)).
+//! [`StreamingFlvDemux::feed`](crate::flv_stream::StreamingFlvDemux::feed)).
 //!
 //! # Layout (Adobe FLV v10.1 Annex E)
 //!
@@ -45,28 +46,26 @@ use alloc::collections::VecDeque;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
+#[cfg(test)]
+use broadcast_common::Parse;
 use broadcast_common::error::BufferTooShort;
+#[cfg(test)]
 use broadcast_common::len::need_in;
-use core::marker::PhantomData;
-use core::num::NonZeroU32;
 use rtmp_runtime::RtmpError;
 use rtmp_runtime::amf0::{Amf0Value, amf0_values};
 use rtmp_runtime::flv::FlvHeader;
 use rtmp_runtime::flv::FlvTag as RtmpFlvTag;
 use rtmp_runtime::flv::TagType;
 
+use broadcast_common::Serialize;
 use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
-use broadcast_common::{Parse, Serialize, Unpackage};
 
 use crate::aac_asc::AudioSpecificConfig;
-use crate::annexb::{NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
 use crate::error::{Error, Result};
-use crate::ir::{AUDIO_SAMPLE_SIZE_BITS, InputDegradation};
-use crate::media::{Media, Track};
 use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
-use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use isobmff::avc_config::AVCConfigurationBox;
 use isobmff::mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG4_AUDIO,
     SLConfigDescriptor, STREAM_TYPE_AUDIO,
@@ -80,7 +79,6 @@ use isobmff::mp4esds::{
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738) to
 /// validate the header incrementally without duplicating the constant.
-pub(crate) const FLV_SIGNATURE: [u8; 3] = rtmp_runtime::flv::FLV_SIGNATURE;
 /// Width of the FLV file signature `FLV` (§E.4.1).
 pub(crate) const FLV_SIGNATURE_LEN: usize = 3;
 /// FLV header length in bytes (§E.2), from the shared FLV codec.
@@ -188,11 +186,11 @@ const SI24_MAX: i32 = (1 << 23) - 1;
 /// Byte offset of the `L` of the FLV signature (§E.4.1).
 const SIGNATURE_L_OFFSET: usize = 1;
 /// Byte offset of the `V` of the FLV signature (§E.4.1).
+#[cfg(test)]
 const SIGNATURE_V_OFFSET: usize = 2;
 /// `FrameType` shift in the first `VideoTagHeader` byte (§E.4.3).
 const FRAME_TYPE_SHIFT: u32 = 4;
 /// `CodecID` mask in the first `VideoTagHeader` byte (§E.4.3).
-const CODEC_ID_MASK: u8 = 0x0F;
 /// `SoundFormat` shift in the first `AudioTagHeader` byte (§E.4.2).
 const SOUND_FORMAT_SHIFT: u32 = 4;
 /// `SoundRate` shift in the first `AudioTagHeader` byte (§E.4.2).
@@ -204,22 +202,15 @@ const SOUND_TYPE_MASK: u8 = 0x01;
 /// `AudioTagHeader` before `AACAUDIODATA`: sound fields byte + `AACPacketType`.
 const AUDIO_TAG_HEADER_LEN: usize = 2;
 /// Bytes needed before both `CodecID` and `AVCPacketType` are readable.
-const VIDEO_TAG_MIN_LEN: usize = AVC_PACKET_TYPE_OFFSET + 1;
 /// Whole AVC video tag body header: `Videodata` byte + `AVCPacketType` +
 /// `CompositionTime` (§E.4.3.2).
 const VIDEO_TAG_BODY_HEADER_LEN: usize = AVC_PACKET_DATA_OFFSET;
-/// Byte offset of `AVCPacketType` in `Videodata`.
-const AVC_PACKET_TYPE_OFFSET: usize = 1;
 /// Byte offset of `CompositionTime` in `Videodata`.
 const COMPOSITION_TIME_OFFSET: usize = 2;
 /// `CompositionTime` is a signed 24-bit field (§E.4.3.2).
 const COMPOSITION_TIME_LEN: usize = 3;
 /// Byte offset of the first coded byte after the AVC packet header.
 const AVC_PACKET_DATA_OFFSET: usize = COMPOSITION_TIME_OFFSET + COMPOSITION_TIME_LEN;
-/// Byte offset of `AACPacketType` in `Audiodata`.
-const AAC_PACKET_TYPE_OFFSET: usize = 1;
-/// Byte offset of the first coded byte after the AAC packet header.
-const AAC_PACKET_DATA_OFFSET: usize = AAC_PACKET_TYPE_OFFSET + 1;
 
 /// Shift of the most significant byte of the signed 24-bit `CompositionTime`.
 const SI24_TOP_BYTE_SHIFT: u32 = 16;
@@ -231,10 +222,6 @@ const SI24_LAST_BYTE: usize = 2;
 const SI24_SIGN_BIT: u32 = 0x0080_0000;
 /// Mask that sign-extends the signed 24-bit `CompositionTime` to 32 bits.
 const SI24_SIGN_EXTEND_MASK: u32 = 0xFF00_0000;
-/// Index counted back from the end to the sample before the last.
-const PREV_SAMPLE_BACK: usize = 2;
-/// Index counted back from the end to the last sample.
-const LAST_SAMPLE_BACK: usize = 1;
 
 // `esds` construction constants (mirroring `ts_demux`).
 /// `ES_ID` assigned to the single audio elementary stream.
@@ -307,7 +294,7 @@ pub enum FlvError {
         /// The maximum this crate accepts.
         max: usize,
     },
-    /// A [`Media`] track used a codec FLV cannot carry (only AVC + AAC).
+    /// An IR track used a codec FLV cannot carry (only AVC + AAC).
     #[error("codec {codec} has no FLV carriage in this crate (only AVC + AAC)")]
     UnsupportedCodec {
         /// The codec name.
@@ -372,53 +359,8 @@ impl From<Error> for FlvError {
 // FlvDemux — Unpackage<Input = &[u8]>
 // ---------------------------------------------------------------------------
 
-/// Demux an FLV byte stream into a [`Media`] (Adobe FLV v10.1 Annex E).
-///
-/// Parses the header then walks the tag loop: an AVC sequence-header tag
-/// (`AVCPacketType == 0`) yields the [`CodecConfig::Avc`] (dimensions decoded
-/// from the SPS inside the `avcC`); an AAC sequence-header tag
-/// (`AACPacketType == 0`) yields the [`CodecConfig::Aac`] (ASC → `esds`).
-/// Type-1 tags become [`Sample`]s: video DTS = tag timestamp, PTS = DTS +
-/// `CompositionTime`; audio frames are the raw AAC AUs. Script (`onMetaData`)
-/// tags are skipped leniently.
-///
-/// The `'a` parameter ties the demuxer to the byte-slice lifetime it consumes
-/// via [`Unpackage::Input`]; construct one per call with [`FlvDemux::new`].
-#[derive(Debug, Default, Clone)]
-pub struct FlvDemux<'a> {
-    _marker: PhantomData<&'a [u8]>,
-    /// Whether the most recent [`unpackage`](Unpackage::unpackage) stopped on a
-    /// short final tag. See [`FlvDemux::last_walk_was_truncated`].
-    truncated_tail: bool,
-}
-
-impl FlvDemux<'_> {
-    /// Create a new demuxer.
-    pub fn new() -> Self {
-        Self {
-            _marker: PhantomData,
-            truncated_tail: false,
-        }
-    }
-
-    /// Whether the most recent [`unpackage`](Unpackage::unpackage) call ended on
-    /// a **truncated final tag**: the last tag's declared `DataSize` ran past
-    /// the end of the buffer, so that tag was discarded and everything before it
-    /// returned. Always `false` before the first call.
-    ///
-    /// This exists so a truncated capture is not indistinguishable from a
-    /// complete one. The returned [`Media`] is otherwise identical — a recorded
-    /// or captured live FLV routinely ends mid-tag, and refusing the whole file
-    /// over it would discard all the good media — but the caller can now tell,
-    /// and decide whether to warn, trim, or re-fetch. A tag that is complete
-    /// except for its trailing `PreviousTagSize` is *not* reported here: that
-    /// field is redundant (§E.4.1), so such a tag is kept and the walk is clean.
-    pub fn last_walk_was_truncated(&self) -> bool {
-        self.truncated_tail
-    }
-}
-
 /// One parsed FLV tag (header fields + body slice).
+#[cfg(test)]
 struct FlvTag<'a> {
     /// Byte offset of the tag header in the input (for degradation reports).
     offset: usize,
@@ -430,6 +372,7 @@ struct FlvTag<'a> {
 
 /// The tag walk of an FLV stream: the complete tags plus whether the stream
 /// ended on a short tail (see [`iter_tags`]).
+#[cfg(test)]
 struct TagWalk<'a> {
     tags: Vec<FlvTag<'a>>,
     /// `true` when the walk stopped because the last tag declares more bytes
@@ -458,6 +401,7 @@ struct TagWalk<'a> {
 /// A stream whose very first tag is already incomplete has nothing to return at
 /// all, so that alone is [`FlvError::TagOverrun`] — the caller gets a diagnosis
 /// rather than a bare `NoSupportedTrack`.
+#[cfg(test)]
 fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
     need_in(input, FLV_HEADER_LEN + PREV_TAG_SIZE_LEN, "FLV header")?;
     let header = FlvHeader::parse(input).map_err(|e| match e.clone() {
@@ -730,248 +674,6 @@ mod walk_golden {
     }
 }
 
-impl<'a> Unpackage for FlvDemux<'a> {
-    type Input = &'a [u8];
-    type Media = Media;
-    type Error = FlvError;
-
-    fn unpackage(&mut self, input: &'a [u8]) -> core::result::Result<Media, FlvError> {
-        // Reset first: a caller that reuses one demuxer for two streams must
-        // never see the previous stream's truncation reported against this one.
-        self.truncated_tail = false;
-        if input.len() < FLV_HEADER_LEN {
-            return Err(FlvError::Codec(Error::BufferTooShort(BufferTooShort {
-                need: FLV_HEADER_LEN,
-                have: input.len(),
-                what: "FLV header",
-            })));
-        }
-        if input[0..3] != FLV_SIGNATURE {
-            return Err(FlvError::BadSignature([
-                input[0],
-                input[SIGNATURE_L_OFFSET],
-                input[SIGNATURE_V_OFFSET],
-            ]));
-        }
-
-        let walk = iter_tags(input).map_err(FlvError::Codec)?;
-        self.truncated_tail = walk.truncated_tail;
-        let tags = walk.tags;
-        let mut degraded: Vec<InputDegradation> = walk
-            .damaged
-            .iter()
-            .map(|&o| InputDegradation::MalformedUnit { position: o as u64 })
-            .collect();
-
-        // Video track state.
-        let mut avc_config: Option<AVCConfigurationBox> = None;
-        // The NAL length-prefix size the *source* `avcC` declared (the emitted
-        // record's field is rewritten to the canonical 4, so the original must
-        // be kept separately for the sample-rewrite below).
-        let mut avc_source_length_size: Option<usize> = None;
-        let mut video_samples: Vec<Sample> = Vec::new();
-        let mut last_video_dts: Option<u32> = None;
-        // Audio track state.
-        let mut aac_esds: Option<EsdsBox> = None;
-        let mut aac_channels: u16 = 0;
-        let mut aac_rate: u32 = 0;
-        let mut audio_samples: Vec<Sample> = Vec::new();
-        let mut last_audio_dts: Option<u32> = None;
-
-        for tag in &tags {
-            match tag.tag_type {
-                TagType::Video => {
-                    if tag.body.len() < VIDEO_TAG_MIN_LEN {
-                        continue;
-                    }
-                    let frame_type = tag.body[0] >> FRAME_TYPE_SHIFT;
-                    let codec_id = tag.body[0] & CODEC_ID_MASK;
-                    if codec_id != CODEC_ID_AVC {
-                        continue; // non-AVC video is out of scope
-                    }
-                    let avc_packet_type = tag.body[AVC_PACKET_TYPE_OFFSET];
-                    // AVCVIDEOPACKET: AVCPacketType(1) + CompositionTime(SI24=3) + Data.
-                    if tag.body.len() < VIDEO_TAG_BODY_HEADER_LEN {
-                        continue;
-                    }
-                    let composition_time =
-                        read_si24(&tag.body[COMPOSITION_TIME_OFFSET..AVC_PACKET_DATA_OFFSET]);
-                    let data = &tag.body[AVC_PACKET_DATA_OFFSET..];
-                    match avc_packet_type {
-                        avc_packet_type::SEQUENCE_HEADER
-                            if avc_config.is_none() && !data.is_empty() =>
-                        {
-                            // A corrupt sequence header is skipped and reported; a
-                            // later intact one can still configure the track.
-                            let Some(mut record) = AVCDecoderConfigurationRecord::parse(data)
-                                .ok()
-                                .filter(|r| r.require_sps().is_ok())
-                            else {
-                                degraded.push(InputDegradation::MalformedUnit {
-                                    position: tag.offset as u64,
-                                });
-                                continue;
-                            };
-                            // The NALU samples are normalised to 4-byte NAL
-                            // prefixes below, so the emitted `avcC` must declare
-                            // that size, not the source's (r04-W43).
-                            avc_source_length_size =
-                                Some(usize::from(record.length_size_minus_one) + 1);
-                            record.length_size_minus_one = NAL_LENGTH_SIZE_MINUS_ONE;
-                            avc_config = Some(AVCConfigurationBox::new(record));
-                        }
-                        avc_packet_type::NALU => {
-                            let dts = tag.timestamp;
-                            // Absolute dts/pts (media plane step 2c): the FLV
-                            // tag timestamp is already an absolute wire clock
-                            // (milliseconds, matching `FLV_TIMESCALE`), unlike
-                            // the five demuxers this step fixes that used to
-                            // leave the anchor at 0 — FLV's `CompositionTime`
-                            // (§E.4.3.2) folds directly into `pts`.
-                            let dts_abs = dts as i64;
-                            let pts_abs = dts_abs + composition_time as i64;
-                            // The NALU payload's NAL prefixes use the
-                            // `lengthSizeMinusOne` the AVC sequence header
-                            // declared (§E.4.3.1 / ISO/IEC 14496-15:2017 §5.3.3) —
-                            // 1, 2 or 4 bytes. The rest of the pipeline is
-                            // fixed at 4, so rewrite them (r04-W43).
-                            let length_size = avc_source_length_size.unwrap_or(NAL_LENGTH_SIZE);
-                            let Ok(data) = normalise_nal_length_size(data, length_size) else {
-                                // Corrupt NAL framing in this tag: drop the
-                                // sample, report it, keep going.
-                                degraded.push(InputDegradation::MalformedUnit {
-                                    position: tag.offset as u64,
-                                });
-                                continue;
-                            };
-                            // Only a good sample advances the duration clock.
-                            let duration = delta_duration(&mut last_video_dts, dts);
-                            video_samples.push(Sample {
-                                data: data.into(),
-                                timing: Some(crate::ir::SampleTiming::timed_with_duration(
-                                    dts_abs, pts_abs, duration,
-                                )),
-                                flags: crate::ir::SampleFlags::new(
-                                    frame_type == FRAME_TYPE_KEYFRAME,
-                                ),
-                                provenance: None,
-                                display: None,
-                                protection: None,
-                            });
-                        }
-                        avc_packet_type::END_OF_SEQUENCE => {}
-                        _ => {}
-                    }
-                }
-                TagType::Audio => {
-                    if tag.body.is_empty() {
-                        continue;
-                    }
-                    let sound_format = tag.body[0] >> SOUND_FORMAT_SHIFT;
-                    if sound_format != SOUND_FORMAT_AAC {
-                        continue; // non-AAC audio is out of scope
-                    }
-                    // AACAUDIODATA: AACPacketType(1) + Data.
-                    if tag.body.len() < AUDIO_TAG_HEADER_LEN {
-                        continue;
-                    }
-                    let aac_pkt_type = tag.body[AAC_PACKET_TYPE_OFFSET];
-                    let data = &tag.body[AAC_PACKET_DATA_OFFSET..];
-                    match aac_pkt_type {
-                        // Some muxers emit a spurious empty AAC sequence
-                        // header; keep looking until a non-empty ASC arrives.
-                        aac_packet_type::SEQUENCE_HEADER
-                            if aac_esds.is_none() && !data.is_empty() =>
-                        {
-                            let Ok(asc) = AudioSpecificConfig::parse(data) else {
-                                degraded.push(InputDegradation::MalformedUnit {
-                                    position: tag.offset as u64,
-                                });
-                                continue;
-                            };
-                            aac_channels = aac_channel_count(&asc);
-                            aac_rate = asc_rate_hz(&asc);
-                            aac_esds = Some(build_aac_esds(data.to_vec()));
-                        }
-                        aac_packet_type::RAW => {
-                            let dts = tag.timestamp;
-                            let duration = delta_duration(&mut last_audio_dts, dts);
-                            let dts_abs = dts as i64;
-                            audio_samples.push(Sample {
-                                data: data.to_vec().into(),
-                                timing: Some(crate::ir::SampleTiming::timed_with_duration(
-                                    dts_abs, dts_abs, duration,
-                                )),
-                                flags: crate::ir::SampleFlags::SYNC,
-                                provenance: None,
-                                display: None,
-                                protection: None,
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-                TagType::Script => { /* onMetaData — informational, skipped */ }
-                _ => { /* unknown tag type — skipped leniently */ }
-            }
-        }
-
-        // Backfill the final sample's duration from the previous delta (no next
-        // tag to measure against): reuse the second-to-last delta.
-        backfill_last_duration(&mut video_samples);
-        backfill_last_duration(&mut audio_samples);
-
-        let mut tracks: Vec<Track> = Vec::new();
-        let mut track_id = TrackId::new(1);
-        if let Some(config) = avc_config
-            && !video_samples.is_empty()
-        {
-            let (width, height) = avc_dimensions(&config)?;
-            let anchor = anchor_of(&video_samples);
-            tracks.push(Track::new_at(
-                TrackSpec::new(
-                    track_id,
-                    FLV_TIMESCALE,
-                    CodecConfig::Avc {
-                        config,
-                        width,
-                        height,
-                    },
-                ),
-                video_samples,
-                anchor,
-            ));
-            track_id = track_id.next();
-        }
-        if let Some(esds) = aac_esds
-            && !audio_samples.is_empty()
-        {
-            let anchor = anchor_of(&audio_samples);
-            tracks.push(Track::new_at(
-                TrackSpec::new(
-                    track_id,
-                    FLV_TIMESCALE,
-                    CodecConfig::Aac {
-                        esds,
-                        channel_count: aac_channels,
-                        sample_rate: aac_rate,
-                        sample_size: AUDIO_SAMPLE_SIZE_BITS,
-                    },
-                ),
-                audio_samples,
-                anchor,
-            ));
-        }
-
-        if tracks.is_empty() {
-            return Err(FlvError::NoSupportedTrack);
-        }
-        let mut media = Media::new(tracks, FLV_TIMESCALE);
-        media.degraded = degraded;
-        Ok(media)
-    }
-}
-
 /// Read a signed 24-bit big-endian integer (FLV `CompositionTime`, §E.4.3.2).
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738) so
@@ -986,58 +688,6 @@ pub(crate) fn read_si24(b: &[u8]) -> i32 {
     } else {
         raw as i32
     }
-}
-
-/// Compute a sample's duration as the delta from the previous DTS, updating the
-/// running previous-DTS. The first sample gets a provisional 0 (backfilled).
-fn delta_duration(prev: &mut Option<u32>, dts: u32) -> u32 {
-    let dur = match *prev {
-        Some(p) => dts.saturating_sub(p),
-        None => 0,
-    };
-    *prev = Some(dts);
-    dur
-}
-
-/// The delta scheme leaves sample 0 with duration 0 and the last sample with no
-/// forward delta. Shift durations so each sample carries the *forward* delta
-/// (dts[i+1]-dts[i]); the last sample repeats the previous forward delta.
-fn backfill_last_duration(samples: &mut [Sample]) {
-    let n = samples.len();
-    if n == 0 {
-        return;
-    }
-    // `duration[i]` currently holds dts[i]-dts[i-1] (0 for i==0). Rebuild as the
-    // forward delta dts[i+1]-dts[i] by shifting left by one.
-    for i in 0..n.saturating_sub(1) {
-        let dur = samples[i + 1].timing.and_then(|t| t.duration());
-        if let (Some(a), Some(d)) = (samples[i].timing.as_mut(), dur)
-            && let Ok(d) = NonZeroU32::try_from(d)
-        {
-            *a = a.with_duration(d);
-        }
-    }
-    if n >= PREV_SAMPLE_BACK {
-        let dur = samples[n - PREV_SAMPLE_BACK]
-            .timing
-            .and_then(|t| t.duration());
-        if let (Some(a), Some(d)) = (samples[n - LAST_SAMPLE_BACK].timing.as_mut(), dur)
-            && let Ok(d) = NonZeroU32::try_from(d)
-        {
-            *a = a.with_duration(d);
-        }
-    }
-}
-
-/// The AVC track's `Track::start_decode_time` anchor: the first video
-/// sample's absolute dts (media plane step 2c) — kept in lockstep with
-/// `samples[0].timing.and_then(|t| t.dts())` per the crate-wide invariant.
-fn anchor_of(samples: &[Sample]) -> u64 {
-    samples
-        .first()
-        .and_then(|s| s.timing.and_then(|t| t.dts()))
-        .map(|d| d.max(0) as u64)
-        .unwrap_or(0)
 }
 
 /// Build an AAC `esds` from a raw `AudioSpecificConfig` byte slice (mirrors the
@@ -1884,6 +1534,8 @@ fn onmetadata_properties(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
+    use isobmff::avc_config::AVCDecoderConfigurationRecord;
 
     #[test]
     fn si24_sign_extends() {
@@ -1981,7 +1633,7 @@ mod tests {
         nalu.extend_from_slice(&[0x00, 0x01, 0x41]);
         write_flv_tag(&mut flv, tag_type::VIDEO, &nalu);
 
-        let media = FlvDemux::new().unpackage(&flv).expect("FLV -> IR");
+        let media = crate::test_media::media_from_flv(&flv).expect("FLV -> IR");
         let track = &media.tracks[0];
         assert_eq!(
             track.samples[0].data.as_ref(),

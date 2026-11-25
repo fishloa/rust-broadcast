@@ -10,7 +10,6 @@ use broadcast_client::{
 };
 use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::Unpackage;
 use libfuzzer_sys::fuzz_target;
 
 const URLS: [&str; 5] = [
@@ -356,12 +355,38 @@ fn packetise(media: &transmux::Media) -> (Vec<sdp_types::Media>, Vec<Vec<Vec<u8>
     (medias, streams)
 }
 
+/// Fold a whole TS fixture through the streaming demux into the tracks
+/// `packetise` needs (this fuzz crate is outside the workspace test harness).
+fn seed_media(bytes: &[u8]) -> transmux::Media {
+    let mut demux = transmux::StreamingTsDemux::new().with_strict_pmt_order();
+    demux.feed(bytes).expect("feed the TS seed");
+    demux.finish().expect("finish the TS seed");
+    let mut tracks: Vec<transmux::Track> = Vec::new();
+    let mut index: std::collections::BTreeMap<transmux::TrackId, usize> =
+        std::collections::BTreeMap::new();
+    while let Some(event) = demux.poll_event() {
+        match event {
+            transmux::DemuxEvent::TrackAdded(spec) => {
+                index.insert(spec.track_id, tracks.len());
+                tracks.push(transmux::Track::new(spec, Vec::new()));
+            }
+            transmux::DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
+                if let Some(&i) = index.get(&track_id) {
+                    tracks[i].samples.push(sample);
+                }
+            }
+            _ => {}
+        }
+    }
+    transmux::Media::new(tracks, transmux::rtp::VIDEO_CLOCK_TIMESCALE)
+}
+
 fn rtp_seed() -> &'static RtpSeed {
     static SEED: OnceLock<RtpSeed> = OnceLock::new();
     SEED.get_or_init(|| {
-        let media = transmux::TsDemux::new()
-            .unpackage(TS_SOURCES[0])
-            .expect("demux fixture");
+        let media = seed_media(TS_SOURCES[0]);
         let (mut medias, packets) = packetise(&media);
         for (n, media) in medias.iter_mut().enumerate() {
             media.add_attribute_with_value("control", format!("trackID={}", n + 1));

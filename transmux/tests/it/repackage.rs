@@ -1,24 +1,22 @@
 //! `Repackage` gate — fMP4/CMAF resegment / trim / track-select (issue #462).
 //!
-//! The oracle IR is built by demuxing `fixtures/ts/h264-aac.ts` with [`TsDemux`]
+//! The oracle IR is built by demuxing `fixtures/ts/h264-aac.ts` with `StreamingTsDemux`
 //! (deterministic: 75 video + 131 audio samples, fully characterised by the
 //! `ts_demux` gate). Every test re-demuxes the repackaged CMAF output with the
 //! crate's own [`Mp4Demux`] and compares coded sample bytes against that oracle
 //! — no hardcoded offsets, no raw-passthrough shortcuts.
 
 use broadcast_common::timescale::Timescale;
-use core::time::Duration;
-use std::path::PathBuf;
-use transmux::TrackId;
-
-use broadcast_common::Unpackage;
 use bytes::Bytes;
+use core::time::Duration;
 use isobmff::box_types::parse_box;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
+use std::path::PathBuf;
+use transmux::TrackId;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
-use transmux::{Repackage, Sample, Track, TrackSpec, TsDemux};
+use transmux::{Repackage, Sample, Track, TrackSpec};
 
 // ── Fixtures / oracle ───────────────────────────────────────────────────────
 
@@ -33,7 +31,7 @@ fn fixtures_dir() -> PathBuf {
 /// The deterministic oracle IR: demux the characterised H.264+AAC TS.
 fn oracle_ir() -> Media {
     let data = std::fs::read(fixtures_dir().join("h264-aac.ts")).expect("h264-aac.ts fixture");
-    let media = TsDemux::new().unpackage(&data).expect("ts demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("ts demux");
     assert_eq!(media.tracks.len(), 2, "oracle: 2 tracks");
     assert_eq!(
         media.tracks[0].samples.len(),

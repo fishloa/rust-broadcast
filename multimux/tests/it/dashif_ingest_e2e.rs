@@ -1,15 +1,12 @@
-use std::net::SocketAddr;
-use std::time::Duration;
-
-use broadcast_common::mux::Unpackage;
 use bytes::Bytes;
 use multimux::config::{Config, InputSpec, OutputAuthSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
+use std::net::SocketAddr;
+use std::time::Duration;
 use transmux::FragmentTrackData;
 use transmux::dash::DashPackager;
 use transmux::pipeline::{build_init_segment, build_media_segment};
-use transmux::ts_demux::TsDemux;
 use transmux::validate::{SegmentOrigin, Severity, validate_init_segment, validate_media_segment};
 
 use crate::support::listener;
@@ -26,8 +23,8 @@ struct Presentation {
 
 fn presentation() -> Presentation {
     let ts = test_fixtures::read("ts/h264-aac.ts");
-    let mut demux = TsDemux::new();
-    let media = demux.unpackage(&ts[..]).expect("demux");
+
+    let media = test_harness::collect::media_from_ts(&ts[..]).expect("demux");
     let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let mpd = DashPackager::default()
         .render(&specs, &test_harness::collect::segment_log(&media))

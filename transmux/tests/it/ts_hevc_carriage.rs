@@ -30,13 +30,11 @@ use crate::ts_hls_stage;
 use crate::ts_mux_stage;
 use crate::ts_psi::{first_section, parse_pat, parse_pmt, split_lp};
 use broadcast_common::timescale::Timescale;
+use isobmff::{Ac3SpecificBox, HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use std::path::PathBuf;
 use transmux::TrackId;
-
-use broadcast_common::Unpackage;
-use isobmff::{Ac3SpecificBox, HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use transmux::pipeline::CodecConfig;
-use transmux::{Media, Sample, StreamingTsHlsSegmenter, Track, TrackSpec, TsDemux};
+use transmux::{Media, Sample, StreamingTsHlsSegmenter, Track, TrackSpec};
 
 // ── Fixture loading (mirrors tests/it/ts_hevc.rs) ──────────────────────────────
 
@@ -99,7 +97,7 @@ fn parameter_sets(record: &HEVCDecoderConfigurationRecord) -> Vec<(u8, Vec<u8>)>
 #[test]
 fn hevc_track_survives_ts_mux_round_trip() {
     let ts = load_ts("main.ts");
-    let ir = TsDemux::new().unpackage(&ts).expect("demux fixture");
+    let ir = test_harness::collect::media_from_ts(&ts).expect("demux fixture");
     let before = hevc_track(&ir);
     assert!(
         !before.samples.is_empty(),
@@ -126,7 +124,7 @@ fn hevc_track_survives_ts_mux_round_trip() {
 
     // Re-demux the muxed bytes: the HEVC track must come back with the same
     // sample count and byte-identical VPS/SPS/PPS.
-    let ir2 = TsDemux::new().unpackage(&ts2).expect("re-demux mux output");
+    let ir2 = test_harness::collect::media_from_ts(&ts2).expect("re-demux mux output");
     let after = hevc_track(&ir2);
     assert!(!after.samples.is_empty(), "HEVC samples must survive");
     assert_eq!(
@@ -202,7 +200,7 @@ struct RealHevcParts {
 
 fn real_hevc_parts() -> RealHevcParts {
     let ts = load_ts("main.ts");
-    let ir = TsDemux::new().unpackage(&ts).expect("demux fixture");
+    let ir = test_harness::collect::media_from_ts(&ts).expect("demux fixture");
     let track = hevc_track(&ir);
     let (config, width, height) = match &track.spec.config {
         CodecConfig::Hevc {
@@ -284,9 +282,8 @@ fn mid_stream_segment_prepends_missing_hevc_parameter_sets() {
 
     // Re-demux segment 2 alone (every TS-HLS segment is self-contained
     // PAT/PMT/PES) and inspect its first (only) HEVC access unit.
-    let seg2: Media = TsDemux::new()
-        .unpackage(&out.segments[1])
-        .expect("re-demux segment 2");
+    let seg2: Media =
+        test_harness::collect::media_from_ts(&out.segments[1]).expect("re-demux segment 2");
     let seg2_track = hevc_track(&seg2);
     assert_eq!(
         seg2_track.samples.len(),

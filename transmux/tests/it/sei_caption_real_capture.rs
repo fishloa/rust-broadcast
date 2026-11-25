@@ -9,7 +9,7 @@
 //! `private/` is not checked out.
 //!
 //! This test exercises the **full input path** the issue specifies: IR sample
-//! bytes recovered by [`TsDemux`] (unmodified — issue #599 does not touch
+//! bytes recovered by `StreamingTsDemux` (unmodified — issue #599 does not touch
 //! `ts_demux.rs`), fed to [`caption_cc_data`]. `timed-metadata`'s
 //! `timed_metadata_sei_caption_fixture.rs` covers the same capture end-to-end through
 //! `cc_data::CcData`/`Cea608CueExtractor`; this test stays within `transmux`
@@ -28,9 +28,7 @@
 //! an access-unit boundary), so the demuxer's first *complete* sample begins
 //! later in the file. Confirmed by locating this test's expected bytes at
 //! their own distinct raw file offset (~133918) during development.
-
-use broadcast_common::Unpackage;
-use transmux::{CodecConfig, NalCodec, TsDemux, caption_cc_data};
+use transmux::{CodecConfig, NalCodec, caption_cc_data};
 
 const CAPTURE: &str = "transformers-eia608-h264";
 
@@ -59,8 +57,7 @@ fn real_capture_sei_extraction() {
         return;
     };
 
-    let media = TsDemux::new()
-        .unpackage(data.as_slice())
+    let media = test_harness::collect::media_from_ts(data.as_slice())
         .expect("demux the real capture slice");
     let video = media
         .tracks

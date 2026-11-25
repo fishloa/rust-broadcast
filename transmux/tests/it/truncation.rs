@@ -3,11 +3,8 @@
 //! the complete document plus trailing whitespace may parse, asserted
 //! explicitly as `Ok`. The MPD reader is dash-runtime's.
 #![cfg(feature = "std")]
-
-use broadcast_common::Unpackage;
 use broadcast_smooth::SmoothManifest;
 use transmux::SmoothPackager;
-use transmux::ts_demux::TsDemux;
 
 fn assert_every_truncation_errors<T, E: std::fmt::Debug>(
     name: &str,
@@ -40,7 +37,7 @@ fn assert_every_truncation_errors<T, E: std::fmt::Debug>(
 #[test]
 fn smooth_manifest_truncations_all_error() {
     let ts = std::fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("ts fixture");
-    let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
+    let media = test_harness::collect::media_from_ts(&ts[..]).expect("demux");
     let manifest = crate::packagers::smooth(&SmoothPackager, &media).expect("smooth");
     assert_every_truncation_errors("SmoothPackager manifest", &manifest, SmoothManifest::parse);
 }

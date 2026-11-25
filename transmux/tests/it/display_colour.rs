@@ -18,8 +18,8 @@
 //!
 //! Every capture was also scanned with the same oracle: the other H.264
 //! fixtures either carry `video_signal_type_present_flag` 0 or one of the
-//! combinations above. Checked through both TS demux entry points (batch
-//! [`TsDemux`] and the streaming [`StreamingTsDemux`]). Fixtures are loaded
+//! combinations above. Checked through the streaming
+//! [`StreamingTsDemux`]. Fixtures are loaded
 //! through `test_fixtures` and SKIP, never fail, when the private submodule is
 //! not checked out.
 //!
@@ -32,7 +32,7 @@ use transmux::ir::{
     CodecConfig, ColourDescription, ColourPrimaries, MatrixCoefficients, TransferCharacteristics,
     VideoFormat, VideoSignalType,
 };
-use transmux::ts_demux::{DemuxEvent, StreamingTsDemux, TsDemux};
+use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 fn read(fixture: &str) -> Option<Vec<u8>> {
     test_fixtures::require_bytes(fixture, "display_colour")
@@ -62,7 +62,7 @@ fn streaming_display(data: &[u8]) -> Vec<Option<transmux::ir::DisplayGeometry>> 
 
 /// The `display` of every AVC track in the batch `Media`.
 fn batch_display(data: &[u8]) -> Vec<Option<transmux::ir::DisplayGeometry>> {
-    let media = TsDemux::new().demux(data).expect("batch demux");
+    let media = test_harness::collect::media_from_ts(data).expect("batch demux");
     media
         .tracks
         .iter()
@@ -191,7 +191,7 @@ fn fmp4_round_trip(fixture: &str) {
     let Some(data) = read(fixture) else {
         return;
     };
-    let media = TsDemux::new().demux(&data).expect("TS demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("TS demux");
     let want = media
         .tracks
         .iter()

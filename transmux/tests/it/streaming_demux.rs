@@ -17,9 +17,6 @@ use mpeg_ts::ts::Pcr;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use transmux::TrackId;
-
-use broadcast_common::Unpackage;
-use transmux::TsDemux;
 use transmux::media::{Media, PcrSample, Track};
 use transmux::pipeline::{CodecConfig, TrackSpec};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
@@ -179,8 +176,7 @@ fn chunk_boundary_equivalence_matches_batch() {
             "{}: must be whole 188-byte TS packets",
             path.display()
         );
-        let oracle: Media = TsDemux::new()
-            .unpackage(&data)
+        let oracle: Media = test_harness::collect::media_from_ts(&data)
             .unwrap_or_else(|e| panic!("{}: batch demux: {e}", path.display()));
 
         for &size in &CHUNK_SIZES {
@@ -223,9 +219,8 @@ fn m6_single_track_added_covers_every_live_pid_incl_data_tracks() {
 
     // Every track the batch wrapper (built on the very same engine) settles
     // on must have had exactly one corresponding TrackAdded fire.
-    let batch: Media = TsDemux::new()
-        .unpackage(&data)
-        .expect("batch demux of m6-single.ts");
+    let batch: Media =
+        test_harness::collect::media_from_ts(&data).expect("batch demux of m6-single.ts");
     assert_eq!(
         added.len(),
         batch.tracks.len(),
@@ -255,9 +250,8 @@ fn france_discontinuity_fixture_fires_discontinuity_event() {
 #[test]
 fn h264_aac_pcr_event_count_matches_batch_media_pcr_len() {
     let data = read(&fixtures_ts_dir().join("h264-aac.ts"));
-    let batch: Media = TsDemux::new()
-        .unpackage(&data)
-        .expect("batch demux of h264-aac.ts");
+    let batch: Media =
+        test_harness::collect::media_from_ts(&data).expect("batch demux of h264-aac.ts");
     assert!(!batch.pcr.is_empty(), "h264-aac.ts must carry PCR");
 
     let mut demux = StreamingTsDemux::new();
@@ -291,9 +285,8 @@ fn bounded_memory_smoke_double_feed_eager_poll() {
     doubled.extend_from_slice(&data);
     assert_eq!(doubled.len() % 188, 0);
 
-    let single: Media = TsDemux::new()
-        .unpackage(&data)
-        .expect("single-pass batch demux");
+    let single: Media =
+        test_harness::collect::media_from_ts(&data).expect("single-pass batch demux");
     let single_sample_count: usize = single.tracks.iter().map(|t| t.samples.len()).sum();
     assert!(single_sample_count > 0, "single pass must yield samples");
 
@@ -338,9 +331,8 @@ fn finish_flushes_trailing_partial_access_unit_only_at_finish() {
 
     // Oracle: the batch wrapper always calls finish() internally, so this is
     // "what a fully-flushed demux of this exact truncated input looks like".
-    let oracle: Media = TsDemux::new()
-        .unpackage(&truncated)
-        .expect("batch demux of truncated input");
+    let oracle: Media =
+        test_harness::collect::media_from_ts(&truncated).expect("batch demux of truncated input");
     let oracle_total: usize = oracle.tracks.iter().map(|t| t.samples.len()).sum();
     assert!(oracle_total > 0, "truncated input must still yield samples");
 

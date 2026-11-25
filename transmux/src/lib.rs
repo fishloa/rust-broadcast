@@ -25,16 +25,17 @@
 //! caller that still holds a whole [`Media`]. Nothing holds the samples it
 //! converts.
 //!
-//! - **Demux inputs:** MPEG-2 TS ([`TsDemux`], a thin batch
-//!   wrapper over the event-driven [`StreamingTsDemux`] — issue #555),
+//! - **Demux inputs:** MPEG-2 TS (the event-driven [`StreamingTsDemux`] —
+//!   issue #555),
 //!   fMP4/CMAF and progressive (non-fragmented) MP4 through the streaming MP4
 //!   stage [`mp4_demux::Mp4Demux`] (seekable byte ranges or forward-only
 //!   input), MPEG
 //!   Program Stream ([`StreamingPsDemux`]),
 //!   WebM/Matroska ([`MatroskaDemux`] — Xiph/EBML/fixed-size laced blocks are
 //!   unlaced into one sample per frame, see the module docs), FLV
-//!   ([`FlvDemux`] — non-AVC video and non-AAC audio tracks are silently
-//!   skipped, no event/error, see the module docs), RTMP ([`RtmpDemux`]).
+//!   ([`StreamingFlvDemux`] — non-AVC video and non-AAC audio tracks are
+//!   silently skipped, no event/error, see the module docs), and RTMP through
+//!   `rtmp-runtime`'s session engine feeding [`StreamingFlvDemux`].
 //! - **Mux stages:** CMAF/fMP4 ([`CmafMuxStage`]), progressive single-file
 //!   MP4 ([`ProgressiveMuxStage`]), MPEG-2 TS ([`TsMuxStage`]), Matroska
 //!   ([`MkvMuxStage`]), FLV ([`FlvMuxStage`]), RTMP ([`RtmpMuxStage`]), RTP
@@ -71,7 +72,7 @@
 //!   (`METHOD=SAMPLE-AES-CTR`, RFC 8216bis §4.4.4.4 — see the
 //!   `broadcast-hls` crate's module docs); HLS Sample-AES + full-segment
 //!   AES-128 encrypt/decrypt (`sample-aes`, [`sample_aes`]).
-//! - **RTP/RTCP:** de/packetise ([`RtpPacketiserStage`] / [`RtpDepacketiser`]),
+//! - **RTP/RTCP:** packetise ([`RtpPacketiserStage`]),
 //!   streaming depayload ([`RtpStreamDepacketiser`]) + SDP fmtp→config helpers
 //!   ([`rtp_sdp`]); RTCP control packets ([`RtcpPacket`]).
 //! - **Display geometry:** a video track's coded size, SPS VUI sample aspect
@@ -223,6 +224,8 @@ pub mod segment_log;
 pub mod stitch;
 #[cfg(test)]
 pub(crate) mod test_bits;
+#[cfg(test)]
+mod test_media;
 pub mod timeline;
 pub use rtp_packet::rtcp;
 pub mod matroska_demux;
@@ -289,7 +292,7 @@ pub use drm::{
 pub use drm::{playready_pro, playready_pssh, playready_wrmheader};
 pub use error::{Error, Result};
 pub use flv::{
-    FlvDemux, FlvError, FlvMuxStage, FlvPayload, FlvPayloadKind, flv_frame_payload,
+    FlvError, FlvMuxStage, FlvPayload, FlvPayloadKind, flv_frame_payload,
     flv_sequence_header_payloads, flv_track_kind, on_metadata_body,
 };
 pub use flv_stream::StreamingFlvDemux;
@@ -343,15 +346,13 @@ pub use rtcp::{
     RtcpPacketType, SDES_CNAME, SDES_EMAIL, SDES_LOC, SDES_NAME, SDES_NOTE, SDES_PHONE, SDES_PRIV,
     SDES_TOOL, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
 };
-pub use rtmp::{RtmpDemux, RtmpFlvError, RtmpMuxStage};
+pub use rtmp::{RtmpFlvError, RtmpMuxStage};
 #[cfg(feature = "std")]
 pub use rtp::sdp_media;
 pub use rtp::{
     DEFAULT_AAC_CLOCK_RATE, DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT,
-    KLV_ENCODING_NAME, MAX_TIMING_WARNINGS, NAL_TYPE_IDR, RtpDepacketiser, RtpInput,
-    RtpInputStream, RtpMediaKind, RtpPacket, RtpPacketiserStage, RtpTimingWarning,
-    VIDEO_CLOCK_RATE, VIDEO_CLOCK_TIMESCALE, depacketise_klv, packetise_klv,
-    packetise_video_sample,
+    KLV_ENCODING_NAME, NAL_TYPE_IDR, RtpMediaKind, RtpPacket, RtpPacketiserStage, VIDEO_CLOCK_RATE,
+    VIDEO_CLOCK_TIMESCALE, depacketise_klv, packetise_klv, packetise_video_sample,
 };
 pub use rtp_align::{AlignOut, AvSync, SR_SWITCH_TOLERANCE_US, TrackAligner};
 #[cfg(feature = "std")]
@@ -405,7 +406,7 @@ pub use sps::{
 pub use trickplay::TrickPlayStage;
 pub use ts_demux::{
     AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,
-    InputDegradation, StreamingTsDemux, TsDemux,
+    InputDegradation, StreamingTsDemux,
 };
 pub use ts_hls::{StreamingTsHlsSegmenter, UpdateTrackOutcome};
 pub use ts_mux::{DEFAULT_PSI_INTERVAL, TsContinuity, TsMuxStage};

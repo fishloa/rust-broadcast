@@ -45,12 +45,11 @@
 //! not go anywhere near this crate's summing code and so cannot move in
 //! lockstep with a scaling bug in it.
 
-use broadcast_common::Unpackage;
 use test_fixtures::ffprobe;
 
 use transmux::pipeline::CodecConfig;
-use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
-use transmux::{FlvDemux, Media, RtmpDemux, RtmpMuxStage, RtpDepacketiser, TsDemux};
+use transmux::rtp::RtpMediaKind;
+use transmux::{Media, RtmpMuxStage};
 
 fn workspace_fixture(rel: &str) -> Vec<u8> {
     let path = test_fixtures::root().join(rel);
@@ -107,7 +106,7 @@ fn assert_timing_invariant(media: &Media, what: &str) -> usize {
 #[test]
 fn ts_demux_timing_invariant_holds() {
     let ts = workspace_fixture("ts/h264-aac.ts");
-    let media = TsDemux::new().unpackage(&ts[..]).expect("TS demux");
+    let media = test_harness::collect::media_from_ts(&ts[..]).expect("TS demux");
     let checked = assert_timing_invariant(&media, "TsDemux");
     assert!(
         checked >= 2,
@@ -198,7 +197,7 @@ fn progressive_demux_timing_invariant_holds() {
 #[test]
 fn flv_demux_timing_invariant_holds() {
     let flv = workspace_fixture("flv/av.flv");
-    let media = FlvDemux::new().unpackage(&flv[..]).expect("FLV demux");
+    let media = test_harness::collect::media_from_flv(&flv[..]).expect("FLV demux");
     let checked = assert_timing_invariant(&media, "FlvDemux");
     assert!(checked >= 1, "expected at least one timed track checked");
 }
@@ -238,11 +237,9 @@ fn ps_demux_timing_invariant_holds() {
 #[test]
 fn rtmp_demux_timing_invariant_holds() {
     let flv = workspace_fixture("flv/av.flv");
-    let ir = FlvDemux::new().unpackage(&flv[..]).expect("FLV demux");
+    let ir = test_harness::collect::media_from_flv(&flv[..]).expect("FLV demux");
     let wire = crate::mux_bytes::mux_bytes(&mut RtmpMuxStage::default(), &ir);
-    let media = RtmpDemux::new()
-        .unpackage(&wire[..])
-        .expect("RTMP wire -> IR");
+    let media = test_harness::collect::media_from_rtmp(&wire[..]).expect("RTMP wire -> IR");
     let checked = assert_timing_invariant(&media, "RtmpDemux");
     assert!(checked >= 1, "expected at least one timed track checked");
 }
@@ -252,48 +249,47 @@ fn rtmp_demux_timing_invariant_holds() {
 #[test]
 fn rtp_depacketiser_timing_invariant_holds() {
     let ts = workspace_fixture("ts/h264-aac.ts");
-    let ir = TsDemux::new().unpackage(&ts[..]).expect("TS demux");
+    let ir = test_harness::collect::media_from_ts(&ts[..]).expect("TS demux");
     let out = crate::rtp_run::packetise(&ir, crate::rtp_run::stage(1400, 0x1234_5678));
-    let media = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: out
-                .streams
-                .iter()
-                .map(|s| {
-                    let stream = RtpInputStream::new(
-                        s.kind,
-                        s.packets
+    let media = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: out
+            .streams
+            .iter()
+            .map(|s| {
+                let stream = test_harness::collect::RtpTestStream::new(
+                    s.kind,
+                    s.packets
+                        .iter()
+                        .map(|p| p.as_contiguous().to_vec())
+                        .collect(),
+                );
+                // The wire carries no codec config; the SDP does. This test
+                // only needs each track's timing, so pair each stream with the
+                // packetised IR track of its kind.
+                if s.kind == RtpMediaKind::Aac {
+                    stream.with_config(
+                        ir.tracks
                             .iter()
-                            .map(|p| p.as_contiguous().to_vec())
-                            .collect(),
-                    );
-                    // The wire carries no codec config; the SDP does. This
-                    // test only needs each track's timing, so pair each
-                    // stream with the packetised IR track of its kind.
-                    if s.kind == RtpMediaKind::Aac {
-                        stream.with_config(
-                            ir.tracks
-                                .iter()
-                                .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
-                                .expect("audio track")
-                                .spec
-                                .config
-                                .clone(),
-                        )
-                    } else {
-                        stream
-                    }
-                })
-                .collect(),
-        })
-        .expect("RTP -> IR");
+                            .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+                            .expect("audio track")
+                            .spec
+                            .config
+                            .clone(),
+                    )
+                } else {
+                    stream
+                }
+            })
+            .collect(),
+    })
+    .expect("RTP -> IR");
     assert!(
         out.streams
             .iter()
             .any(|s| matches!(s.kind, RtpMediaKind::H264)),
         "sanity: an H.264 RTP stream must have been produced"
     );
-    let checked = assert_timing_invariant(&media, "RtpDepacketiser");
+    let checked = assert_timing_invariant(&media, "RtpStreamDepacketiser");
     assert!(
         checked >= 2,
         "expected at least video + audio tracks checked, got {checked}"

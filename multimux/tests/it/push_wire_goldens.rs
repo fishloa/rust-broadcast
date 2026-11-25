@@ -13,15 +13,12 @@
 //! Regenerate only with a reviewed diff, via `REGENERATE_PUSH_GOLDENS=1`
 //! (RTMP) and `REGENERATE_PUSH_URL_TABLE=1` (SRT).
 
-use std::fmt::Write as _;
-use std::time::Duration;
-
-use broadcast_common::Unpackage;
 use multimux::push::{PushTransport, RtmpTransport, RtmpTransportConfig};
 use rtmp_runtime::server::{ServerEvent, ServerSession};
+use std::fmt::Write as _;
+use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use transmux::FlvDemux;
 use transmux::ir::TrackSpec;
 
 static FLV: std::sync::LazyLock<Vec<u8>> =
@@ -77,10 +74,8 @@ fn tag_body(flv: &[u8], n: usize) -> &[u8] {
 
 #[tokio::test]
 async fn rtmp_push_wire_bodies_match_the_recorded_golden() {
-    let mut demux = FlvDemux::new();
-    let media = demux
-        .unpackage(FLV.as_slice())
-        .expect("demux av.flv fixture");
+    let media =
+        test_harness::collect::media_from_flv(FLV.as_slice()).expect("demux av.flv fixture");
 
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("local addr");

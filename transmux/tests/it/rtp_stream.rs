@@ -25,7 +25,7 @@ fn timescale(value: u32) -> Timescale {
 
 #[cfg(feature = "std")]
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Demand, Stage, Unpackage};
+use broadcast_common::{Demand, Stage};
 use std::collections::HashSet;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
@@ -33,7 +33,7 @@ use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::{aac_config_from_asc_hex, avc_config_from_sprop};
 use transmux::{
     FragmentTrackData, Media, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, Severity,
-    TsDemux, WallSkewExceeded, build_init_segment, build_media_segment, validate::SegmentOrigin,
+    WallSkewExceeded, build_init_segment, build_media_segment, validate::SegmentOrigin,
     validate_init_segment, validate_media_segment,
 };
 
@@ -45,8 +45,8 @@ const SSRC: u32 = 0x1234_5678;
 fn demux_fixture() -> Media {
     let path = test_fixtures::path("ts/h264-aac.ts");
     let data = std::fs::read(path).expect("h264-aac.ts fixture must exist");
-    let mut demux = TsDemux::new();
-    demux.unpackage(&data[..]).expect("demux TS → IR")
+
+    test_harness::collect::media_from_ts(&data[..]).expect("demux TS → IR")
 }
 
 fn packetise(media: &Media) -> crate::rtp_run::RtpOutput {

@@ -6,14 +6,14 @@
 //! timing value (25 fps for the AVC and HEVC fixtures). Only the PES cadence
 //! is synthesised, which is what the check compares against.
 
-use broadcast_common::{Serialize, Unpackage};
+use broadcast_common::Serialize;
 use dvb_si::descriptors::any::DescriptorLoop;
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{PmtSection, PmtStream, StreamType};
 use media_doctor::{Diagnostic, FpsCadenceCheck, Report, Severity};
 use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::pid::Pid;
-use transmux::{CodecConfig, TsDemux};
+use transmux::CodecConfig;
 
 const TS_PACKET_SIZE: usize = 188;
 const PMT_PID: u16 = 0x0100;
@@ -32,7 +32,7 @@ struct ParamSets {
 
 fn avc_param_sets(rel: &str) -> ParamSets {
     let ts = test_fixtures::read(rel);
-    let media = TsDemux::new().unpackage(&ts).expect("fixture demuxes");
+    let media = test_harness::collect::media_from_ts(&ts).expect("fixture demuxes");
     for track in &media.tracks {
         if let CodecConfig::Avc { config, .. } = &track.spec.config {
             let mut nals: Vec<Vec<u8>> = config.config.sps.iter().map(|s| s.0.clone()).collect();
@@ -48,7 +48,7 @@ fn avc_param_sets(rel: &str) -> ParamSets {
 
 fn hevc_param_sets(rel: &str) -> ParamSets {
     let ts = test_fixtures::read(rel);
-    let media = TsDemux::new().unpackage(&ts).expect("fixture demuxes");
+    let media = test_harness::collect::media_from_ts(&ts).expect("fixture demuxes");
     for track in &media.tracks {
         if let CodecConfig::Hevc { config, .. } = &track.spec.config {
             let nals: Vec<Vec<u8>> = config

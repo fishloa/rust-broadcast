@@ -25,7 +25,7 @@ use core::time::Duration;
 use std::path::PathBuf;
 
 use isobmff::movie_fragment::MovieFragmentBox;
-use transmux::{CodecConfig, Segmenter, TsDemux};
+use transmux::{CodecConfig, Segmenter};
 
 fn fixtures_dir() -> PathBuf {
     test_fixtures::path("ts")
@@ -223,8 +223,8 @@ fn open_gop_gulli_fixture_anchors_and_segments() {
     );
 
     // Now demux through the real pipeline and check `is_sync`.
-    let mut demux = TsDemux::new();
-    let media = demux.demux(&ts).expect("demux gulli-opengop.ts");
+
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux gulli-opengop.ts");
     let video = media
         .tracks
         .iter()
@@ -334,8 +334,7 @@ fn closed_gop_h264_main_ts_idr_anchoring_unchanged() {
         "closed-GOP fixture must contain at least one IDR"
     );
 
-    let mut demux = TsDemux::new();
-    let media = demux.demux(&ts).expect("demux h264/main.ts");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux h264/main.ts");
     let video = media
         .tracks
         .iter()

@@ -2291,9 +2291,8 @@ mod segmenter_tests {
 
     /// The AAC track spec of the public `h264-aac.ts` capture, renumbered.
     pub(super) fn aac_track_spec(track_id: TrackId) -> TrackSpec {
-        use broadcast_common::mux::Unpackage;
         let ts = test_fixtures::read("ts/h264-aac.ts");
-        let media = transmux::TsDemux::new().unpackage(&ts).expect("demux TS");
+        let media = test_harness::collect::media_from_ts(&ts).expect("demux TS");
         let mut spec = media
             .tracks
             .iter()
@@ -3722,9 +3721,7 @@ mod segmenter_tests {
                 .expect("push");
         }
         let segments = ts.take_ready_segments();
-        use broadcast_common::mux::Unpackage;
-        let media = transmux::TsDemux::new()
-            .unpackage(&segments[0].bytes)
+        let media = test_harness::collect::media_from_ts(&segments[0].bytes)
             .expect("demux the muxed segment");
         let first_pts = media
             .tracks
@@ -5113,10 +5110,9 @@ mod segmenter_tests {
     }
 
     fn teletext_fixture_track() -> Option<(TrackSpec, Vec<Sample>)> {
-        use broadcast_common::mux::Unpackage;
         let path = test_fixtures::tsduck("input/test-012.ts", "media-plane")?;
         let bytes = std::fs::read(path).ok()?;
-        let media = transmux::TsDemux::new().unpackage(&bytes).ok()?;
+        let media = test_harness::collect::media_from_ts(&bytes).ok()?;
         let track = media
             .tracks
             .into_iter()

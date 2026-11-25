@@ -16,10 +16,8 @@ use test_fixtures::process::tool_available;
 use transmux::TrackId;
 
 use crate::ts_mux_stage;
-use broadcast_common::Unpackage;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
-use transmux::ts_demux::TsDemux;
 use transmux::{Repackage, SmoothPackager};
 
 // ── ffprobe readings of the input fixture (90 kHz ticks) ────────────────────
@@ -50,7 +48,7 @@ fn fixture_path() -> PathBuf {
 
 fn input_media() -> Media {
     let bytes = std::fs::read(fixture_path()).expect("av_offset.ts fixture");
-    TsDemux::new().unpackage(bytes.as_slice()).expect("demux")
+    test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux")
 }
 
 fn scratch(name: &str) -> PathBuf {

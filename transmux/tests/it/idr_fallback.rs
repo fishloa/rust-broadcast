@@ -4,11 +4,9 @@
 
 use crate::ts_hls_stage;
 use std::time::Duration;
-
-use broadcast_common::Unpackage;
 use transmux::media::Media;
 use transmux::{
-    CodecConfig, NalCodec, Sample, SegmentCutPolicy, StreamingTsHlsSegmenter, TrackSpec, TsDemux,
+    CodecConfig, NalCodec, Sample, SegmentCutPolicy, StreamingTsHlsSegmenter, TrackSpec,
     access_unit_is_idr,
 };
 
@@ -24,7 +22,7 @@ struct Video {
 
 fn require_video(rel: &str) -> Video {
     let bytes = std::fs::read(test_fixtures::path(rel)).expect("public fixture");
-    let ir: Media = TsDemux::new().unpackage(&bytes).expect("demux");
+    let ir: Media = test_harness::collect::media_from_ts(&bytes).expect("demux");
     ir.tracks
         .into_iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))

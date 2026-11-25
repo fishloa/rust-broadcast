@@ -3,7 +3,7 @@
 //! replaced before the program is live, the per-track state machine's clock,
 //! and the `BaseURL` / template rules of `ManifestGrouping::from_mpd`.
 
-use broadcast_common::{Stage, Timestamp, Unpackage};
+use broadcast_common::{Stage, Timestamp};
 use dash_runtime::ingest::{
     Addressing, DEFAULT_BUFFERED_BUDGET_BYTES, DEFAULT_MAX_BUFFERED_OBJECT_BYTES,
     DEFAULT_MAX_OBJECT_BYTES, DashifIngestConfig, DashifIngestSession, IngestError, IngestObject,
@@ -11,7 +11,6 @@ use dash_runtime::ingest::{
 };
 use transmux::dash::DashPackager;
 use transmux::pipeline::build_init_segment;
-use transmux::ts_demux::TsDemux;
 
 const NS: &str = "urn:mpeg:dash:schema:mpd:2011";
 
@@ -26,8 +25,8 @@ fn mpd_xml(extra_mpd: &str, period_extra: &str, set_extra: &str, rep_extra: &str
 
 fn media_and_mpd() -> (String, transmux::media::Media) {
     let ts = test_fixtures::read("ts/h264-aac.ts");
-    let mut demux = TsDemux::new();
-    let media = demux.unpackage(&ts[..]).expect("demux");
+
+    let media = test_harness::collect::media_from_ts(&ts[..]).expect("demux");
     let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let mpd = DashPackager::default()
         .render(&specs, &test_harness::collect::segment_log(&media))

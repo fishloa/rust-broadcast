@@ -7,11 +7,10 @@
 //! round trip so the descriptors travel inside a real PMT.
 
 use crate::ts_mux_stage;
-use broadcast_common::Unpackage;
 use mpeg_ts::pid::Pid;
 use transmux::{
     AudioMetadata, AudioRole, AudioType, CodecConfig, EditorialClassification, HeAacProfile,
-    MixType, TsDemux,
+    MixType,
 };
 
 const TAG_ISO_639: u8 = 0x0A;
@@ -55,9 +54,7 @@ fn role(loop_bytes: &[u8]) -> AudioRole {
 #[test]
 fn france2_real_pmt_roles() {
     let path = test_fixtures::path("ts/france2.ts");
-    let media = TsDemux::new()
-        .unpackage(&std::fs::read(path).unwrap())
-        .unwrap();
+    let media = test_harness::collect::media_from_ts(&std::fs::read(path).unwrap()).unwrap();
     let by_pid = |pid: u16| {
         media
             .tracks
@@ -139,7 +136,7 @@ fn synthetic_pmt_through_tsmux() {
     ];
     let is_audio = |c: &CodecConfig| matches!(c, CodecConfig::Aac { .. });
     for (loop_bytes, expected, lang) in cases {
-        let mut media = TsDemux::new().unpackage(&bytes).unwrap();
+        let mut media = test_harness::collect::media_from_ts(&bytes).unwrap();
         let audio = media
             .tracks
             .iter_mut()
@@ -147,7 +144,7 @@ fn synthetic_pmt_through_tsmux() {
             .expect("audio track");
         audio.spec.es_info_descriptors = loop_bytes;
         let muxed = ts_mux_stage::mux(&media);
-        let back = TsDemux::new().unpackage(&muxed).unwrap();
+        let back = test_harness::collect::media_from_ts(&muxed).unwrap();
         let meta = back
             .tracks
             .iter()

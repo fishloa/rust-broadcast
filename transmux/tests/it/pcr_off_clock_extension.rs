@@ -6,14 +6,11 @@
 //! the 27 MHz clock that `Pcr::from_parts` refuses. Parsing stays lossless (the
 //! byte-exact round-trip invariant) and the recovered timeline keeps that
 //! extension exactly; a flat 27 MHz integer could not name such a value at all.
-
-use broadcast_common::Unpackage;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{
     AdaptationField, AdaptationFieldControl, ContinuityCounter, Pcr, ScramblingControl, TsHeader,
 };
 use mpeg_ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
-use transmux::TsDemux;
 
 /// The TS header length.
 const TS_HEADER_LEN: usize = 4;
@@ -66,8 +63,7 @@ fn pcr_packet(pcr: Pcr, field_bytes: [u8; PCR_FIELD_LEN]) -> Vec<u8> {
 }
 
 fn demux_one(packet: &[u8]) -> transmux::PcrSample {
-    let media = TsDemux::new()
-        .unpackage(packet)
+    let media = test_harness::collect::media_from_ts(packet)
         .expect("an adaptation-field PCR packet demuxes");
     *media.pcr.first().expect("the packet carries a PCR")
 }

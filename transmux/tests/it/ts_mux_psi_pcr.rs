@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use crate::ts_mux_stage;
 use broadcast_common::Parse;
-use broadcast_common::{Stage, Unpackage};
+use broadcast_common::Stage;
 use dvb_si::tables::pmt::PmtSection;
 use isobmff::ObjectTypeIndication;
 use isobmff::mpegh::MHADecoderConfigurationRecord;
@@ -22,7 +22,7 @@ use mpeg_ts::ts::SectionReassembler;
 use transmux::ir::DataIdentity;
 use transmux::ir::{Track, TrackId, TrackSpec};
 use transmux::pipeline::{CodecConfig, DataCarriage};
-use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, TsDemux, TsMuxStage};
+use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, TsMuxStage};
 
 const PKT: usize = 188;
 const PAT_PID: u16 = 0x0000;
@@ -40,7 +40,7 @@ fn ts(rel: &str) -> Vec<u8> {
 }
 
 fn demux(bytes: &[u8]) -> Media {
-    TsDemux::new().unpackage(bytes).expect("demux fixture")
+    test_harness::collect::media_from_ts(bytes).expect("demux fixture")
 }
 
 fn timescale(v: u32) -> broadcast_common::timescale::Timescale {

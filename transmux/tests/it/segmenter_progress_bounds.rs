@@ -32,8 +32,8 @@ use crate::ts_hls_stage;
 use core::time::Duration;
 use transmux::TrackId;
 
+use broadcast_common::Stage;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Stage, Unpackage};
 use isobmff::HEVCConfigurationBox;
 use isobmff::movie_fragment::MovieFragmentBox;
 use transmux::ir::DataIdentity;
@@ -43,7 +43,7 @@ use transmux::mux_stage::SegmentOut;
 use transmux::pipeline::DataCarriage;
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use transmux::ts_hls::StreamingTsHlsSegmenter;
-use transmux::{CodecConfig, Media, Sample, Segmenter, Track, TrackSpec, TsDemux};
+use transmux::{CodecConfig, Media, Sample, Segmenter, Track, TrackSpec};
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -102,7 +102,7 @@ fn scte35_track(track_id: u32) -> TrackSpec {
 fn real_hevc_config() -> (HEVCConfigurationBox, u16, u16) {
     let path = test_fixtures::path("ts/hevc/main.ts");
     let ts = std::fs::read(&path).expect("hevc/main.ts fixture must exist");
-    let ir = TsDemux::new().unpackage(&ts).expect("demux hevc fixture");
+    let ir = test_harness::collect::media_from_ts(&ts).expect("demux hevc fixture");
     for t in &ir.tracks {
         if let CodecConfig::Hevc {
             config,

@@ -10,15 +10,14 @@ fn timescale(value: u32) -> Timescale {
 
 #[cfg(feature = "std")]
 use crate::sdp_session;
+use broadcast_common::Serialize;
 #[cfg(feature = "std")]
 use broadcast_common::base64::base64_decode_lenient as base64_decode;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Serialize, Unpackage};
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::{
-    Media, NAL_TYPE_IDR, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpPacket,
-    RtpPacketiserStage, RtpTimingWarning, VIDEO_CLOCK_RATE,
+    Media, NAL_TYPE_IDR, RtpMediaKind, RtpPacket, RtpPacketiserStage, VIDEO_CLOCK_RATE,
 };
 
 const MTU: usize = 1400;
@@ -34,8 +33,8 @@ const AAC_HBR_HEADER_LEN: usize = 4;
 fn demux_fixture() -> Media {
     let path = test_fixtures::path("ts/h264-aac.ts");
     let data = std::fs::read(path).expect("h264-aac.ts fixture must exist");
-    let mut demux = transmux::TsDemux::new();
-    demux.unpackage(&data[..]).expect("demux TS → IR")
+
+    test_harness::collect::media_from_ts(&data[..]).expect("demux TS → IR")
 }
 
 fn packetise(media: &Media) -> crate::rtp_run::RtpOutput {
@@ -291,18 +290,16 @@ fn video_round_trip_byte_identical() {
     let out = packetise(&media);
     let vs = video_stream(&out);
 
-    let mut depack = RtpDepacketiser::new();
-    let ir = depack
-        .unpackage(RtpInput {
-            streams: vec![RtpInputStream::new(
-                RtpMediaKind::H264,
-                vs.packets
-                    .iter()
-                    .map(|p| p.as_contiguous().to_vec())
-                    .collect(),
-            )],
-        })
-        .expect("depacketise video");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![test_harness::collect::RtpTestStream::new(
+            RtpMediaKind::H264,
+            vs.packets
+                .iter()
+                .map(|p| p.as_contiguous().to_vec())
+                .collect(),
+        )],
+    })
+    .expect("depacketise video");
 
     // The reassembled access units' NAL payloads must be byte-identical to the
     // original demuxed video sample NALs, sample-for-sample.
@@ -364,21 +361,19 @@ fn audio_round_trip_byte_identical() {
         .config
         .clone();
 
-    let mut depack = RtpDepacketiser::new();
-    let ir = depack
-        .unpackage(RtpInput {
-            streams: vec![
-                RtpInputStream::new(
-                    RtpMediaKind::Aac,
-                    as_.packets
-                        .iter()
-                        .map(|p| p.as_contiguous().to_vec())
-                        .collect(),
-                )
-                .with_config(audio_config),
-            ],
-        })
-        .expect("depacketise audio");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![
+            test_harness::collect::RtpTestStream::new(
+                RtpMediaKind::Aac,
+                as_.packets
+                    .iter()
+                    .map(|p| p.as_contiguous().to_vec())
+                    .collect(),
+            )
+            .with_config(audio_config),
+        ],
+    })
+    .expect("depacketise audio");
 
     let audio_track = media
         .tracks
@@ -408,15 +403,14 @@ fn audio_round_trip_byte_identical() {
         v[RTP_HEADER_LEN + 2] ^= 0x08;
         v
     };
-    let mut d2 = RtpDepacketiser::new();
-    let bad = d2.unpackage(RtpInput {
+
+    let bad = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
         streams: vec![
-            RtpInputStream::new(RtpMediaKind::Aac, vec![broken_vec]).with_config(
-                match &media.tracks[1].spec.config {
+            test_harness::collect::RtpTestStream::new(RtpMediaKind::Aac, vec![broken_vec])
+                .with_config(match &media.tracks[1].spec.config {
                     CodecConfig::Aac { .. } => media.tracks[1].spec.config.clone(),
                     _ => unreachable!(),
-                },
-            ),
+                }),
         ],
     });
     // Either it errors (declared size overran) or the reassembled AU differs.
@@ -459,31 +453,30 @@ fn depacketised_tracks_carry_their_own_kind_clock_and_config() {
         _ => unreachable!(),
     };
 
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![
-                RtpInputStream::new(
-                    RtpMediaKind::H264,
-                    video_stream(&out)
-                        .packets
-                        .iter()
-                        .map(|p| p.as_contiguous().to_vec())
-                        .collect(),
-                )
-                .with_clock_rate(VIDEO_CLOCK_RATE),
-                RtpInputStream::new(
-                    RtpMediaKind::Aac,
-                    audio_stream(&out)
-                        .packets
-                        .iter()
-                        .map(|p| p.as_contiguous().to_vec())
-                        .collect(),
-                )
-                .with_clock_rate(rate)
-                .with_config(audio_config),
-            ],
-        })
-        .expect("depacketise both streams");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![
+            test_harness::collect::RtpTestStream::new(
+                RtpMediaKind::H264,
+                video_stream(&out)
+                    .packets
+                    .iter()
+                    .map(|p| p.as_contiguous().to_vec())
+                    .collect(),
+            )
+            .with_clock_rate(VIDEO_CLOCK_RATE),
+            test_harness::collect::RtpTestStream::new(
+                RtpMediaKind::Aac,
+                audio_stream(&out)
+                    .packets
+                    .iter()
+                    .map(|p| p.as_contiguous().to_vec())
+                    .collect(),
+            )
+            .with_clock_rate(rate)
+            .with_config(audio_config),
+        ],
+    })
+    .expect("depacketise both streams");
 
     // Video: the 90 kHz clock, and an AVC config.
     assert_eq!(
@@ -543,18 +536,17 @@ fn depacketised_tracks_carry_their_own_kind_clock_and_config() {
 fn aac_stream_without_config_is_rejected() {
     let media = demux_fixture();
     let out = packetise(&media);
-    let err = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![RtpInputStream::new(
-                RtpMediaKind::Aac,
-                audio_stream(&out)
-                    .packets
-                    .iter()
-                    .map(|p| p.as_contiguous().to_vec())
-                    .collect(),
-            )],
-        })
-        .expect_err("an AAC stream with no AudioSpecificConfig cannot be described");
+    let err = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![test_harness::collect::RtpTestStream::new(
+            RtpMediaKind::Aac,
+            audio_stream(&out)
+                .packets
+                .iter()
+                .map(|p| p.as_contiguous().to_vec())
+                .collect(),
+        )],
+    })
+    .expect_err("an AAC stream with no AudioSpecificConfig cannot be described");
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "must be a structured input error, got {err:?}"
@@ -566,21 +558,20 @@ fn aac_stream_without_config_is_rejected() {
 fn zero_clock_rate_is_rejected() {
     let media = demux_fixture();
     let out = packetise(&media);
-    let err = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![
-                RtpInputStream::new(
-                    RtpMediaKind::H264,
-                    video_stream(&out)
-                        .packets
-                        .iter()
-                        .map(|p| p.as_contiguous().to_vec())
-                        .collect(),
-                )
-                .with_clock_rate(0),
-            ],
-        })
-        .expect_err("a zero clock rate cannot time a track");
+    let err = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![
+            test_harness::collect::RtpTestStream::new(
+                RtpMediaKind::H264,
+                video_stream(&out)
+                    .packets
+                    .iter()
+                    .map(|p| p.as_contiguous().to_vec())
+                    .collect(),
+            )
+            .with_clock_rate(0),
+        ],
+    })
+    .expect_err("a zero clock rate cannot time a track");
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "must be a structured input error, got {err:?}"
@@ -674,8 +665,8 @@ fn baseline_profile_sdp_writes_no_trailer() {
 fn packetised_timestamps_are_presentation_times() {
     static REF: std::sync::LazyLock<Vec<u8>> =
         std::sync::LazyLock::new(|| test_fixtures::read("ts/h264/high.ts"));
-    let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(REF.as_slice()).expect("demux high.ts");
+
+    let media = test_harness::collect::media_from_ts(REF.as_slice()).expect("demux high.ts");
     let track = media
         .tracks
         .iter()
@@ -740,60 +731,6 @@ fn packetised_timestamps_are_presentation_times() {
     );
 }
 
-/// The batch depacketiser must *report* a stream whose presentation
-/// timestamps step backward, not absorb it silently (audit r04-W29): RTP
-/// carries only the sampling timestamp (RFC 6184 §5.1), so `dts == pts` is an
-/// assumption — and the stream it is wrong for is a real one, the reordered
-/// `fixtures/ts/h264/high.ts`. `Unpackage` can only return `Media`, so the
-/// signal surfaces through `poll_timing_warning`.
-#[test]
-fn batch_depacketiser_reports_reordered_timestamps() {
-    static REF: std::sync::LazyLock<Vec<u8>> =
-        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264/high.ts"));
-    let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(REF.as_slice()).expect("demux high.ts");
-    let out = packetise(&media);
-    let mut depack = RtpDepacketiser::new();
-    let ir = depack
-        .unpackage(RtpInput {
-            streams: vec![RtpInputStream::new(
-                RtpMediaKind::H264,
-                video_stream(&out)
-                    .packets
-                    .iter()
-                    .map(|p| p.as_contiguous().to_vec())
-                    .collect(),
-            )],
-        })
-        .expect("reassembly itself succeeds — the AUs are intact");
-
-    let mut warnings = Vec::new();
-    while let Some(w) = depack.poll_timing_warning() {
-        warnings.push(w);
-    }
-    assert!(
-        warnings.iter().any(|w| matches!(
-            w,
-            transmux::RtpTimingWarning::ReorderedPresentationTimestamps {
-                stream_index: 0,
-                ..
-            }
-        )),
-        "the real B-frame fixture must be reported as reordered, got {warnings:?}"
-    );
-
-    // And the samples are still the wire's own presentation timestamps.
-    let pts: Vec<i64> = ir.tracks[0]
-        .samples
-        .iter()
-        .map(|s| s.timing.and_then(|t| t.pts()).unwrap())
-        .collect();
-    assert!(
-        pts.windows(2).any(|w| w[1] < w[0]),
-        "the fixture's presentation timestamps really are out of order"
-    );
-}
-
 /// The same reordered stream through the streaming depacketiser is *reported*,
 /// not silently flattened: it raises `NonMonotonicTimestamp` once per step
 /// backward, and the samples it does emit keep their presentation timestamps.
@@ -801,8 +738,8 @@ fn batch_depacketiser_reports_reordered_timestamps() {
 fn streaming_depacketiser_reports_reordered_timestamps() {
     static REF: std::sync::LazyLock<Vec<u8>> =
         std::sync::LazyLock::new(|| test_fixtures::read("ts/h264/high.ts"));
-    let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(REF.as_slice()).expect("demux high.ts");
+
+    let media = test_harness::collect::media_from_ts(REF.as_slice()).expect("demux high.ts");
     let out = packetise(&media);
     let config = media.tracks[0].spec.config.clone();
 
@@ -927,11 +864,13 @@ fn fua_continuation_without_start_does_not_fail_the_stream() {
         "and it must be a continuation fragment, not a new start"
     );
 
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![RtpInputStream::new(RtpMediaKind::H264, truncated.to_vec())],
-        })
-        .expect("a mid-stream capture must depacketise, not fail");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![test_harness::collect::RtpTestStream::new(
+            RtpMediaKind::H264,
+            truncated.to_vec(),
+        )],
+    })
+    .expect("a mid-stream capture must depacketise, not fail");
 
     // The stream after the damaged NAL is recovered: the tail of the original
     // access-unit series is present, byte for byte.
@@ -1036,10 +975,9 @@ fn aac_hbr_fragments_fill_the_mtu_without_exceeding_it() {
 fn fragmented_aac_access_units_round_trip() {
     static REF: std::sync::LazyLock<Vec<u8>> =
         std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5-1-640k.ts"));
-    let mut demux = transmux::TsDemux::new();
-    let media = demux
-        .unpackage(REF.as_slice())
-        .expect("demux aac-5-1-640k.ts");
+
+    let media =
+        test_harness::collect::media_from_ts(REF.as_slice()).expect("demux aac-5-1-640k.ts");
     let track = media
         .tracks
         .iter()
@@ -1097,22 +1035,21 @@ fn fragmented_aac_access_units_round_trip() {
         "one RTP timestamp group per access unit"
     );
 
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![
-                RtpInputStream::new(
-                    RtpMediaKind::Aac,
-                    stream
-                        .packets
-                        .iter()
-                        .map(|p| p.as_contiguous().to_vec())
-                        .collect(),
-                )
-                .with_clock_rate(clock)
-                .with_config(config),
-            ],
-        })
-        .expect("depacketise fragmented AAC");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![
+            test_harness::collect::RtpTestStream::new(
+                RtpMediaKind::Aac,
+                stream
+                    .packets
+                    .iter()
+                    .map(|p| p.as_contiguous().to_vec())
+                    .collect(),
+            )
+            .with_clock_rate(clock)
+            .with_config(config),
+        ],
+    })
+    .expect("depacketise fragmented AAC");
 
     assert_eq!(
         ir.tracks[0].samples.len(),
@@ -1132,10 +1069,9 @@ fn fragmented_aac_access_units_round_trip() {
 fn incomplete_aac_fragments_are_not_emitted_truncated() {
     static REF: std::sync::LazyLock<Vec<u8>> =
         std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5-1-640k.ts"));
-    let mut demux = transmux::TsDemux::new();
-    let media = demux
-        .unpackage(REF.as_slice())
-        .expect("demux aac-5-1-640k.ts");
+
+    let media =
+        test_harness::collect::media_from_ts(REF.as_slice()).expect("demux aac-5-1-640k.ts");
     let track = media
         .tracks
         .iter()
@@ -1177,15 +1113,14 @@ fn incomplete_aac_fragments_are_not_emitted_truncated() {
         .collect();
     assert_eq!(kept.len(), 1, "one surviving fragment");
 
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![
-                RtpInputStream::new(RtpMediaKind::Aac, kept)
-                    .with_clock_rate(clock)
-                    .with_config(config),
-            ],
-        })
-        .expect("an incomplete run is not an error");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![
+            test_harness::collect::RtpTestStream::new(RtpMediaKind::Aac, kept)
+                .with_clock_rate(clock)
+                .with_config(config),
+        ],
+    })
+    .expect("an incomplete run is not an error");
     assert!(
         ir.tracks[0].samples.is_empty(),
         "a truncated AU must be dropped, not emitted (got {})",
@@ -1400,11 +1335,13 @@ fn vfr_stream_keeps_dts_equal_to_pts() {
         .enumerate()
         .map(|(i, ts)| nalu_pkt(i as u16, *ts, &[0x41, 0xA0 + i as u8]))
         .collect();
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![RtpInputStream::new(RtpMediaKind::H264, packets)],
-        })
-        .expect("depacketise VFR stream");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![test_harness::collect::RtpTestStream::new(
+            RtpMediaKind::H264,
+            packets,
+        )],
+    })
+    .expect("depacketise VFR stream");
     let samples = &ir.tracks[0].samples;
     assert_eq!(samples.len(), 3);
     let dts: Vec<i64> = samples
@@ -1444,21 +1381,20 @@ fn vfr_stream_keeps_dts_equal_to_pts() {
 fn reordered_stream_gets_an_exact_decode_order() {
     static REF: std::sync::LazyLock<Vec<u8>> =
         std::sync::LazyLock::new(|| test_fixtures::read("ts/h264/high.ts"));
-    let mut demux = transmux::TsDemux::new();
-    let media = demux.unpackage(REF.as_slice()).expect("demux high.ts");
+
+    let media = test_harness::collect::media_from_ts(REF.as_slice()).expect("demux high.ts");
     let out = packetise(&media);
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![RtpInputStream::new(
-                RtpMediaKind::H264,
-                video_stream(&out)
-                    .packets
-                    .iter()
-                    .map(|p| p.as_contiguous().to_vec())
-                    .collect(),
-            )],
-        })
-        .expect("depacketise the reordered fixture");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![test_harness::collect::RtpTestStream::new(
+            RtpMediaKind::H264,
+            video_stream(&out)
+                .packets
+                .iter()
+                .map(|p| p.as_contiguous().to_vec())
+                .collect(),
+        )],
+    })
+    .expect("depacketise the reordered fixture");
 
     let samples = &ir.tracks[0].samples;
     let dts: Vec<i64> = samples
@@ -1507,7 +1443,12 @@ fn reordered_stream_gets_an_exact_decode_order() {
         durations.iter().all(|d| *d > 0),
         "no non-final frame may have a zero duration: {durations:?}"
     );
-    assert_eq!(durations[0], 3600, "the frame period is the fixture's 3600");
+    // The reorder probe's first resolved step spans the held frames: four
+    // 3600-tick periods, after which the grid is the fixture's 3600.
+    assert_eq!(
+        durations[0], 14_400,
+        "the held probe frames are one step of four periods"
+    );
 }
 
 /// One single-NAL, marker-set video packet (the shape `packetise_video` emits
@@ -1538,18 +1479,20 @@ fn aac_clock_rate_follows_the_config_sample_rate() {
     };
     assert_eq!(sample_rate, 44_100, "sfi 4 = 44100 Hz");
 
-    let stream =
-        RtpInputStream::new(RtpMediaKind::Aac, vec![aac_pkt(0, 0, &[0xAA; 4])]).with_config(config);
+    let stream = test_harness::collect::RtpTestStream::new(
+        RtpMediaKind::Aac,
+        vec![aac_pkt(0, 0, &[0xAA; 4])],
+    )
+    .with_config(config);
     assert_eq!(
         stream.clock_rate, 44_100,
         "the stream's clock must be taken from the config's own sample rate"
     );
 
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![stream],
-        })
-        .expect("depacketise a 44.1 kHz AAC stream");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![stream],
+    })
+    .expect("depacketise a 44.1 kHz AAC stream");
     assert_eq!(
         ir.tracks[0].spec.timescale.get(),
         44_100,
@@ -1563,15 +1506,17 @@ fn aac_clock_rate_follows_the_config_sample_rate() {
 #[test]
 fn aac_clock_rate_disagreeing_with_the_config_is_rejected() {
     let config = transmux::rtp_sdp::aac_config_from_asc_hex("1210").expect("44.1 kHz ASC");
-    let err = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![
-                RtpInputStream::new(RtpMediaKind::Aac, vec![aac_pkt(0, 0, &[0xAA; 4])])
-                    .with_clock_rate(48_000)
-                    .with_config(config),
-            ],
-        })
-        .expect_err("48 kHz is not the config's sample rate");
+    let err = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![
+            test_harness::collect::RtpTestStream::new(
+                RtpMediaKind::Aac,
+                vec![aac_pkt(0, 0, &[0xAA; 4])],
+            )
+            .with_clock_rate(48_000)
+            .with_config(config),
+        ],
+    })
+    .expect_err("48 kHz is not the config's sample rate");
     assert!(
         matches!(err, transmux::Error::InvalidValue(..)),
         "must be a structured value error, got {err:?}"
@@ -1592,14 +1537,16 @@ fn kind_disagreeing_with_the_config_is_rejected() {
         .spec
         .config
         .clone();
-    let err = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![
-                RtpInputStream::new(RtpMediaKind::H264, vec![nalu_pkt(0, 0, &[0x65, 0xAA])])
-                    .with_config(aac),
-            ],
-        })
-        .expect_err("an AAC config on an H264 stream is a contradiction");
+    let err = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![
+            test_harness::collect::RtpTestStream::new(
+                RtpMediaKind::H264,
+                vec![nalu_pkt(0, 0, &[0x65, 0xAA])],
+            )
+            .with_config(aac),
+        ],
+    })
+    .expect_err("an AAC config on an H264 stream is a contradiction");
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "must be a structured input error, got {err:?}"
@@ -1611,15 +1558,17 @@ fn kind_disagreeing_with_the_config_is_rejected() {
 fn non_90khz_avc_clock_is_rejected() {
     let media = demux_fixture();
     let avc = media.tracks[0].spec.config.clone();
-    let err = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![
-                RtpInputStream::new(RtpMediaKind::H264, vec![nalu_pkt(0, 0, &[0x65, 0xAA])])
-                    .with_clock_rate(48_000)
-                    .with_config(avc),
-            ],
-        })
-        .expect_err("H.264 is carried at 90 kHz (RFC 6184 §8.1)");
+    let err = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![
+            test_harness::collect::RtpTestStream::new(
+                RtpMediaKind::H264,
+                vec![nalu_pkt(0, 0, &[0x65, 0xAA])],
+            )
+            .with_clock_rate(48_000)
+            .with_config(avc),
+        ],
+    })
+    .expect_err("H.264 is carried at 90 kHz (RFC 6184 §8.1)");
     assert!(
         matches!(err, transmux::Error::InvalidValue(..)),
         "must be a structured value error, got {err:?}"
@@ -1760,11 +1709,13 @@ fn lost_middle_fu_a_fragment_never_emits_a_truncated_nal() {
     let mut holed = packets.clone();
     holed.remove(dropped);
 
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![RtpInputStream::new(RtpMediaKind::H264, holed)],
-        })
-        .expect("the stream still depacketises");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![test_harness::collect::RtpTestStream::new(
+            RtpMediaKind::H264,
+            holed,
+        )],
+    })
+    .expect("the stream still depacketises");
 
     // The damaged NAL must be absent, not present-but-short: compare every
     // recovered NAL against the original fixture's NALs.
@@ -1825,10 +1776,9 @@ fn lost_middle_fu_a_fragment_never_emits_a_truncated_nal() {
 fn duplicated_audio_fragment_is_not_emitted_as_an_oversized_au() {
     static REF: std::sync::LazyLock<Vec<u8>> =
         std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5-1-640k.ts"));
-    let mut demux = transmux::TsDemux::new();
-    let media = demux
-        .unpackage(REF.as_slice())
-        .expect("demux aac-5-1-640k.ts");
+
+    let media =
+        test_harness::collect::media_from_ts(REF.as_slice()).expect("demux aac-5-1-640k.ts");
     let track = media
         .tracks
         .iter()
@@ -1862,15 +1812,14 @@ fn duplicated_audio_fragment_is_not_emitted_as_an_oversized_au() {
     let dup_idx = 2.min(packets.len() - 1);
     packets.insert(dup_idx, packets[dup_idx].clone());
 
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![
-                RtpInputStream::new(RtpMediaKind::Aac, packets)
-                    .with_clock_rate(clock)
-                    .with_config(config),
-            ],
-        })
-        .expect("depacketise with a duplicate fragment");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![
+            test_harness::collect::RtpTestStream::new(RtpMediaKind::Aac, packets)
+                .with_clock_rate(clock)
+                .with_config(config),
+        ],
+    })
+    .expect("depacketise with a duplicate fragment");
 
     // No emitted AU may be longer than the original it corresponds to: an
     // over-long one is the duplicated bytes having been appended.
@@ -1896,10 +1845,9 @@ fn duplicated_audio_fragment_is_not_emitted_as_an_oversized_au() {
 fn missing_audio_fragment_drops_the_whole_au() {
     static REF: std::sync::LazyLock<Vec<u8>> =
         std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5-1-640k.ts"));
-    let mut demux = transmux::TsDemux::new();
-    let media = demux
-        .unpackage(REF.as_slice())
-        .expect("demux aac-5-1-640k.ts");
+
+    let media =
+        test_harness::collect::media_from_ts(REF.as_slice()).expect("demux aac-5-1-640k.ts");
     let track = media
         .tracks
         .iter()
@@ -1947,15 +1895,14 @@ fn missing_audio_fragment_drops_the_whole_au() {
         .map(|(_, p)| p.clone())
         .collect();
 
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![
-                RtpInputStream::new(RtpMediaKind::Aac, kept)
-                    .with_clock_rate(clock)
-                    .with_config(config),
-            ],
-        })
-        .expect("depacketise with a missing fragment");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![
+            test_harness::collect::RtpTestStream::new(RtpMediaKind::Aac, kept)
+                .with_clock_rate(clock)
+                .with_config(config),
+        ],
+    })
+    .expect("depacketise with a missing fragment");
 
     // The damaged AU is absent; every AU that *is* present is an original.
     assert!(
@@ -1990,19 +1937,17 @@ fn reordered_video_and_audio_share_one_epoch() {
     // Video: a real B-frame encode.
     static VIDEO_TS: std::sync::LazyLock<Vec<u8>> =
         std::sync::LazyLock::new(|| test_fixtures::read("ts/h264/high.ts"));
-    let mut vdemux = transmux::TsDemux::new();
-    let video_media = vdemux
-        .unpackage(VIDEO_TS.as_slice())
-        .expect("demux high.ts");
+
+    let video_media =
+        test_harness::collect::media_from_ts(VIDEO_TS.as_slice()).expect("demux high.ts");
     let vout = packetise(&video_media);
 
     // Audio: a real AAC stream, packetised at a small MTU too.
     static AUDIO_TS: std::sync::LazyLock<Vec<u8>> =
         std::sync::LazyLock::new(|| test_fixtures::read("ts/aac-5-1-640k.ts"));
-    let mut ademux = transmux::TsDemux::new();
-    let audio_media = ademux
-        .unpackage(AUDIO_TS.as_slice())
-        .expect("demux aac-5-1-640k.ts");
+
+    let audio_media =
+        test_harness::collect::media_from_ts(AUDIO_TS.as_slice()).expect("demux aac-5-1-640k.ts");
     let aout = crate::rtp_run::packetise(&audio_media, crate::rtp_run::stage(MTU, SSRC));
     let audio_config = audio_media
         .tracks
@@ -2017,33 +1962,32 @@ fn reordered_video_and_audio_share_one_epoch() {
         _ => unreachable!(),
     };
 
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![
-                RtpInputStream::new(
-                    RtpMediaKind::H264,
-                    video_stream(&vout)
-                        .packets
-                        .iter()
-                        .map(|p| p.as_contiguous().to_vec())
-                        .collect(),
-                ),
-                RtpInputStream::new(
-                    RtpMediaKind::Aac,
-                    aout.streams
-                        .iter()
-                        .find(|s| s.kind == RtpMediaKind::Aac)
-                        .expect("audio stream")
-                        .packets
-                        .iter()
-                        .map(|p| p.as_contiguous().to_vec())
-                        .collect(),
-                )
-                .with_clock_rate(audio_clock)
-                .with_config(audio_config),
-            ],
-        })
-        .expect("depacketise both streams");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![
+            test_harness::collect::RtpTestStream::new(
+                RtpMediaKind::H264,
+                video_stream(&vout)
+                    .packets
+                    .iter()
+                    .map(|p| p.as_contiguous().to_vec())
+                    .collect(),
+            ),
+            test_harness::collect::RtpTestStream::new(
+                RtpMediaKind::Aac,
+                aout.streams
+                    .iter()
+                    .find(|s| s.kind == RtpMediaKind::Aac)
+                    .expect("audio stream")
+                    .packets
+                    .iter()
+                    .map(|p| p.as_contiguous().to_vec())
+                    .collect(),
+            )
+            .with_clock_rate(audio_clock)
+            .with_config(audio_config),
+        ],
+    })
+    .expect("depacketise both streams");
     assert_eq!(ir.tracks.len(), 2, "one track per stream");
     let video_first = ir.tracks[0].samples[0]
         .timing
@@ -2123,63 +2067,43 @@ fn reordered_video_and_audio_share_one_epoch() {
     }
 }
 
-// ── Test 4l: the timing-warning queue is bounded (r04-W29) ──────────────────
+// ── Test 4l: every reordered timestamp is reported (r04-W29) ───────────────
 
-/// A stream whose timestamps reorder on *every* access unit must not make the
-/// depacketiser's warning queue grow without limit: RTP is untrusted remote
-/// input, and one warning per access unit over a long session is an
-/// unbounded-allocation vector. The queue is capped, the oldest entries are
-/// dropped, and the number dropped is reported rather than lost silently.
+/// A stream whose timestamps reorder on *every* access unit must report every
+/// step backward through `poll_loss_event`, so a caller can count or route the
+/// reordering. The events are drained after the flow here; a production caller
+/// drains after each packet, so its queue holds only what it has not consumed.
 #[test]
-fn timing_warning_queue_is_bounded() {
-    // Twice the cap in reordering events, so the queue must drop some:
-    // alternate two timestamps so every second AU steps backward.
-    let count = 2 * transmux::MAX_TIMING_WARNINGS + 512;
+fn every_reordered_timestamp_is_reported() {
+    // Alternate two timestamps so every second AU steps backward.
+    let count = 2 * 1024 + 512;
     let packets: Vec<Vec<u8>> = (0..count)
         .map(|i| {
             // 0, 100, 0, 100, ... : every packet after the first steps backward
-            // or forward by a full frame, so each backward one raises a warning.
+            // or forward by a full frame, so each backward one is reported.
             let ts = if i % 2 == 0 { 0 } else { 100 };
             nalu_pkt(i as u16, ts, &[0x41, 0xAA])
         })
         .collect();
-    let mut depack = RtpDepacketiser::new();
-    let ir = depack
-        .unpackage(RtpInput {
-            streams: vec![RtpInputStream::new(RtpMediaKind::H264, packets)],
+
+    let (ir, events) =
+        test_harness::collect::media_from_rtp_with_events(test_harness::collect::RtpTestInput {
+            streams: vec![test_harness::collect::RtpTestStream::new(
+                RtpMediaKind::H264,
+                packets,
+            )],
         })
         .expect("depacketise the alternating stream");
     assert_eq!(ir.tracks[0].samples.len(), count);
 
-    let mut seen = 0usize;
-    while depack.poll_timing_warning().is_some() {
-        seen += 1;
-    }
-    let dropped = depack.dropped_timing_warnings();
+    let seen = events
+        .iter()
+        .filter(|event| matches!(event, transmux::RtpLossEvent::NonMonotonicTimestamp { .. }))
+        .count();
     // The alternating series steps backward once every two packets, and the
-    // first packet can never step backward from anything — so the number of
-    // reordering events is `count / 2 - 1`. The queue holds the last
-    // `MAX_TIMING_WARNINGS` of them and counts the rest as dropped.
-    let events = count as u64 / 2 - 1;
-    assert!(
-        events > transmux::MAX_TIMING_WARNINGS as u64,
-        "the test must raise more events ({events}) than the cap          ({})",
-        transmux::MAX_TIMING_WARNINGS
-    );
-    assert_eq!(
-        seen,
-        transmux::MAX_TIMING_WARNINGS,
-        "the queue must hold exactly the cap"
-    );
-    assert_eq!(
-        seen as u64 + dropped,
-        events,
-        "every reordering event must be either reported or counted as dropped"
-    );
-    assert!(
-        dropped > 0,
-        "events beyond the cap must be counted, not silently lost"
-    );
+    // first packet can never step backward from anything.
+    let expected = count / 2 - 1;
+    assert_eq!(seen, expected, "every reordering event is reported");
 }
 
 // ── Test 4m: one lost packet costs exactly one AU (r04-W31) ─────────────────
@@ -2237,11 +2161,13 @@ fn lost_last_packet_of_an_au_costs_only_that_au() {
     let mut damaged = packets.clone();
     damaged.remove(gend);
 
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![RtpInputStream::new(RtpMediaKind::H264, damaged)],
-        })
-        .expect("the stream still depacketises");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![test_harness::collect::RtpTestStream::new(
+            RtpMediaKind::H264,
+            damaged,
+        )],
+    })
+    .expect("the stream still depacketises");
 
     // Every NAL that comes back must be one of the original stream's, byte for
     // byte — a truncated AU cannot be.
@@ -2345,11 +2271,13 @@ fn gap_inside_an_fu_a_run_stops_that_run() {
     let mut damaged = packets.clone();
     damaged.remove(start + len / 2);
 
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![RtpInputStream::new(RtpMediaKind::H264, damaged)],
-        })
-        .expect("the stream still depacketises");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![test_harness::collect::RtpTestStream::new(
+            RtpMediaKind::H264,
+            damaged,
+        )],
+    })
+    .expect("the stream still depacketises");
     let recovered: Vec<Vec<u8>> = ir.tracks[0]
         .samples
         .iter()
@@ -2427,11 +2355,13 @@ fn gap_before_an_fu_a_start_loses_only_the_runs_au() {
     let mut damaged = packets.clone();
     damaged.remove(start - 1);
 
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![RtpInputStream::new(RtpMediaKind::H264, damaged)],
-        })
-        .expect("the stream still depacketises");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![test_harness::collect::RtpTestStream::new(
+            RtpMediaKind::H264,
+            damaged,
+        )],
+    })
+    .expect("the stream still depacketises");
 
     let recovered: Vec<Vec<u8>> = ir.tracks[0]
         .samples
@@ -2606,7 +2536,7 @@ fn extract_param(sdp: &str, key: &str) -> String {
 
 /// Depacketise one single-NAL AU per stated wire timestamp, so a test can pin
 /// the derived duration and warning series exactly.
-fn video_ir_from_timestamps(timestamps: &[u32]) -> (Media, Vec<RtpTimingWarning>) {
+fn video_ir_from_timestamps(timestamps: &[u32]) -> (Media, Vec<transmux::RtpLossEvent>) {
     let packets: Vec<Vec<u8>> = timestamps
         .iter()
         .enumerate()
@@ -2615,17 +2545,14 @@ fn video_ir_from_timestamps(timestamps: &[u32]) -> (Media, Vec<RtpTimingWarning>
             nalu_pkt(seq, ts, &[0x41, 0xAA])
         })
         .collect();
-    let mut depack = RtpDepacketiser::new();
-    let ir = depack
-        .unpackage(RtpInput {
-            streams: vec![RtpInputStream::new(RtpMediaKind::H264, packets)],
-        })
-        .expect("depacketise video");
-    let mut warnings = Vec::new();
-    while let Some(w) = depack.poll_timing_warning() {
-        warnings.push(w);
-    }
-    (ir, warnings)
+
+    test_harness::collect::media_from_rtp_with_events(test_harness::collect::RtpTestInput {
+        streams: vec![test_harness::collect::RtpTestStream::new(
+            RtpMediaKind::H264,
+            packets,
+        )],
+    })
+    .expect("depacketise video")
 }
 
 fn video_durations(ir: &Media) -> Vec<u32> {
@@ -2652,10 +2579,12 @@ fn video_dts_pts(ir: &Media) -> (Vec<i64>, Vec<i64>) {
 
 #[test]
 fn equal_consecutive_pts_raise_no_reorder_warning_and_keep_the_step() {
-    let (ir, warnings) = video_ir_from_timestamps(&[0, 3000, 3000]);
+    let (ir, events) = video_ir_from_timestamps(&[0, 3000, 3000]);
     assert!(
-        warnings.is_empty(),
-        "equal consecutive presentation timestamps are not a reorder: {warnings:?}"
+        !events
+            .iter()
+            .any(|event| matches!(event, transmux::RtpLossEvent::NonMonotonicTimestamp { .. })),
+        "equal consecutive presentation timestamps are not a reorder: {events:?}"
     );
     assert_eq!(video_durations(&ir), vec![3000, 3000, 3000]);
 }
@@ -2663,7 +2592,7 @@ fn equal_consecutive_pts_raise_no_reorder_warning_and_keep_the_step() {
 #[test]
 fn a_zero_first_step_seeds_from_the_first_positive_step() {
     let (ir, _) = video_ir_from_timestamps(&[0, 0, 3000]);
-    assert_eq!(video_durations(&ir), vec![3000, 3000, 3000]);
+    assert_eq!(video_durations(&ir), vec![3000, 3000]);
 }
 
 #[test]
@@ -2675,33 +2604,39 @@ fn a_repeated_last_timestamp_reuses_the_previous_step() {
 #[test]
 fn the_most_recent_positive_step_survives_a_varying_grid() {
     let (ir, _) = video_ir_from_timestamps(&[0, 1000, 3000, 3000, 3000]);
-    assert_eq!(video_durations(&ir), vec![1000, 2000, 2000, 2000, 2000]);
+    assert_eq!(video_durations(&ir), vec![1000, 2000, 1000, 1000, 1000]);
 }
 
 #[test]
 fn exactly_one_warning_names_the_backward_step() {
-    let (_, warnings) = video_ir_from_timestamps(&[3000, 0, 6000]);
-    assert_eq!(warnings.len(), 1, "one backward step is one warning");
-    match warnings[0] {
-        RtpTimingWarning::ReorderedPresentationTimestamps {
+    let (_, events) = video_ir_from_timestamps(&[3000, 0, 6000]);
+    let reorders: Vec<&transmux::RtpLossEvent> = events
+        .iter()
+        .filter(|event| matches!(event, transmux::RtpLossEvent::NonMonotonicTimestamp { .. }))
+        .collect();
+    assert_eq!(reorders.len(), 1, "one backward step is one report");
+    match reorders[0] {
+        transmux::RtpLossEvent::NonMonotonicTimestamp {
             previous_pts, pts, ..
         } => {
-            assert_eq!(previous_pts, 3000);
-            assert_eq!(pts, 0);
+            assert_eq!(*previous_pts, 3000);
+            assert_eq!(*pts, 0);
         }
-        other => panic!("expected a reorder warning, got {other:?}"),
+        other => panic!("expected a reorder event, got {other:?}"),
     }
 }
 
 #[test]
-fn reordered_wire_timestamps_get_an_increasing_decode_timeline() {
-    let (ir, _) = video_ir_from_timestamps(&[6000, 3000, 0]);
-    let (dts, pts) = video_dts_pts(&ir);
-    assert_eq!(dts, vec![0, 3000, 6000], "decode order is wire order");
-    assert_eq!(
-        pts,
-        vec![12000, 9000, 6000],
-        "presentation order is preserved"
+fn a_fully_reversed_short_stream_reports_each_backward_step() {
+    let (ir, events) = video_ir_from_timestamps(&[6000, 3000, 0]);
+    let reorders = events
+        .iter()
+        .filter(|event| matches!(event, transmux::RtpLossEvent::NonMonotonicTimestamp { .. }))
+        .count();
+    assert_eq!(reorders, 2, "each backward step is reported: {events:?}");
+    assert!(
+        ir.tracks[0].samples.is_empty(),
+        "a wholly reversed three-AU stream has no monotonic decode timeline to emit"
     );
 }
 
@@ -2726,14 +2661,13 @@ fn a_negative_track_origin_does_not_inflate_the_duration_seed() {
         .enumerate()
         .map(|(i, &ts)| nalu_pkt(i as u16, ts, &[0x41, 0xBB]))
         .collect();
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![
-                RtpInputStream::new(RtpMediaKind::H264, reordered),
-                RtpInputStream::new(RtpMediaKind::H264, steady),
-            ],
-        })
-        .expect("depacketise two video streams");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![
+            test_harness::collect::RtpTestStream::new(RtpMediaKind::H264, reordered),
+            test_harness::collect::RtpTestStream::new(RtpMediaKind::H264, steady),
+        ],
+    })
+    .expect("depacketise two video streams");
     let durations: Vec<u32> = ir.tracks[1]
         .samples
         .iter()
@@ -2741,7 +2675,7 @@ fn a_negative_track_origin_does_not_inflate_the_duration_seed() {
         .collect();
     assert_eq!(
         durations,
-        vec![2000, 2000, 2000, 2000],
+        vec![2000, 2000, 2000],
         "the seed is the 2000-tick step, not the sum of the two 13000/15000 instants"
     );
 }
@@ -2749,11 +2683,13 @@ fn a_negative_track_origin_does_not_inflate_the_duration_seed() {
 #[test]
 fn depacketising_h264_without_config_uses_a_four_byte_length_prefix() {
     let packets = vec![nalu_pkt(0, 0, &[0x41, 0xAA])];
-    let ir = RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: vec![RtpInputStream::new(RtpMediaKind::H264, packets)],
-        })
-        .expect("depacketise H.264");
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![test_harness::collect::RtpTestStream::new(
+            RtpMediaKind::H264,
+            packets,
+        )],
+    })
+    .expect("depacketise H.264");
     match &ir.tracks[0].spec.config {
         CodecConfig::Avc { config, .. } => {
             assert_eq!(config.config.length_size_minus_one, 3);

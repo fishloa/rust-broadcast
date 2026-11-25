@@ -47,8 +47,6 @@ fn big_flv_is_written_incrementally_and_reaches_its_size() {
 
 #[test]
 fn written_big_files_demux_back_to_every_sample() {
-    use broadcast_common::Unpackage;
-
     let _serial = PEAK_LOCK.lock().unwrap();
     let dir = temp_dir("demux");
     let ts_path = dir.join("round-trip.ts");
@@ -58,9 +56,7 @@ fn written_big_files_demux_back_to_every_sample() {
         4 << 20,
     );
     let ts_bytes = std::fs::read(&ts_path).unwrap();
-    let ts_media = transmux::TsDemux::new()
-        .unpackage(ts_bytes.as_slice())
-        .unwrap();
+    let ts_media = test_harness::collect::media_from_ts(ts_bytes.as_slice()).unwrap();
     let ts_counts: Vec<(u32, u64)> = ts_media
         .tracks
         .iter()
@@ -96,9 +92,7 @@ fn written_big_files_demux_back_to_every_sample() {
         2 << 20,
     );
     let flv_bytes = std::fs::read(&flv_path).unwrap();
-    let flv_media = transmux::FlvDemux::new()
-        .unpackage(flv_bytes.as_slice())
-        .unwrap();
+    let flv_media = test_harness::collect::media_from_flv(flv_bytes.as_slice()).unwrap();
     let flv_counts: Vec<(u32, u64)> = flv_media
         .tracks
         .iter()
@@ -171,34 +165,25 @@ fn assert_no_drift(
 
 #[test]
 fn tracks_do_not_drift_apart_across_passes() {
-    use broadcast_common::Unpackage;
-
     let _serial = PEAK_LOCK.lock().unwrap();
     let dir = temp_dir("drift");
     let ts_source = test_fixtures::path("ts/h264-aac.ts");
     let ts_out = dir.join("drift.ts");
     let ts_made = test_harness::big_media::write_big_ts(&ts_out, &ts_source, DRIFT_TARGET);
     let ts_source_bytes = std::fs::read(&ts_source).unwrap();
-    let ts_source_media = transmux::TsDemux::new()
-        .unpackage(ts_source_bytes.as_slice())
-        .unwrap();
+    let ts_source_media = test_harness::collect::media_from_ts(ts_source_bytes.as_slice()).unwrap();
     let ts_bytes = std::fs::read(&ts_out).unwrap();
-    let ts_written = transmux::TsDemux::new()
-        .unpackage(ts_bytes.as_slice())
-        .unwrap();
+    let ts_written = test_harness::collect::media_from_ts(ts_bytes.as_slice()).unwrap();
     assert_no_drift(&ts_written, &ts_source_media, &ts_made, "ts");
 
     let flv_source = test_fixtures::find("flv/av.flv").expect("flv fixture").0;
     let flv_out = dir.join("drift.flv");
     let flv_made = test_harness::big_media::write_big_flv(&flv_out, &flv_source, DRIFT_TARGET);
     let flv_source_bytes = std::fs::read(&flv_source).unwrap();
-    let flv_source_media = transmux::FlvDemux::new()
-        .unpackage(flv_source_bytes.as_slice())
-        .unwrap();
+    let flv_source_media =
+        test_harness::collect::media_from_flv(flv_source_bytes.as_slice()).unwrap();
     let flv_bytes = std::fs::read(&flv_out).unwrap();
-    let flv_written = transmux::FlvDemux::new()
-        .unpackage(flv_bytes.as_slice())
-        .unwrap();
+    let flv_written = test_harness::collect::media_from_flv(flv_bytes.as_slice()).unwrap();
     assert_no_drift(&flv_written, &flv_source_media, &flv_made, "flv");
 
     let _ = std::fs::remove_dir_all(&dir);

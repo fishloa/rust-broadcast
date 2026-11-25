@@ -4,7 +4,6 @@
 //! and malformed classifications, plus `package_track_fragment`'s own contract.
 
 use broadcast_common::Serialize;
-use broadcast_common::Unpackage;
 use broadcast_common::error::BufferTooShort;
 use transmux::Error;
 use transmux::media::{Media, Track};
@@ -12,13 +11,10 @@ use transmux::smooth::{SmoothPackager, TfxdBox};
 use transmux::smooth_fragment::{
     FragmentState, PIFF_SAMPLE_ENCRYPTION_UUID, fragment_state, fragment_tfxd, fragment_track_id,
 };
-use transmux::ts_demux::TsDemux;
 
 fn media() -> Media {
     let ts = test_fixtures::read("ts/h264-aac.ts");
-    TsDemux::new()
-        .unpackage(&ts[..])
-        .expect("demux h264-aac.ts")
+    test_harness::collect::media_from_ts(&ts[..]).expect("demux h264-aac.ts")
 }
 
 fn bx(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {

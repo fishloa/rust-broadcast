@@ -7,13 +7,10 @@
 #![cfg(feature = "std")]
 
 use crate::ts_mux_stage;
+use broadcast_common::timescale::Timescale;
 use core::time::Duration;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
-
-use broadcast_common::Unpackage;
-use broadcast_common::timescale::Timescale;
-use transmux::TsDemux;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -447,7 +444,7 @@ fn ts_demux_output_is_unchanged() {
             eprintln!("SKIPPED {rel}: fixture missing");
             continue;
         };
-        let media = TsDemux::new().unpackage(bytes.as_slice()).expect(rel);
+        let media = test_harness::collect::media_from_ts(bytes.as_slice()).expect(rel);
         check(&mut bad, rel, fnv1a(media_debug(&media).as_bytes()), want);
     }
     assert!(bad.is_empty(), "output changed: {bad:?}");
@@ -462,7 +459,7 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
         eprintln!("SKIPPED ts/h264-aac.ts");
         return;
     };
-    let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
+    let media = test_harness::collect::media_from_ts(data.as_slice()).unwrap();
     let video_only = media
         .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .unwrap();
@@ -506,7 +503,7 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
 
 fn h264_aac_media() -> Option<transmux::Media> {
     let data = fixture("ts/h264-aac.ts")?;
-    Some(TsDemux::new().unpackage(data.as_slice()).unwrap())
+    Some(test_harness::collect::media_from_ts(data.as_slice()).unwrap())
 }
 
 #[test]
@@ -642,7 +639,7 @@ fn hevc_and_dolby_muxer_outputs_are_unchanged() {
             i += 4;
             continue;
         };
-        let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
+        let media = test_harness::collect::media_from_ts(data.as_slice()).unwrap();
         let outs = [
             (
                 "progressive",
@@ -743,7 +740,7 @@ fn dash_mpd_output_is_unchanged() {
             eprintln!("SKIPPED {rel}");
             continue;
         };
-        let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
+        let media = test_harness::collect::media_from_ts(data.as_slice()).unwrap();
         let got = match crate::packagers::dash(&DashPackager::default(), &media) {
             Ok(mpd) => {
                 fnv1a(strip_aspect_attrs(&restore_legacy_adaptation_set_ids(&mpd)).as_bytes())

@@ -1220,8 +1220,6 @@ mod tests {
     // second" picked the SCTE-35 track as the anchor: its buffered duration
     // could never advance, `push` never returned a segment, and every
     // track's `pending` buffer grew without bound.
-
-    use broadcast_common::Unpackage;
     use broadcast_common::timescale::Timescale;
     use isobmff::mp4esds::{
         DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
@@ -1348,8 +1346,7 @@ mod tests {
 
         // Every emitted segment is a byte-oracle-verifiable real TS mux —
         // decode the first one and confirm it actually carries the AAC PES.
-        let demuxed = crate::ts_demux::TsDemux::new()
-            .unpackage(&cuts[0].bytes)
+        let demuxed = crate::test_media::media_from_ts(&cuts[0].bytes)
             .expect("cut segment must be a valid TS stream");
         assert!(
             demuxed

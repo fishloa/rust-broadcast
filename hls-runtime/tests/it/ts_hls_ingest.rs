@@ -22,8 +22,8 @@
 use hls_runtime::client::{Action, HlsClient, Output};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use transmux::CodecConfig;
 use transmux::TrackId;
-use transmux::{CodecConfig, TsDemux};
 use url::Url;
 
 const PLAYLIST_URL: &str = "http://fixture/index.m3u8";
@@ -98,8 +98,7 @@ fn oracle_track_totals(segment_names: &[String]) -> BTreeMap<TrackId, usize> {
     let mut totals = BTreeMap::new();
     for name in segment_names {
         let bytes = read_fixture(name);
-        let media = TsDemux::new()
-            .demux(&bytes)
+        let media = test_harness::collect::media_from_ts(&bytes)
             .unwrap_or_else(|e| panic!("oracle demux of {name} failed: {e}"));
         for track in media.tracks {
             *totals.entry(track.spec.track_id).or_insert(0) += track.samples.len();
@@ -381,8 +380,8 @@ fn drive_in_memory(playlist: &str, segments: &[(&str, Vec<u8>)]) -> Vec<Output> 
 fn pts_wrap_between_segments_is_unrolled_across_the_boundary() {
     let seg0 = read_fixture("index0.ts");
     let seg1 = read_fixture("index1.ts");
-    let (_, dts0) = avc_track_dts(&TsDemux::new().demux(&seg0).unwrap());
-    let (_, dts1) = avc_track_dts(&TsDemux::new().demux(&seg1).unwrap());
+    let (_, dts0) = avc_track_dts(&test_harness::collect::media_from_ts(&seg0).unwrap());
+    let (_, dts1) = avc_track_dts(&test_harness::collect::media_from_ts(&seg1).unwrap());
     let first_of_seg1 = u64::try_from(dts1[0]).unwrap();
     let last_of_seg0 = u64::try_from(*dts0.last().unwrap()).unwrap();
     assert!(
@@ -396,9 +395,10 @@ fn pts_wrap_between_segments_is_unrolled_across_the_boundary() {
     // (known once segment 1 arrives) gives segment 0's last frame its true
     // duration, a guess from the previous frame does not.
     const EXTRA: u64 = 1500;
-    let reference = TsDemux::new()
-        .demux(&[seg0.clone(), shift_pes_timestamps(&seg1, EXTRA)].concat())
-        .unwrap();
+    let reference = test_harness::collect::media_from_ts(
+        &[seg0.clone(), shift_pes_timestamps(&seg1, EXTRA)].concat(),
+    )
+    .unwrap();
     let is_video = |c: &CodecConfig| matches!(c, CodecConfig::Avc { .. });
     let is_audio = |c: &CodecConfig| matches!(c, CodecConfig::Aac { .. });
     let (video_id, want_video) = timing_of(&reference, is_video);
@@ -411,7 +411,8 @@ fn pts_wrap_between_segments_is_unrolled_across_the_boundary() {
     let shifted1 = shift_pes_timestamps(&seg1, offset + EXTRA);
 
     // Sanity: the shift really put the wrap between the segments.
-    let (_, shifted_dts0) = avc_track_dts(&TsDemux::new().demux(&shifted0).unwrap());
+    let (_, shifted_dts0) =
+        avc_track_dts(&test_harness::collect::media_from_ts(&shifted0).unwrap());
     assert!(
         shifted_dts0
             .iter()
@@ -568,8 +569,7 @@ fn duplicate_ts_segment_delivery_emits_samples_once() {
         .on_resource(ids[1], &read_fixture("index1.ts"))
         .unwrap();
     let per_segment = |name: &str| -> usize {
-        TsDemux::new()
-            .demux(&read_fixture(name))
+        test_harness::collect::media_from_ts(&read_fixture(name))
             .unwrap()
             .tracks
             .iter()

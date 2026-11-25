@@ -225,8 +225,8 @@ fn ec3_init_segment_sample_entry() {
 fn dvb_0x06_enhanced_ac3_descriptor_classifies_as_eac3() {
     let ts = std::fs::read("../fixtures/ts/dolby/eac3-dvb-0x06.ts")
         .expect("read eac3-dvb-0x06.ts fixture");
-    let mut demux = transmux::ts_demux::TsDemux::new();
-    let media = demux.demux(&ts).expect("demux dvb 0x06 ts");
+
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux dvb 0x06 ts");
 
     assert_eq!(media.tracks.len(), 1, "one audio track");
     let audio = &media.tracks[0];

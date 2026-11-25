@@ -373,11 +373,9 @@ impl Stage for CencDecryptStage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Unpackage;
     use bytes::Bytes;
 
     use crate::ir::{Track, TrackSpec};
-    use crate::ts_demux::TsDemux;
 
     const KID: [u8; 16] = [
         0xa7, 0xe6, 0x1c, 0x37, 0x3e, 0x21, 0x90, 0x33, 0xc2, 0x10, 0x91, 0xfa, 0x60, 0x7b, 0xf3,
@@ -425,8 +423,8 @@ mod tests {
 
     fn encrypted_cenc_sample() -> crate::ir::Sample {
         let bytes = test_fixtures::read("ts/h264/main.ts");
-        let mut demux = TsDemux::new();
-        let media = demux.unpackage(bytes.as_slice()).expect("demux");
+
+        let media = crate::test_media::media_from_ts(bytes.as_slice()).expect("demux");
         let clear = crate::repackage::select_tracks_by(&media, |t| {
             matches!(t.spec.config, CodecConfig::Avc { .. })
         })

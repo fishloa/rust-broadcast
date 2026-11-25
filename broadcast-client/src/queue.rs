@@ -320,7 +320,6 @@ mod tests {
     use super::*;
     use crate::events::{BufferEvent, ErrorKind, Status};
     use crate::tshttp::StarveKind;
-    use broadcast_common::Unpackage;
     use core::time::Duration as StdDuration;
     use transmux::{JoinDecision, RapKind, Sample, TrackId};
 
@@ -332,7 +331,7 @@ mod tests {
         static BASE: std::sync::OnceLock<Sample> = std::sync::OnceLock::new();
         BASE.get_or_init(|| {
             let data = test_fixtures::read("ts/h264-aac.ts");
-            let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
+            let media = test_harness::collect::media_from_ts(&data[..]).unwrap();
             media.tracks[0].samples[0].clone()
         })
         .clone()

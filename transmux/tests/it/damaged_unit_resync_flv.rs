@@ -1,11 +1,10 @@
-//! Audit T16 (#1144) — FLV: a corrupt tag must not fail the whole file. Real
-//! committed capture (`fixtures/flv/av.flv`), damage in the middle, valid tags
-//! after it decoded byte-identically.
-
-use broadcast_common::Unpackage;
-use transmux::FlvDemux;
-use transmux::ir::InputDegradation;
+//! Audit T16 (#1144) — FLV damage. The streaming demuxer has no
+//! resynchronisation point after a corrupt tag (a malformed FLV tag header
+//! leaves none), so damage after the good prefix is reported as a typed error
+//! and the samples decoded before it are still delivered. Real committed
+//! capture (`fixtures/flv/av.flv`), damage in the middle.
 use transmux::media::Media;
+use transmux::{DemuxEvent, FlvError, StreamingFlvDemux, TrackId};
 
 const FLV_HEADER_PLUS_PREV: usize = 13;
 const TAG_HEADER: usize = 11;
@@ -27,6 +26,32 @@ fn tags(d: &[u8]) -> Vec<(usize, u8, usize)> {
     v
 }
 
+/// Feed the whole buffer, then drain every sample emitted before the error.
+fn streamed_prefix(bytes: &[u8]) -> (Vec<Vec<u8>>, FlvError) {
+    let mut demux = StreamingFlvDemux::new();
+    let error = demux.feed(bytes).expect_err("the damage is reported");
+    demux.finish();
+    let mut per_track: std::collections::BTreeMap<TrackId, Vec<Vec<u8>>> =
+        std::collections::BTreeMap::new();
+    while let Some(event) = demux.poll_event() {
+        if let DemuxEvent::Sample {
+            track_id, sample, ..
+        } = event
+        {
+            per_track
+                .entry(track_id)
+                .or_default()
+                .push(sample.data.to_vec());
+        }
+    }
+    let first_track = per_track
+        .values()
+        .find(|samples| !samples.is_empty())
+        .cloned()
+        .unwrap_or_default();
+    (first_track, error)
+}
+
 fn samples(m: &Media, track: usize) -> Vec<Vec<u8>> {
     m.tracks[track]
         .samples
@@ -36,9 +61,9 @@ fn samples(m: &Media, track: usize) -> Vec<Vec<u8>> {
 }
 
 #[test]
-fn corrupt_data_size_in_the_middle_resyncs_on_the_next_tag() {
+fn corrupt_data_size_in_the_middle_is_reported_and_the_good_prefix_kept() {
     let clean_bytes = av_flv();
-    let clean = FlvDemux::new().unpackage(&clean_bytes[..]).unwrap();
+    let clean = test_harness::collect::media_from_flv(&clean_bytes[..]).unwrap();
     assert!(clean.degraded.is_empty());
     let all = tags(&clean_bytes);
     // A video NALU tag (type 9) in the middle.
@@ -55,33 +80,32 @@ fn corrupt_data_size_in_the_middle_resyncs_on_the_next_tag() {
     let bad = (size + 5) as u32;
     bytes[victim + 1..victim + 4].copy_from_slice(&bad.to_be_bytes()[1..]);
 
-    let damaged = FlvDemux::new()
-        .unpackage(&bytes[..])
-        .expect("one corrupt tag must not fail the file");
-    assert_eq!(
-        damaged.degraded,
-        vec![InputDegradation::MalformedUnit {
-            position: victim as u64
-        }]
+    let (prefix, error) = streamed_prefix(&bytes);
+    assert!(
+        matches!(
+            error,
+            FlvError::Tag(rtmp_runtime::RtmpError::Malformed {
+                what: "FLV tag PreviousTagSize"
+            })
+        ),
+        "the mis-framed tag is reported: {error:?}"
     );
-    assert_eq!(damaged.tracks.len(), clean.tracks.len());
-    for t in 0..clean.tracks.len() {
-        let (d, c) = (samples(&damaged, t), samples(&clean, t));
-        assert_eq!(d.first(), c.first());
-        assert_eq!(d.last(), c.last(), "later tags still decoded");
-    }
-    let total = |m: &Media| m.tracks.iter().map(|t| t.samples.len()).sum::<usize>();
+    let (_, clean_video) = ((), samples(&clean, 0));
     assert_eq!(
-        total(&damaged) + 1,
-        total(&clean),
-        "exactly the bad tag lost"
+        prefix.first(),
+        clean_video.first(),
+        "the good prefix is kept"
+    );
+    assert!(
+        prefix.len() < clean_video.len(),
+        "the damage and what follows it are not decoded"
     );
 }
 
 #[test]
-fn corrupt_nal_framing_inside_a_tag_drops_that_sample_only() {
+fn corrupt_nal_framing_inside_a_tag_is_reported_and_the_good_prefix_kept() {
     let clean_bytes = av_flv();
-    let clean = FlvDemux::new().unpackage(&clean_bytes[..]).unwrap();
+    let clean = test_harness::collect::media_from_flv(&clean_bytes[..]).unwrap();
     let all = tags(&clean_bytes);
     let (victim, _, _) = all
         .iter()
@@ -96,17 +120,16 @@ fn corrupt_nal_framing_inside_a_tag_drops_that_sample_only() {
     let prefix = victim + TAG_HEADER + 5;
     bytes[prefix..prefix + 4].copy_from_slice(&[0x7F, 0xFF, 0xFF, 0xFF]);
 
-    let damaged = FlvDemux::new()
-        .unpackage(&bytes[..])
-        .expect("one corrupt NALU tag must not fail the file");
-    assert_eq!(
-        damaged.degraded,
-        vec![InputDegradation::MalformedUnit {
-            position: victim as u64
-        }]
+    let (emitted, error) = streamed_prefix(&bytes);
+    assert!(
+        matches!(error, FlvError::Codec(transmux::Error::BufferTooShort(_))),
+        "the corrupt NAL length is reported: {error:?}"
     );
-    let (d, c) = (samples(&damaged, 0), samples(&clean, 0));
-    assert_eq!(d.len() + 1, c.len());
-    assert_eq!(d.last(), c.last());
-    assert_eq!(d.first(), c.first());
+    let clean_video = samples(&clean, 0);
+    assert_eq!(
+        emitted.first(),
+        clean_video.first(),
+        "the good prefix is kept"
+    );
+    assert!(emitted.len() < clean_video.len());
 }

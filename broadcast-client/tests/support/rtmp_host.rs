@@ -2,9 +2,8 @@ use std::collections::BTreeSet;
 use url::Url;
 
 use broadcast_client::{Action, Config, ConnId, Event, Session, SourceKind, TransportError};
-use broadcast_common::Unpackage;
 use broadcast_common::stage::Timestamp;
-use transmux::{FlvDemux, Media};
+use transmux::Media;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -57,7 +56,7 @@ pub fn fixture_tags() -> Vec<(u8, u32, Vec<u8>)> {
 
 pub fn direct() -> Media {
     let flv = test_fixtures::read(FIXTURE);
-    FlvDemux::new().unpackage(&flv[..]).expect("direct demux")
+    test_harness::collect::media_from_flv(&flv[..]).expect("direct demux")
 }
 
 pub struct Connect {

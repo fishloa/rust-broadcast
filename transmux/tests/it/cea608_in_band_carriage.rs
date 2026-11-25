@@ -10,9 +10,8 @@
 //! extractor's frame count (`private/fixtures/captions/*/*.cc_data.txt` line count).
 
 use crate::ts_mux_stage;
-use broadcast_common::Unpackage;
+use transmux::Media;
 use transmux::pipeline::CodecConfig;
-use transmux::{Media, TsDemux};
 
 /// The captures live in the private submodule (their media licence is unclear,
 /// see `private/fixtures/captions/PROVENANCE.md`): `true` (after a loud notice)
@@ -69,7 +68,7 @@ fn assert_carried(ts_path: &str, reference_path: &str) {
         .lines()
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .count();
-    let media = TsDemux::new().unpackage(&ts).expect("demux the capture");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux the capture");
     assert_eq!(
         marker_count(&media),
         want,
@@ -77,7 +76,7 @@ fn assert_carried(ts_path: &str, reference_path: &str) {
     );
 
     let remuxed = ts_mux_stage::mux(&media);
-    let media2 = TsDemux::new().unpackage(&remuxed).expect("re-demux");
+    let media2 = test_harness::collect::media_from_ts(&remuxed).expect("re-demux");
     assert_eq!(
         marker_count(&media2),
         want,

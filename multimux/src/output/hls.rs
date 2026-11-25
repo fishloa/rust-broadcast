@@ -1085,7 +1085,7 @@ mod ts_tests {
     #[tokio::test]
     async fn master_playlist_carries_codecs_from_the_ts_track_specs() {
         let ts = std::fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("h264-aac.ts fixture");
-        let media = transmux::TsDemux::new().demux(&ts).expect("demux");
+        let media = test_harness::collect::media_from_ts(&ts).expect("demux");
         let specs: Vec<transmux::TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
 
         let route = make_route();

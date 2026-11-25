@@ -33,8 +33,7 @@ use mpeg_ts::pid::Pid;
 use std::collections::BTreeSet;
 
 use crate::ts_mux_stage;
-use broadcast_common::Unpackage;
-use transmux::{Media, Track, TsDemux};
+use transmux::{Media, Track};
 
 const DESC_TAG_ISO_639_LANGUAGE: u8 = 0x0A;
 const DESC_TAG_DVB_SUBTITLING: u8 = 0x59;
@@ -47,9 +46,7 @@ fn fixture_bytes() -> Vec<u8> {
 }
 
 fn demux_fixture() -> Media {
-    TsDemux::new()
-        .unpackage(&fixture_bytes())
-        .expect("demux france2.ts")
+    test_harness::collect::media_from_ts(&fixture_bytes()).expect("demux france2.ts")
 }
 
 /// Walk a descriptor loop's tag/length TLVs (ISO/IEC 13818-1 §2.6,
@@ -93,9 +90,7 @@ fn track_for_pid(media: &Media, pid: u16) -> &Track {
 
 fn remux_via_ts(media: &Media) -> Media {
     let bytes = ts_mux_stage::mux(media);
-    TsDemux::new()
-        .unpackage(&bytes)
-        .expect("re-demux the remuxed TS")
+    test_harness::collect::media_from_ts(&bytes).expect("re-demux the remuxed TS")
 }
 
 /// ISO-639 language codes recovered from every track's ES_info loop,

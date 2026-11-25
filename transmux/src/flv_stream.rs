@@ -3,9 +3,7 @@
 //! #555) for the FLV container (Adobe FLV v10.1 Annex E — see
 //! `private/specs-verified/mpeg/transmux/codec/flv.md` and [`crate::flv`] for the wire layout).
 //!
-//! [`FlvDemux`](crate::flv::FlvDemux) is a **one-shot** [`Unpackage`
-//! ](broadcast_common::Unpackage): it demands the whole FLV byte stream up
-//! front and returns one [`Media`](crate::media::Media). A live RTMP publisher instead delivers
+//! A live RTMP publisher delivers
 //! FLV tags forever — re-running the one-shot demuxer over an
 //! ever-growing buffer on every new tag would grow memory (and CPU) without
 //! bound. [`StreamingFlvDemux`] is the incremental analogue, mirroring
@@ -43,7 +41,7 @@
 //!
 //! # Non-AVC/AAC tracks
 //!
-//! Mirrors [`FlvDemux`](crate::flv::FlvDemux): unlike the TS demux (which
+//! Unlike the TS demux (which
 //! carries every other `stream_type` as an opaque `Data` track so nothing is
 //! dropped), a video tag whose `CodecID` isn't AVC, or an audio tag whose
 //! `SoundFormat` isn't AAC, is **silently skipped** here too — no track, no
@@ -54,10 +52,8 @@
 //!
 //! Annex E requires the AVC/AAC sequence-header tag (`AVCPacketType`/
 //! `AACPacketType` == 0) to precede that track's media tags. Unlike the
-//! one-shot [`FlvDemux`](crate::flv::FlvDemux) — which can freely accumulate
-//! all of a track's samples before its config is known, because it only
-//! builds the final [`Track`](crate::media::Track) after the whole buffer is
-//! consumed — a streaming demuxer with
+//! a whole-buffer demuxer — which can freely accumulate
+//! all of a track's samples before its config is known — a streaming demuxer with
 //! *bounded* memory cannot hold an unbounded pre-config backlog waiting for
 //! a config that might arrive arbitrarily late (or never). A media tag for a
 //! track whose sequence header has not yet been seen is therefore dropped,
@@ -80,8 +76,7 @@
 //! [`DemuxEvent::TracksResolved`] is a PMT-driven signal (TS declares its
 //! track count up front); FLV has no equivalent binding declaration — the
 //! header's `TypeFlags` bits are informational only and the one-shot
-//! [`FlvDemux`](crate::flv::FlvDemux) itself does not trust them — so this
-//! demuxer never emits it.
+//! no FLV demuxer trusts them — so this demuxer never emits it.
 //! A consumer that needs a "no more tracks coming" signal should drive that
 //! from its own knowledge of the publish (e.g. RTMP `publish` parameters).
 //!
@@ -504,9 +499,73 @@ impl StreamingFlvDemux {
     /// bytes coming) into the event queue; drain it with
     /// [`poll_event`](Self::poll_event). Idempotent: a second call with
     /// nothing newly pending enqueues nothing.
+    ///
+    /// A final tag whose **body is complete** but whose trailing 4-byte
+    /// `PreviousTagSize` is partly or wholly missing is processed here: that
+    /// field is redundant (§E.4.1), so the tag is complete data, not a
+    /// truncation. [`last_walk_was_truncated`](Self::last_walk_was_truncated)
+    /// distinguishes the two.
     pub fn finish(&mut self) {
+        self.consume_final_body_complete_tag();
         self.video.flush(&mut self.events);
         self.audio.flush(&mut self.events);
+    }
+
+    /// After [`finish`](Self::finish), whether the input ended inside a tag's
+    /// body: the last tag's declared `DataSize` ran past the bytes supplied, so
+    /// that tag was dropped and everything before it kept. A trailing tag whose
+    /// body is complete but whose redundant `PreviousTagSize` is short is not
+    /// truncation (§E.4.1).
+    pub fn last_walk_was_truncated(&self) -> bool {
+        if !self.header_seen || self.pending.len() < TAG_HEADER_LEN {
+            return false;
+        }
+        let Ok(header) = rtmp_runtime::flv::FlvTagHeader::parse(&self.pending) else {
+            return false;
+        };
+        let body_end =
+            TAG_HEADER_LEN.saturating_add(usize::try_from(header.data_size).unwrap_or(usize::MAX));
+        self.pending.len() < body_end
+    }
+
+    /// Process the one tag [`consume`](Self::consume) left pending because its
+    /// redundant trailing `PreviousTagSize` had not fully arrived, if its body
+    /// is complete.
+    fn consume_final_body_complete_tag(&mut self) {
+        if !self.header_seen {
+            return;
+        }
+        let Ok(header) = rtmp_runtime::flv::FlvTagHeader::parse(&self.pending) else {
+            return;
+        };
+        if self.pending.len() >= header.total_len() {
+            return;
+        }
+        let body_end =
+            TAG_HEADER_LEN.saturating_add(usize::try_from(header.data_size).unwrap_or(usize::MAX));
+        if self.pending.len() < body_end {
+            return;
+        }
+        let Ok(tag) = rtmp_runtime::flv::FlvTag::parse(&self.pending) else {
+            return;
+        };
+        let tag_type_byte = tag.tag_type.to_byte();
+        let timestamp = match tag_type_byte {
+            tag_type::VIDEO | tag_type::AUDIO => self.clock.unroll(header.timestamp),
+            _ => i64::from(header.timestamp),
+        };
+        let processed = Self::process_tag(
+            &mut self.video,
+            &mut self.audio,
+            &mut self.next_track_id,
+            tag_type_byte,
+            timestamp,
+            tag.body,
+            &mut self.events,
+        );
+        if processed.is_ok() {
+            self.pending.clear();
+        }
     }
 
     /// Bytes still missing before the unit [`feed`](Self::feed) is currently
@@ -581,7 +640,7 @@ impl StreamingFlvDemux {
         let frame_type = body[0] >> FRAME_TYPE_SHIFT;
         let codec_id = body[0] & CODEC_ID_MASK;
         if codec_id != CODEC_ID_AVC {
-            return Ok(()); // non-AVC video is out of scope (mirrors FlvDemux)
+            return Ok(()); // non-AVC video is out of scope
         }
         let avc_packet_type_byte = body[AVC_PACKET_TYPE_OFFSET];
         // AVCVIDEOPACKET: AVCPacketType(1) + CompositionTime(SI24=3) + Data.
@@ -704,7 +763,7 @@ impl StreamingFlvDemux {
         }
         let sound_format = body[0] >> SOUND_FORMAT_SHIFT;
         if sound_format != crate::flv::SOUND_FORMAT_AAC {
-            return Ok(()); // non-AAC audio is out of scope (mirrors FlvDemux)
+            return Ok(()); // non-AAC audio is out of scope
         }
         // AACAUDIODATA: AACPacketType(1) + Data.
         if body.len() < AAC_PACKET_DATA_OFFSET {

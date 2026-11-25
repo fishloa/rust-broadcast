@@ -13,7 +13,6 @@ use media_plane::ids::SegmentSeq;
 use media_plane::trunk::SegmentEntry;
 use media_plane::trunk::{Trunk, TrunkConfig};
 use transmux::Container;
-use transmux::ts_demux::TsDemux;
 use transmux::{CodecConfig, TrackSpec};
 
 fn nz(n: usize) -> NonZeroUsize {
@@ -46,7 +45,7 @@ fn render(origin: &HlsOrigin) -> String {
 
 fn specs_from_fixture(fixture: &str) -> Option<Vec<TrackSpec>> {
     let data = test_fixtures::require_bytes(fixture, "frame_rate")?;
-    let media = TsDemux::new().demux(&data).ok()?;
+    let media = test_harness::collect::media_from_ts(&data).ok()?;
     Some(media.tracks.into_iter().map(|t| t.spec).collect())
 }
 
@@ -214,7 +213,7 @@ fn ts_origin_fed_with(
 
 fn ts_fixture_tracks(fixture: &str, video_only: bool) -> Option<Vec<transmux::Track>> {
     let data = test_fixtures::require_bytes(fixture, "frame_rate")?;
-    let media = TsDemux::new().demux(&data).ok()?;
+    let media = test_harness::collect::media_from_ts(&data).ok()?;
     Some(
         media
             .tracks

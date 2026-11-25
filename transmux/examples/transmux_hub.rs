@@ -12,7 +12,7 @@
 //! This example drives the `{TS} → IR → {CMAF}` path:
 //!
 //! 1. Read a real H.264 + AAC MPEG-2 Transport Stream fixture.
-//! 2. [`TsDemux`] → [`Media`]: print each track's codec, geometry, and count.
+//! 2. [`StreamingTsDemux`] → [`Media`]: print each track's codec, geometry, and count.
 //! 3. Build a CMAF initialization segment + a media segment from the IR and
 //!    print their sizes.
 //!
@@ -23,10 +23,8 @@
 //! ```
 
 use std::path::PathBuf;
-
-use broadcast_common::Unpackage;
 use transmux::pipeline::{CodecConfig, FragmentTrackData, build_init_segment, build_media_segment};
-use transmux::{Media, Track, TrackSpec, TsDemux};
+use transmux::{Media, Track, TrackSpec};
 
 /// Locate a fixture under the workspace `fixtures/` directory (a sibling of the
 /// crate's `CARGO_MANIFEST_DIR`). Fixtures are read at runtime via `std::fs`
@@ -104,7 +102,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("read {} bytes from {}\n", ts.len(), path.display());
 
     // 1. Unpackage: MPEG-2 TS → neutral Media IR.
-    let media: Media = TsDemux::new().unpackage(&ts[..])?;
+    let media: Media = test_harness::collect::media_from_ts(&ts[..])?;
     print_track_summary(&media);
 
     // 2. Mux: Media IR → CMAF. `CmafMuxStage` emits an init

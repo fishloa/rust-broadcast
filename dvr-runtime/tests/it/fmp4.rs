@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use broadcast_common::Timestamp;
-use broadcast_common::mux::Unpackage;
 use broadcast_hls::MediaPlaylist;
 use bytes::Bytes;
 use dvr_runtime::fs::{FsArchive, FsRecorder};
@@ -41,9 +40,7 @@ struct Source {
 
 fn load() -> Vec<Source> {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
-    let media = transmux::ts_demux::TsDemux::new()
-        .unpackage(&bytes)
-        .expect("demux the fixture");
+    let media = test_harness::collect::media_from_ts(&bytes).expect("demux the fixture");
     media
         .tracks
         .into_iter()

@@ -19,14 +19,12 @@ use std::time::Duration;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
-use broadcast_common::mux::Unpackage;
 use broadcast_hls::{MasterPlaylist, MediaPlaylist, MediaRendition, MediaType};
 use media_doctor::{Report, check_hls_playlist};
 use media_plane::ProgramId;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use tower::ServiceExt;
 use transmux::pipeline::CodecConfig;
-use transmux::ts_demux::TsDemux;
 
 use media_plane::segmenter::ProgramSegmenter;
 use multimux::origin::{AppState, router};
@@ -89,7 +87,7 @@ struct Rig {
 }
 
 fn demux(bytes: &[u8]) -> transmux::Media {
-    TsDemux::new().unpackage(bytes).expect("demux fixture")
+    test_harness::collect::media_from_ts(bytes).expect("demux fixture")
 }
 
 fn compose(video: &[u8], teletext: &[u8]) -> transmux::Media {

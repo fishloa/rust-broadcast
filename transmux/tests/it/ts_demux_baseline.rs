@@ -9,11 +9,8 @@
 //! timing hash, `start_decode_time`, movie timescale, PCR count, degraded and
 //! skipped reports must equal the recorded lines exactly.
 
-#[path = "support/demux_baseline.rs"]
-mod demux_baseline;
-
 /// Feed one baseline section through the streaming stage at three chunk sizes.
-fn check(section: &demux_baseline::Section, bytes: &[u8]) {
+fn check(section: &crate::demux_baseline::Section, bytes: &[u8]) {
     for chunk in [1usize, 188, 64 * 1024] {
         match test_harness::collect::media_from_ts_chunked(bytes, chunk) {
             Ok(media) => {
@@ -22,7 +19,7 @@ fn check(section: &demux_baseline::Section, bytes: &[u8]) {
                     "{} at chunk {chunk}: streamed but the baseline records an error",
                     section.file
                 );
-                let (tracks, summary) = demux_baseline::summarize(&media);
+                let (tracks, summary) = crate::demux_baseline::summarize(&media);
                 assert_eq!(
                     tracks, section.tracks,
                     "{} at chunk {chunk}: per-track samples differ from the baseline",
@@ -47,7 +44,7 @@ fn check(section: &demux_baseline::Section, bytes: &[u8]) {
 #[test]
 fn every_public_ts_fixture_reproduces_the_whole_input_baseline() {
     let text = test_fixtures::read_to_string("ts/demux-baseline.txt");
-    let sections = demux_baseline::parse(&text);
+    let sections = crate::demux_baseline::parse(&text);
     assert!(
         sections.len() >= 48,
         "the golden must cover every public TS fixture"
@@ -67,14 +64,17 @@ fn every_private_ts_capture_reproduces_the_whole_input_baseline() {
         return;
     };
     let text = std::fs::read_to_string(&path).expect("read the private TS baseline");
-    let sections = demux_baseline::parse(&text);
+    let sections = crate::demux_baseline::parse(&text);
     assert!(
         sections.len() >= 19,
         "the golden must cover every private TS capture"
     );
     for section in &sections {
         let Some(fixture) = test_fixtures::private(&format!("ts/{}", section.file)) else {
-            panic!("the private baseline names a missing fixture: {}", section.file);
+            panic!(
+                "the private baseline names a missing fixture: {}",
+                section.file
+            );
         };
         let bytes = std::fs::read(&fixture).expect("read a private TS capture");
         check(section, &bytes);

@@ -10,13 +10,10 @@
 //! | h264_aac | 320x240 | 1:1 | 4:3 |
 
 #![cfg(feature = "std")]
-
-use broadcast_common::Unpackage;
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};
 use transmux::DashPackager;
-use transmux::ts_demux::TsDemux;
 
 /// `(@par of the video AdaptationSet, @sar of each video Representation)`,
 /// read by parsing the MPD (never by substring search), so an attribute on the
@@ -58,7 +55,7 @@ fn video_geometry_attrs(mpd: &str) -> (Option<String>, Vec<Option<String>>) {
 
 fn mpd_for(fixture: &str) -> Option<String> {
     let data = test_fixtures::require_bytes(fixture, "display_dash")?;
-    let media = TsDemux::new().unpackage(&data).expect("demux fixture");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux fixture");
     Some(crate::packagers::dash(&DashPackager::default(), &media).expect("package DASH"))
 }
 

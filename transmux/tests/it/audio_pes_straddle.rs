@@ -28,9 +28,7 @@
 use crate::ts_psi::pid_of;
 use std::collections::{BTreeMap, BTreeSet};
 use transmux::TrackId;
-
-use broadcast_common::Unpackage;
-use transmux::{DemuxEvent, StreamingTsDemux, TsDemux};
+use transmux::{DemuxEvent, StreamingTsDemux};
 
 const TS: usize = 188;
 /// Bytes each audio PES hands to the next one (zenith-tv's default).
@@ -227,7 +225,7 @@ fn observe(ts: &[u8], chunk: usize) -> BTreeMap<TrackId, Vec<Sample>> {
 
 /// Batch demux, as the same per-track sample lists.
 fn batch(ts: &[u8]) -> BTreeMap<TrackId, Vec<Sample>> {
-    let media = TsDemux::new().unpackage(ts).expect("batch demux");
+    let media = test_harness::collect::media_from_ts(ts).expect("batch demux");
     media
         .tracks
         .iter()
@@ -345,7 +343,7 @@ fn sintel_ac3_and_eac3_straddling_pes_recover_every_syncframe() {
 #[test]
 fn sintel_plain_ac3_stays_ac3_and_eac3_stays_eac3() {
     let aligned = local_fixture("sintel-ac3-eac3-aligned.ts");
-    let media = TsDemux::new().unpackage(aligned.as_slice()).expect("demux");
+    let media = test_harness::collect::media_from_ts(aligned.as_slice()).expect("demux");
     let (mut ac3, mut eac3) = (0, 0);
     for t in &media.tracks {
         match t.config() {
@@ -394,7 +392,7 @@ fn aac_mp2_and_dts_straddling_pes_match_the_aligned_demux() {
 #[test]
 fn real_capture_eac3_recovers_straddling_syncframes() {
     let ts = fixture("ts/m6-single.ts");
-    let media = TsDemux::new().unpackage(ts.as_slice()).expect("demux");
+    let media = test_harness::collect::media_from_ts(ts.as_slice()).expect("demux");
     let mut counts: Vec<usize> = Vec::new();
     for t in media
         .tracks

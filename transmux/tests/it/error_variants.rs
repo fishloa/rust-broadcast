@@ -1,10 +1,7 @@
-use broadcast_common::Unpackage;
 use broadcast_common::error::FieldOverflow;
 use broadcast_common::timescale::Timescale;
 use rtmp_runtime::RtmpError;
-use transmux::{
-    Error, FlvDemux, FlvError, Media, MkvMuxStage, RtmpFlvError, RtmpMuxStage, TsDemux,
-};
+use transmux::{Error, FlvError, Media, MkvMuxStage, RtmpFlvError, RtmpMuxStage};
 
 #[test]
 fn rtmp_flv_error_display_names_the_failure_and_its_numbers() {
@@ -50,20 +47,19 @@ fn an_rtmp_chunk_size_beyond_the_u32_field_is_reported_not_wrapped() {
 }
 
 #[test]
-fn an_flv_with_no_tags_has_no_supported_track() {
+fn an_flv_with_no_tags_has_no_tracks() {
     let header = [
         b'F', b'L', b'V', 0x01, 0x05, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00,
     ];
-    assert_eq!(
-        FlvDemux::new().unpackage(&header).unwrap_err(),
-        FlvError::NoSupportedTrack
-    );
+    let media =
+        test_harness::collect::media_from_flv(&header).expect("a tagless stream is not an error");
+    assert!(media.tracks.is_empty(), "no tag carries a track");
 }
 
 #[test]
 fn a_codec_matroska_cannot_carry_is_named_in_the_error() {
     let ts = test_fixtures::read("ts/legacy/mpeg2-mp2.ts");
-    let media = TsDemux::new().unpackage(&ts).expect("demux");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux");
     let mut stage = MkvMuxStage::new(core::time::Duration::from_millis(1_000));
     match crate::mux_bytes::mux_result(&mut stage, &media).unwrap_err() {
         transmux::Error::UnsupportedMkvCodec { codec } => assert_eq!(codec, "MPEG-2 Video"),

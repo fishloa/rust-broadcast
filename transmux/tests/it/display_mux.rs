@@ -479,9 +479,7 @@ fn melodie_pasp_and_colr() {
     let Some(data) = read("ts/melodie-anamorphic-sar-64-45-zenith-tv.ts") else {
         return;
     };
-    let media = transmux::ts_demux::TsDemux::new()
-        .demux(&data)
-        .expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let track = media
         .tracks
         .iter()
@@ -499,9 +497,7 @@ fn krone_pasp_no_colr() {
     let Some(data) = read("ts/krone-anamorphic-sar-16-11-zenith-tv.ts") else {
         return;
     };
-    let media = transmux::ts_demux::TsDemux::new()
-        .demux(&data)
-        .expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let track = media
         .tracks
         .iter()
@@ -518,9 +514,7 @@ fn transformers_neither() {
     let Some(data) = read("ts/transformers-eia608-h264.ts") else {
         return;
     };
-    let media = transmux::ts_demux::TsDemux::new()
-        .demux(&data)
-        .expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let track = media
         .tracks
         .iter()
@@ -535,9 +529,7 @@ fn transformers_neither() {
 #[test]
 fn gulli_colr_no_pasp() {
     let data = test_fixtures::read("ts/gulli-opengop.ts");
-    let media = transmux::ts_demux::TsDemux::new()
-        .demux(&data)
-        .expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let track = media
         .tracks
         .iter()
@@ -583,9 +575,7 @@ fn ffprobe_oracle_real_captures() {
         let Some(data) = read(fixture) else {
             continue;
         };
-        let media = transmux::ts_demux::TsDemux::new()
-            .demux(&data)
-            .expect("demux");
+        let media = test_harness::collect::media_from_ts(&data).expect("demux");
         let track = media
             .tracks
             .iter()
@@ -658,9 +648,7 @@ fn ffprobe_oracle_real_captures() {
     // gulli public fixture
     let path = test_fixtures::path("ts/gulli-opengop.ts");
     if let Ok(data) = std::fs::read(&path) {
-        let media = transmux::ts_demux::TsDemux::new()
-            .demux(&data)
-            .expect("demux");
+        let media = test_harness::collect::media_from_ts(&data).expect("demux");
         let track = media
             .tracks
             .iter()

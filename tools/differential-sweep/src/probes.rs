@@ -217,32 +217,60 @@ pub fn transmux_batch(fx: &Fixture, _: &Cfg) -> Option<Value> {
     }
     let packets = ts_packets(&fx.data)?;
     let flat: Vec<u8> = packets.iter().flat_map(|p| p.iter().copied()).collect();
-    let mut d = transmux::ts_demux::TsDemux::new();
-    Some(match d.demux(&flat) {
-        Err(e) => json!({ "err": format!("{e}") }),
-        Ok(media) => {
-            let tracks: Vec<Value> = media
-                .tracks
-                .iter()
-                .map(|t| {
-                    let mut all = Vec::new();
-                    let mut bytes = 0u64;
-                    for s in &t.samples {
-                        bytes += s.data.len() as u64;
-                        all.extend_from_slice(&s.data);
-                    }
-                    json!({
-                        "track_id": format!("{:?}", t.spec.track_id),
-                        "pid": hx_opt(t.spec.source_pid),
-                        "program": format!("{:?}", t.spec.program_number),
-                        "codec": codec_identity(&t.spec.config),
-                        "samples": t.samples.len(), "bytes": bytes, "sha256": sha(&all),
-                    })
-                })
-                .collect();
-            json!({ "tracks": tracks, "pcr": media.pcr.len(), "skipped": media.skipped.len() })
+
+    let mut demux = transmux::StreamingTsDemux::new().with_strict_pmt_order();
+    if let Err(e) = demux.feed(&flat).and_then(|()| demux.finish()) {
+        return Some(json!({ "err": format!("{e}") }));
+    }
+    let mut tracks: Vec<transmux::Track> = Vec::new();
+    let mut index: std::collections::BTreeMap<transmux::TrackId, usize> =
+        std::collections::BTreeMap::new();
+    let mut pcr = 0usize;
+    while let Some(event) = demux.poll_event() {
+        match event {
+            transmux::DemuxEvent::TrackAdded(spec) => {
+                index.insert(spec.track_id, tracks.len());
+                tracks.push(transmux::Track::new(spec, Vec::new()));
+            }
+            transmux::DemuxEvent::TrackUpdated(spec) => {
+                if let Some(&i) = index.get(&spec.track_id) {
+                    tracks[i].spec = spec;
+                }
+            }
+            transmux::DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
+                if let Some(&i) = index.get(&track_id) {
+                    tracks[i].samples.push(sample);
+                }
+            }
+            transmux::DemuxEvent::ClockReference { pcr: wire, .. } => {
+                if wire.is_some() {
+                    pcr += 1;
+                }
+            }
+            _ => {}
         }
-    })
+    }
+    let tracks: Vec<Value> = tracks
+        .iter()
+        .map(|t| {
+            let mut all = Vec::new();
+            let mut bytes = 0u64;
+            for s in &t.samples {
+                bytes += s.data.len() as u64;
+                all.extend_from_slice(&s.data);
+            }
+            json!({
+                "track_id": format!("{:?}", t.spec.track_id),
+                "pid": hx_opt(t.spec.source_pid),
+                "program": format!("{:?}", t.spec.program_number),
+                "codec": codec_identity(&t.spec.config),
+                "samples": t.samples.len(), "bytes": bytes, "sha256": sha(&all),
+            })
+        })
+        .collect();
+    Some(json!({ "tracks": tracks, "pcr": pcr, "skipped": 0 }))
 }
 
 pub fn transmux_run(fx: &Fixture, _: &Cfg) -> Option<Value> {

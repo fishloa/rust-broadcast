@@ -15,9 +15,7 @@ mod bit_writer;
 mod paff_gen;
 
 use std::path::Path;
-
-use broadcast_common::Unpackage;
-use transmux::{Media, TsDemux};
+use transmux::Media;
 
 const FRAMES: usize = 12;
 
@@ -38,11 +36,10 @@ fn main() {
         ),
     ] {
         let rewrapped = paff_gen::ts_from_aus(&g.aus);
-        let want = timestamps(&TsDemux::new().unpackage(&g.ts).expect("demux generated TS"));
+        let want =
+            timestamps(&test_harness::collect::media_from_ts(&g.ts).expect("demux generated TS"));
         let got = timestamps(
-            &TsDemux::new()
-                .unpackage(&rewrapped)
-                .expect("demux re-wrapped AUs"),
+            &test_harness::collect::media_from_ts(&rewrapped).expect("demux re-wrapped AUs"),
         );
         assert_eq!(got, want, "{name}: the AUs re-wrapped carry the same clock");
         println!(

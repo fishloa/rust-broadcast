@@ -43,7 +43,7 @@ const FFPROBE_DEADLINE: Duration = Duration::from_secs(60);
 
 use crate::support::shared_it::fixture_path;
 use multimux::push::{PushTransport, RtspTransport, RtspTransportConfig};
-use transmux::{CodecConfig, TsDemux};
+use transmux::CodecConfig;
 
 /// HANG GUARD (workspace precedent, issue #826): every blocking wait below
 /// is bounded, so a broken connect/push path fails the test rather than
@@ -266,7 +266,7 @@ async fn push_and_read_back(
     read_url: String,
 ) {
     let ts = std::fs::read(fixture_path("ts/h264-aac.ts")).expect("h264-aac.ts fixture must exist");
-    let media = TsDemux::new().demux(&ts).expect("demux h264-aac.ts");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux h264-aac.ts");
     assert!(
         media
             .tracks

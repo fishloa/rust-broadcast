@@ -1,4 +1,4 @@
-//! MPEG-2 Transport Stream demuxer → hub [`Media`] IR.
+//! MPEG-2 Transport Stream demuxer → hub [`Media`](crate::media::Media) IR.
 //!
 //! [`StreamingTsDemux`] (issue #555) is the **one** demux core: an
 //! event-driven, incremental engine that consumes TS bytes of any size or
@@ -7,14 +7,14 @@
 //! known.
 //! `TracksResolved` (issue #624) additionally tells a consumer when every
 //! currently-known PMT-declared PID has resolved — the "safe to build a
-//! multi-track segmenter now" signal. [`TsDemux`] — the
-//! **input** side of the any-to-any container hub, implementing the abstract
-//! [`broadcast_common::Unpackage`] trait so `{TS} → IR → {any}` composes with
+//! multi-track segmenter now" signal. It is also the **input** side of the
+//! any-to-any container hub: a caller that holds a whole buffer feeds it, calls
+//! `finish()`, and folds the event stream into a [`Media`](crate::media::Media) (the workspace test
+//! harness does exactly that in `collect::media_from_ts`), then muxes it with
 //! the existing [`CmafMuxStage`](crate::media::CmafMuxStage) /
-//! [`HlsPackager`](crate::media::HlsPackager) packagers — is now a thin batch
-//! wrapper over it: feed the whole buffer, call `finish()`, fold the event
-//! stream into a [`Media`]. There is no separate whole-buffer implementation;
-//! every behaviour below is produced by the streaming core.
+//! [`HlsPackager`](crate::media::HlsPackager) packagers. There is no separate
+//! whole-buffer implementation; every behaviour below is produced by the
+//! streaming core.
 //!
 //! Pipeline: TS packet layer ([`mpeg_ts`], resynchronised via
 //! [`mpeg_ts::resync::TsResync`]) → follow PAT → PMT → per-PID PES
@@ -120,7 +120,7 @@
 //! family a track uses. The demuxer also collects every PCR observation on a
 //! program's PMT-announced `PCR_PID` (issue #1354: other PIDs' PCRs are
 //! dropped once the PMTs are known, and each event carries its
-//! `provenance.program_number`), both into [`Media`]'s `pcr` field (batch) and
+//! `provenance.program_number`), both into [`Media`](crate::media::Media)'s `pcr` field (batch) and
 //! as [`DemuxEvent::ClockReference`] (streaming).
 //!
 //! # Draining the streaming queue
@@ -231,11 +231,10 @@ use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use broadcast_common::timescale::Timescale;
-use core::marker::PhantomData;
 use mpeg_ts::pid::Pid;
 
 use broadcast_common::timescale::{Rounding, rescale};
-use broadcast_common::{Demand, Parse, Serialize, Stage, Timestamp, Unpackage};
+use broadcast_common::{Demand, Parse, Serialize, Stage, Timestamp};
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{
@@ -254,7 +253,6 @@ use crate::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, annexb_to_length_prefixed, iter_a
 use crate::dts_core::{DTS_CORE_SYNC_WORD, DtsCoreFrameInfo};
 use crate::error::{Error, Result};
 use crate::hdr::{HEVC_PREFIX_SEI_NUT, HdrStaticMetadata};
-use crate::media::{Media, PcrSample, Track};
 use crate::mhas::find_mpegh3da_config;
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
 use crate::nal::{
@@ -4698,7 +4696,7 @@ enum CcVerdict {
 }
 
 /// Event-driven, incremental MPEG-2 Transport Stream demuxer (issue #555) —
-/// the one demux core [`TsDemux`] is a thin batch wrapper over.
+/// the one demux core.
 ///
 /// Feed TS bytes of any size/alignment with [`feed`](Self::feed) (backed by
 /// [`mpeg_ts::resync::TsResync`], so mid-packet chunk boundaries — down to a
@@ -4782,7 +4780,7 @@ enum CcVerdict {
 ///   the AAC ADTS header changed (SD↔HD switch, re-encode) so the config
 ///   itself differs (r04-W51) — treat it as "rebuild the init segment /
 ///   decoder". An unchanged repeat of a parameter set emits nothing.
-///   [`TsDemux`] folds these into the final track spec.
+///   A whole-input collector folds these into the final track spec.
 /// - **`Discontinuity`** says the *timeline or data* is not continuous at this
 ///   point, and carries a [`DiscontinuityKind`]: `Signalled` — an adaptation
 ///   field `discontinuity_indicator` (§2.4.3.5) on any packet (`track` is the
@@ -4961,7 +4959,7 @@ impl StreamingTsDemux {
     /// until `finish()`. The cost is that track ids follow resolution order,
     /// not PMT order. A caller that holds the whole input and calls `finish()`
     /// has no liveness to protect and wants stable PMT-order ids; this keeps
-    /// them (it is what [`TsDemux`] uses).
+    /// them (the whole-input collector uses it).
     #[must_use]
     pub fn with_strict_pmt_order(mut self) -> Self {
         self.strict_pmt_order = true;
@@ -6722,167 +6720,6 @@ impl Stage for StreamingTsDemux {
     }
 }
 
-// ── Batch wrapper ────────────────────────────────────────────────────────────
-
-/// Demux an MPEG-2 Transport Stream byte slice into a [`Media`].
-///
-/// A thin wrapper over [`StreamingTsDemux`] (issue #555): follows the PAT to
-/// every PMT, enumerates each program's elementary streams into IR [`Track`]s,
-/// reassembles per-PID PES into access units with PTS/DTS, recovers codec
-/// config from the in-band headers, and emits length-prefixed video / raw
-/// audio samples in decode order — by feeding the whole input to a
-/// [`StreamingTsDemux`], calling `finish()`, and folding the resulting
-/// [`DemuxEvent`]s into a [`Media`].
-///
-/// The `'a` parameter ties the demuxer to the byte-slice lifetime it consumes
-/// via [`Unpackage::Input`]; construct one per call with [`TsDemux::new`].
-#[derive(Debug, Default, Clone)]
-pub struct TsDemux<'a> {
-    _marker: PhantomData<&'a [u8]>,
-    afd_persistence: AfdPersistence,
-}
-
-impl<'a> TsDemux<'a> {
-    /// Create a new demuxer.
-    pub fn new() -> Self {
-        Self {
-            _marker: PhantomData,
-            afd_persistence: AfdPersistence::UntilReplaced,
-        }
-    }
-
-    #[must_use]
-    pub fn with_afd_persistence(mut self, policy: AfdPersistence) -> Self {
-        self.afd_persistence = policy;
-        self
-    }
-
-    /// Demux `input` (a whole MPEG-2 TS byte stream) into a [`Media`].
-    ///
-    /// This is the inherent form of [`Unpackage::unpackage`]; both produce the
-    /// same result. See the type-level docs for the pipeline.
-    pub fn demux(&mut self, input: &'a [u8]) -> Result<Media> {
-        let mut demux = StreamingTsDemux::new()
-            .with_afd_persistence(self.afd_persistence)
-            .with_strict_pmt_order();
-        demux.feed(input)?;
-        demux.finish()?;
-
-        let mut tracks: Vec<Track> = Vec::new();
-        let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
-        let mut pcr: Vec<PcrSample> = Vec::new();
-        let mut degraded: Vec<InputDegradation> = Vec::new();
-        let mut degraded_at: Vec<DegradationRecord> = Vec::new();
-        while let Some(event) = demux.poll_event() {
-            match event {
-                DemuxEvent::TrackAdded(spec) => {
-                    index_by_id.insert(spec.track_id, tracks.len());
-                    tracks.push(Track::new(spec, Vec::new()));
-                }
-                DemuxEvent::TrackUpdated(spec) => {
-                    // Whole-buffer batch demux: reflect the final PMT-derived
-                    // metadata (issue #774) — samples already collected under
-                    // the earlier spec are untouched, only the spec itself
-                    // (e.g. corrected descriptors) is refreshed.
-                    if let Some(&i) = index_by_id.get(&spec.track_id) {
-                        tracks[i].spec = spec;
-                    }
-                }
-                // A one-shot whole-buffer `Media` has no removal/abandonment
-                // shape (its `tracks` is a flat, final list) — a track that
-                // was removed or abandoned mid-file simply keeps whatever it
-                // had already collected, exactly like `Discontinuity` below.
-                DemuxEvent::TrackRemoved { .. } => {}
-                DemuxEvent::TrackAbandoned { .. } => {}
-                DemuxEvent::Sample { track_id, sample }
-                    if let Some(&i) = index_by_id.get(&track_id) =>
-                {
-                    let track = &mut tracks[i];
-                    // `Track::start_decode_time` is no longer carried by
-                    // `TrackAdded` (issue #774 reshape) — it is exactly
-                    // the first sample's own `dts` (media plane step 2c
-                    // invariant, unconditionally true for every track
-                    // kind), so derive it here instead.
-                    if track.samples.is_empty()
-                        && let Some(dts) = sample.timing.and_then(|t| t.dts())
-                    {
-                        track.start_decode_time = dts as u64;
-                    }
-                    track.samples.push(sample);
-                }
-                DemuxEvent::Sample { .. } => {}
-                DemuxEvent::ClockReference {
-                    pcr: wire,
-                    discontinuous,
-                    provenance,
-                    ..
-                } => {
-                    // This batch wrapper only ever demuxes TS, where a
-                    // `ClockReference` carries the parsed adaptation-field
-                    // `Pcr` itself, so the wire parts survive without a
-                    // rebuild from the 27 MHz view (a parsed extension in
-                    // `300..=511` is off the clock and has no 27 MHz value).
-                    if let Some(wire) = wire {
-                        pcr.push(PcrSample {
-                            pcr: wire,
-                            // This batch wrapper only ever demuxes TS, whose
-                            // ClockReference always carries a PID/packet_index
-                            // — the fallbacks are unreachable in practice, not
-                            // a silent downgrade.
-                            pid: provenance.pid.unwrap_or(Pid::from_const(0)),
-                            packet_index: provenance.packet_index.unwrap_or(0),
-                            discontinuity: discontinuous,
-                        });
-                    }
-                }
-                DemuxEvent::Discontinuity { .. } => {}
-                DemuxEvent::InputDegraded {
-                    track,
-                    kind,
-                    provenance,
-                } => {
-                    degraded.push(kind);
-                    degraded_at.push(DegradationRecord::new(kind, track, provenance));
-                }
-                DemuxEvent::TracksResolved { .. } => {}
-                // The per-AU tag is lossless in a `Media` (design §5.3): every
-                // video `Sample` already carries its own `display`, so the
-                // batch path needs no event list. The event itself is not
-                // kept — a `Media` has no react-to-a-change surface.
-                DemuxEvent::DisplayChanged { .. } => {}
-            }
-        }
-        // The streaming core stamps `track: None` on damage seen before its PID
-        // resolved to a track (a Data/DSM-CC PID is announced only once its
-        // first section completes or at `finish()`, issue #1348). `tracks` is
-        // final here, so resolve every still-unresolved record against it by
-        // source PID. A PID that never became a track, and stream-wide damage
-        // (`pid: None`), stay `None`.
-        for record in &mut degraded_at {
-            if record.track.is_none()
-                && let Some(pid) = record.provenance.pid
-                && let Some(t) = tracks.iter().find(|t| t.spec.source_pid == Some(pid))
-            {
-                record.track = Some(t.spec.track_id);
-            }
-        }
-        let mut media = Media::new(tracks, VIDEO_TIMESCALE).with_pcr(pcr);
-        media.degraded = degraded;
-        media.degraded_at = degraded_at;
-        Ok(media)
-    }
-}
-
-impl<'a> Unpackage for TsDemux<'a> {
-    type Input = &'a [u8];
-    type Media = Media;
-    type Error = Error;
-
-    fn unpackage(&mut self, input: &'a [u8]) -> Result<Media> {
-        self.demux(input)
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -8503,7 +8340,7 @@ pub(crate) mod tests {
         let real = {
             let path = test_fixtures::path("ts/dolby/eac3.ts");
             let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
-            let media = TsDemux::new().demux(&ts).expect("demux real E-AC-3");
+            let media = crate::test_media::media_from_ts(&ts).expect("demux real E-AC-3");
             media.tracks[0].samples[0].data.to_vec()
         };
         let run = |es: &[u8]| {
@@ -8552,7 +8389,7 @@ pub(crate) mod tests {
         let real = {
             let path = test_fixtures::path("ts/dolby/eac3.ts");
             let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
-            let media = TsDemux::new().demux(&ts).expect("demux real E-AC-3");
+            let media = crate::test_media::media_from_ts(&ts).expect("demux real E-AC-3");
             media.tracks[0].samples[0].data.to_vec()
         };
         let mut es = real;
@@ -8631,8 +8468,8 @@ pub(crate) mod tests {
 
         // The fixture's own config, read from its recovered ASC rather than
         // assumed.
-        let mut demux = TsDemux::new();
-        let media = demux.demux(&source).expect("demux aac fixture");
+
+        let media = crate::test_media::media_from_ts(&source).expect("demux aac fixture");
         let audio = media
             .tracks
             .iter()
@@ -9266,7 +9103,7 @@ pub(crate) mod tests {
         path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = TsDemux::new().demux(&source).expect("demux h264-aac.ts");
+        let media = crate::test_media::media_from_ts(&source).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .iter()
@@ -9746,7 +9583,7 @@ pub(crate) mod tests {
         path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = TsDemux::new().demux(&source).expect("demux h264-aac.ts");
+        let media = crate::test_media::media_from_ts(&source).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .iter()
@@ -9855,9 +9692,7 @@ pub(crate) mod tests {
         let path = test_fixtures::path("ts/h264-two-resolutions.ts");
         let other =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = TsDemux::new()
-            .demux(&other)
-            .expect("demux two-resolution fixture");
+        let media = crate::test_media::media_from_ts(&other).expect("demux two-resolution fixture");
         let second_sps = media
             .tracks
             .iter()
@@ -10221,7 +10056,7 @@ pub(crate) mod tests {
             .count();
         assert_eq!(rejected, 2, "the huge and the stub SPS: {base:?}");
         // Every config the demuxer emitted serializes.
-        let media = TsDemux::new().demux(&bytes).expect("demux");
+        let media = crate::test_media::media_from_ts(&bytes).expect("demux");
         for t in &media.tracks {
             let CodecConfig::Avc { config, .. } = t.config() else {
                 continue;
@@ -10539,7 +10374,7 @@ pub(crate) mod tests {
         path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = TsDemux::new().demux(&source).expect("demux h264-aac.ts");
+        let media = crate::test_media::media_from_ts(&source).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .iter()
@@ -10700,7 +10535,7 @@ pub(crate) mod tests {
         path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = TsDemux::new().demux(&source).expect("demux h264-aac.ts");
+        let media = crate::test_media::media_from_ts(&source).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .iter()
@@ -11245,7 +11080,7 @@ pub(crate) mod tests {
         path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = TsDemux::new().demux(&source).expect("demux h264-aac.ts");
+        let media = crate::test_media::media_from_ts(&source).expect("demux h264-aac.ts");
 
         /// Frame period of the fixture's video track, in 90 kHz ticks — the
         /// real cadence `TsMuxStage` stamps its PES headers from.
@@ -11524,8 +11359,7 @@ pub(crate) mod tests {
         let ts_bytes =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
 
-        let mut demux = TsDemux::new();
-        let media = demux.demux(&ts_bytes).expect("demux h264-aac.ts");
+        let media = crate::test_media::media_from_ts(&ts_bytes).expect("demux h264-aac.ts");
         let audio = media
             .tracks
             .iter()
@@ -11597,8 +11431,8 @@ pub(crate) mod tests {
         path.push("h264-aac.ts");
         let ts_bytes =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let mut demux = TsDemux::new();
-        let media = demux.demux(&ts_bytes).expect("demux h264-aac.ts");
+
+        let media = crate::test_media::media_from_ts(&ts_bytes).expect("demux h264-aac.ts");
         let audio = media
             .tracks
             .into_iter()
@@ -13213,7 +13047,7 @@ pub(crate) mod tests {
         }
 
         // Batch entry point.
-        let media = TsDemux::new().demux(&ts).expect("batch demux");
+        let media = crate::test_media::media_from_ts(&ts).expect("batch demux");
         let batch: Vec<_> = media.tracks[0]
             .samples
             .iter()
@@ -13669,7 +13503,7 @@ pub(crate) mod tests {
     fn real_eac3_independent_frames() -> Vec<Vec<u8>> {
         let path = test_fixtures::path("ts/dolby/eac3.ts");
         let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
-        let media = TsDemux::new().demux(&ts).expect("demux real E-AC-3");
+        let media = crate::test_media::media_from_ts(&ts).expect("demux real E-AC-3");
         media.tracks[0]
             .samples
             .iter()
@@ -13687,7 +13521,7 @@ pub(crate) mod tests {
 
     /// Config of the first track of `ts`.
     fn first_track_config(ts: &[u8]) -> CodecConfig {
-        let media = TsDemux::new().demux(ts).expect("demux");
+        let media = crate::test_media::media_from_ts(ts).expect("demux");
         media.tracks[0].spec.config.clone()
     }
 
@@ -13831,7 +13665,7 @@ pub(crate) mod tests {
             &boundary_sizes(128, au_len),
             1536 * 90_000 / CARRY_SAMPLE_RATE,
         );
-        let media = TsDemux::new().demux(&ts).expect("demux");
+        let media = crate::test_media::media_from_ts(&ts).expect("demux");
         let CodecConfig::Eac3 { config, .. } = &media.tracks[0].spec.config else {
             panic!("E-AC-3 track expected");
         };
@@ -14191,9 +14025,8 @@ pub(crate) mod tests {
             "every observation reaches the consumer with its own wire parts"
         );
 
-        let media = TsDemux::new()
-            .unpackage(&input)
-            .expect("a PMT-declared PCR PID demuxes");
+        let media =
+            crate::test_media::media_from_ts(&input).expect("a PMT-declared PCR PID demuxes");
         assert_eq!(
             media
                 .pcr
@@ -15138,7 +14971,7 @@ pub(crate) mod tests {
     }
 
     fn video_pid_and_track(bytes: &[u8]) -> (u16, TrackId) {
-        let media = TsDemux::new().unpackage(bytes).expect("demux");
+        let media = crate::test_media::media_from_ts(bytes).expect("demux");
         let track = media
             .tracks
             .iter()
@@ -15417,7 +15250,7 @@ pub(crate) mod tests {
 
     fn real_hevc_parameter_sets() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let bytes = std::fs::read(test_fixtures::path("ts/hevc/main.ts")).expect("hevc fixture");
-        let media = TsDemux::new().unpackage(&bytes).expect("demux");
+        let media = crate::test_media::media_from_ts(&bytes).expect("demux");
         let track = media
             .tracks
             .iter()
@@ -15450,7 +15283,7 @@ pub(crate) mod tests {
 
     fn hevc_sps_from(fixture: &str) -> Vec<u8> {
         let bytes = std::fs::read(test_fixtures::path(fixture)).expect("hevc fixture");
-        let media = TsDemux::new().unpackage(&bytes).expect("demux");
+        let media = crate::test_media::media_from_ts(&bytes).expect("demux");
         let track = media
             .tracks
             .iter()

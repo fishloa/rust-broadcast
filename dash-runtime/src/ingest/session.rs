@@ -593,11 +593,10 @@ impl IngestSession for DashifIngestSession {
 #[cfg(test)]
 mod tests {
     use super::{DashifIngestConfig, DashifIngestSession, IngestObject, ObjectKind};
-    use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
+    use broadcast_common::{Demand, Stage, Timestamp};
     use transmux::FragmentTrackData;
     use transmux::dash::DashPackager;
     use transmux::pipeline::{build_init_segment, build_media_segment};
-    use transmux::ts_demux::TsDemux;
 
     fn styp(brands: &[&[u8; 4]]) -> Vec<u8> {
         let size = 8 + 8 + brands.len() * 4;
@@ -662,8 +661,8 @@ mod tests {
 
     fn media_and_mpd() -> (Vec<u8>, transmux::media::Media) {
         let ts = test_fixtures::read("ts/h264-aac.ts");
-        let mut demux = TsDemux::new();
-        let media = demux.unpackage(&ts[..]).expect("demux");
+
+        let media = test_harness::collect::media_from_ts(&ts[..]).expect("demux");
         let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
         let mpd = DashPackager::default()
             .render(&specs, &test_harness::collect::segment_log(&media))

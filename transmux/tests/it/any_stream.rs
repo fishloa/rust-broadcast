@@ -43,19 +43,17 @@
 //! under test (mirrors `tests/it/ir_timing.rs`'s `collect_pmt_es`).
 
 use mpeg_ts::pid::Pid;
+use mpeg_ts::ts::{SectionReassembler, TsPacket};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::Unpackage;
-use mpeg_ts::ts::{SectionReassembler, TsPacket};
-
 use crate::ts_hls_stage;
 use crate::ts_mux_stage;
 use transmux::ir::DataIdentity;
 use transmux::pipeline::{CodecConfig, DataCarriage};
-use transmux::{Media, Track, TsDemux};
+use transmux::{Media, Track};
 
 const TS: usize = 188;
 
@@ -71,9 +69,7 @@ fn read_fixture(name: &str) -> Vec<u8> {
 }
 
 fn demux(data: &[u8]) -> Media {
-    TsDemux::new()
-        .unpackage(data)
-        .expect("TS demux must succeed")
+    test_harness::collect::media_from_ts(data).expect("TS demux must succeed")
 }
 
 // ── Independent oracle: PAT/PMT section walk (not the crate's own parser) ──

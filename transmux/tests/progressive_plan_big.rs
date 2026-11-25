@@ -14,15 +14,13 @@
 //! hands it over as one `Bytes`. The cap is therefore a fixed number of
 //! plan-sized tables, not a fraction of the 4 GiB file.
 
-use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
-
-use broadcast_common::Unpackage;
 use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::timescale::Timescale;
+use std::fs::{File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 use test_alloc::ThreadCapped;
 use transmux::mux_stage::MuxInput;
-use transmux::{DemuxEvent, StreamingTsDemux, TsDemux};
+use transmux::{DemuxEvent, StreamingTsDemux};
 
 /// Sample count a 4 GiB file of the capture carries, rounded up.
 const MAX_SAMPLES: usize = 1_100_000;
@@ -156,8 +154,7 @@ fn a_generated_gibibyte_streams_into_a_progressive_file() {
     }
     let source = test_fixtures::path(SOURCE);
     let small = test_fixtures::read(SOURCE);
-    let kept: Vec<transmux::TrackId> = TsDemux::new()
-        .unpackage(small.as_slice())
+    let kept: Vec<transmux::TrackId> = test_harness::collect::media_from_ts(small.as_slice())
         .expect("demux the source")
         .tracks
         .iter()

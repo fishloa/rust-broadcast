@@ -12,10 +12,9 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::ts_mux_stage;
-use broadcast_common::Unpackage;
 use dvb_conformance::{ConformanceMonitor, Indicator};
 use mpeg_ts::ts::TsPacket;
-use transmux::{DEFAULT_PSI_INTERVAL, Media, TsDemux, TsMuxStage};
+use transmux::{DEFAULT_PSI_INTERVAL, Media, TsMuxStage};
 
 const PKT: usize = 188;
 const PAT_PID: u16 = 0x0000;
@@ -35,7 +34,7 @@ fn fixture(rel: &str) -> Vec<u8> {
 }
 
 fn demux(bytes: &[u8]) -> Media {
-    TsDemux::new().unpackage(bytes).expect("demux")
+    test_harness::collect::media_from_ts(bytes).expect("demux")
 }
 
 struct Pkt<'a>(&'a [u8]);

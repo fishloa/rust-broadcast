@@ -1979,9 +1979,8 @@ mod tests {
 
     #[test]
     fn a_tracks_event_without_a_track_removes_it_from_the_buffer_feeder() {
-        use broadcast_common::Unpackage;
         let data = test_fixtures::read("ts/h264-aac.ts");
-        let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
+        let media = test_harness::collect::media_from_ts(&data[..]).unwrap();
         let specs: Vec<transmux::TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
         assert_eq!(specs.len(), 2);
         let mut session = Session::open(
@@ -2003,11 +2002,10 @@ mod tests {
 
     #[test]
     fn default_rendered_tracks_is_the_lowest_id_whatever_the_resolution_order() {
-        use broadcast_common::Unpackage;
         const LOW_AUDIO: u32 = 20;
         const HIGH_AUDIO: u32 = 30;
         let data = test_fixtures::read("ts/h264-aac.ts");
-        let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
+        let media = test_harness::collect::media_from_ts(&data[..]).unwrap();
         let video = media
             .tracks
             .iter()
@@ -2076,11 +2074,10 @@ mod tests {
     #[cfg(feature = "test-seams")]
     #[test]
     fn a_pcr_discontinuity_coinciding_with_a_jump_hints_and_rearms_once() {
-        use broadcast_common::Unpackage;
         const TICKS_PER_FRAME: i64 = 3_600;
         const JUMP_TICKS: i64 = 30 * 90_000;
         let data = test_fixtures::read("ts/h264-aac.ts");
-        let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
+        let media = test_harness::collect::media_from_ts(&data[..]).unwrap();
         let video = media
             .tracks
             .into_iter()

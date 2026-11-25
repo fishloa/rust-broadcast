@@ -318,7 +318,7 @@ mod tests {
 
     fn fixture_media() -> transmux::ir::Media {
         let ts = test_fixtures::read("ts/h264-aac.ts");
-        let mut media = transmux::TsDemux::new().demux(&ts).expect("demux fixture");
+        let mut media = test_harness::collect::media_from_ts(&ts).expect("demux fixture");
         for track in &mut media.tracks {
             track.samples.truncate(2);
         }

@@ -19,11 +19,9 @@
 //! (e.g. an RTMP `RtmpSource`, #738's T11b) would: `feed` then drain with
 //! `poll_event` in a loop — the uniform pull idiom shared with
 //! [`transmux::StreamingTsDemux`].
-
-use broadcast_common::Unpackage;
 use bytes::Bytes;
 use transmux::TrackId;
-use transmux::{CodecConfig, DemuxEvent, FlvDemux, FlvError, StreamingFlvDemux};
+use transmux::{CodecConfig, DemuxEvent, FlvError, StreamingFlvDemux};
 
 static FLV: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
@@ -96,10 +94,8 @@ fn track_dims(c: &CodecConfig) -> (u16, u16) {
 /// Run the one-shot `FlvDemux` and produce the full per-track/per-sample
 /// shape, for direct comparison against the streaming demux's output.
 fn one_shot_full() -> Vec<FullTrack> {
-    let mut demux = FlvDemux::new();
-    let media = demux
-        .unpackage(FLV.as_slice())
-        .expect("one-shot demux av.flv");
+    let media =
+        test_harness::collect::media_from_flv(FLV.as_slice()).expect("one-shot demux av.flv");
     media
         .tracks
         .iter()
@@ -603,8 +599,7 @@ fn undetermined_aac_channel_count_is_unknown_not_zero_fabricated() {
         write_tag(&mut out, 8, 0, &[0xAF, 0x00, asc[0], asc[1]]);
         write_tag(&mut out, 8, 0, &[0xAF, 0x01, 0x00, 0xAA, 0xBB]);
 
-        let mut demux = FlvDemux::new();
-        let media = demux.unpackage(&out).expect("demux");
+        let media = test_harness::collect::media_from_flv(&out).expect("demux");
         let CodecConfig::Aac { channel_count, .. } = media.tracks[0].config() else {
             panic!("track 0 must be AAC");
         };
@@ -647,7 +642,7 @@ fn every_flv_fixture_fed_one_byte_at_a_time_matches_the_whole_buffer_demux() {
     const FIXTURES: [&str; 3] = ["flv/av.flv", "flv/aac-7-1.flv", "flv/oversize-dims.flv"];
     for rel in FIXTURES {
         let bytes = test_fixtures::read(rel);
-        let whole = match FlvDemux::new().unpackage(bytes.as_slice()) {
+        let whole = match test_harness::collect::media_from_flv(bytes.as_slice()) {
             Ok(media) => media,
             Err(_) => continue,
         };
@@ -729,19 +724,6 @@ fn a_header_rejected_for_its_data_offset_is_a_header_error() {
         !matches!(err, FlvError::BadSignature(_)),
         "a stream whose signature is exactly FLV must not be reported as not-FLV"
     );
-
-    let err = FlvDemux::default()
-        .unpackage(&input)
-        .expect_err("DataOffset 0 is not a valid header");
-    assert!(
-        matches!(
-            err,
-            FlvError::Codec(transmux::Error::InvalidInput(
-                "FLV header DataOffset below the header"
-            ))
-        ),
-        "the whole-buffer demuxer reports the same cause: {err:?}"
-    );
 }
 
 #[test]
@@ -751,10 +733,6 @@ fn a_bad_signature_is_still_a_bad_signature() {
     let mut demux = StreamingFlvDemux::new();
     assert!(matches!(
         demux.feed(&input).expect_err("not FLV"),
-        FlvError::BadSignature([b'X', b'L', b'V'])
-    ));
-    assert!(matches!(
-        FlvDemux::default().unpackage(&input).expect_err("not FLV"),
         FlvError::BadSignature([b'X', b'L', b'V'])
     ));
 }

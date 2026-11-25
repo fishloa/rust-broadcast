@@ -9,13 +9,10 @@
 //! size again for it, while the streaming stage allocates only the segment.
 //!
 //! The counter is process-wide, so this binary carries exactly one `#[test]`.
-
-use broadcast_common::Unpackage;
 use dash_runtime::client::{DashClient, PullLimits};
 use test_harness::dash::loopback::{Drive, Hook, Origin, drive};
 use transmux::ir::{SampleFlags, SampleTiming};
 use transmux::pipeline::{FragmentTrackData, build_init_segment, build_media_segment};
-use transmux::ts_demux::TsDemux;
 
 #[global_allocator]
 static A: test_alloc::ProcessCounting = test_alloc::ProcessCounting::new();
@@ -45,7 +42,7 @@ const MANIFEST: &str = r#"<?xml version="1.0"?>
 
 fn presentation() -> (String, Vec<u8>, Vec<u8>) {
     let ts = test_fixtures::read("ts/h264-aac.ts");
-    let media = TsDemux::new().unpackage(&ts[..]).expect("demux TS fixture");
+    let media = test_harness::collect::media_from_ts(&ts[..]).expect("demux TS fixture");
     let track = &media.tracks[0];
     let timescale = track.spec.timescale.get();
     let init = build_init_segment(std::slice::from_ref(&track.spec), media.movie_timescale)

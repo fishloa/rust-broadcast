@@ -11,9 +11,8 @@
 
 use crate::ts_mux_stage;
 use crate::ts_psi::{first_section, parse_pat, parse_pmt, payload_offset, pid_of, pusi_of};
-use broadcast_common::{Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize};
 use isobmff::DtsSpecificBox;
-use transmux::TsDemux;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
@@ -25,7 +24,7 @@ fn load_fixture() -> Vec<u8> {
 
 fn demux_fixture() -> Media {
     let data = load_fixture();
-    TsDemux::new().unpackage(&data).expect("demux dts-core.ts")
+    test_harness::collect::media_from_ts(&data).expect("demux dts-core.ts")
 }
 
 fn dts_track(media: &Media) -> &transmux::media::Track {
@@ -322,9 +321,7 @@ fn ts_mux_round_trip_preserves_samples_and_stream_type() {
         "muxed PMT must carry DTS stream_type 0x82"
     );
 
-    let media2 = TsDemux::new()
-        .unpackage(&ts2)
-        .expect("re-demux muxed output");
+    let media2 = test_harness::collect::media_from_ts(&ts2).expect("re-demux muxed output");
     let track2 = dts_track(&media2);
 
     assert_eq!(track2.samples.len(), track1.samples.len());

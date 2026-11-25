@@ -15,8 +15,8 @@
 //! emitted config serializes via both `to_bytes()` and `try_to_bytes()`, and
 //! the full event sequence is chunk-size invariant.
 
-use broadcast_common::{Serialize, Unpackage};
-use transmux::{CodecConfig, DemuxEvent, StreamingTsDemux, TsDemux};
+use broadcast_common::Serialize;
+use transmux::{CodecConfig, DemuxEvent, StreamingTsDemux};
 
 const TS_PACKET_SIZE: usize = 188;
 const TS_HEADER_SIZE: usize = 4;
@@ -233,7 +233,7 @@ fn garbled_fixtures_never_yield_unserializable_configs() {
                             .count();
                         // The whole-buffer batch API must not panic either, and
                         // every track it reports must serialize.
-                        let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
+                        let media = test_harness::collect::media_from_ts(&ts[..]).expect("demux");
                         for t in &media.tracks {
                             assert_serializable(&t.spec.config, &what);
                         }

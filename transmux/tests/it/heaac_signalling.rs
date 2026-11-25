@@ -11,12 +11,12 @@
 
 use crate::ts_mux_stage;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize};
 use dvb_si::descriptors::aac::{AacDescriptor, AacExtension};
 use isobmff::EsdsBox;
 use transmux::{
     AudioObjectType, AudioSpecificConfig, CodecConfig, HeAacProfile, Media, SamplingFrequencyIndex,
-    TrackSpec, TsDemux, build_init_segment, rfc6381_codec_string,
+    TrackSpec, build_init_segment, rfc6381_codec_string,
 };
 
 const MOVIE_TIMESCALE: Timescale = broadcast_common::timescale!(1000);
@@ -36,7 +36,7 @@ const V2_ASC: [u8; 4] = [0xEB, 0x8A, 0x08, 0x00];
 
 fn demux(fixture: &str) -> Media {
     let bytes = test_fixtures::read(fixture);
-    TsDemux::new().unpackage(&bytes).expect("demux fixture")
+    test_harness::collect::media_from_ts(&bytes).expect("demux fixture")
 }
 
 fn audio_spec(media: &Media) -> TrackSpec {
@@ -83,7 +83,7 @@ fn remux_with_aac_descriptor(fixture: &str, aac_type: u8) -> TrackSpec {
     };
     audio.spec.es_info_descriptors = descriptor.try_to_bytes().expect("descriptor serializes");
     let muxed = ts_mux_stage::mux(&media);
-    let back = TsDemux::new().unpackage(&muxed).expect("re-demux");
+    let back = test_harness::collect::media_from_ts(&muxed).expect("re-demux");
     audio_spec(&back)
 }
 
@@ -194,9 +194,7 @@ fn heaac_descriptor_demux_emits_output_rate_timescale() {
         extension: Some(AacExtension::new(false, Some(AAC_TYPE_HE_V2_STEREO), &[])),
     };
     audio.spec.es_info_descriptors = descriptor.try_to_bytes().unwrap();
-    let back = TsDemux::new()
-        .unpackage(&ts_mux_stage::mux(&media))
-        .unwrap();
+    let back = test_harness::collect::media_from_ts(&ts_mux_stage::mux(&media)).unwrap();
     let track = back
         .tracks
         .iter()

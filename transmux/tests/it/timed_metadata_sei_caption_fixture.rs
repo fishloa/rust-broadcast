@@ -34,12 +34,12 @@
 //!   `ffmpeg -f lavfi -i "movie=<slice>[out+subcc]" -c:s srt` (ffmpeg's own
 //!   EIA-608 decoder, `cc_dec`) against the exact same slice — an external
 //!   oracle, not a value invented for this test.
-use broadcast_common::{Parse, Unpackage};
+use broadcast_common::Parse;
 use cc_data::CcData;
 use cc_data::decode::Cea608Channel;
 use timed_metadata::event::MediaTime;
 use timed_metadata::webvtt::{Cea608CueExtractor, write_document};
-use transmux::{CodecConfig, NalCodec, TsDemux, caption_cc_data};
+use transmux::{CodecConfig, NalCodec, caption_cc_data};
 
 // ---------------------------------------------------------------------------
 // Shared: SEI wrap + WebVTT structural validity (mirrors webvtt_cc_fixture.rs)
@@ -209,9 +209,7 @@ const REAL_CAPTURE: &str = "transformers-eia608-h264";
 /// `transmux::caption_cc_data`, and return `(pts_90k, cc_data_bytes)` in
 /// decode order for every access unit that carried one.
 fn extract_sei_frames_from_ts(data: &[u8]) -> Vec<(u64, Vec<u8>)> {
-    let media = TsDemux::new()
-        .unpackage(data)
-        .expect("demux the real capture slice");
+    let media = test_harness::collect::media_from_ts(data).expect("demux the real capture slice");
     let video = media
         .tracks
         .iter()

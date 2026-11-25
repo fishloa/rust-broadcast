@@ -14,12 +14,12 @@ use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::Duration;
 
-use broadcast_common::{Parse, Serialize, Stage as _, Unpackage};
+use broadcast_common::{Parse, Serialize, Stage as _};
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
 use transmux::mux_stage::{MuxOutput, drive_media};
 use transmux::{
-    CodecConfig, DEFAULT_PSI_INTERVAL, FlvDemux, FlvPayloadKind, Media, Sample, TsDemux,
-    TsMuxStage, flv_frame_payload, flv_sequence_header_payloads, on_metadata_body,
+    CodecConfig, DEFAULT_PSI_INTERVAL, FlvPayloadKind, Media, Sample, TsMuxStage,
+    flv_frame_payload, flv_sequence_header_payloads, on_metadata_body,
 };
 
 /// Nanoseconds in one second: turns a timescale-tick span into a [`Duration`]
@@ -49,7 +49,7 @@ pub fn write_big_ts(path: &Path, source_fixture: &Path, target_bytes: u64) -> Bi
     let source = read_source(source_fixture);
     let media = expect(
         "demux TS source",
-        TsDemux::new().unpackage(source.as_slice()),
+        crate::collect::media_from_ts(source.as_slice()),
     );
     let step = pass_step(&media);
     let mut mux = TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL));
@@ -77,7 +77,7 @@ pub fn write_big_flv(path: &Path, source_fixture: &Path, target_bytes: u64) -> B
     let source = read_source(source_fixture);
     let media = expect(
         "demux FLV source",
-        FlvDemux::new().unpackage(source.as_slice()),
+        crate::collect::media_from_flv(source.as_slice()),
     );
     let step = pass_step(&media);
     let mut out = BufWriter::new(expect("create output", File::create(path)));
@@ -137,7 +137,7 @@ impl TsSegmentStream {
         let source = read_source(source_fixture);
         let media = expect(
             "demux TS source",
-            TsDemux::new().unpackage(source.as_slice()),
+            crate::collect::media_from_ts(source.as_slice()),
         );
         let step = pass_step(&media);
         Self {

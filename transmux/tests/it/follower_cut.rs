@@ -8,8 +8,6 @@
 //! ceiling rescale, and compared against the emitted `mdat` bytes.
 
 #![cfg(feature = "std")]
-
-use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use core::time::Duration;
 use transmux::TrackId;
@@ -18,7 +16,7 @@ use transmux::media::{Media, Track};
 use transmux::pipeline::TrackSpec;
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use transmux::{
-    CodecConfig, Error, Sample, Severity, TsDemux, validate::SegmentOrigin, validate_init_segment,
+    CodecConfig, Error, Sample, Severity, validate::SegmentOrigin, validate_init_segment,
     validate_media_segment,
 };
 
@@ -176,7 +174,7 @@ fn leader_plans(video: &Track, movie_ts: Timescale) -> Vec<CutPlan> {
 
 fn demux(name: &str) -> Media {
     let bytes = test_fixtures::read(name);
-    TsDemux::new().unpackage(&bytes).unwrap()
+    test_harness::collect::media_from_ts(&bytes).unwrap()
 }
 
 /// Full alignment contract of one follower against one leader.

@@ -11,15 +11,14 @@
 use std::path::PathBuf;
 use transmux::TrackId;
 
+use broadcast_common::Stage;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Stage, Unpackage};
 use std::time::Duration;
 use transmux::Sample;
 use transmux::ll_dash::LlSegmenter;
 use transmux::media::Media;
 use transmux::pipeline::{FragmentTrackData, TrackSpec};
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
-use transmux::ts_demux::TsDemux;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -32,8 +31,8 @@ fn fixtures_dir() -> PathBuf {
 fn demux_media() -> Media {
     let ts = std::fs::read(fixtures_dir().join("ts/h264-aac.ts"))
         .expect("h264-aac.ts fixture must exist");
-    let mut demux = TsDemux::new();
-    demux.unpackage(&ts[..]).expect("demux h264-aac.ts")
+
+    test_harness::collect::media_from_ts(&ts[..]).expect("demux h264-aac.ts")
 }
 
 fn video_track(media: &Media) -> &transmux::media::Track {

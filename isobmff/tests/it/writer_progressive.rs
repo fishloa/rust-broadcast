@@ -291,11 +291,8 @@ fn transmux_progressive(media: &transmux::Media, faststart: bool) -> Vec<u8> {
 /// box orders.
 #[test]
 fn a_transmux_written_file_round_trips_byte_identically() {
-    use broadcast_common::Unpackage;
     let ts = test_fixtures::read("ts/h264-aac.ts");
-    let media = transmux::TsDemux::new()
-        .unpackage(ts.as_slice())
-        .expect("demux h264-aac.ts");
+    let media = test_harness::collect::media_from_ts(ts.as_slice()).expect("demux h264-aac.ts");
     for faststart in [true, false] {
         let source = transmux_progressive(&media, faststart);
         let header = header_of(&source);

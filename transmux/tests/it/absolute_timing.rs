@@ -25,13 +25,12 @@
 //! never against the demuxer's own bookkeeping.
 
 use crate::ts_mux_stage;
-use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 
 use transmux::pipeline::CodecConfig;
-use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
-use transmux::{FlvDemux, Media, RtmpMuxStage, TsDemux};
+use transmux::rtp::RtpMediaKind;
+use transmux::{Media, RtmpMuxStage};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -216,7 +215,7 @@ fn ts_33bit_rollover_is_unwrapped_once_at_the_demux_edge() {
     let first_dts = TS_WRAP - 2 * FRAME_DUR;
     let ts = synth_ts_crossing_wrap(first_dts, N);
 
-    let media = TsDemux::new().unpackage(&ts).expect("demux synthesised TS");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux synthesised TS");
     let track = media
         .tracks
         .iter()
@@ -302,9 +301,9 @@ fn ts_rollover_survives_ts_ir_ts_round_trip() {
     const N: usize = 6;
     let first_dts = TS_WRAP - 2 * FRAME_DUR;
     let ts = synth_ts_crossing_wrap(first_dts, N);
-    let ir = TsDemux::new().unpackage(&ts).expect("demux");
+    let ir = test_harness::collect::media_from_ts(&ts).expect("demux");
     let ts2 = ts_mux_stage::mux(&ir);
-    let ir2 = TsDemux::new().unpackage(&ts2).expect("re-demux");
+    let ir2 = test_harness::collect::media_from_ts(&ts2).expect("re-demux");
 
     let deltas = |m: &Media| -> Vec<i64> {
         let t = m
@@ -386,7 +385,7 @@ fn assert_absolute_timeline(media: &Media, what: &str) {
 #[test]
 fn flv_demux_emits_absolute_time_from_tag_timestamps() {
     let flv = std::fs::read(test_fixtures::path("flv/av.flv")).expect("fixtures/flv/av.flv");
-    let media = FlvDemux::new().unpackage(&flv[..]).expect("FLV → IR");
+    let media = test_harness::collect::media_from_flv(&flv[..]).expect("FLV → IR");
     assert_absolute_timeline(&media, "FLV");
 
     // Independent oracle: the video tag timestamps in file order.
@@ -711,11 +710,9 @@ fn ps_demux_emits_absolute_time_from_pes_timestamps() {
 #[test]
 fn rtmp_demux_emits_absolute_time_from_message_timestamps() {
     let flv = std::fs::read(test_fixtures::path("flv/av.flv")).expect("fixtures/flv/av.flv");
-    let ir = FlvDemux::new().unpackage(&flv[..]).expect("FLV → IR");
+    let ir = test_harness::collect::media_from_flv(&flv[..]).expect("FLV → IR");
     let wire = crate::mux_bytes::mux_bytes(&mut RtmpMuxStage::default(), &ir);
-    let back = transmux::RtmpDemux::new()
-        .unpackage(&wire[..])
-        .expect("RTMP wire → IR");
+    let back = test_harness::collect::media_from_rtmp(&wire[..]).expect("RTMP wire → IR");
     assert_absolute_timeline(&back, "RTMP");
 
     // The recovered inter-sample deltas must match the FLV source's.
@@ -747,42 +744,41 @@ fn rtmp_demux_emits_absolute_time_from_message_timestamps() {
 #[test]
 fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
     let ts = std::fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("h264-aac.ts fixture");
-    let ir = TsDemux::new().unpackage(&ts[..]).expect("TS → IR");
+    let ir = test_harness::collect::media_from_ts(&ts[..]).expect("TS → IR");
     let out = crate::rtp_run::packetise(&ir, crate::rtp_run::stage(1400, 0x1234_5678));
 
-    let recovered = transmux::RtpDepacketiser::new()
-        .unpackage(RtpInput {
-            streams: out
-                .streams
-                .iter()
-                .map(|s| {
-                    let stream = RtpInputStream::new(
-                        s.kind,
-                        s.packets
+    let recovered = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: out
+            .streams
+            .iter()
+            .map(|s| {
+                let stream = test_harness::collect::RtpTestStream::new(
+                    s.kind,
+                    s.packets
+                        .iter()
+                        .map(|p| p.as_contiguous().to_vec())
+                        .collect(),
+                );
+                // The wire carries no codec config; the SDP does. This test
+                // only needs each track's identity/timing, so pair each stream
+                // with the packetised IR track of its kind.
+                if s.kind == RtpMediaKind::Aac {
+                    stream.with_config(
+                        ir.tracks
                             .iter()
-                            .map(|p| p.as_contiguous().to_vec())
-                            .collect(),
-                    );
-                    // The wire carries no codec config; the SDP does. This
-                    // test only needs each track's identity/timing, so pair
-                    // each stream with the packetised IR track of its kind.
-                    if s.kind == RtpMediaKind::Aac {
-                        stream.with_config(
-                            ir.tracks
-                                .iter()
-                                .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
-                                .expect("audio track")
-                                .spec
-                                .config
-                                .clone(),
-                        )
-                    } else {
-                        stream
-                    }
-                })
-                .collect(),
-        })
-        .expect("RTP → IR");
+                            .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+                            .expect("audio track")
+                            .spec
+                            .config
+                            .clone(),
+                    )
+                } else {
+                    stream
+                }
+            })
+            .collect(),
+    })
+    .expect("RTP → IR");
     assert_absolute_timeline(&recovered, "RTP");
 
     // Independent oracle: the distinct RTP header timestamps of the video
@@ -1052,7 +1048,7 @@ fn synth_two_pid_ts(video_first: i64, audio_first: i64) -> Vec<u8> {
 #[test]
 fn audio_and_video_of_one_program_share_one_unroll_epoch_across_2_33() {
     let ts = synth_two_pid_ts(3000, TS_WRAP - 1500);
-    let media = TsDemux::new().unpackage(&ts).expect("demux");
+    let media = test_harness::collect::media_from_ts(&ts).expect("demux");
     let video = media
         .tracks
         .iter()

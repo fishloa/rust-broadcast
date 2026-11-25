@@ -147,7 +147,6 @@ mod tests {
     use axum::response::{IntoResponse, Response as AxumResponse};
     use axum::routing::get;
     use broadcast_common::Timestamp;
-    use broadcast_common::Unpackage;
     use broadcast_smooth::{SmoothManifest, StreamType};
     use media_plane::ingress::{HandshakePolicy, ProgramId};
     use media_plane::trunk::{SampleCursorItem, TrunkConfig};
@@ -161,7 +160,7 @@ mod tests {
 
     const SYNTHETIC_MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
         transmux::VIDEO_CLOCK_TIMESCALE;
-    use transmux::{Media, SmoothOrigin, SmoothPackager, SmoothSegmenter, TsDemux};
+    use transmux::{Media, SmoothOrigin, SmoothPackager, SmoothSegmenter};
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
@@ -187,9 +186,7 @@ mod tests {
     fn build_smooth_output() -> (Media, Vec<transmux::mux_stage::SegmentOut>, String) {
         use transmux::mux_stage::MuxOutput;
         let ts = std::fs::read(fixture_ts_path()).expect("h264-aac.ts fixture must exist");
-        let media = TsDemux::new()
-            .unpackage(ts.as_slice())
-            .expect("demux h264-aac.ts");
+        let media = test_harness::collect::media_from_ts(ts.as_slice()).expect("demux h264-aac.ts");
         let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
         let origin = SmoothOrigin::from_tracks(&media.tracks);
         let mut segmenter =

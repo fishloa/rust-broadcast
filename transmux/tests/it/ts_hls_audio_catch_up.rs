@@ -5,16 +5,14 @@
 //! the order `StreamingTsDemux` emits them, exactly as a live ingest does.
 
 use crate::ts_hls_stage;
-use std::collections::HashMap;
-
-use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
+use std::collections::HashMap;
 use transmux::ir::DataIdentity;
 use transmux::media::Media;
 use transmux::pipeline::{CodecConfig, DataCarriage};
 use transmux::{
     DemuxEvent, Sample, SegmentCutPolicy, StreamingTsDemux, StreamingTsHlsSegmenter, TrackId,
-    TrackSpec, TsDemux,
+    TrackSpec,
 };
 
 const TARGET_SECS: u32 = 1;
@@ -71,7 +69,7 @@ fn segments(streamed: &Streamed) -> Vec<Vec<u8>> {
 }
 
 fn spans(segment: &[u8]) -> (f64, Vec<f64>) {
-    let ir: Media = TsDemux::new().unpackage(segment).expect("demux segment");
+    let ir: Media = test_harness::collect::media_from_ts(segment).expect("demux segment");
     let mut video = 0.0;
     let mut audio = Vec::new();
     for t in &ir.tracks {
@@ -189,9 +187,7 @@ fn a_lagging_audio_track_defers_the_cut_to_the_boundary() {
     }
     let cuts = ts_hls_stage::drain(&mut seg);
     assert_eq!(cuts.len(), 1, "audio reaching 1.0 s must close the cut");
-    let media = TsDemux::new()
-        .unpackage(&cuts[0].bytes)
-        .expect("demux segment");
+    let media = test_harness::collect::media_from_ts(&cuts[0].bytes).expect("demux segment");
     let audio = media
         .tracks
         .iter()

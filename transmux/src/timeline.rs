@@ -287,8 +287,6 @@ mod tests {
     use super::*;
     use crate::live_join::DropReason;
     use crate::live_join::LiveJoin;
-    use crate::ts_demux::TsDemux;
-    use broadcast_common::Unpackage;
 
     const VIDEO_TS: i64 = 90_000;
     const T0: u64 = 7_000_000;
@@ -301,7 +299,7 @@ mod tests {
 
     fn fixture() -> Fixture {
         let data = test_fixtures::read("ts/h264-aac.ts");
-        let media = TsDemux::new().unpackage(&data[..]).unwrap();
+        let media = crate::test_media::media_from_ts(&data[..]).unwrap();
         let mut video = None;
         let mut audio = None;
         for t in media.tracks {

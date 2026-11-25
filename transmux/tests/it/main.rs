@@ -45,6 +45,8 @@ mod dash_mpd;
 mod dash_xsd;
 mod data_identity_map;
 mod degraded_at_track;
+#[path = "support/demux_baseline.rs"]
+mod demux_baseline;
 mod demux_timing_invariant;
 mod display_afd;
 mod display_change;

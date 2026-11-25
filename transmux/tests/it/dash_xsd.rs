@@ -4,8 +4,6 @@ use broadcast_common::timescale::Timescale;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-
-use broadcast_common::Unpackage;
 use transmux::TrackId;
 use transmux::dash::{
     Addressing, ContentProtectionSystem, DashPackager, TrackSegments, TrickModeAdaptationSet,
@@ -13,7 +11,6 @@ use transmux::dash::{
 };
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::media::Media;
-use transmux::ts_demux::TsDemux;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -25,7 +22,7 @@ fn fixtures() -> PathBuf {
 
 fn media() -> Media {
     let ts = fs::read(fixtures().join("ts/h264-aac.ts")).expect("ts fixture");
-    TsDemux::new().unpackage(&ts[..]).expect("demux")
+    test_harness::collect::media_from_ts(&ts[..]).expect("demux")
 }
 
 fn four_audio_media() -> Media {
@@ -37,7 +34,7 @@ fn four_audio_media() -> Media {
         "ts/legacy/mpeg2-mp2.ts",
     ] {
         let bytes = test_fixtures::read(rel);
-        let m = TsDemux::new().unpackage(&bytes).expect("demux");
+        let m = test_harness::collect::media_from_ts(&bytes).expect("demux");
         tracks.extend(m.tracks);
     }
     for (i, t) in tracks.iter_mut().enumerate() {

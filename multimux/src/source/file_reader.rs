@@ -18,8 +18,7 @@
 //!   demuxer; the reader answers its forward chunks (TS/FLV/PS) or absolute
 //!   byte ranges (MP4/Matroska) until it asks for end of input, then rewinds to
 //!   offset 0 for the next pass. Live memory is a function of the session's
-//!   [`FileStreamLimits`] and never of the file's length, so
-//!   [`FileReaderConfig::max_file_bytes`] applies to nothing.
+//!   [`FileStreamLimits`] and never of the file's length.
 //!
 //! 1. **Identify** the container from a bounded prefix with
 //!    [`media_plane::file_source::probe_prefix`]. The verdict maps to a
@@ -133,21 +132,12 @@ pub struct FileReaderConfig {
     /// reader bounded without changing its semantics. `None` (the runtime
     /// default) loops forever.
     pub max_loops: Option<u32>,
-    /// Cap on the file's size in bytes. No container is read whole any more —
-    /// TS, FLV, MP4, PS and Matroska all stream from disk under bounded
-    /// buffers — so this applies to nothing; it is kept until Phase 6 deletes
-    /// the field. Defaults to [`DEFAULT_MAX_FILE_BYTES`].
-    pub max_file_bytes: usize,
 }
-
-/// The default [`FileReaderConfig::max_file_bytes`]: 1 GiB. Every container
-/// streams from disk, so the value applies to nothing.
-pub const DEFAULT_MAX_FILE_BYTES: usize = 1 << 30;
 
 impl FileReaderConfig {
     /// Construct with sensible runtime defaults: pacing on, 3 read retries at
-    /// 500 ms, no loop cap, and the [`DEFAULT_MAX_FILE_BYTES`] size cap. Use
-    /// the `with_*` builders to tune the remaining knobs.
+    /// 500 ms and no loop cap. Use the `with_*` builders to tune the remaining
+    /// knobs.
     pub fn new(path: PathBuf, loop_file: bool, trunk: Arc<Trunk>) -> Self {
         FileReaderConfig {
             path,
@@ -157,7 +147,6 @@ impl FileReaderConfig {
             max_retries: DEFAULT_MAX_RETRIES,
             retry_interval: DEFAULT_RETRY_INTERVAL,
             max_loops: None,
-            max_file_bytes: DEFAULT_MAX_FILE_BYTES,
         }
     }
 
@@ -182,14 +171,6 @@ impl FileReaderConfig {
     /// Set [`Self::max_loops`].
     pub fn with_max_loops(mut self, max_loops: Option<u32>) -> Self {
         self.max_loops = max_loops;
-        self
-    }
-
-    /// Set [`Self::max_file_bytes`]. No container reads whole any more, so the
-    /// cap applies to nothing; it is kept until Phase 6 deletes the field.
-    /// only.
-    pub fn with_max_file_bytes(mut self, max_file_bytes: usize) -> Self {
-        self.max_file_bytes = max_file_bytes;
         self
     }
 }

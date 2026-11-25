@@ -19,9 +19,8 @@
 
 use crate::ts_mux_stage;
 use crate::ts_psi::{first_section, parse_pat, payload_offset, pid_of, pusi_of};
-use broadcast_common::{Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize};
 use isobmff::MHADecoderConfigurationRecord;
-use transmux::TsDemux;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
@@ -44,8 +43,7 @@ fn with_fixture(body: impl FnOnce(&[u8])) {
 }
 
 fn demux_fixture(data: &[u8]) -> Media {
-    TsDemux::new()
-        .unpackage(data)
+    test_harness::collect::media_from_ts(data)
         .expect("demux mpegh-cicp-01-baseline-32kbps-single.ts")
 }
 
@@ -381,9 +379,7 @@ fn ts_mux_round_trip_preserves_samples_stream_type_and_descriptor() {
             "muxed descriptor's profile-level byte must match the IR's config"
         );
 
-        let media2 = TsDemux::new()
-            .unpackage(&ts2)
-            .expect("re-demux muxed output");
+        let media2 = test_harness::collect::media_from_ts(&ts2).expect("re-demux muxed output");
         let track2 = mpegh_track(&media2);
 
         assert_eq!(track2.samples.len(), track1.samples.len());

@@ -8,8 +8,6 @@
 
 use std::fs;
 
-use broadcast_common::Unpackage;
-
 const FIXTURE: &str = "ts/h264-aac.ts";
 /// RFC 3551 §6 static payload type for MPEG2 Transport Stream (RFC 2250 §2).
 const MP2T_PT: u8 = 33;
@@ -34,9 +32,7 @@ fn check(name: &str, actual: &str) {
 #[test]
 fn transmux_rtp_medias_match_golden() {
     let ts = test_fixtures::read(FIXTURE);
-    let media = transmux::TsDemux::new()
-        .unpackage(&ts[..])
-        .expect("demux fixture");
+    let media = test_harness::collect::media_from_ts(&ts[..]).expect("demux fixture");
     // The packetiser's payload types are the documented defaults for the
     // first video and first audio stream, which is what this session's `m=`
     // sections bind.

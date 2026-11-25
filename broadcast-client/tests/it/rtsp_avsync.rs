@@ -3,7 +3,6 @@ use crate::support;
 use std::collections::BTreeMap;
 
 use broadcast_client::{AvSync, Config, Event};
-use broadcast_common::Unpackage;
 use std::path::PathBuf;
 use std::process::Command;
 use support::rtsp_host::{
@@ -11,8 +10,8 @@ use support::rtsp_host::{
 };
 use support::truth::Truth;
 
+use transmux::CodecConfig;
 use transmux::rtp::RtpMediaKind;
-use transmux::{CodecConfig, TsDemux};
 
 const FRAME_STEP_US: u64 = 10_000;
 const RTP_TIMESTAMP_AT: usize = 4;
@@ -512,9 +511,7 @@ fn three_b_frame_fixture() -> Option<(MediaFixture, transmux::Media)> {
     let fixture = match status {
         Ok(s) if s.success() => {
             let data = std::fs::read(&out).expect("read generated source");
-            let media = TsDemux::new()
-                .unpackage(&data[..])
-                .expect("demux generated");
+            let media = test_harness::collect::media_from_ts(&data[..]).expect("demux generated");
             Some((MediaFixture::from_media(&media), media))
         }
         _ => None,

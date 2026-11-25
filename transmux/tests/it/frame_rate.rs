@@ -5,7 +5,6 @@ use broadcast_common::Parse;
 use isobmff::nalu_types::{HevcNalArray, HevcNalUnit};
 use isobmff::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use transmux::CodecConfig;
-use transmux::ts_demux::TsDemux;
 use transmux::{decode_hevc_vui_timing, nominal_frame_rate};
 
 // Re-exported? nominal_frame_rate is in transmux root.
@@ -141,7 +140,7 @@ fn hevc_vui_timing_and_nominal_rate_per_fixture() {
 #[test]
 fn real_h264_fixture_with_vui_timing() {
     let data = test_fixtures::require_bytes("ts/h264-aac.ts", "frame_rate").expect("fixture");
-    let media = TsDemux::new().demux(&data).expect("demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("demux");
     let spec = media
         .tracks
         .into_iter()

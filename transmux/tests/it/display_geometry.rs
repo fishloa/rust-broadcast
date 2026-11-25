@@ -9,13 +9,13 @@
 //! - `krone-anamorphic-sar-16-11-zenith-tv.ts`: `aspect_ratio_idc` 4, i.e. the
 //!   Table E-1 row `16:11` ("720x576 16:9 frame with horizontal overscan").
 //!
-//! Each is checked through both TS demux entry points (batch [`TsDemux`] and
-//! the streaming [`StreamingTsDemux`], whose `TrackAdded` / `TrackUpdated`
-//! carry a `TrackSpec`). Fixtures are loaded through `test_fixtures`; the
+//! Each is checked through [`StreamingTsDemux`], whose `TrackAdded` /
+//! `TrackUpdated` carry a `TrackSpec`. Fixtures are loaded through
+//! `test_fixtures`; the
 //! private submodule is skipped, not failed, when it is not checked out.
 
 use transmux::ir::{AspectRatioIdc, CodecConfig};
-use transmux::ts_demux::{DemuxEvent, StreamingTsDemux, TsDemux};
+use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 /// 720x576: the SD frame size of both zenith-tv captures (no frame cropping:
 /// `frame_cropping_flag` 0 in both SPS).
@@ -57,7 +57,7 @@ fn streaming_video_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
 }
 
 fn batch_video_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
-    let media = TsDemux::new().demux(data).expect("batch demux");
+    let media = test_harness::collect::media_from_ts(data).expect("batch demux");
     media
         .tracks
         .iter()
@@ -237,7 +237,7 @@ fn cmaf_round_trip_keeps_the_sample_aspect_ratio() {
     let Some(data) = read("ts/krone-anamorphic-sar-16-11-zenith-tv.ts") else {
         return;
     };
-    let media = TsDemux::new().demux(&data).expect("TS demux");
+    let media = test_harness::collect::media_from_ts(&data).expect("TS demux");
     let before: Vec<Option<(u16, u16)>> = media
         .tracks
         .iter()

@@ -733,20 +733,19 @@ async fn second_reader_over_same_trunk_fails_with_writer_unavailable() {
 
 // ---------------------------------------------------------------------------
 // Regular-file check — an operator-supplied path is never read unbounded (a
-// character device/FIFO would OOM the whole origin). Every media container now
-// streams, so `max_file_bytes` refuses nothing.
+// character device/FIFO would OOM the whole origin). Every media container
+// streams from disk in bounded memory.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_matroska_file_over_the_cap_plays() {
+async fn a_matroska_file_streams_from_disk() {
     let trunk = trunk();
     let config = FileReaderConfig::new(fixture("fixtures/mkv/h264-aac.mkv"), false, trunk.clone())
         .with_pace(false)
-        .with_max_retries(0)
-        .with_max_file_bytes(512);
+        .with_max_retries(0);
     let published = count_published(trunk, FileReader::new(config))
         .await
-        .expect("a Matroska file over the cap must stream, not be refused");
+        .expect("a Matroska file must stream, not be refused");
     assert!(published > 0, "the Matroska fixture must publish samples");
 }
 
@@ -842,7 +841,7 @@ async fn b_frame_fixture_publishes_decode_order_dts() {
 
 // ---------------------------------------------------------------------------
 // The streaming path (issue #4057, Phase 5 slice 4): every container plays from
-// disk in bounded memory and none is subject to `max_file_bytes`.
+// disk in bounded memory.
 // ---------------------------------------------------------------------------
 
 /// One MPEG-2 TS packet, the granularity at which a truncated capture stays a
@@ -913,7 +912,6 @@ fn timed_sample_count(bytes: &[u8]) -> usize {
 
 #[tokio::test]
 async fn a_ts_file_larger_than_the_cap_plays() {
-    const CAP: usize = 1 << 20;
     const TARGET: u64 = 4 << 20;
     let dir = scratch("ts-over-cap");
     let path = dir.join("big.ts");
@@ -927,11 +925,10 @@ async fn a_ts_file_larger_than_the_cap_plays() {
     let trunk = trunk();
     let config = FileReaderConfig::new(path, false, trunk.clone())
         .with_pace(false)
-        .with_max_retries(0)
-        .with_max_file_bytes(CAP);
+        .with_max_retries(0);
     let published = count_published(trunk, FileReader::new(config))
         .await
-        .expect("a TS file over the cap must stream, not be refused");
+        .expect("a TS file must stream, not be refused");
     assert_eq!(
         published as u64, expected,
         "every sample of the generated TS capture must play"
@@ -940,8 +937,7 @@ async fn a_ts_file_larger_than_the_cap_plays() {
 }
 
 #[tokio::test]
-async fn an_flv_file_larger_than_the_cap_plays() {
-    const CAP: usize = 1 << 20;
+async fn an_flv_file_streams_from_disk() {
     const TARGET: u64 = 4 << 20;
     let dir = scratch("flv-over-cap");
     let path = dir.join("big.flv");
@@ -952,11 +948,10 @@ async fn an_flv_file_larger_than_the_cap_plays() {
     let trunk = trunk();
     let config = FileReaderConfig::new(path, false, trunk.clone())
         .with_pace(false)
-        .with_max_retries(0)
-        .with_max_file_bytes(CAP);
+        .with_max_retries(0);
     let published = count_published(trunk, FileReader::new(config))
         .await
-        .expect("an FLV file over the cap must stream, not be refused");
+        .expect("an FLV file must stream, not be refused");
     assert_eq!(
         published as u64, expected,
         "every sample of the generated FLV capture must play"
@@ -965,33 +960,30 @@ async fn an_flv_file_larger_than_the_cap_plays() {
 }
 
 #[tokio::test]
-async fn an_mp4_file_larger_than_the_cap_plays() {
-    // MP4 reads by absolute byte range, so the whole-file cap never applies.
+async fn an_mp4_file_streams_from_disk() {
+    // MP4 reads by absolute byte range, so no whole-file cap applies.
     let trunk = trunk();
     let reader = FileReader::new(
         FileReaderConfig::new(fixture("fixtures/mp4/h264-high.mp4"), false, trunk.clone())
             .with_pace(false)
-            .with_max_retries(0)
-            .with_max_file_bytes(1),
+            .with_max_retries(0),
     );
     let published = count_published(trunk, reader)
         .await
-        .expect("an MP4 over the cap must stream, not be refused");
+        .expect("an MP4 must stream, not be refused");
     assert!(published > 0, "the MP4 fixture must publish samples");
 }
 
 #[tokio::test]
-async fn a_ps_file_larger_than_the_cap_plays() {
-    // A Program Stream streams through `StreamingPsDemux`, so the whole-file
-    // cap never applies.
+async fn a_ps_file_streams_from_disk() {
+    // A Program Stream streams through `StreamingPsDemux`.
     let trunk = trunk();
     let config = FileReaderConfig::new(fixture("fixtures/ps/h264-ac3.ps"), false, trunk.clone())
         .with_pace(false)
-        .with_max_retries(0)
-        .with_max_file_bytes(1);
+        .with_max_retries(0);
     let published = count_published(trunk, FileReader::new(config))
         .await
-        .expect("a PS file over the cap must stream, not be refused");
+        .expect("a PS file must stream, not be refused");
     assert!(published > 0, "the PS fixture must publish samples");
 }
 

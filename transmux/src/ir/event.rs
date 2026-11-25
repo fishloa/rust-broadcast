@@ -491,8 +491,8 @@ pub enum DemuxEvent {
     /// This means "the declared track set is stable", which requires the
     /// container to *have* an up-front track declaration in the first place
     /// (MPEG-2 TS: the PMT). A container without one — FLV/RTMP, whose
-    /// `TypeFlags` header bits are informational only and not trusted even by
-    /// the one-shot [`crate::flv::FlvDemux`] — legitimately never emits this;
+    /// `TypeFlags` header bits are informational only and are not trusted even
+    /// by the streaming FLV demuxer — legitimately never emits this;
     /// that asymmetry is for the media plane's ingress layer to handle
     /// explicitly (e.g. gating on the first [`DemuxEvent::Sample`] instead),
     /// not something this event can paper over by pretending every container

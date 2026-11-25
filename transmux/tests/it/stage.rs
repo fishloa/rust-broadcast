@@ -56,10 +56,8 @@ use transmux::mux_stage::{MuxInput, MuxOutput, SegmentOut};
 use transmux::{
     CodecConfig, DemuxEvent, LlHlsSegmenter, LlHlsStageOutput, LlSegmenter, PartInfo, Sample,
     SegmentInfo, Segmenter, StreamingFlvDemux, StreamingTsDemux, StreamingTsHlsSegmenter,
-    TrackSpec, TsDemux,
+    TrackSpec,
 };
-
-use broadcast_common::Unpackage;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -259,7 +257,7 @@ fn mux_inputs(samples: Vec<(TrackId, Sample)>) -> Vec<MuxInput> {
 fn generic_drive_helper_unifies_ts_flv_and_progressive_demuxers() {
     // --- StreamingTsDemux ---------------------------------------------------
     let ts_bytes = read(&fixtures_ts_dir().join("h264-aac.ts"));
-    let oracle_ts: Media = TsDemux::new().unpackage(&ts_bytes).expect("batch TS demux");
+    let oracle_ts: Media = test_harness::collect::media_from_ts(&ts_bytes).expect("batch TS demux");
 
     let ts_chunks: Vec<&[u8]> = ts_bytes.chunks(317).collect();
     let mut ts_stage = StreamingTsDemux::new();
@@ -277,9 +275,8 @@ fn generic_drive_helper_unifies_ts_flv_and_progressive_demuxers() {
 
     // --- StreamingFlvDemux ---------------------------------------------------
     let flv_bytes: &[u8] = FLV.as_slice();
-    let oracle_flv: Media = transmux::FlvDemux::new()
-        .unpackage(flv_bytes)
-        .expect("batch FLV.as_slice() demux");
+    let oracle_flv: Media =
+        test_harness::collect::media_from_flv(flv_bytes).expect("batch FLV.as_slice() demux");
 
     let flv_chunks: Vec<&[u8]> = flv_bytes.chunks(257).collect();
     let mut flv_stage = StreamingFlvDemux::new();

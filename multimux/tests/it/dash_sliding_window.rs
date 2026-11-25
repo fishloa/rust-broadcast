@@ -24,7 +24,6 @@ use transmux::TrackId;
 
 use crate::support::origin::{body_string, get};
 use axum::http::StatusCode;
-use broadcast_common::Unpackage;
 use dash_runtime::mpd::Mpd;
 use multimux::origin::{AppState, router};
 use multimux::output::Output;
@@ -32,7 +31,6 @@ use multimux::output::dash::DashOutput;
 use multimux::output::ll_dash::LlDashOutput;
 use multimux::route::RouteHandle;
 use tower::ServiceExt;
-use transmux::TsDemux;
 use transmux::ll_hls::LlHlsSegmenter;
 
 const TARGET_DURATION: Duration = Duration::from_secs(2);
@@ -94,9 +92,10 @@ fn derivable(e: &Edge, elapsed: f64) -> std::ops::RangeInclusive<u64> {
 
 /// Run one output (`manifest_path`) through the sliding-window scenario.
 async fn slide(output: Arc<dyn Output>, manifest_path: &str) {
-    let media = TsDemux::new()
-        .unpackage(&std::fs::read(test_fixtures::path("ts/h264-aac-40s.ts")).expect("fixture"))
-        .expect("demux fixture");
+    let media = test_harness::collect::media_from_ts(
+        &std::fs::read(test_fixtures::path("ts/h264-aac-40s.ts")).expect("fixture"),
+    )
+    .expect("demux fixture");
     let mut track = media
         .tracks
         .into_iter()

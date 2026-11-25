@@ -2,19 +2,16 @@
 //! `dash_runtime::mpd::Mpd::parse` (issue #2340): the writer's output is a
 //! document dash-runtime's reader accepts, and it says what the packager was
 //! told to emit.
-
-use broadcast_common::Unpackage;
 use dash_runtime::mpd::Mpd;
 use dash_runtime::mpd::PresentationType;
 use dash_runtime::mpd::inherit::SegmentInfo;
 use dash_runtime::mpd::inherit::TemplateInfo;
 use dash_runtime::mpd::inherit::resolve_segment_info;
 use transmux::dash::{Addressing, DashPackager, TrackSegments};
-use transmux::ts_demux::TsDemux;
 
 fn media() -> transmux::media::Media {
     let ts = std::fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("ts fixture");
-    TsDemux::new().unpackage(&ts[..]).expect("demux")
+    test_harness::collect::media_from_ts(&ts[..]).expect("demux")
 }
 
 fn parse(xml: &str) -> Mpd {

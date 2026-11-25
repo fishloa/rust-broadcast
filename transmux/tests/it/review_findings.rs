@@ -3,10 +3,9 @@
 //! feature. See the PR description for the finding list.
 
 use crate::ts_psi::pid_of;
-use broadcast_common::Unpackage;
 use transmux::ac3_syncframe::split_eac3_syncframes;
 use transmux::pipeline::CodecConfig;
-use transmux::{DemuxEvent, StreamingTsDemux, TsDemux};
+use transmux::{DemuxEvent, StreamingTsDemux};
 
 const TS_PACKET: usize = 188;
 
@@ -63,7 +62,7 @@ fn eac3_cc_gap_in_next_pes_drops_the_held_intact_access_unit() {
         }
     }
 
-    let media = TsDemux::new().unpackage(&damaged).expect("demux");
+    let media = test_harness::collect::media_from_ts(&damaged).expect("demux");
     let track = media
         .tracks
         .iter()
@@ -149,7 +148,7 @@ fn eac3_held_access_unit_is_retimed_onto_the_next_pes_timeline_after_a_pts_jump(
         }
         pes_index += 1;
     }
-    let media = TsDemux::new().unpackage(&out).expect("demux");
+    let media = test_harness::collect::media_from_ts(&out).expect("demux");
     let track = media
         .tracks
         .iter()

@@ -1002,7 +1002,6 @@ mod tests {
         use axum::Router;
         use axum::response::IntoResponse;
         use axum::routing::get;
-        use transmux::TsDemux;
 
         let fixture_dir = test_fixtures::path("hls/ts-hls");
         let playlist_text =
@@ -1016,7 +1015,7 @@ mod tests {
 
         let mut want_total_samples = 0usize;
         for bytes in [&seg0, &seg1] {
-            let media = TsDemux::new().demux(bytes).expect("oracle demux");
+            let media = test_harness::collect::media_from_ts(bytes).expect("oracle demux");
             want_total_samples += media.tracks.iter().map(|t| t.samples.len()).sum::<usize>();
         }
         assert!(want_total_samples > 0, "sanity: fixture must carry samples");

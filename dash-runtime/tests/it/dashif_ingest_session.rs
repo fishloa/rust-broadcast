@@ -1,15 +1,14 @@
-use broadcast_common::{Serialize, Stage, Timestamp, Unpackage};
+use broadcast_common::{Serialize, Stage, Timestamp};
 use dash_runtime::ingest::{DashifIngestSession, IngestObject, ObjectKind};
 use media_plane::ingress::SessionEvent;
 use transmux::FragmentTrackData;
 use transmux::dash::DashPackager;
 use transmux::pipeline::{build_init_segment, build_media_segment};
-use transmux::ts_demux::TsDemux;
 
 fn demux_media() -> transmux::media::Media {
     let ts = test_fixtures::read("ts/h264-aac.ts");
-    let mut demux = TsDemux::new();
-    demux.unpackage(&ts[..]).expect("demux")
+
+    test_harness::collect::media_from_ts(&ts[..]).expect("demux")
 }
 
 #[test]

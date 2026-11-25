@@ -516,8 +516,7 @@ impl RtmpSource {
 mod tests {
     use super::*;
     use crate::tshttp::Event as TsEvent;
-    use broadcast_common::Unpackage;
-    use transmux::{EventProvenance, FlvDemux, Media};
+    use transmux::{EventProvenance, Media};
 
     fn rtmp_source() -> RtmpSource {
         let url = Url::parse("rtmp://origin.test/live/cam1").expect("url");
@@ -526,7 +525,7 @@ mod tests {
 
     fn trailer_spec() -> TrackSpec {
         let data = test_fixtures::read("flv/av.flv");
-        let media: Media = FlvDemux::new().unpackage(&data[..]).expect("direct demux");
+        let media: Media = test_harness::collect::media_from_flv(&data[..]).expect("direct demux");
         media.tracks[0].spec.clone()
     }
 

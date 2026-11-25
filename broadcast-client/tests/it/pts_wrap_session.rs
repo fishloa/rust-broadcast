@@ -1,10 +1,9 @@
 use crate::support::replay::{bitrate_bps, replay_with_host};
 use crate::support::ts_shift::{PTS_WRAP, Shift, shift_pes};
 use broadcast_client::{Action, BufferEvent, Config, Event, Session};
-use broadcast_common::Unpackage;
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
 use broadcast_common::stage::Timestamp;
-use transmux::{DEFAULT_PSI_INTERVAL, Media, TsDemux, TsMuxStage};
+use transmux::{DEFAULT_PSI_INTERVAL, Media, TsMuxStage};
 use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -17,7 +16,7 @@ const WRAP: i64 = 1 << 33;
 #[test]
 fn pts_33bit_wrap_through_session_playout() {
     let base = test_fixtures::read("ts/h264-aac.ts");
-    let media0 = TsDemux::new().unpackage(&base[..]).unwrap();
+    let media0 = test_harness::collect::media_from_ts(&base[..]).unwrap();
     let movie_timescale = media0.movie_timescale;
 
     // Keep an audio track as an origin anchor at DTS 0 so the muxer does not
@@ -145,7 +144,7 @@ const TICKS_27_PER_90K: u64 = 300;
 const AUDIO_BEHIND_90KHZ: i64 = 90_000;
 
 fn first_pts(bytes: &[u8]) -> (i64, i64) {
-    let media = TsDemux::new().unpackage(bytes).unwrap();
+    let media = test_harness::collect::media_from_ts(bytes).unwrap();
     let mut video = None;
     let mut audio = None;
     for t in &media.tracks {

@@ -1,11 +1,9 @@
 //! DASH manifest gates: RFC 6381 MPEG codec strings, addressing labels and an
 //! empty caller-supplied duration list (ISO/IEC 23009-1 §5.3.9.4.4).
 #![cfg(feature = "std")]
-
-use broadcast_common::Unpackage;
 use isobmff::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox};
 use transmux::dash::{Addressing, DashPackager};
-use transmux::{CodecConfig, MpegAudioLayer, TsDemux, rfc6381_codec_string};
+use transmux::{CodecConfig, MpegAudioLayer, rfc6381_codec_string};
 
 fn esds(oti: u8) -> EsdsBox {
     EsdsBox {
@@ -53,7 +51,7 @@ fn addressing_labels_are_stable() {
 #[test]
 fn an_empty_duration_list_falls_back_to_the_total_duration() {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
-    let media = TsDemux::new().unpackage(bytes.as_slice()).expect("demux");
+    let media = test_harness::collect::media_from_ts(bytes.as_slice()).expect("demux");
     let packager = DashPackager::default();
     let mpd = crate::packagers::dash(&packager, &media)
         .expect("a track with no per-segment summary falls back to its total");

@@ -177,12 +177,9 @@ mod tests {
     const TELETEXT_FIXTURE: &str = "input/test-012.ts";
 
     fn teletext_track() -> Option<TrackSpec> {
-        use broadcast_common::mux::Unpackage;
         let path = test_fixtures::tsduck(TELETEXT_FIXTURE, "split_subtitle track change")?;
         let bytes = std::fs::read(path).expect("read teletext fixture");
-        let media = transmux::ts_demux::TsDemux::new()
-            .unpackage(&bytes)
-            .expect("demux fixture");
+        let media = test_harness::collect::media_from_ts(&bytes).expect("demux fixture");
         media
             .tracks
             .into_iter()

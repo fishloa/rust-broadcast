@@ -1,7 +1,6 @@
 //! Streaming RTP depayloader — RFC 6184 (H.264) / RFC 3640 (AAC).
 //!
-//! Stateful counterpart to [`crate::rtp::RtpDepacketiser`]: fed RTP packets
-//! incrementally via [`RtpStreamDepacketiser::push`], it emits fully-timed
+//! The one RTP depayloader: fed RTP packets incrementally via [`RtpStreamDepacketiser::push`], it emits fully-timed
 //! [`Sample`]s (real per-AU `duration` from RTP-timestamp deltas, `is_sync`
 //! from IDR detection) carrying the real [`CodecConfig`] supplied at
 //! construction (e.g. from [`crate::rtp_sdp`]).

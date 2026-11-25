@@ -124,9 +124,7 @@ fn hevc_spec() -> TrackSpec {
 fn avc_spec() -> TrackSpec {
     let data =
         test_fixtures::require_bytes("ts/h264-aac.ts", "origin_codecs").expect("h264 fixture");
-    let media = transmux::ts_demux::TsDemux::new()
-        .demux(&data)
-        .expect("TS demuxes");
+    let media = test_harness::collect::media_from_ts(&data).expect("TS demuxes");
     media
         .tracks
         .into_iter()
