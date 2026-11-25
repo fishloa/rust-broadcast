@@ -613,6 +613,38 @@ mod tests {
         );
     }
 
+    /// Review focus (Phase 5 slice 1): 1000 bytes lost inside a PES must not
+    /// swallow the packs that follow. The declared length lands in the middle
+    /// of the next PES, so the scanner refuses it, resyncs on the first
+    /// following pack, and that pack and its PES are delivered intact.
+    #[test]
+    fn a_pes_with_1000_bytes_missing_resyncs_and_keeps_the_following_pack() {
+        let mut stream = PACK.to_vec();
+        stream.extend_from_slice(&pes(0xE0, &[0x11; 2000]));
+        stream.extend_from_slice(&PACK);
+        stream.extend_from_slice(&pes(0xE0, &[0x22; 2000]));
+        stream.extend_from_slice(&PACK);
+        // Drop 1000 bytes from the middle of the first PES payload.
+        let first_pes_at = PACK.len();
+        stream.drain(first_pes_at + 6 + 500..first_pes_at + 6 + 1500);
+
+        let mut scanner = PsScanner::new(PsLimits::new());
+        scanner.feed(&stream);
+        scanner.finish();
+        let events = drain(&mut scanner).unwrap();
+        assert_eq!(
+            events,
+            vec![
+                EventKind::Pack,
+                EventKind::Resync(1014),
+                EventKind::Pack,
+                EventKind::Pes(0xE0, 6 + 3 + 5 + 2000),
+                EventKind::Pack,
+                EventKind::End,
+            ]
+        );
+    }
+
     #[test]
     fn an_oversized_pes_length_is_a_typed_error() {
         let mut pes_bytes = pes(0xE0, &[0x00; 4]);
