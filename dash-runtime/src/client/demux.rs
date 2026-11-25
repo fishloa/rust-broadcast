@@ -74,9 +74,9 @@ impl Collected {
 }
 
 /// Split an init's tracks into those this client can carry and the CENC/CBCS
-/// ones it cannot. A `DataIdentity::Mp4` track whose sample entry carries a
-/// `sinf` box is sample-encrypted; this client decrypts AES-128 HLS/DASH
-/// segments only, so the track is reported and left out.
+/// ones it cannot. A track with `TrackSpec::protection` is sample-encrypted;
+/// this client decrypts AES-128 HLS/DASH segments only, so the track is
+/// reported and left out.
 fn split_encrypted(specs: Vec<TrackSpec>) -> (Vec<TrackSpec>, Vec<SkippedTrack>) {
     let mut kept = Vec::with_capacity(specs.len());
     let mut encrypted = Vec::new();
@@ -90,12 +90,14 @@ fn split_encrypted(specs: Vec<TrackSpec>) -> (Vec<TrackSpec>, Vec<SkippedTrack>)
 }
 
 fn encrypted_data_track(spec: &TrackSpec) -> Option<SkippedTrack> {
-    let transmux::ir::CodecConfig::Data { identity } = &spec.config else {
-        return None;
+    spec.protection.as_ref()?;
+    let fourcc = if spec.config.is_audio() {
+        "enca"
+    } else {
+        "encv"
     };
-    let fourcc = String::from_utf8_lossy(&identity.protected_mp4_entry()?).into_owned();
     let mut skipped = SkippedTrack::new(
-        fourcc,
+        fourcc.to_string(),
         String::from("CENC/CBCS sample encryption is not supported by this client"),
     );
     skipped.track_id = Some(spec.track_id);

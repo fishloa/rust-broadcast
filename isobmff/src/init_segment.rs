@@ -3153,7 +3153,9 @@ pub struct SampleDescriptionBox {
 ///
 /// The permissive reader uses this to tell a known four-CC that fails to parse
 /// from one this crate has no typed form for.
-pub(crate) fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
+/// Parse one sample entry's box bytes into its typed variant (§8.5.2,
+/// ISO/IEC 14496-15:2017 sample entries).
+pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
     let codec = &box_bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE];
     Ok(match codec {
         b"avc1" | b"avc3" | b"avc2" | b"avc4" => SampleEntryVariant::Avc1(

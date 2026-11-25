@@ -51,10 +51,11 @@ pub struct SampleRef {
     pub size: u32,
     /// One-based `stsd` entry that describes this sample (§8.7.4).
     pub description_index: u32,
-    /// CENC per-sample auxiliary information from the fragment's `senc` box
-    /// (ISO/IEC 23001-7 §12.3), when the sample's track is protected and the
-    /// fragment carries one. `None` for a progressive sample and for a
-    /// constant-IV track, whose IV is in `tenc` rather than per sample.
+    /// CENC per-sample auxiliary information from the track's `senc` box
+    /// (ISO/IEC 23001-7 §12.3): a `stbl`-level box for a progressive track, a
+    /// `traf`-level one for a fragmented track. `None` for a cleartext track
+    /// and for a constant-IV track, whose IV is in `tenc` rather than per
+    /// sample.
     pub aux: Option<crate::writer::SampleAux>,
 }
 
@@ -343,7 +344,7 @@ impl Layout {
 /// it the parsed [`SampleTableBox`] on every step, so no cursor borrows from
 /// the structure it walks. [`TrackCursor`] is this same state paired with the
 /// table it was built from; there is one implementation of the walk.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct CursorState {
     track: TrackId,
     layout: Layout,
@@ -351,6 +352,7 @@ pub struct CursorState {
     file_len: Option<u64>,
     pos: Pos,
     done: bool,
+    aux: Option<Vec<crate::writer::SampleAux>>,
 }
 
 impl CursorState {
@@ -364,6 +366,23 @@ impl CursorState {
         track: TrackId,
         limits: &Limits,
         file_len: Option<u64>,
+    ) -> Result<Self> {
+        Self::new_with_aux(stbl, track, limits, file_len, None)
+    }
+
+    /// [`CursorState::new`] with the track's CENC `senc` (progressive files)
+    /// surfaced on each [`SampleRef::aux`].
+    ///
+    /// `per_sample_iv_size` is the track's `tenc.default_per_sample_iv_size`;
+    /// pass `None` for a cleartext track. A `senc` in the `stbl` must carry one
+    /// entry per declared sample — anything else is a malformed table, rejected
+    /// before a sample is yielded.
+    pub fn new_with_aux(
+        stbl: &SampleTableBox,
+        track: TrackId,
+        limits: &Limits,
+        file_len: Option<u64>,
+        per_sample_iv_size: Option<u8>,
     ) -> Result<Self> {
         let layout = Layout::resolve(&stbl.children)?;
         let stsc = layout.stsc(stbl)?;
@@ -402,6 +421,10 @@ impl CursorState {
                 "stsc/stco sample-to-chunk mapping did not cover all samples",
             ));
         }
+        let aux = match per_sample_iv_size {
+            Some(iv_size) => progressive_aux(stbl, iv_size, total_samples)?,
+            None => None,
+        };
         let mut state = Self {
             track,
             layout,
@@ -422,6 +445,7 @@ impl CursorState {
                 stss_pos: 0,
             },
             done: false,
+            aux,
         };
         state.pos = state.start(stbl)?;
         Ok(state)
@@ -661,7 +685,11 @@ impl CursorState {
             offset,
             size,
             description_index: self.current_description_index(stbl)?,
-            aux: None,
+            aux: self
+                .aux
+                .as_ref()
+                .and_then(|aux| aux.get(self.pos.sample as usize))
+                .cloned(),
         })
     }
 
@@ -778,6 +806,21 @@ impl<'a> TrackCursor<'a> {
         Ok(Self {
             stbl,
             state: CursorState::new(stbl, track, limits, file_len)?,
+        })
+    }
+
+    /// [`TrackCursor::new`] with the track's CENC `senc` surfaced on each
+    /// yielded [`SampleRef::aux`] (see [`CursorState::new_with_aux`]).
+    pub fn new_with_aux(
+        stbl: &'a SampleTableBox,
+        track: TrackId,
+        limits: &Limits,
+        file_len: Option<u64>,
+        per_sample_iv_size: Option<u8>,
+    ) -> Result<Self> {
+        Ok(Self {
+            stbl,
+            state: CursorState::new_with_aux(stbl, track, limits, file_len, per_sample_iv_size)?,
         })
     }
 
@@ -1054,6 +1097,43 @@ pub fn build_stsc_with_descriptions(
         flags: 0,
         entries,
     })
+}
+
+/// The `stbl`-level `senc` of a progressive protected track, one entry per
+/// declared sample (ISO/IEC 23001-7 §12.3).
+fn progressive_aux(
+    stbl: &SampleTableBox,
+    per_sample_iv_size: u8,
+    total_samples: u32,
+) -> Result<Option<Vec<crate::writer::SampleAux>>> {
+    let senc = stbl.children.iter().find_map(|child| match child {
+        StblChild::Opaque(bytes)
+            if bytes.len() >= BOX_HEADER_MIN_SIZE
+                && bytes[BOX_TYPE_SIZE..BOX_HEADER_MIN_SIZE] == crate::cenc::SENC =>
+        {
+            Some(bytes.as_slice())
+        }
+        _ => None,
+    });
+    let Some(senc) = senc else {
+        return Ok(None);
+    };
+    let parsed = crate::cenc::SampleEncryptionBox::parse_box(senc, per_sample_iv_size)?;
+    if parsed.entries.len() != total_samples as usize {
+        return Err(Error::InvalidInput(
+            "progressive senc entry count does not match the sample count",
+        ));
+    }
+    Ok(Some(
+        parsed
+            .entries
+            .into_iter()
+            .map(|entry| crate::writer::SampleAux {
+                initialization_vector: entry.initialization_vector,
+                subsamples: entry.subsamples,
+            })
+            .collect(),
+    ))
 }
 
 #[cfg(test)]

@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::{Decrypt, Encrypt, Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize, Unpackage};
 use isobmff::cenc::{
     ProtectionSchemeInfoBox, SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox, SampleEncryptionBox,
     SampleEncryptionEntry,
@@ -30,7 +30,7 @@ use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
-    CencEncryptor, CencScheme, CodecConfig, EncryptConfig, Media, SubsamplePolicy, TsDemux,
+    CencEncryptStage, CencScheme, CodecConfig, EncryptConfig, Media, SubsamplePolicy, TsDemux,
 };
 
 const KID: [u8; 16] = [
@@ -39,6 +39,21 @@ const KID: [u8; 16] = [
 const KEY: [u8; 16] = [
     0x76, 0xa6, 0xc6, 0x5c, 0x5e, 0xa7, 0x62, 0x04, 0x6b, 0xd7, 0x49, 0xa2, 0xe6, 0x32, 0xcc, 0xbb,
 ];
+
+fn encrypt_into(media: &mut Media, cfg: &EncryptConfig) {
+    let mut stage = CencEncryptStage::new(KEY, cfg.clone()).expect("CencEncryptStage config");
+    *media = crate::cenc_support::run(&mut stage, media).expect("encrypt");
+}
+
+fn decrypt_bytes(bytes: &[u8]) -> Media {
+    let media =
+        test_harness::collect::media_from_mp4(bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("demux protected fMP4");
+    let mut keys = transmux::KeyMap::new();
+    keys.insert(KID, KEY);
+    let mut stage = transmux::cenc_decrypt::CencDecryptStage::new(keys);
+    crate::cenc_support::run(&mut stage, &media).expect("decrypt")
+}
 
 fn fixture_path() -> PathBuf {
     test_fixtures::path("ts/h264/main.ts")
@@ -191,9 +206,7 @@ fn protect_init_segment_emits_encv_sinf() {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_into(&mut media, &cfg);
     let track_id = media.tracks[0].spec.track_id;
 
     let protected = protect(&media, track_id.value());
@@ -267,9 +280,7 @@ fn protect_media_segment_emits_senc_saiz_saio() {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_into(&mut media, &cfg);
     let track_id = media.tracks[0].spec.track_id;
     let sample_count = media.tracks[0].samples.len();
     assert!(sample_count > 1, "fixture must carry more than one sample");
@@ -366,9 +377,7 @@ fn protect_media_segment_sets_subsample_flag() {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::Video);
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_into(&mut media, &cfg);
     let track_id = media.tracks[0].spec.track_id;
     let enc = media.tracks[0].spec.protection.clone().unwrap();
     let entries = sample_entries(&media.tracks[0]);
@@ -405,9 +414,7 @@ fn protect_media_segment_unknown_track_errors() {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_into(&mut media, &cfg);
     let enc = media.tracks[0].spec.protection.clone().unwrap();
     let entries = sample_entries(&media.tracks[0]);
 
@@ -572,9 +579,7 @@ fn protect_media_segment_keeps_a_moof_level_opaque_child() {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_into(&mut media, &cfg);
     let raw = mux_without_fragment_protection(&media);
     let enc = media.tracks[0]
         .spec
@@ -663,9 +668,7 @@ fn protect_media_segment_rejects_a_traf_that_already_carries_senc() {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_into(&mut media, &cfg);
     let raw = crate::cmaf::package(&media).expect("CmafMux::package");
     let enc = media.tracks[0]
         .spec
@@ -705,9 +708,7 @@ fn protect_media_segment_rejects_a_data_offset_that_would_overflow() {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_into(&mut media, &cfg);
     let raw = mux_without_fragment_protection(&media);
     let enc = media.tracks[0]
         .spec
@@ -767,8 +768,6 @@ fn protect_media_segment_rejects_a_data_offset_that_would_overflow() {
 /// `senc` — none of which a structural check alone would.
 #[test]
 fn protected_segment_with_an_opaque_moof_child_decrypts_to_the_clear_samples() {
-    use transmux::{CencDecryptor, KeyMap};
-
     let Some(mut media) = clear_video_media() else {
         return;
     };
@@ -779,9 +778,7 @@ fn protected_segment_with_an_opaque_moof_child_decrypts_to_the_clear_samples() {
         .collect();
 
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_into(&mut media, &cfg);
     let raw = mux_without_fragment_protection(&media);
     let enc = media.tracks[0]
         .spec
@@ -808,13 +805,7 @@ fn protected_segment_with_an_opaque_moof_child_decrypts_to_the_clear_samples() {
     };
     let protected = protect_media_segment(&spliced, &[fp]).expect("protect_media_segment");
 
-    let mut keys = KeyMap::new();
-    keys.insert(KID, KEY);
-    let dec = CencDecryptor::from_fmp4(&protected)
-        .expect("CencDecryptor::from_fmp4 on the protected segment");
-    let mut demuxed = dec.demux().expect("CencDecryptor::demux");
-    dec.decrypt(&mut demuxed, &keys)
-        .expect("decrypt the protected segment");
+    let demuxed = decrypt_bytes(&protected);
     let got: Vec<Vec<u8>> = demuxed.tracks[0]
         .samples
         .iter()
@@ -845,15 +836,12 @@ fn protected_segment_with_an_opaque_moof_child_matches_mp4decrypt() {
         );
         return;
     }
-    use transmux::{CencDecryptor, KeyMap};
 
     let Some(mut media) = clear_video_media() else {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_into(&mut media, &cfg);
     let raw = mux_without_fragment_protection(&media);
     let enc = media.tracks[0]
         .spec
@@ -880,14 +868,7 @@ fn protected_segment_with_an_opaque_moof_child_matches_mp4decrypt() {
     let protected = protect_media_segment(&spliced, &[fp]).expect("protect_media_segment");
 
     // Ours.
-    let dec = CencDecryptor::from_fmp4(&protected).expect("harvest");
-    let mut ours = dec.demux().expect("demux");
-    dec.decrypt(&mut ours, &{
-        let mut k = KeyMap::new();
-        k.insert(KID, KEY);
-        k
-    })
-    .expect("decrypt");
+    let ours = decrypt_bytes(&protected);
     let our_samples: Vec<Vec<u8>> = ours.tracks[0]
         .samples
         .iter()
@@ -940,8 +921,6 @@ fn protected_segment_with_an_opaque_moof_child_matches_mp4decrypt() {
 /// the `cenc_frag_layouts` fixtures) must reproduce the clear samples.
 #[test]
 fn two_trafs_and_a_trailing_opaque_child_decrypt_to_the_clear_samples() {
-    use transmux::{CencDecryptor, KeyMap};
-
     // AVC + AAC: `fixtures/ts/h264/main.ts` is video-only, so this test needs
     // the A/V capture.
     let bytes = test_fixtures::read("ts/h264-aac.ts");
@@ -964,9 +943,7 @@ fn two_trafs_and_a_trailing_opaque_child_decrypt_to_the_clear_samples() {
         .collect();
 
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_into(&mut media, &cfg);
     let raw = mux_without_fragment_protection(&media);
 
     let mut with_init = raw.clone();
@@ -1003,13 +980,9 @@ fn two_trafs_and_a_trailing_opaque_child_decrypt_to_the_clear_samples() {
         .collect();
     let protected = protect_media_segment(&spliced, &protections).expect("protect_media_segment");
 
-    let mut keys = KeyMap::new();
-    keys.insert(KID, KEY);
-    let dec = CencDecryptor::from_fmp4(&protected).expect("harvest");
-    let mut out = dec.demux().expect("demux");
-    dec.decrypt(&mut out, &keys).expect("decrypt");
+    let out = decrypt_bytes(&protected);
 
-    // `CencDecryptor` reconstructs the AVC track; the point of this test is
+    // The decrypt stage reconstructs the AVC track; the point of this test is
     // that the *rewrite* kept both `traf`s addressable and the appended
     // `pssh` in place, so the video track must decrypt to its clear samples
     // even though a second `traf` (and an opaque child after it) shifted every
@@ -1073,9 +1046,7 @@ fn non_cenc_typed_saiz_is_not_treated_as_an_existing_cenc_triple() {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_into(&mut media, &cfg);
     let raw = mux_without_fragment_protection(&media);
     let enc = media.tracks[0]
         .spec
@@ -1125,9 +1096,7 @@ fn two_protect_calls_keep_both_enca_and_encv_entries() {
                 || matches!(t.spec.config, CodecConfig::Aac { .. })
         })
         .expect("AVC + AAC tracks present");
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cenc_cfg(SubsamplePolicy::WholeSample))
-        .expect("encrypt");
+    encrypt_into(&mut media, &cenc_cfg(SubsamplePolicy::WholeSample));
     let raw = crate::cmaf::package(&media).expect("CmafMux::package");
 
     // Audio first, video second: the second call re-parses the moov that
@@ -1156,9 +1125,7 @@ fn protect_init_segment_accepts_an_init_only_buffer() {
         return;
     };
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_into(&mut media, &cfg);
     let track_id = media.tracks[0].spec.track_id;
     let enc = media.tracks[0]
         .spec

@@ -19,7 +19,6 @@
 
 use broadcast_common::Parse;
 use isobmff::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox, SgpdEntry};
-use transmux::cenc_decrypt::CencDecryptor;
 
 /// Per-thread live-allocation budget. Generous versus every legitimate path
 /// exercised below (the fixtures are tens of KB), and 2–3 orders of magnitude
@@ -147,17 +146,21 @@ fn hostile_stsz_sample_count_is_rejected() {
     file[start + STSZ_SAMPLE_COUNT_OFFSET..start + STSZ_SAMPLE_COUNT_OFFSET + 4]
         .copy_from_slice(&u32::MAX.to_be_bytes());
 
-    let dec = CencDecryptor::from_fmp4(&file).expect("harvest does not read stsz");
-    let res = dec.demux();
-    assert!(
-        res.is_err(),
-        "a ~24 KB file whose stsz declares 0xFFFFFFFF samples must be Err, got Ok with \
-         {} track(s)",
-        match res {
-            Ok(m) => m.tracks.len(),
-            Err(_) => unreachable!(),
-        }
+    let res = test_harness::collect::media_from_mp4(
+        file.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
     );
+    match res {
+        Err(_) => {}
+        Ok(media) => assert!(
+            media.tracks.is_empty() && (!media.skipped.is_empty() || !media.degraded.is_empty()),
+            "a ~24 KB file whose stsz declares 0xFFFFFFFF samples must be rejected, got {} \
+             track(s), skipped {:?}, degraded {:?}",
+            media.tracks.len(),
+            media.skipped,
+            media.degraded
+        ),
+    }
 }
 
 /// `stco` with `entry_count = 0xFFFFFFFF`: pre-fix the capacity request
@@ -165,11 +168,21 @@ fn hostile_stsz_sample_count_is_rejected() {
 #[test]
 fn hostile_stco_entry_count_is_rejected() {
     let file = patch_fixture(CENC_MP4, b"stco", STCO_ENTRY_COUNT_OFFSET, u32::MAX);
-    let dec = CencDecryptor::from_fmp4(&file).expect("harvest does not read stco");
-    assert!(
-        matches!(dec.demux(), Err(transmux::Error::BufferTooShort(..))),
-        "a stco declaring 0xFFFFFFFF chunk offsets must be Err"
+    let res = test_harness::collect::media_from_mp4(
+        file.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
     );
+    match res {
+        Err(_) => {}
+        Ok(media) => assert!(
+            media.tracks.is_empty() && (!media.skipped.is_empty() || !media.degraded.is_empty()),
+            "a stco declaring 0xFFFFFFFF chunk offsets must be rejected, got {} track(s), \
+             skipped {:?}, degraded {:?}",
+            media.tracks.len(),
+            media.skipped,
+            media.degraded
+        ),
+    }
 }
 
 // ---------------------------------------------------------------------------

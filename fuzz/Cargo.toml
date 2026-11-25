@@ -358,6 +358,18 @@ test = false
 doc  = false
 
 [[bin]]
+name = "cenc_encrypt_stage"
+path = "fuzz_targets/cenc_encrypt_stage.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "cenc_decrypt_stage"
+path = "fuzz_targets/cenc_decrypt_stage.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "isobmff_writer_roundtrip"
 path = "fuzz_targets/isobmff_writer_roundtrip.rs"
 test = false

@@ -288,7 +288,7 @@ impl TrackProtection {
 /// ISO/IEC 23001-7 §12.2/§12.3 permit it because
 /// `tenc.default_constant_IV` carries the lone IV and there is no
 /// per-sample subsample map to record). The self-consistency gate
-/// ([`CencDecryptor`](crate::CencDecryptor) round-trip) is tested for
+/// ([`CencDecryptStage`](crate::cenc_decrypt::CencDecryptStage) round-trip) is tested for
 /// both shapes; the new default shape is additionally verified against
 /// Bento4's `mp4decrypt`. Has no effect when `iv` is not
 /// [`IvGen::Constant`](crate::cenc_encrypt::IvGen::Constant) or `scheme`

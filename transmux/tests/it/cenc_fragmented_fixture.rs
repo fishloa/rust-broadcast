@@ -27,9 +27,8 @@
 
 use std::process::Command;
 
-use broadcast_common::Decrypt;
 use transmux::annexb::iter_length_prefixed_nals;
-use transmux::cenc_decrypt::{CencDecryptor, CencScheme, KeyMap};
+use transmux::cenc_decrypt::{CencDecryptStage, CencScheme, KeyMap};
 use transmux::{CodecConfig, Sample};
 
 const CENC_MP4: &str = "mp4/h264-cenc.mp4";
@@ -53,6 +52,16 @@ fn read(path: &str) -> Vec<u8> {
 
 fn keys() -> KeyMap {
     KeyMap::new().with_key(KID, KEY)
+}
+
+fn demux(bytes: &[u8]) -> transmux::Media {
+    test_harness::collect::media_from_mp4(bytes, test_harness::collect::CollectMode::Seekable)
+        .expect("demux protected fMP4")
+}
+
+fn decrypt(media: &transmux::Media) -> transmux::Media {
+    let mut stage = CencDecryptStage::new(keys());
+    crate::cenc_support::run(&mut stage, media).expect("decrypt")
 }
 
 fn to_hex(bytes: &[u8; 16]) -> String {
@@ -88,28 +97,38 @@ fn mp4decrypt_available() -> bool {
 #[test]
 fn cenc_fragmented_demux_and_decrypt_succeeds() {
     let file = read(CENC_MP4);
-    let dec = CencDecryptor::from_fmp4(&file).expect("harvest fragmented CENC metadata");
-    assert_eq!(dec.scheme(), Some(CencScheme::Cenc), "scheme must be cenc");
-    assert_eq!(&dec.original_format(), b"avc1");
-
-    let mut media = dec.demux().expect("demux fragmented protected fMP4");
+    let media = demux(&file);
+    let video = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("the protected video track is mapped to AVC");
+    assert_eq!(
+        video.spec.protection.as_ref().map(|p| p.scheme),
+        Some(CencScheme::Cenc),
+        "scheme must be cenc"
+    );
     assert_eq!(
         media.tracks.len(),
-        1,
-        "only the protected video track is carried (Bento4 left track 2 cleartext)"
+        2,
+        "the clear audio track beside it is carried too"
     );
     // 3 moof fragments: 25 + 25 video samples (fragment 3 carries only the
     // audio track's traf, mp4dump-verified) — proves fragments were walked
     // and concatenated, not just the first one.
     assert_eq!(
-        media.tracks[0].samples.len(),
+        video.samples.len(),
         50,
         "video samples across all fragments must be concatenated in file order"
     );
 
-    dec.decrypt(&mut media, &keys())
-        .expect("decrypt fragmented cenc samples");
-    let nals = nal_payloads(&media.tracks[0].samples);
+    let media = decrypt(&media);
+    let video = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("video");
+    let nals = nal_payloads(&video.samples);
     assert!(!nals.is_empty(), "decrypted output must carry NALs");
     assert_eq!(
         nals[0][0] & 0x80,
@@ -119,32 +138,34 @@ fn cenc_fragmented_demux_and_decrypt_succeeds() {
 }
 
 /// #3657: the unprotected audio track the fixture's independent packager left
-/// cleartext is recorded in `Media::skipped` (never silently dropped) with
-/// its real sample-entry FourCC, not `"unknown"`.
+/// cleartext is carried as a normal AAC track (never silently dropped), with
+/// no protection of its own.
 #[test]
-fn unprotected_track_is_skipped_with_its_sample_entry_fourcc() {
+fn unprotected_track_is_carried_with_its_codec() {
     let file = read(CENC_MP4);
-    let dec = CencDecryptor::from_fmp4(&file).expect("harvest fragmented CENC metadata");
-    let media = dec.demux().expect("demux fragmented protected fMP4");
-    assert_eq!(
-        media.skipped.len(),
-        1,
-        "the one unprotected track must be recorded, not dropped silently"
-    );
-    assert_eq!(
-        media.skipped[0].fourcc, "mp4a",
-        "the AAC sample entry's FourCC is the label a caller sees"
-    );
+    let media = demux(&file);
+    assert!(media.skipped.is_empty(), "no track is skipped");
+    let audio = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+        .expect("the AAC track is carried");
+    assert!(audio.spec.protection.is_none(), "the audio track is clear");
+    assert!(!audio.samples.is_empty(), "and carries its samples");
 }
 
 #[test]
 fn cbcs_fragmented_demux_and_decrypt_succeeds() {
     let file = read(CBCS_MP4);
-    let dec = CencDecryptor::from_fmp4(&file).expect("harvest fragmented CBCS metadata");
-    assert_eq!(dec.scheme(), Some(CencScheme::Cbcs), "scheme must be cbcs");
-    assert_eq!(&dec.original_format(), b"avc1");
-
-    let tenc = dec.track_encryption().expect("tenc present");
+    let media = demux(&file);
+    let video = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("video");
+    let protection = video.spec.protection.as_ref().expect("tenc present");
+    assert_eq!(protection.scheme, CencScheme::Cbcs, "scheme must be cbcs");
+    let tenc = &protection.tenc;
     assert_eq!(
         tenc.default_per_sample_iv_size, 0,
         "cbcs uses a constant IV"
@@ -155,14 +176,15 @@ fn cbcs_fragmented_demux_and_decrypt_succeeds() {
     );
     assert_eq!(tenc.default_crypt_byte_block, 1);
     assert_eq!(tenc.default_skip_byte_block, 9);
+    assert_eq!(video.samples.len(), 50);
 
-    let mut media = dec.demux().expect("demux fragmented protected fMP4");
-    assert_eq!(media.tracks.len(), 1);
-    assert_eq!(media.tracks[0].samples.len(), 50);
-
-    dec.decrypt(&mut media, &keys())
-        .expect("decrypt fragmented cbcs samples");
-    let nals = nal_payloads(&media.tracks[0].samples);
+    let media = decrypt(&media);
+    let video = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("video");
+    let nals = nal_payloads(&video.samples);
     assert!(!nals.is_empty());
     assert_eq!(
         nals[0][0] & 0x80,
@@ -234,10 +256,13 @@ fn assert_matches_bento4_reference(fixture_rel: &str, tag: &str) {
 
     // Ours.
     let file = read(fixture_rel);
-    let dec = CencDecryptor::from_fmp4(&file).expect("harvest crypto metadata");
-    let mut media = dec.demux().expect("demux protected fMP4");
-    dec.decrypt(&mut media, &keys()).expect("decrypt");
-    let our_nals = nal_payloads(&media.tracks[0].samples);
+    let media = decrypt(&demux(&file));
+    let video = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("video");
+    let our_nals = nal_payloads(&video.samples);
 
     assert_eq!(
         our_nals.len(),
@@ -293,10 +318,13 @@ fn assert_mutation_changes_output(fixture_path: &str, tag: &str) {
     // NAL payloads: a mutated ciphertext byte decrypts to garbage that need
     // not even be a valid length-prefixed NAL stream, so parsing it (as
     // `nal_payloads` does) could itself error instead of just differing.
-    let dec = CencDecryptor::from_fmp4(&file).expect("harvest crypto metadata");
-    let mut good = dec.demux().expect("demux protected fMP4");
-    dec.decrypt(&mut good, &keys()).expect("decrypt (baseline)");
-    let good_first_sample = good.tracks[0].samples[0].data.clone();
+    let good = decrypt(&demux(&file));
+    let good_video = good
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("video");
+    let good_first_sample = good_video.samples[0].data.clone();
 
     // Flip one byte inside the first mdat's body — squarely inside the first
     // fragment's encrypted video sample bytes (mp4dump-verified: the first
@@ -305,13 +333,13 @@ fn assert_mutation_changes_output(fixture_path: &str, tag: &str) {
     let mutate_at = first_mdat_body_offset(&file);
     file[mutate_at] ^= 0xFF;
 
-    let dec_mutated =
-        CencDecryptor::from_fmp4(&file).expect("harvest crypto metadata (mutated file)");
-    let mut bad = dec_mutated.demux().expect("demux protected fMP4 (mutated)");
-    dec_mutated
-        .decrypt(&mut bad, &keys())
-        .expect("decrypt (mutated)");
-    let bad_first_sample = &bad.tracks[0].samples[0].data;
+    let bad = decrypt(&demux(&file));
+    let bad_video = bad
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("video");
+    let bad_first_sample = &bad_video.samples[0].data;
 
     assert_eq!(
         good_first_sample.len(),

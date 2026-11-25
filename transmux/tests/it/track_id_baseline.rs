@@ -123,7 +123,8 @@ fn summarize(root: &Path, key: impl Fn(&str) -> Option<String>) -> String {
                 transmux::CodecConfig::Data {
                     identity: transmux::ir::DataIdentity::Mp4 { .. },
                 }
-            ) {
+            ) || (t.spec.protection.is_some() && !t.spec.config.is_audio())
+            {
                 continue;
             }
             let _ = write!(line, " {}x{}", t.track_id(), t.samples.len());
