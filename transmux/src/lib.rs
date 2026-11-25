@@ -48,8 +48,8 @@
 //!   ([`RebaseStage`] / [`OffsetStage`] / [`GapStage`], via each absolute
 //!   [`Sample`] `dts`/`pts` — 33-bit MPEG wrap-unroll happens once, at the
 //!   demux edge, see [`ts_demux`]);
-//!   timeline splice / concatenation → SSAI ([`concat`](fn@concat) / [`splice_insert`],
-//!   returning a [`SpliceResult`] with discontinuity points).
+//!   timeline splice / concatenation → SSAI as a sample stage
+//!   ([`SpliceStage`] driven by a [`SplicePlan`]).
 //! - **Crypto:** CENC/CBCS (`cenc`, AES-CTR/AES-CBC-pattern) decrypt
 //!   ([`CencDecryptor`]) + encrypt ([`CencEncryptor`], which populates
 //!   [`TrackSpec::protection`](crate::ir::TrackSpec::protection) for the muxer's `sinf`/`senc`/`saio`/`saiz` box
@@ -368,7 +368,7 @@ pub use hdr10plus::{
 };
 #[cfg(feature = "std")]
 pub use smooth_codec::track_spec_from_quality_level;
-pub use splice::{SplicePoint, SpliceResult, concat, snap_to_preceding_sync, splice_insert};
+pub use splice::{SplicePlan, SplicePoint, SpliceStage, TrackSplice, snap_to_preceding_sync};
 pub use sps::{
     AvcReorderDepth, AvcSpsInfo, AvcVuiTiming, HevcSpsInfo, HevcVpsTiming, HevcVuiTiming,
     decode_avc_reorder_depth, decode_avc_sps, decode_avc_vui_timing, decode_hevc_sps,
