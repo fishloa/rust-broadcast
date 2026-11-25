@@ -393,6 +393,7 @@ impl StreamingFlvDemux {
             return Err(err);
         }
         self.drain_pending(cursor);
+        self.flush_damage();
         Ok(())
     }
 
@@ -477,12 +478,13 @@ impl StreamingFlvDemux {
                 continue;
             }
 
-            let decision = rtmp_runtime::flv::resync_decision(&self.pending[*cursor..], at_eof);
+            let remaining = &self.pending[*cursor..];
+            let decision = rtmp_runtime::flv::resync_decision(remaining, at_eof);
             match decision {
                 rtmp_runtime::flv::ResyncDecision::Tag => {}
                 rtmp_runtime::flv::ResyncDecision::Need(_) => break,
                 rtmp_runtime::flv::ResyncDecision::Skip(len) => {
-                    let len = len.min(self.pending.len() - *cursor);
+                    let len = len.min(remaining.len());
                     self.report_damage(*cursor, len);
                     *cursor += len;
                     continue;
@@ -1435,12 +1437,11 @@ mod tests {
         let split = flv.len() - last_tag_len;
         demux.feed(&flv[..split]).unwrap();
 
-        // At a clean tag boundary only the last tag is buffered, waiting for
-        // the header that proves its chain.
+        // At a clean tag boundary, nothing partial should remain buffered.
         assert_eq!(
             demux.pending.len(),
-            last_tag_len,
-            "pending holds at most the one tag awaiting its successor's header"
+            0,
+            "pending must be empty at a clean tag boundary, not accumulate the whole stream"
         );
 
         // Now feed one byte of the final tag: pending must hold only that
@@ -1448,11 +1449,11 @@ mod tests {
         demux.feed(&flv[split..split + 1]).unwrap();
         assert_eq!(
             demux.pending.len(),
-            last_tag_len + 1,
-            "pending holds the tag awaiting its successor plus the one byte fed"
+            1,
+            "pending must hold only the in-progress partial tag"
         );
         assert!(
-            demux.pending.len() <= 2 * last_tag_len,
+            demux.pending.len() < last_tag_len,
             "pending must never grow to hold a whole stream's worth of tags"
         );
     }
@@ -1912,15 +1913,10 @@ mod tests {
         assert_eq!(demux.pending.len(), 0, "the header must not stall");
         assert_eq!(Stage::demand(&demux).want_bytes, TAG_HEADER_LEN);
 
-        let mut tags = Vec::new();
-        write_tag(&mut tags, 0x12, 0, &[0, 0, 0, 0]);
-        write_tag(&mut tags, 0x12, 1, &[0, 0, 0, 0]);
-        demux.feed(&tags).expect("two complete tags");
-        assert_eq!(
-            demux.pending.len(),
-            tags.len() / 2,
-            "the first tag is consumed; the last one waits for the header after it"
-        );
+        let mut tag = Vec::new();
+        write_tag(&mut tag, 0x12, 0, &[0, 0, 0, 0]);
+        demux.feed(&tag).expect("one complete tag");
+        assert_eq!(demux.pending.len(), 0, "a complete tag is consumed");
     }
 
     /// A non-standard `DataOffset` is consumed at exactly its first tag offset
@@ -1997,16 +1993,10 @@ mod tests {
         for len in [0usize, 1, 2, 4] {
             let mut out = flv_header();
             write_tag(&mut out, tag_type::VIDEO, 0, &vec![0x17u8; len]);
-            let short_len = out.len();
-            write_tag(&mut out, 0x12, 1, &[0, 0, 0, 0]);
             let mut demux = StreamingFlvDemux::new();
             let events = feed_and_drain(&mut demux, &out).expect("a short body is skipped");
             assert!(events.is_empty(), "len {len} must produce no event");
-            assert_eq!(
-                demux.pending.len(),
-                out.len() - short_len,
-                "len {len}: only the trailing tag waits for its successor's header"
-            );
+            assert_eq!(demux.pending.len(), 0, "len {len}");
         }
     }
 

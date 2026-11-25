@@ -781,6 +781,15 @@ pub fn resync_decision(input: &[u8], at_eof: bool) -> ResyncDecision {
     if input.len() < FLV_TAG_HEADER_LEN {
         return ResyncDecision::Need(FLV_TAG_HEADER_LEN);
     }
+    // A complete tag whose own trailing `PreviousTagSize` agrees with its
+    // header is whole: it needs no second opinion from the tag after it, so a
+    // streaming caller does not have to wait for that tag's header.
+    if let Ok(header) = FlvTagHeader::parse(input) {
+        let total = header.total_len();
+        if input.len() >= total && FlvTag::parse(&input[..total]).is_ok() {
+            return ResyncDecision::Tag;
+        }
+    }
     if tag_chain_holds(input, 0, false) {
         if !at_eof {
             // The chain "holds" here only because the header after this tag has
@@ -1114,13 +1123,10 @@ mod tests {
 
     #[test]
     fn resync_decision_keeps_waits_and_skips_to_the_same_chain() {
-        // A consistent chain at the front is kept, but a lone tag waits for
-        // the header that proves its chain; at end of input there is none.
+        // A whole tag at the front is kept, with or without the header that
+        // follows it.
         let good = tag(TagType::Audio, 0, b"abc");
-        assert_eq!(
-            resync_decision(&good, false),
-            ResyncDecision::Need(11 + 3 + FLV_PREV_TAG_SIZE_LEN + FLV_TAG_HEADER_LEN)
-        );
+        assert_eq!(resync_decision(&good, false), ResyncDecision::Tag);
         assert_eq!(resync_decision(&good, true), ResyncDecision::Tag);
         // A partial header just asks for the header bytes.
         assert_eq!(
