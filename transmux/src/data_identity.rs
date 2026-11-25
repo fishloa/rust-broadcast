@@ -1,12 +1,10 @@
 //! Carry an opaque data track across container families (Decision 7).
 //!
-//! A [`CodecConfig::Data`](crate::ir::CodecConfig::Data) track carries the
-//! identity of the container it was demuxed from: a TS elementary-stream
-//! `stream_type` and descriptor loop
-//! ([`DataIdentity::Ts`](crate::ir::DataIdentity::Ts)), an ISOBMFF handler and
-//! sample entry ([`DataIdentity::Mp4`](crate::ir::DataIdentity::Mp4)), or a
-//! Matroska `CodecID` and `CodecPrivate`
-//! ([`DataIdentity::Matroska`](crate::ir::DataIdentity::Matroska)). Each muxer
+//! A [`CodecConfig::Data`] track carries the identity of the container it was
+//! demuxed from: a TS elementary-stream `stream_type` and descriptor loop
+//! ([`DataIdentity::Ts`]), an ISOBMFF handler and sample entry
+//! ([`DataIdentity::Mp4`]), or a Matroska `CodecID` and `CodecPrivate`
+//! ([`DataIdentity::Matroska`]). Each muxer
 //! only places its own family's identity, so carrying a track to another
 //! container needs the caller to say what the target identity is.
 //!

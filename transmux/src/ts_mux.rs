@@ -36,10 +36,9 @@
 //! # ES_info descriptor passthrough policy (issue #775)
 //!
 //! Every track's inherited PMT `ES_info` descriptor-loop bytes
-//! ([`TrackSpec::es_info_descriptors`](crate::pipeline::TrackSpec::es_info_descriptors);
-//! a [`CodecConfig::Data`] track's come from its
-//! [`DataIdentity::Ts`](crate::pipeline::DataIdentity::Ts) identity, so a
-//! mapped identity's descriptors reach the PMT)
+//! ([`TrackSpec::es_info_descriptors`]; a [`CodecConfig::Data`] track's come
+//! from its [`DataIdentity::Ts`] identity, so a mapped identity's descriptors
+//! reach the PMT)
 //! are carried into the re-muxed PMT, not only an opaque
 //! [`CodecConfig::Data`] track's — a track loses no information just because
 //! this crate understood its codec. The policy is a **deny-list, not an

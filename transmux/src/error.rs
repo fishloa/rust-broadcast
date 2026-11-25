@@ -412,9 +412,8 @@ pub enum Error {
         want: &'static str,
     },
 
-    /// A fMP4/CMAF mux entry point (see
-    /// [`Error::DataIdentityMismatch`](crate::error::Error::DataIdentityMismatch)
-    /// for the full list) was given a
+    /// A fMP4/CMAF mux entry point (see [`Error::DataIdentityMismatch`] for the
+    /// full list) was given a
     /// [`CodecConfig::Subtitle`](crate::pipeline::CodecConfig::Subtitle)
     /// track (B1, media plane step-2 fix wave 1): reconstructing the `stpp`/
     /// `wvtt` sample entry needs more than the format tag this crate carries
