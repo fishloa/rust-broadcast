@@ -1,18 +1,20 @@
 #![cfg(feature = "std")]
 
-//! An over-limit capped read allocates in proportion to the cap, never to the
-//! input: a hostile stream that never ends must not grow the buffer.
+//! An over-limit bounded read allocates in proportion to the limit, never to
+//! the input: a hostile stream that never ends must not grow the buffer.
 
 use std::io::Read;
 
-use broadcast_common::capped::{Error, TooLarge, read_capped};
+use broadcast_common::bounded::{BoundedReadError, Limit, read_bounded};
 
+/// The cap under test, in bytes.
+const LIMIT_BYTES: u64 = 64 * 1024;
 /// The cap under test.
-const LIMIT: u64 = 64 * 1024;
+const LIMIT: Limit = Limit::new("endless", LIMIT_BYTES);
 /// `read_to_end` may grow a `Vec` by doubling, so one step past the cap is at
 /// most twice it; the rest covers the test harness's own allocations on this
 /// thread.
-const VEC_GROWTH: usize = 2 * LIMIT as usize;
+const VEC_GROWTH: usize = 2 * LIMIT_BYTES as usize;
 /// Named slack for the harness and the error value.
 const SLACK: usize = 64 * 1024;
 /// Per-thread live-byte ceiling.
@@ -42,19 +44,21 @@ fn an_over_limit_read_allocates_no_more_than_the_cap() {
     let mut input = Endless {
         remaining: 4 * 1024 * 1024 * 1024,
     };
-    let error = read_capped(&mut input, LIMIT, "endless").expect_err("over the cap");
+    let error = read_bounded(&mut input, LIMIT).expect_err("over the cap");
     assert!(matches!(
         error,
-        Error::TooLarge(TooLarge {
-            what: "endless",
-            limit: LIMIT,
-        })
+        BoundedReadError::TooLarge {
+            limit_name: "endless",
+            limit_bytes: LIMIT_BYTES,
+        }
     ));
 }
 
 #[test]
 fn an_at_or_under_limit_read_is_returned() {
-    let mut input = Endless { remaining: LIMIT };
-    let bytes = read_capped(&mut input, LIMIT, "exact").expect("at the cap");
-    assert_eq!(u64::try_from(bytes.len()).unwrap_or(u64::MAX), LIMIT);
+    let mut input = Endless {
+        remaining: LIMIT_BYTES,
+    };
+    let bytes = read_bounded(&mut input, LIMIT).expect("at the cap");
+    assert_eq!(u64::try_from(bytes.len()).unwrap_or(u64::MAX), LIMIT_BYTES);
 }
