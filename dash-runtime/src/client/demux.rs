@@ -32,7 +32,6 @@ pub(crate) struct InitInfo {
 /// What one drain of the stage's events yields.
 #[derive(Default)]
 struct Collected {
-    specs: Vec<TrackSpec>,
     tracks: Vec<(u32, Vec<Sample>)>,
     skipped: Vec<SkippedTrack>,
     damaged: usize,
@@ -47,7 +46,6 @@ impl Collected {
 
     fn on_event(&mut self, event: DemuxEvent) {
         match event {
-            DemuxEvent::TrackAdded(spec) => self.specs.push(spec),
             DemuxEvent::Sample {
                 track_id, sample, ..
             } => {
@@ -77,16 +75,14 @@ fn stage_over(init: &[u8]) -> Result<Mp4Demux, transmux::Error> {
     Ok(demux)
 }
 
-/// The track specs of an Initialization Segment, read from the stage's events
-/// after the init alone has been fed and finished.
+/// The track specs of an Initialization Segment, read from the stage as soon
+/// as its `moov` is parsed (no `finish`).
 pub(crate) fn init_info(init: &[u8]) -> Result<InitInfo, transmux::Error> {
     let mut demux = stage_over(init)?;
     let mut collected = Collected::default();
     collected.drain(&mut demux);
-    demux.finish()?;
-    collected.drain(&mut demux);
     Ok(InitInfo {
-        specs: collected.specs,
+        specs: demux.init_tracks().cloned().collect(),
         skipped: collected.skipped,
     })
 }
