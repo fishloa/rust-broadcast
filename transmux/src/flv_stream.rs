@@ -489,6 +489,7 @@ impl StreamingFlvDemux {
                     *cursor += len;
                     continue;
                 }
+                _ => break,
             }
             self.flush_damage();
             let remaining = &self.pending[*cursor..];
@@ -559,9 +560,9 @@ impl StreamingFlvDemux {
     /// # Errors
     ///
     /// [`FlvError::Codec`] with a `BufferTooShort` describing the bytes the
-    /// input ends short of (a header shorter than
-    /// [`crate::flv::FLV_HEADER_LEN`], a `DataOffset` past the input, or an
-    /// incomplete first tag), or [`FlvError::NoSupportedTrack`] when the input
+    /// input ends short of (a header shorter than the 9-byte FLV header, a
+    /// `DataOffset` past the input, or an incomplete first tag), or
+    /// [`FlvError::NoSupportedTrack`] when the input
     /// was complete but carried no track this demuxer supports. Every event
     /// before the error has already been queued.
     pub fn finish(&mut self) -> Result<(), FlvError> {

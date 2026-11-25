@@ -759,6 +759,7 @@ pub struct ResyncWalk<'a> {
 /// What an incremental caller should do with the bytes at the front of its
 /// buffer — see [`resync_decision`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum ResyncDecision {
     /// The front is the start of a consistent tag chain: parse it normally.
     Tag,
