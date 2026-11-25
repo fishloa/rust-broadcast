@@ -318,6 +318,195 @@ impl<'a> Lacing<'a> {
     }
 }
 
+/// The frame-size table at the front of a laced Block payload (RFC 9559 §12).
+///
+/// The reader needs each frame's byte range without holding the frame data, so
+/// it reads only the table and computes the ranges from it. The table is the
+/// same syntax [`Lacing`] parses; this type exposes it without the frames.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LaceHeader {
+    data_offset: usize,
+    explicit: Vec<u64>,
+    frame_count: usize,
+    fixed: bool,
+}
+
+impl LaceHeader {
+    /// Parse the frame-size table for a Block whose flags select `kind`.
+    ///
+    /// `max_frames` is the caller's hostile-input cap on the lace count.
+    pub fn parse(payload: &[u8], kind: LacingKind, max_frames: usize) -> Result<Self> {
+        if kind == LacingKind::None {
+            return Ok(Self {
+                data_offset: 0,
+                explicit: Vec::new(),
+                frame_count: 1,
+                fixed: false,
+            });
+        }
+        let (count, data) = parse_lace_count(payload)?;
+        if count < MIN_LACED_FRAMES {
+            return Err(Error::InvalidBlock {
+                what: "lacing set with one frame",
+            });
+        }
+        if count > max_frames {
+            return Err(Error::LimitExceeded {
+                limit: "max_lace_frames",
+                value: u64::try_from(count).unwrap_or(u64::MAX),
+            });
+        }
+        match kind {
+            LacingKind::Xiph => {
+                let mut position = 0usize;
+                let mut explicit = Vec::with_capacity(count - 1);
+                for _ in 0..count - 1 {
+                    let mut size = 0u64;
+                    loop {
+                        let octet = *data.get(position).ok_or(Error::Truncated {
+                            what: "Xiph lace size",
+                            need: position + 1,
+                            have: data.len(),
+                        })?;
+                        position += 1;
+                        size = size
+                            .checked_add(u64::from(octet))
+                            .ok_or(Error::SizeOverflow)?;
+                        if octet != XIPH_CONTINUATION {
+                            break;
+                        }
+                    }
+                    explicit.push(size);
+                }
+                Ok(Self {
+                    data_offset: LACE_COUNT_OCTETS
+                        .checked_add(position)
+                        .ok_or(Error::SizeOverflow)?,
+                    explicit,
+                    frame_count: count,
+                    fixed: false,
+                })
+            }
+            LacingKind::Ebml => {
+                let (first, first_used) = VintSize::parse(data)?;
+                let first = first.value().ok_or(Error::InvalidBlock {
+                    what: "first EBML lace size is unknown",
+                })?;
+                let mut position = first_used;
+                let mut explicit = Vec::with_capacity(count - 1);
+                explicit.push(first);
+                let mut delta_width: Option<VintWidth> = None;
+                for _ in 0..count - MIN_LACED_FRAMES {
+                    let slice = data.get(position..).ok_or(Error::Truncated {
+                        what: "EBML lace delta",
+                        need: position,
+                        have: data.len(),
+                    })?;
+                    let (delta, width) = parse_signed_vint(slice)?;
+                    match delta_width {
+                        Some(previous) if previous != width => {
+                            return Err(Error::InvalidBlock {
+                                what: "EBML lace deltas differ in width",
+                            });
+                        }
+                        Some(_) => {}
+                        None => delta_width = Some(width),
+                    }
+                    position = position
+                        .checked_add(width.get())
+                        .ok_or(Error::SizeOverflow)?;
+                    let previous = *explicit.last().ok_or(Error::InvalidBlock {
+                        what: "EBML lace with no previous size",
+                    })?;
+                    let next = i64::try_from(previous).map_err(|_| Error::SizeOverflow)? + delta;
+                    let next = u64::try_from(next).map_err(|_| Error::InvalidBlock {
+                        what: "EBML lace size is negative",
+                    })?;
+                    explicit.push(next);
+                }
+                Ok(Self {
+                    data_offset: LACE_COUNT_OCTETS
+                        .checked_add(position)
+                        .ok_or(Error::SizeOverflow)?,
+                    explicit,
+                    frame_count: count,
+                    fixed: false,
+                })
+            }
+            LacingKind::Fixed => Ok(Self {
+                data_offset: LACE_COUNT_OCTETS,
+                explicit: Vec::new(),
+                frame_count: count,
+                fixed: true,
+            }),
+            LacingKind::None => Ok(Self {
+                data_offset: 0,
+                explicit: Vec::new(),
+                frame_count: 1,
+                fixed: false,
+            }),
+        }
+    }
+
+    /// Octets from the Block payload start to the first frame.
+    #[must_use]
+    pub const fn data_offset(&self) -> usize {
+        self.data_offset
+    }
+
+    /// The number of frames the table describes.
+    #[must_use]
+    pub const fn frame_count(&self) -> usize {
+        self.frame_count
+    }
+
+    /// Every frame's size, the last one taking the remainder of `payload_len`.
+    ///
+    /// `payload_len` is the whole Block payload length, so a caller that read
+    /// only a prefix still gets the exact ranges. A zero-length frame is
+    /// rejected: a hostile count byte would otherwise turn a few bytes into
+    /// hundreds of empty samples.
+    pub fn frame_sizes(&self, payload_len: u64) -> Result<Vec<u64>> {
+        let data_start = u64::try_from(self.data_offset).map_err(|_| Error::SizeOverflow)?;
+        let available = payload_len
+            .checked_sub(data_start)
+            .ok_or(Error::InvalidBlock {
+                what: "lace header runs past the block",
+            })?;
+        if self.fixed {
+            let count = u64::try_from(self.frame_count).map_err(|_| Error::SizeOverflow)?;
+            if count == 0 || available % count != 0 {
+                return Err(Error::InvalidBlock {
+                    what: "fixed lace frames are not equal",
+                });
+            }
+            let each = available / count;
+            if each == 0 {
+                return Err(Error::InvalidBlock {
+                    what: "laced frame has zero length",
+                });
+            }
+            return Ok(alloc::vec![each; self.frame_count]);
+        }
+        let explicit: u64 = self.explicit.iter().try_fold(0u64, |total, size| {
+            total.checked_add(*size).ok_or(Error::SizeOverflow)
+        })?;
+        if explicit > available {
+            return Err(Error::InvalidBlock {
+                what: "laced frame sizes exceed the block",
+            });
+        }
+        let mut sizes = self.explicit.clone();
+        sizes.push(available - explicit);
+        if sizes.contains(&0) {
+            return Err(Error::InvalidBlock {
+                what: "laced frame has zero length",
+            });
+        }
+        Ok(sizes)
+    }
+}
+
 /// The full `SimpleBlock`/`Block` payload (RFC 9559 §12).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

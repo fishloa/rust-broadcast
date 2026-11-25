@@ -17,4 +17,27 @@ All notable changes to this crate are documented here. The format follows
   checked element by element; the element-id table is pinned to the private
   transcription at runtime.
 - Hostile-input caps (`Limits`) for element depth, element size and child
-  count.
+  count, plus the reader's master, track, lace, Cues, Cluster-index,
+  Block-header, read and resync caps.
+- `reader::Reader`: the sans-IO reader (`step`/`supply`), one Cluster header
+  and one Block header at a time, unknown-size `Segment`/`Cluster` boundaries
+  found by RFC 8794 §6.2 sibling ids, every laced frame yielded with its own
+  byte range, `Info`/`Tracks`/`Cues` surfaced once, and permissive-mode
+  warnings with a bounded level-1 resync.
+- `Reader::seek_to`: the last Cue point at or before a time (RFC 9559 §20), or
+  a binary search over the recorded Cluster index when a file has no Cues.
+- `writer::Writer`: EBML header, unknown-size `Segment`, `SeekHead`, `Info`,
+  `Tracks`, Clusters cut by a caller span plus video keyframes and the
+  `SimpleBlock` `i16` range, `Cues` and the `Info.Duration` patch, every write
+  returned as `Write::Append`/`Write::At`.
+- `writer::{info_element, tracks_element}` builders over the typed element
+  model.
+- `driver::{FileReader, ForwardReader}` blocking drivers under `std`, with
+  bounded reads, frame reads by range, and a retained header tail so a
+  forward-only source never seeks back.
+- Differential goldens under `fixtures/mkv/golden/` recorded from `origin/main`
+  `WebmDemux`/`MkvMuxStage`, and tests for the six fixtures through both
+  drivers, at 1-byte/4 KiB/whole supplies, with unknown sizes, all three lacing
+  forms, Cues seeking and a cue-less Cluster scan.
+- `list_samples` and `remux` examples, a `matroska_reader` fuzz target and a
+  4 GiB soak.

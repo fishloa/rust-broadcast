@@ -73,6 +73,8 @@ example_args() {
         dvb-mabr/parse_session) echo "fixtures/mabr/annex-c3-gateway-config.xml" ;;
         broadcast-matroska/dump_elements) echo "fixtures/mkv/vp9-opus.webm" ;;
         broadcast-matroska/list_tracks)   echo "fixtures/mkv/vp9-opus.webm" ;;
+        broadcast-matroska/list_samples)  echo "fixtures/mkv/vp9-opus.webm" ;;
+        broadcast-matroska/remux)         echo "fixtures/mkv/vp9-opus.webm $WORKDIR/remux.mkv" ;;
         # Both directions are keystream transforms over opaque bytes, so each
         # runs standalone against the same input — no ordering dependency
         # between the two examples (cargo enumerates targets alphabetically,

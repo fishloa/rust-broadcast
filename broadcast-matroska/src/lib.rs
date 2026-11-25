@@ -1,6 +1,8 @@
 //! `broadcast-matroska` — EBML (RFC 8794) and Matroska/WebM (RFC 9559)
-//! element syntax: element framing, the scalar payload codecs, and the typed
-//! element model with byte-identical parse/serialize round trips.
+//! element syntax plus the sans-IO reader and writer over it: element framing,
+//! the scalar payload codecs, the typed element model with byte-identical
+//! parse/serialize round trips, a piece-at-a-time reader with Cues-driven
+//! seeking, and a piece-at-a-time writer.
 //!
 //! This crate is deliberately below [`transmux`](https://docs.rs/transmux): it
 //! knows element syntax only, never a media IR or a codec bitstream. Its one
@@ -27,6 +29,14 @@
 //!   type and its parent), the typed element model rooted at
 //!   [`matroska::Segment`], and the `SimpleBlock`/`Block`
 //!   header with all four lacing forms.
+//! - [`reader`] — the sans-IO reader: one Cluster header and one Block header
+//!   at a time, `Step::Need`/`Step::supply`, Cues-driven seeking, and the
+//!   permissive/unknown-size rules.
+//! - [`writer`] — the sans-IO writer: header, tracks, Clusters as Blocks
+//!   arrive, Cues and the `Info.Duration` patch, returned as [`writer::Write`]
+//!   values.
+//! - `driver` (feature `std`) — blocking [`driver::FileReader`] and
+//!   [`driver::ForwardReader`] that answer the reader's demands themselves.
 //! - [`limits`] — the hostile-input caps every count or depth read from a file
 //!   is checked against before anything is allocated.
 //!
@@ -47,13 +57,15 @@
 //! ```text
 //! cargo run -p broadcast-matroska --example dump_elements -- fixtures/mkv/vp9-opus.webm
 //! cargo run -p broadcast-matroska --example list_tracks -- fixtures/mkv/vp9-opus.webm
+//! cargo run -p broadcast-matroska --example list_samples -- fixtures/mkv/vp9-opus.webm
+//! cargo run -p broadcast-matroska --example remux -- fixtures/mkv/vp9-opus.webm out.mkv
 //! ```
 //!
 //! # Feature flags
 //!
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
-//! | `std`   | yes     | `std` glue; without it the crate is `no_std` + `alloc` |
+//! | `std`   | yes     | the blocking `driver` module; without it the crate is `no_std` + `alloc` |
 //! | `serde` | no      | `serde::Serialize` on the element types |
 
 #![cfg_attr(not(any(feature = "std", test)), no_std)]
@@ -61,10 +73,14 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 extern crate alloc;
 
+#[cfg(feature = "std")]
+pub mod driver;
 pub mod ebml;
 pub mod error;
 pub mod limits;
 pub mod matroska;
+pub mod reader;
+pub mod writer;
 
 pub use ebml::{ElementHeader, ElementId, VintSize};
 pub use error::{Error, Result};

@@ -23,6 +23,7 @@ serde     = { version = "1", optional = true, default-features = false, features
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+test-alloc    = { path = "../test-alloc" }
 
 [features]
 default = ["std"]
@@ -41,4 +42,12 @@ required-features = ["std"]
 
 [[example]]
 name = "list_tracks"
+required-features = ["std"]
+
+[[example]]
+name = "list_samples"
+required-features = ["std"]
+
+[[example]]
+name = "remux"
 required-features = ["std"]

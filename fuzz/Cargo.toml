@@ -626,3 +626,9 @@ name = "matroska_typed_parse"
 path = "fuzz_targets/matroska_typed_parse.rs"
 test = false
 doc  = false
+
+[[bin]]
+name = "matroska_reader"
+path = "fuzz_targets/matroska_reader.rs"
+test = false
+doc  = false
