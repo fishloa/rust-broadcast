@@ -176,6 +176,7 @@ pub mod codec_config_ext;
 pub mod container;
 #[cfg(feature = "std")]
 pub mod dash;
+pub mod data_identity;
 pub(crate) mod display_track;
 pub mod dovi_descriptor;
 pub mod drm;
@@ -271,6 +272,7 @@ pub use dash::{
     TrackSegments, TrickModeAdaptationSet, TrickModeRepr, rfc6381_codec_string,
     rfc6381_track_codec_string,
 };
+pub use data_identity::{DataIdentityMap, DataIdentityStage};
 pub use drm::{
     COMMON_SYSTEM_ID, FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID,
     cenc_kid_to_playready, fairplay_pssh, fairplay_pssh_data, playready_kid_to_cenc,
