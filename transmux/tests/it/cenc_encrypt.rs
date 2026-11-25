@@ -24,7 +24,7 @@
 //! point yet (`CencDecryptor::from_fmp4` needs a real protected fMP4 file —
 //! the muxer doesn't emit `sinf`/`senc` until Tasks 3/4 land). This file
 //! therefore verifies `cbcs` behaviourally: real bytes change, the recorded
-//! [`transmux::TrackEncryption`] is well-formed (one entry per sample, the
+//! per-sample [`transmux::ir::SampleProtection`] is well-formed (one per sample, the
 //! configured pattern, a well-formed subsample map), and two different keys
 //! produce different ciphertexts (proving genuine encryption, not a
 //! passthrough) — the true byte-exact `cbcs` reversal is covered by the
@@ -215,7 +215,7 @@ fn cenc_double_encrypt_reproduces_cleartext() {
 }
 
 /// `cbcs`: real encryption happens (bytes change, differ by key), and the
-/// recorded [`transmux::TrackEncryption`] is well-formed — one entry per
+/// recorded per-sample [`transmux::ir::SampleProtection`] is well-formed — one per
 /// sample, the configured `1:9` pattern, and a subsample map whose
 /// clear+protected byte counts sum to each sample's length.
 #[test]
@@ -503,7 +503,7 @@ fn constant_iv_under_cbcs_still_works() {
         media.tracks[0]
             .samples
             .iter()
-            .all(|s| &s.protection.as_ref().expect("Some").iv[..] == &CONSTANT_IV[..]),
+            .all(|s| s.protection.as_ref().expect("Some").iv[..] == CONSTANT_IV[..]),
         "default constant_iv_senc=Emit must carry the constant IV in every senc entry"
     );
     assert_ne!(snapshot(&media), original, "cbcs must change bytes");

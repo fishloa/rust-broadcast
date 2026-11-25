@@ -13,7 +13,7 @@
 //!
 //! and then shows the two signalling surfaces added in issue #564's final
 //! task, both driven straight off the encrypted `Media`'s
-//! [`transmux::TrackEncryption`]:
+//! [`transmux::TrackProtection`]:
 //!
 //! - [`transmux::DashPackager`] auto-derives a `<ContentProtection
 //!   schemeIdUri="urn:mpeg:dash:mp4protection:2011">` element from

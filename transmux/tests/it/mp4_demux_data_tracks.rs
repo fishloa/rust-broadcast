@@ -54,7 +54,7 @@ fn gopro_unmapped_tracks_arrive_as_data_tracks() {
         let track = media
             .tracks
             .iter()
-            .find(|t| mp4_identity(t).is_some_and(|(_, entry)| &entry[4..8] == &fourcc))
+            .find(|t| mp4_identity(t).is_some_and(|(_, entry)| entry[4..8] == fourcc))
             .unwrap_or_else(|| {
                 panic!(
                     "{:?} must arrive as a data track; tracks: {:?}",

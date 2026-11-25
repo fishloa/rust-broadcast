@@ -15,8 +15,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole-input MP4 demux entry point remains. Tests use
   `test_harness::collect`; the CLI and the repackager collect through a
   crate-private driver over the same stage.
+- CENC/CBCS protection now rides on each sample: `Sample::protection:
+  Option<Arc<SampleProtection>>` carries the IV and subsample map, and
+  `TrackSpec::protection: Option<TrackProtection>` carries the scheme and
+  `tenc` defaults. `Track::encryption`, `TrackEncryption` and its parallel
+  per-track `samples` list are deleted; `cenc_segment::protect_init_segment`
+  takes a `&TrackProtection`. A muxer now emits `senc`/`saiz`/`saio` from the
+  samples themselves when they carry protection, so the separate
+  `protect_media_segment` post-pass is no longer needed for the fragment half.
+- `CodecConfig::Data` is now a struct variant over a `DataIdentity`: TS fields
+  moved verbatim into `DataIdentity::Ts { stream_type, descriptors, carriage }`,
+  and `DataIdentity::{Mp4 { handler, sample_entry }, Matroska { codec_id,
+  codec_private }}` give a data track a native identity in the other
+  containers.
+- `mp4_demux::Mp4Demux` no longer abandons a track whose sample entry has no
+  typed `CodecConfig` (GoPro `gpmd`, QuickTime `tmcd`/`fdsc`, a CENC `encv`
+  entry, …). It announces it as `CodecConfig::Data` with an
+  `DataIdentity::Mp4` carrying the raw sample entry, samples included; only a
+  known four-CC whose parse failed still takes the `TrackAbandoned` path.
 
 ### Added
+- `ir::SampleProtection` (a sample's IV and subsample map) and
+  `ir::TrackProtection` (scheme, `tenc` defaults, constant-IV `senc` policy)
+  with `From` conversions to and from `isobmff::writer::SampleAux`;
+  `ir::DataIdentity` and its `name()`/`Display` labels.
 - `Error::LimitExceeded { what, limit }`, reporting a count or size read from
   the input that exceeded an `isobmff::Limits` cap before anything was
   allocated from it; it is the variant `isobmff::Error::LimitExceeded` maps

@@ -18,6 +18,7 @@
 
 use crate::TrackId;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use broadcast_common::timescale::{Rounding, rescale_i64};
 use bytes::Bytes;
 use core::num::NonZeroU32;
