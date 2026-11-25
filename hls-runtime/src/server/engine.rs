@@ -98,7 +98,8 @@ use broadcast_common::units::{MILLIS_PER_SEC, NANOS_PER_SEC};
 
 /// Whole nanoseconds in one [`timed_metadata::MediaTime`] tick (90 kHz).
 const NANOS_PER_PTS_TICK: u128 = (NANOS_PER_SEC / PTS_HZ) as u128;
-use broadcast_common::{Timestamp, Unpackage};
+use broadcast_common::Timestamp;
+use broadcast_common::stage::Stage;
 use broadcast_hls::{
     ByteRange, ClosedCaptionsRef, DecimalSeconds, FrameRate, LowLatencyConfig, MapTag,
     MasterPlaylist, MediaPlaylist, MediaRendition, MediaSegment, MediaType, OpenSegment, PartSpec,
@@ -865,6 +866,30 @@ fn segment_frame_rate_millihertz(samples: u64, ticks: u64, timescale: Timescale)
     u32::try_from(millihertz)
         .ok()
         .filter(|mh| *mh <= MAX_PLAUSIBLE_FRAME_RATE_MILLIHERTZ)
+}
+
+/// Every track spec an fMP4 Media Initialization Section announces, or `None`
+/// when the bytes are not one.
+///
+/// The stage is fed the init alone and finished: at end of input it announces
+/// every track the `moov` holds with its unrefined spec, which is what the
+/// origin advertises until the first segment arrives.
+fn init_track_specs(plain: &[u8]) -> Option<Vec<transmux::TrackSpec>> {
+    let mut demux = transmux::mp4_demux::Mp4Demux::sequential(Default::default());
+    demux
+        .feed(transmux::mp4_demux::Mp4Input::Next(plain), Timestamp::ZERO)
+        .ok()?;
+    demux
+        .feed(transmux::mp4_demux::Mp4Input::SegmentEnd, Timestamp::ZERO)
+        .ok()?;
+    demux.finish().ok()?;
+    let mut specs = Vec::new();
+    while let Some(event) = demux.poll() {
+        if let transmux::DemuxEvent::TrackAdded(spec) = event {
+            specs.push(spec);
+        }
+    }
+    Some(specs)
 }
 
 /// Mean video frame rate of an fMP4 `segment` from its `trun` durations, or
@@ -2066,16 +2091,7 @@ impl HlsOrigin {
     pub fn set_init_from(&self, bytes: impl Into<Bytes>, first_segment: SegmentSeq) {
         let bytes = bytes.into();
         if self.container == Container::Fmp4 {
-            let derived = transmux::Fmp4Demux::new()
-                .unpackage(bytes.as_ref())
-                .ok()
-                .map(|media| {
-                    media
-                        .tracks
-                        .into_iter()
-                        .map(|t| t.spec)
-                        .collect::<Vec<transmux::TrackSpec>>()
-                })
+            let derived = init_track_specs(bytes.as_ref())
                 .map(|specs| self.with_known_es_info(specs))
                 .and_then(|specs| self.set_track_specs(&specs).ok());
             if derived.is_none() {

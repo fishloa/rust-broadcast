@@ -221,8 +221,8 @@ pub enum Output {
     /// (e.g. across an `EXT-X-DISCONTINUITY`).
     Init(Vec<u8>),
     /// Newly available coded samples (access units) for one track, in decode
-    /// order, demuxed from a fetched Part or Segment resource via
-    /// `transmux::Fmp4Demux`.
+    /// order, demuxed from a fetched Part or Segment resource by the
+    /// streaming `transmux::mp4_demux::Mp4Demux` this client keeps per init.
     Samples {
         /// Track ID, matching the `moov`'s `trak.tkhd.track_ID` (ISO/IEC
         /// 14496-12:2026 §8.3.2) carried by the preceding [`Output::Init`].

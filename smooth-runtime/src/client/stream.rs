@@ -2,13 +2,13 @@
 
 use std::collections::VecDeque;
 
-use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use broadcast_smooth::{QualityLevel, SmoothManifest, StreamIndex};
 use transmux::smooth_fragment::fragment_tfxd;
-use transmux::{Fmp4Demux, Sample, TrackId, TrackSpec};
+use transmux::{Sample, TrackId, TrackSpec};
 
 use super::action::RequestId;
+use crate::demux::SegmentDemux;
 
 pub(crate) type Chunk = (u64, u64);
 
@@ -37,7 +37,7 @@ pub(crate) struct Stream {
     pub(crate) cursor: Cursor,
     pub(crate) local_track_id: Option<TrackId>,
     pub(crate) track: Option<TrackId>,
-    pub(crate) init: Option<Vec<u8>>,
+    pub(crate) demux: Option<SegmentDemux>,
     pub(crate) held: Vec<HeldFragment>,
     pub(crate) failures: u32,
     pub(crate) refresh_misses: u32,
@@ -58,7 +58,7 @@ impl Stream {
             cursor: Cursor::Idle,
             local_track_id: None,
             track: None,
-            init: None,
+            demux: None,
             held: Vec::new(),
             failures: 0,
             refresh_misses: 0,
@@ -95,6 +95,55 @@ impl Stream {
         }
         true
     }
+
+    /// Feed one fragment body to this stream's demux stage and return its
+    /// samples rebased so the fragment starts at its `tfxd` time, or at `start`
+    /// when it carries none.
+    pub(crate) fn fragment_samples(
+        &mut self,
+        body: &[u8],
+        start: u64,
+    ) -> Result<Vec<Sample>, FragmentFault> {
+        let local = self.local_track_id.ok_or(FragmentFault::Demux)?;
+        let segment = self
+            .demux
+            .as_mut()
+            .ok_or(FragmentFault::Demux)?
+            .segment(body)
+            .map_err(|_| FragmentFault::Demux)?;
+        if segment.damaged {
+            return Err(FragmentFault::Demux);
+        }
+        let desired = fragment_tfxd(body).map_or(start, |t| t.fragment_absolute_time);
+        let desired = i64::try_from(desired).map_err(|_| FragmentFault::TimeOutOfRange)?;
+        let mut out = Vec::new();
+        for track in segment
+            .tracks
+            .into_iter()
+            .filter(|t| t.spec.track_id == local)
+        {
+            let Some(first_dts) = track
+                .samples
+                .first()
+                .and_then(|s| s.timing.and_then(|t| t.dts()))
+            else {
+                continue;
+            };
+            let offset = desired
+                .checked_sub(first_dts)
+                .ok_or(FragmentFault::TimeOutOfRange)?;
+            for mut sample in track.samples {
+                if let Some(t) = sample.timing.as_mut() {
+                    let dts = t.dts();
+                    let current = dts.unwrap_or(0);
+                    let shifted = shift(dts, offset)?.unwrap_or(current);
+                    t.shift(shifted - current);
+                }
+                out.push(sample);
+            }
+        }
+        Ok(out)
+    }
 }
 
 pub(crate) fn live_join(
@@ -124,49 +173,6 @@ pub(crate) fn live_join(
 pub(crate) enum FragmentFault {
     Demux,
     TimeOutOfRange,
-}
-
-pub(crate) fn demux_fragment(
-    init: &[u8],
-    local_track_id: TrackId,
-    body: &[u8],
-    start: u64,
-) -> Result<Vec<Sample>, FragmentFault> {
-    let mut data = Vec::with_capacity(init.len() + body.len());
-    data.extend_from_slice(init);
-    data.extend_from_slice(body);
-    let media = Fmp4Demux::new()
-        .unpackage(data.as_slice())
-        .map_err(|_| FragmentFault::Demux)?;
-    let desired = fragment_tfxd(body).map_or(start, |t| t.fragment_absolute_time);
-    let desired = i64::try_from(desired).map_err(|_| FragmentFault::TimeOutOfRange)?;
-    let mut out = Vec::new();
-    for track in media
-        .tracks
-        .into_iter()
-        .filter(|t| t.spec.track_id == local_track_id)
-    {
-        let Some(first_dts) = track
-            .samples
-            .first()
-            .and_then(|s| s.timing.and_then(|t| t.dts()))
-        else {
-            continue;
-        };
-        let offset = desired
-            .checked_sub(first_dts)
-            .ok_or(FragmentFault::TimeOutOfRange)?;
-        for mut sample in track.samples {
-            if let Some(t) = sample.timing.as_mut() {
-                let dts = t.dts();
-                let current = dts.unwrap_or(0);
-                let shifted = shift(dts, offset)?.unwrap_or(current);
-                t.shift(shifted - current);
-            }
-            out.push(sample);
-        }
-    }
-    Ok(out)
 }
 
 fn shift(time: Option<i64>, offset: i64) -> Result<Option<i64>, FragmentFault> {

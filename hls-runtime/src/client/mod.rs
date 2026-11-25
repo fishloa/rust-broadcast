@@ -16,7 +16,8 @@
 //! [`broadcast_hls::MediaPlaylist::parse`] (issue #717 slice 1 — the
 //! symmetric inverse of the LL-HLS origin's own `to_m3u8()` renderer, so
 //! origin and client share one wire model); demuxing a fetched CMAF part or
-//! segment into access units is [`transmux::Fmp4Demux`]. `client` holds only
+//! segment into access units is [`transmux::mp4_demux::Mp4Demux`], one stage
+//! per init segment. `client` holds only
 //! the client **engine**: the reload scheduler, the fetch pipeline
 //! (prefetch/byte-range/dedup), and the output ordering — see
 //! [`HlsClient`]'s docs for the full behaviour.
