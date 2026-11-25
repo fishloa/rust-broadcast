@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use broadcast_common::bounded::{Limit, read_file_bounded_string};
+use broadcast_common::bounded::{Limit, read_file_bounded, read_file_bounded_string};
 use broadcast_common::stage::Timestamp;
 use smooth_runtime::{Action, FetchFailure, Output, SmoothClient, SmoothClientConfig};
 
@@ -29,6 +29,10 @@ const RUN_US: u64 = 10_000_000;
 /// A whole Smooth client Manifest: the ceiling the XML reader accepts for any
 /// manifest this crate parses.
 const MANIFEST_LIMIT: Limit = Limit::new("Smooth manifest", 4 * 1024 * 1024);
+
+/// One media fragment. The manifest is the real bound; this ceiling only stops
+/// a runaway read of an origin that lies.
+const FRAGMENT_LIMIT: Limit = Limit::new("Smooth fragment", 64 << 20);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut look_ahead = DEFAULT_LOOK_AHEAD;
@@ -61,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .trim_start_matches('/')
                         .replace("%28", "(")
                         .replace("%29", ")");
-                    match std::fs::read(dir.join(relative)) {
+                    match read_file_bounded(&dir.join(relative), FRAGMENT_LIMIT) {
                         Ok(body) => client.on_fragment(now(now_us), id, &body),
                         Err(_) => client.on_failure(
                             now(now_us),

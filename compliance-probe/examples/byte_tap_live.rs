@@ -7,7 +7,8 @@
 //!
 //! Run with: `cargo run -p compliance-probe --example byte_tap_live`
 
-use std::fs;
+use std::fs::File;
+use std::io::{self, BufReader, Read};
 
 use broadcast_common::Timestamp;
 use bytes::Bytes;
@@ -18,7 +19,7 @@ use mpeg_ts::ts::TS_PACKET_SIZE;
 
 fn main() {
     let path = test_fixtures::path("ts/m6-single.ts");
-    let data = fs::read(&path).unwrap_or_else(|e| {
+    let file = File::open(&path).unwrap_or_else(|e| {
         panic!(
             "committed fixture {} could not be read: {e}",
             path.display()
@@ -37,15 +38,38 @@ fn main() {
     let mut probe = Probe::new();
     let mut bridge = TrunkBridge::default();
     let chunk_size = 7 * TS_PACKET_SIZE;
-    for (i, chunk) in data.chunks(chunk_size).enumerate() {
+    let mut reader = BufReader::with_capacity(chunk_size * 2, file);
+    let mut chunk = vec![0u8; chunk_size];
+    let mut index = 0u64;
+    while let Some(bytes) = read_chunk(&mut reader, &mut chunk).unwrap_or_else(|e| {
+        panic!(
+            "committed fixture {} could not be read: {e}",
+            path.display()
+        )
+    }) {
         tap.record(
-            Bytes::copy_from_slice(chunk),
-            Timestamp::from_nanos(i as u64 * 1_000_000),
+            Bytes::copy_from_slice(bytes),
+            Timestamp::from_nanos(index * 1_000_000),
         );
         probe.drain_byte_tap(&mut bridge, &mut tap, Timestamp::ZERO);
+        index += 1;
     }
 
     let stats = probe.conformance_stats();
     println!("packets analysed via ByteTap: {}", stats.packets);
     println!("in sync                     : {}", stats.in_sync);
+}
+
+/// Read the next chunk; `None` at a clean end of stream.
+fn read_chunk<'a>(reader: &mut impl Read, buf: &'a mut [u8]) -> io::Result<Option<&'a [u8]>> {
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok((filled > 0).then_some(&buf[..filled]))
 }

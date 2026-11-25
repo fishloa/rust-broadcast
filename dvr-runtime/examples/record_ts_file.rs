@@ -4,6 +4,8 @@
 //! cargo run -p dvr-runtime --example record_ts_file --all-features -- <input.ts>
 //! ```
 
+use std::fs::File;
+use std::io::{self, BufReader, Read};
 use std::time::Duration;
 
 use broadcast_common::Timestamp;
@@ -27,7 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let input = std::env::args()
         .nth(1)
         .ok_or("usage: record_ts_file <input.ts>")?;
-    let bytes = std::fs::read(&input)?;
+    let len = std::fs::metadata(&input)?.len();
     let trunk = Trunk::new(
         TrunkConfig::default().with_segment_capacity(std::num::NonZeroUsize::new(16).unwrap()),
     );
@@ -43,9 +45,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .segment_writer()
         .ok_or("the segment writer is already taken")?;
 
-    let slice = bytes.len().div_ceil(5).div_ceil(188) * 188;
+    let slice = usize::try_from(len)
+        .unwrap_or(usize::MAX)
+        .div_ceil(5)
+        .div_ceil(188)
+        * 188;
+    let mut reader = BufReader::with_capacity(slice.max(1), File::open(&input)?);
+    let mut chunk = vec![0u8; slice.max(1)];
     let mut now = Timestamp::ZERO;
-    for (index, chunk) in bytes.chunks(slice).enumerate() {
+    let mut index = 0usize;
+    while let Some(chunk) = read_chunk(&mut reader, &mut chunk)? {
         let seq = u32::try_from(index)? + 1;
         writer.publish_segment(SegmentEntry::new(
             Bytes::copy_from_slice(chunk),
@@ -56,6 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ))?;
         now = now.saturating_add(Duration::from_secs(2));
         recorder.poll(now, |_| None, &[])?;
+        index += 1;
     }
     recorder.poll(now, |_| None, &[])?;
 
@@ -70,4 +80,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         playlist.lines().take(9).collect::<Vec<_>>().join("\n")
     );
     Ok(())
+}
+
+/// Read one slice of the capture; `None` at a clean end of stream.
+fn read_chunk<'a>(reader: &mut impl Read, buf: &'a mut [u8]) -> io::Result<Option<&'a [u8]>> {
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok((filled > 0).then_some(&buf[..filled]))
 }

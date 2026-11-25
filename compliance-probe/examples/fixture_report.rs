@@ -18,7 +18,7 @@
 use std::time::Duration;
 
 use compliance_probe::Probe;
-use mpeg_ts::ts::TS_PACKET_SIZE;
+use mpeg_ts::reader::PacketReader;
 
 /// Assumed inter-packet arrival interval. See this example's module docs for
 /// why this specific value, and why the choice matters at all.
@@ -29,7 +29,7 @@ fn main() {
     // sibling crate — see `dvb-conformance/examples/monitor_stream.rs` for
     // the same pattern this example mirrors.
     let path = test_fixtures::path("ts/m6-single.ts");
-    let data = std::fs::read(&path).unwrap_or_else(|e| {
+    let file = std::fs::File::open(&path).unwrap_or_else(|e| {
         panic!(
             "committed fixture {} could not be read: {e}",
             path.display()
@@ -37,12 +37,8 @@ fn main() {
     });
 
     let mut probe = Probe::new();
-    for (i, chunk) in data.chunks(TS_PACKET_SIZE).enumerate() {
-        if chunk.len() < TS_PACKET_SIZE {
-            break;
-        }
-        let mut packet = [0u8; TS_PACKET_SIZE];
-        packet.copy_from_slice(chunk);
+    for (i, packet) in PacketReader::new(file).enumerate() {
+        let packet = packet.unwrap_or_else(|e| panic!("fixture read failed: {e}"));
         let t = Duration::from_micros(i as u64 * INTER_PACKET_MICROS);
         probe.feed_ts_packet(&packet, t);
     }

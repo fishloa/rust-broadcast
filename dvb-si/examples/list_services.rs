@@ -7,16 +7,15 @@
 use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::tables::AnyTableSection;
+use mpeg_ts::reader::PacketReader;
 use std::collections::BTreeMap;
-
-const PKT: usize = 188;
 
 fn main() {
     // Fixtures live in the workspace-shared `fixtures/` tree, not under the
     // crate. A committed fixture that cannot be read is a bug, not a reason
     // to skip — so a missing/unreadable fixture is a hard failure.
     let path = test_fixtures::path("ts/tnt-5w-12732v-isi6-10s.ts");
-    let data = std::fs::read(&path).unwrap_or_else(|e| {
+    let file = std::fs::File::open(&path).unwrap_or_else(|e| {
         panic!(
             "committed fixture {} could not be read: {e}",
             path.display()
@@ -27,11 +26,9 @@ fn main() {
     let mut tables: BTreeMap<&'static str, u32> = BTreeMap::new();
     let mut services = Vec::new();
 
-    for pkt in data.chunks(PKT) {
-        if pkt.len() < PKT {
-            break;
-        }
-        for event in demux.feed(pkt) {
+    for pkt in PacketReader::new(file) {
+        let pkt = pkt.unwrap_or_else(|e| panic!("fixture read failed: {e}"));
+        for event in demux.feed(&pkt) {
             match event.table_section() {
                 Ok(AnyTableSection::SdtSection(sdt)) => {
                     *tables.entry("SDT").or_default() += 1;

@@ -8,6 +8,29 @@
 
 use container_probe::{Detail, Probe};
 
+/// The longest prefix `container_probe::probe` examines: reading this much
+/// reproduces a whole-file probe without holding the file.
+const PROBE_READ_LEN: usize = container_probe::DEFAULT_BUDGET;
+
+/// Read at most the bytes `container_probe::probe` would examine.
+fn read_prefix(path: &str) -> Result<Vec<u8>, std::io::Error> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut prefix = vec![0u8; PROBE_READ_LEN];
+    let mut filled = 0usize;
+    while filled < prefix.len() {
+        match file.read(&mut prefix[filled..]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    prefix.truncate(filled);
+    Ok(prefix)
+}
+
 /// Render the prober detail for `Identified` output.
 fn detail_text(detail: &Detail) -> String {
     match detail {
@@ -59,7 +82,7 @@ fn main() {
             .to_string_lossy()
             .into_owned()
     });
-    let data = match std::fs::read(&path) {
+    let data = match read_prefix(&path) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("failed to read {path}: {e}");
