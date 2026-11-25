@@ -10,8 +10,9 @@
 //! drains [`Action`]s, performs the I/O, feeds the answers back and drains
 //! [`Output`]s: one [`Manifest`](Output::Manifest) per Period, then the
 //! [`Tracks`](Output::Tracks) and ordered [`Samples`](Output::Samples) demuxed
-//! with `transmux::Fmp4Demux`. All selected AdaptationSets play on one
-//! timeline (design decision D7); Periods play back to back.
+//! through one `transmux::mp4_demux::Mp4Demux` stage per Representation (its
+//! init fed once). All selected AdaptationSets play on one timeline (design
+//! decision D7); Periods play back to back.
 //!
 //! What it does, and does not:
 //!
@@ -54,7 +55,7 @@
 
 mod action;
 pub mod config;
-mod demux;
+pub(crate) mod demux;
 mod engine;
 mod error;
 mod meta;

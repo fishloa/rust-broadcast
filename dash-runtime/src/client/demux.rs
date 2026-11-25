@@ -1,9 +1,17 @@
-//! fMP4 demux of `init ++ segment` (ISO/IEC 14496-12:2026), the `hls-runtime` and
-//! multimux `dash_pull` pattern: a fresh [`Fmp4Demux`] per segment, so no
-//! state leaks between segments and any segment can be retried alone.
+//! fMP4 demux of one Representation's init and media segments through the
+//! streaming MP4 stage (ISO/IEC 14496-12:2026): the init is fed once and each
+//! segment is fed to the same [`Mp4Demux`], never concatenated with it.
+//!
+//! A segment the stage refuses leaves the stage unusable, so the caller drops
+//! it ([`SegmentStage`] is recreated from the init) and the next segment of the
+//! same Representation demuxes as usual. A segment the reader merely tolerates
+//! costs only itself: its damage arrives as [`DemuxEvent::InputDegraded`] and
+//! the following segment continues under the same init.
 
-use broadcast_common::Unpackage;
-use transmux::{Fmp4Demux, InputDegradation, Sample, SkippedTrack, TrackSpec};
+use broadcast_common::Stage;
+use broadcast_common::stage::Timestamp;
+use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
+use transmux::{AbandonReason, DemuxEvent, InputDegradation, Sample, SkippedTrack, TrackSpec};
 
 /// The samples of one segment, by the `tkhd.track_ID` of the init they were
 /// demuxed with.
@@ -21,31 +29,117 @@ pub(crate) struct InitInfo {
     pub(crate) skipped: Vec<SkippedTrack>,
 }
 
+/// What one drain of the stage's events yields.
+#[derive(Default)]
+struct Collected {
+    specs: Vec<TrackSpec>,
+    tracks: Vec<(u32, Vec<Sample>)>,
+    skipped: Vec<SkippedTrack>,
+    damaged: usize,
+}
+
+impl Collected {
+    fn drain(&mut self, demux: &mut Mp4Demux) {
+        while let Some(event) = demux.poll() {
+            self.on_event(event);
+        }
+    }
+
+    fn on_event(&mut self, event: DemuxEvent) {
+        match event {
+            DemuxEvent::TrackAdded(spec) => self.specs.push(spec),
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
+                let id = track_id.value();
+                match self.tracks.iter_mut().find(|(track, _)| *track == id) {
+                    Some((_, samples)) => samples.push(sample),
+                    None => self.tracks.push((id, vec![sample])),
+                }
+            }
+            DemuxEvent::TrackAbandoned {
+                track_id, reason, ..
+            } => self.skipped.push(skipped_from_reason(reason, track_id)),
+            DemuxEvent::InputDegraded { kind, .. } => {
+                if matches!(kind, InputDegradation::MalformedUnit { .. }) {
+                    self.damaged = self.damaged.saturating_add(1);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// A new stage over `init`, with the init's bytes fed.
+fn stage_over(init: &[u8]) -> Result<Mp4Demux, transmux::Error> {
+    let mut demux = Mp4Demux::sequential(Mp4DemuxConfig::default());
+    demux.feed(Mp4Input::Next(init), Timestamp::ZERO)?;
+    Ok(demux)
+}
+
+/// The track specs of an Initialization Segment, read from the stage's events
+/// after the init alone has been fed and finished.
 pub(crate) fn init_info(init: &[u8]) -> Result<InitInfo, transmux::Error> {
-    let media = Fmp4Demux::new().unpackage(init)?;
+    let mut demux = stage_over(init)?;
+    let mut collected = Collected::default();
+    collected.drain(&mut demux);
+    demux.finish()?;
+    collected.drain(&mut demux);
     Ok(InitInfo {
-        specs: media.tracks.into_iter().map(|t| t.spec).collect(),
-        skipped: media.skipped,
+        specs: collected.specs,
+        skipped: collected.skipped,
     })
 }
 
-pub(crate) fn demux_segment(init: &[u8], segment: &[u8]) -> Result<Staged, transmux::Error> {
-    let mut combined = Vec::with_capacity(init.len().saturating_add(segment.len()));
-    combined.extend_from_slice(init);
-    combined.extend_from_slice(segment);
-    let media = Fmp4Demux::new().unpackage(combined.as_slice())?;
-    let damaged = media
-        .degraded
-        .iter()
-        .filter(|d| matches!(d, InputDegradation::MalformedUnit { .. }))
-        .count();
-    Ok(Staged {
-        tracks: media
-            .tracks
-            .into_iter()
-            .map(|t| (t.spec.track_id.value(), t.samples))
-            .collect(),
-        damaged,
-        skipped: media.skipped,
-    })
+/// One Representation's long-lived demux stage: the init is fed once and each
+/// media segment follows it, closed by [`Mp4Input::SegmentEnd`].
+pub(crate) struct SegmentStage {
+    demux: Mp4Demux,
+    init_events: Collected,
+}
+
+impl SegmentStage {
+    /// A stage with `init` fed, ready for its first media segment.
+    pub(crate) fn new(init: &[u8]) -> Result<Self, transmux::Error> {
+        let mut demux = stage_over(init)?;
+        let mut init_events = Collected::default();
+        init_events.drain(&mut demux);
+        Ok(Self { demux, init_events })
+    }
+
+    /// Feed one media segment and return its samples.
+    pub(crate) fn demux(&mut self, segment: &[u8]) -> Result<Staged, transmux::Error> {
+        self.demux.feed(Mp4Input::Next(segment), Timestamp::ZERO)?;
+        self.demux.feed(Mp4Input::SegmentEnd, Timestamp::ZERO)?;
+        let mut collected = Collected::default();
+        collected.drain(&mut self.demux);
+        Ok(Staged {
+            tracks: collected.tracks,
+            damaged: self.init_events.damaged.saturating_add(collected.damaged),
+            skipped: self.init_events.skipped.clone(),
+        })
+    }
+}
+
+fn skipped_from_reason(reason: AbandonReason, track_id: Option<transmux::TrackId>) -> SkippedTrack {
+    let (fourcc, text) = match reason {
+        AbandonReason::UnsupportedSampleEntry { fourcc } => {
+            let fourcc = String::from_utf8_lossy(&fourcc).into_owned();
+            let text =
+                format!("sample entry '{fourcc}' has no CodecConfig reconstruction in this crate");
+            (fourcc, text)
+        }
+        AbandonReason::UnsupportedCodec => (
+            String::from("unknown"),
+            "sample entry 'unknown' has no CodecConfig reconstruction in this crate".into(),
+        ),
+        AbandonReason::MalformedTrack { expected } => (
+            String::from("unknown"),
+            format!("unexpected box: expected {expected}"),
+        ),
+        other => (String::from("unknown"), other.name().into()),
+    };
+    let mut skipped = SkippedTrack::new(fourcc, text);
+    skipped.track_id = track_id;
+    skipped
 }
