@@ -960,6 +960,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::ir::DataIdentity;
     use broadcast_common::timescale::Timescale;
 
     #[test]
@@ -1011,9 +1012,11 @@ mod tests {
             TrackId::new(track_id),
             timescale(rate),
             CodecConfig::Data {
-                stream_type: 0x86,
-                descriptors: alloc::vec![],
-                carriage: crate::pipeline::DataCarriage::Sections,
+                identity: DataIdentity::Ts {
+                    stream_type: 0x86,
+                    descriptors: alloc::vec![],
+                    carriage: crate::pipeline::DataCarriage::Sections,
+                },
             },
         )
     }

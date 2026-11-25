@@ -2528,7 +2528,9 @@ impl HlsClient {
                     } else {
                         self.ts_specs.remove(&spec.track_id);
                         let stream_type = match &spec.config {
-                            transmux::CodecConfig::Data { stream_type, .. } => Some(*stream_type),
+                            transmux::CodecConfig::Data {
+                                identity: transmux::ir::DataIdentity::Ts { stream_type, .. },
+                            } => Some(*stream_type),
                             _ => None,
                         };
                         self.pending_outputs.push_back(Output::TrackDropped {

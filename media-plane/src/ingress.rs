@@ -1822,7 +1822,7 @@ mod tests {
     use broadcast_common::Demand;
     use broadcast_common::timescale::Timescale;
     use std::collections::VecDeque;
-    use transmux::pipeline::{CodecConfig, DataCarriage};
+    use transmux::pipeline::{CodecConfig, DataCarriage, DataIdentity};
 
     /// `NonZeroUsize` from a literal capacity — see `trunk`'s identical test
     /// helper.
@@ -1866,9 +1866,11 @@ mod tests {
             track_id,
             timescale(90_000),
             CodecConfig::Data {
-                stream_type: 0x06,
-                descriptors: Vec::new(),
-                carriage: DataCarriage::Pes,
+                identity: DataIdentity::Ts {
+                    stream_type: 0x06,
+                    descriptors: Vec::new(),
+                    carriage: DataCarriage::Pes,
+                },
             },
         )
     }

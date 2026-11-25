@@ -63,7 +63,9 @@ fn unmuxable_tracks(ts: &[u8]) -> Vec<(TrackId, Option<u8>)> {
         .filter(|t| !t.spec.config.is_muxable_in_bmff())
         .map(|t| {
             let st = match &t.spec.config {
-                transmux::CodecConfig::Data { stream_type, .. } => Some(*stream_type),
+                transmux::CodecConfig::Data {
+                    identity: transmux::ir::DataIdentity::Ts { stream_type, .. },
+                } => Some(*stream_type),
                 _ => None,
             };
             (t.spec.track_id, st)

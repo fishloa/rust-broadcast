@@ -8,6 +8,7 @@ use std::collections::HashMap;
 
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
+use transmux::ir::DataIdentity;
 use transmux::media::Media;
 use transmux::pipeline::{CodecConfig, DataCarriage};
 use transmux::{
@@ -227,9 +228,11 @@ fn a_track_that_has_delivered_no_media_never_defers_the_cut() {
         TrackId::new(3),
         Timescale::try_new(90_000).expect("non-zero"),
         CodecConfig::Data {
-            stream_type: 0x86,
-            descriptors: Vec::new(),
-            carriage: DataCarriage::Sections,
+            identity: DataIdentity::Ts {
+                stream_type: 0x86,
+                descriptors: Vec::new(),
+                carriage: DataCarriage::Sections,
+            },
         },
     );
     let mut seg = StreamingTsHlsSegmenter::new(vec![video, audio, data], TARGET_SECS, usize::MAX)
@@ -264,9 +267,11 @@ fn a_non_anchor_section_track_with_samples_never_defers_the_cut() {
         data_id,
         Timescale::try_new(90_000).expect("non-zero"),
         CodecConfig::Data {
-            stream_type: 0x86,
-            descriptors: Vec::new(),
-            carriage: DataCarriage::Sections,
+            identity: DataIdentity::Ts {
+                stream_type: 0x86,
+                descriptors: Vec::new(),
+                carriage: DataCarriage::Sections,
+            },
         },
     );
     let mut seg = StreamingTsHlsSegmenter::new(vec![audio, data], TARGET_SECS, usize::MAX)

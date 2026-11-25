@@ -11,6 +11,7 @@ use broadcast_common::{Package, Parse, Unpackage};
 use transmux::{CodecConfig, FlvDemux, FlvError, FlvMux, Media, Sample, Track, TrackId, TrackSpec};
 
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType, tags};
+use transmux::ir::DataIdentity;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -662,9 +663,11 @@ fn flv_track_kind_classifies_exactly_the_carryable_codecs() {
     );
 
     let data = CodecConfig::Data {
-        stream_type: 0x86,
-        descriptors: Vec::new(),
-        carriage: transmux::ir::DataCarriage::Sections,
+        identity: DataIdentity::Ts {
+            stream_type: 0x86,
+            descriptors: Vec::new(),
+            carriage: transmux::ir::DataCarriage::Sections,
+        },
     };
     assert_eq!(transmux::flv_track_kind(&data), None);
 }

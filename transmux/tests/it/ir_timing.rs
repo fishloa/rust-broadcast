@@ -16,6 +16,7 @@ use broadcast_common::{Package, Unpackage};
 use mpeg_pes::PesAssembler;
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
+use transmux::ir::DataIdentity;
 use transmux::media::CmafMux;
 use transmux::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
 use transmux::{Ec3SyncframeInfo, Error, Media, PcrSample, Track, TsDemux};
@@ -505,10 +506,11 @@ fn data_track_subtitle_pes_passthrough() {
 
     let media = demux(&data);
     assert!(
-        media
-            .tracks
-            .iter()
-            .any(|t| matches!(t.spec.config, CodecConfig::Data { stream_type, .. } if stream_type == STREAM_TYPE_PES_PRIVATE)),
+        media.tracks.iter().any(|t| matches!(
+            t.spec.config,
+            CodecConfig::Data { identity: DataIdentity::Ts { stream_type, .. } }
+                if stream_type == STREAM_TYPE_PES_PRIVATE
+        )),
         "at least one CodecConfig::Data track with stream_type 0x06 must exist"
     );
 
@@ -536,14 +538,18 @@ fn data_track_subtitle_pes_passthrough() {
         .tracks
         .iter()
         .find(|t| match &t.spec.config {
-            CodecConfig::Data { descriptors: d, .. } => d.as_slice() == descriptors.as_slice(),
+            CodecConfig::Data {
+                identity: DataIdentity::Ts { descriptors: d, .. },
+            } => d.as_slice() == descriptors.as_slice(),
             _ => false,
         })
         .unwrap_or_else(|| {
             panic!("a Data track with PID {target_pid:#06x}'s exact descriptor bytes must exist")
         });
     match &data_track.spec.config {
-        CodecConfig::Data { stream_type, .. } => assert_eq!(*stream_type, STREAM_TYPE_PES_PRIVATE),
+        CodecConfig::Data {
+            identity: DataIdentity::Ts { stream_type, .. },
+        } => assert_eq!(*stream_type, STREAM_TYPE_PES_PRIVATE),
         _ => unreachable!(),
     }
 
@@ -799,9 +805,11 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
                 TrackId::new(1),
                 timescale(90_000),
                 CodecConfig::Data {
-                    stream_type: 0x06,
-                    descriptors: vec![],
-                    carriage: DataCarriage::Pes,
+                    identity: DataIdentity::Ts {
+                        stream_type: 0x06,
+                        descriptors: vec![],
+                        carriage: DataCarriage::Pes,
+                    },
                 },
             ),
             vec![Sample::from_raw(vec![1, 2, 3], None, None, None).expect("valid timing")],

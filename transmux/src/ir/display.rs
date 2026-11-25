@@ -1360,6 +1360,7 @@ impl DisplayChangeSet {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::DataIdentity;
     use alloc::string::ToString;
 
     #[test]
@@ -1427,9 +1428,11 @@ mod tests {
     #[test]
     fn codecs_without_an_sps_have_no_geometry() {
         let data = CodecConfig::Data {
-            stream_type: 0x06,
-            descriptors: alloc::vec::Vec::new(),
-            carriage: crate::ir::DataCarriage::Pes,
+            identity: DataIdentity::Ts {
+                stream_type: 0x06,
+                descriptors: alloc::vec::Vec::new(),
+                carriage: crate::ir::DataCarriage::Pes,
+            },
         };
         assert_eq!(DisplayGeometry::from_codec_config(&data), None);
     }

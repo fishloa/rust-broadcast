@@ -359,6 +359,7 @@ mod tests {
     use async_trait::async_trait;
     use broadcast_common::timescale::Timescale;
     use transmux::CodecConfig;
+    use transmux::ir::DataIdentity;
 
     /// A fake transport double: no real socket, just an in-memory record of
     /// what `send`/`encode_media` were asked to do — enough to test
@@ -432,9 +433,11 @@ mod tests {
             track_id,
             timescale(90_000),
             CodecConfig::Data {
-                stream_type: 0x06,
-                descriptors: Vec::new(),
-                carriage: transmux::ir::DataCarriage::Pes,
+                identity: DataIdentity::Ts {
+                    stream_type: 0x06,
+                    descriptors: Vec::new(),
+                    carriage: transmux::ir::DataCarriage::Pes,
+                },
             },
         )
     }

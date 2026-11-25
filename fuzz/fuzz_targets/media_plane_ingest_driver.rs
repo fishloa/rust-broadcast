@@ -16,7 +16,7 @@ use media_plane::{
     HandshakePolicy, IngestDriver, IngestSession, ProgramId, RetentionClass,
     SessionEvent, TrunkConfig,
 };
-use transmux::pipeline::DataCarriage;
+use transmux::pipeline::{DataCarriage, DataIdentity};
 use transmux::{CodecConfig, Sample, TrackId, TrackSpec};
 
 /// A session whose entire event stream is fuzzer-controlled: `feed` decodes
@@ -50,9 +50,11 @@ impl Stage for FuzzSession {
                         TrackId::new(u32::from(rec[3])),
                         timescale(90_000),
                         CodecConfig::Data {
+                            identity: DataIdentity::Ts {
                             stream_type: 0x06,
                             descriptors: Vec::new(),
                             carriage: DataCarriage::Pes,
+                            },
                         },
                     )],
                 }),

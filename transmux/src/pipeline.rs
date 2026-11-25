@@ -63,8 +63,8 @@ const HEVC_FIELD_SEQ_FACTOR: u128 = 2;
 /// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
 /// `crate::pipeline::`/`transmux::pipeline::` path keeps resolving unchanged.
 pub use crate::ir::{
-    CodecConfig, DataCarriage, FragmentTrackData, Provenance, Sample, SampleFlags, SubtitleFormat,
-    SubtitleSampleEntry, TrackSpec,
+    CodecConfig, DataCarriage, DataIdentity, FragmentTrackData, Provenance, Sample, SampleFlags,
+    SubtitleFormat, SubtitleSampleEntry, TrackSpec,
 };
 
 /// Build a CMAF initialization segment (`ftyp` + fragmented-init `moov`) for the
@@ -139,10 +139,13 @@ fn track_setup(t: &TrackSpec) -> Result<isobmff::writer::TrackSetup> {
 /// track (B1, media plane step-2 fix wave 1).
 fn unmuxable_track_error(t: &TrackSpec) -> crate::error::Error {
     match &t.config {
-        CodecConfig::Data { stream_type, .. } => crate::error::Error::UnmuxableDataTrack {
+        CodecConfig::Data {
+            identity: DataIdentity::Ts { stream_type, .. },
+        } => crate::error::Error::UnmuxableDataTrack {
             track_id: t.track_id,
             stream_type: *stream_type,
         },
+        CodecConfig::Data { .. } => crate::error::Error::UnsupportedCodec { codec: "Data" },
         CodecConfig::Subtitle { format, .. } => crate::error::Error::UnmuxableSubtitleTrack {
             track_id: t.track_id,
             format: *format,

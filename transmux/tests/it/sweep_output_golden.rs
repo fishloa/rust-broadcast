@@ -120,9 +120,9 @@ fn sample_timing_debug(s: &str) -> String {
 /// `ts_sync_loss_degraded.rs` instead.
 fn media_debug(media: &transmux::Media) -> String {
     let s = legacy_pcr_debug(&legacy_pid_debug(&no_track_encryption_debug(
-        &no_protection_debug(&no_display_debug(&sample_timing_debug(&format!(
-            "{media:?}"
-        )))),
+        &no_protection_debug(&no_display_debug(&sample_timing_debug(
+            &legacy_data_config_debug(&format!("{media:?}")),
+        ))),
     )));
     match s.rfind(", degraded: [") {
         Some(i) => format!("{} }}", &s[..i]),
@@ -168,6 +168,35 @@ fn no_display_debug(s: &str) -> String {
             }
         }
         rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `CodecConfig::Data` used to render its TS fields directly (`Data {
+/// stream_type: 6, descriptors: [...], carriage: Pes }`); they now sit inside
+/// `identity: DataIdentity::Ts { .. }`. Flatten that one wrapper back so the
+/// goldens keep proving the demux output itself is unchanged.
+fn legacy_data_config_debug(s: &str) -> String {
+    const OPEN: &str = "Data { identity: Ts { ";
+    const CLOSE: &str = " } }";
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find(OPEN) {
+        out.push_str(&rest[..i]);
+        out.push_str("Data { ");
+        let after = &rest[i + OPEN.len()..];
+        match after.find(CLOSE) {
+            Some(end) => {
+                out.push_str(&after[..end]);
+                out.push_str(" }");
+                rest = &after[end + CLOSE.len()..];
+            }
+            None => {
+                out.push_str(after);
+                rest = "";
+            }
+        }
     }
     out.push_str(rest);
     out

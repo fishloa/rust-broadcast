@@ -87,7 +87,7 @@ use crate::codec_config_ext::EsdsBoxCodecInfo;
 use crate::error::{Error, Result};
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::nal::{AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, nal_unit_type};
-use crate::pipeline::{CodecConfig, DataCarriage, Sample};
+use crate::pipeline::{CodecConfig, DataCarriage, DataIdentity, Sample};
 use crate::ts_demux::DESCRIPTOR_HEADER_LEN;
 use isobmff::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
 use isobmff::nalu_types::HEVC_SPS_NUT;
@@ -476,9 +476,12 @@ impl EsKind {
             CodecConfig::Dts { .. } => Some(EsKind::Dts),
             CodecConfig::MpegH { .. } => Some(EsKind::MpegH),
             CodecConfig::Data {
-                stream_type,
-                carriage,
-                ..
+                identity:
+                    DataIdentity::Ts {
+                        stream_type,
+                        carriage,
+                        ..
+                    },
             } => Some(EsKind::Data {
                 stream_type: *stream_type,
                 carriage: *carriage,

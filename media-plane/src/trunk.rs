@@ -3536,7 +3536,7 @@ mod tests {
     use broadcast_common::timescale::Timescale;
     use std::sync::mpsc;
     use std::thread;
-    use transmux::pipeline::{CodecConfig, DataCarriage};
+    use transmux::pipeline::{CodecConfig, DataCarriage, DataIdentity};
 
     /// An opaque `TrackSpec` for track-set tests — mirrors `ingress`'s own
     /// identically-named test helper (same shape, so a track built here and
@@ -3547,9 +3547,11 @@ mod tests {
             track_id,
             timescale(90_000),
             CodecConfig::Data {
-                stream_type: 0x06,
-                descriptors: Vec::new(),
-                carriage: DataCarriage::Pes,
+                identity: DataIdentity::Ts {
+                    stream_type: 0x06,
+                    descriptors: Vec::new(),
+                    carriage: DataCarriage::Pes,
+                },
             },
         )
     }

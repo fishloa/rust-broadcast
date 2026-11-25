@@ -1047,6 +1047,7 @@ fn config_box_body<'b>(boxes: &'b [OpaqueBox], fourcc: &[u8; BOX_TYPE_SIZE]) -> 
 mod tests {
     use super::*;
     use crate::TrackId;
+    use crate::ir::DataIdentity;
     use isobmff::subtitle_entries::WvttSampleEntry;
 
     /// ffmpeg's `mov` muxer cannot produce a `wvtt` sample entry (only
@@ -1321,9 +1322,11 @@ mod tests {
                 TrackId::new(2),
                 TIMESCALE,
                 CodecConfig::Data {
-                    stream_type: 0x86,
-                    descriptors: Vec::new(),
-                    carriage: crate::ir::DataCarriage::Sections,
+                    identity: DataIdentity::Ts {
+                        stream_type: 0x86,
+                        descriptors: Vec::new(),
+                        carriage: crate::ir::DataCarriage::Sections,
+                    },
                 },
             ),
             vec![Sample::new(vec![0xFCu8; 8], None, None, None, true).expect("valid timing")],
@@ -1356,9 +1359,11 @@ mod tests {
                 TrackId::new(2),
                 TIMESCALE,
                 CodecConfig::Data {
-                    stream_type: 0x86,
-                    descriptors: Vec::new(),
-                    carriage: crate::ir::DataCarriage::Sections,
+                    identity: DataIdentity::Ts {
+                        stream_type: 0x86,
+                        descriptors: Vec::new(),
+                        carriage: crate::ir::DataCarriage::Sections,
+                    },
                 },
             ),
             vec![Sample::new(vec![0xFCu8; 8], None, None, None, true).expect("valid timing")],

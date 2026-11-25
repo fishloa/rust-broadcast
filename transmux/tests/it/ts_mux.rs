@@ -18,6 +18,7 @@ use broadcast_common::{Package, Serialize, Unpackage};
 use mpeg_ts::ts::TsPacket;
 use test_fixtures::process::tool_available;
 use transmux::TrackId;
+use transmux::ir::DataIdentity;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
 use transmux::{TsDemux, TsMux};
@@ -433,9 +434,11 @@ fn oversized_audio_sample_is_rejected_not_clamped() {
         TrackId::new(1),
         timescale(48_000),
         CodecConfig::Data {
-            stream_type: 0x06,
-            descriptors: Vec::new(),
-            carriage: transmux::ir::DataCarriage::Pes,
+            identity: DataIdentity::Ts {
+                stream_type: 0x06,
+                descriptors: Vec::new(),
+                carriage: transmux::ir::DataCarriage::Pes,
+            },
         },
     );
     let sample =
@@ -508,9 +511,11 @@ fn pcr_pid_is_audio_not_a_sparse_data_pid() {
                 TrackId::new(99),
                 timescale(90_000),
                 CodecConfig::Data {
-                    stream_type: 0x06,
-                    descriptors: Vec::new(),
-                    carriage: DataCarriage::Pes,
+                    identity: DataIdentity::Ts {
+                        stream_type: 0x06,
+                        descriptors: Vec::new(),
+                        carriage: DataCarriage::Pes,
+                    },
                 },
             ),
             vec![

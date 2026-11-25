@@ -1603,7 +1603,7 @@ impl Stage for StreamingTsHlsSegmenter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::pipeline::{CodecConfig, DataCarriage};
+    use crate::pipeline::{CodecConfig, DataCarriage, DataIdentity};
 
     fn sample(dur: u32, sync: bool) -> Sample {
         Sample {
@@ -1683,9 +1683,11 @@ mod tests {
             track_id,
             timescale(90_000),
             CodecConfig::Data {
-                stream_type: 0x86,
-                descriptors: Vec::new(),
-                carriage: DataCarriage::Sections,
+                identity: DataIdentity::Ts {
+                    stream_type: 0x86,
+                    descriptors: Vec::new(),
+                    carriage: DataCarriage::Sections,
+                },
             },
         )
     }
