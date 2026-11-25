@@ -8,14 +8,16 @@
 //! (malformed or unusual) fragment shape is the subject under test.
 #![cfg(feature = "cenc")]
 
-use broadcast_common::{Decrypt, Encrypt, Unpackage};
+use broadcast_common::Unpackage;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::movie_fragment::TrackFragmentRunBox;
 use test_harness::collect::MediaSelectExt;
+use transmux::cenc_decrypt::CencDecryptStage;
+use transmux::cenc_encrypt::CencEncryptStage;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
-    CencDecryptor, CencEncryptor, CencScheme, CodecConfig, EncryptConfig, KeyMap, Media, Sample,
-    SubsamplePolicy, Track, TrackId, TrackSpec, TsDemux,
+    CencScheme, CodecConfig, EncryptConfig, KeyMap, Media, Sample, SubsamplePolicy, Track, TrackId,
+    TrackSpec, TsDemux,
 };
 
 const KID: [u8; 16] = [
@@ -45,6 +47,18 @@ fn cbcs_cfg(subsample: SubsamplePolicy) -> EncryptConfig {
 
 fn keys() -> KeyMap {
     KeyMap::new().with_key(KID, KEY)
+}
+
+fn encrypt(media: &Media, cfg: EncryptConfig) -> Media {
+    let mut stage = CencEncryptStage::new(KEY, cfg).expect("config");
+    crate::cenc_support::run(&mut stage, media).expect("encrypt")
+}
+
+fn decrypt(bytes: &[u8]) -> Result<Media, transmux::Error> {
+    let media =
+        test_harness::collect::media_from_mp4(bytes, test_harness::collect::CollectMode::Seekable)?;
+    let mut stage = CencDecryptStage::new(keys());
+    crate::cenc_support::run(&mut stage, &media)
 }
 
 /// `(offset, size, fourcc)` of every box directly in `body`.
@@ -140,9 +154,7 @@ fn sample_bytes(media: &Media, track_id: u32) -> Vec<Vec<u8>> {
 fn subsample_senc_flags_are_read_from_the_fullbox_flag_bytes() {
     let mut media = clear_video_media();
     let clear = sample_bytes(&media, 1);
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cenc_cfg(SubsamplePolicy::Video))
-        .expect("encrypt with a per-NAL subsample map");
+    media = encrypt(&media, cenc_cfg(SubsamplePolicy::Video));
     let protected = protect_all(&media);
     assert!(
         clear.iter().any(|s| s.len() > 20),
@@ -161,9 +173,7 @@ fn subsample_senc_flags_are_read_from_the_fullbox_flag_bytes() {
         "senc FullBox flags carry UseSubSampleEncryption"
     );
 
-    let dec = CencDecryptor::from_fmp4(&protected).expect("harvest the protected fragment");
-    let mut out = dec.demux().expect("demux");
-    dec.decrypt(&mut out, &keys()).expect("decrypt");
+    let out = decrypt(&protected).expect("decrypt");
     assert_eq!(
         sample_bytes(&out, 1),
         clear,
@@ -183,9 +193,7 @@ fn subsample_senc_flags_are_read_from_the_fullbox_flag_bytes() {
 #[test]
 fn per_sample_iv_track_without_senc_errors_instead_of_empty_iv_entries() {
     let mut media = clear_video_media();
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cenc_cfg(SubsamplePolicy::WholeSample))
-        .expect("encrypt");
+    media = encrypt(&media, cenc_cfg(SubsamplePolicy::WholeSample));
     let mut protected = protect_all(&media);
     assert_eq!(
         media.tracks[0]
@@ -208,24 +216,23 @@ fn per_sample_iv_track_without_senc_errors_instead_of_empty_iv_entries() {
     let ty = traf_off + senc_off + 4;
     protected[ty..ty + 4].copy_from_slice(b"sken");
 
-    let dec = CencDecryptor::from_fmp4(&protected).expect("harvest still succeeds");
+    let demuxed = test_harness::collect::media_from_mp4(
+        protected.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux still succeeds");
     assert!(
-        dec.sample_entries().is_empty(),
+        demuxed.tracks[0]
+            .samples
+            .iter()
+            .all(|s| s.protection.is_none()),
         "a per-sample-IV track with no senc must not synthesize placeholder entries"
     );
-    let mut out = dec.demux().expect("demux");
-    let before = sample_bytes(&out, 1);
-    let err = dec
-        .decrypt(&mut out, &keys())
+    let err = decrypt(&protected)
         .expect_err("decrypt must fail: the samples carry no CENC auxiliary information");
     assert!(
-        matches!(err, transmux::Error::InvalidInput(_)),
-        "expected InvalidInput, got {err:?}"
-    );
-    assert_eq!(
-        sample_bytes(&out, 1),
-        before,
-        "a rejected decrypt must leave every sample byte-identical"
+        matches!(err, transmux::Error::CencMissingSampleProtection { .. }),
+        "expected CencMissingSampleProtection, got {err:?}"
     );
 }
 
@@ -287,14 +294,10 @@ fn first_sample_dts_is_seeded_from_the_target_tracks_tfdt() {
         ],
         timescale(1000),
     );
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cbcs_cfg(SubsamplePolicy::WholeSample))
-        .expect("encrypt both tracks");
+    media = encrypt(&media, cbcs_cfg(SubsamplePolicy::WholeSample));
     let protected = protect_all(&media);
 
-    let dec = CencDecryptor::from_fmp4(&protected).expect("harvest");
-    let mut out = dec.demux().expect("demux");
-    dec.decrypt(&mut out, &keys()).expect("decrypt");
+    let out = decrypt(&protected).expect("decrypt");
 
     let find = |id: u32| {
         out.tracks
@@ -354,9 +357,7 @@ fn trun_sample_flags_drive_is_sync_after_decryption() {
         .collect();
     assert!(samples.len() > 1, "need a sync sample plus non-sync ones");
     let mut media = Media::new(vec![Track::new_at(spec, samples, 0)], timescale(1000));
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cbcs_cfg(SubsamplePolicy::WholeSample))
-        .expect("encrypt");
+    media = encrypt(&media, cbcs_cfg(SubsamplePolicy::WholeSample));
     let protected = protect_all(&media);
 
     let traf = traf_bytes(&protected, 1);
@@ -377,9 +378,7 @@ fn trun_sample_flags_drive_is_sync_after_decryption() {
         "the remaining samples carry exactly the non-sync word"
     );
 
-    let dec = CencDecryptor::from_fmp4(&protected).expect("harvest");
-    let mut out = dec.demux().expect("demux");
-    dec.decrypt(&mut out, &keys()).expect("decrypt");
+    let out = decrypt(&protected).expect("decrypt");
     let got: Vec<bool> = out.tracks[0]
         .samples
         .iter()

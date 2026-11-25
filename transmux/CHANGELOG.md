@@ -69,10 +69,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   codec_private }}` give a data track a native identity in the other
   containers.
 - `mp4_demux::Mp4Demux` no longer abandons a track whose sample entry has no
-  typed `CodecConfig` (GoPro `gpmd`, QuickTime `tmcd`/`fdsc`, a CENC `encv`
-  entry, …). It announces it as `CodecConfig::Data` with an
-  `DataIdentity::Mp4` carrying the raw sample entry, samples included; only a
-  known four-CC whose parse failed still takes the `TrackAbandoned` path.
+  typed `CodecConfig` (GoPro `gpmd`, QuickTime `tmcd`/`fdsc`, …). It announces
+  it as `CodecConfig::Data` with an `DataIdentity::Mp4` carrying the raw sample
+  entry, samples included; only a known four-CC whose parse failed still takes
+  the `TrackAbandoned` path. A CENC `encv`/`enca` entry is no longer data at
+  all: its `sinf`/`frma` restores the wrapped codec, with the protection left
+  on `TrackSpec::protection`.
+- Whole-Media CENC is gone. `CencEncryptor` and its `broadcast_common::Encrypt`
+  impl, `CencDecryptor` and its `Decrypt` impl (and its `demux_protected` file
+  walk) are deleted. The replacements are `CencEncryptStage` and
+  `CencDecryptStage`, `Stage<In = MuxInput, Out = MuxInput>` values that
+  protect or unprotect one sample at a time; decryption reads the IV and
+  subsample map the demuxer already put on the sample. `DataIdentity::protected_mp4_entry`
+  is deleted (a consumer asks `TrackSpec::protection.is_some()`). HLS
+  SAMPLE-AES gains `SampleAesStage`/`SampleAesOp` over the existing per-NAL and
+  per-frame transforms.
 - `CmafMux` and its `Package` impl are deleted. The replacement is
   `media::CmafMuxStage`, a `Stage` over `MuxInput`/`MuxOutput` that writes
   through `isobmff::writer::FragmentedWriter`; `FragmentCut` states when a

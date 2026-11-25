@@ -255,3 +255,35 @@ fn schi_round_trip() {
     let n = schi.serialize_into(&mut out).unwrap();
     assert_eq!(&out[..n], schi_bytes, "schi round-trip byte-exact");
 }
+
+/// The progressive (`stbl`-level) `senc` must reach every sample through the
+/// streaming reader, not only the fragmented (`traf`-level) one. `cenc.mp4`
+/// is ffmpeg's progressive CENC layout: one `senc` inside `stbl` covering all
+/// 15 samples (ISO/IEC 23001-7 §12.3).
+#[test]
+fn progressive_senc_is_surfaced_per_sample() {
+    use isobmff::ReaderConfig;
+    use isobmff::driver::{DriverStep, FileReader};
+
+    let path = test_fixtures::path("mp4/cenc.mp4");
+    let file = std::fs::File::open(&path).expect("open fixture");
+    let mut reader =
+        FileReader::new(file, ReaderConfig::default().with_total_len(None)).expect("wrap file");
+    let mut samples = 0usize;
+    loop {
+        match reader.step().expect("driver step") {
+            DriverStep::Sample(sample) => {
+                let aux = sample
+                    .aux
+                    .as_ref()
+                    .expect("a progressive protected sample carries its senc entry");
+                assert_eq!(aux.initialization_vector.len(), 8, "tenc IV size");
+                assert!(!aux.subsamples.is_empty(), "subsample encryption");
+                samples += 1;
+            }
+            DriverStep::Done => break,
+            _ => {}
+        }
+    }
+    assert_eq!(samples, 15, "every senc entry reached its sample");
+}

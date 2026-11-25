@@ -13,9 +13,8 @@
 //! traf, ffmpeg fails the audio) — see the README's "could not be proven".
 #![cfg(feature = "cenc")]
 
-use broadcast_common::Decrypt;
 use transmux::Media;
-use transmux::cenc_decrypt::{CencDecryptor, KeyMap};
+use transmux::cenc_decrypt::{CencDecryptStage, KeyMap};
 
 /// The fixture's KID/KEY (`fixtures/mp4/cenc-layouts/PROVENANCE.md`).
 const KID: [u8; 16] = [
@@ -55,12 +54,16 @@ fn video_samples(media: &Media) -> Vec<Vec<u8>> {
 /// Decrypt one `enc_*.mp4` and return its video samples.
 fn decrypt_video(name: &str) -> Vec<Vec<u8>> {
     let bytes = read(name);
-    let dec = CencDecryptor::from_fmp4(&bytes).unwrap_or_else(|e| panic!("{name}: from_fmp4: {e}"));
-    let mut media = dec.demux().unwrap_or_else(|e| panic!("{name}: demux: {e}"));
+    let media = test_harness::collect::media_from_mp4(
+        bytes.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .unwrap_or_else(|e| panic!("{name}: demux: {e}"));
     let keys = KeyMap::new().with_key(KID, KEY);
-    dec.decrypt(&mut media, &keys)
+    let mut stage = CencDecryptStage::new(keys);
+    let out = crate::cenc_support::run(&mut stage, &media)
         .unwrap_or_else(|e| panic!("{name}: decrypt: {e}"));
-    video_samples(&media)
+    video_samples(&out)
 }
 
 /// All nine layouts must decrypt to the clear video samples byte-for-byte.

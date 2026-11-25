@@ -723,8 +723,7 @@ const DASH_GOLDEN: &[u64] = &[0xd2dcfb26a908fc39, 0xe6e9e31487c71f4e, 0xa779291f
 #[cfg(feature = "cenc")]
 #[test]
 fn cenc_decrypted_output_is_unchanged() {
-    use broadcast_common::Decrypt;
-    use transmux::cenc_decrypt::{CencDecryptor, KeyMap};
+    use transmux::cenc_decrypt::{CencDecryptStage, KeyMap};
     const KID: [u8; 16] = [
         0xa7, 0xe6, 0x1c, 0x37, 0x3e, 0x21, 0x90, 0x33, 0xc2, 0x10, 0x91, 0xfa, 0x60, 0x7b, 0xf3,
         0xb8,
@@ -737,8 +736,11 @@ fn cenc_decrypted_output_is_unchanged() {
         eprintln!("SKIPPED mp4/cenc.mp4");
         return;
     };
-    let dec = CencDecryptor::from_fmp4(&file).unwrap();
-    let mut media = dec.demux().unwrap();
+    let media = test_harness::collect::media_from_mp4(
+        file.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .unwrap();
     let mut bad = Vec::new();
     check(
         &mut bad,
@@ -746,8 +748,8 @@ fn cenc_decrypted_output_is_unchanged() {
         fnv1a(media_debug(&media).as_bytes()),
         CENC_GOLDEN[0],
     );
-    dec.decrypt(&mut media, &KeyMap::new().with_key(KID, KEY))
-        .unwrap();
+    let mut stage = CencDecryptStage::new(KeyMap::new().with_key(KID, KEY));
+    let media = crate::cenc_support::run(&mut stage, &media).unwrap();
     let mut bytes = Vec::new();
     for t in &media.tracks {
         for smp in &t.samples {
@@ -770,4 +772,9 @@ fn cenc_decrypted_output_is_unchanged() {
 }
 
 #[cfg(feature = "cenc")]
-const CENC_GOLDEN: [u64; 3] = [0xf124776756fb7155, 0xfb42a9ef77a663dd, 0x80b225c275a0c9a2];
+/// The two Media *debug* digests changed with Phase 4 slice 6: a protected
+/// `encv` entry now maps to its wrapped codec (real `width`/`height`) and the
+/// reader supplies real sample timing, where the old decrypt-only walk had
+/// neither. The decrypted *sample bytes* digest is unchanged, which is the
+/// byte-identity gate.
+const CENC_GOLDEN: [u64; 3] = [0x28cf140cfbdeb576, 0xfb42a9ef77a663dd, 0x82cca5514eee7a2d];

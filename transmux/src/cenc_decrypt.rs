@@ -1,35 +1,11 @@
-//! CENC decrypt — unprotect a Common-Encryption fMP4 (ISO/IEC 23001-7).
+//! CENC decrypt — [`CencDecryptStage`], one sample at a time (ISO/IEC 23001-7).
 //!
-//! Turns a CENC-encrypted ISOBMFF/CMAF file back into cleartext coded samples,
-//! implementing the hub [`broadcast_common::Decrypt`] trait. Only the box
-//! *parsers* (in [`isobmff::cenc`]) are reused here; this module adds the
-//! `sinf`/`frma` unwrap and dispatches AES sample-decryption (both ciphers) to
-//! the shared cipher core in `cenc_crypto` (factored out so an
-//! encrypt path can reuse it — see that module's docs for the `cbcs` CBC
-//! chain-reset rule).
-//!
-//! # Container support
-//!
-//! Both ISOBMFF layouts are supported:
-//!
-//! - **Progressive** (single `moov`/`mdat`, e.g. ffmpeg's `-cenc_aes_ctr`
-//!   output): sample layout comes from `stsz`/`stsc`/`stco` inside `stbl`, and
-//!   the per-sample IV/subsample map comes from a single `senc` also inside
-//!   `stbl`.
-//! - **Fragmented CMAF** (`moov` + one or more `moof`/`mdat` pairs, the
-//!   real-world case): the `moov` still carries the track's crypto *defaults*
-//!   (`sinf`/`tenc`), but each `traf` inside a `moof` carries its OWN `senc`
-//!   (per-fragment per-sample IV/subsample map) and `trun` (per-sample sizes,
-//!   resolved against the `mdat` via the `trun`/`tfhd` `default-base-is-moof`
-//!   convention). Every fragment's samples are concatenated in file order into
-//!   one [`crate::media::Track`], exactly like the progressive case — see
-//!   this module's private `harvest_fragment_senc` and
-//!   `collect_fragment_samples` helpers. The already-typed
-//!   fragment parsers in [`isobmff::movie_fragment`] (`MovieFragmentBox`,
-//!   `TrackFragmentHeaderBox`, `TrackFragmentRunBox`) are reused rather than a
-//!   second hand-rolled `moof`/`traf`/`trun` walker; only the `senc` lookup
-//!   (which those types do not carry) is done with this module's own
-//!   box-navigation helpers.
+//! The demuxer already surfaces each protected track's `tenc` defaults
+//! ([`TrackSpec::protection`](crate::ir::TrackSpec::protection)) and each
+//! sample's IV and subsample map
+//! ([`Sample::protection`](crate::ir::Sample::protection)), so decryption needs
+//! no second file walk: a `Track` announcement passes through with its
+//! protection cleared, and every `Sample` is deciphered in place.
 //!
 //! # Scheme support
 //!
@@ -41,86 +17,43 @@
 //! # Spec citations
 //!
 //! - **Sample encryption / subsamples**: ISO/IEC 23001-7 §9.
-//! - **AES-CTR (`cenc`) mode**: ISO/IEC 23001-7 §10.1 — the 16-byte counter is
-//!   the per-sample IV (8- or 16-byte, left-justified and zero-padded to 16)
-//!   with the low 64 bits acting as the AES block counter, incrementing once per
-//!   16-byte cipher block across the concatenated *protected* bytes of a sample
-//!   (the clear subsample ranges are skipped, not counted).
-//! - **AES-CBC pattern (`cbcs`) mode**: ISO/IEC 23001-7 §10.2 — *within* one
-//!   subsample's protected range (or the whole sample, when there is no
-//!   subsample map), `default_crypt_byte_block` 16-byte blocks are
-//!   CBC-decrypted, then `default_skip_byte_block` 16-byte blocks are passed
-//!   through clear, repeating across that range; a final partial block
-//!   (`< 16` bytes remaining in a crypt run) is left clear. The IV — the
-//!   `tenc` version-1 `default_constant_IV` when
-//!   `default_Per_Sample_IV_Size == 0`, otherwise the per-sample IV from
-//!   `senc` — seeds the *first* encrypted block of *every* subsample's
-//!   protected range (the chain resets at each subsample boundary, it does
-//!   not carry over); within one subsample's range the chain then continues
-//!   seamlessly from each encrypted block's ciphertext to the next, skip
-//!   bytes never entering the chain. `cenc`'s CTR counter, by contrast, does
-//!   advance continuously across the whole sample regardless of subsample
-//!   boundaries — the two ciphers differ here. This `cbcs` chain-reset rule
-//!   was triangulated against Bento4's `mp4decrypt` and Shaka Packager (ISO/IEC
-//!   23001-7 itself is not owned by this project, so the reference
-//!   implementations are the source of truth) — see `cenc_crypto`'s module
-//!   docs for the full derivation, including the earlier
-//!   cross-subsample-continuous version's divergence from Bento4.
-//! - **`sinf`/`frma` unwrap**: ISO/IEC 14496-12:2026 §13.4 — after decryption the
-//!   track's coded data is in the original (`frma`) format.
-//! - **Movie fragments** (`moof`/`traf`/`tfhd`/`trun`): ISO/IEC 14496-12:2026 §8.8.
+//! - **AES-CTR (`cenc`) mode**: ISO/IEC 23001-7 §10.1 — the per-sample IV is
+//!   the counter block (8- or 16-byte, left-justified and zero-padded to 16)
+//!   with the low 64 bits acting as the AES block counter.
+//! - **AES-CBC pattern (`cbcs`) mode**: ISO/IEC 23001-7 §10.2 — each protected
+//!   range CBC-decrypts `default_crypt_byte_block` blocks then skips
+//!   `default_skip_byte_block`, with the chain reset at each subsample.
+//! - **`sinf`/`frma` unwrap**: ISO/IEC 14496-12:2026 §13.4.
 //!
-//! No AES is rolled by hand: `cenc_crypto` wraps the RustCrypto
-//! [`aes`], [`ctr`], and [`cbc`] crates for the block cipher and mode work.
-//! This module is gated on the `cenc` feature.
+//! No AES is rolled by hand: `cenc_crypto` wraps the RustCrypto [`aes`],
+//! [`ctr`], and [`cbc`] crates. This module is gated on the `cenc` feature.
 
-use crate::TrackId;
-use broadcast_common::len::need_in;
-use broadcast_common::timescale::Timescale;
 use core::fmt;
 
-use alloc::collections::BTreeMap;
-use alloc::string::ToString;
+use alloc::boxed::Box;
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 
-use broadcast_common::{Decrypt, Parse};
+use broadcast_common::stage::{Stage, Timestamp};
+use isobmff::cenc::{KEY_LEN, TrackEncryptionBox};
 
-use isobmff::box_types::{
-    BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxIter, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET,
-    box_body, descend_boxes, find_box, parse_box,
-};
-// Re-exported (not just `use`d) so `transmux::cenc_decrypt::CencScheme` keeps
-// resolving for existing callers even though the type now lives in
-// `crate::cenc` (issue #564 — one shared definition for decrypt/encrypt/IR).
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
-use crate::ir::{ConstantIvSenc, SampleProtection, TrackProtection};
-use crate::media::Media;
+use crate::ir::{CodecConfig, DataIdentity, TrackId, TrackProtection, TrackSpec};
+use crate::mux_stage::MuxInput;
 pub use broadcast_common::cenc::CencScheme;
-use isobmff::cenc::{KEY_LEN, SENC, SampleEncryptionEntry, TrackEncryptionBox};
-use isobmff::init_segment::{MDIA, MINF, MOOV, MVHD, STBL, STSD, SampleTableBox, TKHD, TRAK};
-use isobmff::movie_fragment::{
-    MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC, TFHD, TRAF, TRUN, TrackFragmentHeaderBox,
-    TrackFragmentRunBox,
-};
-use isobmff::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox};
-use isobmff::sample_table::TrackCursor;
-use isobmff::segments::{MDAT, MOOF};
 
 /// A map of content keys, keyed by 16-byte Key ID (KID).
 ///
-/// The [`Decrypt::Keys`] material for [`CencDecryptor`]: each protected sample's
-/// KID (from `tenc.default_kid`) selects a 16-byte AES-128 content key.
+/// Each protected sample's KID (from `tenc.default_kid`) selects a 16-byte
+/// AES-128 content key.
 #[derive(Clone, Default)]
 pub struct KeyMap {
     keys: BTreeMap<[u8; KEY_LEN], [u8; KEY_LEN]>,
 }
 
 /// Manual `Debug`: lists the (non-secret) KIDs this map holds, never the
-/// content key bytes paired with them (a derived `Debug` over the
-/// `BTreeMap<kid, key>` would print both — a `tracing::debug!`/`dbg!`/panic
-/// message of a value holding a `KeyMap` would then write live content keys
-/// to logs).
+/// content key bytes paired with them.
 impl fmt::Debug for KeyMap {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("KeyMap")
@@ -129,9 +62,7 @@ impl fmt::Debug for KeyMap {
     }
 }
 
-/// Constant-time in the key bytes (`subtle`): comparing two key maps must not
-/// leak how long a prefix of a content key matched. The KIDs (not secret) and
-/// the entry count are compared normally.
+/// Constant-time in the key bytes (`subtle`).
 impl PartialEq for KeyMap {
     fn eq(&self, other: &Self) -> bool {
         use subtle::ConstantTimeEq;
@@ -148,8 +79,7 @@ impl PartialEq for KeyMap {
 
 impl Eq for KeyMap {}
 
-/// Wipe the content keys on drop (issue #1142) so they do not linger in freed
-/// memory.
+/// Wipe the content keys on drop (issue #1142).
 impl Drop for KeyMap {
     fn drop(&mut self) {
         use zeroize::Zeroize;
@@ -184,1936 +114,494 @@ impl KeyMap {
     }
 }
 
-/// Per-track CENC crypto metadata recovered from a protected fMP4.
-#[derive(Debug, Clone)]
-struct TrackCrypto {
-    /// The track's real `tkhd.track_id` (used to match this track's samples in
-    /// [`crate::media::Media`], and to match `moof`/`traf` fragments by
-    /// `tfhd.track_id` in [`harvest_fragment_senc`]).
-    track_id: TrackId,
-    /// The `tenc` defaults (KID, IV size, protection flag, and — for `cbcs` —
-    /// the pattern's `crypt`:`skip` block counts and optional constant IV).
-    tenc: TrackEncryptionBox,
-    /// The original (unprotected) codec four-CC from `frma`.
-    original_format: [u8; BOX_TYPE_SIZE],
-    /// The protection scheme from `schm`.
-    scheme: CencScheme,
-    /// Per-sample encryption info (IV + subsample map), in decode order.
-    ///
-    /// For a progressive file this is the single `stbl`-level `senc`'s
-    /// entries; for a fragmented file this is every `moof`'s `traf`-level
-    /// `senc` entries, concatenated in file (fragment) order — see
-    /// [`harvest_fragment_senc`].
-    samples: Vec<SampleEncryptionEntry>,
+/// One announced track's cipher state.
+enum TrackCrypto {
+    /// Announced without `TrackSpec::protection`: samples are cleartext unless
+    /// they carry their own auxiliary information, which is held until a
+    /// `Track` update announces the `tenc`.
+    Cleartext,
+    /// A protected track's scheme, `tenc` defaults, and content key.
+    Protected {
+        scheme: CencScheme,
+        tenc: TrackEncryptionBox,
+        key: [u8; KEY_LEN],
+    },
 }
 
-/// Decrypts CENC-protected samples of a [`Media`] using a [`KeyMap`].
+/// Samples held until their track's `tenc` arrives.
+#[derive(Default)]
+struct Pending {
+    samples: Vec<crate::ir::Sample>,
+    bytes: u64,
+}
+
+/// Decrypts CENC-protected samples one at a time.
 ///
-/// Construct one from the protected file's bytes with [`CencDecryptor::from_fmp4`]
-/// (which harvests the `tenc`/`senc`/`sinf` crypto metadata), then either
-/// [`demux`](CencDecryptor::demux) the encrypted samples into a [`Media`] or,
-/// if you already have a [`Media`] of the encrypted samples, call
-/// [`Decrypt::decrypt`] directly. The decryptor matches each track's samples to
-/// the recovered per-sample IV + subsample map by decode-order index.
-#[derive(Clone)]
-pub struct CencDecryptor {
-    /// The whole protected fMP4 file (borrowing is avoided so the decryptor is
-    /// `'static`-friendly for the trait impl; a `Vec` copy is acceptable here).
-    file: bytes::Bytes,
-    /// Per-track crypto metadata, in `moov` track order.
-    tracks: Vec<TrackCrypto>,
+/// A sample whose IV size disagrees with its track's `tenc` is a typed error
+/// naming the track, never decrypted with a guessed IV. Samples that arrive
+/// before a `Track` update names the `tenc` are held (up to the hostile-input
+/// cap [`isobmff::Limits::default`] sets) and decrypted only once the real
+/// `tenc` is known.
+pub struct CencDecryptStage {
+    keys: KeyMap,
+    tracks: BTreeMap<TrackId, TrackCrypto>,
+    pending: BTreeMap<TrackId, Pending>,
+    pending_bytes: u64,
+    max_pending_bytes: u64,
+    ready: VecDeque<MuxInput>,
 }
 
-/// Manual `Debug`: prints the file's length rather than its bytes (this type
-/// never holds a content key — those are supplied out of band to
-/// [`Decrypt::decrypt`] as a [`KeyMap`] — but a derived `Debug` would still
-/// dump the whole protected file, megabytes of ciphertext, into any
-/// `tracing`/`dbg!`/panic message of a value holding one).
-impl fmt::Debug for CencDecryptor {
+impl fmt::Debug for CencDecryptStage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CencDecryptor")
-            .field("file_len", &self.file.len())
-            .field("tracks", &self.tracks)
+        f.debug_struct("CencDecryptStage")
+            .field("kids", &self.keys)
+            .field("tracks", &self.tracks.len())
+            .field("pending_bytes", &self.pending_bytes)
             .finish()
     }
 }
 
-impl CencDecryptor {
-    /// Build a decryptor by harvesting CENC metadata from a protected fMP4.
-    ///
-    /// Parses each track's `sinf` (`frma` + `schm` + `schi/tenc`) and its
-    /// per-sample IV/subsample map (`senc` — a single `stbl`-level box for a
-    /// progressive file, or every `moof`'s `traf`-level box, concatenated, for
-    /// a fragmented one). Fails with [`Error::UnexpectedBox`] if no protected
-    /// track is found.
-    ///
-    /// Copies `file` once to own it; a caller that already holds a
-    /// [`bytes::Bytes`] should use [`Self::from_fmp4_bytes`], which shares the
-    /// buffer instead (and lets [`Self::demux`] hand out samples as zero-copy
-    /// slices of it).
-    pub fn from_fmp4(file: &[u8]) -> Result<Self> {
-        Self::from_fmp4_bytes(bytes::Bytes::copy_from_slice(file))
-    }
-
-    /// [`Self::from_fmp4`] over an already-shared buffer: no copy of the file,
-    /// and every sample [`Self::demux`] returns is a slice of it (audit r05-O2).
-    pub fn from_fmp4_bytes(file: bytes::Bytes) -> Result<Self> {
-        let mut tracks = Vec::new();
-        harvest_tracks(&file, &mut tracks)?;
-        if tracks.is_empty() {
-            return Err(Error::UnexpectedBox {
-                expected: "a protected track (sinf/tenc + senc)",
-            });
+impl CencDecryptStage {
+    /// A decrypt stage over `keys`.
+    #[must_use]
+    pub fn new(keys: KeyMap) -> Self {
+        Self {
+            keys,
+            tracks: BTreeMap::new(),
+            pending: BTreeMap::new(),
+            pending_bytes: 0,
+            max_pending_bytes: isobmff::Limits::default().max_need_bytes(),
+            ready: VecDeque::new(),
         }
-        Ok(Self { file, tracks })
     }
 
-    /// The original (unprotected) codec four-CC of the first protected track,
-    /// from its `frma` box (e.g. `*b"avc1"`).
-    pub fn original_format(&self) -> [u8; BOX_TYPE_SIZE] {
-        self.tracks
-            .first()
-            .map(|t| t.original_format)
-            .unwrap_or(*b"\0\0\0\0")
-    }
-
-    /// The protection scheme of the first protected track (`cenc`/`cbcs`).
-    pub fn scheme(&self) -> Option<CencScheme> {
-        self.tracks.first().map(|t| t.scheme)
-    }
-
-    /// The `tenc` (default KID / IV size) of the first protected track.
-    pub fn track_encryption(&self) -> Option<&TrackEncryptionBox> {
-        self.tracks.first().map(|t| &t.tenc)
-    }
-
-    /// The per-sample encryption entries (IV + subsamples) of the first
-    /// protected track, in decode order.
-    pub fn sample_entries(&self) -> &[SampleEncryptionEntry] {
-        self.tracks
-            .first()
-            .map(|t| t.samples.as_slice())
-            .unwrap_or(&[])
-    }
-
-    /// Demux the protected fMP4 into a [`Media`] carrying the *encrypted* coded
-    /// samples in decode order, one [`crate::media::Track`] per protected track.
+    /// Set the byte cap for samples held while waiting for a late `tenc`.
     ///
-    /// The returned samples are still encrypted; pass the [`Media`] to
-    /// [`Decrypt::decrypt`] with the content keys to obtain cleartext. Works for
-    /// both progressive and fragmented sources — see the module docs.
-    ///
-    /// Only protected **AVC** tracks are reconstructed: a protected track whose
-    /// original format is not `avc1` (a CENC asset's `enca` audio leg, or a
-    /// protected HEVC video) is **skipped** so the rest still demuxes (audit
-    /// r05-W6), as are unprotected tracks. Each skipped **protected** track is
-    /// recorded in [`Media::skipped`](crate::ir::Media::skipped) (its original
-    /// format's FourCC and the reason), as is an **unprotected** track — so no
-    /// drop is silent; a `Media`
-    /// narrowed to a skipped track fails in [`Decrypt::decrypt`] with "no
-    /// protected-source track matches this media track's track_id" rather than
-    /// silently passing ciphertext through.
-    pub fn demux(&self) -> Result<Media> {
-        demux_protected(&self.file, &self.tracks)
+    /// The default is the hostile-input cap [`isobmff::Limits::default`]
+    /// states; a caller may set its own policy.
+    #[must_use]
+    pub fn with_max_pending_bytes(mut self, max_pending_bytes: u64) -> Self {
+        self.max_pending_bytes = max_pending_bytes;
+        self
     }
 
-    /// Decrypt one sample's bytes in place, dispatching on the track's scheme.
-    ///
-    /// Delegates to the shared cipher core in `cenc_crypto`: `cenc`
-    /// (AES-CTR, ISO/IEC 23001-7 §10.1) via `cenc_crypto::apply_ctr` — the
-    /// counter runs continuously across subsample boundaries; `cbcs`
-    /// (AES-CBC pattern, ISO/IEC 23001-7 §10.2) via
-    /// `cenc_crypto::cbcs_sample` with `CbcsOp::Decrypt` — the CBC chain
-    /// instead *resets* to the sample's seed IV at the start of every
-    /// subsample's protected range (see `cenc_crypto`'s module docs).
-    ///
-    /// Returns whether [`cenc_crypto::rewrite_in_place`]'s zero-copy fast path
-    /// was taken (media plane step 2b, G12) — see that function's docs.
-    fn decrypt_sample(
-        scheme: CencScheme,
-        tenc: &TrackEncryptionBox,
-        iv: &[u8],
-        subsamples: &[isobmff::cenc::SubSampleEntry],
-        key: &[u8; KEY_LEN],
-        data: &mut bytes::Bytes,
-    ) -> Result<bool> {
-        cenc_crypto::rewrite_in_place(data, |buf| match scheme {
-            CencScheme::Cenc => cenc_crypto::apply_ctr(iv, key, subsamples, buf),
-            CencScheme::Cbcs => {
-                cenc_crypto::cbcs_sample(tenc, iv, subsamples, key, buf, CbcsOp::Decrypt)
+    fn on_track(&mut self, mut spec: TrackSpec) -> Result<()> {
+        let id = spec.track_id;
+        let protection = spec.protection.take();
+        match protection {
+            Some(TrackProtection {
+                scheme: _,
+                ref tenc,
+                ..
+            }) if tenc.default_is_protected == 0 => {
+                self.tracks.insert(id, TrackCrypto::Cleartext);
             }
-            // `CencScheme` is `#[non_exhaustive]` and now lives in
-            // `broadcast-common`, so this arm is reachable if a future scheme
-            // (`cens`/`cbc1`) is added there before the cipher for it lands
-            // here. Reject rather than guess: picking the wrong cipher would
-            // silently emit garbage plaintext.
+            Some(protection) => {
+                let scheme = protection.scheme;
+                if !matches!(scheme, CencScheme::Cenc | CencScheme::Cbcs) {
+                    return Err(Error::UnsupportedCencScheme { scheme });
+                }
+                let key =
+                    *self
+                        .keys
+                        .get(&protection.tenc.default_kid)
+                        .ok_or(Error::InvalidInput(
+                            "no content key for the track's default_KID",
+                        ))?;
+                restore_sample_entry(&mut spec.config);
+                self.tracks.insert(
+                    id,
+                    TrackCrypto::Protected {
+                        scheme,
+                        tenc: protection.tenc,
+                        key,
+                    },
+                );
+            }
+            None => {
+                self.tracks.insert(id, TrackCrypto::Cleartext);
+            }
+        }
+        self.ready.push_back(MuxInput::Track(Box::new(spec)));
+        self.drain_pending(id)
+    }
+
+    fn on_sample(&mut self, track: TrackId, sample: crate::ir::Sample) -> Result<()> {
+        match self.tracks.get(&track) {
+            Some(TrackCrypto::Protected { .. }) => self.decrypt_and_emit(track, sample),
+            Some(TrackCrypto::Cleartext) if sample.protection.is_some() => {
+                let bytes = u64::try_from(sample.data.len()).unwrap_or(u64::MAX);
+                if self.pending_bytes.saturating_add(bytes) > self.max_pending_bytes {
+                    return Err(Error::LimitExceeded {
+                        what: "cenc samples held for a late tenc",
+                        limit: self.max_pending_bytes,
+                    });
+                }
+                self.pending_bytes = self.pending_bytes.saturating_add(bytes);
+                let pending = self.pending.entry(track).or_default();
+                pending.bytes = pending.bytes.saturating_add(bytes);
+                pending.samples.push(sample);
+                Ok(())
+            }
+            Some(TrackCrypto::Cleartext) => {
+                self.ready.push_back(MuxInput::Sample { track, sample });
+                Ok(())
+            }
+            None => Err(Error::CencUnannouncedTrack { track }),
+        }
+    }
+
+    fn drain_pending(&mut self, track: TrackId) -> Result<()> {
+        let Some(pending) = self.pending.remove(&track) else {
+            return Ok(());
+        };
+        self.pending_bytes = self.pending_bytes.saturating_sub(pending.bytes);
+        for sample in pending.samples {
+            match self.tracks.get(&track) {
+                Some(TrackCrypto::Protected { .. }) => self.decrypt_and_emit(track, sample)?,
+                Some(TrackCrypto::Cleartext) => {
+                    if sample.protection.is_some() {
+                        return Err(Error::CencMissingSampleProtection { track });
+                    }
+                    self.ready.push_back(MuxInput::Sample { track, sample });
+                }
+                None => return Err(Error::CencUnannouncedTrack { track }),
+            }
+        }
+        Ok(())
+    }
+
+    fn decrypt_and_emit(&mut self, track: TrackId, mut sample: crate::ir::Sample) -> Result<()> {
+        let Some(TrackCrypto::Protected { scheme, tenc, key }) = self.tracks.get(&track) else {
+            return Err(Error::CencUnannouncedTrack { track });
+        };
+        let scheme = *scheme;
+        let (iv, subsamples) = if tenc.default_per_sample_iv_size == 0 {
+            let iv = tenc
+                .default_constant_iv
+                .as_ref()
+                .ok_or(Error::CencMissingSampleProtection { track })?
+                .clone();
+            let subsamples = sample
+                .protection
+                .as_ref()
+                .map(|p| p.subsamples.clone())
+                .unwrap_or_default();
+            (iv, subsamples)
+        } else {
+            let protection = sample
+                .protection
+                .as_ref()
+                .ok_or(Error::CencMissingSampleProtection { track })?;
+            if protection.iv.len() != usize::from(tenc.default_per_sample_iv_size) {
+                return Err(Error::CencIvSizeMismatch {
+                    track,
+                    tenc: tenc.default_per_sample_iv_size,
+                    sample: protection.iv.len(),
+                });
+            }
+            (protection.iv.to_vec(), protection.subsamples.clone())
+        };
+        cenc_crypto::validate_sample_decrypt(scheme, tenc, &iv, &subsamples, sample.data.len())?;
+        cenc_crypto::rewrite_in_place(&mut sample.data, |buf| match scheme {
+            CencScheme::Cenc => cenc_crypto::apply_ctr(&iv, key, &subsamples, buf),
+            CencScheme::Cbcs => {
+                cenc_crypto::cbcs_sample(tenc, &iv, &subsamples, key, buf, CbcsOp::Decrypt)
+            }
             other => Err(Error::UnsupportedCencScheme { scheme: other }),
-        })
+        })?;
+        sample.protection = None;
+        self.ready.push_back(MuxInput::Sample { track, sample });
+        Ok(())
     }
 }
 
-impl Decrypt for CencDecryptor {
-    type Media = Media;
-    type Keys = KeyMap;
+/// Restore a protected `encv`/`enca` data identity to its cleartext sample
+/// entry (ISO/IEC 14496-12:2026 §13.4.1).
+fn restore_sample_entry(config: &mut CodecConfig) {
+    if let CodecConfig::Data {
+        identity: DataIdentity::Mp4 { sample_entry, .. },
+    } = config
+        && let Some(clear) = isobmff::cenc::clear_sample_entry(sample_entry)
+    {
+        *sample_entry = clear.into();
+    }
+}
+
+impl Stage for CencDecryptStage {
+    type In<'a> = MuxInput;
+    type Out = MuxInput;
     type Error = Error;
 
-    /// Decrypt every protected track of `media` in place.
-    ///
-    /// Each media track is paired with its recovered crypto record **by
-    /// `track_id`** ([`crate::pipeline::TrackSpec::track_id`] against the
-    /// `tkhd.track_id` harvested from the protected source) — never by
-    /// position. Positional pairing silently
-    /// mis-decrypts whenever the `Media`'s track order or membership differs
-    /// from the source's `moov` order: a [`select_tracks_by`](crate::repackage::select_tracks_by)-narrowed
-    /// `Media` holding only the audio track would be decrypted with the
-    /// *video* track's IVs, and if the two tracks' sample counts happened to
-    /// coincide the count check below would not catch it either — it would
-    /// just return `Ok` over garbage.
-    ///
-    /// A media track with no matching record is an error (the caller asked for
-    /// a track this decryptor has no crypto metadata for); unmatched *records*
-    /// are fine — that is exactly the narrowed-`Media` case.
-    ///
-    /// # Atomicity
-    ///
-    /// Every track is validated in full **before any sample is decrypted**
-    /// (audit r05-W5): the record match, `tenc.default_is_protected`, the
-    /// content key's presence, the sample count, and every sample's
-    /// content-dependent precondition (IV length, subsample-map coverage,
-    /// `cbcs` pattern) are checked in a first pass over the whole `Media`.
-    /// Without it, a missing key on track 2 or a malformed subsample map on
-    /// sample `k` returned `Err` after track 1 (or samples `0..k`) had already
-    /// been decrypted in place — the caller could not tell which samples were
-    /// now plaintext, and retrying under CTR XORs those samples *back* to
-    /// ciphertext. A rejected call now leaves `media` byte-identical.
-    fn decrypt(&self, media: &mut Media, keys: &KeyMap) -> Result<()> {
-        // ── Pass 1: prove the whole `Media` decryptable, mutate nothing ──
-        for track in media.tracks.iter() {
-            self.tracks
-                .iter()
-                .find(|c| c.track_id == track.spec.track_id)
-                .ok_or(Error::InvalidInput(
-                    "no protected-source track matches this media track's track_id",
-                ))?;
-            let protection = track.spec.protection.as_ref().ok_or(Error::InvalidInput(
-                "this media track carries no CENC track protection",
-            ))?;
-            if protection.tenc.default_is_protected == 0 {
-                // Track is not protected — nothing to do.
-                continue;
-            }
-            if keys.get(&protection.tenc.default_kid).is_none() {
-                return Err(Error::InvalidInput(
-                    "no content key for the track's default_KID",
-                ));
-            }
-            for sample in track.samples.iter() {
-                let sample_protection = sample.protection.as_deref().ok_or(Error::InvalidInput(
-                    "a protected media sample carries no CENC auxiliary information",
-                ))?;
-                crate::cenc_crypto::validate_sample_decrypt(
-                    protection.scheme,
-                    &protection.tenc,
-                    &sample_protection.iv,
-                    &sample_protection.subsamples,
-                    sample.data.len(),
-                )?;
+    fn feed(&mut self, input: Self::In<'_>, _now: Timestamp) -> Result<()> {
+        match input {
+            MuxInput::Track(spec) => self.on_track(*spec),
+            MuxInput::Sample { track, sample } => self.on_sample(track, sample),
+            other => {
+                self.ready.push_back(other);
+                Ok(())
             }
         }
+    }
 
-        // ── Pass 2: decrypt. Pass 1 proved every precondition the cipher
-        // checks, and the same plans (IVs, subsample maps) are consumed
-        // unmodified — but nothing here is `expect`ed: a panic on a path
-        // driven by untrusted input is never acceptable, so the same lookups
-        // are repeated as `Err` (they cannot fire, but if the two passes ever
-        // drifted the result is an error, not an abort). ──
-        for track in media.tracks.iter_mut() {
-            self.tracks
-                .iter()
-                .find(|c| c.track_id == track.spec.track_id)
-                .ok_or(Error::InvalidInput(
-                    "no protected-source track matches this media track's track_id",
-                ))?;
-            let protection = track.spec.protection.as_ref().ok_or(Error::InvalidInput(
-                "this media track carries no CENC track protection",
-            ))?;
-            if protection.tenc.default_is_protected == 0 {
-                continue;
-            }
-            let key = keys
-                .get(&protection.tenc.default_kid)
-                .ok_or(Error::InvalidInput(
-                    "no content key for the track's default_KID",
-                ))?;
-            for sample in track.samples.iter_mut() {
-                let sample_protection = sample.protection.as_deref().ok_or(Error::InvalidInput(
-                    "a protected media sample carries no CENC auxiliary information",
-                ))?;
-                CencDecryptor::decrypt_sample(
-                    protection.scheme,
-                    &protection.tenc,
-                    &sample_protection.iv,
-                    &sample_protection.subsamples,
-                    key,
-                    &mut sample.data,
-                )?;
-            }
+    fn poll(&mut self) -> Option<MuxInput> {
+        self.ready.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        if let Some((track, _)) = self.pending.iter().next() {
+            return Err(Error::CencMissingSampleProtection { track: *track });
         }
         Ok(())
     }
 }
 
-// ---------------------------------------------------------------------------
-// fMP4 harvesting: recover per-track crypto metadata + encrypted samples.
-// ---------------------------------------------------------------------------
-
-/// `creation_time` and `modification_time` precede `timescale` in `mdhd`
-/// (ISO/IEC 14496-12:2026 §8.4.2).
-const MDHD_TIMES_BEFORE_TIMESCALE: usize = 2;
-/// `stsd` fixed header after the FullBox: `entry_count`.
-const STSD_ENTRY_COUNT: usize = 4;
-/// A `VisualSampleEntry` fixed body length before its child boxes
-/// (ISO/IEC 14496-12:2026 §12.1.3): 78 bytes — 6 reserved, 2 data_ref, 16
-/// predefined/reserved, 2 width, 2 height, 4 hres, 4 vres, 4 reserved, 2
-/// frame_count, 32 compressorname, 2 depth, 2 predefined.
-const VISUAL_SAMPLE_ENTRY_HDR: usize = 78;
-
-/// Recover crypto metadata for every protected track in `file`.
-///
-/// Works for both progressive (single `moov`/`mdat`) and fragmented
-/// (`moov` + `moof`/`mdat`*) sources: [`harvest_track`] recovers each track's
-/// `sinf`/`tenc` defaults (and, for a progressive file, its single `senc`);
-/// for a fragmented file [`harvest_fragment_senc`] walks every `moof` and
-/// appends each `traf`'s `senc` entries, in file order.
-fn harvest_tracks(file: &[u8], out: &mut Vec<TrackCrypto>) -> Result<()> {
-    let moov = find_box(file, &MOOV).ok_or(Error::UnexpectedBox { expected: "moov" })?;
-    let fragmented = find_box(file, &MOOF).is_some();
-    for trak in BoxIter::new(box_body(moov, 0, "moov body")?) {
-        let trak = trak?;
-        if !trak.header.box_type.is(&TRAK) {
-            continue;
-        }
-        if let Some(crypto) = harvest_track(trak.bytes, fragmented)? {
-            out.push(crypto);
-        }
-    }
-    if fragmented {
-        harvest_fragment_senc(file, out)?;
-    }
-    Ok(())
-}
-
-/// Recover one track's crypto metadata, if it is protected.
-///
-/// `fragmented` selects where the per-sample `senc` lives: `false` reads the
-/// single `stbl`-level `senc` (progressive fMP4, unchanged from before);
-/// `true` leaves `samples` empty — the caller ([`harvest_tracks`]) fills it in
-/// afterwards from every `moof`'s `traf`-level `senc` via
-/// [`harvest_fragment_senc`], since a fragmented file carries no `senc` in
-/// `stbl` at all.
-fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
-    // Navigate trak → mdia → minf → stbl.
-    let Some(stbl) = descend_boxes(trak, &[&MDIA, &MINF, &STBL]) else {
-        return Ok(None);
-    };
-
-    // sinf lives inside the protected sample entry (encv/enca) under stsd.
-    let Some(stsd) = find_box(box_body(stbl, 0, "stbl body")?, &STSD) else {
-        return Ok(None);
-    };
-    let Some(sinf) = find_sinf_in_stsd(stsd) else {
-        return Ok(None);
-    };
-    let sinf_parsed = isobmff::cenc::ProtectionSchemeInfoBox::parse(sinf)?;
-    let scheme = sinf_parsed
-        .scheme_type
-        .as_ref()
-        .and_then(|s| CencScheme::from_four_cc(&s.scheme_type))
-        .ok_or(Error::InvalidInput(
-            "sinf missing or unknown schm scheme_type",
-        ))?;
-    let tenc = sinf_parsed
-        .scheme_info
-        .as_ref()
-        .and_then(|si| si.tenc.clone())
-        .ok_or(Error::UnexpectedBox {
-            expected: "tenc inside schi",
-        })?;
-    let original_format = sinf_parsed.original_format.data_format;
-
-    // A `seig` ('CencSampleEncryptionInformationGroupEntry') sample group in
-    // `stbl` means some run of this track's samples decrypts under a KID/IV
-    // override, not the `tenc` default read above — key rotation within a
-    // single track. This decryptor only ever decrypts with the track-wide
-    // `tenc.default_KID`, so silently proceeding here would decrypt every
-    // group-overridden sample with the wrong key and produce plausible but
-    // wrong plaintext, with no structural signal anything went wrong. Reject
-    // explicitly instead (issue #990) until seig is actually implemented.
-    if container_has_seig_sgpd(stbl)? {
-        return Err(Error::UnsupportedFeature(
-            "seig sample-group key rotation not implemented",
-        ));
-    }
-
-    let tkhd = find_box(box_body(trak, 0, "trak body")?, &TKHD)
-        .ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
-    let track_id = isobmff::init_segment::TrackHeaderBox::parse(tkhd)?.track_id;
-
-    let samples = if fragmented {
-        // Filled in later by `harvest_fragment_senc`, once every `moof` has
-        // been walked (each `traf`'s `senc` covers only that fragment).
-        Vec::new()
-    } else {
-        // Progressive fMP4: a single senc lives inside stbl, covering every
-        // sample of the (fragment-less) track.
-        let senc = find_box(box_body(stbl, 0, "stbl body")?, &SENC)
-            .ok_or(Error::UnexpectedBox { expected: "senc" })?;
-        parse_senc_box(senc, tenc.default_per_sample_iv_size)?.entries
-    };
-
-    Ok(Some(TrackCrypto {
-        track_id: track_id.into(),
-        tenc,
-        original_format,
-        scheme,
-        samples,
-    }))
-}
-
-/// Parse a full `senc` box (header + FullBox + body) into its typed form,
-/// given the track's `tenc.default_per_sample_iv_size`.
-fn parse_senc_box(
-    senc: &[u8],
-    per_sample_iv_size: u8,
-) -> Result<isobmff::cenc::SampleEncryptionBox> {
-    need_in(
-        senc,
-        BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE,
-        "senc header",
-    )?;
-    let version = senc[BOX_HEADER_MIN_SIZE];
-    let mut flag_word = [0u8; BOX_TYPE_SIZE];
-    flag_word[FULLBOX_FLAGS_OFFSET..].copy_from_slice(
-        &senc[BOX_HEADER_MIN_SIZE + FULLBOX_FLAGS_OFFSET..BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE],
-    );
-    let flags = u32::from_be_bytes(flag_word);
-    isobmff::cenc::SampleEncryptionBox::parse_body(
-        &senc[BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE..],
-        version,
-        flags,
-        per_sample_iv_size,
-    )
-    .map_err(Error::from)
-}
-
-/// Walk every top-level `moof` in a fragmented file and append each `traf`'s
-/// `senc` entries to the matching (by `tfhd.track_id`) [`TrackCrypto`], in
-/// file order.
-///
-/// Reuses the already-typed [`TrackFragmentHeaderBox`] parser (from
-/// [`isobmff::movie_fragment`]) to recover `tfhd.track_id` — `senc` itself is
-/// not part of that crate's typed `moof`/`traf` structures (only
-/// `tfhd`/`tfdt`/`trun` are), so it is located directly among the `traf`'s
-/// sibling boxes with this module's own box-navigation helpers, the same way
-/// [`find_sinf_in_stsd`] locates `sinf` among an `stsd` entry's children.
-///
-/// A `traf` with no matching protected track (e.g. an unencrypted audio
-/// track) is skipped. A `traf` with no `senc` at all is only ever legitimate
-/// for a **constant-IV, whole-sample-protected** track
-/// (`tenc.default_per_sample_iv_size == 0`) — the one shape
-/// [`isobmff::writer::fragmented::protect_media_segment`] (via its private
-/// `build_cenc_fragment_boxes`) deliberately omits `senc`/`saiz`/`saio` for,
-/// since every sample of such a track decrypts from `tenc.default_constant_IV`
-/// alone and there is nothing per-sample for `senc` to carry (ISO/IEC
-/// 23001-7 §12.2/§12.3). That shape needs placeholder entries synthesized
-/// here (one empty IV/subsample-map pair per `trun` sample) so
-/// [`Decrypt::decrypt`]'s per-track sample-count pairing still lines up —
-/// otherwise a legitimately senc-less fragment would fail with the generic
-/// "sample count mismatch" error despite being fully decryptable. For any
-/// other track (`default_per_sample_iv_size != 0`), a missing `senc` should
-/// not happen for a genuinely protected track; it is tolerated here rather
-/// than treated as fatal, and the same sample-count check downstream will
-/// still catch it.
-fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> {
-    for moof in BoxIter::new(file)
-        .filter_map(|b| b.ok())
-        .filter(|b| b.header.box_type.is(&MOOF))
-    {
-        let moof = moof.bytes;
-        for traf in BoxIter::new(box_body(moof, 0, "moof body")?) {
-            let traf = traf?;
-            if !traf.header.box_type.is(&TRAF) {
-                continue;
-            }
-            let traf = traf.bytes;
-            let Some(tfhd) = find_box(box_body(traf, 0, "traf body")?, &TFHD) else {
-                continue;
-            };
-            need_in(
-                tfhd,
-                BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE,
-                "tfhd header",
-            )?;
-            let tfhd_parsed =
-                TrackFragmentHeaderBox::parse_body(isobmff::box_types::parse_box(tfhd)?.0.body)?;
-
-            let Some(crypto) = tracks
-                .iter_mut()
-                .find(|t| t.track_id.value() == tfhd_parsed.track_id.value())
-            else {
-                // This traf's track isn't one we're decrypting (e.g. the
-                // unencrypted audio track alongside a protected video track).
-                continue;
-            };
-            // A per-fragment `seig` override (a `traf`-level `sgpd`/`sbgp`,
-            // the common CMAF shape for key rotation across fragments) is
-            // just as unsafe to ignore as the `stbl`-level one checked in
-            // `harvest_track` — see that call site's comment (issue #990).
-            if container_has_seig_sgpd(traf)? {
-                return Err(Error::UnsupportedFeature(
-                    "seig sample-group key rotation not implemented",
-                ));
-            }
-            match find_box(box_body(traf, 0, "traf body")?, &SENC) {
-                Some(senc) => {
-                    let senc_parsed = parse_senc_box(senc, crypto.tenc.default_per_sample_iv_size)?;
-                    crypto.samples.extend(senc_parsed.entries);
-                }
-                None if crypto.tenc.default_per_sample_iv_size == 0 => {
-                    let sample_count = traf_trun_sample_count(traf)?;
-                    crypto.samples.extend(
-                        core::iter::repeat_with(|| SampleEncryptionEntry {
-                            initialization_vector: Vec::new(),
-                            subsamples: Vec::new(),
-                        })
-                        .take(sample_count),
-                    );
-                }
-                None => {
-                    // Should not happen for a genuinely protected,
-                    // per-sample-IV track; the sample-count mismatch check in
-                    // `Decrypt::decrypt` will catch it.
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-/// Sum every `trun`'s sample count inside one `traf` (ISO/IEC 14496-12:2026
-/// §8.8.8) — used only to synthesize placeholder `senc` entries for a
-/// legitimately senc-less constant-IV/whole-sample fragment (see
-/// [`harvest_fragment_senc`]).
-fn traf_trun_sample_count(traf: &[u8]) -> Result<usize> {
-    let mut total = 0usize;
-    for trun in BoxIter::new(&traf[BOX_HEADER_MIN_SIZE.min(traf.len())..])
-        .filter_map(|b| b.ok())
-        .filter(|b| b.header.box_type.is(&TRUN))
-    {
-        let parsed = TrackFragmentRunBox::parse_body(trun.body)?;
-        total += parsed.samples.len();
-    }
-    Ok(total)
-}
-
-/// Find the `sinf` box nested inside the (first) `encv`/`enca` sample entry of
-/// an `stsd` box.
-fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
-    // stsd body: FullBox(4) + entry_count(4), then sample entries.
-    let body_start = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + STSD_ENTRY_COUNT;
-    if body_start > stsd.len() {
-        return None;
-    }
-    BoxIter::new(&stsd[body_start..])
-        .filter_map(|b| b.ok())
-        .find(|entry| {
-            let ty = entry.four_cc();
-            ty == *b"encv" || ty == *b"enca"
-        })
-        .and_then(|entry| isobmff::cenc::sinf_of_sample_entry(entry.bytes))
-}
-
-/// The FourCC of the first sample entry in an `stsd` box, as text
-/// (`"unknown"` when the box is too short to hold one).
-fn stsd_entry_fourcc(stsd: &[u8]) -> &'static str {
-    let body_start = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + STSD_ENTRY_COUNT;
-    let Some(first) = stsd.get(body_start..body_start + BOX_HEADER_MIN_SIZE) else {
-        return "unknown";
-    };
-    // The entry's box type is its second four bytes.
-    match &first[4..8] {
-        b"avc1" | b"encv" => "avc1",
-        b"mp4a" | b"enca" => "mp4a",
-        b"hvc1" | b"hev1" => "hvc1",
-        b"vp09" => "vp09",
-        b"av01" => "av01",
-        b"ac-3" => "ac-3",
-        b"ec-3" => "ec-3",
-        b"stpp" => "stpp",
-        b"wvtt" => "wvtt",
-        _ => "unknown",
-    }
-}
-
-/// Demux a protected fMP4 into a [`Media`] of encrypted samples.
-///
-/// Supports both the progressive layout (single `moov`/`mdat`, sample layout
-/// from `stsz`/`stsc`/`stco`, e.g. ffmpeg's `-cenc_aes_ctr`) and fragmented
-/// CMAF (`moov` + one or more `moof`/`mdat` pairs, sample layout from each
-/// fragment's `trun`) — see [`collect_fragment_samples`].
-fn demux_protected(file: &bytes::Bytes, cryptos: &[TrackCrypto]) -> Result<Media> {
-    use crate::media::{Media, Track};
-    use crate::pipeline::{CodecConfig, Sample, TrackSpec};
-    use isobmff::AVCConfigurationBox;
-
-    let moov = find_box(file, &MOOV).ok_or(Error::UnexpectedBox { expected: "moov" })?;
-    let movie_timescale = mvhd_timescale(moov)?;
-    let fragmented = find_box(file, &MOOF).is_some();
-
-    let mut tracks = Vec::new();
-    let mut skipped: Vec<crate::ir::SkippedTrack> = Vec::new();
-    for trak in BoxIter::new(box_body(moov, 0, "moov body")?) {
-        let trak = trak?;
-        if !trak.header.box_type.is(&TRAK) {
-            continue;
-        }
-        let trak = trak.bytes;
-        let Some(stbl) = descend_boxes(trak, &[&MDIA, &MINF, &STBL]) else {
-            continue;
-        };
-        let mdhd = descend_boxes(trak, &[&MDIA])
-            .and_then(|mdia| find_box(box_body(mdia, 0, "mdia body").ok()?, b"mdhd"))
-            .ok_or(Error::UnexpectedBox { expected: "mdhd" })?;
-        let timescale = mdhd_timescale(mdhd)?;
-
-        // Only protected video (encv → original avc1) is reconstructed here.
-        let Some(stsd) = find_box(box_body(stbl, 0, "stbl body")?, &STSD) else {
-            continue;
-        };
-        let Some(sinf) = find_sinf_in_stsd(stsd) else {
-            // An **unprotected** track (no `sinf`) alongside protected ones:
-            // skipped, but recorded so the drop is never silent (audit
-            // r05-W6 follow-up). Its sample-entry FourCC is the `stsd` child.
-            skipped.push(crate::ir::SkippedTrack::new(
-                stsd_entry_fourcc(stsd).to_string(),
-                "unprotected track: CencDecryptor::demux reconstructs protected tracks only"
-                    .to_string(),
-            ));
-            continue;
-        };
-        let sinf_parsed = isobmff::cenc::ProtectionSchemeInfoBox::parse(sinf)?;
-        if &sinf_parsed.original_format.data_format != b"avc1" {
-            // Skip, rather than fail the whole file, a protected track whose
-            // original format is not AVC — a typical `encv`+`enca` CENC
-            // asset's audio leg, or a protected HEVC video (audit r05-W6).
-            // Failing here made an ordinary CENC asset undemuxable entirely.
-            // Recorded in `Media::skipped` so the skip is loud, never silent
-            // (audit r05-W6 follow-up); a caller that needs the track still
-            // gets a clear error from `decrypt`'s "no protected-source track
-            // matches this media track's track_id".
-            let fourcc = core::str::from_utf8(&sinf_parsed.original_format.data_format)
-                .unwrap_or("unknown")
-                .to_string();
-            skipped.push(crate::ir::SkippedTrack::new(
-                fourcc,
-                "protected track whose original format is not avc1: only protected AVC demux is supported"
-                    .to_string(),
-            ));
-            continue;
-        }
-        // Recover the avcC config record from inside the encv entry.
-        let avc_config = find_avcc_config(stsd)?;
-
-        let tkhd = find_box(box_body(trak, 0, "trak body")?, &TKHD)
-            .ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
-        let track_id = isobmff::init_segment::TrackHeaderBox::parse(tkhd)?.track_id;
-
-        let samples = if fragmented {
-            collect_fragment_samples(file, track_id.into())?
-        } else {
-            // Sample byte layout from stsz + stsc + stco (contiguous chunks).
-            let layout = progressive_sample_layout(stbl, file.len())?;
-
-            let mut samples = Vec::with_capacity(layout.len());
-            for &(offset, size) in &layout {
-                let end = offset
-                    .checked_add(size)
-                    .ok_or(Error::InvalidInput("sample offset + size overflow"))?;
-                need_in(file, end, "protected sample data")?;
-                samples.push(Sample {
-                    data: file.slice(offset..end),
-                    // Progressive (non-fragmented) protected-sample recovery
-                    // never parsed `stts`/`ctts` timing here (pre-existing
-                    // behaviour); `None` is the honest representation now
-                    // that a fabricated placeholder timestamp is no longer
-                    // required to populate the struct.
-                    timing: None,
-                    flags: crate::ir::SampleFlags::SYNC,
-                    provenance: None,
-                    display: None,
-                    protection: None,
-                });
-            }
-            samples
-        };
-
-        let mut samples = samples;
-        let crypto = cryptos.iter().find(|c| c.track_id == track_id.into());
-        let mut spec = TrackSpec::new(
-            track_id.into(),
-            timescale,
-            CodecConfig::Avc {
-                config: AVCConfigurationBox::new(avc_config),
-                width: 0,
-                height: 0,
-            },
-        );
-        if let Some(crypto) = crypto {
-            for (sample, entry) in samples.iter_mut().zip(crypto.samples.iter()) {
-                sample.protection = Some(alloc::sync::Arc::new(SampleProtection {
-                    iv: bytes::Bytes::copy_from_slice(&entry.initialization_vector),
-                    subsamples: entry.subsamples.clone(),
-                }));
-            }
-            spec = spec.with_protection(TrackProtection::new(
-                crypto.scheme,
-                crypto.tenc.clone(),
-                ConstantIvSenc::default(),
-            ));
-        }
-        tracks.push(Track::new(spec, samples));
-    }
-
-    if tracks.is_empty() {
-        return Err(Error::UnexpectedBox {
-            expected: "a protected AVC track",
-        });
-    }
-    let mut media = Media::new(tracks, movie_timescale);
-    media.skipped = skipped;
-    Ok(media)
-}
-
-/// Collect one track's coded sample bytes from every `moof`/`mdat` fragment
-/// pair in `file`, in file order.
-///
-/// Reuses the already-typed [`MovieFragmentBox`] parser (which in turn parses
-/// `tfhd`/`tfdt`/`trun`) for the fragment structure — this mirrors
-/// [`crate::mp4_demux::Mp4Demux`]'s own `moof`/`mdat` walk, scoped to a single
-/// `target_track_id` and without decrypting or resolving codec config (the
-/// caller, [`demux_protected`], already has that from `moov`).
-fn collect_fragment_samples(
-    file: &bytes::Bytes,
-    target_track_id: TrackId,
-) -> Result<Vec<crate::pipeline::Sample>> {
-    let mut out = Vec::new();
-    let mut offset = 0usize;
-    // One `mdat` scan for the whole file, shared by every fragment.
-    let mdats = isobmff::frag_offsets::mdat_ranges(file);
-    // Sample bytes copied so far, for the whole file and never refilled: many
-    // `moof`s each claiming one `mdat` would otherwise copy it once per
-    // fragment (audit 20 finding 13).
-    let mut copied_bytes: u64 = 0;
-    let mut pending_moof: Option<(u64, MovieFragmentBox)> = None;
-    // Running absolute decode-time cursor (media plane step 2c), seeded from
-    // the first fragment's `tfdt` for this track (mirrors
-    // `crate::mp4_demux::Mp4Demux`); `Track::new` below anchors
-    // at 0 regardless (this path never fed a caller-visible anchor), so this
-    // is purely to give each recovered sample a real, internally-consistent
-    // `dts`/`pts` rather than `None` — the trun/tfdt here genuinely carries
-    // per-sample timing, so `None` would be a fabricated *absence*, not an
-    // honest one.
-    let mut next_dts: i64 = 0;
-    let mut seeded = false;
-    while offset + BOX_HEADER_MIN_SIZE <= file.len() {
-        let (bx, consumed) = parse_box(&file[offset..])?;
-        if bx.header.box_type.is(&MOOF) {
-            let moof = MovieFragmentBox::parse_body(bx.body)?;
-            pending_moof = Some((offset as u64, moof));
-        } else if bx.header.box_type.is(&MDAT)
-            && let Some((moof_off, moof)) = pending_moof.take()
-        {
-            if !seeded {
-                if let Some(tfdt) = moof
-                    .traf
-                    .iter()
-                    .find(|t| t.tfhd.track_id.value() == target_track_id.value())
-                    .and_then(|t| t.tfdt.as_ref())
-                {
-                    next_dts = tfdt.base_media_decode_time() as i64;
-                }
-                seeded = true;
-            }
-            absorb_protected_fragment(
-                file,
-                &mdats,
-                moof_off,
-                &moof,
-                target_track_id,
-                &mut next_dts,
-                &mut copied_bytes,
-                &mut out,
-            )?;
-        }
-        if consumed == 0 {
-            break;
-        }
-        offset += consumed;
-    }
-    Ok(out)
-}
-
-/// Resolve one `moof`'s samples for `target_track_id` into `out`, slicing
-/// coded bytes from `file`.
-///
-/// The sample data base follows ISO/IEC 14496-12:2026 §8.8.7/§8.8.8:
-///
-/// - `tfhd.base_data_offset`, when present (`base-data-offset-present`), is an
-///   **absolute** file offset and anchors the track fragment's runs ("an
-///   explicit anchor for the data offsets in each track run");
-/// - otherwise, with `default-base-is-moof` set, the base is the first byte of
-///   the enclosing `moof`;
-/// - otherwise, with neither set, the base for the **first** track fragment in
-///   the movie fragment is the `moof` start, and for each subsequent track
-///   fragment it is "the end of the data defined by the preceding fragment".
-///
-/// A `trun`'s `data_offset`, when present, is relative to that base ("it is
-/// relative to the base-data-offset established in the track fragment
-/// header"); when absent, "the data for this run starts immediately after the
-/// data of the previous run, or at the base-data-offset defined by the track
-/// fragment header if this is the first run in a track fragment".
-///
-/// The previous code read every run from `moof_off + trun.data_offset`, so a
-/// `tfhd.base_data_offset` (explicit-base files, e.g. some PIFF/Smooth-derived
-/// CMAF) was ignored and a `trun` without `data_offset` sliced the wrong bytes
-/// — which CTR then "decrypted" to garbage with `Ok` (audit r05-W7).
-///
-/// Sourcing: ISO/IEC 14496-12:2026 §8.8.7 / §8.8.8, transcribed in
-/// `private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`.
-fn absorb_protected_fragment(
-    file: &bytes::Bytes,
-    mdats: &[isobmff::frag_offsets::MdatRange],
-    moof_off: u64,
-    moof: &MovieFragmentBox,
-    target_track_id: TrackId,
-    next_dts: &mut i64,
-    copied_bytes: &mut u64,
-    out: &mut Vec<crate::pipeline::Sample>,
-) -> Result<()> {
-    use crate::pipeline::Sample;
-
-    // All §8.8.7/§8.8.8 addressing and bounds live in `frag_offsets`, shared
-    // with `Mp4Demux` so the two cannot drift (audit r05-W7).
-    let budget = isobmff::frag_offsets::sample_bytes_budget(file.len() as u64);
-    for r in isobmff::frag_offsets::sample_ranges_in_run(
-        moof_off,
-        moof,
-        target_track_id.into(),
-        mdats,
-        budget,
-        copied_bytes,
-    )? {
-        let dts = *next_dts;
-        let pts = isobmff::frag_offsets::add_offset(dts, r.composition_offset)?;
-        let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
-        let start = usize::try_from(r.start)
-            .map_err(|_| Error::InvalidInput("sample offset does not fit the address space"))?;
-        let end = usize::try_from(r.end)
-            .map_err(|_| Error::InvalidInput("sample end does not fit the address space"))?;
-        out.push(Sample {
-            data: file.slice(start..end),
-            timing: Some(crate::ir::SampleTiming::timed_with_duration(
-                dts, pts, r.duration,
-            )),
-            flags: crate::ir::SampleFlags::new(is_sync),
-            provenance: None,
-            display: None,
-            protection: None,
-        });
-        *next_dts = isobmff::frag_offsets::add_duration(dts, r.duration)?;
-    }
-    Ok(())
-}
-
-/// Parse the avcC record from the (first) encv entry of an stsd.
-fn find_avcc_config(stsd: &[u8]) -> Result<isobmff::avc_config::AVCDecoderConfigurationRecord> {
-    let body_start = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + STSD_ENTRY_COUNT;
-    for entry in BoxIter::new(&stsd[body_start.min(stsd.len())..]).filter_map(|b| b.ok()) {
-        if entry.header.box_type.is(b"encv") {
-            let child_start = BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_HDR;
-            if child_start <= entry.bytes.len()
-                && let Some(avcc) = BoxIter::new(&entry.bytes[child_start..])
-                    .filter_map(|b| b.ok())
-                    .find(|b| b.header.box_type.is(b"avcC"))
-            {
-                let cfg = isobmff::AVCConfigurationBox::parse_body(avcc.body)?;
-                return Ok(cfg.config);
-            }
-        }
-    }
-    Err(Error::UnexpectedBox {
-        expected: "avcC inside encv",
-    })
-}
-
-// ---------------------------------------------------------------------------
-// Small box-navigation helpers (borrow-only, no allocation).
-// ---------------------------------------------------------------------------
-
-/// Whether `container` (a `stbl` or `traf`, both direct `sgpd` parents per
-/// ISO/IEC 14496-12:2026 §8.9.3.1) has a `sgpd` box whose `grouping_type` is
-/// `seig` — the CENC key-rotation sample group this decryptor does not
-/// implement (see the two call sites' comments, issue #990).
-///
-/// A container can carry more than one `sgpd` (one per grouping type in use),
-/// so every child is checked rather than just the first.
-fn container_has_seig_sgpd(container: &[u8]) -> Result<bool> {
-    for entry in BoxIter::new(box_body(container, 0, "container body")?) {
-        let entry = entry?;
-        if !entry.header.box_type.is(b"sgpd") {
-            continue;
-        }
-        let sgpd = SampleGroupDescriptionBox::parse(entry.bytes)?;
-        if sgpd.grouping_type == GROUPING_TYPE_SEIG {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-/// Read `mvhd.timescale` (handles version 0 and 1 layouts).
-fn mvhd_timescale(moov: &[u8]) -> Result<Timescale> {
-    let mvhd = find_box(box_body(moov, 0, "moov body")?, &MVHD)
-        .ok_or(Error::UnexpectedBox { expected: "mvhd" })?;
-    header_timescale(mvhd, "mvhd")
-}
-
-/// Read `mdhd.timescale` (handles version 0 and 1 layouts).
-fn mdhd_timescale(mdhd: &[u8]) -> Result<Timescale> {
-    header_timescale(mdhd, "mdhd")
-}
-
-/// A zero timescale is an `InvalidValue` error, never a fallback.
-fn header_timescale(header: &[u8], expected: &'static str) -> Result<Timescale> {
-    let truncated = || Error::UnexpectedBox { expected };
-    let version = header.get(BOX_HEADER_MIN_SIZE).ok_or_else(truncated)?;
-    // version 0: after FullBox(4): creation(4) modification(4) timescale(4)
-    // version 1: after FullBox(4): creation(8) modification(8) timescale(4)
-    let ts_off = if *version == 1 {
-        BOX_HEADER_MIN_SIZE
-            + FULLBOX_EXTRA_SIZE
-            + MDHD_TIMES_BEFORE_TIMESCALE * core::mem::size_of::<u64>()
-    } else {
-        BOX_HEADER_MIN_SIZE
-            + FULLBOX_EXTRA_SIZE
-            + MDHD_TIMES_BEFORE_TIMESCALE * core::mem::size_of::<u32>()
-    };
-    let bytes = header
-        .get(ts_off..ts_off + core::mem::size_of::<u32>())
-        .ok_or_else(truncated)?;
-    let word: [u8; core::mem::size_of::<u32>()] = bytes.try_into().map_err(|_| truncated())?;
-    Ok(Timescale::try_new(u32::from_be_bytes(word))?)
-}
-
-/// Each sample's `(absolute_file_offset, size)` from a progressive `stbl`.
-///
-/// Parses the whole `stbl` into its typed children and walks them through
-/// [`TrackCursor`], so `co64` is honoured and every wire count is bounded
-/// before it can drive an allocation (audit r05-O1 / #1141, r05-C4).
-fn progressive_sample_layout(stbl: &[u8], file_len: usize) -> Result<Vec<(usize, usize)>> {
-    let table = SampleTableBox::parse(stbl)?;
-    let file_len =
-        u64::try_from(file_len).map_err(|_| Error::InvalidInput("file length exceeds u64"))?;
-    let cursor = TrackCursor::new(
-        &table,
-        isobmff::TrackId::new(0),
-        &isobmff::Limits::default(),
-        Some(file_len),
-    )?;
-    let mut layout = Vec::with_capacity(usize::try_from(cursor.len()).unwrap_or(0));
-    for item in cursor {
-        let sample = item?;
-        let offset = usize::try_from(sample.offset)
-            .map_err(|_| Error::InvalidInput("sample offset exceeds addressable range"))?;
-        layout.push((offset, sample.size as usize));
-    }
-    Ok(layout)
-}
-
 #[cfg(test)]
 mod tests {
-    //! Track-pairing tests for [`Decrypt::decrypt`].
-    //!
-    //! [`CencDecryptor`]'s fields are private, so only an in-crate test can
-    //! build one with hand-made [`TrackCrypto`] records — which is what it takes
-    //! to construct the mis-pairing case deterministically (two protected
-    //! tracks with *equal* sample counts and different IVs, so a positional
-    //! zip both mis-decrypts and slips past the sample-count check).
-
     use super::*;
+    use broadcast_common::Unpackage;
+    use bytes::Bytes;
 
-    fn timescale(value: u32) -> Timescale {
-        Timescale::try_new(value).expect("a non-zero timescale")
-    }
+    use crate::ir::{Track, TrackSpec};
+    use crate::ts_demux::TsDemux;
 
-    fn full_box(fourcc: &[u8; 4], entries: &[u8], count: u32) -> Vec<u8> {
-        let mut b = Vec::new();
-        let len = (BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 4 + entries.len()) as u32;
-        b.extend_from_slice(&len.to_be_bytes());
-        b.extend_from_slice(fourcc);
-        b.extend_from_slice(&[0; FULLBOX_EXTRA_SIZE]);
-        b.extend_from_slice(&count.to_be_bytes());
-        b.extend_from_slice(entries);
-        b
-    }
-
-    fn stbl_with(boxes: &[Vec<u8>]) -> Vec<u8> {
-        let mut stbl = vec![0u8; BOX_HEADER_MIN_SIZE];
-        for b in boxes {
-            stbl.extend_from_slice(b);
-        }
-        stbl
-    }
-
-    fn stsz_box(size: u32, count: u32) -> Vec<u8> {
-        let mut b = Vec::new();
-        b.extend_from_slice(&((BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 8) as u32).to_be_bytes());
-        b.extend_from_slice(b"stsz");
-        b.extend_from_slice(&[0; FULLBOX_EXTRA_SIZE]);
-        b.extend_from_slice(&size.to_be_bytes());
-        b.extend_from_slice(&count.to_be_bytes());
-        b
-    }
-
-    /// A single-run `stts` with the given per-sample delta.
-    fn stts_box(count: u32, delta: u32) -> Vec<u8> {
-        let mut entries = Vec::new();
-        entries.extend_from_slice(&count.to_be_bytes());
-        entries.extend_from_slice(&delta.to_be_bytes());
-        full_box(b"stts", &entries, 1)
-    }
-
-    /// r05-O1: one entry per chunk; the shared expander must lay samples out
-    /// at each chunk's `stco` offset.
-    #[test]
-    fn stbl_layout_maps_one_sample_per_chunk_through_stco() {
-        const CHUNKS: u32 = 400;
-        let mut stsc = Vec::new();
-        let mut stco = Vec::new();
-        for c in 1..=CHUNKS {
-            stsc.extend_from_slice(&c.to_be_bytes()); // first_chunk
-            stsc.extend_from_slice(&1u32.to_be_bytes()); // samples_per_chunk
-            stsc.extend_from_slice(&1u32.to_be_bytes()); // sample_description_index
-            stco.extend_from_slice(&(c * 100).to_be_bytes());
-        }
-        let stbl = stbl_with(&[
-            stts_box(CHUNKS, 10),
-            stsz_box(10, CHUNKS),
-            full_box(b"stsc", &stsc, CHUNKS),
-            full_box(b"stco", &stco, CHUNKS),
-        ]);
-        let layout = progressive_sample_layout(&stbl, 1 << 20).unwrap();
-        assert_eq!(layout.len(), CHUNKS as usize);
-        assert_eq!(layout[0], (100, 10));
-        assert_eq!(layout[CHUNKS as usize - 1], (CHUNKS as usize * 100, 10));
-    }
-
-    /// Drift fix (#1141): the raw-byte copy read only `stco`, so a `co64`
-    /// file failed with "stco" missing; it now resolves through the shared
-    /// expander, which prefers `co64`.
-    #[test]
-    fn stbl_layout_resolves_co64_chunk_offsets() {
-        let mut stsc = Vec::new();
-        stsc.extend_from_slice(&1u32.to_be_bytes());
-        stsc.extend_from_slice(&2u32.to_be_bytes()); // 2 samples per chunk
-        stsc.extend_from_slice(&1u32.to_be_bytes());
-        let co64 = 0x1_0000u64.to_be_bytes();
-        let stbl = stbl_with(&[
-            stts_box(2, 1),
-            stsz_box(7, 2),
-            full_box(b"stsc", &stsc, 1),
-            full_box(b"co64", &co64, 1),
-        ]);
-        let layout = progressive_sample_layout(&stbl, 1 << 20).unwrap();
-        assert_eq!(layout, vec![(0x1_0000, 7), (0x1_0007, 7)]);
-    }
-
-    /// r05-C4: a hostile `stsz.sample_count` far above the file length is
-    /// rejected up front, before any allocation.
-    #[test]
-    fn stbl_layout_rejects_sample_count_above_file_length() {
-        let stbl = stbl_with(&[
-            stts_box(1, 1),
-            stsz_box(1, u32::MAX),
-            full_box(b"stsc", &[], 0),
-            full_box(b"stco", &[], 0),
-        ]);
-        assert!(matches!(
-            progressive_sample_layout(&stbl, 64),
-            Err(crate::error::Error::BufferTooShort(..))
-        ));
-    }
-
-    /// The protected-progressive path expands through the same layout, so it
-    /// inherits the byte budget: `stco` entries all pointing at one region
-    /// with a uniform `stsz` claim `sample_count x sample_size` bytes from a
-    /// far smaller file (audit 20 findings 6 / 57).
-    #[test]
-    fn stbl_layout_rejects_overlapping_chunks_past_the_input_length() {
-        let mut stsc = Vec::new();
-        stsc.extend_from_slice(&1u32.to_be_bytes()); // first_chunk
-        stsc.extend_from_slice(&1u32.to_be_bytes()); // samples_per_chunk
-        stsc.extend_from_slice(&1u32.to_be_bytes()); // sample_description_index
-        let mut stco = Vec::new();
-        for _ in 0..4 {
-            stco.extend_from_slice(&0u32.to_be_bytes());
-        }
-        let stbl = stbl_with(&[
-            stts_box(4, 1),
-            stsz_box(64, 4),
-            full_box(b"stsc", &stsc, 1),
-            full_box(b"stco", &stco, 4),
-        ]);
-        assert!(matches!(
-            progressive_sample_layout(&stbl, 100),
-            Err(crate::error::Error::SampleDataBudgetExceeded { limit: 100 })
-        ));
-    }
-
-    /// The fragmented protected path threads ONE sample-byte counter through
-    /// every `moof`, so a run of fragments that each claim the same `mdat` is
-    /// refused past the input length instead of slicing that payload once per
-    /// fragment (audit 20 findings 13 / 57).
-    #[test]
-    fn collect_fragment_samples_shares_one_sample_byte_budget() {
-        const MOOFS: usize = 100;
-        const MDAT_PAYLOAD: usize = 1000;
-        const SAMPLES_PER_MOOF: u32 = 2;
-        const SAMPLE_SIZE: u32 = 500;
-        /// `tfhd.base_data_offset` present, `trun` data offset + per-sample size.
-        const TFHD_BASE_DATA_OFFSET_PRESENT: u32 = 0x000001;
-        const TRUN_DATA_OFFSET_AND_SIZE: u32 = 0x000001 | 0x000200;
-
-        fn bx(ty: &[u8; 4], payload: &[u8]) -> Vec<u8> {
-            let mut out = Vec::with_capacity(8 + payload.len());
-            out.extend_from_slice(&((8 + payload.len()) as u32).to_be_bytes());
-            out.extend_from_slice(ty);
-            out.extend_from_slice(payload);
-            out
-        }
-
-        fn kids(ty: &[u8; 4], parts: &[Vec<u8>]) -> Vec<u8> {
-            let mut payload = Vec::new();
-            for p in parts {
-                payload.extend_from_slice(p);
-            }
-            bx(ty, &payload)
-        }
-
-        let moof_at = |base: u64| {
-            let mut tfhd = Vec::new();
-            tfhd.extend_from_slice(&TFHD_BASE_DATA_OFFSET_PRESENT.to_be_bytes());
-            tfhd.extend_from_slice(&1u32.to_be_bytes());
-            tfhd.extend_from_slice(&base.to_be_bytes());
-            let mut trun = Vec::new();
-            trun.extend_from_slice(&TRUN_DATA_OFFSET_AND_SIZE.to_be_bytes());
-            trun.extend_from_slice(&SAMPLES_PER_MOOF.to_be_bytes());
-            trun.extend_from_slice(&0i32.to_be_bytes());
-            for _ in 0..SAMPLES_PER_MOOF {
-                trun.extend_from_slice(&SAMPLE_SIZE.to_be_bytes());
-            }
-            let mut mfhd = Vec::new();
-            mfhd.extend_from_slice(&[0u8; FULLBOX_EXTRA_SIZE]);
-            mfhd.extend_from_slice(&1u32.to_be_bytes());
-            kids(
-                b"moof",
-                &[
-                    bx(b"mfhd", &mfhd),
-                    kids(b"traf", &[bx(b"tfhd", &tfhd), bx(b"trun", &trun)]),
-                ],
-            )
-        };
-
-        let mdat_payload = moof_at(0).len() + BOX_HEADER_MIN_SIZE;
-        let mut file = moof_at(mdat_payload as u64);
-        file.extend_from_slice(&bx(b"mdat", &vec![0xAA; MDAT_PAYLOAD]));
-        for _ in 1..MOOFS {
-            // Each fragment names the FIRST `mdat` in its base data offset; the
-            // empty `mdat` after it only resolves the fragment.
-            file.extend_from_slice(&moof_at(mdat_payload as u64));
-            file.extend_from_slice(&bx(b"mdat", &[]));
-        }
-
-        let err = collect_fragment_samples(&bytes::Bytes::from(file), TrackId::new(1)).unwrap_err();
-        assert!(
-            matches!(err, Error::SampleDataBudgetExceeded { .. }),
-            "fragments claiming one mdat must be capped by the run, got {err:?}"
-        );
-    }
-
-    use crate::media::Track;
-    use crate::pipeline::{CodecConfig, Sample, TrackSpec};
-
-    const VIDEO_TRACK_ID: u32 = 1;
-    const AUDIO_TRACK_ID: u32 = 2;
-    const KID: [u8; KEY_LEN] = [0xAA; KEY_LEN];
-    const KEY: [u8; KEY_LEN] = [
-        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
-        0x10,
+    const KID: [u8; 16] = [
+        0xa7, 0xe6, 0x1c, 0x37, 0x3e, 0x21, 0x90, 0x33, 0xc2, 0x10, 0x91, 0xfa, 0x60, 0x7b, 0xf3,
+        0xb8,
     ];
-    /// The two tracks' per-sample IVs, deliberately different — the whole
-    /// point of the `Media` being narrowed is that the surviving track must
-    /// still get *its own* IV.
-    const VIDEO_IV: [u8; 8] = [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11];
-    const AUDIO_IV: [u8; 8] = [0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22, 0x22];
-    /// Equal on both tracks, so a positional mis-pairing is NOT caught by the
-    /// "sample count mismatch between media and senc" check.
-    const SAMPLES_PER_TRACK: usize = 2;
+    const KEY: [u8; 16] = [
+        0x76, 0xa6, 0xc6, 0x5c, 0x5e, 0xa7, 0x62, 0x04, 0x6b, 0xd7, 0x49, 0xa2, 0xe6, 0x32, 0xcc,
+        0xbb,
+    ];
 
-    fn tenc() -> TrackEncryptionBox {
+    fn keys() -> KeyMap {
+        KeyMap::new().with_key(KID, KEY)
+    }
+
+    fn tenc(iv_size: u8) -> TrackEncryptionBox {
         TrackEncryptionBox {
             version: 0,
             default_crypt_byte_block: 0,
             default_skip_byte_block: 0,
             default_is_protected: 1,
-            default_per_sample_iv_size: 8,
+            default_per_sample_iv_size: iv_size,
             default_kid: KID,
             default_constant_iv: None,
         }
     }
 
-    fn crypto(track_id: TrackId, iv: &[u8; 8]) -> TrackCrypto {
-        TrackCrypto {
-            track_id,
-            tenc: tenc(),
-            original_format: *b"avc1",
-            scheme: CencScheme::Cenc,
-            samples: (0..SAMPLES_PER_TRACK)
-                .map(|_| SampleEncryptionEntry {
-                    initialization_vector: iv.to_vec(),
-                    subsamples: Vec::new(),
-                })
-                .collect(),
-        }
-    }
-
-    /// A decryptor over a two-track protected source: video (`track_id` 1) then
-    /// audio (`track_id` 2), in `moov` order.
-    fn decryptor() -> CencDecryptor {
-        CencDecryptor {
-            file: bytes::Bytes::new(),
-            tracks: alloc::vec![
-                crypto(TrackId::new(VIDEO_TRACK_ID), &VIDEO_IV),
-                crypto(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV),
-            ],
-        }
-    }
-
-    /// A codec config for the synthetic tracks. Irrelevant to track pairing
-    /// (the property under test) — Opus is simply the cheapest `CodecConfig` to
-    /// build by hand, needing no parsed configuration record.
-    fn test_codec_config() -> CodecConfig {
-        CodecConfig::Opus {
-            config: isobmff::opus::OpusSpecificBox {
-                version: 0,
-                output_channel_count: 2,
-                pre_skip: 0,
-                input_sample_rate: 48_000,
-                output_gain: 0,
-                channel_mapping_family: 0,
-                channel_mapping: None,
+    fn protected_track(id: u32, tenc: TrackEncryptionBox) -> Track {
+        let mut spec = TrackSpec::new(
+            TrackId::new(id),
+            broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
+            CodecConfig::Data {
+                identity: DataIdentity::Mp4 {
+                    handler: *b"vide",
+                    sample_entry: Bytes::new(),
+                },
             },
-            channel_count: 2,
-            sample_rate: 48_000,
-            sample_size: 16,
-        }
-    }
-
-    /// Distinct plaintext per sample, so a wrong-IV "decryption" cannot
-    /// coincidentally match.
-    fn plaintext(i: usize) -> Vec<u8> {
-        (0u8..64).map(|b| b.wrapping_add(i as u8 * 7)).collect()
-    }
-
-    /// One track's `Media`, its samples already encrypted with `iv` and
-    /// carrying that IV as their CENC auxiliary information.
-    fn encrypted_media(track_id: TrackId, iv: &[u8; 8]) -> Media {
-        let sample_protection = alloc::sync::Arc::new(SampleProtection {
-            iv: bytes::Bytes::copy_from_slice(iv),
-            subsamples: Vec::new(),
-        });
-        let samples = (0..SAMPLES_PER_TRACK)
-            .map(|i| {
-                let mut buf = plaintext(i);
-                cenc_crypto::apply_ctr(iv, &KEY, &[], &mut buf).expect("encrypt");
-                Sample {
-                    data: buf.into(),
-                    timing: None,
-                    flags: crate::ir::SampleFlags::SYNC,
-                    provenance: None,
-                    display: None,
-                    protection: Some(sample_protection.clone()),
-                }
-            })
-            .collect();
-        Media::new(
-            alloc::vec![Track::new(
-                TrackSpec::new(track_id, timescale(90_000), test_codec_config()).with_protection(
-                    TrackProtection::new(CencScheme::Cenc, tenc(), ConstantIvSenc::default(),)
-                ),
-                samples,
-            )],
-            timescale(90_000),
-        )
-    }
-
-    /// **The mis-pairing regression test.** A `Media` narrowed to the *second*
-    /// protected track (`select_tracks_by`, e.g. audio-only) must be decrypted
-    /// with that track's own IVs. A positional zip pairs it with the *first*
-    /// crypto record instead — and because both tracks carry the same number of
-    /// samples, the sample-count check does not notice, so the old code
-    /// returned `Ok` over garbage.
-    #[test]
-    fn narrowed_media_decrypts_with_its_own_tracks_ivs() {
-        let dec = decryptor();
-        let keys = KeyMap::new().with_key(KID, KEY);
-        let mut media = encrypted_media(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
-
-        dec.decrypt(&mut media, &keys).expect("decrypt");
-
-        for (i, sample) in media.tracks[0].samples.iter().enumerate() {
-            assert_eq!(
-                &sample.data[..],
-                &plaintext(i)[..],
-                "sample {i} must be decrypted with track {AUDIO_TRACK_ID}'s IV, not \
-                 whichever record happens to sit at the same position"
-            );
-        }
-    }
-
-    /// The first track still decrypts correctly (the pairing change must not
-    /// merely swap which track is wrong).
-    #[test]
-    fn first_track_still_decrypts_with_its_own_ivs() {
-        let dec = decryptor();
-        let keys = KeyMap::new().with_key(KID, KEY);
-        let mut media = encrypted_media(TrackId::new(VIDEO_TRACK_ID), &VIDEO_IV);
-        dec.decrypt(&mut media, &keys).expect("decrypt");
-        for (i, sample) in media.tracks[0].samples.iter().enumerate() {
-            assert_eq!(&sample.data[..], &plaintext(i)[..]);
-        }
-    }
-
-    /// A `Media` holding **both** protected tracks, so a fault on track 2 is
-    /// only discovered once the loop reaches it.
-    fn two_track_media_second_bad() -> Media {
-        let video = encrypted_media(TrackId::new(VIDEO_TRACK_ID), &VIDEO_IV);
-        let audio = encrypted_media(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
-        Media::new(
-            alloc::vec![video.tracks[0].clone(), audio.tracks[0].clone()],
-            timescale(90_000),
-        )
-    }
-
-    /// Audit r05-W5: `decrypt` must be atomic. A **track 2** sample missing
-    /// its CENC auxiliary information must be reported without track 1 having
-    /// been decrypted in place — otherwise the caller cannot tell which
-    /// samples are now plaintext, and under CTR a retry would XOR the
-    /// already-plaintext samples *back* to ciphertext.
-    #[test]
-    fn decrypt_is_atomic_across_tracks() {
-        let dec = decryptor();
-        let keys = KeyMap::new().with_key(KID, KEY);
-        let mut media = two_track_media_second_bad();
-        media.tracks[1]
-            .samples
-            .last_mut()
-            .expect("track 2 has samples")
-            .protection = None;
-        // Ciphertext snapshot of every sample, before the call.
-        let before: Vec<Vec<u8>> = media
-            .tracks
-            .iter()
-            .flat_map(|t| t.samples.iter().map(|s| s.data.to_vec()))
-            .collect();
-        // Sanity: track 1's samples really are ciphertext, not plaintext.
-        assert_ne!(&media.tracks[0].samples[0].data[..], &plaintext(0)[..]);
-
-        let err = dec.decrypt(&mut media, &keys).unwrap_err();
-        assert!(matches!(err, Error::InvalidInput(_)), "got {err:?}");
-
-        let after: Vec<Vec<u8>> = media
-            .tracks
-            .iter()
-            .flat_map(|t| t.samples.iter().map(|s| s.data.to_vec()))
-            .collect();
-        assert_eq!(
-            after, before,
-            "a rejected decrypt must leave every sample byte-identical"
         );
+        spec.protection = Some(TrackProtection::new(
+            CencScheme::Cenc,
+            tenc,
+            crate::ir::ConstantIvSenc::default(),
+        ));
+        Track::new(spec, Vec::new())
     }
 
-    /// Audit r05-W5 follow-up: a malformed subsample map on **track 2** must
-    /// also leave track 1 untouched. The map declares more protected bytes
-    /// than the sample has, so `validate_subsample_map` rejects it.
-    #[test]
-    fn decrypt_is_atomic_on_bad_subsample_map_track2() {
-        let dec = decryptor();
-        let mut media = two_track_media_second_bad();
-        // 64-byte samples (see `plaintext`): claim 100 protected bytes.
-        media.tracks[1].samples[0].protection = Some(alloc::sync::Arc::new(SampleProtection {
-            iv: bytes::Bytes::copy_from_slice(&AUDIO_IV),
-            subsamples: alloc::vec![isobmff::cenc::SubSampleEntry {
-                bytes_of_clear_data: 0,
-                bytes_of_protected_data: 100,
-            }],
+    fn encrypted_cenc_sample() -> crate::ir::Sample {
+        let bytes = test_fixtures::read("ts/h264/main.ts");
+        let mut demux = TsDemux::new();
+        let media = demux.unpackage(bytes.as_slice()).expect("demux");
+        let clear = crate::repackage::select_tracks_by(&media, |t| {
+            matches!(t.spec.config, CodecConfig::Avc { .. })
+        })
+        .expect("AVC");
+        let mut sample = clear.tracks[0].samples[0].clone();
+        let iv = Bytes::from(alloc::vec![0u8; 8]);
+        let subs = crate::cenc_encrypt::nal_subsamples(crate::nal::NalCodec::Avc, &sample.data)
+            .expect("subsamples");
+        cenc_crypto::rewrite_in_place(&mut sample.data, |buf| {
+            cenc_crypto::apply_ctr(&iv, &KEY, &subs, buf)
+        })
+        .expect("cipher");
+        sample.protection = Some(alloc::sync::Arc::new(crate::ir::SampleProtection {
+            iv,
+            subsamples: subs,
         }));
-        let before: Vec<Vec<u8>> = media
-            .tracks
-            .iter()
-            .flat_map(|t| t.samples.iter().map(|s| s.data.to_vec()))
-            .collect();
-
-        let err = dec
-            .decrypt(&mut media, &KeyMap::new().with_key(KID, KEY))
-            .unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort(..)), "got {err:?}");
-        let after: Vec<Vec<u8>> = media
-            .tracks
-            .iter()
-            .flat_map(|t| t.samples.iter().map(|s| s.data.to_vec()))
-            .collect();
-        assert_eq!(
-            after, before,
-            "media must be byte-identical after a rejection"
-        );
+        sample
     }
 
-    /// A two-track `cbcs` decrypt whose second track carries a malformed
-    /// subsample map — the `cbcs` path must be atomic too, not only `cenc`.
-    #[test]
-    fn decrypt_is_atomic_for_cbcs() {
-        let mut t = tenc();
-        t.default_per_sample_iv_size = 16;
-        t.default_crypt_byte_block = 1;
-        t.default_skip_byte_block = 9;
-        let dec = decryptor();
-        let mut media = two_track_media_second_bad();
-        for track in &mut media.tracks {
-            let protection = track
-                .spec
-                .protection
-                .as_mut()
-                .expect("encrypted_media sets a track protection");
-            protection.scheme = CencScheme::Cbcs;
-            protection.tenc = t.clone();
-            for sample in &mut track.samples {
-                sample.protection = Some(alloc::sync::Arc::new(SampleProtection {
-                    iv: bytes::Bytes::from(alloc::vec![0x22u8; 16]),
-                    subsamples: Vec::new(),
-                }));
-            }
-        }
-        // 64-byte samples (see `plaintext`): claim 100 protected bytes.
-        media.tracks[1].samples[0].protection = Some(alloc::sync::Arc::new(SampleProtection {
-            iv: bytes::Bytes::from(alloc::vec![0x22u8; 16]),
-            subsamples: alloc::vec![isobmff::cenc::SubSampleEntry {
-                bytes_of_clear_data: 0,
-                bytes_of_protected_data: 100,
-            }],
-        }));
-        let before: Vec<Vec<u8>> = media
-            .tracks
-            .iter()
-            .flat_map(|t| t.samples.iter().map(|s| s.data.to_vec()))
-            .collect();
-
-        let err = dec
-            .decrypt(&mut media, &KeyMap::new().with_key(KID, KEY))
-            .unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort(..)), "got {err:?}");
-        let after: Vec<Vec<u8>> = media
-            .tracks
-            .iter()
-            .flat_map(|t| t.samples.iter().map(|s| s.data.to_vec()))
-            .collect();
-        assert_eq!(
-            after, before,
-            "a rejected cbcs decrypt must leave media byte-identical"
-        );
+    fn sample_of(track: TrackId, sample: crate::ir::Sample) -> MuxInput {
+        MuxInput::Sample { track, sample }
     }
 
-    /// Audit r05-W5: a **missing content key** on track 2 must likewise be
-    /// caught before track 1 is touched. The key map carries only the video
-    /// track's KID.
-    #[test]
-    fn decrypt_is_atomic_when_a_key_is_missing() {
-        let dec = decryptor();
-        let mut media = two_track_media_second_bad();
-        // Second track uses a different KID, which the key map will not hold.
-        media.tracks[1]
-            .spec
-            .protection
-            .as_mut()
-            .expect("track 2 is protected")
-            .tenc
-            .default_kid = [0xBB; KEY_LEN];
-        let before: Vec<Vec<u8>> = media
-            .tracks
-            .iter()
-            .flat_map(|t| t.samples.iter().map(|s| s.data.to_vec()))
-            .collect();
-
-        let err = dec
-            .decrypt(&mut media, &KeyMap::new().with_key(KID, KEY))
-            .unwrap_err();
-        assert!(matches!(err, Error::InvalidInput(_)), "got {err:?}");
-        let after: Vec<Vec<u8>> = media
-            .tracks
-            .iter()
-            .flat_map(|t| t.samples.iter().map(|s| s.data.to_vec()))
-            .collect();
-        assert_eq!(
-            after, before,
-            "media must be byte-identical after a rejection"
-        );
-    }
-
-    /// A media track the decryptor has no crypto record for is an error, not a
-    /// silent pass-through of still-encrypted samples.
-    #[test]
-    fn unknown_track_id_errors() {
-        let dec = decryptor();
-        let keys = KeyMap::new().with_key(KID, KEY);
-        let mut media = encrypted_media(TrackId::new(99), &AUDIO_IV);
-        let err = dec.decrypt(&mut media, &keys).unwrap_err();
-        assert!(matches!(err, Error::InvalidInput(_)), "got {err:?}");
-    }
-
-    /// W8: `KeyMap`'s `Debug` must list KIDs (not secret) but never the
-    /// content key bytes paired with them.
-    #[test]
-    fn keymap_debug_redacts_key_bytes_but_shows_kids() {
-        let km = KeyMap::new().with_key(KID, KEY);
-        let out = alloc::format!("{km:?}");
-        assert!(
-            !out.contains(&alloc::format!("{KEY:?}")),
-            "Debug output must not contain the key's array representation: {out}"
-        );
-        assert!(
-            out.contains(&alloc::format!("{KID:?}")),
-            "KIDs are not secret and should still be visible: {out}"
-        );
-    }
-
-    /// W8: `CencDecryptor` never stores a content key (keys are supplied out
-    /// of band to [`Decrypt::decrypt`]), but its `Debug` must also never dump
-    /// the raw protected file bytes — pin that the output stays bounded
-    /// regardless of file size, rather than growing with it.
-    #[test]
-    fn decryptor_debug_does_not_dump_raw_file_bytes() {
-        let mut small = decryptor();
-        small.file = bytes::Bytes::from_static(&[0x42u8; 10]);
-        let mut large = decryptor();
-        large.file = bytes::Bytes::from(alloc::vec![0x42u8; 10_000]);
-
-        let small_out = alloc::format!("{small:?}");
-        let large_out = alloc::format!("{large:?}");
-
-        assert!(!small_out.contains(&alloc::format!("{KEY:?}")));
-        assert!(!large_out.contains(&alloc::format!("{KEY:?}")));
-        // A derived `Debug` over `file: Vec<u8>` would make the 10_000-byte
-        // file's output roughly 1000x longer than the 10-byte file's; the
-        // manual impl instead prints only `file_len` (a handful of digits),
-        // so the two stay within a few characters of each other (both
-        // decryptors are otherwise identical).
-        let diff = large_out.len().abs_diff(small_out.len());
-        assert!(
-            diff < 20,
-            "Debug output must not scale with file size (it should print file_len, not the \
-             bytes): small={small_out} ({} chars), large={large_out} ({} chars)",
-            small_out.len(),
-            large_out.len()
-        );
-        assert!(large_out.contains("file_len"));
-    }
-
-    /// Audit r05-W7 (audio half): for **every** layout fixture, the audio
-    /// track (track 2) must decrypt sample-for-sample to `clear.mp4`'s audio
-    /// plaintext, across every `moof`. This is the traf the base rules exist
-    /// for — the second traf in each moof is where `base_data_offset` /
-    /// default-base-is-moof / the omit carry and the implicit-trun rule all
-    /// bite. The clear reference is `clear.mp4` demuxed with the crate's own
-    /// `Mp4Demux` (whose addressing is the shared `frag_offsets` resolver);
-    /// `clear-samples.txt` is its per-sample hash manifest.
-    #[test]
-    fn all_layouts_decrypt_audio_to_clear() {
-        let read = |name: &str| {
-            std::fs::read(test_fixtures::path(&format!("mp4/cenc-layouts/{}", name)))
-                .unwrap_or_else(|e| panic!("read {name}: {e}"))
-        };
-        // Independent-of-this-test oracle: the clear file's own audio samples,
-        // read with the plain (unencrypted) `Mp4Demux`.
-        let clear_bytes = read("clear.mp4");
-        let clear_media =
-            crate::mp4_collect::media_from_mp4(clear_bytes.as_slice()).expect("demux clear");
-        let clear_audio: Vec<Vec<u8>> = clear_media
-            .tracks
-            .iter()
-            .find(|t| t.spec.track_id == TrackId::new(2))
-            .expect("clear.mp4 must carry track 2 (audio)")
-            .samples
-            .iter()
-            .map(|s| s.data.to_vec())
-            .collect();
-        assert_eq!(clear_audio.len(), 95, "clear audio has 95 samples");
-
-        let files = [
-            "enc-default-none.mp4",
-            "enc-default-explicit.mp4",
-            "enc-default-implicit.mp4",
-            "enc-base-moof-none.mp4",
-            "enc-base-moof-explicit.mp4",
-            "enc-base-moof-implicit.mp4",
-            "enc-omit-none.mp4",
-            "enc-omit-explicit.mp4",
-            "enc-omit-implicit.mp4",
-        ];
-        // Key/KID for these fixtures (their README).
-        const FKID: [u8; KEY_LEN] = [
-            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab,
-            0xcd, 0xef,
-        ];
-        const FKEY: [u8; KEY_LEN] = [
-            0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
-            0xee, 0xff,
-        ];
-        let keys = KeyMap::new().with_key(FKID, FKEY);
-        for f in files {
-            let bytes = read(f);
-            // Ciphertext samples for track 2, resolved by the shared
-            // §8.8.7/§8.8.8 walker (the same code the decryptor and Mp4Demux
-            // use).
-            let cipher =
-                collect_fragment_samples(&bytes::Bytes::from(bytes.clone()), TrackId::new(2))
-                    .unwrap_or_else(|e| panic!("{f}: collect audio: {e}"));
-            assert_eq!(
-                cipher.len(),
-                clear_audio.len(),
-                "{f}: audio sample count must match the clear reference"
-            );
-            // The harvested per-sample IVs/subsample maps for the audio track.
-            let dec = CencDecryptor::from_fmp4(&bytes).unwrap_or_else(|e| panic!("{f}: {e}"));
-            let crypto = dec
-                .tracks
-                .iter()
-                .find(|c| c.track_id == TrackId::new(2))
-                .unwrap_or_else(|| panic!("{f}: no audio crypto record"));
-            let key = keys
-                .get(&crypto.tenc.default_kid)
-                .unwrap_or_else(|| panic!("{f}: no key"));
-            assert_eq!(crypto.samples.len(), cipher.len(), "{f}: senc count");
-            for (i, (c, entry)) in cipher.iter().zip(crypto.samples.iter()).enumerate() {
-                let mut buf = c.data.to_vec();
-                crate::cenc_crypto::apply_ctr(
-                    &entry.initialization_vector,
-                    key,
-                    &entry.subsamples,
-                    &mut buf,
-                )
-                .unwrap_or_else(|e| panic!("{f}: audio sample {i}: {e}"));
-                assert_eq!(
-                    buf, clear_audio[i],
-                    "{f}: audio sample {i} must equal the clear plaintext byte-for-byte"
-                );
-            }
-        }
-    }
-
-    // -- #982: the private box-navigation copies were removed -------------
-
-    /// The deleted private helpers' exact logic (hardcoded 8-byte container
-    /// header skip), kept ONLY as the reference the shared helpers must agree
-    /// with on every real fixture.
-    fn legacy_children<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Vec<&'a [u8]> {
-        let body = &container[BOX_HEADER_MIN_SIZE.min(container.len())..];
+    fn poll_all(stage: &mut CencDecryptStage) -> Vec<MuxInput> {
         let mut out = Vec::new();
-        let mut off = 0usize;
-        while off + BOX_HEADER_MIN_SIZE <= body.len() {
-            let size = u32::from_be_bytes(
-                body[off..off + core::mem::size_of::<u32>()]
-                    .try_into()
-                    .expect("four size bytes"),
-            ) as usize;
-            if size < BOX_HEADER_MIN_SIZE || off + size > body.len() {
-                break;
-            }
-            let child = &body[off..off + size];
-            if &child[4..8] == fourcc {
-                out.push(child);
-            }
-            off += size;
+        while let Some(item) = stage.poll() {
+            out.push(item);
         }
         out
     }
 
-    fn shared_children<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Vec<&'a [u8]> {
-        let Ok(body) = box_body(container, 0, "container body") else {
-            return Vec::new();
-        };
-        BoxIter::new(body)
-            .filter_map(|b| b.ok())
-            .filter(|b| b.header.box_type.is(fourcc))
-            .map(|b| b.bytes)
-            .collect()
-    }
-
-    fn shared_find<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
-        box_body(container, 0, "container body")
-            .ok()
-            .and_then(|body| find_box(body, fourcc))
-    }
-
-    /// Compare shared vs legacy child lookup for one container/four-CC.
-    fn check_agree(container: &[u8], fourcc: &[u8; 4]) {
-        let shared = shared_children(container, fourcc);
-        let legacy = legacy_children(container, fourcc);
-        assert_eq!(shared, legacy);
-        assert_eq!(shared_find(container, fourcc), legacy.first().copied());
-    }
-
-    const NAV_KIDS: [&[u8; 4]; 12] = [
-        b"trak", b"traf", b"mvhd", b"mdia", b"minf", b"stbl", b"stsd", b"tkhd", b"mdhd", b"senc",
-        b"tfhd", b"sgpd",
-    ];
-
-    /// Walk `moov`/`moof` two levels deep comparing shared vs legacy lookup;
-    /// returns the number of comparisons made.
-    fn assert_nav_agrees(file: &[u8]) -> usize {
-        let mut compared = 0usize;
-        for top in [b"moov", b"moof"] {
-            for c in BoxIter::new(file)
-                .filter_map(|b| b.ok())
-                .filter(|b| b.header.box_type.is(top))
-            {
-                let c = c.bytes;
-                for kid in NAV_KIDS {
-                    check_agree(c, kid);
-                    compared += 1;
-                    for sub in shared_children(c, kid) {
-                        for kid2 in NAV_KIDS {
-                            check_agree(sub, kid2);
-                            compared += 1;
-                        }
-                    }
-                }
-            }
-        }
-        compared
-    }
-
-    /// Shared helpers agree with the removed private copies on every real
-    /// fixture (CENC fMP4 layouts, the mixed-track MP4Box file, the cmaf and
-    /// cenc_boxes sets), so the dedup is behaviour-preserving.
     #[test]
-    fn shared_box_nav_agrees_with_removed_private_copies_on_real_fixtures() {
-        let mut files = Vec::new();
-        for dir in [
-            test_fixtures::path("mp4/cenc-layouts"),
-            test_fixtures::path("mp4/cmaf-av-subtitle"),
-            test_fixtures::path("mp4/cenc-boxes"),
-            test_fixtures::path("mp4"),
-        ] {
-            if let Ok(rd) = std::fs::read_dir(&dir) {
-                for e in rd.flatten() {
-                    let p = e.path();
-                    if p.extension().is_some_and(|x| x == "mp4" || x == "m4s") {
-                        files.push(p);
-                    }
-                }
-            }
-        }
+    fn a_clear_sample_passes_through_unchanged() {
+        let mut stage = CencDecryptStage::new(keys());
+        stage
+            .feed(
+                MuxInput::Track(Box::new(protected_track(1, tenc(8)).spec)),
+                Timestamp::ZERO,
+            )
+            .expect("track");
+        let sample = encrypted_cenc_sample();
+        let data = sample.data.clone();
+        stage
+            .feed(sample_of(TrackId::new(1), sample), Timestamp::ZERO)
+            .expect("sample");
+        let _ = data;
+        let out = poll_all(&mut stage);
+        assert!(matches!(out[0], MuxInput::Track(_)));
+        assert!(matches!(out[1], MuxInput::Sample { .. }));
+    }
+
+    /// Review Focus: a `Track` update after the first samples announces the
+    /// `tenc`; the held samples must be decrypted with it, never guessed.
+    #[test]
+    fn samples_before_a_late_tenc_are_held_then_decrypted() {
+        let mut stage = CencDecryptStage::new(keys());
+        let mut spec = protected_track(1, tenc(8)).spec;
+        spec.protection = None;
+        stage
+            .feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)
+            .expect("initial track");
+        let sample = encrypted_cenc_sample();
+        let want = sample.data.clone();
+        stage
+            .feed(sample_of(TrackId::new(1), sample), Timestamp::ZERO)
+            .expect("held sample");
+        let early = poll_all(&mut stage);
         assert!(
-            files.len() >= 10,
-            "fixtures must be found, got {}",
-            files.len()
+            early
+                .iter()
+                .all(|item| !matches!(item, MuxInput::Sample { .. })),
+            "nothing is emitted before the tenc is known"
         );
-        let mut compared = 0;
-        for f in &files {
-            compared += assert_nav_agrees(&std::fs::read(f).unwrap());
-        }
-        assert!(
-            compared > 500,
-            "agreement walk must bite, compared {compared}"
-        );
-    }
 
-    /// Where the two paths legitimately differ: a container written in the
-    /// `largesize` form (16-byte header). The old hardcoded 8-byte skip started
-    /// mid-`largesize` and found nothing; the shared helper finds the child.
-    #[test]
-    fn largesize_container_children_are_found() {
-        let child = full_box(b"tkhd", &[0u8; 8], 0);
-        let total = 16 + child.len();
-        let mut trak = Vec::new();
-        trak.extend_from_slice(&1u32.to_be_bytes()); // size == 1 -> largesize
-        trak.extend_from_slice(b"trak");
-        trak.extend_from_slice(&(total as u64).to_be_bytes());
-        trak.extend_from_slice(&child);
-        assert_eq!(shared_find(&trak, b"tkhd"), Some(child.as_slice()));
-        assert_eq!(shared_children(&trak, b"tkhd").len(), 1);
-        assert!(
-            legacy_children(&trak, b"tkhd").is_empty(),
-            "the removed 8-byte skip could not see into a largesize container"
-        );
-    }
-
-    /// #3656: an `stsd` shorter than its own FullBox + entry_count prefix has
-    /// no sample entry to find. Every such length must answer `None` rather
-    /// than slicing past the end (the `>` guard is what stops the slice).
-    #[test]
-    fn find_sinf_in_stsd_on_a_truncated_stsd_returns_none() {
-        for len in
-            BOX_HEADER_MIN_SIZE..(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + STSD_ENTRY_COUNT)
-        {
-            let mut stsd = vec![0u8; len];
-            stsd[..4].copy_from_slice(&(len as u32).to_be_bytes());
-            stsd[4..8].copy_from_slice(b"stsd");
-            assert_eq!(
-                find_sinf_in_stsd(&stsd),
-                None,
-                "an stsd of {len} bytes has no room for a sample entry"
-            );
-        }
-    }
-
-    /// An `stsd` declaring one sample entry of `entry_type` with
-    /// `entry_body_len` body bytes (0 gives the minimal 24-byte box: 8-byte
-    /// box header + FullBox + entry_count + the entry's own 8-byte header).
-    fn stsd_with_entry(entry_type: &[u8; 4], entry_body_len: usize) -> Vec<u8> {
-        let entry_size = BOX_HEADER_MIN_SIZE + entry_body_len;
-        let mut entries = Vec::new();
-        entries.extend_from_slice(&(entry_size as u32).to_be_bytes());
-        entries.extend_from_slice(entry_type);
-        entries.extend(core::iter::repeat_n(0u8, entry_body_len));
-        full_box(b"stsd", &entries, 1)
-    }
-
-    /// #3657: the label recorded in `Media::skipped` for an unprotected
-    /// track keeps each supported sample entry's identity instead of
-    /// degrading every codec but `mp4a` to `"unknown"`, and a minimal
-    /// 24-byte `stsd` still resolves its entry type.
-    #[test]
-    fn stsd_entry_fourcc_reports_every_supported_sample_entry() {
-        for (entry, want) in [
-            (b"avc1", "avc1"),
-            (b"encv", "avc1"),
-            (b"mp4a", "mp4a"),
-            (b"enca", "mp4a"),
-            (b"hvc1", "hvc1"),
-            (b"hev1", "hvc1"),
-            (b"vp09", "vp09"),
-            (b"av01", "av01"),
-            (b"ac-3", "ac-3"),
-            (b"ec-3", "ec-3"),
-            (b"stpp", "stpp"),
-            (b"wvtt", "wvtt"),
-        ] {
-            let stsd = stsd_with_entry(entry, 0);
-            assert_eq!(stsd.len(), 24, "the minimal stsd is 24 bytes");
-            assert_eq!(
-                stsd_entry_fourcc(&stsd),
-                want,
-                "sample entry {:?}",
-                core::str::from_utf8(entry)
-            );
-        }
-        assert_eq!(
-            stsd_entry_fourcc(&stsd_with_entry(b"zzzz", 0)),
-            "unknown",
-            "an unrecognised sample entry stays unknown"
-        );
-        assert_eq!(
-            stsd_entry_fourcc(&[]),
-            "unknown",
-            "a zero-length stsd has no entry"
-        );
-    }
-
-    /// #3654: a `senc` shorter than its 8-byte box header + 4-byte FullBox
-    /// cannot be parsed. Every prefix must be a typed error rather than a
-    /// panic from indexing the version/flags bytes.
-    #[test]
-    fn parse_senc_box_rejects_every_truncated_prefix() {
-        let full = full_box(b"senc", &0u32.to_be_bytes(), 0);
-        for len in 0..(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 4) {
-            assert!(
-                parse_senc_box(&full[..len], 8).is_err(),
-                "a {len}-byte senc must be rejected"
-            );
-        }
-        assert!(
-            parse_senc_box(&full, 8).is_ok(),
-            "the complete empty senc parses"
-        );
-    }
-
-    fn header_box(fourcc: &[u8; 4], version: u8, fields: &[u8]) -> Vec<u8> {
-        let mut b = Vec::new();
-        let len = (BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + fields.len()) as u32;
-        b.extend_from_slice(&len.to_be_bytes());
-        b.extend_from_slice(fourcc);
-        b.extend_from_slice(&[version, 0, 0, 0]);
-        b.extend_from_slice(fields);
-        b
-    }
-
-    /// #3660: `header_timescale` must read the version-1 layout's timescale
-    /// after two 8-byte time fields (creation, modification), not the
-    /// version-0 offsets.
-    #[test]
-    fn header_timescale_reads_the_version_1_offset() {
-        let mut fields = Vec::new();
-        fields.extend_from_slice(&0x0000_0001_0000_0002u64.to_be_bytes());
-        fields.extend_from_slice(&0x0000_0003_0000_0004u64.to_be_bytes());
-        fields.extend_from_slice(&90_000u32.to_be_bytes());
-        fields.extend_from_slice(&0x0000_0005_0000_0006u64.to_be_bytes());
-        let mdhd = header_box(b"mdhd", 1, &fields);
-        assert_eq!(
-            header_timescale(&mdhd, "mdhd").expect("v1 mdhd").get(),
-            90_000,
-            "version 1: timescale follows two 8-byte time fields"
-        );
-    }
-
-    /// The version-0 layout is unchanged: timescale follows two 4-byte time
-    /// fields.
-    #[test]
-    fn header_timescale_reads_the_version_0_offset() {
-        let mut fields = Vec::new();
-        fields.extend_from_slice(&1u32.to_be_bytes());
-        fields.extend_from_slice(&2u32.to_be_bytes());
-        fields.extend_from_slice(&48_000u32.to_be_bytes());
-        fields.extend_from_slice(&3u32.to_be_bytes());
-        let mvhd = header_box(b"mvhd", 0, &fields);
-        assert_eq!(
-            header_timescale(&mvhd, "mvhd").expect("v0 mvhd").get(),
-            48_000,
-            "version 0: timescale follows two 4-byte time fields"
-        );
-    }
-
-    /// A version-1 header cut before its timescale field is a typed
-    /// `UnexpectedBox`, never a panic or a zero timescale.
-    #[test]
-    fn header_timescale_rejects_a_truncated_version_1_header() {
-        let mut fields = Vec::new();
-        fields.extend_from_slice(&1u64.to_be_bytes());
-        fields.extend_from_slice(&2u64.to_be_bytes());
-        let mdhd = header_box(b"mdhd", 1, &fields);
-        assert!(matches!(
-            header_timescale(&mdhd, "mdhd"),
-            Err(Error::UnexpectedBox { expected: "mdhd" })
+        spec.protection = Some(TrackProtection::new(
+            CencScheme::Cenc,
+            tenc(8),
+            crate::ir::ConstantIvSenc::default(),
         ));
+        stage
+            .feed(MuxInput::Track(Box::new(spec)), Timestamp::ZERO)
+            .expect("late track update");
+        let out = poll_all(&mut stage);
+        let decrypted = out.iter().find_map(|item| match item {
+            MuxInput::Sample { sample, .. } => Some(sample),
+            _ => None,
+        });
+        let decrypted = decrypted.expect("held sample emitted after the update");
+        assert_ne!(decrypted.data, want);
+        assert!(decrypted.protection.is_none());
+    }
+
+    #[test]
+    fn an_iv_size_disagreement_is_a_typed_error_naming_the_track() {
+        let mut stage = CencDecryptStage::new(keys());
+        stage
+            .feed(
+                MuxInput::Track(Box::new(protected_track(7, tenc(8)).spec)),
+                Timestamp::ZERO,
+            )
+            .expect("track");
+        let mut sample = encrypted_cenc_sample();
+        sample.protection = Some(alloc::sync::Arc::new(crate::ir::SampleProtection {
+            iv: Bytes::from(alloc::vec![0u8; 16]),
+            subsamples: Vec::new(),
+        }));
+        let err = stage
+            .feed(sample_of(TrackId::new(7), sample), Timestamp::ZERO)
+            .expect_err("16-byte IV against an 8-byte tenc");
+        assert!(
+            matches!(
+                err,
+                Error::CencIvSizeMismatch {
+                    track,
+                    tenc: 8,
+                    sample: 16
+                } if track == TrackId::new(7)
+            ),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_key_is_an_error_at_announcement() {
+        let mut stage = CencDecryptStage::new(KeyMap::new());
+        let err = stage
+            .feed(
+                MuxInput::Track(Box::new(protected_track(1, tenc(8)).spec)),
+                Timestamp::ZERO,
+            )
+            .expect_err("no key");
+        assert!(matches!(err, Error::InvalidInput(_)));
+    }
+
+    #[test]
+    fn unfinished_pending_samples_are_an_error() {
+        let mut stage = CencDecryptStage::new(keys());
+        let mut spec = protected_track(1, tenc(8)).spec;
+        spec.protection = None;
+        stage
+            .feed(MuxInput::Track(Box::new(spec)), Timestamp::ZERO)
+            .expect("track");
+        stage
+            .feed(
+                sample_of(TrackId::new(1), encrypted_cenc_sample()),
+                Timestamp::ZERO,
+            )
+            .expect("held");
+        let err = stage.finish().expect_err("still pending");
+        assert!(matches!(err, Error::CencMissingSampleProtection { .. }));
+    }
+
+    #[test]
+    fn pending_cap_is_enforced() {
+        let mut stage = CencDecryptStage::new(keys()).with_max_pending_bytes(1);
+        let mut spec = protected_track(1, tenc(8)).spec;
+        spec.protection = None;
+        stage
+            .feed(MuxInput::Track(Box::new(spec)), Timestamp::ZERO)
+            .expect("track");
+        let err = stage
+            .feed(
+                sample_of(TrackId::new(1), encrypted_cenc_sample()),
+                Timestamp::ZERO,
+            )
+            .expect_err("cap");
+        assert!(matches!(err, Error::LimitExceeded { .. }));
+    }
+
+    #[test]
+    fn a_cleartext_track_with_protected_samples_is_an_error_at_finish() {
+        let mut stage = CencDecryptStage::new(keys());
+        let spec = TrackSpec::new(
+            TrackId::new(1),
+            broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
+            CodecConfig::Data {
+                identity: DataIdentity::Mp4 {
+                    handler: *b"vide",
+                    sample_entry: Bytes::new(),
+                },
+            },
+        );
+        stage
+            .feed(MuxInput::Track(Box::new(spec)), Timestamp::ZERO)
+            .expect("track");
+        let sample = encrypted_cenc_sample();
+        stage
+            .feed(sample_of(TrackId::new(1), sample), Timestamp::ZERO)
+            .expect("held");
+        assert!(stage.finish().is_err());
     }
 }

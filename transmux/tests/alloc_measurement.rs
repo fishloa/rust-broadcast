@@ -45,10 +45,10 @@
 use test_alloc::ThreadCounting;
 use test_harness::collect::MediaSelectExt;
 
+use broadcast_common::Unpackage;
 use broadcast_common::stage::{Stage, Timestamp};
-use broadcast_common::{Encrypt, Unpackage};
 use transmux::{
-    CencEncryptor, CencScheme, CodecConfig, EncryptConfig, Media, RtpPacketiserStage, Sample,
+    CencEncryptStage, CencScheme, CodecConfig, EncryptConfig, Media, RtpPacketiserStage, Sample,
     SubsamplePolicy, TsDemux,
 };
 
@@ -76,6 +76,33 @@ fn clear_video_media() -> Media {
     media
         .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("AVC video track present")
+}
+
+/// Drive the encrypt stage over `media`, discarding its output: the cipher
+/// work (and its allocations) happen in `feed`, which is what is measured.
+fn encrypt_through_stage(media: Media, cfg: EncryptConfig) {
+    use transmux::mux_stage::MuxInput;
+    let mut stage = CencEncryptStage::new(KEY, cfg).expect("stage config");
+    for track in media.tracks {
+        let track_id = track.spec.track_id;
+        stage
+            .feed(MuxInput::Track(Box::new(track.spec)), Timestamp::ZERO)
+            .expect("announce");
+        while stage.poll().is_some() {}
+        for sample in track.samples {
+            stage
+                .feed(
+                    MuxInput::Sample {
+                        track: track_id,
+                        sample,
+                    },
+                    Timestamp::ZERO,
+                )
+                .expect("encrypt sample");
+            while stage.poll().is_some() {}
+        }
+    }
+    stage.finish().expect("finish");
 }
 
 const KID: [u8; 16] = [
@@ -106,12 +133,16 @@ const KEY: [u8; 16] = [
 /// - 74 / 5_296 / 43 (2026-11-25) — per-sample protection: each sample now
 ///   owns an `Arc<SampleProtection>` (one allocation per sample) instead of a
 ///   parallel per-track entry list.
+/// - 68 / 4_760 / 105 (2026-11-26) — encryption is a per-sample stage: the
+///   measurement now covers the stage queue (and drops the input `Media`
+///   inside the window, hence more deallocs than allocs), while the whole-media
+///   plan that used to copy every sample handle is gone.
 ///
 /// Re-measure and update these (with a fresh date) if a legitimate change
 /// moves them; do not widen a tolerance instead.
-const CENC_MEASURED_ALLOCS: usize = 74;
-const CENC_MEASURED_ALLOC_BYTES: usize = 5_296;
-const CENC_MEASURED_DEALLOCS: usize = 43;
+const CENC_MEASURED_ALLOCS: usize = 68;
+const CENC_MEASURED_ALLOC_BYTES: usize = 4_760;
+const CENC_MEASURED_DEALLOCS: usize = 105;
 // NOTE: the three pinned metrics (allocs/alloc_bytes/deallocs) are asserted
 // with `assert_eq!` below, not a tolerance band. A tolerance multiple (e.g.
 // "within 2x") is wide enough that short-circuiting `CencEncryptor::encrypt`
@@ -130,7 +161,7 @@ const CENC_MEASURED_DEALLOCS: usize = 43;
 /// regression is actually caught rather than merely reported.
 #[test]
 fn cenc_encrypt_allocation_count_over_real_fixture() {
-    let mut media = clear_video_media();
+    let media = clear_video_media();
     let sample_count = media.tracks[0].samples.len();
     assert!(sample_count > 1, "fixture must carry more than one sample");
     // Total cleartext payload size across every sample of the track, captured
@@ -144,9 +175,7 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
     let cfg = EncryptConfig::new(CencScheme::Cenc, KID, SubsamplePolicy::Video);
 
     reset_counters();
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_through_stage(media, cfg);
     let (allocs, alloc_bytes, deallocs) = snapshot_counters();
 
     eprintln!(
@@ -200,15 +229,17 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
 ///   the 15 planned IVs are 8 bytes wider each — same count, +120 bytes.
 /// - 71 / 4_520 / 40 (2026-11-25) — per-sample protection (one
 ///   `Arc<SampleProtection>` per sample, replacing the parallel entry list).
-const CBCS_MEASURED_ALLOCS: usize = 71;
-const CBCS_MEASURED_ALLOC_BYTES: usize = 4_520;
-const CBCS_MEASURED_DEALLOCS: usize = 40;
+/// - 65 / 3_680 / 102 (2026-11-26) — the per-sample encrypt stage (see the
+///   `cenc` history above for why deallocs now exceed allocs).
+const CBCS_MEASURED_ALLOCS: usize = 65;
+const CBCS_MEASURED_ALLOC_BYTES: usize = 3_680;
+const CBCS_MEASURED_DEALLOCS: usize = 102;
 
 /// Same measurement for `cbcs` (AES-CBC pattern) — a different code path
 /// through `cenc_crypto::cbcs_sample` with its own subsample walk.
 #[test]
 fn cbcs_encrypt_allocation_count_over_real_fixture() {
-    let mut media = clear_video_media();
+    let media = clear_video_media();
     let sample_count = media.tracks[0].samples.len();
     let total_payload: usize = media.tracks[0].samples.iter().map(|s| s.data.len()).sum();
 
@@ -216,9 +247,7 @@ fn cbcs_encrypt_allocation_count_over_real_fixture() {
         EncryptConfig::new(CencScheme::Cbcs, KID, SubsamplePolicy::Video).with_pattern((1, 9));
 
     reset_counters();
-    CencEncryptor::new(KEY)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_through_stage(media, cfg);
     let (allocs, alloc_bytes, deallocs) = snapshot_counters();
 
     eprintln!(

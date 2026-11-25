@@ -1475,8 +1475,6 @@ fn write_output(out_path: &Path, out: Output) -> CliResult<()> {
 /// can consume. The `keys` are `<KID-hex>:<key-hex>` pairs.
 #[cfg(feature = "cenc")]
 fn decrypt_input(input: &[u8], container: Container, keys: &[String]) -> CliResult<Vec<u8>> {
-    use broadcast_common::Decrypt;
-
     if container != Container::Mp4 {
         return Err(CliError::Transmux(crate::Error::InvalidInput(
             "--decrypt only applies to CENC-protected MP4/CMAF input",
@@ -1487,9 +1485,8 @@ fn decrypt_input(input: &[u8], container: Container, keys: &[String]) -> CliResu
         let (kid, key) = parse_key(spec)?;
         key_map.insert(kid, key);
     }
-    let decryptor = crate::cenc_decrypt::CencDecryptor::from_fmp4(input)?;
-    let mut media = decryptor.demux()?;
-    decryptor.decrypt(&mut media, &key_map)?;
+    let mut stage = crate::cenc_decrypt::CencDecryptStage::new(key_map);
+    let media = crate::mp4_collect::media_through_stage(input, &mut stage)?;
     // Re-package the now-cleartext samples as fMP4 so autodetect + demux run on a
     // clean container. Filter first (media plane step-2 fix wave 1): the CMAF
     // muxer rejects a non-carriable track (e.g. an encrypted subtitle track)
