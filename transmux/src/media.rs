@@ -119,6 +119,13 @@ pub struct CmafMuxStage {
     tracks: Vec<TrackSpec>,
     writer: Option<isobmff::writer::FragmentedWriter>,
     track_started: Vec<bool>,
+    /// Per-track elapsed-media accounting, so each fragment's `tfdt` advances
+    /// with that track's own samples (a `duration: Some(0)` stream uses the
+    /// `dts` delta instead).
+    track_clock: Vec<MediaClock>,
+    /// Each track's next absolute decode time — the `tfdt.baseMediaDecodeTime`
+    /// a newly opened fragment starts it at.
+    track_next_decode: Vec<u64>,
     anchor: Option<TrackId>,
     anchor_clock: MediaClock,
     anchor_duration: u64,
@@ -160,6 +167,8 @@ impl CmafMuxStage {
             tracks: Vec::new(),
             writer: None,
             track_started: Vec::new(),
+            track_clock: Vec::new(),
+            track_next_decode: Vec::new(),
             anchor: None,
             anchor_clock: MediaClock::new(),
             anchor_duration: 0,
@@ -225,6 +234,8 @@ impl CmafMuxStage {
             .ok()
             .map(|index| self.tracks[index].track_id);
         self.track_started = alloc::vec![false; self.tracks.len()];
+        self.track_clock = alloc::vec![MediaClock::new(); self.tracks.len()];
+        self.track_next_decode = alloc::vec![0; self.tracks.len()];
         self.writer = Some(writer);
         Ok(())
     }
@@ -238,14 +249,7 @@ impl CmafMuxStage {
                     "CmafMuxStage: sample for an unannounced track",
                 ))?;
         self.ensure_writer()?;
-        let Some(writer) = self.writer.as_mut() else {
-            return Ok(());
-        };
         let dts = sample.timing.and_then(|t| t.dts()).unwrap_or(0).max(0) as u64;
-        if !self.track_started[index] {
-            writer.set_base_decode_time(isobmff::TrackId::new(track.value()), dts)?;
-            self.track_started[index] = true;
-        }
         let is_anchor = self.anchor == Some(track);
         if is_anchor {
             let cut = match self.cut {
@@ -264,11 +268,19 @@ impl CmafMuxStage {
             };
             if cut {
                 self.flush_fragment()?;
-                let Some(writer) = self.writer.as_mut() else {
-                    return Ok(());
-                };
+            }
+        }
+        if !self.buffered {
+            self.begin_fragment()?;
+        }
+        if !self.track_started[index] {
+            if let Some(writer) = self.writer.as_mut() {
                 writer.set_base_decode_time(isobmff::TrackId::new(track.value()), dts)?;
             }
+            self.track_next_decode[index] = dts;
+            self.track_started[index] = true;
+        }
+        if is_anchor {
             if self.anchor_start.is_none() {
                 self.anchor_start = Some(dts);
                 self.anchor_independent = sample.flags.is_sync;
@@ -289,7 +301,25 @@ impl CmafMuxStage {
             return Ok(());
         };
         writer.push(isobmff::TrackId::new(track.value()), meta, &sample.data)?;
+        let increment = self.track_clock[index].tick(&sample);
+        self.track_next_decode[index] = self.track_next_decode[index].saturating_add(increment);
         self.buffered = true;
+        Ok(())
+    }
+
+    /// Open a fragment: every track's `tfdt.baseMediaDecodeTime` is the decode
+    /// time its next sample will carry, so consecutive fragments continue each
+    /// track's timeline instead of restarting it.
+    fn begin_fragment(&mut self) -> Result<()> {
+        let Some(writer) = self.writer.as_mut() else {
+            return Ok(());
+        };
+        for (index, spec) in self.tracks.iter().enumerate() {
+            writer.set_base_decode_time(
+                isobmff::TrackId::new(spec.track_id.value()),
+                self.track_next_decode[index],
+            )?;
+        }
         Ok(())
     }
 

@@ -27,6 +27,7 @@ mod cli;
 mod cli_binary;
 #[path = "support/cmaf.rs"]
 mod cmaf;
+mod cmaf_stage;
 mod codec_config;
 mod codec_tail;
 mod codecs_new;
