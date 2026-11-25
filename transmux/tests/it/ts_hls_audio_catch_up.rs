@@ -4,6 +4,7 @@
 //! video it accompanies, is cut short at the boundary. Samples are pushed in
 //! the order `StreamingTsDemux` emits them, exactly as a live ingest does.
 
+use crate::ts_hls_stage;
 use std::collections::HashMap;
 
 use broadcast_common::Unpackage;
@@ -45,7 +46,7 @@ fn stream(bytes: &[u8]) -> Streamed {
         demux.feed(chunk).expect("valid timing");
         drain(&mut demux);
     }
-    demux.finish().expect("valid timing");
+    demux.finish().unwrap();
     drain(&mut demux);
     Streamed { specs, events }
 }
@@ -58,8 +59,12 @@ fn segments(streamed: &Streamed) -> Vec<Vec<u8>> {
     let mut out = Vec::new();
     for (track_id, sample) in &streamed.events {
         if known.contains(track_id) {
-            seg.push(*track_id, sample.clone()).expect("push");
-            out.extend(seg.take_ready().into_iter().map(|s| s.bytes));
+            ts_hls_stage::feed(&mut seg, *track_id, sample.clone());
+            out.extend(
+                ts_hls_stage::drain(&mut seg)
+                    .into_iter()
+                    .map(|s| s.bytes.to_vec()),
+            );
         }
     }
     out
@@ -163,8 +168,7 @@ fn catch_up_segmenter() -> (StreamingTsHlsSegmenter, TrackId, TrackId) {
 /// 0.1 s video frames at 90 kHz, keyframe every 10 (a 1 s GOP).
 fn push_video_frames(seg: &mut StreamingTsHlsSegmenter, id: TrackId, frames: usize, start: usize) {
     for i in start..start + frames {
-        seg.push(id, video_sample(9_000, i % 10 == 0))
-            .expect("push video");
+        ts_hls_stage::feed(seg, id, video_sample(9_000, i % 10 == 0));
     }
 }
 
@@ -172,18 +176,18 @@ fn push_video_frames(seg: &mut StreamingTsHlsSegmenter, id: TrackId, frames: usi
 fn a_lagging_audio_track_defers_the_cut_to_the_boundary() {
     let (mut seg, vid, aud) = catch_up_segmenter();
     for _ in 0..42 {
-        seg.push(aud, audio_sample(1024)).expect("push audio");
+        ts_hls_stage::feed(&mut seg, aud, audio_sample(1024));
     }
     push_video_frames(&mut seg, vid, 11, 0);
     assert!(
-        seg.take_ready().is_empty(),
+        ts_hls_stage::drain(&mut seg).is_empty(),
         "audio 0.9 s behind the 1.0 s boundary must defer the cut"
     );
 
     for _ in 42..48 {
-        seg.push(aud, audio_sample(1024)).expect("push audio");
+        ts_hls_stage::feed(&mut seg, aud, audio_sample(1024));
     }
-    let cuts = seg.take_ready();
+    let cuts = ts_hls_stage::drain(&mut seg);
     assert_eq!(cuts.len(), 1, "audio reaching 1.0 s must close the cut");
     let media = TsDemux::new()
         .unpackage(&cuts[0].bytes)
@@ -204,17 +208,19 @@ fn a_lagging_audio_track_defers_the_cut_to_the_boundary() {
 fn a_cut_is_waited_out_after_catch_up_max_secs_of_anchor_media() {
     let (mut seg, vid, aud) = catch_up_segmenter();
     for _ in 0..42 {
-        seg.push(aud, audio_sample(1024)).expect("push audio");
+        ts_hls_stage::feed(&mut seg, aud, audio_sample(1024));
     }
     push_video_frames(&mut seg, vid, 11, 0);
-    assert!(seg.take_ready().is_empty(), "the cut defers first");
+    assert!(
+        ts_hls_stage::drain(&mut seg).is_empty(),
+        "the cut defers first"
+    );
 
     for _ in 0..9 {
-        seg.push(vid, video_sample(9_000, false))
-            .expect("push video");
+        ts_hls_stage::feed(&mut seg, vid, video_sample(9_000, false));
     }
     assert!(
-        !seg.take_ready().is_empty(),
+        !ts_hls_stage::drain(&mut seg).is_empty(),
         "1 s of further anchor media must wait out the lagging audio"
     );
 }
@@ -240,7 +246,7 @@ fn a_track_that_has_delivered_no_media_never_defers_the_cut() {
 
     push_video_frames(&mut seg, vid, 11, 0);
     assert!(
-        !seg.take_ready().is_empty(),
+        !ts_hls_stage::drain(&mut seg).is_empty(),
         "an audio track with no samples and a section track must not defer"
     );
 }
@@ -249,11 +255,11 @@ fn a_track_that_has_delivered_no_media_never_defers_the_cut() {
 fn audio_already_past_the_boundary_cuts_immediately() {
     let (mut seg, vid, aud) = catch_up_segmenter();
     for _ in 0..50 {
-        seg.push(aud, audio_sample(1024)).expect("push audio");
+        ts_hls_stage::feed(&mut seg, aud, audio_sample(1024));
     }
     push_video_frames(&mut seg, vid, 11, 0);
     assert!(
-        !seg.take_ready().is_empty(),
+        !ts_hls_stage::drain(&mut seg).is_empty(),
         "audio past the boundary must not defer the cut"
     );
 }
@@ -279,20 +285,20 @@ fn a_non_anchor_section_track_with_samples_never_defers_the_cut() {
 
     // A section sample has no timing and no duration; the track has therefore
     // "delivered media" but can never carry a decode time of its own.
-    seg.push(
+    ts_hls_stage::feed(
+        &mut seg,
         data_id,
         Sample::new(vec![0xFC, 0x30, 0x11], None, None, None, true).expect("valid timing"),
-    )
-    .expect("push section");
+    );
     // 0.1 s audio frames: the cut-triggering frame adds less than the
     // CATCH_UP_MAX_SECS bound, so a false lag cannot be waited out on the
     // same push.
     for _ in 0..11 {
-        seg.push(aid, audio_sample(4_800)).expect("push audio");
+        ts_hls_stage::feed(&mut seg, aid, audio_sample(4_800));
     }
 
     assert!(
-        !seg.take_ready().is_empty(),
+        !ts_hls_stage::drain(&mut seg).is_empty(),
         "a non-audio track must never be treated as lagging audio"
     );
 }

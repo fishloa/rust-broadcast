@@ -4,6 +4,7 @@
 //! `#EXT-X-DISCONTINUITY`.
 
 use crate::hub_fixtures::video_track;
+use crate::ts_hls_stage;
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use broadcast_hls::MediaPlaylist;
@@ -82,11 +83,9 @@ fn audio_config_change_arms_discontinuity() {
     let a = n / 3;
     let b = 2 * n / 3;
     for i in 0..a {
-        seg.push(video_id, video_samples[i].clone())
-            .expect("push v");
+        ts_hls_stage::feed(&mut seg, video_id, video_samples[i].clone());
         if i < audio_samples.len() {
-            seg.push(audio_id, audio_samples[i].clone())
-                .expect("push a");
+            ts_hls_stage::feed(&mut seg, audio_id, audio_samples[i].clone());
         }
     }
 
@@ -98,12 +97,10 @@ fn audio_config_change_arms_discontinuity() {
 
     for i in a..b {
         if i < video_samples.len() {
-            seg.push(video_id, video_samples[i].clone())
-                .expect("push v2");
+            ts_hls_stage::feed(&mut seg, video_id, video_samples[i].clone());
         }
         if i < audio_samples.len() {
-            seg.push(audio_id, audio_samples[i].clone())
-                .expect("push a2");
+            ts_hls_stage::feed(&mut seg, audio_id, audio_samples[i].clone());
         }
     }
 
@@ -115,16 +112,14 @@ fn audio_config_change_arms_discontinuity() {
 
     for i in b..n {
         if i < video_samples.len() {
-            seg.push(video_id, video_samples[i].clone())
-                .expect("push v3");
+            ts_hls_stage::feed(&mut seg, video_id, video_samples[i].clone());
         }
         if i < audio_samples.len() {
-            seg.push(audio_id, audio_samples[i].clone())
-                .expect("push a3");
+            ts_hls_stage::feed(&mut seg, audio_id, audio_samples[i].clone());
         }
     }
 
-    seg.finish().expect("finish");
+    ts_hls_stage::finish(&mut seg);
     let playlist = seg.playlist().expect("playlist");
     assert_eq!(
         count_discontinuities(&playlist),
@@ -176,11 +171,9 @@ fn audio_config_unchanged_is_noop() {
     let n = video_samples.len();
     let m = n / 2;
     for i in 0..m {
-        seg.push(video_id, video_samples[i].clone())
-            .expect("push v");
+        ts_hls_stage::feed(&mut seg, video_id, video_samples[i].clone());
         if i < audio_samples.len() {
-            seg.push(audio_id, audio_samples[i].clone())
-                .expect("push a");
+            ts_hls_stage::feed(&mut seg, audio_id, audio_samples[i].clone());
         }
     }
 
@@ -192,16 +185,14 @@ fn audio_config_unchanged_is_noop() {
 
     for i in m..n {
         if i < video_samples.len() {
-            seg.push(video_id, video_samples[i].clone())
-                .expect("push v2");
+            ts_hls_stage::feed(&mut seg, video_id, video_samples[i].clone());
         }
         if i < audio_samples.len() {
-            seg.push(audio_id, audio_samples[i].clone())
-                .expect("push a2");
+            ts_hls_stage::feed(&mut seg, audio_id, audio_samples[i].clone());
         }
     }
 
-    seg.finish().expect("finish");
+    ts_hls_stage::finish(&mut seg);
     let playlist = seg.playlist().expect("playlist");
     assert_eq!(
         count_discontinuities(&playlist),
@@ -213,14 +204,12 @@ fn audio_config_unchanged_is_noop() {
         StreamingTsHlsSegmenter::new(vec![video_spec.clone(), audio_spec.clone()], 1, usize::MAX)
             .expect("construct");
     for i in 0..n {
-        seg2.push(video_id, video_samples[i].clone())
-            .expect("push v");
+        ts_hls_stage::feed(&mut seg2, video_id, video_samples[i].clone());
         if i < audio_samples.len() {
-            seg2.push(audio_id, audio_samples[i].clone())
-                .expect("push a");
+            ts_hls_stage::feed(&mut seg2, audio_id, audio_samples[i].clone());
         }
     }
-    seg2.finish().expect("finish");
+    ts_hls_stage::finish(&mut seg2);
     let playlist2 = seg2.playlist().expect("playlist");
     assert_eq!(count_discontinuities(&playlist2), 0);
     let reparsed = MediaPlaylist::parse(&playlist).expect("parse");
@@ -260,11 +249,9 @@ fn video_frame_rate_change_arms_discontinuity() {
     let a = n / 3;
     let b = 2 * n / 3;
     for i in 0..a {
-        seg.push(video_id, video_samples[i].clone())
-            .expect("push v");
+        ts_hls_stage::feed(&mut seg, video_id, video_samples[i].clone());
         if i < audio_samples.len() {
-            seg.push(audio_id, audio_samples[i].clone())
-                .expect("push a");
+            ts_hls_stage::feed(&mut seg, audio_id, audio_samples[i].clone());
         }
     }
 
@@ -275,16 +262,14 @@ fn video_frame_rate_change_arms_discontinuity() {
 
     for i in a..b {
         if i < video_samples.len() {
-            seg.push(video_id, video_samples[i].clone())
-                .expect("push v2");
+            ts_hls_stage::feed(&mut seg, video_id, video_samples[i].clone());
         }
         if i < audio_samples.len() {
-            seg.push(audio_id, audio_samples[i].clone())
-                .expect("push a2");
+            ts_hls_stage::feed(&mut seg, audio_id, audio_samples[i].clone());
         }
     }
 
-    seg.finish().expect("finish");
+    ts_hls_stage::finish(&mut seg);
     let playlist = seg.playlist().expect("playlist");
     assert_eq!(
         count_discontinuities(&playlist),
@@ -328,9 +313,9 @@ fn audio_non_trigger_change_is_noop() {
                 Ok(UpdateTrackOutcome::Unchanged)
             );
         }
-        seg.push(audio_id, sample).expect("push a");
+        ts_hls_stage::feed(&mut seg, audio_id, sample);
     }
-    seg.finish().expect("finish");
+    ts_hls_stage::finish(&mut seg);
     let playlist = seg.playlist().expect("playlist");
     assert_eq!(
         count_discontinuities(&playlist),
@@ -380,10 +365,10 @@ fn aac_asc_change_at_the_same_rate_and_channels_arms_discontinuity() {
     // Cut one segment so the change lands mid-stream.
     let cut_at = audio_samples.len() / 2;
     for sample in &audio_samples[..cut_at] {
-        seg.push(audio_id, sample.clone()).expect("push a");
+        ts_hls_stage::feed(&mut seg, audio_id, sample.clone());
     }
     assert!(
-        !seg.take_ready().is_empty(),
+        !ts_hls_stage::drain(&mut seg).is_empty(),
         "the fixture must cut at least one segment before the change"
     );
 
@@ -394,9 +379,9 @@ fn aac_asc_change_at_the_same_rate_and_channels_arms_discontinuity() {
     );
 
     for sample in &audio_samples[cut_at..] {
-        seg.push(audio_id, sample.clone()).expect("push b");
+        ts_hls_stage::feed(&mut seg, audio_id, sample.clone());
     }
-    seg.finish().expect("finish");
+    ts_hls_stage::finish(&mut seg);
     let playlist = seg.playlist().expect("playlist");
     assert!(
         playlist.contains("#EXT-X-DISCONTINUITY"),
@@ -407,7 +392,7 @@ fn aac_asc_change_at_the_same_rate_and_channels_arms_discontinuity() {
     let mut control =
         StreamingTsHlsSegmenter::new(vec![audio_spec.clone()], 1, usize::MAX).expect("construct");
     for sample in &audio_samples[..cut_at] {
-        control.push(audio_id, sample.clone()).expect("push");
+        ts_hls_stage::feed(&mut control, audio_id, sample.clone());
     }
     assert_eq!(
         control.update_track(audio_spec),
@@ -427,7 +412,7 @@ fn push_one_second_frames(
         let sync = i % gop == 0;
         let sample =
             Sample::new(vec![0u8; 4], None, None, Some(frame_ticks), sync).expect("valid timing");
-        seg.push(id, sample).expect("push");
+        ts_hls_stage::feed(seg, id, sample);
     }
 }
 
@@ -446,13 +431,13 @@ fn anchor_timescale_change_recomputes_the_target_ticks() {
     );
     // 4 s of 0.1 s frames at 30 kHz, keyframe every 2 s.
     push_one_second_frames(&mut seg, id, 3_000, 10, 4);
-    let cuts = seg.take_ready();
+    let cuts = ts_hls_stage::drain(&mut seg);
     assert!(
         !cuts.is_empty(),
         "the 2 s target must cut at the 2 s keyframe under the new timescale"
     );
     assert_eq!(
-        cuts[0].duration,
+        ts_hls_stage::duration(&cuts[0]),
         core::time::Duration::from_secs(2),
         "target_ticks must be re-derived at 30 kHz, not keep 90 kHz ticks"
     );
@@ -469,7 +454,10 @@ fn a_display_only_change_keeps_the_cut_cadence() {
     assert_eq!(seg.update_track(changed), Ok(UpdateTrackOutcome::Changed));
     // 4 s of 1 s frames at 90 kHz, keyframe every 2 s.
     push_one_second_frames(&mut seg, id, 9_000, 10, 4);
-    let cuts = seg.take_ready();
+    let cuts = ts_hls_stage::drain(&mut seg);
     assert!(!cuts.is_empty());
-    assert_eq!(cuts[0].duration, core::time::Duration::from_secs(2));
+    assert_eq!(
+        ts_hls_stage::duration(&cuts[0]),
+        core::time::Duration::from_secs(2)
+    );
 }

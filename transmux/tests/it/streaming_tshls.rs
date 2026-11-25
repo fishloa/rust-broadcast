@@ -12,15 +12,15 @@
 
 use crate::hub_fixtures;
 use crate::hub_fixtures::dummy_avc_config;
+use crate::ts_hls_stage;
+use broadcast_common::Unpackage;
 use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Unpackage};
 use transmux::TrackId;
 use transmux::media::Media;
+use transmux::mux_stage::SegmentOut;
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
-use transmux::{
-    CodecConfig, Sample, StreamingTsHlsSegmenter, TrackSpec, TsDemux, TsHlsPackager, TsSegment,
-};
+use transmux::{CodecConfig, Sample, StreamingTsHlsSegmenter, TrackSpec, TsDemux};
 
 // ── Fixture + pipeline ───────────────────────────────────────────────────────
 
@@ -66,14 +66,14 @@ fn merged_decode_order(ir: &Media) -> Vec<(usize, usize)> {
 /// Feed every sample of `ir` through `seg` one at a time, in global
 /// decode-time order, returning every segment emitted by `push` (in order),
 /// followed by `finish`'s trailing segment (if any).
-fn feed_all(ir: &Media, seg: &mut StreamingTsHlsSegmenter) -> Vec<TsSegment> {
+fn feed_all(ir: &Media, seg: &mut StreamingTsHlsSegmenter) -> Vec<SegmentOut> {
     for (tpos, i) in merged_decode_order(ir) {
         let track_id = ir.tracks[tpos].spec.track_id;
         let sample = ir.tracks[tpos].samples[i].clone();
-        seg.push(track_id, sample).expect("push");
+        ts_hls_stage::feed(seg, track_id, sample);
     }
-    seg.finish().expect("finish");
-    seg.take_ready()
+    ts_hls_stage::finish(seg);
+    ts_hls_stage::drain(seg)
 }
 
 fn extract_tag_u64(playlist: &str, tag: &str) -> u64 {
@@ -104,7 +104,7 @@ fn extract_uris(playlist: &str) -> Vec<String> {
 #[test]
 fn streaming_reproduces_batch_segment_boundaries_and_bytes() {
     let ir = demux(&load_ts());
-    let batch = TsHlsPackager::new(1).package(&ir).expect("batch package");
+    let batch = ts_hls_stage::hls(&ir, 1);
 
     let mut seg = StreamingTsHlsSegmenter::new(track_specs(&ir), 1, usize::MAX)
         .expect("construct streaming segmenter");
@@ -128,7 +128,7 @@ fn streaming_reproduces_batch_segment_boundaries_and_bytes() {
 #[test]
 fn streaming_emits_segments_progressively_and_loses_nothing() {
     let ir = demux(&load_ts());
-    let batch = TsHlsPackager::new(1).package(&ir).expect("batch package");
+    let batch = ts_hls_stage::hls(&ir, 1);
 
     let mut seg = StreamingTsHlsSegmenter::new(track_specs(&ir), 1, usize::MAX)
         .expect("construct streaming segmenter");
@@ -142,9 +142,9 @@ fn streaming_emits_segments_progressively_and_loses_nothing() {
     for (tpos, i) in &order {
         let track_id = ir.tracks[*tpos].spec.track_id;
         let sample = ir.tracks[*tpos].samples[*i].clone();
-        seg.push(track_id, sample).expect("push");
+        ts_hls_stage::feed(&mut seg, track_id, sample);
     }
-    let emitted_before_finish: Vec<TsSegment> = seg.take_ready();
+    let emitted_before_finish: Vec<SegmentOut> = ts_hls_stage::drain(&mut seg);
     assert!(
         !emitted_before_finish.is_empty(),
         "at least one segment must be available before finish() (progressive emission)"
@@ -154,9 +154,9 @@ fn streaming_emits_segments_progressively_and_loses_nothing() {
         "not every segment can have been flushed before finish() cuts the trailing partial"
     );
 
-    let mut all: Vec<TsSegment> = emitted_before_finish;
-    seg.finish().expect("finish");
-    all.extend(seg.take_ready());
+    let mut all: Vec<SegmentOut> = emitted_before_finish;
+    ts_hls_stage::finish(&mut seg);
+    all.extend(ts_hls_stage::drain(&mut seg));
 
     // No sample lost or duplicated: concatenation matches the batch output
     // exactly (segment-for-segment, matching test 1's stronger claim).
@@ -182,9 +182,9 @@ fn rolling_playlist_windows_and_advances_media_sequence() {
     for (tpos, i) in merged_decode_order(&ir) {
         let track_id = ir.tracks[tpos].spec.track_id;
         let sample = ir.tracks[tpos].samples[i].clone();
-        seg.push(track_id, sample).expect("push");
+        ts_hls_stage::feed(&mut seg, track_id, sample);
     }
-    let emitted: Vec<TsSegment> = seg.take_ready();
+    let emitted: Vec<SegmentOut> = ts_hls_stage::drain(&mut seg);
     let m = emitted.len();
     assert!(
         m > window,
@@ -208,7 +208,7 @@ fn rolling_playlist_windows_and_advances_media_sequence() {
     assert_eq!(uris.len(), window, "playlist must list exactly N segments");
     let expected_uris: Vec<String> = emitted[m - window..]
         .iter()
-        .map(|s| s.uri.clone())
+        .map(|s| format!("seg{}.ts", s.summary.sequence))
         .collect();
     assert_eq!(
         uris, expected_uris,
@@ -216,8 +216,8 @@ fn rolling_playlist_windows_and_advances_media_sequence() {
     );
 
     // finish() flushes the trailing partial segment and appends ENDLIST.
-    seg.finish().expect("finish");
-    let last = seg.take_ready().pop();
+    ts_hls_stage::finish(&mut seg);
+    let last = ts_hls_stage::drain(&mut seg).pop();
     let pl2 = seg.playlist().unwrap();
     assert!(
         pl2.trim_end().ends_with("#EXT-X-ENDLIST"),
@@ -226,7 +226,10 @@ fn rolling_playlist_windows_and_advances_media_sequence() {
     if let Some(tail) = last {
         // The just-finished trailing segment is now the newest in the window.
         let uris2 = extract_uris(&pl2);
-        assert_eq!(uris2.last().unwrap(), &tail.uri);
+        assert_eq!(
+            uris2.last().unwrap(),
+            &format!("seg{}.ts", tail.summary.sequence)
+        );
     }
 }
 
@@ -276,69 +279,76 @@ fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>)
     let mut snapshots = Vec::new();
 
     // sync -> opens s0 (45_000 ticks buffered)
-    seg.push(TrackId::new(1), nal_sample(true, 45_000)).unwrap();
+    ts_hls_stage::feed(&mut seg, TrackId::new(1), nal_sample(true, 45_000));
     assert!(
-        seg.take_ready().is_empty(),
+        ts_hls_stage::drain(&mut seg).is_empty(),
         "opening sync sample must not cut"
     );
     // non-sync -> 90_000 ticks buffered (>= target)
-    seg.push(TrackId::new(1), nal_sample(false, 45_000))
-        .unwrap();
+    ts_hls_stage::feed(&mut seg, TrackId::new(1), nal_sample(false, 45_000));
     assert!(
-        seg.take_ready().is_empty(),
+        ts_hls_stage::drain(&mut seg).is_empty(),
         "buffering non-sync sample must not cut"
     );
 
     // sync -> cuts s0 (continuous); opens s1
-    seg.push(TrackId::new(1), nal_sample(true, 45_000)).unwrap();
-    assert_eq!(seg.take_ready().len(), 1, "sync sample must cut s0");
-    seg.push(TrackId::new(1), nal_sample(false, 45_000))
-        .unwrap();
+    ts_hls_stage::feed(&mut seg, TrackId::new(1), nal_sample(true, 45_000));
+    assert_eq!(
+        ts_hls_stage::drain(&mut seg).len(),
+        1,
+        "sync sample must cut s0"
+    );
+    ts_hls_stage::feed(&mut seg, TrackId::new(1), nal_sample(false, 45_000));
     assert!(
-        seg.take_ready().is_empty(),
+        ts_hls_stage::drain(&mut seg).is_empty(),
         "buffering non-sync sample must not cut"
     );
 
     // sync -> cuts s1 (continuous); opens s2
-    seg.push(TrackId::new(1), nal_sample(true, 45_000)).unwrap();
-    assert_eq!(seg.take_ready().len(), 1, "sync sample must cut s1");
+    ts_hls_stage::feed(&mut seg, TrackId::new(1), nal_sample(true, 45_000));
+    assert_eq!(
+        ts_hls_stage::drain(&mut seg).len(),
+        1,
+        "sync sample must cut s1"
+    );
     snapshots.push(seg.playlist().unwrap());
     // Mark s2 (currently buffering) as the next segment to be cut discontinuous.
     seg.mark_discontinuity();
-    seg.push(TrackId::new(1), nal_sample(false, 45_000))
-        .unwrap();
+    ts_hls_stage::feed(&mut seg, TrackId::new(1), nal_sample(false, 45_000));
     assert!(
-        seg.take_ready().is_empty(),
+        ts_hls_stage::drain(&mut seg).is_empty(),
         "buffering non-sync sample must not cut"
     );
 
     // sync -> cuts s2 (discontinuous); opens s3
-    seg.push(TrackId::new(1), nal_sample(true, 45_000)).unwrap();
-    let s2 = seg.take_ready();
+    ts_hls_stage::feed(&mut seg, TrackId::new(1), nal_sample(true, 45_000));
+    let s2 = ts_hls_stage::drain(&mut seg);
     assert_eq!(s2.len(), 1, "sync sample must cut s2 singly");
-    assert!(s2[0].discontinuous, "s2 must be discontinuous");
+    assert!(s2[0].summary.discontinuous, "s2 must be discontinuous");
     snapshots.push(seg.playlist().unwrap());
-    seg.push(TrackId::new(1), nal_sample(false, 45_000))
-        .unwrap();
+    ts_hls_stage::feed(&mut seg, TrackId::new(1), nal_sample(false, 45_000));
     assert!(
-        seg.take_ready().is_empty(),
+        ts_hls_stage::drain(&mut seg).is_empty(),
         "buffering non-sync sample must not cut"
     );
 
     // sync -> cuts s3 (continuous); opens s4
-    seg.push(TrackId::new(1), nal_sample(true, 45_000)).unwrap();
-    assert_eq!(seg.take_ready().len(), 1, "sync sample must cut s3");
+    ts_hls_stage::feed(&mut seg, TrackId::new(1), nal_sample(true, 45_000));
+    assert_eq!(
+        ts_hls_stage::drain(&mut seg).len(),
+        1,
+        "sync sample must cut s3"
+    );
     snapshots.push(seg.playlist().unwrap());
-    seg.push(TrackId::new(1), nal_sample(false, 45_000))
-        .unwrap();
+    ts_hls_stage::feed(&mut seg, TrackId::new(1), nal_sample(false, 45_000));
     assert!(
-        seg.take_ready().is_empty(),
+        ts_hls_stage::drain(&mut seg).is_empty(),
         "buffering non-sync sample must not cut"
     );
 
     // finish() -> cuts s4 (continuous, final flush)
-    seg.finish().unwrap();
-    assert_eq!(seg.take_ready().len(), 1, "finish must cut s4");
+    ts_hls_stage::finish(&mut seg);
+    assert_eq!(ts_hls_stage::drain(&mut seg).len(), 1, "finish must cut s4");
     snapshots.push(seg.playlist().unwrap());
 
     (seg, snapshots)
@@ -438,14 +448,14 @@ fn discontinuity_sequence_is_spec_correct_and_stable_across_window_rollover() {
 }
 
 fn push_duration_only(seg: &mut StreamingTsHlsSegmenter, id: TrackId, duration: u32) {
-    seg.push(
+    ts_hls_stage::feed(
+        seg,
         id,
         Sample::new(vec![0u8; 4], None, None, Some(duration), true).expect("valid timing"),
-    )
-    .expect("push");
+    );
 }
 
-fn first_sample_dts(segment: &TsSegment) -> i64 {
+fn first_sample_dts(segment: &SegmentOut) -> i64 {
     let ir = demux(&segment.bytes);
     ir.tracks[0]
         .samples
@@ -468,11 +478,11 @@ fn first_avc_sample_bytes() -> Vec<u8> {
 }
 
 fn push_avc(seg: &mut StreamingTsHlsSegmenter, id: TrackId, data: &[u8], duration: u32) {
-    seg.push(
+    ts_hls_stage::feed(
+        seg,
         id,
         Sample::new(data.to_vec(), None, None, Some(duration), true).expect("valid timing"),
-    )
-    .expect("push");
+    );
 }
 
 fn audio_spec_48k() -> TrackSpec {
@@ -495,7 +505,7 @@ fn set_start_time_moves_a_90_khz_anchor_to_ten_seconds() {
     seg.set_start_time(core::time::Duration::from_secs(10));
     push_avc(&mut seg, id, &data, 90_000);
     push_avc(&mut seg, id, &data, 90_000);
-    let cut = seg.take_ready();
+    let cut = ts_hls_stage::drain(&mut seg);
     assert!(!cut.is_empty(), "the second sample must cut a segment");
     assert_eq!(
         first_sample_dts(&cut[0]),
@@ -512,7 +522,7 @@ fn set_start_time_moves_a_48_khz_audio_anchor_to_ten_seconds() {
     seg.set_start_time(core::time::Duration::from_secs(10));
     push_duration_only(&mut seg, id, 48_000);
     push_duration_only(&mut seg, id, 48_000);
-    let cut = seg.take_ready();
+    let cut = ts_hls_stage::drain(&mut seg);
     assert!(!cut.is_empty(), "the second sample must cut a segment");
     assert_eq!(
         first_sample_dts(&cut[0]),
@@ -530,7 +540,7 @@ fn set_start_time_after_a_push_is_a_no_op() {
     push_avc(&mut seg, id, &data, 90_000);
     seg.set_start_time(core::time::Duration::from_secs(10));
     push_avc(&mut seg, id, &data, 90_000);
-    let cut = seg.take_ready();
+    let cut = ts_hls_stage::drain(&mut seg);
     assert!(!cut.is_empty());
     assert_eq!(
         first_sample_dts(&cut[0]),
@@ -548,9 +558,9 @@ fn streaming_playlist_pins_extinf_version_and_target_duration() {
         let sync = i == 0 || i == 5 || i == 7;
         let sample =
             Sample::new(vec![0u8; 4], None, None, Some(90_000), sync).expect("valid timing");
-        seg.push(id, sample).expect("push");
+        ts_hls_stage::feed(&mut seg, id, sample);
     }
-    seg.finish().expect("finish");
+    ts_hls_stage::finish(&mut seg);
     let playlist = seg.playlist().expect("playlist");
 
     assert!(playlist.contains("#EXT-X-VERSION:3"), "{playlist}");
@@ -589,13 +599,29 @@ fn demand_saturates_at_the_pending_sample_bound() {
 
     let sample = || Sample::new(vec![0u8; 4], None, None, Some(1), false).expect("valid timing");
     for _ in 0..MAX_PENDING_SAMPLES_PER_TRACK - 1 {
-        Stage::feed(&mut seg, (id, sample()), Timestamp::ZERO).expect("feed");
+        Stage::feed(
+            &mut seg,
+            transmux::mux_stage::MuxInput::Sample {
+                track: id,
+                sample: sample(),
+            },
+            Timestamp::ZERO,
+        )
+        .expect("feed");
     }
     assert!(
         !Stage::demand(&seg).saturated,
         "MAX-1 buffered samples are not full"
     );
-    Stage::feed(&mut seg, (id, sample()), Timestamp::ZERO).expect("feed");
+    Stage::feed(
+        &mut seg,
+        transmux::mux_stage::MuxInput::Sample {
+            track: id,
+            sample: sample(),
+        },
+        Timestamp::ZERO,
+    )
+    .expect("feed");
     assert!(
         Stage::demand(&seg).saturated,
         "MAX buffered samples must report saturated"

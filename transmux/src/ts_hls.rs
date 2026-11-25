@@ -10,28 +10,28 @@
 //!
 //! # Behaviour
 //!
-//! [`TsHlsPackager`] segments the hub [`Media`] IR at keyframe boundaries on the
-//! **anchor track** (the first video track, else the first track whose samples
-//! can advance a clock — never a section-carried track, whose `duration` *and*
-//! `dts` are always `None`; see
-//! [`crate::segmenter::choose_anchor`]), cutting a new segment
-//! on the first sync sample at or past the target duration — mirroring
-//! [`Segmenter`](crate::segmenter::Segmenter)'s CMAF rule so every video segment
-//! begins on a random-access point. Every track's samples are partitioned across
-//! the segments by decode time, so the concatenation of all segments carries the
-//! full input (no sample dropped, duplicated, or reordered). Each segment is then
-//! muxed via the shared [`crate::ts_mux`] machinery, re-emitting PAT + PMT at its
-//! start (ISO/IEC 13818-1 §2.4.4 PSI repetition — a receiver joining mid-stream
-//! must find the PSI at each segment boundary).
+//! [`StreamingTsHlsSegmenter`] segments at keyframe boundaries on the **anchor
+//! track** (the first video track, else the first track whose samples can
+//! advance a clock — never a section-carried track, whose `duration` *and*
+//! `dts` are always `None`; see [`crate::segmenter::choose_anchor`]), cutting a
+//! new segment on the first sync sample at or past the target duration —
+//! mirroring [`Segmenter`](crate::segmenter::Segmenter)'s CMAF rule so every
+//! video segment begins on a random-access point. Every track's samples are
+//! partitioned across the segments by decode time, so the concatenation of all
+//! segments carries the full input (no sample dropped, duplicated, or
+//! reordered). Each segment is then muxed via the shared [`crate::ts_mux`]
+//! machinery, re-emitting PAT + PMT at its start (ISO/IEC 13818-1 §2.4.4 PSI
+//! repetition — a receiver joining mid-stream must find the PSI at each
+//! segment boundary).
 //!
-//! The playlist is a VOD media playlist: `#EXTM3U`, `#EXT-X-VERSION`,
-//! `#EXT-X-TARGETDURATION` (≥ every `#EXTINF`), `#EXT-X-MEDIA-SEQUENCE`, one
-//! `#EXTINF` + `.ts` URI per segment, and a trailing `#EXT-X-ENDLIST`
-//! (RFC 8216 §4.3.3). `#EXT-X-DISCONTINUITY` (RFC 8216 §4.3.2.3) and
-//! `#EXT-X-DISCONTINUITY-SEQUENCE` (RFC 8216 §4.3.3.3) are forwarded from the
-//! underlying [`MediaPlaylist`] when the [`MediaSegment::discontinuous`] flag
-//! is set; this packager itself produces a single continuous timeline from one
-//! contiguous IR, so it does not set the flag on any generated segment.
+//! For a whole [`Media`](crate::ir::Media) the caller drives the segmenter
+//! through `drive_media`, which announces every track and feeds every sample;
+//! the resulting playlist is a VOD media playlist: `#EXTM3U`,
+//! `#EXT-X-VERSION`, `#EXT-X-TARGETDURATION` (≥ every `#EXTINF`),
+//! `#EXT-X-MEDIA-SEQUENCE`, one `#EXTINF` + `.ts` URI per segment, and a
+//! trailing `#EXT-X-ENDLIST` (RFC 8216 §4.3.3). `#EXT-X-DISCONTINUITY`
+//! (RFC 8216 §4.3.2.3) and `#EXT-X-DISCONTINUITY-SEQUENCE` (RFC 8216
+//! §4.3.3.3) are rendered from the segmenter's own discontinuity state.
 //!
 //! # Cut policy
 //!
@@ -41,29 +41,29 @@
 //! access units until the first one (Apple HLS Authoring Spec 7.4,
 //! `docs/hls-apple-conformance/`).
 //!
-//! # Streaming (live) input — [`StreamingTsHlsSegmenter`]
+//! # Input — [`StreamingTsHlsSegmenter`]
 //!
-//! [`TsHlsPackager::package`] is batch: it needs the whole [`Media`] up front.
-//! For a live, unbounded feed there is no whole-input IR — [`StreamingTsHlsSegmenter`]
-//! is the incremental analogue, mirroring [`Segmenter`](crate::segmenter::Segmenter)'s
-//! CMAF push/flush model: [`StreamingTsHlsSegmenter::push`] buffers one coded
-//! sample at a time and returns a finished `.ts` [`TsSegment`] whenever the
-//! anchor track crosses a keyframe past the target duration;
-//! [`StreamingTsHlsSegmenter::finish`] flushes the trailing partial segment;
-//! [`StreamingTsHlsSegmenter::playlist`] renders a rolling media playlist over
-//! a configurable sliding window, advancing `#EXT-X-MEDIA-SEQUENCE` and
-//! `#EXT-X-DISCONTINUITY-SEQUENCE` as older segments roll off (RFC 8216
-//! §6.2.1 defines a segment's Discontinuity Sequence Number as the header
-//! value plus the `#EXT-X-DISCONTINUITY` tags still visible ahead of it in
-//! the *current* playlist, so the header only needs to advance once a
-//! discontinuous segment's own inline tag has rolled out of the window), and
-//! omitting `#EXT-X-ENDLIST` until `finish` has been called. Both types share the same
-//! anchor-selection, cut-decision, duration-accounting and sample-placement
-//! logic — [`crate::segmenter::choose_anchor`] and
-//! [`crate::segmenter::MediaClock`] (shared with the other three
-//! segmenters), plus this module's private `is_cut_point`/
-//! `segment_duration_secs`/`placement_secs` helpers — so they can never drift
-//! apart.
+//! The segmenter speaks the muxer stage vocabulary
+//! ([`crate::mux_stage::MuxInput`]/[`crate::mux_stage::MuxOutput`]): feed it a
+//! track announcement or update, one coded sample at a time, a timeline
+//! discontinuity or an explicit flush, and pull a finished `.ts`
+//! [`MuxOutput::Segment`] — its bytes
+//! plus a filled [`SegmentSummary`] — whenever the anchor track crosses a
+//! keyframe past the target duration. [`Stage::finish`] flushes the trailing
+//! partial segment; [`StreamingTsHlsSegmenter::playlist`] renders a rolling
+//! media playlist over a configurable sliding window, advancing
+//! `#EXT-X-MEDIA-SEQUENCE` and `#EXT-X-DISCONTINUITY-SEQUENCE` as older
+//! segments roll off (RFC 8216 §6.2.1 defines a segment's Discontinuity
+//! Sequence Number as the header value plus the `#EXT-X-DISCONTINUITY` tags
+//! still visible ahead of it in the *current* playlist, so the header only
+//! needs to advance once a discontinuous segment's own inline tag has rolled
+//! out of the window), and omitting `#EXT-X-ENDLIST` until `finish` has been
+//! called.
+//!
+//! Anchor selection, the cut decision and duration accounting all come from
+//! [`crate::segmenter::choose_anchor`] and [`crate::segmenter::MediaClock`]
+//! (shared with the other segmenters), plus this module's private
+//! `is_cut_point`/`segment_duration`/`placement_secs` helpers.
 //!
 //! # Spec
 //!
@@ -83,11 +83,12 @@ use alloc::vec::Vec;
 use core::time::Duration;
 
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Demand, Package, Stage, Timestamp};
+use broadcast_common::{Demand, Stage, Timestamp};
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 
 use crate::error::{Error, Result};
-use crate::media::{Media, Track};
+use crate::media::Track;
+use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary};
 use crate::nal::{NalCodec, access_unit_is_idr};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::segment_cut::SegmentCutPolicy;
@@ -113,275 +114,11 @@ pub enum UpdateTrackOutcome {
 /// is the floor for floating-point `#EXTINF` durations (RFC 8216 §7).
 const DEFAULT_HLS_VERSION: u8 = 3;
 
-/// Default segment target duration, in whole seconds.
-const DEFAULT_TARGET_SECS: u32 = 6;
-
-// Test-only count of `MediaClock::tick` calls `TsHlsPackager::package` makes on
-// the *current thread*.
+// ── Shared segment-cutting arithmetic ──────────────────────────────────────
 //
-// The batch packager must touch each sample a bounded number of times; before
-// audit r05-W33 it re-walked every earlier sample of every track once per
-// segment (`O(segments x samples)`). Instrumenting the real walk keeps the
-// regression test timing-independent: it asserts a literal call count, not a
-// duration.
-//
-// Thread-local rather than a process-wide static: the test harness runs tests
-// on several threads, and another `#[test]` that happens to call `package`
-// concurrently would otherwise inflate this counter and flake the `==`
-// assertion.
-#[cfg(test)]
-std::thread_local! {
-    pub(crate) static PACKAGE_TICK_CALLS: core::cell::Cell<usize> =
-        const { core::cell::Cell::new(0) };
-}
-
-/// Increment the thread-local tick counter (a no-op outside tests).
-#[cfg(test)]
-#[inline]
-fn count_tick() {
-    PACKAGE_TICK_CALLS.with(|c| c.set(c.get() + 1));
-}
-
-/// The output of [`TsHlsPackager`]: the `.ts` media segments plus the media
-/// playlist referencing them.
-///
-/// `segments[i]` is the whole-packet MPEG-2 TS bytes of the segment named by the
-/// *i*-th `#EXTINF`/URI pair in `playlist`; the URIs are `{prefix}{i}.ts`.
-#[derive(Debug, Clone)]
-pub struct TsHlsOutput {
-    /// The `.ts` media segments, in playlist order. Each is a whole number of
-    /// 188-byte TS packets and opens with a PAT + PMT.
-    pub segments: Vec<Vec<u8>>,
-    /// The RFC 8216 media playlist (`#EXTM3U` … `#EXT-X-ENDLIST`) referencing
-    /// `segments` by URI.
-    pub playlist: String,
-}
-
-/// Package a hub [`Media`] IR into classic HLS: keyframe-aligned MPEG-2 TS
-/// `.ts` media segments + an RFC 8216 media playlist.
-///
-/// Construct with [`TsHlsPackager::new`] or [`TsHlsPackager::default`], then call
-/// [`Package::package`]. The target segment duration is a whole number of seconds
-/// (integer arithmetic, `no_std`-friendly).
-///
-/// ```
-/// use broadcast_common::{Package, Unpackage};
-/// use transmux::{TsDemux, TsHlsPackager};
-/// # fn ts_bytes() -> Vec<u8> { std::fs::read(test_fixtures::path("ts/h264-aac.ts")).unwrap() }
-/// let ir = TsDemux::new().unpackage(&ts_bytes()).unwrap();
-/// let out = TsHlsPackager::new(1).package(&ir).unwrap();
-/// assert!(out.playlist.starts_with("#EXTM3U"));
-/// assert!(out.segments.iter().all(|s| s.len() % 188 == 0));
-/// ```
-#[derive(Debug, Clone)]
-pub struct TsHlsPackager {
-    /// Target segment duration in whole seconds. Segments are cut on the first
-    /// anchor-track keyframe at or past this many seconds of buffered anchor
-    /// media (so the actual duration may be slightly longer, keyframe-aligned).
-    pub target_secs: u32,
-    /// `#EXT-X-VERSION` written to the playlist.
-    pub version: u8,
-    /// `#EXT-X-MEDIA-SEQUENCE` of the first segment.
-    pub msn: broadcast_hls::MediaSequence,
-    /// URI prefix for the generated `.ts` segment entries (`{prefix}{i}.ts`).
-    pub uri_prefix: String,
-}
-
-impl Default for TsHlsPackager {
-    fn default() -> Self {
-        Self::new(DEFAULT_TARGET_SECS)
-    }
-}
-
-impl TsHlsPackager {
-    /// Create a packager targeting `target_secs`-second segments (clamped to at
-    /// least 1 second), with the default HLS version, media sequence 0, and the
-    /// `"seg"` URI prefix.
-    pub fn new(target_secs: u32) -> Self {
-        Self {
-            target_secs: target_secs.max(1),
-            version: DEFAULT_HLS_VERSION,
-            msn: broadcast_hls::MediaSequence::new(0),
-            uri_prefix: String::from("seg"),
-        }
-    }
-}
-
-/// One segment's per-track sample ranges, expressed as `[start, end)` indices
-/// into each track's `samples`. `ranges[t]` is the half-open range for
-/// `tracks[t]`; an empty range means that track contributes no sample here.
-struct SegmentRanges {
-    ranges: Vec<core::ops::Range<usize>>,
-}
-
-impl Package for TsHlsPackager {
-    type Media = Media;
-    type Output = TsHlsOutput;
-    type Error = Error;
-
-    fn package(&mut self, media: &Media) -> Result<TsHlsOutput> {
-        if media.tracks.is_empty() {
-            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
-        }
-
-        // Choose the anchor track: first video (AVC), else the first
-        // anchor-capable track (one whose samples actually carry a
-        // duration) — mirrors Segmenter's anchor selection, but errors
-        // loudly rather than defaulting to track 0 when nothing qualifies
-        // (issue B9).
-        let anchor = choose_anchor(media.tracks.iter().map(|t| &t.spec.config))?;
-
-        let target_ticks = self.anchor_target_ticks(&media.tracks[anchor]);
-        let boundaries = anchor_segment_boundaries(&media.tracks[anchor].samples, target_ticks);
-        let segments = partition_tracks(&media.tracks, anchor, &boundaries);
-
-        // Mux each segment independently: each re-emits PAT/PMT then its PES.
-        // One `TsContinuity` spans every segment: without an
-        // `#EXT-X-DISCONTINUITY` between them the segments concatenate into one
-        // transport stream, so each PID's continuity_counter must keep counting
-        // (§2.4.3.3) instead of restarting at 0 (audit r05-W21).
-        let mut continuity = TsContinuity::new();
-        let mut ts_segments: Vec<Vec<u8>> = Vec::with_capacity(segments.len());
-        let mut playlist_segments: Vec<MediaSegment> = Vec::with_capacity(segments.len());
-        let mut target_duration: u32 = 0;
-        // Running per-track elapsed media time, so each segment's base DTS is
-        // the value the previous segment left off at rather than a fresh O(n)
-        // rescans of every earlier sample. The ranges are contiguous and in
-        // order (`partition_tracks`), so walking the cursor forward over the
-        // samples each segment consumes yields exactly the same cumulative sum
-        // the prefix walk did. `MediaClock` (duration, else dts delta) rather
-        // than a duration sum, matching the streaming path's `base_decode` — a
-        // `duration: Some(0)` stream would otherwise pin every segment's base
-        // DTS at 0. Each clock is carried across boundaries (it is deliberately
-        // not reset there), so the first sample of a segment can still take its
-        // dts delta from the last sample of the previous one.
-        let mut clocks: Vec<MediaClock> = alloc::vec![MediaClock::new(); media.tracks.len()];
-        let mut base_dts: Vec<u64> = alloc::vec![0u64; media.tracks.len()];
-        // Per-track cursor into `samples`: contiguous, monotonically advancing
-        // segment ranges let one forward walk both feed the clock and advance
-        // the next segment's base, so a sample is ticked exactly once for the
-        // whole package (`O(samples)`, not `O(segments × samples)`).
-        let mut cursor: Vec<usize> = alloc::vec![0usize; media.tracks.len()];
-        for (i, seg) in segments.iter().enumerate() {
-            // Fold any samples this segment's window starts past into the
-            // running base *before* `base_dts` is handed to the muxer.
-            // `partition_tracks` can emit a zero-width range for a track whose
-            // samples all fall after an early window, and it can re-claim
-            // samples an earlier segment already counted (its last range is
-            // written from a `seg_start_idx` an earlier write may have passed),
-            // so the cursor advances monotonically and never backwards — a
-            // sample is ticked exactly once for the whole package.
-            for (ti, track) in media.tracks.iter().enumerate() {
-                let start = seg.ranges[ti].start.max(cursor[ti]);
-                while cursor[ti] < start {
-                    #[cfg(test)]
-                    count_tick();
-                    base_dts[ti] += clocks[ti].tick(&track.samples[cursor[ti]]);
-                    cursor[ti] += 1;
-                }
-            }
-            let sample_slices: Vec<&[Sample]> = media
-                .tracks
-                .iter()
-                .zip(&seg.ranges)
-                .map(|(t, r)| &t.samples[r.clone()])
-                .collect();
-            let bytes = mux_tracks_at_continuing(
-                &media.tracks,
-                &sample_slices,
-                &base_dts,
-                &mut continuity,
-            )?;
-            ts_segments.push(bytes);
-
-            // Walk this segment's samples exactly once: the running clock
-            // yields each sample's elapsed media time, which both advances the
-            // track's base DTS for the next segment and gives the segment's own
-            // buffered duration. `MediaClock` (duration, else dts delta) rather
-            // than a duration sum, matching the streaming path's `base_decode`
-            // — a `duration: Some(0)` stream would otherwise pin every
-            // segment's base DTS at 0 — and the clock deliberately carries
-            // across boundaries, so the first sample of a segment still takes
-            // its dts delta from the last sample of the previous one.
-            // Each track is walked at most once overall: `cursor[ti]` is the
-            // first sample not yet ticked, and the loop ticks exactly the
-            // samples this segment owns that the cursor has not passed. A
-            // segment's own duration is the ticks of the samples in its range;
-            // the running `base_dts` is the total ticked so far, which is what
-            // the *next* segment's samples start from. `partition_tracks`
-            // ranges are non-decreasing and, together, cover every sample, so
-            // the cursor advances monotonically.
-            let mut ticks: Vec<u64> = alloc::vec![0u64; media.tracks.len()];
-            for (ti, track) in media.tracks.iter().enumerate() {
-                let range = seg.ranges[ti].clone();
-                // This segment's own duration is the ticks of the samples in
-                // its range, minus any the cursor already passed (an
-                // overlapping range re-claims samples an earlier segment
-                // counted, and counting them twice would inflate #EXTINF).
-                let mut segment_ticks: u64 = 0;
-                for idx in cursor[ti].max(range.start)..range.end {
-                    #[cfg(test)]
-                    count_tick();
-                    segment_ticks += clocks[ti].tick(&track.samples[idx]);
-                }
-                base_dts[ti] += segment_ticks;
-                cursor[ti] = cursor[ti].max(range.end);
-                ticks[ti] = segment_ticks;
-            }
-            let anchor_ticks = ticks[anchor];
-            let ts_scale = media.tracks[anchor].spec.timescale;
-            // #EXT-X-TARGETDURATION is an integer ≥ every #EXTINF (RFC 8216
-            // §4.3.3.1: the rounded max segment duration).
-            let (duration, ceil_secs) = segment_duration(anchor_ticks, ts_scale);
-            if ceil_secs > target_duration {
-                target_duration = ceil_secs;
-            }
-            playlist_segments.push(MediaSegment {
-                uri: format!("{}{}.ts", self.uri_prefix, i),
-                // A `Duration` is always finite and non-negative.
-                duration: DecimalSeconds::from_duration(duration),
-                discontinuous: false,
-                parts: vec![],
-                ..Default::default()
-            });
-        }
-
-        let playlist = MediaPlaylist {
-            version: self.version,
-            target_duration: target_duration.max(1),
-            msn: self.msn,
-            discontinuity_sequence: 0,
-            segments: playlist_segments,
-            endlist: true,
-            extra_tags: vec![],
-            low_latency: None,
-            iframes_only: false,
-            open_segment: None,
-            ..Default::default()
-        }
-        .to_m3u8()?;
-
-        Ok(TsHlsOutput {
-            segments: ts_segments,
-            playlist,
-        })
-    }
-}
-
-impl TsHlsPackager {
-    /// Convert the configured `target_secs` into anchor-track timescale ticks
-    /// (never zero, so a segment can always close).
-    fn anchor_target_ticks(&self, anchor: &Track) -> u64 {
-        target_ticks_for(self.target_secs, anchor.spec.timescale.get())
-    }
-}
-
-// ── Shared segment-cutting logic (batch + streaming) ────────────────────────
-//
-// [`TsHlsPackager`] (batch) and [`StreamingTsHlsSegmenter`] (incremental) both
-// cut segments on the same anchor-track keyframe rule and share the exact same
-// duration/anchor-selection arithmetic below, so the two paths can never
-// silently drift apart (issue #571).
+// The segmenter cuts segments on the anchor track's keyframe rule and derives
+// every duration below from the one [`MediaClock`], so the placement and
+// duration rules cannot drift apart (issue #571).
 
 // Anchor selection (`is_anchor_capable`/`choose_anchor`) and the anchor
 // progress clock (`MediaClock`) are the *shared* implementations in
@@ -403,10 +140,9 @@ impl TsHlsPackager {
 /// so without this rule *every* section sample would be placed at time `0.0`
 /// and land in segment 0 no matter how late it actually occurs.
 ///
-/// Both the batch ([`partition_tracks`]) and streaming
-/// ([`StreamingTsHlsSegmenter::cut_segment`]) partitions call this, so the two
-/// place a given sample in the same segment (the equivalence this module's
-/// docs claim, and `tests/it/streaming_tshls.rs` enforces).
+/// [`StreamingTsHlsSegmenter::cut_segment`] calls this for every non-anchor
+/// track, so a sample of a track with a different timescale lands in the same
+/// segment an anchor-relative split would place it.
 ///
 /// A section sample carrying *neither* a duration nor a dts has no time
 /// information anywhere in the IR; it keeps the accumulator's value, i.e. it
@@ -451,161 +187,13 @@ fn segment_duration(anchor_ticks: u64, ts_scale: Timescale) -> (Duration, u32) {
 
 /// True when the anchor should be cut *before* buffering the incoming sample:
 /// the current segment already has content (`has_pending`), the sample is a
-/// sync sample, and the buffered duration has reached the target. Shared by
-/// the batch boundary scan ([`anchor_segment_boundaries`]) and
-/// [`StreamingTsHlsSegmenter::push`]'s incremental cut decision.
+/// sync sample, and the buffered duration has reached the target — the
+/// segmenter's incremental cut decision.
 fn is_cut_point(has_pending: bool, is_sync: bool, buffered_ticks: u64, target_ticks: u64) -> bool {
     has_pending && is_sync && buffered_ticks >= target_ticks
 }
 
-/// Compute the anchor-track sample indices at which a new segment starts.
-///
-/// Always includes `0`. A cut is made *before* a sync sample once the buffered
-/// anchor duration since the last cut has reached `target_ticks` — the same rule
-/// as [`Segmenter`](crate::segmenter::Segmenter), so every segment begins on a
-/// keyframe (random-access point). Returns the ascending list of start indices.
-///
-/// The buffered duration is accumulated by [`MediaClock`]: each sample's own
-/// `duration` when that is a real, non-zero span, else the `dts` delta from
-/// the previous sample. Requiring `duration` alone stalled this scan on the
-/// `duration: Some(0)` samples live input legitimately produces (an RTMP
-/// publish's first tag, or any two FLV tags sharing a timestamp), so **no**
-/// boundary was ever found and the whole stream became one segment.
-fn anchor_segment_boundaries(samples: &[Sample], target_ticks: u64) -> Vec<usize> {
-    let mut starts = vec![0usize];
-    if samples.is_empty() {
-        return starts;
-    }
-    let mut clock = MediaClock::new();
-    let mut buffered: u64 = 0;
-    for (i, s) in samples.iter().enumerate() {
-        // Cut before this sample when it is a keyframe past the target and it is
-        // not the very first sample (the leading segment already starts at 0).
-        if is_cut_point(i > 0, s.flags.is_sync, buffered, target_ticks) {
-            starts.push(i);
-            buffered = 0;
-        }
-        buffered += clock.tick(s);
-    }
-    starts
-}
-
-/// Partition every track's samples into per-segment index ranges.
-///
-/// The anchor track is split exactly at `anchor_boundaries`. Non-anchor tracks
-/// (e.g. audio) are split by decode time: each sample is assigned to the segment
-/// whose anchor-time window `[seg_start_time, next_seg_start_time)` contains the
-/// sample's decode-start time — [`placement_secs`], the *same* rule
-/// [`StreamingTsHlsSegmenter::cut_segment`] applies incrementally — computed in
-/// seconds so tracks with different timescales align. Every sample lands in
-/// exactly one segment, in order, so a concatenation of the segments reproduces
-/// each track's full sample list.
-fn partition_tracks(
-    tracks: &[Track],
-    anchor: usize,
-    anchor_boundaries: &[usize],
-) -> Vec<SegmentRanges> {
-    let n_segs = anchor_boundaries.len();
-    let anchor_samples = &tracks[anchor].samples;
-    let anchor_scale = tracks[anchor].spec.timescale.get() as u64;
-    let origin_secs = timeline_origin_secs(
-        anchor_samples
-            .first()
-            .and_then(|s| s.timing.and_then(|t| t.dts())),
-        tracks[anchor].spec.timescale,
-    );
-
-    // Segment start times (seconds) on the anchor timeline; the last segment
-    // runs to +∞ so it captures any trailing tail on longer tracks. Accumulated
-    // by `MediaClock` (duration, else dts delta) for the same reason
-    // `anchor_segment_boundaries` uses it: a plain duration sum freezes at 0 on
-    // a `duration: Some(0)` stream and would place every non-anchor sample in
-    // segment 0.
-    let mut start_times: Vec<f64> = Vec::with_capacity(n_segs);
-    {
-        let mut clock = MediaClock::new();
-        let mut acc: u64 = 0;
-        let mut cursor = 0usize;
-        for &b in anchor_boundaries {
-            while cursor < b {
-                acc += clock.tick(&anchor_samples[cursor]);
-                cursor += 1;
-            }
-            start_times.push(acc as f64 / anchor_scale as f64);
-        }
-    }
-
-    let mut out: Vec<SegmentRanges> = (0..n_segs)
-        .map(|_| SegmentRanges {
-            ranges: vec![0..0; tracks.len()],
-        })
-        .collect();
-
-    for (t_idx, track) in tracks.iter().enumerate() {
-        if t_idx == anchor {
-            // Exact index split on the anchor.
-            for (seg, &start) in anchor_boundaries.iter().enumerate() {
-                let end = if seg + 1 < n_segs {
-                    anchor_boundaries[seg + 1]
-                } else {
-                    anchor_samples.len()
-                };
-                out[seg].ranges[t_idx] = start..end;
-            }
-            continue;
-        }
-
-        // Time-based split for non-anchor tracks.
-        let scale = track.spec.timescale;
-        // For each segment, find the [start_idx, end_idx) of samples whose
-        // decode-start time falls in this segment's window.
-        let mut seg = 0usize;
-        let mut seg_start_idx = 0usize;
-        let mut acc_ticks: u64 = 0;
-        let mut clock = MediaClock::new();
-        for (i, s) in track.samples.iter().enumerate() {
-            let start_time = placement_secs(s, acc_ticks, scale, origin_secs);
-            // Advance to the segment whose window contains this sample. A sample
-            // belongs to the last segment whose start_time ≤ this sample's time.
-            while seg + 1 < n_segs && start_time >= start_times[seg + 1] {
-                out[seg].ranges[t_idx] = seg_start_idx..i;
-                seg += 1;
-                seg_start_idx = i;
-            }
-            acc_ticks += clock.tick(s);
-        }
-        // Trailing samples belong to the current (last reached) segment.
-        out[seg].ranges[t_idx] = seg_start_idx..track.samples.len();
-    }
-
-    out
-}
-
 // ── Streaming (incremental) TS-HLS segmentation for live input (issue #571) ─
-
-/// One finished `.ts` media segment produced incrementally by
-/// [`StreamingTsHlsSegmenter`] — the streaming analogue of one
-/// [`TsHlsOutput::segments`] entry, plus the playlist metadata
-/// [`StreamingTsHlsSegmenter::playlist`] needs to describe it.
-#[derive(Debug, Clone)]
-pub struct TsSegment {
-    /// Whole-packet MPEG-2 TS bytes: PAT + PMT then the keyframe-aligned PES.
-    /// Byte-identical to the corresponding segment [`TsHlsPackager::package`]
-    /// would produce from the same samples in one batch call.
-    pub bytes: Vec<u8>,
-    /// Segment duration (the anchor track's buffered duration).
-    pub duration: Duration,
-    /// `true` when this segment should be preceded by `#EXT-X-DISCONTINUITY`
-    /// (RFC 8216 §4.3.2.3) — set via
-    /// [`StreamingTsHlsSegmenter::mark_discontinuity`].
-    pub discontinuous: bool,
-    /// The playlist URI assigned to this segment (`"{uri_prefix}{sequence}.ts"`).
-    pub uri: String,
-    /// 0-based, ever-increasing sequence number of this segment. Stable for
-    /// the life of the segmenter, independent of the rolling playlist window
-    /// (unlike `#EXT-X-MEDIA-SEQUENCE`, which advances as segments roll off).
-    pub sequence: u64,
-}
 
 /// Playlist-relevant metadata for one segment retained in the rolling window
 /// — the segment bytes themselves are handed to the caller by
@@ -663,10 +251,9 @@ struct StreamTrackState {
     flush_clock: MediaClock,
 }
 
-/// A stateful **streaming** classic-HLS segmenter — the incremental analogue
-/// of [`TsHlsPackager`] for unbounded live input, mirroring how
-/// [`Segmenter`](crate::segmenter::Segmenter) drives incremental CMAF
-/// fragment production.
+/// A stateful classic-HLS segmenter for live and whole-`Media` input,
+/// mirroring how [`Segmenter`](crate::segmenter::Segmenter) drives incremental
+/// CMAF fragment production.
 ///
 /// Build it from the same [`TrackSpec`]s (in the same order) as the source
 /// `Media`'s tracks, `push` coded samples in decode order, and pull finished
@@ -706,12 +293,24 @@ struct StreamTrackState {
 /// #         .expect("valid timing")
 /// # }
 /// // 2 s target segments, keep the last 3 in the rolling playlist.
+/// use broadcast_common::stage::{Stage, Timestamp};
+/// use transmux::mux_stage::{MuxInput, MuxOutput};
 /// let mut seg = StreamingTsHlsSegmenter::new(vec![spec()], 2, 3).unwrap();
-/// seg.push(transmux::TrackId::new(1), au(true)).unwrap();
-/// seg.finish().unwrap();
-/// let segments = seg.take_ready();          // write s.bytes for each
-/// assert_eq!(segments.len(), 1);
-/// assert_eq!(segments[0].bytes[0], 0x47);   // MPEG-TS sync byte
+/// Stage::feed(
+///     &mut seg,
+///     MuxInput::Sample { track: transmux::TrackId::new(1), sample: au(true) },
+///     Timestamp::ZERO,
+/// )
+/// .unwrap();
+/// Stage::finish(&mut seg).unwrap();
+/// let mut segments = 0;
+/// while let Some(output) = Stage::poll(&mut seg) {
+///     if let MuxOutput::Segment(segment) = output {
+///         assert_eq!(segment.bytes[0], 0x47); // MPEG-TS sync byte
+///         segments += 1;
+///     }
+/// }
+/// assert_eq!(segments, 1);
 /// let playlist = seg.playlist().unwrap(); // rolling window, #EXT-X-ENDLIST after finish
 /// assert!(playlist.contains("#EXT-X-ENDLIST"));
 /// ```
@@ -760,7 +359,8 @@ pub struct StreamingTsHlsSegmenter {
     /// [`SegmentCutPolicy::IdrOnly`] gave up waiting for an IDR and cuts on
     /// any sync sample for the rest of the stream.
     idr_fallback_active: bool,
-    /// Set by [`Self::finish`]; makes [`Self::playlist`] emit `#EXT-X-ENDLIST`.
+    /// Set by [`Stage::finish`]; makes [`Self::playlist`] emit
+    /// `#EXT-X-ENDLIST`.
     finished: bool,
     /// `#EXT-X-VERSION` written to the playlist.
     pub version: u8,
@@ -791,31 +391,10 @@ pub struct StreamingTsHlsSegmenter {
     /// per RFC 8216 §4.3.3.1 — never shrinks even as segments roll off).
     target_duration: u32,
     /// Segments cut but not yet handed to the caller — the **single** source
-    /// of truth for every retrieval path: the inherent [`Self::take_ready`]
-    /// drain, and [`Stage::poll`]. Every cut lands here and *only* here (issue
-    /// R2); neither [`push`](Self::push) nor [`finish`](Self::finish) returns
-    /// a segment inline any more, so there is no value a caller can silently
+    /// of truth for retrieval: [`Stage::poll`] drains it. Every cut lands here
+    /// and *only* here (issue R2), so there is no value a caller can silently
     /// drop.
-    ///
-    /// This used to also be handed back inline from `push`/`finish`
-    /// (`Result<Option<TsSegment>>`), alongside this same queue. That was
-    /// reachable data loss, not just a caller-discipline note: because
-    /// `finish` is both an inherent method *and* the [`Stage::finish`] trait
-    /// method with the same name and arity, an unqualified `seg.finish()` call
-    /// always resolves to the inherent one (inherent-over-trait method
-    /// resolution) regardless of whether the caller is otherwise driving this
-    /// type purely through [`Stage`] (`Stage::feed` + `Stage::poll`). Such a
-    /// caller has no reason to inspect the `Result<()>` a `Stage`-style
-    /// `finish` implies, so the old inherent `finish`'s popped-and-returned
-    /// trailing segment was dropped on the floor the moment that expression's
-    /// value went unused — silently, with no error, and a subsequent
-    /// `Stage::poll` finding the queue already empty. See
-    /// `finish_bare_call_does_not_lose_the_trailing_segment_to_a_poll_driver`
-    /// for the reproduction. Removing the inline return removes the value
-    /// there was anything to drop: `push`/`finish` now only ever return
-    /// `Result<()>`, and the *only* ways to retrieve a cut segment are
-    /// [`Self::take_ready`] and [`Stage::poll`], both draining this one queue.
-    ready: VecDeque<TsSegment>,
+    ready: VecDeque<MuxOutput>,
 }
 
 fn audio_discontinuity_trigger(old: &CodecConfig, new: &CodecConfig) -> bool {
@@ -845,7 +424,7 @@ fn audio_discontinuity_trigger(old: &CodecConfig, new: &CodecConfig) -> bool {
 impl StreamingTsHlsSegmenter {
     /// Start every track's decode clock at `start` instead of zero, so a run
     /// that continues an earlier one (a source reconnect) carries on from
-    /// where it ended. Call before the first [`push`](Self::push); a no-op
+    /// where it ended. Call before the first sample; a no-op
     /// once any track holds samples.
     pub fn set_start_time(&mut self, start: Duration) {
         if self.tracks.iter().any(|t| !t.pending.is_empty()) {
@@ -867,12 +446,11 @@ impl StreamingTsHlsSegmenter {
     ///
     /// The anchor is the first **video** track (any codec), else the first
     /// anchor-capable track — [`crate::segmenter::choose_anchor`],
-    /// the same rule [`TsHlsPackager`] and the other three segmenters use.
+    /// the same rule the other three segmenters use.
     /// `tracks` must be given in the
     /// same order the caller will later `push` matching `track_id`s, and in
     /// the same order as the source `Media`'s tracks, so the muxed PID/PMT
-    /// layout matches [`TsHlsPackager::package`] exactly (needed for the two
-    /// paths to produce byte-identical segments from the same input).
+    /// layout is the one the whole-`Media` drive produces.
     ///
     /// # Errors
     /// [`Error::InvalidInput`] if `tracks` is empty, has duplicate
@@ -938,7 +516,8 @@ impl StreamingTsHlsSegmenter {
     }
 
     /// Build a streaming TS-HLS segmenter whose segment numbering starts
-    /// from `next_sequence` (0-based, matching [`TsSegment::sequence`]'s own
+    /// from `next_sequence` (0-based, matching
+    /// [`SegmentSummary::sequence`](crate::mux_stage::SegmentSummary::sequence)'s own
     /// convention) rather than [`Self::new`]'s implicit `0` — the classic-TS
     /// analogue of [`crate::ll_hls::LlHlsSegmenter::with_part_target_at`]: a
     /// segmenter rebuilt after a track-set change, or built against a
@@ -970,7 +549,7 @@ impl StreamingTsHlsSegmenter {
     /// Only AVC/HEVC/VVC anchors carry IDR pictures: any other anchor codec
     /// keeps the sync-flag rule under either policy.
     ///
-    /// Call before the first [`Self::push`]; a later call re-arms the wait
+    /// Call before the first sample; a later call re-arms the wait
     /// only if nothing has been buffered or cut yet.
     #[must_use]
     pub fn with_cut_policy(mut self, policy: SegmentCutPolicy) -> Self {
@@ -1036,17 +615,14 @@ impl StreamingTsHlsSegmenter {
 
     /// Push one coded sample for `track_id`, in decode order.
     ///
-    /// Mirrors [`TsHlsPackager`]'s cut rule: when the anchor track reaches a
-    /// sync sample past the target duration, the samples buffered so far are
-    /// cut into a `.ts` segment (returned here) *before* this sample is
-    /// buffered, so the new keyframe opens the next segment. Non-anchor
-    /// tracks are split by decode time exactly as
-    /// [`TsHlsPackager::package`]'s `partition_tracks` splits them: pushing
-    /// every sample of a `Media` through this segmenter — interleaved so that
-    /// no sample is pushed before an earlier-or-equal-decode-time sample on
-    /// another track — then calling [`Self::finish`] reproduces the same
-    /// segment boundaries and byte-identical segments as one
-    /// [`TsHlsPackager::package`] call over the whole `Media`.
+    /// The cut rule: when the anchor track reaches a sync sample past the
+    /// target duration, the samples buffered so far are cut into a `.ts`
+    /// segment *before* this sample is buffered, so the new keyframe opens the
+    /// next segment. Non-anchor tracks are split by decode time. Feeding every
+    /// sample of a `Media` — interleaved so that no sample is fed before an
+    /// earlier-or-equal-decode-time sample on another track — then finishing
+    /// reproduces the segment boundaries and bytes a whole-`Media` drive
+    /// produces.
     ///
     /// Anchor progress is measured by [`MediaClock`]: each anchor sample's own
     /// `duration` when that is a real, non-zero span, else the `dts` delta
@@ -1057,23 +633,8 @@ impl StreamingTsHlsSegmenter {
     /// publish's first sample (and any two tags sharing a timestamp) carries
     /// `Some(0)`, which the *other* three segmenters silently stalled on.
     ///
-    /// # Errors
-    /// [`Error::InvalidInput`] if `track_id` matches no track, the underlying
-    /// mux fails while cutting, or this track already holds
-    /// [`MAX_PENDING_SAMPLES_PER_TRACK`] un-cut samples (no anchor sync sample
-    /// to cut on — call [`finish`](Self::finish) to close a trailing partial
-    /// segment).
-    ///
-    /// Any segment this push cuts is queued, not returned inline (issue R2)
-    /// — retrieve it via [`Self::take_ready`] or [`Stage::poll`].
-    pub fn push(&mut self, track_id: TrackId, sample: Sample) -> Result<()> {
-        self.push_inner(track_id, sample)
-    }
-
-    /// [`push`](Self::push)'s whole body, leaving any cut segment on
-    /// [`ready`](Self::ready) rather than returning it — the shared core of
-    /// the inherent and [`Stage::feed`] entry points, so neither can drift and
-    /// neither needs a second queue.
+    /// [`Stage::feed`]'s sample body, leaving any cut segment on
+    /// [`ready`](Self::ready) rather than returning it.
     fn push_inner(&mut self, track_id: TrackId, sample: Sample) -> Result<()> {
         let idx = self
             .tracks
@@ -1197,39 +758,22 @@ impl StreamingTsHlsSegmenter {
         })
     }
 
-    /// Finalize the trailing partial segment (call once at end-of-stream).
-    /// `None` if nothing is buffered. Every track's remaining pending samples
-    /// are flushed into this one final segment regardless of decode time —
-    /// mirroring `partition_tracks`'s last segment, which runs to `+∞` and
-    /// absorbs the full trailing tail of every track. Also marks the
-    /// segmenter finished, so [`Self::playlist`] appends `#EXT-X-ENDLIST`.
-    ///
-    /// # Errors
-    /// Propagates a mux failure while cutting the trailing segment.
-    ///
-    /// The trailing segment this cuts (if any) is queued, not returned inline
-    /// (issue R2) — retrieve it via [`Self::take_ready`] or [`Stage::poll`].
-    /// This matters even for a caller that never touches [`Stage`] directly:
-    /// `finish` is also the [`Stage::finish`] trait method's name, so an
-    /// inline return here would tempt a `Stage`-style driver's bare
-    /// `seg.finish()` call (which always resolves to *this* inherent method,
-    /// never the trait one, by inherent-over-trait precedence) into silently
-    /// discarding it. See the `ready` field docs.
-    pub fn finish(&mut self) -> Result<()> {
-        self.finish_inner()
+    /// Close the unit being built now: cut every track's pending samples into
+    /// one segment without marking the segmenter finished, so the playlist
+    /// keeps its live form.
+    fn flush_inner(&mut self) -> Result<()> {
+        self.complete_deferred()?;
+        if self.tracks.iter().any(|t| !t.pending.is_empty()) {
+            self.cut_segment(true)?;
+        }
+        Ok(())
     }
 
-    /// Drain every segment cut so far but not yet retrieved, in cut order —
-    /// the inherent-API analogue of [`Stage::poll`], draining the same
-    /// private `ready` queue (issue R2). Mirrors
-    /// [`Segmenter::take_ready`](crate::segmenter::Segmenter::take_ready).
-    pub fn take_ready(&mut self) -> Vec<TsSegment> {
-        self.ready.drain(..).collect()
-    }
-
-    /// [`finish`](Self::finish)'s whole body, leaving the trailing segment on
-    /// [`ready`](Self::ready) rather than returning it — shared with
-    /// [`Stage::finish`] for the same reason as [`push_inner`](Self::push_inner).
+    /// Finalize the trailing partial segment (call once at end-of-stream),
+    /// leaving it on [`ready`](Self::ready) for [`Stage::poll`]. Every track's
+    /// remaining pending samples are flushed into this one final segment
+    /// regardless of decode time, and the segmenter is marked finished so
+    /// [`Self::playlist`] appends `#EXT-X-ENDLIST`.
     fn finish_inner(&mut self) -> Result<()> {
         self.finished = true;
         self.complete_deferred()?;
@@ -1388,7 +932,7 @@ impl StreamingTsHlsSegmenter {
     /// accounts for its own boundary, and the header must only advance once
     /// that segment (and its tag) is gone, or every segment sharing the
     /// window with it would have its Discontinuity Sequence Number
-    /// double-counted. No `#EXT-X-ENDLIST` until [`Self::finish`] has been
+    /// double-counted. No `#EXT-X-ENDLIST` until [`Stage::finish`] has been
     /// called.
     pub fn playlist(&self) -> crate::Result<String> {
         let segments: Vec<MediaSegment> = self
@@ -1426,14 +970,13 @@ impl StreamingTsHlsSegmenter {
     /// Cut samples into one `.ts` segment.
     ///
     /// When `final_cut` is `false` (a keyframe-triggered cut from
-    /// [`Self::push`]), the anchor's whole pending buffer closes out, and a
+    /// a sample feed), the anchor's whole pending buffer closes out, and a
     /// non-anchor track's samples that decode-start at or after the new
     /// segment's start time stay pending for the next segment — the
-    /// incremental form of `partition_tracks`'s time-based split for
-    /// non-anchor tracks. When `final_cut` is `true` (from [`Self::finish`]),
-    /// every track's entire pending buffer is flushed regardless of decode
-    /// time, mirroring `partition_tracks`'s last segment (which runs to `+∞`
-    /// and absorbs the full trailing tail of every track).
+    /// time-based split for non-anchor tracks. When `final_cut` is `true`
+    /// (from [`Stage::finish`] or [`Stage::feed`]'s flush), every track's
+    /// entire pending buffer is flushed regardless of decode time, so the
+    /// trailing tail of every track lands in the closing segment.
     ///
     /// The cut segment is pushed onto [`ready`](Self::ready), the single queue
     /// both the inherent API and [`Stage::poll`] drain.
@@ -1448,7 +991,7 @@ impl StreamingTsHlsSegmenter {
         let origin_secs = self.origin_secs.unwrap_or(0.0);
         // The new segment's start time = this track's cumulative decode time
         // so far (already-flushed ticks + the pending anchor buffer) — the
-        // streaming equivalent of `partition_tracks`'s `start_times[seg + 1]`.
+        // The segment's start time: cumulative decode ticks so far.
         let next_start_ticks = self.tracks[anchor].base_decode + closed_anchor_dur;
         let next_start_secs = next_start_ticks as f64 / anchor_scale as f64;
 
@@ -1468,10 +1011,9 @@ impl StreamingTsHlsSegmenter {
                 }
                 let scale = t.spec.timescale;
                 let mut acc = t.base_decode;
-                // Same `MediaClock`/`placement_secs` pair the batch
-                // `partition_tracks` uses, so both paths place a given sample
-                // — including a timestamped, duration-less section sample — in
-                // the same segment.
+                // `MediaClock`/`placement_secs` place a given sample —
+                // including a timestamped, duration-less section sample — by
+                // its own decode time.
                 let mut clock = MediaClock::resumed_at(t.flush_clock.last_dts());
                 for (j, s) in t.pending.iter().enumerate() {
                     let start_secs = placement_secs(s, acc, scale, origin_secs);
@@ -1540,48 +1082,60 @@ impl StreamingTsHlsSegmenter {
             }
         }
 
-        self.ready.push_back(TsSegment {
-            bytes,
-            duration,
-            discontinuous,
-            uri,
+        let summary = SegmentSummary {
+            track: self.tracks[anchor].spec.track_id,
             sequence,
-        });
+            start: next_start_ticks,
+            duration: closed_anchor_dur,
+            timescale: self.tracks[anchor].spec.timescale.get(),
+            bytes: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+            independent: true,
+            discontinuous,
+        };
+        self.ready.push_back(MuxOutput::Segment(SegmentOut {
+            bytes: bytes.into(),
+            summary,
+        }));
         Ok(())
     }
 }
 
-/// [`Stage`] adoption (media plane step 2e-2): `In = (u32, Sample)`, same
-/// reasoning as the other three segmenters' impls. `Out = TsSegment` — this
-/// segmenter's own natural output, not unified with any other segmenter's
-/// `Out`.
+/// [`Stage`] adoption (media plane step 2e-2 / Phase 4): the segmenter takes
+/// the muxer vocabulary — a track announcement or update, one sample, a
+/// timeline discontinuity or an explicit flush — and emits
+/// [`MuxOutput::Segment`] per cut (a filled [`SegmentSummary`] plus the
+/// segment's bytes).
 ///
-/// Like the other three segmenters (issue R2), [`push`](StreamingTsHlsSegmenter::push)/
-/// [`finish`](StreamingTsHlsSegmenter::finish) never return a cut segment
-/// inline — every cut lands on the same `ready` queue this impl's
-/// [`poll`](Stage::poll) drains, and the inherent
-/// [`take_ready`](StreamingTsHlsSegmenter::take_ready) drains it too, so a
-/// segment is retrievable exactly once no matter which API — inherent,
-/// `Stage`, or a mix of both on the same instance — the caller uses.
+/// Every cut lands on the private `ready` queue [`poll`](Stage::poll) drains
+/// and *only* there (issue R2), so a segment is retrievable exactly once.
 impl Stage for StreamingTsHlsSegmenter {
-    type In<'a> = (TrackId, Sample);
-    type Out = TsSegment;
+    type In<'a> = MuxInput;
+    type Out = MuxOutput;
     type Error = Error;
 
-    fn feed(&mut self, (track_id, sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
-        self.push_inner(track_id, sample)
+    fn feed(&mut self, input: MuxInput, _now: Timestamp) -> Result<()> {
+        match input {
+            MuxInput::Track(spec) => {
+                let spec = *spec;
+                if self.tracks.iter().any(|t| t.spec.track_id == spec.track_id) {
+                    self.update_track(spec).map(|_| ())
+                } else {
+                    self.add_track(spec)
+                }
+            }
+            MuxInput::Sample { track, sample } => self.push_inner(track, sample),
+            MuxInput::Discontinuity { .. } => {
+                self.mark_discontinuity();
+                Ok(())
+            }
+            MuxInput::Flush => self.flush_inner(),
+        }
     }
 
     fn poll(&mut self) -> Option<Self::Out> {
         self.ready.pop_front()
     }
 
-    /// Delegates to the private `finish_inner`, **not** to `self.finish()`:
-    /// the inherent [`finish`](StreamingTsHlsSegmenter::finish) and this trait
-    /// method share a name *and* an arity, so bare method-call syntax picks
-    /// the inherent one only by inherent-over-trait precedence. Renaming the
-    /// inherent method would silently retarget `self.finish()` at this very
-    /// method — infinite recursion that still compiles.
     fn finish(&mut self) -> Result<()> {
         self.finish_inner()
     }
@@ -1605,36 +1159,38 @@ mod tests {
     use super::*;
     use crate::pipeline::{CodecConfig, DataCarriage, DataIdentity};
 
-    fn sample(dur: u32, sync: bool) -> Sample {
-        Sample {
-            data: vec![0u8; 4].into(),
-            // Boundary selection is duration-driven; absolute time is not
-            // what this helper exercises.
-            timing: Some(crate::ir::SampleTiming::DurationOnly {
-                duration: core::num::NonZeroU32::new(dur)
-                    .unwrap_or_else(|| core::num::NonZeroU32::new(1).unwrap()),
-            }),
-            flags: crate::ir::SampleFlags::new(sync),
-            provenance: None,
-            display: None,
-            protection: None,
+    fn feed_sample(seg: &mut StreamingTsHlsSegmenter, track: TrackId, sample: Sample) {
+        Stage::feed(seg, MuxInput::Sample { track, sample }, Timestamp::ZERO).expect("feed sample");
+    }
+
+    fn drain_segments(seg: &mut StreamingTsHlsSegmenter) -> Vec<SegmentOut> {
+        let mut out = Vec::new();
+        while let Some(item) = Stage::poll(seg) {
+            if let MuxOutput::Segment(segment) = item {
+                out.push(segment);
+            }
         }
+        out
     }
 
     #[test]
-    fn boundaries_cut_on_keyframe_past_target() {
-        // Durations 1 each, sync at 0,2,4,6; target 2 ticks.
-        let s: Vec<Sample> = (0..8).map(|i| sample(1, i % 2 == 0)).collect();
-        let b = anchor_segment_boundaries(&s, 2);
-        // Segment 0: [0,2) (buffered reaches 2 at idx2 sync). Then [2,4), [4,6), [6,8).
-        assert_eq!(b, vec![0, 2, 4, 6]);
-    }
-
-    #[test]
-    fn boundaries_single_when_target_exceeds_stream() {
-        let s: Vec<Sample> = (0..4).map(|i| sample(1, i == 0)).collect();
-        let b = anchor_segment_boundaries(&s, 1000);
-        assert_eq!(b, vec![0], "one segment when target dwarfs the stream");
+    fn cut_point_needs_pending_media_a_sync_sample_and_the_target() {
+        // The cut rule every segmenter shares: a sync sample past the target,
+        // with media already buffered for the segment it closes.
+        assert!(is_cut_point(true, true, 2, 2), "sync at the target cuts");
+        assert!(is_cut_point(true, true, 3, 2), "sync past the target cuts");
+        assert!(
+            !is_cut_point(true, true, 1, 2),
+            "a sync sample before the target does not cut"
+        );
+        assert!(
+            !is_cut_point(false, true, 1000, 1),
+            "the first sample opens a segment, it never closes one"
+        );
+        assert!(
+            !is_cut_point(true, false, 1000, 1),
+            "a non-sync sample never opens a segment"
+        );
     }
 
     // ── Issue B9: a section-carried anchor must not stall the segmenter ────
@@ -1746,19 +1302,15 @@ mod tests {
 
         // A couple of section samples up front (duration: None) must not
         // prevent the audio anchor from advancing.
-        seg.push(TrackId::new(SCTE_ID), section_sample())
-            .expect("push section");
-        seg.push(TrackId::new(SCTE_ID), section_sample())
-            .expect("push section");
+        feed_sample(&mut seg, TrackId::new(SCTE_ID), section_sample());
 
         // 12 audio samples of 200 ticks each: a cut fires once buffered
         // reaches the 1000-tick target on the 6th and 11th pushes. Cuts are
         // queued, not returned inline (issue R2) — drained via `take_ready`.
         for _ in 0..12 {
-            seg.push(TrackId::new(AUDIO_ID), audio_sample(200))
-                .expect("push audio");
+            feed_sample(&mut seg, TrackId::new(AUDIO_ID), audio_sample(200));
         }
-        let cuts = seg.take_ready();
+        let cuts = drain_segments(&mut seg);
 
         assert_eq!(
             cuts.len(),
@@ -1772,7 +1324,7 @@ mod tests {
                 "cut segment {i} must carry real TS bytes"
             );
             assert!(
-                !c.duration.is_zero(),
+                c.summary.duration > 0,
                 "cut segment {i} must have a positive duration"
             );
         }
@@ -1825,21 +1377,8 @@ mod tests {
         }
     }
 
-    /// Reproduces the R2 hazard directly: a driver that pushes exclusively
-    /// through [`Stage::feed`]/[`Stage::poll`] (never touching the inherent
-    /// API) but closes the stream with a bare, unqualified `seg.finish()`
-    /// call. Rust's inherent-over-trait method resolution means that bare
-    /// call always picks [`StreamingTsHlsSegmenter::finish`] — the inherent
-    /// method — never [`Stage::finish`], regardless of the fact that every
-    /// other call in this test goes through `Stage`. A `Stage`-only driver
-    /// has no reason to inspect a `finish()` call's return value as anything
-    /// but `Result<()>`, so before the R2 fix (when the inherent `finish`
-    /// popped-and-returned the trailing segment as `Result<Option<TsSegment>>`)
-    /// that value was simply dropped, unread, and the trailing segment was
-    /// gone: a following `Stage::poll` found the queue already empty. Since
-    /// the R2 fix, `finish` only ever returns `Result<()>`, so there is no
-    /// value to drop — the segment is retrieved by the following `poll` no
-    /// matter what.
+    /// A `Stage`-driven segmenter must hand the trailing segment `finish`
+    /// cuts back through `Stage::poll`, never lose it.
     #[test]
     fn finish_bare_call_does_not_lose_the_trailing_segment_to_a_poll_driver() {
         const AUDIO_ID: u32 = 1;
@@ -1855,26 +1394,17 @@ mod tests {
         // One sample only: not enough to cross the (huge) cut target, so
         // nothing is cut yet and the only segment `Stage::poll` will ever see
         // is the trailing one `finish` cuts below.
-        Stage::feed(
-            &mut seg,
-            (TrackId::new(AUDIO_ID), audio_sample(200)),
-            Timestamp::ZERO,
-        )
-        .expect("feed via Stage");
+        feed_sample(&mut seg, TrackId::new(AUDIO_ID), audio_sample(200));
         assert!(
             Stage::poll(&mut seg).is_none(),
             "no cut yet: nothing should be ready before finish"
         );
 
-        // The hazard: an unqualified bare call, exactly what a caller who
-        // believes they are only using the `Stage` trait would naturally
-        // write to close the stream out.
-        seg.finish().expect("finish");
+        Stage::finish(&mut seg).expect("finish");
 
         assert!(
-            Stage::poll(&mut seg).is_some(),
-            "the trailing segment cut by a bare finish() call must still be retrievable via \
-             Stage::poll — it must not have been silently handed back inline and dropped"
+            matches!(Stage::poll(&mut seg), Some(MuxOutput::Segment(_))),
+            "the trailing segment cut by finish must be retrievable via Stage::poll"
         );
     }
 
@@ -1901,89 +1431,17 @@ mod tests {
         .expect("construct");
 
         // Two 1000-tick (1s) samples cross the 1s target on the second push.
-        seg.push(TrackId::new(AUDIO_ID), audio_sample(1000))
-            .expect("push 1");
-        seg.push(TrackId::new(AUDIO_ID), audio_sample(1000))
-            .expect("push 2");
-        seg.finish().expect("finish");
+        feed_sample(&mut seg, TrackId::new(AUDIO_ID), audio_sample(1000));
+        feed_sample(&mut seg, TrackId::new(AUDIO_ID), audio_sample(1000));
+        Stage::finish(&mut seg).expect("finish");
 
-        let cut: Vec<TsSegment> = seg.take_ready().into_iter().collect();
+        let cut = drain_segments(&mut seg);
         assert_eq!(
-            cut.iter().map(|s| s.sequence).collect::<Vec<_>>(),
+            cut.iter().map(|s| s.summary.sequence).collect::<Vec<_>>(),
             vec![SEED, SEED + 1],
             "segments cut by a seeded segmenter must number from the seed, not from 0"
         );
     }
-    // ── Audit r05-W33: the batch packager is O(samples), not O(segments ×
-    //    samples) ────────────────────────────────────────────────────────────
-
-    /// A two-track media (an AVC anchor plus an audio track) of `count`
-    /// one-tick samples each, sync every `gop` on the anchor, so `package`
-    /// cuts `count / gop` segments and both tracks contribute samples.
-    fn countable_media(count: usize, gop: usize) -> Media {
-        use isobmff::nalu_types::{AvcPps, AvcSps};
-        let record = isobmff::avc_config::AVCDecoderConfigurationRecord {
-            configuration_version: 1,
-            profile_indication: 0x42,
-            profile_compatibility: 0,
-            level_indication: 0x1E,
-            length_size_minus_one: 3,
-            sps: vec![AvcSps(vec![0x67, 0x42, 0xc0, 0x1e, 0xd9])],
-            pps: vec![AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
-            chroma_format: None,
-            bit_depth_luma_minus8: None,
-            bit_depth_chroma_minus8: None,
-            sps_ext: vec![],
-        };
-        let video_spec = TrackSpec::new(
-            TrackId::new(1),
-            timescale(90_000),
-            CodecConfig::Avc {
-                config: isobmff::avc_config::AVCConfigurationBox::new(record),
-                width: 320,
-                height: 240,
-            },
-        );
-        let audio_spec = aac_track(TrackId::new(2), 90_000);
-        // One second per sample in a 90 kHz timescale, so a 1-second target
-        // cuts `count / gop` segments.
-        let video: Vec<Sample> = (0..count).map(|i| sample(90_000, i % gop == 0)).collect();
-        let audio: Vec<Sample> = (0..count).map(|i| sample(90_000, i % gop == 0)).collect();
-        Media::new(
-            vec![Track::new(video_spec, video), Track::new(audio_spec, audio)],
-            timescale(1000),
-        )
-    }
-
-    /// The batch packager must call `MediaClock::tick` a number of times
-    /// proportional to the *sample count*, however many segments it cuts. On
-    /// the pre-fix code each segment re-walked every earlier sample of every
-    /// track, so 400 anchor samples in 100 segments cost `Σ 4k` = 20 200 anchor
-    /// visits alone.
-    #[test]
-    fn batch_package_ticks_each_sample_once() {
-        const COUNT: usize = 400;
-        const GOP: usize = 4;
-
-        let media = countable_media(COUNT, GOP);
-        let mut packager = TsHlsPackager::new(1);
-        PACKAGE_TICK_CALLS.with(|c| c.set(0));
-        let out = packager.package(&media).expect("package");
-        let visits = PACKAGE_TICK_CALLS.with(|c| c.get());
-
-        assert_eq!(
-            out.segments.len(),
-            COUNT / GOP,
-            "the fixture must cut many segments for the bound to bite"
-        );
-        assert_eq!(
-            visits,
-            COUNT * 2,
-            "each of the two tracks' {COUNT} samples must be ticked exactly once 
-             (the pre-fix code re-walked every earlier sample per segment)"
-        );
-    }
-
     fn avc_spec(track_id: u32) -> TrackSpec {
         use isobmff::nalu_types::{AvcPps, AvcSps};
         let record = isobmff::avc_config::AVCDecoderConfigurationRecord {
@@ -2025,26 +1483,47 @@ mod tests {
 
     #[test]
     fn duration_less_dts_samples_partition_by_their_own_dts() {
+        // A timestamped, duration-less sample (a section-carried SCTE-35
+        // splice, say) is placed by its own `dts`, not by an accumulator that
+        // can never advance: video starts at 10 s with one 1 s sample each,
+        // the data samples sit at 10.0/10.5/11.0/11.5 s, so the 1 s segments
+        // take two data samples each into the first two and none into the
+        // last two.
         let video = avc_spec(1);
-        let video_samples: Vec<Sample> = (0..4)
-            .map(|i| timed_sample(900_000 + i * 90_000, Some(90_000), true))
-            .collect();
         let data = scte35_track(TrackId::new(2));
-        let data_samples: Vec<Sample> = [900_000, 945_000, 990_000, 1_035_000]
+        let mut seg =
+            StreamingTsHlsSegmenter::new(vec![video, data], 1, usize::MAX).expect("construct");
+        let video_dts = [900_000i64, 990_000, 1_080_000, 1_170_000];
+        let data: Vec<Sample> = [900_000, 945_000, 990_000, 1_035_000]
             .iter()
             .map(|&dts| timed_sample(dts, None, true))
             .collect();
-        let tracks = vec![
-            Track::new(video, video_samples.clone()),
-            Track::new(data, data_samples),
-        ];
-        let anchor = choose_anchor(tracks.iter().map(|t| &t.spec.config)).expect("anchor");
-        assert_eq!(anchor, 0, "the AVC track is the anchor");
-        let boundaries = anchor_segment_boundaries(&video_samples, 90_000);
-        assert_eq!(boundaries, vec![0, 1, 2, 3]);
-        let segments = partition_tracks(&tracks, anchor, &boundaries);
-        let data_counts: Vec<usize> = segments.iter().map(|s| s.ranges[1].len()).collect();
-        assert_eq!(data_counts, vec![2, 2, 0, 0]);
+        let mut order: Vec<(TrackId, Sample)> = video_dts
+            .iter()
+            .map(|&dts| (TrackId::new(1), timed_sample(dts, Some(90_000), true)))
+            .collect();
+        order.extend(data.into_iter().map(|sample| (TrackId::new(2), sample)));
+        order.sort_by_key(|(track, sample)| {
+            (
+                sample.timing.and_then(|t| t.dts()).unwrap_or(0),
+                track.value(),
+            )
+        });
+
+        let mut counts: Vec<usize> = Vec::new();
+        for (track, sample) in order {
+            let before = seg.tracks[1].pending.len();
+            feed_sample(&mut seg, track, sample);
+            if seg.total_segments as usize > counts.len() {
+                counts.push(before - seg.tracks[1].pending.len());
+            }
+        }
+        let before = seg.tracks[1].pending.len();
+        Stage::finish(&mut seg).expect("finish");
+        if seg.total_segments as usize > counts.len() {
+            counts.push(before - seg.tracks[1].pending.len());
+        }
+        assert_eq!(counts, vec![2, 2, 0, 0]);
     }
 
     #[test]

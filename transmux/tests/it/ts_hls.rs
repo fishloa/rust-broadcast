@@ -12,11 +12,12 @@
 //! Pipeline: `ir = TsDemux(h264-aac.ts)` → `out = TsHlsPackager(ir)` →
 //! demux `out.segments` (concat and per-segment) → compare.
 
+use crate::ts_hls_stage;
 use crate::ts_psi::{first_section, parse_pmt, pid_of, pusi_of, split_lp};
-use broadcast_common::{Package, Serialize, Unpackage};
+use broadcast_common::{Serialize, Unpackage};
+use transmux::TsDemux;
 use transmux::media::{Media, Track};
 use transmux::pipeline::CodecConfig;
-use transmux::{TsDemux, TsHlsOutput, TsHlsPackager};
 
 // ── Fixture + pipeline ───────────────────────────────────────────────────────
 
@@ -30,10 +31,8 @@ fn demux(ts: &[u8]) -> Media {
 }
 
 /// A small target (1s) forces multiple segments on the fixture.
-fn package(ir: &Media, target_secs: u32) -> TsHlsOutput {
-    TsHlsPackager::new(target_secs)
-        .package(ir)
-        .expect("package classic HLS")
+fn package(ir: &Media, target_secs: u32) -> ts_hls_stage::HlsOutput {
+    ts_hls_stage::hls(ir, target_secs)
 }
 
 // ── Minimal TS packet + PSI walking (byte-level, no crate internals) ──────────
@@ -497,17 +496,17 @@ fn fnv1a(bytes: &[u8]) -> String {
     format!("{h:016x}(len={})", bytes.len())
 }
 
-/// The batch packager's output is **byte-identical** to the pre-r05-W33 code.
+/// The segmenter's whole-`Media` output is **byte-identical** to the batch
+/// packager it replaced.
 ///
-/// That version recomputed each segment's base DTS by re-walking every earlier
-/// sample (O(segments × samples)); the fix carries a running base instead. The
-/// literals below were produced by running this exact fixture through
-/// `main`'s `TsHlsPackager::new(2).package(&TsDemux(h264-aac.ts))` in a detached
-/// `main` worktree (`git worktree add --detach <dir> main`) and hashing the
-/// result with the same function — no `git stash` was used. The playlist hash
-/// covers the `#EXTINF` durations, so every segment's duration is pinned too.
+/// The batch packager was itself byte-identical to the pre-r05-W33 code (that
+/// version recomputed each segment's base DTS by re-walking every earlier
+/// sample; the fix carried a running base instead). The literals below were
+/// produced by the batch packager on this exact fixture and are unchanged by
+/// the move to the streaming segmenter. The playlist hash covers the
+/// `#EXTINF` durations, so every segment's duration is pinned too.
 #[test]
-fn batch_packaging_is_byte_identical_to_the_pre_w33_packager() {
+fn whole_media_segmentation_is_byte_identical_to_the_batch_packager() {
     let ir = demux(&load_ts());
     let out = package(&ir, 2);
 
@@ -532,14 +531,22 @@ fn batch_packaging_is_byte_identical_to_the_pre_w33_packager() {
 #[test]
 fn configured_media_sequence_is_rendered() {
     let ir = demux(&load_ts());
-    let mut packager = TsHlsPackager {
-        msn: broadcast_hls::MediaSequence::new(42),
-        ..TsHlsPackager::default()
-    };
-    let out = packager.package(&ir).expect("package classic HLS");
+    let specs: Vec<transmux::TrackSpec> = ir.tracks.iter().map(|t| t.spec.clone()).collect();
+    let mut seg = transmux::StreamingTsHlsSegmenter::with_start_sequence(specs, 6, usize::MAX, 42)
+        .expect("segmenter");
+    let outputs =
+        transmux::mux_stage::drive_media(&mut seg, &ir, broadcast_common::stage::Timestamp::ZERO)
+            .expect("segment media");
+    let mut count = 0;
+    for output in outputs {
+        if let transmux::mux_stage::MuxOutput::Segment(_) = output {
+            count += 1;
+        }
+    }
+    assert!(count > 0, "the fixture must cut at least one segment");
+    let playlist = seg.playlist().expect("playlist");
     assert!(
-        out.playlist.contains("#EXT-X-MEDIA-SEQUENCE:42"),
-        "a non-zero configured msn must reach the playlist: {}",
-        out.playlist
+        playlist.contains("#EXT-X-MEDIA-SEQUENCE:42"),
+        "a non-zero starting sequence must reach the playlist: {playlist}"
     );
 }

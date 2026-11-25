@@ -6,10 +6,12 @@
 //! `fixtures/ts/h264-aac.ts`: the segmenter is built video-only, cuts a
 //! segment, then audio joins through `add_track`.
 
+use crate::ts_hls_stage;
 use broadcast_common::Unpackage;
 use broadcast_common::crc32_mpeg2;
+use transmux::mux_stage::SegmentOut;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::{DemuxEvent, StreamingTsDemux, StreamingTsHlsSegmenter, TsDemux, TsSegment};
+use transmux::{DemuxEvent, StreamingTsDemux, StreamingTsHlsSegmenter, TsDemux};
 
 const TS_PACKET_SIZE: usize = 188;
 const PMT_PID: u16 = 0x1000;
@@ -54,8 +56,8 @@ fn is_avc(c: &CodecConfig) -> bool {
 }
 
 struct Run {
-    before: Vec<TsSegment>,
-    after: Vec<TsSegment>,
+    before: Vec<SegmentOut>,
+    after: Vec<SegmentOut>,
     audio_spec: TrackSpec,
 }
 
@@ -82,8 +84,8 @@ fn run() -> Run {
     let mut before = Vec::new();
     let mut split = None;
     for (i, s) in video.iter().enumerate() {
-        seg.push(vid, s.clone()).unwrap();
-        let ready = seg.take_ready();
+        ts_hls_stage::feed(&mut seg, vid, s.clone());
+        let ready = ts_hls_stage::drain(&mut seg);
         if !ready.is_empty() {
             before.extend(ready);
             split = Some(i);
@@ -110,14 +112,14 @@ fn run() -> Run {
     items.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.cmp(&b.1)));
     for (_, is_video, idx) in items {
         if is_video {
-            seg.push(vid, video[idx].clone()).unwrap();
+            ts_hls_stage::feed(&mut seg, vid, video[idx].clone());
         } else {
-            seg.push(aid, audio[idx].clone()).unwrap();
+            ts_hls_stage::feed(&mut seg, aid, audio[idx].clone());
         }
     }
-    let mut after = seg.take_ready();
-    seg.finish().unwrap();
-    after.extend(seg.take_ready());
+    let mut after = ts_hls_stage::drain(&mut seg);
+    ts_hls_stage::finish(&mut seg);
+    after.extend(ts_hls_stage::drain(&mut seg));
     Run {
         before,
         after,
@@ -157,9 +159,15 @@ fn pmt_version_bumps_once_when_a_track_is_added() {
 #[test]
 fn first_segment_after_add_track_is_flagged_discontinuous() {
     let r = run();
-    assert!(r.after[0].discontinuous, "RFC 8216bis section 4.4.4.3");
-    assert!(!r.after[1].discontinuous, "only the changing segment");
-    assert!(r.before.iter().all(|s| !s.discontinuous));
+    assert!(
+        r.after[0].summary.discontinuous,
+        "RFC 8216bis section 4.4.4.3"
+    );
+    assert!(
+        !r.after[1].summary.discontinuous,
+        "only the changing segment"
+    );
+    assert!(r.before.iter().all(|s| !s.summary.discontinuous));
 }
 
 #[test]
@@ -179,7 +187,7 @@ fn late_track_reaches_a_streaming_demux_that_joined_before_it() {
             }
         }
     }
-    d.finish().expect("valid timing");
+    d.finish().unwrap();
     while let Some(e) = d.poll_event() {
         if let DemuxEvent::TrackAdded(spec) = e {
             added.push(spec.config.clone());

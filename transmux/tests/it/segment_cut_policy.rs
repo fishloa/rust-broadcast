@@ -5,11 +5,13 @@
 //! samples with rebased timestamps; HEVC NAL types are patched in real sample
 //! bytes only where a fixture cannot supply the type (CRA, IDR_N_LP/W_RADL).
 
+use crate::ts_hls_stage;
 use broadcast_common::Unpackage;
 use transmux::media::Media;
+use transmux::mux_stage::SegmentOut;
 use transmux::{
     CodecConfig, NalCodec, Sample, SegmentCutPolicy, StreamingTsHlsSegmenter, TrackSpec, TsDemux,
-    TsSegment, access_unit_is_idr,
+    access_unit_is_idr,
 };
 
 const TARGET_SECS: u32 = 1;
@@ -99,7 +101,7 @@ fn looped_to_seconds(v: &Video) -> Vec<Sample> {
 
 struct Run {
     cuts: Vec<usize>,
-    segments: Vec<TsSegment>,
+    segments: Vec<SegmentOut>,
     dropped: u64,
 }
 
@@ -108,16 +110,16 @@ fn run_with(spec: &TrackSpec, samples: &[Sample], seg: StreamingTsHlsSegmenter) 
     let mut cuts = Vec::new();
     let mut segments = Vec::new();
     for (i, s) in samples.iter().enumerate() {
-        seg.push(spec.track_id, s.clone()).expect("push");
-        let ready = seg.take_ready();
+        ts_hls_stage::feed(&mut seg, spec.track_id, s.clone());
+        let ready = ts_hls_stage::drain(&mut seg);
         if !ready.is_empty() {
             cuts.push(i);
             segments.extend(ready);
         }
     }
     let dropped = seg.dropped_leading_aus();
-    seg.finish().expect("finish");
-    segments.extend(seg.take_ready());
+    ts_hls_stage::finish(&mut seg);
+    segments.extend(ts_hls_stage::drain(&mut seg));
     Run {
         cuts,
         segments,
@@ -168,7 +170,7 @@ fn oracle_cuts(samples: &[Sample], timescale: u32) -> Vec<usize> {
     cuts
 }
 
-fn first_video_sample_is_idr(segment: &TsSegment, codec: NalCodec) -> bool {
+fn first_video_sample_is_idr(segment: &SegmentOut, codec: NalCodec) -> bool {
     let ir = TsDemux::new()
         .unpackage(&segment.bytes)
         .expect("demux segment");
@@ -270,7 +272,7 @@ fn idr_only_cuts_only_on_idr() {
         assert!(
             first_video_sample_is_idr(seg, v.codec),
             "segment {} does not start on an IDR",
-            seg.sequence
+            seg.summary.sequence
         );
     }
 
@@ -544,19 +546,19 @@ fn gap_restarts_at_next_idr() {
     let mut after_gap = Vec::new();
     for (i, s) in stream.iter().enumerate() {
         if i == gap_at {
-            before_gap.extend(seg.take_ready());
+            before_gap.extend(ts_hls_stage::drain(&mut seg));
             assert_eq!(seg.dropped_leading_aus(), 0);
             seg.mark_discontinuity();
         }
-        seg.push(v.spec.track_id, s.clone()).expect("push");
+        ts_hls_stage::feed(&mut seg, v.spec.track_id, s.clone());
         if i < gap_at {
-            before_gap.extend(seg.take_ready());
+            before_gap.extend(ts_hls_stage::drain(&mut seg));
         } else {
-            after_gap.extend(seg.take_ready());
+            after_gap.extend(ts_hls_stage::drain(&mut seg));
         }
     }
-    seg.finish().expect("finish");
-    after_gap.extend(seg.take_ready());
+    ts_hls_stage::finish(&mut seg);
+    after_gap.extend(ts_hls_stage::drain(&mut seg));
 
     let next_idr = (gap_at..stream.len())
         .find(|&i| access_unit_is_idr(v.codec, &stream[i].data))
@@ -567,19 +569,19 @@ fn gap_restarts_at_next_idr() {
         "exactly the AUs between the gap and the next IDR are dropped"
     );
     assert!(
-        before_gap.iter().all(|s| !s.discontinuous),
+        before_gap.iter().all(|s| !s.summary.discontinuous),
         "segments closed before the gap are continuous"
     );
     assert!(
-        !after_gap[0].discontinuous,
+        !after_gap[0].summary.discontinuous,
         "the pre-gap tail closed at the resync IDR is continuous"
     );
     assert!(
-        after_gap[1].discontinuous,
+        after_gap[1].summary.discontinuous,
         "the first segment opened after the gap carries the discontinuity"
     );
     assert!(first_video_sample_is_idr(&after_gap[1], v.codec));
-    assert!(after_gap.iter().skip(2).all(|s| !s.discontinuous));
+    assert!(after_gap.iter().skip(2).all(|s| !s.summary.discontinuous));
     assert!(
         seg.playlist()
             .expect("playlist")
@@ -659,8 +661,7 @@ fn fall_back_to_any_rap_opens_the_next_sync_sample() {
 
     let mut idx = 0;
     while idx < stream.len() && seg.dropped_leading_aus() == 0 {
-        seg.push(g.spec.track_id, stream[idx].clone())
-            .expect("push");
+        ts_hls_stage::feed(&mut seg, g.spec.track_id, stream[idx].clone());
         idx += 1;
     }
     assert!(
@@ -670,13 +671,13 @@ fn fall_back_to_any_rap_opens_the_next_sync_sample() {
     seg.fall_back_to_any_rap();
     assert!(seg.idr_fallback_active(), "fall-back must be reported");
 
-    let mut cuts = seg.take_ready();
+    let mut cuts = ts_hls_stage::drain(&mut seg);
     for sample in &stream[idx..] {
-        seg.push(g.spec.track_id, sample.clone()).expect("push");
-        cuts.extend(seg.take_ready());
+        ts_hls_stage::feed(&mut seg, g.spec.track_id, sample.clone());
+        cuts.extend(ts_hls_stage::drain(&mut seg));
     }
-    seg.finish().expect("finish");
-    cuts.extend(seg.take_ready());
+    ts_hls_stage::finish(&mut seg);
+    cuts.extend(ts_hls_stage::drain(&mut seg));
     assert!(
         !cuts.is_empty(),
         "a sync sample must open a segment once the fall-back accepts any RAP"
@@ -697,13 +698,12 @@ fn with_cut_policy_does_not_rearm_after_samples_are_buffered() {
 
     let mut seg = StreamingTsHlsSegmenter::new(vec![v.spec.clone()], u32::MAX, usize::MAX)
         .expect("segmenter");
-    seg.push(v.spec.track_id, non_sync).expect("push");
+    ts_hls_stage::feed(&mut seg, v.spec.track_id, non_sync);
     let mut seg = seg.with_cut_policy(SegmentCutPolicy::IdrOnly);
     assert_eq!(seg.cut_policy(), SegmentCutPolicy::IdrOnly);
 
     // Sample 20 is a sync sample that is not an IDR; it must not be dropped.
-    seg.push(v.spec.track_id, v.samples[20].clone())
-        .expect("push");
+    ts_hls_stage::feed(&mut seg, v.spec.track_id, v.samples[20].clone());
     assert_eq!(
         seg.dropped_leading_aus(),
         0,
@@ -743,33 +743,33 @@ fn vvc_idr_opens_the_first_segment_under_idr_only() {
         .expect("segmenter")
         .with_cut_policy(SegmentCutPolicy::IdrOnly);
 
-    seg.push(
+    ts_hls_stage::feed(
+        &mut seg,
         id,
         Sample::new(cra.clone(), None, None, Some(90_000), true).expect("valid timing"),
-    )
-    .expect("push CRA");
+    );
     assert_eq!(
         seg.dropped_leading_aus(),
         1,
         "a VVC CRA is a RAP but not an IDR"
     );
 
-    seg.push(
+    ts_hls_stage::feed(
+        &mut seg,
         id,
         Sample::new(idr.clone(), None, None, Some(90_000), true).expect("valid timing"),
-    )
-    .expect("push IDR");
+    );
     assert_eq!(
         seg.dropped_leading_aus(),
         1,
         "the IDR opens the stream; the CRA stays dropped"
     );
     // Already open: a following non-IDR sync sample is buffered, not dropped.
-    seg.push(
+    ts_hls_stage::feed(
+        &mut seg,
         id,
         Sample::new(cra, None, None, Some(90_000), true).expect("valid timing"),
-    )
-    .expect("push CRA");
+    );
     assert_eq!(
         seg.dropped_leading_aus(),
         1,
@@ -789,8 +789,8 @@ fn a_marked_discontinuity_before_any_cut_does_not_flag_the_first_segment() {
     let mut cuts = Vec::new();
     let mut cut_idx = 0;
     for (i, sample) in stream.iter().enumerate() {
-        seg.push(v.spec.track_id, sample.clone()).expect("push");
-        cuts.extend(seg.take_ready());
+        ts_hls_stage::feed(&mut seg, v.spec.track_id, sample.clone());
+        cuts.extend(ts_hls_stage::drain(&mut seg));
         if !cuts.is_empty() {
             cut_idx = i;
             break;
@@ -798,7 +798,7 @@ fn a_marked_discontinuity_before_any_cut_does_not_flag_the_first_segment() {
     }
     assert!(!cuts.is_empty());
     assert!(
-        !cuts[0].discontinuous,
+        !cuts[0].summary.discontinuous,
         "a discontinuity signalled before any output is not a timeline break at the start"
     );
     assert!(
@@ -811,8 +811,8 @@ fn a_marked_discontinuity_before_any_cut_does_not_flag_the_first_segment() {
     seg.mark_discontinuity();
     let mut second = Vec::new();
     for sample in &stream[cut_idx + 1..] {
-        seg.push(v.spec.track_id, sample.clone()).expect("push");
-        second.extend(seg.take_ready());
+        ts_hls_stage::feed(&mut seg, v.spec.track_id, sample.clone());
+        second.extend(ts_hls_stage::drain(&mut seg));
         if second.len() >= 2 {
             break;
         }
@@ -822,11 +822,11 @@ fn a_marked_discontinuity_before_any_cut_does_not_flag_the_first_segment() {
         "a pre-gap tail and then a fresh segment must be cut"
     );
     assert!(
-        !second[0].discontinuous,
+        !second[0].summary.discontinuous,
         "the pre-gap tail closed at the resync IDR is continuous"
     );
     assert!(
-        second[1].discontinuous,
+        second[1].summary.discontinuous,
         "after one segment, a marked discontinuity flags the next"
     );
 }

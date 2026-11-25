@@ -28,19 +28,21 @@
 //! everything in segment 0) trips them.
 
 use crate::hub_fixtures::{dummy_avc_config, dummy_esds};
+use crate::ts_hls_stage;
 use core::time::Duration;
 use transmux::TrackId;
 
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Stage, Unpackage};
+use broadcast_common::{Stage, Unpackage};
 use isobmff::HEVCConfigurationBox;
 use isobmff::movie_fragment::MovieFragmentBox;
 use transmux::ir::DataIdentity;
 use transmux::ll_dash::LlSegmenter;
 use transmux::ll_hls::LlHlsSegmenter;
+use transmux::mux_stage::SegmentOut;
 use transmux::pipeline::DataCarriage;
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
-use transmux::ts_hls::{StreamingTsHlsSegmenter, TsHlsPackager, TsSegment};
+use transmux::ts_hls::StreamingTsHlsSegmenter;
 use transmux::{CodecConfig, Media, Sample, Segmenter, Track, TrackSpec, TsDemux};
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -303,10 +305,10 @@ fn c1_zero_duration_anchor_still_cuts_segments_in_streaming_ts_hls() {
         // Pre-fix this call *errored* on the first sample: the streaming
         // TS-HLS path rejected `duration: None` outright and only tolerated
         // Some(0) by never advancing.
-        seg.push(TrackId::new(1), s).expect("push");
+        ts_hls_stage::feed(&mut seg, TrackId::new(1), s);
     }
-    seg.finish().expect("finish");
-    let cuts: Vec<TsSegment> = seg.take_ready();
+    ts_hls_stage::finish(&mut seg);
+    let cuts: Vec<SegmentOut> = ts_hls_stage::drain(&mut seg);
     assert_eq!(
         cuts.len(),
         C1_CUTS_BEFORE_FLUSH + 1,
@@ -314,7 +316,7 @@ fn c1_zero_duration_anchor_still_cuts_segments_in_streaming_ts_hls() {
     );
     for c in &cuts {
         assert!(
-            !c.duration.is_zero(),
+            c.summary.duration > 0,
             "every cut segment must have a duration"
         );
         assert_eq!(c.bytes.len() % 188, 0, "whole TS packets");
@@ -428,7 +430,7 @@ fn c2_infinite_gop_is_bounded_in_cmaf_segmenter() {
         "flush clears the saturation"
     );
     seg.push(TrackId::new(1), au(999_000, false))
-        .expect("accepts input again");
+        .expect("input flows again");
 }
 
 #[test]
@@ -537,7 +539,14 @@ fn c2_infinite_gop_is_bounded_in_streaming_ts_hls() {
     let mut seg =
         StreamingTsHlsSegmenter::new(vec![avc_track(1)], 1, usize::MAX).expect("construct");
     let (accepted, saw_saturated) = drive_until_rejected(&mut seg, samples.len(), |s, i| {
-        s.push(TrackId::new(1), samples[i].clone())
+        Stage::feed(
+            s,
+            transmux::mux_stage::MuxInput::Sample {
+                track: TrackId::new(1),
+                sample: samples[i].clone(),
+            },
+            broadcast_common::stage::Timestamp::ZERO,
+        )
     });
     assert_eq!(accepted, MAX_PENDING_SAMPLES_PER_TRACK);
     assert!(saw_saturated, "demand() must flip before push errors");
@@ -583,7 +592,7 @@ fn hevc_video_after_audio_is_still_the_anchor_and_parts_report_real_independence
     for i in 0..(2 * FRAMES_PER_SEC + 2) {
         let dts = i as i64 * FRAME_TICKS;
         seg.push(TrackId::new(VIDEO_ID), au(dts, i % FRAMES_PER_SEC == 0))
-            .expect("push video");
+            .expect("push");
     }
 
     let parts = seg.take_ready_parts();
@@ -636,7 +645,7 @@ fn hevc_video_after_audio_is_still_the_anchor_and_parts_report_real_independence
             TrackId::new(VIDEO_ID),
             au(i as i64 * FRAME_TICKS, i % FRAMES_PER_SEC == 0),
         )
-        .expect("push video");
+        .expect("push");
     }
     assert!(
         ll.take_ready()
@@ -658,16 +667,13 @@ fn section_segment_index(segments: &[Vec<u8>], needle: &[u8]) -> Option<usize> {
 }
 
 /// An SCTE-35-style section sample at a **late** timestamp must land in the
-/// same segment whether the media is partitioned in one batch
-/// (`TsHlsPackager::package` → `partition_tracks`) or incrementally
-/// (`StreamingTsHlsSegmenter`).
+/// same segment whether a whole `Media` is driven through the segmenter in one
+/// pass or its samples are fed incrementally in decode order.
 ///
-/// Before the fix `partition_tracks` accumulated only `duration`, which a
+/// Before the fix the placement rule accumulated only `duration`, which a
 /// section sample never carries, so its placement time stayed at 0 and **every
 /// section sample was muxed into segment 0** — an ad-insertion cue for t=4 s
-/// was signalled at t=0 — while the streaming path put it in the segment that
-/// was open when it arrived. That directly contradicted the byte-identity the
-/// module docs claim for the two paths.
+/// was signalled at t=0.
 #[test]
 fn section_sample_lands_in_the_same_segment_batch_and_streaming() {
     const VIDEO_ID: u32 = 1;
@@ -693,9 +699,7 @@ fn section_sample_lands_in_the_same_segment_batch_and_streaming() {
         ],
         TS_TIMESCALE,
     );
-    let batch = TsHlsPackager::new(1)
-        .package(&media)
-        .expect("batch package");
+    let batch = ts_hls_stage::hls(&media, 1);
     let batch_idx =
         section_segment_index(&batch.segments, &CUE).expect("batch output must carry the cue");
 
@@ -714,18 +718,28 @@ fn section_sample_lands_in_the_same_segment_batch_and_streaming() {
     // (which is what `section_segment_index` reads a segment *index* out of).
     for s in &video {
         if !pushed_cue && s.timing.and_then(|t| t.dts()).unwrap_or(0) >= CUE_DTS {
-            seg.push(TrackId::new(SCTE_ID), section.clone())
-                .expect("push cue");
-            streamed.extend(seg.take_ready().into_iter().map(|c| c.bytes));
+            ts_hls_stage::feed(&mut seg, TrackId::new(SCTE_ID), section.clone());
+            streamed.extend(
+                ts_hls_stage::drain(&mut seg)
+                    .into_iter()
+                    .map(|c| c.bytes.to_vec()),
+            );
             pushed_cue = true;
         }
-        seg.push(TrackId::new(VIDEO_ID), s.clone())
-            .expect("push video");
-        streamed.extend(seg.take_ready().into_iter().map(|c| c.bytes));
+        ts_hls_stage::feed(&mut seg, TrackId::new(VIDEO_ID), s.clone());
+        streamed.extend(
+            ts_hls_stage::drain(&mut seg)
+                .into_iter()
+                .map(|c| c.bytes.to_vec()),
+        );
     }
     assert!(pushed_cue, "the test stream must reach the cue's timestamp");
-    seg.finish().expect("finish");
-    streamed.extend(seg.take_ready().into_iter().map(|c| c.bytes));
+    ts_hls_stage::finish(&mut seg);
+    streamed.extend(
+        ts_hls_stage::drain(&mut seg)
+            .into_iter()
+            .map(|c| c.bytes.to_vec()),
+    );
     let stream_idx =
         section_segment_index(&streamed, &CUE).expect("streaming output must carry the cue");
 
