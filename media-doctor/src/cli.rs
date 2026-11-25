@@ -37,6 +37,13 @@ pub struct CheckArgs {
     /// Emit JSON report on stdout instead of human text.
     #[arg(long = "json")]
     pub json: bool,
+
+    /// Decode each data-track sample through a compiled-in payload plug-in,
+    /// printing the values per sample (repeatable). An unknown name is a usage
+    /// error listing the plug-ins this build carries; with `--json` the
+    /// decoded values go to stderr so the report on stdout stays valid JSON.
+    #[arg(long = "plugin", value_name = "NAME")]
+    pub plugin: Vec<String>,
 }
 
 /// `media-doctor watch` — continuously ingest a live UDP MPEG-TS feed and

@@ -1825,6 +1825,10 @@ pub const TABLE: &[Crate] = &[
             // fabricated rather than transcribed from a spec table.
             "IvGen",
             "SubsamplePolicy",
+            // `payload::PayloadScalar`: a data-carrying value ADT (text, integer,
+            // bytes, …) a payload plug-in reads out of a sample; a flat spec token
+            // would be lossy and the typed variant *is* the label.
+            "PayloadScalar",
         ],
         expected: None,
         min_enums: None,

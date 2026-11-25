@@ -80,11 +80,18 @@ pub const TABLE: &[Crate] = &[
     },
     Crate {
         name: "transmux",
-        allow: &[(
-            "src/klv.rs",
-            "KlvItem",
-            "`key` is the SMPTE KLV universal label, a public identifier",
-        )],
+        allow: &[
+            (
+                "src/klv.rs",
+                "KlvItem",
+                "`key` is the SMPTE KLV universal label, a public identifier",
+            ),
+            (
+                "src/payload.rs",
+                "PayloadValue",
+                "`key` is the decoded value's name (e.g. an ST 0601 tag), not key material",
+            ),
+        ],
         ct_compare: true,
     },
     Crate {

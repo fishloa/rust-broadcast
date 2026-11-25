@@ -21,7 +21,13 @@ fn main() {
     let cli = Cli::parse();
     match cli {
         Cli::Check(args) => {
-            if let Err(e) = run_check(&args) {
+            let registry = match media_doctor::payload::registry(&args.plugin) {
+                Ok(registry) => registry,
+                Err(message) => {
+                    clap::Error::raw(clap::error::ErrorKind::InvalidValue, message).exit()
+                }
+            };
+            if let Err(e) = run_check(&args, &registry) {
                 eprintln!("error: {e}");
                 process::exit(1);
             }
@@ -161,7 +167,10 @@ enum Routed {
 /// Largest prefix read to route an input: 4 MiB.
 const PROBE_PREFIX_MAX: usize = 4 << 20;
 
-fn run_check(args: &CheckArgs) -> Result<(), Box<dyn std::error::Error>> {
+fn run_check(
+    args: &CheckArgs,
+    registry: &media_doctor::payload::PayloadRegistry,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut file = File::open(&args.input)?;
     let len = file.metadata()?.len();
     let routed = match probe_file(&mut file, len)? {
@@ -174,13 +183,27 @@ fn run_check(args: &CheckArgs) -> Result<(), Box<dyn std::error::Error>> {
         Routed::Ts => {
             let bytes = fs::read(&args.input)?;
             match classify_input(&bytes) {
-                InputKind::TransportStream(realigned) => run_ts_checks(&realigned, &mut report),
+                InputKind::TransportStream(realigned) => {
+                    run_ts_checks(&realigned, &mut report);
+                    if !registry.is_empty() {
+                        media_doctor::payload::decode_ts(&realigned, registry, &mut |sample| {
+                            emit_decoded(sample, args.json)
+                        });
+                    }
+                }
                 InputKind::Container => check_container_codec(&bytes, &mut report),
             }
         }
         // An MP4 is checked by streaming its byte ranges through the demux
         // stage; the file is never read whole.
-        Routed::Mp4 => check_mp4_input(&mut file, len, &mut report)?,
+        Routed::Mp4 => {
+            check_mp4_input(&mut file, len, &mut report)?;
+            if !registry.is_empty() {
+                media_doctor::payload::decode_mp4(&mut file, len, registry, &mut |sample| {
+                    emit_decoded(sample, args.json)
+                })?;
+            }
+        }
         // Borrows `bytes` directly — the container path needs no realigned
         // copy, so this never clones the input.
         Routed::Other => {
@@ -190,6 +213,45 @@ fn run_check(args: &CheckArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     emit_check_report(&report, args.json)
+}
+
+/// Print one decoded data-track sample: the header line, then its values.
+///
+/// With `--json` the report on stdout must stay a single JSON document, so the
+/// decoded values go to stderr instead.
+fn emit_decoded(sample: media_doctor::payload::DecodedSample<'_>, json: bool) {
+    if json {
+        eprintln!(
+            "track {} sample {} [{}]",
+            sample.track, sample.sample, sample.plugin
+        );
+        for value in sample.values {
+            eprintln!("  {}: {}", value.key, scalar_text(&value.value));
+        }
+    } else {
+        println!(
+            "track {} sample {} [{}]",
+            sample.track, sample.sample, sample.plugin
+        );
+        for value in sample.values {
+            println!("  {}: {}", value.key, scalar_text(&value.value));
+        }
+    }
+}
+
+/// Render one decoded value as text.
+fn scalar_text(value: &transmux::payload::PayloadScalar) -> String {
+    use transmux::payload::PayloadScalar;
+    match value {
+        PayloadScalar::Text(text) => text.clone(),
+        PayloadScalar::Integer(v) => v.to_string(),
+        PayloadScalar::Unsigned(v) => v.to_string(),
+        PayloadScalar::Float(v) => v.to_string(),
+        PayloadScalar::Bytes(bytes) => broadcast_common::hex::hex_encode(bytes),
+        PayloadScalar::Timestamp(micros) => format!("{micros} us"),
+        PayloadScalar::Boolean(flag) => flag.to_string(),
+        _ => String::from("<unrecognised value>"),
+    }
 }
 
 /// The routing decision a probe verdict names.
