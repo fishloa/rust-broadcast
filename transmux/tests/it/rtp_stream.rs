@@ -154,16 +154,14 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
     assert_eq!(rec_syncs, orig_video_syncs, "keyframe count preserved");
     // Literal expectations for `h264-aac.ts` (75 access units at 90 kHz, a
     // B-frame encode whose wire timestamps are presentation times in decode
-    // order). Each AU's duration is its step to the next presentation
-    // instant, the source's own 3600-tick (25 fps) grid; the one exception is
-    // the first AU, emitted before the first backward step revealed the
-    // reorder, which keeps its forward step (4 frames). The numbers are
-    // asserted literally so this test cannot pass by re-implementing the
-    // depacketiser's rule and comparing it with itself.
+    // order). Each AU's duration is its step to the next decode instant, the
+    // source's own 3600-tick (25 fps) grid, the first one included. The
+    // numbers are asserted literally so this test cannot pass by
+    // re-implementing the depacketiser's rule and comparing it with itself.
     const EXPECTED_FIRST_DURATIONS: [u32; 12] = [
-        14400, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600,
+        3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600,
     ];
-    const EXPECTED_TOTAL: u64 = 280_800;
+    const EXPECTED_TOTAL: u64 = 270_000;
     let got_durations: Vec<u32> = recovered
         .iter()
         .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0))
@@ -1803,9 +1801,11 @@ fn reorder_release_waits_for_pending_to_exceed_max_reorder_depth() {
         .unwrap()
         .len();
     assert_eq!(
-        emitted, 17,
-        "17 pending trips the bound and the whole window resolves"
+        emitted, 16,
+        "17 pending trips the bound and the window resolves, less the unit held for its duration"
     );
+    emitted += d.flush(id).unwrap().len();
+    assert_eq!(emitted, 17, "the flush emits the held unit");
 }
 
 /// Resolving the window prunes `seen_pts` only below the oldest pending AU:
@@ -1821,7 +1821,8 @@ fn resolving_window_prunes_only_below_the_oldest_pending_au() {
     );
     d.push(id, &wrap_vpkt(0, 10_000, &[0x65, 0xAA])).unwrap();
     d.push(id, &wrap_vpkt(1, 8_000, &[0x41, 0xBB])).unwrap();
-    let out = d.push(id, &wrap_vpkt(2, 11_000, &[0x41, 0xCC])).unwrap();
+    let mut out = d.push(id, &wrap_vpkt(2, 11_000, &[0x41, 0xCC])).unwrap();
+    out.extend(d.flush(id).unwrap());
     let got: Vec<_> = out
         .iter()
         .map(|s| {
@@ -1833,7 +1834,11 @@ fn resolving_window_prunes_only_below_the_oldest_pending_au() {
         .collect();
     assert_eq!(
         got,
-        vec![(Some(10_000), Some(1000)), (Some(8_000), Some(2000))]
+        vec![
+            (Some(10_000), Some(1)),
+            (Some(8_000), Some(1)),
+            (Some(11_000), Some(1))
+        ]
     );
 }
 
@@ -1951,8 +1956,8 @@ fn reordered_wire_order_min_step_drives_the_resolved_duration() {
     assert_eq!(
         pts_and_durations(&out),
         vec![
-            (0, 12_000),
-            (12_000, 1500),
+            (0, 1500),
+            (12_000, 6000),
             (6_000, 3000),
             (9_000, 1500),
             (10_500, 1500)

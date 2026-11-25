@@ -496,7 +496,7 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
             ))))
             .as_bytes(),
         ),
-        0x24e2_66a5_5d4e_7510,
+        0x22e1_7964_99e2_9ce6,
     );
     assert!(bad.is_empty(), "output changed: {bad:?}");
 }
