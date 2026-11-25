@@ -33,12 +33,12 @@ use core::time::Duration;
 use isobmff::box_types::parse_box;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
+use test_harness::collect::{concat, splice_insert};
 use transmux::TrackId;
 use transmux::ir::DataIdentity;
 use transmux::pipeline::DataCarriage;
 use transmux::{
-    CodecConfig, Media, Sample, Segmenter, Track, TrackSpec, TsDemux, concat,
-    snap_to_preceding_sync, splice_insert,
+    CodecConfig, Media, Sample, Segmenter, Track, TrackSpec, TsDemux, snap_to_preceding_sync,
 };
 
 fn timescale(value: u32) -> Timescale {

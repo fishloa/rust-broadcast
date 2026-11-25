@@ -17,6 +17,7 @@
 #![cfg(feature = "cenc")]
 
 use std::path::PathBuf;
+use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
 use broadcast_common::{Decrypt, Encrypt, Package, Parse, Serialize, Unpackage};
