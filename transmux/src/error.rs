@@ -136,6 +136,37 @@ pub enum Error {
         cap: u64,
     },
 
+    /// A sample fed to
+    /// [`ProgressiveMuxStage`](crate::progressive::ProgressiveMuxStage)
+    /// disagrees with the [`plan`](isobmff::plan::OwnedPlan) the muxer was
+    /// built over.
+    #[error(
+        "progressive plan mismatch for track {track} sample {index}: {what} {got}, \
+         planned {planned}"
+    )]
+    PlanMismatch {
+        /// The track of the mismatched sample.
+        track: TrackId,
+        /// Its zero-based index in the plan.
+        index: u32,
+        /// What disagreed (`"size"`, `"sample count"` or `"missing sample"`).
+        what: &'static str,
+        /// The plan's value.
+        planned: u64,
+        /// What the muxer was given.
+        got: u64,
+    },
+
+    /// Progressive (single-file) MP4 output needs a sample plan from a first
+    /// pass over the input, so a caller whose input it can only consume once
+    /// (a pipe or a socket) cannot produce one; fragmented MP4 writes its
+    /// tables per fragment and needs no second pass.
+    #[error(
+        "progressive MP4 needs a replayable input (two passes); use fragmented MP4 \
+         (--format cmaf) for a single-pass input"
+    )]
+    ProgressiveNeedsReplayableInput,
+
     /// A byte range supplied to [`Mp4Demux`](crate::mp4_demux::Mp4Demux) did
     /// not match the range it asked for: either the offset differed, or the
     /// supply was longer than requested. Both ranges are named so the caller
@@ -306,7 +337,7 @@ pub enum Error {
 
     /// A fMP4/CMAF mux entry point ([`build_init_segment`](crate::pipeline::build_init_segment)
     /// and every packager built on it — [`CmafMuxStage`](crate::media::CmafMuxStage),
-    /// [`ProgressiveMux`](crate::progressive::ProgressiveMux),
+    /// [`ProgressiveMuxStage`](crate::progressive::ProgressiveMuxStage),
     /// [`Segmenter`](crate::segmenter::Segmenter),
     /// [`LlSegmenter`](crate::ll_dash::LlSegmenter),
     /// [`LlHlsSegmenter`](crate::ll_hls::LlHlsSegmenter)) was given a

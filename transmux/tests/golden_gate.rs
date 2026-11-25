@@ -11,7 +11,7 @@
 //! Cases (all driven from `fixtures/ts/h264-aac.ts`, a real 2-track H.264 +
 //! AAC MPEG-2 TS capture, ISO/IEC 13818-1):
 //!   1. TS → CMAF/fMP4 (`CmafMux`)
-//!   2. TS → progressive MP4 (`ProgressiveMux`)
+//!   2. TS → progressive MP4 (two-pass plan + `ProgressiveMuxStage`)
 //!   3. TS → classic TS-HLS: a media segment **and** the `.m3u8` playlist
 //!   4. TS → DASH MPD: `ffprobe`'s own `dash` demuxer on the `.mpd` if the
 //!      local build has it (rare — needs libxml2), else a structural MPD

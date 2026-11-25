@@ -355,8 +355,12 @@ impl ProgressiveWriter {
             .any(|chunk| chunk.rel_offset > u64::from(u32::MAX));
         let (moov, payload_offset) = loop {
             let measured = build_moov(&plan, &movie, &planned.tracks, source_chunks, 0, use_co64)?;
-            let moov_len = u64::try_from(measured.len())
+            let measured_len = measured.len();
+            let moov_len = u64::try_from(measured_len)
                 .map_err(|_| Error::InvalidInput("progressive: moov exceeds the address space"))?;
+            // The measuring copy holds one `stsz` (an entry per sample); free it
+            // before the real build so a long file holds one `moov`, not two.
+            drop(measured);
             let payload_offset = mdat_payload_offset(
                 u64::try_from(ftyp.len()).unwrap_or(u64::MAX),
                 moov_len,
@@ -376,11 +380,7 @@ impl ProgressiveWriter {
                 payload_offset,
                 use_co64,
             )?;
-            debug_assert_eq!(
-                moov.len(),
-                measured.len(),
-                "moov size must be offset-stable"
-            );
+            debug_assert_eq!(moov.len(), measured_len, "moov size must be offset-stable");
             break (moov, payload_offset);
         };
 
@@ -470,6 +470,13 @@ impl ProgressiveWriter {
     #[must_use]
     pub const fn payload_len(&self) -> u64 {
         self.payload_len
+    }
+
+    /// The sample plan this writer was built over: what each sample's size and
+    /// position is, so a muxer feeding it can name a mismatch itself.
+    #[must_use]
+    pub const fn plan(&self) -> &OwnedPlan {
+        &self.plan
     }
 
     /// The whole file's length once every write has been placed: the size a

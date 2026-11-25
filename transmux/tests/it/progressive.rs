@@ -1,7 +1,9 @@
 //! Progressive (single-file, non-fragmented) MP4 output gate — issue #463.
 //!
-//! Pipeline under test: `TsDemux::unpackage(h264-aac.ts)` → [`Media`], then
-//! `ProgressiveMux { faststart: true }.package(&media)` → a complete `.mp4`.
+//! Pipeline under test: `TsDemux::unpackage(h264-aac.ts)` → [`Media`], then a
+//! [`PlanPass`](transmux::plan_pass::PlanPass) and a
+//! [`ProgressiveMuxStage`](transmux::progressive::ProgressiveMuxStage) → a
+//! complete `.mp4`.
 //!
 //! Oracle: `fixtures/ts/demux-oracle/h264-aac.ref.mp4` is
 //! `ffmpeg -movflags +faststart -c copy` of `fixtures/ts/h264-aac.ts`
@@ -12,14 +14,12 @@
 //! (below) — no hardcoded offsets — so the tables must be internally consistent
 //! with the real mdat layout for the assertions to hold.
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 
 use broadcast_common::{Parse, Serialize, Unpackage};
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
-use transmux::progressive::ProgressiveMux;
 use transmux::ts_demux::TsDemux;
 
 fn timescale(value: u32) -> Timescale {
@@ -264,9 +264,7 @@ fn ref_mp4() -> Vec<u8> {
 
 fn package(faststart: bool) -> Vec<u8> {
     let media = demux_media();
-    ProgressiveMux { faststart }
-        .package(&media)
-        .expect("package progressive")
+    crate::progressive_support::package(&media, faststart)
 }
 
 const EXPECTED_VIDEO_SAMPLES: u32 = 75;
@@ -544,9 +542,7 @@ fn huge_timescale_media() -> Media {
 #[test]
 fn oversized_durations_promote_headers_to_version_1() {
     let media = huge_timescale_media();
-    let out = ProgressiveMux { faststart: true }
-        .package(&media)
-        .expect("package progressive");
+    let out = crate::progressive_support::package(&media, true);
 
     let moov = *find(&top_boxes(&out), b"moov").expect("moov");
     let moov_children = children(moov.start + moov.hdr, moov.body(&out));
@@ -604,9 +600,7 @@ fn version_1_headers_are_ffprobe_readable() {
         return;
     }
     let media = huge_timescale_media();
-    let out = ProgressiveMux { faststart: true }
-        .package(&media)
-        .expect("package progressive");
+    let out = crate::progressive_support::package(&media, true);
     let path = std::env::temp_dir().join(format!("transmux-w24-{}.mp4", std::process::id()));
     std::fs::write(&path, &out).expect("write");
     let probe = std::process::Command::new("ffprobe")
@@ -851,9 +845,7 @@ fn promoted_v1_duration_is_read_by_ffprobe() {
         return;
     }
     let media = huge_timescale_media();
-    let out = ProgressiveMux { faststart: true }
-        .package(&media)
-        .expect("package progressive");
+    let out = crate::progressive_support::package(&media, true);
     let path = std::env::temp_dir().join(format!("transmux-h8b-{}.mp4", std::process::id()));
     std::fs::write(&path, &out).expect("write");
     let probe = std::process::Command::new("ffprobe")
@@ -1119,9 +1111,7 @@ fn timed_media(samples: Vec<transmux::pipeline::Sample>, ts: Timescale) -> Media
 }
 
 fn progressive_out(media: &Media) -> Vec<u8> {
-    ProgressiveMux { faststart: true }
-        .package(media)
-        .expect("package progressive")
+    crate::progressive_support::package(media, true)
 }
 
 /// A variable-duration track's `stts` runs survive a mux → demux round trip
@@ -1259,9 +1249,7 @@ fn non_monotonic_dts_still_packages() {
         let _ = step;
     }
 
-    let out = ProgressiveMux { faststart: true }
-        .package(&media)
-        .expect("a backwards dts step must still package");
+    let out = crate::progressive_support::package(&media, true);
 
     // Every sample must still be present and resolvable.
     let locs = top_boxes(&out);
