@@ -81,7 +81,7 @@ builds (see the table above against the in-tree versions below).
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
-**67 workspace members.** 55 are on crates.io; 47 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
+**68 workspace members.** 55 are on crates.io; 48 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
 
 ### Overview
 
@@ -111,6 +111,7 @@ builds (see the table above against the in-tree versions below).
 | [`scte35-splice`](#scte35-splice) | Metadata and ad-insertion signalling | 8.0.0 | [![crates.io](https://img.shields.io/crates/v/scte35-splice.svg)](https://crates.io/crates/scte35-splice) | yes | 2 | on crates.io |
 | [`timed-metadata`](#timed-metadata) | Metadata and ad-insertion signalling | 0.12.0 | [![crates.io](https://img.shields.io/crates/v/timed-metadata.svg)](https://crates.io/crates/timed-metadata) | yes | 3 | on crates.io |
 | [`broadcast-hls`](#broadcast-hls) | Containers and adaptive streaming | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-hls.svg)](https://crates.io/crates/broadcast-hls) | yes | 1 | on crates.io |
+| [`broadcast-matroska`](#broadcast-matroska) | Containers and adaptive streaming | 0.1.0 | — | yes | 1 | not on crates.io |
 | [`broadcast-smooth`](#broadcast-smooth) | Containers and adaptive streaming | 0.3.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-smooth.svg)](https://crates.io/crates/broadcast-smooth) | no | 1 | on crates.io |
 | [`container-probe`](#container-probe) | Containers and adaptive streaming | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/container-probe.svg)](https://crates.io/crates/container-probe) | yes | 1 | on crates.io |
 | [`isobmff`](#isobmff) | Containers and adaptive streaming | 0.1.0 | [![crates.io](https://img.shields.io/crates/v/isobmff.svg)](https://crates.io/crates/isobmff) | yes | 1 | on crates.io |
@@ -167,7 +168,7 @@ The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair ev
 - **Cargo description:** Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc.
 - **Version (in-tree):** 14.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** 60 workspace crates
+- **Used by (workspace):** 61 workspace crates
 - **Links:** [README](../broadcast-common/README.md) · [CHANGELOG](../broadcast-common/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-common) · [docs.rs](https://docs.rs/broadcast-common)
 
 #### broadcast-auth
@@ -446,6 +447,17 @@ Parses and serializes HLS playlists, including Low-Latency HLS (parts, preload h
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dvr-runtime`](#dvr-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`ssai-runtime`](#ssai-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Links:** [README](../broadcast-hls/README.md) · [CHANGELOG](../broadcast-hls/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-hls) · [docs.rs](https://docs.rs/broadcast-hls)
+
+#### broadcast-matroska
+
+Parses and serializes the EBML element framing (Element IDs, Element Data Sizes including the unknown size, the EBML header, `Void` and `CRC-32`), the scalar payload types, and every Matroska master and leaf element, including the `SimpleBlock`/`Block` header with none, Xiph, EBML and fixed-size lacing, plus typed field accessors. The encoded width of every size and integer and the file's field order are preserved, so a file read and rewritten through it comes back byte for byte. It knows element syntax only, never the media IR or a codec bitstream, so it depends only on `broadcast-common`. The reader and writer that move `transmux` off its hand-written WebM code are later slices. Not yet published.
+
+- **Standards:** RFC 8794 (EBML); RFC 9559 (Matroska)
+- **Cargo description:** EBML (RFC 8794) and Matroska/WebM (RFC 9559) element syntax, no_std.
+- **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
+- **Used by (workspace):** none
+- **Links:** [README](../broadcast-matroska/README.md) · [CHANGELOG](../broadcast-matroska/CHANGELOG.md) · [docs + spec pointer](../broadcast-matroska/docs/)
 
 #### broadcast-smooth
 
@@ -946,7 +958,7 @@ Layer 0 has no workspace dependencies; every other crate sits one layer above it
 
 ```text
 layer 0: broadcast-common, test-alloc, test-fixtures, workspace-guards
-layer 1: atsc3, broadcast-auth, broadcast-dash, broadcast-hls, broadcast-loudness, broadcast-smooth, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, isobmff, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, scte104, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
+layer 1: atsc3, broadcast-auth, broadcast-dash, broadcast-hls, broadcast-loudness, broadcast-matroska, broadcast-smooth, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, isobmff, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, scte104, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
 layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, isobmff-private-format, isobmff-tokio, mpeg-ps, rist-runtime, rtsp-runtime, scte35-splice, ssai-runtime, st291, webrtc-runtime
 layer 3: dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, timed-metadata, transmux
 layer 4: caption-convert, dvb-ci-runtime, media-doctor, ts-fix
@@ -970,6 +982,7 @@ flowchart BT
     broadcast_dash["broadcast-dash"]
     broadcast_hls["broadcast-hls"]
     broadcast_loudness["broadcast-loudness"]
+    broadcast_matroska["broadcast-matroska"]
     broadcast_smooth["broadcast-smooth"]
     buffering_runtime["buffering-runtime"]
     cc_data["cc-data"]
@@ -1055,6 +1068,7 @@ flowchart BT
   broadcast_dash --> broadcast_common
   broadcast_hls --> broadcast_common
   broadcast_loudness --> broadcast_common
+  broadcast_matroska --> broadcast_common
   broadcast_smooth --> broadcast_common
   buffering_runtime --> broadcast_common
   caption_convert --> timed_metadata

@@ -490,6 +490,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-matroska"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "serde",
+ "test-fixtures",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "broadcast-smooth"
 version = "0.3.0"
 dependencies = [

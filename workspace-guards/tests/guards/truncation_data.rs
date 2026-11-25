@@ -42,6 +42,10 @@ pub const EXEMPT: &[&str] = &[
 
 pub const TABLE: &[Crate] = &[
     Crate {
+        name: "broadcast-matroska",
+        allowlist: &[],
+    },
+    Crate {
         name: "broadcast-dash",
         allowlist: &[],
     },
