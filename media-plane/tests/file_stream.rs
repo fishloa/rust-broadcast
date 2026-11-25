@@ -139,8 +139,26 @@ fn drive(session: &mut StreamingFileSession, bytes: &[u8], chunk: usize) -> Vec<
                     offset = feed_chunk(session, bytes, offset, chunk);
                 }
             }
+            FileDemand::BytesAt { offset: at, len } => {
+                let start = usize::try_from(at).unwrap_or(usize::MAX).min(bytes.len());
+                let end = start.saturating_add(len).min(bytes.len());
+                session
+                    .feed(
+                        FileInput::At {
+                            offset: at,
+                            bytes: bytes[start..end].to_vec().into(),
+                        },
+                        Timestamp::ZERO,
+                    )
+                    .expect("byte range");
+            }
             FileDemand::Rewind => {
                 offset = feed_chunk(session, bytes, 0, chunk);
+            }
+            FileDemand::Eof => {
+                session
+                    .feed(FileInput::Eof, Timestamp::ZERO)
+                    .expect("end of input");
             }
             FileDemand::Wait => {
                 eof_sent = eof_when_exhausted(session, offset, bytes.len(), eof_sent);
@@ -322,6 +340,38 @@ fn flv_streaming_session_matches_the_whole_file_session() {
             &old_path(&bytes),
         );
     }
+}
+
+#[test]
+fn a_matroska_file_streams_from_disk_ranges() {
+    let bytes = test_fixtures::read("mkv/h264-aac.mkv");
+    let total = u64::try_from(bytes.len()).expect("length fits u64");
+    let limits = FileStreamLimits {
+        matroska: transmux::matroska_demux::MatroskaDemuxConfig::default()
+            .with_total_len(Some(total)),
+        ..FileStreamLimits::default()
+    };
+    let mut session = StreamingFileSession::new(
+        StreamContainer::Matroska,
+        ProgramId(0),
+        false,
+        None,
+        false,
+        limits,
+    );
+    let got = drive(&mut session, &bytes, CHUNK);
+    let want = test_harness::collect::media_from_matroska(
+        &bytes,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("whole-file demux");
+    let expected: usize = want.tracks.iter().map(|track| track.samples.len()).sum();
+    assert_eq!(got.len(), expected, "every sample streamed");
+    assert_eq!(
+        session.queued_sample_bytes(),
+        0,
+        "the last released sample leaves nothing held"
+    );
 }
 
 #[test]

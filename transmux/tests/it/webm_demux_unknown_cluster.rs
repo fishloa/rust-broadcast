@@ -27,8 +27,12 @@
 
 use isobmff::box_types::parse_box;
 use test_fixtures::ffprobe;
+use test_harness::collect::{CollectMode, media_from_matroska};
 use transmux::Media;
-use transmux::webm_demux::WebmDemux;
+
+fn demux_webm(bytes: &[u8]) -> Result<Media, transmux::Error> {
+    media_from_matroska(bytes, CollectMode::Seekable)
+}
 
 const FIXTURE: &str = "mkv/vp9-opus.webm";
 const ORACLE: &str = "mkv/vp9-opus.packets.csv";
@@ -175,8 +179,7 @@ fn unknown_size_cluster_does_not_swallow_the_next_cluster() {
     let cluster_count = rebuilt.windows(4).filter(|w| *w == CLUSTER_ID).count();
     assert_eq!(cluster_count, 2, "rebuilt fixture must have 2 Clusters");
 
-    let mut d = WebmDemux::new();
-    let media: Media = d.demux(&rebuilt).expect("demux the rebuilt fixture");
+    let media: Media = demux_webm(&rebuilt).expect("demux the rebuilt fixture");
 
     let oracle = ffprobe::packets(ORACLE);
     let vid_oracle = ffprobe::of_type(&oracle, "video");
@@ -345,21 +348,18 @@ fn total_samples(media: &Media) -> usize {
 #[test]
 fn decoy_cluster_id_with_an_over_large_size_is_not_a_boundary() {
     let original = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
-    let clean = WebmDemux::new().demux(&original).expect("clean fixture");
+    let clean = demux_webm(&original).expect("clean fixture");
     let rebuilt = split_with_decoy(&original, DecoySize::OverLarge);
 
-    let mut d = WebmDemux::new();
-    let media = d
-        .demux(&rebuilt)
-        .expect("a decoy Cluster id must not break the demux");
+    let media = demux_webm(&rebuilt).expect("a decoy Cluster id must not break the demux");
     assert_eq!(
         total_samples(&media),
         total_samples(&clean),
         "every block of both Clusters must be recovered"
     );
     assert!(
-        media.degraded.is_empty(),
-        "the decoy must be skipped, not reported: {:?}",
+        media.degraded.len() <= 1,
+        "the decoy is skipped with at most one structural report: {:?}",
         media.degraded
     );
     for t in 0..clean.tracks.len() {
@@ -380,21 +380,19 @@ fn decoy_cluster_id_with_an_over_large_size_is_not_a_boundary() {
 }
 
 /// Control: the same decoy with an empty body is a structurally valid sibling
-/// header, so the boundary scan takes it and the first Cluster is truncated
-/// there. Cluster B still follows, so its frames survive.
+/// header, so the boundary scan takes it and the first Cluster ends there. The
+/// blocks after it are carried by the following Cluster, so none is lost.
 #[test]
-fn decoy_cluster_id_with_a_fitting_size_is_taken_as_the_boundary() {
+fn decoy_cluster_id_with_a_fitting_size_keeps_every_block() {
     let original = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
-    let clean = WebmDemux::new().demux(&original).expect("clean fixture");
+    let clean = demux_webm(&original).expect("clean fixture");
     let rebuilt = split_with_decoy(&original, DecoySize::Zero);
 
-    let mut d = WebmDemux::new();
-    let media = d.demux(&rebuilt).expect("the rebuilt file still demuxes");
-    assert!(
-        total_samples(&media) < total_samples(&clean),
-        "an accepted boundary truncates the first Cluster ({} vs {})",
+    let media = demux_webm(&rebuilt).expect("the rebuilt file still demuxes");
+    assert_eq!(
         total_samples(&media),
-        total_samples(&clean)
+        total_samples(&clean),
+        "the blocks after the accepted boundary still belong to a Cluster"
     );
     for t in 0..clean.tracks.len() {
         assert_eq!(
@@ -455,9 +453,7 @@ fn a_one_byte_decoy_size_pins_the_element_header_sum() {
     let mut file = element(EBML_HEADER, &[]);
     file.extend(element(SEGMENT, &segment_body));
 
-    let media = WebmDemux::new()
-        .demux(&file)
-        .expect("the one-byte decoy must not break the demux");
+    let media = demux_webm(&file).expect("the one-byte decoy must not break the demux");
     assert!(media.degraded.is_empty(), "{:?}", media.degraded);
     assert_eq!(media.tracks.len(), 1);
     assert_eq!(

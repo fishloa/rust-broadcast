@@ -13,7 +13,7 @@ use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
-use transmux::{TsDemux, WebmDemux};
+use transmux::TsDemux;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -381,7 +381,11 @@ fn webm_demux_output_is_unchanged() {
             eprintln!("SKIPPED {rel}: fixture missing");
             continue;
         };
-        let media = WebmDemux::new().unpackage(bytes.as_slice()).expect(rel);
+        let media = test_harness::collect::media_from_matroska(
+            bytes.as_slice(),
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .expect(rel);
         check(&mut bad, rel, fnv1a(media_debug(&media).as_bytes()), want);
     }
     assert!(bad.is_empty(), "output changed: {bad:?}");

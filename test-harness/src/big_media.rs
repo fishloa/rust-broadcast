@@ -14,7 +14,7 @@ use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::Duration;
 
-use broadcast_common::{Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize, Stage as _, Unpackage};
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
 use transmux::mux_stage::{MuxOutput, drive_media};
 use transmux::{
@@ -1599,6 +1599,116 @@ fn ps_pack_at_pass(
         }
     }
     bytes
+}
+
+/// Write a Matroska (`.mkv`) file of at least `target_bytes` by repeating
+/// `source_fixture`'s samples through one `transmux::MkvMuxStage`, pass after pass with
+/// each pass's timestamps advanced by the source's span.
+///
+/// Appends are streamed to disk as the writer emits them; the writer's
+/// `Info.Duration` patch is applied by seeking at the end. Live memory is the
+/// source fixture's own parsed media plus the writer's one pending Block per
+/// track and one open Cluster, never the generated file.
+pub fn write_big_mkv(path: &Path, source_fixture: &Path, target_bytes: u64) -> BigMedia {
+    let source = read_source(source_fixture);
+    let media = expect(
+        "demux Matroska source",
+        crate::collect::media_from_matroska(&source, crate::collect::CollectMode::Seekable),
+    );
+    let step = pass_step(&media);
+    let mut stage = transmux::MkvMuxStage::new(Duration::from_millis(MKV_CLUSTER_SPAN_MS));
+    for track in &media.tracks {
+        expect(
+            "announce Matroska track",
+            stage.feed(
+                transmux::mux_stage::MuxInput::Track(Box::new(track.spec.clone())),
+                broadcast_common::Timestamp::ZERO,
+            ),
+        );
+    }
+    let mut out = BufWriter::new(expect("create output", File::create(path)));
+    let mut patches: Vec<(u64, Vec<u8>)> = Vec::new();
+    let mut written = 0u64;
+    let mut passes = 0u64;
+    let mut kept_sync = false;
+    while written < target_bytes {
+        let mut shifted = media_at_pass(&media, &step, passes);
+        // A synthetic soak input keeps only the first video sync sample: the
+        // coded frames are untouched, but the seek index stays one entry so a
+        // multi-hour file does not build a Cues table the size of its keyframe
+        // count (a real capture has one keyframe every few seconds, not one per
+        // repeated fixture pass).
+        for track in &mut shifted.tracks {
+            if !track.spec.config.is_video() {
+                continue;
+            }
+            for sample in &mut track.samples {
+                if !sample.flags.is_sync {
+                    continue;
+                }
+                if kept_sync {
+                    sample.flags.is_sync = false;
+                } else {
+                    kept_sync = true;
+                }
+            }
+        }
+        for track in &shifted.tracks {
+            for sample in &track.samples {
+                expect(
+                    "feed Matroska sample",
+                    stage.feed(
+                        transmux::mux_stage::MuxInput::Sample {
+                            track: track.spec.track_id,
+                            sample: sample.clone(),
+                        },
+                        broadcast_common::Timestamp::ZERO,
+                    ),
+                );
+                while let Some(output) = stage.poll() {
+                    written += write_mkv_output(&mut out, output, &mut patches);
+                }
+            }
+        }
+        passes += 1;
+    }
+    expect("finish Matroska muxer", stage.finish());
+    while let Some(output) = stage.poll() {
+        written += write_mkv_output(&mut out, output, &mut patches);
+    }
+    expect("flush Matroska output", out.flush());
+    for (offset, bytes) in patches {
+        expect("seek Matroska patch", out.seek(SeekFrom::Start(offset)));
+        expect("write Matroska patch", out.write_all(&bytes));
+    }
+    expect("flush Matroska patches", out.flush());
+    BigMedia {
+        bytes: written,
+        samples_per_track: counts(&media, passes),
+        duration: step.duration_for(passes),
+    }
+}
+
+/// The `Cluster` span a generated Matroska file uses.
+const MKV_CLUSTER_SPAN_MS: u64 = 5_000;
+
+/// Write one Matroska mux output; returns the bytes appended.
+fn write_mkv_output<W: Write>(
+    out: &mut W,
+    output: MuxOutput,
+    patches: &mut Vec<(u64, Vec<u8>)>,
+) -> u64 {
+    match output {
+        MuxOutput::Bytes(chunk) => {
+            expect("write Matroska bytes", out.write_all(&chunk));
+            expect("sum Matroska length", u64::try_from(chunk.len()))
+        }
+        MuxOutput::BytesAt { offset, bytes } => {
+            patches.push((offset, bytes.to_vec()));
+            0
+        }
+        _ => 0,
+    }
 }
 
 #[cfg(test)]

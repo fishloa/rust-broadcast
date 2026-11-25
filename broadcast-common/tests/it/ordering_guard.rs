@@ -493,7 +493,6 @@ fn named_const_blocks_ascending() {
 /// Files whose tables are deliberately ordered by spec clause / wire field
 /// rather than numerically; each must say so in a `// ORDER:` comment.
 const ORDER_COMMENT_REQUIRED: &[(&str, &str)] = &[
-    ("transmux/src/webm_demux.rs", "EBML element-hierarchy order"),
     (
         "st377-1/src/identification.rs",
         "MXF Annex A.3 property-table order",

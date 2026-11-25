@@ -580,8 +580,8 @@ test = false
 doc  = false
 
 [[bin]]
-name = "transmux_webm_demux"
-path = "fuzz_targets/transmux_webm_demux.rs"
+name = "transmux_matroska_demux"
+path = "fuzz_targets/transmux_matroska_demux.rs"
 test = false
 doc  = false
 

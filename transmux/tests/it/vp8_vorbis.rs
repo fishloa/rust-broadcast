@@ -20,10 +20,10 @@
 //! (Vorbis I §4.2.2) — never hardcoded into the parse.
 
 use test_fixtures::ffprobe;
+use test_harness::collect::{CollectMode, media_from_matroska};
 use transmux::Media;
 use transmux::error::Error;
 use transmux::pipeline::CodecConfig;
-use transmux::webm_demux::WebmDemux;
 
 /// VP8+Opus fixture (video track 0, audio track 1).
 const VP8_FIXTURE: &str = "mkv/vp8-opus.webm";
@@ -36,8 +36,7 @@ const VORBIS_ORACLE: &str = "mkv/vorbis.packets.csv";
 
 fn demux(path: &str) -> Media {
     let bytes = std::fs::read(test_fixtures::path(path)).expect("read webm fixture");
-    let mut d = WebmDemux::new();
-    d.demux(&bytes).expect("demux webm")
+    media_from_matroska(&bytes, CollectMode::Seekable).expect("demux webm")
 }
 
 /// Test 1 — VP8 enumeration + dimensions decoded from the key-frame header.
@@ -191,8 +190,7 @@ fn vp8_non_keyframe_reports_the_isolated_key_frame_bit() {
     let tracks = vec![crate::webm_build::track_entry(1, 1, b"V_VP8", &[])];
     let frame = [0x11u8, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let bytes = crate::webm_build::file(&tracks, &[(1, &frame)]);
-    let err = WebmDemux::new()
-        .demux(&bytes)
+    let err = media_from_matroska(&bytes, CollectMode::Seekable)
         .expect_err("a non-key first VP8 frame cannot configure the codec");
     match err {
         Error::InvalidValue(v) => {
@@ -211,8 +209,7 @@ fn vorbis_lace_length_run_ending_on_a_continuation_is_buffer_too_short() {
     let cp = [2u8, 0x1E, 0xFF];
     let tracks = vec![crate::webm_build::track_entry(1, 2, b"A_VORBIS", &cp)];
     let bytes = crate::webm_build::file(&tracks, &[(1, &[0xAA])]);
-    let err = WebmDemux::new()
-        .demux(&bytes)
+    let err = media_from_matroska(&bytes, CollectMode::Seekable)
         .expect_err("a truncated Xiph lacing table cannot configure the codec");
     match err {
         Error::BufferTooShort(b) => {
@@ -234,8 +231,7 @@ fn vorbis_identification_header_longer_than_the_body_reports_the_full_need() {
     assert_eq!(cp.len(), 18);
     let tracks = vec![crate::webm_build::track_entry(1, 2, b"A_VORBIS", &cp)];
     let bytes = crate::webm_build::file(&tracks, &[(1, &[0xAA])]);
-    let err = WebmDemux::new()
-        .demux(&bytes)
+    let err = media_from_matroska(&bytes, CollectMode::Seekable)
         .expect_err("a short identification header cannot configure the codec");
     match err {
         Error::BufferTooShort(b) => {
@@ -271,8 +267,7 @@ fn vorbis_sample_rate_above_64_khz_reads_every_byte_offset() {
     cp.push(0x05); // setup header (opaque here)
     let tracks = vec![crate::webm_build::track_entry(1, 2, b"A_VORBIS", &cp)];
     let bytes = crate::webm_build::file(&tracks, &[(1, &[0xAA])]);
-    let media = WebmDemux::new()
-        .demux(&bytes)
+    let media = media_from_matroska(&bytes, CollectMode::Seekable)
         .expect("a hand-built identification header must parse");
 
     let CodecConfig::Vorbis {

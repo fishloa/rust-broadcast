@@ -110,6 +110,7 @@ mod ll_hls;
 #[path = "support/ll_packager.rs"]
 mod ll_packager;
 mod manifest_protection;
+mod matroska_demux_golden;
 #[cfg(feature = "std")]
 #[path = "support/mkv_bytes.rs"]
 mod mkv_bytes;

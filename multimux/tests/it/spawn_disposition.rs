@@ -32,12 +32,6 @@ const DISPOSITION: &[(&str, &str, u32, &str)] = &[
         "FileReader::spawn -> SpawnedReader (owns a CancellationToken; Drop cancels)",
     ),
     (
-        "source/file_reader.rs",
-        "read_capped_whole",
-        1,
-        "spawn_blocking for the whole-file probe/demux of a capped container; awaited inline (owned by the caller)",
-    ),
-    (
         "route.rs",
         "poll_dvr",
         1,

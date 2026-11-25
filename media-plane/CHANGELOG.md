@@ -13,11 +13,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ProgramSegmenter` drives `transmux::StreamingTsHlsSegmenter` through
   `Stage::feed(MuxInput::Sample)`/`Stage::poll` and normalises each
   `SegmentOut` summary instead of the deleted `TsSegment` (#1024, Phase 4).
-- `FileStreamLimits` gained a required `mp4: transmux::mp4_demux::Mp4DemuxConfig` field (the stage's caller policy: read window and total length). A struct literal must now name it or spread `..FileStreamLimits::default()`. The read window stays unset by default.
+- `FileStreamLimits` gained a required `mp4: transmux::mp4_demux::Mp4DemuxConfig` field and a required `matroska: transmux::matroska_demux::MatroskaDemuxConfig` field (each stage's caller policy: hostile-input caps and total length). A struct literal must now name them or spread `..FileStreamLimits::default()`. The read window stays unset by default.
 
 
 ### Added
 
+- `file_stream::StreamContainer::Matroska` streams a Matroska/WebM file by
+  absolute byte ranges through `transmux::matroska_demux::MatroskaDemux`, so a
+  Matroska file is no longer read whole or bounded by
+  `FileReaderConfig::max_file_bytes` (which now applies to nothing).
 - `file_stream::StreamContainer::MpegPs` streams an MPEG-1/2 Program Stream
   through `transmux::StreamingPsDemux`, so a PS file is no longer read whole or
   bounded by `FileReaderConfig::max_file_bytes`.
@@ -28,7 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FileReaderError::FileChangedContainer`, raised when a looping streaming playout re-probes its file and finds a different container (issue #4057).
 ### Changed
 
-- `demux_identified`/`probe_and_demux` no longer demux MP4: an ISOBMFF file is streamed by `StreamingFileSession` over `Mp4Demux`, so the whole-buffer arm for it returns `FileReaderError::UnsupportedFormat` (#4057). The Program Stream arm is removed for the same reason: PS streams through `StreamContainer::MpegPs` / `StreamingPsDemux`; WebM keeps the whole-file path.
+- `demux_identified`/`probe_and_demux` no longer demux MP4: an ISOBMFF file is streamed by `StreamingFileSession` over `Mp4Demux`, so the whole-buffer arm for it returns `FileReaderError::UnsupportedFormat` (#4057). The Program Stream and Matroska arms are removed for the same reason: PS streams through `StreamContainer::MpegPs` / `StreamingPsDemux`, Matroska through `StreamContainer::Matroska` / `MatroskaDemux`; no container takes the whole-file path.
 
 
 ## [0.14.0] - 2026-11-22

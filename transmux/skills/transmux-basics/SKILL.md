@@ -93,10 +93,12 @@ assert_eq!(again.tracks.len(), media.tracks.len());
 
 The types each direction speaks:
 
-- **Demux:** batch `TsDemux`, `PsDemux`, `WebmDemux`, `FlvDemux`, `RtmpDemux`,
-  `RtpDepacketiser` (`Unpackage`); streaming `StreamingTsDemux` (fed bytes,
-  `poll_event`), `StreamingFlvDemux`, and `Mp4Demux`, the one MP4 demuxer
-  (a `Stage` over `Mp4DemuxConfig`/`Mp4Input::{At, Next, SegmentEnd, Eof}`).
+- **Demux:** batch `TsDemux`, `FlvDemux`, `RtmpDemux`, `RtpDepacketiser`
+  (`Unpackage`); streaming `StreamingTsDemux` (fed bytes, `poll_event`),
+  `StreamingFlvDemux`, `StreamingPsDemux`, `Mp4Demux` (a `Stage` over
+  `Mp4DemuxConfig`/`Mp4Input::{At, Next, SegmentEnd, Eof}`) and
+  `MatroskaDemux` (a `Stage` over
+  `MatroskaDemuxConfig`/`MatroskaInput::{At, Next, Eof}`).
 - **Mux stages:** `CmafMuxStage` (`FragmentCut::OnFlush` or
   `FragmentCut::AnchorKeyframe`), `ProgressiveMuxStage` (two-pass, with
   `PlanPass`), `TsMuxStage`, `MkvMuxStage`, `FlvMuxStage`, `RtmpMuxStage`,
@@ -311,7 +313,7 @@ $ cat in.ts | transmux - -o out.cmaf -f cmaf             # a forward-only stdin 
 
 `-f` takes `cmaf | hls | ts-hls | dash | ts | progressive` (default: inferred
 from `-o`'s extension). Every input is streamed through its container's stage;
-MPEG-PS and WebM are still read whole under `--max-whole-input-bytes`. An opaque
+Every supported input (TS, MP4/CMAF, MPEG-PS, Matroska/WebM, FLV) streams; no whole-file cap exists. An opaque
 data track crosses container families only when mapped with
 `--data-identity <track>=ts:<stream_type>[:<descriptors-hex>]` (or
 `mp4:<handler>:<sample-entry-hex>`, `matroska:<codec_id>[:<codec-private-hex>]`):

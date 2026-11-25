@@ -110,12 +110,12 @@ fn fragmented_mp4_selects_fmp4_demuxer() {
 }
 
 #[test]
-fn mkv_selects_webm_demuxer() {
+fn mkv_selects_matroska_demuxer() {
     let (format, detail) = probe_fixture("fixtures/mkv/h264-aac.mkv");
     assert_eq!(
         select_demuxer(format, detail).unwrap(),
         DemuxerKind::Webm,
-        "expected WebmDemux for Matroska"
+        "expected the Matroska stage for Matroska"
     );
 }
 
@@ -732,40 +732,22 @@ async fn second_reader_over_same_trunk_fails_with_writer_unavailable() {
 }
 
 // ---------------------------------------------------------------------------
-// Size cap + regular-file check — an operator-supplied path is never read
-// unbounded (a character device/FIFO would OOM the whole origin), and an
-// over-cap file fails cleanly before the read.
+// Regular-file check — an operator-supplied path is never read unbounded (a
+// character device/FIFO would OOM the whole origin). Every media container now
+// streams, so `max_file_bytes` refuses nothing.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn oversized_file_yields_file_too_large() {
-    let dir = std::env::temp_dir().join(format!(
-        "multimux-file-reader-oversize-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).unwrap();
-    let big = dir.join("big.mkv");
-    // A real, identifiable whole-file container over a 512-byte cap: the cap
-    // still applies to WebM (TS, FLV, MP4 and PS stream instead).
-    let bytes = std::fs::read(fixture("fixtures/mkv/h264-aac.mkv")).unwrap();
-    let len = bytes.len() as u64;
-    std::fs::write(&big, &bytes).unwrap();
-
+async fn a_matroska_file_over_the_cap_plays() {
     let trunk = trunk();
-    let config = FileReaderConfig::new(big.clone(), false, trunk)
+    let config = FileReaderConfig::new(fixture("fixtures/mkv/h264-aac.mkv"), false, trunk.clone())
         .with_pace(false)
         .with_max_retries(0)
-        .with_retry_interval(Duration::from_millis(1))
         .with_max_file_bytes(512);
-    let result = FileReader::new(config).run().await;
-    match result {
-        Err(FileReaderError::FileTooLarge { size, max, .. }) => {
-            assert_eq!(size, len, "must report the file's actual size");
-            assert_eq!(max, 512, "must report the configured cap");
-        }
-        other => panic!("over-cap file must be FileTooLarge, got {other:?}"),
-    }
-    let _ = std::fs::remove_dir_all(&dir);
+    let published = count_published(trunk, FileReader::new(config))
+        .await
+        .expect("a Matroska file over the cap must stream, not be refused");
+    assert!(published > 0, "the Matroska fixture must publish samples");
 }
 
 #[tokio::test]
@@ -859,9 +841,8 @@ async fn b_frame_fixture_publishes_decode_order_dts() {
 }
 
 // ---------------------------------------------------------------------------
-// The streaming path (issue #4057): TS and FLV play from disk in bounded
-// memory and are not subject to `max_file_bytes`; WebM keeps the
-// whole-file path and its cap.
+// The streaming path (issue #4057, Phase 5 slice 4): every container plays from
+// disk in bounded memory and none is subject to `max_file_bytes`.
 // ---------------------------------------------------------------------------
 
 /// One MPEG-2 TS packet, the granularity at which a truncated capture stays a

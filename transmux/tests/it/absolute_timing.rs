@@ -31,7 +31,7 @@ use transmux::TrackId;
 
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
-use transmux::{FlvDemux, Media, RtmpMuxStage, TsDemux, WebmDemux};
+use transmux::{FlvDemux, Media, RtmpMuxStage, TsDemux};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -435,7 +435,7 @@ fn flv_demux_emits_absolute_time_from_tag_timestamps() {
 // and Matroska's `Segment > {Info, Cluster > {Timestamp, SimpleBlock}}`
 // structure directly off the fixture's raw bytes (RFC 8794 §4/§5 for the EBML
 // varint/ID encoding; RFC 9559 §12/§27 for Cluster/Timestamp/SimpleBlock and
-// `TimestampScale`) — entirely independently of `transmux::webm_demux`, which
+// `TimestampScale`) — entirely independently of `transmux::matroska_demux`, which
 // this test exists to check.
 
 /// Read an EBML variable-size-integer **element ID** (RFC 8794 §5): unlike a
@@ -481,7 +481,7 @@ struct WebmOracle {
 /// Walk a WebM/Matroska file's `EBML header`, `Segment > Info` (for
 /// `TimestampScale`), and every `Segment > Cluster > {Timestamp, SimpleBlock}`
 /// (RFC 9559 §12), computing each SimpleBlock's absolute presentation time in
-/// IR milliseconds exactly as documented in `webm_demux.rs`'s module doc
+/// IR milliseconds exactly as documented in `matroska_demux.rs`'s module doc
 /// (`(cluster_ts + rel_ts) * timestamp_scale_ns / 1_000_000`) — but by
 /// re-deriving it from the raw bytes here, not by calling into that module.
 fn walk_webm(data: &[u8]) -> WebmOracle {
@@ -644,7 +644,11 @@ fn walk_webm(data: &[u8]) -> WebmOracle {
 fn webm_demux_emits_absolute_time_from_cluster_timecodes() {
     let webm = std::fs::read(test_fixtures::path("mkv/vp9-opus.webm"))
         .expect("fixtures/mkv/vp9-opus.webm");
-    let media = WebmDemux::new().unpackage(&webm[..]).expect("WebM → IR");
+    let media = test_harness::collect::media_from_matroska(
+        &webm,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("WebM → IR");
     assert_absolute_timeline(&media, "WebM");
     for t in &media.tracks {
         for s in &t.samples {
