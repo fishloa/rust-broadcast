@@ -52,7 +52,7 @@
 //!   ([`SpliceStage`] driven by a [`SplicePlan`], or plan-less
 //!   [`SpliceStage::switching`] holding one GOP to snap to the preceding sync).
 //! - **Crypto:** CENC/CBCS (`cenc`, AES-CTR/AES-CBC-pattern) decrypt
-//!   ([`CencDecryptor`]) + encrypt ([`CencEncryptor`], which populates
+//!   ([`CencDecryptStage`]) + encrypt ([`CencEncryptStage`], which populates
 //!   [`TrackSpec::protection`](crate::ir::TrackSpec::protection) for the muxer's `sinf`/`senc`/`saio`/`saiz` box
 //!   emission — [`cenc_segment::protect_init_segment`] /
 //!   [`isobmff::writer::fragmented::protect_media_segment`]); DRM signalling driven off
@@ -130,7 +130,7 @@
 //! |---------|---------|-------------|
 //! | `std`   | yes     | `std::error::Error` impls, plus every XML path (DASH/LL-DASH MPD, Smooth Streaming, PlayReady WRMHEADER) via `quick-xml` |
 //! | `serde` | no      | `serde::Serialize` for box types |
-//! | `cenc`  | yes     | CENC/CBCS (ISO/IEC 23001-7) AES-CTR/AES-CBC sample decrypt ([`CencDecryptor`]) + encrypt ([`CencEncryptor`]) via the RustCrypto `aes`/`ctr`/`cbc` crates. DASH/HLS DRM signalling ([`DashPackager::content_protection`], [`broadcast_hls::cenc_ext_x_key`]) reads the always-available `TrackSpec::protection`/`cenc` box types and needs no feature |
+//! | `cenc`  | yes     | CENC/CBCS (ISO/IEC 23001-7) AES-CTR/AES-CBC sample decrypt ([`CencDecryptStage`]) + encrypt ([`CencEncryptStage`]) via the RustCrypto `aes`/`ctr`/`cbc` crates. DASH/HLS DRM signalling ([`DashPackager::content_protection`], [`broadcast_hls::cenc_ext_x_key`]) reads the always-available `TrackSpec::protection`/`cenc` box types and needs no feature |
 //! | `sample-aes` | no | HLS Sample-AES + full-segment AES-128 (AES-128-CBC) content protection ([`sample_aes`]); implies `cenc`, adds the RustCrypto `cbc` crate |
 //! | `cli`   | no      | the `transmux` command-line packager binary (`clap`; implies `std`) — see [`cli`] and `docs/CLI-STANDARD.md` |
 
@@ -250,9 +250,9 @@ pub use broadcast_common::CencScheme;
 pub use broadcast_common::klv::KlvItem;
 pub use caption_detect::{CaptionDetector, DetectedCaption, declared_caption_services};
 #[cfg(feature = "cenc")]
-pub use cenc_decrypt::{CencDecryptor, KeyMap};
+pub use cenc_decrypt::{CencDecryptStage, KeyMap};
 #[cfg(feature = "cenc")]
-pub use cenc_encrypt::{CencEncryptor, ConstantIvSenc, EncryptConfig, IvGen, SubsamplePolicy};
+pub use cenc_encrypt::{CencEncryptStage, ConstantIvSenc, EncryptConfig, IvGen, SubsamplePolicy};
 pub use container::Container;
 #[cfg(feature = "std")]
 pub use dash::{

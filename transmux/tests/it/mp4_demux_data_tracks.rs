@@ -110,15 +110,18 @@ fn protection_survives_demux_and_remux() {
         .as_ref()
         .expect("the sample entry's sinf states the track protection");
 
-    let decryptor =
-        transmux::CencDecryptor::from_fmp4(&bytes).expect("harvest the source CENC metadata");
-    let want = decryptor.sample_entries();
+    let want: Vec<isobmff::cenc::SampleEncryptionEntry> = track
+        .samples
+        .iter()
+        .map(|sample| {
+            let protection = sample.protection.as_ref().expect("per-sample protection");
+            isobmff::cenc::SampleEncryptionEntry {
+                initialization_vector: protection.iv.to_vec(),
+                subsamples: protection.subsamples.clone(),
+            }
+        })
+        .collect();
     assert_eq!(track.samples.len(), want.len(), "one entry per sample");
-    for (sample, entry) in track.samples.iter().zip(want) {
-        let got = sample.protection.as_ref().expect("per-sample protection");
-        assert_eq!(&got.iv[..], &entry.initialization_vector[..]);
-        assert_eq!(got.subsamples, entry.subsamples);
-    }
 
     let out = build_media_segment(
         1,

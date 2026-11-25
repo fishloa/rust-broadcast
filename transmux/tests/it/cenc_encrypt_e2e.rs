@@ -40,12 +40,12 @@ use std::path::PathBuf;
 use std::process::Command;
 use test_harness::collect::MediaSelectExt;
 
-use broadcast_common::{Decrypt, Encrypt, Unpackage};
+use broadcast_common::Unpackage;
 use bytes::Bytes;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
-    CencDecryptor, CencEncryptor, CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen,
-    KeyMap, Media, SubsamplePolicy, TrackProtection,
+    CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, KeyMap, Media, SubsamplePolicy,
+    TrackProtection,
 };
 
 /// Constant `cbcs` IV — the standard real-world `cbcs` convention (confirmed
@@ -125,16 +125,34 @@ fn mp4decrypt_available() -> bool {
 ///
 /// The media segment's `senc`/`saiz`/`saio` come from the muxer itself now
 /// that each sample carries its own protection.
+fn encrypt_into(media: &mut Media, cfg: &EncryptConfig) {
+    let mut stage =
+        transmux::CencEncryptStage::new(KEY, cfg.clone()).expect("CencEncryptStage config");
+    *media = crate::cenc_support::run(&mut stage, media).expect("CencEncryptStage");
+}
+
+fn demux_bytes(bytes: &[u8]) -> Media {
+    test_harness::collect::media_from_mp4(bytes, test_harness::collect::CollectMode::Seekable)
+        .expect("demux protected fMP4")
+}
+
+fn decrypt_media(media: &Media) -> Media {
+    let mut stage = transmux::cenc_decrypt::CencDecryptStage::new(keys());
+    crate::cenc_support::run(&mut stage, media).expect("decrypt")
+}
+
+fn decrypt_bytes(bytes: &[u8]) -> Media {
+    decrypt_media(&demux_bytes(bytes))
+}
+
 fn build_protected_fmp4(media: &mut Media, cfg: &EncryptConfig) -> Vec<u8> {
-    CencEncryptor::new(KEY)
-        .encrypt(&mut *media, cfg)
-        .expect("CencEncryptor::encrypt");
+    encrypt_into(media, cfg);
     let track_id = media.tracks[0].spec.track_id;
     let enc: TrackProtection = media.tracks[0]
         .spec
         .protection
         .clone()
-        .expect("TrackSpec::protection populated by CencEncryptor");
+        .expect("TrackSpec::protection populated by CencEncryptStage");
 
     let raw = crate::cmaf::package(&*media).expect("CmafMux::package");
     protect_init_segment(&raw, track_id, &enc).expect("protect_init_segment")
@@ -174,16 +192,17 @@ fn run_e2e(
     let in_path = write_temp(&protected_bytes, tag);
 
     // ── Self round-trip ─────────────────────────────────────────────────
-    let dec = CencDecryptor::from_fmp4(&protected_bytes)
-        .unwrap_or_else(|e| panic!("{tag}: CencDecryptor::from_fmp4: {e}"));
+    let protected_media = demux_bytes(&protected_bytes);
     assert_eq!(
-        dec.scheme(),
+        protected_media.tracks[0]
+            .spec
+            .protection
+            .as_ref()
+            .map(|p| p.scheme),
         Some(scheme),
         "{tag}: scheme recovered from sinf/schm"
     );
-    let mut recovered = dec.demux().unwrap_or_else(|e| panic!("{tag}: demux: {e}"));
-    dec.decrypt(&mut recovered, &keys())
-        .unwrap_or_else(|e| panic!("{tag}: decrypt: {e}"));
+    let recovered = decrypt_media(&protected_media);
     let self_round_trip = snapshot(&recovered);
     assert_eq!(
         self_round_trip, original,
@@ -347,13 +366,7 @@ fn cbcs_whole_sample_constant_iv_no_senc_round_trip() {
     }
 
     // ── Self round-trip (the hard gate) ─────────────────────────────────
-    let dec = CencDecryptor::from_fmp4(&protected_bytes)
-        .unwrap_or_else(|e| panic!("cbcs_no_senc: CencDecryptor::from_fmp4: {e}"));
-    let mut recovered = dec
-        .demux()
-        .unwrap_or_else(|e| panic!("cbcs_no_senc: demux: {e}"));
-    dec.decrypt(&mut recovered, &keys())
-        .unwrap_or_else(|e| panic!("cbcs_no_senc: decrypt: {e}"));
+    let recovered = decrypt_bytes(&protected_bytes);
     assert_eq!(
         snapshot(&recovered),
         original,
@@ -458,13 +471,7 @@ fn cbcs_whole_sample_constant_iv_emit_senc_round_trip_and_mp4decrypt_interop() {
     }
 
     // ── Self round-trip (the hard gate) ─────────────────────────────────
-    let dec = CencDecryptor::from_fmp4(&protected_bytes)
-        .unwrap_or_else(|e| panic!("cbcs_emit_senc: CencDecryptor::from_fmp4: {e}"));
-    let mut recovered = dec
-        .demux()
-        .unwrap_or_else(|e| panic!("cbcs_emit_senc: demux: {e}"));
-    dec.decrypt(&mut recovered, &keys())
-        .unwrap_or_else(|e| panic!("cbcs_emit_senc: decrypt: {e}"));
+    let recovered = decrypt_bytes(&protected_bytes);
     assert_eq!(
         snapshot(&recovered),
         original,
@@ -563,9 +570,7 @@ fn cbcs_counter_16_byte_iv_mp4decrypt_interop() {
     }
 
     // Self round-trip remains the hard gate.
-    let dec = CencDecryptor::from_fmp4(&protected_bytes).expect("from_fmp4");
-    let mut recovered = dec.demux().expect("demux");
-    dec.decrypt(&mut recovered, &keys()).expect("decrypt");
+    let recovered = decrypt_bytes(&protected_bytes);
     assert_eq!(snapshot(&recovered), original, "self round-trip");
 
     // ── Golden interop (Bento4 mp4decrypt) ──────────────────────────────

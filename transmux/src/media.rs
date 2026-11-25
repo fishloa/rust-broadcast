@@ -19,12 +19,11 @@
 //! [`TrackSpec`] (codec config + timescale + track_id) and [`Sample`] (coded
 //! access units); those types stay public and unchanged. `no_std` + `alloc`.
 //!
-//! Sample [`Decrypt`](broadcast_common::Decrypt) is implemented for CENC/CBCS
-//! (ISO/IEC 23001-7 AES-CTR / AES-CBC-pattern) by
-//! [`CencDecryptor`](crate::cenc_decrypt::CencDecryptor), and the inverse
-//! [`Encrypt`](broadcast_common::Encrypt) by
-//! [`CencEncryptor`](crate::cenc_encrypt::CencEncryptor) — both behind the
-//! `cenc` feature (issues #465/#564). Either direction records its per-track
+//! CENC/CBCS (ISO/IEC 23001-7 AES-CTR / AES-CBC-pattern) protection is
+//! applied and removed per sample by
+//! [`CencEncryptStage`](crate::cenc_encrypt::CencEncryptStage) and
+//! [`CencDecryptStage`](crate::cenc_decrypt::CencDecryptStage) — both behind
+//! the `cenc` feature (issues #465/#564). Either direction records its per-track
 //! crypto metadata onto [`TrackSpec::protection`](crate::ir::TrackSpec::protection) and per-sample [`SampleProtection`](crate::ir::SampleProtection).
 
 use alloc::format;

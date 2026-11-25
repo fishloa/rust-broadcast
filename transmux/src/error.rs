@@ -266,6 +266,51 @@ pub enum Error {
         scheme: broadcast_common::CencScheme,
     },
 
+    /// A [`CencEncryptStage`](crate::cenc_encrypt::CencEncryptStage) or
+    /// [`CencDecryptStage`](crate::cenc_decrypt::CencDecryptStage) was fed a
+    /// sample of a track it has not been told about.
+    #[error("cenc: no track announcement for track {track}")]
+    CencUnannouncedTrack {
+        /// The unannounced track.
+        track: TrackId,
+    },
+
+    /// An [`IvGen::Explicit`](crate::cenc_encrypt::IvGen::Explicit) list has
+    /// no IV left for this sample.
+    #[error("cenc: track {track}: {message}")]
+    CencIvList {
+        /// The track whose sample needed an IV.
+        track: TrackId,
+        /// What went wrong with the list.
+        message: &'static str,
+    },
+
+    /// A sample's CENC auxiliary information does not match its track's
+    /// `tenc` per-sample IV size, so decrypting it would use the wrong IV.
+    #[error("cenc: track {track}: sample IV is {sample} bytes but tenc states {tenc}")]
+    CencIvSizeMismatch {
+        /// The track whose sample disagrees.
+        track: TrackId,
+        /// `tenc.default_per_sample_iv_size`.
+        tenc: u8,
+        /// The sample's own IV length.
+        sample: usize,
+    },
+
+    /// A sample of a protected track carries no CENC auxiliary information.
+    #[error("cenc: track {track}: a protected sample carries no auxiliary information")]
+    CencMissingSampleProtection {
+        /// The track whose sample is missing its IV.
+        track: TrackId,
+    },
+
+    /// A sample of a cleartext track carries CENC auxiliary information.
+    #[error("cenc: track {track}: a cleartext track's sample carries auxiliary information")]
+    CencUnexpectedSampleProtection {
+        /// The track whose sample carries unexpected protection.
+        track: TrackId,
+    },
+
     /// A [`CodecConfig`](crate::pipeline::CodecConfig) has no Matroska CodecID
     /// mapping in [`MkvMux`](crate::mkv_mux::MkvMux) (e.g. `Vvc`/`Flac`/`Ac4`/
     /// `MpegH`/`Mpeg2Video`/`MpegAudio`/`Dts`/`Subtitle`/`Data` — see that

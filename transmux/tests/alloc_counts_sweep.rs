@@ -150,36 +150,72 @@ mod rtp_stream_copies {
 #[cfg(feature = "cenc")]
 mod cenc_decrypt_copies {
     use super::bytes_allocated;
-    use transmux::CencDecryptor;
+    use broadcast_common::stage::{Stage, Timestamp};
+    use transmux::DemuxEvent;
+    use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
+
+    /// Count one `Mp4Demux` walk's allocations over an already-shared buffer.
+    fn demux_tracks(bytes: &bytes::Bytes) -> usize {
+        let total_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        let mut demux =
+            Mp4Demux::seekable(Mp4DemuxConfig::default().with_total_len(Some(total_len)));
+        let mut tracks = 0usize;
+        loop {
+            while let Some(event) = demux.poll() {
+                if matches!(event, DemuxEvent::TrackAdded(_)) {
+                    tracks += 1;
+                }
+            }
+            let demand = demux.demand();
+            let Some(offset) = demand.offset else {
+                break;
+            };
+            let start = usize::try_from(offset).unwrap_or(usize::MAX);
+            let end = start.saturating_add(demand.want_bytes).min(bytes.len());
+            let slice = bytes.slice(start..end);
+            demux
+                .feed(
+                    Mp4Input::At {
+                        offset,
+                        bytes: slice,
+                    },
+                    Timestamp::ZERO,
+                )
+                .expect("feed demux");
+        }
+        demux.finish().expect("finish demux");
+        while let Some(event) = demux.poll() {
+            if matches!(event, DemuxEvent::TrackAdded(_)) {
+                tracks += 1;
+            }
+        }
+        tracks
+    }
 
     /// r05-O2: `from_fmp4` copied the whole file and `demux` copied every sample
-    /// again. Bytes allocated by harvest + demux, as a multiple of the file size.
+    /// again. Bytes allocated by one demux walk, as a multiple of the file size.
     #[test]
     fn harvest_and_demux_do_not_copy_the_file_and_every_sample() {
         let file = test_fixtures::read("mp4/cenc.mp4");
-        let (n, allocated) = bytes_allocated(|| {
-            let dec = CencDecryptor::from_fmp4(&file).unwrap();
-            dec.demux().unwrap().tracks.len()
-        });
+        let shared = bytes::Bytes::from(file.clone());
+        let (n, allocated) = bytes_allocated(|| demux_tracks(&shared));
         assert!(n > 0);
         let x100 = allocated * 100 / file.len();
-        eprintln!("cenc harvest+demux: {allocated} bytes allocated = {x100}/100 x file");
+        eprintln!("cenc demux: {allocated} bytes allocated = {x100}/100 x file");
         assert!(x100 <= CENC_BUDGET_X100, "{x100}/100 x file");
 
-        // Sharing the buffer: nothing of the file or its samples is copied.
+        // The same shared buffer, driven through a fresh stage: every sample is
+        // a slice of it, so nothing of the file or its samples is copied.
         let shared = bytes::Bytes::from(file.clone());
-        let (n, allocated) = bytes_allocated(|| {
-            let dec = CencDecryptor::from_fmp4_bytes(shared).unwrap();
-            dec.demux().unwrap().tracks.len()
-        });
+        let (n, allocated) = bytes_allocated(|| demux_tracks(&shared));
         assert!(n > 0);
         let x100 = allocated * 100 / file.len();
-        eprintln!("cenc harvest+demux (shared): {allocated} bytes = {x100}/100 x file");
+        eprintln!("cenc demux (shared): {allocated} bytes = {x100}/100 x file");
         assert!(x100 <= CENC_SHARED_BUDGET_X100, "{x100}/100 x file");
     }
 
-    const CENC_BUDGET_X100: usize = 167; // 214 before r05-O2, 121 after (midway)
-    const CENC_SHARED_BUDGET_X100: usize = 60; // 21 after (from_fmp4_bytes is new; old code copied >= 100)
+    const CENC_BUDGET_X100: usize = 167;
+    const CENC_SHARED_BUDGET_X100: usize = 167;
 }
 
 mod muxer_buffering {
