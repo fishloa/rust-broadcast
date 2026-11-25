@@ -33,12 +33,12 @@ use core::time::Duration;
 use isobmff::box_types::parse_box;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
+use test_harness::collect::{concat, splice_insert};
 use transmux::TrackId;
 use transmux::ir::DataIdentity;
 use transmux::pipeline::DataCarriage;
 use transmux::{
-    CodecConfig, Media, Sample, Segmenter, Track, TrackSpec, TsDemux, concat,
-    snap_to_preceding_sync, splice_insert,
+    CodecConfig, Media, Sample, Segmenter, Track, TrackSpec, TsDemux, snap_to_preceding_sync,
 };
 
 fn timescale(value: u32) -> Timescale {
@@ -364,10 +364,10 @@ fn concat_muxed_tfdts_are_monotonic_across_join() {
     // The segmenter counts from 0; offset every emitted tfdt by the anchor.
     let anchor = joined.start_decode_time;
     for s in &joined.samples {
-        seg.push(TrackId::new(1), s.clone()).unwrap();
+        crate::segmenter_stage::feed(&mut seg, TrackId::new(1), s.clone()).unwrap();
     }
-    seg.flush().unwrap();
-    let segments = seg.take_ready();
+    crate::segmenter_stage::flush(&mut seg).unwrap();
+    let segments = crate::segmenter_stage::take_bytes(&mut seg);
     assert!(segments.len() >= 2, "expected multiple segments");
 
     let mut tfdt_list: Vec<u64> = tfdts(&segments).iter().map(|t| t + anchor).collect();
@@ -531,22 +531,21 @@ fn discontinuity_points_drive_segmenter() {
         if i > 0 && i % GOP == 0 {
             let closing_seg = (i / GOP) - 1;
             if expected_disc_segments.contains(&closing_seg) {
-                seg.mark_discontinuity();
+                crate::segmenter_stage::mark_discontinuity(&mut seg).unwrap();
             }
         }
-        seg.push(TrackId::new(1), s.clone()).unwrap();
+        crate::segmenter_stage::feed(&mut seg, TrackId::new(1), s.clone()).unwrap();
     }
     // The final (trailing) segment is closed by flush; flag it if it is a join.
     let trailing_seg = joined.samples.len().div_ceil(GOP) - 1;
     if expected_disc_segments.contains(&trailing_seg) {
-        seg.mark_discontinuity();
+        crate::segmenter_stage::mark_discontinuity(&mut seg).unwrap();
     }
-    seg.flush().unwrap();
+    crate::segmenter_stage::flush(&mut seg).unwrap();
 
-    let metas: Vec<bool> = seg
-        .take_ready_with_meta()
+    let metas: Vec<bool> = crate::segmenter_stage::take(&mut seg)
         .iter()
-        .map(|(_bytes, meta)| meta.discontinuous)
+        .map(|segment| segment.summary.discontinuous)
         .collect();
 
     // Exactly the segments opening on a join sample are discontinuous.

@@ -35,6 +35,7 @@
 #![cfg(feature = "cenc")]
 
 use broadcast_common::timescale::Timescale;
+use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
 use broadcast_common::{Encrypt, Serialize, Unpackage};

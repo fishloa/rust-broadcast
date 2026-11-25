@@ -7,10 +7,12 @@
 #![cfg(feature = "std")]
 
 use core::time::Duration;
+use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
+use broadcast_common::Package;
+use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Unpackage};
 use transmux::{PsDemux, TsDemux, WebmDemux};
 
 fn timescale(value: u32) -> Timescale {
@@ -542,13 +544,13 @@ fn muxer_outputs_are_unchanged() {
 
 #[test]
 fn fragment_writer_outputs_are_unchanged() {
-    use transmux::{CmafMux, LlSegmenter, SmoothPackager};
+    use transmux::{LlSegmenter, SmoothPackager};
     let Some(media) = h264_aac_media() else {
         eprintln!("SKIPPED ts/h264-aac.ts");
         return;
     };
     let mut bad = Vec::new();
-    let cmaf = CmafMux::new(1).package(&media).unwrap();
+    let cmaf = crate::cmaf::package(&media).unwrap();
     check(&mut bad, "cmaf", fnv1a(&cmaf), 0xfbf4_2a4d_ad3f_5ea0);
     let smooth = SmoothPackager::default().package(&media).unwrap();
     check(
@@ -583,7 +585,7 @@ const CODEC_MUX_FIXTURES: &[&str] = &["ts/hevc/main.ts", "ts/dolby/ac3.ts", "ts/
 
 #[test]
 fn hevc_and_dolby_muxer_outputs_are_unchanged() {
-    use transmux::{CmafMux, ProgressiveMux, TsMux};
+    use transmux::{ProgressiveMux, TsMux};
     let want: &[(&str, u64)] = CODEC_MUX_GOLDEN;
     let mut bad = Vec::new();
     let mut i = 0;
@@ -610,7 +612,7 @@ fn hevc_and_dolby_muxer_outputs_are_unchanged() {
                 "ts",
                 hash_result(TsMux::new().with_psi_interval(None).package(&media)),
             ),
-            ("cmaf", hash_result(CmafMux::new(1).package(&media))),
+            ("cmaf", hash_result(crate::cmaf::package(&media))),
         ];
         for (kind, got) in outs {
             let name = format!("{rel}:{kind}");

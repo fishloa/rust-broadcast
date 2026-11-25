@@ -15,9 +15,8 @@
 //! presentation-timeline concern the mux/consumer applies, not something a
 //! demuxer's decode-order [`Track`]/[`Sample`] IR carries.
 
-use broadcast_common::Package;
 use isobmff::timing::SegmentIndexBox;
-use transmux::{CmafMux, CodecConfig};
+use transmux::CodecConfig;
 
 fn prog_fixture() -> Vec<u8> {
     let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
@@ -203,9 +202,7 @@ fn round_trip_progressive_to_fmp4_preserves_samples_and_codec() {
         test_harness::collect::media_from_mp4(&data, test_harness::collect::CollectMode::Seekable)
             .unwrap();
 
-    let cmaf = CmafMux::new(1)
-        .package(&original)
-        .expect("CmafMux::package");
+    let cmaf = crate::cmaf::package(&original).expect("CmafMux::package");
     let reloaded =
         test_harness::collect::media_from_mp4(&cmaf, test_harness::collect::CollectMode::Seekable)
             .expect("Mp4Demux::unpackage");

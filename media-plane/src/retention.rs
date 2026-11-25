@@ -533,7 +533,6 @@ mod tests {
     use std::num::NonZeroUsize;
     use std::sync::mpsc;
     use std::thread;
-    use transmux::SegmentMeta;
 
     #[test]
     fn retention_config_error_displays_the_window_and_cap() {
@@ -561,9 +560,7 @@ mod tests {
             SegmentSeq::new(seq),
             Duration::from_secs(2),
             Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         )
     }
 

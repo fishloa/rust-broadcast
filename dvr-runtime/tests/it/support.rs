@@ -117,7 +117,7 @@ pub fn segment_at(seq: u32, len: usize, at_ns: u64, discontinuous: bool) -> Segm
         SegmentSeq::new(seq),
         Duration::from_secs(2),
         Timestamp::from_nanos(at_ns),
-        transmux::SegmentMeta { discontinuous },
+        discontinuous,
     )
 }
 

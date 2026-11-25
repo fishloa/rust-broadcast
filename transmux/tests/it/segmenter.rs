@@ -114,22 +114,24 @@ fn synthetic_cuts_are_exact_and_lossless() {
             let is_sync = idx % 10 == 0;
             // Duration-driven segmenter: dts/pts stay `None` for these
             // synthetic samples (media plane step 2c — never fabricated).
-            seg.push(
+            crate::segmenter_stage::feed(
+                &mut seg,
                 TrackId::new(1),
                 Sample::new(vec![0xAA; 16], None, None, Some(VID_DUR), is_sync)
                     .expect("valid timing"),
             )
             .unwrap();
         } else {
-            seg.push(
+            crate::segmenter_stage::feed(
+                &mut seg,
                 TrackId::new(2),
                 Sample::from_raw(vec![0xBB; 8], None, None, Some(AUD_DUR)).expect("valid timing"),
             )
             .unwrap();
         }
     }
-    seg.flush().unwrap();
-    let segments = seg.take_ready();
+    crate::segmenter_stage::flush(&mut seg).unwrap();
+    let segments = crate::segmenter_stage::take_bytes(&mut seg);
 
     // --- exact segment count: keyframes at 0/10/20, target 0.3s (=27000 ticks).
     // cut fires at AU10 (buffered 30000≥27000) and AU20 → 2 mid cuts + 1 flush = 3.
@@ -227,13 +229,13 @@ fn single_segment_is_byte_identical_to_batch_builder() {
     )
     .unwrap();
     for v in &vid {
-        seg.push(TrackId::new(1), v.clone()).unwrap();
+        crate::segmenter_stage::feed(&mut seg, TrackId::new(1), v.clone()).unwrap();
     }
     for a in &aud {
-        seg.push(TrackId::new(2), a.clone()).unwrap();
+        crate::segmenter_stage::feed(&mut seg, TrackId::new(2), a.clone()).unwrap();
     }
-    seg.flush().unwrap();
-    let segments = seg.take_ready();
+    crate::segmenter_stage::flush(&mut seg).unwrap();
+    let segments = crate::segmenter_stage::take_bytes(&mut seg);
     assert_eq!(segments.len(), 1, "huge target → single segment");
     assert_eq!(
         segments[0], reference,
@@ -263,7 +265,8 @@ fn rejects_bad_construction() {
     let mut seg =
         Segmenter::new(vec![video_track()], timescale(1000), Duration::from_secs(2)).unwrap();
     assert!(
-        seg.push(
+        crate::segmenter_stage::feed(
+            &mut seg,
             TrackId::new(99),
             Sample::from_raw(vec![0], None, None, Some(1)).expect("valid timing")
         )
@@ -450,7 +453,8 @@ fn real_fixture_remux_is_lossless_and_parseable() {
     for (i, (payload, pts, dts)) in vid.iter().enumerate() {
         // media plane step 2c: feed the real absolute PES dts/pts pair.
         let dts_val = (*dts).unwrap_or(*pts) as i64;
-        seg.push(
+        crate::segmenter_stage::feed(
+            &mut seg,
             TrackId::new(1),
             Sample::from_annexb(
                 payload,
@@ -466,7 +470,8 @@ fn real_fixture_remux_is_lossless_and_parseable() {
     for p in &aud {
         for f in split_adts_frames(p) {
             if f.len() > 7 {
-                seg.push(
+                crate::segmenter_stage::feed(
+                    &mut seg,
                     TrackId::new(2),
                     Sample::from_raw(f[7..].to_vec(), None, None, Some(1024))
                         .expect("valid timing"),
@@ -475,8 +480,8 @@ fn real_fixture_remux_is_lossless_and_parseable() {
             }
         }
     }
-    seg.flush().unwrap();
-    let segments = seg.take_ready();
+    crate::segmenter_stage::flush(&mut seg).unwrap();
+    let segments = crate::segmenter_stage::take_bytes(&mut seg);
     assert!(!segments.is_empty(), "produced segments");
 
     let mut vid_seen = 0usize;

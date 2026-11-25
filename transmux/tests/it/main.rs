@@ -25,6 +25,9 @@ mod clap_precedence;
 mod classify_nals;
 mod cli;
 mod cli_binary;
+#[path = "support/cmaf.rs"]
+mod cmaf;
+mod cmaf_stage;
 mod codec_config;
 mod codec_tail;
 mod codecs_new;
@@ -164,6 +167,8 @@ mod segment_cut_policy;
 mod segment_emsg;
 mod segmenter;
 mod segmenter_progress_bounds;
+#[path = "support/segmenter_stage.rs"]
+mod segmenter_stage;
 mod sei_caption_real_capture;
 mod serializer_length_truncation;
 mod skipped_track_id;

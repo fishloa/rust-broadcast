@@ -204,9 +204,7 @@ fn ts_origin_fed_with(
                 SegmentSeq::new(u32::try_from(n + 1).unwrap()),
                 duration,
                 broadcast_common::Timestamp::from_nanos(start),
-                transmux::SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("monotonic");
         start += u64::try_from(segment.duration.as_nanos()).unwrap_or(u64::MAX);
@@ -446,9 +444,7 @@ impl Feed {
                     SegmentSeq::new(self.next),
                     *duration,
                     broadcast_common::Timestamp::from_nanos(u64::from(self.next) * NANOS_PER_SEC),
-                    transmux::SegmentMeta {
-                        discontinuous: false,
-                    },
+                    false,
                 ))
                 .expect("monotonic");
             self.next += 1;

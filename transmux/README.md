@@ -106,14 +106,25 @@ Demux a real H.264 plus AAC broadcast capture once, then mux the same IR to CMAF
 
 ```rust
 use broadcast_common::{Package, Unpackage};
-use transmux::{CmafMux, DashPackager, Media, TsDemux, TsMux};
+use transmux::{CmafMuxStage, DashPackager, FragmentCut, Media, TsDemux, TsMux};
 
 let ts = std::fs::read("../fixtures/ts/h264-aac.ts").unwrap();
 let media: Media = TsDemux::new().unpackage(&ts[..]).unwrap();
 assert!(media.tracks.len() >= 2, "an H.264 video and an AAC audio track");
 
-let cmaf: Vec<u8> = CmafMux::default().package(&media).unwrap();
-assert!(cmaf.len() > 1000);
+let mut stage = CmafMuxStage::new(media.movie_timescale, FragmentCut::OnFlush, 1);
+let outputs =
+    transmux::mux_stage::drive_media(&mut stage, &media, broadcast_common::Timestamp::ZERO)
+        .unwrap();
+let cmaf: usize = outputs
+    .iter()
+    .map(|output| match output {
+        transmux::mux_stage::MuxOutput::Init(b) | transmux::mux_stage::MuxOutput::Bytes(b) => b.len(),
+        transmux::mux_stage::MuxOutput::Segment(s) => s.bytes.len(),
+        _ => 0,
+    })
+    .sum();
+assert!(cmaf > 1000);
 
 let mpd: String = DashPackager::default().package(&media).unwrap();
 assert!(mpd.contains("<MPD"));
@@ -124,7 +135,7 @@ let again = TsDemux::new().unpackage(&ts_again[..]).unwrap();
 assert_eq!(again.tracks.len(), media.tracks.len());
 ```
 
-For a live source `Segmenter` owns the segment-cutting state machine (`push` samples, `take_ready` segments, `flush` at end of stream); `StreamingTsDemux` is the incremental demux (`feed`, `poll_event`, `finish`) and `Mp4Demux` is its MP4 counterpart (a `Stage` over `Mp4Input::{At, Next, Eof}`) - drain `poll` after every `feed`: the event queue is unbounded and only `poll_event` empties it (opt-in `with_max_degraded_events` caps the `InputDegraded` diagnostics). Runnable programs: `transmux_any_to_any` and `ssai_ad_stitch` (`cargo run -p transmux --example <name>`).
+For a live source `Segmenter` owns the segment-cutting state machine (a `Stage` over `MuxInput`: feed samples, `poll` segments, `MuxInput::Flush` at end of stream); `StreamingTsDemux` is the incremental demux (`feed`, `poll_event`, `finish`) and `Mp4Demux` is its MP4 counterpart (a `Stage` over `Mp4Input::{At, Next, Eof}`) - drain `poll` after every `feed`: the event queue is unbounded and only `poll_event` empties it (opt-in `with_max_degraded_events` caps the `InputDegraded` diagnostics). Runnable programs: `transmux_any_to_any` and `ssai_ad_stitch` (`cargo run -p transmux --example <name>`).
 
 ## Command-line packager (`cli` feature)
 
@@ -162,7 +173,7 @@ Input detection uses `container-probe`, which scores structural evidence over th
 - **Mux and packaging:** `CmafMux`, `ProgressiveMux`, `TsMux`, and the incremental muxer stages `MkvMuxStage`, `FlvMuxStage`, `RtmpMuxStage` (plus the segmenter stages), `HlsPackager`, `TsHlsPackager`, `DashPackager` (static and live, auto `ContentProtection`), `LlDashPackager`, `SmoothPackager`, `build_init_segment`, `build_media_segment`.
 - **Live segmenters:** `Segmenter`, `LlHlsSegmenter` (parts before the segment closes, `set_start_time_ns`), `StreamingTsHlsSegmenter` (rolling playlist, `with_start_sequence`, `TsContinuity`, `set_start_time_ns`), `LlSegmenter`.
 - **Container boxes (ISO/IEC 14496-12:2026, ISO/IEC 14496-15:2017):** `AVCParameterSampleEntry` (avcp sample entry and `AVCParameterSample`), `TrackReferenceBox` (tref, with `AVCP_REFERENCE_TYPE`), `DataEntry` (url/urn/imdt/snim data entries in dref), `SubSampleInformationBoxV2` and `SubSampleReferenceTableBox` (ssrt), `HEVCSampleEntry::array_completeness_violations`.
-- **Transforms:** `Repackage`, `rebase_to_zero`, `apply_offset`, `insert_discontinuity_gap`, `concat`, `splice_insert` (keyframe-snapped, returns `SpliceResult`), `derive_iframe_track`.
+- **Transforms:** `Repackage`; the sample stages `RebaseStage`/`OffsetStage`/`GapStage` (timeline conditioning), `TrickPlayStage` (I-frame-only derivation) and `SpliceStage` driven by `SplicePlan` (keyframe-snapped concat/splice).
 - **DASH:** `DashPackager` and `LlDashPackager` render the MPD through `broadcast_dash::Mpd::to_xml`. The MPD reader, the `xs:duration` reader and writer, the segment-template grammar and `BaseURL` resolution live in `broadcast-dash` and `dash-runtime`.
 - **RTP:** `RtpPacketiserStage`, `packetise_video_sample`, `sdp_media`, `RtpDepacketiser`, `RtpStreamDepacketiser`, `rtp::rescale_ts`, `sdp_track` (module `rtp_sdp`: one SDP media section read as a playable track), `rtp_align::TrackAligner` (RTCP Sender Report A/V alignment, wrap-safe), KLV over RTP.
 - **Shared live-pipeline definitions:** `Container` (`Fmp4`, `MpegTs`, `WebVtt`), `audio_profile` (operator-declared HE-AAC profiles and `apply_overrides`), `stitch::Stitcher` (one continuous timeline across reported discontinuities) and the `timeline` jump detector (`JumpDetector`, `TimelineJumpConfig`).

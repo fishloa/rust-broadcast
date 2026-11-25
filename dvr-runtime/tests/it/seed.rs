@@ -60,9 +60,7 @@ fn record_run(
             SegmentSeq::new(seq),
             Duration::from_secs(2),
             Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
-            transmux::SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         );
         writer.publish_segment(entry).expect("publish");
     }
@@ -290,9 +288,7 @@ fn the_cache_is_invalidated_when_a_playlist_changes() {
                 SegmentSeq::new(seq),
                 Duration::from_secs(2),
                 Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
-                transmux::SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
         recorder
@@ -335,9 +331,7 @@ fn the_cache_invalidates_a_same_length_rewrite_with_a_new_inode() {
             SegmentSeq::new(0),
             Duration::from_secs(2),
             Timestamp::from_nanos(2_000_000_000),
-            transmux::SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     recorder
@@ -478,9 +472,7 @@ fn recover_spans_walks_a_recorded_period() {
                 SegmentSeq::new(seq),
                 Duration::from_secs(2),
                 Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
-                transmux::SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
     }
@@ -560,9 +552,7 @@ fn a_restart_counts_each_seeded_periods_real_size() {
                 SegmentSeq::new(0),
                 Duration::from_secs(2),
                 Timestamp::ZERO,
-                transmux::SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
         recorder
@@ -732,9 +722,7 @@ fn a_held_cursor_survives_a_locked_directory_and_records_what_closed_meanwhile()
             SegmentSeq::new(1),
             Duration::from_secs(2),
             Timestamp::ZERO,
-            transmux::SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     let mut attempts = 0;
@@ -805,9 +793,7 @@ fn a_programme_handed_over_by_the_host_is_recorded() {
             SegmentSeq::new(1),
             Duration::from_secs(2),
             Timestamp::ZERO,
-            transmux::SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     recorder
@@ -859,9 +845,7 @@ fn succeed_takes_the_lock_over_without_releasing_it() {
             SegmentSeq::new(1),
             Duration::from_secs(2),
             Timestamp::ZERO,
-            transmux::SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     second

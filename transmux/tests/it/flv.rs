@@ -13,12 +13,12 @@
 
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize, Unpackage};
 use bytes::Bytes;
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use test_fixtures::ffprobe;
 use transmux::TrackId;
-use transmux::{CmafMux, CodecConfig, FlvDemux, FlvError, FlvMuxStage};
+use transmux::{CodecConfig, FlvDemux, FlvError, FlvMuxStage};
 
 /// The track specs of `media`, the shape the per-spec FLV helpers take.
 fn specs(media: &transmux::Media) -> Vec<transmux::TrackSpec> {
@@ -292,8 +292,7 @@ fn cross_hub_flv_to_cmaf() {
         .map(|s| s.data.clone())
         .collect();
 
-    let mut cmaf = CmafMux::new(1);
-    let seg = cmaf.package(&media).expect("CMAF package");
+    let seg = crate::cmaf::package(&media).expect("CMAF package");
 
     // Init moov must carry avc1/avcC (video) and mp4a (audio).
     let moov = find_top_box(&seg, b"moov").expect("moov in CMAF");

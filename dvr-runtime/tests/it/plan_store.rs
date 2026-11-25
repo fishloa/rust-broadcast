@@ -146,7 +146,7 @@ fn entry(seq: u32, len: usize, discontinuous: bool) -> SegmentEntry {
         SegmentSeq::new(seq),
         Duration::from_secs(2),
         Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
-        transmux::SegmentMeta { discontinuous },
+        discontinuous,
     )
 }
 
@@ -160,9 +160,7 @@ fn long_item(seq: u32) -> SegmentCursorItem {
         SegmentSeq::new(seq),
         Duration::from_secs(5),
         Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
-        transmux::SegmentMeta {
-            discontinuous: false,
-        },
+        false,
     ))
 }
 

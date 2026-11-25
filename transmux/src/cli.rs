@@ -2,7 +2,7 @@
 //!
 //! Wires the existing demux spokes ([`TsDemux`], [`Mp4Demux`](crate::mp4_demux::Mp4Demux), [`PsDemux`],
 //! [`WebmDemux`], [`FlvDemux`]) through the neutral [`Media`] IR into the
-//! existing mux spokes ([`CmafMux`], [`TsHlsPackager`],
+//! existing mux spokes ([`CmafMuxStage`], [`TsHlsPackager`],
 //! [`DashPackager`], [`ProgressiveMux`], [`TsMux`]).
 //!
 //! It writes **no** new demux/mux logic — it is a front-end that autodetects the
@@ -28,11 +28,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use broadcast_common::timescale::{Timescale, cmp_ticks};
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::{Package, Stage, Unpackage};
 
 use crate::dash::DashPackager;
 use crate::flv::FlvDemux;
-use crate::media::{CmafMux, Media};
+use crate::media::{CmafMuxStage, FragmentCut, Media};
 use crate::progressive::ProgressiveMux;
 use crate::ps_demux::PsDemux;
 use crate::segmenter::{MediaClock, Segmenter};
@@ -214,7 +214,7 @@ broadcast_common::impl_spec_display!(Container);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum OutputFormat {
-    /// CMAF/fMP4 single init+media segment → [`CmafMux`].
+    /// CMAF/fMP4 single init+media segment → [`CmafMuxStage`].
     Cmaf,
     /// CMAF-HLS media playlist (`.m3u8`) → CMAF segments via [`Segmenter`].
     Hls,
@@ -623,7 +623,9 @@ fn filter_for_bmff_mux(media: &Media) -> CliResult<Media> {
         "warning: dropping track(s) {dropped:?} from CMAF/fMP4 output \
          (no ISOBMFF carriage in this crate for their codec)"
     );
-    Ok(media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())?)
+    Ok(crate::repackage::select_tracks_by(media, |t| {
+        t.spec.config.is_muxable_in_bmff()
+    })?)
 }
 
 /// Split `media` into one init segment plus its `styp`+`moof`+`mdat` media
@@ -681,12 +683,30 @@ fn segment_media(media: &Media, target_secs: u32) -> CliResult<(Vec<u8>, Vec<Vec
     }
     merged.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
 
+    let mut segments = Vec::new();
     for (_, ti, si) in merged {
-        let track_id = media.tracks[ti].spec.track_id;
-        seg.push(track_id, media.tracks[ti].samples[si].clone())?;
+        let track = media.tracks[ti].spec.track_id;
+        seg.feed(
+            crate::mux_stage::MuxInput::Sample {
+                track,
+                sample: media.tracks[ti].samples[si].clone(),
+            },
+            broadcast_common::Timestamp::ZERO,
+        )?;
+        drain_segments(&mut seg, &mut segments);
     }
-    seg.flush()?;
-    Ok((init, seg.take_ready()))
+    seg.finish()?;
+    drain_segments(&mut seg, &mut segments);
+    Ok((init, segments))
+}
+
+/// Drain a segmenter stage's finished segments into `out`.
+fn drain_segments(seg: &mut Segmenter, out: &mut Vec<Vec<u8>>) {
+    while let Some(output) = seg.poll() {
+        if let crate::mux_stage::MuxOutput::Segment(segment) = output {
+            out.push(segment.bytes.to_vec());
+        }
+    }
 }
 
 /// A media segment plus its measured presentation duration, in that order.
@@ -1091,11 +1111,32 @@ fn render_cmaf_hls_playlist(segments: &[(Vec<u8>, f64)]) -> CliResult<String> {
 }
 
 /// Dispatch to the correct mux spoke for `opts.format`.
+/// Mux `media` into one CMAF init segment followed by one media segment.
+///
+/// Drives [`CmafMuxStage`] through [`crate::mux_stage::drive_media`]; the
+/// stage cuts only on finish, so the bytes are the concatenation the former
+/// whole-`Media` muxer emitted.
+fn package_cmaf(media: &Media) -> CliResult<Vec<u8>> {
+    let mut stage = CmafMuxStage::new(media.movie_timescale, FragmentCut::OnFlush, 1);
+    let out = crate::mux_stage::drive_media(&mut stage, media, broadcast_common::Timestamp::ZERO)?;
+    let mut bytes = Vec::new();
+    for item in out {
+        match item {
+            crate::mux_stage::MuxOutput::Init(b) | crate::mux_stage::MuxOutput::Bytes(b) => {
+                bytes.extend_from_slice(&b);
+            }
+            crate::mux_stage::MuxOutput::Segment(seg) => bytes.extend_from_slice(&seg.bytes),
+            crate::mux_stage::MuxOutput::BytesAt { .. } | crate::mux_stage::MuxOutput::Text(_) => {}
+        }
+    }
+    Ok(bytes)
+}
+
 fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
     match opts.format {
         OutputFormat::Cmaf => {
             let media = filter_for_bmff_mux(media)?;
-            Ok(Output::Bytes(CmafMux::new(1).package(&media)?))
+            Ok(Output::Bytes(package_cmaf(&media)?))
         }
         OutputFormat::Progressive => {
             let media = filter_for_bmff_mux(media)?;
@@ -1346,11 +1387,11 @@ fn decrypt_input(input: &[u8], container: Container, keys: &[String]) -> CliResu
     let mut media = decryptor.demux()?;
     decryptor.decrypt(&mut media, &key_map)?;
     // Re-package the now-cleartext samples as fMP4 so autodetect + demux run on a
-    // clean container. Filter first (media plane step-2 fix wave 1): CmafMux
-    // now rejects a non-carriable track (e.g. an encrypted subtitle track)
+    // clean container. Filter first (media plane step-2 fix wave 1): the CMAF
+    // muxer rejects a non-carriable track (e.g. an encrypted subtitle track)
     // instead of silently dropping it.
     let media = filter_for_bmff_mux(&media)?;
-    Ok(CmafMux::new(1).package(&media)?)
+    package_cmaf(&media)
 }
 
 /// Parse a `<32-hex-KID>:<32-hex-key>` string into a `(kid, key)` byte pair.

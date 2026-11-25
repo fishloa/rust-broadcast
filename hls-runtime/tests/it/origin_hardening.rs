@@ -26,7 +26,6 @@ use hls_runtime::server::{
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
 use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
-use transmux::SegmentMeta;
 
 /// The validator's own `-t` timeout, seconds.
 const VALIDATOR_TIMEOUT_SECS: u64 = 3;
@@ -80,7 +79,7 @@ fn publish_seg_bytes(w: &SegmentWriter, seq: u32, secs: u64, discontinuous: bool
         SegmentSeq::new(seq),
         Duration::from_secs(secs),
         Timestamp::from_nanos(0),
-        SegmentMeta { discontinuous },
+        discontinuous,
     ))
     .expect("monotonic sequence number");
 }

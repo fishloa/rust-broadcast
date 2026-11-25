@@ -5,7 +5,7 @@
 //! the *full* sample tables (`stbl`: `stsd`/`stts`/`ctts`/`stsc`/`stsz`/
 //! `stco`|`co64`/`stss`, ISO/IEC 14496-12:2026 §8.5–§8.7), and a single `mdat`
 //! holding every track's sample data concatenated. This is the VOD/download
-//! counterpart to the fragmented [`crate::media::CmafMux`].
+//! counterpart to the fragmented [`crate::media::CmafMuxStage`].
 //!
 //! This module's job is only the IR-to-plan mapping: it reads each sample's
 //! decode delta, composition offset, sync flag and size, and each track's
@@ -249,7 +249,7 @@ impl broadcast_common::Package for ProgressiveMux {
         // `CodecConfig::Subtitle`) is no longer silently omitted here — it
         // surfaces the same named error every other mux entry point does.
         // The caller must pre-filter first, e.g. with
-        // `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`.
+        // `select_tracks_by(&media, |t| t.spec.config.is_muxable_in_bmff())`.
         let movie_timescale = media.movie_timescale;
 
         let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();

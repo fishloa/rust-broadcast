@@ -10,14 +10,14 @@ use broadcast_common::timescale::Timescale;
 use mpeg_ts::pid::Pid;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use mpeg_pes::PesAssembler;
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
 use transmux::ir::DataIdentity;
-use transmux::media::CmafMux;
 use transmux::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
 use transmux::{Ec3SyncframeInfo, Error, Media, PcrSample, Track, TsDemux};
 
@@ -769,9 +769,7 @@ fn pcr_timeline_clean_stream_monotonic() {
 fn cmaf_mux_ac3_durations_no_longer_zero() {
     let ts = read_fixture("dolby/ac3.ts");
     let media = demux(&ts);
-    let fmp4 = CmafMux::default()
-        .package(&media)
-        .expect("package TS-sourced AC-3 to CMAF");
+    let fmp4 = crate::cmaf::package(&media).expect("package TS-sourced AC-3 to CMAF");
 
     let round: Media =
         test_harness::collect::media_from_mp4(&fmp4, test_harness::collect::CollectMode::Seekable)
@@ -833,7 +831,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
 
     // A Media of a Data track must now fail with the specific, named
     // `UnmuxableDataTrack` error — not the generic `UnsupportedCodec`.
-    let data_err = CmafMux::default().package(&data_only).unwrap_err();
+    let data_err = crate::cmaf::package(&data_only).unwrap_err();
     assert!(
         matches!(
             data_err,
@@ -848,7 +846,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
 
     // VP8 is unrelated to this issue (a genuinely out-of-scope WebM-native
     // codec) and must still fail exactly as before.
-    let vp8_err = CmafMux::default().package(&vp8_media).unwrap_err();
+    let vp8_err = crate::cmaf::package(&vp8_media).unwrap_err();
     assert!(
         matches!(vp8_err, Error::UnsupportedCodec { codec: "VP8" }),
         "VP8 must still fail exactly as before, got {vp8_err:?}"
@@ -877,7 +875,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
             .any(|t| matches!(t.spec.config, CodecConfig::Eac3 { .. })),
         "m6-single.ts must produce at least one E-AC-3 track (issue #641)"
     );
-    let mixed_err = CmafMux::default().package(&media).unwrap_err();
+    let mixed_err = crate::cmaf::package(&media).unwrap_err();
     assert!(
         matches!(mixed_err, Error::UnmuxableDataTrack { .. }),
         "a mixed Media with a Data track must be rejected naming it, got {mixed_err:?}"
@@ -886,8 +884,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
     let carriable = media
         .select_tracks_by(|t| !matches!(t.spec.config, CodecConfig::Data { .. }))
         .expect("at least the E-AC-3 tracks remain carriable");
-    let out = CmafMux::default()
-        .package(&carriable)
+    let out = crate::cmaf::package(&carriable)
         .expect("CmafMux must succeed once the Data tracks are explicitly filtered out");
     assert!(
         out.windows(4).any(|w| w == b"moov"),

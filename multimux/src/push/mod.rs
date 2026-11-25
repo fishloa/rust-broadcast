@@ -1075,9 +1075,7 @@ mod tests {
                             media_plane::ids::SegmentSeq::new(seq),
                             Duration::from_millis(5),
                             broadcast_common::Timestamp::from_nanos(u64::from(seq) * 5_000_000),
-                            transmux::SegmentMeta {
-                                discontinuous: false,
-                            },
+                            false,
                         ))
                         .is_err()
                     {

@@ -13,7 +13,8 @@
 //! demux `out.segments` (concat and per-segment) → compare.
 
 use crate::ts_psi::{first_section, parse_pmt, pid_of, pusi_of, split_lp};
-use broadcast_common::{Package, Serialize, Unpackage};
+use broadcast_common::Package;
+use broadcast_common::{Serialize, Unpackage};
 use transmux::media::{Media, Track};
 use transmux::pipeline::CodecConfig;
 use transmux::{TsDemux, TsHlsOutput, TsHlsPackager};

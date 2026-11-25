@@ -550,7 +550,7 @@ impl Window {
             .segments
             .back()
             .is_none_or(|last| last.sequence_number.checked_next() == Some(entry.sequence_number));
-        let mut discontinuous = entry.meta.discontinuous;
+        let mut discontinuous = entry.discontinuous;
         if !follows || self.gap_pending {
             self.clear_rolling_off();
             discontinuous = true;
@@ -4290,7 +4290,6 @@ mod tests {
     use media_plane::trunk::{EventAnchor, TrunkConfig};
     use std::time::{Duration, Instant};
     use timed_metadata::{MediaTime, TimeAnchor};
-    use transmux::SegmentMeta;
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
@@ -4387,7 +4386,7 @@ mod tests {
                 SegmentSeq::new(seq),
                 duration,
                 Timestamp::from_nanos(0),
-                SegmentMeta { discontinuous },
+                discontinuous,
             ))
             .unwrap();
     }
@@ -4657,9 +4656,7 @@ mod tests {
                 SegmentSeq::new(1),
                 Duration::from_secs(1),
                 Timestamp::from_nanos(0),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
         let response = resolve_with_deadline(
@@ -6012,9 +6009,7 @@ mod tests {
                 SegmentSeq::new(1),
                 Duration::from_secs_f64(4.0),
                 Timestamp::from_nanos(0),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .unwrap();
         writer
@@ -6023,9 +6018,7 @@ mod tests {
                 SegmentSeq::new(2),
                 Duration::from_secs_f64(4.0),
                 Timestamp::from_nanos(4_000_000_000),
-                SegmentMeta {
-                    discontinuous: true,
-                },
+                true,
             ))
             .unwrap();
 
@@ -6064,7 +6057,7 @@ mod tests {
             SegmentSeq::new(seq),
             Duration::from_secs(4),
             Timestamp::from_nanos(0),
-            SegmentMeta { discontinuous },
+            discontinuous,
         )
     }
 
@@ -6195,9 +6188,7 @@ mod tests {
                 SegmentSeq::new(1),
                 Duration::from_nanos(10),
                 Timestamp::from_nanos(0),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .unwrap();
         assert_eq!(
