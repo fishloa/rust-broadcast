@@ -10,7 +10,6 @@ use mpeg_ts::ts::TS_SYNC_BYTE;
 use transmux::TrackId;
 
 use ::url::Url;
-use broadcast_common::Unpackage;
 use broadcast_common::range::ByteSpan;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::url_ref;
@@ -20,14 +19,15 @@ use broadcast_hls::{
     OpenSegment, PreloadHintType,
 };
 use isobmff::cenc::KEY_LEN;
+use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use transmux::sample_aes::{BLOCK_LEN, aes128_decrypt_segment};
-use transmux::{DemuxEvent, Fmp4Demux, InputDegradation, Sample, StreamingTsDemux, TrackSpec};
+use transmux::{AbandonReason, DemuxEvent, InputDegradation, Sample, StreamingTsDemux, TrackSpec};
 
 use super::action::{Action, BlockingReload, KeyId, ResourceId};
 use super::error::{Error, Result};
 use super::output::{MasterSelection, Output, RenditionInfo, VariantInfo, VariantPolicy};
 use super::url;
-use broadcast_common::stage::Timestamp;
+use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::units::MILLIS_PER_SEC;
 
 /// Movie timescale of the init segment synthesized for classic TS-segment
@@ -67,6 +67,11 @@ const MAX_PENDING_ERRORS: usize = 256;
 /// issue #2815).
 const MAX_INIT_SLOTS: usize = 64;
 
+/// Bytes handed to one streaming MP4 `feed` of a Part/Segment body: the stage
+/// holds this piece plus the one fragment it is resolving, so the client's own
+/// buffer never grows to the body's length.
+const DEMUX_FEED_BYTES: usize = 64 * 1024;
+
 /// Longest the non-blocking reload cadence may wait, however large the
 /// untrusted `EXT-X-TARGETDURATION` says the target duration is.
 const MAX_RELOAD_WAIT_MS: u64 = 60_000;
@@ -86,6 +91,47 @@ struct TsDemuxState(StreamingTsDemux);
 impl core::fmt::Debug for TsDemuxState {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("TsDemuxState(StreamingTsDemux)")
+    }
+}
+
+/// [`Mp4Demux`] with a `Debug` impl (the transmux type has none), so
+/// [`HlsClient`] can keep deriving it.
+struct Mp4DemuxState(Mp4Demux);
+
+impl core::fmt::Debug for Mp4DemuxState {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("Mp4DemuxState(Mp4Demux)")
+    }
+}
+
+/// A forward-only streaming MP4 stage holding `plain`, the Media
+/// Initialization Section every following Part/Segment continues.
+fn start_demux(plain: &[u8]) -> core::result::Result<Mp4Demux, transmux::Error> {
+    let mut demux = Mp4Demux::sequential(Mp4DemuxConfig::default());
+    demux.feed(Mp4Input::Next(plain), Timestamp::ZERO)?;
+    demux.feed(Mp4Input::SegmentEnd, Timestamp::ZERO)?;
+    Ok(demux)
+}
+
+/// The sample-entry four-CC and reason [`Output::TrackSkipped`] reports for a
+/// track the demuxer abandoned.
+fn abandoned_track(reason: AbandonReason) -> (String, String) {
+    match reason {
+        AbandonReason::UnsupportedSampleEntry { fourcc } => {
+            let fourcc = String::from_utf8_lossy(&fourcc).into_owned();
+            let text =
+                format!("sample entry '{fourcc}' has no CodecConfig reconstruction in this crate");
+            (fourcc, text)
+        }
+        AbandonReason::UnsupportedCodec => (
+            String::from("unknown"),
+            String::from("sample entry 'unknown' has no CodecConfig reconstruction in this crate"),
+        ),
+        AbandonReason::MalformedTrack { expected } => (
+            String::from("unknown"),
+            format!("unexpected box: expected {expected}"),
+        ),
+        other => (String::from("unknown"), String::from(other.name())),
     }
 }
 
@@ -222,6 +268,19 @@ struct InitSlot {
     cipher: Option<Vec<u8>>,
     bytes: Option<Vec<u8>>,
     skipped_reported: BTreeSet<(Option<u32>, String)>,
+    /// The one streaming MP4 stage this init feeds, kept across every Part and
+    /// Segment of its map-run.
+    demux: Option<Mp4DemuxState>,
+    /// Events the stage produced while it was fed this init, replayed before
+    /// the first Part/Segment's own.
+    init_events: Vec<DemuxEvent>,
+    /// The stage's error from reading this init, if it could not.
+    demux_error: Option<transmux::Error>,
+    /// Track specs the stage has announced for this init.
+    specs: Vec<TrackSpec>,
+    /// Whether the stage has announced any track (added or abandoned) for this
+    /// init.
+    tracks_known: bool,
 }
 
 /// An `EXT-X-MAP` of the playlist being processed, with the key that encrypts
@@ -350,15 +409,15 @@ fn program_date_time_ms(seg: &MediaSegment) -> Option<i64> {
 ///   single segment, so a part's samples are never double-counted against its
 ///   parent's.
 /// - **Output adapter** (slice 4): exactly one [`Output::Init`] precedes any
-///   [`Output::Samples`]; parts/segments are demuxed via
-///   [`transmux::Fmp4Demux`] (by concatenating the cached init bytes with the
-///   fetched resource — this crate never re-implements ISOBMFF box parsing,
-///   only reuses transmux's), so `Output::Samples` carries real access units,
-///   not opaque container bytes. `#EXT-X-DISCONTINUITY` on a segment surfaces
-///   as [`Output::Discontinuity`] immediately before that segment's first
-///   samples. **Known limitation**: an in-progress ([`OpenSegment`]) segment
-///   carries no discontinuity flag of its own (only a *closed*
-///   [`MediaSegment`] does) — if every part of a segment was already
+///   [`Output::Samples`]; parts/segments are demuxed by one streaming
+///   [`transmux::mp4_demux::Mp4Demux`] per init segment (this crate never
+///   re-implements ISOBMFF box parsing, only reuses transmux's), fed the init
+///   once and then each fetched resource in bounded pieces, so `Output::Samples`
+///   carries real access units, not opaque container bytes. `#EXT-X-DISCONTINUITY`
+///   on a segment surfaces as [`Output::Discontinuity`] immediately before that
+///   segment's first samples. **Known limitation**: an in-progress
+///   ([`OpenSegment`]) segment carries no discontinuity flag of its own (only a
+///   *closed* [`MediaSegment`] does) — if every part of a segment was already
 ///   delivered while it was still open, a discontinuity revealed only once it
 ///   closes is signalled late (after those parts' samples, not before). This
 ///   is a gap in the current wire model ([`broadcast_hls::OpenSegment`]), not
@@ -1246,6 +1305,11 @@ impl HlsClient {
                 cipher: None,
                 bytes: None,
                 skipped_reported: BTreeSet::new(),
+                demux: None,
+                init_events: Vec::new(),
+                demux_error: None,
+                specs: Vec::new(),
+                tracks_known: false,
             },
         );
         Ok(id)
@@ -1314,8 +1378,8 @@ impl HlsClient {
     /// `requested` bookkeeping — or, for `Init`, `init_uri` — has no record
     /// of it): a caller/driver bug, or a stale/duplicate delivery after the
     /// client already moved past this id.
-    /// [`Error::Demux`] if `transmux::Fmp4Demux` rejects the concatenation of
-    /// the cached init + `bytes`.
+    /// [`Error::Demux`] if the streaming MP4 stage refuses `bytes` (a damaged
+    /// body is reported through [`Output::FragmentDamaged`], not this error).
     pub fn on_resource(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
         let was_requested = match id {
             ResourceId::Init => self.init_target.is_some(),
@@ -1404,6 +1468,7 @@ impl HlsClient {
             slot.cipher = None;
             slot.fetch = InitFetch::Ready;
         }
+        self.install_demux(target, plain);
         if self.announced_init.is_none() {
             self.announce_init(target);
         }
@@ -2198,68 +2263,157 @@ impl HlsClient {
         self.resolve_byte_range(url, &Some(br))
     }
 
+    /// Start a fresh streaming MP4 stage on `plain` for `slot`, replaying the
+    /// track announcements a re-read of the init makes.
+    fn install_demux(&mut self, slot: InitId, plain: &[u8]) {
+        let Some(state) = self.inits.get_mut(&slot) else {
+            return;
+        };
+        state.demux = None;
+        state.demux_error = None;
+        state.init_events.clear();
+        match start_demux(plain) {
+            Ok(mut demux) => {
+                while let Some(event) = demux.poll() {
+                    if !matches!(event, DemuxEvent::InputDegraded { .. }) {
+                        state.init_events.push(event);
+                    }
+                }
+                state.demux = Some(Mp4DemuxState(demux));
+            }
+            Err(err) => state.demux_error = Some(err),
+        }
+    }
+
+    /// Replace the stage of `slot` with a fresh one over its held init, so a
+    /// segment that could not be demuxed costs only itself.
+    fn restart_demux(&mut self, slot: InitId) {
+        let Some(plain) = self.inits.get(&slot).and_then(|s| s.bytes.clone()) else {
+            return;
+        };
+        self.install_demux(slot, &plain);
+    }
+
+    /// Feed one Part/Segment body to `slot`'s stage and close the unit: the
+    /// body goes in [`DEMUX_FEED_BYTES`] pieces, so the stage's buffer holds a
+    /// piece plus the one fragment it is resolving, never the whole body.
+    fn feed_segment(
+        &mut self,
+        slot: InitId,
+        bytes: &[u8],
+    ) -> core::result::Result<(), transmux::Error> {
+        let Some(state) = self.inits.get_mut(&slot) else {
+            return Err(transmux::Error::InvalidInput("no init slot for the stage"));
+        };
+        if let Some(source) = state.demux_error.clone() {
+            return Err(source);
+        }
+        let Some(demux) = state.demux.as_mut() else {
+            return Err(transmux::Error::InvalidInput(
+                "no streaming MP4 stage for the init",
+            ));
+        };
+        for chunk in bytes.chunks(DEMUX_FEED_BYTES) {
+            demux.0.feed(Mp4Input::Next(chunk), Timestamp::ZERO)?;
+        }
+        demux.0.feed(Mp4Input::SegmentEnd, Timestamp::ZERO)
+    }
+
     fn demux_and_emit(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
         let slot = self.init_of(&id).filter(|s| self.init_ready(Some(*s)));
         let Some(slot) = slot else {
             return Err(Error::InitNotYetAvailable { id });
         };
         self.announce_init(slot);
-        let init = self
-            .inits
-            .get(&slot)
-            .and_then(|s| s.bytes.as_ref())
-            .ok_or(Error::InitNotYetAvailable { id })?;
         if segment::progressive_movie(bytes) {
             return Err(Error::NotFragmented { id });
         }
-        let mut combined = Vec::with_capacity(init.len() + bytes.len());
-        combined.extend_from_slice(init);
-        combined.extend_from_slice(bytes);
-        let mut demux = Fmp4Demux::new();
-        let media = demux
-            .unpackage(combined.as_slice())
-            .map_err(|source| Error::Demux { id, source })?;
-        let damaged = media
-            .degraded
-            .iter()
-            .filter(|d| matches!(d, InputDegradation::MalformedUnit { .. }))
-            .count();
+        let fed = self.feed_segment(slot, bytes);
+        if let Err(source) = fed {
+            self.restart_demux(slot);
+            return Err(Error::Demux { id, source });
+        }
+        let (specs, damaged, abandoned, samples) = {
+            let state = self
+                .inits
+                .get_mut(&slot)
+                .ok_or(Error::InitNotYetAvailable { id })?;
+            let mut events = core::mem::take(&mut state.init_events);
+            if let Some(demux) = state.demux.as_mut() {
+                while let Some(event) = demux.0.poll() {
+                    events.push(event);
+                }
+            }
+            let mut samples: BTreeMap<TrackId, Vec<Sample>> = BTreeMap::new();
+            let mut damaged = 0usize;
+            let mut abandoned: Vec<(Option<TrackId>, AbandonReason)> = Vec::new();
+            for event in events {
+                match event {
+                    DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
+                        state.tracks_known = true;
+                        match state
+                            .specs
+                            .iter_mut()
+                            .find(|existing| existing.track_id == spec.track_id)
+                        {
+                            Some(existing) => *existing = spec,
+                            None => state.specs.push(spec),
+                        }
+                    }
+                    DemuxEvent::TrackAbandoned {
+                        track_id, reason, ..
+                    } => {
+                        state.tracks_known = true;
+                        abandoned.push((track_id, reason));
+                    }
+                    DemuxEvent::Sample {
+                        track_id, sample, ..
+                    } => {
+                        samples.entry(track_id).or_default().push(sample);
+                    }
+                    DemuxEvent::InputDegraded {
+                        kind: InputDegradation::MalformedUnit { .. },
+                        ..
+                    } => damaged = damaged.saturating_add(1),
+                    _ => {}
+                }
+            }
+            let mut specs = state.specs.clone();
+            specs.sort_by_key(|spec| spec.track_id);
+            (specs, damaged, abandoned, samples)
+        };
         if damaged > 0 {
             self.pending_outputs.push_back(Output::FragmentDamaged {
                 id,
                 skipped: damaged,
             });
         }
-        for skipped in &media.skipped {
-            let key = (skipped.track_id.map(TrackId::value), skipped.fourcc.clone());
+        for (track_id, reason) in abandoned {
+            let (fourcc, reason) = abandoned_track(reason);
+            let key = (track_id.map(TrackId::value), fourcc.clone());
             let first = self
                 .inits
                 .get_mut(&slot)
                 .is_some_and(|s| s.skipped_reported.insert(key));
             if first {
                 self.pending_outputs.push_back(Output::TrackSkipped {
-                    track_id: skipped.track_id,
-                    fourcc: skipped.fourcc.clone(),
-                    reason: skipped.reason.clone(),
+                    track_id,
+                    fourcc,
+                    reason,
                 });
             }
         }
-        let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-        let specs_changed = self
-            .last_fmp4_specs
-            .as_ref()
-            .is_none_or(|prev| *prev != specs);
-        if specs_changed {
+        if self.inits.get(&slot).is_some_and(|s| s.tracks_known)
+            && self.last_fmp4_specs.as_ref() != Some(&specs)
+        {
             self.pending_outputs
                 .push_back(Output::Tracks(specs.clone()));
             self.last_fmp4_specs = Some(specs);
         }
-        for track in media.tracks {
-            if !track.samples.is_empty() {
-                self.pending_outputs.push_back(Output::Samples {
-                    track_id: track.spec.track_id,
-                    samples: track.samples,
-                });
+        for (track_id, samples) in samples {
+            if !samples.is_empty() {
+                self.pending_outputs
+                    .push_back(Output::Samples { track_id, samples });
             }
         }
         Ok(())
@@ -2314,7 +2468,7 @@ impl HlsClient {
     /// The [`Output::Init`] the crate's output contract requires is
     /// synthesized from the demuxer's track set via
     /// [`transmux::build_init_segment`] — a real `ftyp`+fragmented-`moov`,
-    /// byte-for-byte demuxable by `transmux::Fmp4Demux` like any other init
+    /// byte-for-byte demuxable by `transmux::mp4_demux::Mp4Demux` like any other init
     /// segment, so callers built against the fMP4 path (e.g. `multimux`'s
     /// `HlsPull`) need no TS-specific handling. It is emitted before the
     /// first samples and again whenever the track set (a new PID, a codec
@@ -3594,6 +3748,11 @@ mod tests {
                 cipher: None,
                 bytes: None,
                 skipped_reported: BTreeSet::new(),
+                demux: None,
+                init_events: Vec::new(),
+                demux_error: None,
+                specs: Vec::new(),
+                tracks_known: false,
             },
         );
     }

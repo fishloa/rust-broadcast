@@ -7,6 +7,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- The playback client demuxes with one streaming `transmux::mp4_demux::Mp4Demux` per Media Initialization Section instead of building an `init + segment` buffer and running a whole-input demuxer over it for every fetched Part/Segment: the init is fed once and each body in bounded pieces, so a segment's samples no longer cost a second copy of the whole body, and a damaged segment costs only itself. Decoded output (`Output::Init`/`Tracks`/`Samples`/`TrackSkipped`/`FragmentDamaged`) is unchanged.
+- The origin derives its track set (and so `CODECS`, `RESOLUTION`, `FRAME-RATE`, `VIDEO-RANGE`) from the same streaming demux, fed the init alone.
+
+### Tests
+
+- The demux path is shown to allocate nothing near `init.len() + segment.len()` for a generated four-mebibyte media segment, and a segment with a damaged `moof` is pinned to cost only itself while the next one still demuxes under the same init.
+
 ## [0.16.0] - 2026-11-22
 ### Breaking
 

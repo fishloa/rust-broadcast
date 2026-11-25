@@ -65,6 +65,9 @@ serde = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "url/serd
 tokio             = { version = "1", features = ["net", "io-util", "rt", "macros", "time", "test-util"] }
 test-fixtures     = { path = "../test-fixtures" }
 test-harness     = { path = "../test-harness" }
+# The one audited counting allocator: the per-segment concatenation bound in
+# `tests/no_segment_concat.rs` runs the whole pull under a live-byte cap.
+test-alloc       = { path = "../test-alloc" }
 # `hls-runtime/tests/it/subtitle_renditions.rs` runs the independent `check_hls_playlist`
 # conformance checker over rendered playlists. Path-only: never published.
 media-doctor      = { path = "../media-doctor", default-features = false, features = ["std"] }

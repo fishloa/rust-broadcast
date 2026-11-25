@@ -4,7 +4,8 @@
 //! init bytes + the `local_to_global` track-id remap in fixed MPD order, but
 //! driven by pushed objects (`IngestObject`) instead of a pull plan. One
 //! `Manifest` announces the presentation; `Header`s register tracks; `Segment`s
-//! demux against `header ++ segment` and emit `SessionEvent::Sample`s.
+//! demux through one streaming MP4 stage per Representation (the init fed once)
+//! and emit `SessionEvent::Sample`s.
 //!
 //! Cited against `private/specs-md/dashif_live_media_ingest_v1.3.md`
 //! §6.2 items 1-3, 10, 11, 18, 19 and §5.3 items 2-3.
@@ -23,14 +24,14 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
+use broadcast_common::{Demand, Stage, Timestamp};
 use media_plane::ingress::{IngestSession, ProgramId, SessionEvent};
 use media_plane::trunk::RetentionClass;
 use transmux::TrackId;
-use transmux::media::Fmp4Demux;
 use transmux::pipeline::TrackSpec;
 
 use super::{IngestError, IngestState, ManifestGrouping, ObjectKind};
+use crate::client::demux::{self, SegmentStage};
 
 use tracing::{debug, warn};
 
@@ -78,6 +79,7 @@ struct RepData {
     init_bytes: Option<Vec<u8>>,
     local_to_global: Option<HashMap<TrackId, TrackId>>,
     buffered: Vec<(TrackId, transmux::ir::Sample)>,
+    demux: Option<SegmentStage>,
 }
 
 /// Handle for a streaming (chunked) segment being fed via
@@ -221,13 +223,11 @@ impl DashifIngestSession {
         }
 
         // Demux init: must carry at least one track.
-        let media = Fmp4Demux::new()
-            .unpackage(bytes)
-            .map_err(SessionError::Demux)?;
-        if media.tracks.is_empty() {
+        let info = demux::init_info(bytes).map_err(SessionError::Demux)?;
+        if info.specs.is_empty() {
             return Err(SessionError::Ingest(IngestError::BadRequest));
         }
-        let local_tracks: Vec<TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
+        let stage = SegmentStage::new(bytes).map_err(SessionError::Demux)?;
 
         let rep = self
             .reps
@@ -235,7 +235,8 @@ impl DashifIngestSession {
             .ok_or(SessionError::Ingest(IngestError::Internal))?;
         rep.header_bytes = Some(bytes.to_vec());
         rep.init_bytes = Some(bytes.to_vec());
-        rep.local_tracks = Some(local_tracks);
+        rep.local_tracks = Some(info.specs);
+        rep.demux = Some(stage);
 
         self.ingest_state.on_header(rep_id);
 
@@ -302,6 +303,32 @@ impl DashifIngestSession {
                 }
             }
         }
+    }
+
+    /// Demux one `styp`..`mdat` group through the Representation's long-lived
+    /// stage, creating the stage from the header on first use. A stage the
+    /// reader refuses is dropped, so the next segment starts from a fresh one.
+    fn demux_group(&mut self, rep_id: &str, group: &[u8]) -> Result<demux::Staged, SessionError> {
+        let init = self
+            .reps
+            .get(rep_id)
+            .and_then(|r| r.init_bytes.clone())
+            .ok_or(SessionError::Ingest(IngestError::SegmentWithoutHeader))?;
+        let rep = self
+            .reps
+            .get_mut(rep_id)
+            .ok_or(SessionError::Ingest(IngestError::Internal))?;
+        if rep.demux.is_none() {
+            rep.demux = Some(SegmentStage::new(&init).map_err(SessionError::Demux)?);
+        }
+        let result = match rep.demux.as_mut() {
+            Some(stage) => stage.demux(group),
+            None => Err(transmux::Error::InvalidInput("MP4 demux stage missing")),
+        };
+        if result.is_err() {
+            rep.demux = None;
+        }
+        result.map_err(SessionError::Demux)
     }
 
     fn on_segment(
@@ -404,18 +431,7 @@ impl DashifIngestSession {
             let group = handle.buf[..e].to_vec();
             self.detect_styp_lmsg(&handle.rep_id, &group);
 
-            // Demux init ++ chunk.
-            let init = self
-                .reps
-                .get(&handle.rep_id)
-                .and_then(|r| r.init_bytes.clone())
-                .ok_or(SessionError::Ingest(IngestError::SegmentWithoutHeader))?;
-            let mut combined = Vec::with_capacity(init.len() + group.len());
-            combined.extend_from_slice(&init);
-            combined.extend_from_slice(&group);
-            let media = Fmp4Demux::new()
-                .unpackage(&combined)
-                .map_err(SessionError::Demux)?;
+            let staged = self.demux_group(&handle.rep_id, &group)?;
 
             if self.new_program_emitted {
                 let l2g = self
@@ -423,9 +439,9 @@ impl DashifIngestSession {
                     .get(&handle.rep_id)
                     .and_then(|r| r.local_to_global.clone())
                     .unwrap_or_default();
-                for track in media.tracks {
-                    if let Some(&global_id) = l2g.get(&track.spec.track_id) {
-                        for sample in track.samples {
+                for (local, samples) in staged.tracks {
+                    if let Some(&global_id) = l2g.get(&TrackId::new(local)) {
+                        for sample in samples {
                             self.pending_events.push_back(SessionEvent::Sample {
                                 program: ProgramId(0),
                                 track_id: global_id,
@@ -436,7 +452,7 @@ impl DashifIngestSession {
                     }
                 }
             } else {
-                let new_count: usize = media.tracks.iter().map(|t| t.samples.len()).sum();
+                let new_count: usize = staged.tracks.iter().map(|(_, t)| t.len()).sum();
                 let rep = self
                     .reps
                     .get_mut(&handle.rep_id)
@@ -444,9 +460,10 @@ impl DashifIngestSession {
                 if rep.buffered.len() + new_count > BUFFERED_SAMPLE_CAP {
                     return Err(SessionError::Ingest(IngestError::Internal));
                 }
-                for track in media.tracks {
-                    for sample in track.samples {
-                        rep.buffered.push((track.spec.track_id, sample));
+                for (local, samples) in staged.tracks {
+                    let track_id = TrackId::new(local);
+                    for sample in samples {
+                        rep.buffered.push((track_id, sample));
                     }
                 }
             }

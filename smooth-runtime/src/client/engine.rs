@@ -20,7 +20,8 @@ use broadcast_common::url_ref;
 use super::action::{Action, FetchFailure, RequestId, StreamId};
 use super::config::{SYNTHETIC_MOVIE_TIMESCALE, SmoothClientConfig};
 use super::output::{Dropped, ManifestFault, Output, QualityInfo};
-use super::stream::{Chunk, Cursor, HeldFragment, Stream, demux_fragment, live_join};
+use super::stream::{Chunk, Cursor, HeldFragment, Stream, live_join};
+use crate::demux::SegmentDemux;
 use crate::error::SmoothError;
 use broadcast_common::units::MICROS_PER_SEC;
 
@@ -703,7 +704,7 @@ impl SmoothClient {
         .map_err(|e| e.to_string())?;
         let init = build_init_segment(std::slice::from_ref(&spec), SYNTHETIC_MOVIE_TIMESCALE)
             .map_err(|e| e.to_string())?;
-        self.streams[si].init = Some(init);
+        self.streams[si].demux = Some(SegmentDemux::new(&init).map_err(|error| error.to_string())?);
         self.streams[si].applied = quality.clone();
         spec.track_id = global;
         Ok(spec)
@@ -742,13 +743,10 @@ impl SmoothClient {
     }
 
     fn emit_samples(&mut self, si: usize, start: u64, body: &[u8]) {
-        let stream = &self.streams[si];
-        let (Some(init), Some(local), Some(track)) =
-            (stream.init.as_deref(), stream.local_track_id, stream.track)
-        else {
+        let Some(track) = self.streams[si].track else {
             return;
         };
-        match demux_fragment(init, local, body, start) {
+        match self.streams[si].fragment_samples(body, start) {
             Ok(samples) => {
                 for sample in samples {
                     self.outputs.push_back(Output::Sample { track, sample });
