@@ -62,6 +62,7 @@
 //! [`broadcast_hls::MediaSegment::discontinuous`].
 
 use crate::TrackId;
+use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 

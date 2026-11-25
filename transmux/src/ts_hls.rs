@@ -75,6 +75,7 @@
 
 use crate::TrackId;
 use crate::units::ROUNDING_DIVISOR;
+use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::string::String;

@@ -27,6 +27,7 @@
 //! the `cenc` feature (issues #465/#564). Either direction records its per-track
 //! crypto metadata onto [`TrackSpec::protection`](crate::ir::TrackSpec::protection) and per-sample [`SampleProtection`](crate::ir::SampleProtection).
 
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
