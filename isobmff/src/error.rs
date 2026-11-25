@@ -224,6 +224,25 @@ pub enum Error {
         got: u64,
     },
 
+    /// A fragment written under a recorded layout would contradict it: the
+    /// layout states a field once (or omits it in favour of a default) and the
+    /// samples say something else, so writing it would misdescribe them.
+    #[error(
+        "{field} of track {track} sample {sample} is {actual}, the recorded layout states {expected}"
+    )]
+    LayoutMismatch {
+        /// Which `tfhd`/`trun` field disagrees.
+        field: &'static str,
+        /// The track of the sample.
+        track: crate::TrackId,
+        /// Zero-based sample index inside the fragment.
+        sample: u32,
+        /// The value the layout states.
+        expected: u64,
+        /// The value the samples state.
+        actual: u64,
+    },
+
     /// An out-of-turn sample would grow the append-only sink's reorder buffer
     /// past the cap the caller chose.
     #[error("reorder buffer would exceed the caller's {cap}-byte cap")]

@@ -704,6 +704,7 @@ pub(crate) fn build_chunk(
             track_id: isobmff::TrackId::new(ft.track_id.value()),
             base_decode_time: ft.base_media_decode_time,
             samples: &sample_sets[i],
+            trex: Default::default(),
         })
         .collect();
     let styp = with_styp.then_some(isobmff::writer::SegmentBrands {
@@ -715,6 +716,8 @@ pub(crate) fn build_chunk(
         sequence_number,
         styp: styp.as_ref(),
         events: emsgs,
+        layout: None,
+        position: 0,
     };
     Ok(isobmff::writer::fragmented_segment(&fragment_tracks, &options)?.bytes)
 }

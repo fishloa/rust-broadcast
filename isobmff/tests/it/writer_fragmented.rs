@@ -8,7 +8,7 @@
 //! `MovieFragmentBox` + `frag_offsets` so every sample's bytes, duration, sync
 //! flag and composition offset is compared with the source.
 
-use broadcast_common::Parse;
+use broadcast_common::{Parse, Serialize};
 use isobmff::box_types::{BoxIter, find_box};
 use isobmff::init_segment::MovieBox;
 use isobmff::limits::Limits;
@@ -488,6 +488,7 @@ fn a_caller_can_build_a_fragment_without_the_buffering_writer() {
         track_id: TrackId::new(3),
         base_decode_time: 0,
         samples: &samples,
+        trex: Default::default(),
     }];
     let fragment = fragmented_segment(
         &tracks,
@@ -495,6 +496,8 @@ fn a_caller_can_build_a_fragment_without_the_buffering_writer() {
             sequence_number: 4,
             styp: None,
             events: &[],
+            layout: None,
+            position: 0,
         },
     )
     .expect("fragment");
@@ -534,6 +537,7 @@ fn cenc_aux_emits_senc_saiz_saio_in_the_traf() {
         track_id: TrackId::new(1),
         base_decode_time: 0,
         samples: &samples,
+        trex: Default::default(),
     }];
     let fragment = fragmented_segment(
         &tracks,
@@ -541,6 +545,8 @@ fn cenc_aux_emits_senc_saiz_saio_in_the_traf() {
             sequence_number: 1,
             styp: None,
             events: &[],
+            layout: None,
+            position: 0,
         },
     )
     .expect("fragment");
@@ -560,4 +566,681 @@ fn cenc_aux_emits_senc_saiz_saio_in_the_traf() {
         })
         .collect();
     assert_eq!(opaque, vec![*b"senc", *b"saiz", *b"saio"]);
+}
+
+/// A three-sample, one-track fragment as this crate writes it, plus the layout
+/// the reader records for it.
+fn canonical_fragment() -> (Vec<u8>, isobmff::frag_layout::FragmentLayout) {
+    let metas = [
+        SampleMeta {
+            duration: 1_000,
+            composition_offset: 0,
+            sync: true,
+            aux: None,
+            description_index: 1,
+        },
+        SampleMeta {
+            duration: 1_000,
+            composition_offset: 40,
+            sync: false,
+            aux: None,
+            description_index: 1,
+        },
+        SampleMeta {
+            duration: 1_000,
+            composition_offset: 0,
+            sync: false,
+            aux: None,
+            description_index: 1,
+        },
+    ];
+    let samples: Vec<isobmff::writer::SampleData<'_>> = metas
+        .iter()
+        .map(|meta| isobmff::writer::SampleData {
+            meta,
+            data: &[0u8; 4],
+        })
+        .collect();
+    let tracks = [isobmff::writer::FragmentTrack {
+        track_id: TrackId::new(1),
+        base_decode_time: 0,
+        samples: &samples,
+        trex: Default::default(),
+    }];
+    let fragment = fragmented_segment(
+        &tracks,
+        &isobmff::writer::FragmentOptions {
+            sequence_number: 2,
+            styp: None,
+            events: &[],
+            layout: None,
+            position: 0,
+        },
+    )
+    .expect("canonical fragment");
+    let moof = parse_moof(&fragment.bytes);
+    let layout =
+        isobmff::frag_layout::FragmentLayout::from_moof(&moof, 0).expect("recorded layout");
+    (fragment.bytes[..fragment.moof_len].to_vec(), layout)
+}
+
+fn parse_moof(bytes: &[u8]) -> MovieFragmentBox {
+    let found = find_box(bytes, b"moof").expect("a moof");
+    MovieFragmentBox::parse_body(parse_box(found).expect("moof box").0.body).expect("parse moof")
+}
+
+/// The fragment a written layout produces at `position`, as `moof` bytes.
+fn write_with_layout(
+    layout: &isobmff::frag_layout::FragmentLayout,
+    position: u64,
+) -> (
+    Vec<u8>,
+    isobmff::writer::Fragment,
+    isobmff::frag_layout::FragmentLayout,
+) {
+    let metas = [
+        SampleMeta {
+            duration: 1_000,
+            composition_offset: 0,
+            sync: true,
+            aux: None,
+            description_index: 1,
+        },
+        SampleMeta {
+            duration: 1_000,
+            composition_offset: 40,
+            sync: false,
+            aux: None,
+            description_index: 1,
+        },
+        SampleMeta {
+            duration: 1_000,
+            composition_offset: 0,
+            sync: false,
+            aux: None,
+            description_index: 1,
+        },
+    ];
+    let samples: Vec<isobmff::writer::SampleData<'_>> = metas
+        .iter()
+        .map(|meta| isobmff::writer::SampleData {
+            meta,
+            data: &[0u8; 4],
+        })
+        .collect();
+    let tracks = [isobmff::writer::FragmentTrack {
+        track_id: TrackId::new(1),
+        base_decode_time: 0,
+        samples: &samples,
+        trex: Default::default(),
+    }];
+    let fragment = fragmented_segment(
+        &tracks,
+        &isobmff::writer::FragmentOptions {
+            sequence_number: 2,
+            styp: None,
+            events: &[],
+            layout: Some(layout),
+            position,
+        },
+    )
+    .expect("layout fragment");
+    let moof = parse_moof(&fragment.bytes);
+    let recorded = isobmff::frag_layout::FragmentLayout::from_moof(&moof, fragment.moof_offset)
+        .expect("recorded layout");
+    (
+        fragment.bytes[..fragment.moof_len].to_vec(),
+        fragment,
+        recorded,
+    )
+}
+
+/// A recorded layout states exactly what it was recorded from, so the writer
+/// reproduces the fragment byte for byte.
+#[test]
+fn a_recorded_layout_reproduces_the_fragment_it_was_read_from() {
+    let (canonical, layout) = canonical_fragment();
+    let (rewritten, fragment, _) = write_with_layout(&layout, 0);
+    assert_eq!(fragment.moof_offset, 0);
+    assert_eq!(
+        rewritten, canonical,
+        "the moof round-trips through its layout"
+    );
+}
+
+/// A layout that leaves a per-sample field to a `tfhd` default the samples
+/// contradict is refused, naming the field and the sample.
+#[test]
+fn a_layout_default_the_samples_contradict_is_refused() {
+    let (_, mut layout) = canonical_fragment();
+    let track = &mut layout.tracks[0];
+    track.tfhd.default_sample_duration = Some(999);
+    track.runs[0].fields.duration = false;
+    let metas = [SampleMeta {
+        duration: 1_000,
+        composition_offset: 0,
+        sync: true,
+        aux: None,
+        description_index: 1,
+    }];
+    let samples = [isobmff::writer::SampleData {
+        meta: &metas[0],
+        data: &[0u8; 4],
+    }];
+    let tracks = [isobmff::writer::FragmentTrack {
+        track_id: TrackId::new(1),
+        base_decode_time: 0,
+        samples: &samples,
+        trex: Default::default(),
+    }];
+    let err = fragmented_segment(
+        &tracks,
+        &isobmff::writer::FragmentOptions {
+            sequence_number: 1,
+            styp: None,
+            events: &[],
+            layout: Some(&layout),
+            position: 0,
+        },
+    )
+    .expect_err("a contradicted default is refused");
+    match err {
+        isobmff::Error::LayoutMismatch {
+            field,
+            sample,
+            expected,
+            actual,
+            ..
+        } => {
+            assert_eq!(field, "sample_count");
+            assert_eq!(sample, 3);
+            assert_eq!(expected, 3);
+            assert_eq!(actual, 1);
+        }
+        other => panic!("expected LayoutMismatch, got {other:?}"),
+    }
+}
+
+/// The same three samples, one at a time against a `tfhd` default they
+/// contradict, are refused on the sample that disagrees.
+#[test]
+fn a_layout_default_is_checked_against_every_sample() {
+    let (_, mut layout) = canonical_fragment();
+    let track = &mut layout.tracks[0];
+    track.runs[0].fields.duration = false;
+    track.tfhd.default_sample_duration = Some(1_000);
+    let metas = [
+        SampleMeta {
+            duration: 1_000,
+            composition_offset: 0,
+            sync: true,
+            aux: None,
+            description_index: 1,
+        },
+        SampleMeta {
+            duration: 1_001,
+            composition_offset: 0,
+            sync: true,
+            aux: None,
+            description_index: 1,
+        },
+        SampleMeta {
+            duration: 1_000,
+            composition_offset: 0,
+            sync: true,
+            aux: None,
+            description_index: 1,
+        },
+    ];
+    let samples: Vec<isobmff::writer::SampleData<'_>> = metas
+        .iter()
+        .map(|meta| isobmff::writer::SampleData {
+            meta,
+            data: &[0u8; 4],
+        })
+        .collect();
+    let tracks = [isobmff::writer::FragmentTrack {
+        track_id: TrackId::new(1),
+        base_decode_time: 0,
+        samples: &samples,
+        trex: Default::default(),
+    }];
+    let err = fragmented_segment(
+        &tracks,
+        &isobmff::writer::FragmentOptions {
+            sequence_number: 1,
+            styp: None,
+            events: &[],
+            layout: Some(&layout),
+            position: 0,
+        },
+    )
+    .expect_err("the second sample disagrees with the default");
+    match err {
+        isobmff::Error::LayoutMismatch {
+            field,
+            sample,
+            expected,
+            actual,
+            ..
+        } => {
+            assert_eq!(field, "sample_duration");
+            assert_eq!(sample, 1);
+            assert_eq!(expected, 1_000);
+            assert_eq!(actual, 1_001);
+        }
+        other => panic!("expected LayoutMismatch, got {other:?}"),
+    }
+}
+
+/// A layout that states an absolute `base_data_offset` gets it recomputed for
+/// where the writer places the fragment, and each run follows from it.
+#[test]
+fn an_absolute_base_data_offset_is_recomputed_for_the_new_position() {
+    let (_, mut layout) = canonical_fragment();
+    let track = &mut layout.tracks[0];
+    track.tfhd.base_data_offset = Some(0);
+    track.tfhd.flags &= !isobmff::movie_fragment::TFHD_DEFAULT_BASE_IS_MOOF;
+    let position = 5_000;
+    let (_, fragment, recorded) = write_with_layout(&layout, position);
+    assert_eq!(
+        recorded.tracks[0].tfhd.base_data_offset,
+        Some(0),
+        "the recorded base is the moof's own first byte"
+    );
+    let moof = parse_moof(&fragment.bytes);
+    assert_eq!(
+        moof.traf[0].tfhd.base_data_offset,
+        Some(position),
+        "the written base is the absolute position"
+    );
+    assert_eq!(
+        moof.traf[0].trun[0].data_offset,
+        Some(i32::try_from(fragment.moof_len + 8).expect("fits")),
+        "the run still starts at the mdat payload"
+    );
+}
+
+/// A layout that splits a track's samples into two runs writes two runs, with
+/// each run's `data_offset` at its own first sample.
+#[test]
+fn a_layout_run_split_is_written_as_it_states_it() {
+    let (_, mut layout) = canonical_fragment();
+    let track = &mut layout.tracks[0];
+    let whole = track.runs[0].clone();
+    let first = isobmff::frag_layout::RunLayout {
+        sample_count: 1,
+        ..whole.clone()
+    };
+    let rest = isobmff::frag_layout::RunLayout {
+        sample_count: 2,
+        first_sample_flags: None,
+        ..whole
+    };
+    track.runs = vec![first, rest];
+    track.children = vec![
+        isobmff::movie_fragment::TrafChild::Tfhd,
+        isobmff::movie_fragment::TrafChild::Tfdt,
+        isobmff::movie_fragment::TrafChild::Trun(0),
+        isobmff::movie_fragment::TrafChild::Trun(1),
+    ];
+    let (_, fragment, _) = write_with_layout(&layout, 0);
+    let moof = parse_moof(&fragment.bytes);
+    assert_eq!(moof.traf[0].trun.len(), 2);
+    assert_eq!(moof.traf[0].trun[0].samples.len(), 1);
+    assert_eq!(moof.traf[0].trun[1].samples.len(), 2);
+    let first_offset = moof.traf[0].trun[0].data_offset.expect("stated");
+    let second_offset = moof.traf[0].trun[1].data_offset.expect("stated");
+    assert_eq!(
+        second_offset,
+        first_offset + 4,
+        "the second run starts after the first run's one 4-byte sample"
+    );
+}
+
+/// An omitted per-sample field must be backed by a `tfhd` default: the flags
+/// word carries no presence bit for it.
+#[test]
+fn a_layout_omits_the_fields_it_leaves_to_a_tfhd_default() {
+    let (_, mut layout) = canonical_fragment();
+    let track = &mut layout.tracks[0];
+    track.tfhd.default_sample_duration = Some(1_000);
+    track.tfhd.default_sample_size = Some(4);
+    track.runs[0].fields.duration = false;
+    track.runs[0].fields.size = false;
+    let (_, _, recorded) = write_with_layout(&layout, 0);
+    assert!(!recorded.tracks[0].runs[0].fields.duration);
+    assert!(!recorded.tracks[0].runs[0].fields.size);
+    assert!(recorded.tracks[0].runs[0].fields.composition_offset);
+    assert!(recorded.tracks[0].runs[0].fields.flags);
+
+    // Moving the duration from every record into the `tfhd` shrinks the moof
+    // by three 4-byte records and grows the header by one 4-byte default.
+    let (_, mut stripped) = canonical_fragment();
+    stripped.tracks[0].tfhd.default_sample_duration = Some(1_000);
+    stripped.tracks[0].runs[0].fields.duration = false;
+    let (_, small, _) = write_with_layout(&stripped, 0);
+    let (canonical, _) = canonical_fragment();
+    let word = core::mem::size_of::<u32>();
+    assert_eq!(
+        small.moof_len + 2 * word,
+        canonical.len(),
+        "three per-sample durations out, one `tfhd` default in, eight bytes net"
+    );
+    assert_eq!(
+        stripped.tracks[0].runs[0].fields.flags()
+            & isobmff::movie_fragment::TRUN_SAMPLE_DURATION_PRESENT,
+        0,
+        "the `trun` no longer states a per-sample duration"
+    );
+}
+
+/// The absolute offsets of every top-level `moof` in `bytes`.
+fn moof_offsets(bytes: &[u8]) -> Vec<u64> {
+    let mut out = Vec::new();
+    let mut offset = 0usize;
+    while offset + 8 <= bytes.len() {
+        let size = u32::from_be_bytes([
+            bytes[offset],
+            bytes[offset + 1],
+            bytes[offset + 2],
+            bytes[offset + 3],
+        ]) as usize;
+        if &bytes[offset + 4..offset + 8] == b"moof" {
+            out.push(u64::try_from(offset).expect("offset"));
+        }
+        if size < 8 {
+            break;
+        }
+        offset += size;
+    }
+    out
+}
+
+/// A one-track fragmented file of `fragments` flushes, each with `per`
+/// samples: every sample the same size and duration, the first of each
+/// fragment the only sync sample.
+///
+/// A `sidx` is placed immediately before the first fragment, which is where a
+/// caller that streams the fragments out and assembles the file afterwards
+/// puts it.
+fn sample_file(fragments: u32, per: usize, compact: bool, mfra: bool, sidx: bool) -> Vec<u8> {
+    let mut writer = Writer::fragmented(
+        vec![raw_video_setup()],
+        broadcast_common::timescale::Timescale::try_new(1_000).expect("timescale"),
+        Limits::default(),
+    )
+    .expect("fragmented writer");
+    writer.set_compact_layout(compact);
+    writer.with_mfra(mfra);
+    writer.with_sidx(sidx);
+    let mut out = writer.init().expect("init segment");
+    writer.set_position(u64::try_from(out.len()).expect("init length"));
+    let mut body = Vec::new();
+    for fragment in 0..fragments {
+        let base = u64::from(fragment) * u64::try_from(per).expect("per") * 40;
+        writer
+            .set_base_decode_time(TrackId::new(1), base)
+            .expect("base decode time");
+        for sample in 0..per {
+            let sync = sample == 0;
+            writer
+                .push(
+                    TrackId::new(1),
+                    SampleMeta {
+                        duration: 40,
+                        composition_offset: if sample == 1 { 400 } else { 0 },
+                        sync,
+                        aux: None,
+                        description_index: 1,
+                    },
+                    &[0u8; 8],
+                )
+                .expect("push");
+        }
+        let flushed = writer.flush().expect("flush").expect("a fragment");
+        body.extend_from_slice(&flushed.bytes);
+    }
+    if sidx {
+        let index = writer
+            .segment_index()
+            .expect("index")
+            .expect("the writer was asked for one");
+        out.extend_from_slice(&index);
+    }
+    out.extend_from_slice(&body);
+    if mfra {
+        writer.set_position(u64::try_from(out.len()).expect("body length"));
+        out.extend_from_slice(&writer.trailer().expect("trailer"));
+    }
+    out
+}
+
+/// The compact layout describes the same samples with fewer bytes: the moof is
+/// smaller and the reader reads it back to identical samples.
+#[test]
+fn a_compact_layout_is_smaller_and_reads_back_to_the_same_samples() {
+    let canonical = sample_file(2, 4, false, false, false);
+    let compact = sample_file(2, 4, true, false, false);
+    assert!(
+        compact.len() < canonical.len(),
+        "the compact file is {} bytes, the canonical one {}",
+        compact.len(),
+        canonical.len()
+    );
+    let canonical_samples = read_with_reader(&canonical);
+    let compact_samples = read_with_reader(&compact);
+    assert_eq!(compact_samples, canonical_samples);
+}
+
+/// Every sample a [`Reader`] run yields, in file order, as the descriptor
+/// facts the reader reports plus the coded bytes they address.
+fn read_with_reader(bytes: &[u8]) -> Vec<(u32, u64, u32, i32, bool, Vec<u8>)> {
+    let mut reader = Reader::new(
+        ReaderConfig::default()
+            .with_total_len(Some(u64::try_from(bytes.len()).expect("length")))
+            .with_order(SampleOrder::File),
+    );
+    let mut out = Vec::new();
+    loop {
+        match reader.step().expect("step") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end").min(bytes.len());
+                reader
+                    .supply(range.offset, &bytes[start..end])
+                    .expect("supply");
+            }
+            Step::Sample(sample) => {
+                let start = usize::try_from(sample.offset).expect("offset");
+                let end = start + usize::try_from(sample.size).expect("size");
+                out.push((
+                    sample.track.value(),
+                    sample.decode_time,
+                    sample.duration,
+                    sample.composition_offset,
+                    sample.sync,
+                    bytes[start..end].to_vec(),
+                ));
+            }
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The regenerated `mfra` addresses the fragments the writer placed, and a
+/// seek through it lands on each of their `moof`s.
+#[test]
+fn the_regenerated_mfra_addresses_the_written_moofs() {
+    let bytes = sample_file(3, 4, false, true, false);
+    let offsets = moof_offsets(&bytes);
+    assert_eq!(offsets.len(), 3);
+    let mfra = isobmff::BoxIter::clamped(&bytes)
+        .filter_map(|step| step.ok())
+        .find(|step| step.header.box_type.is(b"mfra"))
+        .expect("the writer emitted an mfra");
+    let parsed =
+        isobmff::timing::MovieFragmentRandomAccessBox::parse(mfra.bytes).expect("mfra parses");
+    let entries = &parsed.tfra[0].entries;
+    assert_eq!(entries.len(), offsets.len(), "one entry per fragment");
+    for (entry, offset) in entries.iter().zip(&offsets) {
+        assert_eq!(entry.moof_offset, *offset, "the entry addresses its moof");
+        assert_eq!(entry.traf_number, 1);
+        assert_eq!(entry.trun_number, 1);
+        assert_eq!(entry.sample_number, 1);
+    }
+    assert_eq!(
+        entries[0].time, 0,
+        "the first fragment's sync sample is at its base decode time"
+    );
+    assert_eq!(entries[1].time, 160, "the second fragment starts 160 in");
+    assert_eq!(
+        parsed.mfro.parent_size,
+        u32::try_from(mfra.end - mfra.start).expect("mfra length"),
+        "the mfro states the mfra's own size"
+    );
+
+    for (index, entry) in entries.iter().enumerate() {
+        let landed = seek_to_moof(&bytes, TrackId::new(1), entry.time);
+        assert_eq!(
+            landed, offsets[index],
+            "a seek to {} lands on fragment {index}",
+            entry.time
+        );
+    }
+}
+
+/// The regenerated `sidx` indexes the written fragments: one reference each,
+/// sized from the offsets the writer placed them at.
+#[test]
+fn the_regenerated_sidx_indexes_the_written_fragments() {
+    let bytes = sample_file(3, 4, false, false, true);
+    let offsets = moof_offsets(&bytes);
+    let sidx = isobmff::BoxIter::clamped(&bytes)
+        .filter_map(|step| step.ok())
+        .find(|step| step.header.box_type.is(b"sidx"))
+        .expect("the writer emitted a sidx");
+    let index = <isobmff::timing::SegmentIndexBox as broadcast_common::Parse>::parse(sidx.bytes)
+        .expect("sidx parses");
+    assert_eq!(index.references.len(), offsets.len());
+    assert_eq!(index.reference_id, 1, "the first track's id");
+    assert_eq!(index.timescale.get(), 1_000, "the first track's timescale");
+    for (position, reference) in index.references.iter().enumerate() {
+        let start = offsets[position];
+        let end = offsets
+            .get(position + 1)
+            .copied()
+            .unwrap_or(u64::try_from(bytes.len()).expect("length"));
+        assert_eq!(
+            u64::from(reference.referenced_size),
+            end - start,
+            "reference {position} spans its fragment"
+        );
+        assert_eq!(reference.subsegment_duration, 4 * 40);
+        assert_eq!(reference.starts_with_sap, 1);
+        assert_eq!(reference.sap_type, 1);
+    }
+}
+
+/// Drive a reader to the fragment a seek names.
+fn seek_to_moof(bytes: &[u8], track: TrackId, time: u64) -> u64 {
+    let mut reader = Reader::new(
+        ReaderConfig::default()
+            .with_total_len(Some(u64::try_from(bytes.len()).expect("length")))
+            .with_order(SampleOrder::File),
+    );
+    let mut seeked = false;
+    loop {
+        match reader.step().expect("step") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end").min(bytes.len());
+                reader
+                    .supply(range.offset, &bytes[start..end])
+                    .expect("supply");
+            }
+            Step::Fragment(info) => return info.moof.offset,
+            Step::Done => panic!("the seek found no fragment"),
+            _ => {}
+        }
+        if !seeked && reader.movie_timescale().is_some() {
+            reader.seek_to(track, time).expect("seek");
+            seeked = true;
+        }
+    }
+}
+
+/// The boxes between the last fragment's media and this one are carried in the
+/// layout and written ahead of the `styp`/`moof`.
+#[test]
+fn a_layout_carries_the_boxes_between_fragments() {
+    let filler = isobmff::box_support::OpaqueBox::new(*b"free", vec![0u8; 8]);
+    let (_, mut layout) = canonical_fragment();
+    layout.before = vec![filler.clone()];
+    let (_, fragment, _) = write_with_layout(&layout, 0);
+    let expected = filler.try_to_bytes().expect("free box bytes");
+    assert_eq!(
+        &fragment.bytes[..expected.len()],
+        expected.as_slice(),
+        "the carried box precedes the moof"
+    );
+    assert_eq!(
+        &fragment.bytes[expected.len() + 4..expected.len() + 8],
+        b"moof",
+        "the moof follows the carried box"
+    );
+    assert_eq!(
+        fragment.moof_offset,
+        u64::try_from(expected.len()).expect("length"),
+        "the moof starts after the carried box"
+    );
+}
+
+/// The reader records a box that sits between two fragments in the layout of
+/// the fragment it precedes, so the rewrite can put it back.
+#[test]
+fn the_reader_records_a_box_between_two_fragments() {
+    let plain = sample_file(2, 2, false, false, false);
+    let offsets = moof_offsets(&plain);
+    let second = usize::try_from(offsets[1]).expect("offset");
+    let filler = isobmff::box_support::OpaqueBox::new(*b"free", vec![0u8; 8]);
+    let bytes = filler.try_to_bytes().expect("free box bytes");
+    let mut with_free = plain[..second].to_vec();
+    with_free.extend_from_slice(&bytes);
+    with_free.extend_from_slice(&plain[second..]);
+
+    let mut reader = Reader::new(
+        ReaderConfig::default()
+            .with_total_len(Some(u64::try_from(with_free.len()).expect("length")))
+            .with_order(SampleOrder::File),
+    );
+    let mut carried: Vec<usize> = Vec::new();
+    loop {
+        match reader.step().expect("step") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end())
+                    .expect("end")
+                    .min(with_free.len());
+                reader
+                    .supply(range.offset, &with_free[start..end])
+                    .expect("supply");
+            }
+            Step::Fragment(info) => {
+                carried.extend(info.layout.before.iter().map(|box_| box_.data.len()));
+                if info.layout.tracks.is_empty() {
+                    panic!("a fragment recorded no track layout");
+                }
+            }
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    assert_eq!(
+        carried,
+        vec![8],
+        "only the second fragment carries the box before it"
+    );
 }

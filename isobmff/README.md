@@ -48,11 +48,12 @@ It never knows the media IR or a codec bitstream.
 | `sample_groups` | `prft`, `sgpd`, `sbgp`, `subs`, `ssrt` |
 | `movie_fragment` | `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun` |
 | `limits` | hostile-input caps (`Limits`) for the Phase 2 reader |
-| `writer` | sans-IO fragmented writer (init segment, `moof`+`mdat`, CENC media-segment protection) and progressive writer (`Writer::progressive`: whole-file layout from a plan, `stco`/`co64`, seekable or append-only sink) |
+| `writer` | sans-IO fragmented writer (init segment, `moof`+`mdat`, CENC media-segment protection, recorded/compact fragment layouts, regenerated `sidx`/`mfra`) and progressive writer (`Writer::progressive`: whole-file layout from a plan, `stco`/`co64`, seekable or append-only sink) |
 | `sample_table` | lazy per-track sample cursor (`TrackCursor`/`CursorState`) and the run-length table builders |
 | `reader` | sans-IO progressive-file `Reader`: asks for structure byte ranges, yields every track and one sample descriptor at a time, `seek_to` over `stss` |
 | `plan` | `SamplePlan`, the progressive index a `Reader` hands out without reading media; `OwnedPlan` and `PlanBuilder`, its owned form; `MovieShell`/`TopLevelBox`, the boxes a plan carries back to a writer |
 | `frag_offsets` | ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 sample-data addressing rules |
+| `frag_layout` | `FragmentLayout`: the `tfhd`/`trun` field choices, run splits and child order a fragment states, plus the `sidx`/`mfra` forms around it — `reader::FragmentInfo` reports one and `FragmentedWriter::set_fragment_layout` reproduces it byte for byte |
 | `reader` (fragmented) | the same `Reader` reads a fragmented file one `moof` at a time and seeks through `sidx` or the trailing `tfra` |
 | `reader` (permissive) | `Mode::Permissive` reports the design §4.7 faults as `Step::Warning`; strict mode keeps rejecting them |
 | `quicktime` | QuickTime atoms, read and written: sound description versions 1/2, `wave`, `gmhd`, `tmcd`, `tapt`, chapter titles, `qt  `/brandless files |
