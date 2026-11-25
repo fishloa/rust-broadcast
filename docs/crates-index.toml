@@ -301,6 +301,14 @@ what = "Parses and serializes HLS playlists, including Low-Latency HLS (parts, p
 crates_io = true
 lifecycle = "active"
 
+[crate.broadcast-matroska]
+domain = "containers"
+summary = "EBML (RFC 8794) and Matroska/WebM (RFC 9559) element syntax: the typed element tree, blocks and all lacing forms, no_std."
+standards = "RFC 8794 (EBML); RFC 9559 (Matroska)"
+what = "Parses and serializes the EBML element framing (Element IDs, Element Data Sizes including the unknown size, the EBML header, `Void` and `CRC-32`), the scalar payload types, and every Matroska master and leaf element, including the `SimpleBlock`/`Block` header with none, Xiph, EBML and fixed-size lacing, plus typed field accessors. The encoded width of every size and integer and the file's field order are preserved, so a file read and rewritten through it comes back byte for byte. It knows element syntax only, never the media IR or a codec bitstream, so it depends only on `broadcast-common`. The reader and writer that move `transmux` off its hand-written WebM code are later slices. Not yet published."
+crates_io = false
+lifecycle = "active"
+
 [crate.broadcast-smooth]
 domain = "containers"
 summary = "Microsoft Smooth Streaming (MS-SSTR) client Manifest: typed model with parse and serialize."

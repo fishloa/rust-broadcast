@@ -1,0 +1,26 @@
+name: Release broadcast-matroska
+
+# Publishes the broadcast-matroska crate to crates.io on a
+# `broadcast-matroska-v*` tag. broadcast-matroska is versioned and released
+# INDEPENDENTLY of the DVB lockstep: it is the EBML/Matroska element layer
+# below transmux, with its own API surface and cadence. CI is the only source
+# of published artifacts — never `cargo publish` from a workstation. Requires
+# the CARGO_REGISTRY_TOKEN secret.
+#
+# DEPENDENCY ORDER: broadcast-matroska depends on broadcast-common only, so
+# that version must already be live. Downstream, transmux will depend on it
+# once its WebM demuxer and Matroska muxer move onto this crate.
+
+on:
+  push:
+    tags: ["broadcast-matroska-v*"]
+
+jobs:
+  publish:
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-crate.yml
+    secrets: inherit
+    with:
+      crate: broadcast-matroska
+      build-gate: no-default

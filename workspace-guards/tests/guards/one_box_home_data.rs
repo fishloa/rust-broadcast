@@ -28,6 +28,7 @@ pub const TABLE: &[Crate] = &[
     plain("atsc3"),
     plain("atsc3-route"),
     plain("broadcast-auth"),
+    plain("broadcast-matroska"),
     plain("broadcast-client"),
     plain("broadcast-common"),
     plain("broadcast-dash"),
