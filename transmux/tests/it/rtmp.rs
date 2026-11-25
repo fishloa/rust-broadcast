@@ -10,11 +10,11 @@
 //! 1. RTMP → IR equals FLV → IR (track/sample counts + per-sample sizes).
 //! 2. IR → RTMP wire → IR preserves every sample (no raw passthrough).
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use rtmp_runtime::chunk::{ChunkWriter, Message};
 use rtmp_runtime::message::MessageTypeId;
 use transmux::FlvDemux;
-use transmux::rtmp::{RtmpDemux, RtmpMux};
+use transmux::rtmp::{RtmpDemux, RtmpMuxStage};
 
 static FLV: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
@@ -108,16 +108,15 @@ fn rtmp_demux_matches_flv_demux() {
     }
 }
 
-/// IR → `RtmpMux` → wire → `RtmpDemux` → IR must preserve the sample set.
-/// A raw-passthrough `RtmpMux` cannot pass: the bytes are re-chunked and the A/V
+/// IR → `RtmpMuxStage` → wire → `RtmpDemux` → IR must preserve the sample set.
+/// A raw-passthrough `RtmpMuxStage` cannot pass: the bytes are re-chunked and the A/V
 /// bodies re-framed as RTMP messages, then de-chunked and FLV-routed back.
 #[test]
 fn rtmp_mux_round_trip_preserves_samples() {
     let mut flv_demux = FlvDemux::new();
     let media = flv_demux.unpackage(FLV.as_slice()).expect("FLV → IR");
 
-    let mut mux = RtmpMux::new();
-    let wire = mux.package(&media).expect("IR → RTMP wire");
+    let wire = crate::mux_bytes::mux_bytes(&mut RtmpMuxStage::new(), &media);
     assert!(!wire.is_empty(), "muxed RTMP wire is non-empty");
 
     let mut demux = RtmpDemux::new();

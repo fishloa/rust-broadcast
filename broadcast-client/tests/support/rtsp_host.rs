@@ -4,12 +4,12 @@ use url::Url;
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
 use broadcast_client::{Action, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
-use broadcast_common::{Package, Serialize, Unpackage};
+use broadcast_common::{Serialize, Unpackage};
 use rtsp_runtime::transport::{Transport, TransportSpec};
 use rtsp_types::{Message, StatusCode, Version, headers};
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
-use transmux::{RtpPacketiser, Sample, SenderReport, TsDemux};
+use transmux::{RtpPacketiserStage, Sample, SenderReport, TsDemux};
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -48,6 +48,66 @@ pub struct MediaFixture {
     pub tracks: Vec<TrackFixture>,
 }
 
+/// Packetise every track of `media` with the RTP packetiser stage, one track at
+/// a time, rebuilding each track's packet list and SDP media section.
+fn packetise(media: &transmux::Media) -> (Vec<RtpRunStream>, Vec<sdp_types::Media>) {
+    use broadcast_common::stage::{Stage, Timestamp};
+    use transmux::mux_stage::{MuxInput, MuxOutput};
+    let mut streams: Vec<RtpRunStream> = Vec::new();
+    let mut medias: Vec<sdp_types::Media> = Vec::new();
+    for track in &media.tracks {
+        let kind = match &track.spec.config {
+            CodecConfig::Avc { .. } => RtpMediaKind::H264,
+            _ => RtpMediaKind::Aac,
+        };
+        let mut stage = RtpPacketiserStage::new()
+            .with_mtu(MTU)
+            .with_ssrc(SSRC)
+            .with_stap_a_parameter_sets(false);
+        stage
+            .feed(
+                MuxInput::Track(Box::new(track.spec.clone())),
+                Timestamp::ZERO,
+            )
+            .expect("announce track");
+        let mut packets: Vec<Vec<u8>> = Vec::new();
+        let drain = |stage: &mut RtpPacketiserStage, packets: &mut Vec<Vec<u8>>| {
+            while let Some(MuxOutput::Bytes(bytes)) = stage.poll() {
+                packets.push(bytes.to_vec());
+            }
+        };
+        drain(&mut stage, &mut packets);
+        for sample in &track.samples {
+            stage
+                .feed(
+                    MuxInput::Sample {
+                        track: track.spec.track_id,
+                        sample: sample.clone(),
+                    },
+                    Timestamp::ZERO,
+                )
+                .expect("feed sample");
+            drain(&mut stage, &mut packets);
+        }
+        let pt = packets
+            .first()
+            .and_then(|p| p.get(1))
+            .map(|byte| byte & 0x7F)
+            .unwrap_or(transmux::DEFAULT_VIDEO_PT);
+        if let Ok(media) = transmux::sdp_media(&track.spec, pt) {
+            medias.push(media);
+        }
+        streams.push(RtpRunStream { kind, packets });
+    }
+    (streams, medias)
+}
+
+/// One track's packetised RTP packets.
+struct RtpRunStream {
+    kind: RtpMediaKind,
+    packets: Vec<Vec<u8>>,
+}
+
 impl MediaFixture {
     pub fn load() -> Self {
         Self::from_media(&Self::demux())
@@ -59,13 +119,7 @@ impl MediaFixture {
     }
 
     pub fn from_media(media: &transmux::Media) -> Self {
-        let mut packetiser = RtpPacketiser {
-            mtu: MTU,
-            ssrc: SSRC,
-            stap_a_parameter_sets: false,
-            ..RtpPacketiser::default()
-        };
-        let out = packetiser.package(media).expect("packetise fixture");
+        let (streams, medias) = packetise(media);
         let mut session = sdp_types::Session::new(
             sdp_types::Origin::with_ip_addr(0, 0, std::net::Ipv4Addr::LOCALHOST),
             "broadcast-client RTSP fixture",
@@ -73,14 +127,13 @@ impl MediaFixture {
         session.set_connection(sdp_types::Connection::from_ip_addr(std::net::IpAddr::V4(
             std::net::Ipv4Addr::LOCALHOST,
         )));
-        session.medias = out.medias;
+        session.medias = medias;
         for (n, m) in session.medias.iter_mut().enumerate() {
             m.add_attribute_with_value("control", format!("trackID={}", n + 1));
         }
         let mut sdp = Vec::new();
         session.write(&mut sdp).expect("write sdp");
-        let tracks = out
-            .streams
+        let tracks = streams
             .iter()
             .map(|stream| {
                 let original = media
@@ -93,11 +146,7 @@ impl MediaFixture {
                     .expect("matching original track");
                 TrackFixture {
                     kind: stream.kind,
-                    packets: stream
-                        .packets
-                        .iter()
-                        .map(|p| p.as_contiguous().to_vec())
-                        .collect(),
+                    packets: stream.packets.clone(),
                     samples: original.samples.clone(),
                 }
             })

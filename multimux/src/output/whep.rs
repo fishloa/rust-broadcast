@@ -57,29 +57,24 @@
 //! bitstream" work, once, at ingest time) — `handle_whep_connection` reads
 //! it directly off `Trunk::tracks()` and uses it both to build the answer's
 //! `sprop-parameter-sets`/`profile-level-id` and to drive
-//! [`transmux::RtpPacketiser::packetise_video`]'s per-sample STAP-A
-//! parameter-set aggregation.
+//! [`transmux::packetise_video_sample`]'s per-sample STAP-A parameter-set
+//! aggregation.
 //!
-//! # Continuous RTP state across [`transmux::RtpPacketiser`] calls
+//! # Continuous RTP state across per-sample packetisation
 //!
-//! [`transmux::RtpPacketiser::packetise_video`] is a **batch** API: called
-//! once per (track, all-its-samples) with its own fresh sequence-number
-//! counter starting at 0 and a timestamp computed relative to that batch's
-//! first sample. A live egress session instead has to packetise one
-//! just-arrived `Sample` at a time, with sequence numbers and timestamps
-//! that stay continuous across calls (RFC 3550 §5.1) — the reason this
-//! module still calls `packetise_video` (reusing its already-correct RFC
-//! 6184 single-NAL/STAP-A/FU-A framing rather than re-implementing it) but
-//! then **patches** the two fields that batch call got wrong for a
-//! streaming caller: `patch_seq_and_timestamp` overwrites the RTP fixed
-//! header's sequence-number and timestamp bytes (always at a fixed byte
-//! offset, RFC 3550 §5.1) with this session's own running counters before
-//! handing the packet to [`MediaTransport::encrypt_rtp`] (which needs the
-//! typed `rtp_packet::RtpPacket`, so the patched bytes are re-parsed rather
-//! than hand-assembled). Those two are the *only* fields patched — SSRC and
-//! payload type are already this session's, straight from the
-//! `RtpPacketiser` it was built with; see that function's own doc for the
-//! full "what is deliberately not patched" list.
+//! [`transmux::packetise_video_sample`] packetises **one** sample: a fresh
+//! sequence-number counter starting at 0 and RTP timestamp 0, so a session
+//! that packetises one just-arrived `Sample` at a time would restart both
+//! fields on every sample. The session therefore numbers its own stream:
+//! `patch_seq_and_timestamp` overwrites the RTP fixed header's
+//! sequence-number and timestamp bytes (always at a fixed byte offset,
+//! RFC 3550 §5.1) with this session's running values before handing the
+//! packet to [`MediaTransport::encrypt_rtp`] (which needs the typed
+//! `rtp_packet::RtpPacket`, so the patched bytes are re-parsed rather than
+//! hand-assembled). Those two are the *only* fields patched — SSRC and
+//! payload type are already this session's, straight from the packetiser's
+//! arguments; see that function's own doc for the full "what is
+//! deliberately not patched" list.
 //!
 //! # Peer address: learned, not looked up
 //!
@@ -109,12 +104,8 @@ use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use transmux::ir::Track;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::{
-    DEFAULT_AUDIO_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, RtpPacket, RtpPacketiser, VIDEO_CLOCK_RATE,
-    VIDEO_CLOCK_TIMESCALE,
-};
+use transmux::{DEFAULT_MTU, DEFAULT_VIDEO_PT, RtpPacket, VIDEO_CLOCK_RATE, VIDEO_CLOCK_TIMESCALE};
 
 use webrtc_runtime::media::{
     Datagram, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
@@ -1238,19 +1229,18 @@ impl PacketCache {
         #[cfg(test)]
         self.packetisations
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let packetiser = RtpPacketiser {
-            mtu: DEFAULT_MTU,
-            video_pt: DEFAULT_VIDEO_PT,
-            audio_pt: DEFAULT_AUDIO_PT,
-            ssrc: 0,
+        let packets = Arc::new(transmux::packetise_video_sample(
+            spec,
+            sample,
+            DEFAULT_MTU,
+            DEFAULT_VIDEO_PT,
+            0,
             // Lead each sync (IDR) sample with a fresh STAP-A of the real
             // SPS/PPS (RFC 6184 §5.7.1) so a viewer that joins mid-stream, or
             // that lost the very first one, can still resynchronize at the
             // next keyframe — see the module doc.
-            stap_a_parameter_sets: sample.flags.is_sync,
-        };
-        let track = Track::new(spec.clone(), vec![sample.clone()]);
-        let packets = Arc::new(packetiser.packetise_video(&track, DEFAULT_VIDEO_PT)?);
+            sample.flags.is_sync,
+        )?);
         if entries.len() == PACKET_CACHE_SAMPLES {
             entries.pop_front();
         }
