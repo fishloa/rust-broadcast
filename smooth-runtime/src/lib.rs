@@ -27,6 +27,7 @@
 //! `private/specs-verified/mpeg/transmux/smooth/ms-sstr.md`.
 
 pub mod client;
+mod demux;
 pub mod error;
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]

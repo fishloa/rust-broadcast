@@ -33,6 +33,7 @@ thiserror         = "2"
 
 [dev-dependencies]
 test-fixtures     = { path = "../test-fixtures" }
+test-alloc        = { path = "../test-alloc" }
 workspace-guards  = { path = "../workspace-guards" }
 # The golden Manifest test parses both documents with the workspace's one XML
 # reader, so a difference in either is reported as elements and attributes
