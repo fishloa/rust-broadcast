@@ -941,6 +941,195 @@ mod playout_tests {
         }
     }
 
+    /// A minimal Matroska file (EBML header + Segment + Info + Tracks + one
+    /// Cluster) with one VP8 track and one frame per `(relative ms, byte)`
+    /// entry. Element ids and sizes follow RFC 8794 §4 / RFC 9559 §27.
+    fn mkv_bytes(frames: &[(i16, u8)]) -> Vec<u8> {
+        const EBML_HEADER: [u8; 4] = [0x1A, 0x45, 0xDF, 0xA3];
+        const SEGMENT: [u8; 4] = [0x18, 0x53, 0x80, 0x67];
+        const INFO: [u8; 4] = [0x15, 0x49, 0xA9, 0x66];
+        const TIMESTAMP_SCALE: [u8; 3] = [0x2A, 0xD7, 0xB1];
+        const TRACKS: [u8; 4] = [0x16, 0x54, 0xAE, 0x6B];
+        const TRACK_ENTRY: [u8; 1] = [0xAE];
+        const TRACK_NUMBER: [u8; 1] = [0xD7];
+        const TRACK_TYPE: [u8; 1] = [0x83];
+        const CODEC_ID: [u8; 1] = [0x86];
+        const CLUSTER: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
+        const CLUSTER_TIMESTAMP: [u8; 1] = [0xE7];
+        const SIMPLE_BLOCK: [u8; 1] = [0xA3];
+
+        fn size(mut value: usize) -> Vec<u8> {
+            let mut width = 1usize;
+            while value >= (1usize << (7 * width)) - 1 {
+                width += 1;
+            }
+            let mut out = vec![0u8; width];
+            for slot in (0..width).rev() {
+                out[slot] = (value & 0xFF) as u8;
+                value >>= 8;
+            }
+            out[0] |= 1u8 << (8 - width);
+            out
+        }
+        fn element(id: &[u8], body: &[u8]) -> Vec<u8> {
+            let mut out = id.to_vec();
+            out.extend(size(body.len()));
+            out.extend_from_slice(body);
+            out
+        }
+        let info = element(&INFO, &element(&TIMESTAMP_SCALE, &[0x0F, 0x42, 0x40]));
+        let track_entry = {
+            let mut body = element(&TRACK_NUMBER, &[1]);
+            body.extend(element(&TRACK_TYPE, &[1]));
+            body.extend(element(&CODEC_ID, b"V_VP8"));
+            element(&TRACK_ENTRY, &body)
+        };
+        let tracks = element(&TRACKS, &track_entry);
+        let mut cluster_body = element(&CLUSTER_TIMESTAMP, &[0]);
+        for (relative, byte) in frames {
+            let mut payload = size(1);
+            payload.extend_from_slice(&relative.to_be_bytes());
+            payload.push(0x80);
+            // A complete VP8 key-frame header: key-frame tag, start code,
+            // 320x240 dimensions (`byte` fills the last dimension octet).
+            payload.extend_from_slice(&[0x10, 0, 0, 0x9D, 0x01, 0x2A, 0x40, 0x01, 0xF0, *byte]);
+            cluster_body.extend(element(&SIMPLE_BLOCK, &payload));
+        }
+        let cluster = element(&CLUSTER, &cluster_body);
+        let mut segment_body = info;
+        segment_body.extend(tracks);
+        segment_body.extend(cluster);
+        let mut out = element(&EBML_HEADER, &[]);
+        out.extend(element(&SEGMENT, &segment_body));
+        out
+    }
+
+    /// A stream at a file's samples: feed its byte demands until `stop` says
+    /// the released-sample count is enough.
+    async fn drive_matroska(
+        session: &mut StreamingFileSession,
+        bytes: &[u8],
+        mut stop: impl FnMut(usize) -> bool,
+    ) -> Result<usize, FileReaderError> {
+        let mut offset = 0usize;
+        let mut released = 0usize;
+        let mut eof = false;
+        for _ in 0..(bytes.len() * 4 + 64) {
+            match session.file_demand() {
+                FileDemand::BytesAt { offset: at, len } => {
+                    let start = usize::try_from(at).unwrap_or(usize::MAX).min(bytes.len());
+                    let end = start.saturating_add(len).min(bytes.len());
+                    session.feed(
+                        FileInput::At {
+                            offset: at,
+                            bytes: bytes[start..end].to_vec().into(),
+                        },
+                        broadcast_common::Timestamp::ZERO,
+                    )?;
+                }
+                FileDemand::Bytes if offset < bytes.len() => {
+                    let end = (offset + (64 << 10)).min(bytes.len());
+                    session.feed(
+                        FileInput::Bytes(&bytes[offset..end]),
+                        broadcast_common::Timestamp::ZERO,
+                    )?;
+                    offset = end;
+                }
+                FileDemand::Eof if !eof => {
+                    session.feed(FileInput::Eof, broadcast_common::Timestamp::ZERO)?;
+                    eof = true;
+                }
+                FileDemand::Done => return Ok(released),
+                _ => {}
+            }
+            while let Some(event) = session.poll() {
+                if matches!(event, SessionEvent::Sample { .. }) {
+                    released += 1;
+                }
+            }
+            if stop(released) || (eof && released > 0) {
+                return Ok(released);
+            }
+        }
+        Ok(released)
+    }
+
+    /// A file with no playable sample is refused, on the streaming path too:
+    /// a Matroska track with no Block has no timed sample for the session to
+    /// pace, loop or write.
+    #[tokio::test]
+    async fn a_streaming_matroska_file_with_no_playable_sample_is_rejected() {
+        let bytes = mkv_bytes(&[]);
+        let total = u64::try_from(bytes.len()).expect("length fits u64");
+        let mut session = StreamingFileSession::new(
+            StreamContainer::Matroska,
+            STANDALONE_PROGRAM,
+            true,
+            None,
+            false,
+            FileStreamLimits {
+                matroska: transmux::matroska_demux::MatroskaDemuxConfig::default()
+                    .with_total_len(Some(total)),
+                ..FileStreamLimits::default()
+            },
+        );
+        let outcome = drive_matroska(&mut session, &bytes, |released| released > 0).await;
+        let error = match outcome {
+            Err(error) => error,
+            Ok(_) => session.finish().expect_err("no timed sample can be played"),
+        };
+        assert!(
+            matches!(error, FileReaderError::NoPlayableSamples),
+            "a file with no playable sample must be refused, got {error:?}"
+        );
+    }
+
+    /// Pacing sleeps by the sample's own delta from the file start: the second
+    /// sample (100 ms after the first) is due ~100 ms after the first was
+    /// released, and the third (200 ms after the second) ~200 ms later.
+    #[tokio::test]
+    async fn a_streaming_matroska_file_paces_by_the_sample_delta() {
+        const SECOND_MS: u64 = 100;
+        const THIRD_MS: u64 = 200;
+        let bytes = mkv_bytes(&[(0, 1), (SECOND_MS as i16, 2), (300, 3)]);
+        let total = u64::try_from(bytes.len()).expect("length fits u64");
+        let mut session = StreamingFileSession::new(
+            StreamContainer::Matroska,
+            STANDALONE_PROGRAM,
+            false,
+            None,
+            true,
+            FileStreamLimits {
+                matroska: transmux::matroska_demux::MatroskaDemuxConfig::default()
+                    .with_total_len(Some(total)),
+                ..FileStreamLimits::default()
+            },
+        );
+        let released = drive_matroska(&mut session, &bytes, |_| false)
+            .await
+            .expect("first sample");
+        assert_eq!(released, 1, "the first sample is due immediately");
+        let due = session.next_due().expect("a paced session has a deadline");
+        let wait = due.saturating_duration_since(std::time::Instant::now());
+        assert!(
+            wait >= std::time::Duration::from_millis(50)
+                && wait <= std::time::Duration::from_millis(250),
+            "the next sample must be paced ~{SECOND_MS} ms after the first, got {wait:?}"
+        );
+        tokio::time::sleep(wait).await;
+        let released = drive_matroska(&mut session, &bytes, |_| false)
+            .await
+            .expect("second sample");
+        assert_eq!(released, 1, "the second sample is due after its delta");
+        let due = session.next_due().expect("a paced session has a deadline");
+        let wait = due.saturating_duration_since(std::time::Instant::now());
+        assert!(
+            wait >= std::time::Duration::from_millis(120)
+                && wait <= std::time::Duration::from_millis(400),
+            "the third sample must follow the second by ~{THIRD_MS} ms, got {wait:?}"
+        );
+    }
+
     /// The ring depth does not depend on the file or the window.
     #[test]
     fn the_file_ring_is_independent_of_the_file_length() {
