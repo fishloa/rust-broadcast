@@ -3,16 +3,17 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
-use broadcast_common::{Timestamp, Unpackage};
+use broadcast_common::Timestamp;
 use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex, StreamType};
 use bytes::Bytes;
 use media_plane::Trunk;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
 use media_plane::ids::SegmentSeq;
 use transmux::{
-    Fmp4Demux, Media, SmoothCodec, SmoothPackager, SmoothStreamType, Track, TrackSpec,
-    resolve_codec, to_smooth_ticks,
+    SmoothCodec, SmoothPackager, SmoothStreamType, Track, TrackSpec, resolve_codec, to_smooth_ticks,
 };
+
+use crate::demux::SegmentDemux;
 
 /// The prefix of this origin's fragment-URL template and of every fragment
 /// request path: the `QualityLevels(N)` segment of MS-SSTR §2.2.3.
@@ -764,13 +765,18 @@ fn chunk_timeline(
     let packager = SmoothPackager {
         target_duration: SINGLE_SEGMENT_FRAGMENT_TARGET,
     };
+    let mut demux = SegmentDemux::new(init).map_err(|error| SmoothOriginError::Codec {
+        track: spec.track_id.value(),
+        reason: error.to_string(),
+    })?;
     let mut chunks: Vec<ChunkTiming> = Vec::with_capacity(segments.len());
     for (sequence, bytes) in segments {
-        let media = demux(init, bytes).map_err(|reason| SmoothOriginError::Codec {
-            track: spec.track_id.value(),
-            reason,
-        })?;
-        let Some(track) = find_track(&media, key) else {
+        let tracks =
+            segment_tracks(&mut demux, bytes).map_err(|reason| SmoothOriginError::Codec {
+                track: spec.track_id.value(),
+                reason,
+            })?;
+        let Some(track) = find_track(&tracks, key) else {
             continue;
         };
         let Some(first) = track.samples.first() else {
@@ -802,21 +808,24 @@ fn chunk_timeline(
     Ok(chunks)
 }
 
-/// Demux one init + media segment, rendering the demuxer's error.
-fn demux(init: &[u8], segment: &[u8]) -> Result<Media, String> {
-    let mut combined = Vec::with_capacity(init.len() + segment.len());
-    combined.extend_from_slice(init);
-    combined.extend_from_slice(segment);
-    Fmp4Demux::new()
-        .unpackage(combined.as_slice())
-        .map_err(|error| error.to_string())
+/// The demuxer's report for a media segment damaged mid-box.
+const DAMAGED_SEGMENT: &str = "the media segment is damaged";
+
+/// Feed one media segment on `demux`, rendering the demuxer's refusals: a
+/// segment the demuxer reports as damaged is the error it used to be when the
+/// whole init-plus-segment demux failed.
+fn segment_tracks(demux: &mut SegmentDemux, segment: &[u8]) -> Result<Vec<Track>, String> {
+    let parsed = demux.segment(segment).map_err(|error| error.to_string())?;
+    if parsed.damaged {
+        return Err(DAMAGED_SEGMENT.to_string());
+    }
+    Ok(parsed.tracks)
 }
 
 /// The demuxed track a [`StreamKey`] names: the `ordinal`-th track of its kind
 /// in the segment's own interleaved track order.
-fn find_track(media: &Media, key: StreamKey) -> Option<&Track> {
-    media
-        .tracks
+fn find_track(tracks: &[Track], key: StreamKey) -> Option<&Track> {
+    tracks
         .iter()
         .filter(|track| stream_kind(&track.spec.config) == Some(key.kind))
         .nth(usize::try_from(key.ordinal.checked_sub(1)?).ok()?)
@@ -969,11 +978,15 @@ fn package_fragment(
     init: &[u8],
     bytes: &[u8],
 ) -> Result<Bytes, SmoothOriginError> {
-    let media = demux(init, bytes).map_err(|reason| SmoothOriginError::Codec {
+    let mut demux = SegmentDemux::new(init).map_err(|error| SmoothOriginError::Codec {
+        track: stream.interleaved_ordinal,
+        reason: error.to_string(),
+    })?;
+    let tracks = segment_tracks(&mut demux, bytes).map_err(|reason| SmoothOriginError::Codec {
         track: stream.interleaved_ordinal,
         reason,
     })?;
-    let track = find_track(&media, stream.key).ok_or(SmoothOriginError::Codec {
+    let track = find_track(&tracks, stream.key).ok_or(SmoothOriginError::Codec {
         track: stream.interleaved_ordinal,
         reason: "the segment does not carry the requested stream".to_string(),
     })?;
