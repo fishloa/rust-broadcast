@@ -44,7 +44,7 @@
 //!   [`isobmff::cenc::SampleEncryptionEntry`] per [`Track::samples`] entry.
 //!
 //! This module is a pure type consolidation (media plane step 2a): the
-//! packagers/depackagers built on this IR ([`Fmp4Demux`](crate::media::Fmp4Demux),
+//! packagers/depackagers built on this IR ([`Mp4Demux`](crate::mp4_demux::Mp4Demux),
 //! [`CmafMux`](crate::media::CmafMux), [`HlsPackager`](crate::media::HlsPackager))
 //! and the segment-authoring machinery ([`crate::pipeline::build_init_segment`] /
 //! [`crate::pipeline::build_media_segment`]) stay in their existing modules —

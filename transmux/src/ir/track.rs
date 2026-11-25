@@ -169,7 +169,7 @@ pub struct Track {
     /// track-level anchor for tracks with no samples at all.
     ///
     /// Demuxers that recover an absolute timeline populate it
-    /// ([`crate::media::Fmp4Demux`] from the first movie fragment's `tfdt`;
+    /// ([`crate::mp4_demux::Mp4Demux`] from the first movie fragment's `tfdt`;
     /// [`TsDemux`](crate::ts_demux::TsDemux) from the first sample's
     /// unwrapped DTS; WebM, MPEG Program Stream, FLV, RTMP and RTP likewise
     /// anchor on their first sample's absolute timestamp or their own source

@@ -7,9 +7,6 @@
 //! [`Sample`]s; this module holds the packagers/depackagers that convert
 //! between that IR and concrete container forms:
 //!
-//! - [`Fmp4Demux`] : [`Unpackage`] `<Input = &[u8]>` — parse a fragmented
-//!   ISOBMFF/CMAF file (init `moov` + one or more `moof`/`mdat` fragments) into
-//!   a [`Media`], reusing the crate's existing box parsers.
 //! - [`CmafMux`] : [`Package`] `<Output = Vec<u8>>` — mux a [`Media`] back into
 //!   a CMAF init segment + one media segment, a transparent wrapper over
 //!   [`build_init_segment`] / [`build_media_segment`].
@@ -29,13 +26,12 @@
 //! crypto metadata onto [`Track::encryption`].
 
 use alloc::format;
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use core::marker::PhantomData;
 
 use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
-use broadcast_common::{Package, Parse, Unpackage};
+use broadcast_common::{Package, Parse};
 
 use crate::codec_config_ext::VvcRecordCodecInfo;
 use broadcast_hls::{ByteRange, DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
@@ -45,24 +41,22 @@ use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
 use crate::ir::{
     AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, DisplayInfo, EXTENDED_SAR_IDC,
-    FragmentTrackData, InputDegradation, PictureRect, Sample, SubtitleFormat, SubtitleSampleEntry,
-    TrackSpec, VideoFormat, VideoSignalType,
+    FragmentTrackData, PictureRect, Sample, SubtitleFormat, SubtitleSampleEntry, TrackSpec,
+    VideoFormat, VideoSignalType,
 };
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::pipeline::{build_init_segment, build_media_segment};
 use alloc::sync::Arc;
 use isobmff::ac4::Ac4SpecificBox;
 use isobmff::box_support::OpaqueBox;
-use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, parse_box};
+use isobmff::box_types::BOX_TYPE_SIZE;
 use isobmff::dts::DtsSpecificBox;
 use isobmff::flac::FlacSpecificBox;
-use isobmff::init_segment::{MOOV, MovieBox, SampleEntryVariant, sampling_rate_override};
-use isobmff::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
+use isobmff::init_segment::{SampleEntryVariant, sampling_rate_override};
 use isobmff::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
 use isobmff::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
 use isobmff::opus::OpusSpecificBox;
 use isobmff::reader::TrackInfo;
-use isobmff::segments::{MDAT, MOOF};
 use isobmff::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 
 /// [`Media`], [`Track`], [`TrackEncryption`], [`PcrSample`] moved to
@@ -72,356 +66,6 @@ pub use crate::ir::{Media, PcrSample, SkippedTrack, Track, TrackEncryption};
 
 /// `#EXT-X-VERSION` for the fMP4 playlists [`HlsPackager`] writes (RFC 8216 §7).
 const DEFAULT_HLS_VERSION: u8 = 7;
-
-// ---------------------------------------------------------------------------
-// Fmp4Demux — Unpackage<Input = &[u8]>
-// ---------------------------------------------------------------------------
-
-/// Demux a fragmented ISOBMFF/CMAF byte stream into a [`Media`].
-///
-/// Walks top-level boxes: the `moov` supplies each track's identity + codec
-/// config (rebuilt into a [`TrackSpec`]); every `moof`/`mdat` fragment pair
-/// supplies coded samples (sizes/durations/flags resolved from the `trun`,
-/// falling back to the `tfhd` defaults), which are appended to the matching
-/// track in decode order.
-///
-/// The `'a` parameter ties the demuxer to the byte-slice lifetime it consumes
-/// via [`Unpackage::Input`]; construct one per call with [`Fmp4Demux::new`].
-#[derive(Debug, Default, Clone)]
-pub struct Fmp4Demux<'a> {
-    _marker: PhantomData<&'a [u8]>,
-}
-
-impl Fmp4Demux<'_> {
-    /// Create a new demuxer.
-    pub fn new() -> Self {
-        Self {
-            _marker: PhantomData,
-        }
-    }
-}
-
-/// A track skeleton built from the init `moov`, plus a running sample list.
-struct TrackBuilder {
-    spec: TrackSpec,
-    samples: Vec<Sample>,
-    /// Absolute decode-time anchor: the track's start time, taken from the
-    /// **first** movie fragment's `tfdt` seen for this track (`None` until that
-    /// fragment is absorbed; a stream with no `tfdt` at all yields a `0`
-    /// anchor). Distinct from `next_dts`, which every later `tfdt` re-seeds.
-    start_decode_time: Option<u64>,
-    /// Running absolute decode time for the *next* sample to be pushed, in
-    /// this track's media timescale (media plane step 2c: `Sample::dts` is
-    /// now absolute, so this replaces the old "reconstruct via anchor + Σ
-    /// duration downstream" model with the equivalent running value carried
-    /// forward while demuxing). **Re-seeded from every fragment's own `tfdt`**
-    /// (falling back to the running sum for a fragment that carries none, and
-    /// to `0` if the stream never carries one), then advanced by each sample's
-    /// duration in decode order — see `absorb_fragment`.
-    next_dts: i64,
-    /// Whether this track's sample entry carries parameter sets in-band
-    /// (avc3/avc4/hev1), so per-AU display tagging applies.
-    in_band: bool,
-    /// Container-level boxes from the sample entry, used to overlay `pasp` /
-    /// `colr nclx` onto every tag the in-band tracker produces.
-    entry_extra_boxes: Vec<isobmff::sample_entries::OpaqueBox>,
-}
-
-impl<'a> Unpackage for Fmp4Demux<'a> {
-    type Input = &'a [u8];
-    type Media = Media;
-    type Error = Error;
-
-    fn unpackage(&mut self, input: &'a [u8]) -> Result<Media> {
-        let moov_bytes = find_box(input, &MOOV).ok_or(Error::UnexpectedBox { expected: "moov" })?;
-        let moov = MovieBox::parse(moov_bytes)?;
-        let movie_timescale = moov.mvhd.timescale;
-        let trex_defaults: &[isobmff::init_segment::TrackExtendsBox] =
-            moov.mvex.as_ref().map_or(&[], |m| m.trex.as_slice());
-
-        // DEMUX = lenient but loud (media plane step-2 fix wave 1, B2/B3): a
-        // track whose sample entry the crate cannot reconstruct into a
-        // `CodecConfig` (a QuickTime hint/chapter track, `c608`/`c708`,
-        // GoPro `gpmd`, or any other FourCC with no `CodecConfig`
-        // reconstruction — codec coverage (`stpp`/`wvtt`/`ac-4`) already
-        // landed, so what remains unreconstructable is a genuine gap) is
-        // skipped, not a whole-file failure — mirrors
-        // [`crate::progressive_demux::ProgressiveDemux`]'s per-track
-        // handling, which this used to diverge from. The caller still
-        // learns about it via [`Media::skipped`], never silently.
-        let mut builders: Vec<TrackBuilder> = Vec::with_capacity(moov.tracks.len());
-        let mut skipped: Vec<SkippedTrack> = Vec::new();
-        for trak in &moov.tracks {
-            let info = match TrackInfo::from_trak(trak).map_err(Error::from) {
-                Ok(info) => info,
-                Err(err) => {
-                    skipped.push(skipped_track(err, trak.tkhd.track_id.into()));
-                    continue;
-                }
-            };
-            match track_spec_from_track_info(&info) {
-                Ok(spec) => {
-                    let (in_band, entry_extra_boxes) = info
-                        .entries
-                        .first()
-                        .and_then(|entry| entry.typed.as_ref())
-                        .map_or((false, Vec::new()), track_entry_inband_and_extras);
-                    builders.push(TrackBuilder {
-                        spec,
-                        samples: Vec::new(),
-                        start_decode_time: None,
-                        next_dts: 0,
-                        in_band,
-                        entry_extra_boxes,
-                    })
-                }
-                Err(err) => skipped.push(skipped_track(err, info.track_id.into())),
-            }
-        }
-
-        // 2. Walk every top-level box; each `moof` pairs with the next `mdat`.
-        //    Sample bytes are resolved via the trun `data_offset` measured from
-        //    the enclosing `moof` (default-base-is-moof), so we track the moof's
-        //    absolute file offset.
-        let mut offset = 0usize;
-        // Every `mdat` payload range, scanned once for the whole file (not once
-        // per `traf`).
-        let mdats = isobmff::frag_offsets::mdat_ranges(input);
-        // Fragments waiting for their `mdat`. A queue, not a single slot:
-        // `moof`, `moof`, `mdat` is legal (ISO/IEC 14496-12:2026 §8.8.4 allows
-        // any number of `moof`s, and CMAF writes one per track for
-        // CMF2/multi-track segments), and a single slot silently dropped every
-        // fragment before the last (audit r05-W26). Each `mdat` resolves the
-        // fragment that follows it, per §8.8.4's "the `mdat` carrying a
-        // fragment's data follows that fragment".
-        let mut pending_moofs: Vec<(u64, MovieFragmentBox)> = Vec::new();
-        // The zero-width-`trun` sample allowance is shared by every `moof`
-        // queued here (and refilled once an `mdat` consumes them): a per-`trun`
-        // or per-`moof` cap lets N tiny fragments held before one `mdat` cost
-        // N x 40 MiB of `TrunSample`s.
-        let mut zero_width_budget = isobmff::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
-        // Sample bytes copied so far, for the whole file and never refilled:
-        // one `mdat` followed by N `moof`s that each claim all of it would
-        // otherwise copy those same bytes N times (audit 20 finding 13).
-        let mut copied_bytes: u64 = 0;
-        // A `moof` whose body does not parse is skipped and reported (audit
-        // T16, #1144): the box framing is intact, so the next box is read from
-        // a correct offset and one corrupt fragment costs only itself.
-        let mut degraded: Vec<InputDegradation> = Vec::new();
-        while offset + BOX_HEADER_MIN_SIZE <= input.len() {
-            // A truncated *final* box is ordinary in a live capture or an
-            // interrupted recording, so a tail whose declared size runs past
-            // the end of the data ends the walk rather than failing the whole
-            // file — nothing follows it to be mis-framed.
-            //
-            // Only that case. Any other parse failure (`BoxSizeUnderflow` from
-            // a size of 2..7, a bad `largesize`, a `uuid` header cut short)
-            // means the *framing* is wrong, so every box after it would be
-            // read from a bogus offset; treating it as end-of-data silently
-            // truncated the file at the first corrupt box (audit item 4).
-            let (bx, consumed) = match parse_box(&input[offset..]) {
-                Ok(parsed) => parsed,
-                // Every "the declared box does not fit the bytes present"
-                // error ends the walk: the box is the last one and the file
-                // was cut inside its header. `parse_box` reports these as three
-                // variants — a body past the end (`BufferTooShort`), a `uuid`
-                // usertype cut short (`UuidBufferTooShort`), and a `largesize`
-                // field cut short (`LargesizeBufferTooShort`) — and all three
-                // mean the same thing at the tail (audit item 9, round 3).
-                Err(isobmff::Error::BufferTooShort(..))
-                | Err(isobmff::Error::UuidBufferTooShort { .. })
-                | Err(isobmff::Error::LargesizeBufferTooShort { .. }) => break,
-                Err(e) => return Err(e.into()),
-            };
-            let ty = bx.header.box_type.0;
-            if ty == MOOF {
-                match MovieFragmentBox::parse_body_budgeted(bx.body, &mut zero_width_budget) {
-                    Ok(mut moof) => {
-                        isobmff::movie_fragment::apply_trex_defaults(&mut moof, trex_defaults);
-                        pending_moofs.push((offset as u64, moof));
-                    }
-                    Err(_) => degraded.push(InputDegradation::MalformedUnit {
-                        position: offset as u64,
-                    }),
-                }
-            } else if ty == MDAT {
-                // A `moof`'s samples live in the `mdat` that follows it; a
-                // segment carrying several `moof`s before one `mdat` resolves
-                // them in order.
-                for (moof_off, moof) in pending_moofs.drain(..) {
-                    for _ in 0..absorb_fragment(
-                        input,
-                        &mdats,
-                        moof_off,
-                        &moof,
-                        &mut builders,
-                        &mut copied_bytes,
-                    ) {
-                        degraded.push(InputDegradation::MalformedUnit { position: moof_off });
-                    }
-                }
-                zero_width_budget = isobmff::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
-            }
-            if consumed == 0 {
-                break;
-            }
-            offset += consumed;
-        }
-
-        for (moof_off, _) in pending_moofs {
-            degraded.push(InputDegradation::MalformedUnit { position: moof_off });
-        }
-
-        let tracks = builders
-            .into_iter()
-            .map(|mut b| {
-                if let Some(first) = b.samples.first() {
-                    refine_legacy_config(&mut b.spec.config, first);
-                }
-                let length_size = nal_length_size(&b.spec.config);
-                if let Some(length_size) = length_size {
-                    for sample in &mut b.samples {
-                        normalise_nal_lengths(length_size, sample)?;
-                    }
-                    normalise_spec_nal_length(&mut b.spec);
-                }
-                if b.in_band {
-                    tag_fmp4_inband_display(&mut b);
-                }
-                if matches!(b.spec.config, CodecConfig::Hevc { .. }) {
-                    b.spec.hdr10plus = b.samples.first().is_some_and(|s| {
-                        crate::hdr10plus::Hdr10PlusMetadata::sample_carries_hdr10plus(&s.data)
-                    });
-                }
-                Ok(Track {
-                    spec: b.spec,
-                    samples: b.samples,
-                    // First-fragment tfdt baseMediaDecodeTime; 0 when the stream
-                    // carried no tfdt at all (ISO/IEC 14496-12:2026 §8.8.12).
-                    start_decode_time: b.start_decode_time.unwrap_or(0),
-                    encryption: None,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        Ok(Media {
-            tracks,
-            movie_timescale,
-            pcr: Vec::new(),
-            skipped,
-            degraded,
-            degraded_at: Vec::new(),
-        })
-    }
-}
-
-/// Resolve a fragment's samples into `builders`, slicing coded bytes from the
-/// file per ISO/IEC 14496-12:2026 §8.8.7 / §8.8.8.
-///
-/// The addressing (and its bounds) live in [`isobmff::frag_offsets`], shared with
-/// [`crate::cenc_decrypt::CencDecryptor`] so the two cannot drift.
-fn absorb_fragment(
-    file: &[u8],
-    mdats: &[isobmff::frag_offsets::MdatRange],
-    moof_off: u64,
-    moof: &MovieFragmentBox,
-    builders: &mut [TrackBuilder],
-    copied_bytes: &mut u64,
-) -> usize {
-    // A `traf` whose `trun` addressing or timing is invalid is skipped whole
-    // and counted (audit T16, #1144); each `traf` is committed atomically so a
-    // failure leaves its track exactly as it was.
-    let mut bad = 0usize;
-    for traf in &moof.traf {
-        if absorb_traf(file, mdats, moof_off, moof, traf, builders, copied_bytes).is_err() {
-            bad += 1;
-        }
-    }
-    bad
-}
-
-fn absorb_traf(
-    file: &[u8],
-    mdats: &[isobmff::frag_offsets::MdatRange],
-    moof_off: u64,
-    moof: &MovieFragmentBox,
-    traf: &isobmff::movie_fragment::TrackFragmentBox,
-    builders: &mut [TrackBuilder],
-    copied_bytes: &mut u64,
-) -> Result<()> {
-    {
-        let tfhd = &traf.tfhd;
-        let Some(builder) = builders
-            .iter_mut()
-            .find(|b| b.spec.track_id.value() == tfhd.track_id.value())
-        else {
-            // A track present in a fragment but absent from the init movie:
-            // skip it (well-formed CMAF declares every track in the init moov).
-            return Ok(());
-        };
-        // `tfdt` is authoritative for **every** fragment that carries one, not
-        // just the first (ISO/IEC 14496-12:2026 §8.8.12: it *is* the absolute
-        // decode time of the fragment's first sample). Seeding once and then
-        // pure-summing `trun` durations silently assumes the source is gapless;
-        // for a discontinuous or gapped fMP4 (a DVR recording spliced across a
-        // dropout, a live capture that missed segments) every sample after the
-        // gap came out short by the gap, which then re-muxes to a wrong `tfdt`
-        // / PES stamp and permanently desyncs A/V.
-        //
-        // Re-seeding per fragment carries the gap through into the samples'
-        // absolute `dts` — which, for a batch `Media`, is what representing the
-        // discontinuity means: this IR has no event channel to raise it on, and
-        // the honest alternative to a preserved gap is a fabricated
-        // contiguity, not a report.
-        //
-        // `start_decode_time` still records the FIRST fragment's anchor: it is
-        // the track's start time, not a running cursor.
-        // Resolve and validate everything first; the builder is only touched
-        // once the whole `traf` is known good.
-        let mut start_decode_time = builder.start_decode_time;
-        let mut next_dts = builder.next_dts;
-        if let Some(tfdt) = &traf.tfdt {
-            let base = tfdt.base_media_decode_time();
-            if start_decode_time.is_none() {
-                start_decode_time = Some(base);
-            }
-            next_dts = isobmff::frag_offsets::tfdt_as_i64(base)?;
-        }
-        let mut samples = Vec::new();
-        for r in isobmff::frag_offsets::sample_ranges_in_run(
-            moof_off,
-            moof,
-            tfhd.track_id,
-            mdats,
-            isobmff::frag_offsets::sample_bytes_budget(file.len() as u64),
-            copied_bytes,
-        )? {
-            let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
-            let dts = next_dts;
-            let pts = isobmff::frag_offsets::add_offset(dts, r.composition_offset)?;
-            let start = usize::try_from(r.start)
-                .map_err(|_| Error::InvalidInput("sample offset does not fit the address space"))?;
-            let end = usize::try_from(r.end)
-                .map_err(|_| Error::InvalidInput("sample end does not fit the address space"))?;
-            samples.push(Sample {
-                data: file[start..end].to_vec().into(),
-                timing: Some(crate::ir::SampleTiming::timed_with_duration(
-                    dts, pts, r.duration,
-                )),
-                flags: crate::ir::SampleFlags::new(is_sync),
-                // fMP4 sources carry no per-sample source-container
-                // timestamps distinct from the fragment's own tfdt/trun
-                // timing (see `Sample::provenance`).
-                provenance: None,
-                display: None,
-            });
-            next_dts = isobmff::frag_offsets::add_duration(dts, r.duration)?;
-        }
-        builder.start_decode_time = start_decode_time;
-        builder.next_dts = next_dts;
-        builder.samples.extend(samples);
-    }
-    Ok(())
-}
 
 // ---------------------------------------------------------------------------
 // CmafMux — Package<Output = Vec<u8>>
@@ -751,24 +395,15 @@ impl Package for HlsPackager {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers: box location + TrackSpec reconstruction
+// Helpers: TrackSpec reconstruction
 // ---------------------------------------------------------------------------
-
-/// Find a top-level box by four-CC, returning its full bytes (header + body).
-///
-/// Re-exported for [`crate::progressive_demux::ProgressiveDemux`], which walks
-/// the same top-level `moov` box; the one implementation is
-/// [`isobmff::box_types::find_box`] (#1141).
-pub(crate) use isobmff::box_types::find_box;
 
 /// Rebuild a [`TrackSpec`] from the reader's per-track view (identity + codec
 /// config).
 ///
 /// `pub(crate)`: the single shared sample-entry → [`CodecConfig`]
-/// reconstruction path, reused verbatim by
-/// [`crate::progressive_demux::ProgressiveDemux`] and
-/// [`crate::mp4_demux::Mp4Demux`] (issue #561) so progressive, fragmented and
-/// streaming demux never diverge on codec-config recovery.
+/// reconstruction path, used by [`crate::mp4_demux::Mp4Demux`], so the
+/// seekable and forward-only reads never diverge on codec-config recovery.
 pub(crate) fn track_spec_from_track_info(info: &TrackInfo) -> Result<TrackSpec> {
     let entry = info.entries.first().ok_or(Error::UnexpectedBox {
         expected: "stsd entry",
@@ -1059,15 +694,6 @@ impl InbandDisplayTagger {
 }
 
 /// Tag every sample of an in-band track, in one pass (the whole-input demuxers).
-fn tag_fmp4_inband_display(b: &mut TrackBuilder) {
-    let Some(mut tagger) = InbandDisplayTagger::new(&b.spec.config, &b.entry_extra_boxes) else {
-        return;
-    };
-    for sample in &mut b.samples {
-        tagger.tag(sample);
-    }
-}
-
 fn overlay_display_info(
     raw: &Arc<DisplayInfo>,
     config: &CodecConfig,
@@ -1100,18 +726,6 @@ fn gcd_u32(mut a: u32, mut b: u32) -> u32 {
 /// reach an entry (missing `mdia`/`mdhd`/`minf`/`stbl`/`stsd`), so there is no
 /// FourCC to recover; `"unknown"` names that case honestly rather than
 /// guessing.
-pub(crate) fn skipped_track(err: Error, track_id: crate::TrackId) -> SkippedTrack {
-    let fourcc = match &err {
-        Error::UnsupportedSampleEntry { fourcc } => fourcc.clone(),
-        _ => String::from("unknown"),
-    };
-    SkippedTrack {
-        fourcc,
-        reason: err.to_string(),
-        track_id: Some(track_id),
-    }
-}
-
 /// The real sampling rate of an audio sample entry.
 ///
 /// Prefers a `SamplingRateBox` (`srat`, ISO/IEC 14496-12:2026 §12.2.3.1) in the
@@ -1137,7 +751,8 @@ fn entry_sampling_rate(samplerate_16_16: u32, config_boxes: &[OpaqueBox]) -> u32
 ///
 /// Only `SampleEntryVariant::Unknown` — a sample entry naming a codec this
 /// crate genuinely does not implement — yields
-/// [`Error::UnsupportedSampleEntry`], propagated by [`Fmp4Demux`] rather than
+/// [`Error::UnsupportedSampleEntry`], propagated by
+/// [`crate::mp4_demux::Mp4Demux`] rather than
 /// silently skipping the track (media plane step 2d: codec coverage lands
 /// *before* this strictness, so `stpp`/`wvtt`/`ac-4` — which used to hit this
 /// path — no longer do) (ISO/IEC 14496-12:2026 §8.5.2 sample entries; -15
@@ -1331,8 +946,7 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
 ///
 /// Only the **first** sample of a track is consulted; pass exactly that one.
 ///
-/// `pub(crate)`: shared with [`crate::progressive_demux::ProgressiveDemux`] and
-/// [`crate::mp4_demux::Mp4Demux`].
+/// `pub(crate)`: used by [`crate::mp4_demux::Mp4Demux`].
 pub(crate) fn refine_legacy_config(config: &mut CodecConfig, first: &Sample) {
     match config {
         CodecConfig::Mpeg2Video { width, height, .. }
@@ -1571,9 +1185,7 @@ mod tests {
         file.extend_from_slice(&seg1);
         file.extend_from_slice(&seg2);
 
-        let media = Fmp4Demux::new()
-            .unpackage(&file)
-            .expect("demux gapped fMP4");
+        let media = crate::mp4_collect::media_from_mp4(&file).expect("demux gapped fMP4");
         let track = &media.tracks[0];
         assert_eq!(
             track.samples.len(),
@@ -1657,7 +1269,7 @@ mod tests {
             .unwrap(),
         );
 
-        let media = Fmp4Demux::new().unpackage(&file).unwrap();
+        let media = crate::mp4_collect::media_from_mp4(&file).unwrap();
         let got: Vec<i64> = media.tracks[0]
             .samples
             .iter()
@@ -1829,9 +1441,7 @@ mod tests {
         let mut file = init;
         file.extend_from_slice(&frag);
 
-        let media = Fmp4Demux::new()
-            .unpackage(&file)
-            .expect("demux the 2-byte fMP4");
+        let media = crate::mp4_collect::media_from_mp4(&file).expect("demux the 2-byte fMP4");
         let track = &media.tracks[0];
         assert_eq!(
             track.samples[0].data.as_ref(),
@@ -1927,9 +1537,7 @@ mod tests {
         let mut file = init;
         file.extend_from_slice(&frag);
 
-        let media = Fmp4Demux::new()
-            .unpackage(&file)
-            .expect("demux the 2-byte HEVC fMP4");
+        let media = crate::mp4_collect::media_from_mp4(&file).expect("demux the 2-byte HEVC fMP4");
         let track = &media.tracks[0];
         assert_eq!(
             track.samples[0].data.as_ref(),

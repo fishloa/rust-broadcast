@@ -1,5 +1,5 @@
 //! Client-side inspection of Smooth Streaming documents and fragment responses: the pure,
-//! sans-IO checks a Smooth *puller* needs before it hands bytes to [`crate::media::Fmp4Demux`].
+//! sans-IO checks a Smooth *puller* needs before it hands bytes to [`crate::mp4_demux::Mp4Demux`].
 //!
 //! Smooth Streaming: MS-SSTR (`private/specs-verified/mpeg/transmux/smooth/ms-sstr.md`).
 //!

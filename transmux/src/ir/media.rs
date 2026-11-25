@@ -60,9 +60,8 @@ impl PcrSample {
 ///
 /// DEMUX = lenient but loud (media plane step-2 fix wave 1, B2/B3): such a
 /// track is skipped rather than failing the whole file, but it is never
-/// silent — [`Fmp4Demux`](crate::media::Fmp4Demux) and
-/// [`ProgressiveDemux`](crate::progressive_demux::ProgressiveDemux) both
-/// record one of these per skipped track in [`Media::skipped`].
+/// silent — [`Mp4Demux`](crate::mp4_demux::Mp4Demux) records one of these per
+/// skipped track in [`Media::skipped`].
 ///
 /// `#[non_exhaustive]`: construct with [`SkippedTrack::new`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,7 +94,7 @@ impl SkippedTrack {
 /// The media intermediate representation: a set of elementary [`Track`]s.
 ///
 /// This is the hub's neutral form. [`Unpackage`](broadcast_common::Unpackage)
-/// impls (e.g. [`Fmp4Demux`](crate::media::Fmp4Demux)) produce a `Media`;
+/// impls (e.g. [`Mp4Demux`](crate::mp4_demux::Mp4Demux)) produce a `Media`;
 /// [`Package`](broadcast_common::Package) impls (e.g.
 /// [`CmafMux`](crate::media::CmafMux), [`HlsPackager`](crate::media::HlsPackager))
 /// consume one.

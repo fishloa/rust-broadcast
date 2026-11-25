@@ -12,7 +12,7 @@
 //!
 //! Smooth has no bootstrapping init segment — a `QualityLevel`'s
 //! `CodecPrivateData` IS the codec config. [`track_spec_from_quality_level`]
-//! builds the `TrackSpec` so [`crate::media::Fmp4Demux`] (which hard-requires a
+//! builds the `TrackSpec` so [`crate::mp4_demux::Mp4Demux`] (which hard-requires a
 //! `moov`) can then absorb the Smooth fragment stream:
 //! - `FourCC="H264"`: the Annex-B-framed `CodecPrivateData` (start-code
 //!   delimited SPS+PPS) is split with [`crate::annexb::iter_annexb_nals`] and
