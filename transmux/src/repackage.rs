@@ -21,10 +21,12 @@
 //!   snapped instant, so audio and video stay aligned. Window times are on one
 //!   decode-time origin common to every track (the earliest first-sample
 //!   `dts`), and the resegmented output keeps each track's offset from that
-//!   origin in its first `tfdt`. A window needs the whole input (it needs that
-//!   origin), so it is honoured only by [`Repackage::run_media`]; the
-//!   streaming [`Repackage::run`] refuses it with
-//!   [`Error::RepackageWindowNeedsWholeInput`].
+//!   origin in its first `tfdt`. [`Repackage::run_media`] has the whole
+//!   input; the streaming [`Repackage::run`] holds samples until every
+//!   announced track has produced its first sample (that origin) and the lower
+//!   edge has reached a random-access point, bounded by
+//!   [`Repackage::window_hold`] ([`Error::RepackageWindowHoldExceeded`] past
+//!   it). Both apply the one [`trim`] rule.
 //! - **resegment** — [`Segmenter`] at a new target segment duration produces
 //!   fresh CMAF init + media segments cut on the anchor track's keyframes.
 //!
@@ -38,7 +40,7 @@ use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
-use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
+use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
@@ -69,6 +71,7 @@ pub struct Repackage {
     target_duration: core::time::Duration,
     select: Option<Vec<usize>>,
     trim: Option<(u64, u64)>,
+    hold: Option<u64>,
 }
 
 impl Repackage {
@@ -80,6 +83,7 @@ impl Repackage {
             target_duration,
             select: None,
             trim: None,
+            hold: None,
         }
     }
 
@@ -93,11 +97,21 @@ impl Repackage {
     /// Trim to the half-open presentation-time window `[start, end)` in the movie
     /// timescale (see the module docs for the snapping rule).
     ///
-    /// A window needs the whole input, so it is honoured by
-    /// [`Repackage::run_media`] only: [`Repackage::run`] returns
-    /// [`Error::RepackageWindowNeedsWholeInput`].
+    /// [`Repackage::run`] holds samples until every announced track has
+    /// produced its first sample and the window's lower edge has snapped back
+    /// to a random-access point on the anchor track; [`Repackage::window_hold`]
+    /// bounds that hold.
     pub fn trim(mut self, start: u64, end: u64) -> Self {
         self.trim = Some((start, end));
+        self
+    }
+
+    /// Bound the bytes [`Repackage::run`] holds while it waits for a window's
+    /// timeline origin and snapped lower edge. Past `max_bytes` the run fails
+    /// with [`Error::RepackageWindowHoldExceeded`]. Unset means no bound: a
+    /// caller that cannot supply a plan should set one.
+    pub fn window_hold(mut self, max_bytes: u64) -> Self {
+        self.hold = Some(max_bytes);
         self
     }
 
@@ -105,14 +119,10 @@ impl Repackage {
     /// resegment.
     ///
     /// # Errors
-    /// [`Error::RepackageWindowNeedsWholeInput`] if [`Repackage::trim`] was
-    /// set — a streaming byte stream has no timeline origin to place a window
-    /// on. Propagates [`Mp4Demux`] errors and
-    /// [`Segmenter`] errors.
+    /// [`Error::RepackageWindowHoldExceeded`] when a [`Repackage::trim`]
+    /// window's leading hold passes the caller's cap. Propagates [`Mp4Demux`]
+    /// errors and [`Segmenter`] errors.
     pub fn run(&self, fmp4: &[u8]) -> Result<RepackageOutput> {
-        if self.trim.is_some() {
-            return Err(Error::RepackageWindowNeedsWholeInput);
-        }
         let total_len = u64::try_from(fmp4.len()).unwrap_or(u64::MAX);
         let mut demux =
             Mp4Demux::seekable(Mp4DemuxConfig::default().with_total_len(Some(total_len)));
@@ -366,6 +376,12 @@ where
     Ok(Media::new(tracks, media.movie_timescale))
 }
 
+/// The one half-open presentation-time test both [`trim`] and the streaming
+/// [`Repackage::run`] window apply: `lo <= presentation < hi`.
+fn in_window(presentation: i64, lo: i64, hi: i64) -> bool {
+    presentation >= lo && presentation < hi
+}
+
 /// Trim to the half-open presentation-time window `[start, end)`, expressed in
 /// the **movie timescale** ([`Media::movie_timescale`]).
 ///
@@ -395,7 +411,7 @@ pub fn trim(media: &Media, start: u64, end: u64) -> Result<Media> {
     let anchor_hi = rescale_floor(end, media.movie_timescale, anchor_ts);
     let snapped = anchor_pts
         .iter()
-        .position(|&p| p >= anchor_lo && p < anchor_hi)
+        .position(|&p| in_window(p, anchor_lo, anchor_hi))
         .map(|mut idx| {
             while idx > 0 && !anchor_track.samples[idx].flags.is_sync {
                 idx -= 1;
@@ -416,7 +432,7 @@ pub fn trim(media: &Media, start: u64, end: u64) -> Result<Media> {
                 Some(idx) => rescale_i64(anchor_pts[idx], anchor_ts, ts, Rounding::Floor),
                 None => rescale_floor(start, media.movie_timescale, ts),
             };
-            pts.iter().position(|&p| p >= lo && p < hi)
+            pts.iter().position(|&p| in_window(p, lo, hi))
         };
         let mut kept = Vec::new();
         if let Some(start_idx) = start_idx {
@@ -470,6 +486,165 @@ impl Media {
 // The repackaging stage
 // ---------------------------------------------------------------------------
 
+/// What a streaming [`Repackage::trim`] window holds between the first
+/// sample and the moment its lower edge is known: every kept sample, the first
+/// decodable time of each kept track, and (once resolved) the per-track filter
+/// [`trim`] derives. Bounded by [`Repackage::window_hold`].
+struct WindowHold {
+    start: u64,
+    end: u64,
+    limit: Option<u64>,
+    /// Held samples in feed (decode) order.
+    held: Vec<(TrackId, Sample)>,
+    held_bytes: u64,
+    /// First decodable time of each kept track, by the position
+    /// [`RepackageSink::kept`] names.
+    first: Vec<Option<(i64, Timescale)>>,
+    /// The shared timeline origin: the earliest first decode time.
+    origin: Option<(i64, Timescale)>,
+    /// The per-track trim rule, once resolved.
+    filter: Option<Vec<WindowFilter>>,
+}
+
+/// One track's share of a resolved window: [`trim`]'s presentation-time rule.
+struct WindowFilter {
+    track: TrackId,
+    /// The timeline origin in this track's timescale ticks.
+    base: i64,
+    /// Presentation time the track starts at, inclusive.
+    lo: i64,
+    /// Presentation time the track ends before, exclusive.
+    hi: i64,
+    /// Running relative decode time for a sample with no `dts`.
+    next_rel: i64,
+    /// Anchor track only: the held-buffer position of the snapped sample
+    /// (`usize::MAX` when the window selects no anchor sample).
+    start_index: Option<usize>,
+    started: bool,
+    stopped: bool,
+}
+
+impl WindowHold {
+    fn new(start: u64, end: u64, limit: Option<u64>) -> Self {
+        Self {
+            start,
+            end,
+            limit,
+            held: Vec::new(),
+            held_bytes: 0,
+            first: Vec::new(),
+            origin: None,
+            filter: None,
+        }
+    }
+
+    /// Hold one kept sample, recording its track's first decode time. Past the
+    /// caller's cap the run refuses rather than growing without bound.
+    fn hold(
+        &mut self,
+        index: usize,
+        timescale: Timescale,
+        track: TrackId,
+        sample: Sample,
+    ) -> Result<()> {
+        if self.first.len() <= index {
+            self.first.resize(index + 1, None);
+        }
+        if self.first[index].is_none()
+            && let Some(dts) = sample.timing.and_then(|timing| timing.dts())
+        {
+            self.first[index] = Some((dts, timescale));
+        }
+        self.held_bytes = self.held_bytes.saturating_add(sample.data.len() as u64);
+        if let Some(limit) = self.limit
+            && self.filter.is_none()
+            && self.held_bytes > limit
+        {
+            return Err(Error::RepackageWindowHoldExceeded { limit });
+        }
+        self.held.push((track, sample));
+        Ok(())
+    }
+
+    /// Apply the resolved window rule to one sample: `true` keeps it.
+    fn pass(&mut self, track: TrackId, sample: &Sample, seq: Option<usize>) -> Result<bool> {
+        let Some(filter) = self
+            .filter
+            .as_mut()
+            .and_then(|filters| filters.iter_mut().find(|filter| filter.track == track))
+        else {
+            return Ok(true);
+        };
+        if filter.stopped {
+            return Ok(false);
+        }
+        let rel = match sample.timing.and_then(|timing| timing.dts()) {
+            Some(dts) => dts.checked_sub(filter.base).ok_or(Error::InvalidInput(
+                "trim: sample decode time is more than i64 ticks from the timeline origin",
+            ))?,
+            None => filter.next_rel,
+        };
+        let duration = sample
+            .timing
+            .and_then(|timing| timing.duration())
+            .unwrap_or(0);
+        filter.next_rel = rel.saturating_add(i64::from(duration));
+        let presentation = rel.saturating_add(i64::from(sample.composition_offset()?.unwrap_or(0)));
+        match filter.start_index {
+            Some(index) => {
+                if !filter.started {
+                    if seq == Some(index) {
+                        filter.started = true;
+                        Ok(true)
+                    } else {
+                        Ok(false)
+                    }
+                } else if presentation >= filter.hi {
+                    filter.stopped = true;
+                    Ok(false)
+                } else {
+                    Ok(true)
+                }
+            }
+            None => {
+                if !filter.started {
+                    filter.started = in_window(presentation, filter.lo, filter.hi);
+                    Ok(filter.started)
+                } else if presentation >= filter.hi {
+                    filter.stopped = true;
+                    Ok(false)
+                } else {
+                    Ok(true)
+                }
+            }
+        }
+    }
+}
+
+/// A sample's relative decode time and presentation time, following
+/// [`relative_decode_times`]'s rule for a sample with no `dts`.
+fn relative_presentation(
+    sample: &Sample,
+    origin: (i64, Timescale),
+    timescale: Timescale,
+    next_rel: &mut i64,
+) -> Result<(i64, i64)> {
+    let base = rescale_i64(origin.0, origin.1, timescale, Rounding::Floor);
+    let rel = match sample.timing.and_then(|timing| timing.dts()) {
+        Some(dts) => dts.checked_sub(base).ok_or(Error::InvalidInput(
+            "trim: sample decode time is more than i64 ticks from the timeline origin",
+        ))?,
+        None => *next_rel,
+    };
+    let duration = sample
+        .timing
+        .and_then(|timing| timing.duration())
+        .unwrap_or(0);
+    *next_rel = rel.saturating_add(i64::from(duration));
+    let presentation = rel.saturating_add(i64::from(sample.composition_offset()?.unwrap_or(0)));
+    Ok((rel, presentation))
+}
+
 /// The one stage between the demuxer and the segmenter: it resolves the kept
 /// track set and feeds each kept sample on to the segmenter.
 struct RepackageSink {
@@ -492,6 +667,8 @@ struct RepackageSink {
     started: Vec<TrackId>,
     segmenter: Option<Segmenter>,
     pending: VecDeque<MuxOutput>,
+    /// A streaming [`Repackage::trim`] window's hold, or `None` without one.
+    window: Option<WindowHold>,
 }
 
 impl RepackageSink {
@@ -508,6 +685,9 @@ impl RepackageSink {
             started: Vec::new(),
             segmenter: None,
             pending: VecDeque::new(),
+            window: repackage
+                .trim
+                .map(|(start, end)| WindowHold::new(start, end, repackage.hold)),
         }
     }
 
@@ -525,6 +705,7 @@ impl RepackageSink {
             started: Vec::new(),
             segmenter: None,
             pending: VecDeque::new(),
+            window: None,
         }
     }
 
@@ -652,6 +833,156 @@ impl RepackageSink {
         }
         segmenter.feed(MuxInput::Sample { track, sample }, Timestamp::ZERO)
     }
+
+    /// Feed one kept sample on to the segmenter, anchoring the track's first
+    /// `tfdt` on the shared origin (issue #1021) so a track that starts later
+    /// keeps that offset instead of restarting at 0.
+    fn accept(&mut self, track: TrackId, sample: Sample) -> Result<()> {
+        if self.origin.is_none()
+            && let Some(dts) = sample.timing.and_then(|t| t.dts())
+            && let Some(timescale) = self.timescale(track)
+        {
+            self.origin = Some((dts, timescale));
+        }
+        if self.segmenter.is_none() {
+            self.start()?;
+        }
+        self.emit(track, sample)
+    }
+
+    /// Resolve a streaming window once its origin (and, unless `force`, its
+    /// snapped lower edge) is known, then release the held samples through the
+    /// per-track rule [`trim`] applies. `force` is the end-of-input pass: a
+    /// track that never produced a sample is skipped, and a window that selects
+    /// no anchor sample keeps nothing from the anchor but still starts the other
+    /// tracks at the window's own lower edge.
+    fn resolve_window(&mut self, force: bool) -> Result<()> {
+        let Some(mut window) = self.window.take() else {
+            return Ok(());
+        };
+        if window.filter.is_some() {
+            self.window = Some(window);
+            return Ok(());
+        }
+        let ready = if force {
+            true
+        } else {
+            !self.kept.is_empty() && window.first.iter().all(Option::is_some)
+        };
+        if !ready {
+            self.window = Some(window);
+            return Ok(());
+        }
+        let origin = window.origin.or_else(|| {
+            let mut best: Option<(i64, Timescale)> = None;
+            for first in window.first.iter().flatten() {
+                let take =
+                    best.is_none_or(|(bd, bts)| cmp_ticks(first.0, first.1, bd, bts).is_lt());
+                if take {
+                    best = Some(*first);
+                }
+            }
+            best
+        });
+        let Some(origin) = origin else {
+            self.window = Some(window);
+            if force {
+                return Err(Error::InvalidInput(
+                    "trim: window selected no samples on any track",
+                ));
+            }
+            return Ok(());
+        };
+        window.origin = Some(origin);
+        let Some(movie_timescale) = self.movie_timescale else {
+            self.window = Some(window);
+            return Ok(());
+        };
+        let anchor = choose_anchor(self.announced.iter().map(|spec| &spec.config))?;
+        let anchor_spec = &self.announced[anchor];
+        let anchor_ts = anchor_spec.timescale;
+        let lo = rescale_floor(window.start, movie_timescale, anchor_ts);
+        let hi = rescale_floor(window.end, movie_timescale, anchor_ts);
+
+        let mut next_rel = 0i64;
+        let mut first: Option<(i64, usize)> = None;
+        let mut last_sync: Option<(i64, usize)> = None;
+        let mut snapped: Option<(i64, usize)> = None;
+        for (seq, (track, sample)) in window.held.iter().enumerate() {
+            if *track != anchor_spec.track_id {
+                continue;
+            }
+            let (_rel, presentation) =
+                relative_presentation(sample, origin, anchor_ts, &mut next_rel)?;
+            if first.is_none() {
+                first = Some((presentation, seq));
+            }
+            if sample.flags.is_sync {
+                last_sync = Some((presentation, seq));
+            }
+            if snapped.is_none() && in_window(presentation, lo, hi) {
+                snapped = last_sync.or(first);
+            }
+        }
+        let snapped = snapped.or(if force {
+            // No anchor sample in the window: the anchor contributes nothing,
+            // and every other track starts at the window's own lower edge.
+            Some((
+                rescale_floor(window.start, movie_timescale, anchor_ts),
+                usize::MAX,
+            ))
+        } else {
+            None
+        });
+        let Some((snapped_pts, snapped_seq)) = snapped else {
+            self.window = Some(window);
+            return Ok(());
+        };
+
+        let mut filters = Vec::with_capacity(self.announced.len());
+        for (index, spec) in self.announced.iter().enumerate() {
+            let timescale = spec.timescale;
+            let hi_ticks = rescale_floor(window.end, movie_timescale, timescale);
+            let base = rescale_i64(origin.0, origin.1, timescale, Rounding::Floor);
+            let (lo_ticks, start_index) = if index == anchor {
+                (snapped_pts, Some(snapped_seq))
+            } else {
+                (
+                    rescale_i64(snapped_pts, anchor_ts, timescale, Rounding::Floor),
+                    None,
+                )
+            };
+            filters.push(WindowFilter {
+                track: spec.track_id,
+                base,
+                lo: lo_ticks,
+                hi: hi_ticks,
+                next_rel: 0,
+                start_index,
+                started: false,
+                stopped: false,
+            });
+        }
+        window.filter = Some(filters);
+        let held = core::mem::take(&mut window.held);
+        window.held_bytes = 0;
+        let mut kept = Vec::new();
+        for (seq, (track, sample)) in held.into_iter().enumerate() {
+            if window.pass(track, &sample, Some(seq))? {
+                kept.push((track, sample));
+            }
+        }
+        self.window = Some(window);
+        for (track, sample) in kept {
+            self.accept(track, sample)?;
+        }
+        if force && self.segmenter.is_none() {
+            return Err(Error::InvalidInput(
+                "trim: window selected no samples on any track",
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl Stage for RepackageSink {
@@ -689,16 +1020,25 @@ impl Stage for RepackageSink {
                 if !self.kept.contains(&track) {
                     return Ok(());
                 }
-                if self.origin.is_none()
-                    && let Some(dts) = sample.timing.and_then(|t| t.dts())
-                    && let Some(timescale) = self.timescale(track)
-                {
-                    self.origin = Some((dts, timescale));
+                if self.window.as_ref().is_some_and(|w| w.filter.is_none()) {
+                    let index = self.kept.iter().position(|t| *t == track).unwrap_or(0);
+                    let timescale = self
+                        .timescale(track)
+                        .ok_or(Error::InvalidInput("repackage: unknown track"))?;
+                    if let Some(window) = self.window.as_mut() {
+                        window.hold(index, timescale, track, sample)?;
+                    }
+                    self.resolve_window(false)?;
+                    return Ok(());
                 }
-                if self.segmenter.is_none() {
-                    self.start()?;
+                let keep = match self.window.as_mut() {
+                    Some(window) => window.pass(track, &sample, None)?,
+                    None => true,
+                };
+                if keep {
+                    self.accept(track, sample)?;
                 }
-                self.emit(track, sample)
+                Ok(())
             }
             MuxInput::Discontinuity { .. } => Ok(()),
             MuxInput::Flush => self.finish(),
@@ -710,6 +1050,7 @@ impl Stage for RepackageSink {
     }
 
     fn finish(&mut self) -> Result<()> {
+        self.resolve_window(true)?;
         if let Some(segmenter) = self.segmenter.as_mut() {
             segmenter.finish()?;
             while let Some(output) = segmenter.poll() {

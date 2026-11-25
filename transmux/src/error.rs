@@ -91,15 +91,19 @@ pub enum Error {
     #[error("invalid input: {0}")]
     InvalidInput(&'static str),
 
-    /// [`Repackage::run`](crate::repackage::Repackage::run) was configured
-    /// with a time window. A streaming input knows the shared timeline origin
-    /// (the earliest first decode time across every track) only from a plan,
-    /// so trimming a byte stream needs the whole input: use
-    /// [`Repackage::run_media`](crate::repackage::Repackage::run_media).
+    /// A streaming [`Repackage::run`](crate::repackage::Repackage::run) window
+    /// held more bytes than the caller's cap before its lower edge reached a
+    /// random-access point. Raise the cap with
+    /// [`Repackage::window_hold`](crate::repackage::Repackage::window_hold), or
+    /// use [`Repackage::run_media`](crate::repackage::Repackage::run_media)
+    /// over a whole input.
     #[error(
-        "repackage: a time window needs the whole input; use run_media, or a plan once one is available"
+        "repackage: a time window held more than {limit} bytes before its lower edge reached a keyframe"
     )]
-    RepackageWindowNeedsWholeInput,
+    RepackageWindowHoldExceeded {
+        /// The caller's cap, in bytes.
+        limit: u64,
+    },
 
     /// A [`RebaseStage`](crate::rebase::RebaseStage) built with an exact
     /// origin was fed a sample of a track the origin does not name.

@@ -177,11 +177,37 @@ struct DecodeCursor<'m> {
 
 impl<'m> DecodeCursor<'m> {
     fn new(track: &'m Track) -> Self {
+        let mut decode = i64::try_from(track.start_decode_time).unwrap_or(i64::MAX);
+        // A track's untimed head (samples that state a span but no timestamp,
+        // before its first timestamped sample) plays *before* that first timed
+        // sample: the producers that recover an absolute anchor
+        // (`Track::start_decode_time`) take it from the first sample that
+        // carries one. Back the running decode time off by the head's total
+        // span so those samples sort where they play instead of at the first
+        // timed sample's instant — on a 44.1 kHz audio head that is enough to
+        // reorder it behind the video it actually precedes.
+        let mut head_ticks: u64 = 0;
+        let mut has_timed = false;
+        for sample in &track.samples {
+            match sample.timing {
+                Some(SampleTiming::Timed { .. }) => {
+                    has_timed = true;
+                    break;
+                }
+                Some(SampleTiming::DurationOnly { duration }) => {
+                    head_ticks = head_ticks.saturating_add(u64::from(duration.get()));
+                }
+                None => {}
+            }
+        }
+        if has_timed {
+            decode = decode.saturating_sub(i64::try_from(head_ticks).unwrap_or(i64::MAX));
+        }
         Self {
             samples: &track.samples,
             timescale: i128::from(track.spec.timescale),
             next: 0,
-            decode: i64::try_from(track.start_decode_time).unwrap_or(i64::MAX),
+            decode,
         }
     }
 
@@ -233,7 +259,7 @@ mod tests {
 
     #[derive(Default)]
     struct Recorder {
-        fed: Vec<(TrackId, i64)>,
+        fed: Vec<(TrackId, Option<i64>)>,
         announced: usize,
         finished: bool,
         out: Vec<MuxOutput>,
@@ -248,10 +274,8 @@ mod tests {
             match input {
                 MuxInput::Track(_) => self.announced += 1,
                 MuxInput::Sample { track, sample } => {
-                    let Some(SampleTiming::Timed { dts, .. }) = sample.timing else {
-                        unreachable!("test samples are timed");
-                    };
-                    self.fed.push((track, dts));
+                    self.fed
+                        .push((track, sample.timing.and_then(|timing| timing.dts())));
                     self.out.push(MuxOutput::Bytes(sample.data));
                 }
                 _ => {}
@@ -313,14 +337,87 @@ mod tests {
         assert_eq!(
             stage.fed,
             vec![
-                (v, 0),
-                (a, 0),
-                (a, 1_024),
-                (v, 3_000),
-                (a, 2_048),
-                (a, 3_072),
-                (v, 6_000)
+                (v, Some(0)),
+                (a, Some(0)),
+                (a, Some(1_024)),
+                (v, Some(3_000)),
+                (a, Some(2_048)),
+                (a, Some(3_072)),
+                (v, Some(6_000))
             ]
+        );
+    }
+
+    /// A track's untimed head plays *before* its first timestamped sample, so
+    /// it must sort there too. Sixteen 1024-tick head frames at 44.1 kHz span
+    /// ~371 ms before the first timed sample at 64 243 ticks (~1.457 s), i.e.
+    /// from ~1.086 s, which precedes the video's first sample at 1.4 s. Ordering
+    /// the head at the first timed sample instead put an entire video picture
+    /// before audio that genuinely plays first.
+    #[test]
+    fn an_untimed_head_sorts_before_the_first_timed_sample() {
+        const HEAD: u32 = 16;
+        const HEAD_DURATION: u32 = 1_024;
+        const FIRST_TIMED: i64 = 64_243;
+        let video = track(1, 90_000, &[126_000, 129_600]);
+        let mut samples = Vec::new();
+        for _ in 0..HEAD {
+            samples.push(Sample {
+                data: vec![0u8; 1].into(),
+                timing: Some(SampleTiming::duration_only(HEAD_DURATION).expect("positive")),
+                flags: SampleFlags::SYNC,
+                provenance: None,
+                display: None,
+                protection: None,
+            });
+        }
+        samples.push(Sample {
+            data: vec![0u8; 1].into(),
+            timing: Some(SampleTiming::timed(FIRST_TIMED, FIRST_TIMED)),
+            flags: SampleFlags::SYNC,
+            provenance: None,
+            display: None,
+            protection: None,
+        });
+        let audio = Track::new_at(
+            TrackSpec::new(
+                TrackId::new(2),
+                Timescale::try_new(44_100).expect("non-zero"),
+                CodecConfig::Data {
+                    identity: DataIdentity::Ts {
+                        stream_type: 6,
+                        descriptors: Vec::new(),
+                        carriage: DataCarriage::Pes,
+                    },
+                },
+            ),
+            samples,
+            u64::try_from(FIRST_TIMED).expect("non-negative"),
+        );
+        let media = Media::new(
+            vec![video, audio],
+            Timescale::try_new(1_000).expect("non-zero"),
+        );
+        let mut stage = Recorder::default();
+        drive_media(&mut stage, &media, Timestamp::default()).expect("infallible");
+        assert_eq!(
+            stage.fed.first().copied(),
+            Some((TrackId::new(2), None)),
+            "the untimed audio head precedes the video that starts after it"
+        );
+        let video = stage
+            .fed
+            .iter()
+            .position(|entry| *entry == (TrackId::new(1), Some(126_000)))
+            .expect("video sample fed");
+        let timed_audio = stage
+            .fed
+            .iter()
+            .position(|entry| *entry == (TrackId::new(2), Some(FIRST_TIMED)))
+            .expect("first timed audio sample fed");
+        assert!(
+            video < timed_audio,
+            "the first timed audio sample still follows the video it plays after"
         );
     }
 }

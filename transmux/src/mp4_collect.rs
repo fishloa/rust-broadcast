@@ -7,6 +7,7 @@
 //! exists until the muxers consume samples directly (streaming-first Phase 4).
 
 use alloc::collections::BTreeMap;
+#[cfg(test)]
 use alloc::string::String;
 use alloc::vec::Vec;
 
@@ -15,7 +16,9 @@ use broadcast_common::stage::Timestamp;
 use broadcast_common::timescale::Timescale;
 
 use crate::error::Result;
-use crate::ir::{AbandonReason, DemuxEvent, Media, SkippedTrack, Track, TrackId};
+#[cfg(test)]
+use crate::ir::{AbandonReason, SkippedTrack};
+use crate::ir::{DemuxEvent, Media, Track, TrackId};
 use crate::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 #[cfg(all(feature = "cli", feature = "cenc"))]
 use crate::mux_stage::MuxInput;
@@ -28,6 +31,7 @@ const DEFAULT_MOVIE_TIMESCALE: core::num::NonZeroU32 = match core::num::NonZeroU
 
 /// Demux a whole in-memory MP4 image through a seekable [`Mp4Demux`] and fold
 /// its events into a [`Media`].
+#[cfg(test)]
 pub(crate) fn media_from_mp4(bytes: &[u8]) -> Result<Media> {
     let total_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     let mut demux = Mp4Demux::seekable(Mp4DemuxConfig::default().with_total_len(Some(total_len)));
@@ -35,6 +39,7 @@ pub(crate) fn media_from_mp4(bytes: &[u8]) -> Result<Media> {
     media_from_stage(demux)
 }
 
+#[cfg(test)]
 fn drive_seekable(demux: &mut Mp4Demux, bytes: &[u8]) -> Result<()> {
     loop {
         let demand = demux.demand();
@@ -197,6 +202,7 @@ fn media_from_inputs(inputs: Vec<MuxInput>) -> Media {
     Media::new(tracks, Timescale::from_nonzero(DEFAULT_MOVIE_TIMESCALE))
 }
 
+#[cfg(test)]
 fn media_from_stage(mut demux: Mp4Demux) -> Result<Media> {
     let fragmented = demux.is_fragmented();
     let movie_timescale = demux.movie_timescale();
@@ -224,6 +230,7 @@ fn media_from_stage(mut demux: Mp4Demux) -> Result<Media> {
 }
 
 /// Fold a demux event stream into a [`Media`].
+#[cfg(test)]
 fn media_from_events(events: Vec<DemuxEvent>) -> Media {
     let mut tracks: Vec<Track> = Vec::new();
     let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
@@ -266,6 +273,7 @@ fn media_from_events(events: Vec<DemuxEvent>) -> Media {
     media
 }
 
+#[cfg(test)]
 fn skipped_from_reason(reason: AbandonReason, track_id: Option<TrackId>) -> SkippedTrack {
     let (fourcc, text) = match reason {
         AbandonReason::UnsupportedSampleEntry { fourcc, detail } => {
