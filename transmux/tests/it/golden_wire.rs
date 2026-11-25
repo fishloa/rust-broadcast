@@ -8,9 +8,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 
 use crate::sdp_session;
-use broadcast_common::Package;
 use broadcast_common::Unpackage;
-use transmux::{RtpOutput, RtpPacketiser, TsDemux};
+use transmux::TsDemux;
 
 fn check(name: &str, actual: &str) {
     if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
@@ -31,15 +30,10 @@ fn check(name: &str, actual: &str) {
 fn rtp_session_sdp_matches_golden() {
     let ts = fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("ts fixture");
     let media = TsDemux::new().unpackage(&ts[..]).expect("demux");
-    let mut p = RtpPacketiser {
-        mtu: 1400,
-        ssrc: 0x1234_5678,
-        ..RtpPacketiser::default()
-    };
-    let out = p.package(&media).expect("packetise");
+    let out = crate::rtp_run::packetise(&media, crate::rtp_run::stage(1400, 0x1234_5678));
     check(
         "golden/rtp/rtp-sdp-h264-aac.sdp",
-        &sdp_session::local_session(out),
+        &sdp_session::local_session(out.medias),
     );
 }
 
@@ -55,18 +49,9 @@ fn connection_address_sdp_matches_golden() {
     let media: Vec<sdp_types::Media> = sdp_types::Session::parse(MEDIA_BLOCK_SESSION.as_bytes())
         .expect("parse media block")
         .medias;
-    let v4 = sdp_session::session(
-        RtpOutput {
-            streams: Vec::new(),
-            medias: media,
-        },
-        IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)),
-    );
+    let v4 = sdp_session::session(media, IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)));
     let v6 = sdp_session::session(
-        RtpOutput {
-            streams: Vec::new(),
-            medias: Vec::new(),
-        },
+        Vec::new(),
         IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
     );
     check("golden/rtp/rtp-sdp-conn-v4.sdp", &v4);

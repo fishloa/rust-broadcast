@@ -118,7 +118,7 @@ fn a_composition_offset_past_i32_is_a_typed_range_error_naming_the_offset() {
 }
 
 #[test]
-fn a_span_past_f64_max_is_an_error_not_an_infinite_extinf() {
+fn a_finite_enormous_span_renders_and_a_zero_timescale_is_an_error() {
     // Two samples in a 1 Hz track: a short one whose end is at the bottom of
     // the tick range (its decode time is taken to its presentation time by a
     // `-3` composition offset), and a long one whose end sits just below the
@@ -136,7 +136,7 @@ fn a_span_past_f64_max_is_an_error_not_an_infinite_extinf() {
     )
     .expect("valid timing");
     assert_eq!(high.composition_offset(), Ok(Some(0)));
-    let media = Media::new(vec![Track::new(avc_spec(), vec![low, high])], timescale(1));
+    let _media = Media::new(vec![Track::new(avc_spec(), vec![low, high])], timescale(1));
     // A summary's span is `u64` ticks over a non-zero timescale, so it can be
     // absurd but never infinite: the renderer must refuse a span the
     // `DecimalSeconds` constructor cannot represent rather than panic on it.
@@ -182,7 +182,6 @@ fn a_span_past_f64_max_is_an_error_not_an_infinite_extinf() {
         matches!(err, transmux::Error::InvalidInput(_)),
         "got {err:?}"
     );
-    let _ = media;
 }
 
 #[test]

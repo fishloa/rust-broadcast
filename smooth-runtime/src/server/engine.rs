@@ -989,7 +989,7 @@ fn package_fragment(
             track: stream.interleaved_ordinal,
             reason: error.to_string(),
         })?;
-    Ok(Bytes::from(fragment.bytes))
+    Ok(fragment.bytes)
 }
 
 impl SmoothRequest {

@@ -1,9 +1,10 @@
 //! DASH `.mpd` Media Presentation Description generation — ISO/IEC 23009-1.
 //!
 //! The DASH sibling of [`crate::media::HlsPackager`]: [`DashPackager`] renders a
-//! [`Media`](crate::media::Media) as an MPEG-DASH Media Presentation Description
-//! (MPD) XML document. One CMAF segment set therefore yields both an HLS media
-//! playlist and a DASH manifest describing the same tracks.
+//! track set and its [`SegmentSummaryLog`] as an MPEG-DASH Media Presentation
+//! Description (MPD) XML document, never seeing a sample. One CMAF segment set
+//! therefore yields both an HLS media playlist and a DASH manifest describing
+//! the same tracks.
 //!
 //! # Structure (ISO/IEC 23009-1:2014)
 //!
@@ -414,9 +415,9 @@ pub struct TrickModeRepr {
     pub total_duration: u64,
 }
 
-/// Render an MPEG-DASH MPD (ISO/IEC 23009-1) describing a [`Media`](crate::media::Media).
+/// Render an MPEG-DASH MPD (ISO/IEC 23009-1) describing a track set.
 ///
-/// Groups the media's tracks into one video and one audio
+/// Groups the tracks into one video and one audio
 /// `AdaptationSet` (only kinds that have tracks are emitted) and emits a
 /// `Representation` per track with a number-based
 /// `SegmentTemplate`.

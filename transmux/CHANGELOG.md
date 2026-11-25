@@ -23,6 +23,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `repackage`: `Repackage::run` drives the demux stage and `run_media` the
   muxer stage through the same filters, never building a `Media` for the
   streaming path.
+- The FLV, RTMP, Matroska and RTP muxers are stages:
+  `FlvMux`/`RtmpMux`/`MkvMux`/`RtpPacketiser` (and their `Package` impls) are
+  replaced by `FlvMuxStage`, `RtmpMuxStage`, `MkvMuxStage` and
+  `RtpPacketiserStage`, each `Stage<In = MuxInput, Out = MuxOutput>`, so an
+  output is written as the samples arrive instead of from a whole `Media`.
+  `MkvMuxStage::new` takes the `Cluster` duration (caller policy);
+  `RtpPacketiserStage` assigns the session's dynamic payload types at track
+  announcement and emits one whole RTP datagram per packet, and `RtpOutput`,
+  `RtpStream` and `RtpPacketiser::packetise_video` are gone —
+  `RtpPacket::from_contiguous`, `packetise_video_sample` and `sdp_media`
+  replace them. FLV frame timestamps now come from each sample's own decode
+  time rather than a per-track running sum; the file's `onMetaData` duration
+  and Matroska's `Info.Duration` are patched at `finish` with
+  `MuxOutput::BytesAt`, and a Matroska `Segment` is written with the RFC 8794
+  unknown-size encoding (its length is a whole-stream fact the stage never
+  holds).
+- `flv_frame_payloads(&Media)` and `flv_sequence_header_payloads(&Media)` are
+  per-sample/per-spec: `flv_frame_payload(&TrackSpec, &Sample)` and
+  `flv_sequence_header_payloads(&[TrackSpec])`; `on_metadata_body` takes
+  `&[TrackSpec]` too.
+- `MkvMuxStage` muxes a `CodecConfig::Data` track whose identity is
+  `DataIdentity::Matroska` (CodecID and CodecPrivate written as given) and
+  refuses any other data identity with `Error::UnsupportedMkvCodec`.
+  `WebmDemux` now carries an unmapped CodecID as such a data track instead of
+  dropping it.
 - `Fmp4Demux`, `ProgressiveDemux` (its `Unpackage` and `Stage` impls too),
   `demux_progressive` and `samples_from_stbl` are deleted, together with the
   `transmux_progressive_demux` fuzz target. The replacement is

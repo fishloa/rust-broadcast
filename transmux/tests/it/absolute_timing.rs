@@ -31,7 +31,7 @@ use transmux::TrackId;
 
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
-use transmux::{FlvDemux, Media, PsDemux, RtmpMux, RtpOutput, RtpPacketiser, TsDemux, WebmDemux};
+use transmux::{FlvDemux, Media, PsDemux, RtmpMuxStage, TsDemux, WebmDemux};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -708,7 +708,7 @@ fn ps_demux_emits_absolute_time_from_pes_timestamps() {
 fn rtmp_demux_emits_absolute_time_from_message_timestamps() {
     let flv = std::fs::read(test_fixtures::path("flv/av.flv")).expect("fixtures/flv/av.flv");
     let ir = FlvDemux::new().unpackage(&flv[..]).expect("FLV → IR");
-    let wire = RtmpMux::default().package(&ir).expect("IR → RTMP wire");
+    let wire = crate::mux_bytes::mux_bytes(&mut RtmpMuxStage::default(), &ir);
     let back = transmux::RtmpDemux::new()
         .unpackage(&wire[..])
         .expect("RTMP wire → IR");
@@ -744,13 +744,7 @@ fn rtmp_demux_emits_absolute_time_from_message_timestamps() {
 fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
     let ts = std::fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("h264-aac.ts fixture");
     let ir = TsDemux::new().unpackage(&ts[..]).expect("TS → IR");
-    let out: RtpOutput = RtpPacketiser {
-        mtu: 1400,
-        ssrc: 0x1234_5678,
-        ..RtpPacketiser::default()
-    }
-    .package(&ir)
-    .expect("IR → RTP");
+    let out = crate::rtp_run::packetise(&ir, crate::rtp_run::stage(1400, 0x1234_5678));
 
     let recovered = transmux::RtpDepacketiser::new()
         .unpackage(RtpInput {

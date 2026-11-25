@@ -435,7 +435,7 @@ mod tests {
             CodecConfig::Aac { .. } => StreamType::Audio,
             _ => panic!("unexpected codec"),
         };
-        let manifest = SmoothManifest::parse(&manifest_text).expect("parse manifest");
+        let manifest = SmoothManifest::parse(manifest_text).expect("parse manifest");
         let si = manifest
             .streams
             .iter()

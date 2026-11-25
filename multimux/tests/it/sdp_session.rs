@@ -8,11 +8,9 @@
 
 use std::fs;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 
 const FIXTURE: &str = "ts/h264-aac.ts";
-const MTU: usize = 1400;
-const SSRC: u32 = 0x1234_5678;
 /// RFC 3551 §6 static payload type for MPEG2 Transport Stream (RFC 2250 §2).
 const MP2T_PT: u8 = 33;
 /// RFC 2250 §2's fixed RTP clock rate for MP2T.
@@ -30,7 +28,7 @@ fn check(name: &str, actual: &str) {
     assert_eq!(actual, expected, "{name} differs from the golden output");
 }
 
-/// transmux's `RtpOutput::medias` for the committed H.264 + AAC fixture
+/// transmux's `sdp_media` sections for the committed H.264 + AAC fixture
 /// (`broadcast-client`'s RTSP capture fixture) — the media sections that
 /// become the session's `m=` blocks.
 #[test]
@@ -39,17 +37,25 @@ fn transmux_rtp_medias_match_golden() {
     let media = transmux::TsDemux::new()
         .unpackage(&ts[..])
         .expect("demux fixture");
-    let mut packetiser = transmux::RtpPacketiser {
-        mtu: MTU,
-        ssrc: SSRC,
-        ..transmux::RtpPacketiser::default()
-    };
-    let out = packetiser.package(&media).expect("packetise fixture");
-    assert_eq!(out.medias.len(), out.streams.len());
+    // The packetiser's payload types are the documented defaults for the
+    // first video and first audio stream, which is what this session's `m=`
+    // sections bind.
+    let medias: Vec<sdp_types::Media> = media
+        .tracks
+        .iter()
+        .map(|track| {
+            let pt = match &track.spec.config {
+                transmux::CodecConfig::Avc { .. } => transmux::DEFAULT_VIDEO_PT,
+                _ => transmux::DEFAULT_AUDIO_PT,
+            };
+            transmux::sdp_media(&track.spec, pt).expect("SDP media section")
+        })
+        .collect();
+    assert_eq!(medias.len(), media.tracks.len());
     let origin = sdp_types::Origin::with_ip_addr(0, 0, std::net::Ipv4Addr::LOCALHOST);
     let connection =
         sdp_types::Connection::from_ip_addr(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
-    let sdp = rtsp_runtime::session_description("transmux RTP", origin, connection, out.medias)
+    let sdp = rtsp_runtime::session_description("transmux RTP", origin, connection, medias)
         .expect("render session");
     check("golden/rtsp/sdp-transmux-h264-aac.sdp", &sdp);
 }

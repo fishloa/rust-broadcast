@@ -41,12 +41,12 @@
 //! unconditionally. A routine DVB multiplex's first elementary stream is
 //! often teletext, DSM-CC, or SCTE-35 — an opaque
 //! [`transmux::CodecConfig::Data`] track with no derivable RFC 6381 codec
-//! string — so `DashPackager::package` rejected the built [`Media`] and the
+//! string — so `DashPackager::render` rejected the empty-sample media and the
 //! whole DASH route returned a **permanent** `503`, even though a perfectly
 //! representable video/audio track sat right behind it in the PMT's track
 //! list. `select_representable_track` fixes this: it selects the first
 //! track (preferring a video-shaped codec, then any other, e.g. audio) that
-//! actually produces a derivable codec string — proven by trial-packaging it
+//! actually produces a derivable codec string — proven by trial-rendering it
 //! through the real [`DashPackager`] rather than re-deriving "is this codec
 //! supported" here (which would drift from `DashPackager::codec_string`'s
 //! own, more authoritative, list). Only a track set with genuinely **no**

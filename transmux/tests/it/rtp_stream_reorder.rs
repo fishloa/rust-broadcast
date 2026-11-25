@@ -2,13 +2,10 @@
 //! `fixtures/ts/h264-aac.ts`, packetised in decode order with RTP timestamps
 //! equal to the presentation time (RFC 6184 §5.1).
 
-use broadcast_common::Package;
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use transmux::pipeline::CodecConfig;
-use transmux::{
-    RtpMediaKind, RtpPacketiser, RtpStreamDepacketiser, RtpStreamTrack, TrackId, VIDEO_CLOCK_RATE,
-};
+use transmux::{RtpMediaKind, RtpStreamDepacketiser, RtpStreamTrack, TrackId, VIDEO_CLOCK_RATE};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -28,12 +25,7 @@ fn video_durations(skip_aus: usize) -> (Vec<(i64, u32)>, Vec<i64>) {
         .iter()
         .map(|s| s.timing.and_then(|t| t.pts()).unwrap())
         .collect();
-    let mut p = RtpPacketiser {
-        mtu: 1400,
-        ssrc: 0x1234_5678,
-        ..RtpPacketiser::default()
-    };
-    let out = p.package(&media).unwrap();
+    let out = crate::rtp_run::packetise(&media, crate::rtp_run::stage(1400, 0x1234_5678));
     let stream = out
         .streams
         .iter()

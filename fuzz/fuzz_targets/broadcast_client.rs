@@ -10,7 +10,7 @@ use broadcast_client::{
 };
 use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use libfuzzer_sys::fuzz_target;
 
 const URLS: [&str; 5] = [
@@ -306,20 +306,63 @@ struct RtpSeed {
     packets: Vec<Vec<Vec<u8>>>,
 }
 
+/// Packetise every track of `media` with the RTP packetiser stage, one track at
+/// a time: each track's whole packet list, plus its SDP media section.
+fn packetise(media: &transmux::Media) -> (Vec<sdp_types::Media>, Vec<Vec<Vec<u8>>>) {
+    use broadcast_common::stage::Stage as _;
+    use transmux::mux_stage::{MuxInput, MuxOutput};
+    let mut medias: Vec<sdp_types::Media> = Vec::new();
+    let mut streams: Vec<Vec<Vec<u8>>> = Vec::new();
+    for track in &media.tracks {
+        let mut stage = transmux::RtpPacketiserStage::new()
+            .with_mtu(MTU)
+            .with_ssrc(RTP_SSRC)
+            .with_stap_a_parameter_sets(false);
+        stage
+            .feed(
+                MuxInput::Track(Box::new(track.spec.clone())),
+                Timestamp::ZERO,
+            )
+            .expect("announce track");
+        let mut packets: Vec<Vec<u8>> = Vec::new();
+        let drain = |stage: &mut transmux::RtpPacketiserStage, packets: &mut Vec<Vec<u8>>| {
+            while let Some(MuxOutput::Bytes(bytes)) = stage.poll() {
+                packets.push(bytes.to_vec());
+            }
+        };
+        drain(&mut stage, &mut packets);
+        for sample in &track.samples {
+            stage
+                .feed(
+                    MuxInput::Sample {
+                        track: track.spec.track_id,
+                        sample: sample.clone(),
+                    },
+                    Timestamp::ZERO,
+                )
+                .expect("feed sample");
+            drain(&mut stage, &mut packets);
+        }
+        let pt = packets
+            .first()
+            .and_then(|p| p.get(1))
+            .map(|byte| byte & 0x7F)
+            .unwrap_or(transmux::DEFAULT_VIDEO_PT);
+        if let Ok(media) = transmux::sdp_media(&track.spec, pt) {
+            medias.push(media);
+        }
+        streams.push(packets);
+    }
+    (medias, streams)
+}
+
 fn rtp_seed() -> &'static RtpSeed {
     static SEED: OnceLock<RtpSeed> = OnceLock::new();
     SEED.get_or_init(|| {
         let media = transmux::TsDemux::new()
             .unpackage(TS_SOURCES[0])
             .expect("demux fixture");
-        let mut packetiser = transmux::RtpPacketiser {
-            mtu: MTU,
-            ssrc: RTP_SSRC,
-            stap_a_parameter_sets: false,
-            ..transmux::RtpPacketiser::default()
-        };
-        let out = packetiser.package(&media).expect("packetise fixture");
-        let mut medias = out.medias;
+        let (mut medias, packets) = packetise(&media);
         for (n, media) in medias.iter_mut().enumerate() {
             media.add_attribute_with_value("control", format!("trackID={}", n + 1));
         }
@@ -330,17 +373,6 @@ fn rtp_seed() -> &'static RtpSeed {
             medias,
         )
         .expect("render session description");
-        let packets = out
-            .streams
-            .iter()
-            .map(|stream| {
-                stream
-                    .packets
-                    .iter()
-                    .map(|p| p.as_contiguous().to_vec())
-                    .collect()
-            })
-            .collect();
         RtpSeed { sdp, packets }
     })
 }

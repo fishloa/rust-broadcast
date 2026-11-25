@@ -3,11 +3,10 @@
 //! followed by valid data; the data after the damage must still be decoded and
 //! the damage must be reported in `Media::degraded`.
 
-use broadcast_common::Package;
 use broadcast_common::Unpackage;
 use transmux::ir::InputDegradation;
 use transmux::media::Media;
-use transmux::{PsDemux, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpPacketiser};
+use transmux::{PsDemux, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind};
 
 const PACK_START_CODE: [u8; 4] = [0x00, 0x00, 0x01, 0xBA];
 
@@ -88,18 +87,12 @@ fn ps_with_no_recoverable_pack_is_still_an_error() {
     ));
 }
 
-fn packetised() -> (Media, transmux::RtpOutput) {
+fn packetised() -> (Media, crate::rtp_run::RtpOutput) {
     let ts = fixture("ts/h264-aac.ts");
     let media = transmux::TsDemux::new()
         .unpackage(&ts[..])
         .expect("demux TS");
-    let out = RtpPacketiser {
-        mtu: 1400,
-        ssrc: 0x1234_5678,
-        ..RtpPacketiser::default()
-    }
-    .package(&media)
-    .expect("packetise");
+    let out = crate::rtp_run::packetise(&media, crate::rtp_run::stage(1400, 0x1234_5678));
     (media, out)
 }
 

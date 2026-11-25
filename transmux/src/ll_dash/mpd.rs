@@ -40,7 +40,7 @@ const MILLIS_ROUNDING_BIAS: f64 = 0.5;
 /// `<ProducerReferenceTime>` is omitted.
 #[derive(Debug, Clone)]
 pub struct LlDashPackager {
-    /// The underlying whole-segment packager (forced `dynamic` on package).
+    /// The underlying whole-segment packager (forced `dynamic` on render).
     pub base: DashPackager,
     /// Nominal segment duration (the `availabilityTimeOffset` base).
     pub segment_duration: Duration,

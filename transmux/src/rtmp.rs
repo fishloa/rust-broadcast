@@ -15,42 +15,50 @@
 //! is an FLV `AudioTagHeader`+data and a **Video (type 9)** message body is an
 //! FLV `VideoTagHeader`+data (Adobe FLV v10.1 Annex E §E.4.2 / §E.4.3). So this
 //! spoke reuses the crate's FLV spoke ([`crate::flv::FlvDemux`] /
-//! [`crate::flv::FlvMux`]) to reach the [`Media`] IR rather than re-implementing
+//! [`crate::flv::FlvMuxStage`]) to reach the [`Media`] IR rather than re-implementing
 //! FLV parsing:
 //!
 //! - [`RtmpDemux`] ([`Unpackage`]): de-frames the chunk stream (§5.3),
 //!   reassembles complete messages, collects the A/V (and script) message
 //!   bodies, rebuilds an FLV byte stream from them, and hands it to
 //!   [`FlvDemux`] → [`Media`].
-//! - [`RtmpMux`] ([`Package`]): serialises the [`Media`] to FLV via
-//!   [`FlvMux`], splits the FLV tags, wraps each A/V tag
-//!   body as an RTMP message and chunks them (§5.3).
+//! - [`RtmpMuxStage`] ([`Stage`]): runs the same FLV tag pipeline
+//!   [`crate::flv::FlvMuxStage`] does, wraps each tag body as an RTMP message
+//!   and chunks it (§5.3), one message at a time.
 //!
 //! `no_std` + `alloc`.
 
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
-use rtmp_runtime::RtmpError;
+use broadcast_common::stage::{Stage, Timestamp};
+use broadcast_common::{Serialize, Unpackage};
 use rtmp_runtime::chunk::{
     ChunkAssembler, ChunkWriter, DEFAULT_CHUNK_SIZE_VALUE, MAX_CHUNK_SIZE, MAX_MESSAGE_LEN, Message,
 };
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
 use rtmp_runtime::message::{ChunkSize, MessageTypeId, ProtocolControl};
 
-use crate::flv::{FlvDemux, FlvError, FlvMux};
+use crate::flv::{FlvDemux, FlvError, FlvTagStream, OutTag};
 use crate::media::Media;
+use crate::mux_stage::{MuxInput, MuxOutput};
 
 // ---------------------------------------------------------------------------
 // This muxer's chunk stream choice (not a wire constant)
 // ---------------------------------------------------------------------------
 
 /// Chunk stream id this crate uses for outbound audio messages.
-const CSID_AUDIO: u32 = 4;
+///
+/// These three ids are the muxer's own chunk streams and must not overlap a
+/// peer writer's: a connection that also writes through another chunk writer
+/// (rtmp-runtime's session uses 3 for commands, 4 for audio and 5 for video)
+/// has one per-chunk-stream state at the receiver, and two writers compacting
+/// headers independently would each inherit the other's state.
+const CSID_AUDIO: u32 = 6;
 /// Chunk stream id this crate uses for outbound video messages.
-const CSID_VIDEO: u32 = 5;
+const CSID_VIDEO: u32 = 7;
 /// Chunk stream id this crate uses for outbound data (script) messages.
-const CSID_DATA: u32 = 6;
+const CSID_DATA: u32 = 8;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -75,7 +83,7 @@ pub enum RtmpFlvError {
     /// FLV routing of the reassembled A/V bodies failed.
     #[error("RTMP FLV routing: {0}")]
     Flv(FlvError),
-    /// A [`RtmpMux::chunk_size`] was 0 or above `rtmp_runtime::chunk::MAX_CHUNK_SIZE`:
+    /// A [`RtmpMuxStage::chunk_size`] was 0 or above `rtmp_runtime::chunk::MAX_CHUNK_SIZE`:
     /// the muxer would otherwise announce a size it does not frame at (the
     /// chunk writer clamps it).
     #[error("RTMP chunk size {size} is not in 1..={MAX_CHUNK_SIZE}")]
@@ -141,36 +149,6 @@ fn build_flv(
         out.extend_from_slice(&tag.try_to_bytes()?);
     }
     Ok(out)
-}
-
-/// Walk an FLV byte stream into its tags (§E.4.1).
-fn walk_flv_tags(flv: &[u8]) -> Result<Vec<FlvTag<'_>>, RtmpFlvError> {
-    let header = FlvHeader::parse(flv)?;
-    let mut tags = Vec::new();
-    for tag in rtmp_runtime::flv::tags(flv, &header) {
-        add_tag(&mut tags, tag)?;
-    }
-    Ok(tags)
-}
-
-/// Collect one walked tag, mapping the codec's `BufferTooShort` onto the
-/// bridge's own truncation report.
-fn add_tag<'a>(
-    tags: &mut Vec<FlvTag<'a>>,
-    tag: Result<FlvTag<'a>, RtmpError>,
-) -> Result<(), RtmpFlvError> {
-    match tag {
-        Ok(tag) => {
-            tags.push(tag);
-            Ok(())
-        }
-        Err(RtmpError::BufferTooShort(e)) => Err(RtmpFlvError::Truncated {
-            what: e.what,
-            need: e.need,
-            have: e.have,
-        }),
-        Err(e) => Err(RtmpFlvError::Rtmp(e)),
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -244,38 +222,58 @@ impl<'a> Unpackage for RtmpDemux<'a> {
 }
 
 // ---------------------------------------------------------------------------
-// RtmpMux — Package<Output = Vec<u8>>
+// RtmpMuxStage — Stage<In = MuxInput, Out = MuxOutput>
 // ---------------------------------------------------------------------------
 
-/// Mux a [`Media`] into an RTMP chunk stream (Adobe RTMP 1.0).
+/// Mux an RTMP chunk stream from a live sample stream (Adobe RTMP 1.0).
 ///
-/// Serialises the IR to FLV via [`FlvMux`], splits it into
-/// FLV tags, wraps each tag body as the corresponding RTMP message — Audio
-/// (type 8), Video (type 9) or Data (type 18) — on a per-kind chunk stream id,
-/// and chunks them at [`chunk_size`](RtmpMux::chunk_size) (§5.3). The output is
-/// self-describing at any chunk size: at any size other than the §5.4.1
-/// default of 128 bytes it opens with a Set Chunk Size control message, so a peer reassembles it
+/// The stage form of the RTMP container writer: [`MuxInput::Track`]
+/// announcements feed the same FLV tag pipeline [`crate::flv::FlvMuxStage`]
+/// drives, and each FLV tag — `onMetaData`, the AVC/AAC sequence headers, then
+/// one per frame — is wrapped as the corresponding RTMP message (Audio type 8,
+/// Video type 9, Data type 18) on a per-kind chunk stream id and chunked at
+/// [`chunk_size`](Self::chunk_size) (§5.3). The output is self-describing at
+/// any chunk size: at any size other than the §5.4.1 default of 128 bytes it
+/// opens with a Set Chunk Size control message, so a peer reassembles it
 /// without being told the size out of band. The handshake stays the caller's
 /// job.
+///
+/// The stage holds one finished RTMP message at a time; it never holds a whole
+/// media. The chunk writer's per-chunk-stream state persists across calls, so
+/// the stream is byte-identical to one written in a single pass.
 #[derive(Debug, Clone)]
-pub struct RtmpMux {
+pub struct RtmpMuxStage {
     /// Maximum chunk size (§5.4.1); a smaller value fragments large video
     /// messages across more chunks.
     pub chunk_size: usize,
     /// Message stream id assigned to the A/V messages.
     pub message_stream_id: u32,
+    stream: FlvTagStream,
+    writer: ChunkWriter,
+    opened: bool,
+    /// Whether [`Stage::feed`] writes the stream's opening messages (the
+    /// metadata body and the sequence headers). A caller that opens the
+    /// connection itself — a publish client that sends `@setDataFrame` and
+    /// the sequence headers through its own session — turns this off.
+    opening: bool,
+    out: VecDeque<MuxOutput>,
 }
 
-impl Default for RtmpMux {
+impl Default for RtmpMuxStage {
     fn default() -> Self {
         Self {
             chunk_size: usize::try_from(DEFAULT_CHUNK_SIZE_VALUE).unwrap_or(usize::MAX),
             message_stream_id: 1,
+            stream: FlvTagStream::default(),
+            writer: ChunkWriter::new(),
+            opened: false,
+            opening: true,
+            out: VecDeque::new(),
         }
     }
 }
 
-impl RtmpMux {
+impl RtmpMuxStage {
     /// Create a muxer with the default chunk size (128).
     pub fn new() -> Self {
         Self::default()
@@ -284,15 +282,30 @@ impl RtmpMux {
     /// Create a muxer with an explicit chunk size.
     ///
     /// The size is announced to the peer verbatim, so it must be exactly the
-    /// size the chunk writer frames at: `[`RtmpMux::package`]` rejects a
-    /// `chunk_size` of 0 or above `rtmp_runtime::chunk::MAX_CHUNK_SIZE` with
-    /// [`RtmpFlvError::ChunkSizeTooLarge`] rather than announce it and frame at
-    /// a clamped one.
+    /// size the chunk writer frames at: a size of 0 or above
+    /// `rtmp_runtime::chunk::MAX_CHUNK_SIZE` is rejected with
+    /// [`RtmpFlvError::ChunkSizeTooLarge`] rather than announced and then
+    /// framed at a clamped one.
     pub fn with_chunk_size(chunk_size: usize) -> Self {
         Self {
             chunk_size,
             message_stream_id: 1,
+            stream: FlvTagStream::default(),
+            writer: ChunkWriter::new(),
+            opened: false,
+            opening: true,
+            out: VecDeque::new(),
         }
+    }
+
+    /// A muxer that writes only the frame messages: the caller has already
+    /// sent the connection's chunk-size announcement, its metadata and the
+    /// sequence headers (a publish client does exactly that on its own
+    /// chunk streams).
+    #[must_use]
+    pub fn frames_only(mut self) -> Self {
+        self.opening = false;
+        self
     }
 
     /// The chunk size as the wire field carries it, rejecting a value the chunk
@@ -305,51 +318,109 @@ impl RtmpMux {
             size: self.chunk_size,
         })
     }
-}
 
-impl Package for RtmpMux {
-    type Media = Media;
-    type Output = Vec<u8>;
-    type Error = RtmpFlvError;
-
-    fn package(&mut self, media: &Media) -> Result<Vec<u8>, RtmpFlvError> {
+    /// Open the stream: the Set Chunk Size control message when the chunk size
+    /// is not the default, then the `onMetaData` and sequence-header messages.
+    fn open(&mut self) -> Result<(), RtmpFlvError> {
+        if self.opened {
+            return Ok(());
+        }
         let chunk_size = self.wire_chunk_size()?;
-        let max_message_len = usize::try_from(MAX_MESSAGE_LEN).unwrap_or(usize::MAX);
-        let mut flv_mux = FlvMux::new();
-        let flv = flv_mux.package(media).map_err(RtmpFlvError::Flv)?;
-        let tags = walk_flv_tags(&flv)?;
-
-        let mut writer = ChunkWriter::new();
-        let mut out = Vec::new();
+        if !self.opening {
+            // The caller announced the size; this writer must still frame at
+            // it, since a receiver applies the announcement to every chunk on
+            // the connection.
+            self.writer.set_chunk_size(ChunkSize::new(chunk_size)?);
+            self.opened = true;
+            return Ok(());
+        }
         if chunk_size != DEFAULT_CHUNK_SIZE_VALUE {
             let chunk_size = ChunkSize::new(chunk_size)?;
             let control = ProtocolControl::SetChunkSize(chunk_size).to_message();
-            out.extend_from_slice(&writer.write(&control)?);
-            writer.set_chunk_size(chunk_size);
+            let bytes = self.writer.write(&control)?;
+            self.writer.set_chunk_size(chunk_size);
+            self.out.push_back(MuxOutput::Bytes(bytes.into()));
         }
+        let tags = self.stream.opening_tags(None).map_err(RtmpFlvError::Flv)?;
+        self.push_tags(&tags)?;
+        self.opened = true;
+        Ok(())
+    }
+
+    fn push_tags(&mut self, tags: &[OutTag]) -> Result<(), RtmpFlvError> {
         for tag in tags {
-            if tag.body.len() > max_message_len {
-                return Err(RtmpFlvError::MessageTooLarge {
-                    len: tag.body.len(),
-                    max: max_message_len,
-                });
-            }
-            let (chunk_stream_id, message_type_id) = match tag.tag_type {
-                TagType::Audio => (CSID_AUDIO, MessageTypeId::Audio),
-                TagType::Video => (CSID_VIDEO, MessageTypeId::Video),
-                TagType::Script | TagType::Reserved(_) => (CSID_DATA, MessageTypeId::DataAmf0),
-                _ => (CSID_DATA, MessageTypeId::DataAmf0),
-            };
-            let message = Message {
-                chunk_stream_id: rtmp_runtime::ids::ChunkStreamId::new(chunk_stream_id),
-                timestamp: rtmp_runtime::ids::Timestamp::from_millis(tag.timestamp),
-                message_type_id,
-                message_stream_id: rtmp_runtime::ids::MessageStreamId::new(self.message_stream_id),
-                payload: tag.body.to_vec(),
-            };
-            out.extend_from_slice(&writer.write(&message)?);
+            let message = self.message_for(tag)?;
+            let bytes = self.writer.write(&message)?;
+            self.out.push_back(MuxOutput::Bytes(bytes.into()));
         }
-        Ok(out)
+        Ok(())
+    }
+
+    /// Frame one FLV tag body as the RTMP message that carries it (§5.3,
+    /// §7.1.4/§7.1.5).
+    fn message_for(&self, tag: &OutTag) -> Result<Message, RtmpFlvError> {
+        let max_message_len = usize::try_from(MAX_MESSAGE_LEN).unwrap_or(usize::MAX);
+        if tag.body().len() > max_message_len {
+            return Err(RtmpFlvError::MessageTooLarge {
+                len: tag.body().len(),
+                max: max_message_len,
+            });
+        }
+        let (chunk_stream_id, message_type_id) = match tag.tag_type() {
+            TagType::Video => (CSID_VIDEO, MessageTypeId::Video),
+            TagType::Audio => (CSID_AUDIO, MessageTypeId::Audio),
+            _ => (CSID_DATA, MessageTypeId::DataAmf0),
+        };
+        Ok(Message {
+            chunk_stream_id: rtmp_runtime::ids::ChunkStreamId::new(chunk_stream_id),
+            timestamp: rtmp_runtime::ids::Timestamp::from_millis(tag.timestamp()),
+            message_type_id,
+            message_stream_id: rtmp_runtime::ids::MessageStreamId::new(self.message_stream_id),
+            payload: tag.body().to_vec(),
+        })
+    }
+}
+
+impl Stage for RtmpMuxStage {
+    type In<'a> = MuxInput;
+    type Out = MuxOutput;
+    type Error = RtmpFlvError;
+
+    fn feed(&mut self, input: MuxInput, _now: Timestamp) -> Result<(), RtmpFlvError> {
+        match input {
+            MuxInput::Track(spec) => {
+                if self.opened {
+                    return Err(RtmpFlvError::Flv(FlvError::TrackAfterStart));
+                }
+                self.stream.announce(*spec).map_err(RtmpFlvError::Flv)
+            }
+            MuxInput::Sample { track, sample } => {
+                self.open()?;
+                let tags = self.stream.push(track, sample).map_err(RtmpFlvError::Flv)?;
+                self.push_tags(&tags)
+            }
+            MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::Flush => {
+                let tags = self.stream.flush().map_err(RtmpFlvError::Flv)?;
+                self.push_tags(&tags)
+            }
+        }
+    }
+
+    fn poll(&mut self) -> Option<MuxOutput> {
+        self.out.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<(), RtmpFlvError> {
+        // A stage that was never fed still rejects a chunk size the writer
+        // would clamp: the size is this muxer's own configuration, not
+        // something a downstream failure could justify.
+        self.wire_chunk_size()?;
+        if !self.opened {
+            return Ok(());
+        }
+        let tags = self.stream.flush().map_err(RtmpFlvError::Flv)?;
+        self.push_tags(&tags)
     }
 }
 

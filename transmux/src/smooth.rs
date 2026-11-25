@@ -674,7 +674,7 @@ pub struct SmoothOrigin {
 
 /// One tick per second — the timescale a [`SmoothOrigin::default`] carries, so
 /// an origin of `0` needs no specific track's timescale.
-const ONE_TICK_PER_SECOND: Timescale = match Timescale::new(1) {
+const DEFAULT_ORIGIN_TIMESCALE: Timescale = match Timescale::new(1) {
     Some(timescale) => timescale,
     None => Timescale::MICROS,
 };
@@ -714,7 +714,7 @@ impl SmoothOrigin {
     }
 
     /// The origin expressed in `timescale` ticks, rounded down.
-    fn in_timescale(&self, timescale: Timescale) -> i64 {
+    fn scaled_to(&self, timescale: Timescale) -> i64 {
         rescale_i64(self.ticks, self.timescale, timescale, Rounding::Floor)
     }
 }
@@ -723,7 +723,7 @@ impl Default for SmoothOrigin {
     fn default() -> Self {
         Self {
             ticks: 0,
-            timescale: ONE_TICK_PER_SECOND,
+            timescale: DEFAULT_ORIGIN_TIMESCALE,
         }
     }
 }
@@ -749,7 +749,7 @@ fn smooth_times(
     media_timescale: Timescale,
     next_start: Option<u64>,
 ) -> Result<Vec<SmoothSampleTime>> {
-    let base = origin.in_timescale(media_timescale);
+    let base = origin.scaled_to(media_timescale);
     let relative = |sample: &Sample| -> i64 {
         sample
             .timing
@@ -927,7 +927,7 @@ impl SmoothSegmenter {
     /// `sample`'s decode time relative to the origin, in its track's ticks.
     fn relative_ticks(&self, index: usize, sample: &Sample) -> u64 {
         let timescale = self.tracks[index].spec.timescale;
-        let base = self.origin.in_timescale(timescale);
+        let base = self.origin.scaled_to(timescale);
         sample
             .timing
             .and_then(|t| t.dts())
@@ -942,7 +942,7 @@ impl SmoothSegmenter {
             return Ok(());
         }
         let timescale = state.spec.timescale;
-        let base = self.origin.in_timescale(timescale);
+        let base = self.origin.scaled_to(timescale);
         let start = state
             .pending
             .first()
