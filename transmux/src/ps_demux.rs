@@ -1514,3 +1514,553 @@ fn au_is_idr(access_unit: &[u8]) -> bool {
 fn limit_error(what: &'static str) -> Error {
     Error::InvalidInput(what)
 }
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::*;
+
+    const WRAP: u64 = broadcast_common::clock33::WRAP_33BIT;
+
+    /// PS stamps straddling 2^33 (ISO/IEC 13818-1 §2.4.3.7): PTS 2^33-90000,
+    /// then 90000 (one wrap, +180000 ticks), then a B-frame style backward
+    /// dip back across the wrap (2^33-45000) must unroll monotonically /
+    /// bidirectionally, never jump by ~2^33.
+    #[test]
+    fn assign_stamps_unrolls_across_the_33bit_wrap() {
+        let mut stream = Stream::new(Codec::Video, Body::VideoProbe(Vec::new()));
+        stream.push_stamp(0, Some(WRAP - 90_000), Some(WRAP - 90_000));
+        stream.push_stamp(10, Some(90_000), Some(90_000));
+        stream.push_stamp(20, Some(WRAP - 45_000), Some(WRAP - 45_000));
+        let first = stream.take_stamp(0);
+        let second = stream.take_stamp(10);
+        let third = stream.take_stamp(20);
+        assert_eq!(first.0, Some(i128::from(WRAP - 90_000)));
+        assert_eq!(second.0, Some(i128::from(WRAP + 90_000)));
+        assert_eq!(third.0, Some(i128::from(WRAP - 45_000)));
+        assert_eq!(second.1, Some(i128::from(WRAP + 90_000)));
+    }
+
+    /// When a second PES stamp falls in the same access unit only the first
+    /// applies. A PTS-only first stamp makes the `&&` visible: the second
+    /// stamp's PTS must not replace it just because the DTS is still unknown.
+    #[test]
+    fn assign_stamps_keeps_the_first_stamp_of_an_access_unit() {
+        let mut stream = Stream::new(Codec::Video, Body::VideoProbe(Vec::new()));
+        stream.push_stamp(0, Some(180_000), None);
+        stream.push_stamp(0, Some(270_000), Some(270_000));
+        assert_eq!(
+            stream.take_stamp(0),
+            (Some(180_000), None),
+            "the first stamp of the access unit wins"
+        );
+
+        stream.push_stamp(0, Some(1_000), Some(900));
+        stream.push_stamp(0, Some(2_000), Some(1_900));
+        assert_eq!(
+            stream.take_stamp(0),
+            (Some(1_000), Some(900)),
+            "a fully stamped access unit keeps its first stamp"
+        );
+    }
+}
+
+#[cfg(test)]
+mod h264_config_tests {
+    use super::*;
+
+    fn annexb(nals: &[&[u8]]) -> Vec<u8> {
+        let mut out = Vec::new();
+        for nal in nals {
+            out.extend_from_slice(&[0, 0, 1]);
+            out.extend_from_slice(nal);
+        }
+        out
+    }
+
+    /// Drive the stage over `data` and return its events.
+    fn drive(data: &[u8]) -> Vec<DemuxEvent> {
+        let mut demux = StreamingPsDemux::new();
+        demux
+            .feed(data, broadcast_common::stage::Timestamp::ZERO)
+            .expect("feed");
+        demux.finish().expect("finish");
+        let mut events = Vec::new();
+        while let Some(event) = demux.poll() {
+            events.push(event);
+        }
+        events
+    }
+
+    /// The real SPS, PPS and first coded slice of the committed PS fixture.
+    fn fixture_parts() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let data = test_fixtures::read("ps/h264-ac3.ps");
+        let events = drive(&data);
+        let (track_id, config) = events
+            .iter()
+            .find_map(|event| match event {
+                DemuxEvent::TrackAdded(spec) => match &spec.config {
+                    CodecConfig::Avc { config, .. } => Some((spec.track_id, config.clone())),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .expect("track 0 must be AVC");
+        let sps = config.config.sps[0].0.clone();
+        let pps = config.config.pps[0].0.clone();
+        let sample = events
+            .iter()
+            .find_map(|event| match event {
+                DemuxEvent::Sample {
+                    track_id: id,
+                    sample,
+                } if *id == track_id => Some(sample),
+                _ => None,
+            })
+            .expect("the AVC track carries samples")
+            .data
+            .clone();
+        let mut off = 0usize;
+        let mut slice = Vec::new();
+        while off + 4 <= sample.len() {
+            let n = u32::from_be_bytes([
+                sample[off],
+                sample[off + 1],
+                sample[off + 2],
+                sample[off + 3],
+            ]) as usize;
+            off += 4;
+            if off + n > sample.len() {
+                break;
+            }
+            let nal = &sample[off..off + n];
+            off += n;
+            let nal_type = nal[0] & NAL_TYPE_MASK;
+            if nal_type == 1 || nal_type == 5 {
+                slice = nal.to_vec();
+                break;
+            }
+        }
+        assert!(
+            !slice.is_empty(),
+            "the fixture's first sample carries a coded slice"
+        );
+        (sps, pps, slice)
+    }
+
+    fn built_config(nals: &[&[u8]]) -> Option<(Vec<u8>, Vec<u8>)> {
+        let mut timing = VideoTiming::new();
+        timing.scan_parameter_sets(&annexb(nals));
+        let config = timing.avc_config()?;
+        Some((
+            config.config.sps[0].0.clone(),
+            config.config.pps[0].0.clone(),
+        ))
+    }
+
+    /// A damaged parameter set (a set `forbidden_zero_bit`) must never reach
+    /// the `avcC`, in either position, and a stream with only damaged sets is
+    /// declined rather than built from garbage (issue #1171).
+    #[test]
+    fn damaged_parameter_sets_are_skipped() {
+        let (sps, pps, slice) = fixture_parts();
+        let garbage_sps = [0xE7u8, 0x01, 0x02, 0x03, 0xFF];
+        let garbage_pps = [0xE8u8, 0x01, 0x02, 0x03, 0xFF];
+
+        let (got_sps, got_pps) = built_config(&[&garbage_sps, &sps, &garbage_pps, &pps, &slice])
+            .expect("the real SPS/PPS are present");
+        assert_eq!(
+            got_sps, sps,
+            "the damaged SPS before the real one is skipped"
+        );
+        assert_eq!(
+            got_pps, pps,
+            "the damaged PPS before the real one is skipped"
+        );
+        assert_eq!(got_sps[0], 0x67, "the real SPS NAL header");
+
+        let (got_sps, got_pps) = built_config(&[&sps, &garbage_sps, &pps, &garbage_pps, &slice])
+            .expect("the real SPS/PPS are present");
+        assert_eq!(
+            got_sps, sps,
+            "a damaged SPS after the real one must not replace it"
+        );
+        assert_eq!(
+            got_pps, pps,
+            "a damaged PPS after the real one must not replace it"
+        );
+
+        assert!(
+            built_config(&[&garbage_sps, &garbage_pps, &slice]).is_none(),
+            "a stream with only damaged parameter sets must not build a config"
+        );
+    }
+
+    /// The first valid SPS/PPS is kept: a later valid set must not replace it.
+    #[test]
+    fn the_first_valid_parameter_set_wins() {
+        let (sps, pps, slice) = fixture_parts();
+
+        let mut other_sps = sps.clone();
+        other_sps[3] = if sps[3] == 0x1E { 0x1F } else { 0x1E };
+        let mut other_pps = pps.clone();
+        let last = other_pps.len() - 1;
+        other_pps[last] = if other_pps[last] == 0x7F { 0x7E } else { 0x7F };
+        assert!(parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Sps,
+            &other_sps
+        ));
+        assert!(parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Pps,
+            &other_pps
+        ));
+        assert_ne!(other_sps, sps);
+        assert_ne!(other_pps, pps);
+
+        let (got_sps, got_pps) = built_config(&[&sps, &other_sps, &pps, &other_pps, &slice])
+            .expect("a valid SPS/PPS is present");
+        assert_eq!(got_sps, sps, "the first valid SPS is kept");
+        assert_eq!(got_pps, pps, "the first valid PPS is kept");
+    }
+}
+
+#[cfg(test)]
+mod interpolate_tests {
+    use super::*;
+
+    fn pending(index: u64, dts: Option<i128>) -> PendingAu {
+        PendingAu {
+            index,
+            data: Vec::new(),
+            pts: dts,
+            dts,
+            is_sync: false,
+            display: None,
+        }
+    }
+
+    /// Audit #3570: the constant frame duration divides the stamp span by the
+    /// **index** span, and the interpolation walks from the anchor by index
+    /// distance. Stamps on access units 2 and 6 (not 0) make both signs visible:
+    /// `i1 - i0` is 4 (not 8) and `i - anchor_idx` is negative before the anchor.
+    #[test]
+    fn stamped_frame_duration_uses_the_index_span_from_the_first_stamp() {
+        let mut timing = VideoTiming::new();
+        for index in 0..7 {
+            timing.units.push_back(pending(index, None));
+        }
+        timing.note_stamp(2, Some(90_000));
+        timing.note_stamp(6, Some(90_000 + 4 * 3_600));
+        assert_eq!(timing.frame_dur, Some(3_600));
+
+        timing.finalize(false, true, 4096);
+        let dts: Vec<i128> = timing.ready.iter().map(|au| au.dts).collect();
+        assert_eq!(dts[0], 90_000 - 2 * 3_600);
+        assert_eq!(dts[1], 90_000 - 3_600);
+        assert_eq!(dts[2], 90_000);
+        assert_eq!(dts[4], 90_000 + 2 * 3_600);
+        assert_eq!(dts[6], 90_000 + 4 * 3_600);
+    }
+
+    /// Audit #3570: a backwards or repeated stamp pair yields no usable frame
+    /// period and must fall back to the 3 600-tick default (25 fps at 90 kHz).
+    #[test]
+    fn non_increasing_stamps_fall_back_to_the_default_frame_duration() {
+        let mut descending = VideoTiming::new();
+        for index in 0..3 {
+            descending.units.push_back(pending(index, None));
+        }
+        descending.note_stamp(0, Some(90_000));
+        descending.note_stamp(2, Some(90_000 - 7_200));
+        assert_eq!(descending.frame_dur, None);
+        descending.finalize(false, true, 4096);
+        let dts: Vec<i128> = descending.ready.iter().map(|au| au.dts).collect();
+        assert_eq!(dts[0], 90_000);
+        assert_eq!(dts[1], 90_000 + 3_600);
+
+        let mut repeated = VideoTiming::new();
+        for index in 0..3 {
+            repeated.units.push_back(pending(index, None));
+        }
+        repeated.note_stamp(0, Some(90_000));
+        repeated.note_stamp(2, Some(90_000));
+        assert_eq!(repeated.frame_dur, None);
+        repeated.finalize(false, true, 4096);
+        let dts: Vec<i128> = repeated.ready.iter().map(|au| au.dts).collect();
+        assert_eq!(dts[2], 90_000 + 2 * 3_600);
+    }
+
+    const AC3_FIXTURE: &str = "ps/ffmpeg-mpeg2video-2xac3.a0.ac3";
+
+    /// A real AC-3 elementary stream whose second syncframe carries `stamp90`,
+    /// the first carrying 90 000. The fixture is 44.1 kHz mono, so one 1 536-
+    /// sample syncframe is 3 134.7 ticks and the frame-exact running clock sits
+    /// 1 536 track ticks per frame after the anchor.
+    fn ac3_stream(stamp90: u64) -> (Stream, Vec<(usize, usize)>) {
+        let data = std::fs::read(test_fixtures::path(AC3_FIXTURE))
+            .expect("real AC-3 elementary stream fixture");
+        let frames = crate::ac3_syncframe::split_ac3_syncframe_ranges(&data, true);
+        assert!(frames.len() >= 3, "fixture carries several syncframes");
+        let info = Ac3SyncframeInfo::from_es(&data).expect("AC-3 syncframe info");
+        let mut stream = Stream::new(Codec::Ac3, Body::Ac3(Ac3State::new()));
+        stream.ac3_info = Some(info);
+        stream.ac3_timescale = Timescale::try_new(info.sample_rate).expect("sample rate");
+        stream.push_stamp(frames[0].0 as u64, Some(90_000), Some(90_000));
+        stream.push_stamp(frames[1].0 as u64, Some(stamp90), Some(stamp90));
+        (stream, frames)
+    }
+
+    fn ac3_dts(stamp90: u64) -> Vec<i64> {
+        let (mut stream, frames) = ac3_stream(stamp90);
+        let mut out = Vec::new();
+        for &(start, _) in frames.iter().take(3) {
+            let sample = stream.build_ac3_sample(start as u64, Vec::new());
+            out.push(
+                sample
+                    .timing
+                    .and_then(|timing| timing.dts())
+                    .expect("timed AC-3 sample"),
+            );
+        }
+        out
+    }
+
+    /// The first stamp anchors at 44 100 track ticks (90 000/2 at 44.1 kHz);
+    /// each following syncframe advances by its intrinsic 1 536 samples.
+    #[test]
+    fn ac3_stamp_exactly_on_the_frame_grid_keeps_the_running_clock() {
+        let dts = ac3_dts(93_134);
+        assert_eq!(dts[0], 44_100);
+        assert_eq!(dts[1], 45_636);
+        assert_eq!(dts[2], 47_172);
+    }
+
+    /// Audit #3571: a stamp exactly `audio_discontinuity_threshold_90k` (1 800
+    /// ticks) off the predicted wire position is *not* a discontinuity.
+    #[test]
+    fn ac3_stamp_at_the_threshold_is_not_a_discontinuity() {
+        let dts = ac3_dts(93_134 + 1_800);
+        assert_eq!(
+            dts[1], 45_636,
+            "within the threshold the running clock wins"
+        );
+        assert_eq!(dts[2], 47_172);
+    }
+
+    /// One tick past the threshold re-anchors from the wire stamp: 94 935 ticks
+    /// rescales to 46 518 at 44.1 kHz, and the clock continues from there.
+    #[test]
+    fn ac3_stamp_one_tick_past_the_threshold_reanchors() {
+        let dts = ac3_dts(93_134 + 1_801);
+        assert_eq!(dts[1], 46_518);
+        assert_eq!(dts[2], 48_054);
+    }
+
+    /// The same drift with the opposite sign must also re-anchor (the drift is
+    /// an absolute distance): 91 333 ticks rescale to 44 753.
+    #[test]
+    fn ac3_negative_drift_past_the_threshold_reanchors() {
+        let dts = ac3_dts(93_134 - 1_801);
+        assert_eq!(dts[1], 44_753);
+        assert_eq!(dts[2], 46_289);
+    }
+}
+
+#[cfg(test)]
+mod private1_tests {
+    use super::*;
+
+    /// Drive the stage over `data` and return its events.
+    fn drive(data: &[u8]) -> Vec<DemuxEvent> {
+        let mut demux = StreamingPsDemux::new();
+        demux
+            .feed(data, broadcast_common::stage::Timestamp::ZERO)
+            .expect("feed");
+        demux.finish().expect("finish");
+        let mut events = Vec::new();
+        while let Some(event) = demux.poll() {
+            events.push(event);
+        }
+        events
+    }
+
+    fn header(substream_id: u8, number_of_frames: u8, pointer: u16) -> Private1Header {
+        Private1Header {
+            substream_id,
+            number_of_frames,
+            first_access_unit_pointer: pointer,
+        }
+    }
+
+    /// The header's four bytes are `substream_id`, `number_of_frames` and a
+    /// **big-endian** 16-bit pointer: reading the pointer's high byte twice
+    /// equals the right value only while it is zero.
+    #[test]
+    fn parse_reads_the_pointer_big_endian() {
+        let (parsed, rest) = Private1Header::parse(&[0x80, 1, 0x01, 0x23]).expect("header");
+        assert_eq!(parsed.substream_id, 0x80);
+        assert_eq!(parsed.number_of_frames, 1);
+        assert_eq!(parsed.first_access_unit_pointer, 0x0123);
+        assert!(rest.is_empty(), "a header-only payload has no body");
+    }
+
+    /// A payload that cannot hold the whole header is refused, never indexed
+    /// past its end.
+    #[test]
+    fn a_payload_shorter_than_the_header_is_refused() {
+        assert!(Private1Header::parse(&[]).is_none());
+        assert!(Private1Header::parse(&[0x80]).is_none());
+        assert!(Private1Header::parse(&[0x80, 1]).is_none());
+        assert!(Private1Header::parse(&[0x80, 1, 2]).is_none());
+    }
+
+    /// The consistency rule (ISO/IEC 13818-1 §2.4.3.7 as the DVD/ATSC private
+    /// profiles use it): a header that claims frames must point at one, and a
+    /// pointer may address one byte past the body (an access unit that starts
+    /// at its very end) but no further.
+    #[test]
+    fn is_consistent_truth_table() {
+        for (frames, pointer, body_len, want) in [
+            (1u8, 0u16, 0usize, false),
+            (0, 0, 0, true),
+            (1, 1, 0, true),
+            (1, 2, 0, false),
+            (0, 1, 0, true),
+            (0, 0, 5, true),
+            (1, 6, 5, true),
+            (1, 7, 5, false),
+            (0, 6, 5, true),
+            (0, 7, 5, false),
+        ] {
+            assert_eq!(
+                header(0x80, frames, pointer).is_consistent(body_len + PRIVATE1_HEADER_LEN),
+                want,
+                "frames={frames} pointer={pointer} body_len={body_len}"
+            );
+        }
+    }
+
+    /// A payload shorter than the header does not underflow the body length.
+    #[test]
+    fn is_consistent_does_not_underflow_a_short_payload() {
+        assert!(header(0x80, 0, 0).is_consistent(0));
+        assert!(header(0x80, 0, 0).is_consistent(3));
+        assert!(!header(0x80, 1, 0).is_consistent(3));
+    }
+
+    /// The AC-3 probe: a payload whose probed bytes are not the 2-byte
+    /// syncword is not AC-3, whatever its length, and a payload that is
+    /// exactly the syncword is.
+    #[test]
+    fn classify_private1_probes_the_ac3_syncword() {
+        assert_eq!(
+            Codec::classify_private1(0x80, &header(0x80, 1, 1), &[0x12, 0x34, 0x56]),
+            None
+        );
+        assert_eq!(
+            Codec::classify_private1(0x80, &header(0x80, 1, 1), &AC3_SYNCWORD),
+            Some(Codec::Ac3)
+        );
+        assert_eq!(
+            Codec::classify_private1(0x80, &header(0x80, 1, 1), &[0x0B]),
+            None
+        );
+    }
+
+    /// A `picture_start_code` in the final three bytes is not a picture: the
+    /// scan must not index past the end of the stream.
+    #[test]
+    fn split_mpeg2_pictures_handles_a_start_code_at_the_tail() {
+        fn ranges(data: &[u8]) -> Vec<(u64, usize)> {
+            let mut state = Mpeg2State {
+                width: 0,
+                height: 0,
+                tracker: Mpeg2DisplayTracker::new(),
+                buf: data.to_vec(),
+                base: 0,
+                first_picture: false,
+                search_from: 0,
+                flushing: false,
+            };
+            let mut out = Vec::new();
+            while let Some((start, unit)) = state.pop() {
+                out.push((start, unit.len()));
+            }
+            state.finish();
+            while let Some((start, unit)) = state.pop() {
+                out.push((start, unit.len()));
+            }
+            out
+        }
+
+        let data = [0u8, 0, 1, 0xB3, 1, 2, 0, 0, 1];
+        assert_eq!(ranges(&data), alloc::vec![(0, data.len())]);
+
+        let data = [0u8, 0, 1, 0x00, 1, 2, 0, 0, 1, 0x00];
+        assert_eq!(ranges(&data), alloc::vec![(0, 6), (6, data.len() - 6)]);
+    }
+
+    /// A complete, valid-looking AC-3 frame in the prefix the pointer skips
+    /// past is *not* part of the track: the first packet of a substream
+    /// starts the elementary stream at the access unit the pointer names.
+    #[test]
+    fn a_complete_frame_before_the_first_access_unit_is_not_emitted() {
+        let es = std::fs::read(test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.a0.ac3"))
+            .expect("real AC-3 elementary stream fixture");
+        let frames = crate::ac3_syncframe::split_ac3_syncframes(&es);
+        assert!(frames.len() >= 2, "fixture carries several syncframes");
+        let (first, second) = (frames[0], frames[1]);
+
+        let mut body = first.to_vec();
+        body.extend_from_slice(second);
+        let pointer = u16::try_from(first.len() + 1).expect("a small frame");
+        let mut payload = alloc::vec![0x80u8, 1];
+        payload.extend_from_slice(&pointer.to_be_bytes());
+        payload.extend_from_slice(&body);
+
+        let pack_header = &std::fs::read(test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.ps"))
+            .expect("real PS fixture")[..14];
+        let mut ps = pack_header.to_vec();
+        ps.extend_from_slice(&[0, 0, 1, STREAM_ID_PRIVATE_1]);
+        let pes_data_len = 3 + payload.len();
+        ps.extend_from_slice(
+            &u16::try_from(pes_data_len)
+                .expect("a small PES")
+                .to_be_bytes(),
+        );
+        ps.extend_from_slice(&[0x80, 0x00, 0x00]);
+        ps.extend_from_slice(&payload);
+
+        let events = drive(&ps);
+        let track_id = events
+            .iter()
+            .find_map(|event| match event {
+                DemuxEvent::TrackAdded(spec) if matches!(spec.config, CodecConfig::Ac3 { .. }) => {
+                    Some(spec.track_id)
+                }
+                _ => None,
+            })
+            .expect("the AC-3 substream");
+        let samples: Vec<&Sample> = events
+            .iter()
+            .filter_map(|event| match event {
+                DemuxEvent::Sample {
+                    track_id: id,
+                    sample,
+                } if *id == track_id => Some(sample),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            samples.len(),
+            1,
+            "only the access unit the pointer names is emitted"
+        );
+        assert_eq!(
+            samples[0].data.as_ref(),
+            second,
+            "the sample is the second frame, not the prefix frame"
+        );
+    }
+}
