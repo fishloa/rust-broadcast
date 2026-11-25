@@ -44,11 +44,10 @@
 //! - **Transforms:** resegment / trim / track-select ([`Repackage`]);
 //!   streaming CMAF segmentation ([`Segmenter`]); streaming classic-HLS
 //!   segmentation ([`StreamingTsHlsSegmenter`]); IR timeline conditioning —
-//!   PTS/DTS rebase and offset, discontinuity-gap insertion
-//!   ([`rebase_to_zero`] / [`apply_offset`] / [`insert_discontinuity_gap`],
-//!   via each absolute [`Sample`] `dts`/`pts` and the [`Track::start_decode_time`]
-//!   anchor kept in lockstep with it — 33-bit MPEG wrap-unroll happens once,
-//!   at the demux edge, see [`ts_demux`]);
+//!   PTS/DTS rebase and offset, discontinuity-gap insertion as sample stages
+//!   ([`RebaseStage`] / [`OffsetStage`] / [`GapStage`], via each absolute
+//!   [`Sample`] `dts`/`pts` — 33-bit MPEG wrap-unroll happens once, at the
+//!   demux edge, see [`ts_demux`]);
 //!   timeline splice / concatenation → SSAI ([`concat`](fn@concat) / [`splice_insert`],
 //!   returning a [`SpliceResult`] with discontinuity points).
 //! - **Crypto:** CENC/CBCS (`cenc`, AES-CTR/AES-CBC-pattern) decrypt
@@ -313,7 +312,7 @@ pub use pipeline::{
 };
 pub use progressive::ProgressiveMux;
 pub use ps_demux::PsDemux;
-pub use rebase::{apply_offset, insert_discontinuity_gap, rebase_to_zero};
+pub use rebase::{GapStage, OffsetStage, RebaseOrigin, RebaseStage};
 pub use repackage::{Repackage, RepackageOutput};
 pub use rtcp::{
     APP_NAME_LEN, App, Bye, CompoundPacket, PT_APP, PT_BYE, PT_RECEIVER_REPORT, PT_SENDER_REPORT,

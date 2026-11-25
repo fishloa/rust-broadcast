@@ -91,6 +91,30 @@ pub enum Error {
     #[error("invalid input: {0}")]
     InvalidInput(&'static str),
 
+    /// A [`RebaseStage`](crate::rebase::RebaseStage) built with an exact
+    /// origin was fed a sample of a track the origin does not name.
+    #[error("rebase: no origin was supplied for track {track}")]
+    RebaseMissingOrigin {
+        /// The track whose first sample arrived without an origin.
+        track: TrackId,
+    },
+
+    /// A [`RebaseStage`](crate::rebase::RebaseStage) start window buffered
+    /// more than its caller-supplied byte cap before it could name an origin.
+    #[error("rebase: start window exceeded its {cap}-byte cap")]
+    RebaseWindowOverflow {
+        /// The caller's `max_bytes` cap.
+        cap: u64,
+    },
+
+    /// A [`SpliceStage`](crate::splice::SpliceStage) held more than its
+    /// caller-supplied cap of samples waiting for a sync point.
+    #[error("splice: held {cap} samples waiting for a sync point")]
+    SpliceGopOverflow {
+        /// The caller's cap.
+        cap: usize,
+    },
+
     /// A byte range supplied to [`Mp4Demux`](crate::mp4_demux::Mp4Demux) did
     /// not match the range it asked for: either the offset differed, or the
     /// supply was longer than requested. Both ranges are named so the caller
@@ -271,7 +295,7 @@ pub enum Error {
     /// it. Names the offending track (media plane step 2d; applied uniformly
     /// to every mux entry point in media plane step-2 fix wave 1, B2-B4) so
     /// the caller can pre-filter it out (e.g. with
-    /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by))
+    /// [`select_tracks_by`](crate::repackage::select_tracks_by))
     /// rather than have it silently vanish from the output.
     #[error(
         "cannot CMAF-mux track {track_id} (PMT stream_type 0x{stream_type:02X}): \
@@ -291,7 +315,7 @@ pub enum Error {
     /// `wvtt` sample entry needs more than the format tag this crate carries
     /// (`TODO(#753)`), so CMAF/fMP4 output cannot carry it yet. Names the
     /// offending track so the caller can pre-filter it out (e.g. with
-    /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by))
+    /// [`select_tracks_by`](crate::repackage::select_tracks_by))
     /// rather than have the whole package call fail opaquely.
     #[error(
         "cannot CMAF-mux track {track_id} (subtitle format {format}): \

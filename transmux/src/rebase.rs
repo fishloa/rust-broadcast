@@ -1,134 +1,362 @@
-//! Timeline-conditioning transforms over the [`Media`] IR — PTS/DTS rebase,
+//! Timeline-conditioning transforms over the sample stream — PTS/DTS rebase,
 //! offset, and discontinuity-gap insertion (issue #476).
 //!
-//! Media plane step 2c: [`Sample`](crate::pipeline::Sample) `dts`/`pts` are
-//! now **absolute** ticks in the track's media timescale, not a running sum
-//! anchored on [`Track::start_decode_time`]. These transforms shift that
-//! absolute pair directly, keeping [`Track::start_decode_time`] in lockstep
-//! as the track-level anchor (equal to the first sample's `dts` for a timed
-//! track; the only datum available at all for an empty track):
+//! Media plane step 2c: [`Sample`] `dts`/`pts` are
+//! **absolute** ticks in the track's media timescale, not a running sum
+//! anchored on a track-level start. These stages shift that absolute pair
+//! directly:
 //!
-//! - [`rebase_to_zero`] — re-origin each track so its first sample starts at
-//!   decode time 0 (per-track).
-//! - [`apply_offset`] — shift every track's anchor (and every sample's
-//!   `dts`/`pts`) by a signed delta (saturating at 0 on underflow).
-//! - [`insert_discontinuity_gap`] — push every sample from a given index
-//!   onward (or the whole track, at index 0) later by a gap (splice / concat
+//! - [`RebaseStage`] — re-origin each track so its first sample starts at
+//!   decode time 0. Built with an exact per-track [`RebaseOrigin`] (from a
+//!   sample plan) or a [`RebaseStage::start_window`] that discovers each
+//!   track's own first sample, holding output no longer than the caller's
+//!   window or byte cap.
+//! - [`OffsetStage`] — shift a track by a signed delta (saturating at 0 on
+//!   underflow, per track, on its first sample's anchor).
+//! - [`GapStage`] — push every sample from a given per-track index onward (or
+//!   the whole track, at index 0) later by a gap (splice / concat
 //!   conditioning).
 //!
-//! **33-bit MPEG-2 Systems wrap-unrolling moved to the demux edge** (this
-//! step's own mandate): [`crate::ts_demux`] unwraps the wire's 33-bit
-//! PTS/DTS once, incrementally, as it demuxes, so every `Sample::dts`/`pts`
-//! this crate produces is already absolute — there is nothing left to
-//! re-derive downstream, and re-deriving it here (as this module did before
-//! step 2c, folding `start_decode_time + Σ duration` back into the 33-bit
-//! range and unwrapping again) is exactly the anti-pattern this step
-//! removes. The public `unroll_33bit_wraps`/`MPEG_TS_WRAP` this module used
-//! to export are gone with it.
+//! Each is a [`Stage`] fed `(TrackId, Sample)` and emitting the same pair, so a
+//! transform chain is a chain of stages with no whole [`Media`](crate::ir::Media)
+//! in memory. The former whole-input free functions are gone with them.
 //!
-//! This pairs with issue #475 (splice/concat) as the next consumer: rebase a
-//! source to zero, offset it onto the target timeline, then concatenate.
+//! **33-bit MPEG-2 Systems wrap-unrolling happens at the demux edge**
+//! ([`crate::ts_demux`] unwraps the wire's 33-bit PTS/DTS once,
+//! incrementally), so every `Sample` this crate produces is already absolute.
 
-use crate::media::{Media, Track};
+use alloc::collections::{BTreeMap, VecDeque};
 
-/// Re-origin each track so its first sample starts at decode time 0.
-///
-/// For every track, subtracts its own [`Track::start_decode_time`] from the
-/// anchor and from every sample's `dts`/`pts` (leaving a `None` sample
-/// untouched — never fabricating a timestamp for a section-carried track).
-/// Done **per track** (each track is rebased to its own zero), not by a
-/// single common minimum — so tracks that already shared a common origin
-/// stay aligned, and tracks with independent origins are each pulled to 0.
-///
-/// Idempotent: a second call is a no-op (every anchor is already 0).
-pub fn rebase_to_zero(media: &mut Media) {
-    for track in &mut media.tracks {
-        let anchor = track.start_decode_time as i64;
-        if anchor == 0 {
-            continue;
-        }
-        for s in &mut track.samples {
-            if let Some(t) = s.timing.as_mut() {
-                t.shift(-anchor);
-            }
-        }
-        track.start_decode_time = 0;
+use broadcast_common::stage::{Stage, Timestamp};
+
+use crate::TrackId;
+use crate::error::{Error, Result};
+use crate::ir::Sample;
+
+/// One exact decode-time origin per track, in that track's own media
+/// timescale ticks — the form a sample plan supplies to [`RebaseStage`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RebaseOrigin {
+    origins: BTreeMap<TrackId, i64>,
+}
+
+impl RebaseOrigin {
+    /// No origins.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The origin of `track`, in its own media timescale ticks.
+    #[must_use]
+    pub fn with(mut self, track: TrackId, ticks: i64) -> Self {
+        self.origins.insert(track, ticks);
+        self
+    }
+
+    /// Record `track`'s origin.
+    pub fn set(&mut self, track: TrackId, ticks: i64) {
+        self.origins.insert(track, ticks);
+    }
+
+    /// The origin recorded for `track`, if any.
+    #[must_use]
+    pub fn get(&self, track: TrackId) -> Option<i64> {
+        self.origins.get(&track).copied()
     }
 }
 
-/// Shift every track's decode-time anchor — and every sample's `dts`/`pts` —
-/// by a signed `delta_ticks`.
+/// How a [`RebaseStage`] learns each track's origin.
+#[derive(Debug, Clone)]
+enum Mode {
+    /// Every track's origin is supplied up front.
+    Exact,
+    /// Each track is rebased on its own first sample, buffering output no
+    /// longer than `window` of driver time or `max_bytes` of sample bytes.
+    Window {
+        /// The caller's wall-clock hold.
+        window: core::time::Duration,
+        /// The caller's byte cap on buffered samples.
+        max_bytes: u64,
+    },
+}
+
+/// Re-origin every track's decode timeline so its first sample starts at 0.
 ///
-/// `delta_ticks` is interpreted in each track's own media-timescale ticks (the
-/// same units as [`Track::start_decode_time`]). A positive delta moves the
-/// timeline later; a negative delta moves it earlier, **saturating at 0** — a
-/// track whose anchor would go negative is clamped to 0 (the earliest
-/// representable decode time) rather than wrapping. The *same* effective
-/// delta (which may be smaller in magnitude than `delta_ticks` when the
-/// anchor saturates) is applied to every sample's `dts`/`pts`, so the anchor
-/// and the sample timeline never disagree.
-pub fn apply_offset(media: &mut Media, delta_ticks: i64) {
-    for track in &mut media.tracks {
-        let new_anchor = track.start_decode_time.saturating_add_signed(delta_ticks);
-        let effective_delta = new_anchor as i64 - track.start_decode_time as i64;
-        for s in &mut track.samples {
-            if let Some(t) = s.timing.as_mut() {
-                t.shift(effective_delta);
+/// Drive it with [`feed`](Stage::feed), then [`poll`](Stage::poll) for the
+/// rebased samples, and [`finish`](Stage::finish) at end of input. A sample
+/// carrying no timestamp is passed through untouched — no timestamp is ever
+/// fabricated.
+#[derive(Debug, Clone)]
+pub struct RebaseStage {
+    mode: Mode,
+    origins: BTreeMap<TrackId, i64>,
+    pending: VecDeque<(TrackId, Sample)>,
+    pending_bytes: u64,
+    started: Option<Timestamp>,
+    deadline: Option<Timestamp>,
+    released: bool,
+    ready: VecDeque<(TrackId, Sample)>,
+}
+
+impl RebaseStage {
+    /// Rebase with exact per-track origins (from a sample plan).
+    #[must_use]
+    pub fn with_origin(origin: RebaseOrigin) -> Self {
+        Self {
+            mode: Mode::Exact,
+            origins: origin.origins,
+            pending: VecDeque::new(),
+            pending_bytes: 0,
+            started: None,
+            deadline: None,
+            released: true,
+            ready: VecDeque::new(),
+        }
+    }
+
+    /// Rebase each track on its own first sample, holding output for at most
+    /// `window` of driver time or `max_bytes` of buffered sample bytes.
+    ///
+    /// Buffering ends when the window closes (`on_deadline`), the byte cap is
+    /// reached, or the stage is finished. A track whose first sample arrives
+    /// after the window closed still rebases on that first sample, so it never
+    /// emits a negative timestamp.
+    #[must_use]
+    pub fn start_window(window: core::time::Duration, max_bytes: u64) -> Self {
+        Self {
+            mode: Mode::Window { window, max_bytes },
+            origins: BTreeMap::new(),
+            pending: VecDeque::new(),
+            pending_bytes: 0,
+            started: None,
+            deadline: None,
+            released: false,
+            ready: VecDeque::new(),
+        }
+    }
+
+    /// Release every held sample, in arrival order.
+    fn release(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+        for (track, sample) in &self.pending {
+            if !self.origins.contains_key(track) {
+                let ticks = sample.timing.and_then(|t| t.dts()).unwrap_or(0);
+                self.origins.insert(*track, ticks);
             }
         }
-        track.start_decode_time = new_anchor;
+        while let Some((track, sample)) = self.pending.pop_front() {
+            self.emit(track, sample);
+        }
+        self.pending_bytes = 0;
+    }
+
+    /// The origin for `track`, discovering it from `sample` in window mode.
+    fn origin_for(&mut self, track: TrackId, sample: &Sample) -> Result<i64> {
+        if let Some(ticks) = self.origins.get(&track) {
+            return Ok(*ticks);
+        }
+        match &self.mode {
+            Mode::Exact => Err(Error::RebaseMissingOrigin { track }),
+            Mode::Window { .. } => {
+                let ticks = sample.timing.and_then(|t| t.dts()).unwrap_or(0);
+                self.origins.insert(track, ticks);
+                Ok(ticks)
+            }
+        }
+    }
+
+    fn emit(&mut self, track: TrackId, mut sample: Sample) {
+        let origin = self.origins.get(&track).copied().unwrap_or(0);
+        if origin != 0
+            && let Some(timing) = sample.timing.as_mut()
+        {
+            timing.shift(-origin);
+        }
+        self.ready.push_back((track, sample));
     }
 }
 
-/// Insert a discontinuity gap of `gap_ticks` into a track's decode timeline
-/// immediately before the sample at `at_sample_index`.
-///
-/// Every sample from `at_sample_index` onward has its `dts`/`pts` (when
-/// `Some`) pushed later by `gap_ticks` — so the sample at `at_sample_index`,
-/// and every sample after it, starts `gap_ticks` later, and the total
-/// timeline span grows by exactly `gap_ticks`. Samples before the insertion
-/// point (and their durations) are unchanged.
-///
-/// At `at_sample_index == 0` (or an empty track) there is no preceding
-/// sample: every sample (the whole track) shifts later, and the anchor
-/// ([`Track::start_decode_time`]) is bumped by `gap_ticks` (saturating) to
-/// stay in lockstep. An `at_sample_index` past the end of the track is
-/// clamped to `track.samples.len()` — a no-op on the samples (there is
-/// nothing after the end to shift), matching "gap at the very end" having no
-/// observable effect on this track's own samples.
-pub fn insert_discontinuity_gap(track: &mut Track, at_sample_index: usize, gap_ticks: u32) {
-    let gap = gap_ticks as i64;
-    if at_sample_index == 0 {
-        track.start_decode_time = track.start_decode_time.saturating_add(gap_ticks as u64);
-    }
-    let idx = at_sample_index.min(track.samples.len());
-    for s in &mut track.samples[idx..] {
-        if let Some(t) = s.timing.as_mut() {
-            t.shift(gap);
+impl Stage for RebaseStage {
+    type In<'a> = (TrackId, Sample);
+    type Out = (TrackId, Sample);
+    type Error = Error;
+
+    fn feed(&mut self, (track, sample): Self::In<'_>, now: Timestamp) -> Result<()> {
+        if self.released {
+            self.origin_for(track, &sample)?;
+            self.emit(track, sample);
+            return Ok(());
         }
+        if self.started.is_none() {
+            self.started = Some(now);
+            if let Mode::Window { window, .. } = &self.mode {
+                self.deadline = now.checked_add(*window);
+            }
+        }
+        let bytes = u64::try_from(sample.data.len()).unwrap_or(u64::MAX);
+        let max_bytes = match &self.mode {
+            Mode::Window { max_bytes, .. } => *max_bytes,
+            Mode::Exact => u64::MAX,
+        };
+        if self.pending_bytes.saturating_add(bytes) > max_bytes {
+            return Err(Error::RebaseWindowOverflow { cap: max_bytes });
+        }
+        self.pending_bytes = self.pending_bytes.saturating_add(bytes);
+        self.pending.push_back((track, sample));
+        if self.deadline.is_some_and(|deadline| now >= deadline) {
+            self.release();
+        }
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.ready.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        self.release();
+        Ok(())
+    }
+
+    fn next_deadline(&self) -> Option<Timestamp> {
+        if self.released { None } else { self.deadline }
+    }
+
+    fn on_deadline(&mut self, now: Timestamp) {
+        if self.deadline.is_some_and(|deadline| now >= deadline) {
+            self.release();
+        }
+    }
+}
+
+/// Shift a track's decode timeline by a signed delta, saturating at 0.
+///
+/// The shift is fixed per track from its first sample's anchor, so a negative
+/// delta that would push the anchor below 0 is clamped and the *same*
+/// effective delta is applied to every sample of that track — the anchor and
+/// the sample timeline never disagree. A sample carrying no timestamp is left
+/// untouched.
+#[derive(Debug, Clone)]
+pub struct OffsetStage {
+    delta_ticks: i64,
+    effective: BTreeMap<TrackId, i64>,
+    ready: VecDeque<(TrackId, Sample)>,
+}
+
+impl OffsetStage {
+    /// Shift every track by `delta_ticks` in its own media timescale.
+    #[must_use]
+    pub fn new(delta_ticks: i64) -> Self {
+        Self {
+            delta_ticks,
+            effective: BTreeMap::new(),
+            ready: VecDeque::new(),
+        }
+    }
+
+    fn effective_for(&mut self, track: TrackId, sample: &Sample) -> i64 {
+        if let Some(delta) = self.effective.get(&track) {
+            return *delta;
+        }
+        let anchor = sample.timing.and_then(|t| t.dts()).unwrap_or(0);
+        let effective = self.delta_ticks.max(-anchor);
+        self.effective.insert(track, effective);
+        effective
+    }
+}
+
+impl Stage for OffsetStage {
+    type In<'a> = (TrackId, Sample);
+    type Out = (TrackId, Sample);
+    type Error = Error;
+
+    fn feed(&mut self, (track, mut sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
+        let delta = self.effective_for(track, &sample);
+        if delta != 0
+            && let Some(timing) = sample.timing.as_mut()
+        {
+            timing.shift(delta);
+        }
+        self.ready.push_back((track, sample));
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.ready.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Insert a discontinuity gap before a given per-track sample index.
+///
+/// Every sample at or after `at_sample_index` (per track) has its `dts`/`pts`
+/// pushed later by `gap_ticks`; earlier samples are unchanged. At index 0 the
+/// whole track shifts. A sample carrying no timestamp is left untouched.
+#[derive(Debug, Clone)]
+pub struct GapStage {
+    gap_ticks: i64,
+    at_sample_index: usize,
+    counts: BTreeMap<TrackId, usize>,
+    ready: VecDeque<(TrackId, Sample)>,
+}
+
+impl GapStage {
+    /// Insert `gap_ticks` before each track's sample `at_sample_index`.
+    #[must_use]
+    pub fn new(gap_ticks: u32, at_sample_index: usize) -> Self {
+        Self {
+            gap_ticks: i64::from(gap_ticks),
+            at_sample_index,
+            counts: BTreeMap::new(),
+            ready: VecDeque::new(),
+        }
+    }
+}
+
+impl Stage for GapStage {
+    type In<'a> = (TrackId, Sample);
+    type Out = (TrackId, Sample);
+    type Error = Error;
+
+    fn feed(&mut self, (track, mut sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
+        let count = self.counts.entry(track).or_insert(0);
+        if *count >= self.at_sample_index
+            && let Some(timing) = sample.timing.as_mut()
+        {
+            timing.shift(self.gap_ticks);
+        }
+        *count = count.saturating_add(1);
+        self.ready.push_back((track, sample));
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.ready.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    fn timescale(value: u32) -> Timescale {
-        Timescale::try_new(value).expect("a non-zero timescale")
-    }
-
     use super::*;
-    use crate::TrackId;
-    use crate::ir::SampleFlags;
-    use crate::media::Track;
-    use crate::pipeline::{Sample, TrackSpec};
+    use crate::ir::{SampleFlags, SampleTiming};
     use alloc::vec;
-    use broadcast_common::timescale::Timescale;
+    use alloc::vec::Vec;
 
     fn sample(dts: i64, duration: u32) -> Sample {
         Sample {
             data: vec![0u8; 4].into(),
-            timing: Some(crate::ir::SampleTiming::timed_with_duration(
-                dts, dts, duration,
-            )),
+            timing: Some(SampleTiming::timed_with_duration(dts, dts, duration)),
             flags: SampleFlags::SYNC,
             provenance: None,
             display: None,
@@ -136,129 +364,154 @@ mod tests {
         }
     }
 
-    /// Build a track whose samples carry consecutive absolute `dts`/`pts`
-    /// starting at `start`, stepping by each duration in `durs`.
-    fn track_at(start: i64, durs: &[u32]) -> Track {
+    fn samples_at(start: i64, durs: &[u32]) -> Vec<Sample> {
         let mut dts = start;
-        let mut samples = alloc::vec::Vec::with_capacity(durs.len());
+        let mut out = Vec::with_capacity(durs.len());
         for &d in durs {
-            samples.push(sample(dts, d));
-            dts += d as i64;
+            out.push(sample(dts, d));
+            dts += i64::from(d);
         }
-        Track::new_at(spec(), samples, start as u64)
+        out
     }
 
-    // Codec config is irrelevant to the transforms; build a minimal AVC spec.
-    fn spec() -> TrackSpec {
-        use crate::pipeline::CodecConfig;
-        use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
-        use isobmff::nalu_types::{AvcPps, AvcSps};
-        let record = AVCDecoderConfigurationRecord {
-            configuration_version: 1,
-            profile_indication: 66,
-            profile_compatibility: 0,
-            level_indication: 30,
-            length_size_minus_one: 3,
-            sps: vec![AvcSps(vec![0x67, 0x42, 0x00, 0x1e])],
-            pps: vec![AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
-            chroma_format: None,
-            bit_depth_luma_minus8: None,
-            bit_depth_chroma_minus8: None,
-            sps_ext: vec![],
-        };
-        TrackSpec::new(
-            TrackId::new(1),
-            timescale(90_000),
-            CodecConfig::Avc {
-                config: AVCConfigurationBox::new(record),
-                width: 16,
-                height: 16,
-            },
-        )
+    fn run<S>(stage: &mut S, track: TrackId, input: Vec<Sample>) -> Vec<Sample>
+    where
+        S: for<'a> Stage<In<'a> = (TrackId, Sample), Out = (TrackId, Sample), Error = Error>,
+    {
+        let mut out = Vec::new();
+        for sample in input {
+            stage
+                .feed((track, sample), Timestamp::ZERO)
+                .expect("feed must not fail for valid input");
+            while let Some((_, sample)) = stage.poll() {
+                out.push(sample);
+            }
+        }
+        stage.finish().expect("finish must not fail");
+        while let Some((_, sample)) = stage.poll() {
+            out.push(sample);
+        }
+        out
     }
 
-    #[test]
-    fn rebase_to_zero_clears_anchor_and_samples() {
-        let mut m = Media::new(vec![track_at(90_000, &[3000, 3000])], timescale(1000));
-        rebase_to_zero(&mut m);
-        assert_eq!(m.tracks[0].start_decode_time, 0);
-        assert_eq!(m.tracks[0].samples[0].timing.and_then(|t| t.dts()), Some(0));
-        assert_eq!(
-            m.tracks[0].samples[1].timing.and_then(|t| t.dts()),
-            Some(3000)
-        );
-        assert_eq!(
-            m.tracks[0].samples[1].timing.and_then(|t| t.pts()),
-            Some(3000)
-        );
-        // Idempotent.
-        rebase_to_zero(&mut m);
-        assert_eq!(m.tracks[0].start_decode_time, 0);
-        assert_eq!(m.tracks[0].samples[0].timing.and_then(|t| t.dts()), Some(0));
+    fn dts(samples: &[Sample]) -> Vec<Option<i64>> {
+        samples
+            .iter()
+            .map(|s| s.timing.and_then(|t| t.dts()))
+            .collect()
     }
 
     #[test]
-    fn rebase_to_zero_leaves_none_untouched() {
-        let mut m = Media::new(vec![track_at(1000, &[10])], timescale(1000));
-        m.tracks[0].samples[0].timing = None;
-        rebase_to_zero(&mut m);
+    fn rebase_with_origin_clears_the_first_sample_and_keeps_the_grid() {
+        let track = TrackId::new(1);
+        let mut stage = RebaseStage::with_origin(RebaseOrigin::new().with(track, 90_000));
+        let out = run(&mut stage, track, samples_at(90_000, &[3000, 3000]));
+        assert_eq!(dts(&out), vec![Some(0), Some(3000)]);
         assert_eq!(
-            m.tracks[0].samples[0].timing.and_then(|t| t.dts()),
-            None,
-            "never fabricate a dts"
+            out[1].timing.and_then(|t| t.pts()),
+            Some(3000),
+            "pts moves with dts"
         );
+    }
+
+    #[test]
+    fn rebase_leaves_an_untimed_sample_untouched() {
+        let track = TrackId::new(1);
+        let mut samples = samples_at(1000, &[10]);
+        samples[0].timing = None;
+        let mut stage = RebaseStage::with_origin(RebaseOrigin::new().with(track, 1000));
+        let out = run(&mut stage, track, samples);
+        assert_eq!(dts(&out), vec![None], "never fabricate a dts");
         assert_eq!(
-            m.tracks[0].samples[0].timing.and_then(|t| t.pts()),
+            out[0].timing.and_then(|t| t.pts()),
             None,
             "never fabricate a pts"
         );
     }
 
     #[test]
-    fn apply_offset_shifts_anchor_and_samples() {
-        let mut m = Media::new(vec![track_at(100, &[10])], timescale(1000));
-        apply_offset(&mut m, 50);
-        assert_eq!(m.tracks[0].start_decode_time, 150);
+    fn rebase_missing_origin_is_reported() {
+        let track = TrackId::new(7);
+        let mut stage = RebaseStage::with_origin(RebaseOrigin::new());
+        let err = stage
+            .feed((track, sample(0, 10)), Timestamp::ZERO)
+            .expect_err("a track with no origin must fail");
+        assert_eq!(err, Error::RebaseMissingOrigin { track });
+    }
+
+    #[test]
+    fn offset_shifts_anchor_and_samples_together() {
+        let track = TrackId::new(1);
+        let mut plus = OffsetStage::new(50);
+        let shifted = run(&mut plus, track, samples_at(100, &[10]));
+        assert_eq!(dts(&shifted), vec![Some(150)]);
+        let mut minus = OffsetStage::new(-1000);
+        let clamped = run(&mut minus, track, shifted);
         assert_eq!(
-            m.tracks[0].samples[0].timing.and_then(|t| t.dts()),
-            Some(150)
-        );
-        apply_offset(&mut m, -1000);
-        assert_eq!(m.tracks[0].start_decode_time, 0, "underflow saturates at 0");
-        assert_eq!(
-            m.tracks[0].samples[0].timing.and_then(|t| t.dts()),
-            Some(0),
-            "sample shift matches the saturated (clamped) anchor delta, not the raw delta"
+            dts(&clamped),
+            vec![Some(0)],
+            "underflow saturates at 0 and the clamped delta applies to every sample"
         );
     }
 
     #[test]
     fn gap_extends_timeline_and_shifts_later_samples() {
-        let mut t = track_at(0, &[100, 100, 100]);
-        insert_discontinuity_gap(&mut t, 2, 500);
+        let track = TrackId::new(1);
+        let mut stage = GapStage::new(500, 2);
+        let out = run(&mut stage, track, samples_at(0, &[100, 100, 100]));
         assert_eq!(
-            t.samples[0].timing.and_then(|t| t.dts()),
-            Some(0),
-            "earlier sample unchanged"
+            dts(&out),
+            vec![Some(0), Some(100), Some(700)],
+            "the gap pushes the insertion point and every later sample out"
         );
-        assert_eq!(
-            t.samples[1].timing.and_then(|t| t.dts()),
-            Some(100),
-            "earlier sample unchanged"
-        );
-        assert_eq!(
-            t.samples[2].timing.and_then(|t| t.dts()),
-            Some(700),
-            "sample at the insertion point pushed out by the gap (200 + 500)"
-        );
-        assert_eq!(t.start_decode_time, 0, "anchor unaffected mid-track");
     }
 
     #[test]
-    fn gap_at_index_zero_shifts_anchor_and_every_sample() {
-        let mut t = track_at(1000, &[100]);
-        insert_discontinuity_gap(&mut t, 0, 250);
-        assert_eq!(t.start_decode_time, 1250);
-        assert_eq!(t.samples[0].timing.and_then(|t| t.dts()), Some(1250));
+    fn gap_at_index_zero_shifts_every_sample() {
+        let track = TrackId::new(1);
+        let mut stage = GapStage::new(250, 0);
+        let out = run(&mut stage, track, samples_at(1000, &[100, 100]));
+        assert_eq!(dts(&out), vec![Some(1250), Some(1350)]);
+    }
+
+    #[test]
+    fn a_late_track_in_a_start_window_never_goes_negative() {
+        let early = TrackId::new(1);
+        let late = TrackId::new(2);
+        let mut stage = RebaseStage::start_window(core::time::Duration::from_millis(100), 1 << 20);
+        stage
+            .feed((early, sample(5000, 100)), Timestamp::ZERO)
+            .expect("feed");
+        let deadline = stage.next_deadline().expect("a window has a deadline");
+        stage.on_deadline(deadline);
+        stage
+            .feed((late, sample(10, 100)), deadline)
+            .expect("a late track rebases on its own first sample");
+        stage.finish().expect("finish");
+        let mut early_out = Vec::new();
+        let mut late_out = Vec::new();
+        while let Some((track, sample)) = stage.poll() {
+            if track == early {
+                early_out.push(sample);
+            } else {
+                late_out.push(sample);
+            }
+        }
+        assert_eq!(dts(&early_out), vec![Some(0)]);
+        assert_eq!(
+            dts(&late_out),
+            vec![Some(0)],
+            "a track's first sample is non-negative even when it arrives late"
+        );
+    }
+
+    #[test]
+    fn a_start_window_byte_cap_is_a_typed_error() {
+        let track = TrackId::new(1);
+        let mut stage = RebaseStage::start_window(core::time::Duration::from_secs(10), 2);
+        let err = stage
+            .feed((track, sample(0, 100)), Timestamp::ZERO)
+            .expect_err("four bytes exceed a two-byte cap");
+        assert_eq!(err, Error::RebaseWindowOverflow { cap: 2 });
     }
 }
