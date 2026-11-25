@@ -1734,6 +1734,10 @@ pub const TABLE: &[Crate] = &[
             // `mp4_demux::Mp4Input`: a data-carrying input ADT (`At { offset, bytes }`,
             // `Next(&[u8])`, `Eof`), the stage's own drive vocabulary, not a spec code.
             "Mp4Input",
+            // `mux_stage::{MuxInput, MuxOutput}`: data-carrying ADTs (a track spec, a sample,
+            // bytes, a segment), the muxer stages' drive vocabulary, not spec codes.
+            "MuxInput",
+            "MuxOutput",
             // `rtp_align::AlignOut` (#2380): a data-carrying ADT (`Sample(TrackId, Sample)`),
             // the result of placing one sample, not a spec code.
             "AlignOut",

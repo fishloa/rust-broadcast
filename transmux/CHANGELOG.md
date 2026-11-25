@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   known four-CC whose parse failed still takes the `TrackAbandoned` path.
 
 ### Added
+- `mux_stage`: `MuxInput`, `MuxOutput`, `SegmentOut` and `SegmentSummary`, the one
+  input and output vocabulary every muxer stage speaks, and `drive_media`, the
+  bridge that feeds a whole `Media` to such a stage in decode-time order.
 - `ir::SampleProtection` (a sample's IV and subsample map) and
   `ir::TrackProtection` (scheme, `tenc` defaults, constant-IV `senc` policy)
   with `From` conversions to and from `isobmff::writer::SampleAux`;
