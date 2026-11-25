@@ -2311,6 +2311,7 @@ dependencies = [
  "ssai-runtime",
  "test-alloc",
  "test-fixtures",
+ "test-harness",
  "timed-metadata",
  "tokio",
  "tokio-util",

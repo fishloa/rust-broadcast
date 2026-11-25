@@ -78,6 +78,8 @@ cli     = ["dep:clap", "dep:container-probe", "std", "net", "serde"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+# The bounded-memory MP4 check test generates its 8 GiB fixture at test time.
+test-harness = { path = "../test-harness" }
 tokio = { version = "1", features = ["rt", "net", "time", "io-util", "macros"] }
 test-alloc = { path = "../test-alloc" }
 # `mediastreamvalidator_oracle.rs` (issue #870) renders real TS-HLS/CMAF-HLS

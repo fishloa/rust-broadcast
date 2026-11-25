@@ -12,6 +12,7 @@ mod hls_fixture;
 mod hls_validator_fixture;
 mod integration;
 mod moov_compressed;
+mod mp4_report_digest;
 mod pcr_fixture;
 mod pts_fixture;
 mod scte35_fixture;

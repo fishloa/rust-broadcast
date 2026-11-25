@@ -13,15 +13,15 @@
 //! The file is identified from a bounded leading prefix, then played down one
 //! of two paths by container:
 //!
-//! * **TS and FLV stream.** [`media_plane::file_stream::StreamingFileSession`]
-//!   drives an incremental demuxer; the reader feeds it 64 KiB reads until it
-//!   asks for end of input, then rewinds to offset 0 for the next pass. Live memory is a function of the
-//!   session's [`FileStreamLimits`] and never of the file's length, so
+//! * **TS, FLV and MP4 stream.** [`media_plane::file_stream::StreamingFileSession`]
+//!   drives an incremental demuxer; the reader answers its forward chunks
+//!   (TS/FLV) or absolute byte ranges (MP4) until it asks for end of input,
+//!   then rewinds to offset 0 for the next pass. Live memory is a function of
+//!   the session's [`FileStreamLimits`] and never of the file's length, so
 //!   [`FileReaderConfig::max_file_bytes`] does not apply.
-//! * **MP4, PS and WebM keep today's whole-file path.** The whole file is
-//!   read under the [`FileReaderConfig::max_file_bytes`] cap, the whole-buffer
-//!   demuxers ([`transmux::PsDemux`], [`transmux::Fmp4Demux`],
-//!   [`transmux::ProgressiveDemux`], [`transmux::WebmDemux`]) run once over
+//! * **PS and WebM keep today's whole-file path.** The whole file is read
+//!   under the [`FileReaderConfig::max_file_bytes`] cap, the whole-buffer
+//!   demuxers ([`transmux::PsDemux`], [`transmux::WebmDemux`]) run once over
 //!   the buffer, and the parsed tracks are replayed.
 //!
 //! 1. **Identify** the container from a bounded prefix with
@@ -139,7 +139,7 @@ pub struct FileReaderConfig {
     pub max_loops: Option<u32>,
     /// Cap on the file's size in bytes, enforced **before** a whole-file read
     /// — an operator-supplied path (e.g. a character device or FIFO) is never
-    /// read unbounded. Applies to MP4, PS and WebM files only: TS and FLV
+    /// read unbounded. Applies to PS and WebM files only: TS, FLV and MP4
     /// stream from disk under bounded buffers, so their size is never capped.
     /// Defaults to [`DEFAULT_MAX_FILE_BYTES`].
     pub max_file_bytes: usize,
@@ -148,8 +148,8 @@ pub struct FileReaderConfig {
 /// The default [`FileReaderConfig::max_file_bytes`]: 1 GiB. Generous enough for
 /// any real slate/filler/loop asset, small enough that a misconfigured path
 /// fails cleanly ([`FileReaderError::FileTooLarge`]) long before an unbounded
-/// read could exhaust process memory. TS and FLV stream from disk and are not
-/// subject to it.
+/// read could exhaust process memory. TS, FLV and MP4 stream from disk and are
+/// not subject to it.
 pub const DEFAULT_MAX_FILE_BYTES: usize = 1 << 30;
 
 impl FileReaderConfig {
@@ -193,8 +193,8 @@ impl FileReaderConfig {
         self
     }
 
-    /// Set [`Self::max_file_bytes`], the whole-file cap that applies to MP4,
-    /// PS and WebM only.
+    /// Set [`Self::max_file_bytes`], the whole-file cap that applies to PS and
+    /// WebM only.
     pub fn with_max_file_bytes(mut self, max_file_bytes: usize) -> Self {
         self.max_file_bytes = max_file_bytes;
         self
@@ -289,8 +289,8 @@ impl FileReader {
         SpawnedReader { handle, cancel }
     }
 
-    /// One open/probe/play attempt: TS and FLV stream from disk, every other
-    /// container takes the whole-file path.
+    /// One open/probe/play attempt: TS, FLV and MP4 stream from disk, PS and
+    /// WebM take the whole-file path.
     async fn run_once(&self) -> Result<(), FileReaderError> {
         let probed = open_probed(&self.config.path).await?;
         match stream_container(probed.demuxer) {
@@ -303,7 +303,7 @@ impl FileReader {
     }
 
     /// Read the whole file, probe it, and demux it into the playable tracks —
-    /// the capped path for MP4, PS and WebM.
+    /// the capped path for PS and WebM.
     async fn read_capped_whole(&self, probed: OpenFile) -> Result<ParsedFile, FileReaderError> {
         let cap = self.config.max_file_bytes;
         if probed.len > cap as u64 {
@@ -329,8 +329,8 @@ impl FileReader {
             })?
     }
 
-    /// Play a TS/FLV file by feeding [`StreamingFileSession`] the bytes it asks
-    /// for, one bounded read at a time — the file is never held whole.
+    /// Play a streaming file by feeding [`StreamingFileSession`] the bytes it
+    /// asks for, one bounded read at a time — the file is never held whole.
     async fn publish_streaming(
         &self,
         probed: OpenFile,
@@ -341,13 +341,17 @@ impl FileReader {
             .trunk
             .writer()
             .ok_or(FileReaderError::WriterUnavailable)?;
+        let limits = FileStreamLimits {
+            mp4: mp4_config(probed.len),
+            ..FileStreamLimits::default()
+        };
         let mut session = StreamingFileSession::new(
             container,
             STANDALONE_PROGRAM,
             self.config.loop_file,
             self.config.max_loops,
             self.config.pace,
-            FileStreamLimits::default(),
+            limits,
         );
         let mut file = probed.file;
         let mut buffer = vec![0u8; FILE_READ_CHUNK];
@@ -358,11 +362,28 @@ impl FileReader {
                     let read = read_chunk(&self.config.path, &mut file, &mut buffer).await?;
                     feed_read(&mut session, &buffer[..read])?;
                 }
+                FileDemand::BytesAt { offset, len } => {
+                    let bytes = read_at(&self.config.path, &mut file, offset, len).await?;
+                    session.feed(
+                        FileInput::At {
+                            offset,
+                            bytes: bytes.into(),
+                        },
+                        broadcast_common::Timestamp::ZERO,
+                    )?;
+                }
+                FileDemand::Eof => {
+                    session.feed(FileInput::Eof, broadcast_common::Timestamp::ZERO)?;
+                }
                 FileDemand::Rewind => {
                     let next = reprobe_stream_file(&self.config.path, container).await?;
                     file = next.file;
-                    let read = read_chunk(&self.config.path, &mut file, &mut buffer).await?;
-                    feed_read(&mut session, &buffer[..read])?;
+                    if container == StreamContainer::Mp4 {
+                        session.rewound();
+                    } else {
+                        let read = read_chunk(&self.config.path, &mut file, &mut buffer).await?;
+                        feed_read(&mut session, &buffer[..read])?;
+                    }
                 }
                 FileDemand::Wait => {
                     if let Some(due) = session.next_due() {
@@ -485,6 +506,9 @@ fn stream_container(demuxer: DemuxerKind) -> Option<StreamContainer> {
     match demuxer {
         DemuxerKind::StreamingTs => Some(StreamContainer::MpegTs),
         DemuxerKind::StreamingFlv => Some(StreamContainer::Flv),
+        DemuxerKind::Fmp4 | DemuxerKind::Progressive | DemuxerKind::Mp4 => {
+            Some(StreamContainer::Mp4)
+        }
         _ => None,
     }
 }
@@ -582,6 +606,40 @@ async fn read_chunk(
     file.read(buffer)
         .await
         .map_err(|source| read_error(path, source))
+}
+
+/// The MP4 stage policy for a file of `total_len` bytes: a caller-chosen
+/// total length so a `moov`-after-`mdat` input can be read and end of input
+/// recognised. The read window stays unset (one sample per request).
+fn mp4_config(total_len: u64) -> transmux::mp4_demux::Mp4DemuxConfig {
+    transmux::mp4_demux::Mp4DemuxConfig::default().with_total_len(Some(total_len))
+}
+
+/// Read exactly `len` bytes at absolute `offset`, or fewer only at end of
+/// file: one seek and one bounded buffer, never a read to the end.
+async fn read_at(
+    path: &Path,
+    file: &mut tokio::fs::File,
+    offset: u64,
+    len: usize,
+) -> Result<Vec<u8>, FileReaderError> {
+    file.seek(std::io::SeekFrom::Start(offset))
+        .await
+        .map_err(|source| read_error(path, source))?;
+    let mut buffer = vec![0u8; len];
+    let mut filled = 0usize;
+    while filled < len {
+        let read = file
+            .read(&mut buffer[filled..])
+            .await
+            .map_err(|source| read_error(path, source))?;
+        if read == 0 {
+            break;
+        }
+        filled += read;
+    }
+    buffer.truncate(filled);
+    Ok(buffer)
 }
 
 /// Feed a read: the bytes just read, or end of input for a zero-length read.
@@ -761,8 +819,8 @@ fn file_trunk_config(window_segments: usize) -> media_plane::trunk::TrunkConfig 
 /// Run a `InputSpec::File` route to completion on the current task: identify
 /// the file from a bounded prefix, then replay it through a single-program
 /// [`IngestDriver`] and pump `crate::source::advance_route` once per iteration
-/// so samples become servable segments/parts. TS and FLV stream from disk
-/// through a [`StreamingFileSession`]; MP4, PS and WebM keep the whole-file
+/// so samples become servable segments/parts. TS, FLV and MP4 stream from disk
+/// through a [`StreamingFileSession`]; PS and WebM keep the whole-file
 /// [`FileIngestSession`] path under the configured size cap. Mirrors
 /// [`crate::source::ts_udp::run_ts_udp`]'s shape; returns `Err` only on a
 /// failure (a bad/unreadable file), which the route's supervisor retries.
@@ -825,7 +883,7 @@ pub(crate) async fn run_file_source(
     }
 }
 
-/// The whole-file route: replay an already-demuxed MP4/PS/WebM file through a
+/// The whole-file route: replay an already-demuxed PS/WebM file through a
 /// [`FileIngestSession`].
 async fn run_whole_file_route(
     parsed: ParsedFile,
@@ -896,8 +954,8 @@ async fn run_whole_file_route(
     }
 }
 
-/// The streaming route: read a TS/FLV file from disk in bounded chunks and
-/// drive the session through the route's [`IngestDriver`].
+/// The streaming route: read a TS/FLV/MP4 file from disk in bounded chunks or
+/// byte ranges and drive the session through the route's [`IngestDriver`].
 async fn run_streaming_file_route(
     path: &std::path::Path,
     probed: OpenFile,
@@ -908,7 +966,7 @@ async fn run_streaming_file_route(
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> crate::MultimuxError {
     let mut driver = IngestDriver::new(
-        StreamingFileIngest::new(container, loop_file),
+        StreamingFileIngest::new(container, loop_file, probed.len),
         media_plane::IngestConfig::new(handshake)
             .with_trunk(file_trunk_config(window_segments))
             .with_max_programs(
@@ -930,17 +988,35 @@ async fn run_streaming_file_route(
                 };
                 feed_route(&mut driver, &buffer[..read], now);
             }
+            FileDemand::BytesAt { offset, len } => {
+                let bytes = match read_at(path, &mut file, offset, len).await {
+                    Ok(bytes) => bytes,
+                    Err(error) => return error.into(),
+                };
+                driver.feed(
+                    FileInput::At {
+                        offset,
+                        bytes: bytes.into(),
+                    },
+                    now,
+                );
+            }
+            FileDemand::Eof => driver.feed(FileInput::Eof, now),
             FileDemand::Rewind => {
                 let next = match reprobe_stream_file(path, container).await {
                     Ok(next) => next,
                     Err(error) => return error.into(),
                 };
                 file = next.file;
-                let read = match read_chunk(path, &mut file, &mut buffer).await {
-                    Ok(read) => read,
-                    Err(error) => return error.into(),
-                };
-                feed_route(&mut driver, &buffer[..read], now);
+                if container == StreamContainer::Mp4 {
+                    driver.session_mut().rewound();
+                } else {
+                    let read = match read_chunk(path, &mut file, &mut buffer).await {
+                        Ok(read) => read,
+                        Err(error) => return error.into(),
+                    };
+                    feed_route(&mut driver, &buffer[..read], now);
+                }
             }
             FileDemand::Wait => {
                 match driver.session().next_due() {
@@ -1016,16 +1092,24 @@ struct StreamingFileIngest {
 }
 
 impl StreamingFileIngest {
-    fn new(container: StreamContainer, loop_file: bool) -> Self {
+    fn new(container: StreamContainer, loop_file: bool, total_len: u64) -> Self {
+        let limits = FileStreamLimits {
+            mp4: mp4_config(total_len),
+            ..FileStreamLimits::default()
+        };
         let session = StreamingFileSession::new(
             container,
             crate::route::SPTS_PROGRAM_ID,
             loop_file,
             None,
             true,
-            FileStreamLimits::default(),
+            limits,
         );
         Self { session }
+    }
+
+    fn rewound(&mut self) {
+        self.session.rewound();
     }
 
     fn file_demand(&self) -> FileDemand {
@@ -1204,9 +1288,9 @@ mod playout_tests {
     /// playout asset, and one byte over is refused with its real size.
     #[tokio::test]
     async fn a_file_exactly_at_the_size_cap_is_accepted_and_one_byte_over_is_refused() {
-        // A capped whole-file container: TS and FLV stream from disk instead
-        // and are deliberately not subject to the cap.
-        let path = test_fixtures::path("mp4/h264-high.mp4");
+        // A capped whole-file container: TS, FLV and MP4 stream from disk
+        // instead and are deliberately not subject to the cap.
+        let path = test_fixtures::path("ps/h264-ac3.ps");
         let len = std::fs::metadata(&path).expect("fixture metadata").len() as usize;
         assert!(len > 0);
 

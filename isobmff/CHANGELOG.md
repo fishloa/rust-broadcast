@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Breaking
+
+- `registry::BoxDef` and `registry::RegisteredBox` require `Send + Sync`, so a `Reader` holding registered values can cross threads (a tokio task) and one registry can serve many readers.
 ### Added
 
 - `registry`: `BoxRegistry` registers a private box or sample entry from outside
