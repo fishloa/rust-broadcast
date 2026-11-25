@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Breaking
+- One MPEG-2 TS muxer: `TsMuxStage` replaces `TsMux` and `StreamingTsMux`
+  (both deleted with their `Package` impls). It is a `Stage<In = MuxInput,
+  Out = MuxOutput>` fed one sample at a time, emitting whole 188-byte packets
+  as `MuxOutput::Bytes`; its PAT/PMT repetition interval is a constructor
+  argument (`Some(DEFAULT_PSI_INTERVAL)` repeats, `None` writes the PSI once
+  only). Continuity counters, the PCR PID choice, PES framing and the PSI
+  schedule are the same, and a whole `Media` driven through
+  `mux_stage::drive_media` produces byte-identical output (every committed TS
+  fixture and the output golden tests pin it). A `MuxInput::Track` announced
+  after samples have started writes a new PMT with `version_number`
+  incremented modulo 32, so a live PMT update continues instead of being
+  refused (#1024, Phase 4).
+- `TsHlsPackager`, `TsHlsOutput` and `TsSegment` are deleted: classic TS-HLS is
+  `StreamingTsHlsSegmenter` alone, which now speaks `Stage<In = MuxInput,
+  Out = MuxOutput>` and emits a `MuxOutput::Segment` with a filled
+  `SegmentSummary`. The segment URI is `{uri_prefix}{sequence}.ts`; drive a
+  whole `Media` through `mux_stage::drive_media` and render the playlist with
+  `StreamingTsHlsSegmenter::playlist`.
 - `Fmp4Demux`, `ProgressiveDemux` (its `Unpackage` and `Stage` impls too),
   `demux_progressive` and `samples_from_stbl` are deleted, together with the
   `transmux_progressive_demux` fuzz target. The replacement is
