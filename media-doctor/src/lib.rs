@@ -16,6 +16,8 @@ mod hls_validator;
 pub mod metrics_server;
 #[cfg(feature = "std")]
 pub mod mp4_stream;
+#[cfg(feature = "std")]
+pub mod payload;
 mod playlist;
 mod report;
 #[cfg(feature = "net")]
