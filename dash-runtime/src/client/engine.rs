@@ -15,7 +15,7 @@ use url::Url;
 
 use super::action::{Action, RepId, ResourceId};
 use super::config::{DashConfig, PullLimits};
-use super::demux::{self, Staged};
+use super::demux::{self, SegmentStage, Staged};
 use super::error::{Error, Failure, FailureClass, FailureKind, FatalKind, Rejection, Result};
 use super::meta::ResponseMeta;
 use super::output::{AudioRendition, DropCause, ManifestSelection, Notice, Output, VariantInfo};
@@ -118,6 +118,7 @@ struct RepState {
     rep_key: String,
     joined: bool,
     last_time: Option<u64>,
+    demux: Option<SegmentStage>,
 }
 
 enum SlotState {
@@ -865,6 +866,49 @@ impl DashClient {
         self.periods.get_mut(p)?.lanes.get_mut(l)?.reps.get_mut(r)
     }
 
+    /// Demux one media segment of `rep` through its long-lived stage, creating
+    /// the stage from `init` on first use. A stage the reader refuses is
+    /// dropped, so a retried or following segment starts from a fresh one
+    /// rather than inheriting the refusal.
+    fn demux_segment(
+        &mut self,
+        rep: RepId,
+        init: &[u8],
+        bytes: &[u8],
+    ) -> std::result::Result<Staged, transmux::Error> {
+        let Some((pi, li, ri)) = self.rep_loc.get(&rep).copied() else {
+            return Err(transmux::Error::InvalidInput(
+                "segment for an unknown representation",
+            ));
+        };
+        if self.periods[pi].lanes[li].reps[ri].demux.is_none() {
+            let stage = SegmentStage::new(init)?;
+            self.periods[pi].lanes[li].reps[ri].demux = Some(stage);
+        }
+        let result = match self.periods[pi].lanes[li].reps[ri].demux.as_mut() {
+            Some(stage) => stage.demux(bytes),
+            None => Err(transmux::Error::InvalidInput("MP4 demux stage missing")),
+        };
+        if result.is_err() {
+            self.periods[pi].lanes[li].reps[ri].demux = None;
+        }
+        result
+    }
+
+    /// Drop every Representation's demux stage that was fed `key`'s init, so
+    /// the next segment is demuxed under the init bytes just received.
+    fn reset_stages(&mut self, key: &InitKey) {
+        for period in &mut self.periods {
+            for lane in &mut period.lanes {
+                for rep in &mut lane.reps {
+                    if &rep.init_key == key {
+                        rep.demux = None;
+                    }
+                }
+            }
+        }
+    }
+
     fn rep_segment_error(&mut self, pi: usize, li: usize, reason: &'static str) -> bool {
         if self.periods[pi].lanes[li].current().is_none() {
             return false;
@@ -894,7 +938,9 @@ impl DashClient {
     }
 
     fn drop_rep_at(&mut self, pi: usize, li: usize, ri: usize, cause: DropCause) {
-        self.periods[pi].lanes[li].reps[ri].dead = true;
+        let rep = &mut self.periods[pi].lanes[li].reps[ri];
+        rep.dead = true;
+        rep.demux = None;
         let at = self.periods[pi].lanes[li].reps[ri].at;
         self.outputs.push_back(Output::TrackDropped {
             period: self.periods[pi].index,
@@ -1208,6 +1254,7 @@ impl DashClient {
             rep_key: rep.id.clone(),
             joined: mpd.kind != PresentationType::Dynamic,
             last_time: None,
+            demux: None,
         };
         if let Some(ix) = &state.index {
             range_pair(Some(ix.range))?;
@@ -1442,6 +1489,7 @@ impl DashClient {
         }
         self.clear_success(id);
         self.reqs.remove(&id);
+        self.reset_stages(&key);
         let held = self.demux_held(now, &key);
         self.drain();
         held
@@ -1457,23 +1505,26 @@ impl DashClient {
             for li in 0..self.periods[pi].lanes.len() {
                 let n = self.periods[pi].lanes[li].queue.len();
                 for qi in 0..n {
-                    let (id, matches) = {
-                        let lane = &self.periods[pi].lanes[li];
+                    let (id, rep_id, bytes) = {
+                        let lane = &mut self.periods[pi].lanes[li];
                         let slot = &lane.queue[qi];
-                        let m = matches!(slot.state, SlotState::Held(_))
+                        let matches = matches!(slot.state, SlotState::Held(_))
                             && lane.reps.get(slot.rep).is_some_and(|r| &r.init_key == key);
-                        (slot.id, m)
+                        if !matches {
+                            continue;
+                        }
+                        let Some(rep_id) = lane.reps.get(slot.rep).map(|r| r.id) else {
+                            continue;
+                        };
+                        let slot = &mut lane.queue[qi];
+                        let SlotState::Held(bytes) =
+                            std::mem::replace(&mut slot.state, SlotState::Issued)
+                        else {
+                            continue;
+                        };
+                        (slot.id, rep_id, bytes)
                     };
-                    if !matches {
-                        continue;
-                    }
-                    let slot = &mut self.periods[pi].lanes[li].queue[qi];
-                    let SlotState::Held(bytes) =
-                        std::mem::replace(&mut slot.state, SlotState::Issued)
-                    else {
-                        continue;
-                    };
-                    match demux::demux_segment(&init, &bytes) {
+                    match self.demux_segment(rep_id, &init, &bytes) {
                         Ok(staged) => {
                             self.periods[pi].lanes[li].queue[qi].state = SlotState::Staged(staged);
                         }
@@ -1581,7 +1632,7 @@ impl DashClient {
             .clone();
         let init = self.inits.get(&key).and_then(|e| e.bytes.clone());
         let state = match init {
-            Some(init) => match demux::demux_segment(&init, bytes) {
+            Some(init) => match self.demux_segment(rep, &init, bytes) {
                 Ok(staged) => SlotState::Staged(staged),
                 Err(_) => return Err(self.reject(now, id, Rejection::DemuxFailed)),
             },

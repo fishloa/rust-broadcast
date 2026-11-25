@@ -1044,6 +1044,7 @@ dependencies = [
  "media-plane",
  "percent-encoding",
  "quick-xml",
+ "test-alloc",
  "test-fixtures",
  "test-harness",
  "thiserror 2.0.21",

@@ -18,7 +18,8 @@ use common::loopback::{
     Drive, Fault, FaultKind, Origin, Run, Sig, assert_matches_oracle, drive, oracle,
 };
 use dash_runtime::client::{
-    DashConfig, Error, FailureClass, FailureKind, FatalKind, PullLimits, Rejection, ResourceId,
+    DashConfig, Error, FailureClass, FailureKind, FatalKind, Output, PullLimits, Rejection,
+    ResourceId,
 };
 use url::Url;
 
@@ -44,6 +45,22 @@ fn ffmpeg_expected() -> Vec<Vec<Sig>> {
     let mut out = oracle(&v.iter().map(String::as_str).collect::<Vec<_>>());
     out.extend(oracle(&a.iter().map(String::as_str).collect::<Vec<_>>()));
     out
+}
+
+/// `segment` with its `moof` body overwritten: the top-level box framing (and
+/// so `container_probe`'s media-fragment check) survives, the fragment does
+/// not.
+fn damage_moof(segment: &[u8]) -> Vec<u8> {
+    let body = isobmff::BoxIter::new(segment)
+        .filter_map(|step| step.ok())
+        .find(|item| item.header.box_type.is(&isobmff::segments::MOOF))
+        .map(|item| item.end - item.body.len()..item.end)
+        .expect("the fixture segment carries a moof");
+    let mut damaged = segment.to_vec();
+    for byte in &mut damaged[body] {
+        *byte = u8::MAX;
+    }
+    damaged
 }
 
 fn ondemand_expected() -> Vec<Vec<Sig>> {
@@ -108,6 +125,40 @@ fn a_transient_segment_fault_recovers_with_every_sample() {
         assert_matches_oracle(&run, &ffmpeg_expected());
         assert_eq!(run.requested(SEGMENT), TRANSIENT + 1, "{name}");
     }
+}
+
+#[test]
+fn a_damaged_moof_costs_only_its_own_segment() {
+    let dir = "timeline-ffmpeg-quirk";
+    let damaged = damage_moof(&test_fixtures::read(&format!("dash/{dir}/{SEGMENT}")));
+    let mut origin = Origin::new().fault(Fault::times(SEGMENT, FaultKind::Replace(damaged), 1));
+    let run = drive(FFMPEG, cfg(), &mut origin, &mut Drive::default());
+    assert!(run.ended, "{:?}", run.fatal);
+    assert_eq!(run.requested(SEGMENT), 1, "the damage is not fetched again");
+    assert_eq!(
+        run.count(|o| matches!(o, Output::FragmentDamaged { .. })),
+        1,
+        "{:?}",
+        run.outputs
+    );
+    let mut video = vec![format!("{dir}/init-stream0.m4s")];
+    for n in [1, 3] {
+        video.push(format!("{dir}/chunk-stream0-{n:05}.m4s"));
+    }
+    let mut expected = oracle(&video.iter().map(String::as_str).collect::<Vec<_>>());
+    let audio: Vec<String> = (0..=4)
+        .map(|n| {
+            if n == 0 {
+                format!("{dir}/init-stream1.m4s")
+            } else {
+                format!("{dir}/chunk-stream1-{n:05}.m4s")
+            }
+        })
+        .collect();
+    expected.extend(oracle(
+        &audio.iter().map(String::as_str).collect::<Vec<_>>(),
+    ));
+    assert_matches_oracle(&run, &expected);
 }
 
 #[test]

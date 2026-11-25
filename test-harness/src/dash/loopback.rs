@@ -5,13 +5,14 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use broadcast_common::Unpackage;
+use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
 use dash_runtime::client::{
     Action, DashClient, DashConfig, Error, Failure, FailureClass, FatalKind, Output, PullLimits,
     ResourceId,
 };
-use transmux::{Fmp4Demux, Sample};
+use transmux::Sample;
+use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use url::Url;
 
 pub const HOST: &str = "dash.test";
@@ -440,17 +441,29 @@ pub fn sigs(samples: &[Sample]) -> Vec<Sig> {
     samples.iter().map(sig).collect()
 }
 
-/// The samples `Fmp4Demux` produces from the concatenation of `files` (an init
-/// first), per track in the init's order. This is the oracle: it never sees
-/// the client.
+/// The samples the streaming MP4 stage produces from `files` (an init first)
+/// fed in order, each file closed by a segment end, per track in the init's
+/// order. This is the oracle: it never sees the client.
 pub fn oracle(files: &[&str]) -> Vec<Vec<Sig>> {
-    let mut bytes = Vec::new();
+    let mut demux = Mp4Demux::sequential(Mp4DemuxConfig::default());
+    let mut events = Vec::new();
     for f in files {
-        bytes.extend_from_slice(&test_fixtures::read(&format!("dash/{f}")));
+        let bytes = test_fixtures::read(&format!("dash/{f}"));
+        demux
+            .feed(Mp4Input::Next(&bytes), Timestamp::ZERO)
+            .expect("oracle feed");
+        demux
+            .feed(Mp4Input::SegmentEnd, Timestamp::ZERO)
+            .expect("oracle segment end");
+        while let Some(event) = demux.poll() {
+            events.push(event);
+        }
     }
-    let media = Fmp4Demux::new()
-        .unpackage(bytes.as_slice())
-        .expect("oracle demux");
+    demux.finish().expect("oracle finish");
+    while let Some(event) = demux.poll() {
+        events.push(event);
+    }
+    let media = crate::collect::media_from_events(events);
     media.tracks.iter().map(|t| sigs(&t.samples)).collect()
 }
 
