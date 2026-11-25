@@ -106,18 +106,53 @@ fn a_progressive_mp4_served_as_hls_ends_fatal_not_empty() {
     assert_eq!(samples(&h.events), 0);
 }
 
+/// The `moof` of a segment with its first child's framing destroyed.
+fn damage_first_moof(mut segment: Vec<u8>) -> Vec<u8> {
+    let moof = segment
+        .windows(4)
+        .position(|w| w == b"moof")
+        .expect("a moof in the segment");
+    segment[moof + 8..moof + 12].copy_from_slice(&2u32.to_be_bytes());
+    segment
+}
+
 #[test]
-fn a_fragment_addressed_outside_its_segment_is_reported_once_and_the_rest_plays() {
+fn absolute_offsets_resolve_against_the_whole_stream() {
+    // One streaming demux per init segment keeps the whole stream in one
+    // address space, so a `tfhd` base-data-offset naming the fragment's place
+    // in the whole file resolves without rebasing. The per-segment
+    // concatenation this used to be demuxed as had to report it as damage.
     for fixture in ABSOLUTE_OFFSET_FIXTURES {
         let (events, _) = play_fragments(fixture, false);
-        assert_eq!(
-            damaged_reports(&events),
-            1,
+        assert!(
+            errors(&events).is_empty(),
             "{fixture}: {:?}",
             errors(&events)
         );
+        assert!(samples(&events) > 0, "{fixture}");
         assert!(ended(&events), "{fixture}");
     }
+}
+
+#[test]
+fn a_damaged_fragment_is_reported_once_and_the_rest_plays() {
+    let bytes = test_fixtures::read("mp4/cmaf/av-frag.mp4");
+    let parts = split(&bytes).expect("split");
+    let mut h = Host::new(PLAYLIST_URL, hls_config());
+    h.ok(PLAYLIST_URL, vod(parts.segments.len()));
+    h.ok(&format!("{BASE}/init.mp4"), parts.init);
+    for (i, segment) in parts.segments.into_iter().enumerate() {
+        let body = if i == 0 {
+            damage_first_moof(segment)
+        } else {
+            segment
+        };
+        h.ok(&format!("{BASE}/s{i}.m4s"), body);
+    }
+    h.run_to_end();
+    assert_eq!(damaged_reports(&h.events), 1, "{:?}", errors(&h.events));
+    assert!(samples(&h.events) > 0, "the rest plays");
+    assert!(ended(&h.events));
 }
 
 #[test]
