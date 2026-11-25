@@ -1471,6 +1471,136 @@ fn write_bytes(file: &mut impl Write, bytes: &[u8]) -> u64 {
     expect("sum bytes", u64::try_from(bytes.len()))
 }
 
+/// Write an MPEG-1/2 Program Stream file of at least `target_bytes` by
+/// repeating `source_fixture`'s packs, advancing every pack's SCR and every
+/// PES PTS/DTS by one pass span, streaming each pack to disk.
+///
+/// Live memory is the fixture's own pack list plus one pack's byte image, never
+/// the generated file.
+pub fn write_big_ps(path: &Path, source_fixture: &Path, target_bytes: u64) -> BigMedia {
+    let source = read_source(source_fixture);
+    let scan = mpeg_ps::program_stream::scan_packs(&source);
+    assert!(
+        scan.skipped.is_empty() && scan.remaining.is_empty(),
+        "the PS source fixture must walk cleanly"
+    );
+    assert!(!scan.packs.is_empty(), "the PS source fixture has no pack");
+    let (first_stamp_90k, span_90k) = ps_span_90k(&scan.packs);
+    let pass_ticks_27mhz = span_90k.saturating_mul(300);
+    let source_media = expect(
+        "demux PS source",
+        crate::collect::media_from_ps(&source, 64 << 10),
+    );
+
+    let mut out = BufWriter::new(expect("create output", File::create(path)));
+    let mut written = 0u64;
+    let mut passes = 0u64;
+    while written < target_bytes {
+        let pts_shift = pass_ticks_27mhz / 300;
+        let scr_shift = pass_ticks_27mhz;
+        for pack in &scan.packs {
+            let bytes = ps_pack_at_pass(pack, scr_shift, pts_shift);
+            expect("write PS pass", out.write_all(&bytes));
+            written += expect("sum pack length", u64::try_from(bytes.len()));
+        }
+        passes += 1;
+    }
+    expect("flush PS output", out.flush());
+    let _ = first_stamp_90k;
+    BigMedia {
+        bytes: written,
+        samples_per_track: source_media
+            .tracks
+            .iter()
+            .map(|track| {
+                (
+                    track.spec.track_id.value(),
+                    track.samples.len() as u64 * passes,
+                )
+            })
+            .collect(),
+        duration: Duration::from_secs_f64(span_90k as f64 / 90_000.0 * passes as f64),
+    }
+}
+
+/// The first PES stamp and the span of every PES stamp in the fixtures' packs,
+/// in 90 kHz ticks (at least one 25 Hz frame).
+fn ps_span_90k(packs: &[mpeg_ps::program_stream::Pack<'_>]) -> (u64, u64) {
+    let mut min: Option<u64> = None;
+    let mut max: Option<u64> = None;
+    for pack in packs {
+        for pes in &pack.pes_packets {
+            let Some(header) = &pes.header else {
+                continue;
+            };
+            for stamp in [
+                header.pts.map(|pts| pts.ticks()),
+                header.dts.map(|dts| dts.ticks()),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                min = Some(min.map_or(stamp, |value| value.min(stamp)));
+                max = Some(max.map_or(stamp, |value| value.max(stamp)));
+            }
+        }
+    }
+    let first = min.unwrap_or(0);
+    let span = max.map_or(90_000, |value| value.saturating_sub(first)) + 3_600;
+    (first, span.max(3_600))
+}
+
+/// One pack's byte image with its SCR and PES timestamps advanced.
+fn ps_pack_at_pass(
+    pack: &mpeg_ps::program_stream::Pack<'_>,
+    scr_shift: u64,
+    pts_shift: u64,
+) -> Vec<u8> {
+    use broadcast_common::Serialize;
+    use broadcast_common::clock33::{PCR_WRAP_27MHZ, pack_marked, pcr_split, unpack_marked};
+
+    let header_len = pack.pack_header.header_len();
+    let mut header = pack.pack_header.clone();
+    let ticks = (header.scr.ticks() + scr_shift) % PCR_WRAP_27MHZ;
+    let (base, extension) = pcr_split(ticks);
+    header.scr = mpeg_ps::Scr { base, extension };
+    let mut bytes = vec![0u8; pack.serialized_len()];
+    expect("serialize pack", pack.serialize_into(&mut bytes));
+    expect(
+        "serialize shifted pack header",
+        header.serialize_into(&mut bytes[..header_len]),
+    );
+
+    let mut at = header_len;
+    if pack.system_header.is_some() {
+        at += 6 + usize::from(u16::from_be_bytes([bytes[at + 4], bytes[at + 5]]));
+    }
+    if pack.psm.is_some() {
+        at += 6 + usize::from(u16::from_be_bytes([bytes[at + 4], bytes[at + 5]]));
+    }
+    while at + 6 <= bytes.len() {
+        let length = usize::from(u16::from_be_bytes([bytes[at + 4], bytes[at + 5]]));
+        let flags = bytes[at + 7] >> 6;
+        if flags == 2 || flags == 3 {
+            let field: [u8; 5] = bytes[at + 9..at + 14].try_into().expect("5-byte PTS");
+            let marked = unpack_marked(&field);
+            let shifted = pack_marked(marked.timestamp.wrapping_add(pts_shift), marked.prefix);
+            bytes[at + 9..at + 14].copy_from_slice(&shifted);
+        }
+        if flags == 3 {
+            let field: [u8; 5] = bytes[at + 14..at + 19].try_into().expect("5-byte DTS");
+            let marked = unpack_marked(&field);
+            let shifted = pack_marked(marked.timestamp.wrapping_add(pts_shift), marked.prefix);
+            bytes[at + 14..at + 19].copy_from_slice(&shifted);
+        }
+        at += 6 + length;
+        if length == 0 {
+            break;
+        }
+    }
+    bytes
+}
+
 #[cfg(test)]
 mod big_mp4_tests {
     use super::*;

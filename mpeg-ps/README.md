@@ -33,6 +33,29 @@ with `Error::Mpeg1NotSupported`, never mis-parsed as corrupt data.
 | `std` | yes | Links `std`; off gives `#![no_std]` + `alloc` |
 | `serde` | no | `serde::Serialize` derives on the public types |
 
+### Streaming
+
+`mpeg_ps::PsScanner` is the sans-IO sibling of `program_stream::scan_packs`:
+feed it bytes as they arrive and poll one structural unit at a time (a pack
+header, a system header, a program stream map, or a complete PES packet). It
+holds at most one incomplete unit, bounds a PES at `PsLimits::max_pes_bytes`,
+and resynchronises on the next `pack_start_code` after damage, reporting the
+skipped byte count.
+
+```rust
+use mpeg_ps::{PsEvent, PsLimits, PsScanner};
+
+let bytes = [0x00, 0x00, 0x01, 0xB9];
+let mut scanner = PsScanner::new(PsLimits::new());
+scanner.feed(&bytes);
+while let Ok(Some(event)) = scanner.poll() {
+    if let PsEvent::Pes { stream_id, packet } = event {
+        println!("PES stream_id {stream_id:#04X}, {} bytes", packet.len());
+    }
+}
+scanner.finish();
+```
+
 ```toml
 [dependencies]
 mpeg-ps = "0.10"

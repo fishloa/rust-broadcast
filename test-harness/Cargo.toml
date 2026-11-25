@@ -18,6 +18,7 @@ url = "2"
 headers = { workspace = true }
 isobmff = { path = "../isobmff", version = "0.1.0", default-features = false }
 transmux = { path = "../transmux", version = "0.33.0" }
+mpeg-ps = { path = "../mpeg-ps", version = "0.10.0" }
 
 [dev-dependencies]
 test-alloc = { path = "../test-alloc" }

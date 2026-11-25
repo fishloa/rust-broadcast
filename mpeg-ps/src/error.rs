@@ -120,6 +120,17 @@ pub enum Error {
     /// PES packet parse error from `mpeg-pes`.
     #[error("PES parse error: {0}")]
     Pes(#[from] mpeg_pes::Error),
+    /// A PES packet is larger than the caller's [`crate::scan::PsLimits`]
+    /// cap. A conformant `PES_packet_length` is 16 bits (ISO/IEC 13818-1
+    /// §2.4.3.7, Table 2-21), so a complete packet is at most
+    /// `6 + 65535` bytes; a larger hold is a hostile or damaged input.
+    #[error("PES packet declares {declared} payload bytes, past the cap of {max}")]
+    PesTooLarge {
+        /// The declared `PES_packet_length`, or 0 for the unbounded form.
+        declared: usize,
+        /// The caller's cap.
+        max: usize,
+    },
 
     /// A length or count field's value does not fit its wire field
     /// (see `broadcast_common::len`, #1129).

@@ -1,4 +1,4 @@
-//! `PsDemux` `private_stream_1` substream / AC-3 syncframe / H.264 AU-split
+//! `StreamingPsDemux` `private_stream_1` substream / AC-3 syncframe / H.264 AU-split
 //! gate (audit r04-W19, r04-W20, r04-W21).
 //!
 //! Fixture: `./fixtures/ps/ffmpeg-mpeg2video-2xac3.ps` — see
@@ -20,7 +20,6 @@
 use std::path::PathBuf;
 
 use broadcast_common::Unpackage;
-use transmux::PsDemux;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
@@ -36,9 +35,7 @@ fn load_ps() -> Vec<u8> {
 }
 
 fn demux(data: &[u8]) -> Media {
-    let mut demux = PsDemux::new();
-    demux
-        .unpackage(data)
+    test_harness::collect::media_from_ps(data, 4096)
         .expect("demux MPEG-2 PS with two AC-3 substreams")
 }
 
@@ -681,7 +678,7 @@ fn h264_ts() -> Vec<u8> {
 
 /// Build a Program Stream whose single video PES carries `es` (an Annex B
 /// byte stream) as its payload, with a matching system header-free pack
-/// header — the minimal PS shape `PsDemux` walks.
+/// header — the minimal PS shape `StreamingPsDemux` walks.
 fn ps_with_video_es(es: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     // Pack header: the first 14 bytes of a real ffmpeg PS's own first pack
@@ -723,9 +720,7 @@ fn long_zero_run_before_the_first_start_code_stays_aligned() {
     es.extend_from_slice(&au);
 
     let ps = ps_with_video_es(&es);
-    let mut demux = transmux::PsDemux::new();
-    let media = demux
-        .unpackage(&ps[..])
+    let media = test_harness::collect::media_from_ps(&ps, 4096)
         .unwrap_or_else(|e| panic!("the PS must demux, got {e:?}"));
 
     let video = media
@@ -825,9 +820,7 @@ fn h264_leading_junk_is_absorbed_not_dropped() {
     es.extend_from_slice(&au);
 
     let ps = ps_with_video_es(&es);
-    let mut demux = transmux::PsDemux::new();
-    let media = demux
-        .unpackage(&ps[..])
+    let media = test_harness::collect::media_from_ps(&ps, 4096)
         .unwrap_or_else(|e| panic!("the PS must demux, got {e:?}"));
 
     let video = media
@@ -861,7 +854,7 @@ fn h264_leading_junk_is_absorbed_not_dropped() {
 /// is covered by the fact that `build_h264_track` returns `Result` and its
 /// caller uses `?` — checked by the type system, not by a byte count.
 ///
-/// Allocating a 64 MiB ES through `PsDemux` would also prove nothing extra: the
+/// Allocating a 64 MiB ES through `StreamingPsDemux` would also prove nothing extra: the
 /// demuxer reassembles the elementary stream in memory first, so a 64 MiB ES is
 /// a 64 MiB input rather than an amplification, and the cap is unreachable that
 /// way at any input size a test could construct.
@@ -888,8 +881,7 @@ fn a_splitter_cap_rejection_is_not_a_silent_drop() {
     // demuxes, which is what keeps this from being vacuous in the other
     // direction.
     let ps = ps_with_video_es(&real_h264_annexb_au());
-    let mut demux = transmux::PsDemux::new();
-    let media = demux.unpackage(&ps[..]).expect("a well-formed PS demuxes");
+    let media = test_harness::collect::media_from_ps(&ps, 4096).expect("a well-formed PS demuxes");
     assert!(
         media
             .tracks

@@ -100,3 +100,13 @@
   probe, is what keeps a DTS substream out of the AC-3 track. Released under the
   workspace licence.
 
+
+- `demux-baseline.txt` — the streaming-first Phase 5 slice 1 differential gate
+  (orchestrator p5s1). Per public `fixtures/ps/*.ps`/`*.mpg` file it records
+  each demuxed track's codec, timescale, sample count, first/last PTS and DTS,
+  sync-sample count, an FNV-1a 64 over the concatenated coded sample bytes, and
+  an FNV-1a 64 over the per-sample `(dts, pts, duration)` sequence. Produced by
+  running `transmux`'s whole-buffer `PsDemux` from `origin/main` at commit
+  `b6baa2955` over the files as committed. The streaming `StreamingPsDemux`
+  must reproduce every line byte-for-byte, fed in 1-byte, 188-byte and 64 KiB
+  chunks (`transmux/tests/it/ps_demux_baseline.rs`).

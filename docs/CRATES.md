@@ -216,7 +216,7 @@ Program Stream (`.mpg` / `.vob`) framing around PES packets. Only the MPEG-2 pac
 - **Cargo description:** MPEG-2 Program Stream parser — pack header, system header, program stream map (ISO/IEC 13818-1 §2.5).
 - **Version (in-tree):** 0.10.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`mpeg-pes`](#mpeg-pes)
-- **Used by (workspace):** [`transmux`](#transmux)
+- **Used by (workspace):** [`test-harness`](#test-harness), [`transmux`](#transmux)
 - **Links:** [README](../mpeg-ps/README.md) · [CHANGELOG](../mpeg-ps/CHANGELOG.md) · [crates.io](https://crates.io/crates/mpeg-ps) · [docs.rs](https://docs.rs/mpeg-ps)
 
 #### dvb-stream
@@ -949,7 +949,7 @@ One copy of the DASH loopback simulator (world/synth/capture/loopback), the RTMP
 - **Standards:** n/a
 - **Cargo description:** Shared test harnesses for workspace integration tests (unpublished).
 - **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 7
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dash-runtime`](#dash-runtime), [`isobmff`](#isobmff), [`rtmp-runtime`](#rtmp-runtime), [`test-fixtures`](#test-fixtures), [`transmux`](#transmux)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dash-runtime`](#dash-runtime), [`isobmff`](#isobmff), [`mpeg-ps`](#mpeg-ps), [`rtmp-runtime`](#rtmp-runtime), [`test-fixtures`](#test-fixtures), [`transmux`](#transmux)
 - **Used by (workspace):** none
 
 ### Dependency layers

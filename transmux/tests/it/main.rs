@@ -144,6 +144,7 @@ mod progressive_plan;
 #[path = "support/progressive.rs"]
 mod progressive_support;
 mod ps_demux;
+mod ps_demux_baseline;
 mod ps_demux_mpeg2;
 mod ps_demux_substreams;
 mod reader_differential;

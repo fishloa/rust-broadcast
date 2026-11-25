@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `StreamingPsDemux`, the streaming MPEG-1/2 Program Stream stage: a
+  `Stage<In = &[u8], Out = DemuxEvent>` over `mpeg_ps::PsScanner` that never
+  holds the input (one PES in the scanner, one access unit of lookahead per
+  elementary stream). Its hostile-input bounds are `PsDemuxLimits`
+  (`max_probe_bytes`, `max_held_samples` and the scanner's `PsLimits`).
+  `test_harness::collect::media_from_ps` drives it for tests that need a whole
+  `Media`. Every committed PS fixture demuxes to the same per-track samples,
+  timestamps and coded bytes as the deleted whole-buffer demuxer, fed in 1-byte,
+  188-byte and 64 KiB chunks (`fixtures/ps/demux-baseline.txt`).
 - The `transmux` CLI now **streams**: it detects the container from a prefix and drives the matching streaming demux stage (`StreamingTsDemux`, `Mp4Demux` seekable or sequential, `StreamingFlvDemux`), merges samples by decode time exactly as `mux_stage::drive_media` does, and writes each `MuxOutput` as it arrives — no `fs::read` of media and no whole output buffer. `cli::run_bytes` drives the same path over an in-memory reader. MPEG-PS and WebM are still read whole (Phase 5), bounded by the new `--max-whole-input-bytes` (unlimited unless given; over the cap is `CliError::WholeInputTooLarge`). Progressive output makes its two passes over a seekable input; stdin is refused with `Error::ProgressiveNeedsReplayableInput`, and a non-seekable output with `CliError::ProgressiveNeedsSeekableOutput`.
 - `--format cmaf` cuts a CMAF fragment at the first anchor-track keyframe at or after `--segment-duration` (the existing caller value), so a file of any size converts in bounded memory instead of failing at `isobmff::Limits`' fragment cap. An input shorter than one segment duration still yields exactly one fragment, byte-identical to before; a longer input keeps every sample and its bytes, with only the fragment (`moof`/`mdat`) boundaries changing.
 - The CLI takes `--data-identity <track>=<spec>` (repeatable): `ts:<stream_type>[:<descriptors-hex>]`, `mp4:<handler>:<sample-entry-hex>` or `matroska:<codec_id>[:<codec-private-hex>]`. It builds a `DataIdentityMap` and applies it through a `DataIdentityStage` before the muxer, so an opaque data track (a GoPro `gpmd`, a QuickTime `tmcd`) crosses container families; without a mapping a muxer of another family still refuses it with `Error::DataIdentityMismatch` naming the track.
@@ -15,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `data_identity`: `DataIdentityMap` is a caller-built table from a source track to the `DataIdentity` it should carry in the output, and `DataIdentityStage` rewrites that data track's `MuxInput::Track` announcement while passing samples and every other input through unchanged. There is no library-chosen default: an unmapped data track reaches the muxer with its own identity.
 
 ### Breaking
+- `PsDemux` and its `Unpackage` impl are deleted; `StreamingPsDemux` is the one
+  Program Stream demuxer. The CLI streams a PS input like every other container
+  (`--max-whole-input-bytes` now applies to WebM only), and `media-plane` /
+  `multimux` stream PS files with no size cap.
 - `cli::Opts` gained `data_identity: DataIdentityMap` (construct with `..Opts::default()`); `cli::Args` gained `--data-identity`. CMAF output of an input longer than `--segment-duration` now has several fragments rather than one.
 - `Error::RepackageWindowNeedsWholeInput` is removed: the streaming `Repackage::run` accepts a window, bounded by `Repackage::window_hold` (`Error::RepackageWindowHoldExceeded`).
 - `mux_stage`: an untimed head (samples that state a span but no timestamp, before the first timestamped sample) is now ordered before that first timed sample in `drive_media`, rather than at its instant. A track whose head plays before a video picture therefore sorts where it plays.

@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `file_stream::StreamContainer::MpegPs` streams an MPEG-1/2 Program Stream
+  through `transmux::StreamingPsDemux`, so a PS file is no longer read whole or
+  bounded by `FileReaderConfig::max_file_bytes`.
 - `file_stream::StreamContainer::Mp4` streams an MP4 file by absolute byte ranges through `transmux::mp4_demux::Mp4Demux` (issue #4057): the session gained `FileDemand::BytesAt { offset, len }`, `FileInput::At { offset, bytes }` and `FileDemand::Eof`, `FileStreamLimits::mp4` carries the stage's `Mp4DemuxConfig` (read window unset by default), and `FileReaderError::WrongInput` reports an input shape the container cannot consume. `StreamingFileSession::rewound` acknowledges a seek before the next range demand.
 - `file_source::DemuxerKind::Mp4` names the one streaming MP4 stage for an ISOBMFF file whose fragmented/progressive layout the bounded probe cannot settle (a progressive `mdat` longer than the prefix); the split `Fmp4`/`Progressive` selections keep their tokens for a settled layout.
 - `file_stream::StreamingFileSession`, a sans-IO bounded-memory TS/FLV file playout session (issue #4057): the caller feeds 64 KiB-scale reads it asks for (`FileInput`), answers `FileDemand::Rewind` by seeking to 0, and drains `SessionEvent`s; tracks are merged across a bounded window, paced against the wall clock when configured, and looped with per-track 33-bit PTS offsets. Memory is a function of `FileStreamLimits`, never of the file's length.
@@ -25,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FileReaderError::FileChangedContainer`, raised when a looping streaming playout re-probes its file and finds a different container (issue #4057).
 ### Changed
 
-- `demux_identified`/`probe_and_demux` no longer demux MP4: an ISOBMFF file is streamed by `StreamingFileSession` over `Mp4Demux`, so the whole-buffer arms for it return `FileReaderError::UnsupportedFormat` (PS and WebM keep the whole-file path until Phase 5) (#4057).
+- `demux_identified`/`probe_and_demux` no longer demux MP4: an ISOBMFF file is streamed by `StreamingFileSession` over `Mp4Demux`, so the whole-buffer arm for it returns `FileReaderError::UnsupportedFormat` (#4057). The Program Stream arm is removed for the same reason: PS streams through `StreamContainer::MpegPs` / `StreamingPsDemux`; WebM keeps the whole-file path.
 
 
 ## [0.14.0] - 2026-11-22

@@ -1,0 +1,32 @@
+# PS demux baseline: per-track sample count, first/last dts and pts, sync
+# count, FNV-1a 64 of the concatenated coded sample bytes, and FNV-1a 64 of
+# the per-sample (dts,pts,duration) sequence (missing = i64::MIN/u32::MAX).
+# Produced by transmux origin/main (b6baa2955) `PsDemux` over each
+# fixtures/ps/* file; see fixtures/ps/PROVENANCE.md.
+file=ffmpeg-ac3-dts-with-fake-ac3-sync.ps
+movie_timescale=90000
+track=0 codec=MPEG-2-Video timescale=90000 samples=50 first_dts=45000 first_pts=48600 last_dts=221400 last_pts=225000 syncs=5 bytes_fnv=9bcc8cfa4ae58f3b timing_fnv=677ec06cf2354f08
+track=1 codec=AC-3 timescale=44100 samples=58 first_dts=23558 first_pts=23558 last_dts=111110 last_pts=111110 syncs=58 bytes_fnv=5386e2173660f79b timing_fnv=b41d41a13a0f4281
+file=ffmpeg-ac3-dts.ps
+movie_timescale=90000
+track=0 codec=MPEG-2-Video timescale=90000 samples=50 first_dts=45000 first_pts=48600 last_dts=221400 last_pts=225000 syncs=5 bytes_fnv=9bcc8cfa4ae58f3b timing_fnv=677ec06cf2354f08
+track=1 codec=AC-3 timescale=44100 samples=58 first_dts=23558 first_pts=23558 last_dts=111110 last_pts=111110 syncs=58 bytes_fnv=5386e2173660f79b timing_fnv=b41d41a13a0f4281
+file=ffmpeg-h264-noaud.ps
+movie_timescale=90000
+track=0 codec=AVC timescale=90000 samples=75 first_dts=0 first_pts=0 last_dts=266400 last_pts=266400 syncs=3 bytes_fnv=9833225ddc6dbf09 timing_fnv=57cd28248c6ee90b
+track=1 codec=AC-3 timescale=44100 samples=88 first_dts=25578 first_pts=25578 last_dts=159210 last_pts=159210 syncs=88 bytes_fnv=07be750da0add797 timing_fnv=233867bc17151325
+file=ffmpeg-mpeg2-ps.mpg
+movie_timescale=90000
+track=0 codec=MPEG-2-Video timescale=90000 samples=5 first_dts=45000 first_pts=63000 last_dts=117000 last_pts=117000 syncs=1 bytes_fnv=0d41d91a44fe52aa timing_fnv=d6f290b3db2417de
+file=ffmpeg-mpeg2video-2xac3.ps
+movie_timescale=90000
+track=0 codec=MPEG-2-Video timescale=90000 samples=50 first_dts=45000 first_pts=48600 last_dts=221400 last_pts=225000 syncs=5 bytes_fnv=9bcc8cfa4ae58f3b timing_fnv=677ec06cf2354f08
+track=1 codec=AC-3 timescale=44100 samples=58 first_dts=23558 first_pts=23558 last_dts=111110 last_pts=111110 syncs=58 bytes_fnv=5386e2173660f79b timing_fnv=b41d41a13a0f4281
+track=2 codec=AC-3 timescale=44100 samples=58 first_dts=23558 first_pts=23558 last_dts=111110 last_pts=111110 syncs=58 bytes_fnv=6f35e93b55463c86 timing_fnv=b41d41a13a0f4281
+file=ffmpeg-mpeg2video-mp2.ps
+movie_timescale=90000
+track=0 codec=MPEG-2-Video timescale=90000 samples=25 first_dts=45000 first_pts=48600 last_dts=131400 last_pts=131400 syncs=3 bytes_fnv=f5342a8133c2f43d timing_fnv=35ed30c9820a895e
+file=h264-ac3.ps
+movie_timescale=90000
+track=0 codec=AVC timescale=90000 samples=75 first_dts=45000 first_pts=52200 last_dts=311400 last_pts=311400 syncs=3 bytes_fnv=0659e3918d988f9a timing_fnv=2fcc940db60a66bc
+track=1 codec=AC-3 timescale=44100 samples=88 first_dts=24298 first_pts=24298 last_dts=157930 last_pts=157930 syncs=88 bytes_fnv=07be750da0add797 timing_fnv=9785f1507d317a89

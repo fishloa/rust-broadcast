@@ -1,12 +1,10 @@
-//! `PsDemux` MPEG-2 video gate (C6, #1009) — a Program Stream carrying MPEG-2
+//! `StreamingPsDemux` MPEG-2 video gate (C6, #1009) — a Program Stream carrying MPEG-2
 //! video (not H.264) must come out as `CodecConfig::Mpeg2Video`, not a garbage
 //! `avc1` track built from MPEG-2 slice start codes misread as H.264 NALs.
 //!
 //! Fixture: `fixtures/ps/ffmpeg-mpeg2video-mp2.ps` — see `fixtures/ps/PROVENANCE.md`
 //! for the exact ffmpeg command. Oracle: ffprobe on that same file.
 
-use broadcast_common::Unpackage;
-use transmux::PsDemux;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
@@ -24,7 +22,7 @@ fn load_ps() -> Vec<u8> {
 #[test]
 fn mpeg2_video_is_not_misidentified_as_h264() {
     let ps = load_ps();
-    let media: Media = PsDemux::new().unpackage(&ps).expect("demux must succeed");
+    let media: Media = test_harness::collect::media_from_ps(&ps, 4096).expect("demux must succeed");
 
     let video = media
         .tracks

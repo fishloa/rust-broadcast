@@ -1,8 +1,6 @@
 //! Per-AU display tagging for Program Stream (PS) video samples.
 
-use broadcast_common::Unpackage;
 use std::sync::Arc;
-use transmux::PsDemux;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
@@ -25,7 +23,7 @@ fn melodie_h264_ps_all_samples_720x576_sar_64_45() {
     else {
         return;
     };
-    let media: Media = PsDemux::new().unpackage(&bytes).expect("demux");
+    let media: Media = test_harness::collect::media_from_ps(&bytes, 4096).expect("demux");
     let track = video_track(&media, false);
     assert!(!track.samples.is_empty());
     for s in &track.samples {
@@ -51,7 +49,7 @@ fn test108_mpeg2_ps_sar_and_afd() {
     let Some(bytes) = test_fixtures::require_bytes("ps/test108-mpeg2-afd.ps", "display_ps") else {
         return;
     };
-    let media: Media = PsDemux::new().unpackage(&bytes).expect("demux");
+    let media: Media = test_harness::collect::media_from_ps(&bytes, 4096).expect("demux");
     let track = video_track(&media, true);
     assert!(!track.samples.is_empty());
     for s in &track.samples {
@@ -95,7 +93,7 @@ fn test108_mpeg2_ps_sar_and_afd() {
 fn public_ps_fixtures_tagged() {
     // ffmpeg-h264-noaud.ps: h264 320x240 SAR 1:1
     let bytes = test_fixtures::read("ps/ffmpeg-h264-noaud.ps");
-    let media: Media = PsDemux::new().unpackage(&bytes).expect("demux");
+    let media: Media = test_harness::collect::media_from_ps(&bytes, 4096).expect("demux");
     let track = video_track(&media, false);
     assert!(!track.samples.is_empty());
     for s in &track.samples {
@@ -108,7 +106,7 @@ fn public_ps_fixtures_tagged() {
 
     // ffmpeg-mpeg2video-mp2.ps: mpeg2 352x288 SAR 1:1
     let bytes = test_fixtures::read("ps/ffmpeg-mpeg2video-mp2.ps");
-    let media: Media = PsDemux::new().unpackage(&bytes).expect("demux");
+    let media: Media = test_harness::collect::media_from_ps(&bytes, 4096).expect("demux");
     let track = video_track(&media, true);
     assert!(!track.samples.is_empty());
     for s in &track.samples {
@@ -121,7 +119,7 @@ fn public_ps_fixtures_tagged() {
 
     // fixtures/ps/ffmpeg-mpeg2-ps.mpg: mpeg2 64x48 DAR 4:3 (SAR 1:1)
     let bytes = test_fixtures::read("ps/ffmpeg-mpeg2-ps.mpg");
-    let media: Media = PsDemux::new().unpackage(&bytes).expect("demux");
+    let media: Media = test_harness::collect::media_from_ps(&bytes, 4096).expect("demux");
     let track = video_track(&media, true);
     assert!(!track.samples.is_empty());
     for s in &track.samples {
@@ -139,7 +137,7 @@ fn ps_audio_track_display_none() {
     // demuxer intentionally does not surface (see ps_demux module docs); use
     // a fixture that does expose an audio track instead.
     let bytes = test_fixtures::read("ps/ffmpeg-mpeg2video-2xac3.ps");
-    let media: Media = PsDemux::new().unpackage(&bytes).expect("demux");
+    let media: Media = test_harness::collect::media_from_ps(&bytes, 4096).expect("demux");
     let audio = media
         .tracks
         .iter()
@@ -160,7 +158,7 @@ fn ps_arc_sharing() {
     else {
         return;
     };
-    let media: Media = PsDemux::new().unpackage(&bytes).expect("demux");
+    let media: Media = test_harness::collect::media_from_ps(&bytes, 4096).expect("demux");
     let track = video_track(&media, false);
     for i in 0..track.samples.len() - 1 {
         let a = track.samples[i].display.as_ref().unwrap();
@@ -200,7 +198,7 @@ fn sarswitch_h264_ps_tags_follow_each_access_units_own_sps() {
     let Some(bytes) = test_fixtures::require_bytes("ps/sarswitch-h264.ps", "display_ps") else {
         return;
     };
-    let media: Media = PsDemux::new().unpackage(&bytes).expect("demux");
+    let media: Media = test_harness::collect::media_from_ps(&bytes, 4096).expect("demux");
     let track = video_track(&media, false);
     let sar_of = |s: &transmux::Sample| {
         s.display

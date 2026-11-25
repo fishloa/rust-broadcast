@@ -6,4 +6,5 @@ mod reproductions_2743;
 mod reproductions_2744;
 mod reproductions_2745;
 mod review_transport_ancillary;
+mod scan_chunking;
 mod system_header_fields;

@@ -13,16 +13,16 @@
 //! The file is identified from a bounded leading prefix, then played down one
 //! of two paths by container:
 //!
-//! * **TS, FLV and MP4 stream.** [`media_plane::file_stream::StreamingFileSession`]
+//! * **TS, FLV, MP4 and PS stream.** [`media_plane::file_stream::StreamingFileSession`]
 //!   drives an incremental demuxer; the reader answers its forward chunks
-//!   (TS/FLV) or absolute byte ranges (MP4) until it asks for end of input,
+//!   (TS/FLV/PS) or absolute byte ranges (MP4) until it asks for end of input,
 //!   then rewinds to offset 0 for the next pass. Live memory is a function of
 //!   the session's [`FileStreamLimits`] and never of the file's length, so
 //!   [`FileReaderConfig::max_file_bytes`] does not apply.
-//! * **PS and WebM keep today's whole-file path.** The whole file is read
-//!   under the [`FileReaderConfig::max_file_bytes`] cap, the whole-buffer
-//!   demuxers ([`transmux::PsDemux`], [`transmux::WebmDemux`]) run once over
-//!   the buffer, and the parsed tracks are replayed.
+//! * **WebM keeps today's whole-file path.** The whole file is read under the
+//!   [`FileReaderConfig::max_file_bytes`] cap, the whole-buffer demuxer
+//!   ([`transmux::WebmDemux`]) runs once over the buffer, and the parsed tracks
+//!   are replayed.
 //!
 //! 1. **Identify** the container from a bounded prefix with
 //!    [`media_plane::file_source::probe_prefix`]. The verdict maps to a
@@ -139,8 +139,8 @@ pub struct FileReaderConfig {
     pub max_loops: Option<u32>,
     /// Cap on the file's size in bytes, enforced **before** a whole-file read
     /// — an operator-supplied path (e.g. a character device or FIFO) is never
-    /// read unbounded. Applies to PS and WebM files only: TS, FLV and MP4
-    /// stream from disk under bounded buffers, so their size is never capped.
+    /// read unbounded. Applies to WebM files only: TS, FLV, MP4 and PS stream
+    /// from disk under bounded buffers, so their size is never capped.
     /// Defaults to [`DEFAULT_MAX_FILE_BYTES`].
     pub max_file_bytes: usize,
 }
@@ -193,8 +193,8 @@ impl FileReaderConfig {
         self
     }
 
-    /// Set [`Self::max_file_bytes`], the whole-file cap that applies to PS and
-    /// WebM only.
+    /// Set [`Self::max_file_bytes`], the whole-file cap that applies to WebM
+    /// only.
     pub fn with_max_file_bytes(mut self, max_file_bytes: usize) -> Self {
         self.max_file_bytes = max_file_bytes;
         self
@@ -289,8 +289,8 @@ impl FileReader {
         SpawnedReader { handle, cancel }
     }
 
-    /// One open/probe/play attempt: TS, FLV and MP4 stream from disk, PS and
-    /// WebM take the whole-file path.
+    /// One open/probe/play attempt: TS, FLV, MP4 and PS stream from disk; WebM
+    /// takes the whole-file path.
     async fn run_once(&self) -> Result<(), FileReaderError> {
         let probed = open_probed(&self.config.path).await?;
         match stream_container(probed.demuxer) {
@@ -303,7 +303,7 @@ impl FileReader {
     }
 
     /// Read the whole file, probe it, and demux it into the playable tracks —
-    /// the capped path for PS and WebM.
+    /// the capped path for WebM.
     async fn read_capped_whole(&self, probed: OpenFile) -> Result<ParsedFile, FileReaderError> {
         let cap = self.config.max_file_bytes;
         if probed.len > cap as u64 {
@@ -509,6 +509,7 @@ fn stream_container(demuxer: DemuxerKind) -> Option<StreamContainer> {
         DemuxerKind::Fmp4 | DemuxerKind::Progressive | DemuxerKind::Mp4 => {
             Some(StreamContainer::Mp4)
         }
+        DemuxerKind::Ps => Some(StreamContainer::MpegPs),
         _ => None,
     }
 }
@@ -820,7 +821,7 @@ fn file_trunk_config(window_segments: usize) -> media_plane::trunk::TrunkConfig 
 /// the file from a bounded prefix, then replay it through a single-program
 /// [`IngestDriver`] and pump `crate::source::advance_route` once per iteration
 /// so samples become servable segments/parts. TS, FLV and MP4 stream from disk
-/// through a [`StreamingFileSession`]; PS and WebM keep the whole-file
+/// through a [`StreamingFileSession`]; WebM keeps the whole-file
 /// [`FileIngestSession`] path under the configured size cap. Mirrors
 /// [`crate::source::ts_udp::run_ts_udp`]'s shape; returns `Err` only on a
 /// failure (a bad/unreadable file), which the route's supervisor retries.
@@ -1288,9 +1289,9 @@ mod playout_tests {
     /// playout asset, and one byte over is refused with its real size.
     #[tokio::test]
     async fn a_file_exactly_at_the_size_cap_is_accepted_and_one_byte_over_is_refused() {
-        // A capped whole-file container: TS, FLV and MP4 stream from disk
+        // A capped whole-file container: TS, FLV, MP4 and PS stream from disk
         // instead and are deliberately not subject to the cap.
-        let path = test_fixtures::path("ps/h264-ac3.ps");
+        let path = test_fixtures::path("mkv/h264-aac.mkv");
         let len = std::fs::metadata(&path).expect("fixture metadata").len() as usize;
         assert!(len > 0);
 

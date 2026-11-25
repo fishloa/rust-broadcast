@@ -1,7 +1,7 @@
 //! `transmux` command-line packager — the any-to-any hub as a CLI (issue #482).
 //!
 //! Drives the existing streaming demux stages ([`StreamingTsDemux`],
-//! [`Mp4Demux`], [`StreamingFlvDemux`], [`PsDemux`], [`WebmDemux`]) into the
+//! [`Mp4Demux`], [`StreamingFlvDemux`], [`StreamingPsDemux`], [`WebmDemux`]) into the
 //! existing mux stages ([`CmafMuxStage`], [`StreamingTsHlsSegmenter`],
 //! [`DashPackager`], [`ProgressiveMuxStage`], [`TsMuxStage`]) as
 //! `MuxOutput` arrives. It writes **no** new demux/mux logic — it is a
@@ -43,7 +43,7 @@ use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, TrackPart};
 use crate::pipeline::{FragmentTrackData, build_init_segment, build_media_segment};
 use crate::plan_pass::PlanPass;
 use crate::progressive::ProgressiveMuxStage;
-use crate::ps_demux::PsDemux;
+use crate::ps_demux::StreamingPsDemux;
 use crate::segment_log::SegmentSummaryLog;
 use crate::segmenter::{MediaClock, Segmenter, choose_anchor};
 use crate::ts_demux::StreamingTsDemux;
@@ -225,7 +225,7 @@ pub enum Container {
     MpegTs,
     /// ISO-BMFF fragmented MP4 / CMAF → [`Mp4Demux`].
     Mp4,
-    /// MPEG Program Stream → [`PsDemux`].
+    /// MPEG Program Stream → [`StreamingPsDemux`].
     MpegPs,
     /// WebM / Matroska (EBML) → [`WebmDemux`].
     WebM,
@@ -1782,9 +1782,25 @@ fn drive_seekable<R: Read + Seek>(
             }
             Ok(())
         }
-        Container::MpegPs | Container::WebM => {
-            Err(CliError::UnsupportedContainer(container.name()))
+        Container::MpegPs => {
+            let mut demux = StreamingPsDemux::new();
+            loop {
+                let read = reader.read(&mut buf)?;
+                if read == 0 {
+                    break;
+                }
+                demux.feed(&buf[..read], Timestamp::ZERO)?;
+                while let Some(event) = demux.poll() {
+                    sink(event, Some(crate::rtp::VIDEO_CLOCK_TIMESCALE))?;
+                }
+            }
+            demux.finish()?;
+            while let Some(event) = demux.poll() {
+                sink(event, Some(crate::rtp::VIDEO_CLOCK_TIMESCALE))?;
+            }
+            Ok(())
         }
+        Container::WebM => Err(CliError::UnsupportedContainer(container.name())),
     }
 }
 
@@ -1853,9 +1869,25 @@ fn drive_forward<R: Read>(
             }
             Ok(())
         }
-        Container::MpegPs | Container::WebM => {
-            Err(CliError::UnsupportedContainer(container.name()))
+        Container::MpegPs => {
+            let mut demux = StreamingPsDemux::new();
+            loop {
+                let read = reader.read(&mut buf)?;
+                if read == 0 {
+                    break;
+                }
+                demux.feed(&buf[..read], Timestamp::ZERO)?;
+                while let Some(event) = demux.poll() {
+                    sink(event, Some(crate::rtp::VIDEO_CLOCK_TIMESCALE))?;
+                }
+            }
+            demux.finish()?;
+            while let Some(event) = demux.poll() {
+                sink(event, Some(crate::rtp::VIDEO_CLOCK_TIMESCALE))?;
+            }
+            Ok(())
         }
+        Container::WebM => Err(CliError::UnsupportedContainer(container.name())),
     }
 }
 
@@ -1903,7 +1935,8 @@ fn movie_timescale(container: Container, declared: Option<Timescale>) -> Timesca
         Container::Mp4 => declared.unwrap_or(DEFAULT_MOVIE_TIMESCALE_TS),
         Container::MpegTs => crate::rtp::VIDEO_CLOCK_TIMESCALE,
         Container::Flv => crate::flv::FLV_TIMESCALE,
-        Container::MpegPs | Container::WebM => DEFAULT_MOVIE_TIMESCALE_TS,
+        Container::MpegPs => crate::rtp::VIDEO_CLOCK_TIMESCALE,
+        Container::WebM => DEFAULT_MOVIE_TIMESCALE_TS,
     }
 }
 
@@ -2071,7 +2104,6 @@ fn read_whole<R: Read>(reader: &mut R, container: Container, opts: &Opts) -> Cli
         }
     }
     let media = match container {
-        Container::MpegPs => PsDemux::new().unpackage(&buf)?,
         Container::WebM => WebmDemux::new().unpackage(&buf)?,
         _ => {
             return Err(CliError::UnsupportedContainer(container.name()));
@@ -2110,7 +2142,7 @@ fn run_seekable<R: Read + Seek>(
     emit: &mut dyn Emit,
     keys: DecryptKeys,
 ) -> CliResult<()> {
-    if matches!(container, Container::MpegPs | Container::WebM) {
+    if container == Container::WebM {
         #[cfg(feature = "cenc")]
         if keys.is_some() {
             return Err(crate::Error::InvalidInput(
@@ -2144,7 +2176,7 @@ fn run_forward<R: Read>(
     emit: &mut dyn Emit,
     keys: DecryptKeys,
 ) -> CliResult<()> {
-    if matches!(container, Container::MpegPs | Container::WebM) {
+    if container == Container::WebM {
         let media = read_whole(reader, container, opts)?;
         return run_media_path(&media, opts, emit);
     }
@@ -2166,7 +2198,7 @@ fn run_forward<R: Read>(
             pending_bytes = pending_bytes.saturating_add(sample.data.len() as u64);
         }
         let trigger = match container {
-            Container::Flv => pending_bytes >= FLV_TRACK_SETTLE_BYTES,
+            Container::Flv | Container::MpegPs => pending_bytes >= FLV_TRACK_SETTLE_BYTES,
             _ => matches!(event, DemuxEvent::TracksResolved { .. }),
         };
         pending.push(event);
@@ -2280,7 +2312,7 @@ fn progressive_plan<R: Read + Seek>(
             buffered_bytes = buffered_bytes.saturating_add(sample.data.len() as u64);
         }
         let trigger = match container {
-            Container::Flv => buffered_bytes >= FLV_TRACK_SETTLE_BYTES,
+            Container::Flv | Container::MpegPs => buffered_bytes >= FLV_TRACK_SETTLE_BYTES,
             _ => matches!(event, DemuxEvent::TracksResolved { .. }),
         };
         buffered.push(event);
