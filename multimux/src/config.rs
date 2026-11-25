@@ -2574,6 +2574,11 @@ impl Default for Config {
     }
 }
 
+/// Largest JSON config file accepted. A real config is a few KiB; the cap
+/// stops an operator-supplied path (`/dev/zero`, a runaway log) from growing
+/// the process.
+const CONFIG_FILE_MAX_BYTES: u64 = 16 * 1024 * 1024;
+
 impl Config {
     /// Set the `host:port` the HTTP origin binds.
     #[must_use]
@@ -2802,9 +2807,19 @@ impl Config {
 
     /// Load a JSON config file.
     pub fn from_json_file(path: &Path) -> Result<Config> {
-        let bytes = std::fs::read(path).map_err(|source| MultimuxError::ConfigRead {
-            path: path.to_path_buf(),
-            source,
+        let bytes = broadcast_common::bounded::read_file_bounded(
+            path,
+            broadcast_common::bounded::Limit::new("multimux config", CONFIG_FILE_MAX_BYTES),
+        )
+        .map_err(|error| match error {
+            broadcast_common::bounded::BoundedReadError::Io(source) => MultimuxError::ConfigRead {
+                path: path.to_path_buf(),
+                source,
+            },
+            other => MultimuxError::ConfigParse {
+                path: path.to_path_buf(),
+                reason: other.to_string(),
+            },
         })?;
         let cfg: Config =
             serde_json::from_slice(&bytes).map_err(|e| MultimuxError::ConfigParse {

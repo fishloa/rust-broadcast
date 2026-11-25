@@ -26,6 +26,12 @@ const DISPOSITION: &[(&str, &str, u32, &str)] = &[
         "the process-wide metrics upkeep task; ends with the Tokio runtime that installed the recorder",
     ),
     (
+        "source/sdp.rs",
+        "load_sdp",
+        1,
+        "spawn_blocking bounded SDP file read; awaited inline (owned by the caller)",
+    ),
+    (
         "source/file_reader.rs",
         "spawn",
         1,
