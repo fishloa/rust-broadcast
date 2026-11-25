@@ -28,6 +28,7 @@
 //! and ISO/IEC 14496-12:2026 §4.2, §8.2-§8.7
 //! (`private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`).
 
+use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 
@@ -649,7 +650,7 @@ pub struct Reader {
     crypto: Vec<Option<TrackCrypto>>,
     decode_times: Vec<u64>,
     sample_counts: Vec<u32>,
-    fragment: Option<FragmentState>,
+    fragments: VecDeque<FragmentState>,
     top_level: Vec<TopLevelBox>,
     ready: Option<ReadyFragment>,
     last_fragment: Option<(u64, Vec<SampleRef>)>,
@@ -687,7 +688,7 @@ impl Reader {
             crypto: Vec::new(),
             decode_times: Vec::new(),
             sample_counts: Vec::new(),
-            fragment: None,
+            fragments: VecDeque::new(),
             top_level: Vec::new(),
             ready: None,
             last_fragment: None,
@@ -849,15 +850,15 @@ impl Reader {
         if truncated {
             self.deferred_warning = Some(Warning::TruncatedFragment {
                 offset: self
-                    .fragment
-                    .as_ref()
+                    .fragments
+                    .front()
                     .map(|fragment| fragment.offset)
                     .or_else(|| self.ready.as_ref().map(|ready| ready.info.moof.offset))
                     .or_else(|| self.last_fragment.as_ref().map(|(offset, _)| *offset))
                     .unwrap_or(unit_end),
             });
         }
-        self.fragment = None;
+        self.fragments.clear();
         self.open_box = None;
         self.last_fragment = None;
         self.pending = None;
@@ -1051,7 +1052,7 @@ impl Reader {
         self.pos = offset;
         self.highest_requested = offset;
         self.pending = None;
-        self.fragment = None;
+        self.fragments.clear();
         self.ready = None;
         self.last_fragment = None;
         self.deferred_warning = None;
@@ -1238,6 +1239,17 @@ impl Reader {
         if self.seek_phase_scanning() {
             return self.walk_step();
         }
+        // A queued fragment whose `mdat` has arrived resolves one at a time,
+        // in file order, before the walk reads the next header: a forward-only
+        // source has not yet passed a payload it can still address.
+        if self.ready.is_none()
+            && self
+                .fragments
+                .front()
+                .is_some_and(|fragment| fragment.moof.is_some() && !fragment.mdats.is_empty())
+        {
+            self.finish_fragment(Unresolved::Keep)?;
+        }
         if self.ready.is_some()
             && let Some(step) = self.next_fragment_step()
         {
@@ -1294,12 +1306,14 @@ impl Reader {
                         return Ok(Step::Need(pending.range()));
                     }
                 }
-                self.finish_fragment(Unresolved::Fail)?;
-                if let Some(step) = self.next_fragment_step() {
-                    return Ok(match step {
-                        FragmentStep::Fragment(info) => Step::Fragment(info),
-                        FragmentStep::Sample(sample) => Step::Sample(sample),
-                    });
+                while !self.fragments.is_empty() {
+                    self.finish_fragment(Unresolved::Fail)?;
+                    if let Some(step) = self.next_fragment_step() {
+                        return Ok(match step {
+                            FragmentStep::Fragment(info) => Step::Fragment(info),
+                            FragmentStep::Sample(sample) => Step::Sample(sample),
+                        });
+                    }
                 }
                 self.finish_step()
             }
@@ -1389,7 +1403,7 @@ impl Reader {
                 end = total;
                 size = end.saturating_sub(offset);
                 if header.box_type.is(b"mdat") {
-                    if self.fragment.is_some() {
+                    if !self.fragments.is_empty() {
                         self.warn(Warning::TruncatedFragment { offset });
                     } else {
                         self.warn_truncated_mdat(offset);
@@ -1461,20 +1475,30 @@ impl Reader {
                 self.pos = offset;
                 return self.seek_via_mfra(request);
             }
-            // The fragments a demuxer holds before their `mdat` share one
-            // zero-width `trun` allowance; this reader holds one `moof` at a
-            // time, so each gets a fresh one.
-            self.finish_fragment(Unresolved::Fail)?;
-            if size > self.config.limits.max_fragment_bytes() {
+            // A `moof` ends only a queued fragment whose `mdat` has already
+            // arrived; a run of `moof`s ahead of their shared `mdat` (the CMF2
+            // shape, one `moof` per track, §8.8.4) stays queued.
+            while self
+                .fragments
+                .front()
+                .is_some_and(|fragment| !fragment.mdats.is_empty())
+            {
+                self.finish_fragment(Unresolved::Fail)?;
+            }
+            let limit = self.config.limits.max_fragment_bytes();
+            let held: u64 = self.fragments.iter().fold(0u64, |total, fragment| {
+                total.saturating_add(fragment.range.len)
+            });
+            if held.saturating_add(size) > limit {
                 return Err(Error::LimitExceeded {
                     what: "fragment size",
-                    limit: self.config.limits.max_fragment_bytes(),
+                    limit,
                 });
             }
             let fragment = ByteRange { offset, len: size };
             self.request(offset, size)?;
             self.pending = Some(Pending::Moof(fragment));
-            self.fragment = Some(FragmentState {
+            self.fragments.push_back(FragmentState {
                 offset,
                 range: fragment,
                 moof: None,
@@ -1485,14 +1509,15 @@ impl Reader {
         }
         if header.box_type.is(b"mdat") {
             self.saw_mdat = true;
-            if let Some(fragment) = &mut self.fragment {
-                let payload = offset.saturating_add(header.header_size() as u64);
+            let payload = offset.saturating_add(header.header_size() as u64);
+            for fragment in &mut self.fragments {
                 fragment.mdats.push(MdatRange::new(payload, end));
             }
         } else if self
-            .fragment
-            .as_ref()
-            .is_some_and(|fragment| !fragment.mdats.is_empty() && !header.box_type.is(b"free"))
+            .fragments
+            .front()
+            .is_some_and(|fragment| !fragment.mdats.is_empty())
+            && !header.box_type.is(b"free")
         {
             // A box other than `mdat`/`free` after a fragment's media ends that
             // fragment; nothing is consumed here, so the walk reads this header
@@ -1502,13 +1527,8 @@ impl Reader {
             return Ok(());
         }
         self.pos = end;
-        if header.box_type.is(b"mdat") {
-            // Every run of a fragment that resolves inside the `mdat` payloads
-            // located so far is complete now: hand it out before the walk asks
-            // for the header after its media, so a forward-only source has not
-            // yet passed that payload.
-            self.finish_fragment(Unresolved::Keep)?;
-        } else if size <= self.config.limits.max_metadata_item_bytes()
+        if !header.box_type.is(b"mdat")
+            && size <= self.config.limits.max_metadata_item_bytes()
             && carried_top_level(&header.box_type.0)
         {
             let range = ByteRange { offset, len: size };
@@ -1553,7 +1573,7 @@ impl Reader {
     }
 
     fn accept_moof(&mut self, bytes: &[u8]) -> Result<()> {
-        let Some(fragment) = self.fragment.as_mut() else {
+        let Some(fragment) = self.fragments.back_mut() else {
             return Err(Error::InvalidInput(
                 "moof supplied with no fragment pending",
             ));
@@ -1570,7 +1590,7 @@ impl Reader {
                 Ok(())
             }
             Err(err) if self.tolerated() && tolerable_fragment_error(&err) => {
-                self.fragment = None;
+                self.fragments.pop_back();
                 let truncated = self.config.total_len.is_some_and(|total| self.pos >= total);
                 if !self.done {
                     self.warn(if truncated {
@@ -1672,7 +1692,7 @@ impl Reader {
     /// decides whether that is the end of the fragment ([`Unresolved::Fail`])
     /// or a fragment still waiting for a later `mdat` ([`Unresolved::Keep`]).
     fn finish_fragment(&mut self, unresolved: Unresolved) -> Result<()> {
-        let Some(state) = self.fragment.take() else {
+        let Some(state) = self.fragments.pop_front() else {
             return Ok(());
         };
         let Some(moof) = state.moof.as_ref() else {
@@ -1684,7 +1704,7 @@ impl Reader {
             Ok(resolved) => resolved,
             Err(err) => {
                 if unresolved == Unresolved::Keep {
-                    self.fragment = Some(state);
+                    self.fragments.push_front(state);
                     return Ok(());
                 }
                 if self.tolerated() && tolerable_fragment_error(&err) {

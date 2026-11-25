@@ -5,6 +5,8 @@
 //! whole file's `mdat` ranges, so the header-only path and the whole-file path
 //! must agree byte for byte.
 
+use std::collections::BTreeMap;
+
 use broadcast_common::Parse;
 use isobmff::frag_offsets::{FragmentSampleRange, MdatRange, mdat_ranges, sample_ranges_in};
 use isobmff::movie_fragment::MovieFragmentBox;
@@ -89,7 +91,7 @@ fn fragments_fixtures() -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
     let names = [
         "mp4/h264-aac-frag.mp4",
-        "mp4/cmaf/av-frag.mp4",
+        "mp4/h264-aac-frag.mp4",
         "mp4/cmaf-av-subtitle/av-subtitle-frag.mp4",
         "mp4/llcmaf/ll-chunked.mp4",
         "mp4/frag/h264-high.frag.mp4",
@@ -460,7 +462,7 @@ fn seek_through_mfra_lands_on_the_listed_moof() {
 
 #[test]
 fn a_file_with_no_index_reports_no_index() {
-    let bytes = test_fixtures::read("mp4/cmaf/av-frag.mp4");
+    let bytes = test_fixtures::read("mp4/h264-aac-frag.mp4");
     let mfra = isobmff::BoxIter::clamped(&bytes)
         .filter_map(|b| b.ok())
         .find(|b| b.header.box_type.is(b"mfra"))
@@ -1022,4 +1024,195 @@ fn sample_key(sample: &SampleRef, unit_start: usize) -> (u32, u64, u32, u64, i32
         sample.duration,
         sample.sync,
     )
+}
+
+/// The first `moof` box, its `mdat`, and the prefix before it.
+fn first_fragment(bytes: &[u8]) -> Option<(usize, usize, MovieFragmentBox, usize, usize)> {
+    let boxes: Vec<_> = isobmff::BoxIter::new(bytes).flatten().collect();
+    let moof_index = boxes.iter().position(|item| item.four_cc() == *b"moof")?;
+    let moof = &boxes[moof_index];
+    let mdat = boxes[moof_index + 1..]
+        .iter()
+        .find(|item| item.four_cc() == *b"mdat")?;
+    let parsed = MovieFragmentBox::parse_body(moof.body).ok()?;
+    Some((
+        moof.start,
+        moof.end - moof.start,
+        parsed,
+        mdat.start,
+        mdat.end,
+    ))
+}
+
+/// Rewrite the first fragment of `bytes` into the CMF2 shape: one `moof` per
+/// track, each with an absolute `base_data_offset`, followed by one `mdat`
+/// holding both tracks' data (ISO/IEC 14496-12:2026 §8.8.4).
+///
+/// Returns the new file and the first rewritten `moof`'s length.
+fn cmf2_shape(bytes: &[u8]) -> Option<(Vec<u8>, u64)> {
+    use isobmff::movie_fragment::{
+        TFHD_BASE_DATA_OFFSET_PRESENT, TFHD_DEFAULT_BASE_IS_MOOF, TRUN_DATA_OFFSET_PRESENT,
+    };
+    let (moof_start, _moof_len, moof, mdat_start, mdat_end) = first_fragment(bytes)?;
+    let payload = mdat_start + 8;
+    let mdats = [MdatRange::new(payload as u64, mdat_end as u64)];
+    let budget = isobmff::frag_offsets::sample_bytes_budget(bytes.len() as u64);
+
+    let mut pieces = Vec::new();
+    for (index, traf) in moof.traf.iter().enumerate() {
+        let ranges =
+            sample_ranges_in(moof_start as u64, &moof, traf.tfhd.track_id, &mdats, budget).ok()?;
+        let first = ranges.first()?.start;
+        let first_rel = first.checked_sub(payload as u64)?;
+        let mut piece = MovieFragmentBox::clone(&moof);
+        piece.mfhd.sequence_number =
+            u32::try_from(index + 1).expect("a small track index fits mfhd");
+        piece.traf = vec![isobmff::movie_fragment::TrackFragmentBox::clone(traf)];
+        let only = &mut piece.traf[0];
+        only.tfhd.flags &= !TFHD_DEFAULT_BASE_IS_MOOF;
+        only.tfhd.flags |= TFHD_BASE_DATA_OFFSET_PRESENT;
+        only.tfhd.base_data_offset = Some(0);
+        for trun in &mut only.trun {
+            trun.tr_flags |= TRUN_DATA_OFFSET_PRESENT;
+            trun.data_offset = Some(i32::try_from(first_rel).ok()?);
+        }
+        let mut serialized = vec![0u8; broadcast_common::Serialize::serialized_len(&piece)];
+        broadcast_common::Serialize::serialize_into(&piece, &mut serialized).ok()?;
+        pieces.push(serialized);
+    }
+    let prefix_len = moof_start;
+    let payload_start = prefix_len
+        .checked_add(pieces.iter().map(Vec::len).sum::<usize>())?
+        .checked_add(8)?;
+    let mut out = bytes[..moof_start].to_vec();
+    let mut first_len = None;
+    for mut piece in pieces {
+        // Both tracks address their bytes in the one `mdat` that follows.
+        let mut bytes_out = vec![0u8; piece.len()];
+        bytes_out.copy_from_slice(&piece);
+        let base = payload_start as u64;
+        let mut reparsed = MovieFragmentBox::parse_body(&bytes_out[8..]).ok()?;
+        for traf in &mut reparsed.traf {
+            traf.tfhd.base_data_offset = Some(base);
+        }
+        let mut serialized = vec![0u8; broadcast_common::Serialize::serialized_len(&reparsed)];
+        broadcast_common::Serialize::serialize_into(&reparsed, &mut serialized).ok()?;
+        if first_len.is_none() {
+            first_len = Some(u64::try_from(serialized.len()).ok()?);
+        }
+        out.extend_from_slice(&serialized);
+        piece.clear();
+    }
+    out.extend_from_slice(&bytes[mdat_start..mdat_end]);
+    Some((out, first_len?))
+}
+
+fn sample_bytes_from_file(bytes: &[u8]) -> Vec<(u32, Vec<u8>)> {
+    use isobmff::driver::{DriverStep, FileReader};
+    use std::io::Cursor;
+    let mut reader = FileReader::new(
+        Cursor::new(bytes.to_vec()),
+        config(bytes, SampleOrder::File),
+    )
+    .expect("file reader");
+    let mut out = Vec::new();
+    loop {
+        match reader.step().expect("step") {
+            DriverStep::Sample(sample) => {
+                let mut data = Vec::new();
+                reader
+                    .read_sample(&sample, &mut data)
+                    .expect("sample bytes");
+                out.push((sample.track.value(), data));
+            }
+            DriverStep::Done => break,
+            _ => {}
+        }
+    }
+    out
+}
+
+fn sample_bytes_from_forward(bytes: &[u8]) -> Vec<(u32, Vec<u8>)> {
+    use isobmff::driver::{DriverStep, ForwardReader};
+    let mut reader = ForwardReader::new(bytes, config(bytes, SampleOrder::File));
+    let mut out = Vec::new();
+    loop {
+        match reader.step().expect("step") {
+            DriverStep::Sample(sample) => {
+                let mut data = Vec::new();
+                reader
+                    .read_sample(&sample, &mut data)
+                    .expect("sample bytes");
+                out.push((sample.track.value(), data));
+            }
+            DriverStep::Done => break,
+            _ => {}
+        }
+    }
+    out
+}
+
+#[test]
+fn cmf2_shape_keeps_every_queued_moof_on_both_drivers() {
+    let bytes = test_fixtures::read("mp4/h264-aac-frag.mp4");
+    let (moof_start, _, moof, mdat_start, mdat_end) = first_fragment(&bytes).expect("fragment");
+    let payload = mdat_start + 8;
+    let budget = isobmff::frag_offsets::sample_bytes_budget(bytes.len() as u64);
+    let mdats = [MdatRange::new(payload as u64, mdat_end as u64)];
+    let mut expected: BTreeMap<u32, Vec<Vec<u8>>> = BTreeMap::new();
+    for traf in &moof.traf {
+        let ranges = sample_ranges_in(moof_start as u64, &moof, traf.tfhd.track_id, &mdats, budget)
+            .expect("original ranges");
+        expected.insert(
+            traf.tfhd.track_id.value(),
+            ranges
+                .iter()
+                .map(|range| bytes[range.start as usize..range.end as usize].to_vec())
+                .collect(),
+        );
+    }
+    assert_eq!(
+        expected.len(),
+        2,
+        "the fixture's first fragment has two tracks"
+    );
+
+    let (rewritten, _) = cmf2_shape(&bytes).expect("CMF2 rewrite");
+    for (name, got) in [
+        ("FileReader", sample_bytes_from_file(&rewritten)),
+        ("ForwardReader", sample_bytes_from_forward(&rewritten)),
+    ] {
+        let mut by_track: BTreeMap<u32, Vec<Vec<u8>>> = BTreeMap::new();
+        for (track, data) in got {
+            by_track.entry(track).or_default().push(data);
+        }
+        for (track, want) in &expected {
+            assert_eq!(
+                by_track
+                    .get(track)
+                    .unwrap_or_else(|| panic!("{name}: track {track} missing")),
+                want,
+                "{name}: track {track} sample bytes"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_queued_moof_past_max_fragment_bytes_is_the_typed_limit() {
+    let bytes = test_fixtures::read("mp4/h264-aac-frag.mp4");
+    let (rewritten, first_len) = cmf2_shape(&bytes).expect("CMF2 rewrite");
+    let limits = Limits::default().with_max_fragment_bytes(first_len);
+    let config = config(&rewritten, SampleOrder::File).with_limits(limits);
+    let err = drive(&rewritten, config).expect_err("the second queued moof exceeds the budget");
+    assert!(
+        matches!(
+            err,
+            isobmff::Error::LimitExceeded {
+                what: "fragment size",
+                ..
+            }
+        ),
+        "got {err:?}"
+    );
 }

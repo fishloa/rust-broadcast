@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The reader keeps every `moof` queued ahead of its `mdat` (r05-W26).** A
+  fragment written the CMF2 way (one `moof` per track, then one `mdat` holding
+  both tracks' data, §8.8.4) used to overwrite the previous pending `moof`, so
+  the first fragment's samples were silently dropped. The reader now holds the
+  queued `moof`s, counts their bytes against `Limits::max_fragment_bytes`
+  (exceeding it is the existing `LimitExceeded`), and resolves and emits each
+  one in file order once the following `mdat`(s) arrive, on both a seekable and
+  a forward-only source. `tests/it/reader_fragmented.rs` rewrites a real
+  two-track fragment into that shape and reads every sample back through
+  `FileReader` and `ForwardReader`.
+
 ### Breaking
 
 - `registry::BoxDef` and `registry::RegisteredBox` require `Send + Sync`, so a `Reader` holding registered values can cross threads (a tokio task) and one registry can serve many readers.

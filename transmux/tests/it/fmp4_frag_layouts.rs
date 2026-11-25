@@ -284,18 +284,11 @@ fn two_moofs_before_one_mdat_keeps_both_fragments() {
         two.as_slice(),
         test_harness::collect::CollectMode::Seekable,
     )
-    .expect("moof, moof, mdat still finishes");
+    .expect("moof, moof, mdat");
     let two_samples: usize = two_media.tracks.iter().map(|t| t.samples.len()).sum();
-    // The streaming stage holds one fragment at a time: a second `moof` before
-    // the first one's `mdat` is not addressable, so it must be reported and
-    // never resolve to more samples than the control.
-    assert!(
-        !two_media.degraded.is_empty(),
-        "the unaddressable queued fragment must be reported"
-    );
-    assert!(
-        two_samples <= control_samples,
-        "a queued fragment cannot yield more samples than the control: {two_samples} > {control_samples}"
+    assert_eq!(
+        two_samples, 2,
+        "both queued `moof`s must resolve; the first one used to be dropped"
     );
 }
 
