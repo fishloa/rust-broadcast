@@ -499,6 +499,7 @@ enum Phase {
     },
     Resync {
         remaining: u64,
+        at: Where,
     },
     Done,
 }
@@ -762,7 +763,7 @@ impl Reader {
                     self.done = true;
                 }
                 Phase::Header { at } => self.drive_header(at)?,
-                Phase::Resync { remaining } => self.drive_resync(remaining)?,
+                Phase::Resync { remaining, at } => self.drive_resync(remaining, at)?,
                 Phase::Master { body, .. } | Phase::Unsigned { body, .. } => {
                     self.request(body)?;
                 }
@@ -797,8 +798,7 @@ impl Reader {
         })
     }
 
-    fn drive_resync(&mut self, remaining: u64) -> Result<()> {
-        let at = self.resync_at();
+    fn drive_resync(&mut self, remaining: u64, at: Where) -> Result<()> {
         let end = self.end_for(at);
         if let Some(end) = end
             && self.pos >= end
@@ -819,18 +819,9 @@ impl Reader {
         })
     }
 
-    fn resync_at(&self) -> Where {
-        if self.seen_ebml {
-            Where::Segment
-        } else {
-            Where::Top
-        }
-    }
-
     fn end_resync(&mut self, at: Where) -> Result<()> {
         self.resync_carry_len = 0;
         if self.tolerated() {
-            self.warned(Warning::MalformedElement { offset: self.pos });
             self.done = true;
             self.phase = Phase::Done;
             return Ok(());
@@ -902,8 +893,13 @@ impl Reader {
         }
         self.pos = offset.saturating_add(1);
         self.resync_carry_len = 0;
+        let resync_at = match at {
+            Where::Group { .. } => Where::Cluster,
+            other => other,
+        };
         self.phase = Phase::Resync {
             remaining: self.limits.max_resync_bytes(),
+            at: resync_at,
         };
         Ok(())
     }
@@ -939,7 +935,7 @@ impl Reader {
                 element,
                 payload,
             } => self.accept_block(owner, header, element, payload, range, bytes),
-            Phase::Resync { remaining } => self.accept_resync(remaining, range, bytes),
+            Phase::Resync { remaining, at } => self.accept_resync(remaining, at, range, bytes),
             Phase::Done => Ok(()),
         }
     }
@@ -990,6 +986,7 @@ impl Reader {
             self.resync_carry_len = 0;
             self.phase = Phase::Resync {
                 remaining: self.limits.max_resync_bytes(),
+                at,
             };
             return Ok(());
         }
@@ -1120,7 +1117,17 @@ impl Reader {
                 Ok(())
             }
             ids::CLUSTER => self.enter_cluster(header, offset, payload_len),
-            _ => self.skip(payload_len, offset, Where::Segment),
+            _ if id == crate::ebml::global::VOID_ID || id == crate::ebml::global::CRC32_ID => {
+                self.skip(payload_len, offset, Where::Segment)
+            }
+            _ => self.malformed(
+                Where::Segment,
+                offset,
+                Error::UnexpectedElement {
+                    expected: ids::CLUSTER,
+                    found: id,
+                },
+            ),
         }
     }
 
@@ -1185,7 +1192,17 @@ impl Reader {
                 };
                 Ok(())
             }
-            _ => self.skip(payload_len, offset, Where::Cluster),
+            _ if id == crate::ebml::global::VOID_ID || id == crate::ebml::global::CRC32_ID => {
+                self.skip(payload_len, offset, Where::Cluster)
+            }
+            _ => self.malformed(
+                Where::Cluster,
+                offset,
+                Error::UnexpectedElement {
+                    expected: ids::CLUSTER,
+                    found: id,
+                },
+            ),
         }
     }
 
@@ -1252,8 +1269,14 @@ impl Reader {
                 reason: "element runs past its parent",
             }));
         }
-        self.warned(Warning::Truncated { offset });
-        self.close(at)
+        self.malformed(
+            at,
+            offset,
+            Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "element size",
+                reason: "element runs past its parent",
+            }),
+        )
     }
 
     fn start_master(
@@ -1384,9 +1407,15 @@ impl Reader {
             );
         }
         let full = element_bytes(header, bytes)?;
-        let parsed = Element::parse_at(&full, &self.limits);
         self.pos = body.end();
         self.phase = Phase::Header { at: Where::Segment };
+        if let MasterKind::Tracks = kind
+            && self.tolerated()
+        {
+            let tracks = self.parse_tracks_tolerantly(&full, header, offset)?;
+            return self.accept_tracks(Some(&tracks), offset, body);
+        }
+        let parsed = Element::parse_at(&full, &self.limits);
         let element = match parsed {
             Ok((element, _)) => element,
             Err(error) => return self.master_failed(kind, offset, error),
@@ -1399,10 +1428,62 @@ impl Reader {
                 Ok(())
             }
             MasterKind::SeekHead => self.accept_seek_head(element.as_seek_head()),
-            MasterKind::Info => self.accept_info(element.as_info(), offset, body),
+            MasterKind::Info => match self.accept_info(element.as_info(), offset, body) {
+                Ok(()) => Ok(()),
+                Err(_error) if self.tolerated() => {
+                    self.warned(Warning::MalformedElement { offset });
+                    Ok(())
+                }
+                Err(error) => Err(error),
+            },
             MasterKind::Tracks => self.accept_tracks(element.as_tracks(), offset, body),
             MasterKind::Cues => self.accept_cues(element.as_cues(), offset, body),
         }
+    }
+
+    /// Type each `TrackEntry` on its own in [`Mode::Permissive`]: a corrupt
+    /// entry is reported and skipped, the others are announced.
+    fn parse_tracks_tolerantly<'a>(
+        &mut self,
+        full: &'a [u8],
+        header: ElementHeader,
+        offset: u64,
+    ) -> Result<Tracks<'a>> {
+        let header_len = header.serialized_len();
+        let payload = full.get(header_len..).unwrap_or(&[]);
+        let mut entries: Vec<Element<'_>> = Vec::new();
+        let mut pos = 0usize;
+        while pos < payload.len() {
+            match Element::parse_at(&payload[pos..], &self.limits) {
+                Ok((Element::TrackEntry(entry), used)) => {
+                    entries.push(Element::TrackEntry(entry));
+                    pos = pos.saturating_add(used);
+                }
+                Ok((_other, used)) => pos = pos.saturating_add(used),
+                Err(error) => {
+                    let entry_offset = offset.saturating_add(
+                        u64::try_from(header_len.saturating_add(pos)).unwrap_or(u64::MAX),
+                    );
+                    self.warned(Warning::UnparsedElement {
+                        id: ids::TRACK_ENTRY,
+                        offset: entry_offset,
+                    });
+                    let (entry_header, used) = match ElementHeader::parse(&payload[pos..]) {
+                        Ok(parsed) => parsed,
+                        Err(_) => return Err(error),
+                    };
+                    let Some(len) = entry_header.payload_len() else {
+                        return Err(error);
+                    };
+                    let skip = used.saturating_add(usize::try_from(len).unwrap_or(usize::MAX));
+                    if skip == 0 || pos.saturating_add(skip) > payload.len() {
+                        break;
+                    }
+                    pos = pos.saturating_add(skip);
+                }
+            }
+        }
+        Ok(Tracks::from_parts(header, entries))
     }
 
     fn master_failed(&mut self, kind: MasterKind, offset: u64, error: Error) -> Result<()> {
@@ -1429,10 +1510,10 @@ impl Reader {
             });
         };
         let timestamp_scale_ns = info.timestamp_scale();
-        if timestamp_scale_ns == 0 {
+        if timestamp_scale_ns == 0 || i64::try_from(timestamp_scale_ns).is_err() {
             return Err(Error::InvalidField(broadcast_common::error::InvalidField {
                 field: "TimestampScale",
-                reason: "must be non-zero",
+                reason: "must fit the non-zero signed tick arithmetic",
             }));
         }
         let summary = SegmentInfo {
@@ -1806,7 +1887,13 @@ impl Reader {
         Ok(())
     }
 
-    fn accept_resync(&mut self, remaining: u64, range: ByteRange, bytes: &[u8]) -> Result<()> {
+    fn accept_resync(
+        &mut self,
+        remaining: u64,
+        at: Where,
+        range: ByteRange,
+        bytes: &[u8],
+    ) -> Result<()> {
         let carry_len = self.resync_carry_len;
         let base = range
             .offset
@@ -1814,13 +1901,11 @@ impl Reader {
         let mut window = Vec::with_capacity(carry_len + bytes.len());
         window.extend_from_slice(&self.resync_carry[..carry_len]);
         window.extend_from_slice(bytes);
-        if let Some(index) = find_level_one(&window) {
+        if let Some(index) = find_resync(&window, at) {
             let target = base.saturating_add(u64::try_from(index).unwrap_or(0));
             self.pos = target;
             self.resync_carry_len = 0;
-            self.phase = Phase::Header {
-                at: self.resync_at(),
-            };
+            self.phase = Phase::Header { at };
             return Ok(());
         }
         self.resync_carry_len = window.len().min(RESYNC_OVERLAP);
@@ -1830,9 +1915,12 @@ impl Reader {
         self.pos = range.end();
         let left = remaining.saturating_sub(consumed);
         if left == 0 || self.short_supply(range, bytes) {
-            return self.end_resync(self.resync_at());
+            return self.end_resync(at);
         }
-        self.phase = Phase::Resync { remaining: left };
+        self.phase = Phase::Resync {
+            remaining: left,
+            at,
+        };
         Ok(())
     }
 }
@@ -1862,19 +1950,46 @@ fn is_level_one(id: u32) -> bool {
     id == ids::SEGMENT || ids::SEGMENT_CHILD_IDS.contains(&id)
 }
 
-/// Find the first level-1 element id in `window`.
-fn find_level_one(window: &[u8]) -> Option<usize> {
-    if window.len() < RESYNC_ID_BYTES {
-        return None;
-    }
-    for index in 0..=window.len() - RESYNC_ID_BYTES {
-        let bytes = window.get(index..index + RESYNC_ID_BYTES)?;
-        let id = fold_id(bytes);
-        if is_level_one(id) {
+/// Find the first element id a resync at `at` may land on.
+///
+/// At the Segment level that is a level-1 id, as before. Inside a Cluster it
+/// is a level-1 id (which ends the Cluster) or a known Cluster child, so a
+/// damaged Cluster child does not lose the rest of its Cluster. Every candidate
+/// must also parse as a complete element header, so a byte pattern inside a
+/// Block payload is not mistaken for a boundary.
+fn find_resync(window: &[u8], at: Where) -> Option<usize> {
+    for index in 0..window.len() {
+        let rest = window.get(index..)?;
+        let Some((header, _)) = ElementHeader::parse(rest).ok() else {
+            continue;
+        };
+        let id = header.id().value();
+        let boundary = if matches!(at, Where::Cluster | Where::Group { .. }) {
+            is_level_one(id) || is_cluster_child(id)
+        } else {
+            is_level_one(id)
+        };
+        if boundary {
             return Some(index);
         }
     }
     None
+}
+
+/// The Cluster's direct children this reader can walk, plus the global
+/// elements every level may carry.
+fn is_cluster_child(id: u32) -> bool {
+    matches!(
+        id,
+        ids::TIMESTAMP
+            | ids::SIMPLE_BLOCK
+            | ids::BLOCK_GROUP
+            | ids::POSITION
+            | ids::PREV_SIZE
+            | ids::ENCRYPTED_BLOCK
+            | ids::SILENT_TRACKS
+    ) || id == crate::ebml::global::VOID_ID
+        || id == crate::ebml::global::CRC32_ID
 }
 
 impl Reader {

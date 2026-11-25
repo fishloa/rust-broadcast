@@ -46,7 +46,7 @@ fn samples_of(m: &Media, track: usize) -> Vec<Vec<u8>> {
 }
 
 #[test]
-fn an_over_large_cluster_size_is_framed_by_element_id_without_data_loss() {
+fn corrupt_cluster_size_in_the_middle_resyncs_at_next_cluster() {
     let clean_bytes = fixture("mkv/h264-aac.mkv");
     let clean = demux(&clean_bytes).unwrap();
     assert!(clean.degraded.is_empty());
@@ -74,7 +74,7 @@ fn an_over_large_cluster_size_is_framed_by_element_id_without_data_loss() {
 }
 
 #[test]
-fn corrupt_track_entry_is_reported_not_panicked() {
+fn corrupt_track_entry_is_dropped_and_the_other_track_survives() {
     let clean_bytes = fixture("mkv/h264-aac.mkv");
     let clean = demux(&clean_bytes).unwrap();
     assert_eq!(clean.tracks.len(), 2);
@@ -98,10 +98,8 @@ fn corrupt_track_entry_is_reported_not_panicked() {
         damaged.degraded[0],
         InputDegradation::MalformedUnit { .. }
     ));
-    assert!(
-        damaged.tracks.is_empty(),
-        "an untypable Tracks master announces no track, never a fabricated one"
-    );
+    assert_eq!(damaged.tracks.len(), 1);
+    assert_eq!(samples_of(&damaged, 0), samples_of(&clean, 0));
 }
 
 #[test]
@@ -163,23 +161,18 @@ fn truncated_element_id_at_the_segment_end_is_reported_not_panicked() {
     let clean_bytes = fixture("mkv/h264-aac.mkv");
     let clean = demux(&clean_bytes).unwrap();
 
-    let extra = [0x1Au8, 0x45];
-    let bytes = append_to_segment(&clean_bytes, &extra);
-    let damaged = demux(&bytes).expect("a truncated trailing element ID must not fail the file");
     let start = clean_bytes.len();
-    assert_eq!(damaged.degraded.len(), 2, "{:?}", damaged.degraded);
-    for entry in &damaged.degraded {
-        assert!(matches!(entry, InputDegradation::MalformedUnit { .. }));
-    }
+    let bytes = append_to_segment(&clean_bytes, &[0x1A, 0x45]);
+    let damaged = demux(&bytes).expect("a truncated trailing element ID must not fail the file");
+    assert_eq!(damaged.degraded.len(), 1, "{:?}", damaged.degraded);
+    assert!(matches!(
+        damaged.degraded[0],
+        InputDegradation::MalformedUnit { .. }
+    ));
     assert_eq!(
         position(&damaged.degraded[0]),
         start as u64,
         "the damage starts where the appended bytes start"
-    );
-    assert_eq!(
-        position(&damaged.degraded[1]),
-        (start + extra.len()) as u64,
-        "the second report is the end of the truncated id"
     );
     for t in 0..clean.tracks.len() {
         assert_eq!(
@@ -199,16 +192,15 @@ fn a_five_byte_element_id_is_reported_not_parsed() {
     let clean_bytes = fixture("mkv/h264-aac.mkv");
     let clean = demux(&clean_bytes).unwrap();
 
-    let extra = [0x08u8, 0x01, 0x02, 0x03, 0x04, 0x80];
-    let bytes = append_to_segment(&clean_bytes, &extra);
-    let damaged = demux(&bytes).expect("an over-long element ID must not fail the file");
     let start = clean_bytes.len();
-    assert_eq!(damaged.degraded.len(), 2, "{:?}", damaged.degraded);
-    for entry in &damaged.degraded {
-        assert!(matches!(entry, InputDegradation::MalformedUnit { .. }));
-    }
+    let bytes = append_to_segment(&clean_bytes, &[0x08, 0x01, 0x02, 0x03, 0x04, 0x80]);
+    let damaged = demux(&bytes).expect("an over-long element ID must not fail the file");
+    assert_eq!(damaged.degraded.len(), 1, "{:?}", damaged.degraded);
+    assert!(matches!(
+        damaged.degraded[0],
+        InputDegradation::MalformedUnit { .. }
+    ));
     assert_eq!(position(&damaged.degraded[0]), start as u64);
-    assert_eq!(position(&damaged.degraded[1]), (start + extra.len()) as u64);
     for t in 0..clean.tracks.len() {
         assert_eq!(
             samples_of(&damaged, t),
@@ -275,8 +267,8 @@ fn resync_after_damage_reports_each_damage_at_its_own_offset() {
         .collect();
     assert_eq!(
         data,
-        vec![vec![0xBB]],
-        "the walk resumes at a real Cluster and never re-reads one"
+        vec![vec![0xAA], vec![0xBB]],
+        "exactly the two Clusters' samples, in order, no duplicates"
     );
 
     let cluster_starts: Vec<usize> = file
@@ -290,19 +282,21 @@ fn resync_after_damage_reports_each_damage_at_its_own_offset() {
         "the two real Clusters must be present"
     );
     let body_start = file.len() - segment.len();
-    assert!(media.degraded.len() >= 2, "{:?}", media.degraded);
-    let mut positions: Vec<u64> = media.degraded.iter().map(position).collect();
-    positions.sort_unstable();
-    positions.dedup();
-    assert_eq!(
-        positions.len(),
-        media.degraded.len(),
-        "every damage reports its own byte offset, never a constant"
-    );
-    assert!(
-        positions
-            .iter()
-            .all(|position| *position >= (body_start + garbage_at) as u64),
-        "no damage is reported before the garbage: {positions:?}"
-    );
+    let expected = [
+        body_start + garbage_at,
+        body_start + garbage_at + 4 + cluster_a.len(),
+    ];
+    assert_ne!(expected[0], expected[1]);
+    assert_ne!(expected[0], 0);
+
+    assert_eq!(media.degraded.len(), 2, "{:?}", media.degraded);
+    for (entry, want) in media.degraded.iter().zip(expected) {
+        match entry {
+            InputDegradation::MalformedUnit { position } => assert_eq!(
+                *position, want as u64,
+                "damage must report its own byte offset"
+            ),
+            other => panic!("expected MalformedUnit, got {other:?}"),
+        }
+    }
 }

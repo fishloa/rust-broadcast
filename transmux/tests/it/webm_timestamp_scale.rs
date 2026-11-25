@@ -35,33 +35,42 @@ fn file_with_scale(scale: &[u8]) -> Vec<u8> {
     out
 }
 
+fn degraded_of(value: &[u8]) -> Vec<InputDegradation> {
+    let file = file_with_scale(value);
+    media_from_matroska(&file, CollectMode::Seekable)
+        .expect("a bad Info degrades, it does not fail the file")
+        .degraded
+}
+
 #[test]
-fn zero_timestamp_scale_is_rejected() {
+fn zero_timestamp_scale_is_reported_as_a_malformed_info() {
     for value in [&[0u8][..], &[0, 0, 0, 0, 0, 0, 0, 0][..]] {
-        let file = file_with_scale(value);
-        assert!(
-            media_from_matroska(&file, CollectMode::Seekable).is_err(),
-            "{value:?}: a zero TimestampScale must be rejected"
-        );
+        let degraded = degraded_of(value);
+        assert_eq!(degraded.len(), 1, "{degraded:?}");
+        assert!(matches!(
+            degraded[0],
+            InputDegradation::MalformedUnit { .. }
+        ));
     }
 }
 
 #[test]
-fn an_out_of_range_timestamp_scale_is_represented_exactly_not_wrapped() {
-    // A block at cluster timestamp 1 under a 2^63 ns scale: i128 arithmetic
-    // keeps it positive and the checked narrowing to the IR succeeds.
-    let file = file_with_scale(&[0x80, 0, 0, 0, 0, 0, 0, 0]);
-    let media = media_from_matroska(&file, CollectMode::Seekable).expect("scale in i128");
-    let pts = media.tracks[0].samples[0]
-        .timing
-        .and_then(|timing| timing.pts())
-        .expect("a pts");
-    assert_eq!(pts, ((1i128 << 63) / 1_000_000) as i64);
-    assert!(pts > 0, "the scale must never wrap the timestamp negative");
+fn timestamp_scale_beyond_i64_is_reported_as_a_malformed_info() {
+    for value in [
+        [0x80, 0, 0, 0, 0, 0, 0, 0],
+        [0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF],
+    ] {
+        let degraded = degraded_of(&value);
+        assert_eq!(degraded.len(), 1, "{value:?}: {degraded:?}");
+        assert!(matches!(
+            degraded[0],
+            InputDegradation::MalformedUnit { .. }
+        ));
+    }
 }
 
 #[test]
-fn in_range_timestamp_scales_are_applied_exactly() {
+fn in_range_timestamp_scales_are_accepted() {
     for (value, expected_pts) in [
         (&[0x0F, 0x42, 0x40][..], 1i64),
         (&[0x01][..], 0),
@@ -84,7 +93,7 @@ fn in_range_timestamp_scales_are_applied_exactly() {
 }
 
 #[test]
-fn zeroing_the_scale_of_a_real_file_is_rejected() {
+fn zeroing_the_scale_of_a_real_file_keeps_its_timeline() {
     let clean = test_fixtures::read("mkv/vp9-opus.webm");
     let at = clean
         .windows(TIMESTAMP_SCALE_BYTES.len())
@@ -93,9 +102,28 @@ fn zeroing_the_scale_of_a_real_file_is_rejected() {
     let len = usize::from(clean[at + 3] & 0x7F);
     let mut hostile = clean.clone();
     hostile[at + 4..at + 4 + len].fill(0);
-    assert!(
-        media_from_matroska(&hostile, CollectMode::Seekable).is_err(),
-        "a zero scale is a malformed Info, never applied"
-    );
-    let _ = InputDegradation::MalformedUnit { position: 0 };
+
+    let want = media_from_matroska(&clean, CollectMode::Seekable).unwrap();
+    let got = media_from_matroska(&hostile, CollectMode::Seekable).unwrap();
+    assert!(want.degraded.is_empty());
+    assert_eq!(got.degraded.len(), 1, "{:?}", got.degraded);
+    assert!(matches!(
+        got.degraded[0],
+        InputDegradation::MalformedUnit { .. }
+    ));
+    let times = |media: &transmux::Media| -> Vec<Vec<Option<i64>>> {
+        media
+            .tracks
+            .iter()
+            .map(|track| {
+                track
+                    .samples
+                    .iter()
+                    .map(|sample| sample.timing.and_then(|timing| timing.pts()))
+                    .collect()
+            })
+            .collect()
+    };
+    assert_eq!(times(&got), times(&want));
+    assert!(times(&got).iter().flatten().flatten().any(|&pts| pts > 0));
 }

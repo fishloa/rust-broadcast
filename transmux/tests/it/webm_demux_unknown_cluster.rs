@@ -40,6 +40,77 @@ const ORACLE: &str = "mkv/vp9-opus.packets.csv";
 const CLUSTER_ID: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
 const SEGMENT_ID: [u8; 4] = [0x18, 0x53, 0x80, 0x67];
 
+/// `SeekHead` (RFC 9559 §20) and the ids inside it, folded with their marker
+/// bits so they compare to [`read_id`]'s output.
+const SEEK_HEAD_ID: u32 = 0x114D_9B74;
+/// A `Seek` element inside `SeekHead`.
+const SEEK_ID: u32 = 0x4D_BB;
+/// `SeekID` (the element id a `Seek` points at).
+const SEEK_SEEK_ID: u32 = 0x53_AB;
+/// `SeekPosition` (relative to the Segment payload start).
+const SEEK_POSITION_ID: u32 = 0x53_AC;
+/// The `Cues` element id these rebuilds move.
+const CUES_ID: u32 = 0x1C53_BB6B;
+
+/// Add `extra` bytes to the `SeekHead`'s `Cues` `SeekPosition`, because the
+/// rebuild inserts bytes inside the Segment before `Cues` and the recorded
+/// position is relative to the Segment payload start.
+fn shift_cues_seek_position(bytes: &mut [u8], extra: u64) {
+    let seg_pos = bytes
+        .windows(4)
+        .position(|w| w == SEGMENT_ID)
+        .expect("fixture must contain a Segment");
+    let (_seg_id, seg_id_len) = read_id(bytes, seg_pos);
+    let (_seg_size, seg_size_len) = read_size(bytes, seg_pos + seg_id_len);
+    let payload = seg_pos + seg_id_len + seg_size_len;
+    let seek_head = bytes
+        .windows(4)
+        .position(|w| w == SEEK_HEAD_ID.to_be_bytes());
+    let Some(seek_head) = seek_head else {
+        return;
+    };
+    let (_id, id_len) = read_id(bytes, seek_head);
+    let (head_size, head_size_len) = read_size(bytes, seek_head + id_len);
+    let mut p = seek_head + id_len + head_size_len;
+    let head_end = p + head_size as usize;
+    while p < head_end {
+        let (id, id_len) = read_id(bytes, p);
+        let (size, size_len) = read_size(bytes, p + id_len);
+        let body = p + id_len + size_len;
+        let body_end = body + size as usize;
+        if id == SEEK_ID {
+            let mut q = body;
+            let mut is_cues = false;
+            let mut position_field = None;
+            while q < body_end {
+                let (cid, cid_len) = read_id(bytes, q);
+                let (csize, csize_len) = read_size(bytes, q + cid_len);
+                let cb = q + cid_len + csize_len;
+                let csize = csize as usize;
+                if cid == SEEK_SEEK_ID && bytes[cb..cb + csize] == CUES_ID.to_be_bytes() {
+                    is_cues = true;
+                }
+                if cid == SEEK_POSITION_ID {
+                    position_field = Some((cb, csize));
+                }
+                q = cb + csize;
+            }
+            if is_cues && let Some((at, width)) = position_field {
+                let mut value = 0u64;
+                for &byte in &bytes[at..at + width] {
+                    value = (value << 8) | u64::from(byte);
+                }
+                let shifted = value.saturating_add(extra);
+                for index in 0..width {
+                    bytes[at + index] = (shifted >> (8 * (width - 1 - index))) as u8;
+                }
+            }
+        }
+        p = body_end;
+    }
+    let _ = payload;
+}
+
 /// Minimal EBML VINT reader, independent of (and much simpler than) the
 /// demuxer under test: used only to locate element boundaries so this test
 /// can slice the real fixture, not to validate parsing semantics.
@@ -158,6 +229,7 @@ fn split_into_two_clusters(data: &[u8]) -> Vec<u8> {
     let seg_size_field_start = seg_pos + seg_id_len;
     out[seg_size_field_start..seg_size_field_start + seg_size_len]
         .copy_from_slice(&encode_size(seg_size + extra, seg_size_len));
+    shift_cues_seek_position(&mut out, extra);
 
     out
 }
@@ -335,6 +407,7 @@ fn split_with_decoy(data: &[u8], decoy_size: DecoySize) -> Vec<u8> {
     let (seg_size, seg_size_len) = read_size(data, seg_pos + seg_id_len);
     let field = seg_pos + seg_id_len;
     out[field..field + seg_size_len].copy_from_slice(&encode_size(seg_size + extra, seg_size_len));
+    shift_cues_seek_position(&mut out, extra);
     out
 }
 
@@ -358,8 +431,8 @@ fn decoy_cluster_id_with_an_over_large_size_is_not_a_boundary() {
         "every block of both Clusters must be recovered"
     );
     assert!(
-        media.degraded.len() <= 1,
-        "the decoy is skipped with at most one structural report: {:?}",
+        media.degraded.is_empty(),
+        "the decoy must be skipped, not reported: {:?}",
         media.degraded
     );
     for t in 0..clean.tracks.len() {
