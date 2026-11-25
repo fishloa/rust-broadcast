@@ -285,12 +285,7 @@ mod muxer_buffering {
         }
     }
 
-    // 412 before r05-O4, 220 after, 423 with the plan-driven stage: the muxer
-    // now hands the caller each sample as an owned `Bytes` (one payload copy into
-    // the message) instead of writing into a pre-sized buffer, and the plan pass
-    // allocates the plan. The payload is copied twice (message + output), never
-    // three times.
-    const PROGRESSIVE_BUDGET_X100: usize = 450; // 220 before the plan-driven stage, 423 measured
+    const PROGRESSIVE_BUDGET_X100: usize = 316; // 412 before r05-O4, 220 after (midway)
     const MKV_BUDGET_X100: usize = 719; // 1145 before r05-O4, 293 after (midway)
     const TS_BUDGET_X100: usize = 655; // 770 before r05-O4, 540 after (midway)
 }

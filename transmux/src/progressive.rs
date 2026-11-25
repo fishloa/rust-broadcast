@@ -24,6 +24,7 @@
 //! Spec: ISO/IEC 14496-12:2026 §8.5-§8.7
 //! (`private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`).
 
+use alloc::borrow::Cow;
 use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -35,7 +36,7 @@ use crate::error::{Error, Result};
 use crate::ir::{Sample, TrackId};
 use crate::mux_stage::{MuxInput, MuxOutput};
 use isobmff::plan::OwnedPlan;
-use isobmff::writer::{FileType, Layout, MovieHeader, ProgressiveWriter, Write, Writer};
+use isobmff::writer::{FileType, Layout, MovieHeader, ProgressiveWriter, Writer};
 use isobmff::{Limits, TrackId as IsoTrackId};
 
 /// `ftyp` major brand for a progressive (non-fragmented) MP4.
@@ -114,9 +115,9 @@ impl ProgressiveMuxStage {
             self.movie,
             Limits::default(),
         )?;
-        let header = owned_writes(writer.header());
-        for (offset, bytes) in header {
-            self.emit(offset, bytes);
+        for write in writer.header() {
+            let bytes = Bytes::copy_from_slice(&write.bytes);
+            self.emit(write.offset, bytes);
         }
         self.writer = Some(writer);
         Ok(())
@@ -124,12 +125,28 @@ impl ProgressiveMuxStage {
 
     fn sample(&mut self, track: TrackId, sample: Sample) -> Result<()> {
         self.ensure_writer()?;
-        let writer = self
+        // The writer is moved out for the push so the emitted writes can be
+        // handed to `emit` (which borrows the stage) while the writer's own
+        // borrow of the sample is live, and put back whatever the outcome.
+        let mut writer = self
             .writer
-            .as_mut()
+            .take()
             .ok_or(Error::InvalidInput("progressive: no writer"))?;
+        let result = self.push_sample(&mut writer, track, &sample);
+        self.writer = Some(writer);
+        result
+    }
+
+    /// Place one sample through `writer`, sharing its bytes rather than copying
+    /// them: the sample's `Bytes` already owns the payload.
+    fn push_sample(
+        &mut self,
+        writer: &mut ProgressiveWriter,
+        track: TrackId,
+        sample: &Sample,
+    ) -> Result<()> {
         let iso_track = IsoTrackId::new(track.value());
-        let (index, expected) = {
+        let (track_index, index, expected) = {
             let plan = writer.plan();
             let track_index = plan.index_of(iso_track).ok_or(Error::InvalidInput(
                 "progressive: sample for a track the plan does not have",
@@ -153,7 +170,7 @@ impl ProgressiveMuxStage {
                 });
             }
             let expected = planned.tables.size(index)?;
-            (index, expected)
+            (track_index, index, expected)
         };
         let got = u64::try_from(sample.data.len()).unwrap_or(u64::MAX);
         if got != u64::from(expected) {
@@ -165,16 +182,26 @@ impl ProgressiveMuxStage {
                 got,
             });
         }
-        let writes = owned_writes(writer.push(iso_track, index, &sample.data)?);
-        let track_index = writer
-            .plan()
-            .index_of(iso_track)
-            .ok_or(Error::InvalidInput("progressive: plan track is missing"))?;
         if let Some(count) = self.counts.get_mut(track_index) {
             *count = index.saturating_add(1);
         }
-        for (offset, bytes) in writes {
-            self.emit(offset, bytes);
+        let writes = writer.push(iso_track, index, &sample.data)?;
+        let source = sample.data.as_ptr();
+        let len = sample.data.len();
+        for write in writes {
+            // A seekable sink (and an in-turn append) hands the sample back
+            // borrowing the very buffer the stage was given, so the output can
+            // share it. Only a reordered or buffered write needs a copy.
+            let shared = matches!(
+                &write.bytes,
+                Cow::Borrowed(bytes) if bytes.len() == len && core::ptr::eq(bytes.as_ptr(), source)
+            );
+            let bytes = if shared {
+                sample.data.clone()
+            } else {
+                Bytes::copy_from_slice(&write.bytes)
+            };
+            self.emit(write.offset, bytes);
         }
         Ok(())
     }
@@ -220,26 +247,44 @@ impl Stage for ProgressiveMuxStage {
         }
         self.finished = true;
         self.ensure_writer()?;
-        let writer = self
+        let mut writer = self
             .writer
-            .as_mut()
+            .take()
             .ok_or(Error::InvalidInput("progressive: no writer"))?;
+        let mut missing = None;
         for (index, planned) in writer.plan().tracks().iter().enumerate() {
             let got = self.counts.get(index).copied().unwrap_or(0);
             if got < planned.tables.sample_count {
-                return Err(Error::PlanMismatch {
-                    track: TrackId::from(planned.setup.track_id),
-                    index: got,
-                    what: "missing sample",
-                    planned: u64::from(planned.tables.sample_count),
-                    got: u64::from(got),
-                });
+                missing = Some((
+                    TrackId::from(planned.setup.track_id),
+                    got,
+                    planned.tables.sample_count,
+                ));
+                break;
             }
         }
-        let trailer = owned_writes(writer.finish()?);
-        for (offset, bytes) in trailer {
-            self.emit(offset, bytes);
+        if let Some((track, index, planned)) = missing {
+            self.writer = Some(writer);
+            return Err(Error::PlanMismatch {
+                track,
+                index,
+                what: "missing sample",
+                planned: u64::from(planned),
+                got: u64::from(index),
+            });
         }
+        let trailer = match writer.finish() {
+            Ok(trailer) => trailer,
+            Err(error) => {
+                self.writer = Some(writer);
+                return Err(error.into());
+            }
+        };
+        for write in trailer {
+            let bytes = Bytes::copy_from_slice(&write.bytes);
+            self.emit(write.offset, bytes);
+        }
+        self.writer = Some(writer);
         Ok(())
     }
 }
@@ -251,13 +296,4 @@ fn file_type() -> FileType {
         compatible_brands: vec![*b"isom", *b"iso2", *b"mp41", *b"avc1"],
         emit_ftyp: true,
     }
-}
-
-/// The writer's placements, copied out so the stage can emit them while it
-/// holds the writer mutably.
-fn owned_writes(writes: Vec<Write<'_>>) -> Vec<(u64, Bytes)> {
-    writes
-        .into_iter()
-        .map(|write| (write.offset, Bytes::copy_from_slice(&write.bytes)))
-        .collect()
 }
