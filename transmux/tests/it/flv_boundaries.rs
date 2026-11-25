@@ -6,10 +6,11 @@
 //! never a value recomputed from the code under test.
 #![cfg(feature = "std")]
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Unpackage};
-use transmux::{CodecConfig, FlvDemux, FlvError, FlvMux, Media, Sample, Track, TrackId, TrackSpec};
+use transmux::{
+    CodecConfig, FlvDemux, FlvError, FlvMuxStage, Media, Sample, Track, TrackId, TrackSpec,
+};
 
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType, tags};
 use transmux::ir::DataIdentity;
@@ -146,6 +147,39 @@ fn sequence_body(tag_type: u8, packet_type: u8) -> Vec<u8> {
     panic!("fixture has no sequence header for tag type {tag_type}");
 }
 
+/// The track specs of `media`, the shape the per-spec FLV helpers take.
+fn specs(media: &Media) -> Vec<TrackSpec> {
+    media.tracks.iter().map(|t| t.spec.clone()).collect()
+}
+
+/// Every carried sample's FLV frame-tag payload: the first AVC track's and the
+/// first AAC track's samples, in track order (the set the FLV spoke carries).
+fn frame_payloads(media: &Media) -> Result<Vec<transmux::FlvPayload>, FlvError> {
+    let mut video: Option<&Track> = None;
+    let mut audio: Option<&Track> = None;
+    for track in &media.tracks {
+        match &track.spec.config {
+            CodecConfig::Avc { .. } if video.is_none() => video = Some(track),
+            CodecConfig::Aac { .. } if audio.is_none() => audio = Some(track),
+            CodecConfig::Avc { .. } | CodecConfig::Aac { .. } => {}
+            other => {
+                return Err(FlvError::UnsupportedCodec {
+                    codec: other.name(),
+                });
+            }
+        }
+    }
+    let mut payloads = Vec::new();
+    for track in [video, audio].into_iter().flatten() {
+        for sample in &track.samples {
+            if let Some(payload) = transmux::flv_frame_payload(&track.spec, sample)? {
+                payloads.push(payload);
+            }
+        }
+    }
+    Ok(payloads)
+}
+
 #[test]
 fn composition_time_is_written_as_the_exact_si24_bytes() {
     let offsets = [0i64, 1, 255, 256, 65_536, -1];
@@ -155,7 +189,7 @@ fn composition_time_is_written_as_the_exact_si24_bytes() {
         .map(|(i, &offset)| timed_video(offset, i as i64 * 1000, 1000, vec![0u8; 4]))
         .collect();
     let media = Media::new(vec![video_track(samples)], timescale(1000));
-    let flv = FlvMux::new().package(&media).expect("package");
+    let flv = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), &media);
     let bodies = video_nalu_bodies(&flv);
     let expected: [[u8; 3]; 6] = [
         [0x00, 0x00, 0x00],
@@ -175,23 +209,18 @@ fn composition_time_is_written_as_the_exact_si24_bytes() {
 fn composition_time_si24_bounds_are_inclusive() {
     let ok_max = timed_video(8_388_607, 0, 1000, vec![0u8; 4]);
     let media = Media::new(vec![video_track(vec![ok_max])], timescale(1000));
-    let flv = FlvMux::new()
-        .package(&media)
-        .expect("SI24_MAX is representable");
+    let flv = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), &media);
     assert_eq!(&video_nalu_bodies(&flv)[0][2..5], &[0x7F, 0xFF, 0xFF]);
 
     let ok_min = timed_video(-8_388_608, 0, 1000, vec![0u8; 4]);
     let media = Media::new(vec![video_track(vec![ok_min])], timescale(1000));
-    let flv = FlvMux::new()
-        .package(&media)
-        .expect("SI24_MIN is representable");
+    let flv = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), &media);
     assert_eq!(&video_nalu_bodies(&flv)[0][2..5], &[0x80, 0x00, 0x00]);
 
     for offset in [8_388_608i64, -8_388_609] {
         let sample = timed_video(offset, 0, 1000, vec![0u8; 4]);
         let media = Media::new(vec![video_track(vec![sample])], timescale(1000));
-        let err = FlvMux::new()
-            .package(&media)
+        let err = crate::mux_bytes::mux_result(&mut FlvMuxStage::new(), &media)
             .expect_err("out-of-range CompositionTime must be rejected");
         assert_eq!(
             err,
@@ -206,14 +235,15 @@ fn composition_time_si24_bounds_are_inclusive() {
 #[test]
 fn the_tag_timestamp_31_bit_boundary_is_exact() {
     let max = u32::MAX;
+    // Absolute DTS: the stage rescaled each sample's own timestamp, so the
+    // boundary is between these two values rather than between two running
+    // sums.
     let at_max = vec![
         timed_video(0, 0, max, vec![0u8; 4]),
-        timed_video(0, 0, 1000, vec![0u8; 4]),
+        timed_video(0, i64::from(max), 1000, vec![0u8; 4]),
     ];
     let media = Media::new(vec![video_track(at_max)], timescale(1000));
-    let flv = FlvMux::new()
-        .package(&media)
-        .expect("u32::MAX ms is representable");
+    let flv = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), &media);
     let timestamps: Vec<u32> = tag_bodies(&flv)
         .into_iter()
         .filter(|t| t.tag_type == TagType::Video && t.body[1] == 1)
@@ -222,13 +252,12 @@ fn the_tag_timestamp_31_bit_boundary_is_exact() {
     assert_eq!(timestamps, vec![0, max]);
 
     let past_max = vec![
-        timed_video(0, 0, max, vec![0u8; 4]),
-        timed_video(0, 0, 1, vec![0u8; 4]),
-        timed_video(0, 0, 1, vec![0u8; 4]),
+        timed_video(0, 0, 1000, vec![0u8; 4]),
+        timed_video(0, i64::from(max), 1, vec![0u8; 4]),
+        timed_video(0, i64::from(max) + 1, 1, vec![0u8; 4]),
     ];
     let media = Media::new(vec![video_track(past_max)], timescale(1000));
-    let err = FlvMux::new()
-        .package(&media)
+    let err = crate::mux_bytes::mux_result(&mut FlvMuxStage::new(), &media)
         .expect_err("u32::MAX + 1 ms must be rejected");
     assert_eq!(
         err,
@@ -256,7 +285,8 @@ fn audio_sound_type_follows_the_channel_count() {
             vec![Sample::new(vec![0u8; 4], Some(0), Some(0), Some(1000), true).unwrap()],
         );
         let media = Media::new(vec![track], timescale(1000));
-        let payloads = transmux::flv_sequence_header_payloads(&media).expect("sequence headers");
+        let payloads =
+            transmux::flv_sequence_header_payloads(&specs(&media)).expect("sequence headers");
         let audio = payloads
             .iter()
             .find(|p| p.kind == transmux::FlvPayloadKind::Audio)
@@ -317,7 +347,7 @@ fn locate_av_tracks_picks_the_first_avc_and_aac_track() {
         ],
         timescale(1000),
     );
-    let payloads = transmux::flv_frame_payloads(&media).expect("frame payloads");
+    let payloads = frame_payloads(&media).expect("frame payloads");
     let videos: Vec<_> = payloads
         .iter()
         .filter(|p| p.kind == transmux::FlvPayloadKind::Video)
@@ -356,7 +386,7 @@ fn an_unsupported_codec_is_named_in_the_mux_error() {
     );
     let media = Media::new(vec![track], timescale(1000));
     assert_eq!(
-        FlvMux::new().package(&media).unwrap_err(),
+        crate::mux_bytes::mux_result(&mut FlvMuxStage::new(), &media).unwrap_err(),
         FlvError::UnsupportedCodec { codec: "AC-3" }
     );
 }
@@ -632,7 +662,7 @@ fn on_metadata_body_carries_the_avc_track_geometry() {
         Vec::new(),
     );
     let media = Media::new(vec![track], timescale(1000));
-    let body = transmux::on_metadata_body(&media, Some(1.0)).expect("metadata body");
+    let body = transmux::on_metadata_body(&specs(&media), Some(1.0)).expect("metadata body");
     assert_eq!(metadata_width_height(&body), (1280.0, 720.0));
 }
 
