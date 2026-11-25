@@ -15,7 +15,6 @@ use media_plane::ids::SegmentSeq;
 use media_plane::trunk::EventAnchor;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use timed_metadata::{MediaTime, TimeAnchor};
-use transmux::SegmentMeta;
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -51,9 +50,7 @@ fn seg(w: &SegmentWriter, seq: u32) {
         SegmentSeq::new(seq),
         Duration::from_secs(4),
         Timestamp::from_nanos(0),
-        SegmentMeta {
-            discontinuous: false,
-        },
+        false,
     ))
     .unwrap();
 }
@@ -169,9 +166,7 @@ fn no_can_skip_until_means_no_skip() {
                 SegmentSeq::new(s),
                 Duration::from_secs(4),
                 Timestamp::from_nanos(0),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .unwrap();
     }

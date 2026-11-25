@@ -19,7 +19,7 @@ use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
 use transmux::mux_stage::{MuxOutput, drive_media};
 use transmux::{
     CodecConfig, DEFAULT_PSI_INTERVAL, FlvDemux, FlvPayloadKind, Media, TsDemux, TsMuxStage,
-    flv_frame_payloads, flv_sequence_header_payloads, on_metadata_body,
+    flv_frame_payload, flv_sequence_header_payloads, on_metadata_body,
 };
 
 /// Nanoseconds in one second: turns a timescale-tick span into a [`Duration`]
@@ -85,13 +85,21 @@ pub fn write_big_flv(path: &Path, source_fixture: &Path, target_bytes: u64) -> B
     let mut passes = 0u64;
     while written < target_bytes {
         let shifted = media_at_pass(&media, &step, passes);
-        for payload in expect("build FLV frame payloads", flv_frame_payloads(&shifted)) {
-            written += write_flv_tag(
-                &mut out,
-                payload_tag_type(payload.kind),
-                payload.timestamp_ms,
-                &payload.body,
-            );
+        for track in &shifted.tracks {
+            for sample in &track.samples {
+                let payload = expect(
+                    "build FLV frame payload",
+                    flv_frame_payload(&track.spec, sample),
+                );
+                if let Some(payload) = payload {
+                    written += write_flv_tag(
+                        &mut out,
+                        payload_tag_type(payload.kind),
+                        payload.timestamp_ms,
+                        &payload.body,
+                    );
+                }
+            }
         }
         passes += 1;
     }
@@ -207,11 +215,12 @@ fn write_flv_preamble(out: &mut impl Write, media: &Media) -> u64 {
     );
     expect("write FLV header", out.write_all(&header));
     let mut written = expect("sum FLV header length", u64::try_from(header.len()));
-    let meta = expect("build onMetaData", on_metadata_body(media, None));
+    let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let meta = expect("build onMetaData", on_metadata_body(&specs, None));
     written += write_flv_tag(out, TagType::Script, 0, &meta);
     for payload in expect(
         "build FLV sequence headers",
-        flv_sequence_header_payloads(media),
+        flv_sequence_header_payloads(&specs),
     ) {
         written += write_flv_tag(
             out,

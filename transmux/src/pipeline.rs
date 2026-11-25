@@ -98,7 +98,7 @@ pub(crate) fn track_setups(tracks: &[TrackSpec]) -> Result<Vec<isobmff::writer::
         // `LlSegmenter`, `LlHlsSegmenter`) shares this one check, so a
         // Media containing e.g. a DVB subtitle/DSM-CC/SCTE-35 track fails
         // the same way everywhere; the caller must pre-filter first (e.g.
-        // with `Media::select_tracks_by`).
+        // with `select_tracks_by`).
         if !t.config.is_muxable_in_bmff() {
             return Err(unmuxable_track_error(t));
         }
@@ -107,8 +107,21 @@ pub(crate) fn track_setups(tracks: &[TrackSpec]) -> Result<Vec<isobmff::writer::
     Ok(setups)
 }
 
+/// The `hdlr.name` of an [`DataIdentity::Mp4`] data track: the track carries
+/// opaque sample bytes, so no media-specific handler name applies.
+const DATA_HANDLER_NAME: &[u8] = b"DataHandler\0";
+
 /// The one IR-to-[`TrackSetup`](isobmff::writer::TrackSetup) mapping.
 fn track_setup(t: &TrackSpec) -> Result<isobmff::writer::TrackSetup> {
+    if let CodecConfig::Data {
+        identity: DataIdentity::Mp4 {
+            handler,
+            sample_entry,
+        },
+    } = &t.config
+    {
+        return mp4_data_track_setup(t, *handler, sample_entry);
+    }
     let stsd::TrackMedia {
         entry,
         kind,
@@ -131,6 +144,34 @@ fn track_setup(t: &TrackSpec) -> Result<isobmff::writer::TrackSetup> {
         0
     };
     Ok(setup)
+}
+
+/// The [`TrackSetup`](isobmff::writer::TrackSetup) of an ISOBMFF data track:
+/// its own handler and its complete sample-entry box bytes, carried through
+/// [`isobmff::writer::SampleEntry::Raw`] so the entry re-muxes unchanged
+/// (ISO/IEC 14496-12:2026 §12.1.2).
+fn mp4_data_track_setup(
+    t: &TrackSpec,
+    handler: [u8; BOX_TYPE_SIZE],
+    sample_entry: &[u8],
+) -> Result<isobmff::writer::TrackSetup> {
+    let type_offset = isobmff::box_types::BOX_TYPE_OFFSET;
+    let fourcc: [u8; BOX_TYPE_SIZE] = sample_entry
+        .get(type_offset..type_offset + BOX_TYPE_SIZE)
+        .and_then(|bytes| bytes.try_into().ok())
+        .ok_or(crate::error::Error::InvalidInput(
+            "MP4 data track sample entry is shorter than its box header",
+        ))?;
+    Ok(isobmff::writer::TrackSetup::new(
+        isobmff::TrackId::new(t.track_id.value()),
+        handler,
+        DATA_HANDLER_NAME.to_vec(),
+        t.timescale,
+        isobmff::writer::SampleEntry::Raw {
+            fourcc,
+            body: sample_entry.to_vec(),
+        },
+    ))
 }
 
 /// Build the named, typed rejection for a track [`CodecConfig::is_muxable_in_bmff`]
@@ -654,6 +695,16 @@ pub fn build_media_segment_with_events(
 const STYP_MAJOR_BRAND: [u8; 4] = *b"msdh";
 const STYP_COMPATIBLE_BRANDS: [[u8; 4]; 2] = [*b"msdh", *b"msix"];
 
+/// The one `styp` brand set a CMAF segment or low-latency chunk is written
+/// under, so a streaming muxer's fragment and the batch builders agree.
+pub(crate) fn cmaf_segment_brands() -> isobmff::writer::SegmentBrands {
+    isobmff::writer::SegmentBrands {
+        major_brand: STYP_MAJOR_BRAND,
+        minor_version: 0,
+        compatible_brands: STYP_COMPATIBLE_BRANDS.to_vec(),
+    }
+}
+
 /// Map the IR onto the writer's one fragment builder, which emits
 /// `[styp] [emsg]* moof mdat` over a run of samples.
 ///
@@ -713,11 +764,7 @@ pub(crate) fn build_chunk(
             trex: Default::default(),
         })
         .collect();
-    let styp = with_styp.then_some(isobmff::writer::SegmentBrands {
-        major_brand: STYP_MAJOR_BRAND,
-        minor_version: 0,
-        compatible_brands: STYP_COMPATIBLE_BRANDS.to_vec(),
-    });
+    let styp = with_styp.then(cmaf_segment_brands);
     let options = isobmff::writer::FragmentOptions {
         sequence_number,
         styp: styp.as_ref(),

@@ -1722,9 +1722,7 @@ mod tests {
                 media_plane::ids::SegmentSeq::new(1),
                 duration,
                 broadcast_common::Timestamp::from_nanos(0),
-                transmux::SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish segment");
 

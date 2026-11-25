@@ -205,11 +205,11 @@ fn c1_zero_duration_anchor_still_cuts_segments_in_cmaf_segmenter() {
     let mut seg = Segmenter::new(vec![avc_track(1)], TS_TIMESCALE, Duration::from_secs(1))
         .expect("construct");
     for s in zero_duration_stream(C1_FRAMES) {
-        seg.push(TrackId::new(1), s).expect("push");
+        crate::segmenter_stage::feed(&mut seg, TrackId::new(1), s).expect("push");
     }
-    let cut_before_flush = seg.take_ready().len();
-    seg.flush().expect("flush");
-    let trailing = seg.take_ready();
+    let cut_before_flush = crate::segmenter_stage::take_bytes(&mut seg).len();
+    crate::segmenter_stage::flush(&mut seg).expect("flush");
+    let trailing = crate::segmenter_stage::take_bytes(&mut seg);
 
     assert_eq!(
         cut_before_flush, C1_CUTS_BEFORE_FLUSH,
@@ -228,14 +228,14 @@ fn c1_zero_duration_anchor_tfdt_advances_across_segments() {
         .expect("construct");
     let mut bases = Vec::new();
     for s in zero_duration_stream(C1_FRAMES) {
-        seg.push(TrackId::new(1), s).expect("push");
-        for (bytes, _meta) in seg.take_ready_with_meta() {
-            bases.push(tfdts(&bytes)[0].1);
+        crate::segmenter_stage::feed(&mut seg, TrackId::new(1), s).expect("push");
+        for segment in crate::segmenter_stage::take(&mut seg) {
+            bases.push(tfdts(&segment.bytes)[0].1);
         }
     }
-    seg.flush().expect("flush");
-    for (bytes, _meta) in seg.take_ready_with_meta() {
-        bases.push(tfdts(&bytes)[0].1);
+    crate::segmenter_stage::flush(&mut seg).expect("flush");
+    for segment in crate::segmenter_stage::take(&mut seg) {
+        bases.push(tfdts(&segment.bytes)[0].1);
     }
 
     assert!(bases.len() > 2, "expected several segments, got {bases:?}");
@@ -409,7 +409,7 @@ fn c2_infinite_gop_is_bounded_in_cmaf_segmenter() {
     let mut seg = Segmenter::new(vec![avc_track(1)], TS_TIMESCALE, Duration::from_secs(1))
         .expect("construct");
     let (accepted, saw_saturated) = drive_until_rejected(&mut seg, samples.len(), |s, i| {
-        s.push(TrackId::new(1), samples[i].clone())
+        crate::segmenter_stage::feed(s, TrackId::new(1), samples[i].clone())
     });
     assert_eq!(
         accepted, MAX_PENDING_SAMPLES_PER_TRACK,
@@ -423,14 +423,14 @@ fn c2_infinite_gop_is_bounded_in_cmaf_segmenter() {
     // The bound is not a wedge: flush closes the trailing partial segment (a
     // trailing segment is allowed not to start on a keyframe) and input flows
     // again.
-    seg.flush().expect("flush after the bound");
-    assert_eq!(seg.take_ready().len(), 1);
+    crate::segmenter_stage::flush(&mut seg).expect("flush after the bound");
+    assert_eq!(crate::segmenter_stage::take_bytes(&mut seg).len(), 1);
     assert!(
         !Stage::demand(&seg).saturated,
         "flush clears the saturation"
     );
-    seg.push(TrackId::new(1), au(999_000, false))
-        .expect("input flows again");
+    crate::segmenter_stage::feed(&mut seg, TrackId::new(1), au(999_000, false))
+        .expect("accepts input again");
 }
 
 #[test]

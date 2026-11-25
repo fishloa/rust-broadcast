@@ -25,11 +25,10 @@
 //! how many blocks exist or their contents, only whether the demuxer finds
 //! all of them.
 
-use broadcast_common::Package;
 use isobmff::box_types::parse_box;
 use test_fixtures::ffprobe;
+use transmux::Media;
 use transmux::webm_demux::WebmDemux;
-use transmux::{CmafMux, Media};
 
 const FIXTURE: &str = "mkv/vp9-opus.webm";
 const ORACLE: &str = "mkv/vp9-opus.packets.csv";
@@ -207,8 +206,7 @@ fn unknown_size_cluster_does_not_swallow_the_next_cluster() {
 
     // The re-framed file must still mux cleanly end to end (no leftover
     // stray bytes from the second Cluster corrupting a later sample).
-    let mut mux = CmafMux::default();
-    let cmaf = mux.package(&media).expect("mux to fmp4");
+    let cmaf = crate::cmaf::package(&media).expect("mux to fmp4");
     let mut off = 0usize;
     let mut saw_moov = false;
     while off < cmaf.len() {

@@ -25,6 +25,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SegmentSummary`. The segment URI is `{uri_prefix}{sequence}.ts`; drive a
   whole `Media` through `mux_stage::drive_media` and render the playlist with
   `StreamingTsHlsSegmenter::playlist`.
+- The FLV, RTMP, Matroska and RTP muxers are stages:
+  `FlvMux`/`RtmpMux`/`MkvMux`/`RtpPacketiser` (and their `Package` impls) are
+  replaced by `FlvMuxStage`, `RtmpMuxStage`, `MkvMuxStage` and
+  `RtpPacketiserStage`, each `Stage<In = MuxInput, Out = MuxOutput>`, so an
+  output is written as the samples arrive instead of from a whole `Media`.
+  `MkvMuxStage::new` takes the `Cluster` duration (caller policy);
+  `RtpPacketiserStage` assigns the session's dynamic payload types at track
+  announcement and emits one whole RTP datagram per packet, and `RtpOutput`,
+  `RtpStream` and `RtpPacketiser::packetise_video` are gone —
+  `RtpPacket::from_contiguous`, `packetise_video_sample` and `sdp_media`
+  replace them. FLV frame timestamps now come from each sample's own decode
+  time rather than a per-track running sum; the file's `onMetaData` duration
+  and Matroska's `Info.Duration` are patched at `finish` with
+  `MuxOutput::BytesAt`, and a Matroska `Segment` is written with the RFC 8794
+  unknown-size encoding (its length is a whole-stream fact the stage never
+  holds).
+- `flv_frame_payloads(&Media)` and `flv_sequence_header_payloads(&Media)` are
+  per-sample/per-spec: `flv_frame_payload(&TrackSpec, &Sample)` and
+  `flv_sequence_header_payloads(&[TrackSpec])`; `on_metadata_body` takes
+  `&[TrackSpec]` too.
+- `MkvMuxStage` muxes a `CodecConfig::Data` track whose identity is
+  `DataIdentity::Matroska` (CodecID and CodecPrivate written as given) and
+  refuses any other data identity with `Error::UnsupportedMkvCodec`.
+  `WebmDemux` now carries an unmapped CodecID as such a data track instead of
+  dropping it.
 - `Fmp4Demux`, `ProgressiveDemux` (its `Unpackage` and `Stage` impls too),
   `demux_progressive` and `samples_from_stbl` are deleted, together with the
   `transmux_progressive_demux` fuzz target. The replacement is
@@ -51,11 +76,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry, …). It announces it as `CodecConfig::Data` with an
   `DataIdentity::Mp4` carrying the raw sample entry, samples included; only a
   known four-CC whose parse failed still takes the `TrackAbandoned` path.
+- `CmafMux` and its `Package` impl are deleted. The replacement is
+  `media::CmafMuxStage`, a `Stage` over `MuxInput`/`MuxOutput` that writes
+  through `isobmff::writer::FragmentedWriter`; `FragmentCut` states when a
+  fragment closes, with no library default. Its output is byte-identical to the
+  former whole-`Media` muxer (every golden unchanged).
+- `Segmenter` and `ll_dash::LlSegmenter` speak `mux_stage::MuxInput`; their
+  inherent `push`/`take_ready*`/`flush`/`mark_discontinuity` methods are
+  deleted. `Segmenter::Out` is now `MuxOutput` (each cut a
+  `MuxOutput::Segment` carrying a `SegmentSummary`), and `SegmentMeta` is
+  deleted — the discontinuity flag is `SegmentSummary::discontinuous`.
+  `MuxInput::Discontinuity` replaces `mark_discontinuity` and
+  `MuxInput::Flush` replaces `flush`. `LlSegmenter` keeps its `Chunk` output
+  (a chunk is a fragment, not a whole segment) and maps one into
+  `MuxOutput::Bytes` through `From`.
+- `ll_hls::LlHlsSegmenter`'s `Stage` input is now `MuxInput`; its `Out` stays
+  `LlHlsStageOutput` because a part has no `MuxOutput` form.
+- `Segmenter::take_ready_with_meta` is deleted; callers drive the stage
+  (`feed`/`poll`/`finish`). `LlSegmenter` keeps its inherent chunk API and
+  `Package` impl because `Chunk`'s fields (segment number, chunk sequence) have
+  no `SegmentSummary` form; only its `Stage` input changed.
+- A `DataIdentity::Mp4` data track is now carriable by every fragmented muxer:
+  `isobmff::writer::SampleEntry::Raw` re-emits its own sample entry, so a
+  camera telemetry/timecode track survives MP4 → CMAF → MP4 byte-for-byte.
+  `CodecConfig::is_muxable_in_bmff` accepts it; a TS or Matroska data identity
+  is still refused with the existing named errors.
 
 ### Added
+- `media::{CmafMuxStage, FragmentCut}` and
+  `mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary}` are the
+  streaming shape every converted muxer speaks.
 - `mux_stage`: `MuxInput`, `MuxOutput`, `SegmentOut` and `SegmentSummary`, the one
   input and output vocabulary every muxer stage speaks, and `drive_media`, the
   bridge that feeds a whole `Media` to such a stage in decode-time order.
+- Timeline transforms are now stages, so none holds a whole `Media`:
+  `RebaseStage` is fed `MuxInput` (a `Track` announcement carries the
+  timescale), built with `with_origin` for exact per-track `RebaseOrigin`s or
+  `start_window(window, max_bytes)`, which finds one common origin — the
+  earliest first decode time across the announced tracks, compared across
+  timescales — and refuses (`RebaseBeforeOrigin`) rather than clamping a
+  sample earlier than it. `OffsetStage` and `GapStage` are fed
+  `(TrackId, Sample)`. `TrickPlayStage` announces its derived track through
+  `MuxInput`. `SpliceStage` applies a `SplicePlan` (`SplicePlan::concat` /
+  `SplicePlan::insert`, with `snap_to_preceding_sync` kept as a plan query) or,
+  built with `switching(max_gop_bytes)`, holds at most one GOP and snaps a
+  `splice()` to the preceding sync sample (`SpliceGopOverflow` past the cap).
+  The whole-input `rebase_to_zero`, `apply_offset`,
+  `insert_discontinuity_gap`, `derive_iframe_track`/`append_iframe_track`,
+  `concat`, `splice_insert` and `SpliceResult` are deleted.
+- `Media::select_tracks`, `Media::select_tracks_by` and `Media::trim` are
+  deleted; the functions `select_tracks`, `select_tracks_by` and `trim` live in
+  `repackage` for the `Repackage` driver, and tests reach them through
+  `test_harness::collect`.
 - `ir::SampleProtection` (a sample's IV and subsample map) and
   `ir::TrackProtection` (scheme, `tenc` defaults, constant-IV `senc` policy)
   with `From` conversions to and from `isobmff::writer::SampleAux`;

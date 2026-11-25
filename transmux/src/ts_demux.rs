@@ -10,7 +10,7 @@
 //! multi-track segmenter now" signal. [`TsDemux`] — the
 //! **input** side of the any-to-any container hub, implementing the abstract
 //! [`broadcast_common::Unpackage`] trait so `{TS} → IR → {any}` composes with
-//! the existing [`CmafMux`](crate::media::CmafMux) /
+//! the existing [`CmafMuxStage`](crate::media::CmafMuxStage) /
 //! [`HlsPackager`](crate::media::HlsPackager) packagers — is now a thin batch
 //! wrapper over it: feed the whole buffer, call `finish()`, fold the event
 //! stream into a [`Media`]. There is no separate whole-buffer implementation;

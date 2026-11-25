@@ -10,7 +10,6 @@ use bytes::Bytes;
 use hls_runtime::server::{HlsMasterError, HlsOrigin, HlsOriginBuildError, HlsOriginConfig};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
-use transmux::SegmentMeta;
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -52,9 +51,7 @@ fn publish_seg_bytes(w: &SegmentWriter, seq: u32, secs: u64, bytes: usize) {
         SegmentSeq::new(seq),
         Duration::from_secs(secs),
         broadcast_common::Timestamp::from_nanos(u64::from(seq) * 1_000_000_000),
-        SegmentMeta {
-            discontinuous: false,
-        },
+        false,
     ))
     .expect("monotonic sequence number");
 }

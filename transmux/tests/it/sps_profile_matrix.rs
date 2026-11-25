@@ -47,9 +47,9 @@
 //! (`record.sps[0]`), which is unaffected by that gap.
 
 use crate::bit_writer::BitWriter;
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use transmux::TsDemux;
-use transmux::media::{CmafMux, Media, Track};
+use transmux::media::{Media, Track};
 use transmux::pipeline::CodecConfig;
 use transmux::validate::{Severity, validate_init_segment};
 use transmux::{decode_avc_reorder_depth, decode_avc_sps, decode_avc_vui_timing};
@@ -495,8 +495,7 @@ fn h264_matrix_ts_to_cmaf_init_segment() {
     for oracle in H264_ORACLE {
         let media = demux(&h264_fixture_path(oracle.file));
 
-        let cmaf = CmafMux::default()
-            .package(&media)
+        let cmaf = crate::cmaf::package(&media)
             .unwrap_or_else(|e| panic!("{}: package to CMAF: {e:?}", oracle.file));
 
         let init_errors: Vec<_> = validate_init_segment(&cmaf)
@@ -571,8 +570,7 @@ fn hevc_matrix_ts_to_cmaf_init_segment() {
     for oracle in HEVC_ORACLE {
         let media = demux(&hevc_fixture_path(oracle.file));
 
-        let cmaf = CmafMux::default()
-            .package(&media)
+        let cmaf = crate::cmaf::package(&media)
             .unwrap_or_else(|e| panic!("{}: package to CMAF: {e:?}", oracle.file));
 
         let init_errors: Vec<_> = validate_init_segment(&cmaf)

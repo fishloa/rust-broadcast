@@ -21,6 +21,81 @@ fn bytes_allocated<R>(f: impl FnOnce() -> R) -> (R, usize) {
     (r, b)
 }
 
+/// Mux `media` through `stage` and collect its byte stream, applying every
+/// `MuxOutput::BytesAt` patch in place.
+fn mux_bytes(
+    stage: &mut impl for<'a> broadcast_common::stage::Stage<
+        In<'a> = transmux::mux_stage::MuxInput,
+        Out = transmux::mux_stage::MuxOutput,
+        Error = transmux::Error,
+    >,
+    media: &transmux::Media,
+) -> Vec<u8> {
+    use transmux::mux_stage::{MuxOutput, drive_media};
+    let outputs = drive_media(stage, media, broadcast_common::stage::Timestamp::ZERO)
+        .expect("mux stage drive");
+    let mut bytes: Vec<u8> = Vec::new();
+    for output in outputs {
+        match output {
+            MuxOutput::Bytes(chunk) | MuxOutput::Init(chunk) => bytes.extend_from_slice(&chunk),
+            MuxOutput::Segment(segment) => bytes.extend_from_slice(&segment.bytes),
+            MuxOutput::BytesAt {
+                offset,
+                bytes: patch,
+            } => {
+                let start = usize::try_from(offset).expect("offset fits usize");
+                let end = start + patch.len();
+                if bytes.len() < end {
+                    bytes.resize(end, 0);
+                }
+                bytes[start..end].copy_from_slice(&patch);
+            }
+            _ => {}
+        }
+    }
+    bytes
+}
+
+/// Packetise `media` through `stage`, one track's samples at a time, and return
+/// the per-track packet byte streams in track order.
+fn packetise(
+    stage: &mut transmux::RtpPacketiserStage,
+    media: &transmux::Media,
+) -> Vec<Vec<Vec<u8>>> {
+    use broadcast_common::stage::{Stage, Timestamp};
+    use transmux::mux_stage::{MuxInput, MuxOutput};
+    let mut streams = Vec::new();
+    for track in &media.tracks {
+        stage
+            .feed(
+                MuxInput::Track(Box::new(track.spec.clone())),
+                Timestamp::ZERO,
+            )
+            .expect("announce track");
+        let mut packets: Vec<Vec<u8>> = Vec::new();
+        let drain = |stage: &mut transmux::RtpPacketiserStage, packets: &mut Vec<Vec<u8>>| {
+            while let Some(MuxOutput::Bytes(bytes)) = stage.poll() {
+                packets.push(bytes.to_vec());
+            }
+        };
+        drain(stage, &mut packets);
+        for sample in &track.samples {
+            stage
+                .feed(
+                    MuxInput::Sample {
+                        track: track.spec.track_id,
+                        sample: sample.clone(),
+                    },
+                    Timestamp::ZERO,
+                )
+                .expect("feed sample");
+            drain(stage, &mut packets);
+        }
+        streams.push(packets);
+    }
+    streams
+}
+
 mod ps_demux_copies {
 
     use super::bytes_allocated;
@@ -85,11 +160,12 @@ mod ts_demux_copies {
 
 mod rtp_stream_copies {
     use super::bytes_allocated;
-    use broadcast_common::{Package, Unpackage};
+    use broadcast_common::Unpackage;
+    use test_harness::collect::MediaSelectExt;
     use transmux::TrackId;
     use transmux::pipeline::CodecConfig;
     use transmux::rtp::RtpMediaKind;
-    use transmux::{RtpPacketiser, RtpStreamDepacketiser, RtpStreamTrack, TsDemux};
+    use transmux::{RtpPacketiserStage, RtpStreamDepacketiser, RtpStreamTrack, TsDemux};
 
     /// r04-O7: every in-order RTP packet was copied twice on the way into the AU
     /// buffer (`SeqState::admit`, then `push_one`). Bytes allocated by the push
@@ -107,22 +183,13 @@ mod rtp_stream_copies {
             .clone()
             .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
             .unwrap();
-        let mut pk = RtpPacketiser {
-            mtu: 1400,
-            ssrc: 0x1234_5678,
-            ..RtpPacketiser::default()
-        };
-        let out = pk.package(&video_only).unwrap();
-        let stream = out
-            .streams
-            .iter()
-            .find(|s| s.kind == RtpMediaKind::H264)
-            .unwrap();
-        let packets: Vec<Vec<u8>> = stream
-            .packets
-            .iter()
-            .map(|p| p.as_contiguous().to_vec())
-            .collect();
+        let streams = super::packetise(
+            &mut RtpPacketiserStage::new()
+                .with_mtu(1400)
+                .with_ssrc(0x1234_5678),
+            &video_only,
+        );
+        let packets: Vec<Vec<u8>> = streams.into_iter().flatten().collect();
         let total: usize = packets.iter().map(Vec::len).sum();
         let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
             TrackId::new(1),
@@ -185,7 +252,7 @@ mod muxer_buffering {
     use super::bytes_allocated;
     use broadcast_common::{Package, Unpackage};
     use transmux::mux_stage::{MuxOutput, drive_media};
-    use transmux::{DEFAULT_PSI_INTERVAL, MkvMux, ProgressiveMux, TsDemux, TsMuxStage};
+    use transmux::{DEFAULT_PSI_INTERVAL, MkvMuxStage, ProgressiveMux, TsDemux, TsMuxStage};
 
     /// Mux a whole `Media` through a fresh TS stage and collect its bytes.
     fn mux_ts(media: &transmux::Media) -> Vec<u8> {
@@ -216,7 +283,12 @@ mod muxer_buffering {
         let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
         let cases: [(&str, Vec<u8>, usize); 3] = {
             let (prog, a1) = bytes_allocated(|| ProgressiveMux::new(true).package(&media).unwrap());
-            let (mkv, a2) = bytes_allocated(|| MkvMux::new().package(&media).unwrap());
+            let (mkv, a2) = bytes_allocated(|| {
+                super::mux_bytes(
+                    &mut MkvMuxStage::new(std::time::Duration::from_millis(5_000)),
+                    &media,
+                )
+            });
             let (ts, a3) = bytes_allocated(|| mux_ts(&media));
             [("progressive", prog, a1), ("mkv", mkv, a2), ("ts", ts, a3)]
         };
@@ -240,9 +312,11 @@ mod muxer_buffering {
 mod segmenter_cuts {
     use super::measure;
     use broadcast_common::timescale::Timescale;
+    use broadcast_common::{Stage, Timestamp};
     use core::time::Duration;
     use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
     use transmux::TrackId;
+    use transmux::mux_stage::{MuxInput, MuxOutput};
     use transmux::{CodecConfig, Sample, Segmenter, TrackSpec};
 
     fn timescale(value: u32) -> Timescale {
@@ -289,10 +363,23 @@ mod segmenter_cuts {
             .collect::<Result<Vec<_>, _>>()
             .expect("valid timing");
         let (n, allocs, _) = measure(|| {
-            for s in samples {
-                seg.push(TrackId::new(1), s).unwrap();
+            for sample in samples {
+                seg.feed(
+                    MuxInput::Sample {
+                        track: TrackId::new(1),
+                        sample,
+                    },
+                    Timestamp::ZERO,
+                )
+                .unwrap();
             }
-            seg.take_ready().len()
+            let mut segments = 0usize;
+            while let Some(output) = seg.poll() {
+                if matches!(output, MuxOutput::Segment(_)) {
+                    segments += 1;
+                }
+            }
+            segments
         });
         (n, allocs)
     }

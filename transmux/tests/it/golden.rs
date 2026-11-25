@@ -6,11 +6,12 @@
 //! instead of comparing; a run with `CI` set refuses to write.
 #![cfg(feature = "std")]
 
+use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use broadcast_smooth::SmoothManifest;
 use std::time::Duration;
 use transmux::dash::{

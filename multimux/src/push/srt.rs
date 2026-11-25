@@ -9,13 +9,11 @@
 //! protocol (no RTMP connect/publish, no RTSP ANNOUNCE/RECORD) to run before
 //! the first payload.
 
-use crate::push::{PushTransport, SendMediaError};
+use crate::push::PushTransport;
 use srt_runtime::HandshakeConfig;
 use srt_runtime::SrtUrl;
 use srt_runtime::io::{SrtSocket, SrtSocketConfig};
 use srt_runtime::url::{SrtMode, UrlRejection};
-use transmux::TrackId;
-use transmux::ir::TrackSpec;
 
 /// Per-connection configuration for the SRT push transport — the SRT
 /// handshake config dialed out with (latency, MTU, …).
@@ -137,21 +135,8 @@ impl PushTransport for SrtTransport {
         })
     }
 
-    fn set_tracks(&mut self, tracks: &[TrackSpec]) -> Result<(), SendMediaError> {
-        self.ts_mux.set_tracks(tracks)
-    }
-
-    fn encode_sample(
-        &mut self,
-        _tracks: &[TrackSpec],
-        track: TrackId,
-        sample: transmux::Sample,
-    ) -> Result<Vec<bytes::Bytes>, SendMediaError> {
-        self.ts_mux.encode_sample(track, sample)
-    }
-
-    fn flush_mux(&mut self) -> Result<Vec<bytes::Bytes>, SendMediaError> {
-        self.ts_mux.flush()
+    fn media_muxer(&mut self) -> Option<&mut dyn crate::push::MediaMuxer> {
+        Some(&mut self.ts_mux)
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<(), Self::Error> {
@@ -365,7 +350,11 @@ mod tests {
     /// samples fed in decode order.
     fn encode_pass<T: PushTransport>(transport: &mut T, media: &transmux::Media) -> Vec<u8> {
         let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-        transport.set_tracks(&specs).expect("announce tracks");
+        transport
+            .media_muxer()
+            .expect("a TS push carries its own mux")
+            .set_tracks(&specs)
+            .expect("announce tracks");
         let mut items: Vec<(i128, transmux::TrackId, transmux::Sample)> = Vec::new();
         for track in &media.tracks {
             for sample in &track.samples {
@@ -378,7 +367,9 @@ mod tests {
         let mut out = Vec::new();
         for (_, track, sample) in items {
             for message in transport
-                .encode_sample(&specs, track, sample)
+                .media_muxer()
+                .expect("a TS push carries its own mux")
+                .encode_sample(track, &sample)
                 .expect("encode sample")
             {
                 out.extend_from_slice(&message);

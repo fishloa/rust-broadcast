@@ -15,13 +15,12 @@
 mod paff_gen;
 
 use crate::ts_mux_stage;
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use transmux::pipeline::CodecConfig;
 use transmux::slice_header::{AvcSliceHeader, decode_avc_slice_pps, parse_avc_slice_header};
 use transmux::sps::decode_avc_slice_sps;
 use transmux::{
-    CmafMux, DemuxEvent, Media, StreamingTsDemux, TsDemux, iter_annexb_nals,
-    iter_length_prefixed_nals,
+    DemuxEvent, Media, StreamingTsDemux, TsDemux, iter_annexb_nals, iter_length_prefixed_nals,
 };
 
 const FRAMES: usize = 12;
@@ -238,7 +237,7 @@ fn remux_through_ts_and_fmp4_stays_one_sample_per_frame() {
         let base = r[0].pts.unwrap();
         assert_paired_from(&g, &r, "TS remux", base);
         // IR -> fMP4 -> IR
-        let mp4 = CmafMux::default().package(&ir).expect("mux fMP4");
+        let mp4 = crate::cmaf::package(&ir).expect("mux fMP4");
         let back = test_harness::collect::media_from_mp4(
             &mp4,
             test_harness::collect::CollectMode::Seekable,

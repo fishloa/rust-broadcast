@@ -14,7 +14,6 @@ use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use timed_metadata::TimeAnchor;
-use transmux::SegmentMeta;
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -59,7 +58,7 @@ fn seg(writer: &SegmentWriter, seq: u32, secs: f64, start_ns: u64, discontinuous
             SegmentSeq::new(seq),
             Duration::from_secs_f64(secs),
             Timestamp::from_nanos(start_ns),
-            SegmentMeta { discontinuous },
+            discontinuous,
         ))
         .expect("publish");
 }
@@ -297,9 +296,7 @@ fn iframe_pdt_equals_media_pdt() {
                 SegmentSeq::new(i + 1),
                 Duration::from_secs(1),
                 Timestamp::from_nanos(i as u64 * 1_000_000_000),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
     }

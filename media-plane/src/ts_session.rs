@@ -901,7 +901,6 @@ mod tests {
         use crate::trunk::{PartEntry, SampleCursorItem, SegmentEntry};
         use broadcast_common::Timestamp;
         use transmux::ll_hls::LlHlsSegmenter;
-        use transmux::segmenter::SegmentMeta;
 
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
@@ -983,9 +982,7 @@ mod tests {
                     crate::ids::SegmentSeq::new(segment.segment_seq),
                     segment.duration,
                     Timestamp::ZERO,
-                    SegmentMeta {
-                        discontinuous: false,
-                    },
+                    false,
                 ))
                 .unwrap();
             segments_published += 1;

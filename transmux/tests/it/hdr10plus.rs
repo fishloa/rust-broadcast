@@ -703,7 +703,7 @@ fn fmp4_output_keeps_every_sei_byte_identical_and_keeps_the_flag() {
     let Some((media, source)) = source_media() else {
         return;
     };
-    let bytes = transmux::CmafMux::default().package(&media).expect("cmaf");
+    let bytes = crate::cmaf::package(&media).expect("cmaf");
     let back =
         test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
             .expect("fmp4 demux");

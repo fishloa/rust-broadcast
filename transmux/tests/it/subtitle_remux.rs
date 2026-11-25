@@ -6,11 +6,11 @@
 //! AVC + `stpp`/TTML; see PROVENANCE.md there). `wvtt` has no real producer
 //! available (ffmpeg cannot write it), so it is a spec-vector round trip.
 
+use broadcast_common::Serialize;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Serialize};
 use isobmff::{VttCueBox, WvttSampleEntry};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
-use transmux::{CmafMux, Media, Sample, Track, TrackId, TrackSpec};
+use transmux::{Media, Sample, Track, TrackId, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -58,9 +58,7 @@ fn stpp_track_carries_entry_and_remuxes_through_cmaf() {
     );
 
     // UNFILTERED mux (previously UnmuxableSubtitleTrack).
-    let out = CmafMux::default()
-        .package(&original)
-        .expect("CmafMux carries stpp now");
+    let out = crate::cmaf::package(&original).expect("CmafMux carries stpp now");
     // sthd must precede stbl inside the subtitle trak (§7.3.4).
     let sthd = find(&out, b"sthd").expect("sthd emitted");
     let stpp = find(&out, b"stpp").expect("stpp sample entry emitted");
@@ -120,7 +118,7 @@ fn wvtt_spec_vector_round_trips_with_nmhd() {
     let sample =
         Sample::new(cue.clone(), Some(0), Some(0), Some(1000), true).expect("valid timing");
     let media = Media::new(vec![Track::new(spec, vec![sample])], timescale(1000));
-    let out = CmafMux::default().package(&media).expect("wvtt muxes");
+    let out = crate::cmaf::package(&media).expect("wvtt muxes");
     assert!(find(&out, b"nmhd").is_some() && find(&out, b"text").is_some());
     let round =
         test_harness::collect::media_from_mp4(&out, test_harness::collect::CollectMode::Seekable)
@@ -144,7 +142,7 @@ fn entryless_subtitle_is_still_rejected_by_name() {
         },
     );
     let media = Media::new(vec![Track::new(spec, vec![])], timescale(1000));
-    let err = CmafMux::default().package(&media).unwrap_err();
+    let err = crate::cmaf::package(&media).unwrap_err();
     assert!(
         matches!(err, transmux::Error::UnmuxableSubtitleTrack { .. }),
         "{err:?}"

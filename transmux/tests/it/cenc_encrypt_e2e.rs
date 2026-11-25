@@ -38,13 +38,14 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use test_harness::collect::MediaSelectExt;
 
-use broadcast_common::{Decrypt, Encrypt, Package, Unpackage};
+use broadcast_common::{Decrypt, Encrypt, Unpackage};
 use bytes::Bytes;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
-    CencDecryptor, CencEncryptor, CencScheme, CmafMux, CodecConfig, ConstantIvSenc, EncryptConfig,
-    IvGen, KeyMap, Media, SubsamplePolicy, TrackProtection,
+    CencDecryptor, CencEncryptor, CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen,
+    KeyMap, Media, SubsamplePolicy, TrackProtection,
 };
 
 /// Constant `cbcs` IV — the standard real-world `cbcs` convention (confirmed
@@ -135,7 +136,7 @@ fn build_protected_fmp4(media: &mut Media, cfg: &EncryptConfig) -> Vec<u8> {
         .clone()
         .expect("TrackSpec::protection populated by CencEncryptor");
 
-    let raw = CmafMux::new(1).package(&*media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(&*media).expect("CmafMux::package");
     protect_init_segment(&raw, track_id, &enc).expect("protect_init_segment")
 }
 

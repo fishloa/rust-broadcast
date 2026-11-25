@@ -1755,9 +1755,7 @@ impl ProgramServing {
                 media_plane::ids::SegmentSeq::new(info.segment_seq),
                 duration,
                 Timestamp::from_nanos(start_ns),
-                transmux::SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
         });
         match published {
@@ -5245,9 +5243,7 @@ mod program_registry_tests {
                     media_plane::ids::SegmentSeq::new(1),
                     Duration::from_secs(4),
                     Timestamp::ZERO,
-                    transmux::SegmentMeta {
-                        discontinuous: false,
-                    },
+                    false,
                 ))
                 .expect("publish subtitle segment");
 

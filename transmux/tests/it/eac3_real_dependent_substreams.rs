@@ -15,13 +15,13 @@
 //! this stream (an AC-3 syncframe was not an independent substream), so the TS
 //! demux produced no track.
 
-use broadcast_common::{Package, Serialize, Unpackage};
+use broadcast_common::{Serialize, Unpackage};
 use isobmff::Ec3SpecificBox;
 use transmux::ac3_syncframe::{
     Ec3SyncframeInfo, ec3_specific_box_from_syncframes, split_eac3_syncframes,
 };
 use transmux::pipeline::CodecConfig;
-use transmux::{CmafMux, DemuxEvent, Media, StreamingTsDemux, TsDemux};
+use transmux::{DemuxEvent, Media, StreamingTsDemux, TsDemux};
 
 const AU_COUNT: usize = 157;
 const AC3_CORE_LEN: usize = 2304;
@@ -269,9 +269,7 @@ fn mp4s_from_both_producers_demux_and_remux_unchanged() {
         assert_eq!(config.substreams[0].num_dep_sub, 1, "{name}");
         assert_eq!(config.substreams[0].bsid, 6, "{name}");
 
-        let out = CmafMux::new(1)
-            .package(&media)
-            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let out = crate::cmaf::package(&media).unwrap_or_else(|e| panic!("{name}: {e:?}"));
         let round = test_harness::collect::media_from_mp4(
             &out,
             test_harness::collect::CollectMode::Seekable,

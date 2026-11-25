@@ -487,7 +487,7 @@ fn trim_snaps_back_off_on_hevc_video_not_audio() {
     let media = Media::new(vec![audio, video], timescale(90_000));
 
     // Window starting at video's 2nd sample (pts 3000..6000) — mid-GOP.
-    let trimmed = media.trim(3000, 9000).expect("window selects samples");
+    let trimmed = transmux::repackage::trim(&media, 3000, 9000).expect("window selects samples");
     let video_out = trimmed
         .tracks
         .iter()
@@ -566,7 +566,7 @@ fn trim_window_follows_real_dts_not_duration_sum() {
     );
     let media = Media::new(vec![video], timescale(90_000));
 
-    let trimmed = media.trim(9000, 12000).expect("window selects samples");
+    let trimmed = transmux::repackage::trim(&media, 9000, 12000).expect("window selects samples");
     let video_out = &trimmed.tracks[0];
 
     assert_eq!(
@@ -735,7 +735,7 @@ fn trim_end_is_exclusive_for_anchor_and_other_tracks() {
     );
     let media = Media::new(vec![video, audio], timescale(90_000));
 
-    let trimmed = media.trim(0, 6_000).expect("window selects samples");
+    let trimmed = transmux::repackage::trim(&media, 0, 6_000).expect("window selects samples");
     for (id, base) in [(1u32, 0x10u8), (2, 0x20)] {
         let kept = track_samples(&trimmed, id);
         assert_eq!(kept.len(), 2, "track {id}: pts 0 and 3000 only");
@@ -743,7 +743,7 @@ fn trim_end_is_exclusive_for_anchor_and_other_tracks() {
         assert_eq!(kept[1].data, vec![base + 1; 4]);
     }
 
-    let trimmed = media.trim(3_000, 9_000).expect("window selects samples");
+    let trimmed = transmux::repackage::trim(&media, 3_000, 9_000).expect("window selects samples");
     for (id, base) in [(1u32, 0x10u8), (2, 0x20)] {
         let kept = track_samples(&trimmed, id);
         assert_eq!(kept.len(), 2, "track {id}: pts 6000 is the exclusive end");
@@ -764,8 +764,7 @@ fn trim_anchor_end_edge_sample_is_not_the_snap_point() {
     );
     let media = Media::new(vec![video, audio], timescale(90_000));
 
-    let trimmed = media
-        .trim(6_000, 9_000)
+    let trimmed = transmux::repackage::trim(&media, 6_000, 9_000)
         .expect("the audio sample at 7000 is inside the window");
     assert!(
         track_samples(&trimmed, 1).is_empty(),
@@ -790,7 +789,7 @@ fn trim_with_no_leading_sync_sample() {
     );
     let media = Media::new(vec![video, audio], timescale(90_000));
 
-    let trimmed = media.trim(0, 9_000).expect("window selects samples");
+    let trimmed = transmux::repackage::trim(&media, 0, 9_000).expect("window selects samples");
     let kept = track_samples(&trimmed, 1);
     assert_eq!(kept.len(), 3, "pts 0, 3000, 6000");
     assert_eq!(kept[0].data, vec![0x40u8; 4], "kept starts at index 0");

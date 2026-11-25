@@ -15,13 +15,13 @@ use crate::ts_psi::{
     first_section, parse_pat, parse_pmt, payload_offset, pid_of, pusi_of, split_lp,
 };
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Serialize, Unpackage};
+use broadcast_common::{Serialize, Unpackage};
 use mpeg_ts::ts::TsPacket;
 use test_fixtures::process::tool_available;
 use transmux::TrackId;
 use transmux::TsDemux;
 use transmux::ir::DataIdentity;
-use transmux::media::{CmafMux, Media};
+use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
 fn timescale(value: u32) -> Timescale {
@@ -194,8 +194,8 @@ fn timing_preserved_for_video() {
 fn cmaf_from_round_tripped_ir_matches_cmaf_from_original() {
     let (ir, _ts2, ir2) = pipeline();
 
-    let cmaf_orig = CmafMux::default().package(&ir).expect("CMAF from ir");
-    let cmaf_round = CmafMux::default().package(&ir2).expect("CMAF from ir2");
+    let cmaf_orig = crate::cmaf::package(&ir).expect("CMAF from ir");
+    let cmaf_round = crate::cmaf::package(&ir2).expect("CMAF from ir2");
 
     // Re-parse both CMAF outputs and compare the video track's length-prefixed
     // sample NAL payloads (the mdat coded data), sample-for-sample.

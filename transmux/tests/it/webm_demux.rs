@@ -21,14 +21,14 @@
 //! `initial_padding`), so `recon_pts == oracle_pts + AUDIO_CODEC_DELAY_MS`; the
 //! test documents and applies that constant.
 
-use broadcast_common::Package;
 use isobmff::box_types::parse_box;
 use test_fixtures::ffprobe;
+use transmux::Media;
 use transmux::TrackId;
 use transmux::error::Error;
+use transmux::ir::DataIdentity;
 use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
-use transmux::{CmafMux, Media};
 
 /// Path to the committed WebM fixture, relative to this crate's manifest dir.
 const FIXTURE: &str = "mkv/vp9-opus.webm";
@@ -177,8 +177,7 @@ fn opus_config_from_opus_head() {
 #[test]
 fn demuxed_ir_muxes_to_fmp4_with_vp09_and_opus() {
     let m = demux();
-    let mut mux = CmafMux::default();
-    let fmp4 = mux.package(&m).expect("mux demuxed IR to CMAF");
+    let fmp4 = crate::cmaf::package(&m).expect("mux demuxed IR to CMAF");
 
     // Scan for the fourccs anywhere in the emitted bytes (they only appear if the
     // sample entries + config boxes were built from the IR configs).
@@ -1241,15 +1240,17 @@ fn no_default_duration_skips_a_zero_gap_block_pair() {
 }
 
 // ---------------------------------------------------------------------------
-// Unsupported CodecIDs are skipped, never sent to another codec's parser
+// Unmapped CodecIDs become opaque data tracks, never another codec's parser
 // ---------------------------------------------------------------------------
 
 /// A video track that is not VP9/VP8/AVC and an audio track that is not
-/// Opus/Vorbis must be skipped (`Ok(None)`), not dispatched to the HEVC / AAC
-/// parser because a `&&` became `||`. Each unsupported track carries a sample,
-/// so `build_media` really reaches the codec dispatch for it.
+/// Opus/Vorbis must not be dispatched to the HEVC / AAC parser because a `&&`
+/// became `||`. Each such track is carried as an opaque
+/// [`CodecConfig::Data`] track with its own Matroska identity (CodecID written
+/// back as given), never silently dropped. Each unsupported track carries a
+/// sample, so `build_media` really reaches the codec dispatch for it.
 #[test]
-fn unsupported_codec_ids_are_skipped_not_dispatched_as_hevc_or_aac() {
+fn unsupported_codec_ids_are_carried_as_data_tracks_not_dispatched() {
     let tracks = vec![
         crate::webm_build::track_entry(1, 1, b"V_VP9", &[]),
         crate::webm_build::track_entry(2, 1, b"V_AV1", &[]),
@@ -1261,11 +1262,11 @@ fn unsupported_codec_ids_are_skipped_not_dispatched_as_hevc_or_aac() {
     );
     let media = WebmDemux::new()
         .demux(&bytes)
-        .expect("an unsupported CodecID is skipped, never fatal");
+        .expect("an unmapped CodecID is carried, never fatal");
     assert_eq!(
         media.tracks.len(),
-        1,
-        "only the VP9 track is supported, got {:?}",
+        3,
+        "one mapped track plus two opaque ones, got {:?}",
         media
             .tracks
             .iter()
@@ -1274,9 +1275,27 @@ fn unsupported_codec_ids_are_skipped_not_dispatched_as_hevc_or_aac() {
     );
     assert!(
         matches!(media.tracks[0].spec.config, CodecConfig::Vp9 { .. }),
-        "the surviving track must be VP9, got {:?}",
+        "the mapped track must be VP9, got {:?}",
         media.tracks[0].spec.config
     );
+    let carried: Vec<&str> = media.tracks[1..]
+        .iter()
+        .map(|t| match &t.spec.config {
+            CodecConfig::Data { identity } => identity.name(),
+            other => panic!("expected a data track, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(carried, vec!["matroska", "matroska"]);
+    for (track, codec_id) in media.tracks[1..].iter().zip(["V_AV1", "A_AC3"]) {
+        let CodecConfig::Data {
+            identity: DataIdentity::Matroska { codec_id: got, .. },
+        } = &track.spec.config
+        else {
+            panic!("expected a Matroska data identity");
+        };
+        assert_eq!(got, codec_id, "the CodecID is carried verbatim");
+        assert_eq!(track.samples.len(), 1, "its sample is carried too");
+    }
 }
 
 // ---------------------------------------------------------------------------

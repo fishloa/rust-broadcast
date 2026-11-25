@@ -26,7 +26,7 @@
 //! `V_MPEGH/ISO/HEVC` (→ [`CodecConfig::Hevc`]), `A_OPUS` (→
 //! [`CodecConfig::Opus`]), `A_VORBIS` (→ [`CodecConfig::Vorbis`]) and `A_AAC`
 //! (→ [`CodecConfig::Aac`]); every other CodecID is skipped (never fatal).
-//! (`crate::mkv_mux::MkvMux`, the inverse packager, mirrors this exact set.)
+//! (`crate::mkv_mux::MkvMuxStage`, the inverse muxer, mirrors this exact set.)
 //! Laced blocks are unlaced into their constituent frames (all three encodings
 //! of RFC 9559 §12 — Xiph, EBML and fixed-size). Lacing is the norm for
 //! mkvmerge-muxed audio, so treating it as fatal rejected every ordinary
@@ -49,6 +49,7 @@
 
 use crate::TrackId;
 use alloc::collections::BTreeMap;
+use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::need_in;
@@ -56,10 +57,11 @@ use core::marker::PhantomData;
 
 use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use broadcast_common::{Parse, Unpackage};
+use bytes::Bytes;
 
 use crate::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
 use crate::error::{Error, Result};
-use crate::ir::InputDegradation;
+use crate::ir::{DataIdentity, InputDegradation};
 use crate::media::{Media, Track};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtp_sdp::aac_config_from_asc_bytes;
@@ -979,16 +981,27 @@ fn build_media(
 
         // Codec config: resolved from the TrackEntry plus, for codecs whose
         // geometry lives in-band (VP8), the first sync sample's frame header.
-        // Skip unsupported CodecIDs (never fatal).
+        // A CodecID this crate does not decode is carried as an opaque
+        // `CodecConfig::Data` track with its own Matroska identity — its
+        // CodecID and CodecPrivate written back as given — so nothing is
+        // silently dropped (never fatal).
         let first_sync = sync
             .iter()
             .position(|&s| s)
             .map(|i| payloads[i].as_slice())
             .unwrap_or(payloads[0].as_slice());
-        let Some(codec) = codec_config_for(info, first_sync)? else {
-            continue;
+        let (config, nal_length_size) = match codec_config_for(info, first_sync)? {
+            Some(codec) => codec,
+            None => (
+                CodecConfig::Data {
+                    identity: DataIdentity::Matroska {
+                        codec_id: String::from_utf8_lossy(&info.codec_id).into_owned(),
+                        codec_private: Bytes::copy_from_slice(&info.codec_private),
+                    },
+                },
+                None,
+            ),
         };
-        let (config, nal_length_size) = codec;
 
         let n = payloads.len();
         for i in 0..n {
@@ -1161,7 +1174,7 @@ fn codec_config_for(
 /// Build a [`CodecConfig::Avc`] from an H.264 [`TrackInfo`]: `CodecPrivate` is
 /// the raw `AVCDecoderConfigurationRecord` (ISO/IEC 14496-15:2017 §5.3.3); the coded
 /// dimensions come from the `Video` element (§27, `PixelWidth`/`PixelHeight`) —
-/// mirrors [`crate::mkv_mux::MkvMux`]'s inverse `CodecPrivate` emission.
+/// mirrors [`crate::mkv_mux::MkvMuxStage`]'s inverse `CodecPrivate` emission.
 ///
 /// Returns the config together with the record's NAL length-prefix size
 /// (`lengthSizeMinusOne + 1`, §5.3.3.1.2 / §5.3.3.3). The emitted record's
@@ -1923,7 +1936,7 @@ mod tests {
     /// fMP4/CMAF/TS mux of the normalised IR writes an `avcC` that promises
     /// 2-byte lengths over 4-byte samples.
     ///
-    /// The crate's own `MkvMux` writes `CodecPrivate` and block payloads
+    /// The crate's own `MkvMuxStage` writes `CodecPrivate` and block payloads
     /// verbatim, so a `Media` holding a 2-byte `avcC` and 2-byte-prefixed
     /// samples round-trips through mux → demux; the NAL bodies must survive
     /// byte-for-byte under a 4-byte prefix, and `length_size_minus_one` must be
@@ -1933,9 +1946,7 @@ mod tests {
     #[test]
     fn webm_avc_two_byte_nal_lengths_normalised_to_four() {
         use crate::ir::{FragmentTrackData, Sample, SampleFlags};
-        use crate::mkv_mux::MkvMux;
         use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
-        use broadcast_common::Package;
         use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
         use isobmff::nalu_types::{AvcPps, AvcSps};
 
@@ -1975,7 +1986,7 @@ mod tests {
             )],
             IR_TIMESCALE,
         );
-        let muxed = MkvMux::new().package(&media).expect("mkv package");
+        let muxed = crate::mkv_mux::mux_for_test(&media);
         let demuxed = WebmDemux::new()
             .unpackage(&muxed)
             .expect("WebM demux of the 2-byte-length file");
@@ -2030,9 +2041,7 @@ mod tests {
     #[test]
     fn webm_hevc_two_byte_nal_lengths_normalised_to_four() {
         use crate::ir::{FragmentTrackData, Sample, SampleFlags};
-        use crate::mkv_mux::MkvMux;
         use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
-        use broadcast_common::Package;
         use isobmff::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
         use isobmff::nalu_types::{HevcNalArray, HevcNalUnit};
 
@@ -2082,7 +2091,7 @@ mod tests {
             )],
             IR_TIMESCALE,
         );
-        let muxed = MkvMux::new().package(&media).expect("mkv package");
+        let muxed = crate::mkv_mux::mux_for_test(&media);
         let demuxed = WebmDemux::new().unpackage(&muxed).expect("WebM demux");
         let track = &demuxed.tracks[0];
         assert_eq!(

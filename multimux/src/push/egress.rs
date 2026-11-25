@@ -81,7 +81,7 @@ use transmux::TrackId;
 use bytes::Bytes;
 use media_plane::egress::{NegotiationOutcome, PushEgress, TrackSelection};
 use media_plane::trunk::SampleCursorItem;
-use transmux::ir::TrackSpec;
+use transmux::ir::{Media, Track, TrackSpec};
 
 use crate::push::{MuxError, PushTransport, SendMediaError};
 
@@ -184,6 +184,11 @@ impl<T: PushTransport> PushTransportEgress<T> {
     /// of `send` calls (see the module doc for why `PushEgress::send`
     /// itself cannot do this: it is synchronous).
     pub async fn flush_transmit(&mut self) -> Result<(), SendMediaError> {
+        // A per-sample muxer holds a sample until its ordering key is safe to
+        // emit (one pending sample per announced track); the end of a batch is
+        // that point, so whatever it still holds goes out now rather than
+        // waiting for the next sample of another track.
+        self.flush_mux().await?;
         while let Some(message) = PushEgress::poll_transmit(self) {
             self.transport
                 .write_message(&message)
@@ -197,8 +202,10 @@ impl<T: PushTransport> PushTransportEgress<T> {
     /// Emit every wire message the transport's muxer still holds after an idle
     /// period, queuing it for [`Self::flush_transmit`].
     pub async fn flush_mux(&mut self) -> Result<(), SendMediaError> {
-        let messages = self.transport.flush_mux()?;
-        self.outbound.extend(messages);
+        if let Some(muxer) = self.transport.media_muxer() {
+            let messages = muxer.flush()?;
+            self.outbound.extend(messages);
+        }
         Ok(())
     }
 
@@ -250,7 +257,9 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
         self.selection = TrackSelection::new(carriable.iter().map(|t| t.track_id).collect());
         self.awaiting_sync = carriable.iter().any(|t| t.config.is_video());
         self.specs = carriable;
-        if let Err(error) = self.transport.set_tracks(&self.specs) {
+        if let Some(muxer) = self.transport.media_muxer()
+            && let Err(error) = muxer.set_tracks(&self.specs)
+        {
             return NegotiationOutcome::Error(error);
         }
         self.committed = true;
@@ -278,15 +287,19 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
         }
         self.selection = TrackSelection::new(proposed_ids);
         self.specs = carriable;
-        if let Err(error) = self.transport.set_tracks(&self.specs) {
+        if let Some(muxer) = self.transport.media_muxer()
+            && let Err(error) = muxer.set_tracks(&self.specs)
+        {
             return NegotiationOutcome::Error(error);
         }
         self.committed = true;
         NegotiationOutcome::Accepted(self.selection.clone())
     }
 
-    /// Encoding one drained sample via [`PushTransport::encode_sample`]
-    /// (sans-IO), queuing the resulting wire messages for
+    /// Encoding one drained sample — through the transport's
+    /// [`PushTransport::media_muxer`] when it has one, else a one-sample
+    /// `Media` through [`PushTransport::encode_media`] — queuing the
+    /// resulting wire messages (sans-IO) for
     /// [`Self::flush_transmit`] to actually send. A track not in the current
     /// selection (excluded by negotiation, or dropped by a since-refused
     /// `renegotiate`) is silently skipped — exclusion was already reported
@@ -314,7 +327,12 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
             // exactly like `crate::push::drive_push`'s own `_ => {}` arm.
             _ => return Ok(()),
         };
-        let Some(spec) = self.specs.iter().find(|s| s.track_id == track_id) else {
+        let Some((carried_video, timescale)) = self
+            .specs
+            .iter()
+            .find(|s| s.track_id == track_id)
+            .map(|s| (s.config.is_video(), s.timescale))
+        else {
             self.unselected_samples = self.unselected_samples.saturating_add(1);
             tracing::warn!(
                 track = track_id.value(),
@@ -322,7 +340,6 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
             );
             return Ok(());
         };
-        let carried_video = spec.config.is_video();
         if self.awaiting_sync {
             if carried_video && sample.flags.is_sync {
                 self.awaiting_sync = false;
@@ -330,9 +347,32 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
                 return Ok(());
             }
         }
-        let messages = self
-            .transport
-            .encode_sample(&self.specs, track_id, sample)?;
+        // A per-connection muxer frames this sample directly, one message at a
+        // time: no `Media` is built for it.
+        if let Some(muxer) = self.transport.media_muxer() {
+            self.outbound
+                .extend(muxer.encode_sample(track_id, &sample)?);
+            return Ok(());
+        }
+        // Every carried track rides in EVERY `Media`, the sample only in its
+        // own track (the others empty): the TS muxer derives the PIDs, the
+        // PMT and the PCR PID from the track set, so a one-track `Media` per
+        // sample would map every track onto the first ES PID and flip the
+        // PMT frame to frame (#1024).
+        let tracks = self
+            .specs
+            .iter()
+            .map(|s| {
+                let samples = if s.track_id == track_id {
+                    vec![sample.clone()]
+                } else {
+                    Vec::new()
+                };
+                Track::new(s.clone(), samples)
+            })
+            .collect();
+        let media = Media::new(tracks, timescale);
+        let messages = self.transport.encode_media(&media)?;
         self.outbound.extend(messages);
         Ok(())
     }
@@ -353,7 +393,6 @@ mod tests {
     use broadcast_common::timescale::Timescale;
     use transmux::CodecConfig;
     use transmux::ir::DataIdentity;
-    use transmux::ir::Media;
 
     /// A fake transport double: no real socket, just an in-memory record of
     /// what `send`/`encode_media` were asked to do — enough to test
@@ -395,14 +434,9 @@ mod tests {
             }
         }
 
-        /// One fixed "encoded" message per sample — the tests here judge
+        /// One fixed "encoded" message per batch — the tests here judge
         /// negotiation/queuing/flush, not the wire framing.
-        fn encode_sample(
-            &mut self,
-            _tracks: &[TrackSpec],
-            _track: TrackId,
-            _sample: transmux::ir::Sample,
-        ) -> Result<Vec<Bytes>, SendMediaError> {
+        fn encode_media(&mut self, _media: &Media) -> Result<Vec<Bytes>, SendMediaError> {
             Ok(vec![Bytes::from_static(b"m")])
         }
 
@@ -770,12 +804,9 @@ mod tests {
             std::future::pending().await
         }
 
-        fn encode_sample(
-            &mut self,
-            _tracks: &[TrackSpec],
-            _track: TrackId,
-            _sample: transmux::ir::Sample,
-        ) -> Result<Vec<Bytes>, SendMediaError> {
+        /// One fixed "encoded" message per batch — the tests here judge
+        /// negotiation/queuing/flush, not the wire framing.
+        fn encode_media(&mut self, _media: &Media) -> Result<Vec<Bytes>, SendMediaError> {
             Ok(vec![Bytes::from_static(b"m")])
         }
 

@@ -9,7 +9,7 @@
 //! have no ISOBMFF sample entry in this crate, so they do not participate in
 //! the fMP4/CMAF mux path — `{WebM} → {CMAF/progressive-MP4/TS/DASH/LL-DASH/
 //! CMAF-HLS/LL-HLS/Smooth}` fails on those tracks with
-//! [`Error::UnsupportedCodec`]; only `WebM → WebM`/[`MkvMux`] round-trips them.
+//! [`Error::UnsupportedCodec`]; only `WebM → WebM`/[`MkvMuxStage`] round-trips them.
 //! It **never encodes or decodes media**: it parses codec *config/parameter
 //! headers* only to build container boxes and derive metadata; coded samples
 //! pass through opaque. `no_std` + `alloc`, except the XML manifest paths
@@ -32,26 +32,26 @@
 //!   unlaced into one sample per frame, see the module docs), FLV
 //!   ([`FlvDemux`] — non-AVC video and non-AAC audio tracks are silently
 //!   skipped, no event/error, see the module docs), RTMP ([`RtmpDemux`]).
-//! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMux`]), progressive single-file
-//!   MP4 ([`ProgressiveMux`]), MPEG-2 TS ([`TsMuxStage`]), Matroska ([`MkvMux`]),
+//! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMuxStage`]), progressive single-file
+//!   MP4 ([`ProgressiveMux`]), MPEG-2 TS ([`TsMuxStage`]), Matroska ([`MkvMuxStage`]),
 //!   CMAF-HLS ([`HlsPackager`]), TS-segment HLS
 //!   ([`StreamingTsHlsSegmenter`]), DASH MPD
 //!   ([`DashPackager`]), low-latency
 //!   DASH ([`LlSegmenter`]/[`LlDashPackager`]), Microsoft Smooth Streaming
 //!   ([`SmoothPackager`] — H.264 video + AAC-LC audio only, every other codec
-//!   rejected), RTMP ([`RtmpMux`]), low-latency HLS
+//!   rejected), RTMP ([`RtmpMuxStage`]), low-latency HLS
 //!   ([`LlHlsSegmenter`], live-edge open segments via
 //!   [`broadcast_hls::OpenSegment`]).
 //! - **Transforms:** resegment / trim / track-select ([`Repackage`]);
 //!   streaming CMAF segmentation ([`Segmenter`]); streaming classic-HLS
 //!   segmentation ([`StreamingTsHlsSegmenter`]); IR timeline conditioning —
-//!   PTS/DTS rebase and offset, discontinuity-gap insertion
-//!   ([`rebase_to_zero`] / [`apply_offset`] / [`insert_discontinuity_gap`],
-//!   via each absolute [`Sample`] `dts`/`pts` and the [`Track::start_decode_time`]
-//!   anchor kept in lockstep with it — 33-bit MPEG wrap-unroll happens once,
-//!   at the demux edge, see [`ts_demux`]);
-//!   timeline splice / concatenation → SSAI ([`concat`](fn@concat) / [`splice_insert`],
-//!   returning a [`SpliceResult`] with discontinuity points).
+//!   PTS/DTS rebase and offset, discontinuity-gap insertion as sample stages
+//!   ([`RebaseStage`] / [`OffsetStage`] / [`GapStage`], via each absolute
+//!   [`Sample`] `dts`/`pts` — 33-bit MPEG wrap-unroll happens once, at the
+//!   demux edge, see [`ts_demux`]);
+//!   timeline splice / concatenation → SSAI as a sample stage
+//!   ([`SpliceStage`] driven by a [`SplicePlan`], or plan-less
+//!   [`SpliceStage::switching`] holding one GOP to snap to the preceding sync).
 //! - **Crypto:** CENC/CBCS (`cenc`, AES-CTR/AES-CBC-pattern) decrypt
 //!   ([`CencDecryptor`]) + encrypt ([`CencEncryptor`], which populates
 //!   [`TrackSpec::protection`](crate::ir::TrackSpec::protection) for the muxer's `sinf`/`senc`/`saio`/`saiz` box
@@ -64,7 +64,7 @@
 //!   (`METHOD=SAMPLE-AES-CTR`, RFC 8216bis §4.4.4.4 — see the
 //!   `broadcast-hls` crate's module docs); HLS Sample-AES + full-segment
 //!   AES-128 encrypt/decrypt (`sample-aes`, [`sample_aes`]).
-//! - **RTP/RTCP:** de/packetise ([`RtpPacketiser`] / [`RtpDepacketiser`]),
+//! - **RTP/RTCP:** de/packetise ([`RtpPacketiserStage`] / [`RtpDepacketiser`]),
 //!   streaming depayload ([`RtpStreamDepacketiser`]) + SDP fmtp→config helpers
 //!   ([`rtp_sdp`]); RTCP control packets ([`RtcpPacket`]).
 //! - **Display geometry:** a video track's coded size, SPS VUI sample aspect
@@ -81,7 +81,7 @@
 //! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
 //! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /
-//!   [`nal_unit_type`]); I-frame trick-play track derivation ([`derive_iframe_track`]);
+//!   [`nal_unit_type`]); I-frame trick-play track derivation as a sample stage ([`TrickPlayStage`]);
 //!   the single ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 fragment
 //!   sample-offset resolver shared by the demuxer, decryptor and validator
 //!   ([`isobmff::frag_offsets`]).
@@ -271,7 +271,7 @@ pub use drm::{
 pub use drm::{playready_pro, playready_pssh, playready_wrmheader};
 pub use error::{Error, Result};
 pub use flv::{
-    FlvDemux, FlvError, FlvMux, FlvPayload, FlvPayloadKind, flv_frame_payloads,
+    FlvDemux, FlvError, FlvMuxStage, FlvPayload, FlvPayloadKind, flv_frame_payload,
     flv_sequence_header_payloads, flv_track_kind, on_metadata_body,
 };
 pub use flv_stream::StreamingFlvDemux;
@@ -296,8 +296,10 @@ pub use live_join::{DropReason, JoinDecision, JoinPolicy, JoinState, LiveJoin, R
 pub use ll_dash::LlDashPackager;
 pub use ll_dash::{Chunk, LlSegmenter};
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
-pub use media::{CmafMux, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackProtection};
-pub use mkv_mux::MkvMux;
+pub use media::{
+    CmafMuxStage, FragmentCut, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackProtection,
+};
+pub use mkv_mux::MkvMuxStage;
 pub use mpeg_legacy::{
     MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,
 };
@@ -314,20 +316,23 @@ pub use pipeline::{
 };
 pub use progressive::ProgressiveMux;
 pub use ps_demux::PsDemux;
-pub use rebase::{apply_offset, insert_discontinuity_gap, rebase_to_zero};
-pub use repackage::{Repackage, RepackageOutput};
+pub use rebase::{GapStage, OffsetStage, RebaseOrigin, RebaseStage};
+pub use repackage::{Repackage, RepackageOutput, select_tracks, select_tracks_by, trim};
 pub use rtcp::{
     APP_NAME_LEN, App, Bye, CompoundPacket, PT_APP, PT_BYE, PT_RECEIVER_REPORT, PT_SENDER_REPORT,
     PT_SOURCE_DESCRIPTION, REPORT_BLOCK_LEN, ReceiverReport, ReportBlock, RtcpPacket,
     RtcpPacketType, SDES_CNAME, SDES_EMAIL, SDES_LOC, SDES_NAME, SDES_NOTE, SDES_PHONE, SDES_PRIV,
     SDES_TOOL, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
 };
-pub use rtmp::{RtmpDemux, RtmpFlvError, RtmpMux};
+pub use rtmp::{RtmpDemux, RtmpFlvError, RtmpMuxStage};
+#[cfg(feature = "std")]
+pub use rtp::sdp_media;
 pub use rtp::{
     DEFAULT_AAC_CLOCK_RATE, DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT,
     KLV_ENCODING_NAME, MAX_TIMING_WARNINGS, NAL_TYPE_IDR, RtpDepacketiser, RtpInput,
-    RtpInputStream, RtpMediaKind, RtpOutput, RtpPacket, RtpPacketiser, RtpStream, RtpTimingWarning,
+    RtpInputStream, RtpMediaKind, RtpPacket, RtpPacketiserStage, RtpTimingWarning,
     VIDEO_CLOCK_RATE, VIDEO_CLOCK_TIMESCALE, depacketise_klv, packetise_klv,
+    packetise_video_sample,
 };
 pub use rtp_align::{AlignOut, AvSync, SR_SWITCH_TOLERANCE_US, TrackAligner};
 #[cfg(feature = "std")]
@@ -349,7 +354,7 @@ pub use sample_aes::{
     eac3_encrypt_frame, h264_decrypt_nal, h264_encrypt_nal, iv_from_sequence_number,
 };
 pub use segment_cut::{IdrWait, SegmentCutPolicy};
-pub use segmenter::{SegmentMeta, Segmenter};
+pub use segmenter::Segmenter;
 #[cfg(feature = "std")]
 pub use smooth::{
     FOURCC_AACL, FOURCC_H264, SMOOTH_DEFAULT_TIMESCALE, SMOOTH_TIMESCALE, SmoothCodec,
@@ -370,13 +375,13 @@ pub use hdr10plus::{
 };
 #[cfg(feature = "std")]
 pub use smooth_codec::track_spec_from_quality_level;
-pub use splice::{SplicePoint, SpliceResult, concat, snap_to_preceding_sync, splice_insert};
+pub use splice::{SplicePlan, SplicePoint, SpliceStage, TrackSplice, snap_to_preceding_sync};
 pub use sps::{
     AvcReorderDepth, AvcSpsInfo, AvcVuiTiming, HevcSpsInfo, HevcVpsTiming, HevcVuiTiming,
     decode_avc_reorder_depth, decode_avc_sps, decode_avc_vui_timing, decode_hevc_sps,
     decode_hevc_vps_timing, decode_hevc_vui_timing, rfc6381_avc1, rfc6381_hvc1, rfc6381_mp4a,
 };
-pub use trickplay::{append_iframe_track, derive_iframe_track};
+pub use trickplay::TrickPlayStage;
 pub use ts_demux::{
     AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,
     InputDegradation, StreamingTsDemux, TsDemux,

@@ -38,9 +38,7 @@ fn publish(writer: &SegmentWriter, seq: u32, len: usize, fill: u8, at: u64, disc
         SegmentSeq::new(seq),
         Duration::from_secs(2),
         Timestamp::from_nanos(at),
-        transmux::SegmentMeta {
-            discontinuous: disc,
-        },
+        disc,
     );
     writer.publish_segment(entry).expect("publish");
 }

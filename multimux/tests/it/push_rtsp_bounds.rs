@@ -522,7 +522,11 @@ async fn the_transport_muxes_through_its_own_streaming_mux() {
 /// samples fed in decode order.
 fn encode_pass(transport: &mut RtspTransport, media: &transmux::Media) -> Vec<u8> {
     let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-    transport.set_tracks(&specs).expect("announce tracks");
+    transport
+        .media_muxer()
+        .expect("a TS push carries its own mux")
+        .set_tracks(&specs)
+        .expect("announce tracks");
     let mut items: Vec<(i128, transmux::TrackId, transmux::Sample)> = Vec::new();
     for track in &media.tracks {
         for sample in &track.samples {
@@ -535,7 +539,9 @@ fn encode_pass(transport: &mut RtspTransport, media: &transmux::Media) -> Vec<u8
     let mut out = Vec::new();
     for (_, track, sample) in items {
         for message in transport
-            .encode_sample(&specs, track, sample)
+            .media_muxer()
+            .expect("a TS push carries its own mux")
+            .encode_sample(track, &sample)
             .expect("encode sample")
         {
             out.extend_from_slice(&message);

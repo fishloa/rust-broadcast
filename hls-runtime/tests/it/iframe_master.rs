@@ -16,7 +16,6 @@ use bytes::Bytes;
 use hls_runtime::server::{HlsOrigin, HlsOriginConfig};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
-use transmux::SegmentMeta;
 use transmux::TrackId;
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, TrackSpec, build_init_segment, build_media_segment,
@@ -135,9 +134,7 @@ fn iframe_master_typed_fields() {
                 SegmentSeq::new(i as u32 + 1),
                 Duration::from_secs(1),
                 Timestamp::from_nanos(0),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
     }
@@ -241,9 +238,7 @@ fn iframe_master_d3prime_unavailable_omitted() {
             SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     // audio-first after entry -> unavailable
@@ -253,9 +248,7 @@ fn iframe_master_d3prime_unavailable_omitted() {
             SegmentSeq::new(2),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     let text = origin
@@ -278,9 +271,7 @@ fn iframe_master_survives_eviction() {
                 SegmentSeq::new(i as u32 + 1),
                 Duration::from_secs(1),
                 Timestamp::from_nanos(0),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
     }
@@ -303,9 +294,7 @@ fn iframe_master_resets_on_init_change() {
             SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     // unparseable init resets the snapshot
@@ -328,9 +317,7 @@ fn iframe_master_plain_byte_identical() {
             SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     let a = origin.master_playlist("media.m3u8").expect("a");
@@ -387,9 +374,7 @@ fn iframe_variant_line(transfer_code: u8) -> String {
                 SegmentSeq::new(i as u32 + 1),
                 Duration::from_secs(1),
                 Timestamp::from_nanos(0),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
     }
@@ -451,9 +436,7 @@ fn iframe_variant_codecs_stay_with_the_first_video_track() {
             SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
 

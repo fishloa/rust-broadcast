@@ -22,7 +22,6 @@ use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{EventAnchor, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use timed_metadata::{MediaTime, TimeAnchor};
-use transmux::SegmentMeta;
 
 const UTC_EPOCH_MS: i64 = 1_000_000_000_000;
 const PTS_TICKS_PER_SEC: u64 = 90_000;
@@ -78,7 +77,7 @@ fn publish(writer: &SegmentWriter, seq: u32, secs: u64, discontinuous: bool, byt
             SegmentSeq::new(seq),
             Duration::from_secs(secs),
             Timestamp::from_nanos(0),
-            SegmentMeta { discontinuous },
+            discontinuous,
         ))
         .expect("monotonic sequence");
 }

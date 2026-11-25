@@ -602,7 +602,7 @@ use event_listener::{Event, EventListener, Listener};
 use thiserror::Error;
 use timed_metadata::{MediaTime, PTS_HZ, TimeAnchor, TimedEvent};
 
-use transmux::{Sample, SegmentMeta, TrackSpec};
+use transmux::{Sample, TrackSpec};
 
 /// Which retention discipline a published entry follows once inside the
 /// [`Trunk`]'s sample ring.
@@ -947,17 +947,15 @@ impl TrackChangeLog {
 /// One finished media segment recorded by the segment log, in playlist
 /// order.
 ///
-/// Reuses [`transmux::SegmentMeta`] for exactly what it already models — the
-/// per-segment discontinuity bit [`transmux::Segmenter::take_ready_with_meta`]
-/// returns — by holding the whole type rather than copying its one field out
-/// into a `discontinuous: bool` of this struct's own; a field `SegmentMeta`
-/// gains later is picked up here for free. It does **not** fit whole,
-/// though, and this struct says so rather than pretending it does: nothing
-/// in `transmux` computes a segment's wall-clock duration, its `moof`/`mfhd`
-/// sequence number, or its position on *this trunk's* absolute timeline —
-/// those are properties of the log a segment lands in, not of the segmenter
-/// that produced its bytes, so they are new fields here, supplied by
-/// whoever is feeding [`SegmentWriter::publish_segment`], exactly as
+/// The discontinuity bit is the one a segmenter's
+/// [`SegmentSummary`](transmux::mux_stage::SegmentSummary) reports; it is
+/// carried as a plain `bool` here because nothing else a summary holds
+/// describes a segment in *this* log: nothing in `transmux` computes a
+/// segment's wall-clock duration, its `moof`/`mfhd` sequence number, or its
+/// position on *this trunk's* absolute timeline — those are properties of
+/// the log a segment lands in, not of the segmenter that produced its
+/// bytes, so they are new fields here, supplied by whoever is feeding
+/// [`SegmentWriter::publish_segment`], exactly as
 /// `track_id`/[`RetentionClass`] are supplied by whoever feeds
 /// [`TrunkWriter::publish`].
 #[derive(Debug, Clone)]
@@ -977,10 +975,9 @@ pub struct SegmentEntry {
     pub duration: Duration,
     /// This segment's start position on the trunk's absolute timeline.
     pub timeline_position: Timestamp,
-    /// The discontinuity bit from the segmenter itself; see this struct's
-    /// own doc for why it is reused by embedding the whole type, not
-    /// re-derived as a field of this struct.
-    pub meta: SegmentMeta,
+    /// The discontinuity bit from the segmenter itself — a media-timeline
+    /// break before this segment (RFC 8216 §4.3.2.3).
+    pub discontinuous: bool,
 }
 
 impl SegmentEntry {
@@ -990,14 +987,14 @@ impl SegmentEntry {
         sequence_number: SegmentSeq,
         duration: Duration,
         timeline_position: Timestamp,
-        meta: SegmentMeta,
+        discontinuous: bool,
     ) -> Self {
         SegmentEntry {
             bytes: bytes.into(),
             sequence_number,
             duration,
             timeline_position,
-            meta,
+            discontinuous,
         }
     }
 }
@@ -3701,9 +3698,7 @@ mod tests {
             SegmentSeq::new(seq),
             Duration::from_secs(2),
             Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         )
     }
 
@@ -4946,9 +4941,7 @@ mod tests {
                 SegmentSeq::new(1),
                 Duration::from_secs(2),
                 Timestamp::from_nanos(0),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .unwrap();
 

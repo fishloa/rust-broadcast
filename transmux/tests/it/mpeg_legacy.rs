@@ -9,10 +9,9 @@
 use broadcast_common::timescale::Timescale;
 use std::fs;
 
-use broadcast_common::{Package, Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use test_fixtures::ffprobe;
-use transmux::media::CmafMux;
 use transmux::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use transmux::pipeline::CodecConfig;
 use transmux::ts_demux::TsDemux;
@@ -151,8 +150,7 @@ fn assert_sample_roundtrip(rel: &[&str]) {
         test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
             .expect("demux");
 
-    let mut mux = CmafMux::default();
-    let remuxed = mux.package(&media).expect("re-mux");
+    let remuxed = crate::cmaf::package(&media).expect("re-mux");
 
     let media2 = test_harness::collect::media_from_mp4(
         &remuxed,
@@ -341,8 +339,7 @@ fn ts_config_from_real_es() {
 
     // The MPEG-2 video sample entry must round-trip through mp4v (build init +
     // re-parse) with an esds carrying OTI 0x61.
-    let mut mux = CmafMux::default();
-    let remuxed = mux.package(&media).expect("mux ts->cmaf");
+    let remuxed = crate::cmaf::package(&media).expect("mux ts->cmaf");
     let moov_bytes = find_top_box(&remuxed, b"moov").expect("moov");
     let moov = MovieBox::parse(moov_bytes).expect("parse moov");
     let entry = stsd_entry(&moov, 0);

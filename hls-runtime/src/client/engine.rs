@@ -139,6 +139,22 @@ fn abandoned_track(reason: AbandonReason) -> (String, String) {
     }
 }
 
+/// A `DataIdentity::Mp4` track whose sample entry carries a `sinf` box is
+/// CENC/CBCS-protected: this client decrypts AES-128 HLS segments only, never
+/// sample-level encryption, so the track is reported and left out.
+fn encrypted_data_track(spec: &transmux::TrackSpec) -> Option<AbandonReason> {
+    let transmux::CodecConfig::Data { identity } = &spec.config else {
+        return None;
+    };
+    let fourcc = identity.protected_mp4_entry()?;
+    Some(AbandonReason::UnsupportedSampleEntry {
+        fourcc,
+        detail: Some(String::from(
+            "CENC/CBCS sample encryption is not supported by this client",
+        )),
+    })
+}
+
 /// `usize` index -> `u64` (lossless on every supported target; saturates
 /// rather than casting if a target ever had a wider `usize`).
 fn index_u64(i: usize) -> u64 {
@@ -2355,6 +2371,13 @@ impl HlsClient {
                 match event {
                     DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
                         state.tracks_known = true;
+                        if let Some(reason) = encrypted_data_track(&spec) {
+                            state
+                                .specs
+                                .retain(|existing| existing.track_id != spec.track_id);
+                            abandoned.push((Some(spec.track_id), reason));
+                            continue;
+                        }
                         match state
                             .specs
                             .iter_mut()
@@ -2384,6 +2407,7 @@ impl HlsClient {
             }
             let mut specs = state.specs.clone();
             specs.sort_by_key(|spec| spec.track_id);
+            samples.retain(|track_id, _| specs.iter().any(|spec| spec.track_id == *track_id));
             (specs, damaged, abandoned, samples)
         };
         if damaged > 0 {

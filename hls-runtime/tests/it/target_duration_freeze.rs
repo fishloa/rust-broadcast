@@ -11,7 +11,6 @@ use media_plane::ServedEgress;
 use media_plane::egress::{AwaitPolicy, EgressResponse};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
-use transmux::SegmentMeta;
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -44,9 +43,7 @@ fn publish(w: &SegmentWriter, seq: u32, secs: u64) {
         SegmentSeq::new(seq),
         Duration::from_secs(secs),
         Timestamp::from_nanos(0),
-        SegmentMeta {
-            discontinuous: false,
-        },
+        false,
     ))
     .expect("monotonic sequence number");
 }

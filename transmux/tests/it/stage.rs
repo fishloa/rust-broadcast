@@ -52,11 +52,11 @@ use transmux::TrackId;
 use broadcast_common::{Stage, Timestamp};
 use transmux::media::Media;
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
-use transmux::mux_stage::SegmentOut;
+use transmux::mux_stage::{MuxInput, MuxOutput, SegmentOut};
 use transmux::{
     CodecConfig, DemuxEvent, LlHlsSegmenter, LlHlsStageOutput, LlSegmenter, PartInfo, Sample,
-    SegmentInfo, SegmentMeta, Segmenter, StreamingFlvDemux, StreamingTsDemux,
-    StreamingTsHlsSegmenter, TrackSpec, TsDemux,
+    SegmentInfo, Segmenter, StreamingFlvDemux, StreamingTsDemux, StreamingTsHlsSegmenter,
+    TrackSpec, TsDemux,
 };
 
 use broadcast_common::Unpackage;
@@ -226,6 +226,28 @@ where
         out.push(ev);
     }
     out
+}
+
+/// Keep only `MuxOutput::Segment` items.
+fn segments(outputs: Vec<MuxOutput>) -> Vec<SegmentOut> {
+    outputs
+        .into_iter()
+        .filter_map(|output| match output {
+            MuxOutput::Segment(segment) => Some(segment),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Wrap `(TrackId, Sample)` pairs as [`MuxInput::Sample`] items.
+fn mux_inputs(samples: Vec<(TrackId, Sample)>) -> Vec<MuxInput> {
+    samples
+        .into_iter()
+        .map(|(track_id, sample)| MuxInput::Sample {
+            track: TrackId::new(track_id.value()),
+            sample,
+        })
+        .collect()
 }
 
 /// Drive `StreamingTsDemux` via the generic `drive()` helper, chunked into
@@ -492,15 +514,7 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
         Duration::from_millis(100),
     )
     .unwrap();
-    let mut oracle_seg_out: Vec<(Vec<u8>, SegmentMeta)> = Vec::new();
-    for (track_id, sample) in samples.clone() {
-        oracle_seg
-            .push(TrackId::new(track_id.value()), sample)
-            .unwrap();
-        oracle_seg_out.extend(oracle_seg.take_ready_with_meta());
-    }
-    oracle_seg.flush().unwrap();
-    oracle_seg_out.extend(oracle_seg.take_ready_with_meta());
+    let oracle_seg_out = segments(drive(&mut oracle_seg, mux_inputs(samples.clone())));
     assert!(
         !oracle_seg_out.is_empty(),
         "fixture must actually exercise at least one segment cut"
@@ -512,10 +526,10 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
         Duration::from_millis(100),
     )
     .unwrap();
-    let stage_seg_out = drive(&mut stage_seg, samples.clone());
+    let stage_seg_out = segments(drive(&mut stage_seg, mux_inputs(samples.clone())));
     assert_eq!(
         stage_seg_out, oracle_seg_out,
-        "Stage-driven Segmenter must yield the exact same (bytes, meta) sequence as the inherent push/take_ready_with_meta/flush API"
+        "a Segmenter driven through the generic drive() helper must yield the exact same segment sequence as one driven by a plain feed/poll loop"
     );
 
     // --- LlSegmenter: inherent API (oracle) vs Stage-driven ------------------
@@ -547,7 +561,7 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
         4,
     )
     .unwrap();
-    let stage_ll_out = drive(&mut stage_ll, samples.clone());
+    let stage_ll_out = drive(&mut stage_ll, mux_inputs(samples.clone()));
     assert_eq!(
         stage_ll_out.len(),
         oracle_ll_out.len(),
@@ -601,7 +615,7 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
         Duration::from_millis(30),
     )
     .unwrap();
-    let stage_hls_out = drive(&mut stage_hls, samples);
+    let stage_hls_out = drive(&mut stage_hls, mux_inputs(samples));
     let stage_hls_parts: Vec<&PartInfo> = stage_hls_out
         .iter()
         .filter_map(|o| match o {
@@ -724,71 +738,69 @@ fn poll_segments(seg: &mut StreamingTsHlsSegmenter) -> Vec<SegmentOut> {
 
 /// `Segmenter`.
 #[test]
-fn segmenter_mixed_api_delivers_each_output_exactly_once() {
+fn segmenter_feeds_and_polls_in_lockstep_with_an_undrained_batch() {
     let track = audio_track_spec();
     let samples = audio_samples(50);
 
-    // Oracle: a fresh instance driven purely through the inherent API.
+    // Oracle: one instance driven by a plain feed/poll loop.
     let mut oracle = Segmenter::new(
         vec![track.clone()],
         timescale(1000),
         Duration::from_millis(100),
     )
     .unwrap();
-    let mut oracle_out: Vec<(Vec<u8>, SegmentMeta)> = Vec::new();
-    for (track_id, sample) in samples.clone() {
-        oracle.push(TrackId::new(track_id.value()), sample).unwrap();
-        oracle_out.extend(oracle.take_ready_with_meta());
-    }
-    oracle.flush().unwrap();
-    oracle_out.extend(oracle.take_ready_with_meta());
+    let oracle_out = segments(drive(&mut oracle, mux_inputs(samples.clone())));
     assert!(
         oracle_out.len() >= 4,
         "fixture must cut several segments so an un-drained batch has more \
          than Stage::poll's partial drain can cover"
     );
 
-    // Mixed: ONE instance. Feed the first batch purely through `Stage::feed`
-    // with NO draining at all, partially drain via `Stage::poll`, then hand
-    // the rest to the inherent `take_ready_with_meta`; feed the remainder
-    // through the inherent `push`/`take_ready_with_meta`; finish via
-    // `Stage::finish` + a final `poll`/inherent sweep.
+    // Mixed: ONE instance. Feed the first batch with NO draining at all, then
+    // drain only *part* of it via `poll`, and feed the rest before finishing.
+    // Every output must still arrive exactly once, in order.
     let mut mixed =
         Segmenter::new(vec![track], timescale(1000), Duration::from_millis(100)).unwrap();
-    let mut mixed_out: Vec<(Vec<u8>, SegmentMeta)> = Vec::new();
+    let mut mixed_out: Vec<SegmentOut> = Vec::new();
     let mut samples = samples.into_iter();
     let batch = 30;
     for (i, (track_id, sample)) in samples.by_ref().take(batch).enumerate() {
         mixed
             .feed(
-                (TrackId::new(track_id.value()), sample),
+                MuxInput::Sample {
+                    track: TrackId::new(track_id.value()),
+                    sample,
+                },
                 Timestamp::from_nanos(i as u64),
             )
             .unwrap();
     }
     for _ in 0..2 {
-        if let Some(seg) = mixed.poll() {
-            mixed_out.push(seg);
+        if let Some(MuxOutput::Segment(segment)) = mixed.poll() {
+            mixed_out.push(segment);
         }
     }
-    // The inherent drain must see whatever the batch above left ready.
-    mixed_out.extend(mixed.take_ready_with_meta());
-
     for (track_id, sample) in samples {
-        mixed.push(TrackId::new(track_id.value()), sample).unwrap();
-        mixed_out.extend(mixed.take_ready_with_meta());
+        mixed
+            .feed(
+                MuxInput::Sample {
+                    track: TrackId::new(track_id.value()),
+                    sample,
+                },
+                Timestamp::ZERO,
+            )
+            .unwrap();
     }
     mixed.finish().unwrap();
-    while let Some(seg) = mixed.poll() {
-        mixed_out.push(seg);
+    while let Some(MuxOutput::Segment(segment)) = mixed.poll() {
+        mixed_out.push(segment);
     }
-    mixed_out.extend(mixed.take_ready_with_meta());
 
     assert_eq!(
         mixed_out, oracle_out,
-        "mixing Stage::feed/poll with the inherent push/take_ready_with_meta on ONE Segmenter \
-         instance must deliver exactly the same segments, in the same order, as a purely-inherent \
-         run — nothing lost, nothing duplicated"
+        "an un-drained feed batch followed by a partial poll on ONE Segmenter instance must \
+         deliver exactly the same segments, in the same order, as a plain feed/poll run — \
+         nothing lost, nothing duplicated"
     );
 }
 
@@ -828,7 +840,10 @@ fn ll_segmenter_mixed_api_delivers_each_output_exactly_once() {
     for (i, (track_id, sample)) in samples.by_ref().take(batch).enumerate() {
         mixed
             .feed(
-                (TrackId::new(track_id.value()), sample),
+                MuxInput::Sample {
+                    track: TrackId::new(track_id.value()),
+                    sample,
+                },
                 Timestamp::from_nanos(i as u64),
             )
             .unwrap();
@@ -918,7 +933,10 @@ fn ll_hls_segmenter_mixed_api_delivers_each_output_exactly_once() {
     for (i, (track_id, sample)) in samples.by_ref().take(batch).enumerate() {
         mixed
             .feed(
-                (TrackId::new(track_id.value()), sample),
+                MuxInput::Sample {
+                    track: TrackId::new(track_id.value()),
+                    sample,
+                },
                 Timestamp::from_nanos(i as u64),
             )
             .unwrap();

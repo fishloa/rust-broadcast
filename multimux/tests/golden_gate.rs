@@ -714,9 +714,7 @@ fn dvr_period_file_from_real_samples_replays_decodably() {
                 media_plane::ids::SegmentSeq::new(segment.segment_seq),
                 segment.duration,
                 broadcast_common::Timestamp::from_nanos(0),
-                transmux::SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish segment");
     }

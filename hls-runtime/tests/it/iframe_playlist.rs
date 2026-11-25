@@ -16,7 +16,6 @@ use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::Container;
-use transmux::SegmentMeta;
 use transmux::TrackId;
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, TrackSpec, build_init_segment, build_media_segment,
@@ -127,9 +126,7 @@ fn iframe_geometry_oracle() {
                 SegmentSeq::new(i + 1),
                 Duration::from_secs(1),
                 Timestamp::from_nanos(0),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
     }
@@ -220,7 +217,7 @@ fn iframe_playlist_text_shape() {
                 SegmentSeq::new(i + 1),
                 Duration::from_secs(1),
                 Timestamp::from_nanos(0),
-                SegmentMeta { discontinuous },
+                discontinuous,
             ))
             .expect("publish");
     }
@@ -299,9 +296,7 @@ fn iframe_audio_first_leading_skipped() {
             SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     // followed by a normal fixture segment
@@ -312,9 +307,7 @@ fn iframe_audio_first_leading_skipped() {
             SegmentSeq::new(2),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     let _ = trunk;
@@ -382,9 +375,7 @@ fn iframe_audio_first_after_entry_not_found() {
             SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     // audio-first after entry
@@ -394,9 +385,7 @@ fn iframe_audio_first_after_entry_not_found() {
             SegmentSeq::new(2),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     assert_eq!(iframe_playlist_text(&origin), EgressResponse::NotFound);
@@ -450,9 +439,7 @@ fn iframe_nonsync_first_video_leading_skipped() {
             SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     let normal = fixture_bytes("index0.m4s");
@@ -462,9 +449,7 @@ fn iframe_nonsync_first_video_leading_skipped() {
             SegmentSeq::new(2),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     let text = match iframe_playlist_text(&origin) {
@@ -526,9 +511,7 @@ fn iframe_nonsync_first_video_after_entry_not_found() {
             SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     writer
@@ -537,9 +520,7 @@ fn iframe_nonsync_first_video_after_entry_not_found() {
             SegmentSeq::new(2),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     assert_eq!(iframe_playlist_text(&origin), EgressResponse::NotFound);
@@ -555,9 +536,7 @@ fn iframe_part_without_msn_is_bad_request() {
             SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     let (now, policy) = patient();
@@ -588,9 +567,7 @@ fn iframe_msn_with_part_is_served() {
             SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     let (now, policy) = patient();
@@ -635,9 +612,7 @@ fn iframe_ts_origin_not_found() {
             SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     assert_eq!(iframe_playlist_text(&origin), EgressResponse::NotFound);
@@ -661,9 +636,7 @@ fn iframe_audio_only_not_found() {
             SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     assert_eq!(iframe_playlist_text(&origin), EgressResponse::NotFound);
@@ -680,9 +653,7 @@ fn iframe_rendition_report_uses_configured_media_playlist_name() {
                 SegmentSeq::new(i + 1),
                 Duration::from_secs(1),
                 Timestamp::from_nanos(0),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
     }
@@ -720,9 +691,7 @@ fn iframe_rendition_report_defaults_to_media_m3u8() {
                 SegmentSeq::new(i + 1),
                 Duration::from_secs(1),
                 Timestamp::from_nanos(0),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
     }
@@ -759,9 +728,7 @@ fn a_bare_msn_iframe_reload_waits_for_a_segment_the_window_holds() {
                 SegmentSeq::new(seq),
                 Duration::from_secs(1),
                 Timestamp::from_nanos(0),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
     };

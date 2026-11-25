@@ -14,7 +14,6 @@ use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use timed_metadata::TimeAnchor;
-use transmux::SegmentMeta;
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -49,7 +48,7 @@ fn seg(writer: &SegmentWriter, seq: u32, secs: f64, discontinuous: bool) {
             SegmentSeq::new(seq),
             Duration::from_secs_f64(secs),
             Timestamp::from_nanos(0),
-            SegmentMeta { discontinuous },
+            discontinuous,
         ))
         .expect("publish");
 }
@@ -232,9 +231,7 @@ fn discontinuity_sequence_zero_on_iframe_playlist() {
                 SegmentSeq::new(i + 1),
                 Duration::from_secs(1),
                 Timestamp::from_nanos(0),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
     }

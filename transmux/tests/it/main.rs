@@ -25,6 +25,9 @@ mod clap_precedence;
 mod classify_nals;
 mod cli;
 mod cli_binary;
+#[path = "support/cmaf.rs"]
+mod cmaf;
+mod cmaf_stage;
 mod codec_config;
 mod codec_tail;
 mod codecs_new;
@@ -104,6 +107,9 @@ mod ll_hls;
 #[path = "support/ll_packager.rs"]
 mod ll_packager;
 mod manifest_protection;
+#[cfg(feature = "std")]
+#[path = "support/mkv_bytes.rs"]
+mod mkv_bytes;
 mod mkv_mux;
 mod mp4_demux;
 mod mp4_demux_data_tracks;
@@ -112,6 +118,9 @@ mod mp4_demux_segments;
 mod mpeg_legacy;
 mod mpegh;
 mod mpegh_ts;
+#[cfg(feature = "std")]
+#[path = "support/mux_bytes.rs"]
+mod mux_bytes;
 mod nal_keyframe;
 mod opengop_anchor;
 mod paff_pairing;
@@ -141,6 +150,9 @@ mod rtmp_ingest_fixture;
 mod rtmp_play_peer;
 mod rtmp_spoke_equivalence;
 mod rtp;
+#[cfg(feature = "std")]
+#[path = "support/rtp_run.rs"]
+mod rtp_run;
 mod rtp_sdp;
 mod rtp_stream;
 mod rtp_stream_paff;
@@ -155,6 +167,8 @@ mod segment_cut_policy;
 mod segment_emsg;
 mod segmenter;
 mod segmenter_progress_bounds;
+#[path = "support/segmenter_stage.rs"]
+mod segmenter_stage;
 mod sei_caption_real_capture;
 mod serializer_length_truncation;
 mod skipped_track_id;

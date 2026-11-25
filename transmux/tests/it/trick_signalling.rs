@@ -23,19 +23,19 @@
 //!    track, not hardcoded.
 #![cfg(feature = "std")]
 
+use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use std::fs;
 use transmux::TrackId;
 
-use broadcast_common::Package;
 use broadcast_hls::{
     DecimalSeconds, IFrameVariant, MasterPlaylist, MediaPlaylist, MediaSegment, Variant,
 };
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use test_harness::collect::derive_iframe_track;
 use transmux::dash::{DashPackager, TRICKMODE_SCHEME, TrickModeAdaptationSet, TrickModeRepr};
 use transmux::media::Track;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::trickplay::derive_iframe_track;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

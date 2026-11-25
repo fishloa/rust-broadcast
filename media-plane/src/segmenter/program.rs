@@ -91,7 +91,6 @@ use broadcast_common::Timestamp;
 use broadcast_common::bcp47_language;
 use dvb_si::descriptors::atsc_caption_service::AtscCaptionService;
 use transmux::Container;
-use transmux::SegmentMeta;
 use transmux::ll_hls::{LlHlsSegmenter, PartCutReady, PartInfo};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::ts_hls::StreamingTsHlsSegmenter;
@@ -1866,9 +1865,7 @@ impl ProgramSegmenter {
             seq,
             duration,
             Timestamp::from_nanos(start_ns),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         )));
         self.gap = Some(GapState {
             resume_segment: seq.saturating_next(),
@@ -2020,7 +2017,7 @@ impl ProgramSegmenter {
             segment.segment_seq,
             duration,
             Timestamp::from_nanos(start_ns),
-            SegmentMeta { discontinuous },
+            discontinuous,
         )));
     }
 
@@ -2182,9 +2179,7 @@ mod segmenter_tests {
             SegmentSeq::new(seq),
             Duration::from_secs(1),
             Timestamp::from_nanos(u64::from(seq)),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         )
     }
 
@@ -4100,7 +4095,7 @@ mod segmenter_tests {
         let mut starts = Vec::new();
         while let Some(item) = cursor.poll() {
             if let crate::trunk::SegmentCursorItem::Segment(entry) = item {
-                starts.push((entry.timeline_position.as_nanos(), entry.meta.discontinuous));
+                starts.push((entry.timeline_position.as_nanos(), entry.discontinuous));
             }
         }
         let first_after = starts
@@ -5060,7 +5055,7 @@ mod segmenter_tests {
         let mut marks = Vec::new();
         while let Some(item) = cursor.poll() {
             if let crate::trunk::SegmentCursorItem::Segment(entry) = item {
-                marks.push((entry.sequence_number.value(), entry.meta.discontinuous));
+                marks.push((entry.sequence_number.value(), entry.discontinuous));
             }
         }
         assert_eq!(marks, vec![(1, true), (2, false), (3, true)]);

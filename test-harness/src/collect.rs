@@ -11,7 +11,11 @@
 use std::collections::BTreeMap;
 
 use broadcast_common::Stage;
-use transmux::{AbandonReason, DemuxEvent, Media, SkippedTrack, Track, TrackId};
+use broadcast_common::stage::Timestamp;
+use transmux::{
+    AbandonReason, DemuxEvent, Media, Sample, SkippedTrack, SplicePlan, SplicePoint, SpliceStage,
+    Track, TrackId, TrickPlayStage,
+};
 
 /// Movie timescale [`media_from_events`] uses when the event stream names none
 /// (no event carries it). The caller that knows the real value overwrites it.
@@ -218,4 +222,166 @@ fn media_from_stage(mut demux: transmux::mp4_demux::Mp4Demux) -> Result<Media, t
         }
     }
     Ok(media)
+}
+
+/// The result of driving a [`SplicePlan`] over whole medias: the joined media
+/// and the joins to signal. Field-compatible with the former whole-`Media`
+/// splice result, now produced by [`SpliceStage`].
+pub struct SpliceOutput {
+    /// The joined media on a single monotonic timeline.
+    pub media: Media,
+    /// The join points to signal as `#EXT-X-DISCONTINUITY`.
+    pub discontinuity_points: Vec<SplicePoint>,
+}
+
+/// Append `b` after `a` through [`SpliceStage`].
+///
+/// # Errors
+/// Whatever [`SplicePlan::concat`] or the stage returns.
+pub fn concat(a: &Media, b: &Media) -> Result<SpliceOutput, transmux::Error> {
+    let plan = SplicePlan::concat(a, b)?;
+    drive_splice(&plan, a, Some(b))
+}
+
+/// Splice `ad` into `base` through [`SpliceStage`].
+///
+/// # Errors
+/// Whatever [`SplicePlan::insert`] or the stage returns.
+pub fn splice_insert(
+    base: &Media,
+    ad: &Media,
+    at_ticks: u64,
+) -> Result<SpliceOutput, transmux::Error> {
+    let plan = SplicePlan::insert(base, ad, at_ticks)?;
+    drive_splice(&plan, base, Some(ad))
+}
+
+fn drive_splice(
+    plan: &SplicePlan,
+    base: &Media,
+    inserted: Option<&Media>,
+) -> Result<SpliceOutput, transmux::Error> {
+    let mut per_track: Vec<Vec<Sample>> = vec![Vec::new(); plan.tracks().len()];
+    for (index, slice) in plan.tracks().iter().enumerate() {
+        let base_track = base
+            .tracks
+            .get(index)
+            .ok_or(transmux::Error::InvalidInput("splice: base track vanished"))?;
+        let mut stage = SpliceStage::new(
+            plan.only(index)
+                .ok_or(transmux::Error::InvalidInput("splice: plan track vanished"))?,
+        );
+        let split = slice.split_index.min(base_track.samples.len());
+        for sample in &base_track.samples[..split] {
+            stage.feed((slice.track_id, sample.clone()), Timestamp::ZERO)?;
+        }
+        if let Some(media) = inserted
+            && let Some(track) = media.tracks.get(slice.insert_index)
+        {
+            for sample in &track.samples {
+                stage.feed((slice.track_id, sample.clone()), Timestamp::ZERO)?;
+            }
+        }
+        for sample in &base_track.samples[split..] {
+            stage.feed((slice.track_id, sample.clone()), Timestamp::ZERO)?;
+        }
+        stage.finish()?;
+        while let Some((_, sample)) = stage.poll() {
+            per_track[index].push(sample);
+        }
+    }
+    let mut tracks = Vec::with_capacity(base.tracks.len());
+    for (track, samples) in base.tracks.iter().zip(per_track) {
+        let start = samples
+            .iter()
+            .find_map(|s| s.timing.and_then(|t| t.dts()))
+            .map(|dts| dts.max(0) as u64)
+            .unwrap_or(track.start_decode_time);
+        tracks.push(Track::new_at(track.spec.clone(), samples, start));
+    }
+    Ok(SpliceOutput {
+        media: Media::new(tracks, plan.movie_timescale()),
+        discontinuity_points: plan.discontinuity_points().to_vec(),
+    })
+}
+
+/// Derive an I-frame-only track from `src` through [`TrickPlayStage`].
+///
+/// # Errors
+/// [`transmux::Error::InvalidInput`] when `src` has no sync samples.
+pub fn derive_iframe_track(src: &Track) -> Result<Track, transmux::Error> {
+    let mut stage = TrickPlayStage::new(src.spec.track_id, src.spec.clone());
+    for sample in &src.samples {
+        stage.feed((src.spec.track_id, sample.clone()), Timestamp::ZERO)?;
+    }
+    stage.finish()?;
+    let mut samples = Vec::new();
+    let mut spec = None;
+    while let Some(item) = stage.poll() {
+        match item {
+            transmux::mux_stage::MuxInput::Track(announced) => spec = Some(*announced),
+            transmux::mux_stage::MuxInput::Sample { sample, .. } => samples.push(sample),
+            _ => {}
+        }
+    }
+    let spec = spec.ok_or(transmux::Error::InvalidInput(
+        "trick-play derived no track to announce",
+    ))?;
+    let start = samples
+        .iter()
+        .find_map(|s| s.timing.and_then(|t| t.dts()))
+        .map(|dts| dts.max(0) as u64)
+        .unwrap_or(src.start_decode_time);
+    Ok(Track::new_at(spec, samples, start))
+}
+
+/// Append a track derived by [`derive_iframe_track`] at `index`.
+///
+/// # Errors
+/// [`transmux::Error::InvalidInput`] when `index` is out of range or the
+/// source has no sync samples.
+pub fn append_iframe_track(media: &mut Media, index: usize) -> Result<(), transmux::Error> {
+    let source = media
+        .tracks
+        .get(index)
+        .ok_or(transmux::Error::InvalidInput(
+            "video_track_index out of bounds for media.tracks",
+        ))?;
+    let derived = derive_iframe_track(source)?;
+    media.tracks.push(derived);
+    Ok(())
+}
+
+/// The track-selection helpers [`Media`] used to carry, as a test-only
+/// extension so existing tests keep their method-call shape while the
+/// production functions live in `transmux::repackage`.
+pub trait MediaSelectExt {
+    /// Select tracks by index; see [`transmux::repackage::select_tracks`].
+    fn select_tracks(&self, indices: &[usize]) -> Result<Media, transmux::Error>;
+
+    /// Select tracks by predicate; see
+    /// [`transmux::repackage::select_tracks_by`].
+    fn select_tracks_by<F>(&self, keep: F) -> Result<Media, transmux::Error>
+    where
+        F: FnMut(&Track) -> bool;
+
+    /// Trim to a presentation-time window; see [`transmux::repackage::trim`].
+    fn trim(&self, start: u64, end: u64) -> Result<Media, transmux::Error>;
+}
+
+impl MediaSelectExt for Media {
+    fn select_tracks(&self, indices: &[usize]) -> Result<Media, transmux::Error> {
+        transmux::repackage::select_tracks(self, indices)
+    }
+
+    fn select_tracks_by<F>(&self, keep: F) -> Result<Media, transmux::Error>
+    where
+        F: FnMut(&Track) -> bool,
+    {
+        transmux::repackage::select_tracks_by(self, keep)
+    }
+
+    fn trim(&self, start: u64, end: u64) -> Result<Media, transmux::Error> {
+        transmux::repackage::trim(self, start, end)
+    }
 }

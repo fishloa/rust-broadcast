@@ -352,7 +352,11 @@ async fn rtsp_push_survives_basic_auth_against_mediamtx() {
 /// egress path without a `Trunk`.
 async fn push_per_sample(transport: &mut RtspTransport, media: &transmux::Media) {
     let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-    transport.set_tracks(&specs).expect("announce tracks");
+    transport
+        .media_muxer()
+        .expect("a TS push carries its own mux")
+        .set_tracks(&specs)
+        .expect("announce tracks");
     let mut items: Vec<(i128, transmux::TrackId, transmux::Sample)> = Vec::new();
     for track in &media.tracks {
         for sample in &track.samples {
@@ -364,7 +368,9 @@ async fn push_per_sample(transport: &mut RtspTransport, media: &transmux::Media)
     items.sort_by_key(|(dts, track, _)| (*dts, *track));
     for (_, track, sample) in items {
         let messages = transport
-            .encode_sample(&specs, track, sample)
+            .media_muxer()
+            .expect("a TS push carries its own mux")
+            .encode_sample(track, &sample)
             .expect("encode sample");
         for message in messages {
             tokio::time::timeout(GUARD, transport.send(&message))

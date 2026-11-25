@@ -34,7 +34,7 @@
 //! the SDP's media section and the 90 kHz timestamp — the one place the wall
 //! clock is read — and nothing else.
 
-use crate::push::{PushTransport, SendMediaError};
+use crate::push::PushTransport;
 use rtsp_runtime::Credentials;
 use rtsp_runtime::client::{ClientEvent, ClientSession};
 use rtsp_runtime::sdp::session_description;
@@ -42,7 +42,6 @@ use rtsp_runtime::sdp::session_description;
 use broadcast_common::units::MICROS_PER_SEC;
 use std::time::Instant;
 use tokio::net::TcpStream;
-use transmux::TrackId;
 use transmux::ir::TrackSpec;
 use transmux::rtp::{MP2T_CLOCK_RATE, MP2T_MAX_PAYLOAD, MP2T_PT, MP2T_TS_PACKETS_PER_PACKET};
 
@@ -270,21 +269,8 @@ impl PushTransport for RtspTransport {
         }
     }
 
-    fn set_tracks(&mut self, tracks: &[TrackSpec]) -> Result<(), SendMediaError> {
-        self.ts_mux.set_tracks(tracks)
-    }
-
-    fn encode_sample(
-        &mut self,
-        _tracks: &[TrackSpec],
-        track: TrackId,
-        sample: transmux::Sample,
-    ) -> Result<Vec<bytes::Bytes>, SendMediaError> {
-        self.ts_mux.encode_sample(track, sample)
-    }
-
-    fn flush_mux(&mut self) -> Result<Vec<bytes::Bytes>, SendMediaError> {
-        self.ts_mux.flush()
+    fn media_muxer(&mut self) -> Option<&mut dyn crate::push::MediaMuxer> {
+        Some(&mut self.ts_mux)
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<(), Self::Error> {

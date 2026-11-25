@@ -8,13 +8,14 @@
 //! (malformed or unusual) fragment shape is the subject under test.
 #![cfg(feature = "cenc")]
 
-use broadcast_common::{Decrypt, Encrypt, Package, Unpackage};
+use broadcast_common::{Decrypt, Encrypt, Unpackage};
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::movie_fragment::TrackFragmentRunBox;
+use test_harness::collect::MediaSelectExt;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
-    CencDecryptor, CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, KeyMap, Media,
-    Sample, SubsamplePolicy, Track, TrackId, TrackSpec, TsDemux,
+    CencDecryptor, CencEncryptor, CencScheme, CodecConfig, EncryptConfig, KeyMap, Media, Sample,
+    SubsamplePolicy, Track, TrackId, TrackSpec, TsDemux,
 };
 
 const KID: [u8; 16] = [
@@ -77,7 +78,7 @@ fn find_top(data: &[u8], fourcc: &[u8; 4]) -> (usize, usize) {
 /// emits each sample's `senc` from its own protection), then protect the init
 /// segment of every track.
 fn protect_all(media: &Media) -> Vec<u8> {
-    let mut out = CmafMux::new(1).package(media).expect("CmafMux::package");
+    let mut out = crate::cmaf::package(media).expect("CmafMux::package");
     for track in &media.tracks {
         let enc = track
             .spec

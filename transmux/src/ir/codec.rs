@@ -337,7 +337,7 @@ pub enum CodecConfig {
     /// [`Error::UnmuxableSubtitleTrack`](crate::error::Error::UnmuxableSubtitleTrack)
     /// (media plane step-2 fix wave 1, B1) — rather than silently dropping or
     /// mis-emitting it; a caller must pre-filter with
-    /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by).
+    /// [`select_tracks_by`](crate::repackage::select_tracks_by).
     Subtitle {
         /// Which subtitle wire format this track carries.
         format: SubtitleFormat,
@@ -364,7 +364,7 @@ pub enum CodecConfig {
     /// (every fMP4/CMAF mux entry point rejects it, naming it, rather than
     /// silently omitting it — issue #576/#557); a caller mixing carriable and
     /// opaque tracks must pre-filter with
-    /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by) —
+    /// [`select_tracks_by`](crate::repackage::select_tracks_by) —
     /// see [`CodecConfig::is_muxable_in_bmff`].
     Data {
         /// Which container's identity this opaque track carries.
@@ -417,6 +417,23 @@ impl DataIdentity {
             DataIdentity::Mp4 { .. } => "mp4",
             DataIdentity::Matroska { .. } => "matroska",
         }
+    }
+
+    /// The sample-entry four-character code of an MP4 identity whose sample
+    /// entry carries a `sinf` box: a CENC/CBCS-protected track that reached
+    /// the IR as data because its protected format is not mapped yet.
+    pub fn protected_mp4_entry(&self) -> Option<[u8; isobmff::box_types::BOX_TYPE_SIZE]> {
+        let DataIdentity::Mp4 { sample_entry, .. } = self else {
+            return None;
+        };
+        isobmff::cenc::sinf_of_sample_entry(sample_entry)?;
+        sample_entry
+            .get(
+                isobmff::box_types::BOX_TYPE_OFFSET
+                    ..isobmff::box_types::BOX_TYPE_OFFSET + isobmff::box_types::BOX_TYPE_SIZE,
+            )?
+            .try_into()
+            .ok()
     }
 }
 
@@ -590,15 +607,18 @@ impl CodecConfig {
         (bps != 0).then_some(bps)
     }
 
-    /// True for the opaque [`CodecConfig::Data`] variant (issue #557/#576): a
-    /// PMT-carried elementary stream with no ISOBMFF sample entry in this
-    /// crate. Every fMP4/CMAF mux entry point (init segment + every packager
-    /// built on it) rejects such a track, naming it, rather than silently
-    /// omitting it — mirrors how the TS mux path, unlike this one, *can*
-    /// carry them verbatim. See [`CodecConfig::is_muxable_in_bmff`], which
-    /// also covers an entry-less [`CodecConfig::Subtitle`] (B1).
+    /// True for a [`CodecConfig::Data`] track whose identity no ISOBMFF muxer
+    /// in this crate can place: a TS elementary stream (issue #557/#576) or a
+    /// Matroska track. An [`DataIdentity::Mp4`] data track *is* carriable — its
+    /// identity already is an ISOBMFF handler and sample entry — so it is not
+    /// opaque here. See [`CodecConfig::is_muxable_in_bmff`], which also covers
+    /// an entry-less [`CodecConfig::Subtitle`] (B1).
     pub(crate) fn is_opaque_data(&self) -> bool {
-        matches!(self, CodecConfig::Data { .. })
+        matches!(
+            self,
+            CodecConfig::Data { identity, .. }
+                if !matches!(identity, DataIdentity::Mp4 { .. })
+        )
     }
 
     /// True for a [`CodecConfig::Subtitle`] with no `sample_entry`: this
@@ -623,7 +643,7 @@ impl CodecConfig {
     /// a track failing this predicate is rejected, naming the track, rather
     /// than silently dropped — a caller mixing carriable and non-carriable
     /// tracks must pre-filter first (e.g. with
-    /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by)).
+    /// [`select_tracks_by`](crate::repackage::select_tracks_by)).
     ///
     /// Does NOT cover the WebM-native [`CodecConfig::Vp8`]/[`CodecConfig::Vorbis`]
     /// (genuinely unimplemented fMP4 carriage, not a filterable policy choice
@@ -633,7 +653,7 @@ impl CodecConfig {
     ///
     /// `pub` (unlike the crate's other `CodecConfig` predicates): this is the
     /// caller-facing filter predicate the `Unmuxable*Track` errors point to,
-    /// e.g. `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`.
+    /// e.g. `select_tracks_by(&media, |t| t.spec.config.is_muxable_in_bmff())`.
     pub fn is_muxable_in_bmff(&self) -> bool {
         !(self.is_opaque_data() || self.is_subtitle_without_entry())
     }

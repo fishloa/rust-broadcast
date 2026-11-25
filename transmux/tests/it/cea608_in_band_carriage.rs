@@ -10,7 +10,7 @@
 //! extractor's frame count (`private/fixtures/captions/*/*.cc_data.txt` line count).
 
 use crate::ts_mux_stage;
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use transmux::pipeline::CodecConfig;
 use transmux::{Media, TsDemux};
 
@@ -120,7 +120,6 @@ fn mux_js_fmp4_608_survives_cmaf_remux() {
     if skip_without_private() {
         return;
     }
-    use transmux::CmafMux;
     let mut buf = read_private("captions/mux.js/dash-608-captions-init.mp4");
     buf.extend_from_slice(&read_private("captions/mux.js/dash-608-captions-seg.m4s"));
     let raw_markers = buf
@@ -132,7 +131,7 @@ fn mux_js_fmp4_608_survives_cmaf_remux() {
         test_harness::collect::media_from_mp4(&buf, test_harness::collect::CollectMode::Seekable)
             .expect("demux fMP4");
     assert_eq!(marker_count(&media), 3);
-    let out = CmafMux::new(1).package(&media).expect("CMAF re-mux");
+    let out = crate::cmaf::package(&media).expect("CMAF re-mux");
     let media2 =
         test_harness::collect::media_from_mp4(&out, test_harness::collect::CollectMode::Seekable)
             .expect("re-demux");

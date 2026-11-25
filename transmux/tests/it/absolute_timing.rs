@@ -25,13 +25,13 @@
 //! never against the demuxer's own bookkeeping.
 
 use crate::ts_mux_stage;
+use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Unpackage};
 use transmux::TrackId;
 
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
-use transmux::{FlvDemux, Media, PsDemux, RtmpMux, RtpOutput, RtpPacketiser, TsDemux, WebmDemux};
+use transmux::{FlvDemux, Media, PsDemux, RtmpMuxStage, TsDemux, WebmDemux};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -708,7 +708,7 @@ fn ps_demux_emits_absolute_time_from_pes_timestamps() {
 fn rtmp_demux_emits_absolute_time_from_message_timestamps() {
     let flv = std::fs::read(test_fixtures::path("flv/av.flv")).expect("fixtures/flv/av.flv");
     let ir = FlvDemux::new().unpackage(&flv[..]).expect("FLV → IR");
-    let wire = RtmpMux::default().package(&ir).expect("IR → RTMP wire");
+    let wire = crate::mux_bytes::mux_bytes(&mut RtmpMuxStage::default(), &ir);
     let back = transmux::RtmpDemux::new()
         .unpackage(&wire[..])
         .expect("RTMP wire → IR");
@@ -744,13 +744,7 @@ fn rtmp_demux_emits_absolute_time_from_message_timestamps() {
 fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
     let ts = std::fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("h264-aac.ts fixture");
     let ir = TsDemux::new().unpackage(&ts[..]).expect("TS → IR");
-    let out: RtpOutput = RtpPacketiser {
-        mtu: 1400,
-        ssrc: 0x1234_5678,
-        ..RtpPacketiser::default()
-    }
-    .package(&ir)
-    .expect("IR → RTP");
+    let out = crate::rtp_run::packetise(&ir, crate::rtp_run::stage(1400, 0x1234_5678));
 
     let recovered = transmux::RtpDepacketiser::new()
         .unpackage(RtpInput {
@@ -871,7 +865,7 @@ fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
 fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
     use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
     use isobmff::nalu_types::{AvcPps, AvcSps};
-    use transmux::media::{CmafMux, Track};
+    use transmux::media::Track;
     use transmux::pipeline::{Sample, TrackSpec};
 
     const ANCHOR: u64 = 1_234_567;
@@ -923,7 +917,7 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
     );
 
     // fMP4 #1, written by this crate.
-    let fmp4_1 = CmafMux::default().package(&media).expect("mux #1");
+    let fmp4_1 = crate::cmaf::package(&media).expect("mux #1");
     // -> IR (absolute dts/pts recovered from tfdt + trun durations + ctts) ...
     let ir = test_harness::collect::media_from_mp4(
         &fmp4_1,
@@ -931,7 +925,7 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
     )
     .expect("demux");
     // ... -> fMP4 #2.
-    let fmp4_2 = CmafMux::default().package(&ir).expect("mux #2");
+    let fmp4_2 = crate::cmaf::package(&ir).expect("mux #2");
 
     // The round-tripped IR must carry the absolute timing, not a rebased copy.
     assert_eq!(
