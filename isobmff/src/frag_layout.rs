@@ -386,6 +386,10 @@ impl TrackFragmentLayout {
 
         let mut tfhd = TrackFragmentHeaderLayout {
             flags: crate::movie_fragment::TFHD_DEFAULT_BASE_IS_MOOF,
+            sample_description_index: uniform(
+                samples.iter().map(|sample| sample.meta.description_index),
+            )
+            .filter(|index| *index != track.trex.sample_description_index),
             ..TrackFragmentHeaderLayout::default()
         };
         let mut fields = RunFields::default();

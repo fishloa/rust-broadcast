@@ -11,6 +11,7 @@
 
 use std::collections::BTreeMap;
 
+use isobmff::frag_layout::{FragmentIndex, FragmentLayout};
 use isobmff::plan::OwnedPlan;
 use isobmff::sample_table::SampleRef;
 use isobmff::writer::{
@@ -38,8 +39,17 @@ fn fuzz_limits() -> Limits {
 struct Run {
     tracks: Vec<TrackInfo>,
     samples: Vec<SampleRef>,
-    fragments: Vec<(u32, Vec<SampleRef>)>,
+    fragments: Vec<Fragment>,
+    index: FragmentIndex,
     plan: OwnedPlan,
+}
+
+/// One fragment as the reader reported it: its sequence number, the layout it
+/// states, and its samples.
+struct Fragment {
+    sequence_number: u32,
+    layout: FragmentLayout,
+    samples: Vec<SampleRef>,
 }
 
 fn drive(data: &[u8]) -> Option<Run> {
@@ -51,7 +61,7 @@ fn drive(data: &[u8]) -> Option<Run> {
     );
     let mut tracks = Vec::new();
     let mut samples: Vec<SampleRef> = Vec::new();
-    let mut fragments: Vec<(u32, Vec<SampleRef>)> = Vec::new();
+    let mut fragments: Vec<Fragment> = Vec::new();
     for _ in 0..MAX_STEPS {
         match reader.step().ok()? {
             Step::Need(range) => {
@@ -60,23 +70,29 @@ fn drive(data: &[u8]) -> Option<Run> {
                 reader.supply(range.offset, data.get(start..end)?).ok()?;
             }
             Step::Tracks(step_tracks) => tracks = step_tracks.to_vec(),
-            Step::Fragment(info) => fragments.push((info.sequence_number, Vec::new())),
+            Step::Fragment(info) => fragments.push(Fragment {
+                sequence_number: info.sequence_number,
+                layout: info.layout.clone(),
+                samples: Vec::new(),
+            }),
             Step::Sample(sample) => {
                 let end = sample.offset.checked_add(u64::from(sample.size))?;
                 if end > data.len() as u64 {
                     return None;
                 }
                 if let Some(fragment) = fragments.last_mut() {
-                    fragment.1.push(sample.clone());
+                    fragment.samples.push(sample.clone());
                 }
                 samples.push(sample);
             }
             Step::Done => {
+                let index = reader.fragment_index().clone();
                 let plan = reader.plan()?.to_owned_plan().ok()?;
                 return Some(Run {
                     tracks,
                     samples,
                     fragments,
+                    index,
                     plan,
                 });
             }
@@ -211,9 +227,13 @@ fn rewrite_fragmented(data: &[u8], run: &Run) -> Option<Vec<u8>> {
     if init.len() as u64 > MAX_FILE_BYTES {
         return None;
     }
+    writer.set_index_layout(run.index.clone());
+    writer.set_position(init.len() as u64);
     let mut out = init;
-    for (sequence_number, samples) in &run.fragments {
-        writer.set_sequence_number(*sequence_number);
+    for fragment in &run.fragments {
+        writer.set_sequence_number(fragment.sequence_number);
+        writer.set_fragment_layout(fragment.layout.clone());
+        let samples = &fragment.samples;
         let mut based: Vec<TrackId> = Vec::new();
         for sample in samples {
             if !based.contains(&sample.track) {
