@@ -43,7 +43,7 @@
 //! let envelope = LlsEnvelope::parse(&bytes).unwrap();
 //! assert_eq!(envelope.table_id, LlsTableId::Slt);
 //!
-//! let xml_bytes = envelope.decompress().unwrap();
+//! let xml_bytes = envelope.decompress(atsc3::lls::MAX_DECOMPRESSED_LLS_LIMIT).unwrap();
 //! let xml = std::str::from_utf8(&xml_bytes).unwrap();
 //! let slt = Slt::parse(xml).unwrap();
 //! assert_eq!(slt.services.len(), 2);

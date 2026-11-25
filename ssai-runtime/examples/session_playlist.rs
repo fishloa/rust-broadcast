@@ -8,6 +8,7 @@
 //! cargo run -p ssai-runtime --example session_playlist
 //! ```
 use broadcast_common::Parse;
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::clock33::Clock33;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 use isobmff::emsg::{EmsgBox, PresentationTime};
@@ -17,7 +18,10 @@ use ssai_runtime::decision::{AdBreakDecision, AdDecisionProvider, BreakContext, 
 use ssai_runtime::playlist::{InterstitialDateRange, render_session_playlist};
 use ssai_runtime::session::{BreakState, SessionStore};
 use ssai_runtime::splice::condition_splice_point;
-use std::fs;
+
+/// One `emsg` box: a v1 message whose `message_data` carries one SCTE-35
+/// section (4 KiB at most), so 64 KiB is already generous.
+const EMSG_LIMIT: Limit = Limit::new("EMSG box", 64 * 1024);
 use std::time::Duration;
 
 /// Reduce an absolute representation-clock instant onto the 33-bit PTS
@@ -50,7 +54,8 @@ fn main() {
     // Decode the same real cue `condition_real_cue` uses, so this walkthrough
     // is grounded in genuine SCTE-35 fields rather than invented ones.
     let path = test_fixtures::path("scte35/emsg-splice-insert.bin");
-    let emsg_bytes = fs::read(path).expect("read real emsg fixture (see PROVENANCE.md)");
+    let emsg_bytes =
+        read_file_bounded(&path, EMSG_LIMIT).expect("read real emsg fixture (see PROVENANCE.md)");
     let emsg = EmsgBox::parse(&emsg_bytes).expect("parse real emsg box");
     let requested_pts = match emsg.presentation_time {
         PresentationTime::Absolute(t) => t,

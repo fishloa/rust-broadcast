@@ -77,7 +77,9 @@ fn decompresses_real_payload_into_valid_xml() {
     let bytes = read_fixture(FIXTURE);
     let env = LlsEnvelope::parse(&bytes).expect("parse");
 
-    let xml_bytes = env.decompress().expect("gunzip real payload");
+    let xml_bytes = env
+        .decompress(atsc3::lls::MAX_DECOMPRESSED_LLS_LIMIT)
+        .expect("gunzip real payload");
     let xml = std::str::from_utf8(&xml_bytes).expect("decompressed body is UTF-8");
     assert!(xml.starts_with("<?xml"));
     assert!(xml.contains("<SLT"));
@@ -90,7 +92,9 @@ fn decompresses_real_payload_into_valid_xml() {
 fn parses_real_slt_from_decompressed_payload() {
     let bytes = read_fixture(FIXTURE);
     let env = LlsEnvelope::parse(&bytes).expect("parse");
-    let xml_bytes = env.decompress().expect("gunzip");
+    let xml_bytes = env
+        .decompress(atsc3::lls::MAX_DECOMPRESSED_LLS_LIMIT)
+        .expect("gunzip");
     let xml = std::str::from_utf8(&xml_bytes).expect("utf8");
 
     let slt = Slt::parse(xml).expect("parse real SLT XML");
@@ -134,7 +138,8 @@ fn corrupting_the_gzip_payload_breaks_decompression() {
 
     let env = LlsEnvelope::parse(&bytes).expect("envelope header still parses");
     assert!(
-        env.decompress().is_err(),
+        env.decompress(atsc3::lls::MAX_DECOMPRESSED_LLS_LIMIT)
+            .is_err(),
         "corrupting the gzip payload must break decompression"
     );
 }

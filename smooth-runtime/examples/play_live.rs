@@ -11,6 +11,7 @@
 
 use std::path::PathBuf;
 
+use broadcast_common::bounded::{Limit, read_file_bounded_string};
 use broadcast_common::stage::Timestamp;
 use smooth_runtime::{Action, FetchFailure, Output, SmoothClient, SmoothClientConfig};
 
@@ -25,6 +26,9 @@ const STATIC_ATTRS: &str = "Duration=\"30415941\"";
 const LIVE_ATTRS: &str = "Duration=\"30415941\" IsLive=\"TRUE\" DVRWindowLength=\"20000000\"";
 const DEFAULT_LOOK_AHEAD: usize = 2;
 const RUN_US: u64 = 10_000_000;
+/// A whole Smooth client Manifest: the ceiling the XML reader accepts for any
+/// manifest this crate parses.
+const MANIFEST_LIMIT: Limit = Limit::new("Smooth manifest", 4 * 1024 * 1024);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut look_ahead = DEFAULT_LOOK_AHEAD;
@@ -37,7 +41,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FIXTURE_DIR);
-    let manifest = std::fs::read_to_string(dir.join("Manifest"))?.replace(STATIC_ATTRS, LIVE_ATTRS);
+    let manifest = read_file_bounded_string(&dir.join("Manifest"), MANIFEST_LIMIT)?
+        .replace(STATIC_ATTRS, LIVE_ATTRS);
     let config =
         SmoothClientConfig::new(format!("{ORIGIN}Manifest")).with_live_join_fragments(look_ahead);
     let mut client = SmoothClient::new(config);

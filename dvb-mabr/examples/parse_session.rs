@@ -2,10 +2,18 @@
 //!
 //! Usage: cargo run -p dvb-mabr --example parse_session -- <config.xml>
 
+use broadcast_common::bounded::{Limit, read_file_bounded_string};
 use dvb_mabr::MulticastGatewayConfiguration;
 use std::env;
-use std::fs;
+use std::path::Path;
 use std::process;
+
+/// A whole MABR session-configuration document, bounded by the ceiling the XML
+/// reader accepts for any configuration this crate parses.
+const CONFIG_LIMIT: Limit = Limit::new(
+    "MABR configuration",
+    broadcast_common::xml_chars::MAX_XML_BYTES as u64,
+);
 
 fn main() {
     let path = match env::args().nth(1) {
@@ -16,7 +24,7 @@ fn main() {
         }
     };
 
-    let xml = fs::read_to_string(&path).unwrap_or_else(|e| {
+    let xml = read_file_bounded_string(Path::new(&path), CONFIG_LIMIT).unwrap_or_else(|e| {
         eprintln!("cannot read {path}: {e}");
         process::exit(1);
     });

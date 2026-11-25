@@ -187,6 +187,9 @@ pub const TABLE: &[Crate] = &[
             "InterfaceError",
             "HexDecodeError",
             "Base64DecodeError",
+            // Why a whole-document read was refused (too large, an I/O fault,
+            // not UTF-8), not a spec label.
+            "BoundedReadError",
         ],
         expected: None,
         min_enums: None,

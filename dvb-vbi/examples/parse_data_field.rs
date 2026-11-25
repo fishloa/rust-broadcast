@@ -4,16 +4,19 @@
 /// ```sh
 /// cargo run -p dvb-vbi --example parse_data_field
 /// ```
-use std::fs;
-
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use dvb_vbi::{DataField, DataUnitPayload};
+
+/// One PES data field: the VBI data units of a single video field, kilobytes
+/// at most (ETSI EN 301 775 §4).
+const DATA_FIELD_LIMIT: Limit = Limit::new("VBI data field", 64 * 1024);
 
 fn main() {
     // Fixtures live in the workspace-shared `fixtures/` tree, not under the
     // crate. A committed fixture that cannot be read is a bug, not a reason
     // to skip — so a missing/unreadable fixture is a hard failure.
     let path = test_fixtures::path("subtitles/vbi-data-field.bin");
-    let bytes = fs::read(&path).unwrap_or_else(|e| {
+    let bytes = read_file_bounded(&path, DATA_FIELD_LIMIT).unwrap_or_else(|e| {
         panic!(
             "committed fixture {} could not be read: {e}",
             path.display()

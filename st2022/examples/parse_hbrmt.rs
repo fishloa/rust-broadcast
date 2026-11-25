@@ -3,10 +3,14 @@
 //! Usage:
 //!   cargo run --example parse_hbrmt -- <header.bin>
 
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::{Parse, Serialize};
 use std::env;
-use std::fs;
+use std::path::Path;
 use std::process;
+
+/// One ST 2022-6 HBRMT payload header, fixed-size in the RTP payload.
+const HEADER_LIMIT: Limit = Limit::new("HBRMT payload header", 64 * 1024);
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -16,7 +20,7 @@ fn main() {
     }
 
     let file_path = &args[1];
-    let bytes = match fs::read(file_path) {
+    let bytes = match read_file_bounded(Path::new(file_path), HEADER_LIMIT) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Error reading {}: {}", file_path, e);

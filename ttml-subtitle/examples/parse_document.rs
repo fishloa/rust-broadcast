@@ -2,14 +2,21 @@
 //!
 //! Usage: `cargo run -p ttml-subtitle --example parse_document`
 
-use std::fs;
+use broadcast_common::bounded::{Limit, read_file_bounded_string};
 
 use ttml_subtitle::Document;
+
+/// A whole TTML document, bounded by the ceiling the XML reader accepts for
+/// any document this crate parses.
+const DOCUMENT_LIMIT: Limit = Limit::new(
+    "TTML document",
+    broadcast_common::xml_chars::MAX_XML_BYTES as u64,
+);
 
 fn main() {
     let fixture = test_fixtures::path("subtitles/imsc1-document-example-822.ttml");
 
-    let xml = fs::read_to_string(&fixture).expect("failed to read fixture");
+    let xml = read_file_bounded_string(&fixture, DOCUMENT_LIMIT).expect("failed to read fixture");
 
     let doc = Document::parse_str(&xml).expect("failed to parse document");
 

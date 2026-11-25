@@ -30,6 +30,7 @@ mod imp {
     use std::process::ExitCode;
     use std::time::{Duration, Instant};
 
+    use broadcast_common::bounded::{Limit, read_file_bounded};
     use clap::{Args, Parser, Subcommand};
     use dvb_ci_runtime::device::RecordingCaDevice;
     use dvb_ci_runtime::event::{HotPlug, MmiEvent, MmiMenu};
@@ -38,6 +39,9 @@ mod imp {
 
     const PUMP: Duration = Duration::from_millis(100);
     const READY_TIMEOUT: Duration = Duration::from_secs(10);
+    /// A PMT section file: one MPEG-2 PSI section (ISO/IEC 13818-1
+    /// §2.4.4.8), whose 12-bit `section_length` tops out at 4096 bytes.
+    const PMT_LIMIT: Limit = Limit::new("PMT section file", 4096);
 
     type Dev = RecordingCaDevice<LinuxCaDevice>;
 
@@ -175,7 +179,7 @@ mod imp {
 
     /// Feed a PMT-section file and run the query → reply → ok descramble sequence.
     fn descramble(adapter: u32, ca: u32, pmt_file: &str, trace: bool) -> io::Result<()> {
-        let pmt = std::fs::read(pmt_file)?;
+        let pmt = read_file_bounded(Path::new(pmt_file), PMT_LIMIT).map_err(io::Error::other)?;
         let mut driver = open(adapter, ca)?;
         driver.init()?;
         let deadline = Instant::now() + READY_TIMEOUT;

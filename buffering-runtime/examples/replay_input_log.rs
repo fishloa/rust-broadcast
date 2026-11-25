@@ -14,10 +14,16 @@
 
 use core::time::Duration;
 
+use broadcast_common::bounded::{Limit, read_file_bounded_string};
 use buffering_runtime::ControllerConfig;
 use buffering_runtime::input_log::{Input, InputLog};
 use std::fmt::Write as _;
+use std::path::Path;
 use std::process::ExitCode;
+
+/// A whole input log: a text CSV of delivery events, megabytes at most for a
+/// multi-hour capture.
+const INPUT_LOG_LIMIT: Limit = Limit::new("input log", 16 * 1024 * 1024);
 
 const VIDEO: u32 = 1;
 const AUDIO: u32 = 2;
@@ -54,7 +60,7 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let (name, text) = match args.first() {
         None => ("synthetic".to_string(), synthetic_log()),
-        Some(path) => match std::fs::read_to_string(path) {
+        Some(path) => match read_file_bounded_string(Path::new(path), INPUT_LOG_LIMIT) {
             Ok(t) => (path.clone(), t),
             Err(e) => {
                 eprintln!("{path}: {e}");

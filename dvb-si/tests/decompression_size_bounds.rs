@@ -22,7 +22,10 @@
 
 #![cfg(feature = "flate2")]
 
-use dvb_si::carousel::biop::message::{decompress_zlib, decompress_zlib_bounded};
+use broadcast_common::bounded::Limit;
+use dvb_si::carousel::biop::message::{
+    MAX_DECOMPRESSED_MODULE_SIZE, decompress_zlib, decompress_zlib_bounded,
+};
 use flate2::{Compression, write::ZlibEncoder};
 use std::io::Write;
 
@@ -77,12 +80,10 @@ fn compressed_zeros_output_is_bounded() {
     let result = decompress_zlib(&compressed);
     assert!(
         result
-            == Err(dvb_si::error::Error::InvalidField(
-                broadcast_common::error::InvalidField {
-                    field: "compressed_module_descriptor body",
-                    reason: "zlib output exceeds the decompressed-size limit",
-                }
-            )),
+            == Err(dvb_si::error::Error::TooLarge {
+                limit_name: "decompressed carousel module",
+                limit_bytes: MAX_DECOMPRESSED_MODULE_SIZE as u64,
+            }),
         "a compressed stream inflating to {INFLATED_LEN} bytes (past \
          MAX_DECOMPRESSED_MODULE_SIZE = 64 MiB) must return Err, not silently \
          allocate and return the full output"
@@ -95,15 +96,14 @@ fn compressed_zeros_output_is_bounded() {
 #[test]
 fn compressed_zeros_bounded_explicit_cap_is_rejected() {
     let compressed = compressed_zeros(100 * 1024 * 1024);
-    let result = decompress_zlib_bounded(&compressed, 1024 * 1024);
+    let result =
+        decompress_zlib_bounded(&compressed, Limit::new("explicit 1 MiB cap", 1024 * 1024));
     assert!(
         result
-            == Err(dvb_si::error::Error::InvalidField(
-                broadcast_common::error::InvalidField {
-                    field: "compressed_module_descriptor body",
-                    reason: "zlib output exceeds the decompressed-size limit",
-                }
-            )),
+            == Err(dvb_si::error::Error::TooLarge {
+                limit_name: "explicit 1 MiB cap",
+                limit_bytes: 1024 * 1024,
+            }),
         "output exceeding an explicit 1 MiB cap must return Err"
     );
 }

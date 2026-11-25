@@ -4,12 +4,16 @@
 //!
 //! Run with `cargo run -p rtp-packet --example parse_packet`.
 
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::{Parse, Serialize};
 use rtp_packet::RtpPacket;
 
+/// One RTP packet: its 16-bit length field caps the datagram under 64 KiB.
+const RTP_PACKET_LIMIT: Limit = Limit::new("RTP packet", 64 * 1024);
+
 fn main() {
     let path = test_fixtures::path("rtp/rtp-simple.bin");
-    let bytes = std::fs::read(path).expect("fixture must exist");
+    let bytes = read_file_bounded(&path, RTP_PACKET_LIMIT).expect("fixture must exist");
 
     let pkt = RtpPacket::parse(&bytes).expect("parse RTP fixed header");
     println!("marker:          {}", pkt.marker);

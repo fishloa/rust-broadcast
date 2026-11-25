@@ -68,6 +68,15 @@ pub enum Error {
         available: usize,
     },
 
+    /// A whole document exceeded the named byte limit it was read under.
+    #[error("{limit_name} exceeds the configured limit of {limit_bytes} bytes")]
+    TooLarge {
+        /// Name of the document being read.
+        limit_name: &'static str,
+        /// The ceiling it exceeded, in bytes.
+        limit_bytes: u64,
+    },
+
     /// A reserved or fixed-value bit group was not in the state a spec clause
     /// requires. Most parsers are permissive about reserved bits; this is only
     /// emitted when a clause specifically requires a value.

@@ -5,7 +5,11 @@
 
 use std::path::PathBuf;
 
+use broadcast_common::bounded::{Limit, read_file_bounded_string};
 use broadcast_dash::Mpd;
+
+/// A whole MPD, bounded by the ceiling the MPD parser itself accepts.
+const MPD_LIMIT: Limit = Limit::new("MPD", broadcast_dash::limits::MAX_MPD_BYTES as u64);
 
 fn segment_kind(seg: &broadcast_dash::SegmentLayer) -> &'static str {
     if seg.template.is_some() {
@@ -24,7 +28,7 @@ fn main() {
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| test_fixtures::path("dash/manifest.mpd"));
-    let xml = std::fs::read_to_string(&path).expect("read the committed MPD fixture");
+    let xml = read_file_bounded_string(&path, MPD_LIMIT).expect("read the committed MPD fixture");
 
     let mpd = Mpd::parse(xml.as_bytes()).expect("valid MPD");
     println!(

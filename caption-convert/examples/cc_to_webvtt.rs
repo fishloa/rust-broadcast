@@ -5,9 +5,13 @@
 //!
 //! Run with `cargo run -p caption-convert --example cc_to_webvtt`.
 
+use broadcast_common::bounded::{Limit, read_file_bounded_string};
 use caption_convert::Cea608ToWebVtt;
 use cc_data::decode::Cea608Channel;
-use std::fs;
+
+/// A whole caption fixture: a text table of caption triplets, hundreds of
+/// kilobytes at most.
+const CAPTION_FIXTURE_LIMIT: Limit = Limit::new("caption fixture", 4 * 1024 * 1024);
 
 fn fixture_path() -> std::path::PathBuf {
     test_fixtures::path("captions/cea608-cc1-synthetic.txt")
@@ -17,7 +21,8 @@ fn fixture_path() -> std::path::PathBuf {
 /// comment/blank lines -- the same format `timed-metadata`'s own fixture
 /// test uses (see its doc comment for the fixture's provenance).
 fn load_frames() -> Vec<(u64, Vec<u8>)> {
-    let text = fs::read_to_string(fixture_path()).expect("read cea608-cc1-synthetic.txt fixture");
+    let text = read_file_bounded_string(&fixture_path(), CAPTION_FIXTURE_LIMIT)
+        .expect("read cea608-cc1-synthetic.txt fixture");
     let mut frames = Vec::new();
     for line in text.lines() {
         let line = line.trim();

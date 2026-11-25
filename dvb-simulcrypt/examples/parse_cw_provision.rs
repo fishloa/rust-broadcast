@@ -6,19 +6,22 @@
 /// ```sh
 /// cargo run -p dvb-simulcrypt --example parse_cw_provision
 /// ```
-use std::fs;
-
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::traits::Serialize;
 use dvb_simulcrypt::{
     EcmgScsParameterType, Interface, MessageType, ParameterType, SimulcryptMessage,
 };
+
+/// One SimulCrypt TLV message: signalling plus a CW combination, kilobytes at
+/// most.
+const MESSAGE_LIMIT: Limit = Limit::new("SimulCrypt message", 4 * 1024 * 1024);
 
 fn main() {
     // Fixtures live in the workspace-shared `fixtures/` tree, not under the
     // crate. A committed fixture that cannot be read is a bug, not a reason
     // to skip — so a missing/unreadable fixture is a hard failure.
     let path = test_fixtures::path("simulcrypt/cw-provision.bin");
-    let bytes = fs::read(&path).unwrap_or_else(|e| {
+    let bytes = read_file_bounded(&path, MESSAGE_LIMIT).unwrap_or_else(|e| {
         panic!(
             "committed fixture {} could not be read: {e}",
             path.display()

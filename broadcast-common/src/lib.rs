@@ -55,7 +55,7 @@ pub mod bcd;
 pub mod ber;
 pub mod bits;
 #[cfg(feature = "std")]
-pub mod capped;
+pub mod bounded;
 pub mod cenc;
 pub mod clock33;
 pub mod content_range;
