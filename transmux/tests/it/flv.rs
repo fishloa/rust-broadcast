@@ -1,7 +1,8 @@
 //! FLV.as_slice() (Flash Video) spoke integration tests (issue #513).
 //!
-//! Exercises [`transmux::FlvDemux`] ([`Unpackage`]) and [`transmux::FlvMuxStage`]
-//! ([`Package`]) against the committed real fixture `fixtures/flv/av.flv`
+//! Exercises [`transmux::FlvDemux`] ([`Unpackage`]) and the
+//! [`transmux::FlvMuxStage`] mux stage against the committed real fixture
+//! `fixtures/flv/av.flv`
 //! (H.264 + AAC) and its ffprobe oracle `fixtures/flv/av.packets.csv`.
 //!
 //! Gates (each bites — see the per-test comments for what a regression breaks):
@@ -9,7 +10,7 @@
 //! 2. avcC + ASC: avcC byte-identical to the same-source `.ref.mp4`; ASC rate/channels.
 //! 3. Timestamp/keyframe oracle: 75 video + 131 audio; per-sample PTS/DTS vs CSV.as_str().
 //! 4. Sample fidelity + FLV.as_slice() round-trip: demux→mux→demux byte-identical AUs.
-//! 5. Cross-hub: FLV.as_slice() → IR → CmafMux carries avc1/avcC + mp4a and matching NALs.
+//! 5. Cross-hub: FLV.as_slice() → IR → CmafMuxStage carries avc1/avcC + mp4a and matching NALs.
 
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::timescale::Timescale;
@@ -279,7 +280,7 @@ fn flv_round_trip_preserves_samples_and_timing() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 5 — Cross-hub: FLV.as_slice() → IR → CmafMux
+// Test 5 — Cross-hub: FLV.as_slice() → IR → CmafMuxStage
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -330,11 +331,11 @@ fn cross_hub_flv_to_cmaf() {
     assert!(saw_mp4a, "CMAF must carry mp4a");
 
     // The video NAL payloads in the CMAF mdat equal the FLV.as_slice()-demuxed ones (the
-    // IR passed them through unchanged: CmafMux copies Sample.data into mdat).
+    // IR passed them through unchanged: CmafMuxStage copies Sample.data into mdat).
     let mdat = find_top_box(&seg, b"mdat").expect("mdat in CMAF");
     let mdat_body = &mdat[8..];
     // The first FLV.as_slice() video NAL sample must appear verbatim at the mdat head
-    // (video is emitted first in track order by CmafMux).
+    // (video is emitted first in track order by CmafMuxStage).
     assert!(
         mdat_body.starts_with(&flv_nals[0]),
         "first FLV.as_slice() video sample NAL bytes appear verbatim in the CMAF mdat"
@@ -347,7 +348,7 @@ fn cross_hub_flv_to_cmaf() {
 
 /// `transmux::flv_sequence_header_payloads`/`flv_frame_payloads` are the API
 /// `multimux`'s RTMP push output uses (issue #934) instead of muxing every
-/// push output with `TsMux` and shipping raw MPEG-2 TS as an RTMP video
+/// push output to MPEG-2 TS and shipping those bytes as an RTMP video
 /// message — a payload no RTMP server can decode. Asserts the actual byte
 /// **shape**: an RTMP `send_video` payload must look like FLV.as_slice() `VIDEODATA`
 /// (`FrameType`/`CodecID` nibble + `AVCPacketType`), never start with the TS
@@ -373,8 +374,8 @@ fn streaming_payloads_are_flv_shaped_not_ts_shaped() {
         .expect("audio sequence header present");
 
     // VideoTagHeader: FrameType=keyframe(1)<<4 | CodecID=AVC(7) = 0x17;
-    // AVCPacketType=SEQUENCE_HEADER(0). THE BITE: the old defect (TsMux
-    // output as an RTMP video payload) starts with `0x47` (TS sync byte),
+    // AVCPacketType=SEQUENCE_HEADER(0). THE BITE: the old defect (MPEG-2 TS
+    // as an RTMP video payload) starts with `0x47` (TS sync byte),
     // never `0x17`.
     assert_eq!(
         vid_hdr.body[0], 0x17,
@@ -486,10 +487,10 @@ fn first_frame(
 }
 
 // ---------------------------------------------------------------------------
-// Test 7 — FlvMux rescales track ticks to FLV.as_slice()'s millisecond clock (r04-W12)
+// Test 7 — FlvMuxStage rescales track ticks to FLV.as_slice()'s millisecond clock (r04-W12)
 // ---------------------------------------------------------------------------
 
-/// `FlvMux::package` writes each track's `Sample::duration` running sum into
+/// `FlvMuxStage` writes each track's `Sample::duration` running sum into
 /// the FLV.as_slice() tag `Timestamp` field, which is a **millisecond** clock (§E.4.1),
 /// and `Sample::composition_offset()` into the `CompositionTime` SI24 field,
 /// also milliseconds (§E.4.3.2). Both are in the track's own
@@ -635,7 +636,7 @@ fn package_rejects_oversized_composition_time() {
 /// The RTMP payload path (`flv_frame_payloads`) used to narrow the DTS with
 /// `as u32` and the composition offset with `as i32` (then 3 low bytes), so
 /// an out-of-range value was silently truncated. It must reject them exactly
-/// like `FlvMux::package` does (#1129).
+/// like `FlvMuxStage` does (#1129).
 #[test]
 fn frame_payloads_reject_out_of_range_timestamps() {
     let mut demux = FlvDemux::new();
@@ -1056,7 +1057,7 @@ fn tag_missing_only_its_previous_tag_size_is_accepted() {
 /// an error. `RtpDepacketiser` has produced timescale-0 tracks, so this is
 /// reachable, not hypothetical.
 /// `on_metadata_body` is the only `onMetaData` body the workspace writes: the
-/// script tag `FlvMux` emits for this fixture, and the one a live RTMP push
+/// script tag `FlvMuxStage` emits for this fixture, and the one a live RTMP push
 /// frames, differ only by the `duration` the file knows and a live stream
 /// does not. Bites if either writer grows its own property list again.
 #[test]
@@ -1069,7 +1070,7 @@ fn on_metadata_body_is_the_tag_flv_mux_writes_minus_the_live_duration() {
     let script = rtmp_runtime::flv::tags(&flv, &header)
         .map(|tag| tag.expect("FLV tag"))
         .find(|tag| tag.tag_type == rtmp_runtime::flv::TagType::Script)
-        .expect("FlvMux writes an onMetaData script tag");
+        .expect("FlvMuxStage writes an onMetaData script tag");
 
     let file_body =
         transmux::on_metadata_body(&specs(&media), Some(script_duration_seconds(&media)))
@@ -1077,7 +1078,7 @@ fn on_metadata_body_is_the_tag_flv_mux_writes_minus_the_live_duration() {
     assert_eq!(
         script.body.to_vec(),
         file_body,
-        "FlvMux's script tag is the shared onMetaData body"
+        "FlvMuxStage's script tag is the shared onMetaData body"
     );
 
     let live = transmux::on_metadata_body(&specs(&media), None).expect("live body");
@@ -1092,7 +1093,7 @@ fn on_metadata_body_is_the_tag_flv_mux_writes_minus_the_live_duration() {
     );
 }
 
-/// The fixture's longest track duration as `FlvMux` writes it: the summed
+/// The fixture's longest track duration as `FlvMuxStage` writes it: the summed
 /// sample durations over the track's own timescale, in seconds.
 fn script_duration_seconds(media: &transmux::Media) -> f64 {
     let mut max = 0.0f64;

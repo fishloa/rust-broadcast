@@ -1,8 +1,7 @@
 //! The transmux media intermediate representation (IR).
 //!
-//! This is the neutral hub form every demuxer produces and every muxer
-//! consumes (the transmux side of the `broadcast-common` container-mux
-//! vocabulary, [`broadcast_common::Unpackage`] / [`broadcast_common::Package`]):
+//! This is the neutral hub form every demuxer produces and every mux stage or
+//! manifest renderer consumes:
 //!
 //! - [`Media`] — a set of elementary [`Track`]s, plus the movie timescale and
 //!   an optional recovered PCR timeline ([`PcrSample`]).

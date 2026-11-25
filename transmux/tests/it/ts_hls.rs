@@ -1,4 +1,4 @@
-//! `TsHlsPackager` gate — classic HLS (MPEG-2 TS `.ts` segments + media
+//! `StreamingTsHlsSegmenter` gate — classic HLS (MPEG-2 TS `.ts` segments + media
 //! playlist), verified by round-tripping the outputs through the independent,
 //! ffmpeg-oracle-gated `TsDemux` (issue #472).
 //!
@@ -9,7 +9,7 @@
 //! none of it can be faked (a raw-passthrough serialize would not parse back as
 //! valid TS with in-segment PAT/PMT + keyframe starts).
 //!
-//! Pipeline: `ir = TsDemux(h264-aac.ts)` → `out = TsHlsPackager(ir)` →
+//! Pipeline: `ir = TsDemux(h264-aac.ts)` → `out = StreamingTsHlsSegmenter(ir)` →
 //! demux `out.segments` (concat and per-segment) → compare.
 
 use crate::ts_hls_stage;

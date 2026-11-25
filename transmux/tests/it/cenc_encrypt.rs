@@ -1,4 +1,4 @@
-//! `CencEncryptor` integration tests (issue #564) — public-API-only coverage.
+//! `CencEncryptStage` integration tests (issue #564) — public-API-only coverage.
 //!
 //! Complements the byte-exact IR-level round-trip unit tests inside
 //! `src/cenc_encrypt.rs` (which reverse via the shared, crate-internal cipher
@@ -6,12 +6,12 @@
 //! `pub(crate)`, so an integration test file like this one, compiled as a
 //! separate crate linking only `transmux`'s public API, cannot call them).
 //! This file instead exercises exactly what a caller of the crate can reach:
-//! [`CencEncryptor`]/[`Encrypt`], [`EncryptConfig`], [`IvGen`],
+//! [`CencEncryptStage`]/[`Encrypt`], [`EncryptConfig`], [`IvGen`],
 //! [`SubsamplePolicy`].
 //!
 //! For **`cenc`** (AES-CTR), the round trip is still verified **byte-for-byte
 //! identical** through the public API alone: AES-CTR keystream XOR is its own
-//! inverse, so re-running [`CencEncryptor::encrypt`] a *second* time with the
+//! inverse, so re-running a [`CencEncryptStage`] over the same samples a *second* time with the
 //! identical deterministic config (same KID/key/`IvGen::Counter` base, same
 //! subsample policy) reproduces the original cleartext exactly — the
 //! ciphertext's NAL length-prefixes and headers are left clear by
@@ -21,7 +21,7 @@
 //!
 //! For **`cbcs`** (AES-CBC pattern), that trick does not apply (CBC chaining
 //! is not self-inverse), and there is no public decrypt-from-`Media` entry
-//! point yet (`CencDecryptor::from_fmp4` needs a real protected fMP4 file —
+//! point yet (`CencDecryptStage` needs a real protected fMP4 file —
 //! the muxer doesn't emit `sinf`/`senc` until Tasks 3/4 land). This file
 //! therefore verifies `cbcs` behaviourally: real bytes change, the recorded
 //! per-sample [`transmux::ir::SampleProtection`] is well-formed (one per sample, the
@@ -562,7 +562,7 @@ fn avc_spec(track_id: u32) -> transmux::TrackSpec {
 /// A synthetic AVC `Media`: `valid_count` well-formed length-prefixed samples
 /// followed by one sample whose 4-byte NAL length prefix declares far more
 /// bytes than the sample holds — the shape that made the mid-loop
-/// `nal_subsamples(..)?` in `CencEncryptor::encrypt` fail *after* earlier
+/// `nal_subsamples(..)?` in `CencEncryptStage`'s feed fail *after* earlier
 /// samples had already been keystreamed in place.
 fn avc_media(valid_count: usize, with_bad_sample: bool) -> Media {
     let mut samples: Vec<transmux::Sample> = (0..valid_count)

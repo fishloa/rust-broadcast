@@ -5,8 +5,8 @@
 //! cost extra allocations on the encrypt/decrypt in-place rewrite paths versus
 //! the old `Vec<u8>`, and says the design "owes a measurement rather than an
 //! assumption". This file is that measurement: a counting `#[global_allocator]`
-//! instruments `CencEncryptor::encrypt` over the real committed fixture
-//! (`fixtures/ts/h264/main.ts`), isolated to just the `encrypt()` call (counters
+//! instruments the `CencEncryptStage` pass over the real committed fixture
+//! (`fixtures/ts/h264/main.ts`), isolated to just that pass (counters
 //! are reset immediately before it and read immediately after, so fixture
 //! load/demux overhead is excluded).
 //!
@@ -145,7 +145,7 @@ const CENC_MEASURED_ALLOC_BYTES: usize = 4_760;
 const CENC_MEASURED_DEALLOCS: usize = 105;
 // NOTE: the three pinned metrics (allocs/alloc_bytes/deallocs) are asserted
 // with `assert_eq!` below, not a tolerance band. A tolerance multiple (e.g.
-// "within 2x") is wide enough that short-circuiting `CencEncryptor::encrypt`
+// "within 2x") is wide enough that short-circuiting the `CencEncryptStage` feed
 // to `Ok(())` — allocating and freeing *nothing* — still satisfies "<= 2x a
 // nonzero pinned count", so the assertion would pass against a no-op. Pin
 // the exact measured value instead: if a legitimate change moves it,
@@ -153,7 +153,7 @@ const CENC_MEASURED_DEALLOCS: usize = 105;
 // alloc_measurement -- --nocapture` (run twice to confirm stability — see
 // the module doc), then update the const + this comment's date.
 
-/// The measurement: allocation count/bytes/deallocs for one `CencEncryptor::encrypt`
+/// The measurement: allocation count/bytes/deallocs for one `CencEncryptStage`
 /// pass (`cenc` scheme, NAL-aware subsample map — the common real-world config)
 /// over every sample of the real fixture's video track, counted in isolation
 /// from fixture load/demux. Printed to stderr (`--nocapture`); asserted against

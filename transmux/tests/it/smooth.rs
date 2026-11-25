@@ -42,8 +42,8 @@ fn demux_media() -> Media {
     demux.unpackage(&ts[..]).expect("demux h264-aac.ts")
 }
 
-/// Everything the packager used to hand back as one `SmoothOutput`: the
-/// manifest plus the fragments the segmenter emitted.
+/// One Smooth packaging run: the manifest plus the fragments the segmenter
+/// emitted.
 struct SmoothFixture {
     media: Media,
     manifest: String,

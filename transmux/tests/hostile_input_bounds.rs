@@ -127,7 +127,7 @@ fn hostile_ctts_run_count_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
-// Item 8 — CencDecryptor progressive stsz/stco (r05-C4)
+// Item 8 — CencDecryptStage progressive stsz/stco (r05-C4)
 // ---------------------------------------------------------------------------
 
 /// The item's hostile shape: `stsz` with `sample_size = 1`,

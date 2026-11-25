@@ -1,4 +1,4 @@
-//! `TsMux` PAT/PMT repetition (issue #1162 R7): the PSI must recur through the
+//! `TsMuxStage` PAT/PMT repetition (issue #1162 R7): the PSI must recur through the
 //! output so a stream cut at any packet-aligned offset can still be joined
 //! (ETSI TR 101 290 indicators 1.3/1.5 want PAT/PMT at least every 0.5 s).
 //!

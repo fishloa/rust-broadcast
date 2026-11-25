@@ -57,7 +57,7 @@ broadcast-smooth = { path = "../broadcast-smooth", version = "0.3.0", optional =
 aes        = { version = "0.9", default-features = false, optional = true }
 ctr        = { version = "0.10", default-features = false, optional = true }
 cbc        = { version = "0.2", default-features = false, optional = true }
-# Content-key hygiene (issue #1142): `KeyMap`/`CencEncryptor` wipe their keys on
+# Content-key hygiene (issue #1142): `KeyMap`/`CencEncryptStage` wipe their keys on
 # drop and compare keys in constant time. Both are already in the workspace lock.
 zeroize    = { version = "1", default-features = false, features = ["alloc"], optional = true }
 subtle     = { version = "2", default-features = false, optional = true }
@@ -114,7 +114,7 @@ test-fixtures = { path = "../test-fixtures" }
 test-harness = { path = "../test-harness" }
 container-probe = { path = "../container-probe", version = "0.6.0" }
 # `tests/it/rtp.rs` / `golden_wire.rs` render the session description over
-# `RtpOutput::medias` with the one workspace builder (`rtsp-runtime::sdp`).
+# `rtp_run::RtpOutput::medias` with the one workspace builder (`rtsp-runtime::sdp`).
 # Dev-only: transmux itself never depends on the RTSP crate.
 rtsp-runtime   = { path = "../rtsp-runtime", default-features = false }
 # `golden.rs` takes the guard lexer (`scan::non_test_source`) rather than a copy.

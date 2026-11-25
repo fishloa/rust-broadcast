@@ -1,4 +1,4 @@
-//! `TsMux` PMT `stream_type` mapping, multi-packet PSI packetisation, the
+//! `TsMuxStage` PMT `stream_type` mapping, multi-packet PSI packetisation, the
 //! PAT/PMT repetition schedule and the PCR-only filler (audit 21 finding 56).
 //!
 //! The `stream_type` values asserted here are the literals of ISO/IEC 13818-1

@@ -11,10 +11,11 @@
 //!    [`DateRange`](timed_metadata::DateRange) tag and a DASH `emsg` box —
 //!    the crate's whole reason to exist, reused verbatim rather than
 //!    reimplemented.
-//! 3. **`transmux::splice_insert`** performs the actual sample-level ad
-//!    splice on the demuxed [`Media`] IR, returning a
-//!    [`SpliceResult`](transmux::SpliceResult) whose
-//!    [`SplicePoint`](transmux::SplicePoint)s mark the ad-in and resume cuts.
+//! 3. **`test_harness::collect::splice_insert`** drives `transmux`'s
+//!    `SpliceStage` over a `SplicePlan::insert` to perform the actual
+//!    sample-level ad splice on the demuxed [`Media`] IR, returning a
+//!    `SpliceOutput` whose [`SplicePoint`](transmux::SplicePoint)s mark the
+//!    ad-in and resume cuts.
 //! 4. **`transmux`'s HLS/DASH packaging** (`broadcast_hls::MediaPlaylist`,
 //!    `DashPackager`, `build_media_segment_with_events`) renders the spliced
 //!    timeline as a real `#EXT-X-DISCONTINUITY` + `#EXT-X-DATERANGE` HLS media

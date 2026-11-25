@@ -1090,7 +1090,7 @@ impl DashPackager {
     ///   single-segment behaviour).
     /// - [`Addressing::Timeline`] — `$Time$`, with a child `SegmentTimeline`
     ///   (§5.3.9.6) built from [`ReprInfo::segment_durations`] (required; see
-    ///   [`Package::package`](broadcast_common::Package::package) validation).
+    ///   [`DashPackager::render`] validation).
     ///   A multi-segment Representation carries `@duration` XOR
     ///   `SegmentTimeline`, never both (§5.3.9.2.2 L1381), so `@duration` is
     ///   omitted here.

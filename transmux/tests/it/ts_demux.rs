@@ -314,7 +314,7 @@ fn extract_esds_asc(esds_body: &[u8]) -> Option<Vec<u8>> {
     Some(esds_body[ds..ds + sz].to_vec())
 }
 
-/// Test 4 — sample-fidelity byte oracle: TS → IR → CmafMux fMP4, re-parse the
+/// Test 4 — sample-fidelity byte oracle: TS → IR → CmafMuxStage fMP4, re-parse the
 /// video track's length-prefixed samples, and assert the coded NAL payload
 /// sequence is byte-identical to the ref mp4's video samples.
 #[test]

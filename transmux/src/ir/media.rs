@@ -94,10 +94,10 @@ impl SkippedTrack {
 /// The media intermediate representation: a set of elementary [`Track`]s.
 ///
 /// This is the hub's neutral form. [`Unpackage`](broadcast_common::Unpackage)
-/// impls (e.g. [`Mp4Demux`](crate::mp4_demux::Mp4Demux)) produce a `Media`;
-/// [`Package`](broadcast_common::Package) impls (e.g.
-/// [`CmafMuxStage`](crate::media::CmafMuxStage), [`HlsPackager`](crate::media::HlsPackager))
-/// consume one.
+/// impls and streaming demux stages (e.g. [`Mp4Demux`](crate::mp4_demux::Mp4Demux))
+/// produce a `Media`; mux stages (e.g.
+/// [`CmafMuxStage`](crate::media::CmafMuxStage)) and manifest renderers
+/// ([`HlsPackager`](crate::media::HlsPackager)) consume one.
 ///
 /// `#[non_exhaustive]`: this is the hub's central type and its field set is
 /// still growing — `pcr` and `skipped` were each added after the initial

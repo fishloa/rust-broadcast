@@ -54,6 +54,21 @@
 //! Each join is a media-timeline discontinuity (RFC 8216 §4.3.2.3). The plan
 //! reports [`SplicePoint`]s (track id + sample index + presentation time of
 //! each join) so a downstream packager marks exactly those segments.
+//!
+//! # Example
+//!
+//! ```rust
+//! use transmux::{Media, SplicePlan, SpliceStage};
+//!
+//! # fn plan(base: &Media, ad: &Media) -> transmux::Result<()> {
+//! // Play `base` up to 90 000 presentation ticks (1 s of a 90 kHz track),
+//! // insert `ad`, then resume `base` shifted by `ad`'s span.
+//! let plan = SplicePlan::insert(base, ad, 90_000)?;
+//! let mut stage = SpliceStage::new(plan);
+//! // Feed (TrackId, Sample) pairs in the plan's order, then finish and poll.
+//! let _ = &mut stage;
+//! # Ok(()) }
+//! ```
 
 use alloc::collections::BTreeMap;
 use alloc::collections::VecDeque;

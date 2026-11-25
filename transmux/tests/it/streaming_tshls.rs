@@ -1,10 +1,11 @@
 //! `StreamingTsHlsSegmenter` gate — incremental/live classic-HLS segmentation
-//! (issue #571), verified against the existing batch `TsHlsPackager` on the
-//! same real fixture (`fixtures/ts/h264-aac.ts`, demuxed via `TsDemux`).
+//! (issue #571), verified against the same segmenter driven over a whole
+//! `Media` on the same real fixture (`fixtures/ts/h264-aac.ts`, demuxed via
+//! `TsDemux`).
 //!
 //! Pipeline: `ir = TsDemux(h264-aac.ts)` → push every sample of `ir` through
 //! `StreamingTsHlsSegmenter` in global decode-time order → compare the
-//! resulting `.ts` segments against `TsHlsPackager::package(&ir)`'s batch
+//! resulting `.ts` segments against `ts_hls_stage::hls(&ir, …)`'s whole-`Media`
 //! output. Byte-identical segments prove the streaming cut/partition logic
 //! reproduces the batch algorithm exactly — this cannot be faked by a
 //! raw-passthrough implementation, since it requires correct keyframe-aligned
@@ -44,7 +45,7 @@ fn track_specs(ir: &Media) -> Vec<TrackSpec> {
 /// Every `(track_position, sample_index)` pair in the IR, in **global decode-time
 /// order** — the realistic live-ingest push order (video/audio interleaved by
 /// wall-clock arrival, not "all of one track then all of the other"). Computed
-/// independently of `StreamingTsHlsSegmenter`/`TsHlsPackager` internals: purely
+/// independently of `StreamingTsHlsSegmenter` internals: purely
 /// from each track's own timescale and per-sample durations.
 fn merged_decode_order(ir: &Media) -> Vec<(usize, usize)> {
     let mut items: Vec<(f64, usize, usize)> = Vec::new();

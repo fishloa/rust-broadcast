@@ -524,7 +524,7 @@ impl AuthSpec {
 
 /// Container format for a push output.
 /// Only [`PushFormat::Ts`] is implemented — `crate::push::drive_push` builds
-/// a `transmux::TsMux` unconditionally. `Mp4`/`Mkv` are reserved config
+/// a `transmux::TsMuxStage` unconditionally. `Mp4`/`Mkv` are reserved config
 /// surface for a later phase; selecting either is rejected at config-validate
 /// time (`Route::validate_standalone`, issue #744/M1c) rather than silently
 /// downgraded to TS.
@@ -2063,7 +2063,7 @@ impl Route {
         }
         // Issue #744/M1c: `PushFormat::Mp4`/`PushFormat::Mkv` are declared
         // config surface with no muxer behind them — `crate::push::drive_push`
-        // only ever builds a `transmux::TsMux` and silently ignores the
+        // only ever builds a `transmux::TsMuxStage` and silently ignores the
         // configured format (`let _ = _format;`). Selecting either downgrades
         // an operator's "mp4"/"mkv" request to TS with no signal that
         // happened, so reject them here instead of at push-task spawn time,
@@ -3498,7 +3498,7 @@ mod tests {
     // --- push-output format validation (issue #744) ---
 
     /// `PushFormat::Mp4`/`Mkv` are config surface with no muxer behind them —
-    /// `push::drive_push` only ever builds a `TsMux`. Selecting either used to
+    /// `push::drive_push` only ever builds a `TsMuxStage`. Selecting either used to
     /// silently downgrade to TS, so validation must reject them outright.
     ///
     /// Biting test: remove the check in `validate_standalone` and this fails,

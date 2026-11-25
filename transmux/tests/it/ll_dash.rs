@@ -1032,5 +1032,5 @@ fn ll_dash_demand_is_saturated_exactly_at_the_pending_bound() {
 }
 
 // ===========================================================================
-// Package::package — equal decode time merges the non-anchor track first
+// Whole-`Media` packaging — equal decode time merges the non-anchor track first
 // ===========================================================================

@@ -1150,8 +1150,7 @@ impl Stage for MkvMuxStage {
 }
 
 /// Mux `media` through the stage and collect its byte stream — the
-/// whole-media bridge the crate's own tests use now that no `Package` impl
-/// exists.
+/// whole-media bridge the crate's own tests use.
 #[cfg(test)]
 pub(crate) fn mux_for_test(media: &crate::media::Media) -> Vec<u8> {
     let mut stage = MkvMuxStage::new(core::time::Duration::from_millis(5_000));

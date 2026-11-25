@@ -99,7 +99,7 @@ fn pusi_seen_pids(data: &[u8]) -> HashMap<Pid, usize> {
 }
 
 /// The PMT PID for the (single) program listed in `data`'s PAT, found by an
-/// independent PAT walk (never the crate's own `TsDemux`/`TsMux` internals).
+/// independent PAT walk (never the crate's own `TsDemux`/`TsMuxStage` internals).
 fn find_pmt_pid(data: &[u8]) -> u16 {
     const PAT_PID: u16 = 0x0000;
     const TABLE_ID_PAT: u8 = 0x00;
@@ -575,7 +575,7 @@ fn ts_ir_ts_round_trip_is_payload_lossless_for_data_and_sections() {
     }
 }
 
-// ── Test 4 — TS -> fMP4: CmafMux names+errors on a Data track; an explicit
+// ── Test 4 — TS -> fMP4: CmafMuxStage names+errors on a Data track; an explicit
 //    caller filter still succeeds, keeping the real A/V ──────────────────
 
 #[test]
@@ -632,12 +632,12 @@ fn ts_to_fmp4_errors_naming_data_track_then_succeeds_once_filtered() {
         "video + audio + one opaque Data track"
     );
 
-    // Media plane step 2d: `CmafMux` no longer silently drops the opaque
+    // Media plane step 2d: `CmafMuxStage` no longer silently drops the opaque
     // Data track — it names the offending track and errors, so a caller
     // mixing carriable and opaque streams learns about the gap instead of
     // getting a CMAF output missing a track it never asked to lose.
     let err = crate::cmaf::package(&mixed)
-        .expect_err("CmafMux must reject a Media containing a CodecConfig::Data track");
+        .expect_err("CmafMuxStage must reject a Media containing a CodecConfig::Data track");
     match err {
         transmux::Error::DataIdentityMismatch { track, have, want } => {
             assert_eq!(track, data_track_id, "error must name the Data track");
@@ -656,7 +656,7 @@ fn ts_to_fmp4_errors_naming_data_track_then_succeeds_once_filtered() {
     assert_eq!(av_only.tracks.len(), 2, "video + audio only, once filtered");
 
     let out = crate::cmaf::package(&av_only)
-        .expect("CmafMux must succeed once the Data track is explicitly filtered out");
+        .expect("CmafMuxStage must succeed once the Data track is explicitly filtered out");
 
     let reparsed: Media =
         test_harness::collect::media_from_mp4(&out, test_harness::collect::CollectMode::Seekable)

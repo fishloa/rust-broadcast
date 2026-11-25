@@ -40,6 +40,17 @@
 //! - **`tenc`**: ISO/IEC 23001-7 §12.2.
 //!
 //! This module is gated on the `cenc` feature.
+//!
+//! # Example
+//!
+//! ```rust
+//! use transmux::{CencEncryptStage, CencScheme, EncryptConfig, SubsamplePolicy};
+//!
+//! let cfg = EncryptConfig::new(CencScheme::Cenc, [0x11; 16], SubsamplePolicy::Video);
+//! // One stage per content key: its IV counter continues across every feed.
+//! let stage = CencEncryptStage::new([0x22; 16], cfg)?;
+//! # Ok::<(), transmux::Error>(())
+//! ```
 
 use core::fmt;
 

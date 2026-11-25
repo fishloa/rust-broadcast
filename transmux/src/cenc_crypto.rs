@@ -204,7 +204,7 @@ type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CbcsOp {
     /// Turn plaintext into ciphertext. Used by the encrypt path
-    /// ([`crate::cenc_encrypt::CencEncryptor`]) and the round-trip unit tests.
+    /// ([`crate::cenc_encrypt::CencEncryptStage`]) and the round-trip unit tests.
     Encrypt,
     /// Turn ciphertext back into plaintext.
     Decrypt,

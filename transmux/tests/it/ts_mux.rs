@@ -1,13 +1,13 @@
-//! `TsMux` gate — hub `Media` IR → MPEG-2 TS, verified by a full round-trip
+//! `TsMuxStage` gate — hub `Media` IR → MPEG-2 TS, verified by a full round-trip
 //! through the independent, ffmpeg-oracle-gated `TsDemux` (issue #460).
 //!
 //! Oracle: `TsDemux` is byte-oracle-gated against ffmpeg in `tests/it/ts_demux.rs`,
-//! so a `TsDemux(TsMux(TsDemux(fixture)))` round-trip that preserves tracks,
+//! so a `TsDemux(TsMuxStage(TsDemux(fixture)))` round-trip that preserves tracks,
 //! codec configs, coded NAL payloads, frame counts, and per-sample timing proves
 //! the mux is a faithful inverse — none of it can be faked (a raw-passthrough
 //! serialize would not parse back as valid TS).
 //!
-//! Pipeline: `ir = TsDemux(h264-aac.ts)` → `ts2 = TsMux(ir)` →
+//! Pipeline: `ir = TsDemux(h264-aac.ts)` → `ts2 = TsMuxStage(ir)` →
 //! `ir2 = TsDemux(ts2)`.
 
 use crate::ts_mux_stage;
@@ -35,7 +35,7 @@ fn load_ts() -> Vec<u8> {
     std::fs::read(path).expect("h264-aac.ts fixture must exist")
 }
 
-/// `ir` = the fixture demuxed; `ir2` = re-demux of `TsMux(ir)`; `ts2` = the mux
+/// `ir` = the fixture demuxed; `ir2` = re-demux of `TsMuxStage(ir)`; `ts2` = the mux
 /// output bytes.
 fn pipeline() -> (Media, Vec<u8>, Media) {
     let ts = load_ts();

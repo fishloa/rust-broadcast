@@ -35,9 +35,9 @@ where
     use transmux::mux_stage::MuxInput;
     let mut out = Vec::new();
     let mut cursors = vec![0usize; media.tracks.len()];
-    // The old `Package` merge compared duration-accumulated positions from 0,
-    // not each sample's absolute `dts`, so a track whose first sample carries
-    // an offset still starts at the head of the merge here.
+    // This merge compares duration-accumulated positions from 0, not each
+    // sample's absolute `dts`, so a track whose first sample carries an offset
+    // still starts at the head of the merge.
     let mut dts: Vec<u128> = vec![0; media.tracks.len()];
     loop {
         let mut best: Option<usize> = None;

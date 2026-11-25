@@ -1092,12 +1092,12 @@ fn rescale_to_90k(ticks: u64, from_timescale: broadcast_common::timescale::Times
 /// # What is deliberately *not* patched
 ///
 /// Only these two fields are wrong for a streaming caller. Everything else
-/// [`RtpPacketiser`] wrote is already correct for this session and must be
-/// left alone:
+/// [`transmux::packetise_video_sample`] wrote is already correct for this
+/// session and must be left alone:
 ///
-/// - **`SSRC`** (bytes `[8:12]`) — [`send_sample`] constructs its
-///   `RtpPacketiser` with `ssrc: session.ssrc`, and every packetise path
-///   (single-NAL, STAP-A, FU-A) writes it through `transmux::rtp`'s own
+/// - **`SSRC`** (bytes `[8:12]`) — [`send_sample`]'s `PacketCache` builds
+///   its `RtpPacketiserStage` with `ssrc: session.ssrc`, and every packetise
+///   path (single-NAL, STAP-A, FU-A) writes it through `transmux::rtp`'s own
 ///   `rtp_header` helper, so the emitted SSRC is already this session's.
 /// - **`payload type`** (low 7 bits of byte 1) — likewise set from
 ///   `video_pt: session.pt`, the payload type echoed from the viewer's own
@@ -1110,8 +1110,8 @@ fn rescale_to_90k(ticks: u64, from_timescale: broadcast_common::timescale::Times
 ///
 /// Returns `None` for a `contiguous` shorter than
 /// [`rtp_packet::FIXED_HEADER_LEN`], which cannot carry the fields this
-/// patches. **Unreachable in practice** — [`RtpPacketiser`] always emits at
-/// least a full RFC 3550 §5.1 fixed header — but it is reported rather than
+/// patches. **Unreachable in practice** — [`transmux::packetise_video_sample`]
+/// always emits at least a full RFC 3550 §5.1 fixed header — but it is reported rather than
 /// tolerated: silently returning the buffer *unpatched* would put a packet
 /// on the wire carrying the packetiser's own per-batch sequence number and
 /// timestamp instead of this session's running ones, which is the exact bug
@@ -1254,8 +1254,9 @@ impl PacketCache {
     }
 }
 
-/// Packetises one `Sample` into RTP (via [`RtpPacketiser::packetise_video`],
-/// patched per the module doc), encrypts each packet, and sends it to
+/// Packetises one `Sample` into RTP (via
+/// [`transmux::packetise_video_sample`], patched per the module doc), encrypts
+/// each packet, and sends it to
 /// `peer`. `next_seq` is this session's running sequence-number counter,
 /// advanced by exactly the number of RTP packets this one sample produced
 /// (1 for a small frame, more for STAP-A-led or FU-A-fragmented frames).

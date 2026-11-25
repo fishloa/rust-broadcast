@@ -117,12 +117,12 @@ fn ordering_guard_subtitle_track_present_after_demux() {
 #[test]
 fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
     // B1's regression: `CodecConfig::Subtitle` had no opaque-data-style
-    // predicate covering it, so `build_init_segment` (called by `CmafMux`
+    // predicate covering it, so `build_init_segment` (called by `CmafMuxStage`
     // and every other mux entry point) didn't skip it — it fell through to
     // `build_trak`'s `CodecConfig::Subtitle` arm and errored. Before this
     // fix, `is_opaque_data()` was the only filter predicate a caller had,
     // and it does not match `Subtitle` — so there was NO way to filter a
-    // subtitle-bearing source down to something `CmafMux` would accept; a
+    // subtitle-bearing source down to something `CmafMuxStage` would accept; a
     // "repackage this real subtitle-bearing CMAF asset" pipeline always
     // failed. `is_muxable_in_bmff()` (new in this fix) covers both `Data`
     // and `Subtitle`, so filtering with it is the fix.
@@ -133,7 +133,7 @@ fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
     assert_eq!(media.tracks.len(), 2, "AVC video + stpp subtitle track");
 
     // Since #1186 the demuxed `stpp` track carries its sample entry, so
-    // an UNFILTERED CmafMux carries it (see `tests/it/subtitle_remux.rs`). A
+    // an UNFILTERED CmafMuxStage carries it (see `tests/it/subtitle_remux.rs`). A
     // subtitle track with no sample entry is still rejected, by name.
     let mut entryless = media.clone();
     for t in &mut entryless.tracks {
@@ -142,7 +142,7 @@ fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
         }
     }
     let unfiltered_err = crate::cmaf::package(&entryless)
-        .expect_err("CmafMux must reject an entry-less Subtitle track");
+        .expect_err("CmafMuxStage must reject an entry-less Subtitle track");
     assert!(
         matches!(
             unfiltered_err,
@@ -156,17 +156,17 @@ fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
     assert_eq!(filtered_entryless.tracks.len(), 1);
     let media = entryless;
 
-    // Filtered with the new predicate: CmafMux must now succeed — this is
+    // Filtered with the new predicate: CmafMuxStage must now succeed — this is
     // the "repackages fine" outcome B1 regressed away from.
     let carriable = media
         .select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())
         .expect("the AVC track remains carriable");
     assert_eq!(carriable.tracks.len(), 1, "only the AVC track remains");
     let fmp4 = crate::cmaf::package(&carriable)
-        .expect("CmafMux must succeed once the Subtitle track is filtered out");
+        .expect("CmafMuxStage must succeed once the Subtitle track is filtered out");
     assert!(
         fmp4.windows(4).any(|w| w == b"moov"),
-        "CmafMux output must contain a moov box for the carriable AVC track"
+        "CmafMuxStage output must contain a moov box for the carriable AVC track"
     );
 
     // Full end-to-end: the repackaged CMAF must itself re-demux cleanly.
@@ -208,7 +208,7 @@ fn ac4_round_trips_through_cmaf_mux_then_demux() {
     // Mux: build_trak already had an Ac4 arm (only the demux arm was
     // missing), so this direction worked before this change too.
     let bytes = crate::cmaf::package(&media)
-        .expect("CmafMux must mux an Ac4 track (already supported before step 2d)");
+        .expect("CmafMuxStage must mux an Ac4 track (already supported before step 2d)");
 
     // Demux: this is the new arm added in step 2d.
     let reparsed =

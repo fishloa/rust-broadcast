@@ -2059,7 +2059,7 @@ fn reordered_video_and_audio_share_one_epoch() {
     // sources with unrelated random RTP timestamp origins (RFC 3550 §5.1), so
     // their absolute values differ — what must not differ is the treatment:
     // each track's anchor is its own first sample's dts, and the shift is one
-    // constant for the whole `Media` (which is what makes `rebase_to_zero`,
+    // constant for the whole `Media` (which is what makes `RebaseStage`,
     // which shifts every track together, safe to apply).
     assert_eq!(
         video_first, ir.tracks[0].start_decode_time as i64,

@@ -3,8 +3,8 @@
 //! IS an FLV tag body. So *both* packaging paths must reproduce the same
 //! [`Media`] IR:
 //!
-//! - FLV: [`FlvMux`] → bytes → [`FlvDemux`]
-//! - RTMP: [`FlvMux`] → tags → RTMP messages → chunks → [`RtmpDemux`]
+//! - FLV: [`FlvMuxStage`] → bytes → [`FlvDemux`]
+//! - RTMP: [`FlvMuxStage`] → tags → RTMP messages → chunks → [`RtmpDemux`]
 //!
 //! The IR alone cannot see a dropped script (`onMetaData`) message — the
 //! FLV demuxer lifts no track from it — so the chunk stream is also decoded
@@ -258,7 +258,7 @@ fn a_zero_chunk_size_is_rejected() {
     );
 }
 
-/// The FLV tags [`FlvMux`] wrote for `media`, walked with `rtmp-runtime`'s
+/// The FLV tags [`FlvMuxStage`] wrote for `media`, walked with `rtmp-runtime`'s
 /// strict tag walker (no hand-rolled framing here), as `(tag type, body)`.
 fn flv_mux_tags(media: &Media) -> Vec<(u8, Vec<u8>)> {
     let flv = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), media);
@@ -275,7 +275,7 @@ fn flv_mux_tags(media: &Media) -> Vec<(u8, Vec<u8>)> {
 const MEDIUM_SAMPLE_LEN: usize = 1024;
 
 /// The body length of the longest message for a [`MEDIUM_SAMPLE_LEN`] sample,
-/// after checking the message grows byte for byte with the sample: `FlvMux`
+/// after checking the message grows byte for byte with the sample: `FlvMuxStage`
 /// writes a fixed AVC config tag, a data tag and the one video tag, so only
 /// the video tag tracks `sample_len`.
 fn longest_message_at_medium_sample() -> usize {
@@ -307,7 +307,7 @@ fn media_with_video_sample(sample_len: usize) -> Media {
     Media::new(vec![track], spec.timescale)
 }
 
-/// The longest message body [`FlvMux`] writes for one video sample of
+/// The longest message body [`FlvMuxStage`] writes for one video sample of
 /// `sample_len` bytes.
 fn largest_message_body(media: &Media) -> usize {
     flv_mux_tags(media)

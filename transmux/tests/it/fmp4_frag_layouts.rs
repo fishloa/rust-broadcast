@@ -8,7 +8,7 @@
 //! per-sample plaintext as `clear.mp4` (whose per-sample hashes are pinned in
 //! `clear-samples.txt`), for **all** tracks.
 //!
-//! `Mp4Demux` shares its §8.8.7/§8.8.8 resolver with `CencDecryptor`
+//! `Mp4Demux` shares its §8.8.7/§8.8.8 resolver with `CencDecryptStage`
 //! (`frag_offsets`), so this proves the demuxer's side of the same rule set.
 #![cfg(feature = "std")]
 use transmux::TrackId;

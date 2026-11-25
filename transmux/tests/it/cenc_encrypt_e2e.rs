@@ -6,8 +6,8 @@
 //!
 //! ```text
 //! cleartext Media (TsDemux over fixtures/ts/h264/main.ts, AVC track)
-//!   -> CencEncryptor::encrypt            (Task 2)
-//!   -> CmafMux::package                  (existing, untouched)
+//!   -> CencEncryptStage                     (Task 2)
+//!   -> CmafMuxStage                         (existing, untouched)
 //!   -> protect_init_segment + protect_media_segment (Task 3)
 //!   -> a single standalone fMP4 file written to a temp path
 //! ```
@@ -15,7 +15,7 @@
 //! and then proves that file is *actually* a standards-compliant encrypted
 //! CMAF, two independent ways:
 //!
-//! 1. **Self round-trip**: `CencDecryptor::from_fmp4` + `Decrypt::decrypt`
+//! 1. **Self round-trip**: `CencDecryptStage`
 //!    (this crate's own decrypt path, shipped and tested independently)
 //!    recovers samples byte-identical to the pre-encryption snapshot.
 //! 2. **Golden interop**: Bento4's `mp4decrypt` — a real, independent,
@@ -119,7 +119,7 @@ fn mp4decrypt_available() -> bool {
     })
 }
 
-/// Encrypt `media` in place per `cfg`, mux it through the real `CmafMux`
+/// Encrypt `media` in place per `cfg`, mux it through the real `CmafMuxStage`
 /// packager, then protect the init segment. Returns the fully protected,
 /// standalone (ftyp+moov+styp+moof+mdat) fMP4 bytes.
 ///
@@ -154,7 +154,7 @@ fn build_protected_fmp4(media: &mut Media, cfg: &EncryptConfig) -> Vec<u8> {
         .clone()
         .expect("TrackSpec::protection populated by CencEncryptStage");
 
-    let raw = crate::cmaf::package(&*media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(&*media).expect("CmafMuxStage output");
     protect_init_segment(&raw, track_id, &enc).expect("protect_init_segment")
 }
 
@@ -167,7 +167,7 @@ fn write_temp(bytes: &[u8], tag: &str) -> PathBuf {
 }
 
 /// The full pipeline for one scheme: encrypt -> mux -> protect -> write ->
-/// self round-trip via `CencDecryptor` -> golden interop via `mp4decrypt`
+/// self round-trip via `CencDecryptStage` -> golden interop via `mp4decrypt`
 /// (skipped cleanly if the binary is absent).
 fn run_e2e(
     scheme: CencScheme,
@@ -206,7 +206,7 @@ fn run_e2e(
     let self_round_trip = snapshot(&recovered);
     assert_eq!(
         self_round_trip, original,
-        "{tag}: self round-trip (CencDecryptor) must recover byte-identical samples"
+        "{tag}: self round-trip (CencDecryptStage) must recover byte-identical samples"
     );
 
     // ── Golden interop (Bento4 mp4decrypt) ──────────────────────────────
@@ -309,7 +309,7 @@ fn cbcs_end_to_end_round_trip_and_mp4decrypt_interop() {
 /// This test drives that branch through the full pipeline and confirms the
 /// `traf` genuinely carries none of the three boxes (`mp4dump`-equivalent
 /// box walk), then proves the output is correctly decryptable via the
-/// **self round-trip** (`CencDecryptor` — the fix that made this legitimately
+/// **self round-trip** (`CencDecryptStage` — the fix that made this legitimately
 /// senc-less shape decryptable at all: before it, a missing `senc`, even the
 /// legitimate kind, always tripped `Decrypt::decrypt`'s per-track
 /// sample-count mismatch check; see `cenc_decrypt.rs`'s
@@ -370,7 +370,7 @@ fn cbcs_whole_sample_constant_iv_no_senc_round_trip() {
     assert_eq!(
         snapshot(&recovered),
         original,
-        "cbcs_no_senc: self round-trip (CencDecryptor) must recover byte-identical samples \
+        "cbcs_no_senc: self round-trip (CencDecryptStage) must recover byte-identical samples \
          from a legitimately senc-less, constant-IV, whole-sample-protected fragment"
     );
 
@@ -421,7 +421,7 @@ fn cbcs_whole_sample_constant_iv_no_senc_round_trip() {
 /// but emitted with a replicated-per-sample `senc` so Bento4 `mp4decrypt`
 /// actually decrypts it. This proves the default shape is the interop one.
 ///
-/// The self round-trip gate (`CencDecryptor`) is the hard requirement; Bento4
+/// The self round-trip gate (`CencDecryptStage`) is the hard requirement; Bento4
 /// `mp4decrypt` is the interop oracle (must actually decrypt, not just exit 0
 /// with unchanged `mdat`).
 #[test]

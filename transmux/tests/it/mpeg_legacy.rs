@@ -142,7 +142,7 @@ fn fmp4_mpeg_audio_config() {
     assert_eq!(hdr.sample_rate, 44100);
 }
 
-// ── Test 3: fMP4 sample fidelity (demux → IR → CmafMux → re-demux) ──────────
+// ── Test 3: fMP4 sample fidelity (demux → IR → CmafMuxStage → re-demux) ──────────
 
 fn assert_sample_roundtrip(rel: &[&str]) {
     let mp4 = fixture(rel);

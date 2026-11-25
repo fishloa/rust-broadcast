@@ -512,12 +512,12 @@ impl IngestSession for TsIngestSession {
     type Request = bytes::Bytes;
 }
 
-/// Shared test fixtures for the three TS transports — a real `TsMux`-muxed
+/// Shared test fixtures for the three TS transports — a real `TsMuxStage`-muxed
 /// byte stream plus the `TrunkConfig`/`HandshakePolicy` each transport's
 /// loopback test needs. Lives here (rather than being copy-pasted into
 /// `ts_udp`/`ts_http`/`srt`'s own `mod tests`) for the same
 /// one-copy reason the session itself does.
-/// Real `TsMux`-muxed TS bytes and the configs a TS transport's test needs.
+/// Real `TsMuxStage`-muxed TS bytes and the configs a TS transport's test needs.
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support {
     use crate::ingress::HandshakePolicy;
@@ -608,7 +608,7 @@ pub mod test_support {
     }
 
     /// Builds a real (not hand-faked) single-track muxed TS byte stream via
-    /// the workspace's own `transmux::TsMux` packager — the "real fixture,
+    /// the workspace's own `transmux::TsMuxStage` packager — the "real fixture,
     /// not inline bytes" discipline this project requires, since a
     /// hand-built TS risks missing real PSI/PES framing quirks.
     /// A muxed TS of `count` frames of one track.
@@ -876,7 +876,7 @@ mod tests {
     ///
     /// `Trunk::segment_writer()` (the ring-group split) fixes exactly that,
     /// and this test is the proof — not an assertion in a doc comment. It
-    /// drives the **real** chain: a real `TsMux`-muxed TS stream → the real
+    /// drives the **real** chain: a real `TsMuxStage`-muxed TS stream → the real
     /// `TsIngestSession` → a real `IngestDriver` (holding the `TrunkWriter`)
     /// → a real `SampleCursor` → a real `LlHlsSegmenter` → a
     /// `SegmentWriter` **taken from the same `Trunk` the driver is already
@@ -1009,7 +1009,7 @@ mod tests {
         }
     }
 
-    /// A real `TsMux` stream: a PMT-first non-video head `(0x04` private
+    /// A real `TsMuxStage` stream: a PMT-first non-video head `(0x04` private
     /// audio-type PES that never carries a frame sync, so it can never
     /// resolve) with 540 access units, followed by two healthy data PIDs.
     fn stalled_head_ts_bytes() -> Vec<u8> {

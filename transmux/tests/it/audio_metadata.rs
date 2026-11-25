@@ -3,7 +3,7 @@
 //! Real artifact: `fixtures/ts/france2.ts` (committed DVB capture; PMT ES_info
 //! per `france2-provenance.md`: `fre`, `qad`, `qaa` E-AC-3 audio tracks).
 //! Synthetic cases are spec-valid descriptor loops built by hand from ETSI EN
-//! 300 468 §6.2.19/§6.4.11 and carried through a real `TsMux` -> `TsDemux`
+//! 300 468 §6.2.19/§6.4.11 and carried through a real `TsMuxStage` -> `TsDemux`
 //! round trip so the descriptors travel inside a real PMT.
 
 use crate::ts_mux_stage;

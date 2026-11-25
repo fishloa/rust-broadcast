@@ -186,7 +186,7 @@ fn config_fields_decoded_from_record() {
 
 // ---------------------------------------------------------------------------
 // Gate 3: sample-fidelity round-trip.
-//   Mp4Demux → IR → CmafMux → re-Mp4Demux; coded MPEG-H sample bytes are
+//   Mp4Demux → IR → CmafMuxStage → re-Mp4Demux; coded MPEG-H sample bytes are
 //   byte-identical to the first demux, same count (derived, never hardcoded).
 // ---------------------------------------------------------------------------
 #[test]
