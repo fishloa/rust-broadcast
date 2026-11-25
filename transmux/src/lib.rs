@@ -51,7 +51,9 @@
 //!   demux edge, see [`ts_demux`]);
 //!   timeline splice / concatenation → SSAI as a sample stage
 //!   ([`SpliceStage`] driven by a [`SplicePlan`], or plan-less
-//!   [`SpliceStage::switching`] holding one GOP to snap to the preceding sync).
+//!   [`SpliceStage::switching`] holding one GOP to snap to the preceding sync);
+//!   an opaque data track's container identity across families
+//!   ([`DataIdentityStage`] over a caller-built [`DataIdentityMap`]).
 //! - **Crypto:** CENC/CBCS (`cenc`, AES-CTR/AES-CBC-pattern) decrypt
 //!   ([`CencDecryptStage`]) + encrypt ([`CencEncryptStage`], which populates
 //!   [`TrackSpec::protection`](crate::ir::TrackSpec::protection) for the muxer's `sinf`/`senc`/`saio`/`saiz` box
