@@ -345,9 +345,10 @@ pub use rtp_stream::{
 };
 #[cfg(feature = "sample-aes")]
 pub use sample_aes::{
-    ExtXKey, HlsEncryptionMethod, aac_decrypt_frame, aac_encrypt_frame, ac3_decrypt_frame,
-    ac3_encrypt_frame, aes128_decrypt_segment, aes128_encrypt_segment, eac3_decrypt_frame,
-    eac3_encrypt_frame, h264_decrypt_nal, h264_encrypt_nal, iv_from_sequence_number,
+    ExtXKey, HlsEncryptionMethod, SampleAesOp, SampleAesStage, aac_decrypt_frame,
+    aac_encrypt_frame, ac3_decrypt_frame, ac3_encrypt_frame, aes128_decrypt_segment,
+    aes128_encrypt_segment, eac3_decrypt_frame, eac3_encrypt_frame, h264_decrypt_nal,
+    h264_encrypt_nal, iv_from_sequence_number,
 };
 pub use segment_cut::{IdrWait, SegmentCutPolicy};
 pub use segmenter::Segmenter;
