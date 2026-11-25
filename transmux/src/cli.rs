@@ -1061,12 +1061,13 @@ enum Kind {
     Progressive(ProgressiveMuxStage),
 }
 
-/// Content keys for `--decrypt`, or `()` when the `cenc` feature is off (the
-/// CLI then has no `--decrypt` flag at all).
+/// Content keys for `--decrypt`. Without the `cenc` feature the CLI has no
+/// `--decrypt` flag, so this is an uninhabited `Option` and the parameter
+/// threads through unused (`CliStream::start` ignores it).
 #[cfg(feature = "cenc")]
 type DecryptKeys = Option<crate::cenc_decrypt::KeyMap>;
 #[cfg(not(feature = "cenc"))]
-type DecryptKeys = ();
+type DecryptKeys = Option<core::convert::Infallible>;
 
 struct CliStream {
     kind: Kind,
@@ -2609,7 +2610,7 @@ pub fn run(args: Args) -> CliResult<(Container, OutputFormat)> {
         None
     };
     #[cfg(not(feature = "cenc"))]
-    let keys = ();
+    let keys = no_keys();
 
     let container;
     if from_stdin {
@@ -2675,7 +2676,9 @@ fn no_keys() -> DecryptKeys {
 
 /// The no-`--decrypt` key set (the `cenc` feature is off, so there is none).
 #[cfg(not(feature = "cenc"))]
-fn no_keys() -> DecryptKeys {}
+fn no_keys() -> DecryptKeys {
+    None
+}
 
 // ---------------------------------------------------------------------------
 // CENC decrypt (feature-gated)

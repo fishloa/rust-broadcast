@@ -40,7 +40,7 @@ const BUDGET: usize = 128 * MIB;
 const GIB: u64 = 1024 * 1024 * 1024;
 /// The issue's input size.
 const FULL_INPUT_BYTES: u64 = 2 * GIB;
-/// The quick size: several 4 MiB fragments and a real decrypt.
+/// The quick size: several fragments and a real decrypt.
 const QUICK_INPUT_BYTES: u64 = 32 * MIB as u64;
 /// Bytes in one generated sample, below the demuxer's per-PES unit cap
 /// (`MAX_PES_BUFFER_BYTES`, 4 MiB) so the TS output is demuxable.
