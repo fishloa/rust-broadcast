@@ -424,6 +424,9 @@ impl From<isobmff::Error> for Error {
             I::InvalidString { field, reason } => {
                 Error::EmsgSerialize(I::InvalidString { field, reason })
             }
+            I::LayoutMismatch { .. } => Error::InvalidInput(
+                "a recorded fragment layout disagrees with the samples it describes",
+            ),
             I::PlanMismatch { .. } => Error::InvalidInput("planned sample size mismatch"),
             I::ReorderBufferFull { .. } => Error::InvalidInput("reorder buffer full"),
             I::PlanIncomplete { .. } => Error::InvalidInput("planned sample missing"),

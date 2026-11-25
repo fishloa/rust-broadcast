@@ -166,6 +166,24 @@ fn every_isobmff_error_maps_to_its_transmux_variant() {
             "track 3 has no random-access index to seek on",
         ),
         (
+            I::LayoutMismatch {
+                field: "sample_size",
+                track: isobmff::TrackId::new(1),
+                sample: 4,
+                expected: 100,
+                actual: 90,
+            },
+            |e| {
+                matches!(
+                    e,
+                    T::InvalidInput(
+                        "a recorded fragment layout disagrees with the samples it describes"
+                    )
+                )
+            },
+            "sample_size of track 1 sample 4 is 90, the recorded layout states 100",
+        ),
+        (
             I::PlanMismatch {
                 track: isobmff::TrackId::new(2),
                 index: 7,

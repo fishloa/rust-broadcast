@@ -5,14 +5,19 @@
 //! under `default-base-is-moof`. The CENC `senc`/`saiz`/`saio` emission is
 //! ISO/IEC 23001-7 §12.2/§12.3.
 
+use super::index::{WrittenFragment, WrittenTrack};
 use super::{
     Fragment, FragmentOptions, FragmentTrack, SampleData, SampleMeta, SegmentBrands,
-    TREX_DEFAULT_DESCRIPTION_INDEX, TrackSetup,
+    TREX_DEFAULT_DESCRIPTION_INDEX, TrackSetup, TrexDefaults,
 };
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE};
 use crate::cenc::{SAIO, SAIZ, SENC, SampleEncryptionEntry};
 use crate::emsg::EmsgBox;
 use crate::error::{Error, Result};
+use crate::frag_layout::{
+    FragmentIndex, FragmentLayout, MfraForm, MfraTrackForm, SegmentIndexForm, TfraLengthSizes,
+    sample_flags,
+};
 use crate::limits::Limits;
 use crate::movie_fragment::{
     CENC_AUX_INFO_TYPES, MoofChild, MovieFragmentBox, MovieFragmentHeaderBox,
@@ -70,6 +75,11 @@ pub struct FragmentedWriter {
     shell: Option<crate::plan::MovieShell>,
     sequence_number: u32,
     buffered_bytes: u64,
+    layout: Option<FragmentLayout>,
+    compact: bool,
+    position: u64,
+    index: FragmentIndex,
+    written: Vec<WrittenFragment>,
 }
 
 impl FragmentedWriter {
@@ -95,6 +105,11 @@ impl FragmentedWriter {
             shell: None,
             sequence_number: 1,
             buffered_bytes: 0,
+            layout: None,
+            compact: false,
+            position: 0,
+            index: FragmentIndex::default(),
+            written: Vec::new(),
         })
     }
 
@@ -132,7 +147,8 @@ impl FragmentedWriter {
     }
 
     /// The trailing boxes the shell carries after the last fragment's media
-    /// (`free`, `skip`, a `uuid` box).
+    /// (`free`, `skip`, a `uuid` box), then the regenerated `mfra` when the
+    /// index layout asks for one.
     pub fn trailer(&self) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         if let Some(shell) = &self.shell {
@@ -140,7 +156,94 @@ impl FragmentedWriter {
                 out.extend_from_slice(&box_.try_to_bytes()?);
             }
         }
+        if let Some(mfra) =
+            crate::writer::index::random_access(self.index.mfra.as_ref(), &self.written)?
+        {
+            out.extend_from_slice(&mfra);
+        }
         Ok(out)
+    }
+
+    /// Reproduce `layout` on the next flush, and only that flush.
+    ///
+    /// Every `tfhd`/`trun` field choice, run split and child order the layout
+    /// states is written as it states it; a sample value the layout leaves to
+    /// a default is checked against that default and fails with
+    /// [`Error::LayoutMismatch`] when it disagrees.
+    pub fn set_fragment_layout(&mut self, layout: FragmentLayout) {
+        self.layout = Some(layout);
+        self.compact = false;
+    }
+
+    /// Write every following flush in [`FragmentLayout::compact`]'s form:
+    /// `tfhd` sample defaults where the track's samples agree and
+    /// `first_sample_flags` where only the first differs. Off by default, so a
+    /// writer that is not asked writes this crate's canonical per-sample form.
+    pub fn set_compact_layout(&mut self, compact: bool) {
+        self.compact = compact;
+    }
+
+    /// State the absolute file offset at which the next flush's bytes will be
+    /// placed, so a layout's `base_data_offset` and the regenerated
+    /// `tfra`/`sidx` entries state real positions. Every flush advances it by
+    /// the bytes it returns.
+    pub fn set_position(&mut self, position: u64) {
+        self.position = position;
+    }
+
+    /// The absolute file offset the next flush's bytes will be placed at.
+    #[must_use]
+    pub fn position(&self) -> u64 {
+        self.position
+    }
+
+    /// Regenerate the index boxes around the fragments from `index`'s forms.
+    pub fn set_index_layout(&mut self, index: FragmentIndex) {
+        self.index = index;
+    }
+
+    /// The index layout this writer regenerates.
+    #[must_use]
+    pub fn index_layout(&self) -> &FragmentIndex {
+        &self.index
+    }
+
+    /// Emit a trailing `mfra` over the flushed fragments, in one `tfra` per
+    /// track with one-byte variable fields and 64-bit times.
+    pub fn with_mfra(&mut self, enabled: bool) -> &mut Self {
+        self.index.mfra = enabled.then(|| {
+            let tracks = self
+                .tracks
+                .iter()
+                .map(|track| MfraTrackForm {
+                    track_id: track.setup.track_id,
+                    version: 1,
+                    lengths: TfraLengthSizes::default(),
+                })
+                .collect();
+            MfraForm { tracks }
+        });
+        self
+    }
+
+    /// Emit a leading segment index over the flushed fragments, on the first
+    /// track's timeline.
+    pub fn with_sidx(&mut self, enabled: bool) -> &mut Self {
+        self.index.sidx = if enabled {
+            self.tracks
+                .first()
+                .map(|track| SegmentIndexForm::new(track.setup.track_id, track.setup.timescale))
+        } else {
+            None
+        };
+        self
+    }
+
+    /// The segment index over the flushed fragments, for a caller to place
+    /// before the first of them (streaming output cannot insert it once the
+    /// fragments are gone).
+    pub fn segment_index(&self) -> Result<Option<Vec<u8>>> {
+        crate::writer::index::sidx_bytes(&self.index, &self.written)
     }
 }
 
@@ -210,6 +313,7 @@ impl FragmentedWriter {
             return Ok(None);
         }
         let mut sample_sets: Vec<Vec<SampleData<'_>>> = Vec::with_capacity(active.len());
+        let mut anchors: Vec<(TrackId, u64, TrexDefaults)> = Vec::with_capacity(active.len());
         for &i in &active {
             sample_sets.push(
                 self.tracks[i]
@@ -221,22 +325,47 @@ impl FragmentedWriter {
                     })
                     .collect(),
             );
+            anchors.push((
+                self.tracks[i].setup.track_id,
+                self.tracks[i].base_decode_time,
+                self.tracks[i].setup.trex.unwrap_or_default(),
+            ));
         }
-        let fragment_tracks: Vec<FragmentTrack<'_>> = active
+        let fragment_tracks: Vec<FragmentTrack<'_>> = anchors
             .iter()
             .enumerate()
-            .map(|(slot, &i)| FragmentTrack {
-                track_id: self.tracks[i].setup.track_id,
-                base_decode_time: self.tracks[i].base_decode_time,
-                samples: &sample_sets[slot],
-            })
+            .map(
+                |(slot, &(track_id, base_decode_time, trex))| FragmentTrack {
+                    track_id,
+                    base_decode_time,
+                    samples: &sample_sets[slot],
+                    trex,
+                },
+            )
             .collect();
+        let pending = self.layout.take();
+        let compact = self.compact;
+        let layout = match pending {
+            Some(layout) => Some(layout),
+            None if compact => Some(FragmentLayout::compact(&fragment_tracks)?),
+            None => None,
+        };
         let options = FragmentOptions {
             sequence_number: self.sequence_number,
             styp,
             events,
+            layout: layout.as_ref(),
+            position: self.position,
         };
+        let start = self.position;
         let fragment = fragmented_segment(&fragment_tracks, &options)?;
+        let written = self.written_fragment(&fragment_tracks, layout.as_ref(), start, &fragment)?;
+        self.written.push(written);
+        self.position =
+            self.position
+                .saturating_add(u64::try_from(fragment.bytes.len()).map_err(|_| {
+                    Error::InvalidInput("fragment is past the 64-bit offset range")
+                })?);
         for state in &mut self.tracks {
             state.samples.clear();
             state.active = false;
@@ -244,6 +373,112 @@ impl FragmentedWriter {
         self.buffered_bytes = 0;
         self.sequence_number = self.sequence_number.wrapping_add(1);
         Ok(Some(fragment))
+    }
+
+    /// The track order the fragment's `traf`s take: the layout's own when it
+    /// states one, else the flush's track order.
+    fn traf_order(layout: Option<&FragmentLayout>, tracks: &[FragmentTrack<'_>]) -> Vec<TrackId> {
+        let Some(layout) = layout else {
+            return tracks.iter().map(|track| track.track_id).collect();
+        };
+        let mut order = Vec::with_capacity(layout.tracks.len());
+        for child in &layout.children {
+            if let MoofChild::Traf(index) = child
+                && let Some(track) = layout.tracks.get(*index)
+            {
+                order.push(track.track_id);
+            }
+        }
+        if order.len() != layout.tracks.len() {
+            return layout.tracks.iter().map(|track| track.track_id).collect();
+        }
+        order
+    }
+
+    /// The offsets and per-track facts of one emitted fragment.
+    fn written_fragment(
+        &self,
+        tracks: &[FragmentTrack<'_>],
+        layout: Option<&FragmentLayout>,
+        start: u64,
+        fragment: &Fragment,
+    ) -> Result<WrittenFragment> {
+        let length = u64::try_from(fragment.bytes.len())
+            .map_err(|_| Error::InvalidInput("fragment is past the 64-bit offset range"))?;
+        let mut written = Vec::with_capacity(layout.map_or(tracks.len(), |l| l.tracks.len()));
+        for (slot, track_id) in Self::traf_order(layout, tracks).iter().enumerate() {
+            let ft = tracks
+                .iter()
+                .find(|track| track.track_id == *track_id)
+                .ok_or(Error::InvalidInput(
+                    "a fragment traf names a track this flush does not carry",
+                ))?;
+            let timescale = self
+                .tracks
+                .iter()
+                .find(|state| state.setup.track_id == *track_id)
+                .ok_or(Error::InvalidInput(
+                    "a fragment traf names a track this writer does not hold",
+                ))?
+                .setup
+                .timescale;
+            let runs: Vec<usize> = match layout.and_then(|layout| layout.track(*track_id)) {
+                Some(track) => track.runs.iter().map(|run| run.sample_count).collect(),
+                None => vec![ft.samples.len()],
+            };
+            let traf_number = u32::try_from(slot.saturating_add(1)).unwrap_or(u32::MAX);
+            written.push(Self::written_track(ft, timescale, &runs, traf_number));
+        }
+        Ok(WrittenFragment {
+            moof_offset: fragment.moof_offset,
+            end: start.saturating_add(length),
+            tracks: written,
+        })
+    }
+
+    /// One track's facts for the index boxes: its durations, and where its
+    /// first sync sample sits.
+    fn written_track(
+        ft: &FragmentTrack<'_>,
+        timescale: Timescale,
+        runs: &[usize],
+        traf_number: u32,
+    ) -> WrittenTrack {
+        let mut decode_time = ft.base_decode_time;
+        let mut duration = 0u64;
+        let mut first_sync = None;
+        let mut run = 0usize;
+        let mut left = runs.first().copied().unwrap_or(0);
+        let mut in_run = 0u32;
+        for sample in ft.samples {
+            if left == 0
+                && let Some(next) = runs.get(run.saturating_add(1))
+            {
+                run = run.saturating_add(1);
+                left = *next;
+                in_run = 0;
+            }
+            if first_sync.is_none() && sample.meta.sync {
+                let time = i128::from(decode_time) + i128::from(sample.meta.composition_offset);
+                first_sync = Some((
+                    u32::try_from(run.saturating_add(1)).unwrap_or(u32::MAX),
+                    in_run.saturating_add(1),
+                    u64::try_from(time).unwrap_or(0),
+                ));
+            }
+            duration = duration.saturating_add(u64::from(sample.meta.duration));
+            decode_time = decode_time.saturating_add(u64::from(sample.meta.duration));
+            in_run = in_run.saturating_add(1);
+            left = left.saturating_sub(1);
+        }
+        WrittenTrack {
+            track_id: ft.track_id,
+            timescale,
+            traf_number,
+            duration,
+            starts_with_sync: ft.samples.first().is_some_and(|sample| sample.meta.sync),
+            first_sync,
+        }
     }
 
     fn track_mut(&mut self, track: TrackId) -> Result<&mut TrackState> {
@@ -256,13 +491,17 @@ impl FragmentedWriter {
     }
 }
 
-/// Build one `[styp] [emsg]* moof mdat` fragment over already-collected
-/// samples.
+/// Build one `[before]* [styp] [emsg]* moof mdat` fragment over
+/// already-collected samples.
 ///
 /// The single fragment builder: [`FragmentedWriter::flush`] prepares its
 /// buffers and calls this, and a caller that already holds its samples calls it
-/// directly. `trun.data_offset` resolves against the `default-base-is-moof`
-/// base (§8.8.8) and is computed from the finished `moof` size.
+/// directly. Without a [`FragmentOptions::layout`] every sample's duration,
+/// size, flags and composition offset sits in `trun` and each run is addressed
+/// from the `moof` (`default-base-is-moof`, §8.8.7); with one, the `tfhd`/
+/// `trun` field choices, the run splits, the child order and the boxes between
+/// fragments are the source's, and `trun.data_offset`/`tfhd.base_data_offset`
+/// are recomputed from where the fragment is written.
 pub fn fragmented_segment(
     tracks: &[FragmentTrack<'_>],
     options: &FragmentOptions<'_>,
@@ -273,6 +512,77 @@ pub fn fragmented_segment(
         compatible_brands: brands.compatible_brands.clone(),
     });
 
+    let mut moof = match options.layout {
+        Some(layout) => layout_moof(tracks, layout, options.sequence_number)?,
+        None => canonical_moof(tracks, options.sequence_number)?,
+    };
+
+    let emsg_bytes = event_bytes(options.events)?;
+    let mut prefix = Vec::new();
+    if let Some(layout) = options.layout {
+        for box_ in &layout.before {
+            prefix.extend_from_slice(&box_.try_to_bytes()?);
+        }
+    }
+    if let Some(styp) = &styp {
+        let mut bytes = vec![0u8; styp.serialized_len()];
+        let written = styp.serialize_into(&mut bytes)?;
+        bytes.truncate(written);
+        prefix.extend_from_slice(&bytes);
+    }
+    prefix.extend_from_slice(&emsg_bytes);
+    let moof_offset = options
+        .position
+        .checked_add(u64::try_from(prefix.len()).map_err(|_| {
+            Error::InvalidInput("fragment prefix is past the 64-bit file offset range")
+        })?)
+        .ok_or(Error::InvalidInput("fragment offset overflows the file"))?;
+
+    place_payload(&mut moof, tracks, moof_offset, options.layout)?;
+    let mut mdat_data = Vec::new();
+    fill_mdat(&moof, tracks, &mut mdat_data)?;
+
+    let mdat = MediaDataBox { data: mdat_data };
+    let mut body = vec![0u8; moof.serialized_len()];
+    let written = moof.serialize_into(&mut body)?;
+    body.truncate(written);
+    let mut mdat_bytes = vec![0u8; mdat.serialized_len()];
+    let n = mdat.serialize_into(&mut mdat_bytes)?;
+    body.extend_from_slice(&mdat_bytes[..n]);
+
+    if options.layout.is_some() {
+        // A recorded layout reproduces the source's own protection boxes; the
+        // samples' aux info is not re-derived on top of them.
+        if tracks
+            .iter()
+            .any(|track| track.samples.iter().any(|sample| sample.meta.aux.is_some()))
+        {
+            return Err(Error::InvalidInput(
+                "a recorded fragment layout cannot carry new CENC aux",
+            ));
+        }
+    }
+    let protections = ProtectionSets::build(tracks)?;
+    let body = if protections.is_empty() {
+        body
+    } else {
+        protect_media_segment(&body, &protections.protections())?
+    };
+    let moof_len = first_box_len(&body, &MOOF)?;
+
+    let mut bytes = prefix;
+    bytes.extend_from_slice(&body);
+    Ok(Fragment {
+        bytes,
+        moof_len,
+        moof_offset,
+    })
+}
+
+/// One `moof` in this crate's canonical form: per-sample `trun` fields,
+/// `trun`/`tfdt` versions derived from the samples, one run per track and
+/// `default-base-is-moof` addressing.
+fn canonical_moof(tracks: &[FragmentTrack<'_>], sequence_number: u32) -> Result<MovieFragmentBox> {
     let mut traf_boxes = Vec::with_capacity(tracks.len());
     for ft in tracks {
         let description = fragment_description(ft)?;
@@ -292,57 +602,347 @@ pub fn fragmented_segment(
         let tfdt = TrackFragmentBaseMediaDecodeTimeBox::new_v1(ft.base_decode_time);
         traf_boxes.push(TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]));
     }
-
-    let mut moof = MovieFragmentBox::new(
-        MovieFragmentHeaderBox::new(options.sequence_number),
+    Ok(MovieFragmentBox::new(
+        MovieFragmentHeaderBox::new(sequence_number),
         traf_boxes,
-    );
-
-    let mut cursor = moof.serialized_len() + BOX_HEADER_MIN_SIZE;
-    let mut mdat_data = Vec::new();
-    for (i, ft) in tracks.iter().enumerate() {
-        moof.traf[i].trun[0].data_offset = Some(i32::try_from(cursor).map_err(|_| {
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
-                field: "trun data_offset",
-                value: cursor as u64,
-                reason: "fragment too large for the signed 32-bit trun data_offset",
-            })
-        })?);
-        for sample in ft.samples {
-            mdat_data.extend_from_slice(sample.data);
-            cursor += sample.data.len();
-        }
-    }
-    let mdat = MediaDataBox { data: mdat_data };
-
-    let mut body = vec![0u8; moof.serialized_len()];
-    let written = moof.serialize_into(&mut body)?;
-    body.truncate(written);
-    let mut mdat_bytes = vec![0u8; mdat.serialized_len()];
-    let n = mdat.serialize_into(&mut mdat_bytes)?;
-    body.extend_from_slice(&mdat_bytes[..n]);
-
-    let protections = ProtectionSets::build(tracks)?;
-    let body = if protections.is_empty() {
-        body
-    } else {
-        protect_media_segment(&body, &protections.protections())?
-    };
-    let moof_len = first_box_len(&body, &MOOF)?;
-
-    let emsg_bytes = event_bytes(options.events)?;
-    let styp_len = styp.as_ref().map_or(0, Serialize::serialized_len);
-    let mut bytes = vec![0u8; styp_len + emsg_bytes.len() + body.len()];
-    let mut c = 0usize;
-    if let Some(styp) = &styp {
-        c += styp.serialize_into(&mut bytes[c..])?;
-    }
-    bytes[c..c + emsg_bytes.len()].copy_from_slice(&emsg_bytes);
-    c += emsg_bytes.len();
-    bytes[c..c + body.len()].copy_from_slice(&body);
-    Ok(Fragment { bytes, moof_len })
+    ))
 }
 
+/// One `moof` reproducing `layout`, with every sample value its omitted
+/// fields leave to a default checked against that default.
+fn layout_moof(
+    tracks: &[FragmentTrack<'_>],
+    layout: &crate::frag_layout::FragmentLayout,
+    sequence_number: u32,
+) -> Result<MovieFragmentBox> {
+    if layout.tracks.len() != tracks.len() {
+        return Err(Error::InvalidInput(
+            "the recorded fragment layout does not cover this flush's track set",
+        ));
+    }
+    let mut traf_boxes = Vec::with_capacity(layout.tracks.len());
+    for track_layout in &layout.tracks {
+        let ft = tracks
+            .iter()
+            .find(|track| track.track_id == track_layout.track_id)
+            .ok_or(Error::InvalidInput(
+                "the recorded fragment layout names a track this flush does not carry",
+            ))?;
+        traf_boxes.push(layout_track_fragment(ft, track_layout)?);
+    }
+    Ok(MovieFragmentBox {
+        mfhd: MovieFragmentHeaderBox::new(sequence_number),
+        traf: traf_boxes,
+        order: layout.children.clone(),
+    })
+}
+
+/// One `traf` as `track_layout` states it.
+fn layout_track_fragment(
+    ft: &FragmentTrack<'_>,
+    track_layout: &crate::frag_layout::TrackFragmentLayout,
+) -> Result<TrackFragmentBox> {
+    check_description(ft, &track_layout.tfhd)?;
+    let declared: usize = track_layout.runs.iter().map(|run| run.sample_count).sum();
+    if declared != ft.samples.len() {
+        return Err(Error::LayoutMismatch {
+            field: "sample_count",
+            track: ft.track_id,
+            sample: u32::try_from(declared).unwrap_or(u32::MAX),
+            expected: u64::try_from(declared).unwrap_or(u64::MAX),
+            actual: u64::try_from(ft.samples.len()).unwrap_or(u64::MAX),
+        });
+    }
+    let tfhd = TrackFragmentHeaderBox {
+        flags: track_layout.tfhd.flags,
+        track_id: ft.track_id,
+        base_data_offset: track_layout.tfhd.base_data_offset.map(|_| 0),
+        sample_description_index: track_layout.tfhd.sample_description_index,
+        default_sample_duration: track_layout.tfhd.default_sample_duration,
+        default_sample_size: track_layout.tfhd.default_sample_size,
+        default_sample_flags: track_layout.tfhd.default_sample_flags,
+    };
+    let mut runs = Vec::with_capacity(track_layout.runs.len());
+    let mut start = 0usize;
+    for run in &track_layout.runs {
+        let end = start.saturating_add(run.sample_count);
+        let samples = ft.samples.get(start..end).ok_or(Error::LayoutMismatch {
+            field: "sample_count",
+            track: ft.track_id,
+            sample: u32::try_from(start).unwrap_or(u32::MAX),
+            expected: u64::try_from(end).unwrap_or(u64::MAX),
+            actual: u64::try_from(ft.samples.len()).unwrap_or(u64::MAX),
+        })?;
+        runs.push(layout_run(ft, &tfhd, run, samples, start)?);
+        start = end;
+    }
+    let has_tfdt = track_layout.children.is_empty()
+        || track_layout
+            .children
+            .iter()
+            .any(|child| matches!(child, TrafChild::Tfdt));
+    let tfdt = if has_tfdt {
+        Some(decode_time_box(ft, track_layout.tfdt_version)?)
+    } else {
+        None
+    };
+    Ok(TrackFragmentBox {
+        tfhd,
+        tfdt,
+        trun: runs,
+        order: track_layout.children.clone(),
+    })
+}
+
+/// The `tfdt` for `ft` in the version the layout states.
+fn decode_time_box(
+    ft: &FragmentTrack<'_>,
+    version: u8,
+) -> Result<TrackFragmentBaseMediaDecodeTimeBox> {
+    if version == 0 {
+        let time = u32::try_from(ft.base_decode_time).map_err(|_| {
+            Error::InvalidInput(
+                "a version-0 tfdt cannot state this fragment's base media decode time",
+            )
+        })?;
+        return Ok(TrackFragmentBaseMediaDecodeTimeBox::new_v0(time));
+    }
+    Ok(TrackFragmentBaseMediaDecodeTimeBox::new_v1(
+        ft.base_decode_time,
+    ))
+}
+
+/// One `trun` as `run` states it, with every sample value the run leaves out
+/// checked against the default it inherits.
+fn layout_run(
+    ft: &FragmentTrack<'_>,
+    tfhd: &TrackFragmentHeaderBox,
+    run: &crate::frag_layout::RunLayout,
+    samples: &[SampleData<'_>],
+    first_index: usize,
+) -> Result<TrackFragmentRunBox> {
+    let default_duration = tfhd
+        .default_sample_duration
+        .unwrap_or(ft.trex.default_sample_duration);
+    let default_size = tfhd
+        .default_sample_size
+        .unwrap_or(ft.trex.default_sample_size);
+    let default_flags = tfhd
+        .default_sample_flags
+        .unwrap_or(ft.trex.default_sample_flags);
+    let mut records = Vec::with_capacity(samples.len());
+    for (offset, sample) in samples.iter().enumerate() {
+        let index = first_index.saturating_add(offset);
+        let duration = sample.meta.duration;
+        if !run.fields.duration {
+            check_mismatch(ft, "sample_duration", index, default_duration, duration)?;
+        }
+        let size = u32::try_from(sample.data.len()).map_err(|_| {
+            Error::InvalidInput("sample larger than the 32-bit trun sample_size field")
+        })?;
+        if !run.fields.size {
+            check_mismatch(ft, "sample_size", index, default_size, size)?;
+        }
+        let flags = sample_flags(sample.meta.sync);
+        if !run.fields.flags {
+            let expected = if offset == 0 {
+                run.first_sample_flags.unwrap_or(default_flags)
+            } else {
+                default_flags
+            };
+            check_mismatch(ft, "sample_flags", index, expected, flags)?;
+        }
+        let composition_offset = sample.meta.composition_offset;
+        if !run.fields.composition_offset {
+            check_mismatch(
+                ft,
+                "sample_composition_time_offset",
+                index,
+                0,
+                composition_offset.unsigned_abs(),
+            )?;
+        }
+        records.push(TrunSample {
+            sample_duration: run.fields.duration.then_some(duration),
+            sample_size: run.fields.size.then_some(size),
+            sample_flags: run.fields.flags.then_some(flags),
+            sample_composition_time_offset: run
+                .fields
+                .composition_offset
+                .then_some(i64::from(composition_offset)),
+        });
+    }
+    if run.version == 0
+        && let Some((offset, _)) = samples
+            .iter()
+            .enumerate()
+            .find(|(_, sample)| sample.meta.composition_offset < 0)
+    {
+        return Err(Error::LayoutMismatch {
+            field: "trun version",
+            track: ft.track_id,
+            sample: u32::try_from(first_index.saturating_add(offset)).unwrap_or(u32::MAX),
+            expected: 1,
+            actual: u64::from(run.version),
+        });
+    }
+    Ok(TrackFragmentRunBox {
+        version: run.version,
+        tr_flags: if records.is_empty() {
+            run.fields.flags()
+        } else {
+            0
+        },
+        data_offset: run.data_offset.then_some(0),
+        first_sample_flags: run.first_sample_flags,
+        samples: records,
+    })
+}
+
+/// A recorded `tfhd`/`trex` default against the value a sample states.
+fn check_mismatch(
+    ft: &FragmentTrack<'_>,
+    field: &'static str,
+    index: usize,
+    expected: u32,
+    actual: u32,
+) -> Result<()> {
+    if expected == actual {
+        return Ok(());
+    }
+    Err(Error::LayoutMismatch {
+        field,
+        track: ft.track_id,
+        sample: u32::try_from(index).unwrap_or(u32::MAX),
+        expected: u64::from(expected),
+        actual: u64::from(actual),
+    })
+}
+
+/// The `tfhd.sample_description_index` a recorded layout states against the
+/// one every sample uses.
+fn check_description(
+    ft: &FragmentTrack<'_>,
+    tfhd: &crate::frag_layout::TrackFragmentHeaderLayout,
+) -> Result<()> {
+    let stated = tfhd
+        .sample_description_index
+        .unwrap_or(ft.trex.sample_description_index);
+    for (index, sample) in ft.samples.iter().enumerate() {
+        if sample.meta.description_index != stated {
+            return Err(Error::LayoutMismatch {
+                field: "sample_description_index",
+                track: ft.track_id,
+                sample: u32::try_from(index).unwrap_or(u32::MAX),
+                expected: u64::from(stated),
+                actual: u64::from(sample.meta.description_index),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// State each `traf`'s absolute `base_data_offset` and each run's
+/// `data_offset` for where the fragment's media will land, in `moof` order.
+fn place_payload(
+    moof: &mut MovieFragmentBox,
+    tracks: &[FragmentTrack<'_>],
+    moof_offset: u64,
+    layout: Option<&crate::frag_layout::FragmentLayout>,
+) -> Result<()> {
+    let mut cursor = moof.serialized_len() + BOX_HEADER_MIN_SIZE;
+    for child in moof.child_order_for_rewrite() {
+        let MoofChild::Traf(index) = child else {
+            continue;
+        };
+        let traf = moof
+            .traf
+            .get_mut(index)
+            .ok_or(Error::InvalidInput("moof child index out of range"))?;
+        let track_id = traf.tfhd.track_id;
+        let ft = tracks
+            .iter()
+            .find(|track| track.track_id == track_id)
+            .ok_or(Error::InvalidInput(
+                "a moof traf names a track this fragment has no samples for",
+            ))?;
+        let delta = layout
+            .and_then(|layout| layout.track(track_id))
+            .and_then(|track| track.tfhd.base_data_offset)
+            .unwrap_or(0);
+        if traf.tfhd.base_data_offset.is_some() {
+            traf.tfhd.base_data_offset = Some(absolute_base(moof_offset, delta)?);
+        }
+        let mut next = 0usize;
+        for run in &mut traf.trun {
+            if run.data_offset.is_some() {
+                run.data_offset = Some(offset_from_base(cursor, delta)?);
+            }
+            for _ in 0..run.samples.len() {
+                let sample = ft.samples.get(next).ok_or(Error::InvalidInput(
+                    "a trun states more samples than the fragment carries",
+                ))?;
+                cursor = cursor.saturating_add(sample.data.len());
+                next = next.saturating_add(1);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The fragment's media, in the `moof`'s `traf` order.
+fn fill_mdat(
+    moof: &MovieFragmentBox,
+    tracks: &[FragmentTrack<'_>],
+    out: &mut Vec<u8>,
+) -> Result<()> {
+    for child in moof.child_order_for_rewrite() {
+        let MoofChild::Traf(index) = child else {
+            continue;
+        };
+        let track_id = moof
+            .traf
+            .get(index)
+            .ok_or(Error::InvalidInput("moof child index out of range"))?
+            .tfhd
+            .track_id;
+        let ft = tracks
+            .iter()
+            .find(|track| track.track_id == track_id)
+            .ok_or(Error::InvalidInput(
+                "a moof traf names a track this fragment has no samples for",
+            ))?;
+        for sample in ft.samples {
+            out.extend_from_slice(sample.data);
+        }
+    }
+    Ok(())
+}
+
+/// An absolute `tfhd.base_data_offset` from the `moof`'s offset and a
+/// relative delta.
+fn absolute_base(moof_offset: u64, delta: i64) -> Result<u64> {
+    let base = i128::from(moof_offset) + i128::from(delta);
+    u64::try_from(base)
+        .map_err(|_| Error::InvalidInput("tfhd.base_data_offset leaves the 64-bit offset range"))
+}
+
+/// A `trun.data_offset` from a payload position inside the fragment and the
+/// `traf`'s own base delta.
+fn offset_from_base(cursor: usize, delta: i64) -> Result<i32> {
+    let position = i64::try_from(cursor)
+        .map_err(|_| Error::InvalidInput("fragment offset is past the signed 64-bit range"))?;
+    let value = position
+        .checked_sub(delta)
+        .ok_or(Error::InvalidInput("trun data_offset overflows"))?;
+    i32::try_from(value).map_err(|_| {
+        Error::InvalidValue(broadcast_common::error::InvalidValue {
+            field: "trun data_offset",
+            value: u64::try_from(value).unwrap_or(u64::MAX),
+            reason: "fragment too large for the signed 32-bit trun data_offset",
+        })
+    })
+}
 /// The one-based `stsd` entry a fragment's samples use, when it is not the
 /// default one.
 ///

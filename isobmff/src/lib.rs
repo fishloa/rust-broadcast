@@ -117,6 +117,7 @@ pub mod dts;
 pub mod emsg;
 pub mod error;
 pub mod flac;
+pub mod frag_layout;
 pub mod frag_offsets;
 pub mod hdr_boxes;
 pub mod hevc_config;

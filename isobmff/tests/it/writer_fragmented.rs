@@ -488,6 +488,7 @@ fn a_caller_can_build_a_fragment_without_the_buffering_writer() {
         track_id: TrackId::new(3),
         base_decode_time: 0,
         samples: &samples,
+        trex: Default::default(),
     }];
     let fragment = fragmented_segment(
         &tracks,
@@ -495,6 +496,8 @@ fn a_caller_can_build_a_fragment_without_the_buffering_writer() {
             sequence_number: 4,
             styp: None,
             events: &[],
+            layout: None,
+            position: 0,
         },
     )
     .expect("fragment");
@@ -534,6 +537,7 @@ fn cenc_aux_emits_senc_saiz_saio_in_the_traf() {
         track_id: TrackId::new(1),
         base_decode_time: 0,
         samples: &samples,
+        trex: Default::default(),
     }];
     let fragment = fragmented_segment(
         &tracks,
@@ -541,6 +545,8 @@ fn cenc_aux_emits_senc_saiz_saio_in_the_traf() {
             sequence_number: 1,
             styp: None,
             events: &[],
+            layout: None,
+            position: 0,
         },
     )
     .expect("fragment");
