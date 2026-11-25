@@ -276,12 +276,12 @@ fn open_gop_gulli_fixture_anchors_and_segments() {
 
     let mut segments: Vec<Vec<u8>> = Vec::new();
     for sample in &video.samples {
-        seg.push(video.spec.track_id, sample.clone())
+        crate::segmenter_stage::feed(&mut seg, video.spec.track_id, sample.clone())
             .expect("segmenter push");
-        segments.extend(seg.take_ready());
+        segments.extend(crate::segmenter_stage::take_bytes(&mut seg));
     }
-    seg.flush().expect("segmenter flush");
-    segments.extend(seg.take_ready());
+    crate::segmenter_stage::flush(&mut seg).expect("segmenter flush");
+    segments.extend(crate::segmenter_stage::take_bytes(&mut seg));
 
     // Pre-fix, this fixture yields exactly one giant segment. Post-fix it
     // must cut at every GOP start.

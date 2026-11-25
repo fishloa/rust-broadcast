@@ -10,10 +10,11 @@
 //! strongest bite: round-tripping the real writer's output.
 #![cfg(feature = "std")]
 
+use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use std::path::PathBuf;
 
-use broadcast_common::{Package, Parse, Unpackage};
+use broadcast_common::{Parse, Unpackage};
 use broadcast_smooth::{SmoothManifest, StreamType};
 use isobmff::box_types::parse_box;
 use transmux::aac_asc::AudioSpecificConfig;

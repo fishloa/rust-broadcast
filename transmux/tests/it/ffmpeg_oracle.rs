@@ -8,12 +8,12 @@
 //! assertively with `!has_video`, telling us to update the interop table.
 
 #![cfg(feature = "cenc")]
-use broadcast_common::{Encrypt, Package, Unpackage};
+use broadcast_common::{Encrypt, Unpackage};
 use std::path::PathBuf;
 use std::process::Command;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
-    CencEncryptor, CencScheme, CmafMux, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,
+    CencEncryptor, CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,
     SubsamplePolicy, TrackProtection,
 };
 
@@ -52,7 +52,7 @@ fn build_protected_fmp4(media: &mut Media, cfg: &EncryptConfig) -> Vec<u8> {
         .as_ref()
         .expect("protection")
         .clone();
-    let raw = CmafMux::new(1).package(&*media).expect("mux");
+    let raw = crate::cmaf::package(&*media).expect("mux");
     protect_init_segment(&raw, track_id, &enc).expect("protect init")
 }
 

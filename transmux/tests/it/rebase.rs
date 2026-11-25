@@ -29,12 +29,11 @@
 //! 5. A `None`-timed (section-carried) sample is never given a fabricated
 //!    timestamp by any transform.
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::nalu_types::{AvcPps, AvcSps};
 use transmux::TrackId;
-use transmux::media::{CmafMux, Media, Track};
+use transmux::media::{Media, Track};
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,
 };
@@ -171,7 +170,7 @@ fn rebase_to_zero_end_to_end() {
 
     // Before rebase: the muxer must emit the anchor as the tfdt (proves it is
     // wired, not hardcoded 0).
-    let before = CmafMux::default().package(&media).expect("package");
+    let before = crate::cmaf::package(&media).expect("package");
     assert_eq!(
         muxed_tfdt(&before),
         ANCHOR,
@@ -186,7 +185,7 @@ fn rebase_to_zero_end_to_end() {
         vec![Some(0), Some(3000), Some(6000)],
         "rebase_to_zero must move the samples, not just the anchor"
     );
-    let after = CmafMux::default().package(&media).expect("package");
+    let after = crate::cmaf::package(&media).expect("package");
     assert_eq!(
         muxed_tfdt(&after),
         0,
@@ -210,7 +209,7 @@ fn apply_offset_bites() {
         ],
         "apply_offset must shift every sample's absolute dts too"
     );
-    let fmp4 = CmafMux::default().package(&media).expect("package");
+    let fmp4 = crate::cmaf::package(&media).expect("package");
     assert_eq!(
         muxed_tfdt(&fmp4),
         ANCHOR + DELTA as u64,

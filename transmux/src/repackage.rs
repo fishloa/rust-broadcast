@@ -3,7 +3,7 @@
 //!
 //! `transmux` is an any-to-any container hub: [`Mp4Demux`](crate::mp4_demux::Mp4Demux)
 //! parses fragmented ISOBMFF/CMAF into the neutral [`Media`] IR, and
-//! [`Segmenter`] / [`CmafMux`](crate::media::CmafMux) mux the IR back into CMAF.
+//! [`Segmenter`] / [`CmafMuxStage`](crate::media::CmafMuxStage) mux the IR back into CMAF.
 //! *Repackaging* composes those two ends with pure transforms on the IR in the
 //! middle — no new box parsing:
 //!
@@ -34,6 +34,7 @@
 
 use alloc::vec::Vec;
 
+use broadcast_common::Stage;
 use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
 
 use crate::error::{Error, Result};
@@ -402,19 +403,32 @@ impl Repackage {
         while let Some(ti) = earliest_decode_time_track(media, &dts, &cursors) {
             let track = &media.tracks[ti];
             let sample = &track.samples[cursors[ti]];
-            seg.push(track.spec.track_id, sample.clone())?;
+            seg.feed(
+                crate::mux_stage::MuxInput::Sample {
+                    track: track.spec.track_id,
+                    sample: sample.clone(),
+                },
+                broadcast_common::Timestamp::ZERO,
+            )?;
             dts[ti] += sample.timing.and_then(|t| t.duration()).unwrap_or(0) as u128;
             cursors[ti] += 1;
-            for s in seg.take_ready() {
-                seg_ready.push(s);
-            }
+            drain_segments(&mut seg, &mut seg_ready);
         }
-        seg.flush()?;
-        seg_ready.extend(seg.take_ready());
+        seg.finish()?;
+        drain_segments(&mut seg, &mut seg_ready);
         Ok(RepackageOutput {
             init_segment,
             media_segments: seg_ready,
         })
+    }
+}
+
+/// Drain a segmenter stage's finished segments into `out`.
+fn drain_segments(seg: &mut Segmenter, out: &mut Vec<Vec<u8>>) {
+    while let Some(output) = seg.poll() {
+        if let crate::mux_stage::MuxOutput::Segment(segment) = output {
+            out.push(segment.bytes.to_vec());
+        }
     }
 }
 

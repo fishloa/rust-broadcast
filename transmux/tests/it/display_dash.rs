@@ -11,7 +11,8 @@
 
 #![cfg(feature = "std")]
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Package;
+use broadcast_common::Unpackage;
 use quick_xml::Reader;
 use quick_xml::XmlVersion;
 use quick_xml::events::{BytesStart, Event};

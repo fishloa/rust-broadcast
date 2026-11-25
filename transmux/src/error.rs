@@ -260,7 +260,7 @@ pub enum Error {
     },
 
     /// A fMP4/CMAF mux entry point ([`build_init_segment`](crate::pipeline::build_init_segment)
-    /// and every packager built on it — [`CmafMux`](crate::media::CmafMux),
+    /// and every packager built on it — [`CmafMuxStage`](crate::media::CmafMuxStage),
     /// [`ProgressiveMux`](crate::progressive::ProgressiveMux),
     /// [`Segmenter`](crate::segmenter::Segmenter),
     /// [`LlSegmenter`](crate::ll_dash::LlSegmenter),

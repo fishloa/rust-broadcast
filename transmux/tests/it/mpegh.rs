@@ -22,10 +22,10 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use broadcast_common::{Package, Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use isobmff::{MHAC_CONFIGURATION_VERSION, MHAC_FOURCC, MHADecoderConfigurationRecord};
 use isobmff::{SampleDescriptionBox, SampleEntryVariant};
-use transmux::{CmafMux, CodecConfig};
+use transmux::CodecConfig;
 
 static FIXTURE: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("mp4/frag/mpegh-stereo.frag.mp4"));
@@ -200,8 +200,7 @@ fn sample_bytes_round_trip_byte_identical() {
     );
 
     // Re-mux to CMAF, then re-demux.
-    let mut mux = CmafMux::new(1);
-    let remuxed = mux.package(&first).expect("re-mux to CMAF");
+    let remuxed = crate::cmaf::package(&first).expect("re-mux to CMAF");
     let second = test_harness::collect::media_from_mp4(
         &remuxed,
         test_harness::collect::CollectMode::Seekable,
@@ -230,8 +229,7 @@ fn sample_bytes_round_trip_byte_identical() {
 #[test]
 fn output_init_segment_carries_source_mhac() {
     let media = demux_fixture();
-    let mut mux = CmafMux::new(1);
-    let out = mux.package(&media).expect("mux");
+    let out = crate::cmaf::package(&media).expect("mux");
 
     // Walk the muxed init to its stsd and confirm the mha1/mhaC.
     let stsd_bytes = find_stsd(&out);

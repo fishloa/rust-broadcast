@@ -15,7 +15,8 @@ use std::process::Command;
 use test_fixtures::process::tool_available;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Package;
+use broadcast_common::Unpackage;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::progressive::ProgressiveMux;

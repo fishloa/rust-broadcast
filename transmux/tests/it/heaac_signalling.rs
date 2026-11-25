@@ -9,8 +9,9 @@
 //! (ISO/IEC 14496-3 §1.6.2). The DVB descriptor path builds its PMT only
 //! through `dvb-si`'s serializer and the TS muxer.
 
+use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize, Unpackage};
 use dvb_si::descriptors::aac::{AacDescriptor, AacExtension};
 use isobmff::EsdsBox;
 use transmux::{

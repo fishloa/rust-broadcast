@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 use transmux::TrackId;
 
-use broadcast_common::{Decrypt, Encrypt, Package, Parse, Serialize, Unpackage};
+use broadcast_common::{Decrypt, Encrypt, Parse, Serialize, Unpackage};
 use isobmff::cenc::{
     ProtectionSchemeInfoBox, SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox, SampleEncryptionBox,
     SampleEncryptionEntry,
@@ -29,7 +29,7 @@ use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
-    CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, Media, SubsamplePolicy, TsDemux,
+    CencEncryptor, CencScheme, CodecConfig, EncryptConfig, Media, SubsamplePolicy, TsDemux,
 };
 
 const KID: [u8; 16] = [
@@ -165,14 +165,14 @@ fn mux_without_fragment_protection(media: &Media) -> Vec<u8> {
             sample.protection = None;
         }
     }
-    CmafMux::new(1).package(&clear).expect("CmafMux::package")
+    crate::cmaf::package(&clear).expect("CmafMux::package")
 }
 
 /// Mux `media` through the real `CmafMux` packager (whose fragment writer
 /// emits each sample's `senc`), then protect the init segment for `track_id`.
 /// Returns the fully protected CMAF bytes.
 fn protect(media: &Media, track_id: u32) -> Vec<u8> {
-    let raw = CmafMux::new(1).package(media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(media).expect("CmafMux::package");
     let enc = media.tracks[0]
         .spec
         .protection
@@ -281,16 +281,15 @@ fn protect_media_segment_emits_senc_saiz_saio() {
     // Sanity: `protect_media_segment` really did grow the moof relative to a
     // freshly-built clear one (proves the boxes were actually appended, not a
     // silent no-op).
-    let clear_raw = CmafMux::new(1)
-        .package(&{
-            let mut m = media.clone();
-            m.tracks[0].spec.protection = None;
-            for sample in &mut m.tracks[0].samples {
-                sample.protection = None;
-            }
-            m
-        })
-        .expect("clear CmafMux::package");
+    let clear_raw = crate::cmaf::package(&{
+        let mut m = media.clone();
+        m.tracks[0].spec.protection = None;
+        for sample in &mut m.tracks[0].samples {
+            sample.protection = None;
+        }
+        m
+    })
+    .expect("clear CmafMux::package");
     let (_, clear_moof_bytes) = find_top_box(&clear_raw, b"moof").expect("clear moof present");
     assert!(
         moof_bytes.len() > clear_moof_bytes.len(),
@@ -411,7 +410,7 @@ fn protect_media_segment_unknown_track_errors() {
     let enc = media.tracks[0].spec.protection.clone().unwrap();
     let entries = sample_entries(&media.tracks[0]);
 
-    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(&media).expect("CmafMux::package");
     let bogus_protection = FragmentProtection {
         track_id: isobmff::TrackId::new(9999),
         entries: &entries,
@@ -428,7 +427,7 @@ fn protect_media_segment_empty_protections_is_identity() {
     let Some(media) = clear_video_media() else {
         return;
     };
-    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(&media).expect("CmafMux::package");
     let out = protect_media_segment(&raw, &[]).expect("identity pass");
     assert_eq!(out, raw);
 }
@@ -666,7 +665,7 @@ fn protect_media_segment_rejects_a_traf_that_already_carries_senc() {
     CencEncryptor::new(KEY)
         .encrypt(&mut media, &cfg)
         .expect("encrypt");
-    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(&media).expect("CmafMux::package");
     let enc = media.tracks[0]
         .spec
         .protection
@@ -1128,7 +1127,7 @@ fn two_protect_calls_keep_both_enca_and_encv_entries() {
     CencEncryptor::new(KEY)
         .encrypt(&mut media, &cenc_cfg(SubsamplePolicy::WholeSample))
         .expect("encrypt");
-    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(&media).expect("CmafMux::package");
 
     // Audio first, video second: the second call re-parses the moov that
     // already holds the protected audio entry.
@@ -1166,7 +1165,7 @@ fn protect_init_segment_accepts_an_init_only_buffer() {
         .as_ref()
         .expect("TrackSpec::protection populated by CencEncryptor");
 
-    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(&media).expect("CmafMux::package");
     let (moov_offset, moov_bytes) = find_top_box(&raw, b"moov").expect("moov present");
     let init_only = &raw[..moov_offset + moov_bytes.len()];
     assert!(

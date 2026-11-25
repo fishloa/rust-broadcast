@@ -1222,7 +1222,7 @@ impl StreamingTsHlsSegmenter {
     /// Drain every segment cut so far but not yet retrieved, in cut order —
     /// the inherent-API analogue of [`Stage::poll`], draining the same
     /// private `ready` queue (issue R2). Mirrors
-    /// [`Segmenter::take_ready`](crate::segmenter::Segmenter::take_ready).
+    /// the pre-stage `Segmenter::take_ready` drain it replaces.
     pub fn take_ready(&mut self) -> Vec<TsSegment> {
         self.ready.drain(..).collect()
     }

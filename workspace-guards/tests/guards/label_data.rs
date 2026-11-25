@@ -1738,6 +1738,10 @@ pub const TABLE: &[Crate] = &[
             // bytes, a segment), the muxer stages' drive vocabulary, not spec codes.
             "MuxInput",
             "MuxOutput",
+            // `media::FragmentCut`: the caller-chosen fragment-close policy (a
+            // data-carrying ADT, `AnchorKeyframe { track, target }`), a muxer
+            // policy, not a spec-token label.
+            "FragmentCut",
             // `rtp_align::AlignOut` (#2380): a data-carrying ADT (`Sample(TrackId, Sample)`),
             // the result of placing one sample, not a spec code.
             "AlignOut",

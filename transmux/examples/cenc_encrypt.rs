@@ -31,6 +31,26 @@
 //! cargo run -p transmux --example cenc_encrypt --features cenc
 //! ```
 
+/// One CMAF init segment followed by one media segment.
+fn cmaf_bytes(media: &transmux::Media) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut stage =
+        transmux::CmafMuxStage::new(media.movie_timescale, transmux::FragmentCut::OnFlush, 1);
+    let outputs =
+        transmux::mux_stage::drive_media(&mut stage, media, broadcast_common::Timestamp::ZERO)?;
+    let mut bytes = Vec::new();
+    for output in outputs {
+        match output {
+            transmux::mux_stage::MuxOutput::Init(part)
+            | transmux::mux_stage::MuxOutput::Bytes(part) => bytes.extend_from_slice(&part),
+            transmux::mux_stage::MuxOutput::Segment(segment) => {
+                bytes.extend_from_slice(&segment.bytes);
+            }
+            _ => {}
+        }
+    }
+    Ok(bytes)
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "cenc")]
     {
@@ -50,8 +70,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     use transmux::cenc_segment::protect_init_segment;
     use transmux::pipeline::CodecConfig;
     use transmux::{
-        CencEncryptor, CencScheme, CmafMux, DashPackager, EncryptConfig, IvGen, Media,
-        SubsamplePolicy, TrackProtection, TsDemux,
+        CencEncryptor, CencScheme, DashPackager, EncryptConfig, IvGen, Media, SubsamplePolicy,
+        TrackProtection, TsDemux,
     };
 
     // A test KID/key (never a real production key) — the standard `cbcs`
@@ -115,11 +135,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         broadcast_common::hex::hex_encode(&encryption.tenc.default_kid)
     );
 
-    // 4. Mux the encrypted IR (unchanged CmafMux) into one combined
+    // 4. Mux the encrypted IR (CmafMuxStage) into one combined
     //    ftyp+moov+styp+moof+mdat buffer. The fragment writer emits each
     //    sample's `senc` from its own protection; the init segment's
     //    `sinf`/`tenc` is the one post-processing pass left to do.
-    let raw = CmafMux::new(1).package(&media)?;
+    let raw = cmaf_bytes(&media)?;
     let protected = protect_init_segment(&raw, track_id, &encryption)?;
 
     let out_path = std::env::temp_dir().join("transmux_cenc_encrypt_example.mp4");

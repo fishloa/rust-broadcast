@@ -20,9 +20,8 @@
 
 use std::fs;
 
-use broadcast_common::{Package, Serialize};
+use broadcast_common::Serialize;
 use bytes::Bytes;
-use transmux::media::CmafMux;
 use transmux::pipeline::CodecConfig;
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -251,10 +250,7 @@ fn assert_sample_fidelity(name: &str) {
         .collect();
     assert!(!first.is_empty(), "{name} track 0 has samples");
 
-    let mut mux = CmafMux::new(1);
-    let repacked = mux
-        .package(&media)
-        .unwrap_or_else(|e| panic!("{name} package: {e:?}"));
+    let repacked = crate::cmaf::package(&media).unwrap_or_else(|e| panic!("{name} package: {e:?}"));
 
     let media2 = test_harness::collect::media_from_mp4(
         &repacked,
@@ -313,8 +309,7 @@ fn hevc_output_path_emits_hvc1_with_source_hvcc() {
         "track 0 is Hevc"
     );
 
-    let mut mux = CmafMux::new(1);
-    let out = mux.package(&media).expect("package hevc");
+    let out = crate::cmaf::package(&media).expect("package hevc");
 
     // The emitted init segment must carry an `hvc1` sample entry (parameter sets
     // in the sample entry) whose `hvcC` body is byte-identical to the source.

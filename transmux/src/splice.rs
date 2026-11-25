@@ -16,7 +16,7 @@
 //! [`Sample`] timing is *absolute* (media plane step 2c): each sample carries
 //! its own optional decode time (DTS) and presentation time (PTS =
 //! DTS + composition_offset), in the track's media timescale.
-//! [`Track::start_decode_time`] — which [`CmafMux`](crate::media::CmafMux)
+//! [`Track::start_decode_time`] — which [`CmafMuxStage`](crate::media::CmafMuxStage)
 //! writes as the *first* fragment's `tfdt` `baseMediaDecodeTime` (ISO/IEC
 //! 14496-12:2026 §8.8.12) — is the track's start anchor, not a running cursor:
 //! a source that re-seeds `tfdt` per fragment (a discontinuous or gapped
@@ -91,7 +91,7 @@
 //! id + sample index + presentation time of each join), so a downstream HLS
 //! packager / [`Segmenter`](crate::segmenter::Segmenter) can emit
 //! `#EXT-X-DISCONTINUITY` before exactly those segments (drive the segmenter's
-//! [`mark_discontinuity`](crate::segmenter::Segmenter::mark_discontinuity) at the
+//! [`MuxInput::Discontinuity`](crate::mux_stage::MuxInput::Discontinuity) at the
 //! reported sample indices).
 //!
 //! # Follow-up

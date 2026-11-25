@@ -47,12 +47,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Package;
+use broadcast_common::Unpackage;
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
 use transmux::ir::DataIdentity;
 use transmux::pipeline::{CodecConfig, DataCarriage};
-use transmux::{CmafMux, Media, Track, TsDemux, TsHlsPackager, TsMux};
+use transmux::{Media, Track, TsDemux, TsHlsPackager, TsMux};
 
 const TS: usize = 188;
 
@@ -632,8 +633,7 @@ fn ts_to_fmp4_errors_naming_data_track_then_succeeds_once_filtered() {
     // Data track — it names the offending track and errors, so a caller
     // mixing carriable and opaque streams learns about the gap instead of
     // getting a CMAF output missing a track it never asked to lose.
-    let err = CmafMux::default()
-        .package(&mixed)
+    let err = crate::cmaf::package(&mixed)
         .expect_err("CmafMux must reject a Media containing a CodecConfig::Data track");
     match err {
         transmux::Error::UnmuxableDataTrack {
@@ -657,8 +657,7 @@ fn ts_to_fmp4_errors_naming_data_track_then_succeeds_once_filtered() {
         .expect("select_tracks_by must keep the 2 carriable tracks");
     assert_eq!(av_only.tracks.len(), 2, "video + audio only, once filtered");
 
-    let out = CmafMux::default()
-        .package(&av_only)
+    let out = crate::cmaf::package(&av_only)
         .expect("CmafMux must succeed once the Data track is explicitly filtered out");
 
     let reparsed: Media =

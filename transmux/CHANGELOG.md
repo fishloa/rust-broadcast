@@ -33,8 +33,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entry, …). It announces it as `CodecConfig::Data` with an
   `DataIdentity::Mp4` carrying the raw sample entry, samples included; only a
   known four-CC whose parse failed still takes the `TrackAbandoned` path.
+- `CmafMux` and its `Package` impl are deleted. The replacement is
+  `media::CmafMuxStage`, a `Stage` over `MuxInput`/`MuxOutput` that writes
+  through `isobmff::writer::FragmentedWriter`; `FragmentCut` states when a
+  fragment closes, with no library default. Its output is byte-identical to the
+  former whole-`Media` muxer (every golden unchanged).
+- `Segmenter` and `ll_dash::LlSegmenter` speak `mux_stage::MuxInput`; their
+  inherent `push`/`take_ready*`/`flush`/`mark_discontinuity` methods are
+  deleted. `Segmenter::Out` is now `MuxOutput` (each cut a
+  `MuxOutput::Segment` carrying a `SegmentSummary`), and `SegmentMeta` is
+  deleted — the discontinuity flag is `SegmentSummary::discontinuous`.
+  `MuxInput::Discontinuity` replaces `mark_discontinuity` and
+  `MuxInput::Flush` replaces `flush`. `LlSegmenter` keeps its `Chunk` output
+  (a chunk is a fragment, not a whole segment) and maps one into
+  `MuxOutput::Bytes` through `From`.
+- `ll_hls::LlHlsSegmenter`'s `Stage` input is now `MuxInput`; its `Out` stays
+  `LlHlsStageOutput` because a part has no `MuxOutput` form.
+- `Segmenter::take_ready_with_meta` is deleted; callers drive the stage
+  (`feed`/`poll`/`finish`). `LlSegmenter` keeps its inherent chunk API and
+  `Package` impl because `Chunk`'s fields (segment number, chunk sequence) have
+  no `SegmentSummary` form; only its `Stage` input changed.
+- A `DataIdentity::Mp4` data track is now carriable by every fragmented muxer:
+  `isobmff::writer::SampleEntry::Raw` re-emits its own sample entry, so a
+  camera telemetry/timecode track survives MP4 → CMAF → MP4 byte-for-byte.
+  `CodecConfig::is_muxable_in_bmff` accepts it; a TS or Matroska data identity
+  is still refused with the existing named errors.
 
 ### Added
+- `media::{CmafMuxStage, FragmentCut}` and
+  `mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary}` are the
+  streaming shape every converted muxer speaks.
 - `mux_stage`: `MuxInput`, `MuxOutput`, `SegmentOut` and `SegmentSummary`, the one
   input and output vocabulary every muxer stage speaks, and `drive_media`, the
   bridge that feeds a whole `Media` to such a stage in decode-time order.

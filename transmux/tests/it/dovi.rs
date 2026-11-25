@@ -7,15 +7,16 @@
 //! Spec inputs: `private/specs-verified/dolby/vision/` (DV-NOTES.md).
 #![cfg(feature = "std")]
 
+use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize, Unpackage};
 use isobmff::dovi::{DVCC_FOURCC, DVH1_FOURCC, DVVC_FOURCC};
 use std::time::Duration;
 use transmux::ir::{CodecConfig, TrackSpec};
 
 use isobmff::{DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord};
 use transmux::ts_demux::TsDemux;
-use transmux::{CmafMux, Media, build_init_segment};
+use transmux::{Media, build_init_segment};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -308,7 +309,7 @@ fn rpu_nals_survive_the_cmaf_repackage_unchanged() {
             source.samples.iter().all(|s| rpu_nals(&s.data).len() == 1),
             "{fixture}: the source has exactly one RPU per frame"
         );
-        let bytes = CmafMux::new(1).package(&media).expect("package");
+        let bytes = crate::cmaf::package(&media).expect("package");
         let out = test_harness::collect::media_from_mp4(
             &bytes,
             test_harness::collect::CollectMode::Seekable,

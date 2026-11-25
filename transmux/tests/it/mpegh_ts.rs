@@ -18,9 +18,10 @@
 //! packet or off-by-one boundary, not just "some non-empty config".
 
 use crate::ts_psi::{first_section, parse_pat, payload_offset, pid_of, pusi_of};
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use broadcast_common::Package;
+use broadcast_common::{Parse, Serialize, Unpackage};
 use isobmff::MHADecoderConfigurationRecord;
-use transmux::media::{CmafMux, Media};
+use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::{TsDemux, TsMux};
 
@@ -263,8 +264,7 @@ fn fmp4_round_trip_preserves_config_and_sample_bytes() {
         let mut cfg1_bytes = vec![0u8; cfg1.serialized_len()];
         cfg1.serialize_into(&mut cfg1_bytes).unwrap();
 
-        let mut mux = CmafMux::new(1);
-        let fmp4 = mux.package(&media).expect("mux to fMP4");
+        let fmp4 = crate::cmaf::package(&media).expect("mux to fMP4");
 
         let media2 = test_harness::collect::media_from_mp4(
             &fmp4,

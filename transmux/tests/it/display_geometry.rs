@@ -14,7 +14,6 @@
 //! carry a `TrackSpec`). Fixtures are loaded through `test_fixtures`; the
 //! private submodule is skipped, not failed, when it is not checked out.
 
-use broadcast_common::Package;
 use transmux::ir::{AspectRatioIdc, CodecConfig};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux, TsDemux};
 
@@ -253,7 +252,7 @@ fn cmaf_round_trip_keeps_the_sample_aspect_ratio() {
         before.contains(&Some((16, 11))),
         "TS input must carry 16:11: {before:?}"
     );
-    let fmp4 = transmux::CmafMux::new(1).package(&media).expect("CMAF mux");
+    let fmp4 = crate::cmaf::package(&media).expect("CMAF mux");
     let back =
         test_harness::collect::media_from_mp4(&fmp4, test_harness::collect::CollectMode::Seekable)
             .expect("fMP4 demux");

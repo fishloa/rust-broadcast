@@ -23,11 +23,11 @@
 //!    track, not hardcoded.
 #![cfg(feature = "std")]
 
+use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use std::fs;
 use transmux::TrackId;
 
-use broadcast_common::Package;
 use broadcast_hls::{
     DecimalSeconds, IFrameVariant, MasterPlaylist, MediaPlaylist, MediaSegment, Variant,
 };

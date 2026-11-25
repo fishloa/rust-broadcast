@@ -11,7 +11,7 @@
 //! 2. [`WebmDemux`] → [`Media`] (via [`Unpackage`](broadcast_common::Unpackage)).
 //! 3. Feed that one IR to two packagers:
 //!    - [`DashPackager`] → an MPEG-DASH `.mpd` manifest (printed in full), and
-//!    - [`CmafMux`] → CMAF/fMP4 segment bytes (init + media sizes printed).
+//!    - [`CmafMuxStage`](transmux::CmafMuxStage) → CMAF/fMP4 segment bytes (init + media sizes printed).
 //!
 //! Run it with:
 //!
@@ -28,6 +28,26 @@ use transmux::{DashPackager, Media, WebmDemux};
 /// Locate a fixture under the workspace `fixtures/` directory (a sibling of the
 /// crate's `CARGO_MANIFEST_DIR`). Read at runtime via `std::fs` — never
 /// `include_bytes!`.
+/// One CMAF init segment followed by one media segment.
+fn cmaf_bytes(media: &Media) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut stage =
+        transmux::CmafMuxStage::new(media.movie_timescale, transmux::FragmentCut::OnFlush, 1);
+    let outputs =
+        transmux::mux_stage::drive_media(&mut stage, media, broadcast_common::Timestamp::ZERO)?;
+    let mut bytes = Vec::new();
+    for output in outputs {
+        match output {
+            transmux::mux_stage::MuxOutput::Init(part)
+            | transmux::mux_stage::MuxOutput::Bytes(part) => bytes.extend_from_slice(&part),
+            transmux::mux_stage::MuxOutput::Segment(segment) => {
+                bytes.extend_from_slice(&segment.bytes);
+            }
+            _ => {}
+        }
+    }
+    Ok(bytes)
+}
+
 fn fixture_path(rel: &str) -> PathBuf {
     test_fixtures::path(rel)
 }
@@ -86,7 +106,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{mpd}");
 
     // 3b. The SAME IR → CMAF/fMP4 segment bytes.
-    let cmaf: Vec<u8> = transmux::CmafMux::default().package(&media)?;
+    let cmaf: Vec<u8> = cmaf_bytes(&media)?;
     println!("--- CMAF/fMP4 ---");
     println!(
         "segment bytes: {} (one init + one media segment)",

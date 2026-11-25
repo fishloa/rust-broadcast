@@ -590,15 +590,18 @@ impl CodecConfig {
         (bps != 0).then_some(bps)
     }
 
-    /// True for the opaque [`CodecConfig::Data`] variant (issue #557/#576): a
-    /// PMT-carried elementary stream with no ISOBMFF sample entry in this
-    /// crate. Every fMP4/CMAF mux entry point (init segment + every packager
-    /// built on it) rejects such a track, naming it, rather than silently
-    /// omitting it — mirrors how the TS mux path, unlike this one, *can*
-    /// carry them verbatim. See [`CodecConfig::is_muxable_in_bmff`], which
-    /// also covers an entry-less [`CodecConfig::Subtitle`] (B1).
+    /// True for a [`CodecConfig::Data`] track whose identity no ISOBMFF muxer
+    /// in this crate can place: a TS elementary stream (issue #557/#576) or a
+    /// Matroska track. An [`DataIdentity::Mp4`] data track *is* carriable — its
+    /// identity already is an ISOBMFF handler and sample entry — so it is not
+    /// opaque here. See [`CodecConfig::is_muxable_in_bmff`], which also covers
+    /// an entry-less [`CodecConfig::Subtitle`] (B1).
     pub(crate) fn is_opaque_data(&self) -> bool {
-        matches!(self, CodecConfig::Data { .. })
+        matches!(
+            self,
+            CodecConfig::Data { identity, .. }
+                if !matches!(identity, DataIdentity::Mp4 { .. })
+        )
     }
 
     /// True for a [`CodecConfig::Subtitle`] with no `sample_entry`: this

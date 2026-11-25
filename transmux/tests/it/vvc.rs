@@ -5,13 +5,12 @@
 //! `vvcC` box. The `vvcC` box body (FullBox header + `VvcDecoderConfigurationRecord`)
 //! is the byte-exact oracle. Every test walks the box tree — no hardcoded offsets.
 
-use broadcast_common::{Package, Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use bytes::Bytes;
 use isobmff::vvc_config::{
     VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalArray, VvcNalUnitType, VvcPtlRecord,
 };
 use transmux::codec_config_ext::VvcRecordCodecInfo;
-use transmux::media::CmafMux;
 use transmux::pipeline::CodecConfig;
 
 const FIXTURE: &str = "mp4/frag/vvc.frag.mp4";
@@ -148,8 +147,7 @@ fn vvc_sample_round_trip_through_cmaf() {
         .collect();
     assert!(!orig_samples.is_empty(), "expected coded samples");
 
-    let mut mux = CmafMux::default();
-    let remuxed = mux.package(&media).expect("mux back to CMAF");
+    let remuxed = crate::cmaf::package(&media).expect("mux back to CMAF");
 
     let media2 = test_harness::collect::media_from_mp4(
         &remuxed,
@@ -186,8 +184,7 @@ fn vvc_output_init_segment_carries_vvc1_vvcc() {
         test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
             .expect("demux");
 
-    let mut mux = CmafMux::default();
-    let remuxed = mux.package(&media).expect("mux");
+    let remuxed = crate::cmaf::package(&media).expect("mux");
 
     // The output must contain a vvc1 sample entry (in its moov→…→stsd).
     let vvc1 = find_box_full(&remuxed, b"vvc1").expect("vvc1 in muxed init segment");

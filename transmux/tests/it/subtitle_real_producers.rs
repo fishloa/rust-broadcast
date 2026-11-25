@@ -18,11 +18,12 @@
 
 use std::collections::BTreeSet;
 
-use broadcast_common::{Package, Serialize};
+use broadcast_common::Package;
+use broadcast_common::Serialize;
 use isobmff::box_support::OpaqueBox;
 use isobmff::{WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, parse_wvtt_sample};
 use transmux::pipeline::{CodecConfig, SubtitleSampleEntry};
-use transmux::{CmafMux, DashPackager, Media, SmoothPackager, Track};
+use transmux::{DashPackager, Media, SmoothPackager, Track};
 
 const DIR: &str = "subtitles";
 
@@ -255,9 +256,7 @@ fn every_real_file_remuxes_through_cmaf_unchanged() {
     for c in cases() {
         let media = demux(&c.layout);
         let before = subtitle_track(&media);
-        let out = CmafMux::new(1)
-            .package(&media)
-            .unwrap_or_else(|e| panic!("{}: {e:?}", c.label));
+        let out = crate::cmaf::package(&media).unwrap_or_else(|e| panic!("{}: {e:?}", c.label));
         let round = test_harness::collect::media_from_mp4(
             &out,
             test_harness::collect::CollectMode::Seekable,

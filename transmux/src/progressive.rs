@@ -5,7 +5,7 @@
 //! the *full* sample tables (`stbl`: `stsd`/`stts`/`ctts`/`stsc`/`stsz`/
 //! `stco`|`co64`/`stss`, ISO/IEC 14496-12:2026 §8.5–§8.7), and a single `mdat`
 //! holding every track's sample data concatenated. This is the VOD/download
-//! counterpart to the fragmented [`crate::media::CmafMux`].
+//! counterpart to the fragmented [`crate::media::CmafMuxStage`].
 //!
 //! This module's job is only the IR-to-plan mapping: it reads each sample's
 //! decode delta, composition offset, sync flag and size, and each track's

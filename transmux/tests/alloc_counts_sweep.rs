@@ -218,9 +218,11 @@ mod muxer_buffering {
 mod segmenter_cuts {
     use super::measure;
     use broadcast_common::timescale::Timescale;
+    use broadcast_common::{Stage, Timestamp};
     use core::time::Duration;
     use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
     use transmux::TrackId;
+    use transmux::mux_stage::{MuxInput, MuxOutput};
     use transmux::{CodecConfig, Sample, Segmenter, TrackSpec};
 
     fn timescale(value: u32) -> Timescale {
@@ -267,10 +269,23 @@ mod segmenter_cuts {
             .collect::<Result<Vec<_>, _>>()
             .expect("valid timing");
         let (n, allocs, _) = measure(|| {
-            for s in samples {
-                seg.push(TrackId::new(1), s).unwrap();
+            for sample in samples {
+                seg.feed(
+                    MuxInput::Sample {
+                        track: TrackId::new(1),
+                        sample,
+                    },
+                    Timestamp::ZERO,
+                )
+                .unwrap();
             }
-            seg.take_ready().len()
+            let mut segments = 0usize;
+            while let Some(output) = seg.poll() {
+                if matches!(output, MuxOutput::Segment(_)) {
+                    segments += 1;
+                }
+            }
+            segments
         });
         (n, allocs)
     }
