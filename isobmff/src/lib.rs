@@ -51,6 +51,13 @@
 //!   or sample entry, so a private `stsd` entry and a private `udta` atom come
 //!   back typed without this crate changing. An unregistered box stays
 //!   [`OpaqueBox`](box_support::OpaqueBox) and writes back unchanged.
+//! - [`frag_layout`] — [`frag_layout::FragmentLayout`], the write-back layout
+//!   of one movie fragment: which `tfhd`/`trun` fields a source states and
+//!   their values, the run splits, the child order including opaque boxes, the
+//!   boxes between fragments, and the forms of the `sidx` and `mfra` around
+//!   them. [`reader::FragmentInfo`] reports one per fragment and
+//!   [`writer::FragmentedWriter::set_fragment_layout`] reproduces it byte for
+//!   byte, recomputing every offset from where the fragment is written.
 //! - [`reader`], [`plan`] — the sans-IO progressive [`Reader`]: it asks for
 //!   structure byte ranges, surfaces every track and one [`SampleRef`] at a
 //!   time, and hands out a [`SamplePlan`] from the index alone. [`plan`] also
