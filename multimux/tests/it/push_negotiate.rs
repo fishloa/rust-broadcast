@@ -128,7 +128,7 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
             // `GUARD` read timeout is the backstop if a regression means a
             // track never arrives at all.
             let carried = test_harness::collect::media_from_flv(&flv_bytes)
-                .map(|m| m.tracks.len())
+                .map(|m| m.tracks.iter().filter(|t| !t.samples.is_empty()).count())
                 .unwrap_or(0);
             if carried >= 2 && flv_bytes.len() > 4096 {
                 break;
