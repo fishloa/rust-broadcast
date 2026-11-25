@@ -130,8 +130,21 @@ impl TrackSpec {
 
     /// Attach TS provenance (issue #582): the source elementary-stream PID
     /// and its verbatim PMT ES_info descriptor-loop bytes.
+    ///
+    /// A [`CodecConfig::Data`] track also carries the loop on its
+    /// [`DataIdentity::Ts`](super::DataIdentity::Ts) identity, which is what
+    /// the TS muxer reads; both are updated here so a descriptors-only PMT
+    /// change cannot leave the identity stale. (Removing the duplicate
+    /// `es_info_descriptors` copy for a data track changes a demux golden, so
+    /// it is a separate, orchestrator-approved change.)
     pub fn with_source(mut self, source_pid: Pid, es_info_descriptors: Vec<u8>) -> Self {
         self.source_pid = Some(source_pid);
+        if let CodecConfig::Data {
+            identity: super::DataIdentity::Ts { descriptors, .. },
+        } = &mut self.config
+        {
+            *descriptors = es_info_descriptors.clone();
+        }
         if matches!(self.config, CodecConfig::Hevc { .. }) {
             self.dovi = crate::dovi_descriptor::find_video_stream_descriptor(&es_info_descriptors)
                 .map(|d| d.record);

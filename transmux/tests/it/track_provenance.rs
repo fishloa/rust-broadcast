@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 use transmux::TrackId;
 
 use broadcast_common::Unpackage;
+use transmux::ir::DataIdentity;
 use transmux::pipeline::CodecConfig;
 use transmux::{DemuxEvent, Media, StreamingTsDemux, TsDemux};
 
@@ -36,6 +37,18 @@ const EXPECTED_SUBTITLE_PIDS: [u16; 2] = [0x8C, 0x8E];
 
 fn fixture_bytes() -> Vec<u8> {
     test_fixtures::read("ts/france2.ts")
+}
+
+/// A TS-demuxed track's PMT ES_info descriptor-loop bytes. A `Data` track's
+/// one home for them is its `DataIdentity::Ts` identity; every recognised
+/// codec's track keeps them on `TrackSpec::es_info_descriptors`.
+fn track_es_info(track: &transmux::Track) -> &[u8] {
+    match &track.spec.config {
+        CodecConfig::Data {
+            identity: DataIdentity::Ts { descriptors, .. },
+        } => descriptors,
+        _ => &track.spec.es_info_descriptors,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,8 +210,9 @@ fn every_track_carries_its_pmt_pid_and_es_info() {
             .get(&pid.value())
             .unwrap_or_else(|| panic!("track pid {pid:#06x} not among the PMT's ES entries"));
         assert_eq!(
-            &track.spec.es_info_descriptors, expected_descriptors,
-            "es_info_descriptors for PID {pid:#06x} must equal the PMT ES_info bytes verbatim"
+            track_es_info(track),
+            expected_descriptors.as_slice(),
+            "the track's descriptor loop for PID {pid:#06x} must equal the PMT ES_info bytes verbatim"
         );
         seen_pids.push(pid.value());
     }
@@ -229,7 +243,7 @@ fn audio_language_and_subtitle_descriptors_recoverable() {
     let mut languages = std::collections::BTreeSet::new();
     for &pid in &EXPECTED_AUDIO_PIDS {
         let track = track_for_pid(pid);
-        let lang_desc = find_descriptor(&track.spec.es_info_descriptors, DESC_TAG_ISO_639_LANGUAGE)
+        let lang_desc = find_descriptor(track_es_info(track), DESC_TAG_ISO_639_LANGUAGE)
             .unwrap_or_else(|| {
                 panic!("PID {pid:#06x} es_info_descriptors must carry an ISO-639 language descriptor (tag 0x0A)")
             });
@@ -254,7 +268,7 @@ fn audio_language_and_subtitle_descriptors_recoverable() {
     for &pid in &EXPECTED_SUBTITLE_PIDS {
         let track = track_for_pid(pid);
         assert!(
-            find_descriptor(&track.spec.es_info_descriptors, DESC_TAG_DVB_SUBTITLING).is_some(),
+            find_descriptor(track_es_info(track), DESC_TAG_DVB_SUBTITLING).is_some(),
             "PID {pid:#06x} es_info_descriptors must carry a DVB subtitling descriptor (tag 0x59)"
         );
     }
