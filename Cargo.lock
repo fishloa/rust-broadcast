@@ -3863,6 +3863,7 @@ dependencies = [
  "isobmff",
  "media-plane",
  "quick-xml",
+ "test-alloc",
  "test-fixtures",
  "thiserror 2.0.21",
  "transmux",
