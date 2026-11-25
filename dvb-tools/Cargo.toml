@@ -25,6 +25,9 @@ clap       = { workspace = true, features = ["derive"] }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+# The soak stream test generates a big TS and measures live-byte peaks.
+test-harness = { path = "../test-harness" }
+test-alloc = { path = "../test-alloc" }
 
 [lints]
 workspace = true

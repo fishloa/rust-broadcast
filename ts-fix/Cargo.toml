@@ -42,6 +42,9 @@ required-features = ["cli"]
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
 scte35-splice = { path = "../scte35-splice", version = "8.0.0", default-features = false }
+# The soak stream test generates a big TS and measures live-byte peaks.
+test-harness = { path = "../test-harness" }
+test-alloc = { path = "../test-alloc" }
 
 [package.metadata.docs.rs]
 all-features = true

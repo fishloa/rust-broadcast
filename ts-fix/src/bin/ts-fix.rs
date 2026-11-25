@@ -9,8 +9,9 @@
 //! ts-fix --input corrupt.ts --output repaired.ts --repair-continuity --drop-nulls
 //! ```
 
-use std::fs;
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::{BufReader, BufWriter, ErrorKind, Read, Write};
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use mpeg_ts::pid::Pid;
@@ -133,6 +134,20 @@ fn parse_pid(s: &str) -> Result<Pid, String> {
     Pid::try_new(value).map_err(|e| e.to_string())
 }
 
+/// Read granularity for streaming the input; memory stays flat on a
+/// multi-gigabyte capture.
+const READ_CHUNK: usize = 1 << 20;
+
+/// One `read`, retried on `Interrupted`.
+fn read_chunk(reader: &mut impl Read, buf: &mut [u8]) -> std::io::Result<usize> {
+    loop {
+        match reader.read(buf) {
+            Err(e) if e.kind() == ErrorKind::Interrupted => continue,
+            other => return other,
+        }
+    }
+}
+
 fn main() {
     if let Err(e) = run() {
         eprintln!("error: {e}");
@@ -142,9 +157,6 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-
-    let input =
-        fs::read(&cli.input).map_err(|e| format!("cannot read {}: {e}", cli.input.display()))?;
 
     let mut builder = TsFix::builder();
 
@@ -177,25 +189,61 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let mut engine = builder.build()?;
-    let mut output = Vec::with_capacity(input.len());
+
+    let input =
+        File::open(&cli.input).map_err(|e| format!("cannot read {}: {e}", cli.input.display()))?;
+    let mut reader = BufReader::with_capacity(READ_CHUNK, input);
+    let output = File::create(&cli.output)
+        .map_err(|e| format!("cannot write {}: {e}", cli.output.display()))?;
+    let mut out = BufWriter::with_capacity(READ_CHUNK, output);
 
     // Resynchronise the input byte stream rather than assuming it starts
     // packet-aligned and is a clean multiple of 188: a capture that begins
     // mid-packet, carries a corrupted sync byte, or is 204-byte RS-coded
     // must still be repaired, not aborted (#1101 W-TF-5).
     let mut resync = TsResync::new();
-    let tail = {
-        let mut packets = resync.feed(&input);
-        resync.finish();
-        packets.extend(resync.take_tail_packets());
-        packets
-    };
-    for pkt in tail {
-        engine.push(&pkt, |pkt| output.extend_from_slice(pkt))?;
-    }
-    engine.finish(|pkt| output.extend_from_slice(pkt));
+    let mut chunk = vec![0u8; READ_CHUNK];
+    let mut aligned: Vec<[u8; TS_PACKET_SIZE]> = Vec::new();
+    let mut written_packets: u64 = 0;
+    let mut written_bytes: u64 = 0;
 
-    fs::write(&cli.output, &output)
+    loop {
+        let read = read_chunk(&mut reader, &mut chunk)
+            .map_err(|e| format!("cannot read {}: {e}", cli.input.display()))?;
+        if read == 0 {
+            break;
+        }
+        resync.feed_into(&chunk[..read], &mut aligned);
+        for packet in aligned.drain(..) {
+            push_and_write(
+                &mut engine,
+                &packet,
+                &mut out,
+                &cli.output,
+                &mut written_packets,
+                &mut written_bytes,
+            )?;
+        }
+    }
+    resync.finish();
+    for packet in resync.take_tail_packets() {
+        push_and_write(
+            &mut engine,
+            &packet,
+            &mut out,
+            &cli.output,
+            &mut written_packets,
+            &mut written_bytes,
+        )?;
+    }
+    flush_engine(
+        &mut engine,
+        &mut out,
+        &cli.output,
+        &mut written_packets,
+        &mut written_bytes,
+    )?;
+    out.flush()
         .map_err(|e| format!("cannot write {}: {e}", cli.output.display()))?;
 
     let stats = resync.stats();
@@ -206,11 +254,77 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     eprintln!(
-        "wrote {} packets ({} bytes) to {}",
-        output.len() / TS_PACKET_SIZE,
-        output.len(),
+        "wrote {written_packets} packets ({written_bytes} bytes) to {}",
         cli.output.display(),
     );
 
     Ok(())
+}
+
+/// Feed one aligned packet through the engine, writing every emitted packet.
+fn push_and_write(
+    engine: &mut TsFix,
+    packet: &[u8],
+    out: &mut BufWriter<File>,
+    output: &Path,
+    written_packets: &mut u64,
+    written_bytes: &mut u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut write_error: Option<std::io::Error> = None;
+    engine.push(packet, |emitted| {
+        write_emitted(
+            out,
+            emitted,
+            &mut write_error,
+            written_packets,
+            written_bytes,
+        );
+    })?;
+    write_error.map_or(Ok(()), |e| Err(write_failure(output, &e)))
+}
+
+/// Flush the engine's buffered state, writing every emitted packet.
+fn flush_engine(
+    engine: &mut TsFix,
+    out: &mut BufWriter<File>,
+    output: &Path,
+    written_packets: &mut u64,
+    written_bytes: &mut u64,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut write_error: Option<std::io::Error> = None;
+    engine.finish(|emitted| {
+        write_emitted(
+            out,
+            emitted,
+            &mut write_error,
+            written_packets,
+            written_bytes,
+        );
+    });
+    write_error.map_or(Ok(()), |e| Err(write_failure(output, &e)))
+}
+
+/// Write one emitted packet unless an earlier write already failed.
+fn write_emitted(
+    out: &mut BufWriter<File>,
+    emitted: &[u8],
+    write_error: &mut Option<std::io::Error>,
+    written_packets: &mut u64,
+    written_bytes: &mut u64,
+) {
+    if write_error.is_some() {
+        return;
+    }
+    match out.write_all(emitted) {
+        Ok(()) => {
+            *written_packets += 1;
+            *written_bytes = written_bytes.saturating_add(emitted.len() as u64);
+        }
+        Err(e) => *write_error = Some(e),
+    }
+}
+
+/// The message a failed output write reports.
+fn write_failure(output: &Path, e: &std::io::Error) -> Box<dyn std::error::Error> {
+    format!("cannot write {}: {e}", output.display()).into()
 }

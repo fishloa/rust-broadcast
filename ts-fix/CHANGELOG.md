@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- `discontinuity::PcrDiscontinuityScanner`, the streaming form of `detect_pcr_discontinuities`: a capture is fed in pieces of any size instead of being held whole.
+
+### Changed
+
+- The `ts-fix` binary streams its input through `TsResync` and writes repaired packets as they are produced, so a multi-gigabyte capture no longer needs to fit in memory; its output, statistics and end-of-run line are unchanged.
+
 ## [0.11.0] - 2026-11-22
 ### Breaking
 

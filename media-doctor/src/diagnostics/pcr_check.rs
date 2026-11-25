@@ -18,12 +18,12 @@
 //! (modulo 2^33 x 300) to handle 33-bit wrap, matching the dvb-conformance
 //! crate's method.
 
+use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 
-use crate::Diagnostic;
-use crate::Report;
 use crate::report::{Finding, Location, Severity};
-use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
+use crate::{Diagnostic, DiagnosticScan, PmtStreamIndex, Report};
+use mpeg_ts::ts::TsPacket;
 
 use broadcast_common::clock33::pcr_forward_distance;
 /// 27 MHz clock rate (ticks per second) — ISO/IEC 13818-1 §2.4.2.
@@ -66,98 +66,108 @@ struct PcrState {
 pub struct PcrCheck;
 
 impl Diagnostic for PcrCheck {
-    fn run(&self, ts: &[u8], report: &mut Report) {
-        let n_packets = ts.len() / TS_PACKET_SIZE;
-        let mut pcr_states: BTreeMap<u16, PcrState> = BTreeMap::new();
+    fn scan(&self, _pmt: &PmtStreamIndex) -> Box<dyn DiagnosticScan> {
+        Box::new(PcrScan {
+            pcr_states: BTreeMap::new(),
+            index: 0,
+        })
+    }
+}
 
-        for i in 0..n_packets {
-            let offset = i * TS_PACKET_SIZE;
-            let raw = &ts[offset..offset + TS_PACKET_SIZE];
+/// One streaming pass of [`PcrCheck`].
+struct PcrScan {
+    pcr_states: BTreeMap<u16, PcrState>,
+    index: usize,
+}
 
-            let Ok(pkt) = TsPacket::parse(raw) else {
-                continue;
-            };
+impl DiagnosticScan for PcrScan {
+    fn feed(&mut self, raw: &[u8], report: &mut Report) {
+        let i = self.index;
+        self.index += 1;
 
-            let pid = pkt.header.pid;
+        let Ok(pkt) = TsPacket::parse(raw) else {
+            return;
+        };
 
-            // Only packets with an adaptation field can carry PCR.
-            if !pkt.header.has_adaptation() {
-                continue;
-            }
+        let pid = pkt.header.pid;
 
-            let af = match pkt.adaptation_field() {
-                Some(Ok(a)) => a,
-                _ => continue,
-            };
-
-            let pcr = match af.pcr {
-                Some(p) => p.as_27mhz(),
-                None => continue,
-            };
-
-            let state = pcr_states.entry(pid.value()).or_insert(PcrState {
-                last_pcr: 0,
-                initialised: false,
-            });
-
-            if !state.initialised {
-                state.last_pcr = pcr;
-                state.initialised = true;
-                continue;
-            }
-
-            let last_pcr = state.last_pcr;
-
-            // A signalled discontinuity (§2.4.3.5) re-anchors the clock.
-            // The PCR value on this packet samples a new time base — do not
-            // compare against the previous baseline.
-            if af.discontinuity_indicator {
-                state.last_pcr = pcr;
-                continue;
-            }
-
-            // PCR delta (modular, handling 33-bit wrap).
-            let delta = pcr_forward_distance(last_pcr, pcr);
-            let delta_ms = delta / TICKS_27MHZ_PER_MS;
-
-            // 2.3b is defined on the signed difference: a modular delta past
-            // half the modulus is a backward step. See the module docs and
-            // `private/specs-verified/dvb/dvb-conformance/tr_101_290.md`.
-            let signed_step = delta; // 2.3b is defined on the signed difference.
-            let backward = signed_step > PCR_27MHZ_MAX_FORWARD;
-            let forward_ms = delta_ms;
-            // `backward` guarantees `signed_step > modulus/2`, so the
-            // subtraction cannot underflow; `saturating_sub` states that
-            // rather than resting on it.
-            let backward_ms = (PCR_MODULUS_27MHZ.saturating_sub(signed_step)) / TICKS_27MHZ_PER_MS;
-
-            // ── 2.3b: PCR_discontinuity_indicator_error ─────────────────
-            // "outside 0...100 ms without the discontinuity_indicator set".
-            // Decidable from the values alone, so this is the Error.
-            let outside_range = backward || forward_ms > PCR_DISCONTINUITY_LIMIT_MS;
-            let flagged_discontinuity = outside_range && !af.discontinuity_indicator;
-            if flagged_discontinuity {
-                let what = if backward {
-                    alloc::format!("PCR goes backwards by {backward_ms} ms")
-                } else {
-                    alloc::format!("PCR delta {forward_ms} ms")
-                };
-                report.push(Finding::new(
-                    Severity::Error,
-                    Location::at_pid(i, pid),
-                    "pcr-discontinuity",
-                    alloc::format!(
-                        "{what} on PID 0x{pid:04X}, outside the 0..{PCR_DISCONTINUITY_LIMIT_MS} ms range and no discontinuity_indicator — TR 101 290 indicator 2.3b",
-                    ),
-                ));
-            }
-
-            // 2.3a is not emitted in file mode: every forward step over
-            // 100 ms without the discontinuity_indicator is already reported
-            // above as 2.3b.
-
-            state.last_pcr = pcr;
+        // Only packets with an adaptation field can carry PCR.
+        if !pkt.header.has_adaptation() {
+            return;
         }
+
+        let af = match pkt.adaptation_field() {
+            Some(Ok(a)) => a,
+            _ => return,
+        };
+
+        let pcr = match af.pcr {
+            Some(p) => p.as_27mhz(),
+            None => return,
+        };
+
+        let state = self.pcr_states.entry(pid.value()).or_insert(PcrState {
+            last_pcr: 0,
+            initialised: false,
+        });
+
+        if !state.initialised {
+            state.last_pcr = pcr;
+            state.initialised = true;
+            return;
+        }
+
+        let last_pcr = state.last_pcr;
+
+        // A signalled discontinuity (§2.4.3.5) re-anchors the clock.
+        // The PCR value on this packet samples a new time base — do not
+        // compare against the previous baseline.
+        if af.discontinuity_indicator {
+            state.last_pcr = pcr;
+            return;
+        }
+
+        // PCR delta (modular, handling 33-bit wrap).
+        let delta = pcr_forward_distance(last_pcr, pcr);
+        let delta_ms = delta / TICKS_27MHZ_PER_MS;
+
+        // 2.3b is defined on the signed difference: a modular delta past
+        // half the modulus is a backward step. See the module docs and
+        // `private/specs-verified/dvb/dvb-conformance/tr_101_290.md`.
+        let signed_step = delta; // 2.3b is defined on the signed difference.
+        let backward = signed_step > PCR_27MHZ_MAX_FORWARD;
+        let forward_ms = delta_ms;
+        // `backward` guarantees `signed_step > modulus/2`, so the
+        // subtraction cannot underflow; `saturating_sub` states that
+        // rather than resting on it.
+        let backward_ms = (PCR_MODULUS_27MHZ.saturating_sub(signed_step)) / TICKS_27MHZ_PER_MS;
+
+        // ── 2.3b: PCR_discontinuity_indicator_error ─────────────────
+        // "outside 0...100 ms without the discontinuity_indicator set".
+        // Decidable from the values alone, so this is the Error.
+        let outside_range = backward || forward_ms > PCR_DISCONTINUITY_LIMIT_MS;
+        let flagged_discontinuity = outside_range && !af.discontinuity_indicator;
+        if flagged_discontinuity {
+            let what = if backward {
+                alloc::format!("PCR goes backwards by {backward_ms} ms")
+            } else {
+                alloc::format!("PCR delta {forward_ms} ms")
+            };
+            report.push(Finding::new(
+                Severity::Error,
+                Location::at_pid(i, pid),
+                "pcr-discontinuity",
+                alloc::format!(
+                    "{what} on PID 0x{pid:04X}, outside the 0..{PCR_DISCONTINUITY_LIMIT_MS} ms range and no discontinuity_indicator — TR 101 290 indicator 2.3b",
+                ),
+            ));
+        }
+
+        // 2.3a is not emitted in file mode: every forward step over
+        // 100 ms without the discontinuity_indicator is already reported
+        // above as 2.3b.
+
+        state.last_pcr = pcr;
     }
 }
 

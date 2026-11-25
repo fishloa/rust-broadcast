@@ -69,81 +69,161 @@ pub(crate) fn current_pmt(raw: &[u8]) -> Option<PmtSection<'_>> {
 
 /// One elementary stream declared by a program's PMT.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DeclaredStream {
+pub struct DeclaredStream {
     /// Elementary stream PID.
     pub pid: Pid,
     /// PMT-declared `stream_type` (ISO/IEC 13818-1 Table 2-34).
     pub stream_type: StreamType,
 }
 
-/// Walk `ts` following PAT → every PMT, returning every elementary stream
-/// declared, one entry per PID.
+/// Every elementary stream a transport stream's PMT layer declares, one entry
+/// per PID, in PID order.
 ///
-/// A PMT repeats on the air (typically about every 100 ms — ISO/IEC
-/// 13818-1 §2.4.4.2's PSI repetition-rate advice), so a stream's PID list is
-/// walked far more than once end to end; without deduping, both this
-/// function's own `Vec` and every caller's `.contains()` scan over it grow
-/// linearly with repetitions rather than with the number of actually
-/// declared PIDs — quadratic overall (issue #1069 / audit MD-C2). Dedup by
-/// elementary PID, keeping the latest PMT generation seen for that PID (a
-/// version bump legitimately changes a PID's declared `stream_type`, and the
-/// most recent one is authoritative); returned in PID order.
+/// Built by [`PmtStreamCollector`], fed one packet at a time (or in one step by
+/// [`PmtStreamIndex::from_ts`]), so a multi-gigabyte capture never has to be
+/// held whole.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PmtStreamIndex {
+    streams: Vec<DeclaredStream>,
+}
+
+impl PmtStreamIndex {
+    /// An index that declares nothing.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    /// Walk `ts` following PAT → every PMT, returning every elementary
+    /// stream declared, one entry per PID.
+    ///
+    /// A PMT repeats on the air (typically about every 100 ms — ISO/IEC
+    /// 13818-1 §2.4.4.2's PSI repetition-rate advice), so a stream's PID list
+    /// is walked far more than once end to end; without deduping, both the
+    /// collector's own `Vec` and every caller's `.contains()` scan over it
+    /// grow linearly with repetitions rather than with the number of actually
+    /// declared PIDs — quadratic overall (issue #1069 / audit MD-C2). Dedup by
+    /// elementary PID, keeping the latest PMT generation seen for that PID (a
+    /// version bump legitimately changes a PID's declared `stream_type`, and
+    /// the most recent one is authoritative); returned in PID order.
+    ///
+    /// Malformed/unparseable, CRC-failing or next-generation
+    /// (`current_next_indicator == 0`) PAT or PMT sections are skipped rather
+    /// than propagated — a codec check degrades to "nothing declared" on a
+    /// broken PSI layer instead of panicking; other diagnostics (e.g.
+    /// `PatPmtVersionCheck`) already cover PSI-layer faults.
+    #[must_use]
+    pub fn from_ts(ts: &[u8]) -> Self {
+        let mut collector = PmtStreamCollector::new();
+        for packet in ts.chunks_exact(TS_PACKET_SIZE) {
+            collector.feed(packet);
+        }
+        collector.finish()
+    }
+
+    /// The declared streams, in PID order.
+    #[must_use]
+    pub fn streams(&self) -> &[DeclaredStream] {
+        &self.streams
+    }
+
+    /// Whether the PMT layer declared no elementary stream at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.streams.is_empty()
+    }
+}
+
+/// Streaming PAT → PMT discovery behind [`PmtStreamIndex`].
 ///
-/// Malformed/unparseable, CRC-failing or next-generation
-/// (`current_next_indicator == 0`) PAT or PMT sections are skipped rather than
-/// propagated — a codec check degrades to "nothing declared" on a broken PSI
-/// layer instead of panicking; other diagnostics (e.g. `PatPmtVersionCheck`)
-/// already cover PSI-layer faults.
-pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
-    let n_packets = ts.len() / TS_PACKET_SIZE;
-    let mut reassemblers: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
-    reassemblers.entry(dvb_si::tables::pat::PID).or_default();
+/// Feed one 188-byte TS packet at a time in wire order; call
+/// [`finish`](Self::finish) at end of stream for the index the rest of the
+/// pass is judged against.
+pub struct PmtStreamCollector {
+    reassemblers: BTreeMap<Pid, SectionReassembler>,
+    pmt_pids: Vec<Pid>,
+    declared: BTreeMap<Pid, StreamType>,
+}
 
-    let mut pmt_pids: Vec<Pid> = Vec::new();
-    let mut declared: BTreeMap<Pid, StreamType> = BTreeMap::new();
+impl PmtStreamCollector {
+    /// A collector that has seen no packet yet.
+    #[must_use]
+    pub fn new() -> Self {
+        let mut reassemblers: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
+        reassemblers.entry(dvb_si::tables::pat::PID).or_default();
+        Self {
+            reassemblers,
+            pmt_pids: Vec::new(),
+            declared: BTreeMap::new(),
+        }
+    }
 
-    for i in 0..n_packets {
-        let offset = i * TS_PACKET_SIZE;
-        let raw = &ts[offset..offset + TS_PACKET_SIZE];
-        let Ok(pkt) = TsPacket::parse(raw) else {
-            continue;
+    /// Feed one TS packet.
+    pub fn feed(&mut self, packet: &[u8]) {
+        let Ok(pkt) = TsPacket::parse(packet) else {
+            return;
         };
         let pid = pkt.header.pid;
-        if !reassemblers.contains_key(&pid) {
-            continue;
-        }
         let Some(payload) = pkt.payload else {
-            continue;
+            return;
         };
         let pusi = pkt.header.pusi;
-        reassemblers.get_mut(&pid).unwrap().feed(payload, pusi);
+        let Some(reassembler) = self.reassemblers.get_mut(&pid) else {
+            return;
+        };
+        reassembler.feed(payload, pusi);
 
         let mut new_pmt_pids: Vec<Pid> = Vec::new();
-        while let Some(section) = reassemblers.get_mut(&pid).unwrap().pop_section() {
+        while let Some(section) = self
+            .reassemblers
+            .get_mut(&pid)
+            .and_then(SectionReassembler::pop_section)
+        {
             if pid == dvb_si::tables::pat::PID {
                 if let Some(pat) = current_pat(&section) {
                     for pmt_pid in declared_pmt_pids(&pat) {
-                        if !pmt_pids.contains(&pmt_pid) && !new_pmt_pids.contains(&pmt_pid) {
+                        if !self.pmt_pids.contains(&pmt_pid) && !new_pmt_pids.contains(&pmt_pid) {
                             new_pmt_pids.push(pmt_pid);
                         }
                     }
                 }
             } else if let Some(pmt) = current_pmt(&section) {
                 for stream in &pmt.streams {
-                    declared.insert(stream.elementary_pid, stream.stream_type);
+                    self.declared
+                        .insert(stream.elementary_pid, stream.stream_type);
                 }
             }
         }
         for pmt_pid in new_pmt_pids {
-            pmt_pids.push(pmt_pid);
-            reassemblers.entry(pmt_pid).or_default();
+            self.pmt_pids.push(pmt_pid);
+            self.reassemblers.entry(pmt_pid).or_default();
         }
     }
 
-    declared
-        .into_iter()
-        .map(|(pid, stream_type)| DeclaredStream { pid, stream_type })
-        .collect()
+    /// The index this collector's whole pass declared.
+    #[must_use]
+    pub fn finish(self) -> PmtStreamIndex {
+        PmtStreamIndex {
+            streams: self
+                .declared
+                .into_iter()
+                .map(|(pid, stream_type)| DeclaredStream { pid, stream_type })
+                .collect(),
+        }
+    }
+}
+
+impl Default for PmtStreamCollector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The batch form of [`PmtStreamIndex::from_ts`], for the tests that judge a
+/// whole buffer.
+#[cfg(test)]
+pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
+    PmtStreamIndex::from_ts(ts).streams
 }
 
 /// Scan `payload` for a byte offset at which a well-formed ADTS header parses
@@ -170,52 +250,69 @@ pub(crate) fn pids_with_stream_type(
         .collect()
 }
 
-/// Reassemble PES access units on every PID accepted by `wanted`, invoking
-/// `on_payload` with the PES-header-stripped elementary-stream bytes for each
-/// completed unit (ISO/IEC 13818-1 §2.4.3.6), the 0-based index of the TS
-/// packet that completed it, and the PID it came from.
+/// Reassemble PES access units on every PID accepted by the caller's predicate,
+/// one TS packet at a time.
 ///
-/// Any PID left with a partially-assembled unit at end of stream is flushed
-/// (attributed to the last packet index) — mirrors `PtsCheck`'s flush step.
-pub(crate) fn for_each_access_unit(
-    ts: &[u8],
-    mut wanted: impl FnMut(Pid) -> bool,
-    mut on_payload: impl FnMut(&[u8], usize, Pid),
-) {
-    let n_packets = ts.len() / TS_PACKET_SIZE;
-    let mut assemblers: BTreeMap<Pid, PesAssembler> = BTreeMap::new();
+/// Each completed unit is handed to `on_payload` as the PES-header-stripped
+/// elementary-stream bytes (ISO/IEC 13818-1 §2.4.3.6), the 0-based index of the
+/// TS packet that completed it, and the PID it came from.
+///
+/// Any PID left with a partially-assembled unit at end of stream is flushed by
+/// [`finish`](Self::finish), attributed to the last packet index — mirrors
+/// `PtsCheck`'s flush step.
+#[derive(Default)]
+pub struct AccessUnitScanner {
+    assemblers: BTreeMap<Pid, PesAssembler>,
+    index: usize,
+}
 
-    for i in 0..n_packets {
-        let offset = i * TS_PACKET_SIZE;
-        let raw = &ts[offset..offset + TS_PACKET_SIZE];
-        let Ok(pkt) = TsPacket::parse(raw) else {
-            continue;
+impl AccessUnitScanner {
+    /// A scanner that has seen no packet yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Feed one TS packet.
+    pub fn feed(
+        &mut self,
+        packet: &[u8],
+        wanted: &mut impl FnMut(Pid) -> bool,
+        on_payload: &mut impl FnMut(&[u8], usize, Pid),
+    ) {
+        let index = self.index;
+        self.index += 1;
+        let Ok(pkt) = TsPacket::parse(packet) else {
+            return;
         };
         let pid = pkt.header.pid;
         if !wanted(pid) {
-            continue;
+            return;
         }
         let Some(payload) = pkt.payload else {
-            continue;
+            return;
         };
         if payload.is_empty() {
-            continue;
+            return;
         }
         let pusi = pkt.header.pusi;
-        let assembler = assemblers.entry(pid).or_default();
+        let assembler = self.assemblers.entry(pid).or_default();
         if let Some(pes_bytes) = assembler.feed(pusi, payload)
             && let Ok(pes) = mpeg_pes::PesPacket::parse(&pes_bytes)
         {
-            on_payload(pes.payload, i, pid);
+            on_payload(pes.payload, index, pid);
         }
     }
 
-    let last = n_packets.saturating_sub(1);
-    for (&pid, assembler) in assemblers.iter_mut() {
-        if let Some(pes_bytes) = assembler.flush()
-            && let Ok(pes) = mpeg_pes::PesPacket::parse(&pes_bytes)
-        {
-            on_payload(pes.payload, last, pid);
+    /// Flush every partially-assembled unit, attributed to the last packet fed.
+    pub fn finish(&mut self, on_payload: &mut impl FnMut(&[u8], usize, Pid)) {
+        let last = self.index.saturating_sub(1);
+        for (&pid, assembler) in self.assemblers.iter_mut() {
+            if let Some(pes_bytes) = assembler.flush()
+                && let Ok(pes) = mpeg_pes::PesPacket::parse(&pes_bytes)
+            {
+                on_payload(pes.payload, last, pid);
+            }
         }
     }
 }

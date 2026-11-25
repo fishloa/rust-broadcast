@@ -7,7 +7,8 @@
 
 ## What it does / what it does not
 
-Each `Diagnostic` checks one rule against a TS byte buffer and pushes
+Each `Diagnostic` checks one rule against a transport stream one packet at a
+time (a caller with a buffer still calls `Diagnostic::run`) and pushes
 `Finding`s (severity, location, machine-readable `rule_id`, message) into a
 `Report`. A CLI runs the set over a file (`check`), validates a playlist
 (`check-hls`) or manifest (`check-dash`), or ingests a live UDP feed and exposes
@@ -88,7 +89,10 @@ for f in report.findings() {
 assert!(report.findings().iter().any(|f| f.rule_id == "hls-extinf-exceeds-target"));
 ```
 
-`run_all(ts, &[&dyn Diagnostic], &mut report)` runs several diagnostics in order.
+`run_all(ts, &[&dyn Diagnostic], &mut report)` runs several diagnostics in order
+over a buffer; `DiagnosticRunner` drives them together over a packet stream
+(`PmtStreamCollector` supplies the PMT-declared set), which is what `check`
+does for a capture on disk.
 `check_dash_mpd(text, &mut report)` validates an MPD (needs `std`);
 `check_playlist` is an alias of `check_hls_playlist` kept for older callers.
 

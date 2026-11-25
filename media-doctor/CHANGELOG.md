@@ -2,7 +2,13 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- `Diagnostic` now builds an incremental pass (`scan(&self, pmt: &PmtStreamIndex) -> Box<dyn DiagnosticScan>`) instead of requiring a whole-buffer `run`; `run(&self, ts: &[u8], report: &mut Report)` stays as a default method over that scan, so a caller holding a buffer is unchanged. A diagnostic whose scan reads the PMT-declared stream set overrides `needs_pmt_streams`.
+
 ### Added
+- `PmtStreamCollector`/`PmtStreamIndex`, `DiagnosticRunner` and the streaming `AccessUnitScanner`, so a transport-stream check reads one packet at a time: `media-doctor check` now runs its two passes (PMT discovery, then the diagnostics) in bounded memory instead of `fs::read`-ing the capture. TS findings on every committed fixture are unchanged (pinned by `tests/it/cli_routing.rs`).
+- `payload::TsPayloadDecoder`, the incremental half of `payload::decode_ts`.
 - `check --plugin <name>` decodes each data-track sample through a compiled-in payload plug-in and prints the decoded values per sample. The new `motion-imagery-metadata` feature compiles in `transmux`'s MISB ST 0601 decoder; an unknown name is a usage error listing the compiled-in plug-ins, and with `--json` the decoded values go to stderr so the report on stdout stays a JSON document.
 - `payload::registry` and the `payload::{decode_ts, decode_mp4}` drivers, so the CLI's plug-in path is library code: TS is driven through `StreamingTsDemux` and MP4 through `Mp4Demux`'s byte-range demands, decoding one sample at a time.
 - `check_mp4_file(file, len, report)`, the streaming container check: it drives `transmux::mp4_demux::Mp4Demux::seekable` with bounded reads over an open file (never holding it whole) and feeds `ContainerCodecChecker`, the incremental form of `check_container_codec`. The `check` subcommand opens an MP4 and streams it this way, with no `fs::read` on that path, so a large file is checked in bounded memory. Findings on every committed MP4 fixture are unchanged (pinned by `tests/it/mp4_report_digest.rs`).

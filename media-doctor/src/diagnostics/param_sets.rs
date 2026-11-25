@@ -17,20 +17,19 @@
 //! probe resolved. NAL classification is `transmux::nal`/`transmux::annexb`
 //! throughout — no duplicated NAL/SPS parsing.
 
+use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
+use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
 use dvb_si::tables::pmt::StreamType;
 use transmux::annexb::iter_annexb_nals;
 use transmux::nal::{NalCodec, is_keyframe_nal};
 
-use crate::Diagnostic;
-use crate::Report;
-use crate::diagnostics::codec_common::{
-    collect_pmt_streams, for_each_access_unit, pids_with_stream_type,
-};
+use crate::diagnostics::codec_common::{AccessUnitScanner, pids_with_stream_type};
 use crate::report::{Finding, Location, Severity};
+use crate::{Diagnostic, DiagnosticScan, PmtStreamIndex, Report};
 
 /// H.264 `nal_unit_type` mask (ITU-T H.264 §7.3.1, bits `[4:0]`).
 const H264_NAL_TYPE_MASK: u8 = 0x1F;
@@ -56,34 +55,83 @@ struct ParamState {
 pub struct ParamSetsCheck;
 
 impl Diagnostic for ParamSetsCheck {
-    fn run(&self, ts: &[u8], report: &mut Report) {
-        let declared = collect_pmt_streams(ts);
-        let avc_pids = pids_with_stream_type(&declared, StreamType::H264);
-        let hevc_pids = pids_with_stream_type(&declared, StreamType::Hevc);
-        if avc_pids.is_empty() && hevc_pids.is_empty() {
+    fn needs_pmt_streams(&self) -> bool {
+        true
+    }
+
+    fn scan(&self, pmt: &PmtStreamIndex) -> Box<dyn DiagnosticScan> {
+        let avc_pids = pids_with_stream_type(pmt.streams(), StreamType::H264);
+        let hevc_pids = pids_with_stream_type(pmt.streams(), StreamType::Hevc);
+        let avc_state = avc_pids
+            .iter()
+            .map(|&p| (p, ParamState::default()))
+            .collect();
+        let hevc_state = hevc_pids
+            .iter()
+            .map(|&p| (p, ParamState::default()))
+            .collect();
+        Box::new(ParamSetsScan {
+            avc_pids,
+            hevc_pids,
+            avc_state,
+            hevc_state,
+            assembler: AccessUnitScanner::new(),
+        })
+    }
+}
+
+/// One streaming pass of [`ParamSetsCheck`].
+struct ParamSetsScan {
+    avc_pids: Vec<Pid>,
+    hevc_pids: Vec<Pid>,
+    avc_state: BTreeMap<Pid, ParamState>,
+    hevc_state: BTreeMap<Pid, ParamState>,
+    assembler: AccessUnitScanner,
+}
+
+fn dispatch(
+    avc_state: &mut BTreeMap<Pid, ParamState>,
+    hevc_state: &mut BTreeMap<Pid, ParamState>,
+    payload: &[u8],
+    packet_index: usize,
+    pid: Pid,
+    report: &mut Report,
+) {
+    if let Some(state) = avc_state.get_mut(&pid) {
+        walk_avc(payload, packet_index, pid, state, report);
+    } else if let Some(state) = hevc_state.get_mut(&pid) {
+        walk_hevc(payload, packet_index, pid, state, report);
+    }
+}
+
+impl DiagnosticScan for ParamSetsScan {
+    fn feed(&mut self, packet: &[u8], report: &mut Report) {
+        if self.avc_pids.is_empty() && self.hevc_pids.is_empty() {
             return;
         }
+        let Self {
+            avc_pids,
+            hevc_pids,
+            avc_state,
+            hevc_state,
+            assembler,
+        } = self;
+        let mut wanted = |pid: Pid| avc_pids.contains(&pid) || hevc_pids.contains(&pid);
+        assembler.feed(packet, &mut wanted, &mut |payload, index, pid| {
+            dispatch(avc_state, hevc_state, payload, index, pid, report)
+        });
+    }
 
-        let mut avc_state: BTreeMap<Pid, ParamState> = avc_pids
-            .iter()
-            .map(|&p| (p, ParamState::default()))
-            .collect();
-        let mut hevc_state: BTreeMap<Pid, ParamState> = hevc_pids
-            .iter()
-            .map(|&p| (p, ParamState::default()))
-            .collect();
-
-        for_each_access_unit(
-            ts,
-            |pid| avc_pids.contains(&pid) || hevc_pids.contains(&pid),
-            |payload, packet_index, pid| {
-                if let Some(state) = avc_state.get_mut(&pid) {
-                    walk_avc(payload, packet_index, pid, state, report);
-                } else if let Some(state) = hevc_state.get_mut(&pid) {
-                    walk_hevc(payload, packet_index, pid, state, report);
-                }
-            },
-        );
+    fn finish(&mut self, report: &mut Report) {
+        let Self {
+            avc_state,
+            hevc_state,
+            assembler,
+            ..
+        } = self;
+        assembler.finish(&mut |payload, index, pid| {
+            dispatch(avc_state, hevc_state, payload, index, pid, report)
+        });
     }
 }
 

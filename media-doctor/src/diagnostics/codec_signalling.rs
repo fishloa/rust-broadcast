@@ -45,6 +45,7 @@
 //! capture) is likewise not flagged: there is no bitstream to judge, so
 //! there is nothing to disagree with the PMT's claim.
 
+use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
@@ -52,12 +53,9 @@ use mpeg_ts::pid::Pid;
 use dvb_si::tables::pmt::StreamType;
 use transmux::iter_annexb_nals;
 
-use crate::Diagnostic;
-use crate::Report;
-use crate::diagnostics::codec_common::{
-    collect_pmt_streams, for_each_access_unit, has_adts_sync, pids_with_stream_type,
-};
+use crate::diagnostics::codec_common::{AccessUnitScanner, has_adts_sync, pids_with_stream_type};
 use crate::report::{Finding, Location, Severity};
+use crate::{Diagnostic, DiagnosticScan, PmtStreamIndex, Report};
 
 /// Per-PID tracking: has any access unit been observed at all, and did any
 /// of them look like the declared codec's framing.
@@ -73,41 +71,68 @@ struct Seen {
 pub struct CodecSignallingCheck;
 
 impl Diagnostic for CodecSignallingCheck {
-    fn run(&self, ts: &[u8], report: &mut Report) {
-        let declared = collect_pmt_streams(ts);
-        let video_pids: Vec<Pid> = pids_with_stream_type(&declared, StreamType::H264)
+    fn needs_pmt_streams(&self) -> bool {
+        true
+    }
+
+    fn scan(&self, pmt: &PmtStreamIndex) -> Box<dyn DiagnosticScan> {
+        let streams = pmt.streams();
+        let video_pids: Vec<Pid> = pids_with_stream_type(streams, StreamType::H264)
             .into_iter()
-            .chain(pids_with_stream_type(&declared, StreamType::Hevc))
+            .chain(pids_with_stream_type(streams, StreamType::Hevc))
             .collect();
-        let audio_pids = pids_with_stream_type(&declared, StreamType::AacAdts);
-        if video_pids.is_empty() && audio_pids.is_empty() {
+        let audio_pids = pids_with_stream_type(streams, StreamType::AacAdts);
+        let video_seen = video_pids.iter().map(|&p| (p, Seen::default())).collect();
+        let audio_seen = audio_pids.iter().map(|&p| (p, Seen::default())).collect();
+        Box::new(CodecSignallingScan {
+            video_pids,
+            audio_pids,
+            video_seen,
+            audio_seen,
+            assembler: AccessUnitScanner::new(),
+        })
+    }
+}
+
+/// One streaming pass of [`CodecSignallingCheck`].
+struct CodecSignallingScan {
+    video_pids: Vec<Pid>,
+    audio_pids: Vec<Pid>,
+    video_seen: BTreeMap<Pid, Seen>,
+    audio_seen: BTreeMap<Pid, Seen>,
+    assembler: AccessUnitScanner,
+}
+
+impl DiagnosticScan for CodecSignallingScan {
+    fn feed(&mut self, packet: &[u8], _report: &mut Report) {
+        if self.video_pids.is_empty() && self.audio_pids.is_empty() {
             return;
         }
+        let Self {
+            video_pids,
+            audio_pids,
+            video_seen,
+            audio_seen,
+            assembler,
+        } = self;
+        let mut wanted = |pid: Pid| video_pids.contains(&pid) || audio_pids.contains(&pid);
+        assembler.feed(packet, &mut wanted, &mut |payload, _packet_index, pid| {
+            observe(video_seen, audio_seen, payload, pid)
+        });
+    }
 
-        let mut video_seen: BTreeMap<Pid, Seen> =
-            video_pids.iter().map(|&p| (p, Seen::default())).collect();
-        let mut audio_seen: BTreeMap<Pid, Seen> =
-            audio_pids.iter().map(|&p| (p, Seen::default())).collect();
+    fn finish(&mut self, report: &mut Report) {
+        let Self {
+            video_seen,
+            audio_seen,
+            assembler,
+            ..
+        } = self;
+        assembler.finish(&mut |payload, _packet_index, pid| {
+            observe(video_seen, audio_seen, payload, pid)
+        });
 
-        for_each_access_unit(
-            ts,
-            |pid| video_pids.contains(&pid) || audio_pids.contains(&pid),
-            |payload, _packet_index, pid| {
-                if let Some(seen) = video_seen.get_mut(&pid) {
-                    seen.any_au = true;
-                    if iter_annexb_nals(payload).next().is_some() {
-                        seen.structured = true;
-                    }
-                } else if let Some(seen) = audio_seen.get_mut(&pid) {
-                    seen.any_au = true;
-                    if has_adts_sync(payload) {
-                        seen.structured = true;
-                    }
-                }
-            },
-        );
-
-        for (&pid, seen) in &video_seen {
+        for (&pid, seen) in &*video_seen {
             if seen.any_au && !seen.structured {
                 report.push(Finding::new(
                     Severity::Error,
@@ -121,7 +146,7 @@ impl Diagnostic for CodecSignallingCheck {
                 ));
             }
         }
-        for (&pid, seen) in &audio_seen {
+        for (&pid, seen) in &*audio_seen {
             if seen.any_au && !seen.structured {
                 report.push(Finding::new(
                     Severity::Error,
@@ -134,6 +159,26 @@ impl Diagnostic for CodecSignallingCheck {
                     ),
                 ));
             }
+        }
+    }
+}
+
+/// Record one access unit of `pid` on the video or audio observation map.
+fn observe(
+    video_seen: &mut BTreeMap<Pid, Seen>,
+    audio_seen: &mut BTreeMap<Pid, Seen>,
+    payload: &[u8],
+    pid: Pid,
+) {
+    if let Some(seen) = video_seen.get_mut(&pid) {
+        seen.any_au = true;
+        if iter_annexb_nals(payload).next().is_some() {
+            seen.structured = true;
+        }
+    } else if let Some(seen) = audio_seen.get_mut(&pid) {
+        seen.any_au = true;
+        if has_adts_sync(payload) {
+            seen.structured = true;
         }
     }
 }

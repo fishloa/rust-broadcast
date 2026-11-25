@@ -1,21 +1,17 @@
 //! Container/stream structural checks, delegated to `media-doctor`'s
 //! [`media_doctor::Diagnostic`] harness rather than reimplemented.
 //!
-//! # Honesty note: whole-buffer, not per-packet
+//! # Honesty note: a whole window, re-scanned
 //!
-//! Every `media_doctor::Diagnostic` this module runs is **whole-capture
-//! shaped** (`media-doctor`'s own crate docs: "Implementors receive the full
-//! TS byte slice … and push any findings into `report`") — a version-change
-//! history, a wire-order-before-first-IDR scan, or a per-`splice_event_id`
-//! balance check, none of which can be computed one packet at a time. This
+//! `media_doctor::Diagnostic` is incremental — it is scanned one packet at a
+//! time — but each of its checks keeps per-stream state (a version-change
+//! history, a wire-order-before-first-IDR scan, a per-`splice_event_id`
+//! balance check) that is only meaningful over the bytes it was given. This
 //! module therefore does **not** offer a `feed_ts_packet`-shaped incremental
 //! API: [`run_structural_checks`] re-scans whatever buffer it is given, from
 //! the start, every time it is called. A caller wiring this to a live feed
 //! (e.g. a periodic snapshot of a `media_plane::Trunk` `SegmentCursor`'s
-//! recent bytes) chooses its own re-check cadence and window size — this
-//! crate does not invent an incremental variant `media-doctor` itself does
-//! not provide, which would risk drifting from what that crate actually
-//! checks.
+//! recent bytes) chooses its own re-check cadence and window size.
 //!
 //! `media_doctor::CcAnomalyCheck` and `media_doctor::PcrCheck` overlap with
 //! [`crate::Probe::feed_ts_packet`]'s own TR 101 290
@@ -39,8 +35,8 @@ use crate::record::record_counter;
 const STRUCTURAL_DIAGNOSTIC_COUNT: usize = 7;
 
 /// Run `media-doctor`'s structural [`Diagnostic`] set over `ts` (a
-/// contiguous, whole-number-of-188-byte-packets TS byte buffer — see
-/// `media_doctor::Diagnostic::run`'s own contract), recording
+/// contiguous, whole-number-of-188-byte-packets TS byte buffer — one window
+/// of the stream), recording
 /// `compliance_probe_structural_findings_total` for every [`media_doctor::Finding`]
 /// raised, then returning the full [`Report`] for direct inspection.
 pub fn run_structural_checks(ts: &[u8]) -> Report {

@@ -1,6 +1,6 @@
 //! `media-doctor` CLI binary.
 
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::net::{SocketAddr, UdpSocket};
 use std::path::Path;
@@ -13,9 +13,10 @@ use clap::Parser;
 use media_doctor::cli::{CheckArgs, CheckDashArgs, CheckHlsArgs, Cli, WatchArgs};
 use media_doctor::metrics_server::{self, MetricsPublisher, MetricsServerConfig};
 use media_doctor::{
-    CcAnomalyCheck, CodecSignallingCheck, Diagnostic, FpsCadenceCheck, InterlaceCheck,
-    ParamSetsCheck, PatPmtVersionCheck, PcrCheck, PtsCheck, Report, Scte35Check, SyncByteCheck,
-    WatchState, check_container_codec, check_dash_mpd, check_hls_playlist, check_mp4_file, run_all,
+    CcAnomalyCheck, CodecSignallingCheck, Diagnostic, DiagnosticRunner, FpsCadenceCheck,
+    InterlaceCheck, ParamSetsCheck, PatPmtVersionCheck, PcrCheck, PmtStreamCollector, PtsCheck,
+    Report, Scte35Check, SyncByteCheck, WatchState, check_dash_mpd, check_hls_playlist,
+    check_mp4_file, looks_like_isobmff,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -72,40 +73,44 @@ const TS_PACKET_SIZE: usize = mpeg_ts::ts::TS_PACKET_SIZE;
 /// Size of one read from the input stream.
 const STREAM_CHUNK_LEN: usize = 65_536;
 
-/// Which diagnostic set the CLI runs for `bytes`.
-///
-/// Detection is delegated to `container-probe`, which scores every format it
-/// knows (a stride×phase lattice search across 188/192/204/208-byte TS
-/// framings, so a capture that does not start on a packet boundary, an M2TS
-/// file and a 204-byte RS-framed stream all identify as TS — none of which
-/// the previous "`0x47` at byte 0 and byte 188" check could see). The old
-/// check routed all of those to the container path, which bailed at its
-/// ISOBMFF sniff and printed "No issues found." for a TS full of errors
-/// (audit MD-W7).
-enum InputKind {
-    /// MPEG-2 TS in any of the framings `container-probe` recognises, already
-    /// resynchronised to 188-byte packets.
-    TransportStream(Vec<u8>),
-    /// A container `container_probe` named, or an input it could not classify
-    /// — in both cases the container diagnostics get their say.
-    Container,
+/// How a bounded leading prefix routes the input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Routed {
+    /// Stream the TS diagnostics over the file.
+    Ts,
+    /// Stream the container checks over the file.
+    Mp4,
+    /// Not an MP4: the container checks have nothing to say.
+    Other,
 }
 
-/// Classify `bytes` and, for a TS, return the extracted 188-byte packet
-/// stream.
+/// Largest prefix read to route an input: 4 MiB.
+const PROBE_PREFIX_MAX: usize = 4 << 20;
+
+/// Longest prefix `container_probe::probe` examines, so a prefix this long
+/// reproduces a whole-file probe without reading the whole file.
+const PROBE_READ_LEN: usize = container_probe::DEFAULT_BUDGET;
+
+/// The longest wrapped TS record `container-probe` recognises: 188-byte
+/// packet + 16-byte RS parity + 4-byte M2TS `TP_extra_header`
+/// (ETSI EN 300 421 §5.2.2 / BDAV).
+const MAX_WRAPPED_STRIDE: usize = 208;
+
+/// The TS lattice `prefix` decides: the packet `stride` (188 plain TS, 192
+/// M2TS, 204 RS-framed, 208 M2TS-over-RS) and the byte offset of the first
+/// sync byte.
 ///
-/// `container-probe` reports the lattice it matched: the packet `stride`
-/// (188 plain TS, 192 M2TS, 204 RS-framed, 208 M2TS-over-RS) and the byte
-/// offset of the first sync byte. Extraction takes each stride-aligned
-/// record's leading `stride - 188` *wrapper* bytes off and keeps the 188-byte
-/// packet, which covers a leading-junk capture, a mid-packet cut and every
-/// wrapped framing without a second detection pass.
+/// `container-probe` reports the lattice it matched, and `phase` is the offset
+/// of the first **sync byte** (its lattice search walks `phase + n*stride` and
+/// tests for `0x47` at each position), so it already sits past any 4-byte M2TS
+/// `TP_extra_header`. The 188 bytes starting there are the packet itself,
+/// whatever the wrapper around it is.
 ///
-/// Anything that is not *decidedly* a TS goes to the container path: the TS
-/// diagnostics read the input as a raw packet lattice and produce meaningless
-/// noise on a non-TS, so an undecided input must not take that path.
-fn classify_input(bytes: &[u8]) -> InputKind {
-    let (stride, phase) = match container_probe::probe(bytes) {
+/// Anything that is not *decidedly* a TS returns `None`: the TS diagnostics
+/// read the input as a raw packet lattice and produce meaningless noise on a
+/// non-TS, so an undecided input must not take that path.
+fn ts_lattice(prefix: &[u8]) -> Option<(usize, usize)> {
+    let (stride, phase) = match container_probe::probe(prefix) {
         container_probe::Probe::Identified {
             format: container_probe::Format::MpegTs,
             detail: container_probe::Detail::Ts { stride, phase, .. },
@@ -115,67 +120,141 @@ fn classify_input(bytes: &[u8]) -> InputKind {
         // the ones that would otherwise have been skipped. `Detail` only ever
         // carries the lattice for a TS candidate.
         container_probe::Probe::Ambiguous { candidates, .. } => {
-            let Some((stride, phase)) = candidates.iter().find_map(|c| match c.detail {
+            candidates.iter().find_map(|c| match c.detail {
                 container_probe::Detail::Ts { stride, phase, .. } => {
                     Some((usize::from(stride), usize::from(phase)))
                 }
                 _ => None,
-            }) else {
-                return InputKind::Container;
-            };
-            (stride, phase)
+            })?
         }
         // `Probe` is `#[non_exhaustive]`: any future outcome that is not a
         // decided TS goes to the container path.
-        _ => return InputKind::Container,
+        _ => return None,
     };
+    (TS_PACKET_SIZE..=MAX_WRAPPED_STRIDE)
+        .contains(&stride)
+        .then_some((stride, phase))
+}
 
-    // `phase` is the offset of the first **sync byte** (container-probe's
-    // lattice search walks `phase + n*stride` and tests for `0x47` at each
-    // position), so it already sits past any 4-byte M2TS `TP_extra_header`.
-    // The 188 bytes starting there are the packet itself, whatever the
-    // wrapper around it is — so extract exactly 188 from `off`, not
-    // `off + (stride - 188)`.
-    if !(TS_PACKET_SIZE..=MAX_WRAPPED_STRIDE).contains(&stride) {
-        return InputKind::Container;
-    }
+/// Read the leading prefix used to decide the TS lattice.
+fn read_probe_prefix(file: &mut File, len: u64) -> io::Result<Vec<u8>> {
+    let want = usize::try_from(len)
+        .unwrap_or(usize::MAX)
+        .min(PROBE_READ_LEN);
+    file.seek(SeekFrom::Start(0))?;
+    let mut prefix = vec![0u8; want];
+    let read = read_full(file, &mut prefix)?;
+    prefix.truncate(read);
+    Ok(prefix)
+}
 
-    let mut out = Vec::new();
-    let mut off = phase;
-    while off
-        .checked_add(TS_PACKET_SIZE)
-        .is_some_and(|end| end <= bytes.len())
-    {
-        out.extend_from_slice(&bytes[off..off + TS_PACKET_SIZE]);
-        match off.checked_add(stride) {
-            Some(next) => off = next,
-            None => break,
+/// Feed every 188-byte packet of the capture at `path` to `on_packet`.
+///
+/// Records are `stride` bytes apart starting at `phase`; only the leading 188
+/// bytes of each are the packet (the rest is the wrapper the framing adds).
+/// Reads through a [`std::io::BufReader`] of [`STREAM_CHUNK_LEN`], so a
+/// multi-gigabyte capture never needs that much memory.
+fn for_each_packet(
+    path: &Path,
+    stride: usize,
+    phase: usize,
+    mut on_packet: impl FnMut(&[u8]) -> io::Result<()>,
+) -> io::Result<()> {
+    let mut reader = io::BufReader::with_capacity(STREAM_CHUNK_LEN, File::open(path)?);
+    reader.seek(SeekFrom::Start(phase as u64))?;
+    let mut record = vec![0u8; stride];
+    loop {
+        let mut filled = 0usize;
+        while filled < record.len() {
+            let read = reader.read(&mut record[filled..])?;
+            if read == 0 {
+                break;
+            }
+            filled += read;
+        }
+        if filled < TS_PACKET_SIZE {
+            return Ok(());
+        }
+        on_packet(&record[..TS_PACKET_SIZE])?;
+        if filled < record.len() {
+            return Ok(());
         }
     }
-    if out.is_empty() {
-        return InputKind::Container;
+}
+
+/// Run the TS diagnostics and the payload plug-ins over `path`, one packet at
+/// a time.
+///
+/// Two bounded passes: the first collects the PMT-declared stream set the
+/// codec diagnostics are judged against, the second feeds every packet to the
+/// diagnostics and the payload decoders together.
+fn run_ts_stream(
+    path: &Path,
+    stride: usize,
+    phase: usize,
+    registry: &media_doctor::payload::PayloadRegistry,
+    report: &mut Report,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut collector = PmtStreamCollector::new();
+    for_each_packet(path, stride, phase, |packet| {
+        collector.feed(packet);
+        Ok(())
+    })?;
+    let pmt = collector.finish();
+
+    let diagnostics: &[&dyn Diagnostic] = &[
+        &SyncByteCheck,
+        &PatPmtVersionCheck,
+        &CcAnomalyCheck,
+        &PcrCheck,
+        &PtsCheck,
+        &Scte35Check,
+        &CodecSignallingCheck,
+        &FpsCadenceCheck,
+        &ParamSetsCheck,
+        &InterlaceCheck,
+    ];
+    let mut runner = DiagnosticRunner::new(diagnostics, &pmt);
+    let mut emit = |sample: media_doctor::payload::DecodedSample<'_>| emit_decoded(sample, json);
+    let mut decoder = (!registry.is_empty())
+        .then(|| media_doctor::payload::TsPayloadDecoder::new(registry, &mut emit));
+    for_each_packet(path, stride, phase, |packet| {
+        runner.feed(packet);
+        if let Some(decoder) = decoder.as_mut() {
+            decoder.feed(packet);
+        }
+        Ok(())
+    })?;
+    runner.finish(report);
+    if let Some(decoder) = decoder.as_mut() {
+        decoder.finish();
     }
-    InputKind::TransportStream(out)
+    Ok(())
 }
 
-/// The longest wrapped TS record `container-probe` recognises: 188-byte
-/// packet + 16-byte RS parity + 4-byte M2TS `TP_extra_header`
-/// (ETSI EN 300 421 §5.2.2 / BDAV).
-const MAX_WRAPPED_STRIDE: usize = 208;
-
-/// How a bounded leading prefix routes the input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Routed {
-    /// Run the TS diagnostics over the whole file.
-    Ts,
-    /// Stream the container checks over the file.
-    Mp4,
-    /// Read the whole file and run the container checks.
-    Other,
+/// The container path: an ISOBMFF input is checked by streaming its byte
+/// ranges through the demux stage; any other input has nothing for these
+/// checks to say.
+fn run_container_input(
+    file: &mut File,
+    len: u64,
+    prefix: &[u8],
+    registry: &media_doctor::payload::PayloadRegistry,
+    report: &mut Report,
+    json: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if !looks_like_isobmff(prefix) {
+        return Ok(());
+    }
+    check_mp4_input(file, len, report)?;
+    if !registry.is_empty() {
+        media_doctor::payload::decode_mp4(file, len, registry, &mut |sample| {
+            emit_decoded(sample, json)
+        })?;
+    }
+    Ok(())
 }
-
-/// Largest prefix read to route an input: 4 MiB.
-const PROBE_PREFIX_MAX: usize = 4 << 20;
 
 fn run_check(
     args: &CheckArgs,
@@ -187,23 +266,23 @@ fn run_check(
         Some(probe) => route_probe(&probe),
         None => Routed::Other,
     };
+    let prefix = read_probe_prefix(&mut file, len)?;
     let mut report = Report::new();
 
     match routed {
-        Routed::Ts => {
-            let bytes = fs::read(&args.input)?;
-            match classify_input(&bytes) {
-                InputKind::TransportStream(realigned) => {
-                    run_ts_checks(&realigned, &mut report);
-                    if !registry.is_empty() {
-                        media_doctor::payload::decode_ts(&realigned, registry, &mut |sample| {
-                            emit_decoded(sample, args.json)
-                        });
-                    }
-                }
-                InputKind::Container => check_container_codec(&bytes, &mut report),
+        Routed::Ts => match ts_lattice(&prefix) {
+            Some((stride, phase)) if len >= phase as u64 + TS_PACKET_SIZE as u64 => {
+                run_ts_stream(
+                    Path::new(&args.input),
+                    stride,
+                    phase,
+                    registry,
+                    &mut report,
+                    args.json,
+                )?;
             }
-        }
+            _ => run_container_input(&mut file, len, &prefix, registry, &mut report, args.json)?,
+        },
         // An MP4 is checked by streaming its byte ranges through the demux
         // stage; the file is never read whole.
         Routed::Mp4 => {
@@ -214,11 +293,8 @@ fn run_check(
                 })?;
             }
         }
-        // Borrows `bytes` directly — the container path needs no realigned
-        // copy, so this never clones the input.
         Routed::Other => {
-            let bytes = fs::read(&args.input)?;
-            check_container_codec(&bytes, &mut report);
+            run_container_input(&mut file, len, &prefix, registry, &mut report, args.json)?;
         }
     }
 
@@ -333,22 +409,6 @@ fn read_full(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
 /// stage with bounded reads.
 fn check_mp4_input(file: &mut File, len: u64, report: &mut Report) -> io::Result<()> {
     check_mp4_file(file, len, report)
-}
-
-fn run_ts_checks(ts: &[u8], report: &mut Report) {
-    let diagnostics: &[&dyn Diagnostic] = &[
-        &SyncByteCheck,
-        &PatPmtVersionCheck,
-        &CcAnomalyCheck,
-        &PcrCheck,
-        &PtsCheck,
-        &Scte35Check,
-        &CodecSignallingCheck,
-        &FpsCadenceCheck,
-        &ParamSetsCheck,
-        &InterlaceCheck,
-    ];
-    run_all(ts, diagnostics, report);
 }
 
 fn emit_check_report(report: &Report, json: bool) -> Result<(), Box<dyn std::error::Error>> {
