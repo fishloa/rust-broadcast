@@ -620,6 +620,14 @@ fn layout_moof(
             "the recorded fragment layout does not cover this flush's track set",
         ));
     }
+    check_listed(
+        layout.children.iter().filter_map(|child| match child {
+            MoofChild::Traf(index) => Some(*index),
+            _ => None,
+        }),
+        layout.tracks.len(),
+        "the recorded moof child order does not list every traf",
+    )?;
     let mut traf_boxes = Vec::with_capacity(layout.tracks.len());
     for track_layout in &layout.tracks {
         let ft = tracks
@@ -642,6 +650,17 @@ fn layout_track_fragment(
     ft: &FragmentTrack<'_>,
     track_layout: &crate::frag_layout::TrackFragmentLayout,
 ) -> Result<TrackFragmentBox> {
+    check_listed(
+        track_layout
+            .children
+            .iter()
+            .filter_map(|child| match child {
+                TrafChild::Trun(index) => Some(*index),
+                _ => None,
+            }),
+        track_layout.runs.len(),
+        "the recorded traf child order does not list every run",
+    )?;
     check_description(ft, &track_layout.tfhd)?;
     let declared: usize = track_layout.runs.iter().map(|run| run.sample_count).sum();
     if declared != ft.samples.len() {
@@ -817,6 +836,30 @@ fn check_mismatch(
         expected: u64::from(expected),
         actual: u64::from(actual),
     })
+}
+
+/// A recorded child order must list every child its container holds: one the
+/// order leaves out would be written without its payload, so its samples would
+/// go missing from the `mdat`.
+fn check_listed(
+    indices: impl Iterator<Item = usize>,
+    count: usize,
+    missing: &'static str,
+) -> Result<()> {
+    let listed: Vec<usize> = indices.collect();
+    if listed.is_empty() {
+        return Ok(());
+    }
+    let mut seen = vec![false; count];
+    for index in listed {
+        if let Some(slot) = seen.get_mut(index) {
+            *slot = true;
+        }
+    }
+    if seen.iter().any(|listed| !listed) {
+        return Err(Error::InvalidInput(missing));
+    }
+    Ok(())
 }
 
 /// The `tfhd.sample_description_index` a recorded layout states against the
