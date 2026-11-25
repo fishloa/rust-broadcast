@@ -104,7 +104,7 @@ fMP4 is different and unconditional (§3.1.2): every fMP4 segment MUST have `EXT
 ## Client (`hls-runtime::client`)
 
 Sans-IO, caller-driven: blocking-reload scheduling, part prefetch, discontinuity handling, and
-demux to access units. Handles both fMP4 (via `Fmp4Demux`) and MPEG-TS (via `TsDemux`,
+demux to access units. Handles both fMP4 (via `Mp4Demux`) and MPEG-TS (via `TsDemux`,
 content-sniffed), including classic playlists with no `EXT-X-MAP` at all. An optional
 `tokio`+`reqwest` adapter is provided.
 

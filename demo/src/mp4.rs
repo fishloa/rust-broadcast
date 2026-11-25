@@ -73,7 +73,7 @@ pub struct Mp4Report {
     /// Always `"mp4"` — lets the UI branch between this report shape and the
     /// TS-oriented [`crate::AnalysisResult`].
     container: &'static str,
-    /// Set when `Fmp4Demux::unpackage` itself failed (e.g. no `moov` box
+    /// Set when `Mp4Demux::unpackage` itself failed (e.g. no `moov` box
     /// found at all) — every other field is then its empty/zero default.
     parse_error: Option<String>,
     movie_timescale: u32,
@@ -437,7 +437,7 @@ fn skipped_from_reason(reason: AbandonReason, track_id: Option<transmux::TrackId
 /// `parse_error`, not raised.
 ///
 /// A second, independent pass handles CENC/CBCS-protected tracks: neither
-/// [`Fmp4Demux`] nor [`ProgressiveDemux`] reconstructs an `encv`/`enca`
+/// [`Mp4Demux`] nor [`Mp4Demux`] reconstructs an `encv`/`enca`
 /// sample entry (there is no `sinf`/`tenc` unwrap in either — that logic
 /// lives only in [`transmux::CencDecryptor`], the crate's dedicated *decrypt*
 /// path) — a protected track from the primary pass above lands in
@@ -509,7 +509,7 @@ mod tests {
 
     /// Real-fixture gate: `h264-high.mp4` is a *progressive* (faststart,
     /// `moov` after a single `mdat`, no `moof`) capture — this exercises the
-    /// [`ProgressiveDemux`] branch of [`analyze_mp4_impl`]'s dispatch and
+    /// [`Mp4Demux`] branch of [`analyze_mp4_impl`]'s dispatch and
     /// must resolve a video track carrying a well-formed `avc1.` RFC 6381
     /// string and at least one decoded sample (progressive files carry full
     /// `stbl` sample tables, unlike a `moof`-less input with no fragments at
@@ -538,7 +538,7 @@ mod tests {
     /// Real-fixture gate for the OTHER dispatch branch: `h264-aac-frag.mp4`
     /// (under `fixtures/ts/`) is a genuinely fragmented CMAF capture
     /// (`moov` + three `moof`/`mdat` pairs) — this exercises
-    /// [`analyze_mp4_impl`]'s [`Fmp4Demux`] branch, on both a video and an
+    /// [`analyze_mp4_impl`]'s [`Mp4Demux`] branch, on both a video and an
     /// audio track, with samples spanning multiple fragments.
     #[test]
     fn h264_aac_fragmented_resolves_both_tracks_across_fragments() {

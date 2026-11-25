@@ -21,7 +21,7 @@ One request = one object (§6.2.3/§5.2.18). Four kinds, told apart by URL path 
 
 Path → track: `$RepresentationID$` in the template. With no MPD (grouping trivial, §6.2.2) the track id is taken from the path via the deprecated `Streams(name)` convention or the single path component preceding the file name — chosen once at route config (`path_style`), documented, never inferred per request.
 
-**Chunked transfer** (§6.2.4, §5.2.21): a segment arrives as an HTTP chunked body. The receiver must feed `Fmp4Demux` incrementally (box-at-a-time: `moof`+`mdat` pairs = CMAF chunks) so low-latency parts can be published before the request finishes. `lmsg` brand on `styp` ⇒ track ended; `slat` ⇒ filler segment (tagged so a later real segment may replace it; v1 passes it through and counts it).
+**Chunked transfer** (§6.2.4, §5.2.21): a segment arrives as an HTTP chunked body. The receiver must feed `Mp4Demux` incrementally (box-at-a-time: `moof`+`mdat` pairs = CMAF chunks) so low-latency parts can be published before the request finishes. `lmsg` brand on `styp` ⇒ track ended; `slat` ⇒ filler segment (tagged so a later real segment may replace it; v1 passes it through and counts it).
 
 ## 3. Architecture in this workspace
 
@@ -30,7 +30,7 @@ TCP accept (hyper http1)  ->  auth (broadcast-auth Verifier, Basic/Digest/Bearer
    -> per-request body stream (tower-http RequestDecompression for gzip, §5.2.13)
    -> classify (probe / manifest / header / segment)       [pure, sans-IO: new module in multimux]
    -> IngestSession (media_plane): Established gates on first header+segment, NewProgram/TracksChanged
-   -> Fmp4Demux per track -> Samples -> the same segmenter+TrunkWriter path as dash_pull
+   -> Mp4Demux per track -> Samples -> the same segmenter+TrunkWriter path as dash_pull
 ```
 
 * **Reuse, don't re-implement:** `source::dash_pull` already ingests per-Representation `init + segment` pairs into samples; the receiver's per-track ingestion is that code with the pull loop replaced by request handlers. The only new logic is request classification, the template matcher, and the error-code mapping.
@@ -62,5 +62,5 @@ After a TCP error the source reconnects and re-POSTs the **same POST_URL** (§5.
 ## 6. Open points (must be resolved from the spec text before P1, never guessed)
 
 * §6.4 switching-set signalling and §6.5/6.6 timed text/metadata track formats: transcribed; P1 only needs grouping, tracks of any kind are passed to the demuxer, but `emsg`/timed-metadata track handling must be checked against §6.6 before P3.
-* CMAF (ISO/IEC 23000-19) box constraints are referenced, not restated, by the DASH-IF text; the receiver only requires what `Fmp4Demux` already parses. No claim of CMAF conformance validation beyond `transmux`'s existing fMP4/CMAF validator.
+* CMAF (ISO/IEC 23000-19) box constraints are referenced, not restated, by the DASH-IF text; the receiver only requires what `Mp4Demux` already parses. No claim of CMAF conformance validation beyond `transmux`'s existing fMP4/CMAF validator.
 * `Streams(...)` keyword (deprecated, §6.2.9) exact syntax is not defined in the transcribed text; support it only if a real sender emits it (decision deferred to P1 with a fixture).

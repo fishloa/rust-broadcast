@@ -107,7 +107,7 @@ field instead of reusing that json round-trip.
 
 Only MPEG-2 TS input (`demux_ts`) is exposed in this first version — the one
 demux entry point that is both one-shot/batch-callable and does not require
-understanding transmux's incremental/streaming APIs. `transmux::media::Fmp4Demux`
+understanding transmux's incremental/streaming APIs. `transmux::mp4_demux::Mp4Demux`
 (fragmented ISOBMFF/CMAF input) exists in the Rust crate too and is a natural
 follow-up if fMP4-sourced ML pipelines need it.
 

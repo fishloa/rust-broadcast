@@ -254,7 +254,7 @@ fn assert_layout(rel: &str, expect: IsobmffLayout) {
 }
 
 /// Progressive files — sample tables in `moov`, no `moof`. These are what
-/// `transmux::ProgressiveDemux` handles.
+/// `transmux::Mp4Demux` handles.
 #[test]
 fn progressive_mp4s_report_progressive_layout() {
     for rel in [
@@ -269,7 +269,7 @@ fn progressive_mp4s_report_progressive_layout() {
 }
 
 /// Fragmented files — `moof` movie fragments. These are what
-/// `transmux::Fmp4Demux` handles.
+/// `transmux::Mp4Demux` handles.
 ///
 /// `cmaf/av-frag.mp4` is the fixture that proves the walk is necessary: its
 /// major brand is `isom`, exactly the same brand every progressive file above
@@ -318,7 +318,7 @@ fn major_brand_alone_cannot_discriminate_layout() {
 /// indistinguishable from a progressive one. An earlier revision concluded
 /// `saw_moov && !saw_moof => Progressive` and therefore called the first 64
 /// bytes of this genuinely fragmented CMAF file `Progressive` — which would
-/// have sent a consumer to `ProgressiveDemux` for an fMP4 file.
+/// have sent a consumer to `Mp4Demux` for an fMP4 file.
 ///
 /// `Progressive` is now claimed only when the walk consumed the entire
 /// supplied buffer (and the buffer was not clipped by the probe budget), so

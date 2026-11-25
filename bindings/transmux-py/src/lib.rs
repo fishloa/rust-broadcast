@@ -19,7 +19,7 @@
 //!
 //! Only the TS demux entry point is exposed for v1 (issue #668's scope): it is
 //! the one one-shot, batch-callable `Unpackage` impl transmux ships today.
-//! `Fmp4Demux` exists too (`transmux::media::Fmp4Demux`) and could be wrapped
+//! `Mp4Demux` exists too (`transmux::mp4_demux::Mp4Demux`) and could be wrapped
 //! the same way in a follow-up if fMP4-sourced ML pipelines need it.
 
 use pyo3::exceptions::PyValueError;

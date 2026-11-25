@@ -56,8 +56,8 @@ assert_eq!(again.tracks.len(), media.tracks.len());
 (`transmux/README.md`, section "Quick start" — the crate README's one
 integration-tested example)
 
-Demuxers and muxers (each one trait impl): `TsDemux`, `Fmp4Demux`,
-`ProgressiveDemux`, `PsDemux`, `WebmDemux`, `FlvDemux`, `RtmpDemux` /
+Demuxers and muxers (each one trait impl): `TsDemux`, `Mp4Demux`,
+`PsDemux`, `WebmDemux`, `FlvDemux`, `RtmpDemux` /
 `CmafMux`, `ProgressiveMux` (`ProgressiveMux::new(faststart)`), `TsMux`,
 `MkvMux`, `FlvMux`, `RtmpMux`, `HlsPackager`, `TsHlsPackager`, `DashPackager`,
 `LlDashPackager` (`std`), `SmoothPackager`. `DashPackager`'s and `HlsPackager`'s
