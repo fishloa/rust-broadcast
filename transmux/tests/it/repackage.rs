@@ -795,8 +795,6 @@ fn trim_with_no_leading_sync_sample() {
     assert_eq!(kept[0].data, vec![0x40u8; 4], "kept starts at index 0");
 }
 
-/// A streaming input has no timeline origin to place a window on, so `run`
-/// refuses a window with the typed error instead of guessing.
 /// A window over an empty input has no timeline origin and selects no sample:
 /// the same typed error [`trim`] gives a whole input it cannot place a window
 /// on, never a fabricated origin.

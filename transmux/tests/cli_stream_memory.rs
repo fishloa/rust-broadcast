@@ -5,11 +5,12 @@
 //! high-water mark. Soak-gated: the 1 GiB generation belongs in the nightly
 //! soak, not every pull request.
 //!
-//! The budget is **64 MiB** of live bytes above the level at entry. CMAF's
-//! single-fragment output is deliberately bounded by `isobmff::Limits`
+//! The streaming budget is **64 MiB** of live bytes above the level at entry.
+//! CMAF's single-fragment output is deliberately bounded by `isobmff::Limits`
 //! (`DEFAULT_MAX_FRAGMENT_BYTES`, 64 MiB): a 1 GiB input is refused with
-//! `FragmentTooLarge` rather than buffered, so the test asserts that bounded
-//! refusal too and no case may approach the budget.
+//! `FragmentTooLarge` rather than buffered, so its case asserts that bounded
+//! refusal under a separate **128 MiB** cap (the fragment plus the writer's
+//! own records).
 #![cfg(all(feature = "cli", feature = "std"))]
 
 use clap::Parser;
@@ -18,8 +19,10 @@ use test_alloc::ProcessPeak;
 #[global_allocator]
 static PEAK: ProcessPeak = ProcessPeak::new();
 
-/// Live bytes any one run may hold above the level at entry.
-const BUDGET: usize = 64 * 1024 * 1024;
+/// Live bytes a streaming output may hold above the level at entry.
+const STREAMING_BUDGET: usize = 64 * 1024 * 1024;
+/// Live bytes the bounded single-fragment CMAF refusal may hold.
+const FRAGMENT_REFUSAL_BUDGET: usize = 128 * 1024 * 1024;
 /// Generated input size, at least the issue's 1 GiB.
 const INPUT_BYTES: u64 = 1 << 30;
 
@@ -70,10 +73,10 @@ fn a_big_ts_streams_under_budget() {
         let parsed = args(&input, &output, format);
         let (peak, result) = PEAK.peak_during(|| transmux::cli::run(parsed));
         result.unwrap_or_else(|error| panic!("{format} run failed: {error}"));
-        println!("cli_stream_memory: {format} peak {peak} bytes (budget {BUDGET})");
+        println!("cli_stream_memory: {format} peak {peak} bytes (budget {STREAMING_BUDGET})");
         assert!(
-            peak < BUDGET,
-            "{format} held {peak} bytes, over the {BUDGET}-byte budget"
+            peak < STREAMING_BUDGET,
+            "{format} held {peak} bytes, over the {STREAMING_BUDGET}-byte budget"
         );
     }
 
@@ -82,10 +85,12 @@ fn a_big_ts_streams_under_budget() {
     let output = dir.join("out.cmaf");
     let parsed = args(&input, &output, "cmaf");
     let (peak, result) = PEAK.peak_during(|| transmux::cli::run(parsed));
-    println!("cli_stream_memory: cmaf peak {peak} bytes (budget {BUDGET})");
+    println!(
+        "cli_stream_memory: cmaf peak {peak} bytes (bounded refusal, cap {FRAGMENT_REFUSAL_BUDGET})"
+    );
     assert!(
-        peak < BUDGET,
-        "cmaf held {peak} bytes, over the {BUDGET}-byte budget"
+        peak < FRAGMENT_REFUSAL_BUDGET,
+        "cmaf held {peak} bytes, over the {FRAGMENT_REFUSAL_BUDGET}-byte bound"
     );
     assert!(
         result.is_err(),
