@@ -11,6 +11,7 @@
 use broadcast_common::{Encrypt, Package, Unpackage};
 use std::path::PathBuf;
 use std::process::Command;
+use test_harness::collect::MediaSelectExt;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
     CencEncryptor, CencScheme, CmafMux, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,

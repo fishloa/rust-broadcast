@@ -38,6 +38,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use test_harness::collect::MediaSelectExt;
 
 use broadcast_common::{Decrypt, Encrypt, Package, Unpackage};
 use bytes::Bytes;
