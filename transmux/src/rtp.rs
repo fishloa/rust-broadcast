@@ -448,18 +448,7 @@ impl RtpPacketiserStage {
         let stap = if self.stap_a_parameter_sets
             && let CodecConfig::Avc { config, .. } = &spec.config
         {
-            let mut param_nals: Vec<Vec<u8>> = Vec::new();
-            for sps in &config.config.sps {
-                param_nals.push(sps.0.clone());
-            }
-            for pps in &config.config.pps {
-                param_nals.push(pps.0.clone());
-            }
-            if param_nals.is_empty() {
-                None
-            } else {
-                build_stap_a(pt, &param_nals, &mut seq, 0, self.ssrc).map(Some)?
-            }
+            stap_a_packet(config, pt, self.ssrc, &mut seq, 0)?
         } else {
             None
         };
@@ -486,34 +475,15 @@ impl RtpPacketiserStage {
     ) -> Result<Vec<RtpPacket>> {
         let pt = self.tracks[index].pt;
         let mut packets = Vec::new();
-        let nals = split_length_prefixed(&sample.data)?;
-        if nals.is_empty() {
-            return Ok(packets);
-        }
-        let last_nal = nals.len() - 1;
-        for (n, nal) in nals.iter().enumerate() {
-            let is_last_nal = n == last_nal;
-            if nal.len() + RTP_HEADER_LEN <= self.mtu {
-                let marker = is_last_nal;
-                let seq = self.tracks[index].seq.next();
-                let header = rtp_header(pt, marker, seq, timestamp, self.ssrc);
-                let nal_offset = nal.as_ptr() as usize - sample.data.as_ptr() as usize;
-                let payload = sample.data.slice(nal_offset..nal_offset + nal.len());
-                packets.push(RtpPacket { header, payload });
-            } else {
-                fragment_fu_a(
-                    nal,
-                    &sample.data,
-                    pt,
-                    is_last_nal,
-                    self.mtu,
-                    &mut self.tracks[index].seq,
-                    timestamp,
-                    self.ssrc,
-                    &mut packets,
-                )?;
-            }
-        }
+        push_video_nals(
+            &sample.data,
+            pt,
+            self.mtu,
+            self.ssrc,
+            &mut self.tracks[index].seq,
+            timestamp,
+            &mut packets,
+        )?;
         Ok(packets)
     }
 
@@ -618,6 +588,105 @@ impl Stage for RtpPacketiserStage {
         }
         Ok(())
     }
+}
+
+/// Append one AVC access unit's packets to `packets`: a single-NAL packet
+/// (zero-copy `Bytes::slice` of the sample) or an FU-A fragmentation (RFC
+/// 6184 §5.8) of a NAL larger than `mtu`.
+fn push_video_nals(
+    sample_data: &Bytes,
+    pt: u8,
+    mtu: usize,
+    ssrc: u32,
+    seq: &mut SeqCounter,
+    timestamp: u32,
+    packets: &mut Vec<RtpPacket>,
+) -> Result<()> {
+    let nals = split_length_prefixed(sample_data)?;
+    if nals.is_empty() {
+        return Ok(());
+    }
+    let last_nal = nals.len() - 1;
+    for (n, nal) in nals.iter().enumerate() {
+        let is_last_nal = n == last_nal;
+        if nal.len() + RTP_HEADER_LEN <= mtu {
+            let header = rtp_header(pt, is_last_nal, seq.next(), timestamp, ssrc);
+            let nal_offset = nal.as_ptr() as usize - sample_data.as_ptr() as usize;
+            let payload = sample_data.slice(nal_offset..nal_offset + nal.len());
+            packets.push(RtpPacket { header, payload });
+        } else {
+            fragment_fu_a(
+                nal,
+                sample_data,
+                pt,
+                is_last_nal,
+                mtu,
+                seq,
+                timestamp,
+                ssrc,
+                packets,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// The optional leading STAP-A packet aggregating an AVC track's SPS+PPS
+/// parameter sets (RFC 6184 §5.7.1), or `None` when the record carries none.
+fn stap_a_packet(
+    config: &isobmff::avc_config::AVCConfigurationBox,
+    pt: u8,
+    ssrc: u32,
+    seq: &mut SeqCounter,
+    timestamp: u32,
+) -> Result<Option<RtpPacket>> {
+    let mut param_nals: Vec<Vec<u8>> = Vec::new();
+    for sps in &config.config.sps {
+        param_nals.push(sps.0.clone());
+    }
+    for pps in &config.config.pps {
+        param_nals.push(pps.0.clone());
+    }
+    if param_nals.is_empty() {
+        return Ok(None);
+    }
+    build_stap_a(pt, &param_nals, seq, timestamp, ssrc).map(Some)
+}
+
+/// Packetise **one** AVC sample into RTP packets, as a self-contained packet
+/// group on a fresh sequence counter with RTP timestamp 0.
+///
+/// This is the per-sample form an egress that already tracks its own sequence
+/// numbers and timestamps needs (a WebRTC viewer session patches both fields
+/// onto the packet it actually sends); [`RtpPacketiserStage`] is the stateful
+/// form that numbers a whole stream itself. `stap_a` leads the group with a
+/// fresh STAP-A of the track's parameter sets, so a viewer joining at this
+/// sample can resynchronise its decoder.
+///
+/// # Errors
+///
+/// [`Error::InvalidInput`] for a non-AVC track, and whatever the NAL split
+/// reports for damaged sample data.
+pub fn packetise_video_sample(
+    spec: &TrackSpec,
+    sample: &Sample,
+    mtu: usize,
+    pt: u8,
+    ssrc: u32,
+    stap_a: bool,
+) -> Result<Vec<RtpPacket>> {
+    let CodecConfig::Avc { config, .. } = &spec.config else {
+        return Err(Error::InvalidInput(
+            "packetise_video_sample takes an AVC track",
+        ));
+    };
+    let mut seq = SeqCounter::new(0);
+    let mut packets = Vec::new();
+    if stap_a && let Some(packet) = stap_a_packet(config, pt, ssrc, &mut seq, 0)? {
+        packets.push(packet);
+    }
+    push_video_nals(&sample.data, pt, mtu, ssrc, &mut seq, 0, &mut packets)?;
+    Ok(packets)
 }
 
 impl PtAllocator {

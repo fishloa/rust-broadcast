@@ -329,6 +329,7 @@ pub use rtp::{
     KLV_ENCODING_NAME, MAX_TIMING_WARNINGS, NAL_TYPE_IDR, RtpDepacketiser, RtpInput,
     RtpInputStream, RtpMediaKind, RtpPacket, RtpPacketiserStage, RtpTimingWarning,
     VIDEO_CLOCK_RATE, VIDEO_CLOCK_TIMESCALE, depacketise_klv, packetise_klv,
+    packetise_video_sample,
 };
 pub use rtp_align::{AlignOut, AvSync, SR_SWITCH_TOLERANCE_US, TrackAligner};
 #[cfg(feature = "std")]

@@ -48,11 +48,17 @@ use crate::mux_stage::{MuxInput, MuxOutput};
 // ---------------------------------------------------------------------------
 
 /// Chunk stream id this crate uses for outbound audio messages.
-const CSID_AUDIO: u32 = 4;
+///
+/// These three ids are the muxer's own chunk streams and must not overlap a
+/// peer writer's: a connection that also writes through another chunk writer
+/// (rtmp-runtime's session uses 3 for commands, 4 for audio and 5 for video)
+/// has one per-chunk-stream state at the receiver, and two writers compacting
+/// headers independently would each inherit the other's state.
+const CSID_AUDIO: u32 = 6;
 /// Chunk stream id this crate uses for outbound video messages.
-const CSID_VIDEO: u32 = 5;
+const CSID_VIDEO: u32 = 7;
 /// Chunk stream id this crate uses for outbound data (script) messages.
-const CSID_DATA: u32 = 6;
+const CSID_DATA: u32 = 8;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -245,6 +251,11 @@ pub struct RtmpMuxStage {
     stream: FlvTagStream,
     writer: ChunkWriter,
     opened: bool,
+    /// Whether [`Stage::feed`] writes the stream's opening messages (the
+    /// metadata body and the sequence headers). A caller that opens the
+    /// connection itself — a publish client that sends `@setDataFrame` and
+    /// the sequence headers through its own session — turns this off.
+    opening: bool,
     out: VecDeque<MuxOutput>,
 }
 
@@ -256,6 +267,7 @@ impl Default for RtmpMuxStage {
             stream: FlvTagStream::default(),
             writer: ChunkWriter::new(),
             opened: false,
+            opening: true,
             out: VecDeque::new(),
         }
     }
@@ -281,8 +293,19 @@ impl RtmpMuxStage {
             stream: FlvTagStream::default(),
             writer: ChunkWriter::new(),
             opened: false,
+            opening: true,
             out: VecDeque::new(),
         }
+    }
+
+    /// A muxer that writes only the frame messages: the caller has already
+    /// sent the connection's chunk-size announcement, its metadata and the
+    /// sequence headers (a publish client does exactly that on its own
+    /// chunk streams).
+    #[must_use]
+    pub fn frames_only(mut self) -> Self {
+        self.opening = false;
+        self
     }
 
     /// The chunk size as the wire field carries it, rejecting a value the chunk
@@ -303,6 +326,14 @@ impl RtmpMuxStage {
             return Ok(());
         }
         let chunk_size = self.wire_chunk_size()?;
+        if !self.opening {
+            // The caller announced the size; this writer must still frame at
+            // it, since a receiver applies the announcement to every chunk on
+            // the connection.
+            self.writer.set_chunk_size(ChunkSize::new(chunk_size)?);
+            self.opened = true;
+            return Ok(());
+        }
         if chunk_size != DEFAULT_CHUNK_SIZE_VALUE {
             let chunk_size = ChunkSize::new(chunk_size)?;
             let control = ProtocolControl::SetChunkSize(chunk_size).to_message();
