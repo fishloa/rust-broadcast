@@ -107,12 +107,33 @@ pub enum Error {
         cap: u64,
     },
 
+    /// A [`RebaseStage`](crate::rebase::RebaseStage) was fed a sample of a
+    /// track it has not been told the timescale of.
+    #[error("rebase: no track announcement for track {track}")]
+    RebaseUnannouncedTrack {
+        /// The unannounced track.
+        track: TrackId,
+    },
+
+    /// A [`RebaseStage`](crate::rebase::RebaseStage) start window chose an
+    /// origin later than a sample it was then asked to rebase.
+    #[error("rebase: sample {dts} of track {track} precedes the origin {origin}")]
+    RebaseBeforeOrigin {
+        /// The track of the sample.
+        track: TrackId,
+        /// The sample's decode time, in the track's timescale.
+        dts: i64,
+        /// The origin, in the same track's timescale.
+        origin: i64,
+    },
+
     /// A [`SpliceStage`](crate::splice::SpliceStage) held more than its
-    /// caller-supplied cap of samples waiting for a sync point.
-    #[error("splice: held {cap} samples waiting for a sync point")]
+    /// caller-supplied cap of bytes within one GOP while waiting for the next
+    /// sync sample to snap a plan-less splice to.
+    #[error("splice: held more than {cap} bytes of one GOP waiting for a sync point")]
     SpliceGopOverflow {
-        /// The caller's cap.
-        cap: usize,
+        /// The caller's `max_gop_bytes` cap.
+        cap: u64,
     },
 
     /// A byte range supplied to [`Mp4Demux`](crate::mp4_demux::Mp4Demux) did

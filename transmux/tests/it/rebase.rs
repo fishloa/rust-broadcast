@@ -28,6 +28,7 @@ use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::nalu_types::{AvcPps, AvcSps};
 use transmux::TrackId;
 use transmux::media::{CmafMux, Media, Track};
+use transmux::mux_stage::MuxInput;
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,
 };
@@ -91,7 +92,7 @@ fn media_with_anchor(start: u64, durs: &[u32]) -> Media {
 
 /// Drive `stage` over `track`'s samples and fold them back into a track whose
 /// anchor is the first emitted sample's `dts`.
-fn apply<S>(stage: &mut S, track: &Track) -> Track
+fn apply_pair<S>(stage: &mut S, track: &Track) -> Track
 where
     S: for<'a> Stage<In<'a> = (TrackId, Sample), Out = (TrackId, Sample), Error = transmux::Error>,
 {
@@ -104,6 +105,44 @@ where
     stage.finish().expect("finish");
     while let Some((_, sample)) = stage.poll() {
         out.push(sample);
+    }
+    let start = out
+        .iter()
+        .find_map(|s| s.timing.and_then(|t| t.dts()))
+        .map(|dts| dts.max(0) as u64)
+        .unwrap_or(track.start_decode_time);
+    Track::new_at(track.spec.clone(), out, start)
+}
+
+/// Drive a [`RebaseStage`] (fed `MuxInput`) over `track` and fold its samples
+/// back into a track whose anchor is the first emitted sample's `dts`.
+fn apply<S>(stage: &mut S, track: &Track) -> Track
+where
+    S: for<'a> Stage<In<'a> = MuxInput, Out = MuxInput, Error = transmux::Error>,
+{
+    stage
+        .feed(
+            MuxInput::Track(Box::new(track.spec.clone())),
+            Timestamp::ZERO,
+        )
+        .expect("announce");
+    for sample in &track.samples {
+        stage
+            .feed(
+                MuxInput::Sample {
+                    track: track.spec.track_id,
+                    sample: sample.clone(),
+                },
+                Timestamp::ZERO,
+            )
+            .expect("feed");
+    }
+    stage.finish().expect("finish");
+    let mut out = Vec::new();
+    while let Some(item) = stage.poll() {
+        if let MuxInput::Sample { sample, .. } = item {
+            out.push(sample);
+        }
     }
     let start = out
         .iter()
@@ -206,7 +245,7 @@ fn apply_offset_bites() {
     const DELTA: i64 = 90_000;
     let mut media = media_with_anchor(ANCHOR, &[3000, 3000]);
     let mut stage = OffsetStage::new(DELTA);
-    media.tracks[0] = apply(&mut stage, &media.tracks[0]);
+    media.tracks[0] = apply_pair(&mut stage, &media.tracks[0]);
     assert_eq!(media.tracks[0].start_decode_time, ANCHOR + DELTA as u64);
     assert_eq!(
         dts_seq(&media),
@@ -230,7 +269,7 @@ fn insert_discontinuity_gap_bites() {
     const GAP: u32 = 4500;
     let media = media_with_anchor(0, &[3000, 3000, 3000, 3000]);
     let mut stage = GapStage::new(GAP, 2);
-    let track = apply(&mut stage, &media.tracks[0]);
+    let track = apply_pair(&mut stage, &media.tracks[0]);
 
     let seq: Vec<Option<i64>> = track
         .samples
@@ -260,7 +299,7 @@ fn insert_discontinuity_gap_at_zero_shifts_anchor_and_samples() {
     const GAP: u32 = 250;
     let media = media_with_anchor(1000, &[100, 100]);
     let mut stage = GapStage::new(GAP, 0);
-    let track = apply(&mut stage, &media.tracks[0]);
+    let track = apply_pair(&mut stage, &media.tracks[0]);
     assert_eq!(track.start_decode_time, 1000 + u64::from(GAP));
     assert_eq!(
         track
@@ -296,7 +335,7 @@ fn transforms_never_fabricate_a_timestamp() {
     );
 
     let mut offset = OffsetStage::new(1234);
-    media.tracks[0] = apply(&mut offset, &media.tracks[0]);
+    media.tracks[0] = apply_pair(&mut offset, &media.tracks[0]);
     assert_eq!(
         media.tracks[0].samples[1].timing.and_then(|t| t.dts()),
         None,
@@ -309,7 +348,7 @@ fn transforms_never_fabricate_a_timestamp() {
     );
 
     let mut gap = GapStage::new(999, 1);
-    media.tracks[0] = apply(&mut gap, &media.tracks[0]);
+    media.tracks[0] = apply_pair(&mut gap, &media.tracks[0]);
     assert_eq!(
         media.tracks[0].samples[1].timing.and_then(|t| t.dts()),
         None,
