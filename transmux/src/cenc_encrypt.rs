@@ -1121,9 +1121,10 @@ mod tests {
         let media = demux
             .unpackage(bytes.as_slice())
             .expect("demux fixtures/ts/h264/main.ts");
-        media
-            .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
-            .expect("AVC video track present")
+        crate::repackage::select_tracks_by(&media, |t| {
+            matches!(t.spec.config, CodecConfig::Avc { .. })
+        })
+        .expect("AVC video track present")
     }
 
     /// A real **two-track** (H.264 video + AAC audio) TS capture with both

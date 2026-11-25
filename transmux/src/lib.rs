@@ -313,7 +313,7 @@ pub use pipeline::{
 pub use progressive::ProgressiveMux;
 pub use ps_demux::PsDemux;
 pub use rebase::{GapStage, OffsetStage, RebaseOrigin, RebaseStage};
-pub use repackage::{Repackage, RepackageOutput};
+pub use repackage::{Repackage, RepackageOutput, select_tracks, select_tracks_by, trim};
 pub use rtcp::{
     APP_NAME_LEN, App, Bye, CompoundPacket, PT_APP, PT_BYE, PT_RECEIVER_REPORT, PT_SENDER_REPORT,
     PT_SOURCE_DESCRIPTION, REPORT_BLOCK_LEN, ReceiverReport, ReportBlock, RtcpPacket,

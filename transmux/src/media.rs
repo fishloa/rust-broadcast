@@ -113,7 +113,7 @@ impl Package for CmafMux {
         // `CodecConfig::Subtitle` track (B1) — rather than silently
         // dropping it, so a caller mixing carriable and non-carriable
         // streams must explicitly opt in to dropping the latter, e.g. with
-        // `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`
+        // `select_tracks_by(&media, |t| t.spec.config.is_muxable_in_bmff())`
         // before calling `package`. This is the single shared check every
         // fMP4/CMAF mux entry point uses, not a `CmafMux`-only one.
         let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();

@@ -623,7 +623,9 @@ fn filter_for_bmff_mux(media: &Media) -> CliResult<Media> {
         "warning: dropping track(s) {dropped:?} from CMAF/fMP4 output \
          (no ISOBMFF carriage in this crate for their codec)"
     );
-    Ok(media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())?)
+    Ok(crate::repackage::select_tracks_by(media, |t| {
+        t.spec.config.is_muxable_in_bmff()
+    })?)
 }
 
 /// Split `media` into one init segment plus its `styp`+`moof`+`mdat` media

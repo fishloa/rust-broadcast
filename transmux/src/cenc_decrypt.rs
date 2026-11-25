@@ -364,7 +364,7 @@ impl Decrypt for CencDecryptor {
     /// `tkhd.track_id` harvested from the protected source) — never by
     /// position. Positional pairing silently
     /// mis-decrypts whenever the `Media`'s track order or membership differs
-    /// from the source's `moov` order: a [`Media::select_tracks_by`]-narrowed
+    /// from the source's `moov` order: a [`select_tracks_by`](crate::repackage::select_tracks_by)-narrowed
     /// `Media` holding only the audio track would be decrypted with the
     /// *video* track's IVs, and if the two tracks' sample counts happened to
     /// coincide the count check below would not catch it either — it would
