@@ -11,6 +11,7 @@
 use broadcast_common::{Decrypt, Encrypt, Unpackage};
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::movie_fragment::TrackFragmentRunBox;
+use test_harness::collect::MediaSelectExt;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
     CencDecryptor, CencEncryptor, CencScheme, CodecConfig, EncryptConfig, KeyMap, Media, Sample,

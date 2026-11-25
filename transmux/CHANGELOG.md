@@ -66,6 +66,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mux_stage`: `MuxInput`, `MuxOutput`, `SegmentOut` and `SegmentSummary`, the one
   input and output vocabulary every muxer stage speaks, and `drive_media`, the
   bridge that feeds a whole `Media` to such a stage in decode-time order.
+- Timeline transforms are now stages, so none holds a whole `Media`:
+  `RebaseStage` is fed `MuxInput` (a `Track` announcement carries the
+  timescale), built with `with_origin` for exact per-track `RebaseOrigin`s or
+  `start_window(window, max_bytes)`, which finds one common origin — the
+  earliest first decode time across the announced tracks, compared across
+  timescales — and refuses (`RebaseBeforeOrigin`) rather than clamping a
+  sample earlier than it. `OffsetStage` and `GapStage` are fed
+  `(TrackId, Sample)`. `TrickPlayStage` announces its derived track through
+  `MuxInput`. `SpliceStage` applies a `SplicePlan` (`SplicePlan::concat` /
+  `SplicePlan::insert`, with `snap_to_preceding_sync` kept as a plan query) or,
+  built with `switching(max_gop_bytes)`, holds at most one GOP and snaps a
+  `splice()` to the preceding sync sample (`SpliceGopOverflow` past the cap).
+  The whole-input `rebase_to_zero`, `apply_offset`,
+  `insert_discontinuity_gap`, `derive_iframe_track`/`append_iframe_track`,
+  `concat`, `splice_insert` and `SpliceResult` are deleted.
+- `Media::select_tracks`, `Media::select_tracks_by` and `Media::trim` are
+  deleted; the functions `select_tracks`, `select_tracks_by` and `trim` live in
+  `repackage` for the `Repackage` driver, and tests reach them through
+  `test_harness::collect`.
 - `ir::SampleProtection` (a sample's IV and subsample map) and
   `ir::TrackProtection` (scheme, `tenc` defaults, constant-IV `senc` policy)
   with `From` conversions to and from `isobmff::writer::SampleAux`;

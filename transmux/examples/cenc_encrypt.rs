@@ -5,7 +5,7 @@
 //! ```text
 //! cleartext Media (TsDemux over fixtures/ts/h264/main.ts, AVC track)
 //!   -> CencEncryptor::encrypt        (sets sample + track protection, ciphers samples)
-//!   -> CmafMux::package              (unchanged CMAF muxer)
+//!   -> CmafMuxStage                 (CMAF muxer stage)
 //!   -> protect_init_segment (the fragment writer emits senc itself)
 //!                                    (splice in tenc/sinf + senc/saiz/saio)
 //!   -> a standalone, encrypted CMAF file written to a temp path
@@ -71,7 +71,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     use transmux::pipeline::CodecConfig;
     use transmux::{
         CencEncryptor, CencScheme, DashPackager, EncryptConfig, IvGen, Media, SubsamplePolicy,
-        TrackProtection, TsDemux,
+        TrackProtection, TsDemux, select_tracks_by,
     };
 
     // A test KID/key (never a real production key) — the standard `cbcs`
@@ -109,7 +109,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Demux to the neutral IR, keeping only the AVC video track.
     let mut demux = TsDemux::new();
     let media: Media = demux.unpackage(&ts[..])?;
-    let mut media = media.select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))?;
+    let mut media = select_tracks_by(&media, |t| matches!(t.spec.config, CodecConfig::Avc { .. }))?;
     println!(
         "demuxed IR: {} track(s), {} sample(s)",
         media.tracks.len(),

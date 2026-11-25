@@ -43,6 +43,7 @@
 #![cfg(feature = "cenc")]
 
 use test_alloc::ThreadCounting;
+use test_harness::collect::MediaSelectExt;
 
 use broadcast_common::{Encrypt, Unpackage};
 use transmux::{

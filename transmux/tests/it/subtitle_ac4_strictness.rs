@@ -28,6 +28,7 @@
 use broadcast_common::timescale::Timescale;
 use std::fs;
 use test_fixtures::vectors::DAC4_ORACLE;
+use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
 use broadcast_common::{Parse, Serialize};

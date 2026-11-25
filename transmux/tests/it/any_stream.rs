@@ -45,6 +45,7 @@
 use mpeg_ts::pid::Pid;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
+use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
 use broadcast_common::Package;

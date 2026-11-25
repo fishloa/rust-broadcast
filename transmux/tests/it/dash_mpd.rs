@@ -24,6 +24,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};

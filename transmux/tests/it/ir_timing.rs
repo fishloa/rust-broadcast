@@ -10,6 +10,7 @@ use broadcast_common::timescale::Timescale;
 use mpeg_ts::pid::Pid;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
 use broadcast_common::Unpackage;

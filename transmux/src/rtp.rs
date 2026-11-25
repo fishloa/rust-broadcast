@@ -1347,9 +1347,9 @@ fn decode_timeline(pts: &[i64]) -> (Vec<i64>, Vec<i64>) {
     // unwrapped RTP timestamp`) — so every track in one `Media` shares one
     // epoch. Zero-basing only the reordered tracks would put them on a
     // different epoch from their own siblings, which is worse than either
-    // choice made consistently; a consumer wanting a zero origin applies
-    // `crate::rebase::rebase_to_zero` to the whole `Media`, which shifts every
-    // track in lockstep.
+    // choice made consistently; a consumer wanting a zero origin feeds the
+    // samples through `crate::rebase::RebaseStage`, which shifts every track
+    // in lockstep.
     let mut dts: Vec<i64> = Vec::with_capacity(pts.len());
     let mut shifted_pts: Vec<i64> = Vec::with_capacity(pts.len());
     for (s, p) in sorted.iter().zip(pts.iter()) {

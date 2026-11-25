@@ -7,6 +7,7 @@
 #![cfg(feature = "std")]
 
 use core::time::Duration;
+use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
 use broadcast_common::Package;

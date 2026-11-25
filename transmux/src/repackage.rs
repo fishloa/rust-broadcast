@@ -7,15 +7,15 @@
 //! *Repackaging* composes those two ends with pure transforms on the IR in the
 //! middle — no new box parsing:
 //!
-//! - **track-select** — [`Media::select_tracks`] keeps a chosen subset of tracks,
+//! - **track-select** — [`select_tracks`] keeps a chosen subset of tracks,
 //!   preserving their source order and [`TrackSpec`]s.
-//! - **trim** — [`Media::trim`] keeps only the samples whose *presentation time*
+//! - **trim** — [`trim`] keeps only the samples whose *presentation time*
 //!   (composition time = decode time + `composition_offset`) falls in the
 //!   half-open window `[start, end)`, expressed in the **movie timescale**
 //!   ([`Media::movie_timescale`]). The first kept video sample is guaranteed to
 //!   be a sync sample: the window's lower edge is snapped **back** to the
 //!   preceding random-access point on the segmentation anchor track (see
-//!   [`Media::trim`] for the exact rule), so the output opens on a keyframe as
+//!   [`trim`] for the exact rule), so the output opens on a keyframe as
 //!   CMAF requires (ISO/IEC 23000-19 §7.3.2.3: a CMAF Track's first media
 //!   sample must be an IDR/SAP); every other track then starts from that same
 //!   snapped instant, so audio and video stay aligned. Window times are on one
@@ -133,142 +133,129 @@ fn earliest_decode_time_track(media: &Media, dts: &[u128], cursors: &[usize]) ->
     best
 }
 
-impl Media {
-    /// Select a subset of tracks by their **index** (position in
-    /// [`Media::tracks`]), preserving the given order.
-    ///
-    /// The chosen tracks are cloned with their [`TrackSpec`]s and samples
-    /// intact; [`Media::movie_timescale`] is carried through unchanged.
-    ///
-    /// # Errors
-    /// [`Error::InvalidInput`] if `indices` is empty or names an out-of-range
-    /// track index.
-    pub fn select_tracks(&self, indices: &[usize]) -> Result<Media> {
-        if indices.is_empty() {
-            return Err(Error::InvalidInput("select_tracks: empty track selection"));
-        }
-        let mut tracks = Vec::with_capacity(indices.len());
-        for &i in indices {
-            let t = self.tracks.get(i).ok_or(Error::InvalidInput(
-                "select_tracks: track index out of range",
-            ))?;
-            tracks.push(t.clone());
-        }
-        Ok(Media::new(tracks, self.movie_timescale))
+/// Select a subset of tracks by their **index** (position in
+/// [`Media::tracks`]), preserving the given order.
+///
+/// This and [`select_tracks_by`]/[`trim`] are the track-selection helpers the
+/// former [`Media`] methods became: they are whole-input operations (a window
+/// needs the timeline), kept for the [`Repackage`] driver and its tests, not
+/// sample stages.
+///
+/// # Errors
+/// [`Error::InvalidInput`] if `indices` is empty or names an out-of-range
+/// track index.
+pub fn select_tracks(media: &Media, indices: &[usize]) -> Result<Media> {
+    if indices.is_empty() {
+        return Err(Error::InvalidInput("select_tracks: empty track selection"));
     }
-
-    /// Select a subset of tracks by predicate over each [`Track`], preserving
-    /// source order.
-    ///
-    /// # Errors
-    /// [`Error::InvalidInput`] if the predicate keeps no track.
-    pub fn select_tracks_by<F>(&self, mut keep: F) -> Result<Media>
-    where
-        F: FnMut(&Track) -> bool,
-    {
-        let tracks: Vec<Track> = self.tracks.iter().filter(|t| keep(t)).cloned().collect();
-        if tracks.is_empty() {
-            return Err(Error::InvalidInput(
-                "select_tracks_by: predicate kept no track",
-            ));
-        }
-        Ok(Media::new(tracks, self.movie_timescale))
+    let mut tracks = Vec::with_capacity(indices.len());
+    for &i in indices {
+        let t = media.tracks.get(i).ok_or(Error::InvalidInput(
+            "select_tracks: track index out of range",
+        ))?;
+        tracks.push(t.clone());
     }
+    Ok(Media::new(tracks, media.movie_timescale))
+}
 
-    /// Trim to the half-open presentation-time window `[start, end)`, expressed
-    /// in the **movie timescale** ([`Media::movie_timescale`]).
-    ///
-    /// For each track the window is rescaled into that track's media timescale
-    /// and every sample whose composition (presentation) time — decode time +
-    /// `composition_offset`, measured from the earliest first-sample decode
-    /// time across all tracks — lies in `[start, end)` is kept.
-    ///
-    /// To satisfy the CMAF constraint that a track opens on a random-access
-    /// point (ISO/IEC 23000-19 §7.3.2.3), the **anchor** track (`anchor_index`:
-    /// first video track, else the first anchor-capable track) is back-trimmed:
-    /// the first sample it keeps is the nearest sync sample at or before the
-    /// first sample the raw window would select. Every other track's lower
-    /// edge moves back to that sync sample's presentation time, so the tracks
-    /// stay aligned (audio frames are all sync samples, so their first kept
-    /// sample is already a random-access point); upper edges stay at `end`.
-    ///
-    /// The returned tracks keep their samples' absolute timestamps, with each
-    /// [`Track::start_decode_time`] set to its first kept sample's `dts`.
-    ///
-    /// # Errors
-    /// [`Error::InvalidInput`] if `start >= end`, the media has no tracks, the
-    /// window selects no sample on any track, or (only possible on an already
-    /// pathological input) no track is anchor-capable.
-    pub fn trim(&self, start: u64, end: u64) -> Result<Media> {
-        if start >= end {
-            return Err(Error::InvalidInput("trim: start must be < end"));
-        }
-        if self.tracks.is_empty() {
-            return Err(Error::InvalidInput("trim: media has no tracks"));
-        }
-        let anchor = anchor_index(self)?;
-        let origin = TimelineOrigin::of(&self.tracks);
+/// Select a subset of tracks by predicate over each [`Track`], preserving
+/// source order.
+///
+/// # Errors
+/// [`Error::InvalidInput`] if the predicate keeps no track.
+pub fn select_tracks_by<F>(media: &Media, mut keep: F) -> Result<Media>
+where
+    F: FnMut(&Track) -> bool,
+{
+    let tracks: Vec<Track> = media.tracks.iter().filter(|t| keep(t)).cloned().collect();
+    if tracks.is_empty() {
+        return Err(Error::InvalidInput(
+            "select_tracks_by: predicate kept no track",
+        ));
+    }
+    Ok(Media::new(tracks, media.movie_timescale))
+}
 
-        // The anchor first: its window start snaps back to a sync sample, and
-        // every other track then starts from that same instant (issue #1021).
-        let anchor_track = &self.tracks[anchor];
-        let anchor_ts = anchor_track.spec.timescale;
-        let anchor_pts = presentation_times(anchor_track, &origin)?;
-        let anchor_lo = rescale_floor(start, self.movie_timescale, anchor_ts);
-        let anchor_hi = rescale_floor(end, self.movie_timescale, anchor_ts);
-        let snapped = anchor_pts
-            .iter()
-            .position(|&p| p >= anchor_lo && p < anchor_hi)
-            .map(|mut idx| {
-                while idx > 0 && !anchor_track.samples[idx].flags.is_sync {
-                    idx -= 1;
-                }
-                idx
-            });
+/// Trim to the half-open presentation-time window `[start, end)`, expressed in
+/// the **movie timescale** ([`Media::movie_timescale`]).
+///
+/// For each track the window is rescaled into that track's media timescale and
+/// every sample whose composition (presentation) time lies in `[start, end)`
+/// is kept. The anchor track is back-trimmed to the nearest sync sample at or
+/// before the first sample the raw window would select, and every other
+/// track's lower edge moves back to that same instant.
+///
+/// # Errors
+/// [`Error::InvalidInput`] if `start >= end`, the media has no tracks, the
+/// window selects no sample on any track, or no track is anchor-capable.
+pub fn trim(media: &Media, start: u64, end: u64) -> Result<Media> {
+    if start >= end {
+        return Err(Error::InvalidInput("trim: start must be < end"));
+    }
+    if media.tracks.is_empty() {
+        return Err(Error::InvalidInput("trim: media has no tracks"));
+    }
+    let anchor = anchor_index(media)?;
+    let origin = TimelineOrigin::of(&media.tracks);
 
-        let mut out_tracks = Vec::with_capacity(self.tracks.len());
-        let mut kept_any = false;
-        for (ti, track) in self.tracks.iter().enumerate() {
-            let ts = track.spec.timescale;
-            let pts = presentation_times(track, &origin)?;
-            let hi = rescale_floor(end, self.movie_timescale, ts);
-            let start_idx = if ti == anchor {
-                snapped
-            } else {
-                // Lower edge = the snapped anchor start, else the raw window.
-                let lo = match snapped {
-                    Some(idx) => rescale_i64(anchor_pts[idx], anchor_ts, ts, Rounding::Floor),
-                    None => rescale_floor(start, self.movie_timescale, ts),
-                };
-                pts.iter().position(|&p| p >= lo && p < hi)
+    let anchor_track = &media.tracks[anchor];
+    let anchor_ts = anchor_track.spec.timescale;
+    let anchor_pts = presentation_times(anchor_track, &origin)?;
+    let anchor_lo = rescale_floor(start, media.movie_timescale, anchor_ts);
+    let anchor_hi = rescale_floor(end, media.movie_timescale, anchor_ts);
+    let snapped = anchor_pts
+        .iter()
+        .position(|&p| p >= anchor_lo && p < anchor_hi)
+        .map(|mut idx| {
+            while idx > 0 && !anchor_track.samples[idx].flags.is_sync {
+                idx -= 1;
+            }
+            idx
+        });
+
+    let mut out_tracks = Vec::with_capacity(media.tracks.len());
+    let mut kept_any = false;
+    for (ti, track) in media.tracks.iter().enumerate() {
+        let ts = track.spec.timescale;
+        let pts = presentation_times(track, &origin)?;
+        let hi = rescale_floor(end, media.movie_timescale, ts);
+        let start_idx = if ti == anchor {
+            snapped
+        } else {
+            let lo = match snapped {
+                Some(idx) => rescale_i64(anchor_pts[idx], anchor_ts, ts, Rounding::Floor),
+                None => rescale_floor(start, media.movie_timescale, ts),
             };
-            let mut kept = Vec::new();
-            if let Some(start_idx) = start_idx {
-                for (s, &p) in track.samples[start_idx..].iter().zip(&pts[start_idx..]) {
-                    if p >= hi {
-                        break;
-                    }
-                    kept.push(s.clone());
+            pts.iter().position(|&p| p >= lo && p < hi)
+        };
+        let mut kept = Vec::new();
+        if let Some(start_idx) = start_idx {
+            for (s, &p) in track.samples[start_idx..].iter().zip(&pts[start_idx..]) {
+                if p >= hi {
+                    break;
                 }
+                kept.push(s.clone());
             }
-            if !kept.is_empty() {
-                kept_any = true;
-            }
-            let first_dts = kept
-                .iter()
-                .find_map(|s| s.timing.and_then(|t| t.dts()))
-                .unwrap_or(0)
-                .max(0) as u64;
-            out_tracks.push(Track::new_at(track.spec.clone(), kept, first_dts));
         }
-        if !kept_any {
-            return Err(Error::InvalidInput(
-                "trim: window selected no samples on any track",
-            ));
+        if !kept.is_empty() {
+            kept_any = true;
         }
-        Ok(Media::new(out_tracks, self.movie_timescale))
+        let first_dts = kept
+            .iter()
+            .find_map(|s| s.timing.and_then(|t| t.dts()))
+            .unwrap_or(0)
+            .max(0) as u64;
+        out_tracks.push(Track::new_at(track.spec.clone(), kept, first_dts));
     }
+    if !kept_any {
+        return Err(Error::InvalidInput(
+            "trim: window selected no samples on any track",
+        ));
+    }
+    Ok(Media::new(out_tracks, media.movie_timescale))
+}
 
+impl Media {
     /// Total duration of the segmentation anchor track (`anchor_index`: first
     /// video track, else the first anchor-capable track) in that track's media
     /// timescale — the denominator for how many segments a resegmentation at a
@@ -332,7 +319,7 @@ impl Repackage {
     }
 
     /// Trim to the half-open presentation-time window `[start, end)` in the movie
-    /// timescale (see [`Media::trim`]).
+    /// timescale (see [`trim`]).
     pub fn trim(mut self, start: u64, end: u64) -> Self {
         self.trim = Some((start, end));
         self
@@ -342,15 +329,14 @@ impl Repackage {
     /// resegment, returning the CMAF init + media segments.
     ///
     /// # Errors
-    /// Propagates [`Media::select_tracks`] / [`Media::trim`] / [`Segmenter`]
-    /// errors.
+    /// Propagates [`select_tracks`] / [`trim`] / [`Segmenter`] errors.
     pub fn run_media(&self, media: &Media) -> Result<RepackageOutput> {
         let mut work = media.clone();
         if let Some(indices) = &self.select {
-            work = work.select_tracks(indices)?;
+            work = select_tracks(&work, indices)?;
         }
         if let Some((start, end)) = self.trim {
-            work = work.trim(start, end)?;
+            work = trim(&work, start, end)?;
         }
         self.segment(&work)
     }
