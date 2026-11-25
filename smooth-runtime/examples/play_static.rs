@@ -12,6 +12,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::stage::Timestamp;
 use smooth_runtime::{Action, FetchFailure, Output, SmoothClient, SmoothClientConfig};
 use url::Url;
@@ -24,6 +25,9 @@ fn now(us: u64) -> Timestamp {
 const DEFAULT_DIR: &str = "../fixtures/smooth/av";
 const ORIGIN: &str = "http://origin.test/";
 const MANIFEST_FILE: &str = "Manifest";
+/// A whole Smooth client Manifest: the ceiling the XML reader accepts for any
+/// manifest this crate parses.
+const MANIFEST_LIMIT: Limit = Limit::new("Smooth manifest", 4 * 1024 * 1024);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_DIR);
@@ -60,10 +64,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .trim_start_matches('/')
                 .replace("%28", "(")
                 .replace("%29", ")");
-            match std::fs::read(dir.join(relative)) {
+            let path = dir.join(relative);
+            let body = if is_manifest {
+                read_file_bounded(&path, MANIFEST_LIMIT).map_err(|_| ())
+            } else {
+                std::fs::read(&path).map_err(|_| ())
+            };
+            match body {
                 Ok(body) if is_manifest => client.on_manifest(now(now_us), id, &body),
                 Ok(body) => client.on_fragment(now(now_us), id, &body),
-                Err(_) => client.on_failure(
+                Err(()) => client.on_failure(
                     now(now_us),
                     id,
                     FetchFailure {

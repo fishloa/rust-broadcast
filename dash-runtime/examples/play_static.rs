@@ -17,6 +17,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::stage::Timestamp;
 use dash_runtime::client::{
     Action, DashClient, DashConfig, Error, Failure, FailureClass, Output, PullLimits, ResourceId,
@@ -31,6 +32,9 @@ fn now(us: u64) -> Timestamp {
 
 const DEFAULT_MPD: &str = "../fixtures/dash/timeline-gpac/timeline.mpd";
 const ORIGIN: &str = "http://fixtures.invalid";
+
+/// A whole MPD, bounded by the ceiling the MPD parser itself accepts.
+const MPD_LIMIT: Limit = Limit::new("MPD", broadcast_dash::limits::MAX_MPD_BYTES as u64);
 
 fn origin_path(root: &Path, url: &str) -> Option<PathBuf> {
     let url = Url::parse(url).ok()?;
@@ -80,6 +84,11 @@ fn parse_args() -> Result<Args, String> {
         }
     }
     Ok(args)
+}
+
+fn read_mpd(root: &Path, url: &str) -> Result<Vec<u8>, Failure> {
+    let path = origin_path(root, url).ok_or(Failure::Status(404))?;
+    read_file_bounded(&path, MPD_LIMIT).map_err(|_| Failure::Status(404))
 }
 
 fn read(root: &Path, url: &str, range: Option<(u64, u64)>) -> Result<Vec<u8>, Failure> {
@@ -182,7 +191,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         now_us += 1_000;
         let outcome: Result<(), Error> = match action.id() {
-            None => match read(&root, action.url().as_str(), None) {
+            None => match read_mpd(&root, action.url().as_str()) {
                 Ok(body) => client.on_mpd(now(now_us), &body),
                 Err(_) => return Err("the MPD could not be read".into()),
             },

@@ -16,6 +16,8 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+#[cfg(feature = "flate2")]
+use broadcast_common::bounded::Limit;
 use broadcast_common::len::need_out;
 
 use super::{
@@ -1786,55 +1788,61 @@ impl Serialize for ModuleInfo<'_> {
 #[cfg(feature = "flate2")]
 pub const MAX_DECOMPRESSED_MODULE_SIZE: usize = 64 * 1024 * 1024;
 
-/// Decompress a zlib-encoded module payload, stopping once the output would
-/// exceed `max_len` bytes.
-///
-/// Uses [`flate2`](https://crates.io/crates/flate2) (optional feature `flate2`).
-/// Reads through `std::io::Read::take` with a `max_len.saturating_add(1)` cap (not a
-/// plain `+ 1`, which would overflow `u64` if `max_len == usize::MAX` on a
-/// 64-bit target) so a stream that would inflate past `max_len` is caught
-/// after reading one byte beyond the limit, rather than after allocating the
-/// full (potentially many-gigabyte) output. `max_len == usize::MAX` is
-/// therefore an effectively unbounded call — the full decompressed data is
-/// returned. Returns an error if the zlib stream is invalid, or if the
-/// decompressed output exceeds `max_len`.
+/// The [`Limit`] [`decompress_zlib`] applies: [`MAX_DECOMPRESSED_MODULE_SIZE`]
+/// named for the document it bounds.
 #[cfg(feature = "flate2")]
-pub fn decompress_zlib_bounded(data: &[u8], max_len: usize) -> Result<Vec<u8>> {
-    use std::io::Read;
-    let limit = (max_len as u64).saturating_add(1);
-    let mut decoder = flate2::read::ZlibDecoder::new(data).take(limit);
-    let mut out = Vec::new();
-    decoder.read_to_end(&mut out).map_err(|e| {
-        Error::InvalidField(broadcast_common::error::InvalidField {
+pub const MAX_DECOMPRESSED_MODULE_LIMIT: Limit = Limit::new(
+    "decompressed carousel module",
+    MAX_DECOMPRESSED_MODULE_SIZE as u64,
+);
+
+/// Decompress a zlib-encoded module payload, stopping once the output would
+/// exceed `limit`.
+///
+/// Uses [`flate2`](https://crates.io/crates/flate2) (optional feature `flate2`)
+/// and the workspace's one bounded read ([`broadcast_common::bounded`]): a
+/// stream that would inflate past the limit is caught after reading one byte
+/// beyond it, rather than after allocating the full (potentially
+/// many-gigabyte) output. Returns an error if the zlib stream is invalid, or
+/// [`Error::TooLarge`] naming the limit the decompressed output exceeded.
+#[cfg(feature = "flate2")]
+pub fn decompress_zlib_bounded(data: &[u8], limit: Limit) -> Result<Vec<u8>> {
+    use broadcast_common::bounded::{BoundedReadError, read_bounded};
+
+    read_bounded(flate2::read::ZlibDecoder::new(data), limit).map_err(|error| match error {
+        BoundedReadError::TooLarge {
+            limit_name,
+            limit_bytes,
+        } => Error::TooLarge {
+            limit_name,
+            limit_bytes,
+        },
+        BoundedReadError::Io(error) => Error::InvalidField(broadcast_common::error::InvalidField {
             field: "compressed_module_descriptor body",
-            reason: if e.kind() == std::io::ErrorKind::InvalidData {
+            reason: if error.kind() == std::io::ErrorKind::InvalidData {
                 "zlib decompression failed: invalid data"
             } else {
                 "zlib decompression failed"
             },
-        })
-    })?;
-    if out.len() > max_len {
-        // Reading stops at `max_len + 1`, so the true decompressed size is never known.
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        }),
+        _ => Error::InvalidField(broadcast_common::error::InvalidField {
             field: "compressed_module_descriptor body",
-            reason: "zlib output exceeds the decompressed-size limit",
-        }));
-    }
-    Ok(out)
+            reason: "zlib decompression failed",
+        }),
+    })
 }
 
 /// Decompress a zlib-encoded module payload.
 ///
 /// Uses [`flate2`](https://crates.io/crates/flate2) (optional feature `flate2`).
-/// Bounded by [`MAX_DECOMPRESSED_MODULE_SIZE`] — see
+/// Bounded by [`MAX_DECOMPRESSED_MODULE_LIMIT`] — see
 /// [`decompress_zlib_bounded`] for the general form (e.g. when a
 /// `carousel_identifier_descriptor`'s declared `OriginalSize` is available
 /// and should be used as a tighter cap). Returns the decompressed bytes, or
 /// an error if the zlib stream is invalid or the output exceeds the cap.
 #[cfg(feature = "flate2")]
 pub fn decompress_zlib(data: &[u8]) -> Result<Vec<u8>> {
-    decompress_zlib_bounded(data, MAX_DECOMPRESSED_MODULE_SIZE)
+    decompress_zlib_bounded(data, MAX_DECOMPRESSED_MODULE_LIMIT)
 }
 
 // ── ServiceGatewayInfo ────────────────────────────────────────────────────────
@@ -2264,7 +2272,7 @@ mod tests {
 
     #[cfg(feature = "flate2")]
     #[test]
-    fn decompress_zlib_bounded_usize_max_is_unbounded() {
+    fn decompress_zlib_bounded_huge_limit_is_unbounded() {
         use flate2::{Compression, write::ZlibEncoder};
         use std::io::Write;
 
@@ -2273,9 +2281,10 @@ mod tests {
         encoder.write_all(&original).unwrap();
         let compressed = encoder.finish().unwrap();
 
-        // `max_len = usize::MAX` must not overflow the internal `Take` limit
+        // A limit of `u64::MAX` must not overflow the internal `Take` limit
         // and must return the full decompressed data, not an empty result.
-        let decompressed = decompress_zlib_bounded(&compressed, usize::MAX).unwrap();
+        let decompressed =
+            decompress_zlib_bounded(&compressed, Limit::new("test module", u64::MAX)).unwrap();
         assert_eq!(decompressed.as_slice(), original.as_slice());
     }
 
@@ -2290,21 +2299,26 @@ mod tests {
         encoder.write_all(&original).unwrap();
         let compressed = encoder.finish().unwrap();
 
-        // Output of exactly `max_len` bytes is Ok.
-        let ok = decompress_zlib_bounded(&compressed, original.len()).unwrap();
+        // Output of exactly the limit is Ok.
+        let ok = decompress_zlib_bounded(
+            &compressed,
+            Limit::new("test module", original.len() as u64),
+        )
+        .unwrap();
         assert_eq!(ok, original);
 
-        // Output one byte over `max_len` is Err.
-        let err = decompress_zlib_bounded(&compressed, original.len() - 1);
+        // Output one byte over the limit is Err, naming the limit.
+        let err = decompress_zlib_bounded(
+            &compressed,
+            Limit::new("test module", original.len() as u64 - 1),
+        );
         assert_eq!(
             err.err(),
-            Some(crate::error::Error::InvalidField(
-                broadcast_common::error::InvalidField {
-                    field: "compressed_module_descriptor body",
-                    reason: "zlib output exceeds the decompressed-size limit"
-                }
-            )),
-            "output exceeding max_len by exactly 1 byte must return Err"
+            Some(crate::error::Error::TooLarge {
+                limit_name: "test module",
+                limit_bytes: original.len() as u64 - 1
+            }),
+            "output exceeding the limit by exactly 1 byte must return Err"
         );
     }
 
@@ -2907,16 +2921,14 @@ mod tests {
         encoder.write_all(&original).unwrap();
         let compressed = encoder.finish().unwrap();
 
-        let result = decompress_zlib_bounded(&compressed, 1024);
+        let result = decompress_zlib_bounded(&compressed, Limit::new("test module", 1024));
         assert_eq!(
             result.err(),
-            Some(crate::error::Error::InvalidField(
-                broadcast_common::error::InvalidField {
-                    field: "compressed_module_descriptor body",
-                    reason: "zlib output exceeds the decompressed-size limit"
-                }
-            )),
-            "decompressed output exceeding max_len must return Err"
+            Some(crate::error::Error::TooLarge {
+                limit_name: "test module",
+                limit_bytes: 1024
+            }),
+            "decompressed output exceeding the limit must return Err"
         );
     }
 }

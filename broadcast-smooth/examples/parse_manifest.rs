@@ -4,11 +4,20 @@
 //!
 //! Run with `cargo run -p broadcast-smooth --example parse_manifest`.
 
+use broadcast_common::bounded::{Limit, read_file_bounded_string};
 use broadcast_smooth::SmoothManifest;
+
+/// A whole Smooth client Manifest, bounded by the ceiling the XML reader
+/// accepts for any manifest this crate parses.
+const MANIFEST_LIMIT: Limit = Limit::new(
+    "Smooth manifest",
+    broadcast_common::xml_chars::MAX_XML_BYTES as u64,
+);
 
 fn main() {
     let path = test_fixtures::path("smooth/av/Manifest");
-    let xml = std::fs::read_to_string(path).expect("read the committed Smooth manifest fixture");
+    let xml = read_file_bounded_string(&path, MANIFEST_LIMIT)
+        .expect("read the committed Smooth manifest fixture");
 
     let manifest = SmoothManifest::parse(&xml).expect("valid client manifest");
     println!(

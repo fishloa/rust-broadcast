@@ -7,10 +7,14 @@
 /// cargo run -p isobmff --example parse_emsg -- fixtures/scte35/scte35-emsg-v0.bin
 /// ```
 use std::env;
-use std::fs;
 use std::path::PathBuf;
 
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use isobmff::emsg::EmsgBox;
+
+/// One `emsg` box (`message_data` is opaque), bounded well past any real
+/// splice or XML payload.
+const EMSG_LIMIT: Limit = Limit::new("EMSG box", 1024 * 1024);
 
 fn main() {
     // Fixtures live in the workspace-shared `fixtures/` tree, not under the
@@ -20,7 +24,7 @@ fn main() {
         .nth(1)
         .map(PathBuf::from)
         .unwrap_or_else(|| test_fixtures::path("scte35/scte35-emsg-v0.bin"));
-    let bytes = fs::read(&path).unwrap_or_else(|e| {
+    let bytes = read_file_bounded(&path, EMSG_LIMIT).unwrap_or_else(|e| {
         panic!(
             "committed fixture {} could not be read: {e}",
             path.display()

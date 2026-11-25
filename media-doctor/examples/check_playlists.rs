@@ -12,7 +12,15 @@
 //! example exits non-zero only if a file cannot be read, or if the valid
 //! fixture stops being clean (which would mean the validator regressed).
 
+use broadcast_common::bounded::{Limit, read_file_bounded_string};
 use media_doctor::{Report, check_playlist};
+use std::path::Path;
+
+/// A whole HLS playlist: the ceiling `broadcast-hls` itself accepts.
+const PLAYLIST_LIMIT: Limit = Limit::new(
+    "HLS playlist",
+    broadcast_hls::limits::MAX_PLAYLIST_BYTES as u64,
+);
 
 const DEFAULT_SET: [&str; 5] = [
     "valid.m3u8",
@@ -40,7 +48,7 @@ fn main() {
 
     let mut failed = false;
     for path in &paths {
-        let text = match std::fs::read_to_string(path) {
+        let text = match read_file_bounded_string(Path::new(path), PLAYLIST_LIMIT) {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("failed to read {path}: {e}");

@@ -13,6 +13,10 @@ All notable changes to this crate are documented here. The format follows
   header to read and `supply` answers it, so a caller seeks over the payloads
   and recovery never holds the period file (#4057).
 
+### Changed
+
+- A period playlist is read through the workspace's one bounded read under `broadcast_common::bounded::Limit`, and an over-limit file now fails with the new `PlaylistError::TooLarge { limit_name, limit_bytes }` naming the limit instead of being truncated at `MAX_PLAYLIST_BYTES + 1` and rejected later by the parser.
+
 ### Added
 
 - `RecoverError::TooManyFragments` and `RecoverError::UnexpectedSupply`;

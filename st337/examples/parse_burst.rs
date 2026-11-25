@@ -4,15 +4,20 @@
 //!
 //! Run with `cargo run -p st337 --example parse_burst`.
 
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::{Parse, Serialize};
 use st337::{Burst, DataMode};
+
+/// One IEC 61937 burst payload: a single compressed-audio frame, kilobytes at
+/// most.
+const BURST_LIMIT: Limit = Limit::new("ST 337 burst payload", 64 * 1024);
 
 fn main() {
     // See private/specs-verified/smpte/st337/st337-PROVENANCE.md for how this fixture was extracted (a
     // real E-AC-3 syncframe from fixtures/ts/dolby/eac3.ts) and cross-checked
     // against ffmpeg's own IEC 61937 burst framing.
     let path = test_fixtures::path("audio/eac3-dependent/eac3-frame0.bin");
-    let payload = std::fs::read(path).expect("fixture must exist");
+    let payload = read_file_bounded(&path, BURST_LIMIT).expect("fixture must exist");
 
     let burst = Burst::new(
         21, // data_type -- the IEC 61937 E-AC-3 code point used by the real

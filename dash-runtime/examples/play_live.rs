@@ -20,6 +20,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::stage::Timestamp;
 use dash_runtime::address::{PlanOptions, plan_representation};
 use dash_runtime::client::{
@@ -41,6 +42,9 @@ const START_AFTER_PUBLISH_US: i64 = 300_000;
 const MICROS: u64 = 1_000_000;
 const RTT_US: u64 = 40_000;
 const ORIGIN: &str = "http://fixtures.invalid";
+
+/// A whole MPD, bounded by the ceiling the MPD parser itself accepts.
+const MPD_LIMIT: Limit = Limit::new("MPD", broadcast_dash::limits::MAX_MPD_BYTES as u64);
 
 fn origin_path(root: &Path, url: &str) -> Option<PathBuf> {
     let url = Url::parse(url).ok()?;
@@ -147,7 +151,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "{ORIGIN}/{}",
         utf8_percent_encode(name, NON_ALPHANUMERIC)
     ))?;
-    let mpd = Mpd::parse(&std::fs::read(&path)?)?;
+    let mpd = Mpd::parse(&read_file_bounded(&path, MPD_LIMIT)?)?;
     let publish = mpd
         .publish_time
         .ok_or("the MPD has no publishTime")?

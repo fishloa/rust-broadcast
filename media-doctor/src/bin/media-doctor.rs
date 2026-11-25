@@ -3,10 +3,12 @@
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom};
 use std::net::{SocketAddr, UdpSocket};
+use std::path::Path;
 use std::process;
 use std::thread;
 use std::time::{Duration, Instant};
 
+use broadcast_common::bounded::{Limit, read_file_bounded_string};
 use clap::Parser;
 use media_doctor::cli::{CheckArgs, CheckDashArgs, CheckHlsArgs, Cli, WatchArgs};
 use media_doctor::metrics_server::{self, MetricsPublisher, MetricsServerConfig};
@@ -16,6 +18,14 @@ use media_doctor::{
     WatchState, check_container_codec, check_dash_mpd, check_hls_playlist, check_mp4_file, run_all,
 };
 use tokio_util::sync::CancellationToken;
+
+/// A whole HLS playlist: the ceiling `broadcast-hls` itself accepts.
+const PLAYLIST_LIMIT: Limit = Limit::new(
+    "HLS playlist",
+    broadcast_hls::limits::MAX_PLAYLIST_BYTES as u64,
+);
+/// A whole MPD: the ceiling `broadcast-dash` itself accepts.
+const MPD_LIMIT: Limit = Limit::new("MPD", broadcast_dash::limits::MAX_MPD_BYTES as u64);
 
 fn main() {
     let cli = Cli::parse();
@@ -361,14 +371,14 @@ fn emit_check_report(report: &Report, json: bool) -> Result<(), Box<dyn std::err
 }
 
 fn run_check_hls(args: &CheckHlsArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let text = fs::read_to_string(&args.input)?;
+    let text = read_file_bounded_string(Path::new(&args.input), PLAYLIST_LIMIT)?;
     let mut report = Report::new();
     check_hls_playlist(&text, &mut report);
     emit_report(&report, args.json)
 }
 
 fn run_check_dash(args: &CheckDashArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let text = fs::read_to_string(&args.input)?;
+    let text = read_file_bounded_string(Path::new(&args.input), MPD_LIMIT)?;
     let mut report = Report::new();
     check_dash_mpd(&text, &mut report);
     emit_report(&report, args.json)

@@ -212,6 +212,14 @@ pub enum PlaylistError {
         /// The error kind.
         kind: std::io::ErrorKind,
     },
+    /// The playlist file exceeded the named byte limit it is read under.
+    #[error("{limit_name} exceeds the configured limit of {limit_bytes} bytes")]
+    TooLarge {
+        /// Name of the document being read.
+        limit_name: &'static str,
+        /// The ceiling it exceeded, in bytes.
+        limit_bytes: u64,
+    },
 }
 
 /// Why reading an archived segment's bytes failed.

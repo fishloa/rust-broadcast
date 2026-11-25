@@ -41,6 +41,15 @@ pub enum Error {
         reason: String,
     },
 
+    /// A whole document exceeded the named byte limit it was read under.
+    #[error("{limit_name} exceeds the configured limit of {limit_bytes} bytes")]
+    TooLarge {
+        /// Name of the document being read.
+        limit_name: &'static str,
+        /// The ceiling it exceeded, in bytes.
+        limit_bytes: u64,
+    },
+
     /// XML parsing failed (syntax error, not well-formed).
     #[error("XML parse error in {what}: {reason}")]
     XmlParse {

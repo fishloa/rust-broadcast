@@ -4,14 +4,17 @@
 /// ```sh
 /// cargo run -p st291 --example parse_anc
 /// ```
-use std::fs;
+use broadcast_common::bounded::{Limit, read_file_bounded};
 
 use st291::AncDataPacket;
+
+/// One ANC data packet: DID/SDID plus user data, kilobytes at most.
+const ANC_LIMIT: Limit = Limit::new("ANC data packet", 64 * 1024);
 
 fn main() {
     // Resolve relative to the crate so it runs from any cwd.
     let path = test_fixtures::path("rtp/anc.bin");
-    let data = match fs::read(&path) {
+    let data = match read_file_bounded(&path, ANC_LIMIT) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("fixture not available ({e}); nothing to do");

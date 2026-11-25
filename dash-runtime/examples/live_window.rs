@@ -15,6 +15,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use dash_runtime::address::{PlanOptions, plan_representation};
 use dash_runtime::mpd::{Mpd, PresentationType};
 use dash_runtime::selection::{Policy, select};
@@ -23,6 +24,9 @@ use dash_runtime::timing::live_edge::{join_index, newest_complete, presentation_
 
 const DEFAULT_MPD: &str = "../fixtures/dash/live-number/live.mpd";
 const FALLBACK_SEGMENT: Duration = Duration::from_secs(2);
+
+/// A whole MPD, bounded by the ceiling the MPD parser itself accepts.
+const MPD_LIMIT: Limit = Limit::new("MPD", broadcast_dash::limits::MAX_MPD_BYTES as u64);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_MPD);
@@ -39,7 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    let mpd = Mpd::parse(&std::fs::read(&path)?)?;
+    let mpd = Mpd::parse(&read_file_bounded(&path, MPD_LIMIT)?)?;
     if mpd.kind != PresentationType::Dynamic {
         return Err("this example needs a dynamic MPD".into());
     }
