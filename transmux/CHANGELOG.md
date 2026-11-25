@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Breaking
+- `ProgressiveMux` and its `Package` impl are deleted. The replacement is
+  `progressive::ProgressiveMuxStage`, a `Stage` over `MuxInput`/`MuxOutput`
+  built from an `isobmff::plan::OwnedPlan`, a `Layout` and the movie header:
+  it writes `ftyp`+`moov` (fast start) or `ftyp`+`mdat` up front, then each
+  sample's bytes as it arrives, and holds no sample. A sample whose size or
+  position disagrees with the plan is `Error::PlanMismatch`, naming the track
+  and sample index. The new `plan_pass::PlanPass` is the first of the two
+  passes: fed the same `MuxInput` stream, it records the plan without sample
+  bytes (`PlanPass::for_media` for a caller that already holds a `Media`).
+  Its output is byte-identical to the former whole-`Media` muxer (every golden
+  unchanged, both box orders).
+- The `transmux` CLI treats `-` as standard input; progressive output from it
+  is refused with `Error::ProgressiveNeedsReplayableInput`, naming fragmented
+  MP4, because the two passes need a replayable input. Every other output
+  reads stdin.
 - `Fmp4Demux`, `ProgressiveDemux` (its `Unpackage` and `Stage` impls too),
   `demux_progressive` and `samples_from_stbl` are deleted, together with the
   `transmux_progressive_demux` fuzz target. The replacement is
@@ -60,6 +75,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is still refused with the existing named errors.
 
 ### Added
+- `PlanPass` (module `plan_pass`) records an `isobmff::plan::OwnedPlan` from
+  the mux input: per-sample size, duration, composition offset and sync flag
+  only, with the same `stts`/`ctts`/`stss`/`elst` rules the former whole-`Media`
+  progressive muxer applied. A track must be uniformly timed or uniformly
+  untimed.
 - `media::{CmafMuxStage, FragmentCut}` and
   `mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary}` are the
   streaming shape every converted muxer speaks.
