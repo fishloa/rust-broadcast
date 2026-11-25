@@ -66,6 +66,7 @@ fuzz_target!(|data: &[u8]| {
                         composition_offset: i32::from(flags as i8),
                         sync: flags & 1 == 0,
                         aux: None,
+                        description_index: 1,
                     },
                     tail,
                 ),

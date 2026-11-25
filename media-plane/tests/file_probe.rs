@@ -84,3 +84,50 @@ fn a_file_of_zeros_is_unknown_not_a_hang() {
         "got {err:?}"
     );
 }
+
+/// A progressive file whose `mdat` runs past the probe prefix leaves the
+/// fragmented/progressive layout unsettled; the one streaming MP4 stage reads
+/// both, so the selection routes it there rather than failing.
+#[test]
+fn a_large_progressive_mp4_with_an_unsettled_layout_selects_the_mp4_stage() {
+    use container_probe::{Detail, IsobmffLayout};
+
+    const TARGET: u64 = 8 << 20;
+    const SAMPLES: u32 = 100;
+    let dir = std::env::temp_dir().join(format!("media-plane-probe-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("create scratch dir");
+    let path = dir.join("big.mp4");
+    test_harness::big_media::write_big_mp4(
+        &path,
+        &test_harness::big_media::BigMp4Options {
+            target_bytes: TARGET,
+            sample_count: SAMPLES,
+            moov_first: true,
+            ..test_harness::big_media::BigMp4Options::default()
+        },
+    );
+    let bytes = std::fs::read(&path).expect("read generated file");
+    let prefix_len = DEFAULT_BUDGET.min(bytes.len());
+    let probe = probe_with_budget(&bytes[..prefix_len], prefix_len);
+    let layout = match &probe {
+        Probe::Identified {
+            detail: Detail::Isobmff { layout, .. },
+            ..
+        } => *layout,
+        other => panic!("expected an identified ISOBMFF file, got {other:?}"),
+    };
+    assert_eq!(
+        layout,
+        IsobmffLayout::Unknown,
+        "a 64 KiB prefix must not settle a 8 MiB progressive file's layout"
+    );
+    let Probe::Identified { format, detail, .. } = probe else {
+        unreachable!("checked above");
+    };
+    assert_eq!(
+        select_demuxer(format, detail).expect("unsettled ISOBMFF selects a stage"),
+        DemuxerKind::Mp4,
+        "an unsettled layout must route to the one streaming MP4 stage"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

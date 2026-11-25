@@ -107,6 +107,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                     t.hdr.as_ref(),
                     None,
                 )?,
+                config_position: 0,
             });
             TrackMedia::video(entry, tkhd_w_pre, tkhd_h_pre)
         }
@@ -140,6 +141,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                     t.hdr.as_ref(),
                     dovi,
                 )?,
+                config_position: 0,
             });
             TrackMedia::video(entry, tkhd_w_pre, tkhd_h_pre)
         }
@@ -161,6 +163,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 visual,
                 config: config.clone(),
                 extra_boxes: vec![],
+                config_position: 0,
             }));
             TrackMedia::video(
                 entry,

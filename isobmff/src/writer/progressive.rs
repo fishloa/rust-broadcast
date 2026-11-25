@@ -29,7 +29,7 @@ use crate::init_segment::{
     SampleEntryVariant, SampleSizeBox, SampleTableBox, StblChild,
 };
 use crate::limits::Limits;
-use crate::plan::{OwnedPlan, PlannedTrack, SampleSizes};
+use crate::plan::{BoxPosition, MovieShell, OwnedPlan, PlannedTrack, SampleSizes};
 use crate::sample_table::build_stsc_with_descriptions;
 use crate::segments::{FileTypeBox, MDAT};
 use crate::timing::{EditListBox, EditListEntry};
@@ -48,6 +48,9 @@ const STBL_CTTS_INDEX: usize = 2;
 /// Writes [`ProgressiveWriter::header`] can return: `ftyp`, `moov` and the
 /// `mdat` header.
 const HEADER_WRITES: usize = 3;
+/// Writes [`ProgressiveWriter::finish`] reserves on top of the carried
+/// top-level boxes: the trailing `moov` and nothing else.
+const TRAILER_WRITES: usize = 2;
 
 /// Where a finished file's bytes go.
 #[non_exhaustive]
@@ -154,6 +157,72 @@ pub struct Write<'a> {
     pub bytes: Cow<'a, [u8]>,
 }
 
+/// The top-level boxes a plan carries around the movie, serialized once so
+/// every header/finish write can borrow them.
+#[derive(Debug, Clone, Default)]
+struct TopLevelExtras {
+    after_ftyp: Vec<Vec<u8>>,
+    after_moov: Vec<Vec<u8>>,
+    after_mdat: Vec<Vec<u8>>,
+}
+
+impl TopLevelExtras {
+    /// Serialize the shell's carried top-level boxes by position.
+    fn new(shell: Option<&MovieShell>) -> Result<Self> {
+        let Some(shell) = shell else {
+            return Ok(Self::default());
+        };
+        Ok(Self {
+            after_ftyp: serialized(shell, BoxPosition::AfterFtyp)?,
+            after_moov: serialized(shell, BoxPosition::AfterMoov)?,
+            after_mdat: serialized(shell, BoxPosition::AfterMdat)?,
+        })
+    }
+
+    fn len_of(boxes: &[Vec<u8>]) -> u64 {
+        boxes.iter().fold(0u64, |total, bytes| {
+            total.saturating_add(bytes.len() as u64)
+        })
+    }
+
+    fn after_ftyp_len(&self) -> u64 {
+        Self::len_of(&self.after_ftyp)
+    }
+
+    fn after_moov_len(&self) -> u64 {
+        Self::len_of(&self.after_moov)
+    }
+
+    fn after_mdat_len(&self) -> u64 {
+        Self::len_of(&self.after_mdat)
+    }
+
+    fn total_len(&self) -> u64 {
+        self.after_ftyp_len()
+            .saturating_add(self.after_moov_len())
+            .saturating_add(self.after_mdat_len())
+    }
+
+    /// Append one position's boxes to a write list at `offset`.
+    fn append<'a>(&'a self, boxes: &'a [Vec<u8>], offset: &mut u64, out: &mut Vec<Write<'a>>) {
+        for bytes in boxes {
+            out.push(Write {
+                offset: *offset,
+                bytes: Cow::Borrowed(bytes.as_slice()),
+            });
+            *offset = offset.saturating_add(bytes.len() as u64);
+        }
+    }
+}
+
+/// The shell's carried boxes at one position, as complete box bytes.
+fn serialized(shell: &MovieShell, position: BoxPosition) -> Result<Vec<Vec<u8>>> {
+    shell
+        .top_level_at(position)
+        .map(Serialize::try_to_bytes)
+        .collect()
+}
+
 /// One planned chunk: a run of consecutive samples of one track.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Chunk {
@@ -211,6 +280,7 @@ pub struct ProgressiveWriter {
     ftyp: Vec<u8>,
     moov: Vec<u8>,
     mdat_header: Vec<u8>,
+    extras: TopLevelExtras,
     payload_offset: u64,
     payload_len: u64,
     moov_offset: u64,
@@ -254,16 +324,20 @@ impl ProgressiveWriter {
                 }
             }
         }
+        let extras = TopLevelExtras::new(plan.shell())?;
         let planned = plan_layout(&plan, &layout, movie.timescale)?;
 
-        let ftyp_box = FileTypeBox {
-            major_brand: file_type.major_brand,
-            minor_version: file_type.minor_version,
-            compatible_brands: file_type.compatible_brands,
-        };
-        let mut ftyp = vec![0u8; ftyp_box.serialized_len()];
-        let ftyp_len = ftyp_box.serialize_into(&mut ftyp)?;
-        ftyp.truncate(ftyp_len);
+        let mut ftyp = Vec::new();
+        if file_type.emit_ftyp {
+            let ftyp_box = FileTypeBox {
+                major_brand: file_type.major_brand,
+                minor_version: file_type.minor_version,
+                compatible_brands: file_type.compatible_brands,
+            };
+            ftyp = vec![0u8; ftyp_box.serialized_len()];
+            let ftyp_len = ftyp_box.serialize_into(&mut ftyp)?;
+            ftyp.truncate(ftyp_len);
+        }
 
         let payload_len = planned.payload_len;
         let mdat = BoxHeader::for_payload(BoxType::from_bytes(MDAT), None, payload_len);
@@ -286,6 +360,7 @@ impl ProgressiveWriter {
             let payload_offset = mdat_payload_offset(
                 u64::try_from(ftyp.len()).unwrap_or(u64::MAX),
                 moov_len,
+                &extras,
                 payload_len,
                 layout.faststart,
             );
@@ -315,9 +390,13 @@ impl ProgressiveWriter {
             Error::InvalidInput("progressive: mdat header exceeds the address space")
         })?;
         let moov_offset = if layout.faststart {
-            ftyp_len
+            ftyp_len + extras.after_ftyp_len()
         } else {
-            ftyp_len + mdat_header_len + payload_len
+            ftyp_len
+                + extras.after_ftyp_len()
+                + mdat_header_len
+                + payload_len
+                + extras.after_mdat_len()
         };
 
         let placements = planned
@@ -340,6 +419,7 @@ impl ProgressiveWriter {
             ftyp,
             moov,
             mdat_header,
+            extras,
             payload_offset,
             payload_len,
             moov_offset,
@@ -357,18 +437,27 @@ impl ProgressiveWriter {
     /// `mdat` header otherwise.
     #[must_use]
     pub fn header(&self) -> Vec<Write<'_>> {
-        let mut out = Vec::with_capacity(HEADER_WRITES);
-        out.push(Write {
-            offset: 0,
-            bytes: Cow::Borrowed(&self.ftyp),
-        });
+        let capacity = HEADER_WRITES
+            .saturating_add(self.extras.after_ftyp.len())
+            .saturating_add(self.extras.after_moov.len());
+        let mut out = Vec::with_capacity(capacity);
+        if !self.ftyp.is_empty() {
+            out.push(Write {
+                offset: 0,
+                bytes: Cow::Borrowed(&self.ftyp),
+            });
+        }
         let mut offset = u64::try_from(self.ftyp.len()).unwrap_or(u64::MAX);
+        self.extras
+            .append(&self.extras.after_ftyp, &mut offset, &mut out);
         if self.faststart {
             out.push(Write {
                 offset,
                 bytes: Cow::Borrowed(&self.moov),
             });
             offset = offset.saturating_add(u64::try_from(self.moov.len()).unwrap_or(u64::MAX));
+            self.extras
+                .append(&self.extras.after_moov, &mut offset, &mut out);
         }
         out.push(Write {
             offset,
@@ -390,9 +479,10 @@ impl ProgressiveWriter {
     pub fn file_len(&self) -> u64 {
         [self.ftyp.len(), self.moov.len(), self.mdat_header.len()]
             .into_iter()
-            .try_fold(self.payload_len, |total, len| {
-                total.checked_add(u64::try_from(len).ok()?)
-            })
+            .try_fold(
+                self.payload_len.saturating_add(self.extras.total_len()),
+                |total, len| total.checked_add(u64::try_from(len).ok()?),
+            )
             .unwrap_or(u64::MAX)
     }
 }
@@ -494,12 +584,26 @@ impl ProgressiveWriter {
             }
         }
         if self.faststart {
-            return Ok(Vec::new());
+            let mut out = Vec::with_capacity(self.extras.after_mdat.len());
+            let mut offset = self.payload_offset.saturating_add(self.payload_len);
+            self.extras
+                .append(&self.extras.after_mdat, &mut offset, &mut out);
+            return Ok(out);
         }
-        Ok(vec![Write {
+        let mut out = Vec::with_capacity(
+            TRAILER_WRITES + self.extras.after_mdat.len() + self.extras.after_moov.len(),
+        );
+        let mut offset = self.payload_offset.saturating_add(self.payload_len);
+        self.extras
+            .append(&self.extras.after_mdat, &mut offset, &mut out);
+        out.push(Write {
             offset: self.moov_offset,
             bytes: Cow::Borrowed(&self.moov),
-        }])
+        });
+        let mut offset = self.moov_offset.saturating_add(self.moov.len() as u64);
+        self.extras
+            .append(&self.extras.after_moov, &mut offset, &mut out);
+        Ok(out)
     }
 
     /// The absolute file offset of one planned sample.
@@ -839,14 +943,16 @@ fn interleave_order<K: Ord + Copy>(
 fn mdat_payload_offset(
     ftyp_len: u64,
     moov_len: u64,
+    extras: &TopLevelExtras,
     mdat_payload_len: u64,
     faststart: bool,
 ) -> u64 {
-    let before = if faststart {
-        ftyp_len + moov_len
-    } else {
-        ftyp_len
-    };
+    let mut before = ftyp_len.saturating_add(extras.after_ftyp_len());
+    if faststart {
+        before = before
+            .saturating_add(moov_len)
+            .saturating_add(extras.after_moov_len());
+    }
     let header = BoxHeader::for_payload(BoxType::from_bytes(MDAT), None, mdat_payload_len);
     before + header.header_size() as u64
 }
@@ -890,19 +996,36 @@ fn build_moov(
         .map(|track| track.setup.track_id)
         .max()
         .map_or(TrackId::new(1), TrackId::next);
-    let mvhd = MovieHeaderBox {
-        version: u8::from(!duration_fits_v0(max_presentation)),
-        flags: 0,
-        creation_time: movie.creation_time,
-        modification_time: movie.modification_time,
-        timescale: movie.timescale,
-        duration: max_presentation,
-        rate: MVHD_RATE_UNITY,
-        volume: MVHD_VOLUME_UNITY,
-        matrix: IDENTITY_MATRIX,
-        next_track_id,
+    let moov = match plan.shell() {
+        Some(shell) => {
+            let mut mvhd = shell.mvhd.clone();
+            if !duration_fits_v0(mvhd.duration) {
+                mvhd.version = 1;
+            }
+            MovieBox {
+                mvhd,
+                tracks,
+                mvex: shell.mvex.clone(),
+                opaque: shell.opaque.clone(),
+                order: shell.order.clone(),
+            }
+        }
+        None => {
+            let mvhd = MovieHeaderBox {
+                version: u8::from(!duration_fits_v0(max_presentation)),
+                flags: 0,
+                creation_time: movie.creation_time,
+                modification_time: movie.modification_time,
+                timescale: movie.timescale,
+                duration: max_presentation,
+                rate: MVHD_RATE_UNITY,
+                volume: MVHD_VOLUME_UNITY,
+                matrix: IDENTITY_MATRIX,
+                next_track_id,
+            };
+            MovieBox::new(mvhd, tracks, None, vec![])
+        }
     };
-    let moov = MovieBox::new(mvhd, tracks, None, vec![]);
     let mut out = vec![0u8; moov.serialized_len()];
     let written = moov.serialize_into(&mut out)?;
     out.truncate(written);
@@ -981,7 +1104,97 @@ fn sample_table(
     if let Some(stss) = &track.tables.stss {
         children.push(StblChild::Stss(stss.clone()));
     }
-    Ok(SampleTableBox { children })
+    Ok(SampleTableBox {
+        children: stbl_children(stbl_template(track.setup.shell.as_ref()), children),
+    })
+}
+
+/// The source `stbl` child order, when the track carries its parsed `trak`.
+pub(crate) fn stbl_template(shell: Option<&crate::init_segment::TrackBox>) -> Option<&[StblChild]> {
+    shell?
+        .mdia
+        .as_ref()?
+        .minf
+        .as_ref()?
+        .stbl
+        .as_ref()
+        .map(|stbl| stbl.children.as_slice())
+}
+
+/// Whether the plan rebuilds a table child, so the source's value must not be
+/// carried (its offsets and pointers describe the source layout).
+fn rebuilt(kind: &[u8; crate::box_types::BOX_TYPE_SIZE]) -> bool {
+    kind == b"stsd"
+        || kind == b"stts"
+        || kind == b"ctts"
+        || kind == b"stsc"
+        || kind == b"stsz"
+        || kind == b"stz2"
+        || kind == b"stco"
+        || kind == b"co64"
+        || kind == b"stss"
+}
+
+/// The four-CC of one `stbl` child.
+fn stbl_four_cc(child: &StblChild) -> [u8; crate::box_types::BOX_TYPE_SIZE] {
+    use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE};
+    match child {
+        StblChild::Stsd(_) => *b"stsd",
+        StblChild::Stts(_) => *b"stts",
+        StblChild::Ctts(_) => *b"ctts",
+        StblChild::Stsc(_) => *b"stsc",
+        StblChild::Stsz(_) => *b"stsz",
+        StblChild::Stz2(_) => *b"stz2",
+        StblChild::Sdtp(_) => *b"sdtp",
+        StblChild::Stco(_) => *b"stco",
+        StblChild::Co64(_) => *b"co64",
+        StblChild::Stss(_) => *b"stss",
+        StblChild::Opaque(bytes) => bytes
+            .get(BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE)
+            .and_then(|slice| <[u8; BOX_TYPE_SIZE]>::try_from(slice).ok())
+            .unwrap_or([0u8; BOX_TYPE_SIZE]),
+    }
+}
+
+/// Emit the plan's rebuilt tables in the source `stbl` child order, carrying
+/// every child the plan does not model (`sgpd`, `sbgp`, a typed `sdtp`, an
+/// opaque box) in place.
+///
+/// A plan a [`PlanBuilder`](crate::plan::PlanBuilder) made has no template and
+/// keeps this crate's conventional order.
+pub(crate) fn stbl_children(
+    template: Option<&[StblChild]>,
+    built: Vec<StblChild>,
+) -> Vec<StblChild> {
+    let Some(template) = template else {
+        return built;
+    };
+    let mut used = alloc::vec![false; built.len()];
+    let mut out = Vec::with_capacity(built.len().max(template.len()));
+    for want in template {
+        let kind = stbl_four_cc(want);
+        let found = built
+            .iter()
+            .enumerate()
+            .position(|(index, child)| !used[index] && stbl_four_cc(child) == kind);
+        match found {
+            Some(index) => {
+                used[index] = true;
+                out.push(built[index].clone());
+            }
+            None => {
+                if !rebuilt(&kind) {
+                    out.push(want.clone());
+                }
+            }
+        }
+    }
+    for (index, child) in built.into_iter().enumerate() {
+        if !used[index] {
+            out.push(child);
+        }
+    }
+    out
 }
 
 /// The track's `stsd` entries (§8.5.2).
@@ -990,11 +1203,13 @@ fn sample_description(track: &PlannedTrack) -> Result<SampleDescriptionBox> {
     for entry in &track.entries {
         entries.push(sample_entry_variant(entry)?);
     }
-    let version = entries
-        .iter()
-        .map(SampleEntryVariant::required_stsd_version)
-        .max()
-        .unwrap_or(0);
+    let version = stsd_template_version(track).unwrap_or_else(|| {
+        entries
+            .iter()
+            .map(SampleEntryVariant::required_stsd_version)
+            .max()
+            .unwrap_or(0)
+    });
     Ok(SampleDescriptionBox {
         version,
         flags: 0,
@@ -1002,13 +1217,28 @@ fn sample_description(track: &PlannedTrack) -> Result<SampleDescriptionBox> {
     })
 }
 
+/// The source `stsd` version, when the track carries its parsed `trak`.
+fn stsd_template_version(track: &PlannedTrack) -> Option<u8> {
+    stbl_template(track.setup.shell.as_ref())?
+        .iter()
+        .find_map(|child| match child {
+            StblChild::Stsd(stsd) => Some(stsd.version),
+            _ => None,
+        })
+}
+
 /// Set the header durations and the edit list a non-fragmented movie carries
 /// in `mvhd`/`tkhd`/`mdhd` (§8.2.2.2, §8.3.2.2, §8.4.2.2, §8.6.6).
 fn apply_durations(trak: &mut crate::init_segment::TrackBox, track: &PlannedTrack) {
-    trak.tkhd.version = u8::from(!duration_fits_v0(track.presentation_duration));
+    // A source header keeps the version the file stated (a QuickTime or
+    // out-of-spec version is not this writer's to normalize); only a duration
+    // that no longer fits the 32-bit form forces the 64-bit one.
+    if !duration_fits_v0(track.presentation_duration) {
+        trak.tkhd.version = 1;
+    }
     trak.tkhd.duration = track.presentation_duration;
     trak.edts = edit_box(&track.edits);
-    if trak.edts.is_some() && track.edts_after_mdia {
+    if trak.edts.is_some() && track.edts_after_mdia && trak.order.is_empty() {
         // `edts` goes after `mdia`, the order this crate's progressive output
         // has always carried; a plan read from a file keeps that file's order.
         let mut order = crate::box_support::ChildOrder::default();
@@ -1018,7 +1248,9 @@ fn apply_durations(trak: &mut crate::init_segment::TrackBox, track: &PlannedTrac
         trak.order = order;
     }
     if let Some(mdhd) = trak.mdia.as_mut().and_then(|media| media.mdhd.as_mut()) {
-        mdhd.version = u8::from(!duration_fits_v0(track.media_duration));
+        if !duration_fits_v0(track.media_duration) {
+            mdhd.version = 1;
+        }
         mdhd.duration = track.media_duration;
     }
 }
@@ -1101,10 +1333,37 @@ mod tests {
     fn mdat_payload_offset_accounts_for_largesize_header() {
         let fits = u64::from(u32::MAX) - 8;
         let over = fits + 1;
-        assert_eq!(mdat_payload_offset(24, 1000, fits, true), 24 + 1000 + 8);
-        assert_eq!(mdat_payload_offset(24, 1000, fits, false), 24 + 8);
-        assert_eq!(mdat_payload_offset(24, 1000, over, true), 24 + 1000 + 16);
-        assert_eq!(mdat_payload_offset(24, 1000, over, false), 24 + 16);
+        let none = TopLevelExtras::default();
+        assert_eq!(
+            mdat_payload_offset(24, 1000, &none, fits, true),
+            24 + 1000 + 8
+        );
+        assert_eq!(mdat_payload_offset(24, 1000, &none, fits, false), 24 + 8);
+        assert_eq!(
+            mdat_payload_offset(24, 1000, &none, over, true),
+            24 + 1000 + 16
+        );
+        assert_eq!(mdat_payload_offset(24, 1000, &none, over, false), 24 + 16);
+    }
+
+    /// Top-level boxes the plan carries shift the `mdat` payload exactly by
+    /// their serialized length, at each position the fast-start choice reaches.
+    #[test]
+    fn mdat_payload_offset_accounts_for_carried_top_level_boxes() {
+        let extras = TopLevelExtras {
+            after_ftyp: alloc::vec![alloc::vec![0u8; 8]],
+            after_moov: alloc::vec![alloc::vec![0u8; 4]],
+            after_mdat: alloc::vec![alloc::vec![0u8; 2]],
+        };
+        assert_eq!(
+            mdat_payload_offset(24, 1000, &extras, 10, true),
+            24 + 8 + 1000 + 4 + 8
+        );
+        assert_eq!(
+            mdat_payload_offset(24, 1000, &extras, 10, false),
+            24 + 8 + 8
+        );
+        assert_eq!(extras.total_len(), 14);
     }
 
     #[test]

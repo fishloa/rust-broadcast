@@ -34,6 +34,7 @@ use core::cmp::Ordering;
 use broadcast_common::Parse;
 use broadcast_common::timescale::Timescale;
 
+use crate::box_support::OpaqueBox;
 use crate::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE, BoxHeader, BoxIter, FULLBOX_EXTRA_SIZE,
     parse_box,
@@ -50,7 +51,7 @@ use crate::movie_fragment::{
     MAX_ZERO_WIDTH_TRUN_SAMPLES, MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC, TrackFragmentBox,
     TrafChild, apply_trex_defaults,
 };
-use crate::plan::{SamplePlan, sample_description, sample_table};
+use crate::plan::{BoxPosition, SamplePlan, TopLevelBox, sample_description, sample_table};
 use crate::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox};
 use crate::sample_table::{CursorState, SampleRef};
 use crate::segments::FileTypeBox;
@@ -154,6 +155,7 @@ pub struct ReaderConfig {
     order: SampleOrder,
     source: Source,
     mode: Mode,
+    registry: Option<crate::registry::BoxRegistry>,
 }
 
 impl ReaderConfig {
@@ -221,6 +223,21 @@ impl ReaderConfig {
     pub fn mode(&self) -> Mode {
         self.mode
     }
+
+    /// Attach a [`BoxRegistry`](crate::registry::BoxRegistry) of private box
+    /// types, so a registered `stsd` entry comes back typed in
+    /// [`SampleEntryInfo::registered`].
+    #[must_use]
+    pub fn with_registry(mut self, registry: crate::registry::BoxRegistry) -> Self {
+        self.registry = Some(registry);
+        self
+    }
+
+    /// The attached private box registry, when one was set.
+    #[must_use]
+    pub fn registry(&self) -> Option<&crate::registry::BoxRegistry> {
+        self.registry.as_ref()
+    }
 }
 
 /// One sample description (`stsd` entry, ISO/IEC 14496-12:2026 §8.5.2).
@@ -233,6 +250,11 @@ pub struct SampleEntryInfo {
     pub body: Vec<u8>,
     /// The typed parse, or `None` when the entry is an unknown four-CC.
     pub typed: Option<SampleEntryVariant>,
+    /// The [`ReaderConfig`]'s private-box-registry parse of this entry, when a
+    /// registration matched its four-CC; call
+    /// [`RegisteredEntry::downcast_ref`](crate::registry::RegisteredEntry::downcast_ref)
+    /// for the concrete type.
+    pub registered: Option<crate::registry::RegisteredEntry>,
 }
 
 /// Every fact the reader surfaces about one track, including tracks the media
@@ -307,7 +329,7 @@ impl TrackInfo {
         let mut entries = Vec::with_capacity(stsd.entries.len());
         for entry in &stsd.entries {
             let mut body = alloc::vec![0u8; entry.serialized_len()];
-            let len = entry.serialize_into(&mut body).unwrap_or(0);
+            let len = entry.serialize_into(&mut body)?;
             body.truncate(len);
             let mut fourcc = [0u8; BOX_TYPE_SIZE];
             if body.len() >= BOX_HEADER_MIN_SIZE {
@@ -320,6 +342,7 @@ impl TrackInfo {
                     SampleEntryVariant::Unknown(_) => None,
                     known => Some(known.clone()),
                 },
+                registered: None,
             });
         }
         let references = match trak.track_references()? {
@@ -486,6 +509,7 @@ enum Pending {
     Index(ByteRange),
     MfraTrailer(ByteRange),
     Mfra(ByteRange),
+    TopLevel(ByteRange),
 }
 
 impl Pending {
@@ -497,7 +521,8 @@ impl Pending {
             | Self::Moof(range)
             | Self::Index(range)
             | Self::MfraTrailer(range)
-            | Self::Mfra(range) => *range,
+            | Self::Mfra(range)
+            | Self::TopLevel(range) => *range,
         }
     }
 }
@@ -612,6 +637,7 @@ pub struct Reader {
     brand: Option<FileTypeBox>,
     warnings: Vec<Warning>,
     deferred_warning: Option<Warning>,
+    mdat_truncation_reported: bool,
     tracks: Vec<TrackInfo>,
     cursors: Vec<CursorSlot>,
     emitted_tracks: bool,
@@ -624,6 +650,7 @@ pub struct Reader {
     decode_times: Vec<u64>,
     sample_counts: Vec<u32>,
     fragment: Option<FragmentState>,
+    top_level: Vec<TopLevelBox>,
     ready: Option<ReadyFragment>,
     last_fragment: Option<(u64, Vec<SampleRef>)>,
     open_box: Option<ByteRange>,
@@ -648,6 +675,7 @@ impl Reader {
             brand: None,
             warnings: Vec::new(),
             deferred_warning: None,
+            mdat_truncation_reported: false,
             tracks: Vec::new(),
             cursors: Vec::new(),
             emitted_tracks: false,
@@ -660,6 +688,7 @@ impl Reader {
             decode_times: Vec::new(),
             sample_counts: Vec::new(),
             fragment: None,
+            top_level: Vec::new(),
             ready: None,
             last_fragment: None,
             open_box: None,
@@ -699,6 +728,7 @@ impl Reader {
             Pending::Index(range) => self.accept_index(range, bytes),
             Pending::MfraTrailer(_) => self.accept_mfra_trailer(bytes),
             Pending::Mfra(_) => self.accept_mfra(bytes),
+            Pending::TopLevel(_) => self.accept_top_level(bytes),
         }
     }
 
@@ -894,9 +924,9 @@ impl Reader {
     /// The progressive sample plan, once `moov` is parsed.
     #[must_use]
     pub fn plan(&self) -> Option<SamplePlan<'_>> {
-        self.movie
-            .as_ref()
-            .map(|movie| SamplePlan::new(movie, &self.tracks, self.config.total_len))
+        self.movie.as_ref().map(|movie| {
+            SamplePlan::new(movie, &self.tracks, self.config.total_len, &self.top_level)
+        })
     }
 
     /// The movie timescale (`mvhd.timescale`), once `moov` is parsed.
@@ -916,6 +946,16 @@ impl Reader {
 impl Reader {
     fn warn(&mut self, warning: Warning) {
         self.warnings.push(warning);
+    }
+
+    /// Report a truncated final `mdat` once per file: the box header and a
+    /// sample that runs past the input describe the same fault.
+    fn warn_truncated_mdat(&mut self, offset: u64) {
+        if self.mdat_truncation_reported {
+            return;
+        }
+        self.mdat_truncation_reported = true;
+        self.warn(Warning::TruncatedMdat { offset });
     }
 
     fn finish_step(&mut self) -> Result<Step<'_>> {
@@ -1093,6 +1133,15 @@ impl Reader {
     }
 }
 
+/// Whether a top-level box is carried for a rewrite. A trailing `mfra` is not:
+/// its `tfra` entries address the source's fragments, so carrying it into a
+/// rewritten file would leave a stale index (the writer does not rebuild one).
+/// A `styp`/`emsg` belongs to the fragment run it precedes and is emitted by
+/// the caller that writes that run.
+fn carried_top_level(fourcc: &[u8; BOX_TYPE_SIZE]) -> bool {
+    fourcc != b"mfra" && fourcc != b"styp" && fourcc != b"emsg"
+}
+
 /// Whether an opaque `stsd` holds an entry with a body, which means a known
 /// four-CC failed to parse. A header-only entry is a caller's raw sample entry
 /// and stays legal in both modes.
@@ -1211,7 +1260,10 @@ impl Reader {
             if let Some(sample) = self.next_sample()? {
                 return Ok(Step::Sample(sample));
             }
-            if !self.fragmented {
+            if !self.fragmented && self.config.source == Source::ForwardOnly {
+                // A forward-only caller has already streamed past the sample
+                // data, so the boxes after it cannot be re-read; finish here
+                // rather than demand a range behind the source's position.
                 return self.finish_step();
             }
         }
@@ -1337,12 +1389,11 @@ impl Reader {
                 end = total;
                 size = end.saturating_sub(offset);
                 if header.box_type.is(b"mdat") {
-                    let warning = if self.fragment.is_some() {
-                        Warning::TruncatedFragment { offset }
+                    if self.fragment.is_some() {
+                        self.warn(Warning::TruncatedFragment { offset });
                     } else {
-                        Warning::TruncatedMdat { offset }
-                    };
-                    self.warn(warning);
+                        self.warn_truncated_mdat(offset);
+                    }
                 } else {
                     self.warn(Warning::TruncatedFragment { offset });
                     self.done = true;
@@ -1457,7 +1508,42 @@ impl Reader {
             // for the header after its media, so a forward-only source has not
             // yet passed that payload.
             self.finish_fragment(Unresolved::Keep)?;
+        } else if size <= self.config.limits.max_metadata_item_bytes()
+            && carried_top_level(&header.box_type.0)
+        {
+            let range = ByteRange { offset, len: size };
+            self.pending = Some(Pending::TopLevel(range));
         }
+        Ok(())
+    }
+
+    /// Where a top-level box the writer does not model sits, relative to the
+    /// boxes the writer emits.
+    fn top_level_position(&self) -> BoxPosition {
+        if self.saw_mdat {
+            BoxPosition::AfterMdat
+        } else if self.movie.is_some() {
+            BoxPosition::AfterMoov
+        } else {
+            BoxPosition::AfterFtyp
+        }
+    }
+
+    /// Keep one top-level box outside `ftyp`/`moov`/`mdat` so a rewrite can
+    /// reproduce it in place.
+    fn accept_top_level(&mut self, bytes: &[u8]) -> Result<()> {
+        let (item, _) = parse_box(bytes)?;
+        let carried = OpaqueBox {
+            box_type: item.four_cc(),
+            data: item.payload().to_vec(),
+            to_end: item.to_end(),
+            largesize: item.has_largesize(),
+        };
+        let position = self.top_level_position();
+        self.top_level.push(TopLevelBox {
+            position,
+            data: carried,
+        });
         Ok(())
     }
 
@@ -1522,7 +1608,7 @@ impl Reader {
             self.check_opaque_stsd(trak, &raw)?;
             self.check_wave_esds(trak, &raw)?;
             let track_crypto = track_crypto(trak, &raw)?;
-            let info = build_track_info(trak, raw)?;
+            let info = build_track_info(trak, raw, self.config.registry.as_ref())?;
             let mut declared_samples = 0u32;
             if let Some(stbl) = sample_table(trak) {
                 let state = CursorState::new(
@@ -1856,9 +1942,7 @@ impl Reader {
         let stbl = sample_table(trak).ok_or(Error::UnexpectedBox { expected: "stbl" })?;
         if let Err(err) = slot.state.advance(stbl) {
             if self.tolerated() && matches!(err, Error::BufferTooShort(_)) {
-                self.warn(Warning::TruncatedMdat {
-                    offset: sample.offset,
-                });
+                self.warn_truncated_mdat(sample.offset);
                 return Ok(None);
             }
             return Err(err);
@@ -2026,7 +2110,11 @@ fn fragment_aux(
         .collect())
 }
 
-fn build_track_info(trak: &TrackBox, raw: Vec<RawEntry>) -> Result<TrackInfo> {
+fn build_track_info(
+    trak: &TrackBox,
+    raw: Vec<RawEntry>,
+    registry: Option<&crate::registry::BoxRegistry>,
+) -> Result<TrackInfo> {
     let mdia: &MediaBox = trak
         .mdia
         .as_ref()
@@ -2053,10 +2141,15 @@ fn build_track_info(trak: &TrackBox, raw: Vec<RawEntry>) -> Result<TrackInfo> {
                 SampleEntryVariant::Unknown(_) => None,
                 known => Some(known),
             });
+        let registered = match registry {
+            Some(registry) => registry.parse(Some(STSD), &raw.body)?,
+            None => None,
+        };
         entries.push(SampleEntryInfo {
             fourcc: raw.fourcc,
             body: raw.body,
             typed,
+            registered,
         });
     }
     let references = match trak.track_references()? {

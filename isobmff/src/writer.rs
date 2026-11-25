@@ -13,7 +13,7 @@
 //! only ever produce a typed error.
 
 use crate::box_support::OpaqueBox;
-use crate::box_types::{BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE};
+use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE};
 use crate::cenc::{CencScheme, SubSampleEntry, TrackEncryptionBox};
 use crate::emsg::EmsgBox;
 use crate::error::{Error, Result};
@@ -46,6 +46,9 @@ const IDENTITY_MATRIX: [i32; 9] = [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0
 const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
 /// `ftyp` minor version this crate writes for its default brand set.
 const FTYP_MINOR_VERSION: u32 = 512;
+/// `ftyp` minor version a QuickTime `qt  ` brand carries (the value every
+/// QuickTime `.mov` fixture in `private/fixtures/mp4/quicktime/` states).
+const FTYP_QUICKTIME_MINOR_VERSION: u32 = 512;
 /// `mvhd` `rate` for normal playback: 1.0 in 16.16 fixed point (§8.2.2).
 const MVHD_RATE_UNITY: u32 = 0x0001_0000;
 /// `mvhd` `volume` for full volume: 1.0 in 8.8 fixed point (§8.2.2).
@@ -62,7 +65,11 @@ const NMHD: &[u8; BOX_TYPE_SIZE] = b"nmhd";
 ///
 /// The brand choice belongs to the caller (a CMAF packager writes
 /// `iso5`/`iso6`/`mp41`, a Smooth packager something else), so it is a value
-/// the writer carries rather than a constant it decides.
+/// the writer carries rather than a constant it decides. A QuickTime file uses
+/// [`FileType::quicktime`]; the `ftyp` atom is optional in QuickTime
+/// (`private/specs-verified/apple/isobmff/quicktime-file-format-online.md`,
+/// "File type compatibility atom ('ftyp')"), so [`FileType::without_ftyp`]
+/// writes a classic brandless file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileType {
     /// Best-use brand.
@@ -71,6 +78,31 @@ pub struct FileType {
     pub minor_version: u32,
     /// Brands the file is compatible with.
     pub compatible_brands: Vec<[u8; BOX_TYPE_SIZE]>,
+    /// Whether the file starts with an `ftyp` atom.
+    pub emit_ftyp: bool,
+}
+
+impl FileType {
+    /// The QuickTime brand set: major brand `qt  `, the minor version and
+    /// compatible brand a QuickTime writer emits.
+    #[must_use]
+    pub fn quicktime() -> Self {
+        Self {
+            major_brand: *b"qt  ",
+            minor_version: FTYP_QUICKTIME_MINOR_VERSION,
+            compatible_brands: vec![*b"qt  "],
+            emit_ftyp: true,
+        }
+    }
+
+    /// The same brands, but with no `ftyp` atom at all (classic QuickTime).
+    #[must_use]
+    pub fn without_ftyp() -> Self {
+        Self {
+            emit_ftyp: false,
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for FileType {
@@ -79,6 +111,7 @@ impl Default for FileType {
             major_brand: *b"iso5",
             minor_version: FTYP_MINOR_VERSION,
             compatible_brands: vec![*b"iso5", *b"iso6", *b"mp41"],
+            emit_ftyp: true,
         }
     }
 }
@@ -108,6 +141,22 @@ pub enum SampleEntry {
         /// The complete sample-entry box, 8-byte header included.
         body: Vec<u8>,
     },
+}
+
+impl SampleEntry {
+    /// A registered private sample entry as the raw entry the writer carries.
+    ///
+    /// The writer itself needs no [`BoxRegistry`](crate::registry::BoxRegistry):
+    /// a private entry becomes its complete box bytes here, at the call
+    /// boundary, and travels through [`SampleEntry::Raw`] unchanged.
+    pub fn from_registered(entry: &dyn crate::registry::RegisteredBox) -> Result<Self> {
+        let fourcc = entry.fourcc();
+        let mut body = vec![0u8; entry.serialized_len()];
+        let written = entry.serialize_into(&mut body)?;
+        body.truncate(written);
+        raw_entry_variant(fourcc, &body)?;
+        Ok(Self::Raw { fourcc, body })
+    }
 }
 
 /// The default sample values one track's `trex` states (§8.8.3).
@@ -178,6 +227,17 @@ pub struct TrackSetup {
     pub trex: Option<TrexDefaults>,
     /// CENC protection to wrap the sample entry with.
     pub protection: Option<SampleEntryProtection>,
+    /// The QuickTime base media information header (`gmhd`) this `minf`
+    /// carries, when the caller builds a QuickTime track.
+    pub gmhd: Option<crate::quicktime::GmhdAtom>,
+    /// `tref` references the track declares (`tmcd`, `chap`, `avcp`, …).
+    pub references: Vec<crate::track_reference::TrackReferenceTypeBox>,
+    /// The parsed `trak` this setup was read from, holding every `tkhd`/
+    /// `mdhd`/`hdlr` field, extra child (`tref`, `udta`, `gmhd`) and wire order
+    /// a [`TrackSetup`] does not model. The writer swaps its own `stbl` in and
+    /// writes the rest exactly as the source carried it; `None` builds the
+    /// conventional `trak`.
+    pub shell: Option<TrackBox>,
 }
 
 impl TrackSetup {
@@ -202,6 +262,9 @@ impl TrackSetup {
             entry,
             trex: None,
             protection: None,
+            gmhd: None,
+            references: Vec::new(),
+            shell: None,
         }
     }
 }
@@ -248,6 +311,7 @@ pub(crate) fn build_init_segment(
     tracks: &[TrackSetup],
     movie_timescale: Timescale,
     file_type: &FileType,
+    shell: Option<&crate::plan::MovieShell>,
 ) -> Result<Vec<u8>> {
     let ftyp = FileTypeBox {
         major_brand: file_type.major_brand,
@@ -260,17 +324,20 @@ pub(crate) fn build_init_segment(
         .map(|t| t.track_id)
         .max()
         .map_or(TrackId::new(1), TrackId::next);
-    let mvhd = MovieHeaderBox {
-        version: 0,
-        flags: 0,
-        creation_time: 0,
-        modification_time: 0,
-        timescale: movie_timescale,
-        duration: 0,
-        rate: MVHD_RATE_UNITY,
-        volume: MVHD_VOLUME_UNITY,
-        matrix: IDENTITY_MATRIX,
-        next_track_id,
+    let mvhd = match shell {
+        Some(shell) => shell.mvhd.clone(),
+        None => MovieHeaderBox {
+            version: 0,
+            flags: 0,
+            creation_time: 0,
+            modification_time: 0,
+            timescale: movie_timescale,
+            duration: 0,
+            rate: MVHD_RATE_UNITY,
+            volume: MVHD_VOLUME_UNITY,
+            matrix: IDENTITY_MATRIX,
+            next_track_id,
+        },
     };
 
     let mut trak_boxes = Vec::with_capacity(tracks.len());
@@ -289,17 +356,40 @@ pub(crate) fn build_init_segment(
         });
     }
 
-    let moov = MovieBox::new(
-        mvhd,
-        trak_boxes,
-        Some(MovieExtendsBox::new(trex, vec![])),
-        vec![],
-    );
+    let moov = match shell {
+        Some(shell) => MovieBox {
+            mvhd,
+            tracks: trak_boxes,
+            mvex: shell
+                .mvex
+                .clone()
+                .or_else(|| Some(MovieExtendsBox::new(trex, vec![]))),
+            opaque: shell.opaque.clone(),
+            order: shell.order.clone(),
+        },
+        None => MovieBox::new(
+            mvhd,
+            trak_boxes,
+            Some(MovieExtendsBox::new(trex, vec![])),
+            vec![],
+        ),
+    };
 
-    let mut out = vec![0u8; ftyp.serialized_len() + moov.serialized_len()];
-    let n1 = ftyp.serialize_into(&mut out)?;
-    let n2 = moov.serialize_into(&mut out[n1..])?;
-    out.truncate(n1 + n2);
+    let mut out = Vec::new();
+    if file_type.emit_ftyp {
+        out.extend_from_slice(&ftyp.try_to_bytes()?);
+    }
+    if let Some(shell) = shell {
+        for box_ in shell.top_level_at(crate::plan::BoxPosition::AfterFtyp) {
+            out.extend_from_slice(&box_.try_to_bytes()?);
+        }
+    }
+    out.extend_from_slice(&moov.try_to_bytes()?);
+    if let Some(shell) = shell {
+        for box_ in shell.top_level_at(crate::plan::BoxPosition::AfterMoov) {
+            out.extend_from_slice(&box_.try_to_bytes()?);
+        }
+    }
     Ok(out)
 }
 
@@ -308,6 +398,12 @@ pub(crate) fn build_init_segment(
 fn build_trak(t: &TrackSetup) -> Result<TrackBox> {
     let entry = track_entry(t)?;
     let stbl = empty_sample_table(empty_sample_description(entry));
+    let stbl = match progressive::stbl_template(t.shell.as_ref()) {
+        Some(template) => SampleTableBox {
+            children: progressive::stbl_children(Some(template), stbl.children),
+        },
+        None => stbl,
+    };
     track_box(t, stbl)
 }
 
@@ -316,7 +412,18 @@ fn build_trak(t: &TrackSetup) -> Result<TrackBox> {
 /// The fragmented init and the progressive writer share this: only the sample
 /// table differs between them.
 pub(crate) fn track_box(t: &TrackSetup, stbl: SampleTableBox) -> Result<TrackBox> {
-    let minf = track_media_information(&t.handler, stbl, t.minf_header);
+    if let Some(shell) = &t.shell {
+        let mut trak = shell.clone();
+        trak.edts = None;
+        let minf = trak
+            .mdia
+            .as_mut()
+            .and_then(|mdia| mdia.minf.as_mut())
+            .ok_or(Error::UnexpectedBox { expected: "minf" })?;
+        minf.stbl = Some(stbl);
+        return Ok(trak);
+    }
+    let minf = track_media_information(&t.handler, stbl, t.minf_header, t.gmhd.clone());
     let mdia = MediaBox::new(
         Some(track_media_header(t.timescale, t.language)),
         Some(track_handler(t)),
@@ -324,7 +431,26 @@ pub(crate) fn track_box(t: &TrackSetup, stbl: SampleTableBox) -> Result<TrackBox
         vec![],
     );
     let tkhd = track_header(t);
-    Ok(TrackBox::new(tkhd, None, Some(mdia), vec![]))
+    let mut trak = TrackBox::new(tkhd, None, Some(mdia), vec![]);
+    if !t.references.is_empty() {
+        let references = crate::track_reference::TrackReferenceBox {
+            references: t.references.clone(),
+        };
+        let bytes = references.try_to_bytes()?;
+        if bytes.len() < BOX_HEADER_MIN_SIZE {
+            return Err(Error::InvalidInput("tref box is shorter than its header"));
+        }
+        trak.opaque.push(OpaqueBox {
+            box_type: *b"tref",
+            data: bytes[BOX_HEADER_MIN_SIZE..].to_vec(),
+            to_end: false,
+            largesize: false,
+        });
+        trak.order.push(*b"tkhd");
+        trak.order.push_opaque(*b"tref");
+        trak.order.push(*b"mdia");
+    }
+    Ok(trak)
 }
 
 /// The sample entry the track's `stsd` carries, protecting it first when the
@@ -357,10 +483,10 @@ fn raw_entry_variant(fourcc: [u8; BOX_TYPE_SIZE], body: &[u8]) -> Result<SampleE
             "raw sample entry four-CC does not match its box header",
         ));
     }
-    Ok(SampleEntryVariant::Unknown(OpaqueBox::new(
-        fourcc,
-        item.payload().to_vec(),
-    )))
+    let mut opaque = OpaqueBox::new(fourcc, item.payload().to_vec());
+    opaque.to_end = item.to_end();
+    opaque.largesize = item.has_largesize();
+    Ok(SampleEntryVariant::Unknown(opaque))
 }
 
 /// An empty `stsd` holding the track's single sample entry: the init segment
@@ -429,6 +555,7 @@ fn track_media_information(
     handler: &[u8; BOX_TYPE_SIZE],
     stbl: SampleTableBox,
     minf_header: Option<[u8; BOX_TYPE_SIZE]>,
+    gmhd: Option<crate::quicktime::GmhdAtom>,
 ) -> MediaInformationBox {
     let vmhd = (handler == b"vide").then_some(VideoMediaHeaderBox {
         version: 0,
@@ -448,10 +575,13 @@ fn track_media_information(
         Some(stbl),
         vec![],
     );
+    minf.gmhd = gmhd;
     // A handler that implies no media header of its own (`meta`, `text`,
-    // `tmcd`, …) gets the null one (§8.4.5.2) unless the caller named another.
-    let header =
-        minf_header.or_else(|| (handler != b"vide" && handler != b"soun").then_some(*NMHD));
+    // `tmcd`, …) gets the null one (§8.4.5.2) unless the caller named another
+    // or a QuickTime `gmhd` already is the header.
+    let header = minf_header.or_else(|| {
+        (handler != b"vide" && handler != b"soun" && minf.gmhd.is_none()).then_some(*NMHD)
+    });
     if let Some(header) = header {
         minf.set_leading_opaque_header(OpaqueBox::new(header, vec![0u8; FULLBOX_EXTRA_SIZE]));
     }
@@ -477,6 +607,8 @@ fn track_handler(t: &TrackSetup) -> HandlerBox {
     HandlerBox {
         version: 0,
         flags: 0,
+        pre_defined: 0,
+        reserved: [0u8; crate::init_segment::HDLR_RESERVED_LEN],
         handler_type: t.handler,
         name: t.handler_name.clone(),
     }
@@ -512,7 +644,7 @@ pub struct SampleAux {
 }
 
 /// One sample's metadata for the fragment's `trun`.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SampleMeta {
     /// `sample_duration`, in the track timescale.
     pub duration: u32,
@@ -522,6 +654,22 @@ pub struct SampleMeta {
     pub sync: bool,
     /// CENC per-sample auxiliary information, when the track is protected.
     pub aux: Option<SampleAux>,
+    /// One-based `stsd` entry this sample uses (§8.7.4). A fragment states it
+    /// once per track fragment (`tfhd.sample_description_index`), so every
+    /// sample of one `traf` must share it.
+    pub description_index: u32,
+}
+
+impl Default for SampleMeta {
+    fn default() -> Self {
+        Self {
+            duration: 0,
+            composition_offset: 0,
+            sync: false,
+            aux: None,
+            description_index: TREX_DEFAULT_DESCRIPTION_INDEX,
+        }
+    }
 }
 
 /// One finished fragment: the bytes to emit and the `moof` length inside them.
@@ -562,4 +710,32 @@ pub struct FragmentOptions<'a> {
     pub styp: Option<&'a SegmentBrands>,
     /// Event Message Boxes, emitted after `styp` and before `moof`.
     pub events: &'a [EmsgBox<'a>],
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A raw entry the wire encoded with the `size == 0` form ("to the end of
+    /// the enclosing container", §4.2) is written back with the same form:
+    /// spelling the length out instead changes the entry's bytes (fuzz finding
+    /// on `isobmff_whole_file`).
+    #[test]
+    fn a_to_end_raw_entry_keeps_the_size_zero_form() {
+        let body = [0u8, 0, 0, 0, b'a', b'c', b'm', b'e', 0xde, 0xad, 0xbe, 0xef];
+        let entry = raw_entry_variant(*b"acme", &body).expect("raw entry");
+        let bytes = entry.try_to_bytes().expect("bytes");
+        assert_eq!(bytes, body);
+        assert_eq!(bytes[0..4], [0, 0, 0, 0]);
+    }
+
+    /// The same box with an explicit length keeps it.
+    #[test]
+    fn an_explicit_length_raw_entry_is_unchanged() {
+        let body = [
+            0u8, 0, 0, 12, b'a', b'c', b'm', b'e', 0xde, 0xad, 0xbe, 0xef,
+        ];
+        let entry = raw_entry_variant(*b"acme", &body).expect("raw entry");
+        assert_eq!(entry.try_to_bytes().expect("bytes"), body);
+    }
 }

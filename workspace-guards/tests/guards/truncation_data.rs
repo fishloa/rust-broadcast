@@ -121,6 +121,10 @@ pub const TABLE: &[Crate] = &[
         allowlist: &[],
     },
     Crate {
+        name: "examples/isobmff-private-format",
+        allowlist: &[],
+    },
+    Crate {
         name: "mpeg-pes",
         allowlist: &[],
     },

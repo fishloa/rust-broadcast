@@ -6,8 +6,79 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Breaking
+
+- `registry::BoxDef` and `registry::RegisteredBox` require `Send + Sync`, so a `Reader` holding registered values can cross threads (a tokio task) and one registry can serve many readers.
 ### Added
 
+- `registry`: `BoxRegistry` registers a private box or sample entry from outside
+  the crate. `BoxDef` names its four-CC (or `uuid` extended type) and an
+  optional parent scope; `register` refuses a key this crate already types, or
+  one already registered, unless `register_override` is used. A matching `stsd`
+  entry comes back typed in `SampleEntryInfo::registered`,
+  `BoxRegistry::parse_children` types the children of an opaque box, and
+  `SampleEntry::from_registered` gives the writer the entry bytes it carries.
+  `ReaderConfig::with_registry` attaches one; an unregistered box stays an
+  `OpaqueBox` and writes back unchanged.
+- A whole-file byte-identical round trip: a plan read from a file now carries
+  the parsed `trak` shells, the `moov`'s extra children (`udta`/`meta`,
+  `iods`, `mvex`), each `stbl` child a plan does not rebuild (`sgpd`/`sbgp`/
+  `sdtp`) in its wire position, and the top-level boxes outside
+  `ftyp`/`moov`/`mdat` (`free`, `wide`, `uuid`, `skip`) with their positions.
+  `MovieShell`, `TopLevelBox` and `BoxPosition` are the plan-side types;
+  `TrackSetup::shell` carries the per-track half, `FragmentedWriter::
+  set_movie_shell`/`trailer` the fragmented one. A `PlanBuilder` plan carries
+  none and writes exactly the previous layout, so every golden is unchanged.
+- `HandlerBox::pre_defined` and `HandlerBox::reserved` are parsed and written
+  back: a QuickTime file keeps its component type (`mhlr`/`dhlr`) and
+  manufacturer code there, so a `.mov` round-trips byte for byte.
+- QuickTime atoms are written as well as read: `SoundEntry`, `WaveAtom`,
+  `GmhdAtom`/`GminAtom`/`TcmiAtom`, `TimecodeEntry` and
+  `TrackApertureModeDimensionsBox`/`ApertureDimensions` implement `Serialize`
+  as the exact inverse of their parse, including the `tmcd` wrapper, child
+  order, the sample-entry reserved bytes and the `tcmi` reserved field.
+  `MediaInformationBox` carries a typed `gmhd`, `TrackSetup` gains `gmhd` and
+  `references` (`tref`), and `FileType::quicktime`/`without_ftyp` select a
+  QuickTime-brand file or no `ftyp` at all.
+- `VisualSampleEntryFields` keeps the SampleEntry `reserved[6]`, the
+  QuickTime `revision_level`/`vendor`/quality block and any trailing pad, and
+  `AVCSampleEntry`/`HEVCSampleEntry`/`VVCSampleEntry` keep the position of
+  their config box among the extra boxes, so a typed `.mov` track serialises
+  back to the file's bytes.
+
+### Breaking
+- `Error::QuickTimeOnly` and `SampleEntryVariant::is_quicktime_only` are
+  removed: every QuickTime sample entry this crate parses now serialises.
+- `FileType` gains `emit_ftyp`; `TrackSetup` gains `gmhd` and `references`;
+  `VisualSampleEntryFields` gains `reserved`, `pre_defined_and_reserved` and
+  `trailing`; the AVC, HEVC and VVC sample entries gain `config_position`.
+### Fixed
+- `TrackId::next` saturates at `u32::MAX` instead of panicking on a crafted
+  `track_ID` (fuzz finding on `isobmff_whole_file`).
+- A `SampleEntry::Raw` whose bytes use the `size == 0` ("to end of container",
+  §4.2) or `largesize` forms is written back in that form instead of being given
+  an explicit 32-bit length (fuzz finding).
+- A progressive rewrite keeps the `tkhd`/`mdhd` version the source stated
+  instead of normalizing it to 0 (fuzz finding).
+- A fragment run that uses a non-default `stsd` entry states it in
+  `tfhd.sample_description_index`, so a reader sees the same
+  `description_index` it started with (fuzz finding). `SampleMeta` gains
+  `description_index` (default 1, which omits the field and keeps every
+  existing golden byte-identical), and `media_fragment_run` takes it as the
+  optional per-`traf` value; a run whose samples disagree is an error.
+### Changed
+- A sample plan's `stsd` entries are carried as their exact box bytes
+  (`SampleEntry::Raw`) rather than re-serialized from the typed parse, so a
+  `colr` ahead of `avcC`, or a QuickTime `vendor` field, survives a rewrite.
+  The typed parse is unchanged on `TrackInfo`.
+- The reader walks the boxes after the sample data for a seekable source, so
+  a trailing `free`/`skip`/`uuid` box is carried; a forward-only source still
+  finishes as soon as its samples are exhausted.
+- A truncated final `mdat` is reported once, not once per fault site.
+## [Unreleased]
+### Added
+- `quicktime`, QuickTime atoms a camera or editing `.mov` carries:
 - `Reader::end_of_unit(unit_end)` for sequential input: it declares that the
   bytes supplied so far end one self-contained unit (a media segment). A
   top-level box whose declared end runs past the unit is dropped; in permissive
@@ -24,9 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dimensions (`tapt`), chapter-title samples, and a `qt  ` or absent `ftyp`.
   `Mp4aSampleEntry::wave`/`esds` reach an `esds` inside `wave` through the same
   accessor as a top-level one, `TrackInfo` carries `tapt`, `MediaInformationBox`
-  exposes `gmhd`, and `Reader::brand` reports the `ftyp` box. QuickTime-only
-  types implement `Parse` only; a writer handed one returns
-  `Error::QuickTimeOnly { atom }`, and a plan carries the entry as raw bytes.
+  exposes `gmhd`, and `Reader::brand` reports the `ftyp` box. (They are read
+  and written; see the first `[Unreleased]` entry for the serialisers.)
 - `Mode::Permissive` and `Step::Warning(Warning)`: the reader tolerates the
   faults streaming-first design §4.7 lists (a clamped `moov` child, an
   unparseable known sample entry, an `mp4a` `wave` with no `esds`, a zero

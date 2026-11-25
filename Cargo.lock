@@ -2022,6 +2022,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "isobmff-private-format"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "isobmff",
+]
+
+[[package]]
 name = "isobmff-tokio"
 version = "0.1.0"
 dependencies = [
@@ -2303,6 +2311,7 @@ dependencies = [
  "ssai-runtime",
  "test-alloc",
  "test-fixtures",
+ "test-harness",
  "timed-metadata",
  "tokio",
  "tokio-util",

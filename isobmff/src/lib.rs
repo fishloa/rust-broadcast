@@ -46,6 +46,11 @@
 //! - [`sample_table`] — [`TrackCursor`]/[`CursorState`], the lazy per-track
 //!   walk over the `stts`/`ctts`/`stsc`/`stsz`/`stz2`/`stco`/`co64`/`stss`
 //!   tables, and the run-length table builders.
+//! - [`registry`] — [`BoxRegistry`](registry::BoxRegistry) and
+//!   [`BoxDef`](registry::BoxDef): a third party registers its own private box
+//!   or sample entry, so a private `stsd` entry and a private `udta` atom come
+//!   back typed without this crate changing. An unregistered box stays
+//!   [`OpaqueBox`](box_support::OpaqueBox) and writes back unchanged.
 //! - [`reader`], [`plan`] — the sans-IO progressive [`Reader`]: it asks for
 //!   structure byte ranges, surfaces every track and one [`SampleRef`] at a
 //!   time, and hands out a [`SamplePlan`] from the index alone. [`plan`] also
@@ -53,10 +58,11 @@
 //!   which builds one from pushed sample descriptors. [`reader::Mode`] is
 //!   strict by default; `Mode::Permissive` reports the design §4.7 faults as
 //!   [`reader::Step::Warning`] instead of failing the read.
-//! - [`quicktime`] — read-only QuickTime atoms a camera or editing `.mov`
-//!   carries: sound description versions 1 and 2, `wave`, `gmhd`, `tmcd`,
-//!   `tapt`, chapter titles, and a `qt  ` or absent `ftyp`. These implement
-//!   `Parse` only; a writer refuses one with `Error::QuickTimeOnly`.
+//! - [`quicktime`] — QuickTime atoms a camera or editing `.mov` carries, read
+//!   and written: sound description versions 1 and 2, `wave`, `gmhd`, `tmcd`,
+//!   `tapt`, chapter titles, and a `qt  ` or absent `ftyp`. Every `Serialize`
+//!   is the exact inverse of its `Parse`; [`writer::FileType::quicktime`] and
+//!   [`writer::FileType::without_ftyp`] write the brand choice.
 //! - [`reader`] over a fragmented file — the same state machine reads one
 //!   `moof` at a time, addresses its samples from the following `mdat`
 //!   headers, and seeks through a `sidx` or the trailing `mfra`/`tfra`.
@@ -125,6 +131,7 @@ pub mod opus;
 pub mod plan;
 pub mod quicktime;
 pub mod reader;
+pub mod registry;
 pub mod sample_entries;
 pub mod sample_groups;
 pub mod sample_table;

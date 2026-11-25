@@ -6,10 +6,11 @@
 //! progressive MP4 file has no PMT to cross-validate; instead the
 //! sample-entry config box (`avcC`/`hvcC`) and its `width`/`height` fields
 //! *are* the container's claim, and the SPS embedded in that very config box
-//! is the bitstream truth. This function demuxes `bytes` into a
-//! [`transmux::Media`] (trying [`transmux::Fmp4Demux`] for fragmented/CMAF
-//! input, then [`transmux::ProgressiveDemux`] for a single-`moov` progressive
-//! file) and, for every AVC/HEVC video track, cross-checks:
+//! is the bitstream truth. [`check_container_codec`] demuxes a whole image
+//! through [`transmux::mp4_demux::Mp4Demux`] (or [`ContainerCodecChecker`]
+//! takes the same stage's events one at a time, so a file on disk can be
+//! checked in bounded memory) and, for every AVC/HEVC video track,
+//! cross-checks:
 //!
 //! - **`avcc-sps-mismatch`** / **`hvcc-sps-mismatch`** (Error): the config
 //!   record's `profile_indication`/`level_indication` (AVC) or
@@ -56,10 +57,15 @@
 //! as [`StreamLocator::Track`] (never a TS PID — there is none for this
 //! input).
 
-use broadcast_common::{Parse, Unpackage};
+use alloc::collections::BTreeMap;
+
+use broadcast_common::{Parse, Stage, Timestamp};
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use transmux::TrackId;
-use transmux::{CodecConfig, Fmp4Demux, Media, ProgressiveDemux, iter_length_prefixed_nals_with};
+use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
+use transmux::{CodecConfig, DemuxEvent, Sample, TrackSpec, iter_length_prefixed_nals_with};
+#[cfg(all(test, feature = "std"))]
+use transmux::{Media, Track};
 
 use crate::report::{Finding, Location, Report, Severity};
 use transmux::nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo};
@@ -69,38 +75,124 @@ use transmux::nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo};
 /// loop (ISO/IEC 14496-15:2017 §8.3.3).
 const HEVC_NAL_SPS: u8 = 33;
 
-/// Run every ISOBMFF/CMAF codec-level check against `bytes`, appending
-/// findings to `report`.
+/// Run every ISOBMFF/CMAF codec-level check against a whole `bytes` image,
+/// appending findings to `report`.
 pub fn check_container_codec(bytes: &[u8], report: &mut Report) {
     if !looks_like_isobmff(bytes) {
         return;
     }
-    let media = match Fmp4Demux::new().unpackage(bytes) {
-        Ok(m) => Some(m),
-        // `bytes` is already the whole file in memory here (the `Unpackage`
-        // path, not `Stage::feed`), so the bound just needs to cover it —
-        // `bytes.len()` never rejects (transmux issue B7: `ProgressiveDemux`
-        // now requires an explicit `max_bytes` bound at construction).
-        // `ProgressiveDemux::new` is fallible since it now rejects a zero
-        // cap (transmux issue R1); `bytes.len()` is guaranteed non-zero here
-        // by `looks_like_isobmff`'s `bytes.len() < 8` guard above, so the
-        // only way this `Err` arm is reached is a genuine internal bug, not
-        // a real input this function needs to tolerate — treat it the same
-        // as "does not demux".
-        Err(_) => ProgressiveDemux::new(bytes.len())
-            .ok()
-            .and_then(|mut demux| demux.unpackage(bytes).ok()),
-    };
-    if let Some(media) = media {
-        check_media(&media, report);
+    let total_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let config = Mp4DemuxConfig::default().with_total_len(Some(total_len));
+    let mut checker = ContainerCodecChecker::new();
+    let _ = drive_mp4(bytes, config, &mut checker, report);
+    if let Some(moov) = isobmff::box_types::find_box(bytes, &isobmff::init_segment::MOOV) {
+        check_hevc_sample_entries(moov, report);
     }
-    check_hevc_sample_entries(bytes, report);
 }
 
-fn check_hevc_sample_entries(bytes: &[u8], report: &mut Report) {
-    let Some(moov) = isobmff::box_types::find_box(bytes, &isobmff::init_segment::MOOV) else {
-        return;
-    };
+/// The incremental half of [`check_container_codec`]: feed it a demux stage's
+/// events one at a time (a streamed file reads a bounded range at a time), and
+/// the `moov` box once, and it appends the same findings the whole-image
+/// entry point does.
+pub struct ContainerCodecChecker {
+    specs: BTreeMap<TrackId, TrackSpec>,
+    sample_index: BTreeMap<TrackId, usize>,
+    framing_reported: BTreeMap<TrackId, bool>,
+}
+
+impl ContainerCodecChecker {
+    /// A checker that has seen no events.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            specs: BTreeMap::new(),
+            sample_index: BTreeMap::new(),
+            framing_reported: BTreeMap::new(),
+        }
+    }
+
+    /// Apply one demux event. Track additions (and updates) run the
+    /// track-level checks; a sample runs the length-prefix check once per
+    /// track, exactly as the whole-image path does.
+    pub fn event(&mut self, event: &DemuxEvent, report: &mut Report) {
+        match event {
+            DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
+                check_track_spec(spec, report);
+                self.specs.insert(spec.track_id, spec.clone());
+            }
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
+                let index = self.sample_index.entry(*track_id).or_insert(0);
+                let this = *index;
+                *index = index.saturating_add(1);
+                if self
+                    .framing_reported
+                    .get(track_id)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    return;
+                }
+                let Some(spec) = self.specs.get(track_id) else {
+                    return;
+                };
+                if check_sample_framing(spec, this, sample, report) {
+                    self.framing_reported.insert(*track_id, true);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The `hvc1`/`hev1` sample-entry warnings, from the `moov` box.
+    pub fn sample_entries(&self, moov: &[u8], report: &mut Report) {
+        check_hevc_sample_entries(moov, report);
+    }
+}
+
+impl Default for ContainerCodecChecker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Drive a seekable [`Mp4Demux`] over an in-memory image, handing every event
+/// to `checker`. Reads no more than the range the stage asks for.
+fn drive_mp4(
+    bytes: &[u8],
+    config: Mp4DemuxConfig,
+    checker: &mut ContainerCodecChecker,
+    report: &mut Report,
+) -> Result<(), transmux::Error> {
+    let mut demux = Mp4Demux::seekable(config);
+    loop {
+        let demand = demux.demand();
+        let Some(offset) = demand.offset else {
+            break;
+        };
+        let start = usize::try_from(offset).unwrap_or(usize::MAX);
+        let end = start.saturating_add(demand.want_bytes).min(bytes.len());
+        let slice = bytes.get(start..end).unwrap_or(&[]);
+        demux.feed(
+            Mp4Input::At {
+                offset,
+                bytes: slice.to_vec().into(),
+            },
+            Timestamp::ZERO,
+        )?;
+        while let Some(event) = demux.poll() {
+            checker.event(&event, report);
+        }
+    }
+    demux.finish()?;
+    while let Some(event) = demux.poll() {
+        checker.event(&event, report);
+    }
+    Ok(())
+}
+
+fn check_hevc_sample_entries(moov: &[u8], report: &mut Report) {
     let Ok(movie) = MovieBox::parse(moov) else {
         return;
     };
@@ -196,70 +288,86 @@ fn nal_length_size(config: &CodecConfig) -> Option<usize> {
 /// prefixes (ISO/IEC 14496-15:2017 §5.3.3.1.1).
 const AVCC_LENGTH_SIZES: [usize; 3] = [1, 2, 4];
 
+#[cfg(all(test, feature = "std"))]
 fn check_media(media: &Media, report: &mut Report) {
     for track in &media.tracks {
-        // `track_ID` is a full 32-bit field (ISO/IEC 14496-12:2026 §8.3.2) — never
-        // narrowed, or every id above 65535 aliases onto a lower one.
-        let track_id = track.track_id();
-        // Length-prefixed NAL framing (ISO/IEC 14496-15:2017 §4.3.2, §4.3.3) only
-        // applies to AVC/HEVC video samples — `transmux::pipeline::Sample`
-        // documents its `data` field as "length-prefixed NAL data for
-        // AVC/HEVC, or the raw frame for AAC [and every other codec]".
-        // Running this check on a non-NAL track (e.g. a raw AAC frame, which
-        // is not length-prefixed at all) is not a structural fault — it
-        // would misread arbitrary audio bytes as a bogus NAL length and
-        // false-positive on every clean AAC track (confirmed against
-        // `fixtures/mp4/h264-aac-frag.mp4`'s AAC track).
-        let is_nal_track = matches!(
-            &track.spec.config,
-            CodecConfig::Avc { .. } | CodecConfig::Hevc { .. }
-        );
-
-        match &track.spec.config {
-            CodecConfig::Avc {
-                config,
-                width,
-                height,
-            } => check_avc_track(track_id, &config.config, *width, *height, report),
-            CodecConfig::Hevc {
-                config,
-                width,
-                height,
-            } => check_hevc_track(track_id, &config.config, *width, *height, report),
-            _ => {}
-        }
-
-        if !is_nal_track {
-            continue;
-        }
-
-        // The record's own `lengthSizeMinusOne` (ISO/IEC 14496-15:2017 §5.3.3.1.3
-        // for `avcC`, §8.3.3.1.3 for `hvcC`) declares the prefix width —
-        // 1-, 2- and 4-byte prefixes are all conformant. Assuming 4 bytes
-        // reported a false `length-prefix-violation` on every conformant
-        // AVC/HEVC track that uses a narrower prefix.
-        let Some(length_size) = nal_length_size(&track.spec.config) else {
-            continue;
-        };
+        check_track_spec(&track.spec, report);
         for (idx, sample) in track.samples.iter().enumerate() {
-            if iter_length_prefixed_nals_with(&sample.data, length_size).is_err() {
-                report.push(Finding::new(
-                    Severity::Error,
-                    Location::at_track(idx, track_id),
-                    "length-prefix-violation",
-                    alloc::format!(
-                        "Sample {idx} on track {track_id} is not a well-formed {length_size}-byte \
-                         length-prefixed NAL sequence (declared length runs past the sample's \
-                         own end) — a hallmark of an Annex B start code left in place of a \
-                         length prefix (ISO/IEC 14496-15:2017 §4.3.2)",
-                    ),
-                ));
-                // One finding per track is enough signal; do not spam every
-                // subsequent sample of a track that is malformed throughout.
+            if check_sample_framing(&track.spec, idx, sample, report) {
                 break;
             }
         }
     }
+}
+
+/// Run the track-level codec checks for one track.
+fn check_track_spec(spec: &TrackSpec, report: &mut Report) {
+    // `track_ID` is a full 32-bit field (ISO/IEC 14496-12:2026 §8.3.2) — never
+    // narrowed, or every id above 65535 aliases onto a lower one.
+    let track_id = spec.track_id;
+    match &spec.config {
+        CodecConfig::Avc {
+            config,
+            width,
+            height,
+        } => check_avc_track(track_id, &config.config, *width, *height, report),
+        CodecConfig::Hevc {
+            config,
+            width,
+            height,
+        } => check_hevc_track(track_id, &config.config, *width, *height, report),
+        _ => {}
+    }
+}
+
+/// Run the per-sample length-prefix check for one sample. Returns `true` when
+/// a violation was reported, so the caller can stop after one finding per
+/// track.
+fn check_sample_framing(
+    spec: &TrackSpec,
+    idx: usize,
+    sample: &Sample,
+    report: &mut Report,
+) -> bool {
+    // Length-prefixed NAL framing (ISO/IEC 14496-15:2017 §4.3.2, §4.3.3) only
+    // applies to AVC/HEVC video samples — `transmux::pipeline::Sample`
+    // documents its `data` field as "length-prefixed NAL data for
+    // AVC/HEVC, or the raw frame for AAC [and every other codec]".
+    // Running this check on a non-NAL track (e.g. a raw AAC frame, which
+    // is not length-prefixed at all) is not a structural fault — it
+    // would misread arbitrary audio bytes as a bogus NAL length and
+    // false-positive on every clean AAC track (confirmed against
+    // `fixtures/mp4/h264-aac-frag.mp4`'s AAC track).
+    if !matches!(
+        spec.config,
+        CodecConfig::Avc { .. } | CodecConfig::Hevc { .. }
+    ) {
+        return false;
+    }
+    // The record's own `lengthSizeMinusOne` (ISO/IEC 14496-15:2017 §5.3.3.1.3
+    // for `avcC`, §8.3.3.1.3 for `hvcC`) declares the prefix width —
+    // 1-, 2- and 4-byte prefixes are all conformant. Assuming 4 bytes
+    // reported a false `length-prefix-violation` on every conformant
+    // AVC/HEVC track that uses a narrower prefix.
+    let Some(length_size) = nal_length_size(&spec.config) else {
+        return false;
+    };
+    if iter_length_prefixed_nals_with(&sample.data, length_size).is_err() {
+        let track_id = spec.track_id;
+        report.push(Finding::new(
+            Severity::Error,
+            Location::at_track(idx, track_id),
+            "length-prefix-violation",
+            alloc::format!(
+                "Sample {idx} on track {track_id} is not a well-formed {length_size}-byte \
+                 length-prefixed NAL sequence (declared length runs past the sample's \
+                 own end) — a hallmark of an Annex B start code left in place of a \
+                 length prefix (ISO/IEC 14496-15:2017 §4.3.2)",
+            ),
+        ));
+        return true;
+    }
+    false
 }
 
 fn check_avc_track(
@@ -422,6 +530,63 @@ fn check_hevc_track(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "std")]
+    use alloc::vec::Vec;
+
+    /// Demux a whole in-memory MP4 image into a [`Media`] via the streaming
+    /// stage, for the checks that need a `Media` to mutate.
+    #[cfg(feature = "std")]
+    fn test_media(bytes: &[u8]) -> Media {
+        let total = u64::try_from(bytes.len()).expect("image fits u64");
+        let mut demux = Mp4Demux::seekable(Mp4DemuxConfig::default().with_total_len(Some(total)));
+        let mut events = Vec::new();
+        loop {
+            let demand = demux.demand();
+            let Some(offset) = demand.offset else {
+                break;
+            };
+            let start = usize::try_from(offset).expect("offset fits");
+            let end = start.saturating_add(demand.want_bytes).min(bytes.len());
+            demux
+                .feed(
+                    Mp4Input::At {
+                        offset,
+                        bytes: bytes[start..end].to_vec().into(),
+                    },
+                    Timestamp::ZERO,
+                )
+                .expect("range feed");
+            while let Some(event) = demux.poll() {
+                events.push(event);
+            }
+        }
+        demux.finish().expect("finish");
+        while let Some(event) = demux.poll() {
+            events.push(event);
+        }
+        let movie_timescale = demux
+            .movie_timescale()
+            .unwrap_or(transmux::VIDEO_CLOCK_TIMESCALE);
+        let mut tracks: Vec<Track> = Vec::new();
+        let mut index: BTreeMap<TrackId, usize> = BTreeMap::new();
+        for event in events {
+            match event {
+                DemuxEvent::TrackAdded(spec) => {
+                    index.insert(spec.track_id, tracks.len());
+                    tracks.push(Track::new(spec, Vec::new()));
+                }
+                DemuxEvent::Sample {
+                    track_id, sample, ..
+                } => {
+                    if let Some(&at) = index.get(&track_id) {
+                        tracks[at].samples.push(sample);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Media::new(tracks, movie_timescale)
+    }
 
     /// Non-ISOBMFF bytes (e.g. a raw TS packet) must yield no findings, never
     /// a panic.
@@ -467,10 +632,7 @@ mod tests {
     fn two_byte_nal_length_prefix_is_not_a_violation() {
         let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
         let bytes = std::fs::read(path).expect("read h264-aac-prog.mp4");
-        let mut media = ProgressiveDemux::new(bytes.len())
-            .expect("demuxer")
-            .unpackage(&bytes)
-            .expect("demux");
+        let mut media = test_media(&bytes);
 
         let mut video_tracks = 0usize;
         for track in &mut media.tracks {
@@ -513,10 +675,7 @@ mod tests {
     fn nal_length_size_comes_from_the_record() {
         let path = test_fixtures::path("mp4/h264-aac-prog.mp4");
         let bytes = std::fs::read(path).expect("read h264-aac-prog.mp4");
-        let mut media = ProgressiveDemux::new(bytes.len())
-            .expect("demuxer")
-            .unpackage(&bytes)
-            .expect("demux");
+        let mut media = test_media(&bytes);
 
         let mut checked = 0usize;
         for track in &mut media.tracks {

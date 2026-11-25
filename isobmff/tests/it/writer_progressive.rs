@@ -154,6 +154,7 @@ fn file_type(bytes: &[u8], ftyp: &TopBox) -> FileType {
         major_brand: [body[0], body[1], body[2], body[3]],
         minor_version: le(&body[4..8]),
         compatible_brands: brands,
+        emit_ftyp: true,
     }
 }
 

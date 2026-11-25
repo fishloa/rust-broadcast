@@ -18,10 +18,11 @@
 //! Spec: ISO/IEC 14496-12:2026 §8.5-§8.7
 //! (`private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`).
 
+use crate::box_support::{ChildOrder, OpaqueBox};
 use crate::error::{Error, Result};
 use crate::init_segment::{
-    CompactSampleSizeBox, MovieBox, SampleTableBox, SampleToChunkBox, StblChild, SyncSampleBox,
-    TrackBox,
+    CompactSampleSizeBox, MovieBox, MovieExtendsBox, MovieHeaderBox, SampleTableBox,
+    SampleToChunkBox, StblChild, SyncSampleBox, TrackBox,
 };
 use crate::limits::Limits;
 use crate::reader::TrackInfo;
@@ -41,14 +42,21 @@ pub struct SamplePlan<'a> {
     movie: &'a MovieBox,
     tracks: &'a [TrackInfo],
     file_len: Option<u64>,
+    top_level: &'a [TopLevelBox],
 }
 
 impl<'a> SamplePlan<'a> {
-    pub(crate) fn new(movie: &'a MovieBox, tracks: &'a [TrackInfo], file_len: Option<u64>) -> Self {
+    pub(crate) fn new(
+        movie: &'a MovieBox,
+        tracks: &'a [TrackInfo],
+        file_len: Option<u64>,
+        top_level: &'a [TopLevelBox],
+    ) -> Self {
         Self {
             movie,
             tracks,
             file_len,
+            top_level,
         }
     }
 
@@ -116,9 +124,17 @@ impl<'a> SamplePlan<'a> {
                 start_decode_time: 0,
                 tables,
                 chunks: Some(chunks),
+                shell: Some(trak.clone()),
             });
         }
-        Ok(OwnedPlan::new(tracks))
+        let shell = MovieShell {
+            mvhd: self.movie.mvhd.clone(),
+            mvex: self.movie.mvex.clone(),
+            opaque: self.movie.opaque.clone(),
+            order: self.movie.order.clone(),
+            top_level: self.top_level.to_vec(),
+        };
+        Ok(OwnedPlan::new(tracks).with_shell(shell))
     }
 }
 
@@ -135,6 +151,78 @@ pub(crate) fn sample_description(
         StblChild::Stsd(stsd) => Some(stsd),
         _ => None,
     })
+}
+
+/// Where a top-level box the writer does not model sat in the source file,
+/// relative to the boxes the writer emits (`ftyp`, `moov`, `mdat`).
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BoxPosition {
+    /// Directly after `ftyp`, before the `moov`/`mdat` that follow.
+    AfterFtyp,
+    /// Directly after `moov`.
+    AfterMoov,
+    /// After the `mdat` payload.
+    AfterMdat,
+}
+
+impl BoxPosition {
+    /// The position's stable label.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::AfterFtyp => "after-ftyp",
+            Self::AfterMoov => "after-moov",
+            Self::AfterMdat => "after-mdat",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(BoxPosition);
+
+/// One top-level box outside `ftyp`/`moov`/`mdat` (`free`, `wide`, `uuid`,
+/// `skip`, a trailing `mfra`), carried with its position so a rewrite
+/// reproduces it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TopLevelBox {
+    /// Where the box sat in the source file.
+    pub position: BoxPosition,
+    /// The box, kept as its opaque bytes.
+    pub data: OpaqueBox,
+}
+
+/// The `moov` children a sample plan does not model, and the top-level boxes
+/// around the movie.
+///
+/// A plan read from a file carries one so
+/// [`Writer::progressive`](crate::writer::Writer::progressive) and
+/// [`Writer::fragmented`](crate::writer::Writer::fragmented) can reproduce the
+/// `udta`/`meta`, `mvex`, extra `trak` children and the boxes before or after
+/// the movie. A plan a [`PlanBuilder`] made carries none, and the writer emits
+/// exactly its own conventional layout.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MovieShell {
+    /// The movie header exactly as the source carried it (its duration and
+    /// version are recomputed from the plan when written).
+    pub mvhd: MovieHeaderBox,
+    /// The movie-extends box (`mvex`), when the source was fragmented.
+    pub mvex: Option<MovieExtendsBox>,
+    /// `moov` children this crate does not model (`udta`, `meta`, `iods`).
+    pub opaque: Vec<OpaqueBox>,
+    /// The `moov` wire order the opaque children belong to.
+    pub order: ChildOrder,
+    /// The top-level boxes outside `ftyp`/`moov`/`mdat`, in source order.
+    pub top_level: Vec<TopLevelBox>,
+}
+
+impl MovieShell {
+    /// The carried top-level boxes at one position, in source order.
+    pub fn top_level_at(&self, position: BoxPosition) -> impl Iterator<Item = &OpaqueBox> {
+        self.top_level
+            .iter()
+            .filter(move |carried| carried.position == position)
+            .map(|carried| &carried.data)
+    }
 }
 
 /// One sample as [`PlanBuilder`] takes it (ISO/IEC 14496-12:2026 §8.6-§8.7).
@@ -279,6 +367,10 @@ pub struct PlannedTrack {
     pub tables: SampleTables,
     /// The source chunk layout, when the plan came from a file.
     pub chunks: Option<SourceChunks>,
+    /// The parsed `trak` this track was read from, carrying every header field,
+    /// extra child and wire order the plan does not model. `None` for a track
+    /// a [`PlanBuilder`] built.
+    pub shell: Option<TrackBox>,
 }
 
 /// A progressive file's whole sample plan, owned.
@@ -286,13 +378,36 @@ pub struct PlannedTrack {
 #[non_exhaustive]
 pub struct OwnedPlan {
     tracks: Vec<PlannedTrack>,
+    shell: Option<MovieShell>,
 }
 
 impl OwnedPlan {
     /// A plan over `tracks`, in `moov` order.
     #[must_use]
     pub fn new(tracks: Vec<PlannedTrack>) -> Self {
-        Self { tracks }
+        Self {
+            tracks,
+            shell: None,
+        }
+    }
+
+    /// Attach the source movie shell, so the writer reproduces the `moov`
+    /// children a plan does not model.
+    #[must_use]
+    pub fn with_shell(mut self, shell: MovieShell) -> Self {
+        self.shell = Some(shell);
+        self
+    }
+
+    /// The source movie shell, when this plan carries one.
+    #[must_use]
+    pub fn shell(&self) -> Option<&MovieShell> {
+        self.shell.as_ref()
+    }
+
+    /// Replace the source movie shell.
+    pub fn set_shell(&mut self, shell: Option<MovieShell>) {
+        self.shell = shell;
     }
 
     /// Every track, in `moov` order.
@@ -376,6 +491,7 @@ impl PlanBuilder {
                         descriptions: Vec::new(),
                     },
                     chunks: None,
+                    shell: None,
                 },
                 stts: Vec::new(),
                 ctts: Vec::new(),
@@ -632,24 +748,21 @@ fn description_runs(chunks: &SourceChunks) -> Vec<DescriptionRun> {
     runs
 }
 
-/// The track's `stsd` entries, typed when this crate parses them.
+/// The track's `stsd` entries, as the exact box bytes the source carried.
+///
+/// A sample entry is a codec description, not a sample table, so the plan keeps
+/// it verbatim: re-serializing a typed parse would normalize a box another
+/// muxer wrote (a `colr` ahead of `avcC`, a QuickTime `vendor` field) and break
+/// the byte-identical round trip. `typed` stays available on
+/// [`TrackInfo`](crate::reader::TrackInfo) for a caller that wants the parse.
 fn entries_of(info: &TrackInfo) -> Vec<SampleEntry> {
     info.entries
         .iter()
-        .map(|entry| match &entry.typed {
-            Some(typed) if !quicktime_only(typed) => SampleEntry::Typed(typed.clone()),
-            Some(_) | None => SampleEntry::Raw {
-                fourcc: entry.fourcc,
-                body: entry.body.clone(),
-            },
+        .map(|entry| SampleEntry::Raw {
+            fourcc: entry.fourcc,
+            body: entry.body.clone(),
         })
         .collect()
-}
-
-/// Whether a typed entry is QuickTime-only: the writer carries it as its raw
-/// bytes rather than refusing the whole plan (design §4.9).
-fn quicktime_only(entry: &crate::init_segment::SampleEntryVariant) -> bool {
-    entry.is_quicktime_only()
 }
 
 fn track_setup(trak: &TrackBox, info: &TrackInfo, entries: &[SampleEntry]) -> Result<TrackSetup> {
@@ -666,12 +779,16 @@ fn track_setup(trak: &TrackBox, info: &TrackInfo, entries: &[SampleEntry]) -> Re
         first.clone(),
     );
     setup.minf_header = media_header_fourcc(mdia.and_then(|media| media.minf.as_ref()));
+    setup.gmhd = mdia
+        .and_then(|media| media.minf.as_ref())
+        .and_then(|minf| minf.gmhd());
     setup.language = mdia
         .and_then(|media| media.mdhd.as_ref())
         .map_or(crate::writer::LANG_UND, |mdhd| mdhd.language);
     setup.width = info.header.width;
     setup.height = info.header.height;
     setup.volume = info.header.volume;
+    setup.shell = Some(trak.clone());
     Ok(setup)
 }
 
@@ -681,7 +798,7 @@ fn media_header_fourcc(
     minf: Option<&crate::init_segment::MediaInformationBox>,
 ) -> Option<[u8; crate::box_types::BOX_TYPE_SIZE]> {
     let minf = minf?;
-    if minf.vmhd.is_some() || minf.smhd.is_some() {
+    if minf.vmhd.is_some() || minf.smhd.is_some() || minf.gmhd.is_some() {
         return None;
     }
     minf.opaque.first().map(|header| header.box_type)

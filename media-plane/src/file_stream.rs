@@ -1,12 +1,13 @@
-//! Bounded-memory file playout: a TS/FLV file is fed to an incremental
+//! Bounded-memory file playout: a TS/FLV/MP4 file is fed to an incremental
 //! demuxer, merged across tracks in presentation order and released under a
 //! wall-clock pacing gate, so live memory is a function of
 //! [`FileStreamLimits`] and never of the file's length (issue #4057).
 //!
 //! Sans-IO: the caller owns the file handle, feeds the bytes the session asks
-//! for and answers [`FileDemand::Rewind`] by seeking back to offset 0. The
-//! session never opens a file and never reads a clock beyond the wall-clock
-//! instants pacing compares against.
+//! for (a forward chunk, an absolute byte range, or end of input) and answers
+//! [`FileDemand::Rewind`] by seeking back to offset 0. The session never opens
+//! a file and never reads a clock beyond the wall-clock instants pacing
+//! compares against.
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
@@ -14,6 +15,8 @@ use std::time::{Duration, Instant};
 
 use broadcast_common::clock33::{WRAP_33BIT, unwrap_delta};
 use broadcast_common::{Demand, Stage, Timestamp};
+use bytes::Bytes;
+use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use transmux::{DemuxEvent, Sample, StreamingFlvDemux, StreamingTsDemux, TrackId, TrackSpec};
 
 use crate::file_source::{
@@ -60,6 +63,9 @@ pub enum StreamContainer {
     MpegTs,
     /// Flash Video ([`StreamingFlvDemux`]).
     Flv,
+    /// ISO base media file format, progressive or fragmented
+    /// ([`Mp4Demux`]).
+    Mp4,
 }
 
 impl StreamContainer {
@@ -68,6 +74,7 @@ impl StreamContainer {
         match self {
             StreamContainer::MpegTs => "mpeg-ts",
             StreamContainer::Flv => "flv",
+            StreamContainer::Mp4 => "mp4",
         }
     }
 }
@@ -93,6 +100,11 @@ pub struct FileStreamLimits {
     /// Distinct presentation times kept to measure the frame period.
     /// Default 64, above the deepest decoder reorder (16 frames).
     pub pts_window: usize,
+    /// The MP4 stage's caller policy: the byte-range read window and the
+    /// input's total length. Defaults to one sample per request and no known
+    /// total length; a file playout sets the length so the stage can reach
+    /// end of input.
+    pub mp4: Mp4DemuxConfig,
 }
 
 impl Default for FileStreamLimits {
@@ -104,6 +116,7 @@ impl Default for FileStreamLimits {
             start_window: DEFAULT_START_WINDOW,
             start_window_bytes: DEFAULT_START_WINDOW_BYTES,
             pts_window: DEFAULT_PTS_WINDOW,
+            mp4: Mp4DemuxConfig::default(),
         }
     }
 }
@@ -114,6 +127,14 @@ impl Default for FileStreamLimits {
 pub enum FileInput<'a> {
     /// The next chunk of the file, at the caller's current offset.
     Bytes(&'a [u8]),
+    /// The bytes at `offset`, answering a [`FileDemand::BytesAt`]. `bytes`
+    /// may be shorter than requested only when the file ends there.
+    At {
+        /// Absolute file offset of the first byte.
+        offset: u64,
+        /// The bytes themselves.
+        bytes: Bytes,
+    },
     /// The caller reached the end of the file.
     Eof,
 }
@@ -123,6 +144,7 @@ impl FileInput<'_> {
     pub fn name(&self) -> &'static str {
         match self {
             FileInput::Bytes(_) => "bytes",
+            FileInput::At { .. } => "at",
             FileInput::Eof => "eof",
         }
     }
@@ -136,6 +158,15 @@ broadcast_common::impl_spec_display!(FileInput<'_>);
 pub enum FileDemand {
     /// Feed the next chunk of the file.
     Bytes,
+    /// Feed the `len` bytes at absolute `offset`.
+    BytesAt {
+        /// Absolute file offset of the first byte.
+        offset: u64,
+        /// How many bytes are wanted.
+        len: usize,
+    },
+    /// The pass has consumed its input: feed [`FileInput::Eof`].
+    Eof,
     /// Seek the file to offset 0, then feed.
     Rewind,
     /// Nothing wanted until `next_due()`.
@@ -149,6 +180,8 @@ impl FileDemand {
     pub fn name(&self) -> &'static str {
         match self {
             FileDemand::Bytes => "bytes",
+            FileDemand::BytesAt { .. } => "bytes-at",
+            FileDemand::Eof => "eof",
             FileDemand::Rewind => "rewind",
             FileDemand::Wait => "wait",
             FileDemand::Done => "done",
@@ -164,20 +197,34 @@ enum Demux {
     Ts(StreamingTsDemux),
     /// FLV.
     Flv(StreamingFlvDemux),
+    /// ISO base media file format (seekable byte ranges).
+    Mp4(Box<Mp4Demux>),
 }
 
 impl Demux {
-    fn new(container: StreamContainer) -> Self {
+    fn new(container: StreamContainer, mp4: &Mp4DemuxConfig) -> Self {
         match container {
             StreamContainer::MpegTs => Demux::Ts(StreamingTsDemux::new()),
             StreamContainer::Flv => Demux::Flv(StreamingFlvDemux::new()),
+            StreamContainer::Mp4 => Demux::Mp4(Box::new(Mp4Demux::seekable(mp4.clone()))),
         }
     }
 
-    fn feed(&mut self, bytes: &[u8]) -> Result<(), FileReaderError> {
-        match self {
-            Demux::Ts(demux) => demux.feed(bytes).map_err(FileReaderError::Demux),
-            Demux::Flv(demux) => demux.feed(bytes).map_err(FileReaderError::Flv),
+    fn feed(&mut self, input: FileInput<'_>) -> Result<(), FileReaderError> {
+        match (self, input) {
+            (Demux::Ts(demux), FileInput::Bytes(bytes)) => {
+                demux.feed(bytes).map_err(FileReaderError::Demux)
+            }
+            (Demux::Flv(demux), FileInput::Bytes(bytes)) => {
+                demux.feed(bytes).map_err(FileReaderError::Flv)
+            }
+            (Demux::Mp4(demux), FileInput::At { offset, bytes }) => demux
+                .feed(Mp4Input::At { offset, bytes }, Timestamp::ZERO)
+                .map_err(FileReaderError::Demux),
+            (demux, input) => Err(FileReaderError::WrongInput {
+                container: demux.container_name(),
+                input: input.name(),
+            }),
         }
     }
 
@@ -185,6 +232,7 @@ impl Demux {
         match self {
             Demux::Ts(demux) => demux.poll_event(),
             Demux::Flv(demux) => demux.poll_event(),
+            Demux::Mp4(demux) => demux.poll(),
         }
     }
 
@@ -195,6 +243,26 @@ impl Demux {
                 demux.finish();
                 Ok(())
             }
+            Demux::Mp4(demux) => demux.finish().map_err(FileReaderError::Demux),
+        }
+    }
+
+    /// The absolute byte range the stage wants next, when it reads by range.
+    fn at_demand(&self) -> Option<(u64, usize)> {
+        match self {
+            Demux::Mp4(demux) => {
+                let demand = demux.demand();
+                demand.offset.map(|offset| (offset, demand.want_bytes))
+            }
+            _ => None,
+        }
+    }
+
+    fn container_name(&self) -> &'static str {
+        match self {
+            Demux::Ts(_) => StreamContainer::MpegTs.name(),
+            Demux::Flv(_) => StreamContainer::Flv.name(),
+            Demux::Mp4(_) => StreamContainer::Mp4.name(),
         }
     }
 }
@@ -385,6 +453,7 @@ impl StreamingFileSession {
         pace: bool,
         limits: FileStreamLimits,
     ) -> Self {
+        let demux = Demux::new(container, &limits.mp4);
         Self {
             container,
             program,
@@ -392,7 +461,7 @@ impl StreamingFileSession {
             max_loops,
             pace,
             limits,
-            demux: Some(Demux::new(container)),
+            demux: Some(demux),
             phase: Phase::Streaming,
             established: false,
             announced_specs: None,
@@ -421,6 +490,21 @@ impl StreamingFileSession {
             Phase::Rewinding => FileDemand::Rewind,
             Phase::Flushing => FileDemand::Wait,
             Phase::Streaming => {
+                if self.container == StreamContainer::Mp4 {
+                    let Some(demux) = self.demux.as_ref() else {
+                        return FileDemand::Eof;
+                    };
+                    let Some((offset, len)) = demux.at_demand() else {
+                        return FileDemand::Eof;
+                    };
+                    if self.start_window_closed()
+                        && (self.queued_bytes() >= self.limits.max_queued_bytes
+                            || self.queued_media_time() >= self.limits.read_ahead.as_secs_f64())
+                    {
+                        return FileDemand::Wait;
+                    }
+                    return FileDemand::BytesAt { offset, len };
+                }
                 if !self.start_window_closed() {
                     // Before the program is announced the hold cap must not
                     // stop the feed short of the start window's own byte cap,
@@ -462,6 +546,16 @@ impl StreamingFileSession {
     /// emitted.
     pub fn drained(&self) -> bool {
         self.done
+    }
+
+    /// Acknowledge the caller's rewind: the next demand describes the new
+    /// pass. A container that reads by absolute byte range needs this after it
+    /// has repositioned the file and before it reads again; a forward-only
+    /// container moves on by feeding its first chunk.
+    pub fn rewound(&mut self) {
+        if self.phase == Phase::Rewinding {
+            self.phase = Phase::Streaming;
+        }
     }
 
     fn queued_bytes(&self) -> usize {
@@ -648,8 +742,18 @@ impl StreamingFileSession {
         let Some(demux) = self.demux.as_mut() else {
             return Ok(());
         };
-        demux.feed(bytes)?;
+        demux.feed(FileInput::Bytes(bytes))?;
         self.bytes_fed = self.bytes_fed.saturating_add(bytes.len());
+        self.drain_events()
+    }
+
+    fn feed_at(&mut self, offset: u64, bytes: Bytes) -> Result<(), FileReaderError> {
+        let fed = bytes.len();
+        let Some(demux) = self.demux.as_mut() else {
+            return Ok(());
+        };
+        demux.feed(FileInput::At { offset, bytes })?;
+        self.bytes_fed = self.bytes_fed.saturating_add(fed);
         self.drain_events()
     }
 
@@ -722,7 +826,7 @@ impl StreamingFileSession {
         }
         self.tracks.clear();
         self.pass_offsets = self.next_offsets.clone();
-        self.demux = Some(Demux::new(self.container));
+        self.demux = Some(Demux::new(self.container, &self.limits.mp4));
         self.phase = Phase::Rewinding;
         self.bytes_fed = 0;
         self.tracks_resolved = false;
@@ -806,6 +910,7 @@ impl Stage for StreamingFileSession {
         }
         match input {
             FileInput::Bytes(bytes) => self.feed_bytes(bytes),
+            FileInput::At { offset, bytes } => self.feed_at(offset, bytes),
             FileInput::Eof => self.feed_eof(),
         }
     }
@@ -845,7 +950,8 @@ impl Stage for StreamingFileSession {
 
     fn demand(&self) -> Demand {
         match self.file_demand() {
-            FileDemand::Bytes | FileDemand::Rewind => Demand::new(0),
+            FileDemand::Bytes | FileDemand::Rewind | FileDemand::Eof => Demand::new(0),
+            FileDemand::BytesAt { offset, len } => Demand::at(offset, len),
             FileDemand::Wait | FileDemand::Done => Demand::saturated(),
         }
     }

@@ -1,6 +1,7 @@
 //! `media-doctor` CLI binary.
 
-use std::fs;
+use std::fs::{self, File};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::net::{SocketAddr, UdpSocket};
 use std::process;
 use std::thread;
@@ -12,7 +13,7 @@ use media_doctor::metrics_server::{self, MetricsPublisher, MetricsServerConfig};
 use media_doctor::{
     CcAnomalyCheck, CodecSignallingCheck, Diagnostic, FpsCadenceCheck, InterlaceCheck,
     ParamSetsCheck, PatPmtVersionCheck, PcrCheck, PtsCheck, Report, Scte35Check, SyncByteCheck,
-    WatchState, check_container_codec, check_dash_mpd, check_hls_playlist, run_all,
+    WatchState, check_container_codec, check_dash_mpd, check_hls_playlist, check_mp4_file, run_all,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -146,22 +147,122 @@ fn classify_input(bytes: &[u8]) -> InputKind {
 /// (ETSI EN 300 421 §5.2.2 / BDAV).
 const MAX_WRAPPED_STRIDE: usize = 208;
 
+/// How a bounded leading prefix routes the input.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Routed {
+    /// Run the TS diagnostics over the whole file.
+    Ts,
+    /// Stream the container checks over the file.
+    Mp4,
+    /// Read the whole file and run the container checks.
+    Other,
+}
+
+/// Largest prefix read to route an input: 4 MiB.
+const PROBE_PREFIX_MAX: usize = 4 << 20;
+
 fn run_check(args: &CheckArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = fs::read(&args.input)?;
+    let mut file = File::open(&args.input)?;
+    let len = file.metadata()?.len();
+    let routed = match probe_file(&mut file, len)? {
+        Some(probe) => route_probe(&probe),
+        None => Routed::Other,
+    };
     let mut report = Report::new();
 
-    match classify_input(&bytes) {
-        InputKind::TransportStream(realigned) => run_ts_checks(&realigned, &mut report),
+    match routed {
+        Routed::Ts => {
+            let bytes = fs::read(&args.input)?;
+            match classify_input(&bytes) {
+                InputKind::TransportStream(realigned) => run_ts_checks(&realigned, &mut report),
+                InputKind::Container => check_container_codec(&bytes, &mut report),
+            }
+        }
+        // An MP4 is checked by streaming its byte ranges through the demux
+        // stage; the file is never read whole.
+        Routed::Mp4 => check_mp4_input(&mut file, len, &mut report)?,
         // Borrows `bytes` directly — the container path needs no realigned
         // copy, so this never clones the input.
-        InputKind::Container => check_container_codec(&bytes, &mut report),
+        Routed::Other => {
+            let bytes = fs::read(&args.input)?;
+            check_container_codec(&bytes, &mut report);
+        }
     }
 
     emit_check_report(&report, args.json)
 }
 
-/// Run every transport-stream diagnostic over already-aligned 188-byte
-/// packets.
+/// The routing decision a probe verdict names.
+fn route_probe(probe: &container_probe::Probe) -> Routed {
+    use container_probe::{Format, Probe};
+    match probe {
+        Probe::Identified {
+            format: Format::MpegTs,
+            ..
+        } => Routed::Ts,
+        Probe::Identified {
+            format: Format::Isobmff,
+            ..
+        } => Routed::Mp4,
+        // A tie that includes TS keeps the TS diagnostics, as the whole-file
+        // classifier does; any other tie reads whole.
+        Probe::Ambiguous { candidates, .. }
+            if candidates.iter().any(|c| c.format == Format::MpegTs) =>
+        {
+            Routed::Ts
+        }
+        _ => Routed::Other,
+    }
+}
+
+/// Probe the file's leading prefix, growing it while the probe asks for more
+/// and the file has more to give.
+fn probe_file(file: &mut File, len: u64) -> io::Result<Option<container_probe::Probe>> {
+    let limit = usize::try_from(len)
+        .unwrap_or(usize::MAX)
+        .min(PROBE_PREFIX_MAX);
+    if limit == 0 {
+        return Ok(None);
+    }
+    let mut want = limit.clamp(1, container_probe::DEFAULT_BUDGET);
+    loop {
+        file.seek(SeekFrom::Start(0))?;
+        let mut prefix = vec![0u8; want];
+        let read = read_full(file, &mut prefix)?;
+        prefix.truncate(read);
+        let probe = container_probe::probe_with_budget(&prefix, prefix.len());
+        match &probe {
+            container_probe::Probe::Insufficient { need_at_least, .. } if prefix.len() < limit => {
+                let next = (*need_at_least).min(limit);
+                if next <= prefix.len() {
+                    return Ok(Some(probe));
+                }
+                want = next;
+            }
+            _ => return Ok(Some(probe)),
+        }
+    }
+}
+
+/// Read until `buffer` is full or the file ends.
+fn read_full(file: &mut File, buffer: &mut [u8]) -> io::Result<usize> {
+    let mut filled = 0usize;
+    while filled < buffer.len() {
+        let read = file.read(&mut buffer[filled..])?;
+        if read == 0 {
+            break;
+        }
+        filled += read;
+    }
+    Ok(filled)
+}
+
+/// Run the container codec checks over an MP4 by driving the seekable demux
+/// stage with bounded reads.
+fn check_mp4_input(file: &mut File, len: u64, report: &mut Report) -> io::Result<()> {
+    check_mp4_file(file, len, report)
+}
+
 fn run_ts_checks(ts: &[u8], report: &mut Report) {
     let diagnostics: &[&dyn Diagnostic] = &[
         &SyncByteCheck,

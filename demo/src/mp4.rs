@@ -2,7 +2,8 @@
 //! #928.
 //!
 //! Unlike the TS path (`lib.rs`'s `analyze_impl`), `transmux` demuxes the
-//! container itself ([`transmux::Fmp4Demux`]): this module only *walks* the
+//! container itself ([`transmux::mp4_demux::Mp4Demux`]): this module only
+//! *walks* the
 //! resulting [`transmux::Media`]/[`transmux::Track`] IR to report, per track,
 //! the codec identity transmux already recovered from the init segment's
 //! decoder-config boxes (`avcC`/`hvcC`/`vvcC`/`av1C`/`vpcC`/`esds`/`dOps`/
@@ -12,26 +13,19 @@
 //! own configuration records (via the crate's own public `rfc6381()`
 //! builders, never a re-derived literal).
 //!
-//! [`transmux::Fmp4Demux`] only reads `moov` + `moof`/`mdat` fragments (ISO/IEC
-//! 14496-12:2026 §8.8); a classic *progressive* (single-file, non-fragmented,
-//! `stbl`-sample-table) MP4 — the common shape a phone or a `faststart`
-//! remux produces, with no `moof` at all — needs the sibling
-//! [`transmux::ProgressiveDemux`] (ISO/IEC 14496-12:2026 §8.5-§8.7) instead. This
-//! module picks between the two per input by checking for a top-level `moof`
-//! box ([`has_top_level_moof`]) rather than guessing from a demux failure,
-//! since an all-`moov`-no-`moof` input is not an *error* for [`Fmp4Demux`] —
-//! it successfully returns a `Media` with correct codec identity but zero
-//! samples per track (no fragments to read), which would silently look like
-//! a working but sample-less file instead of "wrong demuxer for this shape".
+//! [`transmux::mp4_demux::Mp4Demux`] reads both a fragmented file (`moov` +
+//! `moof`/`mdat`, ISO/IEC 14496-12:2026 §8.8) and a classic *progressive*
+//! one (a single file with `stbl` sample tables, §8.5-§8.7) — the shape a
+//! phone or a `faststart` remux produces. The demo is handed the whole file
+//! in browser memory, so it drives the seekable stage over that image.
 
-use broadcast_common::{Parse, Unpackage};
+use broadcast_common::{Parse, Stage, Timestamp};
 use serde::Serialize;
-
 use transmux::codec_config_ext::{HevcRecordCodecInfo, VvcRecordCodecInfo};
-use transmux::ir::{CodecConfig, Media, Track};
+use transmux::ir::{AbandonReason, CodecConfig, Media, SkippedTrack, Track};
+use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use transmux::sps::rfc6381_avc1;
-use isobmff::BoxIter;
-use transmux::{AudioSpecificConfig, Fmp4Demux, ProgressiveDemux};
+use transmux::{AudioSpecificConfig, DemuxEvent};
 
 /// One track's codec identity + coarse throughput stats.
 #[derive(Serialize)]
@@ -347,17 +341,94 @@ fn build_report(
     }
 }
 
-/// ISO/IEC 14496-12:2026 §8.8.4: whether any top-level box in `bytes` is a
-/// `moof` (movie fragment) — the presence test that decides fragmented
-/// ([`Fmp4Demux`]) vs. progressive ([`ProgressiveDemux`]) demux below.
-/// Malformed/truncated boxes encountered while walking simply end the scan
-/// (`BoxIter` stops yielding on the first parse error) rather than
-/// panicking; a file that turns out unreadable either way surfaces as a
-/// `parse_error` from whichever demuxer is then tried.
-fn has_top_level_moof(bytes: &[u8]) -> bool {
-    BoxIter::new(bytes)
-        .filter_map(|r| r.ok())
-        .any(|box_ref| box_ref.header.box_type.is(b"moof"))
+/// Demux an in-memory MP4 image through the streaming stage.
+///
+/// The demo is handed the whole file in browser memory, so it drives the
+/// seekable stage over that image; no second copy of the file is made.
+fn demux_mp4(bytes: &[u8]) -> Result<Media, transmux::Error> {
+    let total_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let config = Mp4DemuxConfig::default().with_total_len(Some(total_len));
+    let mut demux = Mp4Demux::seekable(config);
+    loop {
+        let demand = demux.demand();
+        let Some(offset) = demand.offset else {
+            break;
+        };
+        let start = usize::try_from(offset).unwrap_or(usize::MAX);
+        let end = start.saturating_add(demand.want_bytes).min(bytes.len());
+        let slice = bytes.get(start..end).unwrap_or(&[]);
+        demux.feed(
+            Mp4Input::At {
+                offset,
+                bytes: slice.to_vec().into(),
+            },
+            Timestamp::ZERO,
+        )?;
+    }
+    demux.finish()?;
+    if demux.is_fragmented().is_none() {
+        return Err(transmux::Error::UnexpectedBox { expected: "moov" });
+    }
+    let movie_timescale = demux
+        .movie_timescale()
+        .unwrap_or(transmux::VIDEO_CLOCK_TIMESCALE);
+    let mut tracks: Vec<Track> = Vec::new();
+    let mut index: std::collections::BTreeMap<transmux::TrackId, usize> =
+        std::collections::BTreeMap::new();
+    let mut skipped = Vec::new();
+    let mut degraded = Vec::new();
+    while let Some(event) = demux.poll() {
+        match event {
+            DemuxEvent::TrackAdded(spec) => {
+                index.insert(spec.track_id, tracks.len());
+                tracks.push(Track::new(spec, Vec::new()));
+            }
+            DemuxEvent::TrackUpdated(spec) => {
+                if let Some(&at) = index.get(&spec.track_id) {
+                    tracks[at].spec = spec;
+                }
+            }
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
+                if let Some(&at) = index.get(&track_id) {
+                    tracks[at].samples.push(sample);
+                }
+            }
+            DemuxEvent::TrackAbandoned {
+                track_id, reason, ..
+            } => skipped.push(skipped_from_reason(reason, track_id)),
+            DemuxEvent::InputDegraded { kind, .. } => degraded.push(kind),
+            _ => {}
+        }
+    }
+    let mut media = Media::new(tracks, movie_timescale);
+    media.skipped = skipped;
+    media.degraded = degraded;
+    Ok(media)
+}
+
+fn skipped_from_reason(reason: AbandonReason, track_id: Option<transmux::TrackId>) -> SkippedTrack {
+    let (fourcc, text) = match reason {
+        AbandonReason::UnsupportedSampleEntry { fourcc } => {
+            let fourcc = String::from_utf8_lossy(&fourcc).into_owned();
+            let text =
+                format!("sample entry '{fourcc}' has no CodecConfig reconstruction in this crate");
+            (fourcc, text)
+        }
+        AbandonReason::UnsupportedCodec => (
+            String::from("unknown"),
+            "sample entry 'unknown' has no CodecConfig reconstruction in this crate".into(),
+        ),
+        AbandonReason::MalformedTrack { expected } => (
+            String::from("unknown"),
+            format!("unexpected box: expected {expected}"),
+        ),
+        other => (String::from("unknown"), other.name().into()),
+    };
+    let mut skipped = SkippedTrack::new(fourcc, text);
+    skipped.track_id = track_id;
+    skipped
 }
 
 /// Run the MP4/CMAF codec-identity pass over a raw ISO-BMFF byte buffer.
@@ -384,22 +455,7 @@ fn has_top_level_moof(bytes: &[u8]) -> bool {
 /// surfaces honestly via `skipped_tracks` — this analyzer does not invent an
 /// identity transmux itself cannot recover.
 pub fn analyze_mp4_impl(bytes: &[u8]) -> Mp4Report {
-    let result = if has_top_level_moof(bytes) {
-        Fmp4Demux::new().unpackage(bytes)
-    } else {
-        // The inherent `Unpackage::unpackage` path never consults
-        // `max_bytes` (it borrows the caller's slice directly rather than
-        // accumulating into an owned buffer) — see `ProgressiveDemux::new`'s
-        // doc comment — so any non-zero cap is equally correct here; using
-        // the input's own length keeps the value self-explanatory rather
-        // than an arbitrary constant.
-        match ProgressiveDemux::new(bytes.len().max(1)) {
-            Ok(mut demux) => demux.unpackage(bytes),
-            Err(e) => Err(e),
-        }
-    };
-
-    let mut media = match result {
+    let mut media = match demux_mp4(bytes) {
         Ok(media) => media,
         Err(e) => {
             return Mp4Report {

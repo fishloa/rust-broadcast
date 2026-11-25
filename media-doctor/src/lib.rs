@@ -14,6 +14,8 @@ mod diagnostics;
 mod hls_validator;
 #[cfg(feature = "net")]
 pub mod metrics_server;
+#[cfg(feature = "std")]
+pub mod mp4_stream;
 mod playlist;
 mod report;
 #[cfg(feature = "net")]
@@ -22,7 +24,7 @@ mod watch;
 #[cfg(feature = "metrics")]
 mod watch_metrics;
 
-pub use container_codec::check_container_codec;
+pub use container_codec::{ContainerCodecChecker, check_container_codec};
 #[cfg(all(feature = "std", feature = "dash"))]
 pub use dash_validator::check_dash_mpd;
 pub use diagnostics::cc_anomaly::CcAnomalyCheck;
@@ -36,6 +38,8 @@ pub use diagnostics::pts_check::PtsCheck;
 pub use diagnostics::scte35_check::Scte35Check;
 pub use diagnostics::sync_byte::SyncByteCheck;
 pub use hls_validator::check_hls_playlist;
+#[cfg(feature = "std")]
+pub use mp4_stream::check_mp4_file;
 pub use playlist::check_playlist;
 pub use report::{Finding, Location, Report, Severity, StreamLocator};
 pub use watch::{ConformanceSample, PidFlag, WatchSnapshot, WatchState};
