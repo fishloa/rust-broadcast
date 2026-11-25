@@ -224,7 +224,9 @@ impl TrackFragmentLayout {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FragmentLayout {
-    /// `mfhd.sequence_number` (§8.8.2).
+    /// `mfhd.sequence_number` (§8.8.2) the source states. The writer's
+    /// [`FragmentOptions::sequence_number`](crate::writer::FragmentOptions)
+    /// is what it writes, so a caller copying a source sets both.
     pub sequence_number: u32,
     /// The `traf`s, in the order they appear in `children`.
     pub tracks: Vec<TrackFragmentLayout>,
@@ -434,4 +436,67 @@ impl TrackFragmentLayout {
 fn uniform<T: PartialEq + Copy>(mut values: impl Iterator<Item = T>) -> Option<T> {
     let first = values.next()?;
     values.all(|value| value == first).then_some(first)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The layout record is plain data, so a reader's fragment step stays
+    /// usable across threads.
+    #[test]
+    fn every_layout_type_is_send_and_sync() {
+        fn assert_sync<T: Send + Sync>() {}
+        assert_sync::<RunFields>();
+        assert_sync::<RunLayout>();
+        assert_sync::<TrackFragmentHeaderLayout>();
+        assert_sync::<TrackFragmentLayout>();
+        assert_sync::<FragmentLayout>();
+        assert_sync::<TfraLengthSizes>();
+        assert_sync::<MfraTrackForm>();
+        assert_sync::<MfraForm>();
+        assert_sync::<SegmentIndexForm>();
+        assert_sync::<FragmentIndex>();
+    }
+
+    /// The `tr_flags` round trip: the bits a record carries are exactly the
+    /// bits the parsed word states.
+    #[test]
+    fn run_fields_round_trip_their_flags() {
+        let all = RunFields {
+            duration: true,
+            size: true,
+            flags: true,
+            composition_offset: true,
+        };
+        assert_eq!(RunFields::from_flags(all.flags()), all);
+        let none = RunFields::default();
+        assert_eq!(none.flags(), 0);
+        assert_eq!(RunFields::from_flags(0), none);
+    }
+
+    /// A `tfhd` that states an absolute base is recorded against its `moof`,
+    /// so the same fragment at another offset still describes itself.
+    #[test]
+    fn a_base_data_offset_is_recorded_relative_to_its_moof() {
+        let tfhd = TrackFragmentHeaderBox {
+            flags: 0,
+            track_id: TrackId::new(1),
+            base_data_offset: Some(5_000),
+            sample_description_index: None,
+            default_sample_duration: Some(40),
+            default_sample_size: None,
+            default_sample_flags: None,
+        };
+        let layout = TrackFragmentHeaderLayout::from_tfhd(&tfhd, 5_000).expect("recorded");
+        assert_eq!(layout.base_data_offset, Some(0));
+        // The composition of the two is the absolute base again.
+        assert_eq!(layout.default_sample_duration, Some(40));
+        assert_eq!(
+            layout.flags, 0,
+            "presence lives in the options, not in the flags"
+        );
+        let elsewhere = TrackFragmentHeaderLayout::from_tfhd(&tfhd, 4_000).expect("recorded");
+        assert_eq!(elsewhere.base_data_offset, Some(1_000));
+    }
 }

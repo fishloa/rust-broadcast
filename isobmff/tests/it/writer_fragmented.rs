@@ -8,7 +8,7 @@
 //! `MovieFragmentBox` + `frag_offsets` so every sample's bytes, duration, sync
 //! flag and composition offset is compared with the source.
 
-use broadcast_common::Parse;
+use broadcast_common::{Parse, Serialize};
 use isobmff::box_types::{BoxIter, find_box};
 use isobmff::init_segment::MovieBox;
 use isobmff::limits::Limits;
@@ -1170,4 +1170,77 @@ fn seek_to_moof(bytes: &[u8], track: TrackId, time: u64) -> u64 {
             seeked = true;
         }
     }
+}
+
+/// The boxes between the last fragment's media and this one are carried in the
+/// layout and written ahead of the `styp`/`moof`.
+#[test]
+fn a_layout_carries_the_boxes_between_fragments() {
+    let filler = isobmff::box_support::OpaqueBox::new(*b"free", vec![0u8; 8]);
+    let (_, mut layout) = canonical_fragment();
+    layout.before = vec![filler.clone()];
+    let (_, fragment, _) = write_with_layout(&layout, 0);
+    let expected = filler.try_to_bytes().expect("free box bytes");
+    assert_eq!(
+        &fragment.bytes[..expected.len()],
+        expected.as_slice(),
+        "the carried box precedes the moof"
+    );
+    assert_eq!(
+        &fragment.bytes[expected.len() + 4..expected.len() + 8],
+        b"moof",
+        "the moof follows the carried box"
+    );
+    assert_eq!(
+        fragment.moof_offset,
+        u64::try_from(expected.len()).expect("length"),
+        "the moof starts after the carried box"
+    );
+}
+
+/// The reader records a box that sits between two fragments in the layout of
+/// the fragment it precedes, so the rewrite can put it back.
+#[test]
+fn the_reader_records_a_box_between_two_fragments() {
+    let plain = sample_file(2, 2, false, false, false);
+    let offsets = moof_offsets(&plain);
+    let second = usize::try_from(offsets[1]).expect("offset");
+    let filler = isobmff::box_support::OpaqueBox::new(*b"free", vec![0u8; 8]);
+    let bytes = filler.try_to_bytes().expect("free box bytes");
+    let mut with_free = plain[..second].to_vec();
+    with_free.extend_from_slice(&bytes);
+    with_free.extend_from_slice(&plain[second..]);
+
+    let mut reader = Reader::new(
+        ReaderConfig::default()
+            .with_total_len(Some(u64::try_from(with_free.len()).expect("length")))
+            .with_order(SampleOrder::File),
+    );
+    let mut carried: Vec<usize> = Vec::new();
+    loop {
+        match reader.step().expect("step") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end())
+                    .expect("end")
+                    .min(with_free.len());
+                reader
+                    .supply(range.offset, &with_free[start..end])
+                    .expect("supply");
+            }
+            Step::Fragment(info) => {
+                carried.extend(info.layout.before.iter().map(|box_| box_.data.len()));
+                if info.layout.tracks.is_empty() {
+                    panic!("a fragment recorded no track layout");
+                }
+            }
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    assert_eq!(
+        carried,
+        vec![8],
+        "only the second fragment carries the box before it"
+    );
 }

@@ -873,6 +873,7 @@ impl Reader {
         self.fragment = None;
         self.open_box = None;
         self.last_fragment = None;
+        self.between.clear();
         self.pending = None;
         self.pos = unit_end;
         self.highest_requested = unit_end;
