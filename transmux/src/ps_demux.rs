@@ -84,11 +84,9 @@ use crate::nal::{
 use crate::pipeline::CodecConfig;
 use crate::ts_demux::{
     AVC_SPS_CONFIG_MIN_LEN, AVC_SPS_CONSTRAINT_FLAGS_OFFSET, AVC_SPS_LEVEL_IDC_OFFSET,
-    ESDS_VIDEO_ES_ID, MPEG2_PICTURE_START_CODE, OTI_MPEG2_VIDEO_MAIN, STREAM_TYPE_VISUAL,
-    mpeg2_is_sync,
+    MPEG2_PICTURE_START_CODE, mpeg2_is_sync,
 };
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
-use isobmff::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox, SLConfigDescriptor};
 use isobmff::nalu_types::{AvcPps, AvcSps};
 
 // -- stream_id -> codec (ISO/IEC 13818-1 Table 2-22) --------------------------
@@ -746,7 +744,7 @@ impl Stream {
                 track_id,
                 VIDEO_TIMESCALE,
                 CodecConfig::Mpeg2Video {
-                    esds: mpeg2_esds(),
+                    esds: crate::ts_demux::mpeg2_video_esds(),
                     width: state.width,
                     height: state.height,
                 },
@@ -1511,25 +1509,6 @@ fn au_is_idr(access_unit: &[u8]) -> bool {
         nal.first()
             .is_some_and(|header| header & NAL_TYPE_MASK == AVC_NAL_IDR)
     })
-}
-
-/// The `esds` carrying the MPEG-2 Main Visual object type (ISO/IEC 14496-1
-/// Table 5, `OTI_MPEG2_VIDEO_MAIN` = 0x61).
-fn mpeg2_esds() -> EsdsBox {
-    EsdsBox::new(ESDescriptor::new(
-        ESDS_VIDEO_ES_ID,
-        0,
-        Some(DecoderConfigDescriptor::new(
-            OTI_MPEG2_VIDEO_MAIN,
-            STREAM_TYPE_VISUAL,
-            false,
-            0,
-            0,
-            0,
-            None,
-        )),
-        Some(SLConfigDescriptor::predefined_two()),
-    ))
 }
 
 fn limit_error(what: &'static str) -> Error {
