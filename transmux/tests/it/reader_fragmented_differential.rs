@@ -11,7 +11,6 @@ use isobmff::sample_table::SampleRef;
 use isobmff::{Reader, ReaderConfig, SampleOrder, Step};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use transmux::cenc_decrypt::CencDecryptor;
 use transmux::pipeline::CodecConfig;
 
 /// Fragmented fixtures the walk must compare: a checkout with no usable files
@@ -297,26 +296,22 @@ fn the_reader_agrees_with_the_fragmented_demuxer() {
 }
 
 #[test]
-fn the_reader_agrees_with_the_cenc_harvest() {
+fn the_reader_aux_reaches_the_ir_per_sample() {
     let mut cenc_fixtures = 0usize;
     let mut compared_samples = 0usize;
     for (key, bytes) in candidates() {
         if !is_fragmented(&bytes) {
             continue;
         }
-        let Ok(decryptor) = CencDecryptor::from_fmp4(&bytes) else {
+        let Ok(media) = test_harness::collect::media_from_mp4(
+            bytes.as_slice(),
+            test_harness::collect::CollectMode::Seekable,
+        ) else {
             continue;
         };
-        let entries = decryptor.sample_entries();
-        if entries.is_empty() {
-            continue;
-        }
         let Ok((_, rows)) = reader_rows(&bytes) else {
             continue;
         };
-        // The harvest reports the *first* protected track in `moov` order; find
-        // it by the one reader track whose per-sample auxiliary map has the
-        // same length and IV widths.
         let mut by_track: BTreeMap<u32, Vec<SampleRef>> = BTreeMap::new();
         for sample in &rows {
             by_track
@@ -324,46 +319,47 @@ fn the_reader_agrees_with_the_cenc_harvest() {
                 .or_default()
                 .push(sample.clone());
         }
-        let mut matched = None;
-        for (track, samples) in &by_track {
-            let aux: Vec<_> = samples
+        for track in &media.tracks {
+            let Some(protected) = track
+                .samples
                 .iter()
-                .filter_map(|sample| sample.aux.as_ref())
-                .collect();
-            if aux.len() != entries.len() {
+                .map(|sample| sample.protection.as_ref())
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            let Some(samples) = by_track.get(&track.spec.track_id.value()) else {
+                continue;
+            };
+            let Some(aux) = samples
+                .iter()
+                .map(|sample| sample.aux.as_ref())
+                .collect::<Option<Vec<_>>>()
+            else {
+                continue;
+            };
+            if aux.len() != protected.len() || aux.is_empty() {
                 continue;
             }
-            if aux.iter().zip(entries).all(|(aux, entry)| {
-                aux.initialization_vector.len() == entry.initialization_vector.len()
-            }) {
-                matched = Some((*track, samples.clone()));
-                break;
+            for (index, (aux, sample)) in aux.iter().zip(protected.iter()).enumerate() {
+                assert_eq!(
+                    aux.initialization_vector, sample.iv,
+                    "{key}: track {} sample {index} IV",
+                    track.spec.track_id
+                );
+                assert_eq!(
+                    aux.subsamples, sample.subsamples,
+                    "{key}: track {} sample {index} subsamples",
+                    track.spec.track_id
+                );
+                compared_samples += 1;
             }
+            cenc_fixtures += 1;
         }
-        let Some((track, samples)) = matched else {
-            continue;
-        };
-        for (sample, entry) in samples.iter().zip(entries) {
-            let Some(aux) = sample.aux.as_ref() else {
-                panic!("{key}: track {track} sample {} has no aux", sample.index);
-            };
-            assert_eq!(
-                aux.initialization_vector, entry.initialization_vector,
-                "{key}: track {track} sample {} IV",
-                sample.index
-            );
-            assert_eq!(
-                aux.subsamples, entry.subsamples,
-                "{key}: track {track} sample {} subsamples",
-                sample.index
-            );
-            compared_samples += 1;
-        }
-        cenc_fixtures += 1;
     }
     assert!(
         cenc_fixtures >= MIN_CENC_FIXTURES,
-        "only {cenc_fixtures} CENC fixtures compared"
+        "only {cenc_fixtures} CENC tracks compared"
     );
     assert!(compared_samples > 0, "no CENC sample compared");
 }

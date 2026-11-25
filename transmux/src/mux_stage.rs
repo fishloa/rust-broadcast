@@ -55,7 +55,7 @@ pub enum MuxOutput {
     /// An initialisation segment.
     Init(Bytes),
     /// One finished media segment and its summary.
-    Segment(SegmentOut),
+    Segment(Box<SegmentOut>),
     /// A rendered playlist or manifest.
     Text(String),
 }
@@ -86,7 +86,9 @@ pub struct TrackPart {
     pub duration: u64,
     /// Ticks per second of [`Self::start`] and [`Self::duration`].
     pub timescale: u32,
-    /// This track's bytes in the segment.
+    /// This track's bytes in the segment: its own fragment bytes where the
+    /// container separates tracks, its coded sample bytes where it multiplexes
+    /// them (an MPEG-2 TS segment).
     pub bytes: u64,
     /// The samples this track contributed to the segment.
     pub samples: u32,

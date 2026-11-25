@@ -663,6 +663,7 @@ pub struct Reader {
     fragmented: bool,
     trex: Vec<TrackExtendsBox>,
     crypto: Vec<Option<TrackCrypto>>,
+    progressive_iv_sizes: Vec<Option<u8>>,
     decode_times: Vec<u64>,
     sample_counts: Vec<u32>,
     fragments: VecDeque<FragmentState>,
@@ -703,6 +704,7 @@ impl Reader {
             fragmented: false,
             trex: Vec::new(),
             crypto: Vec::new(),
+            progressive_iv_sizes: Vec::new(),
             decode_times: Vec::new(),
             sample_counts: Vec::new(),
             fragments: VecDeque::new(),
@@ -947,7 +949,13 @@ impl Reader {
     #[must_use]
     pub fn plan(&self) -> Option<SamplePlan<'_>> {
         self.movie.as_ref().map(|movie| {
-            SamplePlan::new(movie, &self.tracks, self.config.total_len, &self.top_level)
+            SamplePlan::new(
+                movie,
+                &self.tracks,
+                self.config.total_len,
+                &self.top_level,
+                &self.progressive_iv_sizes,
+            )
         })
     }
 
@@ -1710,6 +1718,7 @@ impl Reader {
         let mut tracks = Vec::with_capacity(movie.tracks.len());
         let mut cursors = Vec::new();
         let mut crypto = Vec::with_capacity(movie.tracks.len());
+        let mut progressive_iv_sizes = Vec::with_capacity(movie.tracks.len());
         let mut decode_times = Vec::with_capacity(movie.tracks.len());
         let mut sample_counts = Vec::with_capacity(movie.tracks.len());
         for (index, trak) in movie.tracks.iter().enumerate() {
@@ -1720,11 +1729,15 @@ impl Reader {
             let info = build_track_info(trak, raw, self.config.registry.as_ref())?;
             let mut declared_samples = 0u32;
             if let Some(stbl) = sample_table(trak) {
-                let state = CursorState::new(
+                let iv_size = track_crypto
+                    .as_ref()
+                    .map(|crypto| crypto.tenc.default_per_sample_iv_size);
+                let state = CursorState::new_with_aux(
                     stbl,
                     info.track_id,
                     &self.config.limits,
                     self.config.total_len,
+                    iv_size,
                 )?;
                 declared_samples = state.remaining();
                 cursors.push(CursorSlot {
@@ -1732,6 +1745,11 @@ impl Reader {
                     state,
                 });
             }
+            progressive_iv_sizes.push(
+                track_crypto
+                    .as_ref()
+                    .map(|crypto| crypto.tenc.default_per_sample_iv_size),
+            );
             crypto.push(track_crypto);
             decode_times.push(0);
             sample_counts.push(declared_samples);
@@ -1763,6 +1781,7 @@ impl Reader {
         self.tracks = tracks;
         self.cursors = cursors;
         self.crypto = crypto;
+        self.progressive_iv_sizes = progressive_iv_sizes;
         self.decode_times = decode_times;
         self.sample_counts = sample_counts;
         self.emitted_tracks = false;

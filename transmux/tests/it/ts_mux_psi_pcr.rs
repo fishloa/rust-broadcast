@@ -12,8 +12,9 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use crate::ts_mux_stage;
 use broadcast_common::Parse;
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::{Stage, Unpackage};
 use dvb_si::tables::pmt::PmtSection;
 use isobmff::ObjectTypeIndication;
 use isobmff::mpegh::MHADecoderConfigurationRecord;
@@ -21,7 +22,7 @@ use mpeg_ts::ts::SectionReassembler;
 use transmux::ir::DataIdentity;
 use transmux::ir::{Track, TrackId, TrackSpec};
 use transmux::pipeline::{CodecConfig, DataCarriage};
-use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, StreamingTsMux, TsDemux, TsMux};
+use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, TsDemux, TsMuxStage};
 
 const PKT: usize = 188;
 const PAT_PID: u16 = 0x0000;
@@ -106,7 +107,7 @@ fn pmt_entries(ts: &[u8]) -> Vec<(u8, u16)> {
 /// Mux one track (with a single sample) and return `(output, PMT entries)`.
 fn mux_one(config: CodecConfig, sample: Sample) -> (Vec<u8>, Vec<(u8, u16)>) {
     let media = Media::new(vec![track(1, config, vec![sample])], timescale(90_000));
-    let out = TsMux::new().package(&media).expect("mux");
+    let out = ts_mux_stage::mux(&media);
     let entries = pmt_entries(&out);
     (out, entries)
 }
@@ -128,9 +129,7 @@ fn mpeg2_video_maps_to_stream_type_0x02() {
         .find(|t| matches!(t.config(), CodecConfig::Mpeg2Video { .. }))
         .expect("MPEG-2 video track in the legacy fixture")
         .clone();
-    let out = TsMux::new()
-        .package(&Media::new(vec![video], media.movie_timescale))
-        .expect("mux");
+    let out = ts_mux_stage::mux(&Media::new(vec![video], media.movie_timescale));
     assert_eq!(
         pmt_entries(&out),
         vec![(0x02, 0x0100)],
@@ -159,9 +158,7 @@ fn mpeg1_and_mpeg2_audio_map_to_0x03_and_0x04() {
         .0;
     assert_eq!(oti, 0x6B, "the legacy fixture's audio is MPEG-1 audio");
 
-    let out = TsMux::new()
-        .package(&Media::new(vec![audio.clone()], media.movie_timescale))
-        .expect("mux MPEG-1 audio");
+    let out = ts_mux_stage::mux(&Media::new(vec![audio.clone()], media.movie_timescale));
     assert_eq!(
         pmt_entries(&out),
         vec![(0x03, 0x0100)],
@@ -177,9 +174,7 @@ fn mpeg1_and_mpeg2_audio_map_to_0x03_and_0x04() {
         .as_mut()
         .expect("decoder config")
         .object_type_indication = ObjectTypeIndication(0x69);
-    let out = TsMux::new()
-        .package(&Media::new(vec![mpeg2], media.movie_timescale))
-        .expect("mux MPEG-2 audio");
+    let out = ts_mux_stage::mux(&Media::new(vec![mpeg2], media.movie_timescale));
     assert_eq!(
         pmt_entries(&out),
         vec![(0x04, 0x0100)],
@@ -244,7 +239,7 @@ fn pmt_over_one_packet_is_split_with_pusi_pointer_and_stuffing() {
         })
         .collect();
     let media = Media::new(tracks, timescale(90_000));
-    let out = TsMux::new().package(&media).expect("mux");
+    let out = ts_mux_stage::mux(&media);
 
     let pmt_packets: Vec<&[u8]> = out
         .chunks_exact(PKT)
@@ -356,36 +351,25 @@ fn pcr90(pkt: &[u8]) -> Option<u64> {
 
 #[test]
 fn psi_interval_getters_round_trip() {
-    assert_eq!(TsMux::new().psi_interval(), Some(DEFAULT_PSI_INTERVAL));
     assert_eq!(
-        TsMux::new().psi_interval(),
+        TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL)).psi_interval(),
+        Some(DEFAULT_PSI_INTERVAL)
+    );
+    assert_eq!(
+        TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL)).psi_interval(),
         Some(Duration::from_millis(100))
     );
     assert_eq!(
-        TsMux::new()
-            .with_psi_interval(Some(Duration::from_millis(250)))
-            .psi_interval(),
+        TsMuxStage::new(Some(Duration::from_millis(250))).psi_interval(),
         Some(Duration::from_millis(250))
     );
-    assert_eq!(TsMux::new().with_psi_interval(None).psi_interval(), None);
-    assert_eq!(
-        StreamingTsMux::new().psi_interval(),
-        Some(Duration::from_millis(100))
-    );
-    assert_eq!(
-        StreamingTsMux::with_psi_interval(Some(Duration::from_millis(250))).psi_interval(),
-        Some(Duration::from_millis(250))
-    );
-    assert_eq!(StreamingTsMux::with_psi_interval(None).psi_interval(), None);
+    assert_eq!(TsMuxStage::new(None).psi_interval(), None);
 }
 
 #[test]
 fn one_repeat_per_interval_of_evenly_spaced_samples() {
     let media = one_hz_video();
-    let out = TsMux::new()
-        .with_psi_interval(Some(Duration::from_millis(100)))
-        .package(&media)
-        .expect("mux");
+    let out = ts_mux_stage::mux_with(&media, Some(Duration::from_millis(100)));
     // 100 samples 100 ms apart: the leading PAT plus one repeat per later
     // sample boundary.
     let pats = pat_starts(&out);
@@ -413,10 +397,7 @@ fn a_dense_sample_grid_repeats_on_the_interval() {
         .clone();
     let samples: Vec<Sample> = (0..250).map(|k| sample_at(k * 3_600, 3_600)).collect();
     let media = Media::new(vec![track(1, config, samples)], timescale(90_000));
-    let out = TsMux::new()
-        .with_psi_interval(Some(Duration::from_millis(100)))
-        .package(&media)
-        .expect("mux");
+    let out = ts_mux_stage::mux_with(&media, Some(Duration::from_millis(100)));
     let pats = pat_starts(&out);
     assert_eq!(
         pats.len(),
@@ -451,11 +432,31 @@ fn streaming_schedule_carries_across_calls() {
     let media = one_hz_video();
     let samples: Vec<Sample> = media.tracks[0].samples.clone();
     let spec = media.tracks[0].spec.clone();
-    let mut mux = StreamingTsMux::with_psi_interval(Some(Duration::from_millis(100)));
+    let mut mux = TsMuxStage::new(Some(Duration::from_millis(100)));
     let mut out = Vec::new();
+    Stage::feed(
+        &mut mux,
+        transmux::mux_stage::MuxInput::Track(Box::new(spec)),
+        broadcast_common::stage::Timestamp::ZERO,
+    )
+    .expect("announce");
     for s in samples {
-        let chunk = Media::new(vec![Track::new(spec.clone(), vec![s])], timescale(90_000));
-        out.extend_from_slice(&mux.package(&chunk).expect("mux chunk"));
+        Stage::feed(
+            &mut mux,
+            transmux::mux_stage::MuxInput::Sample {
+                track: TrackId::new(1),
+                sample: s,
+            },
+            broadcast_common::stage::Timestamp::ZERO,
+        )
+        .expect("mux chunk");
+        while let Some(transmux::mux_stage::MuxOutput::Bytes(chunk)) = Stage::poll(&mut mux) {
+            out.extend_from_slice(&chunk);
+        }
+    }
+    Stage::finish(&mut mux).expect("finish");
+    while let Some(transmux::mux_stage::MuxOutput::Bytes(chunk)) = Stage::poll(&mut mux) {
+        out.extend_from_slice(&chunk);
     }
     // The schedule continues across calls: one PAT per sample boundary, not one
     // per call plus repeats inside a boundary.
@@ -482,10 +483,7 @@ fn no_psi_repeat_inside_an_access_unit() {
         Sample::new(vec![0x55u8; 1200], Some(0), Some(0), Some(9_000), true).expect("valid timing");
     let next = sample_at(9_000, 9_000);
     let media = Media::new(vec![track(1, config, vec![big, next])], timescale(90_000));
-    let out = TsMux::new()
-        .with_psi_interval(Some(Duration::from_millis(100)))
-        .package(&media)
-        .expect("mux");
+    let out = ts_mux_stage::mux_with(&media, Some(Duration::from_millis(100)));
     let pkts: Vec<&[u8]> = out.chunks_exact(PKT).collect();
     for (i, p) in pkts.iter().enumerate() {
         let pid = (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
@@ -523,7 +521,7 @@ fn a_second_video_stream_takes_the_next_stream_id() {
     let mut second = first.clone();
     second.spec.track_id = TrackId::new(2);
     let media = Media::new(vec![first, second], base.movie_timescale);
-    let out = TsMux::new().package(&media).expect("mux");
+    let out = ts_mux_stage::mux(&media);
 
     let mut stream_ids: Vec<(u16, u8)> = Vec::new();
     for p in out.chunks_exact(PKT) {
@@ -581,10 +579,7 @@ fn avc_parameter_sets_go_after_a_leading_access_unit_delimiter() {
         vec![track(1, avc.config().clone(), vec![keyframe])],
         timescale(90_000),
     );
-    let out = TsMux::new()
-        .with_psi_interval(None)
-        .package(&media)
-        .expect("mux");
+    let out = ts_mux_stage::mux_with(&media, None);
 
     // Concatenate the video PID's payloads and strip the PES header.
     let mut pes = Vec::new();
@@ -635,10 +630,7 @@ fn pcr_only_packets_fill_a_one_second_gap_at_40ms() {
         .clone();
     let samples = vec![sample_at(0, 9_000), sample_at(90_000, 9_000)];
     let media = Media::new(vec![track(1, config, samples)], timescale(90_000));
-    let out = TsMux::new()
-        .with_psi_interval(None)
-        .package(&media)
-        .expect("mux");
+    let out = ts_mux_stage::mux_with(&media, None);
     let fillers: Vec<u64> = out
         .chunks_exact(PKT)
         .filter(|p| {
@@ -673,10 +665,7 @@ fn a_gap_of_exactly_the_maximum_inserts_nothing() {
         sample_at(MAX_PCR_INTERVAL_TICKS as i64, 3_600),
     ];
     let media = Media::new(vec![track(1, config, samples)], timescale(90_000));
-    let out = TsMux::new()
-        .with_psi_interval(None)
-        .package(&media)
-        .expect("mux");
+    let out = ts_mux_stage::mux_with(&media, None);
     let fillers = out
         .chunks_exact(PKT)
         .filter(|p| p[3] & 0x10 == 0 && ((u16::from(p[1] & 0x1F) << 8) | u16::from(p[2])) == 0x0100)

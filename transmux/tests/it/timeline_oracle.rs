@@ -15,13 +15,12 @@ use std::process::Command;
 use test_fixtures::process::tool_available;
 use transmux::TrackId;
 
-use broadcast_common::Package;
+use crate::ts_mux_stage;
 use broadcast_common::Unpackage;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
-use transmux::progressive::ProgressiveMux;
 use transmux::ts_demux::TsDemux;
-use transmux::{Repackage, SmoothPackager, TsMux};
+use transmux::{Repackage, SmoothPackager};
 
 // ── ffprobe readings of the input fixture (90 kHz ticks) ────────────────────
 
@@ -161,7 +160,7 @@ fn ts_first_stamps(ts: &[u8]) -> ((i64, i64), (i64, i64)) {
 #[test]
 fn ts_mux_keeps_inter_track_offset() {
     let media = input_media();
-    let out = TsMux::new().package(&media).expect("TsMux");
+    let out = ts_mux_stage::mux(&media);
     let ((v_pts, v_dts), (a_pts, _)) = ts_first_stamps(&out);
     // Every stamp relative to the earliest output DTS must equal the input's
     // relative to its earliest DTS (a common shift is allowed, nothing else).
@@ -191,14 +190,12 @@ fn ts_mux_keeps_inter_track_offset() {
 
 // ── Progressive output ──────────────────────────────────────────────────────
 
-/// C13 (#1020): `ProgressiveMux` must signal each track's start with an edit
-/// list so a player presents audio 0.278667 s after video, as in the input.
+/// C13 (#1020): the progressive muxer must signal each track's start with an
+/// edit list so a player presents audio 0.278667 s after video, as in the input.
 #[test]
 fn progressive_mux_keeps_inter_track_offset() {
     let media = input_media();
-    let out = ProgressiveMux::new(true)
-        .package(&media)
-        .expect("ProgressiveMux");
+    let out = crate::progressive_support::package(&media, true);
     let dir = scratch("progressive");
     let path = dir.join("out.mp4");
     std::fs::write(&path, &out).unwrap();
@@ -225,7 +222,7 @@ fn progressive_mux_keeps_inter_track_offset() {
     if let Some((v, a)) = ffprobe_start_times(&path) {
         assert!(
             ((a - v) - expected).abs() < 1e-5,
-            "ffprobe A/V start offset of ProgressiveMux output {} != input {expected}",
+            "ffprobe A/V start offset of progressive output {} != input {expected}",
             a - v
         );
     }

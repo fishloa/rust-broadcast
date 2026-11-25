@@ -139,14 +139,16 @@ fn abandoned_track(reason: AbandonReason) -> (String, String) {
     }
 }
 
-/// A `DataIdentity::Mp4` track whose sample entry carries a `sinf` box is
-/// CENC/CBCS-protected: this client decrypts AES-128 HLS segments only, never
-/// sample-level encryption, so the track is reported and left out.
+/// A track with `TrackSpec::protection` is CENC/CBCS-protected: this client
+/// decrypts AES-128 HLS segments only, never sample-level encryption, so the
+/// track is reported and left out.
 fn encrypted_data_track(spec: &transmux::TrackSpec) -> Option<AbandonReason> {
-    let transmux::CodecConfig::Data { identity } = &spec.config else {
-        return None;
+    spec.protection.as_ref()?;
+    let fourcc = if spec.config.is_audio() {
+        *b"enca"
+    } else {
+        *b"encv"
     };
-    let fourcc = identity.protected_mp4_entry()?;
     Some(AbandonReason::UnsupportedSampleEntry {
         fourcc,
         detail: Some(String::from(

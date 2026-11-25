@@ -30,7 +30,6 @@
 use std::time::{Duration, Instant};
 
 use crate::support::shared_it::fixture_path;
-use broadcast_common::Package as _;
 use multimux::push::rtsp::RtpWireState;
 use multimux::push::{PushTransport, RtspTransport, RtspTransportConfig};
 use rtsp_runtime::{RtspServerConfig, ServerSession, SessionIdSource};
@@ -38,6 +37,24 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 /// Seconds to wait after RECORD, so its response is read before the first
 /// media packet and every frame lands under the right request.
+/// Mux a whole `Media` through one TS muxer stage.
+fn mux_ts(media: &transmux::Media) -> Vec<u8> {
+    let mut stage = transmux::TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
+    let out = transmux::mux_stage::drive_media(
+        &mut stage,
+        media,
+        broadcast_common::stage::Timestamp::ZERO,
+    )
+    .expect("mux to TS");
+    let mut bytes = Vec::new();
+    for output in out {
+        if let transmux::mux_stage::MuxOutput::Bytes(chunk) = output {
+            bytes.extend_from_slice(&chunk);
+        }
+    }
+    bytes
+}
+
 const BEFORE_MEDIA: Duration = Duration::from_millis(100);
 
 /// Boundary between two recorded requests.
@@ -96,9 +113,7 @@ fn ts_batch() -> Vec<bytes::Bytes> {
                 .is_some_and(|pts| u64::try_from(pts).is_ok_and(|p| p < SECOND))
         });
     }
-    let bytes = transmux::TsMux::new()
-        .package(&second)
-        .expect("re-mux one second");
+    let bytes = mux_ts(&second);
     vec![bytes.into()]
 }
 

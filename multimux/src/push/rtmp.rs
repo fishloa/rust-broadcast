@@ -106,8 +106,8 @@ impl RtmpTransportConfig {
 pub struct RtmpTransport {
     client: Option<rtmp_runtime::io::AsyncRtmpClient<TcpStream>>,
     /// The connection's sample muxer: FLV tag framing, the RTMP chunk stream
-    /// and the tag order all live here, so they continue across batches.
-    muxer: Option<RtmpMuxStage>,
+    /// and the tag order all live here, so they continue across samples.
+    muxer: Option<RtmpPushMux>,
     /// Whether a track-refusal warning has already been emitted. FLV carries
     /// only AVC video and AAC audio, so any other codec is dropped — but
     /// dropping it *silently*, once per batch, is both a data-loss hazard and
@@ -143,6 +143,47 @@ fn drain(muxer: &mut RtmpMuxStage) -> Vec<bytes::Bytes> {
         }
     }
     messages
+}
+
+/// The per-connection RTMP muxer, behind the push egress's
+/// [`MediaMuxer`](crate::push::MediaMuxer): [`RtmpTransport::setup`] creates
+/// the stage and announces its tracks there (that is also where the sequence
+/// headers go out), so [`MediaMuxer::set_tracks`] has nothing left to announce
+/// — the egress refuses a changed set once committed.
+struct RtmpPushMux {
+    stage: RtmpMuxStage,
+}
+
+impl crate::push::MediaMuxer for RtmpPushMux {
+    fn set_tracks(&mut self, _tracks: &[TrackSpec]) -> Result<(), SendMediaError> {
+        Ok(())
+    }
+
+    /// Frame one sample as RTMP messages, all of them already
+    /// chunk-stream-framed.
+    fn encode_sample(
+        &mut self,
+        track: TrackId,
+        sample: &transmux::ir::Sample,
+    ) -> Result<Vec<bytes::Bytes>, SendMediaError> {
+        self.stage
+            .feed(
+                MuxInput::Sample {
+                    track,
+                    sample: sample.clone(),
+                },
+                StageTimestamp::ZERO,
+            )
+            .map_err(|e| SendMediaError::Mux(MuxError::Rtmp(e)))?;
+        Ok(drain(&mut self.stage))
+    }
+
+    fn flush(&mut self) -> Result<Vec<bytes::Bytes>, SendMediaError> {
+        self.stage
+            .feed(MuxInput::Flush, StageTimestamp::ZERO)
+            .map_err(|e| SendMediaError::Mux(MuxError::Rtmp(e)))?;
+        Ok(drain(&mut self.stage))
+    }
 }
 
 /// `carried`'s samples in **decode** order across tracks: every track's own
@@ -311,14 +352,16 @@ impl PushTransport for RtmpTransport {
                 )
                 .map_err(|e| RtmpPushError::Protocol(RtmpProtocolError::Mux(e)))?;
         }
-        self.muxer = Some(muxer);
+        self.muxer = Some(RtmpPushMux { stage: muxer });
         Ok(())
     }
 
     /// The connection's per-sample muxer, so the push egress feeds it one
     /// sample at a time instead of building a one-sample `Media`.
-    fn media_muxer(&mut self) -> Option<&mut RtmpMuxStage> {
-        self.muxer.as_mut()
+    fn media_muxer(&mut self) -> Option<&mut dyn crate::push::MediaMuxer> {
+        self.muxer
+            .as_mut()
+            .map(|muxer| muxer as &mut dyn crate::push::MediaMuxer)
     }
 
     /// Frame `media`'s samples as RTMP messages through the connection's

@@ -13,17 +13,35 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use multimux::config::{AdminSpec, Config, InputSpec, OutputAuthSpec, Route, TsHlsCutPolicy};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
 use transmux::media::{Media, Track};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::{NalCodec, TsDemux, TsMux, access_unit_is_idr};
+use transmux::{NalCodec, TsDemux, access_unit_is_idr};
 
 use crate::support::listener;
 use listener::bind_tcp;
+
+/// Mux a whole `Media` through one TS muxer stage.
+fn mux_ts(media: &transmux::Media) -> Vec<u8> {
+    let mut stage = transmux::TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
+    let out = transmux::mux_stage::drive_media(
+        &mut stage,
+        media,
+        broadcast_common::stage::Timestamp::ZERO,
+    )
+    .expect("mux to TS");
+    let mut bytes = Vec::new();
+    for output in out {
+        if let transmux::mux_stage::MuxOutput::Bytes(chunk) = output {
+            bytes.extend_from_slice(&chunk);
+        }
+    }
+    bytes
+}
 
 const ADMIN_TOKEN: &str = "ts-hls-idr-admin";
 const FIRST_NON_IDR_SYNC: usize = 20;
@@ -74,7 +92,7 @@ fn write_ts(tag: &str) -> PathBuf {
     let (spec, samples) = france2_video();
     let stream = looped_from(&samples, FIRST_NON_IDR_SYNC, LOOP_REPS);
     let media = Media::new(vec![Track::new(spec, stream)], MOVIE_TIMESCALE);
-    let ts = TsMux::new().package(&media).expect("mux looped stream");
+    let ts = mux_ts(&media);
     let path = std::env::temp_dir().join(format!(
         "multimux-ts-hls-idr-{tag}-{}.ts",
         std::process::id()

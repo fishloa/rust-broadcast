@@ -8,6 +8,7 @@ use broadcast_client::{
     AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, ConnId, Event, PauseReason, PlayoutConfig,
     Session, SourceKind, TrackId,
 };
+use broadcast_common::Stage;
 use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
@@ -534,12 +535,13 @@ fn long_stream() -> HashMap<String, Vec<u8>> {
     });
     let mut seg = StreamingTsHlsSegmenter::new(specs, LONG_TARGET_SECS, LONG_WINDOW).unwrap();
     for (t, s) in all {
-        seg.push(t, s).unwrap();
+        feed_sample(&mut seg, t, s);
     }
-    seg.finish().unwrap();
+    Stage::finish(&mut seg).unwrap();
     let mut m = HashMap::new();
-    for s in seg.take_ready() {
-        m.insert(format!("{LIVE_DIR}/{}", s.uri), s.bytes);
+    for s in drain_segments(&mut seg) {
+        let uri = format!("seg{}.ts", s.summary.sequence);
+        m.insert(format!("{LIVE_DIR}/{uri}"), s.bytes.to_vec());
     }
     assert_eq!(m.len(), SEG_URIS.len());
     m
@@ -1198,4 +1200,29 @@ fn playout_audio_rendition_switch_does_not_pin_stale_audio_obs() {
         vec!["start"],
         "buffer event sequence changed across audio rendition switch: {evs:?}"
     );
+}
+
+/// Feed one sample to the segmenter's muxer vocabulary.
+fn feed_sample(
+    seg: &mut StreamingTsHlsSegmenter,
+    track: transmux::TrackId,
+    sample: transmux::Sample,
+) {
+    Stage::feed(
+        seg,
+        transmux::mux_stage::MuxInput::Sample { track, sample },
+        broadcast_common::stage::Timestamp::ZERO,
+    )
+    .expect("feed sample");
+}
+
+/// Drain every segment the segmenter has cut so far.
+fn drain_segments(seg: &mut StreamingTsHlsSegmenter) -> Vec<transmux::mux_stage::SegmentOut> {
+    let mut out = Vec::new();
+    while let Some(item) = Stage::poll(seg) {
+        if let transmux::mux_stage::MuxOutput::Segment(segment) = item {
+            out.push(*segment);
+        }
+    }
+    out
 }

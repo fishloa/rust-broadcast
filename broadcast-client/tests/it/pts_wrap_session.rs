@@ -1,10 +1,10 @@
 use crate::support::replay::{bitrate_bps, replay_with_host};
 use crate::support::ts_shift::{PTS_WRAP, Shift, shift_pes};
 use broadcast_client::{Action, BufferEvent, Config, Event, Session};
+use broadcast_common::Unpackage;
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::{Package, Unpackage};
-use transmux::{Media, TsDemux, TsMux};
+use transmux::{DEFAULT_PSI_INTERVAL, Media, TsDemux, TsMuxStage};
 use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -70,8 +70,7 @@ fn pts_33bit_wrap_through_session_playout() {
         tracks.push(a);
     }
     let media = Media::new(tracks, movie_timescale);
-    let mut mux = TsMux::default();
-    let bytes = mux.package(&media).expect("mux");
+    let bytes = mux_ts(&media);
     assert!(!bytes.is_empty());
 
     let mut session = Session::open(
@@ -231,4 +230,22 @@ fn pts_wrap_between_first_audio_and_first_video_keeps_the_join_contract() {
         "Start is {} ms before the video join point once the PTS wrap lies between the first audio and first video PES",
         early_ms
     );
+}
+
+/// Mux a whole `Media` through one TS muxer stage.
+fn mux_ts(media: &Media) -> Vec<u8> {
+    let mut stage = TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL));
+    let out = transmux::mux_stage::drive_media(
+        &mut stage,
+        media,
+        broadcast_common::stage::Timestamp::ZERO,
+    )
+    .expect("mux to TS");
+    let mut bytes = Vec::new();
+    for output in out {
+        if let transmux::mux_stage::MuxOutput::Bytes(chunk) = output {
+            bytes.extend_from_slice(&chunk);
+        }
+    }
+    bytes
 }

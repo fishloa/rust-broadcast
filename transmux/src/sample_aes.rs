@@ -31,15 +31,20 @@
 //! do the work. The whole module is gated on the `sample-aes` feature; the
 //! default `no_std` core build carries no crypto.
 
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use aes::cipher::{Block, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit, block_padding::Pkcs7};
 
+use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_hls::AttrValue;
+use bytes::Bytes;
 
 use crate::error::{Error, Result};
+use crate::ir::{CodecConfig, TrackId};
+use crate::mux_stage::MuxInput;
 
 /// AES-128-CBC encryptor (NIST SP 800-38A).
 type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
@@ -598,6 +603,171 @@ impl ExtXKey {
     }
 }
 
+/// Which direction [`SampleAesStage`] transforms samples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SampleAesOp {
+    /// Protect cleartext samples (`h264_encrypt_nal`, `aac_encrypt_frame`, …).
+    Encrypt,
+    /// Restore protected samples (`h264_decrypt_nal`, `aac_decrypt_frame`, …).
+    Decrypt,
+}
+
+impl SampleAesOp {
+    /// The operation's label.
+    pub fn name(&self) -> &'static str {
+        match self {
+            SampleAesOp::Encrypt => "encrypt",
+            SampleAesOp::Decrypt => "decrypt",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(SampleAesOp);
+
+/// What [`SampleAesStage`] does to one track's samples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SampleAesKind {
+    H264,
+    Aac,
+    Ac3,
+    Eac3,
+    /// A codec Apple's SAMPLE-AES does not define; samples pass through.
+    PassThrough,
+}
+
+/// Applies HLS SAMPLE-AES to a stream of [`MuxInput`], one sample at a time.
+///
+/// The IV is the caller's (an `EXT-X-KEY` `IV` or the media-sequence-derived
+/// one); every sample and every NAL/frame is transformed with it, which is the
+/// per-segment constant-IV shape of the format. H.264, AAC, AC-3 and E-AC-3
+/// transform; any other codec passes through untouched (SAMPLE-AES defines no
+/// transformation for it).
+pub struct SampleAesStage {
+    key: [u8; KEY_LEN],
+    iv: [u8; BLOCK_LEN],
+    op: SampleAesOp,
+    kinds: BTreeMap<TrackId, SampleAesKind>,
+    ready: VecDeque<MuxInput>,
+}
+
+impl core::fmt::Debug for SampleAesStage {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SampleAesStage")
+            .field("key", &"<redacted>")
+            .field("op", &self.op)
+            .finish()
+    }
+}
+
+/// Wipe the bound key on drop (issue #1142).
+impl Drop for SampleAesStage {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.key.zeroize();
+    }
+}
+
+impl SampleAesStage {
+    /// A stage bound to `key` and `iv`, applying `op` to every transformable
+    /// track.
+    #[must_use]
+    pub fn new(key: [u8; KEY_LEN], iv: [u8; BLOCK_LEN], op: SampleAesOp) -> Self {
+        Self {
+            key,
+            iv,
+            op,
+            kinds: BTreeMap::new(),
+            ready: VecDeque::new(),
+        }
+    }
+
+    fn kind(config: &CodecConfig) -> SampleAesKind {
+        match config {
+            CodecConfig::Avc { .. } => SampleAesKind::H264,
+            CodecConfig::Aac { .. } => SampleAesKind::Aac,
+            CodecConfig::Ac3 { .. } => SampleAesKind::Ac3,
+            CodecConfig::Eac3 { .. } => SampleAesKind::Eac3,
+            _ => SampleAesKind::PassThrough,
+        }
+    }
+
+    fn transform_h264(&self, data: &[u8]) -> Result<Vec<u8>> {
+        let nals = crate::annexb::iter_length_prefixed_nals(data)?;
+        let mut out = Vec::with_capacity(data.len());
+        for nal in nals {
+            let transformed = match self.op {
+                SampleAesOp::Encrypt => h264_encrypt_nal(&self.key, &self.iv, nal),
+                SampleAesOp::Decrypt => h264_decrypt_nal(&self.key, &self.iv, nal),
+            };
+            let len = u32::try_from(transformed.len())
+                .map_err(|_| Error::InvalidInput("SAMPLE-AES NAL exceeds u32 length"))?;
+            out.extend_from_slice(&len.to_be_bytes());
+            out.extend_from_slice(&transformed);
+        }
+        Ok(out)
+    }
+
+    fn transform(&self, kind: SampleAesKind, data: &[u8]) -> Result<Vec<u8>> {
+        match (kind, self.op) {
+            (SampleAesKind::H264, _) => self.transform_h264(data),
+            (SampleAesKind::Aac, SampleAesOp::Encrypt) => {
+                aac_encrypt_frame(&self.key, &self.iv, data)
+            }
+            (SampleAesKind::Aac, SampleAesOp::Decrypt) => {
+                aac_decrypt_frame(&self.key, &self.iv, data)
+            }
+            (SampleAesKind::Ac3, SampleAesOp::Encrypt) => {
+                Ok(ac3_encrypt_frame(&self.key, &self.iv, data))
+            }
+            (SampleAesKind::Ac3, SampleAesOp::Decrypt) => {
+                Ok(ac3_decrypt_frame(&self.key, &self.iv, data))
+            }
+            (SampleAesKind::Eac3, SampleAesOp::Encrypt) => {
+                eac3_encrypt_frame(&self.key, &self.iv, data)
+            }
+            (SampleAesKind::Eac3, SampleAesOp::Decrypt) => {
+                eac3_decrypt_frame(&self.key, &self.iv, data)
+            }
+            (SampleAesKind::PassThrough, _) => Ok(data.to_vec()),
+        }
+    }
+}
+
+impl Stage for SampleAesStage {
+    type In<'a> = MuxInput;
+    type Out = MuxInput;
+    type Error = Error;
+
+    fn feed(&mut self, input: Self::In<'_>, _now: Timestamp) -> Result<()> {
+        match input {
+            MuxInput::Track(spec) => {
+                self.kinds.insert(spec.track_id, Self::kind(&spec.config));
+                self.ready.push_back(MuxInput::Track(spec));
+            }
+            MuxInput::Sample { track, mut sample } => {
+                let kind = *self
+                    .kinds
+                    .get(&track)
+                    .ok_or(Error::CencUnannouncedTrack { track })?;
+                let data = self.transform(kind, &sample.data)?;
+                sample.data = Bytes::from(data);
+                self.ready.push_back(MuxInput::Sample { track, sample });
+            }
+            other => self.ready.push_back(other),
+        }
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<MuxInput> {
+        self.ready.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1054,5 +1224,62 @@ mod tests {
         let enc = h264_encrypt_nal(&NIST_KEY, &NIST_IV, &nal);
         let dec = h264_decrypt_nal(&NIST_KEY, &NIST_IV, &enc);
         assert_eq!(dec, nal, "Sample-AES round trip must reproduce the NAL");
+    }
+    #[test]
+    fn sample_aes_stage_h264_round_trips_one_length_prefixed_nal() {
+        let mut nal: Vec<u8> = vec![0x65];
+        for i in 0..96u8 {
+            nal.push(i.wrapping_mul(3).wrapping_add(5));
+        }
+        let mut data = Vec::new();
+        data.extend_from_slice(&u32::try_from(nal.len()).expect("len").to_be_bytes());
+        data.extend_from_slice(&nal);
+
+        let encrypt = SampleAesStage::new(NIST_KEY, NIST_IV, SampleAesOp::Encrypt);
+        let protected = encrypt.transform_h264(&data).expect("encrypt");
+        assert_ne!(protected, data, "encryption changes the slice payload");
+
+        let decrypt = SampleAesStage::new(NIST_KEY, NIST_IV, SampleAesOp::Decrypt);
+        let clear = decrypt.transform_h264(&protected).expect("decrypt");
+        assert_eq!(clear, data, "stage round trip is byte-identical");
+    }
+
+    #[test]
+    fn sample_aes_stage_passes_an_undefined_codec_through() {
+        use crate::ir::DataCarriage;
+        let mut stage = SampleAesStage::new(NIST_KEY, NIST_IV, SampleAesOp::Encrypt);
+        let spec = crate::ir::TrackSpec::new(
+            TrackId::new(1),
+            broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
+            CodecConfig::Data {
+                identity: crate::ir::DataIdentity::Ts {
+                    stream_type: 6,
+                    descriptors: Vec::new(),
+                    carriage: DataCarriage::Pes,
+                },
+            },
+        );
+        stage
+            .feed(
+                MuxInput::Track(Box::new(spec)),
+                broadcast_common::stage::Timestamp::ZERO,
+            )
+            .expect("track");
+        while stage.poll().is_some() {}
+        let sample =
+            crate::ir::Sample::new(vec![1, 2, 3], Some(0), Some(0), Some(1), true).expect("timing");
+        stage
+            .feed(
+                MuxInput::Sample {
+                    track: TrackId::new(1),
+                    sample,
+                },
+                broadcast_common::stage::Timestamp::ZERO,
+            )
+            .expect("sample");
+        match stage.poll() {
+            Some(MuxInput::Sample { sample, .. }) => assert_eq!(&sample.data[..], &[1, 2, 3]),
+            other => panic!("expected a sample, got {other:?}"),
+        }
     }
 }

@@ -8,13 +8,13 @@
 //! assertively with `!has_video`, telling us to update the interop table.
 
 #![cfg(feature = "cenc")]
-use broadcast_common::{Encrypt, Unpackage};
+use broadcast_common::Unpackage;
 use std::path::PathBuf;
 use std::process::Command;
 use test_harness::collect::MediaSelectExt;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
-    CencEncryptor, CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,
+    CencEncryptStage, CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,
     SubsamplePolicy, TrackProtection,
 };
 
@@ -43,9 +43,8 @@ fn to_hex(bytes: &[u8]) -> String {
 }
 
 fn build_protected_fmp4(media: &mut Media, cfg: &EncryptConfig) -> Vec<u8> {
-    CencEncryptor::new(KEY)
-        .encrypt(&mut *media, cfg)
-        .expect("encrypt");
+    let mut stage = CencEncryptStage::new(KEY, cfg.clone()).expect("config");
+    *media = crate::cenc_support::run(&mut stage, media).expect("encrypt");
     let track_id = media.tracks[0].spec.track_id;
     let enc: TrackProtection = media.tracks[0]
         .spec

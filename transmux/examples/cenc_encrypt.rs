@@ -65,12 +65,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(feature = "cenc")]
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    use broadcast_common::{Encrypt, Unpackage};
+    use broadcast_common::Unpackage;
+    use broadcast_common::stage::Stage;
     use broadcast_hls::cenc_ext_x_key;
     use transmux::cenc_segment::protect_init_segment;
     use transmux::pipeline::CodecConfig;
     use transmux::{
-        CencEncryptor, CencScheme, DashPackager, EncryptConfig, IvGen, Media, SubsamplePolicy,
+        CencEncryptStage, CencScheme, DashPackager, EncryptConfig, IvGen, Media, SubsamplePolicy,
         TrackProtection, TsDemux, select_tracks_by,
     };
 
@@ -109,7 +110,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 2. Demux to the neutral IR, keeping only the AVC video track.
     let mut demux = TsDemux::new();
     let media: Media = demux.unpackage(&ts[..])?;
-    let mut media = select_tracks_by(&media, |t| matches!(t.spec.config, CodecConfig::Avc { .. }))?;
+    let media = select_tracks_by(&media, |t| matches!(t.spec.config, CodecConfig::Avc { .. }))?;
     println!(
         "demuxed IR: {} track(s), {} sample(s)",
         media.tracks.len(),
@@ -121,13 +122,51 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = EncryptConfig::new(CencScheme::Cbcs, KID, SubsamplePolicy::Video)
         .with_iv(IvGen::Constant(CONSTANT_IV))
         .with_pattern((1, 9));
-    CencEncryptor::new(KEY).encrypt(&mut media, &cfg)?;
+    let mut stage = CencEncryptStage::new(KEY, cfg)?;
+    let mut outputs = Vec::new();
+    for track in &media.tracks {
+        stage.feed(
+            transmux::mux_stage::MuxInput::Track(Box::new(track.spec.clone())),
+            broadcast_common::stage::Timestamp::ZERO,
+        )?;
+        outputs.extend(std::iter::from_fn(|| stage.poll()));
+        for sample in &track.samples {
+            stage.feed(
+                transmux::mux_stage::MuxInput::Sample {
+                    track: track.spec.track_id,
+                    sample: sample.clone(),
+                },
+                broadcast_common::stage::Timestamp::ZERO,
+            )?;
+            outputs.extend(std::iter::from_fn(|| stage.poll()));
+        }
+    }
+    stage.finish()?;
+    outputs.extend(std::iter::from_fn(|| stage.poll()));
+    let mut encrypted_tracks = Vec::new();
+    let mut index = std::collections::BTreeMap::new();
+    for item in outputs {
+        match item {
+            transmux::mux_stage::MuxInput::Track(spec) => {
+                index.insert(spec.track_id, encrypted_tracks.len());
+                encrypted_tracks.push(transmux::Track::new(*spec, Vec::new()));
+            }
+            transmux::mux_stage::MuxInput::Sample { track, sample } => {
+                if let Some(&at) = index.get(&track) {
+                    encrypted_tracks[at].samples.push(sample);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut media = Media::new(encrypted_tracks, media.movie_timescale);
+    media.skipped = Vec::new();
     let track_id = media.tracks[0].spec.track_id;
     let encryption: TrackProtection = media.tracks[0]
         .spec
         .protection
         .as_ref()
-        .expect("CencEncryptor populates TrackSpec::protection")
+        .expect("CencEncryptStage populates TrackSpec::protection")
         .clone();
     println!(
         "encrypted: scheme={} kid={}",

@@ -1,31 +1,32 @@
-//! `StreamingTsMux` (issue #1024): feeding a live stream one sample at a time
-//! must give ONE continuous transport stream — continuity counters carried on,
-//! PAT/PMT periodic rather than per call, one shared time origin — and the
-//! same per-PID packets as muxing the whole `Media` at once.
+//! The one TS muxer stage (issue #1024, Phase 4): feeding a live stream one
+//! sample at a time must give ONE continuous transport stream — continuity
+//! counters carried on, PAT/PMT periodic rather than per call, one shared time
+//! origin — and the same bytes as muxing the whole `Media` at once.
 #![cfg(feature = "std")]
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 
-use broadcast_common::{Package, Unpackage};
-use transmux::{Media, Sample, StreamingTsMux, Track, TsDemux, TsMux};
+use broadcast_common::stage::Timestamp;
+use broadcast_common::{Stage, Unpackage};
+use transmux::mux_stage::{MuxInput, MuxOutput};
+use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, TsDemux, TsMuxStage};
+
+use crate::ts_mux_stage;
 
 const PKT: usize = 188;
 const PAT_PID: u16 = 0;
 const PMT_PID: u16 = 0x1000;
 
 fn media(rel: &str) -> Media {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel);
-    TsDemux::new()
-        .unpackage(&std::fs::read(p).expect("fixture"))
-        .expect("demux")
+    let bytes = test_fixtures::read(rel);
+    TsDemux::new().unpackage(bytes.as_slice()).expect("demux")
 }
 
 fn pid(p: &[u8]) -> u16 {
     (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2])
 }
 
-/// Decode-ordered `(track, sample)` feed.
+/// Decode-ordered `(track index, sample)` feed.
 fn feed(m: &Media) -> Vec<(usize, Sample)> {
     let mut v: Vec<(i128, usize, Sample)> = Vec::new();
     for (ti, t) in m.tracks.iter().enumerate() {
@@ -50,38 +51,52 @@ fn es(ts: &[u8]) -> BTreeMap<u16, Vec<&[u8]>> {
     m
 }
 
-fn run(mux: &mut StreamingTsMux, m: &Media) -> (Vec<u8>, usize) {
+fn run(mux: &mut TsMuxStage, m: &Media) -> (Vec<u8>, usize) {
     let mut out = Vec::new();
+    for track in &m.tracks {
+        Stage::feed(
+            mux,
+            MuxInput::Track(Box::new(track.spec.clone())),
+            Timestamp::ZERO,
+        )
+        .expect("announce");
+    }
     let samples = feed(m);
-    for (ti, s) in &samples {
-        let tracks = m
-            .tracks
-            .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                Track::new(
-                    t.spec.clone(),
-                    if i == *ti { vec![s.clone()] } else { vec![] },
-                )
-            })
-            .collect();
-        out.extend_from_slice(&mux.package(&Media::new(tracks, m.movie_timescale)).unwrap());
+    for (ti, sample) in &samples {
+        Stage::feed(
+            mux,
+            MuxInput::Sample {
+                track: m.tracks[*ti].spec.track_id,
+                sample: sample.clone(),
+            },
+            Timestamp::ZERO,
+        )
+        .expect("feed");
+        while let Some(output) = Stage::poll(mux) {
+            if let MuxOutput::Bytes(chunk) = output {
+                out.extend_from_slice(&chunk);
+            }
+        }
+    }
+    Stage::finish(mux).expect("finish");
+    while let Some(output) = Stage::poll(mux) {
+        if let MuxOutput::Bytes(chunk) = output {
+            out.extend_from_slice(&chunk);
+        }
     }
     (out, samples.len())
 }
 
 #[test]
 fn per_sample_feed_is_one_stream_equal_to_the_whole_media_mux() {
-    for rel in [
-        "../fixtures/ts/h264-aac.ts",
-        "../fixtures/dash/timeline/av_offset.ts",
-    ] {
+    for rel in ["ts/h264-aac.ts", "dash/timeline/av_offset.ts"] {
         let m = media(rel);
-        let (out, n) = run(&mut StreamingTsMux::new(), &m);
-        let whole = TsMux::new().package(&m).unwrap();
+        let (out, n) = run(&mut TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL)), &m);
+        let whole = ts_mux_stage::mux(&m);
 
-        // Same packets on every PID as the one-shot mux (this also pins the CC
-        // sequence and the PTS/DTS/PCR bytes, which live inside them).
+        // Byte-identical to the whole-`Media` mux: one continuous stream, so
+        // the PSI schedule, the packet order and every PES byte agree.
+        assert_eq!(out, whole, "{rel}");
         assert_eq!(es(&out), es(&whole), "{rel}");
 
         // PSI: written, but periodically — nowhere near once per sample.
@@ -91,7 +106,7 @@ fn per_sample_feed_is_one_stream_equal_to_the_whole_media_mux() {
             .count();
         assert!(pats >= 1 && pats * 4 < n, "{rel}: {pats} PATs, {n} samples");
 
-        // PAT/PMT continuity counters run on across calls.
+        // PAT/PMT continuity counters run on across feeds.
         for want in [PAT_PID, PMT_PID] {
             let ccs: Vec<u8> = out
                 .chunks_exact(PKT)
@@ -108,8 +123,8 @@ fn per_sample_feed_is_one_stream_equal_to_the_whole_media_mux() {
 
 #[test]
 fn psi_once_only_when_interval_is_none() {
-    let m = media("../fixtures/ts/h264-aac.ts");
-    let (out, _) = run(&mut StreamingTsMux::with_psi_interval(None), &m);
+    let m = media("ts/h264-aac.ts");
+    let (out, _) = run(&mut TsMuxStage::new(None), &m);
     let pats = out.chunks_exact(PKT).filter(|p| pid(p) == PAT_PID).count();
     assert_eq!(pats, 1);
 }

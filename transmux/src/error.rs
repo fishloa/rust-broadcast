@@ -146,6 +146,37 @@ pub enum Error {
         cap: u64,
     },
 
+    /// A sample fed to
+    /// [`ProgressiveMuxStage`](crate::progressive::ProgressiveMuxStage)
+    /// disagrees with the [`plan`](isobmff::plan::OwnedPlan) the muxer was
+    /// built over.
+    #[error(
+        "progressive plan mismatch for track {track} sample {index}: {what} {got}, \
+         planned {planned}"
+    )]
+    PlanMismatch {
+        /// The track of the mismatched sample.
+        track: TrackId,
+        /// Its zero-based index in the plan.
+        index: u32,
+        /// What disagreed (`"size"`, `"sample count"` or `"missing sample"`).
+        what: &'static str,
+        /// The plan's value.
+        planned: u64,
+        /// What the muxer was given.
+        got: u64,
+    },
+
+    /// Progressive (single-file) MP4 output needs a sample plan from a first
+    /// pass over the input, so a caller whose input it can only consume once
+    /// (a pipe or a socket) cannot produce one; fragmented MP4 writes its
+    /// tables per fragment and needs no second pass.
+    #[error(
+        "progressive MP4 needs a replayable input (two passes); use fragmented MP4 \
+         (--format cmaf) for a single-pass input"
+    )]
+    ProgressiveNeedsReplayableInput,
+
     /// A byte range supplied to [`Mp4Demux`](crate::mp4_demux::Mp4Demux) did
     /// not match the range it asked for: either the offset differed, or the
     /// supply was longer than requested. Both ranges are named so the caller
@@ -250,7 +281,7 @@ pub enum Error {
     /// at most 16 video and 32 audio elementary streams can be numbered in one
     /// program. A 17th video stream would take `0xF0` (`ECM_stream`) and a 33rd
     /// audio stream `0xE0` — inside the video range — so the muxer refuses
-    /// rather than mislabelling the stream (`TsMux` output, audit r05-W22).
+    /// rather than mislabelling the stream (`TsMuxStage` output, audit r05-W22).
     #[error("too many {family} elementary streams: {max} is the stream_id family limit")]
     TooManyElementaryStreams {
         /// The `stream_id` family that overflowed (`"video"` or `"audio"`).
@@ -274,6 +305,51 @@ pub enum Error {
     UnsupportedCencScheme {
         /// The scheme that could not be applied.
         scheme: broadcast_common::CencScheme,
+    },
+
+    /// A [`CencEncryptStage`](crate::cenc_encrypt::CencEncryptStage) or
+    /// [`CencDecryptStage`](crate::cenc_decrypt::CencDecryptStage) was fed a
+    /// sample of a track it has not been told about.
+    #[error("cenc: no track announcement for track {track}")]
+    CencUnannouncedTrack {
+        /// The unannounced track.
+        track: TrackId,
+    },
+
+    /// An [`IvGen::Explicit`](crate::cenc_encrypt::IvGen::Explicit) list has
+    /// no IV left for this sample.
+    #[error("cenc: track {track}: {message}")]
+    CencIvList {
+        /// The track whose sample needed an IV.
+        track: TrackId,
+        /// What went wrong with the list.
+        message: &'static str,
+    },
+
+    /// A sample's CENC auxiliary information does not match its track's
+    /// `tenc` per-sample IV size, so decrypting it would use the wrong IV.
+    #[error("cenc: track {track}: sample IV is {sample} bytes but tenc states {tenc}")]
+    CencIvSizeMismatch {
+        /// The track whose sample disagrees.
+        track: TrackId,
+        /// `tenc.default_per_sample_iv_size`.
+        tenc: u8,
+        /// The sample's own IV length.
+        sample: usize,
+    },
+
+    /// A sample of a protected track carries no CENC auxiliary information.
+    #[error("cenc: track {track}: a protected sample carries no auxiliary information")]
+    CencMissingSampleProtection {
+        /// The track whose sample is missing its IV.
+        track: TrackId,
+    },
+
+    /// A sample of a cleartext track carries CENC auxiliary information.
+    #[error("cenc: track {track}: a cleartext track's sample carries auxiliary information")]
+    CencUnexpectedSampleProtection {
+        /// The track whose sample carries unexpected protection.
+        track: TrackId,
     },
 
     /// A [`CodecConfig`](crate::pipeline::CodecConfig) has no Matroska CodecID
@@ -316,7 +392,7 @@ pub enum Error {
 
     /// A fMP4/CMAF mux entry point ([`build_init_segment`](crate::pipeline::build_init_segment)
     /// and every packager built on it — [`CmafMuxStage`](crate::media::CmafMuxStage),
-    /// [`ProgressiveMux`](crate::progressive::ProgressiveMux),
+    /// [`ProgressiveMuxStage`](crate::progressive::ProgressiveMuxStage),
     /// [`Segmenter`](crate::segmenter::Segmenter),
     /// [`LlSegmenter`](crate::ll_dash::LlSegmenter),
     /// [`LlHlsSegmenter`](crate::ll_hls::LlHlsSegmenter)) was given a

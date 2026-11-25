@@ -206,7 +206,7 @@ mod tests {
         {
             if let MuxOutput::Segment(segment) = output {
                 log.push(&segment).expect("summary");
-                fragments.push(segment);
+                fragments.push(*segment);
             }
         }
         let manifest = SmoothPackager.render(&specs, &log).expect("manifest");

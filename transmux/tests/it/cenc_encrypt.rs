@@ -38,10 +38,10 @@ use broadcast_common::timescale::Timescale;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::{Encrypt, Serialize, Unpackage};
+use broadcast_common::{Serialize, Stage, Unpackage};
 use bytes::Bytes;
 use transmux::{
-    CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy, Track,
+    CencEncryptStage, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy, Track,
 };
 use transmux::{Media, TsDemux};
 
@@ -84,6 +84,16 @@ fn all_recorded_ivs(media: &Media) -> Vec<Vec<u8>> {
         .collect()
 }
 
+fn encrypt_into(
+    key: [u8; 16],
+    media: &mut Media,
+    cfg: &EncryptConfig,
+) -> Result<(), transmux::Error> {
+    let mut stage = CencEncryptStage::new(key, cfg.clone())?;
+    *media = crate::cenc_support::run(&mut stage, media)?;
+    Ok(())
+}
+
 /// One track's per-sample CENC auxiliary information, in decode order.
 fn sample_protections(track: &Track) -> Vec<transmux::ir::SampleProtection> {
     track
@@ -124,9 +134,7 @@ fn counter_ivs_are_unique_across_every_track() {
     );
     let total_samples: usize = media.tracks.iter().map(|t| t.samples.len()).sum();
 
-    CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cenc_cfg())
-        .expect("encrypt a multi-track Media");
+    encrypt_into(KEY_A, &mut media, &cenc_cfg()).expect("encrypt a multi-track Media");
 
     let ivs = all_recorded_ivs(&media);
     assert_eq!(
@@ -186,9 +194,7 @@ fn cenc_double_encrypt_reproduces_cleartext() {
     let original = snapshot(&media);
     let cfg = cenc_cfg();
 
-    CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .expect("first encrypt");
+    encrypt_into(KEY_A, &mut media, &cfg).expect("first encrypt");
     let after_first = snapshot(&media);
     assert_ne!(after_first, original, "first encrypt must change bytes");
 
@@ -204,9 +210,7 @@ fn cenc_double_encrypt_reproduces_cleartext() {
         assert_eq!(entry.iv.len(), 8, "8-byte counter IV");
     }
 
-    CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .expect("second encrypt (self-inverse)");
+    encrypt_into(KEY_A, &mut media, &cfg).expect("second encrypt (self-inverse)");
     let after_second = snapshot(&media);
     assert_eq!(
         after_second, original,
@@ -226,9 +230,7 @@ fn cbcs_encrypt_changes_bytes_and_records_well_formed_metadata() {
 
     let cfg_a =
         EncryptConfig::new(CencScheme::Cbcs, KID_A, SubsamplePolicy::Video).with_pattern((1, 9));
-    CencEncryptor::new(KEY_A)
-        .encrypt(&mut media_a, &cfg_a)
-        .expect("encrypt (key A)");
+    encrypt_into(KEY_A, &mut media_a, &cfg_a).expect("encrypt (key A)");
     let encrypted_a = snapshot(&media_a);
     assert_ne!(encrypted_a, original, "cbcs encrypt must change bytes");
 
@@ -259,9 +261,7 @@ fn cbcs_encrypt_changes_bytes_and_records_well_formed_metadata() {
     // encryption, not an identity/passthrough).
     let mut media_b = clear_video_media();
     let cfg_b = cfg_a.clone();
-    CencEncryptor::new(KEY_B)
-        .encrypt(&mut media_b, &cfg_b)
-        .expect("encrypt (key B)");
+    encrypt_into(KEY_B, &mut media_b, &cfg_b).expect("encrypt (key B)");
     let encrypted_b = snapshot(&media_b);
     assert_ne!(
         encrypted_a, encrypted_b,
@@ -275,9 +275,7 @@ fn cbcs_encrypt_changes_bytes_and_records_well_formed_metadata() {
 fn whole_sample_policy_yields_empty_subsample_map() {
     let mut media = clear_video_media();
     let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
-    CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt");
+    encrypt_into(KEY_A, &mut media, &cfg).expect("encrypt");
     assert!(
         media.tracks[0].samples.iter().all(|s| s
             .protection
@@ -297,9 +295,7 @@ fn explicit_iv_count_mismatch_errors() {
     let n = media.tracks[0].samples.len();
     assert!(n > 1, "fixture must have more than one sample to bite");
     let cfg = cenc_cfg().with_iv(IvGen::Explicit(vec![vec![0u8; 8]; n - 1]));
-    let err = CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .unwrap_err();
+    let err = encrypt_into(KEY_A, &mut media, &cfg).unwrap_err();
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
@@ -312,9 +308,7 @@ fn explicit_iv_too_long_errors() {
     let mut media = clear_video_media();
     let n = media.tracks[0].samples.len();
     let cfg = cenc_cfg().with_iv(IvGen::Explicit(vec![vec![0u8; 17]; n]));
-    let err = CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .unwrap_err();
+    let err = encrypt_into(KEY_A, &mut media, &cfg).unwrap_err();
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
@@ -330,9 +324,7 @@ fn explicit_iv_empty_errors() {
     let mut media = clear_video_media();
     let n = media.tracks[0].samples.len();
     let cfg = cenc_cfg().with_iv(IvGen::Explicit(vec![vec![]; n]));
-    let err = CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .unwrap_err();
+    let err = encrypt_into(KEY_A, &mut media, &cfg).unwrap_err();
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
@@ -346,9 +338,7 @@ fn explicit_iv_wrong_uniform_length_errors() {
     let mut media = clear_video_media();
     let n = media.tracks[0].samples.len();
     let cfg = cenc_cfg().with_iv(IvGen::Explicit(vec![vec![0u8; 12]; n]));
-    let err = CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .unwrap_err();
+    let err = encrypt_into(KEY_A, &mut media, &cfg).unwrap_err();
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
@@ -382,8 +372,7 @@ fn explicit_iv_valid_lengths_are_ok() {
         let mut media = clear_video_media();
         let n = media.tracks[0].samples.len();
         let cfg = cenc_cfg().with_iv(IvGen::Explicit(distinct_ivs(n, len)));
-        CencEncryptor::new(KEY_A)
-            .encrypt(&mut media, &cfg)
+        encrypt_into(KEY_A, &mut media, &cfg)
             .unwrap_or_else(|e| panic!("{len}-byte explicit IV must be accepted: {e:?}"));
     }
 }
@@ -401,9 +390,7 @@ fn explicit_duplicate_ivs_error() {
     let mut ivs = distinct_ivs(n, 8);
     ivs[n - 1] = ivs[0].clone(); // one repeat, everything else distinct
     let cfg = cenc_cfg().with_iv(IvGen::Explicit(ivs));
-    let err = CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .unwrap_err();
+    let err = encrypt_into(KEY_A, &mut media, &cfg).unwrap_err();
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
@@ -427,21 +414,17 @@ fn explicit_iv_count_is_per_media_not_per_track() {
 
     // Old (per-track) meaning: rejected.
     let cfg = cenc_cfg().with_iv(IvGen::Explicit(distinct_ivs(first_track_n, 8)));
-    let err = CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .unwrap_err();
+    let err = encrypt_into(KEY_A, &mut media, &cfg).unwrap_err();
     assert!(
-        matches!(err, transmux::Error::InvalidInput(_)),
-        "expected InvalidInput for a per-track-sized IV list, got {err:?}"
+        matches!(err, transmux::Error::CencIvList { .. }),
+        "expected a CencIvList error for a per-track-sized IV list, got {err:?}"
     );
 
     // New (per-Media) meaning: accepted, and every recorded IV is the one
     // supplied for that (track, sample) position, in order.
     let ivs = distinct_ivs(total, 8);
     let cfg = cenc_cfg().with_iv(IvGen::Explicit(ivs.clone()));
-    CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .expect("a Media-wide IV list must be accepted");
+    encrypt_into(KEY_A, &mut media, &cfg).expect("a Media-wide IV list must be accepted");
     assert_eq!(
         all_recorded_ivs(&media),
         ivs,
@@ -458,9 +441,7 @@ fn explicit_iv_count_is_per_media_not_per_track() {
 fn constant_iv_under_cenc_errors() {
     let mut media = clear_video_media();
     let cfg = cenc_cfg().with_iv(IvGen::Constant([0x5Au8; 16]));
-    let err = CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .unwrap_err();
+    let err = encrypt_into(KEY_A, &mut media, &cfg).unwrap_err();
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
@@ -491,8 +472,7 @@ fn constant_iv_under_cbcs_still_works() {
         .with_scheme(CencScheme::Cbcs)
         .with_iv(IvGen::Constant(CONSTANT_IV))
         .with_pattern((1, 9));
-    CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
+    encrypt_into(KEY_A, &mut media, &cfg)
         .expect("cbcs + constant IV is the standard convention and must be accepted");
     let enc = media.tracks[0].spec.protection.as_ref().expect("Some");
     assert_eq!(enc.tenc.default_per_sample_iv_size, 16);
@@ -519,9 +499,7 @@ fn cbcs_pattern_zero_crypt_nonzero_skip_errors() {
     let cfg = cenc_cfg()
         .with_scheme(CencScheme::Cbcs)
         .with_pattern((0, 9));
-    let err = CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .unwrap_err();
+    let err = encrypt_into(KEY_A, &mut media, &cfg).unwrap_err();
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
@@ -536,9 +514,7 @@ fn cbcs_pattern_component_too_large_errors() {
     let cfg = cenc_cfg()
         .with_scheme(CencScheme::Cbcs)
         .with_pattern((17, 9));
-    let err = CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .unwrap_err();
+    let err = encrypt_into(KEY_A, &mut media, &cfg).unwrap_err();
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
@@ -634,22 +610,19 @@ fn snapshot_all(media: &Media) -> Vec<Bytes> {
         .collect()
 }
 
-/// **A rejected `encrypt` must be atomic** (the method's own docs promise it):
-/// a sample whose NAL length prefix overruns the sample must leave every
-/// *other* sample byte-identical and no `Track::encryption` populated — not
-/// samples `0..k` silently ciphertext with an `Err` returned. And because the
-/// call was rejected, the [`IvGen::Counter`] state must be exactly as it was:
-/// a later successful call on the *same* instance must hand out precisely the
-/// IVs a brand-new instance would (a failed call may neither consume nor skip
-/// counter state — reusing an IV under the same key is a two-time pad).
+/// **A rejected encrypt must not replay or skip counter state**: a sample
+/// whose NAL length prefix overruns the sample fails the stage, but the
+/// counters already handed to the earlier samples must never be handed out
+/// again (AES-CTR keystream reuse). The input `Media` is taken by reference
+/// and rebuilt only on success, so a failure leaves it byte-identical.
 #[test]
 fn rejected_encrypt_leaves_media_and_counter_untouched() {
-    let mut media = avc_media(4, true);
+    let media = avc_media(4, true);
     let pristine = avc_media(4, true);
     let before = snapshot_all(&media);
 
-    let err = CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cenc_cfg())
+    let mut stage = CencEncryptStage::new(KEY_A, cenc_cfg()).expect("config");
+    let err = crate::cenc_support::run(&mut stage, &media)
         .expect_err("a sample whose NAL length prefix overruns must be rejected");
     assert!(
         matches!(err, transmux::Error::BufferTooShort(..))
@@ -657,7 +630,6 @@ fn rejected_encrypt_leaves_media_and_counter_untouched() {
         "expected a buffer/input error, got {err:?}"
     );
 
-    // The whole point of the fix: no earlier sample was touched.
     assert_eq!(
         snapshot_all(&media),
         before,
@@ -671,26 +643,25 @@ fn rejected_encrypt_leaves_media_and_counter_untouched() {
         );
     }
 
-    // The counter survived the failed call: the same instance, on fresh valid
-    // media, produces exactly the IVs a brand-new one does.
-    let mut used_encryptor = CencEncryptor::new(KEY_A);
-    let mut good_used = avc_media(4, false);
-    used_encryptor
-        .encrypt(&mut good_used, &cenc_cfg())
+    // The four valid samples consumed counters 0..=3 before the bad one; a
+    // stage resumed at that point must produce exactly what this one does.
+    let consumed = stage.next_counter();
+    assert_eq!(consumed, 4, "the valid samples consumed their counters");
+    // The four samples processed before the failure are still queued by the
+    // stage as valid output; drop them and continue.
+    while stage.poll().is_some() {}
+    let good_used = crate::cenc_support::run(&mut stage, &avc_media(4, false))
         .expect("valid media must encrypt after a rejected call");
-
-    let mut fresh = CencEncryptor::new(KEY_A);
-    let mut good_fresh = avc_media(4, false);
-    fresh
-        .encrypt(&mut good_fresh, &cenc_cfg())
+    let mut resumed = CencEncryptStage::resume(KEY_A, cenc_cfg(), consumed).expect("config");
+    let good_resumed = crate::cenc_support::run(&mut resumed, &avc_media(4, false))
         .expect("valid media must encrypt");
 
     assert_eq!(
         all_recorded_ivs(&good_used),
-        all_recorded_ivs(&good_fresh),
-        "a rejected call must not consume or skip IvGen::Counter state"
+        all_recorded_ivs(&good_resumed),
+        "a rejected call must neither replay nor skip IvGen::Counter state"
     );
-    assert_eq!(used_encryptor.next_counter(), fresh.next_counter());
+    assert_eq!(stage.next_counter(), resumed.next_counter());
 }
 
 // ---------------------------------------------------------------------------
@@ -752,7 +723,7 @@ fn cbcs_encrypt(data: Vec<u8>, pattern: (u8, u8)) -> Result<Vec<u8>, transmux::E
     let cfg = EncryptConfig::new(CencScheme::Cbcs, KID, SubsamplePolicy::WholeSample)
         .with_iv(IvGen::Constant(IV))
         .with_pattern(pattern);
-    CencEncryptor::new(KEY).encrypt(&mut media, &cfg)?;
+    encrypt_into(KEY, &mut media, &cfg)?;
     Ok(media.tracks[0].samples[0].data.to_vec())
 }
 
@@ -803,13 +774,16 @@ fn cbcs_zero_crypt_with_nonzero_skip_is_rejected() {
 /// call replayed IVs 0.. under the same key: AES-CTR keystream reuse.)
 #[test]
 fn counter_iv_at_u64_max_is_rejected_and_leaves_state_untouched() {
-    let mut media = whole_sample_media((0..16u8).collect());
+    let media = whole_sample_media((0..16u8).collect());
     let before = snapshot(&media);
-    let mut enc = CencEncryptor::resume(KEY_A, u64::MAX);
-    let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
+    let mut enc = CencEncryptStage::resume(
+        KEY_A,
+        cenc_cfg().with_subsample(SubsamplePolicy::WholeSample),
+        u64::MAX,
+    )
+    .expect("config");
 
-    let err = enc
-        .encrypt(&mut media, &cfg)
+    let err = crate::cenc_support::run(&mut enc, &media)
         .expect_err("an IV of exactly u64::MAX cannot be advanced past");
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
@@ -837,9 +811,9 @@ fn counter_iv_at_u64_max_is_rejected_and_leaves_state_untouched() {
 fn counter_iv_u64_max_minus_one_is_usable_once_then_rejects() {
     let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
 
-    let mut media = whole_sample_media((0..16u8).collect());
-    let mut enc = CencEncryptor::resume(KEY_A, u64::MAX - 1);
-    enc.encrypt(&mut media, &cfg)
+    let media = whole_sample_media((0..16u8).collect());
+    let mut enc = CencEncryptStage::resume(KEY_A, cfg.clone(), u64::MAX - 1).expect("config");
+    let media = crate::cenc_support::run(&mut enc, &media)
         .expect("u64::MAX - 1 is a valid IV and leaves the counter at u64::MAX");
     assert_eq!(enc.next_counter(), u64::MAX);
     let iv = media.tracks[0].samples[0]
@@ -854,11 +828,10 @@ fn counter_iv_u64_max_minus_one_is_usable_once_then_rejects() {
         "the 8-byte counter IV is the literal u64::MAX - 1"
     );
 
-    let mut again = whole_sample_media((0..16u8).collect());
+    let again = whole_sample_media((0..16u8).collect());
     let before = snapshot(&again);
-    let err = enc
-        .encrypt(&mut again, &cfg)
-        .expect_err("the counter is already at u64::MAX");
+    let err =
+        crate::cenc_support::run(&mut enc, &again).expect_err("the counter is already at u64::MAX");
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
@@ -877,23 +850,30 @@ fn counter_iv_u64_max_minus_one_is_usable_once_then_rejects() {
 /// on `next_counter += total`.
 #[test]
 fn counter_iv_using_the_last_iv_in_a_multi_sample_call_is_rejected() {
-    let mut media = counter_media(2);
+    let media = counter_media(2);
     let before = snapshot(&media);
-    let mut enc = CencEncryptor::resume(KEY_A, u64::MAX - 1);
-    let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
+    let mut enc = CencEncryptStage::resume(
+        KEY_A,
+        cenc_cfg().with_subsample(SubsamplePolicy::WholeSample),
+        u64::MAX - 1,
+    )
+    .expect("config");
 
-    let err = enc
-        .encrypt(&mut media, &cfg)
+    let err = crate::cenc_support::run(&mut enc, &media)
         .expect_err("next_counter + 2 overflows, so the call must be rejected");
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"
     );
-    assert_eq!(enc.next_counter(), u64::MAX - 1);
+    assert_eq!(
+        enc.next_counter(),
+        u64::MAX,
+        "the first sample consumed its counter; the second must not wrap or replay"
+    );
     assert_eq!(
         snapshot(&media),
         before,
-        "a rejected encrypt must leave every sample byte-identical"
+        "the input Media is untouched by the stage"
     );
 }
 
@@ -908,10 +888,9 @@ fn counter_iv_using_the_last_iv_in_a_multi_sample_call_is_rejected() {
 fn next_counter_reports_samples_consumed_and_resume_continues_from_it() {
     let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
 
-    let mut media = counter_media(3);
-    let mut enc = CencEncryptor::resume(KEY_A, 7);
+    let mut enc = CencEncryptStage::resume(KEY_A, cfg.clone(), 7).expect("config");
     assert_eq!(enc.next_counter(), 7, "resume takes the given counter");
-    enc.encrypt(&mut media, &cfg).expect("encrypt 3 samples");
+    let media = crate::cenc_support::run(&mut enc, &counter_media(3)).expect("encrypt 3 samples");
     assert_eq!(enc.next_counter(), 10, "3 samples consumed counters 7,8,9");
 
     let ivs: Vec<Vec<u8>> = all_recorded_ivs(&media);
@@ -925,8 +904,7 @@ fn next_counter_reports_samples_consumed_and_resume_continues_from_it() {
         "the recorded IVs are the literal counters 7, 8, 9"
     );
 
-    let mut more = counter_media(1);
-    enc.encrypt(&mut more, &cfg).expect("encrypt one more");
+    let more = crate::cenc_support::run(&mut enc, &counter_media(1)).expect("encrypt one more");
     assert_eq!(
         all_recorded_ivs(&more),
         vec![10u64.to_be_bytes().to_vec()],
@@ -951,8 +929,7 @@ fn cbcs_pattern_config(pattern: (u8, u8)) -> EncryptConfig {
 #[test]
 fn cbcs_pattern_15_15_is_accepted_and_packs_0xff() {
     let mut media = whole_sample_media(vec![0u8; 32]);
-    CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cbcs_pattern_config((15, 15)))
+    encrypt_into(KEY_A, &mut media, &cbcs_pattern_config((15, 15)))
         .expect("15:15 is the maximum legal cbcs pattern");
     let tenc = media.tracks[0]
         .spec
@@ -976,8 +953,7 @@ fn cbcs_pattern_15_15_is_accepted_and_packs_0xff() {
 fn cbcs_pattern_component_above_15_is_rejected() {
     for pattern in [(1u8, 16u8), (1, 200), (16, 1)] {
         let mut media = whole_sample_media(vec![0u8; 32]);
-        let err = CencEncryptor::new(KEY_A)
-            .encrypt(&mut media, &cbcs_pattern_config(pattern))
+        let err = encrypt_into(KEY_A, &mut media, &cbcs_pattern_config(pattern))
             .expect_err("a cbcs pattern component above 15 must be rejected");
         assert!(
             matches!(err, transmux::Error::InvalidInput(_)),
@@ -1040,17 +1016,20 @@ fn ctr_iv_spacing_must_be_at_least_the_previous_samples_block_count() {
     let lens = [16usize, 17, 32];
 
     let mut ok = media_with_samples(lens.iter().map(|&len| vec![0u8; len]).collect());
-    CencEncryptor::new(KEY_A)
-        .encrypt(&mut ok, &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1), ctr_iv(3)]))
-        .expect("IVs spaced by exactly the previous sample's protected block count are adjacent, not overlapping");
+    encrypt_into(
+        KEY_A,
+        &mut ok,
+        &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1), ctr_iv(3)]),
+    )
+    .expect("IVs spaced by exactly the previous sample's protected block count are adjacent, not overlapping");
 
     let mut overlap = media_with_samples(lens.iter().map(|&len| vec![0u8; len]).collect());
-    let err = CencEncryptor::new(KEY_A)
-        .encrypt(
-            &mut overlap,
-            &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1), ctr_iv(2)]),
-        )
-        .expect_err("IV 2 starts inside the 17-byte sample's range [1, 3)");
+    let err = encrypt_into(
+        KEY_A,
+        &mut overlap,
+        &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1), ctr_iv(2)]),
+    )
+    .expect_err("IV 2 starts inside the 17-byte sample's range [1, 3)");
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "got {err:?}"
@@ -1062,17 +1041,20 @@ fn ctr_iv_spacing_must_be_at_least_the_previous_samples_block_count() {
 #[test]
 fn ctr_iv_spacing_for_a_17_byte_sample_is_two_blocks() {
     let mut ok = media_with_samples(vec![vec![0u8; 17], vec![0u8; 17]]);
-    CencEncryptor::new(KEY_A)
-        .encrypt(&mut ok, &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(2)]))
-        .expect("ceil(17 / 16) == 2 blocks, so spacing 2 is adjacent");
+    encrypt_into(
+        KEY_A,
+        &mut ok,
+        &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(2)]),
+    )
+    .expect("ceil(17 / 16) == 2 blocks, so spacing 2 is adjacent");
 
     let mut overlap = media_with_samples(vec![vec![0u8; 17], vec![0u8; 17]]);
-    let err = CencEncryptor::new(KEY_A)
-        .encrypt(
-            &mut overlap,
-            &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1)]),
-        )
-        .expect_err("a 17-byte sample covers blocks 0 and 1, so IV 1 overlaps");
+    let err = encrypt_into(
+        KEY_A,
+        &mut overlap,
+        &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1)]),
+    )
+    .expect_err("a 17-byte sample covers blocks 0 and 1, so IV 1 overlaps");
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "got {err:?}"
@@ -1088,9 +1070,7 @@ fn ctr_iv_spacing_counts_subsample_protected_bytes() {
     let mut ok = media_with_samples(vec![avc_nal_sample(32), avc_nal_sample(32)]);
     let cfg =
         cenc_explicit_config(vec![ctr_iv(0), ctr_iv(2)]).with_subsample(SubsamplePolicy::Video);
-    CencEncryptor::new(KEY_A)
-        .encrypt(&mut ok, &cfg)
-        .expect("32 protected bytes are two counter blocks");
+    encrypt_into(KEY_A, &mut ok, &cfg).expect("32 protected bytes are two counter blocks");
     let entries = sample_protections(&ok.tracks[0]);
     assert_eq!(entries[0].subsamples.len(), 1, "one subsample per NAL");
     assert_eq!(entries[0].subsamples[0].bytes_of_clear_data, 5);
@@ -1099,8 +1079,7 @@ fn ctr_iv_spacing_counts_subsample_protected_bytes() {
     let mut overlap = media_with_samples(vec![avc_nal_sample(32), avc_nal_sample(32)]);
     let cfg =
         cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1)]).with_subsample(SubsamplePolicy::Video);
-    let err = CencEncryptor::new(KEY_A)
-        .encrypt(&mut overlap, &cfg)
+    let err = encrypt_into(KEY_A, &mut overlap, &cfg)
         .expect_err("32 protected bytes cover blocks 0 and 1, so IV 1 overlaps");
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
@@ -1193,9 +1172,7 @@ fn nal_aware_subsampling_clears_the_two_byte_hevc_header() {
     let original = hevc_media();
     let mut media = hevc_media();
     let cfg = EncryptConfig::new(CencScheme::Cbcs, KID_A, SubsamplePolicy::Video);
-    CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt HEVC");
+    encrypt_into(KEY_A, &mut media, &cfg).expect("encrypt HEVC");
     assert_nal_subsample_map(&original, &media, 2);
 }
 
@@ -1204,8 +1181,6 @@ fn nal_aware_subsampling_clears_the_two_byte_vvc_header() {
     let original = vvc_media();
     let mut media = vvc_media();
     let cfg = EncryptConfig::new(CencScheme::Cbcs, KID_A, SubsamplePolicy::Video);
-    CencEncryptor::new(KEY_A)
-        .encrypt(&mut media, &cfg)
-        .expect("encrypt VVC");
+    encrypt_into(KEY_A, &mut media, &cfg).expect("encrypt VVC");
     assert_nal_subsample_map(&original, &media, 2);
 }

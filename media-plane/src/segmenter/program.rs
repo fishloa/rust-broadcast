@@ -374,7 +374,7 @@ impl SiblingTrunks for () {
 
 /// One closed segment, normalised across the two segmenter kinds
 /// [`AnySegmenter`] wraps — [`transmux::ll_hls::SegmentInfo`] (fMP4) and
-/// [`transmux::ts_hls::TsSegment`] (classic TS) carry the same information
+/// [`transmux::mux_stage::SegmentOut`] (classic TS) carry the same information
 /// under different field names/numbering conventions (see
 /// [`AnySegmenter::take_ready_segments`]), so [`ProgramSegmenter::publish_ready`]
 /// works against this one shape regardless of which segmenter produced it.
@@ -383,7 +383,7 @@ pub(crate) struct ReadySegment {
     /// 1-based, matching [`media_plane::trunk::SegmentEntry::sequence_number`]'s
     /// own convention (which in turn mirrors
     /// [`transmux::ll_hls::SegmentInfo::segment_seq`]) — a
-    /// [`transmux::ts_hls::TsSegment::sequence`] is 0-based, so
+    /// [`transmux::mux_stage::SegmentSummary::sequence`] is 0-based, so
     /// [`AnySegmenter::take_ready_segments`] adds one when normalising it.
     segment_seq: SegmentSeq,
     duration: Duration,
@@ -404,19 +404,30 @@ impl From<transmux::ll_hls::SegmentInfo> for ReadySegment {
     }
 }
 
-impl From<transmux::ts_hls::TsSegment> for ReadySegment {
-    fn from(seg: transmux::ts_hls::TsSegment) -> Self {
+impl From<transmux::mux_stage::SegmentOut> for ReadySegment {
+    fn from(seg: transmux::mux_stage::SegmentOut) -> Self {
+        let summary = seg.summary;
         ReadySegment {
-            bytes: seg.bytes,
+            bytes: seg.bytes.to_vec(),
             segment_seq: SegmentSeq::new(
-                u32::try_from(seg.sequence)
+                u32::try_from(summary.sequence)
                     .unwrap_or(u32::MAX)
                     .saturating_add(1),
             ),
-            duration: seg.duration,
-            discontinuous: seg.discontinuous,
+            duration: duration_from_ticks(summary.duration, summary.timescale),
+            discontinuous: summary.discontinuous,
         }
     }
+}
+
+/// `ticks` of a segment summary's own `timescale`, as a [`Duration`].
+fn duration_from_ticks(ticks: u64, timescale: u32) -> Duration {
+    const NANOS_PER_SEC: u128 = 1_000_000_000;
+    let nanos = u128::from(ticks)
+        .saturating_mul(NANOS_PER_SEC)
+        .checked_div(u128::from(timescale.max(1)))
+        .unwrap_or(0);
+    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 
 /// The two segmenter kinds a [`ProgramSegmenter`] can drive, selected by the
@@ -444,7 +455,14 @@ impl AnySegmenter {
     fn push(&mut self, track_id: TrackId, sample: Sample) -> transmux::Result<()> {
         match self {
             AnySegmenter::Fmp4(seg) => seg.push(track_id, sample),
-            AnySegmenter::Ts(seg) => seg.push(track_id, sample),
+            AnySegmenter::Ts(seg) => broadcast_common::Stage::feed(
+                seg,
+                transmux::mux_stage::MuxInput::Sample {
+                    track: track_id,
+                    sample,
+                },
+                broadcast_common::stage::Timestamp::ZERO,
+            ),
         }
     }
 
@@ -462,7 +480,7 @@ impl AnySegmenter {
     fn finish(&mut self) -> transmux::Result<()> {
         match self {
             AnySegmenter::Fmp4(seg) => seg.flush(),
-            AnySegmenter::Ts(seg) => seg.finish(),
+            AnySegmenter::Ts(seg) => broadcast_common::Stage::finish(seg),
         }
     }
 
@@ -516,7 +534,15 @@ impl AnySegmenter {
                 .into_iter()
                 .map(Into::into)
                 .collect(),
-            AnySegmenter::Ts(seg) => seg.take_ready().into_iter().map(Into::into).collect(),
+            AnySegmenter::Ts(seg) => {
+                let mut out = Vec::new();
+                while let Some(item) = broadcast_common::Stage::poll(seg) {
+                    if let transmux::mux_stage::MuxOutput::Segment(segment) = item {
+                        out.push(ReadySegment::from(*segment));
+                    }
+                }
+                out
+            }
         }
     }
 
@@ -1748,11 +1774,15 @@ impl ProgramSegmenter {
                             }
                             let replaced = std::mem::replace(&mut self.seg, AnySegmenter::Ts(seg));
                             if let AnySegmenter::Ts(mut old) = replaced {
-                                if let Err(e) = old.finish() {
+                                if let Err(e) = broadcast_common::Stage::finish(&mut old) {
                                     tracing::warn!(error = %e, "old TS segmenter finish on rebuild failed");
                                 }
-                                let segments: Vec<ReadySegment> =
-                                    old.take_ready().into_iter().map(Into::into).collect();
+                                let mut segments: Vec<ReadySegment> = Vec::new();
+                                while let Some(item) = broadcast_common::Stage::poll(&mut old) {
+                                    if let transmux::mux_stage::MuxOutput::Segment(segment) = item {
+                                        segments.push(ReadySegment::from(*segment));
+                                    }
+                                }
                                 self.publish_in_stream_order(Vec::new(), segments);
                             }
                             // Re-arm the start-gate for the rebuilt track set

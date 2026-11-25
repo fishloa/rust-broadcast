@@ -4,10 +4,15 @@
 #![cfg(feature = "cenc")]
 
 use transmux::KeyMap;
-use transmux::cenc_encrypt::CencEncryptor;
+use transmux::cenc_encrypt::CencEncryptStage;
+use transmux::{CencScheme, EncryptConfig, SubsamplePolicy};
 
 const KID: [u8; 16] = [0x11; 16];
 const KEY: [u8; 16] = [0xA5; 16];
+
+fn config() -> EncryptConfig {
+    EncryptConfig::new(CencScheme::Cenc, KID, SubsamplePolicy::WholeSample)
+}
 
 #[test]
 fn key_map_debug_lists_kids_but_never_key_bytes() {
@@ -35,7 +40,7 @@ fn key_map_equality_distinguishes_keys_kids_and_sizes() {
 
 #[test]
 fn encryptor_debug_never_prints_the_key() {
-    let enc = CencEncryptor::new(KEY);
+    let enc = CencEncryptStage::new(KEY, config()).expect("config");
     let text = format!("{enc:?}");
     assert!(!text.contains("165"), "{text}");
     assert!(text.contains("redacted"), "{text}");
@@ -50,8 +55,9 @@ fn encryptor_wipes_its_key_on_drop() {
     fn contains_key(bytes: &[u8]) -> bool {
         bytes.windows(KEY.len()).any(|w| w == KEY)
     }
-    let mut slot = core::mem::ManuallyDrop::new(CencEncryptor::new(KEY));
-    let len = core::mem::size_of::<CencEncryptor>();
+    let mut slot =
+        core::mem::ManuallyDrop::new(CencEncryptStage::new(KEY, config()).expect("config"));
+    let len = core::mem::size_of::<CencEncryptStage>();
     let ptr = core::ptr::addr_of!(*slot).cast::<u8>();
     // SAFETY: `slot` is live, aligned storage of `len` bytes; the struct holds
     // a `[u8; 16]` and a `u64`, so every byte is initialised (no padding is

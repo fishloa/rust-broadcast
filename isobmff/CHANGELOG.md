@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `sample_table::CursorState::new_with_aux` and `TrackCursor::new_with_aux`
+  surface a progressive track's `stbl`-level `senc` on every `SampleRef::aux`,
+  one entry per declared sample, so a protected progressive file reads exactly
+  like a fragmented one. `cenc::SampleEncryptionBox::parse_box` parses a whole
+  `senc` box, `cenc::clear_sample_entry` reconstructs the cleartext
+  `frma`-format sample entry from an `encv`/`enca` entry, and
+  `init_segment::sample_entry_variant` is public so a demuxer can reparse that
+  cleartext entry.
+
 ### Fixed
 
 - **The reader keeps every `moof` queued ahead of its `mdat` (r05-W26).** A
@@ -27,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `writer::FragmentedWriter::trailer` appends the regenerated `mfra` when the index layout asks for one.
 ### Added
 
+- `writer::ProgressiveWriter::plan` exposes the `OwnedPlan` a progressive
+  writer was built over, so a muxer feeding it can name a size/index mismatch
+  with the plan's own values instead of the writer's box-level error.
 - `frag_layout`: each movie fragment's write-back layout. `reader::FragmentInfo`
   now carries the `FragmentLayout` the reader recorded for it (which `tfhd`
   optional fields are present and their values, `default-base-is-moof`, the

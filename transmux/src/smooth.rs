@@ -974,18 +974,19 @@ impl SmoothSegmenter {
         state.next_sequence += 1;
         state.pending.clear();
         state.pending_duration = 0;
-        self.ready.push_back(MuxOutput::Segment(SegmentOut {
-            bytes: bytes::Bytes::from(data),
-            summary,
-            tracks: alloc::vec![crate::mux_stage::TrackPart {
-                track: state.spec.track_id,
-                start: start_smooth,
-                duration,
-                timescale: SMOOTH_DEFAULT_TIMESCALE.get(),
-                bytes: summary.bytes,
-                samples: summary_samples,
-            }],
-        }));
+        self.ready
+            .push_back(MuxOutput::Segment(Box::new(SegmentOut {
+                bytes: bytes::Bytes::from(data),
+                summary,
+                tracks: alloc::vec![crate::mux_stage::TrackPart {
+                    track: state.spec.track_id,
+                    start: start_smooth,
+                    duration,
+                    timescale: SMOOTH_DEFAULT_TIMESCALE.get(),
+                    bytes: summary.bytes,
+                    samples: summary_samples,
+                }],
+            })));
         Ok(())
     }
 }

@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Breaking
+- `ProgressiveMux` and its `Package` impl are deleted. The replacement is
+  `progressive::ProgressiveMuxStage`, a `Stage` over `MuxInput`/`MuxOutput`
+  built from an `isobmff::plan::OwnedPlan`, a `Layout` and the movie header:
+  it writes `ftyp`+`moov` (fast start) or `ftyp`+`mdat` up front, then each
+  sample's bytes as it arrives, and holds no sample. A sample whose size or
+  position disagrees with the plan is `Error::PlanMismatch`, naming the track
+  and sample index. The new `plan_pass::PlanPass` is the first of the two
+  passes: fed the same `MuxInput` stream, it records the plan without sample
+  bytes (`PlanPass::for_media` for a caller that already holds a `Media`).
+  Its output is byte-identical to the former whole-`Media` muxer (every golden
+  unchanged, both box orders).
+- The `transmux` CLI treats `-` as standard input; progressive output from it
+  is refused with `Error::ProgressiveNeedsReplayableInput`, naming fragmented
+  MP4, because the two passes need a replayable input. Every other output
+  reads stdin.
+- One MPEG-2 TS muxer: `TsMuxStage` replaces `TsMux` and `StreamingTsMux`
+  (both deleted with their `Package` impls). It is a `Stage<In = MuxInput,
+  Out = MuxOutput>` fed one sample at a time, emitting whole 188-byte packets
+  as `MuxOutput::Bytes`; its PAT/PMT repetition interval is a constructor
+  argument (`Some(DEFAULT_PSI_INTERVAL)` repeats, `None` writes the PSI once
+  only). Continuity counters, the PCR PID choice, PES framing and the PSI
+  schedule are the same, and a whole `Media` driven through
+  `mux_stage::drive_media` produces byte-identical output (every committed TS
+  fixture and the output golden tests pin it). A `MuxInput::Track` announced
+  after samples have started writes a new PMT with `version_number`
+  incremented modulo 32, so a live PMT update continues instead of being
+  refused (#1024, Phase 4).
+- `TsHlsPackager`, `TsHlsOutput` and `TsSegment` are deleted: classic TS-HLS is
+  `StreamingTsHlsSegmenter` alone, which now speaks `Stage<In = MuxInput,
+  Out = MuxOutput>` and emits a `MuxOutput::Segment` with a filled
+  `SegmentSummary`. The segment URI is `{uri_prefix}{sequence}.ts`; drive a
+  whole `Media` through `mux_stage::drive_media` and render the playlist with
+  `StreamingTsHlsSegmenter::playlist`.
 
 - The DASH, LL-DASH, Smooth and CMAF-HLS manifest packagers are renderers over a
   `segment_log::SegmentSummaryLog`, not whole-`Media` packagers: `DashPackager`,
@@ -70,10 +103,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   codec_private }}` give a data track a native identity in the other
   containers.
 - `mp4_demux::Mp4Demux` no longer abandons a track whose sample entry has no
-  typed `CodecConfig` (GoPro `gpmd`, QuickTime `tmcd`/`fdsc`, a CENC `encv`
-  entry, …). It announces it as `CodecConfig::Data` with an
-  `DataIdentity::Mp4` carrying the raw sample entry, samples included; only a
-  known four-CC whose parse failed still takes the `TrackAbandoned` path.
+  typed `CodecConfig` (GoPro `gpmd`, QuickTime `tmcd`/`fdsc`, …). It announces
+  it as `CodecConfig::Data` with an `DataIdentity::Mp4` carrying the raw sample
+  entry, samples included; only a known four-CC whose parse failed still takes
+  the `TrackAbandoned` path. A CENC `encv`/`enca` entry is no longer data at
+  all: its `sinf`/`frma` restores the wrapped codec, with the protection left
+  on `TrackSpec::protection`.
+- Whole-Media CENC is gone. `CencEncryptor` and its `broadcast_common::Encrypt`
+  impl, `CencDecryptor` and its `Decrypt` impl (and its `demux_protected` file
+  walk) are deleted. The replacements are `CencEncryptStage` and
+  `CencDecryptStage`, `Stage<In = MuxInput, Out = MuxInput>` values that
+  protect or unprotect one sample at a time; decryption reads the IV and
+  subsample map the demuxer already put on the sample. `DataIdentity::protected_mp4_entry`
+  is deleted (a consumer asks `TrackSpec::protection.is_some()`). HLS
+  SAMPLE-AES gains `SampleAesStage`/`SampleAesOp` over the existing per-NAL and
+  per-frame transforms.
 - `CmafMux` and its `Package` impl are deleted. The replacement is
   `media::CmafMuxStage`, a `Stage` over `MuxInput`/`MuxOutput` that writes
   through `isobmff::writer::FragmentedWriter`; `FragmentCut` states when a
@@ -101,6 +145,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is still refused with the existing named errors.
 
 ### Added
+- `PlanPass` (module `plan_pass`) records an `isobmff::plan::OwnedPlan` from
+  the mux input: per-sample size, duration, composition offset and sync flag
+  only, with the same `stts`/`ctts`/`stss`/`elst` rules the former whole-`Media`
+  progressive muxer applied. A track must be uniformly timed or uniformly
+  untimed.
 - `media::{CmafMuxStage, FragmentCut}` and
   `mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary}` are the
   streaming shape every converted muxer speaks.

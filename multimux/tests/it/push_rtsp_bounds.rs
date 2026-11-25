@@ -504,20 +504,48 @@ async fn the_transport_muxes_through_its_own_streaming_mux() {
         .await
         .expect("connect must not hang")
         .expect("connect");
-    assert!(
-        t.ts_mux().is_some(),
-        "the RTSP push must expose its own streaming mux"
-    );
     let ts = test_fixtures::read("ts/h264-aac.ts");
     let mut media = transmux::TsDemux::new().demux(&ts).expect("demux fixture");
     for track in &mut media.tracks {
         track.samples.truncate(2);
     }
-    let first = t.encode_media(&media).expect("first encode");
-    let second = t.encode_media(&media).expect("second encode");
+    let first = encode_pass(&mut t, &media);
+    let second = encode_pass(&mut t, &media);
     assert!(!first.is_empty(), "the fixture must produce TS bytes");
     assert_ne!(
         first, second,
-        "continuity counters must continue across batches, not restart at zero"
+        "continuity counters must continue across passes, not restart at zero"
     );
+}
+
+/// One pass of `media` through the transport's per-connection TS muxer,
+/// samples fed in decode order.
+fn encode_pass(transport: &mut RtspTransport, media: &transmux::Media) -> Vec<u8> {
+    let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    transport
+        .media_muxer()
+        .expect("a TS push carries its own mux")
+        .set_tracks(&specs)
+        .expect("announce tracks");
+    let mut items: Vec<(i128, transmux::TrackId, transmux::Sample)> = Vec::new();
+    for track in &media.tracks {
+        for sample in &track.samples {
+            let dts = i128::from(sample.timing.and_then(|t| t.dts()).unwrap_or(0)) * 90_000
+                / i128::from(track.spec.timescale.get());
+            items.push((dts, track.spec.track_id, sample.clone()));
+        }
+    }
+    items.sort_by_key(|(dts, track, _)| (*dts, *track));
+    let mut out = Vec::new();
+    for (_, track, sample) in items {
+        for message in transport
+            .media_muxer()
+            .expect("a TS push carries its own mux")
+            .encode_sample(track, &sample)
+            .expect("encode sample")
+        {
+            out.extend_from_slice(&message);
+        }
+    }
+    out
 }

@@ -20,12 +20,11 @@
 //! [`TrackSpec`] (codec config + timescale + track_id) and [`Sample`] (coded
 //! access units); those types stay public and unchanged. `no_std` + `alloc`.
 //!
-//! Sample [`Decrypt`](broadcast_common::Decrypt) is implemented for CENC/CBCS
-//! (ISO/IEC 23001-7 AES-CTR / AES-CBC-pattern) by
-//! [`CencDecryptor`](crate::cenc_decrypt::CencDecryptor), and the inverse
-//! [`Encrypt`](broadcast_common::Encrypt) by
-//! [`CencEncryptor`](crate::cenc_encrypt::CencEncryptor) — both behind the
-//! `cenc` feature (issues #465/#564). Either direction records its per-track
+//! CENC/CBCS (ISO/IEC 23001-7 AES-CTR / AES-CBC-pattern) protection is
+//! applied and removed per sample by
+//! [`CencEncryptStage`](crate::cenc_encrypt::CencEncryptStage) and
+//! [`CencDecryptStage`](crate::cenc_decrypt::CencDecryptStage) — both behind
+//! the `cenc` feature (issues #465/#564). Either direction records its per-track
 //! crypto metadata onto [`TrackSpec::protection`](crate::ir::TrackSpec::protection) and per-sample [`SampleProtection`](crate::ir::SampleProtection).
 
 use alloc::format;
@@ -410,11 +409,12 @@ impl CmafMuxStage {
         self.part_bytes.iter_mut().for_each(|b| *b = 0);
         self.part_samples.iter_mut().for_each(|c| *c = 0);
         self.part_start.iter_mut().for_each(|s| *s = None);
-        self.ready.push_back(MuxOutput::Segment(SegmentOut {
-            bytes: Bytes::from(fragment.bytes),
-            summary,
-            tracks,
-        }));
+        self.ready
+            .push_back(MuxOutput::Segment(Box::new(SegmentOut {
+                bytes: Bytes::from(fragment.bytes),
+                summary,
+                tracks,
+            })));
         Ok(())
     }
 }
@@ -480,16 +480,26 @@ pub(crate) struct TimelineOrigin {
 impl TimelineOrigin {
     /// The origin of `tracks`; `0` when no sample carries a `dts`.
     pub(crate) fn of<'t>(tracks: impl IntoIterator<Item = &'t Track>) -> Self {
+        Self::from_first_decode_times(tracks.into_iter().map(|t| {
+            (
+                t.samples
+                    .iter()
+                    .find_map(|s| s.timing.and_then(|t| t.dts())),
+                t.spec.timescale,
+            )
+        }))
+    }
+
+    /// The origin from each track's first decodable sample time, in that
+    /// track's timescale; `0` when no track carries one.
+    pub(crate) fn from_first_decode_times(
+        tracks: impl IntoIterator<Item = (Option<i64>, Timescale)>,
+    ) -> Self {
         let mut best: Option<(i64, Timescale)> = None;
-        for t in tracks {
-            let Some(d) = t
-                .samples
-                .iter()
-                .find_map(|s| s.timing.and_then(|t| t.dts()))
-            else {
+        for (d, ts) in tracks {
+            let Some(d) = d else {
                 continue;
             };
-            let ts = t.spec.timescale;
             let earlier = match best {
                 None => true,
                 Some((bd, bts)) => cmp_ticks(d, ts, bd, bts).is_lt(),
@@ -523,18 +533,38 @@ impl TimelineOrigin {
 /// shared timeline cannot express it; the old saturating subtraction placed
 /// it at the wrong end of the timeline instead).
 pub(crate) fn relative_decode_times(track: &Track, origin: &TimelineOrigin) -> Result<Vec<i64>> {
-    let base = origin.in_timescale(track.spec.timescale);
-    let mut out = Vec::with_capacity(track.samples.len());
+    relative_times(
+        track.spec.timescale,
+        origin,
+        track.samples.iter().map(|s| {
+            (
+                s.timing.and_then(|t| t.dts()),
+                s.timing.and_then(|t| t.duration()).unwrap_or(0),
+            )
+        }),
+    )
+}
+
+/// [`relative_decode_times`] over descriptors rather than samples: each entry
+/// is a sample's absolute `dts` (when it has one) and its own duration.
+pub(crate) fn relative_times(
+    timescale: Timescale,
+    origin: &TimelineOrigin,
+    samples: impl IntoIterator<Item = (Option<i64>, u32)>,
+) -> Result<Vec<i64>> {
+    let base = origin.in_timescale(timescale);
+    let samples = samples.into_iter();
+    let mut out = Vec::with_capacity(samples.size_hint().0);
     let mut next: i64 = 0;
-    for s in &track.samples {
-        let t = match s.timing.and_then(|t| t.dts()) {
+    for (dts, duration) in samples {
+        let t = match dts {
             Some(d) => d.checked_sub(base).ok_or(Error::InvalidInput(
                 "sample decode time is more than i64 ticks from the timeline origin",
             ))?,
             None => next,
         };
         out.push(t);
-        next = t.saturating_add(i64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)));
+        next = t.saturating_add(i64::from(duration));
     }
     Ok(out)
 }
@@ -754,7 +784,22 @@ pub(crate) fn track_spec_from_track_info(info: &TrackInfo) -> Result<TrackSpec> 
             fourcc: String::from_utf8_lossy(&entry.fourcc).into_owned(),
         });
     }
-    let config = match entry.typed.as_ref().map(codec_config_from_entry) {
+    let protection = track_protection_from_entry(entry)?;
+    // A protected `encv`/`enca` entry is its cleartext sample entry behind a
+    // `sinf` (ISO/IEC 14496-12:2026 §13.4.1): recover the wrapped entry so the
+    // track keeps its real codec, and the clear bytes so a data track re-muxes
+    // without the protection boxes.
+    let clear_entry = if protection.is_some() {
+        isobmff::cenc::clear_sample_entry(&entry.body)
+    } else {
+        None
+    };
+    let parsed_entry = match &clear_entry {
+        Some(bytes) => Some(isobmff::init_segment::sample_entry_variant(bytes)?),
+        None => None,
+    };
+    let typed = parsed_entry.as_ref().or(entry.typed.as_ref());
+    let config = match typed.map(codec_config_from_entry) {
         Some(Ok(config)) => config,
         // No `CodecConfig` for this entry (an unknown four-CC, or a typed
         // entry such as QuickTime `tmcd` this crate does not map): carry the
@@ -762,20 +807,23 @@ pub(crate) fn track_spec_from_track_info(info: &TrackInfo) -> Result<TrackSpec> 
         None | Some(Err(Error::UnsupportedSampleEntry { .. })) => CodecConfig::Data {
             identity: DataIdentity::Mp4 {
                 handler: info.handler,
-                sample_entry: Bytes::copy_from_slice(&entry.body),
+                sample_entry: clear_entry.as_deref().map_or_else(
+                    || Bytes::copy_from_slice(&entry.body),
+                    Bytes::copy_from_slice,
+                ),
             },
         },
         Some(Err(err)) => return Err(err),
     };
     let mut spec = TrackSpec::new(info.track_id.into(), info.timescale, config);
-    if let Some(protection) = track_protection_from_entry(entry)? {
+    if let Some(protection) = protection {
         spec = spec.with_protection(protection);
     }
     // Overlay container-level display geometry (pasp / colr nclx) from the
     // sample entry onto the SPS-derived display — ISO/IEC 14496-12:2026
     // §12.1.4.1 (pasp) / §12.1.5.1 (colr). AVC/HEVC entries only; see
     // `overlay_sample_entry_display`.
-    let spec = match entry.typed.as_ref() {
+    let spec = match typed {
         Some(SampleEntryVariant::Avc1(e)) => overlay_sample_entry_display(spec, &e.extra_boxes),
         Some(SampleEntryVariant::Hevc1(e)) => overlay_sample_entry_display(spec, &e.extra_boxes),
         _ => spec,

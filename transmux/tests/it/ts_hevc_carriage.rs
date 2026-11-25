@@ -26,8 +26,9 @@
 //! (audio's own keyframe cadence would produce a different count than
 //! HEVC's).
 
+use crate::ts_hls_stage;
+use crate::ts_mux_stage;
 use crate::ts_psi::{first_section, parse_pat, parse_pmt, split_lp};
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use std::path::PathBuf;
 use transmux::TrackId;
@@ -35,9 +36,7 @@ use transmux::TrackId;
 use broadcast_common::Unpackage;
 use isobmff::{Ac3SpecificBox, HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use transmux::pipeline::CodecConfig;
-use transmux::{
-    Media, Sample, StreamingTsHlsSegmenter, Track, TrackSpec, TsDemux, TsHlsPackager, TsMux,
-};
+use transmux::{Media, Sample, StreamingTsHlsSegmenter, Track, TrackSpec, TsDemux};
 
 // ── Fixture loading (mirrors tests/it/ts_hevc.rs) ──────────────────────────────
 
@@ -107,7 +106,7 @@ fn hevc_track_survives_ts_mux_round_trip() {
         "fixture must carry HEVC samples"
     );
 
-    let ts2 = TsMux::new().package(&ir).expect("mux IR back to TS");
+    let ts2 = ts_mux_stage::mux(&ir);
     assert_eq!(ts2.len() % TS, 0, "output must be whole 188-byte packets");
     assert!(!ts2.is_empty(), "output must not be empty");
 
@@ -276,9 +275,7 @@ fn mid_stream_segment_prepends_missing_hevc_parameter_sets() {
 
     // 1-second target at 90 kHz: sample 0 alone reaches the target, so sample
     // 1 (an IRAP) opens segment 2.
-    let out = TsHlsPackager::new(1)
-        .package(&media)
-        .expect("package TS-HLS");
+    let out = ts_hls_stage::hls(&media, 1);
     assert_eq!(
         out.segments.len(),
         2,
@@ -405,9 +402,7 @@ fn hevc_track_is_chosen_as_anchor_over_audio() {
     let video_track = Track::new(video_spec, video_samples);
 
     let media = Media::new(vec![audio_track, video_track], timescale(90_000));
-    let out = TsHlsPackager::new(1)
-        .package(&media)
-        .expect("package TS-HLS");
+    let out = ts_hls_stage::hls(&media, 1);
 
     assert_eq!(
         out.segments.len(),
@@ -493,25 +488,25 @@ fn add_track_promotes_hevc_anchor_over_audio_like_construction_time_does() {
     ];
     let mut cuts = 0usize;
     for s in video_samples {
-        seg.push(TrackId::new(2), s).expect("push video");
-        cuts += seg.take_ready().len();
+        ts_hls_stage::feed(&mut seg, TrackId::new(2), s);
+        cuts += ts_hls_stage::drain(&mut seg).len();
     }
     for i in 0..5i64 {
         let dts = i * 1_024;
-        seg.push(
+        ts_hls_stage::feed(
+            &mut seg,
             TrackId::new(1),
             Sample::new(vec![0xAAu8; 8], Some(dts), Some(dts), Some(1_024), true)
                 .expect("valid timing"),
-        )
-        .expect("push audio");
+        );
         // Drain and discard: under the pre-`take_ready` API a cut produced by
         // an audio push was returned here and dropped, never counted. Draining
         // per push keeps `cuts` counting exactly the video-push cuts it did
         // before, instead of sweeping an audio-push cut into the `finish` drain.
-        let _ = seg.take_ready();
+        let _ = ts_hls_stage::drain(&mut seg);
     }
-    seg.finish().expect("finish");
-    cuts += seg.take_ready().len();
+    ts_hls_stage::finish(&mut seg);
+    cuts += ts_hls_stage::drain(&mut seg).len();
 
     assert_eq!(
         cuts, 2,

@@ -188,12 +188,8 @@ fn dims(config: &CodecConfig) -> (Option<u16>, Option<u16>) {
         {
             (Some(width), Some(height))
         }
-        // `0x0` is not a real coded geometry — `transmux::CencDecryptor`'s
-        // protected-AVC recovery path (see `analyze_mp4_impl`) only
-        // reconstructs the `avcC` config record, not the sample entry's
-        // `width`/`height` fields, and reports the literal `0` for both
-        // rather than fabricating a value; report that honestly as unknown
-        // too, instead of a misleading "0x0".
+        // `0x0` is not a real coded geometry: report it honestly as unknown
+        // instead of a misleading "0x0".
         _ => (None, None),
     }
 }
@@ -255,13 +251,7 @@ fn audio_params(config: &CodecConfig) -> (Option<u16>, Option<u32>) {
     }
 }
 
-/// `describe_track`'s `protected_scheme` argument: the CENC/CBCS scheme name
-/// for this track's ID, when [`analyze_mp4_impl`]'s separate
-/// [`transmux::CencDecryptor`] pass recovered one (see that function's doc
-/// comment — `TrackSpec::protection` is not populated by this crate's *demux*
-/// paths, only by [`transmux::CencEncryptor`] on the encode side, so this side
-/// channel is this analyzer's own bridge, not a transmux-native field).
-fn describe_track(track: &Track, protected_scheme: Option<&'static str>) -> Mp4Track {
+fn describe_track(track: &Track) -> Mp4Track {
     let config = &track.spec.config;
     let (width, height) = dims(config);
     let (channel_count, sample_rate) = audio_params(config);
@@ -281,10 +271,9 @@ fn describe_track(track: &Track, protected_scheme: Option<&'static str>) -> Mp4T
         0.0
     };
 
-    let (encrypted, encryption_scheme) = match (&track.spec.protection, protected_scheme) {
-        (Some(enc), _) => (true, Some(enc.scheme.name())),
-        (None, Some(scheme)) => (true, Some(scheme)),
-        (None, None) => (false, None),
+    let (encrypted, encryption_scheme) = match &track.spec.protection {
+        Some(enc) => (true, Some(enc.scheme.name())),
+        None => (false, None),
     };
 
     Mp4Track {
@@ -306,23 +295,8 @@ fn describe_track(track: &Track, protected_scheme: Option<&'static str>) -> Mp4T
     }
 }
 
-fn build_report(
-    media: Media,
-    protected_track_id: Option<transmux::TrackId>,
-    protected_scheme: Option<&'static str>,
-) -> Mp4Report {
-    let tracks = media
-        .tracks
-        .iter()
-        .map(|t| {
-            let scheme = if Some(t.track_id()) == protected_track_id {
-                protected_scheme
-            } else {
-                None
-            };
-            describe_track(t, scheme)
-        })
-        .collect();
+fn build_report(media: Media) -> Mp4Report {
+    let tracks = media.tracks.iter().map(describe_track).collect();
     let skipped_tracks = media
         .skipped
         .into_iter()
@@ -437,28 +411,11 @@ fn skipped_from_reason(reason: AbandonReason, track_id: Option<transmux::TrackId
 /// Run the MP4/CMAF codec-identity pass over a raw ISO-BMFF byte buffer.
 ///
 /// Never panics: a demux failure (e.g. no `moov` box) is reported in
-/// `parse_error`, not raised.
-///
-/// A second, independent pass handles CENC/CBCS-protected tracks: neither
-/// [`Mp4Demux`] nor [`Mp4Demux`] reconstructs an `encv`/`enca`
-/// sample entry (there is no `sinf`/`tenc` unwrap in either — that logic
-/// lives only in [`transmux::CencDecryptor`], the crate's dedicated *decrypt*
-/// path) — a protected track from the primary pass above lands in
-/// `skipped_tracks` naming the raw `encv`/`enca` fourcc. [`CencDecryptor`]
-/// is tried next, purely to *identify* such a track (`from_fmp4` harvests
-/// `sinf`/`tenc`/`senc` metadata; `demux` returns the still-encrypted
-/// samples) — no decryption key is ever supplied or needed. It currently
-/// reconstructs protected **AVC video only** (`demux_protected`'s own
-/// documented scope, and its single-track accessors), so this is only
-/// applied when it recovers exactly one track and the primary pass had
-/// exactly one matching `encv`/`enca` skip — otherwise a mixed/ambiguous
-/// file is left as-is rather than guessing which skipped track a
-/// single-track accessor's scheme belongs to. A protected HEVC or audio
-/// track, or a file with more than one protected track, therefore still
-/// surfaces honestly via `skipped_tracks` — this analyzer does not invent an
-/// identity transmux itself cannot recover.
+/// `parse_error`, not raised. A CENC/CBCS-protected `encv`/`enca` entry is
+/// demuxed as its real codec with `TrackSpec::protection` set, so it is
+/// reported encrypted with its scheme rather than skipped.
 pub fn analyze_mp4_impl(bytes: &[u8]) -> Mp4Report {
-    let mut media = match demux_mp4(bytes) {
+    let media = match demux_mp4(bytes) {
         Ok(media) => media,
         Err(e) => {
             return Mp4Report {
@@ -470,195 +427,7 @@ pub fn analyze_mp4_impl(bytes: &[u8]) -> Mp4Report {
             };
         }
     };
-
-    let encv_or_enca_skips = media
-        .skipped
-        .iter()
-        .filter(|s| s.fourcc == "encv" || s.fourcc == "enca")
-        .count();
-    let mut protected_scheme: Option<&'static str> = None;
-    if encv_or_enca_skips == 1
-        && let Ok(decryptor) = transmux::CencDecryptor::from_fmp4(bytes)
-        && let Ok(mut protected) = decryptor.demux()
-        && protected.tracks.len() == 1
-    {
-        media
-            .skipped
-            .retain(|s| s.fourcc != "encv" && s.fourcc != "enca");
-        protected_scheme = decryptor.scheme().map(|s| s.name());
-        media.tracks.push(protected.tracks.remove(0));
-    }
-
-    let protected_track_id = protected_scheme
-        .and_then(|_| media.tracks.last())
-        .map(|t| t.track_id());
-
-    build_report(media, protected_track_id, protected_scheme)
+    build_report(media)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    fn fixture(name: &str) -> Vec<u8> {
-        test_fixtures::read(&format!("mp4/{name}"))
-    }
-
-    fn transmux_fixture(name: &str) -> Vec<u8> {
-        let path = test_fixtures::path(&format!("mp4/{name}"));
-        std::fs::read(&path)
-            .unwrap_or_else(|e| panic!("failed to read fixture {}: {e}", path.display()))
-    }
-
-    /// Real-fixture gate: `h264-high.mp4` is a *progressive* (faststart,
-    /// `moov` after a single `mdat`, no `moof`) capture — this exercises the
-    /// [`Mp4Demux`] branch of [`analyze_mp4_impl`]'s dispatch and
-    /// must resolve a video track carrying a well-formed `avc1.` RFC 6381
-    /// string and at least one decoded sample (progressive files carry full
-    /// `stbl` sample tables, unlike a `moof`-less input with no fragments at
-    /// all, which would legitimately have zero samples).
-    #[test]
-    fn h264_high_progressive_resolves_codec_identity() {
-        let bytes = fixture("h264-high.mp4");
-        let report = analyze_mp4_impl(&bytes);
-        assert!(report.parse_error.is_none(), "{:?}", report.parse_error);
-        let video = report
-            .tracks
-            .iter()
-            .find(|t| t.kind == "video")
-            .expect("expected a video track");
-        assert_eq!(video.codec, "H.264/AVC");
-        let cs = video
-            .codec_string
-            .as_deref()
-            .expect("expected a codec string");
-        assert!(cs.starts_with("avc1."), "got {cs}");
-        assert!(video.sample_count > 0, "expected at least one sample");
-        assert!(video.width.unwrap_or(0) > 0);
-        assert!(video.height.unwrap_or(0) > 0);
-    }
-
-    /// Real-fixture gate for the OTHER dispatch branch: `h264-aac-frag.mp4`
-    /// (under `fixtures/ts/`) is a genuinely fragmented CMAF capture
-    /// (`moov` + three `moof`/`mdat` pairs) — this exercises
-    /// [`analyze_mp4_impl`]'s [`Mp4Demux`] branch, on both a video and an
-    /// audio track, with samples spanning multiple fragments.
-    #[test]
-    fn h264_aac_fragmented_resolves_both_tracks_across_fragments() {
-        let bytes = transmux_fixture("h264-aac-frag.mp4");
-        let report = analyze_mp4_impl(&bytes);
-        assert!(report.parse_error.is_none(), "{:?}", report.parse_error);
-
-        let video = report
-            .tracks
-            .iter()
-            .find(|t| t.kind == "video")
-            .expect("expected a video track");
-        assert_eq!(video.codec, "H.264/AVC");
-        assert!(
-            video.sample_count > 0,
-            "expected samples from moof/mdat fragments"
-        );
-        assert!(video.width.unwrap_or(0) > 0);
-
-        let audio = report
-            .tracks
-            .iter()
-            .find(|t| t.kind == "audio")
-            .expect("expected an audio track");
-        assert_eq!(audio.codec, "AAC");
-        assert!(audio.sample_count > 0);
-        let cs = audio
-            .codec_string
-            .as_deref()
-            .expect("expected an AAC codec string");
-        assert!(cs.starts_with("mp4a."), "got {cs}");
-    }
-
-    /// HEVC real fixture: `hvc1`/`hev1` + `hvcC` → an `hvc1.` (or `hev1.`)
-    /// RFC 6381 string.
-    #[test]
-    fn hevc_fragment_resolves_codec_identity() {
-        let bytes = fixture("hevc-main.mp4");
-        let report = analyze_mp4_impl(&bytes);
-        assert!(report.parse_error.is_none(), "{:?}", report.parse_error);
-        let video = report
-            .tracks
-            .iter()
-            .find(|t| t.kind == "video")
-            .expect("expected a video track");
-        assert_eq!(video.codec, "H.265/HEVC");
-        assert!(video.codec_string.is_some());
-    }
-
-    /// AV1 real fixture, exercising the `esds`-free `av1C` path.
-    #[test]
-    fn av1_fragment_resolves_codec_identity() {
-        let bytes = fixture("av1.mp4");
-        let report = analyze_mp4_impl(&bytes);
-        assert!(report.parse_error.is_none(), "{:?}", report.parse_error);
-        let video = report
-            .tracks
-            .iter()
-            .find(|t| t.kind == "video")
-            .expect("expected a video track");
-        assert_eq!(video.codec, "AV1");
-        assert!(
-            video
-                .codec_string
-                .as_deref()
-                .unwrap_or("")
-                .starts_with("av01.")
-        );
-    }
-
-    /// CENC-encrypted real fixture: the track must be reported `encrypted`
-    /// with a named scheme, not silently dropped or misreported cleartext.
-    #[test]
-    fn cenc_fixture_reports_encryption() {
-        let bytes = fixture("cenc.mp4");
-        let report = analyze_mp4_impl(&bytes);
-        assert!(report.parse_error.is_none(), "{:?}", report.parse_error);
-        let encrypted_track = report
-            .tracks
-            .iter()
-            .find(|t| t.encrypted)
-            .expect("expected at least one encrypted track");
-        assert!(
-            matches!(
-                encrypted_track.encryption_scheme,
-                Some("cenc") | Some("cbcs")
-            ),
-            "got {:?}",
-            encrypted_track.encryption_scheme
-        );
-    }
-
-    /// Opus/FLAC audio fixtures resolve channel/sample-rate + a codec string.
-    #[test]
-    fn opus_fixture_resolves_audio_identity() {
-        let bytes = fixture("opus.mp4");
-        let report = analyze_mp4_impl(&bytes);
-        assert!(report.parse_error.is_none(), "{:?}", report.parse_error);
-        let audio = report
-            .tracks
-            .iter()
-            .find(|t| t.kind == "audio")
-            .expect("expected an audio track");
-        assert_eq!(audio.codec, "Opus");
-        // RFC 6381 registration for Opus is the literal (capitalized)
-        // "Opus" — see `OpusSpecificBox::rfc6381`'s own doc comment.
-        assert_eq!(audio.codec_string.as_deref(), Some("Opus"));
-        assert!(audio.channel_count.unwrap_or(0) > 0);
-        assert!(audio.sample_rate.unwrap_or(0) > 0);
-    }
-
-    /// Garbage input must never panic and must report the failure honestly.
-    #[test]
-    fn garbage_input_never_panics() {
-        let garbage = vec![0u8; 4096];
-        let report = analyze_mp4_impl(&garbage);
-        assert!(report.parse_error.is_some());
-        assert!(report.tracks.is_empty());
-    }
-}

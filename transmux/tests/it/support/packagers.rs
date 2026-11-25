@@ -138,7 +138,7 @@ pub fn smooth_parts(
     for output in outputs {
         if let MuxOutput::Segment(segment) = output {
             log.push(&segment)?;
-            segments.push(segment);
+            segments.push(*segment);
         }
     }
     Ok((log, segments))

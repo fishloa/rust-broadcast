@@ -21,6 +21,8 @@ mod cenc_frag_layouts;
 mod cenc_fragmented_fixture;
 mod cenc_mux;
 mod cenc_saiz_stsz_v1_boxes;
+#[path = "support/cenc.rs"]
+mod cenc_support;
 mod clap_precedence;
 mod classify_nals;
 mod cli;
@@ -135,6 +137,9 @@ mod presentation_size;
 mod presentation_span_overflow;
 mod progressive;
 mod progressive_demux;
+mod progressive_plan;
+#[path = "support/progressive.rs"]
+mod progressive_support;
 mod ps_demux;
 mod ps_demux_mpeg2;
 mod ps_demux_substreams;
@@ -229,9 +234,14 @@ mod ts_hevc;
 mod ts_hevc_carriage;
 mod ts_hls;
 mod ts_hls_audio_catch_up;
+#[path = "support/ts_hls_stage.rs"]
+mod ts_hls_stage;
 mod ts_mux;
+mod ts_mux_pmt_update;
 mod ts_mux_psi_pcr;
 mod ts_mux_psi_repeat;
+#[path = "support/ts_mux_stage.rs"]
+mod ts_mux_stage;
 mod ts_mux_streaming;
 #[path = "support/ts_psi.rs"]
 mod ts_psi;

@@ -16,10 +16,12 @@
 //! audio elementary stream at all (PMT or PES); segments cut *after* must
 //! declare the audio track in the PMT and actually carry its PES data.
 
+use crate::ts_hls_stage;
 use broadcast_common::Unpackage;
 use transmux::media::Media;
+use transmux::mux_stage::SegmentOut;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::{StreamingTsHlsSegmenter, TrackId, TsDemux, TsSegment};
+use transmux::{StreamingTsHlsSegmenter, TrackId, TsDemux};
 
 fn load_ts() -> Vec<u8> {
     let path = test_fixtures::path("ts/h264-aac.ts");
@@ -80,11 +82,11 @@ fn add_track_registers_audio_after_video_only_segments_were_already_cut() {
     let mut seg = StreamingTsHlsSegmenter::new(vec![video_spec], 1, usize::MAX)
         .expect("construct video-only streaming segmenter");
 
-    let mut before_segments: Vec<TsSegment> = Vec::new();
+    let mut before_segments: Vec<SegmentOut> = Vec::new();
     let mut split_idx: Option<usize> = None;
     for (i, s) in video_samples.iter().enumerate() {
-        seg.push(video_track_id, s.clone()).expect("push video");
-        let ready = seg.take_ready();
+        ts_hls_stage::feed(&mut seg, video_track_id, s.clone());
+        let ready = ts_hls_stage::drain(&mut seg);
         if !ready.is_empty() {
             before_segments.extend(ready);
             split_idx = Some(i);
@@ -142,11 +144,11 @@ fn add_track_registers_audio_after_video_only_segments_were_already_cut() {
         } else {
             (audio_track_id, audio_samples[idx].clone())
         };
-        seg.push(track_id, sample).expect("push");
+        ts_hls_stage::feed(&mut seg, track_id, sample);
     }
-    let mut after_segments: Vec<TsSegment> = seg.take_ready();
-    seg.finish().expect("finish");
-    after_segments.extend(seg.take_ready());
+    let mut after_segments: Vec<SegmentOut> = ts_hls_stage::drain(&mut seg);
+    ts_hls_stage::finish(&mut seg);
+    after_segments.extend(ts_hls_stage::drain(&mut seg));
     assert!(
         !after_segments.is_empty(),
         "at least one segment must be cut after add_track"
@@ -237,15 +239,15 @@ fn add_track_before_output_reanchors_to_video_without_a_discontinuity() {
     seg.add_track(video).expect("add video");
 
     for i in 0..=10u32 {
-        seg.push(vid, sample_of(9_000, i % 10 == 0)).expect("push");
+        ts_hls_stage::feed(&mut seg, vid, sample_of(9_000, i % 10 == 0));
     }
-    let cuts = seg.take_ready();
+    let cuts = ts_hls_stage::drain(&mut seg);
     assert!(
         !cuts.is_empty(),
         "the anchor must switch to the newly added video track"
     );
     assert!(
-        !cuts[0].discontinuous,
+        !cuts[0].summary.discontinuous,
         "a track added before any output must not flag the first segment"
     );
 }
@@ -258,10 +260,10 @@ fn adding_a_non_video_track_before_output_keeps_the_anchor() {
     seg.add_track(audio_spec_b()).expect("add second audio");
 
     for _ in 0..4 {
-        seg.push(id, sample_of(24_000, true)).expect("push");
+        ts_hls_stage::feed(&mut seg, id, sample_of(24_000, true));
     }
     assert!(
-        !seg.take_ready().is_empty(),
+        !ts_hls_stage::drain(&mut seg).is_empty(),
         "the anchor must stay on the audio track that has samples"
     );
 }
@@ -271,15 +273,15 @@ fn adding_video_after_buffered_audio_keeps_the_anchor() {
     let audio = crate::hub_fixtures::audio_track();
     let id = audio.track_id;
     let mut seg = StreamingTsHlsSegmenter::new(vec![audio], 1, usize::MAX).expect("construct");
-    seg.push(id, sample_of(24_000, true)).expect("push");
+    ts_hls_stage::feed(&mut seg, id, sample_of(24_000, true));
     seg.add_track(crate::hub_fixtures::video_track())
         .expect("add video");
 
     for _ in 0..4 {
-        seg.push(id, sample_of(24_000, true)).expect("push");
+        ts_hls_stage::feed(&mut seg, id, sample_of(24_000, true));
     }
     assert!(
-        !seg.take_ready().is_empty(),
+        !ts_hls_stage::drain(&mut seg).is_empty(),
         "a buffered sample means the anchor must not be recomputed"
     );
 }
@@ -290,16 +292,19 @@ fn adding_video_after_a_cut_keeps_the_existing_anchor() {
     let vid = video.track_id;
     let mut seg = StreamingTsHlsSegmenter::new(vec![video], 1, usize::MAX).expect("construct");
     for i in 0..=10u32 {
-        seg.push(vid, sample_of(9_000, i % 10 == 0)).expect("push");
+        ts_hls_stage::feed(&mut seg, vid, sample_of(9_000, i % 10 == 0));
     }
-    assert!(!seg.take_ready().is_empty(), "first segment must cut");
+    assert!(
+        !ts_hls_stage::drain(&mut seg).is_empty(),
+        "first segment must cut"
+    );
 
     seg.add_track(video_spec_b()).expect("add second video");
     for i in 11..=20u32 {
-        seg.push(vid, sample_of(9_000, i % 10 == 0)).expect("push");
+        ts_hls_stage::feed(&mut seg, vid, sample_of(9_000, i % 10 == 0));
     }
     assert!(
-        !seg.take_ready().is_empty(),
+        !ts_hls_stage::drain(&mut seg).is_empty(),
         "cuts must keep following the original video anchor"
     );
 }

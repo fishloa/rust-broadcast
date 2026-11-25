@@ -633,7 +633,9 @@ impl Stage for Segmenter {
     }
 
     fn poll(&mut self) -> Option<Self::Out> {
-        self.ready.pop_front().map(MuxOutput::Segment)
+        self.ready
+            .pop_front()
+            .map(|segment| MuxOutput::Segment(Box::new(segment)))
     }
 
     fn finish(&mut self) -> Result<()> {

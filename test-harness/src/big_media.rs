@@ -14,11 +14,12 @@ use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::Duration;
 
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize, Unpackage};
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
+use transmux::mux_stage::{MuxOutput, drive_media};
 use transmux::{
-    CodecConfig, FlvDemux, FlvPayloadKind, Media, StreamingTsMux, TsDemux, flv_frame_payload,
-    flv_sequence_header_payloads, on_metadata_body,
+    CodecConfig, DEFAULT_PSI_INTERVAL, FlvDemux, FlvPayloadKind, Media, TsDemux, TsMuxStage,
+    flv_frame_payload, flv_sequence_header_payloads, on_metadata_body,
 };
 
 /// Nanoseconds in one second: turns a timescale-tick span into a [`Duration`]
@@ -43,7 +44,7 @@ pub struct BigMedia {
 }
 
 /// Write an MPEG-2 TS file of at least `target_bytes` by repeating
-/// `source_fixture`'s samples through a single [`StreamingTsMux`].
+/// `source_fixture`'s samples through a single [`TsMuxStage`].
 pub fn write_big_ts(path: &Path, source_fixture: &Path, target_bytes: u64) -> BigMedia {
     let source = read_source(source_fixture);
     let media = expect(
@@ -51,13 +52,13 @@ pub fn write_big_ts(path: &Path, source_fixture: &Path, target_bytes: u64) -> Bi
         TsDemux::new().unpackage(source.as_slice()),
     );
     let step = pass_step(&media);
-    let mut mux = StreamingTsMux::new();
+    let mut mux = TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL));
     let mut out = BufWriter::new(expect("create output", File::create(path)));
     let mut written = 0u64;
     let mut passes = 0u64;
     while written < target_bytes {
         let shifted = media_at_pass(&media, &step, passes);
-        let chunk = expect("mux TS pass", mux.package(&shifted));
+        let chunk = mux_pass(&mut mux, &shifted);
         expect("write TS pass", out.write_all(&chunk));
         written += expect("sum chunk length", u64::try_from(chunk.len()));
         passes += 1;
@@ -120,7 +121,7 @@ pub fn write_big_flv(path: &Path, source_fixture: &Path, target_bytes: u64) -> B
 pub struct TsSegmentStream {
     media: Media,
     step: PassStep,
-    mux: StreamingTsMux,
+    mux: TsMuxStage,
     segments: u64,
     segment_bytes: usize,
     emitted: u64,
@@ -142,7 +143,7 @@ impl TsSegmentStream {
         Self {
             media,
             step,
-            mux: StreamingTsMux::new(),
+            mux: TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL)),
             segments,
             segment_bytes: (segment_bytes / TS_PACKET * TS_PACKET).max(TS_PACKET),
             emitted: 0,
@@ -168,7 +169,7 @@ impl TsSegmentStream {
         }
         while self.pending.len() < self.segment_bytes {
             let shifted = media_at_pass(&self.media, &self.step, self.next_pass);
-            let chunk = expect("mux TS pass", self.mux.package(&shifted));
+            let chunk = mux_pass(&mut self.mux, &shifted);
             self.pending.extend_from_slice(&chunk);
             self.next_pass += 1;
         }
@@ -176,6 +177,22 @@ impl TsSegmentStream {
         self.emitted += 1;
         Some(self.pending.drain(..len).collect())
     }
+}
+
+/// Mux one pass of a generated TS through `stage`, collecting the bytes it
+/// emits.
+fn mux_pass(stage: &mut TsMuxStage, media: &Media) -> Vec<u8> {
+    let outputs = expect(
+        "mux TS pass",
+        drive_media(stage, media, broadcast_common::stage::Timestamp::ZERO),
+    );
+    let mut bytes = Vec::new();
+    for output in outputs {
+        if let MuxOutput::Bytes(chunk) = output {
+            bytes.extend_from_slice(&chunk);
+        }
+    }
+    bytes
 }
 
 /// FLV header, `onMetaData` and the AVC/AAC sequence headers, written once.

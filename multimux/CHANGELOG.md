@@ -4,6 +4,19 @@
 
 ### Changed
 
+- Push outputs mux one sample at a time through one per-connection muxer:
+  `PushTransport::media_muxer()` hands out a `MediaMuxer` (announce the track
+  set, feed one drained sample, flush at an idle boundary), and
+  `PushTransportEgress` is its one driver — no push path builds a `Media` per
+  batch or per sample any more. The SRT and RTSP transports keep a
+  `transmux::TsMuxStage` (one interleave window, flushed once per drain pass
+  by `PushTransportEgress::flush_mux`, so an idle-or-ended stream does not
+  leave its last frames queued); RTMP frames each sample through
+  `transmux::RtmpMuxStage` through the same hook, so publishing no longer
+  materialises the media IR. `MuxError::Rtmp` carries that muxer's own errors.
+  The WHEP output packetises one sample with
+  `transmux::packetise_video_sample`, without building a `Track` (#1024,
+  Phase 4).
 - The live DASH/LL-DASH MPD renders from track specs and a segment-summary log
   instead of building an empty-sample `Media`, so a manifest refresh never
   materialises the IR.

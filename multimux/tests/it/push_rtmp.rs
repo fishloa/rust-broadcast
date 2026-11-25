@@ -1,7 +1,7 @@
 //! RTMP push output — real-protocol payload-format test (issue #934).
 //!
 //! Before this fix, `multimux::push::drive_push` muxed **every** push output
-//! with `transmux::TsMux` and `push::rtmp::RtmpTransport::send` shipped the
+//! with the crate's TS muxer and `push::rtmp::RtmpTransport::send` shipped the
 //! resulting MPEG-2 TS bytes as an RTMP `send_video` message payload — a
 //! payload no RTMP server can decode (RTMP Audio/Video messages carry FLV.as_slice()
 //! `AudioTagHeader`/`VideoTagHeader` bodies, not TS). This test exercises the

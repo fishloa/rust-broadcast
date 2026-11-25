@@ -6,11 +6,11 @@
 //! fails here.
 #![cfg(feature = "std")]
 
+use crate::ts_mux_stage;
 use core::time::Duration;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::Package;
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use transmux::{PsDemux, TsDemux, WebmDemux};
@@ -507,20 +507,19 @@ fn h264_aac_media() -> Option<transmux::Media> {
 
 #[test]
 fn muxer_outputs_are_unchanged() {
-    use transmux::{ProgressiveMux, TsMux};
     let Some(media) = h264_aac_media() else {
         eprintln!("SKIPPED ts/h264-aac.ts");
         return;
     };
     let mut bad = Vec::new();
-    let faststart = ProgressiveMux::new(true).package(&media).unwrap();
+    let faststart = crate::progressive_support::package(&media, true);
     check(
         &mut bad,
         "progressive-faststart",
         fnv1a(&faststart),
         0x0d60444d4345e766,
     );
-    let tail = ProgressiveMux::new(false).package(&media).unwrap();
+    let tail = crate::progressive_support::package(&media, false);
     check(
         &mut bad,
         "progressive-moov-last",
@@ -534,10 +533,7 @@ fn muxer_outputs_are_unchanged() {
     // default `TsMux` now repeats PAT/PMT periodically (R7); that default is
     // covered by tests/it/ts_mux_psi_repeat.rs, which proves the default output is
     // exactly this once-only output plus the PSI repeats.
-    let ts = TsMux::new()
-        .with_psi_interval(None)
-        .package(&media)
-        .unwrap();
+    let ts = ts_mux_stage::mux_with(&media, None);
     check(&mut bad, "ts", fnv1a(&ts), 0xe5b08f3fd235cf03);
     assert!(bad.is_empty(), "output changed: {bad:?}");
 }
@@ -633,7 +629,6 @@ const CODEC_MUX_FIXTURES: &[&str] = &["ts/hevc/main.ts", "ts/dolby/ac3.ts", "ts/
 
 #[test]
 fn hevc_and_dolby_muxer_outputs_are_unchanged() {
-    use transmux::{ProgressiveMux, TsMux};
     let want: &[(&str, u64)] = CODEC_MUX_GOLDEN;
     let mut bad = Vec::new();
     let mut i = 0;
@@ -647,7 +642,7 @@ fn hevc_and_dolby_muxer_outputs_are_unchanged() {
         let outs = [
             (
                 "progressive",
-                hash_result(ProgressiveMux::new(true).package(&media)),
+                fnv1a(&crate::progressive_support::package(&media, true)),
             ),
             (
                 "mkv",
@@ -656,10 +651,7 @@ fn hevc_and_dolby_muxer_outputs_are_unchanged() {
                 )),
             ),
             // Once-only PSI: see muxer_outputs_are_unchanged.
-            (
-                "ts",
-                hash_result(TsMux::new().with_psi_interval(None).package(&media)),
-            ),
+            ("ts", hash_result(ts_mux_stage::try_mux_with(&media, None))),
             ("cmaf", hash_result(crate::cmaf::package(&media))),
         ];
         for (kind, got) in outs {
@@ -771,8 +763,7 @@ const DASH_GOLDEN: &[u64] = &[0xd2dcfb26a908fc39, 0xe6e9e31487c71f4e, 0xa779291f
 #[cfg(feature = "cenc")]
 #[test]
 fn cenc_decrypted_output_is_unchanged() {
-    use broadcast_common::Decrypt;
-    use transmux::cenc_decrypt::{CencDecryptor, KeyMap};
+    use transmux::cenc_decrypt::{CencDecryptStage, KeyMap};
     const KID: [u8; 16] = [
         0xa7, 0xe6, 0x1c, 0x37, 0x3e, 0x21, 0x90, 0x33, 0xc2, 0x10, 0x91, 0xfa, 0x60, 0x7b, 0xf3,
         0xb8,
@@ -785,8 +776,11 @@ fn cenc_decrypted_output_is_unchanged() {
         eprintln!("SKIPPED mp4/cenc.mp4");
         return;
     };
-    let dec = CencDecryptor::from_fmp4(&file).unwrap();
-    let mut media = dec.demux().unwrap();
+    let media = test_harness::collect::media_from_mp4(
+        file.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .unwrap();
     let mut bad = Vec::new();
     check(
         &mut bad,
@@ -794,8 +788,8 @@ fn cenc_decrypted_output_is_unchanged() {
         fnv1a(media_debug(&media).as_bytes()),
         CENC_GOLDEN[0],
     );
-    dec.decrypt(&mut media, &KeyMap::new().with_key(KID, KEY))
-        .unwrap();
+    let mut stage = CencDecryptStage::new(KeyMap::new().with_key(KID, KEY));
+    let media = crate::cenc_support::run(&mut stage, &media).unwrap();
     let mut bytes = Vec::new();
     for t in &media.tracks {
         for smp in &t.samples {
@@ -818,4 +812,9 @@ fn cenc_decrypted_output_is_unchanged() {
 }
 
 #[cfg(feature = "cenc")]
-const CENC_GOLDEN: [u64; 3] = [0xf124776756fb7155, 0xfb42a9ef77a663dd, 0x80b225c275a0c9a2];
+/// The two Media *debug* digests changed with Phase 4 slice 6: a protected
+/// `encv` entry now maps to its wrapped codec (real `width`/`height`) and the
+/// reader supplies real sample timing, where the old decrypt-only walk had
+/// neither. The decrypted *sample bytes* digest is unchanged, which is the
+/// byte-identity gate.
+const CENC_GOLDEN: [u64; 3] = [0x28cf140cfbdeb576, 0xfb42a9ef77a663dd, 0x82cca5514eee7a2d];

@@ -2,6 +2,7 @@
 //! F1). `gulli-opengop.ts` is real open-GOP H.264: sync samples, zero IDR
 //! pictures. `france2.ts` carries real IDRs.
 
+use crate::ts_hls_stage;
 use std::time::Duration;
 
 use broadcast_common::Unpackage;
@@ -75,8 +76,8 @@ fn run(v: &Video, stream: &[Sample], bound: Option<Duration>) -> Outcome {
     }
     let mut cuts = Vec::new();
     for (i, s) in stream.iter().enumerate() {
-        seg.push(v.spec.track_id, s.clone()).expect("push");
-        if !seg.take_ready().is_empty() {
+        ts_hls_stage::feed(&mut seg, v.spec.track_id, s.clone());
+        if !ts_hls_stage::drain(&mut seg).is_empty() {
             cuts.push(i);
         }
     }

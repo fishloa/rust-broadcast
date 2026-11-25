@@ -18,7 +18,7 @@ pub fn take(seg: &mut Segmenter) -> Vec<SegmentOut> {
     let mut out = Vec::new();
     while let Some(output) = seg.poll() {
         if let MuxOutput::Segment(segment) = output {
-            out.push(segment);
+            out.push(*segment);
         }
     }
     out

@@ -1,7 +1,7 @@
 //! Demux-side display geometry (Phase 4a-2): an fMP4 / MP4 sample entry's
 //! `pasp` and `colr nclx` are applied to `TrackSpec::display`.
 
-use broadcast_common::Package;
+use crate::ts_mux_stage;
 use broadcast_common::timescale::Timescale;
 use transmux::TrackSpec;
 use transmux::ir::{
@@ -426,9 +426,7 @@ fn avc_ts(spec: TrackSpec, access_units: &[Vec<u8>]) -> Vec<u8> {
         })
         .collect();
     let track = transmux::Track::new(spec, samples);
-    transmux::TsMux::new()
-        .package(&transmux::Media::new(vec![track], timescale(90000)))
-        .expect("mux the synthetic TS")
+    ts_mux_stage::mux(&transmux::Media::new(vec![track], timescale(90000)))
 }
 
 /// Every video `DisplayChanged`, as `(initial, coded width)`.
