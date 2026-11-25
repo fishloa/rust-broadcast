@@ -160,6 +160,12 @@ test = false
 doc  = false
 
 [[bin]]
+name = "mpeg_ps_scanner"
+path = "fuzz_targets/mpeg_ps_scanner.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "mpeg_ps"
 path = "fuzz_targets/mpeg_ps.rs"
 test = false
