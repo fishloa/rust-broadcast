@@ -66,7 +66,7 @@
 //! the `SeekHead`'s own serialized size — needed to compute those very
 //! positions — can be measured from a placeholder build before the real
 //! positions are known, mirroring
-//! [`crate::progressive::ProgressiveMux`]'s two-pass `stco`/`co64` offset
+//! [`crate::progressive::ProgressiveMuxStage`]'s planned `stco`/`co64` offset
 //! arithmetic. `Cues` carries one `CuePoint` per **video** keyframe (never one
 //! per audio sample, which — unlike video — has no non-keyframe state in this
 //! IR: [`crate::pipeline::Sample::from_raw`] always marks an audio sample

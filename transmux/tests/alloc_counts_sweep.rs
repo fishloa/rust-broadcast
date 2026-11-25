@@ -182,10 +182,13 @@ mod cenc_decrypt_copies {
     const CENC_SHARED_BUDGET_X100: usize = 60; // 21 after (from_fmp4_bytes is new; old code copied >= 100)
 }
 
+#[path = "it/support/progressive.rs"]
+mod progressive_support;
+
 mod muxer_buffering {
     use super::bytes_allocated;
     use broadcast_common::{Package, Unpackage};
-    use transmux::{MkvMux, ProgressiveMux, TsDemux, TsMux};
+    use transmux::{MkvMux, TsDemux, TsMux};
 
     /// r05-O4: the muxers buffered their whole output through 2-4 full copies.
     /// Bytes allocated by `package`, as a multiple of the produced output size.
@@ -194,7 +197,7 @@ mod muxer_buffering {
         let data = test_fixtures::read("ts/h264-aac.ts");
         let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
         let cases: [(&str, Vec<u8>, usize); 3] = {
-            let (prog, a1) = bytes_allocated(|| ProgressiveMux::new(true).package(&media).unwrap());
+            let (prog, a1) = bytes_allocated(|| super::progressive_support::package(&media, true));
             let (mkv, a2) = bytes_allocated(|| MkvMux::new().package(&media).unwrap());
             let (ts, a3) = bytes_allocated(|| TsMux::new().package(&media).unwrap());
             [("progressive", prog, a1), ("mkv", mkv, a2), ("ts", ts, a3)]
@@ -211,7 +214,12 @@ mod muxer_buffering {
         }
     }
 
-    const PROGRESSIVE_BUDGET_X100: usize = 316; // 412 before r05-O4, 220 after (midway)
+    // 412 before r05-O4, 220 after, 423 with the plan-driven stage: the muxer
+    // now hands the caller each sample as an owned `Bytes` (one payload copy into
+    // the message) instead of writing into a pre-sized buffer, and the plan pass
+    // allocates the plan. The payload is copied twice (message + output), never
+    // three times.
+    const PROGRESSIVE_BUDGET_X100: usize = 450; // 220 before the plan-driven stage, 423 measured
     const MKV_BUDGET_X100: usize = 719; // 1145 before r05-O4, 293 after (midway)
     const TS_BUDGET_X100: usize = 655; // 770 before r05-O4, 540 after (midway)
 }

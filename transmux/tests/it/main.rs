@@ -126,6 +126,9 @@ mod presentation_size;
 mod presentation_span_overflow;
 mod progressive;
 mod progressive_demux;
+mod progressive_plan;
+#[path = "support/progressive.rs"]
+mod progressive_support;
 mod ps_demux;
 mod ps_demux_mpeg2;
 mod ps_demux_substreams;

@@ -94,7 +94,7 @@ pub(crate) fn track_setups(tracks: &[TrackSpec]) -> Result<Vec<isobmff::writer::
         // (opaque `CodecConfig::Data` — issue #557/#576 — or
         // `CodecConfig::Subtitle` with no sample entry) is rejected, naming it,
         // rather than silently omitted — every mux entry point built on this
-        // function (`CmafMux`, `ProgressiveMux`, `Segmenter`,
+        // function (`CmafMuxStage`, `ProgressiveMuxStage`, `Segmenter`,
         // `LlSegmenter`, `LlHlsSegmenter`) shares this one check, so a
         // Media containing e.g. a DVB subtitle/DSM-CC/SCTE-35 track fails
         // the same way everywhere; the caller must pre-filter first (e.g.
