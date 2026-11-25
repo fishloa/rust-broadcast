@@ -164,6 +164,7 @@ $ transmux in.ts -o out.cmaf                                  # TS to CMAF, form
 $ transmux in.mp4 -o out.m3u8 -f hls --segment-duration 4     # MP4 to CMAF-HLS, 4 s segments
 $ transmux in.ps -o out.mpd -f dash --ll                      # PS to low-latency DASH
 $ transmux enc.mp4 -o dec.mp4 -f progressive --decrypt --key <KID>:<KEY>
+$ cat in.ts | transmux - -o out.cmaf -f cmaf             # a forward-only stdin source streams
 ```
 
 `transmux --help` (abridged):
@@ -179,9 +180,12 @@ Usage: transmux [OPTIONS] --output <PATH> [IN]
       --ll                    Low-latency variant where supported (LL-DASH)
       --utc-timing-url <URL>  DASH only: advertise MPD/UTCTiming with this URL
       --tracks <IDS>          Restrict to these track IDs (comma-separated)
+      --max-whole-input-bytes <BYTES>  Cap the whole-file read of an unstreamable input (MPEG-PS/WebM); unlimited unless given
       --decrypt               Decrypt CENC input (requires the cenc feature)
       --key <KID:KEY>         Content key, repeatable, only with --decrypt
 ```
+
+Every input is streamed: the CLI drives the container's streaming demux stage and writes each muxer output unit as it is produced, so neither the source nor the output has to fit in memory. MPEG-PS and WebM are still read whole (their streaming demuxers are Phase 5), bounded by `--max-whole-input-bytes`. `-` reads standard input and `-o -` writes the single binary formats to standard output; progressive MP4 needs a seekable input and output.
 
 Input detection uses `container-probe`, which scores structural evidence over the leading bytes (MPEG-TS including 192-byte M2TS and mid-packet captures, ISOBMFF, MPEG-PS, WebM and Matroska, FLV). A container it recognises but this CLI has no demuxer for (MXF, WAV, Ogg, ADTS, MP3, Annex B) is reported as unsupported, and an inconclusive probe asks for the format to be given explicitly.
 

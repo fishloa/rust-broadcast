@@ -263,3 +263,5 @@ mod webm_timestamp_scale;
 #[path = "support/xml.rs"]
 mod xml;
 mod xml_escaping;
+
+mod cli_stream;

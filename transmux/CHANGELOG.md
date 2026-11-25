@@ -7,9 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- The `transmux` CLI now **streams**: it detects the container from a prefix and drives the matching streaming demux stage (`StreamingTsDemux`, `Mp4Demux` seekable or sequential, `StreamingFlvDemux`), merges samples by decode time exactly as `mux_stage::drive_media` does, and writes each `MuxOutput` as it arrives — no `fs::read` of media and no whole output buffer. `cli::run_bytes` drives the same path over an in-memory reader. MPEG-PS and WebM are still read whole (Phase 5), bounded by the new `--max-whole-input-bytes` (unlimited unless given; over the cap is `CliError::WholeInputTooLarge`). Progressive output makes its two passes over a seekable input; stdin is refused with `Error::ProgressiveNeedsReplayableInput`, and a non-seekable output with `CliError::ProgressiveNeedsSeekableOutput`.
+- `repackage`: the streaming `Repackage::run` now honours `Repackage::trim`, holding samples until every announced track has produced its first sample and the window's lower edge has snapped back to a keyframe, then applying the one `trim` rule. `Repackage::window_hold` bounds that hold in bytes; past it the run fails with the new `Error::RepackageWindowHoldExceeded`.
 - `payload`: a caller-owned `PayloadRegistry` holds object-safe `PayloadDecoder`s and renders one opaque data-track sample as named `PayloadValue`s (`PayloadScalar` is text, signed/unsigned integer, float, bytes, a POSIX-epoch-microsecond timestamp or a boolean). Each plug-in is a cargo feature; `St0601Decoder` (feature `motion-imagery-metadata`) claims a data track whose sample starts with the MISB ST 0601 Universal Label and returns its items as `tag_<n>` values plus `checksum_valid`, the tag-1 running-sum check reported as a value rather than as a decode error.
 
 ### Breaking
+- `Error::RepackageWindowNeedsWholeInput` is removed: the streaming `Repackage::run` accepts a window, bounded by `Repackage::window_hold` (`Error::RepackageWindowHoldExceeded`).
+- `mux_stage`: an untimed head (samples that state a span but no timestamp, before the first timestamped sample) is now ordered before that first timed sample in `drive_media`, rather than at its instant. A track whose head plays before a video picture therefore sorts where it plays.
 - `ProgressiveMux` and its `Package` impl are deleted. The replacement is
   `progressive::ProgressiveMuxStage`, a `Stage` over `MuxInput`/`MuxOutput`
   built from an `isobmff::plan::OwnedPlan`, a `Layout` and the movie header:
