@@ -280,6 +280,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** the ISOBMFF box layer is split out of the modules that mixed it with bitstream parsing, ahead of moving it to a dedicated crate. Public paths move in place: `init_segment::{OpaqueBox, ChildOrder}` -> `box_support`, `ac3::{Ac3SyncframeInfo, Ec3SyncframeInfo, split_*}` -> `ac3_syncframe`, `dts::{DtsCoreFrameInfo, DtsCoreFrame, split_dts_core_frames}` -> `dts_core`, `mpegh::{find_mpegh3da_config, walk_mhas_packets, MhasPacket}` -> `mhas`, `dovi::{DoviVideoStreamDescriptor, find_video_stream_descriptor, has_registration_descriptor, video_stream_descriptor_bytes, DOVI_VIDEO_STREAM_DESCRIPTOR_TAG, ...}` -> `dovi_descriptor`, `hdr::{ChromaticityXy, MasteringDisplayColourVolume, ContentLightLevel}` -> `hdr_boxes`, `movie_fragment::{FragmentProtection, MediaRunSample, media_fragment_run, protect_media_segment}` -> `fragment_build`, `init_segment::protect_init_segment` -> `cenc_segment`, `Ec3SpecificBox::from_syncframes` -> `ac3_syncframe::ec3_specific_box_from_syncframes`. Codec-metadata methods that need the bitstream parsers become extension traits: `nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo}` and `codec_config_ext::{HevcRecordCodecInfo, VvcRecordCodecInfo, EsdsBoxCodecInfo}` replace the inherent `decode`/`rfc6381`/`decode_sps`/`dimensions`/`audio_specific_config` methods. Wire bytes, output and behaviour are unchanged.
  builds against `motion-imagery-metadata` 0.2 (was 0.1). `LocalSetItem::value_typed()` returns that crate's `St0601Value`, so a consumer naming its types moves to 0.2 with it; 0.2 types tag 81/115/116/121/122/127/128/130/138/139/141/142 packs through new accessors and drops the `St0903VmtiItem::AlgorithmSeries`/`OntologySeries` variants.
 
+### Fixed
+- The CLI's `--decrypt` streams: the demux events pass through `CencDecryptStage`
+  on their way to the muxer (`CliStream` owns the stage and feeds every
+  `Track`/`Sample` into it), so each protected sample is deciphered and written
+  one at a time. The former path read the whole file into memory, decrypted it
+  into a whole `Media` and re-muxed that into an in-memory fMP4 buffer before
+  demuxing it again; `mp4_collect`'s whole-image bridge is deleted with it.
+  Issue #953's conversion — a CENC fragmented MP4 to MPEG-2 TS — is pinned by
+  `tests/bench_953.rs`, which generates a protected file one sample at a time
+  (soak-gated at 2 GiB, a small size on every run), runs the same `cli::run` the
+  binary runs under a per-thread 128 MiB cap, and checks the output TS carries
+  every sample and that the first and last samples of each track decrypt to the
+  generator's cleartext bytes. Measured on a debug build: 2 148 690 736 input
+  bytes to TS in 258.5 s, peak **26 324 407 bytes (25.1 MiB)**; the pre-fix path
+  peaked at 257 973 788 bytes on a 34 606 288-byte input, the same ~7.5× ratio
+  behind the issue's 6.66 GB.
+
 ## [0.33.0] - 2026-11-22
 ### Breaking
 - **BREAKING:** `HEVCDecoderConfigurationRecord::is_valid_length_size` is removed. It had no caller (the parser validates `lengthSizeMinusOne` against `VALID_LENGTH_SIZES`; the VVC record keeps its own, used copy) and its doc comment described an unrelated reserved-bit rule, so it was a dead, untested duplicate public API (audit 23 finding 268, #3781).

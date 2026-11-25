@@ -1061,11 +1061,23 @@ enum Kind {
     Progressive(ProgressiveMuxStage),
 }
 
+/// Content keys for `--decrypt`. Without the `cenc` feature the CLI has no
+/// `--decrypt` flag, so this is an uninhabited `Option` and the parameter
+/// threads through unused (`CliStream::start` ignores it).
+#[cfg(feature = "cenc")]
+type DecryptKeys = Option<crate::cenc_decrypt::KeyMap>;
+#[cfg(not(feature = "cenc"))]
+type DecryptKeys = Option<core::convert::Infallible>;
+
 struct CliStream {
     kind: Kind,
     reorder: Reorder,
     specs: Vec<TrackSpec>,
     opts: Opts,
+    /// The `--decrypt` stage, standing between the demux events and the
+    /// interleave/mux path. `None` when the caller did not ask to decrypt.
+    #[cfg(feature = "cenc")]
+    decrypt: Option<crate::cenc_decrypt::CencDecryptStage>,
 }
 
 impl CliStream {
@@ -1075,8 +1087,31 @@ impl CliStream {
         opts: &Opts,
         emit: &mut dyn Emit,
         plan: Option<isobmff::plan::OwnedPlan>,
+        keys: DecryptKeys,
     ) -> CliResult<Self> {
         let specs = apply_identity(&specs, &opts.data_identity)?;
+        #[cfg(feature = "cenc")]
+        let (decrypt, specs) = match keys {
+            Some(keys) => {
+                let mut stage = crate::cenc_decrypt::CencDecryptStage::new(keys);
+                for spec in &specs {
+                    stage.feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)?;
+                }
+                let clear = specs
+                    .into_iter()
+                    .map(|mut spec| {
+                        spec.protection = None;
+                        spec
+                    })
+                    .collect();
+                (Some(stage), clear)
+            }
+            None => (None, specs),
+        };
+        #[cfg(not(feature = "cenc"))]
+        let _ = keys;
+        #[cfg(not(feature = "cenc"))]
+        let specs = specs;
         let kind = match opts.format {
             OutputFormat::Cmaf => {
                 let target = Duration::from_secs(u64::from(opts.segment_duration.max(1)));
@@ -1141,12 +1176,15 @@ impl CliStream {
             reorder: Reorder::new(&specs, matches!(opts.format, OutputFormat::Hls)),
             specs,
             opts: opts.clone(),
+            #[cfg(feature = "cenc")]
+            decrypt,
         })
     }
 
     fn event(&mut self, event: DemuxEvent, emit: &mut dyn Emit) -> CliResult<()> {
         match event {
             DemuxEvent::Sample { track_id, sample } => self.sample(track_id, sample, emit),
+            DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => self.announce(spec),
             // A whole-`Media` drive never carried a discontinuity, so the CLI
             // ignores one here too: forwarding it would change a byte-exact
             // segmenter/TS muxer output against the established goldens.
@@ -1154,9 +1192,56 @@ impl CliStream {
         }
     }
 
+    /// Feed a track's changed `tenc` (or any other spec update) to the decrypt
+    /// stage, whose held samples then become decipherable. A track the caller
+    /// filtered out is dropped for the same reason [`Self::sample`] drops its
+    /// samples: the muxers never see that track either.
+    #[cfg(feature = "cenc")]
+    fn announce(&mut self, spec: TrackSpec) -> CliResult<()> {
+        let Some(stage) = self.decrypt.as_mut() else {
+            return Ok(());
+        };
+        if !self.specs.iter().any(|kept| kept.track_id == spec.track_id) {
+            return Ok(());
+        }
+        stage.feed(MuxInput::Track(Box::new(spec)), Timestamp::ZERO)?;
+        self.drain_decrypt(None)
+    }
+
+    #[cfg(not(feature = "cenc"))]
+    fn announce(&mut self, _spec: TrackSpec) -> CliResult<()> {
+        Ok(())
+    }
+
     fn sample(&mut self, track: TrackId, sample: Sample, emit: &mut dyn Emit) -> CliResult<()> {
+        #[cfg(feature = "cenc")]
+        if let Some(stage) = self.decrypt.as_mut() {
+            if !self.specs.iter().any(|kept| kept.track_id == track) {
+                return Ok(());
+            }
+            stage.feed(MuxInput::Sample { track, sample }, Timestamp::ZERO)?;
+            return self.drain_decrypt(Some(emit));
+        }
         self.reorder.push(track, sample)?;
         self.drain_order(false, emit)
+    }
+
+    /// Collect the decrypt stage's output and interleave the samples it
+    /// released (a late `tenc` can release a whole held run at once).
+    #[cfg(feature = "cenc")]
+    fn drain_decrypt(&mut self, mut emit: Option<&mut dyn Emit>) -> CliResult<()> {
+        loop {
+            let Some(output) = self.decrypt.as_mut().and_then(|stage| stage.poll()) else {
+                break;
+            };
+            if let MuxInput::Sample { track, sample } = output {
+                self.reorder.push(track, sample)?;
+            }
+        }
+        match emit.as_mut() {
+            Some(emit) => self.drain_order(false, *emit),
+            None => Ok(()),
+        }
     }
 
     fn drain_order(&mut self, final_input: bool, emit: &mut dyn Emit) -> CliResult<()> {
@@ -2011,6 +2096,7 @@ pub fn run_bytes(input: &[u8], opts: &Opts) -> CliResult<Output> {
         u64::try_from(input.len()).ok(),
         opts,
         &mut emit,
+        no_keys(),
     )?;
     Ok(emit.output())
 }
@@ -2022,8 +2108,16 @@ fn run_seekable<R: Read + Seek>(
     total_len: Option<u64>,
     opts: &Opts,
     emit: &mut dyn Emit,
+    keys: DecryptKeys,
 ) -> CliResult<()> {
     if matches!(container, Container::MpegPs | Container::WebM) {
+        #[cfg(feature = "cenc")]
+        if keys.is_some() {
+            return Err(crate::Error::InvalidInput(
+                "--decrypt only applies to CENC-protected MP4/CMAF input",
+            )
+            .into());
+        }
         let media = read_whole(reader, container, opts)?;
         return run_media_path(&media, opts, emit);
     }
@@ -2031,11 +2125,11 @@ fn run_seekable<R: Read + Seek>(
         if !emit.seekable() {
             return Err(CliError::ProgressiveNeedsSeekableOutput);
         }
-        return run_progressive(reader, container, total_len, opts, emit);
+        return run_progressive(reader, container, total_len, opts, emit, keys);
     }
     let (specs, movie) = discover_seekable(reader, container, total_len, opts)?;
     rewind(reader)?;
-    let mut stream = CliStream::start(specs, movie, opts, emit, None)?;
+    let mut stream = CliStream::start(specs, movie, opts, emit, None, keys)?;
     drive_seekable(reader, container, total_len, &mut |event, _| {
         stream.event(event, emit)
     })?;
@@ -2048,6 +2142,7 @@ fn run_forward<R: Read>(
     container: Container,
     opts: &Opts,
     emit: &mut dyn Emit,
+    keys: DecryptKeys,
 ) -> CliResult<()> {
     if matches!(container, Container::MpegPs | Container::WebM) {
         let media = read_whole(reader, container, opts)?;
@@ -2060,6 +2155,7 @@ fn run_forward<R: Read>(
     let mut pending: Vec<DemuxEvent> = Vec::new();
     let mut pending_bytes = 0u64;
     let mut stream: Option<CliStream> = None;
+    let mut keys = keys;
     drive_forward(reader, container, &mut |event, movie| {
         collector.movie(movie);
         if let Some(stream) = stream.as_mut() {
@@ -2077,7 +2173,7 @@ fn run_forward<R: Read>(
         if trigger {
             let specs = apply_specs(collector.specs.clone(), opts, opts.format)?;
             let movie = movie_timescale(container, collector.movie);
-            let mut started = CliStream::start(specs, movie, opts, emit, None)?;
+            let mut started = CliStream::start(specs, movie, opts, emit, None, keys.take())?;
             for event in pending.drain(..) {
                 if !is_track_event(&event) {
                     started.event(event, emit)?;
@@ -2092,7 +2188,7 @@ fn run_forward<R: Read>(
         None => {
             let specs = apply_specs(collector.specs.clone(), opts, opts.format)?;
             let movie = movie_timescale(container, collector.movie);
-            let mut started = CliStream::start(specs, movie, opts, emit, None)?;
+            let mut started = CliStream::start(specs, movie, opts, emit, None, keys.take())?;
             for event in pending {
                 if !is_track_event(&event) {
                     started.event(event, emit)?;
@@ -2136,10 +2232,11 @@ fn run_progressive<R: Read + Seek>(
     total_len: Option<u64>,
     opts: &Opts,
     emit: &mut dyn Emit,
+    keys: DecryptKeys,
 ) -> CliResult<()> {
     let (plan, specs, movie) = progressive_plan(reader, container, total_len, opts)?;
     rewind(reader)?;
-    let mut stream = CliStream::start(specs, movie, opts, emit, Some(plan))?;
+    let mut stream = CliStream::start(specs, movie, opts, emit, Some(plan), keys)?;
     drive_seekable(reader, container, total_len, &mut |event, _| {
         stream.event(event, emit)
     })?;
@@ -2278,7 +2375,7 @@ fn run_media_path(media: &Media, opts: &Opts, emit: &mut dyn Emit) -> CliResult<
     } else {
         None
     };
-    let mut stream = CliStream::start(specs, media.movie_timescale, opts, emit, plan)?;
+    let mut stream = CliStream::start(specs, media.movie_timescale, opts, emit, plan, no_keys())?;
     for track in &filtered.tracks {
         for sample in &track.samples {
             stream.sample(track.spec.track_id, sample.clone(), emit)?;
@@ -2506,6 +2603,15 @@ pub fn run(args: Args) -> CliResult<(Container, OutputFormat)> {
         Box::new(FileEmit::new(&args.output))
     };
 
+    #[cfg(feature = "cenc")]
+    let keys = if args.decrypt {
+        Some(decrypt_keys::key_map(&args.keys)?)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "cenc"))]
+    let keys = no_keys();
+
     let container;
     if from_stdin {
         if format == OutputFormat::Progressive {
@@ -2515,87 +2621,68 @@ pub fn run(args: Args) -> CliResult<(Container, OutputFormat)> {
         let (detected, prefix) = probe_reader(&mut stdin)?;
         container = detected;
         #[cfg(feature = "cenc")]
-        {
-            if args.decrypt {
-                let mut all = prefix;
-                stdin.read_to_end(&mut all)?;
-                let clear = decrypt_input(&all, container, &args.keys)?;
-                let mut cursor = std::io::Cursor::new(clear);
-                let len = u64::try_from(cursor.get_ref().len()).ok();
-                run_seekable(&mut cursor, Container::Mp4, len, &opts, &mut *emit)?;
-                return Ok((container, format));
-            }
+        if keys.is_some() && container != Container::Mp4 {
+            return Err(crate::Error::InvalidInput(
+                "--decrypt only applies to CENC-protected MP4/CMAF input",
+            )
+            .into());
         }
         let mut reader = PrefixReader {
             prefix,
             pos: 0,
             inner: stdin,
         };
-        run_forward(&mut reader, container, &opts, &mut *emit)?;
+        run_forward(&mut reader, container, &opts, &mut *emit, keys)?;
     } else {
         let mut file = File::open(&in_path)?;
         let len = file.metadata().ok().map(|metadata| metadata.len());
         let (detected, _prefix) = probe_reader(&mut file)?;
         container = detected;
-        rewind(&mut file)?;
         #[cfg(feature = "cenc")]
-        {
-            if args.decrypt {
-                let mut all = Vec::new();
-                file.read_to_end(&mut all)?;
-                let clear = decrypt_input(&all, container, &args.keys)?;
-                let mut cursor = std::io::Cursor::new(clear);
-                let decrypted_len = u64::try_from(cursor.get_ref().len()).ok();
-                run_seekable(
-                    &mut cursor,
-                    Container::Mp4,
-                    decrypted_len,
-                    &opts,
-                    &mut *emit,
-                )?;
-                return Ok((container, format));
-            }
+        if keys.is_some() && container != Container::Mp4 {
+            return Err(crate::Error::InvalidInput(
+                "--decrypt only applies to CENC-protected MP4/CMAF input",
+            )
+            .into());
         }
-        run_seekable(&mut file, container, len, &opts, &mut *emit)?;
+        rewind(&mut file)?;
+        run_seekable(&mut file, container, len, &opts, &mut *emit, keys)?;
     }
     Ok((container, format))
+}
+
+/// Content-key handling for `--decrypt`.
+#[cfg(feature = "cenc")]
+mod decrypt_keys {
+    use super::{CliResult, parse_key};
+    use crate::cenc_decrypt::KeyMap;
+
+    /// Parse every `--key <KID>:<key>` argument into a [`KeyMap`].
+    pub(super) fn key_map(keys: &[String]) -> CliResult<KeyMap> {
+        let mut map = KeyMap::new();
+        for spec in keys {
+            let (kid, key) = parse_key(spec)?;
+            map.insert(kid, key);
+        }
+        Ok(map)
+    }
+}
+
+/// The no-`--decrypt` key set.
+#[cfg(feature = "cenc")]
+fn no_keys() -> DecryptKeys {
+    None
+}
+
+/// The no-`--decrypt` key set (the `cenc` feature is off, so there is none).
+#[cfg(not(feature = "cenc"))]
+fn no_keys() -> DecryptKeys {
+    None
 }
 
 // ---------------------------------------------------------------------------
 // CENC decrypt (feature-gated)
 // ---------------------------------------------------------------------------
-
-/// Decrypt CENC-protected fMP4 input into a fresh unprotected fMP4 the demuxers
-/// can consume. The `keys` are `<KID-hex>:<key-hex>` pairs.
-#[cfg(feature = "cenc")]
-fn decrypt_input(input: &[u8], container: Container, keys: &[String]) -> CliResult<Vec<u8>> {
-    if container != Container::Mp4 {
-        return Err(CliError::Transmux(crate::Error::InvalidInput(
-            "--decrypt only applies to CENC-protected MP4/CMAF input",
-        )));
-    }
-    let mut key_map = crate::cenc_decrypt::KeyMap::new();
-    for spec in keys {
-        let (kid, key) = parse_key(spec)?;
-        key_map.insert(kid, key);
-    }
-    let mut stage = crate::cenc_decrypt::CencDecryptStage::new(key_map);
-    let media = crate::mp4_collect::media_through_stage(input, &mut stage)?;
-    // Re-package the now-cleartext samples as fMP4 so autodetect + demux run on
-    // a clean container. `run_media_path` applies the same ISOBMFF track filter
-    // every CMAF output does, so an encrypted subtitle track is dropped, not a
-    // hard error.
-    let opts = Opts {
-        format: OutputFormat::Cmaf,
-        ..Opts::default()
-    };
-    let mut emit = MemoryEmit::default();
-    run_media_path(&media, &opts, &mut emit)?;
-    match emit.output() {
-        Output::Bytes(bytes) => Ok(bytes),
-        _ => Err(crate::Error::InvalidInput("CENC decrypt produced no fMP4 bytes").into()),
-    }
-}
 
 /// Parse a `<32-hex-KID>:<32-hex-key>` string into a `(kid, key)` byte pair.
 #[cfg(feature = "cenc")]

@@ -59,6 +59,7 @@ fn a_segment_is_never_concatenated_with_its_init() {
             fragment_count: FRAGMENTS,
             sample_bytes: SAMPLE_BYTES,
             with_mfra: false,
+            protect: false,
         },
     );
     let mut file = File::open(&path).expect("open the generated fMP4");

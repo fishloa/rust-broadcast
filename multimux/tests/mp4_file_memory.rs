@@ -236,6 +236,7 @@ async fn mp4_file_playout_holds_less_than_the_budget() {
             fragment_count: FRAGMENT_COUNT,
             sample_bytes: FRAGMENT_SAMPLE_BYTES,
             with_mfra: true,
+            protect: false,
         },
     );
     assert!(made.bytes >= FILE_BYTES, "the generated file is 8 GiB");

@@ -41,6 +41,7 @@ fn generated() -> (Vec<u8>, Vec<u8>) {
             fragment_count: FRAGMENTS,
             sample_bytes: SAMPLE_BYTES,
             with_mfra: false,
+            protect: false,
         },
     );
     let bytes = std::fs::read(&path).expect("read the generated fMP4");
