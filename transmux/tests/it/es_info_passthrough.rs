@@ -1,4 +1,4 @@
-//! `TsMux` ES_info descriptor passthrough policy (issue #775).
+//! `TsMuxStage` ES_info descriptor passthrough policy (issue #775).
 //!
 //! Root cause: `plan_elementary_streams` only carried a track's inherited PMT
 //! `ES_info` descriptor-loop bytes into the re-muxed PMT for an opaque
@@ -150,7 +150,7 @@ fn remux_preserves_audio_language_descriptors_for_recognised_codec() {
         "sanity: fixture must carry ISO-639 fre/qad/qaa on its 3 audio tracks"
     );
 
-    // The re-mux: TsDemux -> TsMux -> TsDemux.
+    // The re-mux: TsDemux -> TsMuxStage -> TsDemux.
     let remuxed = remux_via_ts(&media);
 
     assert_eq!(

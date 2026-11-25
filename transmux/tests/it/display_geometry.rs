@@ -229,7 +229,7 @@ fn track_updated_lands_after_the_last_old_config_sample() {
 }
 
 /// The geometry survives an fMP4 (CMAF) round trip: anamorphic TS input,
-/// `CmafMux` then `Mp4Demux`. Both `TrackSpec`s derive it from the same
+/// `CmafMuxStage` then `Mp4Demux`. Both `TrackSpec`s derive it from the same
 /// `avcC` (the muxer rewrites the init segment, so this is not a pass-through
 /// of the demuxed spec).
 #[test]

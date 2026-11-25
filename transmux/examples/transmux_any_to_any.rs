@@ -1,9 +1,8 @@
 //! `transmux` cross-container walkthrough — one IR, many outputs.
 //!
 //! The whole point of the hub is that a source container is demuxed *once* into
-//! the neutral [`Media`] IR, then that single IR feeds any number of
-//! [`Package`](broadcast_common::Package) outputs — no re-demux, no
-//! re-encoding.
+//! the neutral [`Media`] IR, then that single IR feeds any number of muxer
+//! stages and manifest renderers — no re-demux, no re-encoding.
 //!
 //! This example drives `{WebM} → IR → {DASH MPD + CMAF}`:
 //!

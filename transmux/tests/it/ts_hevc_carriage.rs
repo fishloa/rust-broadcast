@@ -1,4 +1,4 @@
-//! `TsMux`/`TsHlsPackager` HEVC **carriage** gate (issues #627/#628).
+//! `TsMuxStage`/`StreamingTsHlsSegmenter` HEVC **carriage** gate (issues #627/#628).
 //!
 //! #627: `ts_mux::EsKind::from_config` only mapped AVC/AAC/AC-3/E-AC-3/DTS/
 //! MPEG-H/Data — every other codec (HEVC included) fell through to `None` and
@@ -8,7 +8,7 @@
 //! the wrong (or a nonexistent) anchor track for segment cuts.
 //!
 //! Test 1 proves #627 end to end on a real capture: `TsDemux(hevc/main.ts)` →
-//! `TsMux` → PMT must declare `stream_type = 0x24`, and re-demuxing the muxed
+//! `TsMuxStage` → PMT must declare `stream_type = 0x24`, and re-demuxing the muxed
 //! bytes must recover the same HEVC track (dims + VPS/SPS/PPS). This cannot be
 //! faked by a raw passthrough — the intermediate bytes are real TS packets
 //! independently re-parsed by `TsDemux`.
@@ -16,13 +16,13 @@
 //! Test 2 proves the HEVC access-unit parameter-set-prepend path (the HEVC
 //! sibling of `build_annexb_au`'s AVC guarantee): a synthetic HEVC track whose
 //! second keyframe access unit does **not** carry its own VPS/SPS/PPS is
-//! segmented by `TsHlsPackager` so that keyframe opens segment 2; re-demuxing
+//! segmented by `StreamingTsHlsSegmenter` so that keyframe opens segment 2; re-demuxing
 //! that segment alone must show the parameter sets inserted, in AU order,
 //! before the first slice NAL.
 //!
 //! Test 3 proves #628: a two-track program with audio at track index 0 and
 //! HEVC video at index 1 must pick the HEVC track as the segmentation anchor
-//! — observed through the number of segments `TsHlsPackager` actually cuts
+//! — observed through the number of segments `StreamingTsHlsSegmenter` actually cuts
 //! (audio's own keyframe cadence would produce a different count than
 //! HEVC's).
 

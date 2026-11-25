@@ -4,10 +4,10 @@
 //!
 //! ```text
 //! cleartext Media (TsDemux over fixtures/ts/h264/main.ts, AVC track)
-//!   -> CencEncryptor::encrypt        (sets sample + track protection, ciphers samples)
-//!   -> CmafMuxStage                 (CMAF muxer stage)
-//!   -> protect_init_segment (the fragment writer emits senc itself)
-//!                                    (splice in tenc/sinf + senc/saiz/saio)
+//!   -> CencEncryptStage         (sets sample + track protection, ciphers samples)
+//!   -> CmafMuxStage             (CMAF muxer stage)
+//!   -> protect_init_segment     (splice in tenc/sinf; the fragment writer
+//!                                emits senc/saiz/saio itself)
 //!   -> a standalone, encrypted CMAF file written to a temp path
 //! ```
 //!
@@ -190,7 +190,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // 5. DASH signalling: `DashPackager` auto-derives the "common"
-    //    ContentProtection from `Track::encryption` — no extra wiring.
+    //    ContentProtection from `TrackSpec::protection` — no extra wiring.
     let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let log = transmux::segment_log::SegmentSummaryLog::new();
     let mpd = DashPackager::default().render(&specs, &log)?;

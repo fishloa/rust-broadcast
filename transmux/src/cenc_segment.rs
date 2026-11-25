@@ -25,12 +25,12 @@ use isobmff::init_segment::{MOOV, MovieBox, StblChild, protect_sample_entry};
 /// Operates as a *post-processing* pass over an already-muxed init segment
 /// rather than being wired into `pipeline::build_init_segment` itself, so it
 /// composes with any caller that already has a
-/// [`crate::ir::TrackProtection`] in hand (e.g. from
-/// `CencEncryptor::encrypt`'s `TrackSpec::protection`) without that crypto
+/// [`crate::ir::TrackProtection`] in hand (e.g. the one a `CencEncryptStage`
+/// announces on `TrackSpec::protection`) without that crypto
 /// metadata needing to flow through the lower-level `TrackSpec`/pipeline
 /// plumbing. `init_segment` may be the bare `ftyp`+`moov` pair or a larger
-/// buffer with more boxes following (e.g. a whole `CmafMux` output including
-/// `styp`/`moof`/`mdat`) — only the `moov` span is touched; everything
+/// buffer with more boxes following (e.g. a whole `CmafMuxStage` output
+/// including `styp`/`moof`/`mdat`) — only the `moov` span is touched; everything
 /// before and after it is copied through verbatim.
 pub fn protect_init_segment(
     init_segment: &[u8],

@@ -17,12 +17,15 @@
 //! the PlayReady [`playready_wrmheader`]/[`playready_pro`]/[`playready_pssh`]
 //! builders), which are built on `quick-xml` and need the `std` feature.
 //!
-//! The spokes are expressed through the two abstract traits in `broadcast_common`:
-//! [`Unpackage`](broadcast_common::Unpackage) (container → IR) and
-//! [`Package`](broadcast_common::Package) (IR → container), the inverse pair
-//! mirroring `Parse` / `Serialize`.
+//! The demux spoke is [`Unpackage`](broadcast_common::Unpackage) (container →
+//! IR, the batch form of a demuxer). Every muxer, segmenter, transform and
+//! protection pass is a [`Stage`](broadcast_common::Stage) over
+//! [`mux_stage`]'s one vocabulary: [`mux_stage::MuxInput`] in,
+//! [`mux_stage::MuxOutput`] out, with [`mux_stage::drive_media`] bridging a
+//! caller that still holds a whole [`Media`]. Nothing holds the samples it
+//! converts.
 //!
-//! - **Demux (`Unpackage`) inputs:** MPEG-2 TS ([`TsDemux`], a thin batch
+//! - **Demux inputs:** MPEG-2 TS ([`TsDemux`], a thin batch
 //!   wrapper over the event-driven [`StreamingTsDemux`] — issue #555),
 //!   fMP4/CMAF and progressive (non-fragmented) MP4 through the streaming MP4
 //!   stage [`mp4_demux::Mp4Demux`] (seekable byte ranges or forward-only
@@ -32,16 +35,18 @@
 //!   unlaced into one sample per frame, see the module docs), FLV
 //!   ([`FlvDemux`] — non-AVC video and non-AAC audio tracks are silently
 //!   skipped, no event/error, see the module docs), RTMP ([`RtmpDemux`]).
-//! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMuxStage`]), progressive single-file
-//!   MP4 ([`ProgressiveMuxStage`]), MPEG-2 TS ([`TsMuxStage`]), Matroska ([`MkvMuxStage`]),
-//!   CMAF-HLS ([`HlsPackager`]), TS-segment HLS
-//!   ([`StreamingTsHlsSegmenter`]), DASH MPD
-//!   ([`DashPackager`]), low-latency
-//!   DASH ([`LlSegmenter`]/[`LlDashPackager`]), Microsoft Smooth Streaming
-//!   ([`SmoothPackager`] — H.264 video + AAC-LC audio only, every other codec
-//!   rejected), RTMP ([`RtmpMuxStage`]), low-latency HLS
-//!   ([`LlHlsSegmenter`], live-edge open segments via
-//!   [`broadcast_hls::OpenSegment`]).
+//! - **Mux stages:** CMAF/fMP4 ([`CmafMuxStage`]), progressive single-file
+//!   MP4 ([`ProgressiveMuxStage`]), MPEG-2 TS ([`TsMuxStage`]), Matroska
+//!   ([`MkvMuxStage`]), FLV ([`FlvMuxStage`]), RTMP ([`RtmpMuxStage`]), RTP
+//!   ([`RtpPacketiserStage`]).
+//! - **Segmenters and manifest renderers:** CMAF ([`Segmenter`]), TS-segment
+//!   HLS ([`StreamingTsHlsSegmenter`]), low-latency HLS ([`LlHlsSegmenter`],
+//!   live-edge open segments via [`broadcast_hls::OpenSegment`]), low-latency
+//!   DASH ([`LlSegmenter`]), Smooth Streaming ([`SmoothSegmenter`]); the
+//!   renderers ([`HlsPackager`], [`DashPackager`], [`LlDashPackager`],
+//!   [`SmoothPackager`] — H.264 video + AAC-LC audio only, every other codec
+//!   rejected) never see a sample: they take a track-spec slice and a
+//!   [`segment_log::SegmentSummaryLog`] and return a `String`.
 //! - **Transforms:** resegment / trim / track-select ([`Repackage`]);
 //!   streaming CMAF segmentation ([`Segmenter`]); streaming classic-HLS
 //!   segmentation ([`StreamingTsHlsSegmenter`]); IR timeline conditioning —

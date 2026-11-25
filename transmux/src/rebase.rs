@@ -20,11 +20,31 @@
 //! [`RebaseStage`] is fed [`MuxInput`] because a track announcement carries the
 //! timescale its origin must be converted into; [`OffsetStage`] and
 //! [`GapStage`] are fed `(TrackId, Sample)`. No transform holds a whole
-//! [`Media`](crate::ir::Media); the former whole-input free functions are gone.
+//! [`Media`](crate::ir::Media).
 //!
 //! **33-bit MPEG-2 Systems wrap-unrolling happens at the demux edge**
 //! ([`crate::ts_demux`] unwraps the wire's 33-bit PTS/DTS once,
 //! incrementally), so every `Sample` this crate produces is already absolute.
+//!
+//! # Example
+//!
+//! ```rust
+//! use transmux::{GapStage, OffsetStage, RebaseOrigin, RebaseStage, TrackId};
+//!
+//! // Exact per-track origins, as a sample plan supplies them.
+//! let rebase = RebaseStage::with_origin(
+//!     RebaseOrigin::new()
+//!         .with(TrackId::new(1), 90_000)
+//!         .with(TrackId::new(2), 48_000),
+//! );
+//! // Or discover one common origin across the announced tracks, holding at
+//! // most a two-second window and one mebibyte of output.
+//! let discovered =
+//!     RebaseStage::start_window(core::time::Duration::from_secs(2), 1_048_576);
+//! let shifted = OffsetStage::new(48_000);
+//! let gapped = GapStage::new(9_000, 42);
+//! # let _ = (rebase, discovered, shifted, gapped);
+//! ```
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 

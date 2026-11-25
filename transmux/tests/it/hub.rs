@@ -1,15 +1,16 @@
 //! Any-to-any hub gate (issue #466).
 //!
-//! Exercises the `broadcast-common` container-mux traits as implemented by
-//! transmux: [`Mp4Demux`] ([`Unpackage`]) and [`CmafMux`] ([`Package`]).
+//! Exercises both hub paths as implemented by transmux: [`Mp4Demux`] (the
+//! streaming [`Unpackage`] demuxer) and the [`CmafMuxStage`] mux stage, driven
+//! by `mux_stage::drive_media`.
 //!
 //! EXIT CRITERIA (all bite):
 //! 1. `Mp4Demux.unpackage(av-frag.mp4)` → `Media` with exactly 2 tracks
 //!    (AVC video track_id=1, AAC audio track_id=2) with the same per-track
 //!    sample counts computed independently from the raw `moof`/`trun` boxes.
-//! 2. `CmafMux.package(&media)` → re-`unpackage` → identical track/sample
+//! 2. `CmafMuxStage` over `media` → re-`unpackage` → identical track/sample
 //!    structure (counts, durations, sync flags, composition offsets, AU bytes).
-//! 3. `CmafMux::package` bytes == `build_init_segment ++ build_media_segment`
+//! 3. `CmafMuxStage` bytes == `build_init_segment ++ build_media_segment`
 //!    for the equivalent input (the wrapper is byte-transparent).
 
 use broadcast_common::timescale::Timescale;
@@ -175,7 +176,7 @@ fn cmaf_package_is_byte_transparent_over_build_helpers() {
         test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
             .expect("unpackage");
 
-    // Package via the hub.
+    // Mux via the hub.
     let via_hub = crate::cmaf::package_seq(&media, 7).expect("package");
 
     // Build the equivalent output directly with the existing helpers.
@@ -187,7 +188,7 @@ fn cmaf_package_is_byte_transparent_over_build_helpers() {
         .map(|t| {
             FragmentTrackData::new(
                 t.spec.track_id,
-                // CmafMux now anchors each fragment at the track's start_decode_time
+                // CmafMuxStage anchors each fragment at the track's start_decode_time
                 // (the demuxed tfdt), so the byte-transparent equivalent must too.
                 t.start_decode_time,
                 &t.samples,

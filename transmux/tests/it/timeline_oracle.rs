@@ -155,7 +155,7 @@ fn ts_first_stamps(ts: &[u8]) -> ((i64, i64), (i64, i64)) {
     (video.expect("video PES"), audio.expect("audio PES"))
 }
 
-/// C13 (#1020): `TsMux` must keep each track's start relative to the others.
+/// C13 (#1020): `TsMuxStage` must keep each track's start relative to the others.
 /// Input (ffprobe): audio starts 25 080 ticks after the first video PTS.
 #[test]
 fn ts_mux_keeps_inter_track_offset() {
@@ -182,7 +182,7 @@ fn ts_mux_keeps_inter_track_offset() {
         let expected = secs(IN_AUDIO_FIRST_PTS - IN_VIDEO_FIRST_PTS);
         assert!(
             ((a - v) - expected).abs() < 1e-5,
-            "ffprobe A/V start offset of TsMux output {} != input {expected}",
+            "ffprobe A/V start offset of TsMuxStage output {} != input {expected}",
             a - v
         );
     }

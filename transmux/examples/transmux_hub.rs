@@ -1,15 +1,13 @@
 //! `transmux` quickstart — the any-to-any container hub in one flow.
 //!
-//! transmux is a *samples-in* container multiplexer built around two
-//! `broadcast_common` traits:
-//!
-//! - [`Unpackage`](broadcast_common::Unpackage) — a demuxer parses a source
-//!   container into the neutral [`Media`] intermediate representation (IR): a
-//!   set of elementary [`Track`]s, each an ordered run of coded access units
-//!   (`Sample`s) plus its codec configuration.
-//! - [`Package`](broadcast_common::Package) — a packager renders that same IR
-//!   back into an output container. Coded samples pass through opaque; transmux
-//!   never encodes or decodes media.
+//! transmux is a *samples-in* container multiplexer: a demuxer parses a source
+//! container into the neutral [`Media`] intermediate representation (IR) — a
+//! set of elementary [`Track`]s, each an ordered run of coded access units
+//! (`Sample`s) plus its codec configuration — and a muxer `Stage` renders
+//! that same IR back into an output container. The batch demuxers implement
+//! [`Unpackage`](broadcast_common::Unpackage); every muxer is a
+//! `Stage<In = MuxInput, Out = MuxOutput>` over `mux_stage`. Coded samples pass
+//! through opaque; transmux never encodes or decodes media.
 //!
 //! This example drives the `{TS} → IR → {CMAF}` path:
 //!
@@ -109,7 +107,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let media: Media = TsDemux::new().unpackage(&ts[..])?;
     print_track_summary(&media);
 
-    // 2. Package: Media IR → CMAF. `CmafMux::package` concatenates an init
+    // 2. Mux: Media IR → CMAF. `CmafMuxStage` emits an init
     //    segment and a media segment; here we build them separately (the same
     //    public pipeline the muxer uses) so we can report each size.
     let specs: Vec<TrackSpec> = media

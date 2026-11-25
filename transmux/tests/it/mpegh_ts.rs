@@ -250,7 +250,7 @@ fn demux_enumerates_mpegh_track_with_recovered_config() {
 
 // ---------------------------------------------------------------------------
 // Gate 2: TS -> IR -> fMP4 -> IR round-trip: mhaC config + sample bytes
-// byte-identical (via CmafMux -> Mp4Demux, the existing mhm1/mhaC path).
+// byte-identical (via CmafMuxStage -> Mp4Demux, the existing mhm1/mhaC path).
 // ---------------------------------------------------------------------------
 
 #[test]

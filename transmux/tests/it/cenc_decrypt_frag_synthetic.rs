@@ -2,7 +2,7 @@
 //! the fragment's own boxes: `senc` flags, a missing `senc`, `tfdt` seeding
 //! and `trun` sample flags (audit 23 findings 173-178).
 //!
-//! The files are produced by this crate's own packager (`CmafMux` +
+//! The files are produced by this crate's own packager (`CmafMuxStage` +
 //! `protect_init_segment` + `protect_media_segment`) from the committed
 //! `ts/h264/main.ts` fixture, then patched at the box level where a specific
 //! (malformed or unusual) fragment shape is the subject under test.
@@ -88,17 +88,17 @@ fn find_top(data: &[u8], fourcc: &[u8; 4]) -> (usize, usize) {
         .unwrap_or_else(|| panic!("top-level box {:?} present", core::str::from_utf8(fourcc)))
 }
 
-/// Mux `media` through the real `CmafMux` packager (whose fragment writer
+/// Mux `media` through the real `CmafMuxStage` packager (whose fragment writer
 /// emits each sample's `senc` from its own protection), then protect the init
 /// segment of every track.
 fn protect_all(media: &Media) -> Vec<u8> {
-    let mut out = crate::cmaf::package(media).expect("CmafMux::package");
+    let mut out = crate::cmaf::package(media).expect("CmafMuxStage output");
     for track in &media.tracks {
         let enc = track
             .spec
             .protection
             .as_ref()
-            .expect("TrackSpec::protection populated by CencEncryptor");
+            .expect("TrackSpec::protection populated by CencEncryptStage");
         out = protect_init_segment(&out, track.spec.track_id, enc).expect("protect_init_segment");
     }
     out

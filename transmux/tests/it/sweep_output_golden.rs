@@ -530,7 +530,7 @@ fn muxer_outputs_are_unchanged() {
     let mkv = crate::mkv_bytes::whole_file_equivalent(&mkv);
     check(&mut bad, "mkv", fnv1a(&mkv), 0xf3db485ac205dbe1);
     // The golden pins the once-only-PSI layout (PAT/PMT at the start only). The
-    // default `TsMux` now repeats PAT/PMT periodically (R7); that default is
+    // default `TsMuxStage` now repeats PAT/PMT periodically (R7); that default is
     // covered by tests/it/ts_mux_psi_repeat.rs, which proves the default output is
     // exactly this once-only output plus the PSI repeats.
     let ts = ts_mux_stage::mux_with(&media, None);
@@ -558,8 +558,8 @@ fn fragment_writer_outputs_are_unchanged() {
     let (_, smooth_fragments) =
         crate::packagers::smooth_parts(&media, Duration::from_secs(2)).unwrap();
     let _manifest = crate::packagers::smooth(&SmoothPackager, &media).unwrap();
-    // The old `SmoothOutput` grouped its fragments per track; the segmenter
-    // emits them in decode order, so group them the same way before hashing.
+    // The golden groups fragments per track; the segmenter emits them in
+    // decode order, so group them the same way before hashing.
     let mut grouped = smooth_fragments.clone();
     grouped.sort_by_key(|f| {
         (

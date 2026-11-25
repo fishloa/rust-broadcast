@@ -2,9 +2,9 @@
 //!
 //! Verifies `transmux::cenc_segment::protect_init_segment` and
 //! `isobmff::movie_fragment::protect_media_segment` — the post-processing
-//! passes that turn an already-muxed clear CMAF `CmafMux` output into a
+//! passes that turn an already-muxed clear CMAF `CmafMuxStage` output into a
 //! standards-compliant CENC-protected one, reading the crypto metadata
-//! [`CencEncryptor`] records on `Track::encryption`.
+//! [`CencEncryptStage`] records on `TrackSpec::protection`.
 //!
 //! This is a **structural/byte-exact box round trip**: build a `Media`,
 //! encrypt it, mux it, protect the muxed bytes, then parse the emitted boxes
@@ -170,7 +170,7 @@ fn sample_entries(track: &transmux::Track) -> Vec<SampleEncryptionEntry> {
         .collect()
 }
 
-/// `CmafMux` output of `media` with every sample's protection metadata
+/// `CmafMuxStage` output of `media` with every sample's protection metadata
 /// cleared, so the post-processing `protect_media_segment` pass receives a
 /// clear fragment (the fragment writer now emits `senc` from the samples
 /// themselves, so a post-processing call would otherwise collide).
@@ -181,25 +181,25 @@ fn mux_without_fragment_protection(media: &Media) -> Vec<u8> {
             sample.protection = None;
         }
     }
-    crate::cmaf::package(&clear).expect("CmafMux::package")
+    crate::cmaf::package(&clear).expect("CmafMuxStage output")
 }
 
-/// Mux `media` through the real `CmafMux` packager (whose fragment writer
+/// Mux `media` through the real `CmafMuxStage` packager (whose fragment writer
 /// emits each sample's `senc`), then protect the init segment for `track_id`.
 /// Returns the fully protected CMAF bytes.
 fn protect(media: &Media, track_id: u32) -> Vec<u8> {
-    let raw = crate::cmaf::package(media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(media).expect("CmafMuxStage output");
     let enc = media.tracks[0]
         .spec
         .protection
         .as_ref()
-        .expect("TrackSpec::protection populated by CencEncryptor");
+        .expect("TrackSpec::protection populated by CencEncryptStage");
     protect_init_segment(&raw, TrackId::new(track_id), enc).expect("protect_init_segment")
 }
 
 /// The init-segment half: the sample entry becomes `encv` with a `sinf`
 /// carrying the original four-CC, the configured scheme, and a `tenc`
-/// matching `Track::encryption.tenc` exactly.
+/// matching `TrackSpec::protection.tenc` exactly.
 #[test]
 fn protect_init_segment_emits_encv_sinf() {
     let Some(mut media) = clear_video_media() else {
@@ -301,7 +301,7 @@ fn protect_media_segment_emits_senc_saiz_saio() {
         }
         m
     })
-    .expect("clear CmafMux::package");
+    .expect("clear CmafMuxStage output");
     let (_, clear_moof_bytes) = find_top_box(&clear_raw, b"moof").expect("clear moof present");
     assert!(
         moof_bytes.len() > clear_moof_bytes.len(),
@@ -418,7 +418,7 @@ fn protect_media_segment_unknown_track_errors() {
     let enc = media.tracks[0].spec.protection.clone().unwrap();
     let entries = sample_entries(&media.tracks[0]);
 
-    let raw = crate::cmaf::package(&media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(&media).expect("CmafMuxStage output");
     let bogus_protection = FragmentProtection {
         track_id: isobmff::TrackId::new(9999),
         entries: &entries,
@@ -435,7 +435,7 @@ fn protect_media_segment_empty_protections_is_identity() {
     let Some(media) = clear_video_media() else {
         return;
     };
-    let raw = crate::cmaf::package(&media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(&media).expect("CmafMuxStage output");
     let out = protect_media_segment(&raw, &[]).expect("identity pass");
     assert_eq!(out, raw);
 }
@@ -669,7 +669,7 @@ fn protect_media_segment_rejects_a_traf_that_already_carries_senc() {
     };
     let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
     encrypt_into(&mut media, &cfg);
-    let raw = crate::cmaf::package(&media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(&media).expect("CmafMuxStage output");
     let enc = media.tracks[0]
         .spec
         .protection
@@ -762,7 +762,7 @@ fn protect_media_segment_rejects_a_data_offset_that_would_overflow() {
 
 /// End-to-end oracle for item 2: protect a segment that carries an opaque
 /// moof-level child, then decrypt it back with this crate's own
-/// `CencDecryptor` (whose §8.8.7/§8.8.8 addressing is pinned against the
+/// `CencDecryptStage` (whose §8.8.7/§8.8.8 addressing is pinned against the
 /// `cenc_frag_layouts` fixtures) and check the samples equal the clear ones.
 /// That catches a wrong `saio`, a wrong `data_offset` shift, and a dropped
 /// `senc` — none of which a structural check alone would.
@@ -821,7 +821,7 @@ fn protected_segment_with_an_opaque_moof_child_decrypts_to_the_clear_samples() {
 
 /// Independent oracle for item 2: Bento4 `mp4decrypt` must decrypt this
 /// crate's protected segment (the one carrying a moof-level `pssh`) to the
-/// same samples `CencDecryptor` produces — a decryptor sharing no code with
+/// same samples `CencDecryptStage` produces — a decryptor sharing no code with
 /// the `saio`/`data_offset` arithmetic under test. Skips loudly when the tool
 /// is absent.
 #[test]
@@ -917,7 +917,7 @@ fn protected_segment_with_an_opaque_moof_child_matches_mp4decrypt() {
 /// placed after the last `traf` must still be rewritten correctly: the rebuilt
 /// `moof` length, each `saio`'s moof-relative offset, and every
 /// `trun.data_offset` shift all depend on the wire order. Decrypting the result
-/// with this crate's own `CencDecryptor` (whose addressing is pinned against
+/// with this crate's own `CencDecryptStage` (whose addressing is pinned against
 /// the `cenc_frag_layouts` fixtures) must reproduce the clear samples.
 #[test]
 fn two_trafs_and_a_trailing_opaque_child_decrypt_to_the_clear_samples() {
@@ -1097,7 +1097,7 @@ fn two_protect_calls_keep_both_enca_and_encv_entries() {
         })
         .expect("AVC + AAC tracks present");
     encrypt_into(&mut media, &cenc_cfg(SubsamplePolicy::WholeSample));
-    let raw = crate::cmaf::package(&media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(&media).expect("CmafMuxStage output");
 
     // Audio first, video second: the second call re-parses the moov that
     // already holds the protected audio entry.
@@ -1131,9 +1131,9 @@ fn protect_init_segment_accepts_an_init_only_buffer() {
         .spec
         .protection
         .as_ref()
-        .expect("TrackSpec::protection populated by CencEncryptor");
+        .expect("TrackSpec::protection populated by CencEncryptStage");
 
-    let raw = crate::cmaf::package(&media).expect("CmafMux::package");
+    let raw = crate::cmaf::package(&media).expect("CmafMuxStage output");
     let (moov_offset, moov_bytes) = find_top_box(&raw, b"moov").expect("moov present");
     let init_only = &raw[..moov_offset + moov_bytes.len()];
     assert!(

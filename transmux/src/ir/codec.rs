@@ -622,7 +622,7 @@ impl CodecConfig {
     /// [`CodecConfig::Subtitle`] (media plane step-2 fix wave 1, B1-B4: the
     /// single predicate every fMP4/CMAF mux entry point
     /// ([`build_init_segment`](crate::pipeline::build_init_segment) and
-    /// every packager built on it — `CmafMux`, `ProgressiveMuxStage`, `Segmenter`,
+    /// every packager built on it — `CmafMuxStage`, `ProgressiveMuxStage`, `Segmenter`,
     /// `LlSegmenter`, `LlHlsSegmenter`) checks before building a `trak`:
     /// a track failing this predicate is rejected, naming the track, rather
     /// than silently dropped — a caller mixing carriable and non-carriable

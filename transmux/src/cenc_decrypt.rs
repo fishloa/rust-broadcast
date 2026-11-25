@@ -27,6 +27,20 @@
 //!
 //! No AES is rolled by hand: `cenc_crypto` wraps the RustCrypto [`aes`],
 //! [`ctr`], and [`cbc`] crates. This module is gated on the `cenc` feature.
+//!
+//! # Example
+//!
+//! ```rust
+//! use transmux::{CencDecryptStage, KeyMap};
+//!
+//! let mut keys = KeyMap::new();
+//! // One 16-byte KID -> 16-byte content key entry per protected track.
+//! keys.insert([0x11; 16], [0x22; 16]);
+//! let mut stage = CencDecryptStage::new(keys);
+//! // Feed MuxInput::Track / MuxInput::Sample: a protected track is announced
+//! // with its protection cleared and every sample comes out cleartext.
+//! let _ = &mut stage;
+//! ```
 
 use core::fmt;
 
