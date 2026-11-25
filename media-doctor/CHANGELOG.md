@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `check_mp4_file(file, len, report)`, the streaming container check: it drives `transmux::mp4_demux::Mp4Demux::seekable` with bounded reads over an open file (never holding it whole) and feeds `ContainerCodecChecker`, the incremental form of `check_container_codec`. The `check` subcommand opens an MP4 and streams it this way, with no `fs::read` on that path, so a large file is checked in bounded memory. Findings on every committed MP4 fixture are unchanged (pinned by `tests/it/mp4_report_digest.rs`).
+
 ## [0.18.0] - 2026-11-22
 ### Breaking
 

@@ -744,10 +744,10 @@ async fn oversized_file_yields_file_too_large() {
         std::process::id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
-    let big = dir.join("big.mp4");
+    let big = dir.join("big.ps");
     // A real, identifiable whole-file container over a 512-byte cap: the cap
-    // still applies to MP4, PS and WebM (TS and FLV stream instead).
-    let bytes = std::fs::read(fixture("fixtures/mp4/h264-high.mp4")).unwrap();
+    // still applies to PS and WebM (TS, FLV and MP4 stream instead).
+    let bytes = std::fs::read(fixture("fixtures/ps/h264-ac3.ps")).unwrap();
     let len = bytes.len() as u64;
     std::fs::write(&big, &bytes).unwrap();
 
@@ -984,9 +984,25 @@ async fn an_flv_file_larger_than_the_cap_plays() {
 }
 
 #[tokio::test]
-async fn an_mp4_file_larger_than_the_cap_is_still_refused() {
+async fn an_mp4_file_larger_than_the_cap_plays() {
+    // MP4 reads by absolute byte range, so the whole-file cap never applies.
     let trunk = trunk();
-    let config = FileReaderConfig::new(fixture("fixtures/mp4/h264-high.mp4"), false, trunk)
+    let reader = FileReader::new(
+        FileReaderConfig::new(fixture("fixtures/mp4/h264-high.mp4"), false, trunk.clone())
+            .with_pace(false)
+            .with_max_retries(0)
+            .with_max_file_bytes(1),
+    );
+    let published = count_published(trunk, reader)
+        .await
+        .expect("an MP4 over the cap must stream, not be refused");
+    assert!(published > 0, "the MP4 fixture must publish samples");
+}
+
+#[tokio::test]
+async fn a_ps_file_larger_than_the_cap_is_refused() {
+    let trunk = trunk();
+    let config = FileReaderConfig::new(fixture("fixtures/ps/h264-ac3.ps"), false, trunk)
         .with_pace(false)
         .with_max_retries(0)
         .with_max_file_bytes(1);
@@ -994,7 +1010,7 @@ async fn an_mp4_file_larger_than_the_cap_is_still_refused() {
         Err(FileReaderError::FileTooLarge { max, .. }) => {
             assert_eq!(max, 1, "the configured cap must be reported");
         }
-        other => panic!("an MP4 over the cap must stay FileTooLarge, got {other:?}"),
+        other => panic!("a PS over the cap must stay FileTooLarge, got {other:?}"),
     }
 }
 

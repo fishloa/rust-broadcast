@@ -161,7 +161,13 @@ impl fmt::Debug for RegisteredEntry {
 /// `Parse` receives the complete box bytes, header included, as every parser in
 /// this crate does.
 pub trait BoxDef:
-    for<'a> Parse<'a, Error = Error> + Serialize<Error = Error> + Clone + fmt::Debug + 'static
+    for<'a> Parse<'a, Error = Error>
+    + Serialize<Error = Error>
+    + Clone
+    + fmt::Debug
+    + Send
+    + Sync
+    + 'static
 {
     /// The box's four-CC.
     const FOURCC: [u8; BOX_TYPE_SIZE];
@@ -174,7 +180,9 @@ pub trait BoxDef:
 /// Object-safe face of a registered box value.
 ///
 /// Implemented for every [`BoxDef`]; a caller never writes this by hand.
-pub trait RegisteredBox: fmt::Debug + Any {
+/// `Send + Sync`, so a reader holding registered values can move between
+/// threads and one registry can serve many readers.
+pub trait RegisteredBox: fmt::Debug + Any + Send + Sync {
     /// The four-CC of the box.
     fn fourcc(&self) -> [u8; BOX_TYPE_SIZE];
     /// The value as `&dyn Any`.

@@ -4,7 +4,7 @@
 
 ### Changed
 
-- `FileReaderConfig::max_file_bytes` applies to MP4, PS and WebM file inputs only: TS and FLV stream from disk and are no longer capped or refused for their size (#4057).
+- `FileReaderConfig::max_file_bytes` applies to PS and WebM file inputs only: TS, FLV and MP4 stream from disk and are no longer capped or refused for their size (#4057). MP4 playout reads the byte ranges `Mp4Demux::seekable` asks for (one bounded seek-and-read each), so an MP4 of any size plays, loops, and re-creates the stage per pass.
 
 ### Fixed
 
