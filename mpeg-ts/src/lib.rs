@@ -3,12 +3,16 @@
 #![forbid(unsafe_code)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 extern crate alloc;
+#[cfg(feature = "std")]
+extern crate std;
 
 pub mod error;
 pub mod mux;
 pub mod owned;
 pub mod pid;
 pub mod pusi;
+#[cfg(feature = "std")]
+pub mod reader;
 pub mod resync;
 pub mod section;
 pub mod ts;

@@ -4,6 +4,7 @@
 
 ### Added
 
+- `reader::PacketReader` (feature `std`): yields the aligned 188-byte packets of any `std::io::Read`, resynchronising through `TsResync` as the stream arrives, so a capture is framed in bounded memory. `reader::READ_CHUNK_LEN` names the read granularity.
 - `ts::DTS_NEXT_AU_FIELD_LEN`: the `seamless_splice` `DTS_next_AU` field width (ISO/IEC 13818-1 §2.4.3.5, Table 2-6) that `SeamlessSplice::to_marked_field` names, so its published signature resolves to a documented constant.
 
 ## [0.10.0] - 2026-11-22
