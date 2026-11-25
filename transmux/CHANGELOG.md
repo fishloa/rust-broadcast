@@ -47,12 +47,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Fmp4Demux` uses for the same damage), and drops the buffered partial bytes,
   so a damaged segment cannot affect the next one. Feeding it to a seekable
   stage is `Error::InvalidInput`.
-- `AbandonReason::{UnsupportedSampleEntry { fourcc }, UnsupportedCodec,
+- `AbandonReason::{UnsupportedSampleEntry { fourcc, detail }, UnsupportedCodec,
   MalformedTrack { expected }}` and `InputDegradation::TruncatedUnit
   { position }`, the causes the streaming MP4 demux reports for a track it
   cannot map and for a final unit cut short.
 
 ### Changed
+- Progressive MP4 inputs now report their samples in the track-id baseline; the
+  old demuxer reported none for them. Fragmented entries are unchanged.
 - Internal: `ProgressiveMux::package` builds an `isobmff::plan::OwnedPlan` from
   its `Media` and writes the file through
   `isobmff::writer::Writer::progressive` with a seekable sink; the layout rules

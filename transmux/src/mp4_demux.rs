@@ -484,7 +484,7 @@ impl Mp4Demux {
                 Err(err) => {
                     self.events.push_back(DemuxEvent::TrackAbandoned {
                         track_id: Some(info.track_id.into()),
-                        reason: abandon_reason(&err),
+                        reason: abandon_reason(&err, &info),
                         provenance: EventProvenance::default(),
                     });
                     self.tracks.push(TrackState {
@@ -574,7 +574,7 @@ impl Mp4Demux {
     }
 }
 
-fn abandon_reason(err: &Error) -> AbandonReason {
+fn abandon_reason(err: &Error, info: &TrackInfo) -> AbandonReason {
     match err {
         Error::UnsupportedSampleEntry { fourcc }
             if fourcc.len() == isobmff::box_types::BOX_TYPE_SIZE =>
@@ -583,7 +583,15 @@ fn abandon_reason(err: &Error) -> AbandonReason {
             for (slot, byte) in bytes.iter_mut().zip(fourcc.as_bytes()) {
                 *slot = *byte;
             }
-            AbandonReason::UnsupportedSampleEntry { fourcc: bytes }
+            let detail = info
+                .entries
+                .iter()
+                .find(|entry| entry.fourcc == bytes)
+                .and_then(|entry| entry.error.clone());
+            AbandonReason::UnsupportedSampleEntry {
+                fourcc: bytes,
+                detail,
+            }
         }
         Error::UnsupportedSampleEntry { .. } => AbandonReason::UnsupportedCodec,
         Error::UnexpectedBox { expected } => AbandonReason::MalformedTrack { expected },
@@ -1008,10 +1016,6 @@ impl Mp4Demux {
         self.batch_range.map(|range| range.offset)
     }
 
-    fn missing_bytes(&self, range: ByteRange) -> usize {
-        usize::try_from(range.end().saturating_sub(self.buf_end())).unwrap_or(usize::MAX)
-    }
-
     fn demand_inner(&self) -> Demand {
         if self.poisoned.is_some() {
             return Demand::saturated();
@@ -1033,16 +1037,15 @@ impl Mp4Demux {
                 Demand::saturated()
             }
             SourceMode::Sequential => {
-                if let Some(range) = self.batch_range {
-                    return Demand::new(self.missing_bytes(range));
-                }
-                if let Some(range) = self.structure {
-                    return Demand::new(self.missing_bytes(range));
+                let cap = self.config.limits.max_need_bytes();
+                let buffered = u64::try_from(self.buf.len()).unwrap_or(u64::MAX);
+                if buffered >= cap {
+                    return Demand::saturated();
                 }
                 if self.done || self.finished || self.eof {
                     return Demand::saturated();
                 }
-                Demand::new(0)
+                Demand::new(usize::try_from(cap - buffered).unwrap_or(usize::MAX))
             }
         }
     }

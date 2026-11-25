@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `registry::BoxDef` and `registry::RegisteredBox` require `Send + Sync`, so a `Reader` holding registered values can cross threads (a tokio task) and one registry can serve many readers.
 ### Added
 
+- `SampleEntryInfo::error` carries the sample-entry parser's own message when a
+  known four-CC's `stsd` body fails to parse; `typed` is recovered by
+  re-parsing the raw entry, so a demuxer can report the real cause (issue #952).
+
 - `registry`: `BoxRegistry` registers a private box or sample entry from outside
   the crate. `BoxDef` names its four-CC (or `uuid` extended type) and an
   optional parent scope; `register` refuses a key this crate already types, or

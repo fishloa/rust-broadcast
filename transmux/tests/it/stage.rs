@@ -361,18 +361,79 @@ fn sequential_stage_rejects_input_past_its_byte_cap() {
     chunk[..4].copy_from_slice(&declared.to_be_bytes());
     chunk[4..8].copy_from_slice(b"free");
     let mut err = None;
+    let mut saw_saturated = false;
     for _ in 0..(usize::try_from(MAX_BYTES).unwrap() / CHUNK + 4) {
+        if Stage::demand(&demux).saturated {
+            saw_saturated = true;
+        }
         if let Err(e) = Stage::feed(&mut demux, Mp4Input::Next(&chunk), Timestamp::ZERO) {
             err = Some(e);
             break;
         }
     }
+    assert!(
+        saw_saturated,
+        "demand().saturated must flip true before the cap is actually exceeded"
+    );
     match err.expect("feed must eventually reject input past the byte cap") {
         transmux::Error::LimitExceeded { limit, .. } => {
             assert_eq!(limit, MAX_BYTES, "the error must name the configured bound");
         }
         other => panic!("expected LimitExceeded naming the bound, got {other:?}"),
     }
+}
+
+/// A driver that honours [`Demand`] never sees the cap error and never lets the
+/// stage hold more than the cap: over a real init plus media segment larger
+/// than the cap, every feed is sized by `demand().want_bytes`.
+#[test]
+fn a_driver_honouring_demand_never_exceeds_the_sequential_cap() {
+    const CAP: u64 = 4096;
+
+    let mut bytes = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
+    bytes.extend_from_slice(&test_fixtures::read("hls/cmaf-fmp4/index0.m4s"));
+
+    let limits = isobmff::Limits::default()
+        .with_max_moov_bytes(CAP)
+        .with_max_fragment_bytes(CAP);
+    let config = Mp4DemuxConfig::default().with_limits(limits);
+    let mut demux = Mp4Demux::sequential(config);
+    let mut offset = 0usize;
+    let mut samples = 0usize;
+    loop {
+        while let Some(event) = Stage::poll(&mut demux) {
+            if matches!(event, DemuxEvent::Sample { .. }) {
+                samples += 1;
+            }
+        }
+        assert!(
+            u64::try_from(demux.buffered().0).unwrap_or(u64::MAX) <= CAP,
+            "the stage held {} bytes against a {CAP}-byte cap",
+            demux.buffered().0
+        );
+        let demand = Stage::demand(&demux);
+        if demand.saturated {
+            break;
+        }
+        if offset >= bytes.len() {
+            break;
+        }
+        let want = demand.want_bytes.max(1).min(bytes.len() - offset);
+        Stage::feed(
+            &mut demux,
+            Mp4Input::Next(&bytes[offset..offset + want]),
+            Timestamp::ZERO,
+        )
+        .expect("a demand-sized feed never exceeds the cap");
+        offset += want;
+    }
+    Stage::finish(&mut demux).expect("the demand-sized stream finishes");
+    while let Some(event) = Stage::poll(&mut demux) {
+        if matches!(event, DemuxEvent::Sample { .. }) {
+            samples += 1;
+        }
+    }
+    assert!(samples > 0, "the stream yielded samples");
 }
 
 // ── Segmenter-family Stage fixtures ─────────────────────────────────────────

@@ -119,10 +119,14 @@ impl SegmentStage {
 
 fn skipped_from_reason(reason: AbandonReason, track_id: Option<transmux::TrackId>) -> SkippedTrack {
     let (fourcc, text) = match reason {
-        AbandonReason::UnsupportedSampleEntry { fourcc } => {
+        AbandonReason::UnsupportedSampleEntry { fourcc, detail } => {
             let fourcc = String::from_utf8_lossy(&fourcc).into_owned();
-            let text =
-                format!("sample entry '{fourcc}' has no CodecConfig reconstruction in this crate");
+            let text = match detail {
+                Some(detail) => format!("sample entry '{fourcc}' rejected: {detail}"),
+                None => format!(
+                    "sample entry '{fourcc}' has no CodecConfig reconstruction in this crate"
+                ),
+            };
             (fourcc, text)
         }
         AbandonReason::UnsupportedCodec => (

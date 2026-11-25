@@ -135,8 +135,9 @@ fn genuinely_malformed_stsd_names_the_real_reason() {
     assert_eq!(media.skipped.len(), 1);
     let reason = &media.skipped[0].reason;
     assert!(
-        reason.contains("avc1"),
-        "the reason must name the rejected sample entry; got {reason:?}"
+        reason.contains("buffer too short") && reason.contains("SPS"),
+        "reason must name the real cause (SPS NALU overrun), not a generic \
+         'expected box: stsd entry'; got {reason:?}"
     );
 }
 
@@ -280,8 +281,8 @@ fn a_failed_stsd_on_an_avc3_entry_reports_the_real_reason() {
     assert_eq!(media.skipped.len(), 1);
     let reason = &media.skipped[0].reason;
     assert!(
-        reason.contains("avc3"),
-        "the reason must name the rejected sample entry; got {reason:?}"
+        reason.contains("buffer too short") && reason.contains("SPS"),
+        "reason must name the real cause, got {reason:?}"
     );
 }
 

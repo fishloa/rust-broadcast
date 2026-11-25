@@ -45,6 +45,7 @@ use crate::error::{Error, Result};
 use crate::frag_offsets::{MdatRange, sample_ranges_in_run, sample_ranges_in_run_until};
 use crate::init_segment::{
     MediaBox, MovieBox, SampleEntryVariant, StblChild, TrackBox, TrackExtendsBox,
+    sample_entry_variant,
 };
 use crate::limits::Limits;
 use crate::metadata::MovieMetadata;
@@ -251,6 +252,10 @@ pub struct SampleEntryInfo {
     pub body: Vec<u8>,
     /// The typed parse, or `None` when the entry is an unknown four-CC.
     pub typed: Option<SampleEntryVariant>,
+    /// Why a known four-CC's typed parse failed, when it did. `typed` is
+    /// `None` in that case and this carries the parser's own message, so a
+    /// demuxer can name the real cause (issue #952).
+    pub error: Option<String>,
     /// The [`ReaderConfig`]'s private-box-registry parse of this entry, when a
     /// registration matched its four-CC; call
     /// [`RegisteredEntry::downcast_ref`](crate::registry::RegisteredEntry::downcast_ref)
@@ -343,6 +348,7 @@ impl TrackInfo {
                     SampleEntryVariant::Unknown(_) => None,
                     known => Some(known.clone()),
                 },
+                error: None,
                 registered: None,
             });
         }
@@ -2161,6 +2167,21 @@ fn build_track_info(
                 SampleEntryVariant::Unknown(_) => None,
                 known => Some(known),
             });
+        // A known four-CC whose `stsd` body failed to parse is kept raw: parse
+        // the entry again to recover both its typed form and, when it still
+        // fails, the parser's own message for the abandon reason.
+        let mut error = None;
+        let typed = match typed {
+            Some(typed) => Some(typed),
+            None => match sample_entry_variant(&raw.body) {
+                Ok(SampleEntryVariant::Unknown(_)) => None,
+                Ok(known) => Some(known),
+                Err(err) => {
+                    error = Some(err.to_string());
+                    None
+                }
+            },
+        };
         let registered = match registry {
             Some(registry) => registry.parse(Some(STSD), &raw.body)?,
             None => None,
@@ -2169,6 +2190,7 @@ fn build_track_info(
             fourcc: raw.fourcc,
             body: raw.body,
             typed,
+            error,
             registered,
         });
     }
