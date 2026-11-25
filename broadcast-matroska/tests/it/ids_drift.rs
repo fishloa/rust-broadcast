@@ -95,3 +95,28 @@ fn payload_kind(payload: &str) -> Option<ElementKind> {
         _ => None,
     }
 }
+
+#[test]
+fn every_master_has_a_typed_variant() {
+    use broadcast_matroska::Limits;
+    use broadcast_matroska::ebml::{ElementId, VintSize};
+    use broadcast_matroska::matroska::Element;
+
+    for def in ids::ALL {
+        if def.kind != ElementKind::Master {
+            continue;
+        }
+        let id = ElementId::try_from_raw(def.id).unwrap();
+        let mut bytes = vec![0u8; 12];
+        let id_len = id.write(&mut bytes).unwrap();
+        let size_len = VintSize::minimal(0)
+            .unwrap()
+            .write(&mut bytes[id_len..])
+            .unwrap();
+        bytes.truncate(id_len + size_len);
+        let (element, used) = Element::parse_at(&bytes, &Limits::new())
+            .unwrap_or_else(|error| panic!("{} (0x{:X}): {error}", def.name, def.id));
+        assert_eq!(used, bytes.len());
+        assert_eq!(element.id(), def.id, "{}", def.name);
+    }
+}

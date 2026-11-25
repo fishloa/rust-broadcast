@@ -4,7 +4,7 @@
 use broadcast_common::{Parse, Serialize};
 use broadcast_matroska::Limits;
 use broadcast_matroska::ebml::document::parse_document_start;
-use broadcast_matroska::matroska::{Document, Element, ids};
+use broadcast_matroska::matroska::{Block, Document, Element, ids};
 
 const FIXTURES: &[&str] = &[
     "mkv/h264-aac.mkv",
@@ -96,20 +96,91 @@ fn every_cluster_block_round_trips() {
         let document = Document::parse(&bytes).unwrap();
         let mut blocks = 0usize;
         for cluster in document.segment().clusters() {
-            for block in cluster.simple_blocks() {
-                let block = block.unwrap_or_else(|error| panic!("{fixture}: block: {error}"));
-                let re_serialized = block.try_to_bytes().unwrap();
-                assert!(!re_serialized.is_empty(), "{fixture}: block round trip");
+            for element in cluster.children() {
+                let payload = match element.id() {
+                    ids::SIMPLE_BLOCK => element.as_binary().map(|binary| binary.bytes()),
+                    ids::BLOCK_GROUP => element
+                        .find(ids::BLOCK)
+                        .and_then(|block| block.as_binary())
+                        .map(|binary| binary.bytes()),
+                    _ => None,
+                };
+                let Some(payload) = payload else {
+                    continue;
+                };
+                let block = Block::parse(payload)
+                    .unwrap_or_else(|error| panic!("{fixture}: block: {error}"));
+                assert_eq!(
+                    block.try_to_bytes().unwrap(),
+                    payload,
+                    "{fixture}: block {:X} bytes",
+                    element.id()
+                );
                 blocks += 1;
-            }
-            for group in cluster.block_groups() {
-                if let Some(block) = group.block() {
-                    let block = block.unwrap_or_else(|error| panic!("{fixture}: block: {error}"));
-                    assert!(!block.try_to_bytes().unwrap().is_empty());
-                    blocks += 1;
-                }
             }
         }
         assert!(blocks > 0, "{fixture}: no blocks found");
     }
+}
+
+#[test]
+fn unknown_sized_segment_and_cluster_round_trip() {
+    use broadcast_matroska::ebml::ElementId;
+    use broadcast_matroska::ebml::document::EBML_ID;
+    use broadcast_matroska::ebml::vint::VintSize;
+
+    fn framed(id: u32, payload: &[u8]) -> Vec<u8> {
+        let id = ElementId::try_from_raw(id).unwrap();
+        let mut out = vec![0u8; 12];
+        let id_len = id.write(&mut out).unwrap();
+        let size = VintSize::minimal(u64::try_from(payload.len()).unwrap()).unwrap();
+        let size_len = size.write(&mut out[id_len..]).unwrap();
+        out.truncate(id_len + size_len);
+        out.extend_from_slice(payload);
+        out
+    }
+    fn unknown_framed(id: u32) -> Vec<u8> {
+        let id = ElementId::try_from_raw(id).unwrap();
+        let mut out = vec![0u8; 5];
+        let id_len = id.write(&mut out).unwrap();
+        out[id_len] = 0xFF;
+        out.truncate(id_len + 1);
+        out
+    }
+
+    let mut file = framed(EBML_ID, &[]);
+    file.extend_from_slice(&unknown_framed(ids::SEGMENT));
+    let unknown_child = framed(0x4FFF, b"opaque");
+    file.extend_from_slice(&framed(ids::INFO, &unknown_child));
+    file.extend_from_slice(&unknown_framed(ids::CLUSTER));
+    file.extend_from_slice(&framed(ids::TIMESTAMP, &[0x00]));
+    file.extend_from_slice(&framed(ids::SIMPLE_BLOCK, &[0x81, 0x00, 0x00, 0x80, 0xAA]));
+    file.extend_from_slice(&framed(ids::CUES, &[]));
+
+    let document = Document::parse(&file).unwrap();
+    assert_eq!(document.try_to_bytes().unwrap(), file);
+    let segment = document.segment();
+    assert_eq!(
+        segment.header().payload_len(),
+        None,
+        "Segment stays unknown-size"
+    );
+    let cluster = segment.clusters().next().expect("one cluster");
+    assert_eq!(
+        cluster.header().payload_len(),
+        None,
+        "Cluster stays unknown-size"
+    );
+    assert_eq!(cluster.timestamp(), Some(0));
+    let info = segment.info().expect("info");
+    let unknown = info.children().first().expect("unknown child");
+    assert_eq!(unknown.id(), 0x4FFF);
+    match unknown {
+        Element::Unknown(value) => assert_eq!(value.payload(), b"opaque"),
+        other => panic!("expected an untyped element, got {:X}", other.id()),
+    }
+    assert!(
+        segment.cues().is_some(),
+        "Cues ended the unknown-size Cluster"
+    );
 }

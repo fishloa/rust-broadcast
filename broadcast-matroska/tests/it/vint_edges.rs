@@ -19,12 +19,14 @@ fn every_element_id_width_round_trips() {
 
 #[test]
 fn reserved_all_ones_ids_are_refused() {
-    for raw in [0xFFu32, 0x7FFF, 0x3F_FFFF, 0x1FFF_FFFF, 0x80] {
+    for raw in [0xFFu32, 0x7FFF, 0x3F_FFFF, 0x1FFF_FFFF] {
         assert!(
             ElementId::try_from_raw(raw).is_err(),
             "0x{raw:X} must be refused"
         );
     }
+    // ChapterDisplay's 0x80 is the Matroska exception to RFC 8794 §5.
+    assert!(ElementId::try_from_raw(0x80).is_ok());
     // A five-octet id is outside the four octets this crate reads.
     assert_eq!(
         ElementId::parse(&[0x08, 0, 0, 0, 0x01]),
