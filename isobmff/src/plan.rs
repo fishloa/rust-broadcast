@@ -43,6 +43,7 @@ pub struct SamplePlan<'a> {
     tracks: &'a [TrackInfo],
     file_len: Option<u64>,
     top_level: &'a [TopLevelBox],
+    progressive_iv_sizes: &'a [Option<u8>],
 }
 
 impl<'a> SamplePlan<'a> {
@@ -51,12 +52,14 @@ impl<'a> SamplePlan<'a> {
         tracks: &'a [TrackInfo],
         file_len: Option<u64>,
         top_level: &'a [TopLevelBox],
+        progressive_iv_sizes: &'a [Option<u8>],
     ) -> Self {
         Self {
             movie,
             tracks,
             file_len,
             top_level,
+            progressive_iv_sizes,
         }
     }
 
@@ -82,7 +85,8 @@ impl<'a> SamplePlan<'a> {
             .get(index)
             .ok_or(Error::UnexpectedBox { expected: "trak" })?;
         let stbl = sample_table(trak).ok_or(Error::UnexpectedBox { expected: "stbl" })?;
-        TrackCursor::new(stbl, track, limits, self.file_len)
+        let iv_size = self.progressive_iv_sizes.get(index).copied().flatten();
+        TrackCursor::new_with_aux(stbl, track, limits, self.file_len, iv_size)
     }
 
     /// The plan in owned form, ready for
@@ -102,7 +106,9 @@ impl<'a> SamplePlan<'a> {
                 .get(index)
                 .ok_or(Error::UnexpectedBox { expected: "trak" })?;
             let stbl = sample_table(trak).ok_or(Error::UnexpectedBox { expected: "stbl" })?;
-            let state = CursorState::new(stbl, info.track_id, &limits, self.file_len)?;
+            let iv_size = self.progressive_iv_sizes.get(index).copied().flatten();
+            let state =
+                CursorState::new_with_aux(stbl, info.track_id, &limits, self.file_len, iv_size)?;
             let chunks = source_chunks(stbl)?;
             let tables = SampleTables {
                 sample_count: state.remaining(),

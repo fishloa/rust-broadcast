@@ -279,6 +279,26 @@ const SENC_SAMPLE_COUNT_LEN: usize = 4;
 const SENC_SUBSAMPLE_COUNT_LEN: usize = 2;
 
 impl SampleEncryptionBox {
+    /// Parse a `senc` box from its full box bytes (8-byte header + FullBox +
+    /// body), given the track's `tenc.default_per_sample_iv_size`.
+    pub fn parse_box(bytes: &[u8], per_sample_iv_size: u8) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
+        need_in(
+            bytes,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE,
+            "senc header",
+        )?;
+        let version = bytes[FULLBOX_VERSION_OFFSET];
+        let flags = fullbox_flags(&bytes[FULLBOX_VERSION_OFFSET..]);
+        Self::parse_body(
+            &bytes[BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE..],
+            version,
+            flags,
+            per_sample_iv_size,
+        )
+    }
+
     /// Parse a `senc` box from FullBox body bytes, given the per-sample IV size.
     ///
     /// `sample_count` is an untrusted 32-bit field straight off the wire, so it
