@@ -64,8 +64,12 @@ impl VintWidth {
 pub struct ElementId(u32);
 
 impl ElementId {
-    /// Build an id from its stored value (marker bits included), rejecting a
-    /// zero or all-one VINT_DATA section and a non-shortest encoding.
+    /// Build an id from its stored value (marker bits included), rejecting an
+    /// all-one VINT_DATA section and a non-shortest encoding.
+    ///
+    /// A one-octet id with all-zero VINT_DATA is accepted: RFC 8794 §5 forbids
+    /// it, but RFC 9559 §27.1 (Erratum 7189) opens the one-octet range at
+    /// `0x80` and the Matroska registry assigns `ChapterDisplay` that id.
     pub fn try_from_raw(value: u32) -> Result<Self> {
         let octets = octets_for(value);
         let width = VintWidth::try_new(octets)?;
@@ -74,7 +78,10 @@ impl ElementId {
         }
         let mask = data_mask(width);
         let data = u64::from(value) & mask;
-        if data == 0 || data == mask {
+        if data == mask {
+            return Err(Error::InvalidElementId { value });
+        }
+        if data == 0 && width != VintWidth::MIN {
             return Err(Error::InvalidElementId { value });
         }
         if minimal_width_for_data(data) != width {
@@ -355,10 +362,8 @@ mod tests {
             ElementId::try_from_raw(0xFF),
             Err(Error::InvalidElementId { value: 0xFF })
         );
-        assert_eq!(
-            ElementId::try_from_raw(0x80),
-            Err(Error::InvalidElementId { value: 0x80 })
-        );
+        // ChapterDisplay's one-octet id is the Matroska exception (Err7189).
+        assert_eq!(ElementId::try_from_raw(0x80).unwrap().value(), 0x80);
         // A 2-octet encoding of the 1-octet id 0xBF is not the shortest form.
         assert_eq!(
             ElementId::try_from_raw(0x403F),

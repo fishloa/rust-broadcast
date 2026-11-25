@@ -21,7 +21,7 @@ const FLOAT64_OCTETS: usize = 8;
 /// Octets in a date payload (RFC 8794 §7.6).
 pub const DATE_OCTETS: usize = 8;
 /// The value an empty numeric payload reads as (RFC 8794 §7.3).
-const ZERO_F64: f64 = 0.0;
+const EMPTY_FLOAT_VALUE: f64 = 0.0;
 
 /// Width of an integer or date payload, 0..=8 octets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -320,7 +320,7 @@ impl<'a> Parse<'a> for Float {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let width = FloatWidth::try_new(bytes.len())?;
         let value = match width {
-            FloatWidth::Empty => ZERO_F64,
+            FloatWidth::Empty => EMPTY_FLOAT_VALUE,
             FloatWidth::Single => {
                 let raw: [u8; FLOAT32_OCTETS] = bytes
                     .try_into()

@@ -42,6 +42,13 @@
 //!   subset is transcribed at
 //!   `private/specs-verified/mpeg/transmux/webm/ebml-matroska.md`.
 //!
+//! # Examples
+//!
+//! ```text
+//! cargo run -p broadcast-matroska --example dump_elements -- fixtures/mkv/vp9-opus.webm
+//! cargo run -p broadcast-matroska --example list_tracks -- fixtures/mkv/vp9-opus.webm
+//! ```
+//!
 //! # Feature flags
 //!
 //! | Feature | Default | Description |

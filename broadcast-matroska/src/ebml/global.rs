@@ -35,6 +35,29 @@ impl Crc32 {
         Ok(Self { header, value })
     }
 
+    /// Build from a parsed header and its four-octet payload.
+    pub fn from_payload(header: ElementHeader, payload: &[u8]) -> Result<Self> {
+        if header.id().value() != CRC32_ID {
+            return Err(Error::UnexpectedElement {
+                expected: CRC32_ID,
+                found: header.id().value(),
+            });
+        }
+        if payload.len() != CRC32_OCTETS {
+            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "CRC-32",
+                reason: "payload is not four octets",
+            }));
+        }
+        let raw: [u8; CRC32_OCTETS] = payload.try_into().map_err(|_| Error::IntegerWidth {
+            width: payload.len(),
+        })?;
+        Ok(Self {
+            header,
+            value: u32::from_be_bytes(raw),
+        })
+    }
+
     /// The element header.
     #[must_use]
     pub const fn header(&self) -> ElementHeader {
@@ -52,23 +75,8 @@ impl<'a> Parse<'a> for Crc32 {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (header, data, _) = ElementHeader::split(bytes)?;
-        if header.id().value() != CRC32_ID {
-            return Err(Error::UnexpectedElement {
-                expected: CRC32_ID,
-                found: header.id().value(),
-            });
-        }
-        if data.len() != CRC32_OCTETS {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
-                field: "CRC-32",
-                reason: "payload is not four octets",
-            }));
-        }
-        let raw: [u8; CRC32_OCTETS] = data
-            .try_into()
-            .map_err(|_| Error::IntegerWidth { width: data.len() })?;
-        Self::new(header, u32::from_be_bytes(raw))
+        let (header, payload, _) = ElementHeader::split(bytes)?;
+        Self::from_payload(header, payload)
     }
 }
 

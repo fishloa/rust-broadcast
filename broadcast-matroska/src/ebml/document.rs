@@ -345,20 +345,11 @@ fn parse_child<'a>(
             let children = parse_children(payload, &Limits::new(), depth + 1)?;
             EbmlHeaderChild::Extension(DocTypeExtension::from_parts(header, children))
         }
-        CRC32_ID => EbmlHeaderChild::Crc32(Crc32::new(header, parse_crc32(payload)?)?),
+        CRC32_ID => EbmlHeaderChild::Crc32(Crc32::from_payload(header, payload)?),
         VOID_ID => EbmlHeaderChild::Void(Void::new(header, payload)?),
         _ => EbmlHeaderChild::Unknown(Unknown::new(header, payload)),
     };
     Ok(result)
-}
-
-/// Read a four-octet CRC-32 payload.
-fn parse_crc32(payload: &[u8]) -> Result<u32> {
-    let raw: [u8; crate::ebml::global::CRC32_OCTETS] =
-        payload.try_into().map_err(|_| Error::IntegerWidth {
-            width: payload.len(),
-        })?;
-    Ok(u32::from_be_bytes(raw))
 }
 
 /// Parse a known-size EBML master's children and check its id.

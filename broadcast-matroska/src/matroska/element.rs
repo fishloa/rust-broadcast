@@ -545,15 +545,41 @@ fn parse_master_children<'a>(
     expected_id: u32,
     limits: &Limits,
 ) -> Result<(ElementHeader, Vec<Element<'a>>, usize)> {
-    let (header, payload, used) = ElementHeader::split(bytes)?;
+    let (header, header_len) = ElementHeader::parse(bytes)?;
     if header.id().value() != expected_id {
         return Err(Error::UnexpectedElement {
             expected: expected_id,
             found: header.id().value(),
         });
     }
+    let stop_ids = if expected_id == ids::CLUSTER {
+        ids::SEGMENT_CHILD_IDS
+    } else {
+        &[]
+    };
+    let Some(payload_len) = header.payload_len() else {
+        if expected_id != ids::SEGMENT && expected_id != ids::CLUSTER {
+            return Err(Error::UnknownSizeNotAllowed { id: expected_id });
+        }
+        let rest = bytes.get(header_len..).ok_or(Error::Truncated {
+            what: "unknown-size master",
+            need: header_len,
+            have: bytes.len(),
+        })?;
+        let (children, used) = parse_children_until(rest, limits, 1, stop_ids)?;
+        return Ok((header, children, header_len + used));
+    };
+    let payload_len = usize::try_from(payload_len).map_err(|_| Error::SizeOverflow)?;
+    let end = header_len
+        .checked_add(payload_len)
+        .ok_or(Error::SizeOverflow)?;
+    let payload = bytes.get(header_len..end).ok_or(Error::ElementOverruns {
+        id: expected_id,
+        declared: payload_len as u64,
+        available: bytes.len().saturating_sub(header_len),
+    })?;
     let (children, _) = parse_children_until(payload, limits, 1, &[])?;
-    Ok((header, children, used))
+    Ok((header, children, end))
 }
 
 /// Parse children until the payload ends or a stop id is seen.
@@ -843,7 +869,7 @@ fn dispatch<'a>(
             let (children, _) = parse_children_until(payload, limits, depth + 1, &[])?;
             Ok(Element::SimpleTag(SimpleTag::from_parts(header, children)))
         }
-        CRC32_ID => Ok(Element::Crc32(Crc32::new(header, crc32_value(payload)?)?)),
+        CRC32_ID => Ok(Element::Crc32(Crc32::from_payload(header, payload)?)),
         VOID_ID => Ok(Element::Void(Void::new(header, payload)?)),
         _ => match ids::kind(id) {
             Some(ids::ElementKind::Unsigned) => Ok(Element::Unsigned(UnsignedElement::new(
@@ -878,15 +904,6 @@ fn dispatch<'a>(
             None => Ok(Element::Unknown(Unknown::new(header, payload))),
         },
     }
-}
-
-/// Read a four-octet CRC-32 payload.
-fn crc32_value(payload: &[u8]) -> Result<u32> {
-    let raw: [u8; crate::ebml::global::CRC32_OCTETS] =
-        payload.try_into().map_err(|_| Error::IntegerWidth {
-            width: payload.len(),
-        })?;
-    Ok(u32::from_be_bytes(raw))
 }
 
 /// The serialized length of a master element.

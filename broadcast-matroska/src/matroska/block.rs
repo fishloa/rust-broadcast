@@ -43,6 +43,10 @@ pub const LACE_COUNT_OCTETS: usize = 1;
 const VINT_DATA_BITS: u32 = 7;
 /// One lace; the byte counts frames minus one.
 const LACE_COUNT_BIAS: usize = 1;
+/// Fewest frames a laced block can carry.
+const MIN_LACED_FRAMES: usize = 2;
+/// The frame pairs a size delta is taken between.
+const DELTA_WINDOW: usize = 2;
 
 /// A Block's fixed header (RFC 9559 §12).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -441,7 +445,7 @@ fn split_frames(data: &[u8], mut sizes: Vec<usize>) -> Result<Vec<&[u8]>> {
 /// Parse Xiph lacing (RFC 9559 §12).
 fn parse_xiph<'a>(payload: &'a [u8]) -> Result<Lacing<'a>> {
     let (count, data) = parse_lace_count(payload)?;
-    if count < 2 {
+    if count < MIN_LACED_FRAMES {
         return Err(Error::InvalidBlock {
             what: "lacing set with one frame",
         });
@@ -479,7 +483,7 @@ fn parse_xiph<'a>(payload: &'a [u8]) -> Result<Lacing<'a>> {
 /// Parse EBML lacing (RFC 9559 §12).
 fn parse_ebml<'a>(payload: &'a [u8]) -> Result<Lacing<'a>> {
     let (count, rest) = parse_lace_count(payload)?;
-    if count < 2 {
+    if count < MIN_LACED_FRAMES {
         return Err(Error::InvalidBlock {
             what: "lacing set with one frame",
         });
@@ -493,7 +497,7 @@ fn parse_ebml<'a>(payload: &'a [u8]) -> Result<Lacing<'a>> {
     let mut sizes = Vec::with_capacity(count - 1);
     sizes.push(usize::try_from(first).map_err(|_| Error::SizeOverflow)?);
     let mut delta_width: Option<VintWidth> = None;
-    for _ in 0..count - 2 {
+    for _ in 0..count - MIN_LACED_FRAMES {
         let slice = rest.get(position..).ok_or(Error::Truncated {
             what: "EBML lace delta",
             need: position,
@@ -536,7 +540,7 @@ fn parse_ebml<'a>(payload: &'a [u8]) -> Result<Lacing<'a>> {
 /// Parse fixed-size lacing (RFC 9559 §12).
 fn parse_fixed<'a>(payload: &'a [u8]) -> Result<Lacing<'a>> {
     let (count, data) = parse_lace_count(payload)?;
-    if count < 2 {
+    if count < MIN_LACED_FRAMES {
         return Err(Error::InvalidBlock {
             what: "lacing set with one frame",
         });
@@ -589,7 +593,7 @@ fn xiph_len(size: usize) -> usize {
 /// Write Xiph lacing.
 fn write_xiph(frames: &[&[u8]], buf: &mut [u8]) -> Result<usize> {
     let have = buf.len();
-    if frames.len() < 2 {
+    if frames.len() < MIN_LACED_FRAMES {
         return Err(Error::InvalidBlock {
             what: "Xiph lacing needs at least two frames",
         });
@@ -634,7 +638,7 @@ fn write_ebml(
     buf: &mut [u8],
 ) -> Result<usize> {
     let have = buf.len();
-    if frames.len() < 2 {
+    if frames.len() < MIN_LACED_FRAMES {
         return Err(Error::InvalidBlock {
             what: "EBML lacing needs at least two frames",
         });
@@ -654,7 +658,7 @@ fn write_ebml(
             have,
         },
     ))?)?;
-    for pair in frames[..frames.len() - 1].windows(2) {
+    for pair in frames[..frames.len() - 1].windows(DELTA_WINDOW) {
         let delta = i64::try_from(pair[1].len()).map_err(|_| Error::SizeOverflow)?
             - i64::try_from(pair[0].len()).map_err(|_| Error::SizeOverflow)?;
         let biased = delta + signed_bias(delta_width);
@@ -694,7 +698,7 @@ fn write_ebml(
 /// Write fixed-size lacing.
 fn write_fixed(frames: &[&[u8]], buf: &mut [u8]) -> Result<usize> {
     let have = buf.len();
-    if frames.len() < 2 {
+    if frames.len() < MIN_LACED_FRAMES {
         return Err(Error::InvalidBlock {
             what: "fixed lacing needs at least two frames",
         });

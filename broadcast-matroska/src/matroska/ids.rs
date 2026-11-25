@@ -533,7 +533,7 @@ pub const CODEC_DOWNLOAD_URL: u32 = 0x26B240;
 /// TimestampScale (RFC 9559 §5.1.2.9).
 pub const TIMESTAMP_SCALE: u32 = 0x2AD7B1;
 /// UncompressedFourCC (RFC 9559 §5.1.4.1.28.15).
-pub const UNCOMPRESSED_FOUR_CC: u32 = 0x2EB524;
+pub const UNCOMPRESSED_FOURCC: u32 = 0x2EB524;
 /// GammaValue, deprecated (RFC 9559 Appendix A).
 pub const GAMMA_VALUE: u32 = 0x2FB523;
 /// CodecSettings, deprecated (RFC 9559 Appendix A).
@@ -1969,7 +1969,7 @@ pub const ALL: &[ElementDef] = &[
     },
     ElementDef {
         name: "UncompressedFourCC",
-        id: UNCOMPRESSED_FOUR_CC,
+        id: UNCOMPRESSED_FOURCC,
         kind: ElementKind::Binary,
         parent: r"Segment\Tracks\TrackEntry\Video",
     },

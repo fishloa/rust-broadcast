@@ -13,6 +13,7 @@ macro_rules! spec_enum {
         #[doc = $doc]
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+        #[non_exhaustive]
         pub enum $ty {
             $(
                 #[doc = $label]
@@ -66,16 +67,38 @@ spec_enum!(
     }
 );
 
-spec_enum!(
-    LacingKind,
-    "The lacing form of a Block (RFC 9559 §12).",
-    {
-        None = 0 => "none",
-        Xiph = 1 => "xiph",
-        Fixed = 2 => "fixed",
-        Ebml = 3 => "ebml",
+/// The lacing form of a Block, selected by the two-bit field of RFC 9559 §12.
+///
+/// This is a derived view of the flags octet, not an independent integer: read
+/// it from [`BlockHeader::lacing_kind`](crate::matroska::BlockHeader::lacing_kind).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum LacingKind {
+    /// No lacing.
+    None,
+    /// Xiph lacing.
+    Xiph,
+    /// Fixed-size lacing.
+    Fixed,
+    /// EBML lacing.
+    Ebml,
+}
+
+impl LacingKind {
+    /// The code's name.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Xiph => "xiph",
+            Self::Fixed => "fixed",
+            Self::Ebml => "ebml",
+        }
     }
-);
+}
+
+impl_spec_display!(LacingKind);
 
 spec_enum!(
     FlagInterlaced,
@@ -95,8 +118,8 @@ spec_enum!(
         Tff = 1 => "tff",
         Undetermined = 2 => "undetermined",
         Bff = 6 => "bff",
-        BffSwapped = 9 => "bff-swapped",
-        TffSwapped = 14 => "tff-swapped",
+        TffSwapped = 9 => "tff-swapped",
+        BffSwapped = 14 => "bff-swapped",
     }
 );
 
@@ -105,7 +128,7 @@ spec_enum!(
     "`StereoMode` (RFC 9559 §5.1.4.1.28.3).",
     {
         Mono = 0 => "mono",
-        SideBySideRightFirst = 1 => "side-by-side-right-first",
+        SideBySideLeftFirst = 1 => "side-by-side-left-first",
         TopBottomRightFirst = 2 => "top-bottom-right-first",
         TopBottomLeftFirst = 3 => "top-bottom-left-first",
         CheckerboardRightFirst = 4 => "checkerboard-right-first",
@@ -114,11 +137,11 @@ spec_enum!(
         RowInterleavedLeftFirst = 7 => "row-interleaved-left-first",
         ColumnInterleavedRightFirst = 8 => "column-interleaved-right-first",
         ColumnInterleavedLeftFirst = 9 => "column-interleaved-left-first",
-        Anaglyph = 10 => "anaglyph",
-        SideBySideLeftFirst = 11 => "side-by-side-left-first",
-        TopBottomRightFirstAlt = 12 => "top-bottom-right-first-alt",
-        TopBottomLeftFirstAlt = 13 => "top-bottom-left-first-alt",
-        CheckerboardRightFirstAlt = 14 => "checkerboard-right-first-alt",
+        AnaglyphCyanRed = 10 => "anaglyph-cyan-red",
+        SideBySideRightFirst = 11 => "side-by-side-right-first",
+        AnaglyphGreenMagenta = 12 => "anaglyph-green-magenta",
+        LacedLeftFirst = 13 => "laced-left-first",
+        LacedRightFirst = 14 => "laced-right-first",
     }
 );
 
@@ -198,9 +221,9 @@ mod tests {
         assert_eq!(TrackType::from_u64(1), Some(TrackType::Video));
         assert_eq!(TrackType::Video.value(), 1);
         assert_eq!(TrackType::from_u64(99), None);
-        assert_eq!(LacingKind::from_u64(3), Some(LacingKind::Ebml));
         assert_eq!(LacingKind::Ebml.name(), "ebml");
-        assert_eq!(FieldOrder::from_u64(14), Some(FieldOrder::TffSwapped));
+        assert_eq!(LacingKind::Ebml.name(), "ebml");
+        assert_eq!(FieldOrder::from_u64(14), Some(FieldOrder::BffSwapped));
         assert_eq!(
             ProjectionType::from_u64(1).unwrap().to_string(),
             "equirectangular"
