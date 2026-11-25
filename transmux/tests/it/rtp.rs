@@ -23,6 +23,8 @@ use transmux::{
 const MTU: usize = 1400;
 const SSRC: u32 = 0x1234_5678;
 const RTP_HEADER_LEN: usize = 12;
+/// RTP header marker bit (RFC 3550 §5.3.1): the last packet of an access unit.
+const RTP_MARKER_BIT: u8 = 0x80;
 /// The AAC-hbr payload header: a 16-bit AU-headers-length plus one 2-byte
 /// AU-header (RFC 3640 §3.2.1), which now rides at the head of a datagram's
 /// `payload`.
@@ -1443,12 +1445,7 @@ fn reordered_stream_gets_an_exact_decode_order() {
         durations.iter().all(|d| *d > 0),
         "no non-final frame may have a zero duration: {durations:?}"
     );
-    // The reorder probe's first resolved step spans the held frames: four
-    // 3600-tick periods, after which the grid is the fixture's 3600.
-    assert_eq!(
-        durations[0], 14_400,
-        "the held probe frames are one step of four periods"
-    );
+    assert_eq!(durations[0], 3600, "the frame period is the fixture's 3600");
 }
 
 /// One single-NAL, marker-set video packet (the shape `packetise_video` emits
@@ -2592,7 +2589,7 @@ fn equal_consecutive_pts_raise_no_reorder_warning_and_keep_the_step() {
 #[test]
 fn a_zero_first_step_seeds_from_the_first_positive_step() {
     let (ir, _) = video_ir_from_timestamps(&[0, 0, 3000]);
-    assert_eq!(video_durations(&ir), vec![3000, 3000]);
+    assert_eq!(video_durations(&ir), vec![3000, 3000, 3000]);
 }
 
 #[test]
@@ -2604,7 +2601,7 @@ fn a_repeated_last_timestamp_reuses_the_previous_step() {
 #[test]
 fn the_most_recent_positive_step_survives_a_varying_grid() {
     let (ir, _) = video_ir_from_timestamps(&[0, 1000, 3000, 3000, 3000]);
-    assert_eq!(video_durations(&ir), vec![1000, 2000, 1000, 1000, 1000]);
+    assert_eq!(video_durations(&ir), vec![1000, 2000, 2000, 2000, 2000]);
 }
 
 #[test]
@@ -2627,17 +2624,118 @@ fn exactly_one_warning_names_the_backward_step() {
 }
 
 #[test]
-fn a_fully_reversed_short_stream_reports_each_backward_step() {
+fn reordered_wire_timestamps_get_an_increasing_decode_timeline() {
     let (ir, events) = video_ir_from_timestamps(&[6000, 3000, 0]);
     let reorders = events
         .iter()
         .filter(|event| matches!(event, transmux::RtpLossEvent::NonMonotonicTimestamp { .. }))
         .count();
     assert_eq!(reorders, 2, "each backward step is reported: {events:?}");
-    assert!(
-        ir.tracks[0].samples.is_empty(),
-        "a wholly reversed three-AU stream has no monotonic decode timeline to emit"
+    let (dts, pts) = video_dts_pts(&ir);
+    assert_eq!(dts, vec![0, 3000, 6000], "decode order is wire order");
+    assert_eq!(
+        pts,
+        vec![12000, 9000, 6000],
+        "presentation order is preserved"
     );
+}
+
+/// Every sample the depacketiser emits for a strictly increasing presentation
+/// series carries the decode step to its successor as its duration, keeps a
+/// non-decreasing decode timeline at or before presentation, and no access unit
+/// is lost.
+fn assert_decode_steps(ir: &Media, access_units: usize) {
+    let samples = &ir.tracks[0].samples;
+    assert_eq!(samples.len(), access_units, "one sample per access unit");
+    let dts: Vec<i64> = samples
+        .iter()
+        .map(|s| s.timing.and_then(|t| t.dts()).expect("dts"))
+        .collect();
+    let pts: Vec<i64> = samples
+        .iter()
+        .map(|s| s.timing.and_then(|t| t.pts()).expect("pts"))
+        .collect();
+    let durations: Vec<u32> = samples
+        .iter()
+        .map(|s| s.timing.and_then(|t| t.duration()).expect("duration"))
+        .collect();
+    assert!(
+        dts.windows(2).all(|w| w[1] >= w[0]),
+        "dts must be non-decreasing: {dts:?}"
+    );
+    assert!(
+        dts.iter().zip(&pts).all(|(d, p)| d <= p),
+        "decode must never run ahead of presentation: {dts:?} vs {pts:?}"
+    );
+    for (index, duration) in durations.iter().enumerate().take(samples.len() - 1) {
+        assert_eq!(
+            i64::from(*duration),
+            dts[index + 1] - dts[index],
+            "sample {index} duration must be the decode step"
+        );
+    }
+    assert!(durations.last().copied().unwrap_or(0) > 0);
+}
+
+/// The decode-step property over the synthetic strictly increasing series and
+/// the real reordered `high.ts` capture.
+#[test]
+fn decode_step_durations_hold_on_real_and_synthetic_streams() {
+    for series in [
+        vec![0u32, 1000, 3000],
+        vec![0u32, 3000, 6000],
+        vec![6000u32, 3000, 0],
+    ] {
+        let (ir, _) = video_ir_from_timestamps(&series);
+        assert_decode_steps(&ir, series.len());
+    }
+
+    static REF: std::sync::LazyLock<Vec<u8>> =
+        std::sync::LazyLock::new(|| test_fixtures::read("ts/h264/high.ts"));
+    let media = test_harness::collect::media_from_ts(REF.as_slice()).expect("demux high.ts");
+    let out = packetise(&media);
+    let packets: Vec<Vec<u8>> = video_stream(&out)
+        .packets
+        .iter()
+        .map(|p| p.as_contiguous().to_vec())
+        .collect();
+    let access_units = packets
+        .iter()
+        .filter(|p| p.get(1).is_some_and(|byte| byte & RTP_MARKER_BIT != 0))
+        .count();
+    let ir = test_harness::collect::media_from_rtp(test_harness::collect::RtpTestInput {
+        streams: vec![test_harness::collect::RtpTestStream::new(
+            RtpMediaKind::H264,
+            packets,
+        )],
+    })
+    .expect("depacketise high.ts");
+    assert_decode_steps(&ir, access_units);
+}
+
+/// A duplicate presentation instant cannot give a strictly increasing decode
+/// timeline: the duration fallback (the first/most recent positive step) is
+/// what the deleted batch path used, and the decode step property above is
+/// checked only where the step is positive.
+#[test]
+fn duplicate_presentation_instants_reuse_the_positive_step() {
+    for (series, expected) in [
+        (vec![0u32, 0, 3000], vec![3000u32, 3000, 3000]),
+        (
+            vec![0u32, 1000, 3000, 3000, 3000],
+            vec![1000u32, 2000, 2000, 2000, 2000],
+        ),
+        (
+            vec![1000u32, 3000, 3000, 3000],
+            vec![2000u32, 2000, 2000, 2000],
+        ),
+    ] {
+        let (ir, _) = video_ir_from_timestamps(&series);
+        assert_eq!(video_durations(&ir), expected);
+        let (dts, pts) = video_dts_pts(&ir);
+        assert!(dts.windows(2).all(|w| w[1] >= w[0]));
+        assert!(dts.iter().zip(&pts).all(|(d, p)| d <= p));
+    }
 }
 
 #[test]
@@ -2675,7 +2773,7 @@ fn a_negative_track_origin_does_not_inflate_the_duration_seed() {
         .collect();
     assert_eq!(
         durations,
-        vec![2000, 2000, 2000],
+        vec![2000, 2000, 2000, 2000],
         "the seed is the 2000-tick step, not the sum of the two 13000/15000 instants"
     );
 }

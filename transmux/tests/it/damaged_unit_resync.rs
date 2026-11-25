@@ -9,7 +9,7 @@
 
 use transmux::ir::InputDegradation;
 use transmux::media::Media;
-use transmux::{RtpMediaKind, Sample, TrackId};
+use transmux::{RtpMediaKind, TrackId};
 
 const PACK_START_CODE: [u8; 4] = [0x00, 0x00, 0x01, 0xBA];
 
@@ -97,14 +97,13 @@ fn packetised() -> (Media, crate::rtp_run::RtpOutput) {
     (media, out)
 }
 
-/// Drive the streaming depacketiser one packet at a time, so a damaged packet
-/// is reported as its own error and the caller carries on: everything before
-/// it is already out, everything after it still decodes.
-fn depacketise(
-    kind: RtpMediaKind,
-    packets: Vec<Vec<u8>>,
-    media: &Media,
-) -> (Vec<Sample>, Vec<(usize, transmux::Error)>) {
+/// Drive the streaming depacketiser one packet at a time and fold the
+/// surviving samples back into the `Media` shape the whole-input demuxer
+/// returned: a damaged packet is reported as `InputDegradation::MalformedUnit`
+/// at its packet index, and every other packet still decodes.
+fn depacketise(kind: RtpMediaKind, packets: Vec<Vec<u8>>, media: &Media) -> Media {
+    use transmux::media::{Media as IrMedia, Track};
+    use transmux::pipeline::TrackSpec;
     use transmux::rtp_stream::{RtpStreamDepacketiser, RtpStreamTrack};
     let spec = media
         .tracks
@@ -130,19 +129,33 @@ fn depacketise(
         spec.spec.timescale,
     )]);
     let mut samples = Vec::new();
-    let mut errors = Vec::new();
+    let mut degraded = Vec::new();
     for (index, packet) in packets.iter().enumerate() {
         match depack.push(track_id, packet) {
             Ok(mut got) => samples.append(&mut got),
-            Err(error) => errors.push((index, error)),
+            Err(_) => degraded.push(InputDegradation::MalformedUnit {
+                position: index as u64,
+            }),
         }
     }
     samples.extend(depack.flush(track_id).expect("flush the final AU"));
-    (samples, errors)
+    let anchor = samples
+        .first()
+        .and_then(|sample| sample.timing.and_then(|timing| timing.dts()))
+        .map(|dts| u64::try_from(dts.max(0)).unwrap_or(0))
+        .unwrap_or(0);
+    let track = Track::new_at(
+        TrackSpec::new(track_id, spec.spec.timescale, spec.spec.config.clone()),
+        samples,
+        anchor,
+    );
+    let mut out = IrMedia::new(vec![track], transmux::rtp::VIDEO_CLOCK_TIMESCALE);
+    out.degraded = degraded;
+    out
 }
 
 #[test]
-fn rtp_video_malformed_packets_are_reported_and_the_stream_carries_on() {
+fn rtp_video_malformed_packets_in_the_middle_are_skipped_and_reported() {
     let (media, out) = packetised();
     let vs = out
         .streams
@@ -154,9 +167,9 @@ fn rtp_video_malformed_packets_are_reported_and_the_stream_carries_on() {
         .iter()
         .map(|p| p.as_contiguous().to_vec())
         .collect();
-    let (clean, clean_errors) = depacketise(RtpMediaKind::H264, packets.clone(), &media);
-    assert!(clean_errors.is_empty());
-    let clean_samples = clean.len();
+    let clean = depacketise(RtpMediaKind::H264, packets.clone(), &media);
+    assert!(clean.degraded.is_empty());
+    let clean_samples = clean.tracks[0].samples.len();
 
     let mid = packets.len() / 2;
     // (a) header cut short (RFC 3550 §5.1 needs 12 bytes), (b) an STAP-A whose
@@ -168,12 +181,19 @@ fn rtp_video_malformed_packets_are_reported_and_the_stream_carries_on() {
     let second = mid + 3;
     damaged[second].truncate(3);
 
-    let (s, errors) = depacketise(RtpMediaKind::H264, damaged, &media);
+    let got = depacketise(RtpMediaKind::H264, damaged, &media);
     assert_eq!(
-        errors.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
-        vec![mid, second],
-        "each damaged packet is reported, the rest of the stream carries on"
+        got.degraded,
+        vec![
+            InputDegradation::MalformedUnit {
+                position: mid as u64
+            },
+            InputDegradation::MalformedUnit {
+                position: second as u64
+            },
+        ]
     );
+    let s = &got.tracks[0].samples;
     assert!(s.len() < clean_samples, "damaged AUs are gone");
     assert!(
         s.len() + 6 >= clean_samples,
@@ -182,12 +202,15 @@ fn rtp_video_malformed_packets_are_reported_and_the_stream_carries_on() {
         clean_samples
     );
     // The data after the damage is decoded byte-identically.
-    assert_eq!(s.last().unwrap().data, clean.last().unwrap().data);
-    assert_eq!(s[0].data, clean[0].data);
+    assert_eq!(
+        s.last().unwrap().data,
+        clean.tracks[0].samples.last().unwrap().data
+    );
+    assert_eq!(s[0].data, clean.tracks[0].samples[0].data);
 }
 
 #[test]
-fn rtp_audio_malformed_packet_is_reported_and_the_stream_carries_on() {
+fn rtp_audio_malformed_packet_in_the_middle_is_skipped_and_reported() {
     let (media, out) = packetised();
     let a = out
         .streams
@@ -199,23 +222,25 @@ fn rtp_audio_malformed_packet_is_reported_and_the_stream_carries_on() {
         .iter()
         .map(|p| p.as_contiguous().to_vec())
         .collect();
-    let (clean, clean_errors) = depacketise(RtpMediaKind::Aac, packets.clone(), &media);
-    assert!(clean_errors.is_empty());
+    let clean = depacketise(RtpMediaKind::Aac, packets.clone(), &media);
     let mid = packets.len() / 2;
     let mut damaged = packets;
     damaged[mid].truncate(7);
-    let (g, errors) = depacketise(RtpMediaKind::Aac, damaged, &media);
+    let got = depacketise(RtpMediaKind::Aac, damaged, &media);
     assert_eq!(
-        errors.iter().map(|(index, _)| *index).collect::<Vec<_>>(),
-        vec![mid]
+        got.degraded,
+        vec![InputDegradation::MalformedUnit {
+            position: mid as u64
+        }]
     );
+    let (g, c) = (&got.tracks[0].samples, &clean.tracks[0].samples);
     assert!(
-        g.len() < clean.len() && g.len() + 4 >= clean.len(),
+        g.len() < c.len() && g.len() + 4 >= c.len(),
         "{} vs {}",
         g.len(),
-        clean.len()
+        c.len()
     );
-    assert_eq!(g.last().unwrap().data, clean.last().unwrap().data);
+    assert_eq!(g.last().unwrap().data, c.last().unwrap().data);
 }
 
 #[test]

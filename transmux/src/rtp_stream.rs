@@ -180,6 +180,7 @@
 
 use crate::TrackId;
 use crate::error::{Error, Result};
+use crate::ir::SampleTiming;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtcp::SenderReport;
 use crate::rtp::{RtpMediaKind, parse_rtp_header, reassemble_audio, reassemble_video};
@@ -657,6 +658,8 @@ struct TrackState {
     /// SPS/PPS known for this track (config plus in-band), to read
     /// `field_pic_flag` from slice headers.
     param_sets: AvcParamSets,
+    /// Decode-step duration assignment for the emitted video samples.
+    timing: DecodeStepDurations,
 }
 
 /// One track's RTCP Sender Report wallclock anchor (RFC 3550 §6.4.1): the NTP
@@ -866,6 +869,71 @@ fn sample_is_field_picture(param_sets: &mut AvcParamSets, sample: &Sample) -> bo
         .unwrap_or(false)
 }
 
+/// Assign each emitted video sample its decode-step duration:
+/// `next.dts - dts` for every non-final sample, and the last forward step for
+/// the final one — the rule the batch demuxer applied. One sample is held until
+/// the step to its successor is known; a run of zero steps waits for the first
+/// positive step to seed it (the batch path's `previous_nonzero_duration`),
+/// bounded by [`MAX_REORDER_WINDOW`].
+#[derive(Default)]
+struct DecodeStepDurations {
+    held: Vec<Sample>,
+    last_step: Option<u32>,
+}
+
+impl DecodeStepDurations {
+    fn push(&mut self, sample: Sample, out: &mut Vec<Sample>) {
+        let Some(dts) = sample.timing.and_then(|t| t.dts()) else {
+            out.push(sample);
+            return;
+        };
+        if let Some(prev) = self
+            .held
+            .last()
+            .and_then(|s| s.timing.and_then(|t| t.dts()))
+        {
+            let step = dts.saturating_sub(prev);
+            if step > 0 {
+                let step = u32::try_from(step).unwrap_or(u32::MAX);
+                self.last_step = Some(step);
+                for held in self.held.drain(..) {
+                    out.push(with_duration(held, Some(step)));
+                }
+                self.held.push(sample);
+                return;
+            }
+        }
+        self.held.push(sample);
+        if self.held.len() > MAX_REORDER_WINDOW {
+            let held = self.held.remove(0);
+            out.push(with_duration(held, self.last_step));
+        }
+    }
+
+    fn finish(&mut self, out: &mut Vec<Sample>) {
+        let held = core::mem::take(&mut self.held);
+        let single = held.len() == 1;
+        let step = self.last_step.or(single.then_some(1));
+        for held in held {
+            out.push(with_duration(held, step));
+        }
+        self.last_step = None;
+    }
+}
+
+/// Replace a sample's timing with the same `dts`/`pts` and the given span.
+fn with_duration(mut sample: Sample, duration: Option<u32>) -> Sample {
+    if let Some(timing) = sample.timing.as_mut() {
+        let dts = timing.dts().unwrap_or_default();
+        let pts = timing.pts().unwrap_or_default();
+        *timing = match duration {
+            Some(duration) => SampleTiming::timed_with_duration(dts, pts, duration),
+            None => SampleTiming::timed(dts, pts),
+        };
+    }
+    sample
+}
+
 /// Run a track's freshly emitted samples through its decode-timestamp
 /// derivation (video only; see [`crate::rtp_dts`]).
 fn derive_dts(
@@ -898,7 +966,18 @@ fn derive_dts(
             dts: e.dts,
         });
     }
-    out
+    if st.reordered {
+        let mut timed = Vec::with_capacity(out.len());
+        for s in out {
+            st.timing.push(s, &mut timed);
+        }
+        if finish {
+            st.timing.finish(&mut timed);
+        }
+        timed
+    } else {
+        out
+    }
 }
 
 /// Ticks of the VUI `time_scale` clock per frame: a frame spans two field
@@ -962,6 +1041,7 @@ impl RtpStreamDepacketiser {
                         seq: SeqState::default(),
                         dts: DtsDeriver::new(reorder_depth),
                         param_sets,
+                        timing: DecodeStepDurations::default(),
                     },
                 )
             })
@@ -1346,6 +1426,27 @@ impl RtpStreamDepacketiser {
     ) -> Result<()> {
         if st.reordered && st.kind == RtpMediaKind::H264 {
             Self::resolve_window(st, loss_events, track_id, out, true)?;
+        } else if st.kind == RtpMediaKind::H264 {
+            let step = (st.last_duration != 0)
+                .then_some(st.last_duration)
+                .or(st.declared_duration);
+            if let Some(step) = step {
+                for p in st.pending.drain(..) {
+                    let ts = to_ticks(p.unwrapped_ts);
+                    out.push(Sample::new(
+                        p.data,
+                        Some(ts),
+                        Some(ts),
+                        Some(step),
+                        p.is_sync,
+                    )?);
+                }
+            } else if st.pending.len() > 1 {
+                for p in st.pending.drain(..) {
+                    let ts = to_ticks(p.unwrapped_ts);
+                    out.push(Sample::new(p.data, Some(ts), Some(ts), Some(1), p.is_sync)?);
+                }
+            }
         } else if let Some(duration) = known_duration(st) {
             for (index, p) in st.pending.drain(..).enumerate() {
                 let offset = u64::from(duration) * index as u64;
@@ -1409,12 +1510,14 @@ impl RtpStreamDepacketiser {
             if !ready {
                 break;
             }
-            let Some(duration) = successor
+            let duration = match successor
                 .or(period)
                 .and_then(|d| u32::try_from(d).ok())
                 .filter(|&d| d > 0)
-            else {
-                break;
+            {
+                Some(duration) => duration,
+                None if drain_all => 1,
+                None => break,
             };
             let p = st.pending.remove(0);
             let ts = to_ticks(p.unwrapped_ts);
@@ -1536,7 +1639,40 @@ impl RtpStreamDepacketiser {
                     .pending
                     .last()
                     .is_some_and(|p| p.unwrapped_ts == unwrapped);
-            if !same_packet_group && !st.pending.is_empty() {
+            if st.kind == RtpMediaKind::H264 && !st.pending.is_empty() {
+                let last_ts = st
+                    .pending
+                    .last()
+                    .map(|p| p.unwrapped_ts)
+                    .unwrap_or(unwrapped);
+                let forward = unwrapped.saturating_sub(last_ts);
+                let step = if forward > 0 {
+                    u32::try_from(forward).ok().filter(|&d| d > 0)
+                } else {
+                    (st.last_duration != 0)
+                        .then_some(st.last_duration)
+                        .or(st.declared_duration)
+                };
+                if let Some(step) = step {
+                    if forward > 0 {
+                        st.last_duration = step;
+                    }
+                    for p in st.pending.drain(..) {
+                        let ts = to_ticks(p.unwrapped_ts);
+                        out.push(Sample::new(
+                            p.data,
+                            Some(ts),
+                            Some(ts),
+                            Some(step),
+                            p.is_sync,
+                        )?);
+                    }
+                } else if st.pending.len() > MAX_REORDER_WINDOW {
+                    let p = st.pending.remove(0);
+                    let ts = to_ticks(p.unwrapped_ts);
+                    out.push(Sample::new(p.data, Some(ts), Some(ts), Some(1), p.is_sync)?);
+                }
+            } else if !same_packet_group && !st.pending.is_empty() {
                 let prev_ts = st.pending[0].unwrapped_ts;
                 // Duration = the *forward* step to this AU's presentation
                 // time. On a stream whose presentation order is its wire order
