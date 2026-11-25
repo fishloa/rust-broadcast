@@ -11,3 +11,16 @@
 - **Result**: real handshake completed, `connect` (`app=live`) → `createStream` → `publish` (`stream_key=testkey`, `stream_id=1`) all succeeded against `ServerSession`; 144 `ServerEvent::Media` events were emitted before ffmpeg closed the stream (`ServerEvent::Eof` observed twice — `FCUnpublish` then `deleteStream`, both routed to the same `Eof` event).
 - **Size**: 47.6 KiB raw inbound bytes (handshake + chunk-encoded connect/createStream/publish/A-V messages).
 - **Replay**: `transmux/tests/it/rtmp_ingest_fixture.rs` reads this file via `std::fs`, replays it through a fresh `ServerSession::handle_data` (in one call and in small chunks, to exercise partial-input reassembly), and feeds the concatenated emitted FLV to `transmux::FlvDemux` to confirm it decodes to a real `Media` with an H.264 video track and an AAC audio track.
+
+## Streaming-first demux baseline
+
+- `demux-baseline.txt` — the streaming-first Phase 6 slice 2 differential gate
+  (orchestrator p6s2). `RtmpDemux` demuxes the **post-handshake** chunk stream,
+  and this capture is handshake plus chunk stream, so the baseline records the
+  byte offset the chunk stream starts at (`skip=3073`: the publisher's C0+C1
+  and its C2). From that offset it records each demuxed track's fields exactly
+  as `fixtures/{ts,flv}/demux-baseline.txt` do. Produced by running `transmux`'s
+  whole-buffer `RtmpDemux` from `origin/main` at commit `54ea69378`. The
+  streaming reassembly (chunk stream plus `StreamingFlvDemux`) must reproduce
+  every line byte-for-byte, fed in 1-byte, 20-byte and 64 KiB chunks
+  (`transmux/tests/it/rtmp_demux_baseline.rs`).

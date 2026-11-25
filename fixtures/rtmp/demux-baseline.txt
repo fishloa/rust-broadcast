@@ -1,0 +1,13 @@
+# RTMP demux baseline: per-track fields as the other container baselines record
+# them (plus the byte offset `skip=` the post-handshake chunk stream starts at,
+# and `error=` for an input the demuxer refused whole). Produced by transmux
+# origin/main (54ea69378) `RtmpDemux` over every `fixtures/rtmp/*.bin` file
+# from the recorded offset; see `fixtures/rtmp/PROVENANCE.md`. The streaming
+# reassembly (chunk stream plus `StreamingFlvDemux`) must reproduce every line
+# fed in 1-byte, 20-byte and 64 KiB chunks
+# (`transmux/tests/it/rtmp_demux_baseline.rs`).
+file=obs-publish.bin
+skip=3073
+track=0 codec=AVC timescale=1000 samples=52 first_dts=0 first_pts=80 last_dts=2040 last_pts=2240 syncs=3 bytes_fnv=b7d99baf7fc3b257 timing_fnv=e0fa17a24ab457cd start_decode_time=0
+track=1 codec=AAC timescale=1000 samples=87 first_dts=57 first_pts=57 last_dts=2054 last_pts=2054 syncs=87 bytes_fnv=1d125c8dfd1cb0a0 timing_fnv=3f21e58cef5626a1 start_decode_time=57
+movie_timescale=1000 pcr=0 degraded= skipped=

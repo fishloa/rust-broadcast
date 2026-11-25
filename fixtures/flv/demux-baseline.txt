@@ -1,0 +1,18 @@
+# FLV demux baseline: per-track codec, timescale, sample count, first/last dts
+# and pts, sync count, FNV-1a 64 of the concatenated coded sample bytes, FNV-1a
+# 64 of the per-sample (dts,pts,duration) sequence (missing = i64::MIN/u32::MAX),
+# the track's start_decode_time, then the movie timescale, PCR count, degraded
+# and skipped reports; `error=` records an input the demuxer refused whole.
+# Produced by transmux origin/main (54ea69378) `FlvDemux` over every
+# `fixtures/flv/*.flv` file; see `fixtures/flv/PROVENANCE.md`. The streaming
+# `StreamingFlvDemux` must reproduce every line exactly fed in 1-byte, 188-byte
+# and 64 KiB chunks (`transmux/tests/it/flv_demux_baseline.rs`).
+file=aac-7-1.flv
+track=0 codec=AAC timescale=1000 samples=11 first_dts=0 first_pts=0 last_dts=213 last_pts=213 syncs=11 bytes_fnv=4106bddfddb5c6c8 timing_fnv=885d426844a5e9c3 start_decode_time=0
+movie_timescale=1000 pcr=0 degraded= skipped=
+file=av.flv
+track=0 codec=AVC timescale=1000 samples=75 first_dts=0 first_pts=80 last_dts=2960 last_pts=3000 syncs=3 bytes_fnv=0659e3918d988f9a timing_fnv=cebad9b883d4c46d start_decode_time=0
+track=1 codec=AAC timescale=1000 samples=131 first_dts=57 first_pts=57 last_dts=3076 last_pts=3076 syncs=131 bytes_fnv=fde77ad0608959db timing_fnv=06bd1ba331484e7e start_decode_time=57
+movie_timescale=1000 pcr=0 degraded= skipped=
+file=oversize-dims.flv
+error=FLV codec config: invalid input: FLV avcC width does not fit 16 bits

@@ -49,3 +49,17 @@ pathlib.Path("fixtures/flv/oversize-dims.flv").write_bytes(data)
 EOF
 ```
 
+
+## Streaming-first demux baseline
+
+- `demux-baseline.txt` — the streaming-first Phase 6 slice 2 differential gate
+  (orchestrator p6s2). Per `fixtures/flv/*.flv` file it records each demuxed
+  track's codec, timescale, sample count, first/last PTS and DTS, sync-sample
+  count, an FNV-1a 64 over the concatenated coded sample bytes, an FNV-1a 64
+  over the per-sample `(dts, pts, duration)` sequence and the track's
+  `start_decode_time`, then the movie timescale and the degraded/skipped
+  reports; an input the demuxer refuses whole records its error. Produced by
+  running `transmux`'s whole-buffer `FlvDemux` from `origin/main` at commit
+  `54ea69378`. The streaming `StreamingFlvDemux` must reproduce every line
+  byte-for-byte, fed in 1-byte, 188-byte and 64 KiB chunks
+  (`transmux/tests/it/flv_demux_baseline.rs`).

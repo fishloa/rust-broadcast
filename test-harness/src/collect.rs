@@ -13,9 +13,14 @@ use std::collections::BTreeMap;
 use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
 use transmux::{
-    AbandonReason, DemuxEvent, Media, Sample, SkippedTrack, SplicePlan, SplicePoint, SpliceStage,
-    Track, TrackId, TrickPlayStage,
+    AbandonReason, AfdPersistence, DegradationRecord, DemuxEvent, InputDegradation, Media,
+    PcrSample, Sample, SkippedTrack, SplicePlan, SplicePoint, SpliceStage, StreamingFlvDemux,
+    StreamingTsDemux, Track, TrackId, TrickPlayStage,
 };
+
+/// Feed a whole buffer to a stage in one piece (`[u8]::chunks` of this size
+/// yields exactly one chunk).
+pub const WHOLE_INPUT: usize = usize::MAX;
 
 /// Movie timescale [`media_from_events`] uses when the event stream names none
 /// (no event carries it). The caller that knows the real value overwrites it.
@@ -244,6 +249,213 @@ pub fn media_from_ps(bytes: &[u8], chunk: usize) -> Result<Media, transmux::Erro
     let mut media = media_from_events(events);
     media.movie_timescale = transmux::rtp::VIDEO_CLOCK_TIMESCALE;
     Ok(media)
+}
+
+/// Drive [`StreamingTsDemux`] over a whole in-memory MPEG-2 TS image in one
+/// feed and fold its events into a [`Media`], exactly as the deleted
+/// whole-input `TsDemux::demux` did: strict PMT track order, the program
+/// `ClockReference`s as [`PcrSample`]s, and every damage record resolved
+/// against the final track set by source PID.
+///
+/// A whole small fixture in memory is fine **here only**: this crate is a test
+/// harness. The stage itself never holds the input.
+pub fn media_from_ts(bytes: &[u8]) -> Result<Media, transmux::Error> {
+    media_from_ts_chunked(bytes, WHOLE_INPUT)
+}
+
+/// [`media_from_ts`] fed in `chunk`-sized pieces (the streaming-gate form).
+pub fn media_from_ts_chunked(bytes: &[u8], chunk: usize) -> Result<Media, transmux::Error> {
+    media_from_ts_with_afd(bytes, chunk, AfdPersistence::UntilReplaced)
+}
+
+/// [`media_from_ts_chunked`] with an explicit AFD persistence policy.
+pub fn media_from_ts_with_afd(
+    bytes: &[u8],
+    chunk: usize,
+    afd: AfdPersistence,
+) -> Result<Media, transmux::Error> {
+    let mut demux = StreamingTsDemux::new()
+        .with_afd_persistence(afd)
+        .with_strict_pmt_order();
+    for piece in bytes.chunks(chunk.max(1)) {
+        demux.feed(piece)?;
+    }
+    demux.finish()?;
+
+    let mut tracks: Vec<Track> = Vec::new();
+    let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
+    let mut pcr: Vec<PcrSample> = Vec::new();
+    let mut degraded: Vec<InputDegradation> = Vec::new();
+    let mut degraded_at: Vec<DegradationRecord> = Vec::new();
+    while let Some(event) = demux.poll_event() {
+        match event {
+            DemuxEvent::TrackAdded(spec) => {
+                index_by_id.insert(spec.track_id, tracks.len());
+                tracks.push(Track::new(spec, Vec::new()));
+            }
+            DemuxEvent::TrackUpdated(spec) => {
+                if let Some(&index) = index_by_id.get(&spec.track_id) {
+                    tracks[index].spec = spec;
+                }
+            }
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
+                if let Some(&index) = index_by_id.get(&track_id) {
+                    let track = &mut tracks[index];
+                    if track.samples.is_empty()
+                        && let Some(dts) = sample.timing.and_then(|timing| timing.dts())
+                    {
+                        track.start_decode_time = u64::try_from(dts).unwrap_or(0);
+                    }
+                    track.samples.push(sample);
+                }
+            }
+            DemuxEvent::ClockReference {
+                pcr: wire,
+                discontinuous,
+                provenance,
+                ..
+            } => {
+                if let (Some(wire), Some(pid), Some(packet_index)) =
+                    (wire, provenance.pid, provenance.packet_index)
+                {
+                    pcr.push(PcrSample::new(wire, pid, packet_index, discontinuous));
+                }
+            }
+            DemuxEvent::InputDegraded {
+                track,
+                kind,
+                provenance,
+                ..
+            } => {
+                degraded.push(kind);
+                degraded_at.push(DegradationRecord::new(kind, track, provenance));
+            }
+            DemuxEvent::TrackRemoved { .. }
+            | DemuxEvent::TrackAbandoned { .. }
+            | DemuxEvent::Discontinuity { .. }
+            | DemuxEvent::TracksResolved { .. }
+            | DemuxEvent::DisplayChanged { .. } => {}
+            _ => {}
+        }
+    }
+    for record in &mut degraded_at {
+        if record.track.is_none()
+            && let Some(pid) = record.provenance.pid
+            && let Some(t) = tracks.iter().find(|t| t.spec.source_pid == Some(pid))
+        {
+            record.track = Some(t.spec.track_id);
+        }
+    }
+    let mut media = Media::new(tracks, transmux::rtp::VIDEO_CLOCK_TIMESCALE).with_pcr(pcr);
+    media.degraded = degraded;
+    media.degraded_at = degraded_at;
+    Ok(media)
+}
+
+/// Drive [`StreamingFlvDemux`] over a whole in-memory FLV image and fold its
+/// events into a [`Media`] on FLV's 1 kHz clock.
+///
+/// A whole small fixture in memory is fine **here only**: this crate is a test
+/// harness. The stage itself never holds the input.
+///
+/// # Errors
+///
+/// The first structural error the stage reports (bad signature, implausible
+/// header, corrupt codec config).
+pub fn media_from_flv(bytes: &[u8]) -> Result<Media, transmux::flv::FlvError> {
+    media_from_flv_chunked(bytes, WHOLE_INPUT)
+}
+
+/// [`media_from_flv`] fed in `chunk`-sized pieces.
+///
+/// # Errors
+///
+/// The first structural error the stage reports.
+pub fn media_from_flv_chunked(
+    bytes: &[u8],
+    chunk: usize,
+) -> Result<Media, transmux::flv::FlvError> {
+    let mut demux = StreamingFlvDemux::new();
+    for piece in bytes.chunks(chunk.max(1)) {
+        demux.feed(piece)?;
+    }
+    demux.finish();
+    let mut events = Vec::new();
+    while let Some(event) = demux.poll_event() {
+        events.push(event);
+    }
+    let mut media = media_from_events(events);
+    if let Some(track) = media.tracks.first() {
+        media.movie_timescale = track.spec.timescale;
+    }
+    Ok(media)
+}
+
+/// Drive the RTMP chunk reassembly and the streaming FLV demux over a whole
+/// post-handshake RTMP chunk stream, folding the result into a [`Media`].
+///
+/// The reassembly half is exactly what the deleted whole-input `RtmpDemux` did:
+/// collect the Audio (type 8), Video (type 9) and `onMetaData` (type 18)
+/// message bodies, rebuild an FLV byte stream from them, and demux that.
+///
+/// # Errors
+///
+/// An RTMP wire error, a rebuilt tag body too large for FLV's UI24
+/// `DataSize`, or the FLV stage's own error.
+pub fn media_from_rtmp(bytes: &[u8]) -> Result<Media, transmux::RtmpFlvError> {
+    media_from_rtmp_chunked(bytes, WHOLE_INPUT)
+}
+
+/// [`media_from_rtmp`] fed in `chunk`-sized pieces.
+///
+/// # Errors
+///
+/// An RTMP wire error, a rebuilt tag body too large for FLV's UI24
+/// `DataSize`, or the FLV stage's own error.
+pub fn media_from_rtmp_chunked(bytes: &[u8], chunk: usize) -> Result<Media, transmux::RtmpFlvError> {
+    use broadcast_common::Serialize as _;
+    use rtmp_runtime::chunk::ChunkAssembler;
+    use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
+    use rtmp_runtime::message::{MessageTypeId, ProtocolControl};
+
+    let mut assembler = ChunkAssembler::new();
+    let mut tags: Vec<(TagType, u32, Vec<u8>)> = Vec::new();
+    let mut has_video = false;
+    let mut has_audio = false;
+    for piece in bytes.chunks(chunk.max(1)) {
+        assembler.feed(piece);
+        while let Some(message) = assembler.next_message()? {
+            match message.message_type_id {
+                MessageTypeId::SetChunkSize => {
+                    if let Some(ProtocolControl::SetChunkSize(size)) =
+                        ProtocolControl::from_message(&message)?
+                    {
+                        assembler.compact();
+                        assembler.set_chunk_size(size);
+                    }
+                }
+                MessageTypeId::Audio => {
+                    has_audio = true;
+                    tags.push((TagType::Audio, message.timestamp.millis(), message.payload));
+                }
+                MessageTypeId::Video => {
+                    has_video = true;
+                    tags.push((TagType::Video, message.timestamp.millis(), message.payload));
+                }
+                MessageTypeId::DataAmf0 => {
+                    tags.push((TagType::Script, message.timestamp.millis(), message.payload));
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut flv = FlvHeader::new(has_audio, has_video).try_to_bytes()?;
+    for (tag_type, timestamp, body) in &tags {
+        flv.extend_from_slice(&FlvTag::new(*tag_type, *timestamp, body).try_to_bytes()?);
+    }
+    media_from_flv(&flv).map_err(transmux::RtmpFlvError::Flv)
 }
 
 /// The result of driving a [`SplicePlan`] over whole medias: the joined media
