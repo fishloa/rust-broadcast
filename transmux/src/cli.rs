@@ -3,7 +3,7 @@
 //! Wires the existing demux spokes ([`TsDemux`], [`Mp4Demux`](crate::mp4_demux::Mp4Demux), [`PsDemux`],
 //! [`WebmDemux`], [`FlvDemux`]) through the neutral [`Media`] IR into the
 //! existing mux spokes ([`CmafMuxStage`], [`TsHlsPackager`],
-//! [`DashPackager`], [`ProgressiveMux`], [`TsMux`]).
+//! [`DashPackager`], [`ProgressiveMuxStage`], [`TsMux`]).
 //!
 //! It writes **no** new demux/mux logic — it is a front-end that autodetects the
 //! input container, runs it through the hub, and writes the chosen output.
@@ -33,7 +33,8 @@ use broadcast_common::{Package, Stage, Unpackage};
 use crate::dash::DashPackager;
 use crate::flv::FlvDemux;
 use crate::media::{CmafMuxStage, FragmentCut, Media};
-use crate::progressive::ProgressiveMux;
+use crate::plan_pass::PlanPass;
+use crate::progressive::ProgressiveMuxStage;
 use crate::ps_demux::PsDemux;
 use crate::segmenter::{MediaClock, Segmenter};
 use crate::ts_demux::TsDemux;
@@ -69,6 +70,15 @@ const KEY_ID_HEX_LEN: usize = KEY_ID_LEN * 2;
 /// Default LL-DASH target latency in milliseconds (`Latency@target`), used when
 /// `--ll` selects the DASH low-latency profile.
 const LL_DASH_LATENCY_TARGET: Duration = Duration::from_secs(3);
+/// The wall-clock length of one interleaved progressive chunk — half a second.
+///
+/// An interleaved file lets a player that can only read strictly forward start
+/// decoding as soon as it has the first chunk of every track; one chunk per
+/// track (what this CLI wrote before, audit r05-W25) means downloading
+/// essentially the whole video track before the first audio sample arrives, so
+/// fast start bought nothing on a simple HTTP-progressive client. Half a second
+/// is the usual trade (chunk headers are 4-8 bytes per chunk).
+const PROGRESSIVE_INTERLEAVE_MILLIS: u32 = 500;
 /// `#EXT-X-VERSION` for the CMAF-HLS playlist: 7 is the floor for the
 /// `#EXT-X-MAP` tag on an fMP4 playlist (RFC 8216 §7).
 const HLS_CMAF_VERSION: u8 = 7;
@@ -224,7 +234,7 @@ pub enum OutputFormat {
     Dash,
     /// MPEG-2 Transport Stream → [`TsMux`].
     Ts,
-    /// Progressive single-file MP4 → [`ProgressiveMux`].
+    /// Progressive single-file MP4 → [`ProgressiveMuxStage`].
     Progressive,
 }
 
@@ -271,7 +281,8 @@ broadcast_common::impl_spec_display!(OutputFormat);
 #[command(name = "transmux", version, about, long_about = None)]
 pub struct Args {
     /// Input media file (the container is autodetected from its leading bytes).
-    /// May be given positionally or with `-i/--input`.
+    /// May be given positionally or with `-i/--input`; `-` reads standard
+    /// input, which cannot be the source of the two-pass progressive MP4.
     #[arg(value_name = "IN", required_unless_present = "input")]
     pub in_positional: Option<PathBuf>,
 
@@ -1132,6 +1143,80 @@ fn package_cmaf(media: &Media) -> CliResult<Vec<u8>> {
     Ok(bytes)
 }
 
+/// Mux `media` into one progressive (non-fragmented) MP4.
+///
+/// Two passes over the same media: [`PlanPass`] records the sample plan (no
+/// sample bytes), then [`ProgressiveMuxStage`] writes each sample at the
+/// offset the plan fixed. The media is replayed rather than re-demuxed because
+/// this CLI still holds it whole; a caller that can only read its input once
+/// must use fragmented MP4 ([`crate::Error::ProgressiveNeedsReplayableInput`]).
+fn package_progressive(media: &Media) -> CliResult<Vec<u8>> {
+    let plan = PlanPass::for_media(media)?;
+    let layout = isobmff::writer::Layout::new(
+        true,
+        isobmff::writer::Interleave::ByDuration {
+            millis: PROGRESSIVE_INTERLEAVE_MILLIS,
+        },
+        isobmff::writer::Sink::Seekable,
+    );
+    let movie = isobmff::writer::MovieHeader::new(media.movie_timescale);
+    let mut stage = ProgressiveMuxStage::new(plan, layout, movie);
+    let out = crate::mux_stage::drive_media(&mut stage, media, broadcast_common::Timestamp::ZERO)?;
+    let mut bytes = Vec::with_capacity(progressive_len(&out));
+    for item in out {
+        match item {
+            crate::mux_stage::MuxOutput::Bytes(chunk) => bytes.extend_from_slice(&chunk),
+            crate::mux_stage::MuxOutput::BytesAt {
+                offset,
+                bytes: chunk,
+            } => {
+                let start = usize::try_from(offset).map_err(|_| {
+                    crate::Error::InvalidInput("progressive: offset exceeds the address space")
+                })?;
+                let end = start
+                    .checked_add(chunk.len())
+                    .ok_or(crate::Error::InvalidInput(
+                        "progressive: write overflows the address space",
+                    ))?;
+                if bytes.len() < end {
+                    bytes.resize(end, 0);
+                }
+                bytes
+                    .get_mut(start..end)
+                    .ok_or(crate::Error::InvalidInput(
+                        "progressive: write outside the file",
+                    ))?
+                    .copy_from_slice(&chunk);
+            }
+            crate::mux_stage::MuxOutput::Init(_)
+            | crate::mux_stage::MuxOutput::Segment(_)
+            | crate::mux_stage::MuxOutput::Text(_) => {}
+        }
+    }
+    Ok(bytes)
+}
+
+/// The file length `out` describes: the running end of the assembled bytes.
+fn progressive_len(out: &[crate::mux_stage::MuxOutput]) -> usize {
+    let mut end = 0usize;
+    for item in out {
+        match item {
+            crate::mux_stage::MuxOutput::Bytes(chunk) => {
+                end = end.saturating_add(chunk.len());
+            }
+            crate::mux_stage::MuxOutput::BytesAt {
+                offset,
+                bytes: chunk,
+            } => {
+                let offset = usize::try_from(*offset).unwrap_or(usize::MAX);
+                end = end.max(offset.saturating_add(chunk.len()));
+            }
+            _ => {}
+        }
+    }
+    end
+}
+
 fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
     match opts.format {
         OutputFormat::Cmaf => {
@@ -1140,7 +1225,7 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
         }
         OutputFormat::Progressive => {
             let media = filter_for_bmff_mux(media)?;
-            Ok(Output::Bytes(ProgressiveMux::new(true).package(&media)?))
+            Ok(Output::Bytes(package_progressive(&media)?))
         }
         OutputFormat::Ts => Ok(Output::Bytes(TsMux::new().package(media)?)),
         OutputFormat::Hls => {
@@ -1285,6 +1370,17 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
 // I/O driver (called by main.rs)
 // ---------------------------------------------------------------------------
 
+/// The input path that means standard input.
+const STDIN_INPUT: &str = "-";
+
+/// Read the whole of standard input.
+fn read_stdin() -> CliResult<Vec<u8>> {
+    use std::io::Read;
+    let mut buf = Vec::new();
+    std::io::stdin().read_to_end(&mut buf)?;
+    Ok(buf)
+}
+
 /// Resolve the input path from the positional or `-i` flag.
 fn input_path(args: &Args) -> &Path {
     // clap guarantees exactly one is present (required_unless_present +
@@ -1312,7 +1408,15 @@ fn resolve_format(args: &Args) -> CliResult<OutputFormat> {
 pub fn run(args: Args) -> CliResult<(Container, OutputFormat)> {
     let in_path = input_path(&args).to_path_buf();
     let format = resolve_format(&args)?;
-    let input = fs::read(&in_path)?;
+    let from_stdin = in_path == Path::new(STDIN_INPUT);
+    if from_stdin && format == OutputFormat::Progressive {
+        return Err(crate::Error::ProgressiveNeedsReplayableInput.into());
+    }
+    let input = if from_stdin {
+        read_stdin()?
+    } else {
+        fs::read(&in_path)?
+    };
     let container = detect_container(&input)?;
 
     let opts = Opts {

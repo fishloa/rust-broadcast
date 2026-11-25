@@ -284,10 +284,13 @@ mod cenc_decrypt_copies {
     const CENC_SHARED_BUDGET_X100: usize = 167;
 }
 
+#[path = "it/support/progressive.rs"]
+mod progressive_support;
+
 mod muxer_buffering {
     use super::bytes_allocated;
     use broadcast_common::{Package, Unpackage};
-    use transmux::{MkvMuxStage, ProgressiveMux, TsDemux, TsMux};
+    use transmux::{MkvMuxStage, TsDemux, TsMux};
 
     /// r05-O4: the muxers buffered their whole output through 2-4 full copies.
     /// Bytes allocated by `package`, as a multiple of the produced output size.
@@ -296,7 +299,7 @@ mod muxer_buffering {
         let data = test_fixtures::read("ts/h264-aac.ts");
         let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
         let cases: [(&str, Vec<u8>, usize); 3] = {
-            let (prog, a1) = bytes_allocated(|| ProgressiveMux::new(true).package(&media).unwrap());
+            let (prog, a1) = bytes_allocated(|| super::progressive_support::package(&media, true));
             let (mkv, a2) = bytes_allocated(|| {
                 super::mux_bytes(
                     &mut MkvMuxStage::new(std::time::Duration::from_millis(5_000)),

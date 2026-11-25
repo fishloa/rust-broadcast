@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `writer::FragmentedWriter::trailer` appends the regenerated `mfra` when the index layout asks for one.
 ### Added
 
+- `writer::ProgressiveWriter::plan` exposes the `OwnedPlan` a progressive
+  writer was built over, so a muxer feeding it can name a size/index mismatch
+  with the plan's own values instead of the writer's box-level error.
 - `frag_layout`: each movie fragment's write-back layout. `reader::FragmentInfo`
   now carries the `FragmentLayout` the reader recorded for it (which `tfhd`
   optional fields are present and their values, `default-base-is-moof`, the

@@ -248,6 +248,40 @@ fn write_all(
     out
 }
 
+/// The workspace progressive muxer, two-pass: a plan pass, then the stage.
+fn transmux_progressive(media: &transmux::Media, faststart: bool) -> Vec<u8> {
+    use transmux::mux_stage::{MuxOutput, drive_media};
+    let plan = transmux::plan_pass::PlanPass::for_media(media).expect("plan progressive");
+    let layout = Layout::new(
+        faststart,
+        Interleave::ByDuration { millis: 500 },
+        Sink::Seekable,
+    );
+    let movie = MovieHeader::new(media.movie_timescale);
+    let mut stage = transmux::progressive::ProgressiveMuxStage::new(plan, layout, movie);
+    let out = drive_media(&mut stage, media, broadcast_common::Timestamp::ZERO)
+        .expect("package progressive");
+    let mut bytes = Vec::new();
+    for item in out {
+        match item {
+            MuxOutput::Bytes(chunk) => bytes.extend_from_slice(&chunk),
+            MuxOutput::BytesAt {
+                offset,
+                bytes: chunk,
+            } => {
+                let start = usize::try_from(offset).expect("offset fits");
+                let end = start + chunk.len();
+                if bytes.len() < end {
+                    bytes.resize(end, 0);
+                }
+                bytes[start..end].copy_from_slice(&chunk);
+            }
+            _ => {}
+        }
+    }
+    bytes
+}
+
 // ---------------------------------------------------------------------------
 // Round trips
 // ---------------------------------------------------------------------------
@@ -257,15 +291,13 @@ fn write_all(
 /// box orders.
 #[test]
 fn a_transmux_written_file_round_trips_byte_identically() {
-    use broadcast_common::{Package, Unpackage};
+    use broadcast_common::Unpackage;
     let ts = test_fixtures::read("ts/h264-aac.ts");
     let media = transmux::TsDemux::new()
         .unpackage(ts.as_slice())
         .expect("demux h264-aac.ts");
     for faststart in [true, false] {
-        let source = transmux::progressive::ProgressiveMux::new(faststart)
-            .package(&media)
-            .expect("package progressive");
+        let source = transmux_progressive(&media, faststart);
         let header = header_of(&source);
         assert_eq!(header.faststart, faststart, "the packaged box order");
         let (tracks, samples, plan) = read_all(&source);
