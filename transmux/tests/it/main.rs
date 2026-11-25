@@ -210,9 +210,14 @@ mod ts_hevc;
 mod ts_hevc_carriage;
 mod ts_hls;
 mod ts_hls_audio_catch_up;
+#[path = "support/ts_hls_stage.rs"]
+mod ts_hls_stage;
 mod ts_mux;
+mod ts_mux_pmt_update;
 mod ts_mux_psi_pcr;
 mod ts_mux_psi_repeat;
+#[path = "support/ts_mux_stage.rs"]
+mod ts_mux_stage;
 mod ts_mux_streaming;
 #[path = "support/ts_psi.rs"]
 mod ts_psi;
