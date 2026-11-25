@@ -625,6 +625,8 @@ pub struct Reader {
     sample_counts: Vec<u32>,
     fragment: Option<FragmentState>,
     ready: Option<ReadyFragment>,
+    last_fragment: Option<(u64, Vec<SampleRef>)>,
+    open_box: Option<ByteRange>,
     indexes: Vec<SegmentIndex>,
     seek: Option<SeekRequest>,
     #[cfg(feature = "scan-counters")]
@@ -659,6 +661,8 @@ impl Reader {
             sample_counts: Vec::new(),
             fragment: None,
             ready: None,
+            last_fragment: None,
+            open_box: None,
             indexes: Vec::new(),
             seek: None,
             #[cfg(feature = "scan-counters")]
@@ -750,6 +754,132 @@ impl Reader {
         }
         self.done = false;
         Ok(())
+    }
+
+    /// Declare that the bytes supplied so far end one self-contained unit of
+    /// sequential input: a media segment.
+    ///
+    /// `unit_end` is the absolute offset one past the unit's last byte, the
+    /// caller's running sequential position. A top-level box whose declared end
+    /// lies past it is dropped. In [`Mode::Permissive`] the cut fragment's
+    /// samples wholly inside the unit stay available and a
+    /// [`Warning::TruncatedFragment`] follows them; in [`Mode::Strict`] the
+    /// truncation is the typed error. The `moov` and its track state, the
+    /// `trex` defaults and the running decode time are kept, and the top-level
+    /// walk resumes at `unit_end`, so the next segment is read from its first
+    /// byte. A unit that ended on a box boundary produces no step.
+    pub fn end_of_unit(&mut self, unit_end: u64) -> Result<()> {
+        let overrun = self.open_box.is_some_and(|range| range.end() > unit_end);
+        let samples_overrun =
+            self.ready
+                .as_ref()
+                .is_some_and(|ready| ready.samples.iter().any(|sample| extent(sample) > unit_end))
+                || self.last_fragment.as_ref().is_some_and(|(_, samples)| {
+                    samples.iter().any(|sample| extent(sample) > unit_end)
+                });
+        let truncated = overrun || samples_overrun;
+        if truncated && !self.tolerated() {
+            let (start, end) = match self.open_box.filter(|range| range.end() > unit_end) {
+                Some(range) => (range.offset, range.end()),
+                None => (unit_end, unit_end),
+            };
+            return Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: usize::try_from(end.saturating_sub(start)).unwrap_or(usize::MAX),
+                    have: usize::try_from(unit_end.saturating_sub(start)).unwrap_or(usize::MAX),
+                    what: "top-level box body",
+                },
+            ));
+        }
+        if let Some(ready) = self.ready.take() {
+            self.retime_after_cut(&ready.samples, unit_end);
+            let emitted = ready.next;
+            let samples: Vec<SampleRef> = ready
+                .samples
+                .into_iter()
+                .enumerate()
+                .filter(|(index, sample)| *index < emitted || extent(sample) <= unit_end)
+                .map(|(_, sample)| sample)
+                .collect();
+            let kept = samples.len();
+            if !ready.emitted || emitted < kept {
+                self.ready = Some(ReadyFragment {
+                    info: ready.info,
+                    samples,
+                    next: emitted.min(kept),
+                    emitted: ready.emitted,
+                });
+            } else {
+                self.last_fragment = Some((ready.info.moof.offset, samples));
+            }
+        } else if let Some((offset, samples)) = self.last_fragment.take() {
+            self.retime_after_cut(&samples, unit_end);
+            self.last_fragment = Some((offset, samples));
+        }
+        if truncated {
+            self.deferred_warning = Some(Warning::TruncatedFragment {
+                offset: self
+                    .fragment
+                    .as_ref()
+                    .map(|fragment| fragment.offset)
+                    .or_else(|| self.ready.as_ref().map(|ready| ready.info.moof.offset))
+                    .or_else(|| self.last_fragment.as_ref().map(|(offset, _)| *offset))
+                    .unwrap_or(unit_end),
+            });
+        }
+        self.fragment = None;
+        self.open_box = None;
+        self.last_fragment = None;
+        self.pending = None;
+        self.pos = unit_end;
+        self.highest_requested = unit_end;
+        self.done = false;
+        Ok(())
+    }
+
+    /// Recompute each track's running decode time and sample count from the
+    /// samples that survive a cut, so a following fragment without `tfdt`
+    /// continues from the last kept sample rather than from a dropped one.
+    fn retime_after_cut(&mut self, samples: &[SampleRef], unit_end: u64) {
+        let mut base: Vec<(usize, u64, u32)> = Vec::new();
+        let mut advanced: Vec<(usize, u64, u32)> = Vec::new();
+        for sample in samples {
+            let Some(index) = self
+                .tracks
+                .iter()
+                .position(|info| info.track_id == sample.track)
+            else {
+                continue;
+            };
+            match base.iter_mut().find(|slot| slot.0 == index) {
+                Some(slot) => {
+                    slot.1 = slot.1.min(sample.decode_time);
+                    slot.2 = slot.2.min(sample.index);
+                }
+                None => base.push((index, sample.decode_time, sample.index)),
+            }
+            if extent(sample) <= unit_end {
+                let decode_time = sample
+                    .decode_time
+                    .saturating_add(u64::from(sample.duration));
+                let count = sample.index.saturating_add(1);
+                match advanced.iter_mut().find(|slot| slot.0 == index) {
+                    Some(slot) => {
+                        slot.1 = decode_time;
+                        slot.2 = count;
+                    }
+                    None => advanced.push((index, decode_time, count)),
+                }
+            }
+        }
+        for (index, decode_time, count) in base {
+            self.decode_times[index] = decode_time;
+            self.sample_counts[index] = count;
+        }
+        for (index, decode_time, count) in advanced {
+            self.decode_times[index] = decode_time;
+            self.sample_counts[index] = count;
+        }
     }
 
     /// The file's `ftyp` brand box, when the file carries one.
@@ -883,6 +1013,7 @@ impl Reader {
         self.pending = None;
         self.fragment = None;
         self.ready = None;
+        self.last_fragment = None;
         self.deferred_warning = None;
         // Progressive samples of a hybrid file are not re-read; the seek
         // positions the fragment walk.
@@ -1226,6 +1357,7 @@ impl Reader {
                 ));
             }
         }
+        self.open_box = Some(ByteRange { offset, len: size });
         if header.box_type.is(b"ftyp") {
             if size > self.config.limits.max_moov_bytes() {
                 return Err(Error::LimitExceeded {
@@ -1502,6 +1634,7 @@ impl Reader {
             self.decode_times[index] = decode_time;
             self.sample_counts[index] = count;
         }
+        self.last_fragment = None;
         self.ready = Some(ReadyFragment {
             info: resolved.info,
             samples: resolved.samples,
@@ -1662,7 +1795,8 @@ impl Reader {
                 return Some(FragmentStep::Sample(sample));
             }
         }
-        self.ready = None;
+        let ready = self.ready.take()?;
+        self.last_fragment = Some((ready.info.moof.offset, ready.samples));
         None
     }
 
@@ -1753,6 +1887,11 @@ fn compare_samples(
         SampleOrder::File => sample.offset.cmp(&other.offset),
     };
     primary.then_with(|| track_index.cmp(&other_track_index))
+}
+
+/// One past the sample's last byte.
+fn extent(sample: &SampleRef) -> u64 {
+    sample.offset.saturating_add(u64::from(sample.size))
 }
 
 /// One-based `stsd` entry a sample uses when neither its `tfhd` nor its
