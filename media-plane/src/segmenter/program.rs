@@ -2560,7 +2560,7 @@ mod segmenter_tests {
             panic!("an fMP4 route must keep producing fMP4 after a track change");
         };
         // The rebuilt segmenter carries only the muxable tracks, so its init
-        // segment is buildable (a Data track makes it `UnmuxableDataTrack`).
+        // segment is buildable (a Data track of another family makes it `DataIdentityMismatch`).
         rebuilt
             .init_segment()
             .expect("rebuilt segmenter must be able to build its init segment");
