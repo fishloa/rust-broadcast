@@ -11,6 +11,9 @@
 //! The reader is always created in [`Mode::Permissive`]: a fault it tolerates
 //! becomes [`DemuxEvent::InputDegraded`], never a silent skip. A fault it
 //! cannot tolerate is the stage's error, after which the stage is poisoned.
+//! A sequential consumer marks each media segment with [`Mp4Input::SegmentEnd`]:
+//! the stage drops any partially read top-level box, keeps the parsed `moov`
+//! and its track state, and resumes at the next segment's first byte.
 //!
 //! Sample timing and conditioning are exactly the whole-input demuxers':
 //! `dts` is the reader's absolute decode time, `pts = dts + composition
@@ -69,6 +72,8 @@ pub enum Mp4Input<'a> {
     },
     /// The next sequential bytes (never used by a seekable stage).
     Next(&'a [u8]),
+    /// A sequential media segment ended here; the next bytes start a new one.
+    SegmentEnd,
     /// No more input will arrive.
     Eof,
 }
@@ -278,14 +283,29 @@ impl Mp4Demux {
         self.reader.is_fragmented()
     }
 
-    /// Drop a damaged partial fragment's state so the next fragment can be
-    /// demuxed under the same `moov`.
-    pub fn reset_fragments(&mut self) {
+    /// Declare that the bytes fed so far end one sequential media segment and
+    /// keep the `moov` and its track state for the next.
+    ///
+    /// The reader drops any top-level box whose declared end runs past the
+    /// segment: in its permissive mode the cut fragment is reported as
+    /// [`InputDegradation::MalformedUnit`], the kind the whole-input demuxers
+    /// use for the same damage. The buffered partial bytes are dropped, so a
+    /// damaged segment cannot affect the next one.
+    fn segment_end(&mut self) -> Result<()> {
+        let unit_end = self.buf_end();
+        if let Some(OwnedStep::Warning(warning)) = self.staged.take() {
+            self.push_warning(warning);
+        }
         self.staged = None;
         self.structure = None;
-        self.batch.clear();
         self.batch_range = None;
+        self.batch.clear();
+        let result = self.reader.end_of_unit(unit_end).map_err(Error::from);
+        let pumped = result.and_then(|()| self.pump());
+        self.buf.clear();
+        self.buf_start = unit_end;
         self.done = false;
+        pumped
     }
 
     fn pump(&mut self) -> Result<()> {
@@ -487,10 +507,7 @@ impl Mp4Demux {
     fn push_warning(&mut self, warning: Warning) {
         let position = warning.position();
         let kind = match warning {
-            Warning::MalformedFragment { .. } => InputDegradation::MalformedUnit { position },
-            Warning::TruncatedFragment { .. } | Warning::TruncatedMdat { .. } => {
-                InputDegradation::TruncatedUnit { position }
-            }
+            Warning::TruncatedMdat { .. } => InputDegradation::TruncatedUnit { position },
             _ => InputDegradation::MalformedUnit { position },
         };
         self.events.push_back(DemuxEvent::InputDegraded {
@@ -1000,6 +1017,24 @@ impl Stage for Mp4Demux {
                     ));
                 }
                 self.feed_next(data)
+            }
+            Mp4Input::SegmentEnd => {
+                if self.finished {
+                    return Err(Error::InvalidInput("Mp4Demux was fed after finish"));
+                }
+                if self.eof {
+                    return Err(Error::InvalidInput("Mp4Demux was fed after Eof"));
+                }
+                if self.source != SourceMode::Sequential {
+                    return Err(Error::InvalidInput(
+                        "Mp4Input::SegmentEnd was fed to a seekable Mp4Demux",
+                    ));
+                }
+                let result = self.segment_end();
+                if let Err(err) = &result {
+                    self.poisoned = Some(err.clone());
+                }
+                result
             }
         }
     }

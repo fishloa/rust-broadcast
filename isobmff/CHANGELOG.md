@@ -48,15 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   back to the file's bytes.
 
 ### Breaking
-
 - `Error::QuickTimeOnly` and `SampleEntryVariant::is_quicktime_only` are
   removed: every QuickTime sample entry this crate parses now serialises.
 - `FileType` gains `emit_ftyp`; `TrackSetup` gains `gmhd` and `references`;
   `VisualSampleEntryFields` gains `reserved`, `pre_defined_and_reserved` and
   `trailing`; the AVC, HEVC and VVC sample entries gain `config_position`.
-
 ### Fixed
-
 - `TrackId::next` saturates at `u32::MAX` instead of panicking on a crafted
   `track_ID` (fuzz finding on `isobmff_whole_file`).
 - A `SampleEntry::Raw` whose bytes use the `size == 0` ("to end of container",
@@ -70,9 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `description_index` (default 1, which omits the field and keeps every
   existing golden byte-identical), and `media_fragment_run` takes it as the
   optional per-`traf` value; a run whose samples disagree is an error.
-
 ### Changed
-
 - A sample plan's `stsd` entries are carried as their exact box bytes
   (`SampleEntry::Raw`) rather than re-serialized from the typed parse, so a
   `colr` ahead of `avcC`, or a QuickTime `vendor` field, survives a rewrite.
@@ -81,11 +76,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a trailing `free`/`skip`/`uuid` box is carried; a forward-only source still
   finishes as soon as its samples are exhausted.
 - A truncated final `mdat` is reported once, not once per fault site.
-
 ## [Unreleased]
 ### Added
-
 - `quicktime`, QuickTime atoms a camera or editing `.mov` carries:
+- `Reader::end_of_unit(unit_end)` for sequential input: it declares that the
+  bytes supplied so far end one self-contained unit (a media segment). A
+  top-level box whose declared end runs past the unit is dropped; in permissive
+  mode the cut fragment's samples wholly inside the unit stay available and a
+  `Warning::TruncatedFragment` follows them, while strict mode returns the
+  truncation error. The `moov`, its track state, the `trex` defaults and the
+  running decode time are kept, and the top-level walk resumes at `unit_end`,
+  so a damaged segment cannot affect the next one.
+- `quicktime`, read-only QuickTime atoms a camera or editing `.mov` carries:
   sound description versions 1 and 2 (including the 64-bit version 2 sample
   rate and the four version 1 fields), the `wave` decompression container and
   its `esds`, the base media information header `gmhd`/`gmin`/`tcmi`, the

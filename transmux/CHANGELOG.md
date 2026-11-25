@@ -25,6 +25,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Error::InputRangeMismatch { expected_offset, expected_len, got_offset,
   got_len }`: a caller-supplied byte range did not match the one the stage
   asked for.
+- `Mp4Input::SegmentEnd` for a sequential stage: a segment consumer declares
+  that the bytes fed so far end one media segment. The stage calls
+  `isobmff::Reader::end_of_unit`, reports a tolerated fault as
+  `DemuxEvent::InputDegraded` with `InputDegradation::MalformedUnit` (the kind
+  `Fmp4Demux` uses for the same damage), and drops the buffered partial bytes,
+  so a damaged segment cannot affect the next one. Feeding it to a seekable
+  stage is `Error::InvalidInput`.
 - `AbandonReason::{UnsupportedSampleEntry { fourcc }, UnsupportedCodec,
   MalformedTrack { expected }}` and `InputDegradation::TruncatedUnit
   { position }`, the causes the streaming MP4 demux reports for a track it
@@ -59,6 +66,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whole-input demuxers; their output is unchanged.
 
 ### Breaking
+- **BREAKING:** `Mp4Demux::reset_fragments` is removed. A sequential consumer
+  that wants to end a unit (a media segment) feeds
+  `Mp4Input::SegmentEnd` instead; the reader's new `end_of_unit` drops a
+  damaged partial top-level box and resumes the walk at the next unit.
 - **BREAKING:** `fragment_build` is gone. `FragmentProtection`,
   `protect_media_segment`, `media_fragment_run` and the per-sample run
   descriptor (`RunSample`, formerly `MediaRunSample`) live in the box crate now:

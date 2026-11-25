@@ -20,6 +20,9 @@ fn fuzz_limits() -> Limits {
 /// A hostile file cannot describe more demands or events than this.
 const MAX_STEPS: usize = 1 << 16;
 
+/// Upper bound on how many fuzz-chosen chunks one sequential segment spans.
+const MAX_SEGMENT_CHUNKS: usize = 8;
+
 fn drain(demux: &mut Mp4Demux) {
     while demux.poll().is_some() {}
 }
@@ -58,12 +61,13 @@ fn drive_seekable(data: &[u8], order: SampleOrder) {
     drain(&mut demux);
 }
 
-fn drive_sequential(data: &[u8], chunk: usize) {
+fn drive_sequential(data: &[u8], chunk: usize, per_segment: usize) {
     let config = Mp4DemuxConfig::default()
         .with_total_len(Some(data.len() as u64))
         .with_limits(fuzz_limits());
     let mut demux = Mp4Demux::sequential(config);
     let mut offset = 0usize;
+    let mut fed = 0usize;
     for _ in 0..MAX_STEPS {
         drain(&mut demux);
         if demux.demand().saturated {
@@ -83,7 +87,16 @@ fn drive_sequential(data: &[u8], chunk: usize) {
             break;
         }
         offset += take;
+        fed += 1;
+        if fed % per_segment == 0
+            && demux
+                .feed(Mp4Input::SegmentEnd, Timestamp::ZERO)
+                .is_err()
+        {
+            break;
+        }
     }
+    let _ = demux.feed(Mp4Input::SegmentEnd, Timestamp::ZERO);
     let _ = demux.finish();
     drain(&mut demux);
 }
@@ -104,6 +117,7 @@ fuzz_target!(|input: &[u8]| {
         drive_seekable(data, order);
     }
     if mode & 4 == 0 {
-        drive_sequential(data, usize::from(*chunk) + 1);
+        let per_segment = usize::from(*chunk) % MAX_SEGMENT_CHUNKS + 1;
+        drive_sequential(data, usize::from(*chunk) + 1, per_segment);
     }
 });

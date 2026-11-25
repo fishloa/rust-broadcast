@@ -696,3 +696,330 @@ fn a_run_pointing_into_the_second_mdat_after_the_moof_still_resolves() {
     let expected = expected(&file);
     assert_eq!(outcome.fragments.len(), expected.len());
 }
+
+// ---------------------------------------------------------------------------
+// Sequential units: an init segment followed by media segments, each closed by
+// `Reader::end_of_unit`. A damaged segment must yield its complete prefix, one
+// `Warning::TruncatedFragment`, and leave the next segment readable.
+// ---------------------------------------------------------------------------
+
+use isobmff::reader::{Mode, Warning};
+
+/// One damaged media segment, built from a well-formed one in the test.
+enum Damage {
+    TruncateHalf,
+    MoofSizePastSegment,
+    TruncateInsideMdat,
+}
+
+impl Damage {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::TruncateHalf => "truncate-half",
+            Self::MoofSizePastSegment => "moof-size-past-segment",
+            Self::TruncateInsideMdat => "truncate-inside-mdat",
+        }
+    }
+}
+
+/// `(start, size, header size, four-CC)` for each top-level box of `bytes`.
+fn top_boxes(bytes: &[u8]) -> Vec<(usize, usize, usize, [u8; 4])> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    while at + 8 <= bytes.len() {
+        let raw = u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]);
+        let size = usize::try_from(raw).unwrap_or(usize::MAX);
+        let fourcc: [u8; 4] = bytes[at + 4..at + 8].try_into().expect("four-CC");
+        let (header, total) = match size {
+            0 => (8usize, bytes.len() - at),
+            1 => {
+                if at + 16 > bytes.len() {
+                    break;
+                }
+                let mut large = [0u8; 8];
+                large.copy_from_slice(&bytes[at + 8..at + 16]);
+                (
+                    16usize,
+                    usize::try_from(u64::from_be_bytes(large)).unwrap_or(usize::MAX),
+                )
+            }
+            value => (8usize, value),
+        };
+        if total < header || total > bytes.len() - at {
+            out.push((at, bytes.len() - at, header, fourcc));
+            break;
+        }
+        out.push((at, total, header, fourcc));
+        at += total;
+    }
+    out
+}
+
+fn box_of(bytes: &[u8], fourcc: &[u8; 4]) -> (usize, usize, usize) {
+    for (start, size, header, ty) in top_boxes(bytes) {
+        if ty == *fourcc {
+            return (start, size, header);
+        }
+    }
+    panic!("no {fourcc:?} box in the segment")
+}
+
+fn damage(segment: &[u8], damage: &Damage) -> Vec<u8> {
+    match damage {
+        Damage::TruncateHalf => segment[..segment.len() / 2].to_vec(),
+        Damage::MoofSizePastSegment => {
+            let mut damaged = segment.to_vec();
+            let (start, _, _) = box_of(segment, b"moof");
+            let beyond = u32::try_from(segment.len() + 1).expect("segment fits u32");
+            damaged[start..start + 4].copy_from_slice(&beyond.to_be_bytes());
+            damaged
+        }
+        Damage::TruncateInsideMdat => {
+            let mut damaged = segment.to_vec();
+            let (start, size, header) = box_of(segment, b"mdat");
+            let payload = size - header;
+            let cut = start + header + payload / 2;
+            damaged.truncate(cut);
+            damaged
+        }
+    }
+}
+
+/// The result of driving one sequential input unit by unit.
+struct Units {
+    samples: Vec<Vec<SampleRef>>,
+    warnings: Vec<Warning>,
+    error: Option<isobmff::Error>,
+}
+
+impl Units {
+    /// The samples of `unit` whose bytes lie wholly inside that unit.
+    fn complete(&self, unit: usize, end: usize) -> Vec<&SampleRef> {
+        self.samples[unit]
+            .iter()
+            .filter(|sample| {
+                sample.offset.saturating_add(u64::from(sample.size))
+                    <= u64::try_from(end).unwrap_or(u64::MAX)
+            })
+            .collect()
+    }
+}
+
+fn drive_units(whole: &[u8], units: &[(usize, usize)], config: ReaderConfig) -> Units {
+    let mut reader = Reader::new(config);
+    let mut outcome = Units {
+        samples: Vec::new(),
+        warnings: Vec::new(),
+        error: None,
+    };
+    for &(_, end) in units {
+        outcome.samples.push(Vec::new());
+        loop {
+            match reader.step() {
+                Ok(Step::Need(range)) => {
+                    if range.end() > u64::try_from(end).unwrap_or(u64::MAX) {
+                        break;
+                    }
+                    let start = usize::try_from(range.offset).unwrap_or(usize::MAX);
+                    let stop = usize::try_from(range.end()).unwrap_or(usize::MAX);
+                    let supplied = whole.get(start..stop).unwrap_or(&[]);
+                    if let Err(error) = reader.supply(range.offset, supplied) {
+                        outcome.error = Some(error);
+                        return outcome;
+                    }
+                }
+                Ok(Step::Sample(sample)) => {
+                    if let Some(unit) = outcome.samples.last_mut() {
+                        unit.push(sample);
+                    }
+                }
+                Ok(Step::Warning(warning)) => outcome.warnings.push(warning),
+                Ok(Step::Done) => return outcome,
+                Ok(_) => {}
+                Err(error) => {
+                    outcome.error = Some(error);
+                    return outcome;
+                }
+            }
+        }
+        if let Err(error) = reader.end_of_unit(u64::try_from(end).unwrap_or(u64::MAX)) {
+            outcome.error = Some(error);
+            return outcome;
+        }
+        loop {
+            match reader.step() {
+                Ok(Step::Warning(warning)) => outcome.warnings.push(warning),
+                Ok(Step::Sample(sample)) => {
+                    if let Some(unit) = outcome.samples.last_mut() {
+                        unit.push(sample);
+                    }
+                }
+                Ok(Step::Need(_)) | Ok(Step::Done) => break,
+                Ok(_) => {}
+                Err(error) => {
+                    outcome.error = Some(error);
+                    return outcome;
+                }
+            }
+        }
+    }
+    outcome
+}
+
+const UNIT_INIT: &str = "hls/cmaf-fmp4/init.mp4";
+const UNIT_SEGMENTS: [&str; 2] = ["hls/cmaf-fmp4/index0.m4s", "hls/cmaf-fmp4/index1.m4s"];
+
+fn unit_config() -> ReaderConfig {
+    ReaderConfig::default()
+        .with_order(SampleOrder::File)
+        .with_source(Source::ForwardOnly)
+}
+
+fn unit_config_mode(mode: Mode) -> ReaderConfig {
+    unit_config().with_mode(mode)
+}
+
+#[test]
+fn end_of_unit_recovers_after_each_damage() {
+    let init = test_fixtures::read(UNIT_INIT);
+    let segments: Vec<Vec<u8>> = UNIT_SEGMENTS
+        .iter()
+        .map(|name| test_fixtures::read(name))
+        .collect();
+
+    let whole: Vec<u8> = [&init[..], &segments.concat()[..]].concat();
+    let mut clean_units = vec![(0usize, init.len())];
+    let mut at = init.len();
+    for segment in &segments {
+        clean_units.push((at, at + segment.len()));
+        at += segment.len();
+    }
+    let clean = drive_units(&whole, &clean_units, unit_config_mode(Mode::Permissive));
+    assert!(clean.error.is_none(), "a clean input: {:?}", clean.error);
+    assert!(
+        clean.warnings.is_empty(),
+        "a clean input warns about nothing"
+    );
+
+    for victim in 0..segments.len() {
+        for harm in [
+            Damage::TruncateHalf,
+            Damage::MoofSizePastSegment,
+            Damage::TruncateInsideMdat,
+        ] {
+            let damaged = damage(&segments[victim], &harm);
+            let mut damaged_segments = segments.clone();
+            damaged_segments[victim] = damaged;
+            let damaged_whole: Vec<u8> = [&init[..], &damaged_segments.concat()[..]].concat();
+            let mut units = vec![(0usize, init.len())];
+            let mut at = init.len();
+            for segment in &damaged_segments {
+                units.push((at, at + segment.len()));
+                at += segment.len();
+            }
+
+            let permissive =
+                drive_units(&damaged_whole, &units, unit_config_mode(Mode::Permissive));
+            assert!(
+                permissive.error.is_none(),
+                "segment {victim} {}: permissive must recover, got {:?}",
+                harm.name(),
+                permissive.error
+            );
+            assert!(
+                permissive
+                    .warnings
+                    .iter()
+                    .any(|warning| matches!(warning, Warning::TruncatedFragment { .. })),
+                "segment {victim} {}: a truncated-fragment warning",
+                harm.name()
+            );
+            for unit in 0..clean.samples.len() {
+                if unit == victim + 1 {
+                    continue;
+                }
+                let want: Vec<_> = clean.samples[unit]
+                    .iter()
+                    .map(|sample| sample_key(sample, clean_units[unit].0))
+                    .collect();
+                let got: Vec<_> = permissive.samples[unit]
+                    .iter()
+                    .map(|sample| sample_key(sample, units[unit].0))
+                    .collect();
+                assert_eq!(
+                    got,
+                    want,
+                    "segment {victim} {}: unit {unit} must be complete",
+                    harm.name()
+                );
+            }
+            let end = units[victim + 1].1;
+            let kept = permissive.complete(victim + 1, end);
+            match harm {
+                Damage::MoofSizePastSegment => assert!(
+                    kept.is_empty(),
+                    "segment {victim}: an unreadable moof yields no samples"
+                ),
+                Damage::TruncateHalf => {
+                    for sample in &kept {
+                        assert!(
+                            sample.offset.saturating_add(u64::from(sample.size))
+                                <= u64::try_from(end).unwrap_or(u64::MAX),
+                            "a kept sample lies wholly inside the segment"
+                        );
+                    }
+                    let clean_keys: Vec<_> = clean.samples[victim + 1]
+                        .iter()
+                        .map(|sample| sample_key(sample, clean_units[victim + 1].0))
+                        .collect();
+                    let kept_keys: Vec<_> = kept
+                        .iter()
+                        .map(|sample| sample_key(sample, units[victim + 1].0))
+                        .collect();
+                    assert!(
+                        clean_keys.starts_with(&kept_keys),
+                        "segment {victim}: kept samples are a prefix of the clean ones"
+                    );
+                }
+                Damage::TruncateInsideMdat => {
+                    let clean_keys: Vec<_> = clean
+                        .complete(victim + 1, end)
+                        .iter()
+                        .map(|sample| sample_key(sample, clean_units[victim + 1].0))
+                        .collect();
+                    let kept_keys: Vec<_> = kept
+                        .iter()
+                        .map(|sample| sample_key(sample, units[victim + 1].0))
+                        .collect();
+                    assert_eq!(
+                        kept_keys, clean_keys,
+                        "segment {victim}: every sample wholly inside the cut mdat is kept"
+                    );
+                }
+            }
+
+            let strict = drive_units(&damaged_whole, &units, unit_config_mode(Mode::Strict));
+            assert!(
+                strict.error.is_some(),
+                "segment {victim} {}: strict refuses a truncated unit",
+                harm.name()
+            );
+        }
+    }
+}
+
+/// The fields a sample comparison must agree on. The offset is relative to the
+/// unit, because a damaged unit is shorter and every later unit shifts.
+fn sample_key(sample: &SampleRef, unit_start: usize) -> (u32, u64, u32, u64, i32, u32, bool) {
+    (
+        sample.track.value(),
+        sample
+            .offset
+            .saturating_sub(u64::try_from(unit_start).unwrap_or(0)),
+        sample.size,
+        sample.decode_time,
+        sample.composition_offset,
+        sample.duration,
+        sample.sync,
+    )
+}
