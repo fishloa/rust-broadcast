@@ -40,13 +40,14 @@ use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
 use crate::ir::{
-    AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, DisplayInfo, EXTENDED_SAR_IDC,
-    FragmentTrackData, PictureRect, Sample, SubtitleFormat, SubtitleSampleEntry, TrackSpec,
-    VideoFormat, VideoSignalType,
+    AspectRatioIdc, CodecConfig, ColourDescription, DataIdentity, DisplayGeometry, DisplayInfo,
+    EXTENDED_SAR_IDC, FragmentTrackData, PictureRect, Sample, SubtitleFormat, SubtitleSampleEntry,
+    TrackSpec, VideoFormat, VideoSignalType,
 };
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::pipeline::{build_init_segment, build_media_segment};
 use alloc::sync::Arc;
+use bytes::Bytes;
 use isobmff::ac4::Ac4SpecificBox;
 use isobmff::box_support::OpaqueBox;
 use isobmff::box_types::BOX_TYPE_SIZE;
@@ -408,24 +409,71 @@ pub(crate) fn track_spec_from_track_info(info: &TrackInfo) -> Result<TrackSpec> 
     let entry = info.entries.first().ok_or(Error::UnexpectedBox {
         expected: "stsd entry",
     })?;
-    let typed = entry
-        .typed
-        .as_ref()
-        .ok_or_else(|| Error::UnsupportedSampleEntry {
+    // A known four-CC whose typed parse failed is malformed, not merely a
+    // sample entry transmux has no `CodecConfig` for: it keeps the
+    // `TrackAbandoned` path (with the parser's own detail in the reason).
+    if entry.error.is_some() {
+        return Err(Error::UnsupportedSampleEntry {
             fourcc: String::from_utf8_lossy(&entry.fourcc).into_owned(),
-        })?;
-    let config = codec_config_from_entry(typed)?;
-    let spec = TrackSpec::new(info.track_id.into(), info.timescale, config);
+        });
+    }
+    let config = match entry.typed.as_ref().map(codec_config_from_entry) {
+        Some(Ok(config)) => config,
+        // No `CodecConfig` for this entry (an unknown four-CC, or a typed
+        // entry such as QuickTime `tmcd` this crate does not map): carry the
+        // track as data, with the sample entry's own bytes so it re-muxes.
+        None | Some(Err(Error::UnsupportedSampleEntry { .. })) => CodecConfig::Data {
+            identity: DataIdentity::Mp4 {
+                handler: info.handler,
+                sample_entry: Bytes::copy_from_slice(&entry.body),
+            },
+        },
+        Some(Err(err)) => return Err(err),
+    };
+    let mut spec = TrackSpec::new(info.track_id.into(), info.timescale, config);
+    if let Some(protection) = track_protection_from_entry(entry)? {
+        spec = spec.with_protection(protection);
+    }
     // Overlay container-level display geometry (pasp / colr nclx) from the
     // sample entry onto the SPS-derived display — ISO/IEC 14496-12:2026
     // §12.1.4.1 (pasp) / §12.1.5.1 (colr). AVC/HEVC entries only; see
     // `overlay_sample_entry_display`.
-    let spec = match typed {
-        SampleEntryVariant::Avc1(e) => overlay_sample_entry_display(spec, &e.extra_boxes),
-        SampleEntryVariant::Hevc1(e) => overlay_sample_entry_display(spec, &e.extra_boxes),
+    let spec = match entry.typed.as_ref() {
+        Some(SampleEntryVariant::Avc1(e)) => overlay_sample_entry_display(spec, &e.extra_boxes),
+        Some(SampleEntryVariant::Hevc1(e)) => overlay_sample_entry_display(spec, &e.extra_boxes),
         _ => spec,
     };
     Ok(spec)
+}
+
+/// The CENC/CBCS defaults a sample entry's `sinf` states, or `None` for a
+/// cleartext entry (ISO/IEC 14496-12:2026 §13.4, ISO/IEC 23001-7 §12.2).
+///
+/// The per-sample IVs and subsample maps ride on the samples themselves; this
+/// is only the track-level `tenc` (KID, IV size, `cbcs` pattern / constant IV)
+/// and the scheme.
+fn track_protection_from_entry(
+    entry: &isobmff::reader::SampleEntryInfo,
+) -> Result<Option<TrackProtection>> {
+    let Some(sinf) = isobmff::cenc::sinf_of_sample_entry(&entry.body) else {
+        return Ok(None);
+    };
+    let parsed = isobmff::cenc::ProtectionSchemeInfoBox::parse(sinf)?;
+    let Some(scheme) = parsed
+        .scheme_type
+        .as_ref()
+        .and_then(|ty| isobmff::cenc::CencScheme::from_four_cc(&ty.scheme_type))
+    else {
+        return Ok(None);
+    };
+    let Some(tenc) = parsed.scheme_info.and_then(|info| info.tenc) else {
+        return Ok(None);
+    };
+    Ok(Some(TrackProtection::new(
+        scheme,
+        tenc,
+        crate::ir::ConstantIvSenc::default(),
+    )))
 }
 
 /// Overlay container-level display geometry (a `pasp` / `colr nclx` box found

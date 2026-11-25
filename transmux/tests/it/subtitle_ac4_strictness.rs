@@ -295,24 +295,22 @@ fn fmp4_demux_skips_a_genuinely_unsupported_sample_entry_naming_it_not_failing_t
         &mutated,
         test_harness::collect::CollectMode::Seekable,
     )
-    .expect("an unrecognised sample entry must be skipped, not fail the whole file");
-    assert!(
-        out.tracks.is_empty(),
-        "the only track was unrecognised, so no track survives"
-    );
+    .expect("an unrecognised sample entry must be carried, not fail the whole file");
     assert_eq!(
-        out.skipped.len(),
+        out.tracks.len(),
         1,
-        "the skipped track must be recorded, not silently vanish"
+        "the unrecognised track is carried as a data track"
     );
-    assert_eq!(
-        out.skipped[0].fourcc, "zzz9",
-        "the skip record must name the offending sample entry"
-    );
+    let identity = match &out.tracks[0].spec.config {
+        CodecConfig::Data {
+            identity: transmux::ir::DataIdentity::Mp4 { sample_entry, .. },
+        } => sample_entry,
+        other => panic!("expected an ISOBMFF data identity, got {other:?}"),
+    };
+    assert_eq!(&identity[4..8], b"zzz9", "the raw entry names its fourcc");
     assert!(
-        out.skipped[0].reason.contains("zzz9"),
-        "the skip reason must mention the offending fourcc too, got {:?}",
-        out.skipped[0].reason
+        out.skipped.is_empty(),
+        "an unmapped sample entry is carried as data, not skipped"
     );
 }
 
@@ -363,8 +361,8 @@ fn fmp4_demux_skips_one_unmodelled_track_but_keeps_the_rest() {
 
     assert_eq!(
         out.tracks.len(),
-        2,
-        "the AVC + AAC tracks must survive; only the mutated subtitle track is dropped"
+        3,
+        "the AVC + AAC tracks must survive alongside the mutated subtitle track, now data"
     );
     assert!(
         out.tracks
@@ -382,13 +380,17 @@ fn fmp4_demux_skips_one_unmodelled_track_but_keeps_the_rest() {
         out.tracks.iter().all(|t| !t.samples.is_empty()),
         "every surviving track must still carry its samples"
     );
-    assert_eq!(
-        out.skipped.len(),
-        1,
-        "exactly the mutated subtitle track must be recorded as skipped"
+    assert!(
+        out.tracks.iter().any(|t| matches!(
+            &t.spec.config,
+            CodecConfig::Data {
+                identity: transmux::ir::DataIdentity::Mp4 { sample_entry, .. },
+            } if &sample_entry[4..8] == b"zzz9"
+        )),
+        "the mutated track must be carried as a data track naming its fourcc"
     );
-    assert_eq!(
-        out.skipped[0].fourcc, "zzz9",
-        "the skip record must name the offending sample entry, not just count it"
+    assert!(
+        out.skipped.is_empty(),
+        "an unmapped sample entry is carried as data, not skipped"
     );
 }

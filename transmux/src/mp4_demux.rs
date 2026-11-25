@@ -24,6 +24,7 @@
 //! §8.2-§8.7 (`private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`).
 
 use alloc::collections::VecDeque;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use broadcast_common::stage::{Demand, Stage, Timestamp};
 use broadcast_common::timescale::Timescale;
@@ -39,7 +40,7 @@ use isobmff::sample_table::SampleRef;
 use crate::error::{Error, Result};
 use crate::ir::{
     AbandonReason, CodecConfig, DemuxEvent, EventProvenance, InputDegradation, Sample, SampleFlags,
-    SampleTiming, TrackSpec,
+    SampleProtection, SampleTiming, TrackSpec,
 };
 use crate::media::{
     InbandDisplayTagger, nal_length_size, normalise_nal_lengths, normalise_spec_nal_length,
@@ -772,7 +773,10 @@ impl Mp4Demux {
             flags: SampleFlags::new(sref.sync),
             provenance: None,
             display: None,
-            protection: None,
+            protection: sref
+                .aux
+                .as_ref()
+                .map(|aux| Arc::new(SampleProtection::from(aux))),
         };
         let added = {
             let state = self
