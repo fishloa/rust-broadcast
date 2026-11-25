@@ -13,6 +13,8 @@
 
 use crate::error::{Error, Result};
 use crate::lls_table_id::LlsTableId;
+#[cfg(feature = "std")]
+use broadcast_common::bounded::Limit;
 use broadcast_common::{Parse, Serialize};
 
 /// Length of the common `LLS_table()` header (`LLS_table_id` +
@@ -99,24 +101,38 @@ impl Serialize for LlsEnvelope<'_> {
     }
 }
 
+/// The [`Limit`] applied to a decompressed LLS table body: 4 MiB, the ceiling
+/// every other whole-XML document in the workspace reads under. An LLS table is
+/// broadcast signalling XML — `LLS_table()` instances are MTU-bound, so a body
+/// anywhere near this size is not a realistic broadcast.
+#[cfg(feature = "std")]
+pub const MAX_DECOMPRESSED_LLS_LIMIT: Limit = Limit::new("decompressed LLS table", 4 * 1024 * 1024);
+
 #[cfg(feature = "std")]
 impl LlsEnvelope<'_> {
-    /// Gzip-decompress (RFC 1952) `payload` into the XML bytes it carries.
+    /// Gzip-decompress (RFC 1952) `payload` into the XML bytes it carries,
+    /// stopping once the output would exceed `limit`.
     ///
     /// # Errors
-    /// [`Error::Decompress`] if `payload` is not valid gzip data.
-    pub fn decompress(&self) -> Result<alloc::vec::Vec<u8>> {
-        use std::io::Read;
+    /// [`Error::Decompress`] if `payload` is not valid gzip data, or
+    /// [`Error::TooLarge`] naming the limit the decompressed body exceeded.
+    pub fn decompress(&self, limit: Limit) -> Result<alloc::vec::Vec<u8>> {
+        use broadcast_common::bounded::{BoundedReadError, read_bounded};
 
-        let mut decoder = flate2::read::GzDecoder::new(self.payload);
-        let mut out = alloc::vec::Vec::new();
-        decoder
-            .read_to_end(&mut out)
-            .map_err(|e| Error::Decompress {
+        read_bounded(flate2::read::GzDecoder::new(self.payload), limit).map_err(|error| match error
+        {
+            BoundedReadError::TooLarge {
+                limit_name,
+                limit_bytes,
+            } => Error::TooLarge {
+                limit_name,
+                limit_bytes,
+            },
+            other => Error::Decompress {
                 what: "LlsEnvelope payload",
-                reason: alloc::string::ToString::to_string(&e),
-            })?;
-        Ok(out)
+                reason: alloc::string::ToString::to_string(&other),
+            },
+        })
     }
 }
 
@@ -213,7 +229,7 @@ mod tests {
         bytes.extend_from_slice(&gzipped);
 
         let env = LlsEnvelope::parse(&bytes).unwrap();
-        let decompressed = env.decompress().unwrap();
+        let decompressed = env.decompress(MAX_DECOMPRESSED_LLS_LIMIT).unwrap();
         assert_eq!(decompressed, xml);
     }
 
@@ -223,6 +239,32 @@ mod tests {
         let mut bytes = HEADER.to_vec();
         bytes.extend_from_slice(b"not gzip data at all");
         let env = LlsEnvelope::parse(&bytes).unwrap();
-        assert!(matches!(env.decompress(), Err(Error::Decompress { .. })));
+        assert!(matches!(
+            env.decompress(MAX_DECOMPRESSED_LLS_LIMIT),
+            Err(Error::Decompress { .. })
+        ));
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn decompress_rejects_a_body_over_the_named_limit() {
+        use std::io::Write;
+
+        let xml = b"<SLT bsid=\"1\"><Service serviceId=\"1\" serviceCategory=\"1\"/></SLT>";
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(xml).unwrap();
+        let gzipped = encoder.finish().unwrap();
+
+        let mut bytes = HEADER.to_vec();
+        bytes.extend_from_slice(&gzipped);
+
+        let env = LlsEnvelope::parse(&bytes).unwrap();
+        assert!(matches!(
+            env.decompress(Limit::new("tiny LLS table", 8)),
+            Err(Error::TooLarge {
+                limit_name: "tiny LLS table",
+                limit_bytes: 8,
+            })
+        ));
     }
 }

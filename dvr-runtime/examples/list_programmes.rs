@@ -8,6 +8,7 @@
 use std::time::Duration;
 
 use broadcast_common::Timestamp;
+use broadcast_common::bounded::{Limit, read_file_bounded_string};
 use bytes::Bytes;
 use dvr_runtime::fs::FsRecorder;
 use dvr_runtime::read::parse_period_playlist;
@@ -16,6 +17,13 @@ use dvr_runtime::{
 };
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, Trunk, TrunkConfig};
+
+/// A whole archive period playlist, bounded by the ceiling `broadcast-hls`
+/// itself accepts.
+const PLAYLIST_LIMIT: Limit = Limit::new(
+    "archive period playlist",
+    broadcast_hls::limits::MAX_PLAYLIST_BYTES as u64,
+);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::temp_dir().join("dvr-runtime-example-programmes");
@@ -67,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("archive: {}", dir.display());
     for period in 0..4u32 {
         let path = dir.join(layout::playlist_file_name(PeriodNum::new(period)));
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Ok(text) = read_file_bounded_string(&path, PLAYLIST_LIMIT) else {
             continue;
         };
         let playlist = parse_period_playlist(

@@ -13,6 +13,7 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use broadcast_common::Timestamp;
+use broadcast_common::bounded::{BoundedReadError, Limit, read_file_bounded};
 use broadcast_common::range::ByteSpan;
 use bytes::Bytes;
 use media_plane::ids::SegmentSeq;
@@ -859,7 +860,7 @@ impl FsArchive {
             self.tick = self.tick.wrapping_add(1);
             return Ok(playlist);
         }
-        let data = read_bounded_playlist(&path).map_err(io_playlist_error)?;
+        let data = read_bounded_playlist(&path)?;
         let parsed = Arc::new(parse_period_playlist(period, self.container, &data)?);
         let tick = self.tick;
         self.tick = self.tick.wrapping_add(1);
@@ -919,13 +920,34 @@ impl FsArchive {
     }
 }
 
-fn read_bounded_playlist(path: &Path) -> std::io::Result<Vec<u8>> {
-    let limit = u64::try_from(broadcast_hls::limits::MAX_PLAYLIST_BYTES)
-        .unwrap_or(u64::MAX)
-        .saturating_add(1);
-    let mut data = Vec::new();
-    File::open(path)?.take(limit).read_to_end(&mut data)?;
-    Ok(data)
+/// The [`Limit`] a period playlist is read under: the maximum playlist size
+/// `broadcast-hls` itself accepts.
+const PLAYLIST_LIMIT: Limit = Limit::new(
+    "archive period playlist",
+    broadcast_hls::limits::MAX_PLAYLIST_BYTES as u64,
+);
+
+fn read_bounded_playlist(path: &Path) -> Result<Vec<u8>, PlaylistError> {
+    read_file_bounded(path, PLAYLIST_LIMIT).map_err(playlist_read_error)
+}
+
+fn playlist_read_error(error: BoundedReadError) -> PlaylistError {
+    match error {
+        BoundedReadError::TooLarge {
+            limit_name,
+            limit_bytes,
+        } => PlaylistError::TooLarge {
+            limit_name,
+            limit_bytes,
+        },
+        BoundedReadError::Io(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            PlaylistError::NotFound
+        }
+        BoundedReadError::Io(error) => PlaylistError::Io { kind: error.kind() },
+        _ => PlaylistError::Io {
+            kind: std::io::ErrorKind::InvalidData,
+        },
+    }
 }
 
 fn io_playlist_error(error: std::io::Error) -> PlaylistError {
@@ -1081,6 +1103,34 @@ mod tests {
             .ok()
             .and_then(|out| String::from_utf8(out.stdout).ok())
             .is_some_and(|uid| uid.trim() == "0")
+    }
+
+    #[test]
+    fn an_oversize_playlist_is_a_typed_too_large_error() {
+        let root = PathBuf::from("target/dvr-runtime-tests/oversize-playlist");
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("a");
+        std::fs::create_dir_all(&dir).expect("dir");
+        let name = ArchiveName::new("a").expect("name");
+        let mut archive = FsArchive::open(&root, &name, ArchiveContainer::Ts);
+        let playlist = dir.join("p0.m3u8");
+        std::fs::write(
+            &playlist,
+            vec![b'#'; broadcast_hls::limits::MAX_PLAYLIST_BYTES + 1],
+        )
+        .expect("write");
+        let result = archive.playlist(PeriodNum::new(0));
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(
+            matches!(
+                result,
+                Err(PlaylistError::TooLarge {
+                    limit_name: "archive period playlist",
+                    limit_bytes,
+                }) if limit_bytes == broadcast_hls::limits::MAX_PLAYLIST_BYTES as u64
+            ),
+            "a playlist past MAX_PLAYLIST_BYTES must name the limit, got {result:?}"
+        );
     }
 
     #[test]

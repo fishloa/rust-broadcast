@@ -11,9 +11,14 @@
 //!   cargo run -p atsc3 --example parse_slt -- fixtures/atsc3/slt-lls-2019-01-07.bin
 
 use broadcast_common::Parse;
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use std::env;
-use std::fs;
+use std::path::Path;
 use std::process;
+
+/// A whole LLS envelope: one broadcast signalling table, MTU-bound in the
+/// stream, so 8 MiB is already far past any real instance.
+const LLS_ENVELOPE_LIMIT: Limit = Limit::new("LLS envelope", 8 * 1024 * 1024);
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -22,7 +27,7 @@ fn main() {
         process::exit(1);
     }
 
-    let bytes = match fs::read(&args[1]) {
+    let bytes = match read_file_bounded(Path::new(&args[1]), LLS_ENVELOPE_LIMIT) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Error reading {}: {}", args[1], e);
@@ -43,7 +48,7 @@ fn main() {
         process::exit(1);
     }
 
-    let xml_bytes = match envelope.decompress() {
+    let xml_bytes = match envelope.decompress(atsc3::lls::MAX_DECOMPRESSED_LLS_LIMIT) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Error decompressing LLS payload: {}", e);

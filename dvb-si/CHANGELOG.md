@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `carousel::biop::message::decompress_zlib_bounded` takes the `broadcast_common::bounded::Limit` it inflates under instead of a `usize`, and `decompress_zlib` uses the new `MAX_DECOMPRESSED_MODULE_LIMIT`. A stream inflating past the limit now fails with the new `Error::TooLarge { limit_name, limit_bytes }`, naming the limit, instead of an `InvalidField` whose message only said a limit existed.
+
 ### Added
 - The reserved-field widths, lengths and offsets that appear in the type of a public field or signature are now `pub const` with docs, so a consumer can name the `ReservedOnes`/`ReservedZero` and array types they parameterise (`LANG_CODE_LEN` and the section header's `SECTION_HEADER_RESERVED_BITS` included). No wire or behavioural change.
 
