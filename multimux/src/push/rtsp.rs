@@ -34,7 +34,7 @@
 //! the SDP's media section and the 90 kHz timestamp — the one place the wall
 //! clock is read — and nothing else.
 
-use crate::push::PushTransport;
+use crate::push::{PushTransport, SendMediaError};
 use rtsp_runtime::Credentials;
 use rtsp_runtime::client::{ClientEvent, ClientSession};
 use rtsp_runtime::sdp::session_description;
@@ -42,6 +42,7 @@ use rtsp_runtime::sdp::session_description;
 use broadcast_common::units::MICROS_PER_SEC;
 use std::time::Instant;
 use tokio::net::TcpStream;
+use transmux::TrackId;
 use transmux::ir::TrackSpec;
 use transmux::rtp::{MP2T_CLOCK_RATE, MP2T_MAX_PAYLOAD, MP2T_PT, MP2T_TS_PACKETS_PER_PACKET};
 
@@ -153,7 +154,7 @@ pub struct RtspTransport {
     /// The 90 kHz timestamp stamped on the next `send` row's packets.
     timestamp: u32,
     /// The connection's long-lived TS muxer (issue #1024).
-    ts_mux: transmux::StreamingTsMux,
+    ts_mux: crate::push::TsPushMux,
     /// The bounded best-effort `TEARDOWN` task spawned by [`Self::close`],
     /// kept so the task is owned (its `JoinHandle` is not dropped
     /// fire-and-forget) and so a later `close` can abort a superseded one. It
@@ -248,7 +249,7 @@ impl PushTransport for RtspTransport {
             stream: transmux::rtp::Mp2tPacketiser::new(wire.ssrc, INITIAL_SEQ),
             wire,
             timestamp: 0,
-            ts_mux: transmux::StreamingTsMux::new(),
+            ts_mux: crate::push::TsPushMux::new(),
             teardown: None,
         })
     }
@@ -269,8 +270,21 @@ impl PushTransport for RtspTransport {
         }
     }
 
-    fn ts_mux(&mut self) -> Option<&mut transmux::StreamingTsMux> {
-        Some(&mut self.ts_mux)
+    fn set_tracks(&mut self, tracks: &[TrackSpec]) -> Result<(), SendMediaError> {
+        self.ts_mux.set_tracks(tracks)
+    }
+
+    fn encode_sample(
+        &mut self,
+        _tracks: &[TrackSpec],
+        track: TrackId,
+        sample: transmux::Sample,
+    ) -> Result<Vec<bytes::Bytes>, SendMediaError> {
+        self.ts_mux.encode_sample(track, sample)
+    }
+
+    fn flush_mux(&mut self) -> Result<Vec<bytes::Bytes>, SendMediaError> {
+        self.ts_mux.flush()
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<(), Self::Error> {
@@ -545,7 +559,7 @@ mod tests {
             stream: transmux::rtp::Mp2tPacketiser::new(1, INITIAL_SEQ),
             wire: RtpWireState { ssrc: 1, started },
             timestamp: 0,
-            ts_mux: transmux::StreamingTsMux::new(),
+            ts_mux: crate::push::TsPushMux::new(),
             teardown: None,
         }
     }
@@ -619,7 +633,7 @@ mod tests {
             stream: transmux::rtp::Mp2tPacketiser::new(1, INITIAL_SEQ),
             wire: test_wire(),
             timestamp: 0,
-            ts_mux: transmux::StreamingTsMux::new(),
+            ts_mux: crate::push::TsPushMux::new(),
             teardown: None,
         };
         let shown = format!("{transport:?}");
@@ -691,7 +705,7 @@ mod tests {
             stream: transmux::rtp::Mp2tPacketiser::new(0xdead_beef, 0x1234),
             wire: test_wire(),
             timestamp: 7_500,
-            ts_mux: transmux::StreamingTsMux::new(),
+            ts_mux: crate::push::TsPushMux::new(),
             teardown: None,
         };
         let mut payload = vec![0u8; MP2T_MAX_PAYLOAD + mpeg_ts::ts::TS_PACKET_SIZE];
@@ -728,7 +742,7 @@ mod tests {
             stream: transmux::rtp::Mp2tPacketiser::new(1, INITIAL_SEQ),
             wire: test_wire(),
             timestamp: 0,
-            ts_mux: transmux::StreamingTsMux::new(),
+            ts_mux: crate::push::TsPushMux::new(),
             teardown: None,
         };
         assert!(transport.packetise(&[0u8; 100]).is_err());
@@ -752,7 +766,7 @@ mod tests {
             stream: transmux::rtp::Mp2tPacketiser::new(1, INITIAL_SEQ),
             wire: test_wire(),
             timestamp: 0,
-            ts_mux: transmux::StreamingTsMux::new(),
+            ts_mux: crate::push::TsPushMux::new(),
             teardown: None,
         };
         let debug = format!("{transport:?}");
@@ -804,7 +818,7 @@ mod tests {
             stream: transmux::rtp::Mp2tPacketiser::new(1, INITIAL_SEQ),
             wire: test_wire(),
             timestamp: 0,
-            ts_mux: transmux::StreamingTsMux::new(),
+            ts_mux: crate::push::TsPushMux::new(),
             teardown: None,
         };
         // No runtime is active here; close() must not panic. (A `None` client

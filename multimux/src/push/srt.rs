@@ -9,11 +9,13 @@
 //! protocol (no RTMP connect/publish, no RTSP ANNOUNCE/RECORD) to run before
 //! the first payload.
 
-use crate::push::PushTransport;
+use crate::push::{PushTransport, SendMediaError};
 use srt_runtime::HandshakeConfig;
 use srt_runtime::SrtUrl;
 use srt_runtime::io::{SrtSocket, SrtSocketConfig};
 use srt_runtime::url::{SrtMode, UrlRejection};
+use transmux::TrackId;
+use transmux::ir::TrackSpec;
 
 /// Per-connection configuration for the SRT push transport — the SRT
 /// handshake config dialed out with (latency, MTU, …).
@@ -42,7 +44,7 @@ impl SrtTransportConfig {
 pub struct SrtTransport {
     socket: Option<SrtSocket>,
     /// The connection's long-lived TS muxer (issue #1024).
-    ts_mux: transmux::StreamingTsMux,
+    ts_mux: crate::push::TsPushMux,
 }
 
 // (No URL is stored, so nothing here can leak one.)
@@ -131,12 +133,25 @@ impl PushTransport for SrtTransport {
         let socket = SrtSocket::connect(addr, SrtSocketConfig::new(srt_config)).await?;
         Ok(Self {
             socket: Some(socket),
-            ts_mux: transmux::StreamingTsMux::new(),
+            ts_mux: crate::push::TsPushMux::new(),
         })
     }
 
-    fn ts_mux(&mut self) -> Option<&mut transmux::StreamingTsMux> {
-        Some(&mut self.ts_mux)
+    fn set_tracks(&mut self, tracks: &[TrackSpec]) -> Result<(), SendMediaError> {
+        self.ts_mux.set_tracks(tracks)
+    }
+
+    fn encode_sample(
+        &mut self,
+        _tracks: &[TrackSpec],
+        track: TrackId,
+        sample: transmux::Sample,
+    ) -> Result<Vec<bytes::Bytes>, SendMediaError> {
+        self.ts_mux.encode_sample(track, sample)
+    }
+
+    fn flush_mux(&mut self) -> Result<Vec<bytes::Bytes>, SendMediaError> {
+        self.ts_mux.flush()
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<(), Self::Error> {
@@ -339,32 +354,54 @@ mod tests {
     fn transport_debug_reports_the_connection_state() {
         let transport = SrtTransport {
             socket: None,
-            ts_mux: transmux::StreamingTsMux::new(),
+            ts_mux: crate::push::TsPushMux::new(),
         };
         let shown = format!("{transport:?}");
         assert!(shown.contains("SrtTransport"), "{shown}");
         assert!(shown.contains("connected: false"), "{shown}");
     }
 
-    /// The transport keeps its own streaming mux: a second identical batch
+    /// One pass of `media` through the transport's per-connection TS muxer,
+    /// samples fed in decode order.
+    fn encode_pass<T: PushTransport>(transport: &mut T, media: &transmux::Media) -> Vec<u8> {
+        let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+        transport.set_tracks(&specs).expect("announce tracks");
+        let mut items: Vec<(i128, transmux::TrackId, transmux::Sample)> = Vec::new();
+        for track in &media.tracks {
+            for sample in &track.samples {
+                let dts = i128::from(sample.timing.and_then(|t| t.dts()).unwrap_or(0)) * 90_000
+                    / i128::from(track.spec.timescale.get());
+                items.push((dts, track.spec.track_id, sample.clone()));
+            }
+        }
+        items.sort_by_key(|(dts, track, _)| (*dts, *track));
+        let mut out = Vec::new();
+        for (_, track, sample) in items {
+            for message in transport
+                .encode_sample(&specs, track, sample)
+                .expect("encode sample")
+            {
+                out.extend_from_slice(&message);
+            }
+        }
+        out
+    }
+
+    /// The transport keeps its own streaming mux: a second identical pass
     /// continues the continuity counters instead of restarting them.
     #[test]
     fn the_transport_muxes_through_its_own_streaming_mux() {
         let mut transport = SrtTransport {
             socket: None,
-            ts_mux: transmux::StreamingTsMux::new(),
+            ts_mux: crate::push::TsPushMux::new(),
         };
-        assert!(
-            transport.ts_mux().is_some(),
-            "the SRT push must expose its own streaming mux"
-        );
         let media = fixture_media();
-        let first = transport.encode_media(&media).expect("first encode");
-        let second = transport.encode_media(&media).expect("second encode");
+        let first = encode_pass(&mut transport, &media);
+        let second = encode_pass(&mut transport, &media);
         assert!(!first.is_empty(), "the fixture must produce TS bytes");
         assert_ne!(
             first, second,
-            "continuity counters must continue across batches, not restart at zero"
+            "continuity counters must continue across passes, not restart at zero"
         );
     }
 

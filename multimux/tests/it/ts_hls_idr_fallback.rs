@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use multimux::config::{
     AdminSpec, Config, InputSpec, OutputAuthSpec, Route, TsHlsCutPolicy, TsHlsIdrFallback,
 };
@@ -19,10 +19,28 @@ use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
 use transmux::media::{Media, Track};
 use transmux::pipeline::{CodecConfig, Sample};
-use transmux::{NalCodec, TsDemux, TsMux, access_unit_is_idr};
+use transmux::{NalCodec, TsDemux, access_unit_is_idr};
 
 use crate::support::listener;
 use listener::bind_tcp;
+
+/// Mux a whole `Media` through one TS muxer stage.
+fn mux_ts(media: &transmux::Media) -> Vec<u8> {
+    let mut stage = transmux::TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
+    let out = transmux::mux_stage::drive_media(
+        &mut stage,
+        media,
+        broadcast_common::stage::Timestamp::ZERO,
+    )
+    .expect("mux to TS");
+    let mut bytes = Vec::new();
+    for output in out {
+        if let transmux::mux_stage::MuxOutput::Bytes(chunk) = output {
+            bytes.extend_from_slice(&chunk);
+        }
+    }
+    bytes
+}
 
 const ADMIN_TOKEN: &str = "ts-hls-idr-fallback-admin";
 const HANG_GUARD: Duration = Duration::from_secs(60);
@@ -462,7 +480,7 @@ fn looped_ts(rel: &str, tag: &str, skip: usize, reps: usize) -> PathBuf {
         }
     }
     let media = Media::new(vec![Track::new(track.spec, stream)], MOVIE_TIMESCALE);
-    let ts = TsMux::new().package(&media).expect("mux");
+    let ts = mux_ts(&media);
     let path = std::env::temp_dir().join(format!(
         "multimux-idr-fallback-{tag}-{}.ts",
         std::process::id()

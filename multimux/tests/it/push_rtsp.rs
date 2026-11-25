@@ -300,10 +300,7 @@ async fn push_and_read_back(
     let reader = tokio::task::spawn_blocking(move || ffprobe_read(&reader_url));
     server.wait_for_reader(GUARD).await;
 
-    tokio::time::timeout(GUARD, transport.send_media(&media))
-        .await
-        .expect("send_media must not hang")
-        .unwrap_or_else(|e| panic!("send_media failed: {e}"));
+    push_per_sample(&mut transport, &media).await;
 
     let (ok, stdout, stderr) = tokio::time::timeout(GUARD, reader)
         .await
@@ -348,4 +345,32 @@ async fn rtsp_push_survives_basic_auth_against_mediamtx() {
     let cfg = RtspTransportConfig::default()
         .with_credentials("pushuser".to_string(), "pushpass123".to_string());
     push_and_read_back(&server, cfg, push_url, read_url).await;
+}
+
+/// Feed the whole `Media` through the transport one sample at a time, in
+/// decode order, writing every message the TS muxer emits — the live push
+/// egress path without a `Trunk`.
+async fn push_per_sample(transport: &mut RtspTransport, media: &transmux::Media) {
+    let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    transport.set_tracks(&specs).expect("announce tracks");
+    let mut items: Vec<(i128, transmux::TrackId, transmux::Sample)> = Vec::new();
+    for track in &media.tracks {
+        for sample in &track.samples {
+            let dts = i128::from(sample.timing.and_then(|t| t.dts()).unwrap_or(0)) * 90_000
+                / i128::from(track.spec.timescale.get());
+            items.push((dts, track.spec.track_id, sample.clone()));
+        }
+    }
+    items.sort_by_key(|(dts, track, _)| (*dts, *track));
+    for (_, track, sample) in items {
+        let messages = transport
+            .encode_sample(&specs, track, sample)
+            .expect("encode sample");
+        for message in messages {
+            tokio::time::timeout(GUARD, transport.send(&message))
+                .await
+                .expect("send must not hang")
+                .unwrap_or_else(|e| panic!("send failed: {e}"));
+        }
+    }
 }

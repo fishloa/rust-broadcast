@@ -2,7 +2,7 @@
 //! (issue #1024, audit r07-C1).
 //!
 //! Before the fix every pushed sample went through a fresh one-shot
-//! `TsMux::package`, so the receiver saw PAT/PMT before every frame, the
+//! a one-shot TS mux, so the receiver saw PAT/PMT before every frame, the
 //! continuity counters restarting at 0 and the same PTS/PCR on every frame.
 //! Here a committed fixture is demuxed, fed through the **real**
 //! `PushTransportEgress<SrtTransport>` one sample at a time (exactly what a
@@ -28,9 +28,10 @@ use mpeg_ts::ts::TsPacket;
 use multimux::push::{PushTransport, SrtTransport, SrtTransportConfig};
 use srt_runtime::HandshakeConfig;
 use srt_runtime::io::{SocketStats, SrtListener, SrtSocketConfig};
-use transmux::{Media, Sample, StreamingTsMux, Track, TsDemux, TsMux};
+use transmux::mux_stage::{MuxInput, MuxOutput};
+use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, TsDemux, TsMuxStage};
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 
 const PKT: usize = 188;
 const PAT_PID: u16 = 0x0000;
@@ -231,6 +232,8 @@ async fn push_over_srt(media: &Media, samples: &[(usize, Sample)]) -> (Vec<u8>, 
         egress.send(&item).expect("encode");
         egress.flush_transmit().await.expect("flush");
     }
+    egress.flush_mux().await.expect("flush held packets");
+    egress.flush_transmit().await.expect("flush");
     tokio::time::timeout(GUARD, receiver)
         .await
         .expect("receiver must finish")
@@ -353,7 +356,7 @@ async fn check_fixture(rel: &str) {
     assert!(bad.is_empty(), "{rel}: TR 101 290: {bad:?}");
 
     // 5. Sample-by-sample == whole-Media, per PID, byte for byte.
-    let whole = TsMux::new().package(&media).expect("whole mux");
+    let whole = mux_ts(&media);
     assert_eq!(
         es_packets(&got),
         es_packets(&whole),
@@ -371,31 +374,64 @@ async fn srt_push_h264_aac_is_one_continuous_ts() {
     check_fixture("ts/h264-aac.ts").await;
 }
 
-/// The transport-level pin without a socket: feeding `StreamingTsMux` sample by
-/// sample is the default `encode_media` path's whole behaviour.
+/// The transport-level pin without a socket: feeding the TS muxer stage sample
+/// by sample is the egress path's whole behaviour.
 #[test]
 fn streaming_mux_sample_by_sample_equals_whole_media() {
+    use broadcast_common::Stage;
     let media = demux("ts/h264-aac.ts");
-    let mut mux = StreamingTsMux::new();
+    let mut mux = TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL));
+    for track in &media.tracks {
+        Stage::feed(
+            &mut mux,
+            MuxInput::Track(Box::new(track.spec.clone())),
+            broadcast_common::stage::Timestamp::ZERO,
+        )
+        .expect("announce");
+    }
     let mut out = Vec::new();
     for (ti, s) in interleaved(&media) {
-        let tracks: Vec<Track> = media
-            .tracks
-            .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                Track::new(
-                    t.spec.clone(),
-                    if i == ti { vec![s.clone()] } else { vec![] },
-                )
-            })
-            .collect();
-        out.extend_from_slice(
-            &mux.package(&Media::new(tracks, media.movie_timescale))
-                .unwrap(),
-        );
+        Stage::feed(
+            &mut mux,
+            MuxInput::Sample {
+                track: media.tracks[ti].spec.track_id,
+                sample: s.clone(),
+            },
+            broadcast_common::stage::Timestamp::ZERO,
+        )
+        .expect("feed");
+        while let Some(item) = Stage::poll(&mut mux) {
+            if let MuxOutput::Bytes(chunk) = item {
+                out.extend_from_slice(&chunk);
+            }
+        }
     }
-    let whole = TsMux::new().package(&media).unwrap();
+    Stage::finish(&mut mux).expect("finish");
+    while let Some(item) = Stage::poll(&mut mux) {
+        if let MuxOutput::Bytes(chunk) = item {
+            out.extend_from_slice(&chunk);
+        }
+    }
+    let whole = mux_ts(&media);
+    assert_eq!(out, whole, "one continuous stream, byte for byte");
     assert_cc_valid(&out);
     assert_eq!(es_packets(&out), es_packets(&whole));
+}
+
+/// Mux a whole `Media` through one TS muxer stage.
+fn mux_ts(media: &Media) -> Vec<u8> {
+    let mut stage = TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL));
+    let out = transmux::mux_stage::drive_media(
+        &mut stage,
+        media,
+        broadcast_common::stage::Timestamp::ZERO,
+    )
+    .expect("mux to TS");
+    let mut bytes = Vec::new();
+    for output in out {
+        if let MuxOutput::Bytes(chunk) = output {
+            bytes.extend_from_slice(&chunk);
+        }
+    }
+    bytes
 }
