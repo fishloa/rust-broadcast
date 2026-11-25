@@ -779,6 +779,9 @@ fn track_setup(trak: &TrackBox, info: &TrackInfo, entries: &[SampleEntry]) -> Re
         first.clone(),
     );
     setup.minf_header = media_header_fourcc(mdia.and_then(|media| media.minf.as_ref()));
+    setup.gmhd = mdia
+        .and_then(|media| media.minf.as_ref())
+        .and_then(|minf| minf.gmhd());
     setup.language = mdia
         .and_then(|media| media.mdhd.as_ref())
         .map_or(crate::writer::LANG_UND, |mdhd| mdhd.language);
@@ -795,7 +798,7 @@ fn media_header_fourcc(
     minf: Option<&crate::init_segment::MediaInformationBox>,
 ) -> Option<[u8; crate::box_types::BOX_TYPE_SIZE]> {
     let minf = minf?;
-    if minf.vmhd.is_some() || minf.smhd.is_some() {
+    if minf.vmhd.is_some() || minf.smhd.is_some() || minf.gmhd.is_some() {
         return None;
     }
     minf.opaque.first().map(|header| header.box_type)

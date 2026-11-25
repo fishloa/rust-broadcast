@@ -1,13 +1,11 @@
-//! QuickTime atoms no ISO/IEC 14496-12:2026 file carries — **read only**.
+//! QuickTime atoms no ISO/IEC 14496-12:2026 file carries — read and written.
 //!
 //! A camera or editing `.mov` carries sound description versions 1 and 2, the
 //! `wave` decompression container, the base media information header `gmhd`,
 //! timecode tracks (`tmcd`), track aperture dimensions (`tapt`) and chapter
-//! tracks. These types parse and are kept so such a file reads completely;
-//! [`Serialize`](broadcast_common::Serialize) is deliberately not implemented:
-//! writing a track read from a `.mov` either produces its ISO form or fails
-//! with [`Error::QuickTimeOnly`](crate::Error::QuickTimeOnly) (streaming-first
-//! design §4.7, §4.9).
+//! tracks. These types parse and serialise, so a `.mov` reads and writes
+//! completely; every `Serialize` is the exact inverse of its `Parse`
+//! (streaming-first design §4.7, §4.9).
 //!
 //! Sources (private):
 //! `private/specs-verified/apple/isobmff/quicktime-file-format-online.md` and

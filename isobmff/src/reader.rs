@@ -329,7 +329,7 @@ impl TrackInfo {
         let mut entries = Vec::with_capacity(stsd.entries.len());
         for entry in &stsd.entries {
             let mut body = alloc::vec![0u8; entry.serialized_len()];
-            let len = entry.serialize_into(&mut body).unwrap_or(0);
+            let len = entry.serialize_into(&mut body)?;
             body.truncate(len);
             let mut fourcc = [0u8; BOX_TYPE_SIZE];
             if body.len() >= BOX_HEADER_MIN_SIZE {

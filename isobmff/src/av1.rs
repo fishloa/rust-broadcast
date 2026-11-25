@@ -254,6 +254,7 @@ impl Serialize for Av1SampleEntry {
         crate::box_types::box_len(
             BOX_HEADER_MIN_SIZE
                 + VisualSampleEntryFields::serialized_len()
+                + self.visual.trailing.len()
                 + crate::sample_entries::entry_children_len(&self.children, config_len),
         )
     }

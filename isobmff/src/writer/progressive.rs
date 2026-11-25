@@ -327,14 +327,17 @@ impl ProgressiveWriter {
         let extras = TopLevelExtras::new(plan.shell())?;
         let planned = plan_layout(&plan, &layout, movie.timescale)?;
 
-        let ftyp_box = FileTypeBox {
-            major_brand: file_type.major_brand,
-            minor_version: file_type.minor_version,
-            compatible_brands: file_type.compatible_brands,
-        };
-        let mut ftyp = vec![0u8; ftyp_box.serialized_len()];
-        let ftyp_len = ftyp_box.serialize_into(&mut ftyp)?;
-        ftyp.truncate(ftyp_len);
+        let mut ftyp = Vec::new();
+        if file_type.emit_ftyp {
+            let ftyp_box = FileTypeBox {
+                major_brand: file_type.major_brand,
+                minor_version: file_type.minor_version,
+                compatible_brands: file_type.compatible_brands,
+            };
+            ftyp = vec![0u8; ftyp_box.serialized_len()];
+            let ftyp_len = ftyp_box.serialize_into(&mut ftyp)?;
+            ftyp.truncate(ftyp_len);
+        }
 
         let payload_len = planned.payload_len;
         let mdat = BoxHeader::for_payload(BoxType::from_bytes(MDAT), None, payload_len);
@@ -438,10 +441,12 @@ impl ProgressiveWriter {
             .saturating_add(self.extras.after_ftyp.len())
             .saturating_add(self.extras.after_moov.len());
         let mut out = Vec::with_capacity(capacity);
-        out.push(Write {
-            offset: 0,
-            bytes: Cow::Borrowed(&self.ftyp),
-        });
+        if !self.ftyp.is_empty() {
+            out.push(Write {
+                offset: 0,
+                bytes: Cow::Borrowed(&self.ftyp),
+            });
+        }
         let mut offset = u64::try_from(self.ftyp.len()).unwrap_or(u64::MAX);
         self.extras
             .append(&self.extras.after_ftyp, &mut offset, &mut out);

@@ -1,4 +1,4 @@
-//! The QuickTime track aperture mode dimensions atom (`tapt`) — read only.
+//! The QuickTime track aperture mode dimensions atom (`tapt`) — read and written.
 //!
 //! Source: `private/specs-verified/apple/isobmff/quicktime-file-format-online.md`,
 //! "Track aperture mode dimensions atom ('tapt')", "Track clean aperture
@@ -6,7 +6,8 @@
 //! ('prof')" and "Track encoded pixels dimensions atom ('enof')".
 
 use broadcast_common::Parse;
-use broadcast_common::len::need_in;
+use broadcast_common::Serialize;
+use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{u24_at, u32_at};
 
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxIter, FULLBOX_EXTRA_SIZE};
@@ -30,6 +31,8 @@ const HEIGHT_OFFSET: usize = 4;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ApertureDimensions {
+    /// The atom's four-CC (`clef`, `prof` or `enof`).
+    pub fourcc: [u8; BOX_TYPE_SIZE],
     /// FullBox version.
     pub version: u8,
     /// FullBox flags.
@@ -53,12 +56,42 @@ impl<'a> Parse<'a> for ApertureDimensions {
             FULLBOX_EXTRA_SIZE + DIMENSIONS_BODY_LEN,
             "aperture dimensions",
         )?;
+        let mut fourcc = [0u8; BOX_TYPE_SIZE];
+        fourcc.copy_from_slice(&bytes[crate::box_types::BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
         Ok(Self {
+            fourcc,
             version: body[0],
             flags: u24_at(body, 1),
             width: u32_at(body, FULLBOX_EXTRA_SIZE),
             height: u32_at(body, FULLBOX_EXTRA_SIZE + HEIGHT_OFFSET),
         })
+    }
+}
+
+impl Serialize for ApertureDimensions {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        crate::box_types::box_len(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + DIMENSIONS_BODY_LEN)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_full_box_header(
+            buf,
+            &self.fourcc,
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
+        let width_len = core::mem::size_of::<u32>();
+        buf[c..c + width_len].copy_from_slice(&self.width.to_be_bytes());
+        c += width_len;
+        buf[c..c + width_len].copy_from_slice(&self.height.to_be_bytes());
+        c += width_len;
+        Ok(c)
     }
 }
 
@@ -103,5 +136,27 @@ impl TrackApertureModeDimensionsBox {
                 expected: "tapt with clef, prof and enof",
             }),
         }
+    }
+}
+
+impl Serialize for TrackApertureModeDimensionsBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        let n = BOX_HEADER_MIN_SIZE
+            + self.clef.serialized_len()
+            + self.prof.serialized_len()
+            + self.enof.serialized_len();
+        crate::box_types::box_len(n)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_box_header(buf, &TAPT, need)?;
+        c += self.clef.serialize_into(&mut buf[c..])?;
+        c += self.prof.serialize_into(&mut buf[c..])?;
+        c += self.enof.serialize_into(&mut buf[c..])?;
+        Ok(c)
     }
 }

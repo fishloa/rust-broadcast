@@ -15,7 +15,8 @@ use isobmff::init_segment::MovieBox;
 use isobmff::plan::OwnedPlan;
 use isobmff::sample_table::SampleRef;
 use isobmff::writer::{
-    FileType, Interleave, Layout, MovieHeader, SampleMeta, Sink, TrackSetup, Write, Writer,
+    FileType, Interleave, Layout, MovieHeader, SampleEntry, SampleMeta, Sink, TrackSetup, Write,
+    Writer,
 };
 use isobmff::{Limits, Reader, ReaderConfig, SampleOrder, Step, TrackId, TrackInfo};
 
@@ -252,6 +253,7 @@ fn file_type(bytes: &[u8]) -> FileType {
         major_brand: ftyp.major_brand,
         minor_version: ftyp.minor_version,
         compatible_brands: ftyp.compatible_brands.clone(),
+        emit_ftyp: true,
     }
 }
 
@@ -338,7 +340,13 @@ fn rebuild(bytes: &[u8], run: &Run) -> Vec<u8> {
 }
 
 fn rebuild_progressive(bytes: &[u8], run: &Run) -> Vec<u8> {
-    let shell = run.plan.shell().expect("a plan read from a file");
+    rebuild_progressive_with_plan(bytes, run, run.plan.clone())
+}
+
+/// Rewrite a progressive file from a caller-supplied plan (the typed-entry
+/// variant replaces each track's raw `stsd` bytes with its typed serialisation).
+fn rebuild_progressive_with_plan(bytes: &[u8], run: &Run, plan: OwnedPlan) -> Vec<u8> {
+    let shell = plan.shell().expect("a plan read from a file");
     let boxes = top_boxes(bytes);
     let position = |fourcc: &[u8; 4]| boxes.iter().position(|span| &span.fourcc == fourcc);
     let faststart = match (position(b"moov"), position(b"mdat")) {
@@ -352,14 +360,8 @@ fn rebuild_progressive(bytes: &[u8], run: &Run) -> Vec<u8> {
         shell.mvhd.creation_time,
         shell.mvhd.modification_time,
     );
-    let mut writer = Writer::progressive(
-        run.plan.clone(),
-        layout,
-        file_type(bytes),
-        header,
-        Limits::default(),
-    )
-    .expect("progressive writer");
+    let mut writer = Writer::progressive(plan, layout, file_type(bytes), header, Limits::default())
+        .expect("progressive writer");
     let mut out = vec![0u8; usize::try_from(writer.file_len()).expect("file length")];
     for write in writer.header() {
         place(&mut out, &write);
@@ -376,6 +378,48 @@ fn rebuild_progressive(bytes: &[u8], run: &Run) -> Vec<u8> {
         place(&mut out, &write);
     }
     out
+}
+
+/// Whether a sample entry carries a QuickTime-only form this slice serialises.
+fn is_quicktime_entry(entry: &isobmff::init_segment::SampleEntryVariant) -> bool {
+    use isobmff::init_segment::SampleEntryVariant as E;
+    match entry {
+        E::Tmcd(_) | E::QuickTimeSound(_) => true,
+        E::Mp4a(e) => e.quicktime.is_some(),
+        E::Ac3(e) => e.quicktime.is_some(),
+        E::Ec3(e) => e.quicktime.is_some(),
+        E::Opus(e) => e.quicktime.is_some(),
+        E::Flac(e) => e.quicktime.is_some(),
+        E::Ac4(e) => e.quicktime.is_some(),
+        E::Mha(e) => e.quicktime.is_some(),
+        E::Dts(e) => e.quicktime.is_some(),
+        _ => false,
+    }
+}
+
+/// The same plan with every `stsd` entry rebuilt from its typed parse rather
+/// than the file's raw bytes. The typed serialisers must reproduce the entry
+/// byte for byte for the rewrite to stay identical.
+fn typed_plan(run: &Run) -> OwnedPlan {
+    let mut tracks = run.plan.tracks().to_vec();
+    for (track, info) in tracks.iter_mut().zip(&run.tracks) {
+        if track.entries.len() != info.entries.len() {
+            continue;
+        }
+        for (entry, sample_entry) in track.entries.iter_mut().zip(&info.entries) {
+            if let Some(typed) = &sample_entry.typed
+                && is_quicktime_entry(typed)
+            {
+                *entry = SampleEntry::Typed(typed.clone());
+            }
+        }
+        if let Some(first) = track.entries.first() {
+            track.setup.entry = first.clone();
+        }
+    }
+    let mut plan = OwnedPlan::new(tracks);
+    plan.set_shell(run.plan.shell().cloned());
+    plan
 }
 
 fn rebuild_fragmented(bytes: &[u8], run: &Run) -> Vec<u8> {
@@ -610,6 +654,36 @@ fn files_the_writer_can_reproduce_round_trip_byte_identically() {
         identical >= MIN_BYTE_IDENTICAL,
         "{identical} files round-tripped byte-identically, expected at least {MIN_BYTE_IDENTICAL}"
     );
+}
+
+/// Rebuild every `.mov` track's `stsd` from the typed parse (not its carried
+/// bytes) and prove the typed serialisers still reproduce the file exactly.
+#[test]
+fn quicktime_files_round_trip_from_their_typed_entries() {
+    for name in [
+        "mp4/quicktime/lavf-aac-tmcd.mov",
+        "mp4/quicktime/lavf-pcm24.mov",
+        "mp4/quicktime/iphone-x-live-photo.mov",
+    ] {
+        let Some(source) = load(name) else {
+            continue;
+        };
+        let run = drive(&source);
+        let plan = typed_plan(&run);
+        let written = rebuild_progressive_with_plan(&source, &run, plan);
+        if written != source {
+            let at = written
+                .iter()
+                .zip(&source)
+                .position(|(a, b)| a != b)
+                .unwrap_or_else(|| written.len().min(source.len()));
+            panic!(
+                "{name}: typed rewrite differs at {at} (written {} bytes, source {} bytes)",
+                written.len(),
+                source.len()
+            );
+        }
+    }
 }
 
 #[test]

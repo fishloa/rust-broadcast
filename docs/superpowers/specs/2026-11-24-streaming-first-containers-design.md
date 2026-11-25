@@ -167,7 +167,7 @@ The MP4 box code uses five things from broadcast-common: `len`, the error kinds,
 These shape the `isobmff` API, so they are in scope here rather than added later.
 
 - **iTunes-style metadata** (`moov/udta/meta/ilst`): typed read and write of the common atoms (title, artist, album, track and disc numbers, date, genre, cover art, encoder), freeform `----` items, and chapter lists (Nero `chpl` and QuickTime chapter tracks), read and write. Tag reading is the most common reason a project takes an MP4 crate. Cover art is a bounded unit under `Limits`.
-- **QuickTime `.mov`**: the atoms camera and editing files carry that ISO files do not: `wave` and version 1/2 sound sample descriptions, `wide`, `mdta`-keyed metadata (`keys`/`ilst`), `tapt`/`clef`, `gmhd` and `tmcd` timecode tracks, a QuickTime-brand `ftyp` or none at all. Read only for now (owner, 2026-11-24): a QuickTime-only atom parses into a typed value and is kept so nothing is lost on read, but the writer does not produce QuickTime-brand files. Listed as an exception in §4.9.
+- **QuickTime `.mov`**: the atoms camera and editing files carry that ISO files do not: `wave` and version 1/2 sound sample descriptions, `wide`, `mdta`-keyed metadata (`keys`/`ilst`), `tapt`/`clef`, `gmhd` and `tmcd` timecode tracks, a QuickTime-brand `ftyp` or none at all. Read and written (owner, 2026-11-25): every atom parses into a typed value and serialises back byte-exactly, and the writer emits a QuickTime-brand file when the caller asks for one (`FileType::quicktime`, or `FileType::without_ftyp` for a classic file).
 - **Permissive mode**: `Limits`-style configuration picks strict (today's behaviour: any violation is an error) or permissive. Permissive tolerates the known real-world faults and reports each as a typed warning event instead of failing: an unknown sample entry (kept as an opaque track, which #4056 needs anyway), a box that overruns its parent by trailing bytes, a `wave` atom without `esds`, a zero `mvhd` timescale, a truncated final `mdat`. It never guesses a field value and never relaxes a `Limits` bound. Strict stays the default inside the workspace; byte-identical round-trips are a strict-mode property.
 - Each of these gets real fixtures first (camera originals, an iTunes-tagged `.m4a`, a QuickTime `.mov`), in `private/fixtures/` with PROVENANCE, and the spec transcription where one exists (QuickTime File Format is Apple-published; the `ilst` atom set is documented by Apple and by long-standing convention, so each atom is cited to its source or left opaque).
 
@@ -212,7 +212,7 @@ The workspace already has this pattern twice: `dvb_si::DescriptorRegistry` lets 
 | Progressive and fragmented files | yes | yes |
 | Metadata and private tracks (#4056) | yes | yes |
 | `udta`/`meta`, `©xyz`, iTunes tags, chapters | yes | yes |
-| QuickTime-specific atoms (`.mov`) | yes | no, for now (owner decision): the writer emits ISO-brand files only. A track read from a `.mov` is written as its ISO equivalent where one exists, or refused with a typed error naming the atom. |
+| QuickTime-specific atoms (`.mov`) | yes | yes (owner decision): every QuickTime atom serialises back byte-exactly, and the writer emits a QuickTime-brand file on request. |
 | Private boxes via `BoxRegistry` | yes | yes |
 | Matroska/WebM, TS, PS, FLV data tracks | yes | yes, where the container can carry them |
 | Permissive-mode repairs | yes | no: a tolerated fault is reported, and the writer emits the corrected, conformant form. Reproducing a malformed file is not a goal. |

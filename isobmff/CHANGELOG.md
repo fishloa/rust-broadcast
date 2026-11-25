@@ -33,6 +33,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `HandlerBox::pre_defined` and `HandlerBox::reserved` are parsed and written
   back: a QuickTime file keeps its component type (`mhlr`/`dhlr`) and
   manufacturer code there, so a `.mov` round-trips byte for byte.
+- QuickTime atoms are written as well as read: `SoundEntry`, `WaveAtom`,
+  `GmhdAtom`/`GminAtom`/`TcmiAtom`, `TimecodeEntry` and
+  `TrackApertureModeDimensionsBox`/`ApertureDimensions` implement `Serialize`
+  as the exact inverse of their parse, including the `tmcd` wrapper, child
+  order, the sample-entry reserved bytes and the `tcmi` reserved field.
+  `MediaInformationBox` carries a typed `gmhd`, `TrackSetup` gains `gmhd` and
+  `references` (`tref`), and `FileType::quicktime`/`without_ftyp` select a
+  QuickTime-brand file or no `ftyp` at all.
+- `VisualSampleEntryFields` keeps the SampleEntry `reserved[6]`, the
+  QuickTime `revision_level`/`vendor`/quality block and any trailing pad, and
+  `AVCSampleEntry`/`HEVCSampleEntry`/`VVCSampleEntry` keep the position of
+  their config box among the extra boxes, so a typed `.mov` track serialises
+  back to the file's bytes.
+
+### Breaking
+
+- `Error::QuickTimeOnly` and `SampleEntryVariant::is_quicktime_only` are
+  removed: every QuickTime sample entry this crate parses now serialises.
+- `FileType` gains `emit_ftyp`; `TrackSetup` gains `gmhd` and `references`;
+  `VisualSampleEntryFields` gains `reserved`, `pre_defined_and_reserved` and
+  `trailing`; the AVC, HEVC and VVC sample entries gain `config_position`.
 
 ### Fixed
 
@@ -64,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
-- `quicktime`, read-only QuickTime atoms a camera or editing `.mov` carries:
+- `quicktime`, QuickTime atoms a camera or editing `.mov` carries:
   sound description versions 1 and 2 (including the 64-bit version 2 sample
   rate and the four version 1 fields), the `wave` decompression container and
   its `esds`, the base media information header `gmhd`/`gmin`/`tcmi`, the
@@ -72,9 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dimensions (`tapt`), chapter-title samples, and a `qt  ` or absent `ftyp`.
   `Mp4aSampleEntry::wave`/`esds` reach an `esds` inside `wave` through the same
   accessor as a top-level one, `TrackInfo` carries `tapt`, `MediaInformationBox`
-  exposes `gmhd`, and `Reader::brand` reports the `ftyp` box. QuickTime-only
-  types implement `Parse` only; a writer handed one returns
-  `Error::QuickTimeOnly { atom }`, and a plan carries the entry as raw bytes.
+  exposes `gmhd`, and `Reader::brand` reports the `ftyp` box. (They are read
+  and written; see the first `[Unreleased]` entry for the serialisers.)
 - `Mode::Permissive` and `Step::Warning(Warning)`: the reader tolerates the
   faults streaming-first design §4.7 lists (a clamped `moov` child, an
   unparseable known sample entry, an `mp4a` `wave` with no `esds`, a zero

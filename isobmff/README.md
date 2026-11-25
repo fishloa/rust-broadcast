@@ -55,7 +55,7 @@ It never knows the media IR or a codec bitstream.
 | `frag_offsets` | ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 sample-data addressing rules |
 | `reader` (fragmented) | the same `Reader` reads a fragmented file one `moof` at a time and seeks through `sidx` or the trailing `tfra` |
 | `reader` (permissive) | `Mode::Permissive` reports the design §4.7 faults as `Step::Warning`; strict mode keeps rejecting them |
-| `quicktime` | read-only QuickTime atoms: sound description versions 1/2, `wave`, `gmhd`, `tmcd`, `tapt`, chapter titles, `qt  `/brandless files |
+| `quicktime` | QuickTime atoms, read and written: sound description versions 1/2, `wave`, `gmhd`, `tmcd`, `tapt`, chapter titles, `qt  `/brandless files |
 | `driver` | blocking drivers over the reader: `FileReader` (`Read + Seek`) and `ForwardReader` (`Read` only), with a bounded reusable buffer |
 | `timing` (random access) | `tfra`, `mfra`, `mfro` |
 | `emsg` | `emsg` (versions 0 and 1, ISO/IEC 23009-1 §5.10.3.3) |

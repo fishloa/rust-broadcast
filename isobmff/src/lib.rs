@@ -58,10 +58,11 @@
 //!   which builds one from pushed sample descriptors. [`reader::Mode`] is
 //!   strict by default; `Mode::Permissive` reports the design §4.7 faults as
 //!   [`reader::Step::Warning`] instead of failing the read.
-//! - [`quicktime`] — read-only QuickTime atoms a camera or editing `.mov`
-//!   carries: sound description versions 1 and 2, `wave`, `gmhd`, `tmcd`,
-//!   `tapt`, chapter titles, and a `qt  ` or absent `ftyp`. These implement
-//!   `Parse` only; a writer refuses one with `Error::QuickTimeOnly`.
+//! - [`quicktime`] — QuickTime atoms a camera or editing `.mov` carries, read
+//!   and written: sound description versions 1 and 2, `wave`, `gmhd`, `tmcd`,
+//!   `tapt`, chapter titles, and a `qt  ` or absent `ftyp`. Every `Serialize`
+//!   is the exact inverse of its `Parse`; [`writer::FileType::quicktime`] and
+//!   [`writer::FileType::without_ftyp`] write the brand choice.
 //! - [`reader`] over a fragmented file — the same state machine reads one
 //!   `moof` at a time, addresses its samples from the following `mdat`
 //!   headers, and seeks through a `sidx` or the trailing `mfra`/`tfra`.
