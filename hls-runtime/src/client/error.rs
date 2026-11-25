@@ -55,8 +55,8 @@ pub enum Error {
         id: super::action::ResourceId,
     },
 
-    /// Demuxing the concatenation of the init segment + a fetched Part/Segment
-    /// resource (via `transmux::Fmp4Demux`) failed.
+    /// The streaming MP4 stage failed on a fetched Part/Segment resource (or
+    /// on the init it was fed).
     #[error("demux of resource {id:?} failed: {source}")]
     Demux {
         /// The id whose bytes failed to demux.
