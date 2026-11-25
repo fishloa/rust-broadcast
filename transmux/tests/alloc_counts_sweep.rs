@@ -192,7 +192,14 @@ mod muxer_buffering {
         let mut stage = TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL));
         let outputs = drive_media(&mut stage, media, broadcast_common::stage::Timestamp::ZERO)
             .expect("mux to TS");
-        let mut bytes = Vec::new();
+        let total: usize = outputs
+            .iter()
+            .map(|output| match output {
+                MuxOutput::Bytes(chunk) => chunk.len(),
+                _ => 0,
+            })
+            .sum();
+        let mut bytes = Vec::with_capacity(total);
         for output in outputs {
             if let MuxOutput::Bytes(chunk) = output {
                 bytes.extend_from_slice(&chunk);
@@ -227,13 +234,7 @@ mod muxer_buffering {
 
     const PROGRESSIVE_BUDGET_X100: usize = 316; // 412 before r05-O4, 220 after (midway)
     const MKV_BUDGET_X100: usize = 719; // 1145 before r05-O4, 293 after (midway)
-    // 770 before r05-O4, 655 when the one-shot mux buffered the whole output,
-    // 881 with the per-sample `TsMuxStage` (each sample builds its own PES and
-    // packet run before the stage releases one interleave window). Total
-    // allocation is not the bound that matters for the stage — its live peak
-    // is pinned by `transmux/tests/ts_remux_memory.rs` — so this only has to catch a
-    // return to the old many-copies-of-the-whole-output shape.
-    const TS_BUDGET_X100: usize = 950;
+    const TS_BUDGET_X100: usize = 655; // 770 before r05-O4, 540 after (midway)
 }
 
 mod segmenter_cuts {

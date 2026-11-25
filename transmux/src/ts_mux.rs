@@ -565,6 +565,13 @@ struct TaggedPacket {
 /// Tie-break index of a packet that belongs to no track (a PCR-only packet).
 const TIELESS: u32 = u32::MAX;
 
+/// Packets budgeted for the usual one-packet PAT and one-packet PMT in an emit
+/// buffer; a programme map too large for one packet still grows it.
+const PSI_REPEAT_PACKETS: usize = 2;
+
+/// Sections written per PSI occurrence: the PAT and the PMT travel together.
+const PSI_SECTIONS_PER_REPEAT: usize = 2;
+
 /// The one MPEG-2 TS muxer: a [`Stage`] fed a track set and its samples,
 /// emitting whole 188-byte TS packets as [`MuxOutput::Bytes`].
 ///
@@ -610,6 +617,10 @@ pub struct TsMuxStage {
     /// Built packets awaiting release, ascending by interleave key with equal
     /// keys in insertion order (the stable-sort order the mux describes).
     pending: Vec<TaggedPacket>,
+    /// Per-sample packetisation scratch, cleared for each sample so a feed does
+    /// not allocate its packet run or its PES.
+    scratch: Vec<TaggedPacket>,
+    pes_buf: Vec<u8>,
     /// Interleave key of the last PCR-carrying sample on [`Self::pcr_pid`],
     /// and the continuity counter its last packet carried.
     last_pcr_at: Option<u64>,
@@ -678,6 +689,8 @@ impl TsMuxStage {
             pmt: None,
             continuity: TsContinuity::new(),
             pending: Vec::new(),
+            scratch: Vec::new(),
+            pes_buf: Vec::new(),
             last_pcr_at: None,
             pcr_cc: 0,
             last_fed_at: None,
@@ -846,19 +859,21 @@ impl TsMuxStage {
             .plan
             .as_ref()
             .map_or(0, |p| self.continuity.next_for(p.pid));
-        let mut tagged: Vec<TaggedPacket> = Vec::new();
+        let mut tagged = core::mem::take(&mut self.scratch);
+        tagged.clear();
         {
-            let plan = self.tracks[index].plan.as_ref().expect("checked above");
+            let (tracks, pes_buf) = (&self.tracks, &mut self.pes_buf);
+            let plan = tracks[index].plan.as_ref().expect("checked above");
             let es_payload = build_es_payload(plan, &sample)?;
             // One packet per payload chunk plus the PES header spill and the
             // stuffed final packet: an exact reserve keeps the per-sample
             // packetisation from doubling its way up.
             tagged.reserve(es_payload.len() / TS_PAYLOAD_CAPACITY + PACKETS_PER_SAMPLE_SLACK);
             let carry_pcr = self.pcr_pid == Some(plan.pid);
+            build_pes_bytes(plan, &es_payload, pts90, dts90, pes_buf)?;
             packetise_pes(
                 plan,
-                &es_payload,
-                pts90,
+                pes_buf,
                 dts90,
                 carry_pcr,
                 &mut cc,
@@ -884,9 +899,10 @@ impl TsMuxStage {
             self.last_pcr_at = Some(sort_key);
             self.pcr_cc = cc.wrapping_sub(1) & CC_MASK;
         }
-        for held in tagged {
+        for held in &tagged {
             insert_packet(&mut self.pending, sort_key, index as u32, held.packet);
         }
+        self.scratch = tagged;
         self.release_ready()
     }
 
@@ -920,7 +936,15 @@ impl TsMuxStage {
         if ready == 0 {
             return Ok(());
         }
-        let mut bytes: Vec<u8> = Vec::with_capacity(ready * TS_PACKET_SIZE);
+        // Room for the packets plus any PSI prepended to this run, so a
+        // repeat never regrows the buffer.
+        let psi_room = if self.psi_interval_ticks.is_some() {
+            PSI_SECTIONS_PER_REPEAT * PSI_REPEAT_PACKETS
+        } else {
+            PSI_REPEAT_PACKETS
+        };
+        let mut bytes: Vec<u8> =
+            Vec::with_capacity(ready * TS_PACKET_SIZE + psi_room * TS_PACKET_SIZE);
         let mut pending = core::mem::take(&mut self.pending);
         for tagged in pending.drain(..ready) {
             let key = tagged.order;
@@ -1550,6 +1574,7 @@ fn mux_tracks_timed_with_cc(
         .sum();
     let mut tagged: Vec<TaggedPacket> = Vec::with_capacity(packet_hint);
     let mut pcr_stamps: Vec<u64> = Vec::new();
+    let mut pes: Vec<u8> = Vec::new();
     for (plan, &track_idx) in plans.iter().zip(&planned_idx) {
         let track = &tracks[track_idx];
         let ts_scale = track.spec.timescale;
@@ -1593,16 +1618,8 @@ fn mux_tracks_timed_with_cc(
                 let pts90 = rescale_signed(pts_local, ts_scale) + PCR_LEAD_TICKS;
                 let es_payload = build_es_payload(plan, sample)?;
                 let carry_pcr = plan.pid == pcr_pid;
-                packetise_pes(
-                    plan,
-                    &es_payload,
-                    pts90,
-                    dts90,
-                    carry_pcr,
-                    &mut cc,
-                    sort_key,
-                    &mut tagged,
-                )?;
+                build_pes_bytes(plan, &es_payload, pts90, dts90, &mut pes)?;
+                packetise_pes(plan, &pes, dts90, carry_pcr, &mut cc, sort_key, &mut tagged)?;
                 if carry_pcr {
                     pcr_stamps.push(sort_key);
                 }
@@ -2123,16 +2140,13 @@ fn packetise_section(pid: Pid, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACK
 /// ISO/IEC 13818-1 §2.4.3.
 fn packetise_pes(
     plan: &EsPlan,
-    es_payload: &[u8],
-    pts90: u64,
+    pes: &[u8],
     dts90: u64,
     carry_pcr: bool,
     cc: &mut u8,
     sort_key: u64,
     tagged: &mut Vec<TaggedPacket>,
 ) -> Result<()> {
-    let pes = build_pes_bytes(plan, es_payload, pts90, dts90)?;
-
     let mut pos = 0usize;
     let mut first = true;
     while pos < pes.len() {
@@ -2292,7 +2306,13 @@ fn write_af_packet(
 /// larger unit must split it into several PES packets itself (e.g. one per
 /// audio frame), which this function cannot do because it does not know the
 /// unit's internal framing.
-fn build_pes_bytes(plan: &EsPlan, es_payload: &[u8], pts90: u64, dts90: u64) -> Result<Vec<u8>> {
+fn build_pes_bytes(
+    plan: &EsPlan,
+    es_payload: &[u8],
+    pts90: u64,
+    dts90: u64,
+    out: &mut Vec<u8>,
+) -> Result<()> {
     let include_dts = dts90 != pts90;
     // PES optional-header content length after the 3 fixed bytes: PTS (5) always,
     // + DTS (5) when present.
@@ -2314,7 +2334,8 @@ fn build_pes_bytes(plan: &EsPlan, es_payload: &[u8], pts90: u64, dts90: u64) -> 
         })?
     };
 
-    let mut out = Vec::with_capacity(MIN_LEN + HEADER_FIXED + opt_content + es_payload.len());
+    out.clear();
+    out.reserve(MIN_LEN + HEADER_FIXED + opt_content + es_payload.len());
     out.extend_from_slice(&mpeg_pes::PACKET_START_CODE_PREFIX);
     out.push(plan.stream_id.get());
     out.extend_from_slice(&pes_packet_length.to_be_bytes());
@@ -2336,7 +2357,7 @@ fn build_pes_bytes(plan: &EsPlan, es_payload: &[u8], pts90: u64, dts90: u64) -> 
         out.extend_from_slice(&encode_timestamp(pts90, TS_PREFIX_PTS_ONLY));
     }
     out.extend_from_slice(es_payload);
-    Ok(out)
+    Ok(())
 }
 
 /// Encode a 33-bit timestamp into the 5-byte PTS/DTS field with the given 4-bit
@@ -2863,7 +2884,8 @@ mod tests {
         };
         // Largest payload that still fits: 65535 − (3 fixed + 5 PTS) = 65527.
         let fits = alloc::vec![0u8; u16::MAX as usize - HEADER_FIXED - 5];
-        let ok = build_pes_bytes(&plan, &fits, 0, 0).expect("the maximum legal PES must build");
+        let mut ok = Vec::new();
+        build_pes_bytes(&plan, &fits, 0, 0, &mut ok).expect("the maximum legal PES must build");
         assert_eq!(
             u16::from_be_bytes([ok[4], ok[5]]),
             u16::MAX,
@@ -2871,7 +2893,8 @@ mod tests {
         );
 
         let over = alloc::vec![0u8; fits.len() + 1];
-        let err = build_pes_bytes(&plan, &over, 0, 0).unwrap_err();
+        let mut out = Vec::new();
+        let err = build_pes_bytes(&plan, &over, 0, 0, &mut out).unwrap_err();
         assert!(
             matches!(
                 err,
@@ -2898,7 +2921,8 @@ mod tests {
             descriptors: Vec::new(),
         };
         let big = alloc::vec![0u8; u16::MAX as usize + 1];
-        let pes = build_pes_bytes(&plan, &big, 0, 0).expect("video may be unbounded");
+        let mut pes = Vec::new();
+        build_pes_bytes(&plan, &big, 0, 0, &mut pes).expect("video may be unbounded");
         assert_eq!(
             u16::from_be_bytes([pes[4], pes[5]]),
             0,

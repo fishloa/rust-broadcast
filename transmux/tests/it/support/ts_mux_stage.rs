@@ -36,9 +36,16 @@ pub fn try_drive(stage: &mut TsMuxStage, media: &Media) -> Result<Vec<u8>, trans
     Ok(bytes_of(outputs))
 }
 
-/// Concatenate the byte chunks of `outputs`.
+/// Concatenate the byte chunks of `outputs`, reserving their total size first.
 pub fn bytes_of(outputs: Vec<MuxOutput>) -> Vec<u8> {
-    let mut bytes = Vec::new();
+    let total: usize = outputs
+        .iter()
+        .map(|output| match output {
+            MuxOutput::Bytes(chunk) => chunk.len(),
+            _ => 0,
+        })
+        .sum();
+    let mut bytes = Vec::with_capacity(total);
     for output in outputs {
         if let MuxOutput::Bytes(chunk) = output {
             bytes.extend_from_slice(&chunk);
