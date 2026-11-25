@@ -66,7 +66,7 @@ Every input feeds one `Trunk` per program; every output reads from it, so any in
 | `whip` (H.264 only) | yes | video only | yes | with DVR | yes | video only | H.264 |
 | `custom` | per factory | per factory | per factory | with DVR | per factory | per factory | per factory |
 
-`ts_hls` cannot share a route with the fMP4 outputs in the first column or with `smooth`. `catchup` needs `dvr.enabled: true`. The TS-carriable codec set is that of `transmux::TsMux`; the full input and output reference tables follow below.
+`ts_hls` cannot share a route with the fMP4 outputs in the first column or with `smooth`. `catchup` needs `dvr.enabled: true`. The TS-carriable codec set is that of `transmux::TsMuxStage`; the full input and output reference tables follow below.
 
 ## Configuration examples
 

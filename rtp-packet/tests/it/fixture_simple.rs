@@ -4,7 +4,7 @@
 //! ## Fixture provenance
 //!
 //! These are genuine wire bytes, not hand-typed: the 324-byte packet was
-//! captured by running this workspace's own `transmux::RtpPacketiser`
+//! captured by running this workspace's own `transmux::RtpPacketiserStage`
 //! (RFC 3550-compliant AAC-hbr / RFC 3640 packetiser) over the real broadcast
 //! capture `fixtures/ts/h264-aac.ts` (already committed for transmux's own
 //! RTP tests, `transmux/tests/it/rtp.rs`, issue #469), then saving one emitted

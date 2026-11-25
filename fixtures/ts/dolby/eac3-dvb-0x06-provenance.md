@@ -14,7 +14,7 @@ fixture reproduces it deterministically from real captured audio bytes.
    samples.
 2. Re-muxed those same samples as a `CodecConfig::Data { stream_type: 0x06,
    descriptors: [0x7A, 0x01, 0x00], carriage: Pes }` track through
-   `transmux::ts_mux::TsMux` (the crate's own spec-correct TS/PES/PAT/PMT
+   `transmux::ts_mux::TsMuxStage` (the crate's own spec-correct TS/PES/PAT/PMT
    builder) -- one sample = one PES, byte-identical E-AC-3 payload, just
    declared under the DVB descriptor-disambiguated `stream_type` instead of
    the native one.

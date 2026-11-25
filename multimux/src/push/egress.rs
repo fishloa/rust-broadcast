@@ -482,7 +482,7 @@ mod tests {
     }
 
     /// One minimal length-prefixed (AVCC-style) NAL, valid enough for
-    /// `TsMux`'s AVC path (the default `encode_media`) to package without
+    /// `TsMuxStage`'s AVC path (the default `encode_media`) to package without
     /// erroring: a 4-byte big-endian length prefix + a one-byte IDR-slice
     /// NAL header (type 5, per ISO/IEC 14496-10 Table 7-1) and no payload.
     fn sample() -> transmux::ir::Sample {

@@ -168,8 +168,9 @@ nonzero `pts_adjustment` too, since it's what real generators emit.
 
 ### Cue-to-IDR alignment (measured, not asserted)
 
-Since transmux's own `Fmp4Demux` currently cannot build a track for this
-real fixture (see **Bug found** below), the video track's sample-level
+Since transmux's own MP4 demuxer could not build a track for this real
+fixture when it was acquired (fixed as #952 — see **Bug found** below), the
+video track's sample-level
 `dts`/`pts`/sync-sample flags were extracted independently, straight from
 the `moof`/`traf`/`tfhd`/`tfdt`/`trun` boxes (ISO/IEC 14496-12:2026 §8.8),
 deliberately bypassing `moov`/`stsd`/`avcC` (the part that's broken) — a
@@ -263,9 +264,9 @@ design — that decode lives in `scte35-splice`); the splice command fields
 are already fully decoded above via `scte35-splice` from the identical
 bytes.
 
-## Bug found while building this fixture (recorded, not fixed — out of this task's scope)
+## Bug found while building this fixture (fixed as #952)
 
-**`transmux`'s `Fmp4Demux` cannot currently build a track from this real
+**`transmux`'s MP4 demuxer could not build a track from this real
 fixture.** Root cause, isolated:
 
 - `dash/v300/init.mp4`'s `avc1` sample entry declares
@@ -301,20 +302,19 @@ fixture.** Root cause, isolated:
 Reproducer (against the committed fixture, no scratch files needed):
 
 ```rust
-// cat fixtures/scte35/dash/v300/{init.mp4,0.m4s,1.m4s,...,12.m4s} > combined.mp4
-use broadcast_common::Unpackage;
-use transmux::Fmp4Demux;
+// cat fixtures/scte35/dash/v300/{init.mp4,3.m4s} > combined.mp4
+use test_harness::collect::{CollectMode, media_from_mp4};
 let data = std::fs::read("combined.mp4").unwrap();
-let media = Fmp4Demux::new().unpackage(&data).unwrap();
-assert_eq!(media.tracks.len(), 0); // currently 0 — should be 1
-assert_eq!(media.skipped.len(), 1); // SkippedTrack { reason: "unexpected box: expected stsd entry" }
+let media = media_from_mp4(&data, CollectMode::Seekable).unwrap();
+assert_eq!(media.tracks.len(), 1); // the video track is recovered
+assert!(media.skipped.is_empty());
 ```
 
-Not fixed here — this task is fixture acquisition only, and a fix to
-`transmux`'s High-profile `avcC` handling (most likely: treat the extension
-as present only if enough bytes remain, rather than assuming its presence
-from `profile_indication` alone) is implementation work for a separate
-issue/PR. Recommend filing one; this fixture is the reproducer.
+Fixed as #952: `transmux`'s High-profile `avcC` handling now treats the
+extension as present only if enough bytes remain, rather than assuming its
+presence from `profile_indication` alone. The regression gate is
+`transmux/tests/it/issue_952_avcc_no_trailer.rs`; this fixture is its
+reproducer.
 
 ## What was tried and did not pan out
 

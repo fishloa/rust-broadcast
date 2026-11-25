@@ -4,7 +4,7 @@
 //! 8) / Video (type 9) messages carry FLV `AudioTagHeader`+`AACAUDIODATA` /
 //! `VideoTagHeader`+`AVCVIDEOPACKET` bodies (Adobe FLV v10.1 Annex E
 //! §E.4.2/§E.4.3) — **not** MPEG-2 TS (issue #934: the pre-fix defect muxed
-//! every push output, RTMP included, with `TsMux` and shipped the TS bytes
+//! every push output, RTMP included, to MPEG-2 TS and shipped those TS bytes
 //! as a video message, which no RTMP server can decode). `PushTransport::setup`
 //! sends `onMetaData` plus the AVC/AAC sequence headers (`avcC`/ASC) once, and
 //! `send_media` is overridden to split each batch into FLV-framed payloads
@@ -449,7 +449,7 @@ impl PushTransport for RtmpTransport {
     /// Encodes `media` via [`encode_media`](Self::encode_media) then writes
     /// each resulting chunk-framed RTMP message straight to the socket —
     /// bypasses [`send`](Self::send) (which would re-frame the bytes as a
-    /// *new* video message) and the trait's default `TsMux` path entirely.
+    /// *new* video message) and the trait's default `TsMuxStage` path entirely.
     async fn send_media(&mut self, media: &Media) -> Result<u64, SendMediaError> {
         let messages = self.encode_media(media)?;
         let mut total = 0u64;

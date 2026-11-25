@@ -1902,7 +1902,7 @@ mod tests {
 
     /// MUTATION VERIFIED: reverting `render_mpd` to `specs.remove(0)`
     /// unconditionally (the pre-#776 behaviour) makes this test fail: with
-    /// teletext first in the recorded track list, `DashPackager::package`
+    /// teletext first in the recorded track list, `DashPackager::render`
     /// rejects the opaque `CodecConfig::Data` track and `render_mpd` returns
     /// `None` instead of `Some`, so `manifest` would 503 despite a
     /// perfectly representable video track sitting right behind it.
