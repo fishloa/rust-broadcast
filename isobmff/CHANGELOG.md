@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 
+- `Reader::end_of_unit(unit_end)` for sequential input: it declares that the
+  bytes supplied so far end one self-contained unit (a media segment). A
+  top-level box whose declared end runs past the unit is dropped; in permissive
+  mode the cut fragment's samples wholly inside the unit stay available and a
+  `Warning::TruncatedFragment` follows them, while strict mode returns the
+  truncation error. The `moov`, its track state, the `trex` defaults and the
+  running decode time are kept, and the top-level walk resumes at `unit_end`,
+  so a damaged segment cannot affect the next one.
 - `quicktime`, read-only QuickTime atoms a camera or editing `.mov` carries:
   sound description versions 1 and 2 (including the 64-bit version 2 sample
   rate and the four version 1 fields), the `wave` decompression container and
