@@ -1,0 +1,44 @@
+[package]
+name    = "broadcast-matroska"
+version = "0.1.0"
+edition = "2024"
+description = "EBML (RFC 8794) and Matroska/WebM (RFC 9559) element syntax, no_std."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["matroska", "webm", "ebml", "rfc9559", "no-std"]
+categories   = ["parser-implementations", "multimedia", "no-std"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version.workspace = true
+exclude = ["docs/**"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+thiserror = { version = "2", default-features = false }
+serde     = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+
+[dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
+
+[features]
+default = ["std"]
+# `std` links the standard library. Without it the crate is `#![no_std]` and
+# needs only `alloc`.
+std = ["broadcast-common/std", "thiserror/std", "serde?/std"]
+# `serde::Serialize` derives on the moved element types. Off by default.
+serde = ["dep:serde", "broadcast-common/serde"]
+
+[lints]
+workspace = true
+
+[[example]]
+name = "dump_elements"
+required-features = ["std"]
+
+[[example]]
+name = "list_tracks"
+required-features = ["std"]

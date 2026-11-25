@@ -20,6 +20,7 @@ dvb-si     = { path = "../dvb-si" }
 
 [dependencies]
 broadcast-common   = { path = "../broadcast-common" }
+broadcast-matroska = { path = "../broadcast-matroska" }
 http               = "1"
 headers            = "0.4"
 dvb-si       = { path = "../dvb-si",       features = ["ts", "serde"] }
@@ -611,5 +612,17 @@ doc  = false
 [[bin]]
 name = "transmux_mp4_demux"
 path = "fuzz_targets/transmux_mp4_demux.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "matroska_element_walk"
+path = "fuzz_targets/matroska_element_walk.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "matroska_typed_parse"
+path = "fuzz_targets/matroska_typed_parse.rs"
 test = false
 doc  = false

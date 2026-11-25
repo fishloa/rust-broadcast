@@ -235,6 +235,29 @@ pub const TABLE: &[Crate] = &[
         expected: Some(&["StreamType"]),
         min_enums: None,
     },
+    // The spec enum views (`TrackType`, `LacingKind`, the colour/projection
+    // codes, …) carry `name()` + `impl_spec_display!`. `ElementKind` is the
+    // EBML type vocabulary (RFC 8794 §7). The rest are data-carrying ADTs or
+    // width/error values, not a flat spec token: `Element` (a typed tree),
+    // `VintSize` (a known length or the unknown size plus its width),
+    // `FloatWidth` (0/4/8 octets), `EbmlHeaderChild` (the header's children),
+    // `Lacing` (frames in one of four forms), and `Error` (thiserror's
+    // Display).
+    Crate {
+        name: "broadcast-matroska",
+        scope: Scope::Crate,
+        matcher: Matcher::Loose,
+        skip: &[
+            "Error",
+            "Element",
+            "VintSize",
+            "FloatWidth",
+            "EbmlHeaderChild",
+            "Lacing",
+        ],
+        expected: None,
+        min_enums: None,
+    },
     Crate {
         name: "broadcast-hls",
         scope: Scope::Crate,

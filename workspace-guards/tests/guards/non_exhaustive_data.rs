@@ -45,6 +45,18 @@ pub const EXEMPT: &[&str] = &[
 ];
 
 pub const TABLE: &[Crate] = &[
+    // Every public enum is `#[non_exhaustive]`: the element tree and the spec
+    // decode views all grow with an RFC edition. The data-carrying variants
+    // stay constructible by a caller (the crate builds them), so the rule is
+    // the enum-level attribute rather than per-variant.
+    Crate {
+        name: "broadcast-matroska",
+        skip: &[],
+        variants: false,
+        structs: false,
+        struct_skip: &[],
+        struct_extra: &[],
+    },
     plain("atsc3-route"),
     plain("atsc3"),
     // `RequestContext` is the sole non-suffix config/value struct; `Error` and
