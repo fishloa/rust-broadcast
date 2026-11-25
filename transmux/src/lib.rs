@@ -79,7 +79,7 @@
 //! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
 //! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /
-//!   [`nal_unit_type`]); I-frame trick-play track derivation ([`derive_iframe_track`]);
+//!   [`nal_unit_type`]); I-frame trick-play track derivation as a sample stage ([`TrickPlayStage`]);
 //!   the single ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 fragment
 //!   sample-offset resolver shared by the demuxer, decryptor and validator
 //!   ([`isobmff::frag_offsets`]).
@@ -374,7 +374,7 @@ pub use sps::{
     decode_avc_reorder_depth, decode_avc_sps, decode_avc_vui_timing, decode_hevc_sps,
     decode_hevc_vps_timing, decode_hevc_vui_timing, rfc6381_avc1, rfc6381_hvc1, rfc6381_mp4a,
 };
-pub use trickplay::{append_iframe_track, derive_iframe_track};
+pub use trickplay::TrickPlayStage;
 pub use ts_demux::{
     AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,
     InputDegradation, StreamingTsDemux, TsDemux,
