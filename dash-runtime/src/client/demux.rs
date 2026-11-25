@@ -90,18 +90,10 @@ fn split_encrypted(specs: Vec<TrackSpec>) -> (Vec<TrackSpec>, Vec<SkippedTrack>)
 }
 
 fn encrypted_data_track(spec: &TrackSpec) -> Option<SkippedTrack> {
-    let transmux::ir::CodecConfig::Data {
-        identity: transmux::ir::DataIdentity::Mp4 { sample_entry, .. },
-    } = &spec.config
-    else {
+    let transmux::ir::CodecConfig::Data { identity } = &spec.config else {
         return None;
     };
-    isobmff::cenc::sinf_of_sample_entry(sample_entry)?;
-    let offset = isobmff::box_types::BOX_TYPE_OFFSET;
-    let fourcc = String::from_utf8_lossy(
-        sample_entry.get(offset..offset + isobmff::box_types::BOX_TYPE_SIZE)?,
-    )
-    .into_owned();
+    let fourcc = String::from_utf8_lossy(&identity.protected_mp4_entry()?).into_owned();
     let mut skipped = SkippedTrack::new(
         fourcc,
         String::from("CENC/CBCS sample encryption is not supported by this client"),
