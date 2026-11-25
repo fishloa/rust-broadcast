@@ -9,8 +9,8 @@
 use core::time::Duration;
 use transmux::TrackId;
 
-use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
+use broadcast_common::{Package, Unpackage};
 use transmux::{PsDemux, TsDemux, WebmDemux};
 
 fn timescale(value: u32) -> Timescale {
@@ -449,10 +449,9 @@ fn ts_demux_output_is_unchanged() {
 
 #[test]
 fn rtp_stream_depacketiser_output_is_unchanged() {
-    use broadcast_common::Package;
     use transmux::pipeline::CodecConfig;
     use transmux::rtp::RtpMediaKind;
-    use transmux::{RtpPacketiser, RtpStreamDepacketiser, RtpStreamTrack};
+    use transmux::{RtpPacketiserStage, RtpStreamDepacketiser, RtpStreamTrack};
     let Some(data) = fixture("ts/h264-aac.ts") else {
         eprintln!("SKIPPED ts/h264-aac.ts");
         return;
@@ -462,12 +461,12 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
         .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .unwrap();
     let config = video_only.tracks[0].spec.config.clone();
-    let mut pk = RtpPacketiser {
-        mtu: 1400,
-        ssrc: 0x1234_5678,
-        ..RtpPacketiser::default()
-    };
-    let out = pk.package(&video_only).unwrap();
+    let out = crate::rtp_run::packetise(
+        &video_only,
+        RtpPacketiserStage::new()
+            .with_mtu(1400)
+            .with_ssrc(0x1234_5678),
+    );
     let stream = out
         .streams
         .iter()
@@ -506,8 +505,7 @@ fn h264_aac_media() -> Option<transmux::Media> {
 
 #[test]
 fn muxer_outputs_are_unchanged() {
-    use broadcast_common::Package;
-    use transmux::{MkvMux, ProgressiveMux, TsMux};
+    use transmux::{ProgressiveMux, TsMux};
     let Some(media) = h264_aac_media() else {
         eprintln!("SKIPPED ts/h264-aac.ts");
         return;
@@ -527,7 +525,8 @@ fn muxer_outputs_are_unchanged() {
         fnv1a(&tail),
         0x88ca21e79f4aa26c,
     );
-    let mkv = MkvMux::new().package(&media).unwrap();
+    let mkv = crate::mkv_bytes::mux_pts_ordered(&mut crate::mkv_bytes::stage(&media), &media);
+    let mkv = crate::mkv_bytes::whole_file_equivalent(&mkv);
     check(&mut bad, "mkv", fnv1a(&mkv), 0xf3db485ac205dbe1);
     // The golden pins the once-only-PSI layout (PAT/PMT at the start only). The
     // default `TsMux` now repeats PAT/PMT periodically (R7); that default is
@@ -543,7 +542,6 @@ fn muxer_outputs_are_unchanged() {
 
 #[test]
 fn fragment_writer_outputs_are_unchanged() {
-    use broadcast_common::Package;
     use transmux::{CmafMux, LlSegmenter, SmoothPackager};
     let Some(media) = h264_aac_media() else {
         eprintln!("SKIPPED ts/h264-aac.ts");
@@ -585,8 +583,7 @@ const CODEC_MUX_FIXTURES: &[&str] = &["ts/hevc/main.ts", "ts/dolby/ac3.ts", "ts/
 
 #[test]
 fn hevc_and_dolby_muxer_outputs_are_unchanged() {
-    use broadcast_common::Package;
-    use transmux::{CmafMux, MkvMux, ProgressiveMux, TsMux};
+    use transmux::{CmafMux, ProgressiveMux, TsMux};
     let want: &[(&str, u64)] = CODEC_MUX_GOLDEN;
     let mut bad = Vec::new();
     let mut i = 0;
@@ -602,7 +599,12 @@ fn hevc_and_dolby_muxer_outputs_are_unchanged() {
                 "progressive",
                 hash_result(ProgressiveMux::new(true).package(&media)),
             ),
-            ("mkv", hash_result(MkvMux::new().package(&media))),
+            (
+                "mkv",
+                fnv1a(&crate::mkv_bytes::whole_file_equivalent(
+                    &crate::mux_bytes::mux_bytes(&mut crate::mkv_bytes::stage(&media), &media),
+                )),
+            ),
             // Once-only PSI: see muxer_outputs_are_unchanged.
             (
                 "ts",
@@ -685,7 +687,6 @@ fn restore_legacy_adaptation_set_ids(mpd: &str) -> String {
 
 #[test]
 fn dash_mpd_output_is_unchanged() {
-    use broadcast_common::Package;
     use transmux::DashPackager;
     let mut bad = Vec::new();
     for (i, rel) in ["ts/h264-aac.ts", "ts/hevc/main.ts", "ts/dolby/ac3.ts"]

@@ -1,10 +1,10 @@
 //! RTP de/packetisation + SDP — RFC 3550 / RFC 6184 / RFC 3640 / RFC 4566.
 //!
-//! The RTP spoke of the any-to-any container hub: it packetises the [`Media`]
-//! IR into RTP packets ([`RtpPacketiser`] : [`Package`]) and depacketises RTP
-//! packets back to the IR ([`RtpDepacketiser`] : [`Unpackage`]), for H.264/AVC
-//! video and AAC (`AAC-hbr`) audio, plus SDP (`m=`/`a=rtpmap`/`a=fmtp`)
-//! generation.
+//! The RTP spoke of the any-to-any container hub: it packetises a live sample
+//! stream into RTP packets ([`RtpPacketiserStage`] : [`Stage`]) and
+//! depacketises RTP packets back to the IR ([`RtpDepacketiser`] :
+//! [`Unpackage`]), for H.264/AVC video and AAC (`AAC-hbr`) audio, plus SDP
+//! (`m=`/`a=rtpmap`/`a=fmtp`) generation ([`sdp_media`]).
 //!
 //! # Wire formats
 //!
@@ -15,7 +15,7 @@
 //! - **The timestamp is the presentation time, not the decode time**
 //!   (RFC 6184 §5.1: "The RTP timestamp is set to the sampling timestamp of
 //!   the content"; receivers "SHOULD use the RTP timestamp for synchronizing
-//!   the display process"). So [`RtpPacketiser`] stamps each access unit with
+//!   the display process"). So [`RtpPacketiserStage`] stamps each access unit with
 //!   the sample's **`pts`**, and the depacketisers read it back into `pts` —
 //!   a stream with B-frame reordering must not be presented in decode order at
 //!   the wrong instants. RTP carries no second timestamp, so a decode time is
@@ -33,9 +33,9 @@
 //! - **AAC** (RFC 3640, `AAC-hbr`): an AU-headers-length (16-bit, in bits)
 //!   prefix + one 2-byte AU-header (`sizeLength=13; indexLength=3`) + the raw
 //!   access unit.
-//! - **SDP** (RFC 4566 + `fmtp`; the SDP text is written with `sdp-types`, so
-//!   `RtpOutput::sdp` is `std`-only): `sprop-parameter-sets` carries base64 SPS,PPS
-//!   for video; `config` carries the hex AudioSpecificConfig for audio.
+//! - **SDP** (RFC 4566 + `fmtp`; the media section is built with `sdp-types`,
+//!   so [`sdp_media`] is `std`-only): `sprop-parameter-sets` carries base64
+//!   SPS,PPS for video; `config` carries the hex AudioSpecificConfig for audio.
 //! - **KLV** (RFC 6597, `smpte336m`): a SMPTE ST 336 KLV unit ([`crate::klv`])
 //!   carried directly after the fixed header — no payload header — fragmented
 //!   across sequential packets sharing one timestamp, marker on the last
@@ -43,14 +43,12 @@
 //!
 //! See `private/specs-verified/mpeg/transmux/rtp/rtp-payload-formats.md` for the full transcription.
 //!
-//! This module is stateless: packetise takes the IR and returns
-//! [`RtpPacket`]s whose payload is a zero-copy [`bytes::Bytes`] slice of
-//! the sample data (single-NAL and FU-A fragmentation use
-//! `Bytes::slice`; STAP-A aggregation and the audio AU-header path
-//! interleave headers with payload so they build in a `BytesMut`, which
-//! copies). The depacketise side (single-shot [`RtpDepacketiser`] and
-//! streaming [`crate::rtp_stream::RtpStreamDepacketiser`]) reassembles
-//! fragments by concatenation and may reasonably copy (issue #777).
+//! The packetiser stage holds only per-track sequence/timestamp state and one
+//! access unit's packets; each packet leaves as one [`MuxOutput::Bytes`], the
+//! whole RTP datagram. The depacketise side (single-shot
+//! [`RtpDepacketiser`] and streaming
+//! [`crate::rtp_stream::RtpStreamDepacketiser`]) reassembles fragments by
+//! concatenation and may reasonably copy (issue #777).
 //!
 //! This module does **not** validate sequence-number continuity —
 //! [`crate::rtp_stream`]'s stateful
@@ -69,15 +67,17 @@ use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::wire::u16_at;
 
+use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize, Unpackage};
 use bytes::Bytes;
 use rtp_packet::RtpPacket as RtpPacketWire;
 
 use crate::annexb::NAL_LENGTH_SIZE;
 use crate::error::{Error, Result};
-use crate::ir::InputDegradation;
+use crate::ir::{InputDegradation, Sample, TrackSpec};
 use crate::media::Media;
+use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::pipeline::CodecConfig;
 
 // ---------------------------------------------------------------------------
@@ -213,6 +213,20 @@ pub struct RtpPacket {
 }
 
 impl RtpPacket {
+    /// Split a whole RTP datagram into its fixed header (the first 12 bytes,
+    /// RFC 3550 §5.1) and the payload that follows, borrowing the buffer.
+    /// `None` for a datagram shorter than the fixed header.
+    pub fn from_contiguous(datagram: Bytes) -> Option<Self> {
+        if datagram.len() < RTP_HEADER_LEN {
+            return None;
+        }
+        let payload = datagram.slice(RTP_HEADER_LEN..);
+        Some(Self {
+            header: datagram.slice(..RTP_HEADER_LEN),
+            payload,
+        })
+    }
+
     /// Return a single contiguous [`Bytes`] for this packet: the fixed
     /// header followed by the payload, concatenated. Allocates exactly
     /// `header.len() + payload.len()` bytes.
@@ -225,42 +239,83 @@ impl RtpPacket {
     }
 }
 
-/// One packetised RTP stream: its payload type + kind and the emitted packets.
-#[derive(Debug, Clone)]
-pub struct RtpStream {
-    /// Dynamic payload type (matches the SDP `rtpmap`).
-    pub pt: u8,
-    /// The payload format carried on this stream.
-    pub kind: RtpMediaKind,
-    /// The RTP packets, in emission (sequence-number) order.
-    pub packets: Vec<RtpPacket>,
-}
-
-/// The output of [`RtpPacketiser`]: per-track RTP streams plus the SDP media
-/// descriptions that describe them.
-#[derive(Debug, Clone)]
-pub struct RtpOutput {
-    /// One [`RtpStream`] per packetised track, in track order.
-    pub streams: Vec<RtpStream>,
-    /// One SDP media description (`m=` with its `a=rtpmap`/`a=fmtp`) per
-    /// stream, in the same order (RFC 4566 §5.14, RFC 6184 §8.1, RFC 3640
-    /// §4.1). Session-level lines are not transmux's: build the session with
-    /// `rtsp_runtime::sdp::session_description` over these. `std` only.
-    #[cfg(feature = "std")]
-    pub medias: Vec<sdp_types::Media>,
-}
-
 // ---------------------------------------------------------------------------
-// RtpPacketiser — Package
+// RtpPacketiserStage — Stage<In = MuxInput, Out = MuxOutput>
 // ---------------------------------------------------------------------------
 
-/// Packetise a [`Media`] IR into RTP packets + SDP.
+/// Dynamic payload types (RFC 3551 §6) are per-session bindings, so one stage
+/// allocates them for every stream it is given, never reusing a type and never
+/// handing out one this crate binds to a fixed encoding.
+///
+/// Two streams sharing one type produce an SDP that describes both as the same
+/// encoding — a receiver decodes the second as the first. Before this, a
+/// *third* AVC (or AAC) track got `video_pt + 2` because only "has a video
+/// track been seen" was tracked, so tracks 2 and 3 collided, and `96 + 2 = 98`
+/// additionally collided with [`DEFAULT_KLV_PT`].
+#[derive(Debug, Clone)]
+struct PtAllocator {
+    /// The next candidate type. Advanced past every allocation, so no value is
+    /// ever handed out twice.
+    next: u8,
+}
+
+/// The per-track packetising state.
+#[derive(Debug, Clone)]
+struct RtpTrackState {
+    spec: TrackSpec,
+    kind: RtpMediaKind,
+    pt: u8,
+    seq: SeqCounter,
+    /// The first sample's presentation time; the emitted RTP timestamp series
+    /// starts at 0 for the first access unit regardless of where the source
+    /// timeline sits (RFC 3550 §5.1 only constrains the increments).
+    first_pts: Option<i64>,
+    /// The running sum of preceding durations — the timestamp fallback for a
+    /// sample with no `pts`.
+    ticks: u64,
+}
+
+impl RtpTrackState {
+    /// This sample's RTP timestamp, in `clock`.
+    ///
+    /// RFC 6184 §5.1 is explicit: "The RTP timestamp is set to the sampling
+    /// timestamp of the content", and receivers "SHOULD use the RTP timestamp
+    /// for synchronizing the display process". That is a *presentation* time,
+    /// so a reordered stream (B-frames) must stamp each access unit with its
+    /// **`pts`**, not its `dts`: stamping the decode time makes a receiver
+    /// present in decode order at the wrong instants.
+    fn timestamp(&mut self, sample: &Sample, clock: Timescale) -> u32 {
+        let pts = match (self.first_pts, sample.timing.and_then(|t| t.pts())) {
+            (None, Some(current)) => {
+                self.first_pts = Some(current);
+                0
+            }
+            (Some(first), Some(current)) => {
+                u64::try_from(current.saturating_sub(first).max(0)).unwrap_or(0)
+            }
+            _ => self.ticks,
+        };
+        let duration = sample.timing.and_then(|t| t.duration()).unwrap_or(0);
+        self.ticks = self.ticks.saturating_add(u64::from(duration));
+        rescale_ts(pts, self.spec.timescale, clock)
+    }
+}
+
+/// Packetise a live sample stream into RTP packets (RFC 3550), one
+/// [`MuxOutput::Bytes`] per packet.
 ///
 /// Per track: AVC → single-NAL / STAP-A (SPS+PPS) / FU-A packets on a 90 kHz
-/// clock; AAC → `AAC-hbr` packets on the audio sample-rate clock. All packets of
-/// one access unit share a timestamp and the marker bit is set on the last.
+/// clock ([`VIDEO_CLOCK_TIMESCALE`]); AAC → `AAC-hbr` packets on the audio
+/// sample-rate clock. All packets of one access unit share a timestamp and the
+/// marker bit is set on the last. The stage holds one access unit's packets at
+/// a time.
+///
+/// [`MuxInput::Track`] announcements assign the session's dynamic payload
+/// types; the SDP media section for a track's format is
+/// [`sdp_media`], rendered per track because the stage's packet output carries
+/// the payload type, not the track.
 #[derive(Debug, Clone)]
-pub struct RtpPacketiser {
+pub struct RtpPacketiserStage {
     /// MTU (payload budget): NALs larger than this are fragmented as FU-A.
     pub mtu: usize,
     /// Payload type assigned to the (first) video track.
@@ -271,9 +326,14 @@ pub struct RtpPacketiser {
     pub ssrc: u32,
     /// Aggregate the video SPS+PPS parameter sets into a leading STAP-A packet.
     pub stap_a_parameter_sets: bool,
+    tracks: Vec<RtpTrackState>,
+    pts: PtAllocator,
+    next_video_pt: Option<u8>,
+    next_audio_pt: Option<u8>,
+    out: VecDeque<MuxOutput>,
 }
 
-impl Default for RtpPacketiser {
+impl Default for RtpPacketiserStage {
     fn default() -> Self {
         Self {
             mtu: DEFAULT_MTU,
@@ -281,32 +341,283 @@ impl Default for RtpPacketiser {
             audio_pt: DEFAULT_AUDIO_PT,
             ssrc: DEFAULT_SSRC,
             stap_a_parameter_sets: true,
+            tracks: Vec::new(),
+            pts: PtAllocator::new(DEFAULT_VIDEO_PT.min(DEFAULT_AUDIO_PT)),
+            next_video_pt: Some(DEFAULT_VIDEO_PT),
+            next_audio_pt: Some(DEFAULT_AUDIO_PT),
+            out: VecDeque::new(),
         }
     }
 }
 
-impl RtpPacketiser {
+impl RtpPacketiserStage {
     /// Create a packetiser with default MTU / payload types / SSRC.
     pub fn new() -> Self {
-        Self::default()
+        let mut stage = Self::default();
+        stage.pts = PtAllocator::new(stage.video_pt.min(stage.audio_pt));
+        stage.pts.reserve_through(stage.video_pt);
+        stage.pts.reserve_through(stage.audio_pt);
+        stage.next_video_pt = Some(stage.video_pt);
+        stage.next_audio_pt = Some(stage.audio_pt);
+        stage
+    }
+
+    /// Set the MTU (the payload budget) on a freshly built stage.
+    #[must_use]
+    pub fn with_mtu(mut self, mtu: usize) -> Self {
+        self.mtu = mtu;
+        self
+    }
+
+    /// Set the fixed SSRC on a freshly built stage.
+    #[must_use]
+    pub fn with_ssrc(mut self, ssrc: u32) -> Self {
+        self.ssrc = ssrc;
+        self
+    }
+
+    /// Set whether SPS+PPS are aggregated into a leading STAP-A packet.
+    #[must_use]
+    pub fn with_stap_a_parameter_sets(mut self, aggregate: bool) -> Self {
+        self.stap_a_parameter_sets = aggregate;
+        self
+    }
+
+    /// Set the video track's preferred dynamic payload type.
+    #[must_use]
+    pub fn with_video_pt(mut self, pt: u8) -> Self {
+        self.video_pt = pt;
+        self.next_video_pt = Some(pt);
+        self.pts.reserve_through(pt);
+        self
+    }
+
+    /// Set the audio track's preferred dynamic payload type.
+    #[must_use]
+    pub fn with_audio_pt(mut self, pt: u8) -> Self {
+        self.audio_pt = pt;
+        self.next_audio_pt = Some(pt);
+        self.pts.reserve_through(pt);
+        self
+    }
+
+    /// Announce one track, assigning its payload type.
+    fn announce(&mut self, spec: TrackSpec) -> Result<()> {
+        if self.tracks.iter().any(|t| t.spec.track_id == spec.track_id) {
+            return Err(Error::InvalidInput("rtp: duplicate track id"));
+        }
+        let (kind, pt) = match &spec.config {
+            CodecConfig::Avc { .. } => {
+                // A caller-supplied base is used only if nothing has claimed
+                // it; allocation then continues from there, so a third video
+                // track gets its own type instead of colliding with the second.
+                let pt = match self.next_video_pt.take() {
+                    Some(base) => {
+                        self.pts.reserve_through(base);
+                        base
+                    }
+                    None => self.pts.allocate().ok_or(Error::InvalidInput(
+                        "no dynamic RTP payload type left (RFC 3551 §6's range is 96-127): too many streams share this session",
+                    ))?,
+                };
+                (RtpMediaKind::H264, pt)
+            }
+            CodecConfig::Aac { .. } => {
+                let pt = match self.next_audio_pt.take() {
+                    Some(base) => {
+                        self.pts.reserve_through(base);
+                        base
+                    }
+                    None => self.pts.allocate().ok_or(Error::InvalidInput(
+                        "no dynamic RTP payload type left (RFC 3551 §6's range is 96-127): too many streams share this session",
+                    ))?,
+                };
+                (RtpMediaKind::Aac, pt)
+            }
+            _ => {
+                return Err(Error::InvalidInput(
+                    "RTP packetiser supports only AVC video and AAC audio tracks",
+                ));
+            }
+        };
+        let mut seq = SeqCounter::new(0);
+        // Optional leading STAP-A carrying SPS+PPS (parameter sets).
+        // STAP-A aggregation interleaves header bytes with payload — built in
+        // a `BytesMut` (which copies); the parameter sets are small (typically
+        // <1 kB total).
+        let stap = if self.stap_a_parameter_sets
+            && let CodecConfig::Avc { config, .. } = &spec.config
+        {
+            let mut param_nals: Vec<Vec<u8>> = Vec::new();
+            for sps in &config.config.sps {
+                param_nals.push(sps.0.clone());
+            }
+            for pps in &config.config.pps {
+                param_nals.push(pps.0.clone());
+            }
+            if param_nals.is_empty() {
+                None
+            } else {
+                build_stap_a(pt, &param_nals, &mut seq, 0, self.ssrc).map(Some)?
+            }
+        } else {
+            None
+        };
+        self.tracks.push(RtpTrackState {
+            spec,
+            kind,
+            pt,
+            seq,
+            first_pts: None,
+            ticks: 0,
+        });
+        if let Some(packet) = stap {
+            self.out.push_back(MuxOutput::Bytes(packet.as_contiguous()));
+        }
+        Ok(())
+    }
+
+    /// Packetise one AVC access unit.
+    fn video_packets(
+        &mut self,
+        index: usize,
+        sample: &Sample,
+        timestamp: u32,
+    ) -> Result<Vec<RtpPacket>> {
+        let pt = self.tracks[index].pt;
+        let mut packets = Vec::new();
+        let nals = split_length_prefixed(&sample.data)?;
+        if nals.is_empty() {
+            return Ok(packets);
+        }
+        let last_nal = nals.len() - 1;
+        for (n, nal) in nals.iter().enumerate() {
+            let is_last_nal = n == last_nal;
+            if nal.len() + RTP_HEADER_LEN <= self.mtu {
+                let marker = is_last_nal;
+                let seq = self.tracks[index].seq.next();
+                let header = rtp_header(pt, marker, seq, timestamp, self.ssrc);
+                let nal_offset = nal.as_ptr() as usize - sample.data.as_ptr() as usize;
+                let payload = sample.data.slice(nal_offset..nal_offset + nal.len());
+                packets.push(RtpPacket { header, payload });
+            } else {
+                fragment_fu_a(
+                    nal,
+                    &sample.data,
+                    pt,
+                    is_last_nal,
+                    self.mtu,
+                    &mut self.tracks[index].seq,
+                    timestamp,
+                    self.ssrc,
+                    &mut packets,
+                )?;
+            }
+        }
+        Ok(packets)
+    }
+
+    /// Packetise one AAC access unit (`AAC-hbr`).
+    ///
+    /// The AAC-hbr payload header (AU-headers-length + AU-header) is
+    /// interleaved with the audio access unit, so the full packet is built in a
+    /// `BytesMut` (which copies). The header is small (4 bytes) and audio AUs
+    /// are typically <1 kB.
+    ///
+    /// An access unit that does not fit the payload budget is fragmented over
+    /// consecutive packets per RFC 3640 §3.2.3.1: each fragment carries its own
+    /// AU-header with the AU's **full** size (§3.2.3.2 — "the AU size indicates
+    /// the size of the entire AU and not the size of the fragment"), they all
+    /// share one RTP timestamp, and the marker bit is set on the last one only
+    /// (§3.1).
+    fn audio_packets(&mut self, index: usize, sample: &Sample) -> Result<Vec<RtpPacket>> {
+        let pt = self.tracks[index].pt;
+        let sample_data = &sample.data;
+        let per_packet = self
+            .mtu
+            .checked_sub(RTP_HEADER_LEN + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN)
+            .filter(|&b| b > 0)
+            .ok_or(Error::InvalidInput(
+                "MTU too small for an AAC-hbr packet header",
+            ))?;
+        let au = sample_data;
+        if au.len() >= (1usize << AAC_SIZE_LENGTH) {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: "aac_au_size",
+                value: au.len() as u64,
+                reason: "exceeds 13-bit AAC-hbr AU-size field",
+            }));
+        }
+        let clock = self.tracks[index].spec.timescale;
+        let timestamp = self.tracks[index].timestamp(sample, clock);
+        let mut packets = Vec::new();
+        let au_headers_len_bits = (AAC_AU_HEADER_LEN * u8::BITS as usize) as u16;
+        let hdr = (au.len() as u16) << AAC_INDEX_LENGTH;
+        let num_frags = au.len().div_ceil(per_packet).max(1);
+        for f in 0..num_frags {
+            let start = f * per_packet;
+            let end = (start + per_packet).min(au.len());
+            let is_last = f == num_frags - 1;
+            let seq = self.tracks[index].seq.next();
+            let rtp_hdr = rtp_header(pt, is_last, seq, timestamp, self.ssrc);
+            let frag = &au[start..end];
+            let mut buf = bytes::BytesMut::with_capacity(
+                rtp_hdr.len() + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN + frag.len(),
+            );
+            buf.extend_from_slice(&rtp_hdr);
+            buf.extend_from_slice(&au_headers_len_bits.to_be_bytes());
+            buf.extend_from_slice(&hdr.to_be_bytes());
+            buf.extend_from_slice(frag);
+            let full = buf.freeze();
+            let header_len = rtp_hdr.len() + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN;
+            packets.push(RtpPacket {
+                header: full.slice(0..header_len),
+                payload: full.slice(header_len..),
+            });
+        }
+        Ok(packets)
     }
 }
 
-/// Hands out dynamic payload types (RFC 3551 §6: "This profile reserves
-/// payload type numbers in the range 96-127 exclusively for dynamic
-/// assignment") for one session's streams, never reusing a type and never
-/// handing out one this crate has already bound to a fixed encoding.
-///
-/// Payload types are per-session bindings, so two streams sharing one produces
-/// an SDP that describes both as the same encoding — a receiver decodes the
-/// second as the first. Before this, a *third* AVC (or AAC) track got
-/// `video_pt + 2` because only "has a video track been seen" was tracked, so
-/// tracks 2 and 3 collided, and `96 + 2 = 98` additionally collided with
-/// [`DEFAULT_KLV_PT`].
-struct PtAllocator {
-    /// The next candidate type. Advanced past every allocation, so no value is
-    /// ever handed out twice.
-    next: u8,
+impl Stage for RtpPacketiserStage {
+    type In<'a> = MuxInput;
+    type Out = MuxOutput;
+    type Error = Error;
+
+    fn feed(&mut self, input: MuxInput, _now: Timestamp) -> Result<()> {
+        let (track, sample) = match input {
+            MuxInput::Track(spec) => return self.announce(*spec),
+            MuxInput::Sample { track, sample } => (track, sample),
+            MuxInput::Discontinuity { .. } | MuxInput::Flush => return Ok(()),
+        };
+        let Some(index) = self.tracks.iter().position(|t| t.spec.track_id == track) else {
+            return Err(Error::InvalidInput("rtp: sample for an unannounced track"));
+        };
+        let packets = match self.tracks[index].kind {
+            RtpMediaKind::H264 => {
+                let timestamp = self.tracks[index].timestamp(&sample, VIDEO_CLOCK_TIMESCALE);
+                self.video_packets(index, &sample, timestamp)?
+            }
+            RtpMediaKind::Aac => self.audio_packets(index, &sample)?,
+        };
+        for packet in &packets {
+            self.out.push_back(MuxOutput::Bytes(packet.as_contiguous()));
+        }
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<MuxOutput> {
+        self.out.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        if self.tracks.is_empty() && self.out.is_empty() {
+            return Err(Error::InvalidInput(
+                "no AVC/AAC tracks to packetise into RTP",
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl PtAllocator {
@@ -344,21 +655,6 @@ impl PtAllocator {
     }
 }
 
-/// Per-stream monotonic sequence-number counter (wraps at 16 bits).
-struct SeqCounter(u16);
-
-impl SeqCounter {
-    fn new(start: u16) -> Self {
-        Self(start)
-    }
-    /// Return the next sequence number, advancing (with 16-bit wrap).
-    fn next(&mut self) -> u16 {
-        let v = self.0;
-        self.0 = self.0.wrapping_add(1);
-        v
-    }
-}
-
 /// Write an RTP fixed header into a new packet buffer and return it as
 /// owned [`Bytes`].
 ///
@@ -385,298 +681,20 @@ fn rtp_header(pt: u8, marker: bool, seq: u16, timestamp: u32, ssrc: u32) -> Byte
     buf.freeze()
 }
 
-impl Package for RtpPacketiser {
-    type Media = Media;
-    type Output = RtpOutput;
-    type Error = Error;
+/// Per-stream monotonic sequence-number counter (wraps at 16 bits).
+#[derive(Debug, Clone)]
+struct SeqCounter(u16);
 
-    fn package(&mut self, media: &Media) -> Result<RtpOutput> {
-        if media.tracks.is_empty() {
-            return Err(Error::InvalidInput(
-                "cannot packetise a Media with no tracks",
-            ));
-        }
-        let mut streams = Vec::new();
-        #[cfg(feature = "std")]
-        let mut sdp_media: Vec<sdp_types::Media> = Vec::new();
-        // One allocator per session, shared by both kinds: a payload type is a
-        // session-wide binding (RFC 3551 §6), so a video and an audio stream
-        // must never be handed the same one either.
-        let mut pts = PtAllocator::new(self.video_pt.min(self.audio_pt));
-        // Both kinds' preferred bases are claimed up front, not lazily: the
-        // defaults (96 video, 97 audio) must survive a session whose tracks
-        // are ordered audio-first, and a base must never be handed to the
-        // *other* kind's second track before its own first track claims it.
-        let mut next_video_pt = Some(self.video_pt);
-        let mut next_audio_pt = Some(self.audio_pt);
-        pts.reserve_through(self.video_pt);
-        pts.reserve_through(self.audio_pt);
-
-        for track in &media.tracks {
-            match &track.spec.config {
-                CodecConfig::Avc { config, .. } => {
-                    // A caller-supplied base is used only if nothing has
-                    // claimed it; allocation then continues from there, so a
-                    // third video track gets its own type instead of colliding
-                    // with the second.
-                    let pt = match next_video_pt.take() {
-                        Some(base) => {
-                            pts.reserve_through(base);
-                            base
-                        }
-                        None => pts.allocate().ok_or(Error::InvalidInput(
-                            "no dynamic RTP payload type left (RFC 3551 §6's range is 96-127): too many streams share this session",
-                        ))?,
-                    };
-                    let packets = self.packetise_video(track, pt)?;
-                    streams.push(RtpStream {
-                        pt,
-                        kind: RtpMediaKind::H264,
-                        packets,
-                    });
-                    #[cfg(feature = "std")]
-                    sdp_media.push(sdp_video(pt, &config.config));
-                    #[cfg(not(feature = "std"))]
-                    let _ = config;
-                }
-                CodecConfig::Aac {
-                    esds,
-                    channel_count,
-                    ..
-                } => {
-                    let pt = match next_audio_pt.take() {
-                        Some(base) => {
-                            pts.reserve_through(base);
-                            base
-                        }
-                        None => pts.allocate().ok_or(Error::InvalidInput(
-                            "no dynamic RTP payload type left (RFC 3551 §6's range is 96-127): too many streams share this session",
-                        ))?,
-                    };
-                    let packets = self.packetise_audio(track, pt, track.spec.timescale)?;
-                    streams.push(RtpStream {
-                        pt,
-                        kind: RtpMediaKind::Aac,
-                        packets,
-                    });
-                    let asc = asc_bytes(esds)?;
-                    #[cfg(feature = "std")]
-                    sdp_media.push(sdp_audio(
-                        pt,
-                        track.spec.timescale.get(),
-                        *channel_count,
-                        asc,
-                    ));
-                    #[cfg(not(feature = "std"))]
-                    let _ = (asc, channel_count);
-                }
-                _ => {
-                    return Err(Error::InvalidInput(
-                        "RTP packetiser supports only AVC video and AAC audio tracks",
-                    ));
-                }
-            }
-        }
-        if streams.is_empty() {
-            return Err(Error::InvalidInput(
-                "no AVC/AAC tracks to packetise into RTP",
-            ));
-        }
-        Ok(RtpOutput {
-            streams,
-            #[cfg(feature = "std")]
-            medias: sdp_media,
-        })
+impl SeqCounter {
+    fn new(start: u16) -> Self {
+        Self(start)
     }
-}
-
-impl RtpPacketiser {
-    /// Packetise one AVC track into RTP packets.
-    ///
-    /// Public for the zero-copy allocation test (`alloc_measurement.rs`);
-    /// the main consumer calls [`Package::package`] instead.
-    pub fn packetise_video(&self, track: &crate::media::Track, pt: u8) -> Result<Vec<RtpPacket>> {
-        // The IR timescale is the RTP clock: a `Timescale` is non-zero by
-        // construction, so there is no "unknown" case to fall back from.
-        let timescale = track.spec.timescale;
-        let mut packets = Vec::new();
-        let mut seq = SeqCounter::new(0);
-        let mut timestamp: u32 = 0;
-
-        // Optional leading STAP-A carrying SPS+PPS (parameter sets).
-        // STAP-A aggregation interleaves header bytes with payload — built
-        // in a BytesMut (which copies); the parameter sets are small
-        // (typically <1 kB total).
-        if self.stap_a_parameter_sets
-            && let CodecConfig::Avc { config, .. } = &track.spec.config
-        {
-            let mut param_nals: Vec<Vec<u8>> = Vec::new();
-            for sps in &config.config.sps {
-                param_nals.push(sps.0.clone());
-            }
-            for pps in &config.config.pps {
-                param_nals.push(pps.0.clone());
-            }
-            if !param_nals.is_empty() {
-                let pkt = build_stap_a(pt, &param_nals, &mut seq, timestamp, self.ssrc)?;
-                packets.push(pkt);
-            }
-        }
-
-        for (i, sample) in track.samples.iter().enumerate() {
-            // Rescale to the 90 kHz RTP clock if the IR timescale differs.
-            timestamp = rescale_ts(sample_pts(track, i), timescale, VIDEO_CLOCK_TIMESCALE);
-            let nals = split_length_prefixed(&sample.data)?;
-            if nals.is_empty() {
-                continue;
-            }
-            let last_nal = nals.len() - 1;
-            for (n, nal) in nals.iter().enumerate() {
-                let is_last_nal = n == last_nal;
-                if nal.len() + RTP_HEADER_LEN <= self.mtu {
-                    // Single-NAL packet — zero-copy payload via Bytes::slice.
-                    let marker = is_last_nal;
-                    let header = rtp_header(pt, marker, seq.next(), timestamp, self.ssrc);
-                    // Locate the NAL slice within the sample's Bytes so we
-                    // can share the backing buffer rather than copying.
-                    let nal_offset = nal.as_ptr() as usize - sample.data.as_ptr() as usize;
-                    let payload = sample.data.slice(nal_offset..nal_offset + nal.len());
-                    packets.push(RtpPacket { header, payload });
-                } else {
-                    // FU-A fragmentation — zero-copy payload slices.
-                    fragment_fu_a(
-                        nal,
-                        &sample.data,
-                        pt,
-                        is_last_nal,
-                        self.mtu,
-                        &mut seq,
-                        timestamp,
-                        self.ssrc,
-                        &mut packets,
-                    )?;
-                }
-            }
-        }
-        Ok(packets)
+    /// Return the next sequence number, advancing (with 16-bit wrap).
+    fn next(&mut self) -> u16 {
+        let v = self.0;
+        self.0 = self.0.wrapping_add(1);
+        v
     }
-
-    /// Packetise one AAC track (`AAC-hbr`).
-    ///
-    /// The AAC-hbr payload header (AU-headers-length + AU-header) is
-    /// interleaved with the audio access unit, so the full packet is built
-    /// in a `BytesMut` (which copies). The header is small (4 bytes) and
-    /// audio AUs are typically <1 kB.
-    ///
-    /// An access unit that does not fit the payload budget is fragmented over
-    /// consecutive packets per RFC 3640 §3.2.3.1: each fragment carries its
-    /// own AU-header with the AU's **full** size (§3.2.3.2 — "the AU size
-    /// indicates the size of the entire AU and not the size of the
-    /// fragment"), they all share one RTP timestamp, and the marker bit is
-    /// set on the last one only (§3.1). That is the ordinary case for
-    /// high-rate audio (a 640 kb/s 5.1 AAC frame is ~3.7 kB, well over a
-    /// typical MTU) — previously such a track could not be packetised at all.
-    fn packetise_audio(
-        &self,
-        track: &crate::media::Track,
-        pt: u8,
-        clock: broadcast_common::timescale::Timescale,
-    ) -> Result<Vec<RtpPacket>> {
-        let mut packets = Vec::with_capacity(track.samples.len());
-        let mut seq = SeqCounter::new(0);
-        let timescale = clock;
-        let per_packet = self
-            .mtu
-            .checked_sub(RTP_HEADER_LEN + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN)
-            .filter(|&b| b > 0)
-            .ok_or(Error::InvalidInput(
-                "MTU too small for an AAC-hbr packet header",
-            ))?;
-        for (i, sample) in track.samples.iter().enumerate() {
-            let au = &sample.data;
-            if au.len() >= (1usize << AAC_SIZE_LENGTH) {
-                return Err(Error::InvalidValue(InvalidValue {
-                    field: "aac_au_size",
-                    value: au.len() as u64,
-                    reason: "exceeds 13-bit AAC-hbr AU-size field",
-                }));
-            }
-            let timestamp = rescale_ts(sample_pts(track, i), timescale, clock);
-            // AU-headers-length is in BITS: one 2-byte header = 16 bits. One
-            // header per packet, and it always states the AU's full size
-            // (§3.2.3.2), whether or not this packet carries all of it.
-            let au_headers_len_bits = (AAC_AU_HEADER_LEN * u8::BITS as usize) as u16;
-            // AU-header: AU-size(13) | AU-Index(3). AU-Index = 0 (single AU).
-            let hdr = (au.len() as u16) << AAC_INDEX_LENGTH;
-            // Fragmentation (§3.2.3.1): the marker is set on the last fragment
-            // only, and every fragment shares this AU's timestamp.
-            let num_frags = au.len().div_ceil(per_packet).max(1);
-            for f in 0..num_frags {
-                let start = f * per_packet;
-                let end = (start + per_packet).min(au.len());
-                let is_last = f == num_frags - 1;
-                // Build the full AAC-hbr header (RTP fixed header + AU-headers
-                // prefix + AU-header) in a BytesMut, then extend with the
-                // payload. This copies — the interleaving makes a zero-copy
-                // approach impractical without a vectored I/O consumer.
-                let rtp_hdr = rtp_header(pt, is_last, seq.next(), timestamp, self.ssrc);
-                let frag = &au[start..end];
-                let mut buf = bytes::BytesMut::with_capacity(
-                    rtp_hdr.len() + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN + frag.len(),
-                );
-                buf.extend_from_slice(&rtp_hdr);
-                buf.extend_from_slice(&au_headers_len_bits.to_be_bytes());
-                buf.extend_from_slice(&hdr.to_be_bytes());
-                buf.extend_from_slice(frag);
-                let full = buf.freeze();
-                let header_len = rtp_hdr.len() + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN;
-                packets.push(RtpPacket {
-                    header: full.slice(0..header_len),
-                    payload: full.slice(header_len..),
-                });
-            }
-        }
-        Ok(packets)
-    }
-}
-
-/// The **presentation** timestamp of sample `i`, in the track's media
-/// timescale, **relative to the track's first sample** (so the emitted RTP
-/// timestamp series starts at 0 for the first AU regardless of where the
-/// source timeline sits — RFC 3550 §5.1 only constrains the increments).
-///
-/// RFC 6184 §5.1 is explicit: "The RTP timestamp is set to the sampling
-/// timestamp of the content", and receivers "SHOULD use the RTP timestamp for
-/// synchronizing the display process". That is a *presentation* time, so a
-/// reordered stream (B-frames) must stamp each access unit with its **`pts`**,
-/// not its `dts`: stamping the decode time makes a receiver present in decode
-/// order at the wrong instants.
-///
-/// Read from the sample's own **absolute** `pts` when both it and the first
-/// sample's are known. `pts` is `None` only for a section-carried track (which
-/// RTP never packetises), so the fallback is the running sum of preceding
-/// durations — which for a stream with no composition offset is the same
-/// series (in that case `dts == pts` at every sample, and both paths agree).
-fn sample_pts(track: &crate::media::Track, i: usize) -> u64 {
-    if let (Some(first), Some(cur)) = (
-        track
-            .samples
-            .first()
-            .and_then(|s| s.timing.and_then(|t| t.pts())),
-        track
-            .samples
-            .get(i)
-            .and_then(|s| s.timing.and_then(|t| t.pts())),
-    ) {
-        // A hostile pair of timestamps can invert the subtraction; the
-        // conversion is checked rather than an `as` cast, which would wrap a
-        // large negative into a huge tick count.
-        return u64::try_from((cur - first).max(0)).unwrap_or(0);
-    }
-    track.samples[..i]
-        .iter()
-        .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
-        .sum()
 }
 
 /// Rescale a tick count from `from` to `to` timescale (round to nearest).
@@ -811,6 +829,7 @@ fn fragment_fu_a(
 }
 
 /// Extract the AudioSpecificConfig bytes from an `esds` box.
+#[cfg(feature = "std")]
 fn asc_bytes(esds: &isobmff::mp4esds::EsdsBox) -> Result<&[u8]> {
     esds.es_descriptor
         .decoder_config
@@ -825,6 +844,39 @@ fn asc_bytes(esds: &isobmff::mp4esds::EsdsBox) -> Result<&[u8]> {
 // ---------------------------------------------------------------------------
 // SDP generation (RFC 4566)
 // ---------------------------------------------------------------------------
+
+/// The SDP media section (`m=` with its `a=rtpmap`/`a=fmtp`) describing one
+/// AVC video (RFC 6184 §8.1) or AAC (RFC 3640 §4.1) track's RTP payload
+/// format, bound to payload type `pt`.
+///
+/// The packetiser stage emits whole RTP datagrams, which carry the payload
+/// type but not the track, so a caller that needs a session description asks
+/// for each track's section here with the same payload type it configured (or
+/// read back off that track's first packet). Session-level lines are not
+/// transmux's: build the session with
+/// `rtsp_runtime::sdp::session_description` over these. `std` only.
+///
+/// # Errors
+///
+/// [`Error::InvalidInput`] for a codec RTP does not packetise, and for an
+/// `esds` without a DecoderSpecificInfo (the AAC-hbr `config`).
+#[cfg(feature = "std")]
+pub fn sdp_media(spec: &TrackSpec, pt: u8) -> Result<sdp_types::Media> {
+    match &spec.config {
+        CodecConfig::Avc { config, .. } => Ok(sdp_video(pt, &config.config)),
+        CodecConfig::Aac {
+            esds,
+            channel_count,
+            ..
+        } => {
+            let asc = asc_bytes(esds)?;
+            Ok(sdp_audio(pt, spec.timescale.get(), *channel_count, asc))
+        }
+        _ => Err(Error::InvalidInput(
+            "only AVC video and AAC audio have an RTP payload format in this crate",
+        )),
+    }
+}
 
 /// SDP media section for an H.264 video stream (RFC 6184 §8.1).
 #[cfg(feature = "std")]

@@ -9,7 +9,7 @@
 //! have no ISOBMFF sample entry in this crate, so they do not participate in
 //! the fMP4/CMAF mux path — `{WebM} → {CMAF/progressive-MP4/TS/DASH/LL-DASH/
 //! CMAF-HLS/LL-HLS/Smooth}` fails on those tracks with
-//! [`Error::UnsupportedCodec`]; only `WebM → WebM`/[`MkvMux`] round-trips them.
+//! [`Error::UnsupportedCodec`]; only `WebM → WebM`/[`MkvMuxStage`] round-trips them.
 //! It **never encodes or decodes media**: it parses codec *config/parameter
 //! headers* only to build container boxes and derive metadata; coded samples
 //! pass through opaque. `no_std` + `alloc`, except the XML manifest paths
@@ -32,13 +32,13 @@
 //!   unlaced into one sample per frame, see the module docs), FLV
 //!   ([`FlvDemux`] — non-AVC video and non-AAC audio tracks are silently
 //!   skipped, no event/error, see the module docs), RTMP ([`RtmpDemux`]).
-//! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMux`]), progressive single-file
-//!   MP4 ([`ProgressiveMux`]), MPEG-2 TS ([`TsMux`]), Matroska ([`MkvMux`]),
+//! - **Mux outputs:** CMAF/fMP4 ([`CmafMux`]), progressive single-file
+//!   MP4 ([`ProgressiveMux`]), MPEG-2 TS ([`TsMux`]), Matroska ([`MkvMuxStage`]),
 //!   CMAF-HLS ([`HlsPackager`]), TS-segment HLS ([`TsHlsPackager`]), DASH MPD
 //!   ([`DashPackager`]), low-latency
 //!   DASH ([`LlSegmenter`]/[`LlDashPackager`]), Microsoft Smooth Streaming
 //!   ([`SmoothPackager`] — H.264 video + AAC-LC audio only, every other codec
-//!   rejected), RTMP ([`RtmpMux`]), low-latency HLS
+//!   rejected), RTMP ([`RtmpMuxStage`]), low-latency HLS
 //!   ([`LlHlsSegmenter`], live-edge open segments via
 //!   [`broadcast_hls::OpenSegment`]).
 //! - **Transforms:** resegment / trim / track-select ([`Repackage`]);
@@ -63,7 +63,7 @@
 //!   (`METHOD=SAMPLE-AES-CTR`, RFC 8216bis §4.4.4.4 — see the
 //!   `broadcast-hls` crate's module docs); HLS Sample-AES + full-segment
 //!   AES-128 encrypt/decrypt (`sample-aes`, [`sample_aes`]).
-//! - **RTP/RTCP:** de/packetise ([`RtpPacketiser`] / [`RtpDepacketiser`]),
+//! - **RTP/RTCP:** de/packetise ([`RtpPacketiserStage`] / [`RtpDepacketiser`]),
 //!   streaming depayload ([`RtpStreamDepacketiser`]) + SDP fmtp→config helpers
 //!   ([`rtp_sdp`]); RTCP control packets ([`RtcpPacket`]).
 //! - **Display geometry:** a video track's coded size, SPS VUI sample aspect
@@ -270,7 +270,7 @@ pub use drm::{
 pub use drm::{playready_pro, playready_pssh, playready_wrmheader};
 pub use error::{Error, Result};
 pub use flv::{
-    FlvDemux, FlvError, FlvMux, FlvPayload, FlvPayloadKind, flv_frame_payloads,
+    FlvDemux, FlvError, FlvMuxStage, FlvPayload, FlvPayloadKind, flv_frame_payload,
     flv_sequence_header_payloads, flv_track_kind, on_metadata_body,
 };
 pub use flv_stream::StreamingFlvDemux;
@@ -296,7 +296,7 @@ pub use ll_dash::LlDashPackager;
 pub use ll_dash::{Chunk, LlSegmenter};
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
 pub use media::{CmafMux, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackProtection};
-pub use mkv_mux::MkvMux;
+pub use mkv_mux::MkvMuxStage;
 pub use mpeg_legacy::{
     MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,
 };
@@ -321,11 +321,13 @@ pub use rtcp::{
     RtcpPacketType, SDES_CNAME, SDES_EMAIL, SDES_LOC, SDES_NAME, SDES_NOTE, SDES_PHONE, SDES_PRIV,
     SDES_TOOL, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
 };
-pub use rtmp::{RtmpDemux, RtmpFlvError, RtmpMux};
+pub use rtmp::{RtmpDemux, RtmpFlvError, RtmpMuxStage};
+#[cfg(feature = "std")]
+pub use rtp::sdp_media;
 pub use rtp::{
     DEFAULT_AAC_CLOCK_RATE, DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT,
     KLV_ENCODING_NAME, MAX_TIMING_WARNINGS, NAL_TYPE_IDR, RtpDepacketiser, RtpInput,
-    RtpInputStream, RtpMediaKind, RtpOutput, RtpPacket, RtpPacketiser, RtpStream, RtpTimingWarning,
+    RtpInputStream, RtpMediaKind, RtpPacket, RtpPacketiserStage, RtpTimingWarning,
     VIDEO_CLOCK_RATE, VIDEO_CLOCK_TIMESCALE, depacketise_klv, packetise_klv,
 };
 pub use rtp_align::{AlignOut, AvSync, SR_SWITCH_TOLERANCE_US, TrackAligner};

@@ -8,10 +8,9 @@
 //! coded sample bytes themselves. A muxer that dropped a sample, mis-scaled a
 //! timestamp, or corrupted `CodecPrivate` fails one of these comparisons.
 
-use broadcast_common::Package;
 use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
-use transmux::{Media, MkvMux};
+use transmux::{Media, MkvMuxStage};
 
 /// H.264 (`fixtures/ts/h264-aac.ts`, `-c copy`'d to Matroska) + AAC.
 const H264_AAC: &str = "mkv/h264-aac.mkv";
@@ -33,9 +32,10 @@ fn demux(path: &str) -> Media {
 /// again. Returns (original demux, demux-of-the-remux).
 fn round_trip(path: &str) -> (Media, Media) {
     let original = demux(path);
-    let muxed = MkvMux::new()
-        .package(&original)
-        .unwrap_or_else(|e| panic!("mux {path}: {e}"));
+    let muxed = crate::mux_bytes::mux_bytes(
+        &mut MkvMuxStage::new(std::time::Duration::from_millis(5_000)),
+        &original,
+    );
     let remuxed = WebmDemux::new()
         .demux(&muxed)
         .unwrap_or_else(|e| panic!("re-demux muxed {path}: {e}"));
@@ -262,7 +262,10 @@ fn mkv_round_trip_vp9_opus() {
 #[test]
 fn mkv_double_round_trip_is_stable() {
     let (_, remuxed_once) = round_trip(H264_AAC);
-    let muxed_twice = MkvMux::new().package(&remuxed_once).expect("second mux");
+    let muxed_twice = crate::mux_bytes::mux_bytes(
+        &mut MkvMuxStage::new(std::time::Duration::from_millis(5_000)),
+        &remuxed_once,
+    );
     let remuxed_twice = WebmDemux::new()
         .demux(&muxed_twice)
         .expect("second re-demux");

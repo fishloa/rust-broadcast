@@ -1,7 +1,7 @@
 //! Real-fixture gate for the streaming RTP depayloader (#700).
 //!
 //! Demuxes the real `h264-aac.ts` fixture, packetises it to RTP (the same
-//! `TsDemux` + `RtpPacketiser::package` calls `tests/it/rtp.rs` uses), then feeds
+//! `TsDemux` + `RtpPacketiserStage` calls `tests/it/rtp.rs` uses), then feeds
 //! the video stream's packets through [`RtpStreamDepacketiser`] fed with the
 //! codec config recovered from the *generated SDP* (exercising the P2
 //! `avc_config_from_sprop`/`aac_config_from_asc_hex` round-trip), and checks the
@@ -25,16 +25,16 @@ fn timescale(value: u32) -> Timescale {
 
 #[cfg(feature = "std")]
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Demand, Package, Stage, Unpackage};
+use broadcast_common::{Demand, Stage, Unpackage};
 use std::collections::HashSet;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::{aac_config_from_asc_hex, avc_config_from_sprop};
 use transmux::{
-    FragmentTrackData, Media, RtpLossEvent, RtpOutput, RtpPacketiser, RtpStream,
-    RtpStreamDepacketiser, RtpStreamTrack, Severity, TsDemux, WallSkewExceeded, build_init_segment,
-    build_media_segment, validate::SegmentOrigin, validate_init_segment, validate_media_segment,
+    FragmentTrackData, Media, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, Severity,
+    TsDemux, WallSkewExceeded, build_init_segment, build_media_segment, validate::SegmentOrigin,
+    validate_init_segment, validate_media_segment,
 };
 
 const MTU: usize = 1400;
@@ -49,23 +49,18 @@ fn demux_fixture() -> Media {
     demux.unpackage(&data[..]).expect("demux TS → IR")
 }
 
-fn packetise(media: &Media) -> RtpOutput {
-    let mut p = RtpPacketiser {
-        mtu: MTU,
-        ssrc: SSRC,
-        ..RtpPacketiser::default()
-    };
-    p.package(media).expect("packetise IR → RTP")
+fn packetise(media: &Media) -> crate::rtp_run::RtpOutput {
+    crate::rtp_run::packetise(media, crate::rtp_run::stage(MTU, SSRC))
 }
 
-fn video_stream(out: &RtpOutput) -> &RtpStream {
+fn video_stream(out: &crate::rtp_run::RtpOutput) -> &crate::rtp_run::RtpStream {
     out.streams
         .iter()
         .find(|s| s.kind == RtpMediaKind::H264)
         .unwrap()
 }
 
-fn audio_stream(out: &RtpOutput) -> &RtpStream {
+fn audio_stream(out: &crate::rtp_run::RtpOutput) -> &crate::rtp_run::RtpStream {
     out.streams
         .iter()
         .find(|s| s.kind == RtpMediaKind::Aac)
@@ -110,7 +105,7 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
         .filter(|s| s.flags.is_sync)
         .count();
     // Build codec config from the generated SDP (exercises P2).
-    let sdp = sdp_session::local_session(out.clone());
+    let sdp = sdp_session::local_session(out.medias.clone());
     let sprop = fmtp_value(&sdp, "sprop-parameter-sets=").expect("sprop");
     let avc = avc_config_from_sprop(sprop).expect("avc from sprop");
     // SPS/PPS bytes recovered from SDP must equal the fixture's.

@@ -11,10 +11,10 @@
 //! back to its messages and compared against the FLV tags the FLV path
 //! writes, which is the only thing that would notice.
 
-use broadcast_common::{Package, Parse, Unpackage};
+use broadcast_common::{Parse, Unpackage};
 use rtmp_runtime::chunk::ChunkAssembler;
 use rtmp_runtime::message::{ChunkSize, MessageTypeId, ProtocolControl};
-use transmux::{FlvDemux, FlvMux, Media, RtmpDemux, RtmpMux};
+use transmux::{FlvDemux, FlvMuxStage, Media, RtmpDemux, RtmpMuxStage};
 
 const FIXTURES: &[&str] = &["flv/av.flv", "flv/aac-7-1.flv"];
 
@@ -71,6 +71,8 @@ fn messages_of(tags: &[(u8, u32, Vec<u8>)]) -> Vec<(MessageTypeId, u32, Vec<u8>)
         .collect()
 }
 
+/// The FLV `TagType` of a script-data (`onMetaData`) tag (§E.4.1).
+const FLV_TAG_SCRIPT: u8 = 18;
 fn sample_bytes(media: &Media) -> Vec<Vec<Vec<u8>>> {
     media
         .tracks
@@ -80,13 +82,13 @@ fn sample_bytes(media: &Media) -> Vec<Vec<Vec<u8>>> {
 }
 
 /// The IR both spokes must reproduce. Taken from the fixture's own demux and
-/// then put through one FLV mux/demux, because [`FlvMux`] synthesises exactly
+/// then put through one FLV mux/demux, because [`FlvMuxStage`] synthesises exactly
 /// one `onMetaData` tag while a capture may carry several: the second demux
 /// drops that script-only difference from the IR, so the comparison isolates
 /// what the RTMP chunking round trip has to preserve.
 fn normalised_media(bytes: &[u8]) -> Media {
     let media = FlvDemux::new().unpackage(bytes).expect("fixture FLV → IR");
-    let flv = FlvMux::new().package(&media).expect("IR → FLV");
+    let flv = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), &media);
     FlvDemux::new().unpackage(&flv).expect("FLV → IR")
 }
 
@@ -99,17 +101,29 @@ fn the_rtmp_spoke_carries_the_same_media_as_the_flv_spoke() {
             !ground_truth.tracks.is_empty(),
             "{rel}: fixture must have at least one track"
         );
-        let flv_bytes = FlvMux::new().package(&ground_truth).expect("IR to FLV");
-        let expected = messages_of(&flv_tags(&flv_bytes));
-        assert!(
-            expected.iter().any(|(t, ..)| *t == MessageTypeId::DataAmf0),
-            "{rel}: the FLV path writes an onMetaData tag to compare against"
-        );
+        let flv_bytes = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), &ground_truth);
+        // A file's `onMetaData` states the stream's duration; a live RTMP
+        // publish has none to state, so the script message's body is the live
+        // body and everything else crosses unchanged (the media is what this
+        // test compares).
+        let tags = flv_tags(&flv_bytes);
+        let specs: Vec<transmux::TrackSpec> =
+            ground_truth.tracks.iter().map(|t| t.spec.clone()).collect();
+        let live_meta = transmux::on_metadata_body(&specs, None).expect("live body");
+        let mut expected: Vec<(MessageTypeId, u32, Vec<u8>)> =
+            vec![(MessageTypeId::DataAmf0, 0, live_meta)];
+        expected.extend(messages_of(
+            &tags
+                .into_iter()
+                .filter(|(tag_type, ..)| *tag_type != FLV_TAG_SCRIPT)
+                .collect::<Vec<_>>(),
+        ));
 
         for &chunk_size in CHUNK_SIZES {
-            let wire = RtmpMux::with_chunk_size(chunk_size)
-                .package(&ground_truth)
-                .unwrap_or_else(|e| panic!("{rel} at chunk size {chunk_size}: IR → RTMP: {e}"));
+            let wire = crate::mux_bytes::mux_bytes(
+                &mut RtmpMuxStage::with_chunk_size(chunk_size),
+                &ground_truth,
+            );
             assert!(
                 !wire.is_empty(),
                 "{rel}: the RTMP wire is non-empty at chunk size {chunk_size}"
@@ -160,7 +174,7 @@ fn the_rtmp_spoke_carries_the_same_media_as_the_flv_spoke() {
 #[test]
 fn the_default_chunk_size_is_the_rtmp_runtime_default() {
     assert_eq!(
-        RtmpMux::default().chunk_size,
+        RtmpMuxStage::default().chunk_size,
         usize::try_from(rtmp_runtime::chunk::DEFAULT_CHUNK_SIZE.value())
             .expect("default chunk size fits"),
     );
@@ -178,9 +192,7 @@ fn a_non_default_chunk_size_is_announced_in_band() {
     let bytes = test_fixtures::read(FIXTURES[0]);
     let media = normalised_media(bytes.as_slice());
 
-    let wire = RtmpMux::with_chunk_size(4096)
-        .package(&media)
-        .expect("IR → RTMP at 4096");
+    let wire = crate::mux_bytes::mux_bytes(&mut RtmpMuxStage::with_chunk_size(4096), &media);
     let first = first_message(&wire).expect("a non-empty chunk stream");
     assert_eq!(
         first.message_type_id,
@@ -193,7 +205,7 @@ fn a_non_default_chunk_size_is_announced_in_band() {
         "the announced size is the one the muxer chunks at"
     );
 
-    let default_wire = RtmpMux::new().package(&media).expect("IR → RTMP at 128");
+    let default_wire = crate::mux_bytes::mux_bytes(&mut RtmpMuxStage::new(), &media);
     let default_first = first_message(&default_wire).expect("a non-empty chunk stream");
     assert_ne!(
         default_first.message_type_id,
@@ -205,9 +217,10 @@ fn a_non_default_chunk_size_is_announced_in_band() {
 #[test]
 fn the_largest_chunk_size_round_trips_through_the_demuxer() {
     let media = normalised_media(test_fixtures::read(FIXTURES[0]).as_slice());
-    let wire = RtmpMux::with_chunk_size(rtmp_runtime::chunk::MAX_CHUNK_SIZE as usize)
-        .package(&media)
-        .expect("MAX_CHUNK_SIZE is a legal announced chunk size");
+    let wire = crate::mux_bytes::mux_bytes(
+        &mut RtmpMuxStage::with_chunk_size(rtmp_runtime::chunk::MAX_CHUNK_SIZE as usize),
+        &media,
+    );
     assert_eq!(
         ProtocolControl::from_message(&first_message(&wire).expect("a non-empty stream"))
             .expect("valid protocol control"),
@@ -226,8 +239,7 @@ fn the_largest_chunk_size_round_trips_through_the_demuxer() {
 fn a_chunk_size_above_the_maximum_is_rejected_not_announced() {
     let media = normalised_media(test_fixtures::read(FIXTURES[0]).as_slice());
     let too_large = rtmp_runtime::chunk::MAX_CHUNK_SIZE as usize + 1;
-    let err = RtmpMux::with_chunk_size(too_large)
-        .package(&media)
+    let err = crate::mux_bytes::mux_result(&mut RtmpMuxStage::with_chunk_size(too_large), &media)
         .expect_err("a chunk size the writer would clamp must be an error");
     assert_eq!(
         err,
@@ -238,8 +250,7 @@ fn a_chunk_size_above_the_maximum_is_rejected_not_announced() {
 #[test]
 fn a_zero_chunk_size_is_rejected() {
     let media = normalised_media(test_fixtures::read(FIXTURES[0]).as_slice());
-    let err = RtmpMux::with_chunk_size(0)
-        .package(&media)
+    let err = crate::mux_bytes::mux_result(&mut RtmpMuxStage::with_chunk_size(0), &media)
         .expect_err("a chunk size of 0 must be an error");
     assert_eq!(
         err,
@@ -250,7 +261,7 @@ fn a_zero_chunk_size_is_rejected() {
 /// The FLV tags [`FlvMux`] wrote for `media`, walked with `rtmp-runtime`'s
 /// strict tag walker (no hand-rolled framing here), as `(tag type, body)`.
 fn flv_mux_tags(media: &Media) -> Vec<(u8, Vec<u8>)> {
-    let flv = FlvMux::new().package(media).expect("IR → FLV");
+    let flv = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), media);
     let header = <rtmp_runtime::flv::FlvHeader<'_> as Parse>::parse(&flv).expect("FLV header");
     rtmp_runtime::flv::tags(&flv, &header)
         .map(|tag| tag.map(|tag| (tag.tag_type.to_byte(), tag.body.to_vec())))
@@ -323,8 +334,7 @@ fn a_message_the_demuxer_would_reject_is_refused() {
         "one byte over the limit"
     );
 
-    let err = RtmpMux::new()
-        .package(&over)
+    let err = crate::mux_bytes::mux_result(&mut RtmpMuxStage::new(), &over)
         .expect_err("a message over MAX_MESSAGE_LEN must not be framed");
     assert_eq!(
         err,
@@ -360,19 +370,22 @@ fn a_message_at_the_maximum_round_trips() {
     let probe = longest_message_at_medium_sample();
     let media = media_with_video_sample(MEDIUM_SAMPLE_LEN + (max - probe));
     let expected = flv_mux_tags(&media);
-    let wire = RtmpMux::new()
-        .package(&media)
-        .expect("a message of exactly MAX_MESSAGE_LEN is framed");
+    let wire = crate::mux_bytes::mux_bytes(&mut RtmpMuxStage::new(), &media);
     let video_len = expected
         .iter()
         .map(|(_, body)| body.len())
         .max()
         .expect("at least one tag");
     assert_eq!(video_len, max, "the video tag body is exactly the limit");
-    assert_eq!(
-        carried_messages(&wire),
+    // The file's `onMetaData` carries the duration a live publish has none of;
+    // every media tag crosses at exactly its own length.
+    let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let live_meta = transmux::on_metadata_body(&specs, None).expect("live body");
+    let mut want: Vec<(MessageTypeId, usize)> = vec![(MessageTypeId::DataAmf0, live_meta.len())];
+    want.extend(
         expected
             .iter()
+            .filter(|(tag_type, _)| *tag_type != FLV_TAG_SCRIPT)
             .map(|(tag_type, body)| {
                 let message_type_id = match *tag_type {
                     FLV_TAG_AUDIO => MessageTypeId::Audio,
@@ -380,9 +393,12 @@ fn a_message_at_the_maximum_round_trips() {
                     _ => MessageTypeId::DataAmf0,
                 };
                 (message_type_id, body.len())
-            })
-            .collect::<Vec<_>>(),
-        "every FLV tag crosses as one message at exactly its own length"
+            }),
+    );
+    assert_eq!(
+        carried_messages(&wire),
+        want,
+        "every media FLV tag crosses as one message at exactly its own length"
     );
 }
 

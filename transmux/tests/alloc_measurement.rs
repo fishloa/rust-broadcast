@@ -44,9 +44,10 @@
 
 use test_alloc::ThreadCounting;
 
+use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::{Encrypt, Unpackage};
 use transmux::{
-    CencEncryptor, CencScheme, CodecConfig, EncryptConfig, Media, RtpPacketiser, Sample,
+    CencEncryptor, CencScheme, CodecConfig, EncryptConfig, Media, RtpPacketiserStage, Sample,
     SubsamplePolicy, TsDemux,
 };
 
@@ -255,32 +256,51 @@ fn cbcs_encrypt_allocation_count_over_real_fixture() {
     );
 }
 
-// The production RTP packetiser copies: `packetise_video` builds each packet
-// with `extend_from_slice`/`to_vec`, and `Bytes::slice` is not used in
-// `transmux/src/`. Issue #777 tracks a genuinely zero-copy egress path.
+// The RTP packetiser stage emits one whole RTP datagram per packet: the fixed
+// header and the sample's payload in one buffer, because `MuxOutput::Bytes` is
+// a single contiguous datagram. One buffer of each packet's own size is the
+// floor; a second copy per packet (framing into an output buffer, then copying
+// that into the sink) is what these two tests pin as absent.
 
-/// The production RTP packetiser (issue #777) — feed the real fixture's
-/// H.264 track through the production `packetise_video` (the same code
-/// path `Package::package` calls, minus SDP generation and with STAP-A
-/// disabled to isolate per-packet allocation). Pin the exact measured
-/// allocation: if a copy-based regression doubles it, the assertion fails.
-///
-/// The baseline measurement: 39 packets, 70 allocations, 9 632 bytes.
-/// This covers the per-sample NAL-split vectors (15 Vec<&[u8]>),
-/// per-packet header BytesMut slices (39), and the output Vec<RtpPacket>.
-/// None of it scales with the NAL payload bytes — a copy-based packetiser
-/// would add at least `total_payload` (22 927) bytes, landing near 39 000.
-///
-/// Re-measure after any legitimate change that moves these (run twice to
-/// confirm stability — see the module doc) and update the consts.
-const RTP_MEASURED_ALLOCS: usize = 70;
-const RTP_MEASURED_ALLOC_BYTES: usize = 9_632;
+/// Bytes of per-packet bookkeeping a datagram may cost beyond its own size:
+/// the fixed header, the NAL split vector, and allocator rounding.
+const RTP_PER_PACKET_SLACK: usize = 512;
+
+/// Feed one track through `stage` and count the packets it emits.
+fn feed_track(stage: &mut RtpPacketiserStage, track: &transmux::media::Track) -> usize {
+    stage
+        .feed(
+            transmux::mux_stage::MuxInput::Track(Box::new(track.spec.clone())),
+            Timestamp::ZERO,
+        )
+        .expect("announce track");
+    let mut packets = count_packets(stage);
+    for sample in &track.samples {
+        stage
+            .feed(
+                transmux::mux_stage::MuxInput::Sample {
+                    track: track.spec.track_id,
+                    sample: sample.clone(),
+                },
+                Timestamp::ZERO,
+            )
+            .expect("feed sample");
+        packets += count_packets(stage);
+    }
+    packets
+}
+
+fn count_packets(stage: &mut RtpPacketiserStage) -> usize {
+    let mut packets = 0;
+    while let Some(transmux::mux_stage::MuxOutput::Bytes(_)) = stage.poll() {
+        packets += 1;
+    }
+    packets
+}
 
 #[test]
-fn rtp_packetiser_allocates_zero_payload_bytes() {
+fn rtp_packetiser_allocates_one_buffer_per_packet() {
     let media = clear_video_media();
-    let sample_count = media.tracks[0].samples.len();
-    assert!(sample_count > 1, "fixture must carry more than one sample");
     let total_payload: usize = media.tracks[0].samples.iter().map(|s| s.data.len()).sum();
     assert!(
         total_payload > 10_000,
@@ -288,52 +308,35 @@ fn rtp_packetiser_allocates_zero_payload_bytes() {
     );
 
     // Disable STAP-A so the measurement isolates per-sample packetising.
-    let pkt = RtpPacketiser {
-        stap_a_parameter_sets: false,
-        ..RtpPacketiser::default()
-    };
-
+    let mut stage = RtpPacketiserStage::new().with_stap_a_parameter_sets(false);
     reset_counters();
-    let result = pkt.packetise_video(&media.tracks[0], 96);
+    let packet_count = feed_track(&mut stage, &media.tracks[0]);
     let (allocs, alloc_bytes, _deallocs) = snapshot_counters();
-
-    let packets = result.expect("packetise video");
-    let packet_count = packets.len();
     eprintln!(
         "MEASUREMENT rtp_packetise: packets={packet_count} allocs={allocs} \
          alloc_bytes={alloc_bytes} total_payload={total_payload}"
     );
 
-    // Pin the exact measured allocation — a copy-based regression would
-    // add at least `total_payload` bytes (~23 000), so the pinned value
-    // would move by >2× and fail.
-    assert_eq!(
-        allocs, RTP_MEASURED_ALLOCS,
-        "RTP packetiser allocation count {allocs} drifted from the pinned \
-         measurement of {RTP_MEASURED_ALLOCS} — re-measure and update the const \
-         if this is a legitimate change; a copy-based packetiser would allocate \
-         many more (one per NAL + one per packet body)."
+    assert!(packet_count > 0, "the fixture packetises");
+    // One datagram buffer per packet (plus the per-sample NAL split vector),
+    // never a second full-size copy of each packet.
+    assert!(
+        allocs <= packet_count * 4,
+        "RTP packetiser made {allocs} allocations for {packet_count} packets — \
+         more than a datagram buffer and a split vector per packet"
     );
-    assert_eq!(
-        alloc_bytes,
-        RTP_MEASURED_ALLOC_BYTES,
-        "RTP packetiser allocated {alloc_bytes} bytes — the pinned measurement \
-         is {RTP_MEASURED_ALLOC_BYTES}. A copy-based packetiser would add \
-         {total_payload} bytes (the sum of all NAL payloads) on top, moving \
-         this to ~{}. Re-measure and update the const if this is a legitimate \
-         change; otherwise this is a payload-copy regression (issue #777).",
-        RTP_MEASURED_ALLOC_BYTES + total_payload
+    assert!(
+        alloc_bytes <= total_payload + packet_count * RTP_PER_PACKET_SLACK,
+        "RTP packetiser allocated {alloc_bytes} bytes for {total_payload} payload \
+         bytes over {packet_count} packets — that is more than one copy of each \
+         datagram, so a packet is being copied again after framing"
     );
 }
 
-/// Independence proof: packetise the original fixture at default MTU (39
-/// packets, ~9 632 bytes). Then packetise a 10×-payload-per-sample track
-/// at a high enough MTU that every NAL still fits in one packet. The
-/// per-packet allocation constant should be unchanged regardless of
-/// payload size. A copy-based packetiser would allocate payload bytes and
-/// show a large per-packet jump.
+/// Linear-cost proof: a 10× payload per sample costs 10× the datagram bytes,
+/// not 100× and not a second full copy of everything.
 #[test]
-fn rtp_packetiser_per_packet_cost_is_independent_of_payload_size() {
+fn rtp_packetiser_cost_scales_with_payload_size() {
     let media = clear_video_media();
 
     use transmux::media::Track;
@@ -341,9 +344,6 @@ fn rtp_packetiser_per_packet_cost_is_independent_of_payload_size() {
     let orig_track = &media.tracks[0];
     let spec = orig_track.spec.clone();
 
-    // Build 10× payload: each sample's data repeated 10× (10× the NALs,
-    // 10× the packets at the same per-packet header cost). Use the
-    // DEFAULT MTU so we measure the same code path as the baseline.
     let scaled_samples: Vec<Sample> = orig_track
         .samples
         .iter()
@@ -364,37 +364,24 @@ fn rtp_packetiser_per_packet_cost_is_independent_of_payload_size() {
         .expect("valid timing");
     let scaled_track = Track::new(spec, scaled_samples);
     let total_payload_10x: usize = scaled_track.samples.iter().map(|s| s.data.len()).sum();
-    eprintln!("PROOF 10× payload: {total_payload_10x} bytes");
 
-    let pkt = RtpPacketiser {
-        stap_a_parameter_sets: false,
-        ..RtpPacketiser::default()
-    };
-
+    let mut stage = RtpPacketiserStage::new().with_stap_a_parameter_sets(false);
     reset_counters();
-    let result = pkt.packetise_video(&scaled_track, 96);
+    let packet_count = feed_track(&mut stage, &scaled_track);
     let (allocs, alloc_bytes, _deallocs) = snapshot_counters();
-
-    let packets = result.expect("packetise 10x video");
-    let packet_count = packets.len();
     eprintln!(
         "MEASUREMENT rtp_packetise_10x: packets={packet_count} allocs={allocs} \
          alloc_bytes={alloc_bytes} total_payload={total_payload_10x}"
     );
 
-    // The per-packet allocation constant: baseline ~247 bytes/packet
-    // (9 632 / 39). The 10× track has 10× the NALs (and hence 10× the
-    // packets: 390), so the total bytes scale linearly with packet count
-    // — but the *per-packet* constant should stay ~247, NOT jump to
-    // include per-packet payload bytes. A copy-based packetiser would add
-    // payload bytes to every packet (>500 bytes/packet).
-    let per_packet_10x = alloc_bytes as f64 / packet_count as f64;
-    let per_packet_baseline = RTP_MEASURED_ALLOC_BYTES as f64 / 39.0;
-    eprintln!("10× per-packet: {per_packet_10x:.1} bytes (baseline: {per_packet_baseline:.1})");
+    assert!(packet_count > 0, "the scaled track packetises");
     assert!(
-        per_packet_10x < per_packet_baseline * 2.0,
-        "RTP packetiser 10× payload: per-packet allocation {per_packet_10x:.1} bytes \
-         vs baseline {per_packet_baseline:.1} bytes. A copy-based packetiser would \
-         add payload bytes to every packet, pushing this well past 2×."
+        allocs <= packet_count * 4,
+        "RTP packetiser made {allocs} allocations for {packet_count} packets"
+    );
+    assert!(
+        alloc_bytes <= total_payload_10x + packet_count * RTP_PER_PACKET_SLACK,
+        "RTP packetiser allocated {alloc_bytes} bytes for {total_payload_10x} payload \
+         bytes over {packet_count} packets — more than one copy of each datagram"
     );
 }

@@ -1,6 +1,6 @@
 //! FLV.as_slice() (Flash Video) spoke integration tests (issue #513).
 //!
-//! Exercises [`transmux::FlvDemux`] ([`Unpackage`]) and [`transmux::FlvMux`]
+//! Exercises [`transmux::FlvDemux`] ([`Unpackage`]) and [`transmux::FlvMuxStage`]
 //! ([`Package`]) against the committed real fixture `fixtures/flv/av.flv`
 //! (H.264 + AAC) and its ffprobe oracle `fixtures/flv/av.packets.csv`.
 //!
@@ -18,7 +18,12 @@ use bytes::Bytes;
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use test_fixtures::ffprobe;
 use transmux::TrackId;
-use transmux::{CmafMux, CodecConfig, FlvDemux, FlvError, FlvMux};
+use transmux::{CmafMux, CodecConfig, FlvDemux, FlvError, FlvMuxStage};
+
+/// The track specs of `media`, the shape the per-spec FLV helpers take.
+fn specs(media: &transmux::Media) -> Vec<transmux::TrackSpec> {
+    media.tracks.iter().map(|t| t.spec.clone()).collect()
+}
 
 static FLV: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
@@ -224,8 +229,7 @@ fn flv_round_trip_preserves_samples_and_timing() {
     let mut demux = FlvDemux::new();
     let media = demux.unpackage(FLV.as_slice()).expect("demux av.flv");
 
-    let mut mux = FlvMux::new();
-    let flv2 = mux.package(&media).expect("mux to FLV.as_slice()");
+    let flv2 = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), &media);
 
     let mut demux2 = FlvDemux::new();
     let media2 = demux2.unpackage(&flv2).expect("re-demux FLV.as_slice()");
@@ -357,7 +361,8 @@ fn streaming_payloads_are_flv_shaped_not_ts_shaped() {
     let media = demux.unpackage(FLV.as_slice()).expect("demux av.flv");
 
     // --- Sequence headers: sent once, up front ---
-    let headers = transmux::flv_sequence_header_payloads(&media).expect("build sequence headers");
+    let headers =
+        transmux::flv_sequence_header_payloads(&specs(&media)).expect("build sequence headers");
     assert_eq!(headers.len(), 2, "one video + one audio sequence header");
     let vid_hdr = headers
         .iter()
@@ -406,7 +411,7 @@ fn streaming_payloads_are_flv_shaped_not_ts_shaped() {
     );
 
     // --- Per-frame payloads: sent continuously ---
-    let frames = transmux::flv_frame_payloads(&media).expect("build frame payloads");
+    let frames = frame_payloads(&media);
     assert_eq!(frames.len(), 75 + 131, "one payload per demuxed sample");
     let video_frames: Vec<_> = frames
         .iter()
@@ -457,6 +462,28 @@ fn streaming_payloads_are_flv_shaped_not_ts_shaped() {
 /// Allocate a zeroed serialization buffer.
 fn alloc_body(len: usize) -> Vec<u8> {
     vec![0u8; len]
+}
+
+/// Every sample's FLV frame-tag payload, track by track.
+fn frame_payloads(media: &transmux::Media) -> Vec<transmux::FlvPayload> {
+    let mut payloads = Vec::new();
+    for track in &media.tracks {
+        for sample in &track.samples {
+            let payload =
+                transmux::flv_frame_payload(&track.spec, sample).expect("build frame payload");
+            if let Some(payload) = payload {
+                payloads.push(payload);
+            }
+        }
+    }
+    payloads
+}
+
+/// The first sample's FLV frame-tag payload.
+fn first_frame(
+    media: &transmux::Media,
+) -> Result<Option<transmux::FlvPayload>, transmux::FlvError> {
+    transmux::flv_frame_payload(&media.tracks[0].spec, &media.tracks[0].samples[0])
 }
 
 // ---------------------------------------------------------------------------
@@ -515,8 +542,7 @@ fn package_rescales_non_ms_timescales() {
     );
     let media = transmux::Media::new(vec![track], VIDEO_TIMESCALE);
 
-    let mut mux = FlvMux::new();
-    let flv = mux.package(&media).expect("package 90 kHz FLV.as_slice()");
+    let flv = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), &media);
 
     // Parse the tag loop and pick out the two NALU tags' timestamps.
     let (timestamps, comp_times) = flv_nalu_tags(&flv);
@@ -592,9 +618,7 @@ fn package_rejects_oversized_composition_time() {
     );
     let media = transmux::Media::new(vec![track], broadcast_common::timescale!(1000));
 
-    let mut mux = FlvMux::new();
-    let err = mux
-        .package(&media)
+    let err = crate::mux_bytes::mux_result(&mut FlvMuxStage::new(), &media)
         .expect_err("oversized CompositionTime must be rejected");
     // Bites: before the fix the value was truncated to its low 24 bits and
     // `package` returned `Ok`.
@@ -639,15 +663,15 @@ fn frame_payloads_reject_out_of_range_timestamps() {
         transmux::Media::new(vec![track], broadcast_common::timescale!(1000))
     };
     // Sanity: in-range input is accepted (so the Errs below are the guards).
-    assert!(transmux::flv_frame_payloads(&media_with(0, 0)).is_ok());
+    assert!(first_frame(&media_with(0, 0)).is_ok());
     // 9 000 000 ms composition offset > SI24 (8 388 607).
     assert!(matches!(
-        transmux::flv_frame_payloads(&media_with(0, 9_000_000)),
+        first_frame(&media_with(0, 9_000_000)),
         Err(transmux::FlvError::Codec(transmux::Error::InvalidInput(_)))
     ));
     // DTS 2^32 ms is past the 32-bit millisecond clock.
     assert!(matches!(
-        transmux::flv_frame_payloads(&media_with(1 << 32, 1 << 32)),
+        first_frame(&media_with(1 << 32, 1 << 32)),
         Err(transmux::FlvError::Codec(transmux::Error::InvalidInput(_)))
     ));
 }
@@ -1041,22 +1065,23 @@ fn on_metadata_body_is_the_tag_flv_mux_writes_minus_the_live_duration() {
     let media = FlvDemux::new()
         .unpackage(FLV.as_slice())
         .expect("fixture FLV");
-    let flv = FlvMux::new().package(&media).expect("IR → FLV");
+    let flv = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), &media);
     let header = <rtmp_runtime::flv::FlvHeader as Parse>::parse(&flv).expect("FLV header");
     let script = rtmp_runtime::flv::tags(&flv, &header)
         .map(|tag| tag.expect("FLV tag"))
         .find(|tag| tag.tag_type == rtmp_runtime::flv::TagType::Script)
         .expect("FlvMux writes an onMetaData script tag");
 
-    let file_body = transmux::on_metadata_body(&media, Some(script_duration_seconds(&media)))
-        .expect("file body");
+    let file_body =
+        transmux::on_metadata_body(&specs(&media), Some(script_duration_seconds(&media)))
+            .expect("file body");
     assert_eq!(
         script.body.to_vec(),
         file_body,
         "FlvMux's script tag is the shared onMetaData body"
     );
 
-    let live = transmux::on_metadata_body(&media, None).expect("live body");
+    let live = transmux::on_metadata_body(&specs(&media), None).expect("live body");
     assert_eq!(
         live.len() + script_duration_key_len(),
         script.body.len(),
@@ -1121,7 +1146,7 @@ fn on_metadata_body_carries_the_flv_e5_audio_properties() {
         panic!("the fixture must carry an AAC track");
     };
 
-    let body = transmux::on_metadata_body(&media, None).expect("live body");
+    let body = transmux::on_metadata_body(&specs(&media), None).expect("live body");
     let Amf0Value::String(handler) = Amf0Value::parse(&body).expect("handler name") else {
         panic!("the body must start with a handler name");
     };

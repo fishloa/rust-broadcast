@@ -13,19 +13,21 @@ use crate::sdp_session;
 #[cfg(feature = "std")]
 use broadcast_common::base64::base64_decode_lenient as base64_decode;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Serialize, Unpackage};
-#[cfg(feature = "std")]
-use transmux::RtpOutput;
+use broadcast_common::{Serialize, Unpackage};
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::{
     Media, NAL_TYPE_IDR, RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpPacket,
-    RtpPacketiser, RtpTimingWarning, VIDEO_CLOCK_RATE,
+    RtpPacketiserStage, RtpTimingWarning, VIDEO_CLOCK_RATE,
 };
 
 const MTU: usize = 1400;
 const SSRC: u32 = 0x1234_5678;
 const RTP_HEADER_LEN: usize = 12;
+/// The AAC-hbr payload header: a 16-bit AU-headers-length plus one 2-byte
+/// AU-header (RFC 3640 §3.2.1), which now rides at the head of a datagram's
+/// `payload`.
+const AAC_HBR_HEADER_LEN: usize = 4;
 
 // ── Fixture demux ────────────────────────────────────────────────────────────
 
@@ -36,13 +38,8 @@ fn demux_fixture() -> Media {
     demux.unpackage(&data[..]).expect("demux TS → IR")
 }
 
-fn packetise(media: &Media) -> transmux::RtpOutput {
-    let mut p = RtpPacketiser {
-        mtu: MTU,
-        ssrc: SSRC,
-        ..RtpPacketiser::default()
-    };
-    p.package(media).expect("packetise IR → RTP")
+fn packetise(media: &Media) -> crate::rtp_run::RtpOutput {
+    crate::rtp_run::packetise(media, crate::rtp_run::stage(MTU, SSRC))
 }
 
 fn parse_hdr(pkt: &RtpPacket) -> (u8, u8, bool, u16, u32, u32) {
@@ -75,14 +72,14 @@ fn original_video_nals(media: &Media) -> Vec<Vec<Vec<u8>>> {
         .collect()
 }
 
-fn video_stream(out: &transmux::RtpOutput) -> &transmux::RtpStream {
+fn video_stream(out: &crate::rtp_run::RtpOutput) -> &crate::rtp_run::RtpStream {
     out.streams
         .iter()
         .find(|s| s.kind == RtpMediaKind::H264)
         .unwrap()
 }
 
-fn audio_stream(out: &transmux::RtpOutput) -> &transmux::RtpStream {
+fn audio_stream(out: &crate::rtp_run::RtpOutput) -> &crate::rtp_run::RtpStream {
     out.streams
         .iter()
         .find(|s| s.kind == RtpMediaKind::Aac)
@@ -234,15 +231,17 @@ fn fu_a_fragmentation_happens() {
     let mut fu_ends = 0usize;
     let mut reconstructed_types = Vec::new();
     for pkt in &vs.packets {
-        let hdr = &pkt.header;
-        if hdr.len() <= RTP_HEADER_LEN {
-            continue; // single-NAL packet — no FU indicator
+        // The packet output is one contiguous datagram: the fixed header is
+        // `pkt.header`, and every payload-format byte (the FU indicator and
+        // header here) starts `pkt.payload`.
+        if pkt.payload.is_empty() {
+            continue;
         }
-        let fu_indicator = hdr[RTP_HEADER_LEN];
+        let fu_indicator = pkt.payload[0];
         let nal_type = fu_indicator & 0x1F;
         if nal_type == 28 {
             fu_packets += 1;
-            let fu_header = hdr[RTP_HEADER_LEN + 1];
+            let fu_header = pkt.payload[1];
             let s = fu_header & 0x80 != 0;
             let e = fu_header & 0x40 != 0;
             if s {
@@ -978,18 +977,19 @@ fn aac_hbr_fragments_fill_the_mtu_without_exceeding_it() {
         Media::new(vec![track], media.movie_timescale)
     };
 
-    let mut packetiser = RtpPacketiser {
-        mtu: 100,
-        ssrc: SSRC,
-        ..RtpPacketiser::default()
-    };
-    let out = packetiser.package(&ir_with(500)).expect("packetise");
+    let out = crate::rtp_run::packetise(&ir_with(500), crate::rtp_run::stage(100, SSRC));
     let stream = out
         .streams
         .iter()
         .find(|s| s.kind == RtpMediaKind::Aac)
         .expect("audio stream");
-    let payloads: Vec<usize> = stream.packets.iter().map(|p| p.payload.len()).collect();
+    // Each datagram's payload is the 4-byte AAC-hbr AU-header block
+    // (AU-headers-length + AU-header) followed by one fragment.
+    let payloads: Vec<usize> = stream
+        .packets
+        .iter()
+        .map(|p| p.payload.len() - AAC_HBR_HEADER_LEN)
+        .collect();
     assert_eq!(payloads, vec![84, 84, 84, 84, 84, 80]);
     assert_eq!(
         stream
@@ -1004,12 +1004,7 @@ fn aac_hbr_fragments_fill_the_mtu_without_exceeding_it() {
         assert!(packet.as_contiguous().len() <= 100);
     }
 
-    let mut packetiser = RtpPacketiser {
-        mtu: 17,
-        ssrc: SSRC,
-        ..RtpPacketiser::default()
-    };
-    let out = packetiser.package(&ir_with(3)).expect("packetise");
+    let out = crate::rtp_run::packetise(&ir_with(3), crate::rtp_run::stage(17, SSRC));
     let stream = out
         .streams
         .iter()
@@ -1017,16 +1012,12 @@ fn aac_hbr_fragments_fill_the_mtu_without_exceeding_it() {
         .expect("audio stream");
     assert_eq!(stream.packets.len(), 3);
     for packet in &stream.packets {
-        assert_eq!(packet.payload.len(), 1);
+        assert_eq!(packet.payload.len() - AAC_HBR_HEADER_LEN, 1);
         assert_eq!(packet.as_contiguous().len(), 17);
     }
 
-    let err = RtpPacketiser {
-        mtu: 16,
-        ..RtpPacketiser::default()
-    }
-    .package(&ir_with(1))
-    .expect_err("no room for an AAC-hbr header");
+    let err = crate::rtp_run::packetise_result(&ir_with(1), RtpPacketiserStage::new().with_mtu(16))
+        .expect_err("no room for an AAC-hbr header");
     assert!(
         matches!(err, transmux::Error::InvalidInput(m) if m.contains("MTU too small")),
         "{err:?}"
@@ -1072,12 +1063,12 @@ fn fragmented_aac_access_units_round_trip() {
     };
     let original: Vec<bytes::Bytes> = track.samples.iter().map(|s| s.data.clone()).collect();
 
-    let mut p = RtpPacketiser {
-        mtu: SMALL_MTU,
-        ssrc: SSRC,
-        ..RtpPacketiser::default()
-    };
-    let out = p.package(&media).expect("packetise with fragmentation");
+    let out = crate::rtp_run::packetise(
+        &media,
+        RtpPacketiserStage::new()
+            .with_mtu(SMALL_MTU)
+            .with_ssrc(SSRC),
+    );
     let stream = out
         .streams
         .iter()
@@ -1157,12 +1148,10 @@ fn incomplete_aac_fragments_are_not_emitted_truncated() {
     };
     let first_au = track.samples[0].data.clone();
 
-    let mut p = RtpPacketiser {
-        mtu: 200,
-        ssrc: SSRC,
-        ..RtpPacketiser::default()
-    };
-    let out = p.package(&media).expect("packetise with fragmentation");
+    let out = crate::rtp_run::packetise(
+        &media,
+        RtpPacketiserStage::new().with_mtu(200).with_ssrc(SSRC),
+    );
     let stream = out
         .streams
         .iter()
@@ -1237,9 +1226,22 @@ fn every_stream_gets_a_unique_dynamic_payload_type() {
         .expect("audio track")
         .clone();
 
-    // Three video + two audio tracks: the shape that used to collide.
+    // Three video + two audio tracks: the shape that used to collide. Track
+    // ids are unique in the IR, so each clone gets its own.
+    let mut ids = 1u32;
+    let mut unique = |mut track: transmux::Track| {
+        track.spec.track_id = TrackId::new(ids);
+        ids += 1;
+        track
+    };
     let mut ir = Media::new(
-        vec![video.clone(), video.clone(), video, audio.clone(), audio],
+        vec![
+            unique(video.clone()),
+            unique(video.clone()),
+            unique(video),
+            unique(audio.clone()),
+            unique(audio),
+        ],
         media.movie_timescale,
     );
     ir.pcr = media.pcr.clone();
@@ -1272,7 +1274,7 @@ fn every_stream_gets_a_unique_dynamic_payload_type() {
     assert_eq!(pts[3], transmux::DEFAULT_AUDIO_PT);
 
     // And the generated SDP.as_str() binds each of those types exactly once.
-    let sdp = sdp_session::local_session(out);
+    let sdp = sdp_session::local_session(out.medias);
     for pt in &pts {
         let needle = format!("a=rtpmap:{pt} ");
         assert_eq!(
@@ -1298,7 +1300,7 @@ fn generated_sdp_parses_with_an_independent_parser() {
     let media = demux_fixture();
     let out = packetise(&media);
     let streams = out.streams.len();
-    let sdp = sdp_session::local_session(out);
+    let sdp = sdp_session::local_session(out.medias);
     assert!(
         sdp.contains("c=IN IP4 "),
         "the SDP.as_str() must carry a c= line:
@@ -1364,7 +1366,7 @@ fn generated_sdp_parses_with_an_independent_parser() {
 #[cfg(feature = "std")]
 #[test]
 fn sdp_line_order_follows_rfc8866_section_5() {
-    let sdp = sdp_session::local_session(packetise(&demux_fixture()));
+    let sdp = sdp_session::local_session(packetise(&demux_fixture()).medias);
     let kinds: Vec<char> = sdp
         .split("\r\n")
         .filter(|l| !l.is_empty())
@@ -1654,7 +1656,7 @@ fn connection_address_is_typed_and_emits_the_right_addrtype() {
     let out = packetise(&demux_fixture());
 
     // IPv4: `c=IN IP4 <v4>`, alongside the packetiser's real media sections.
-    let v4 = sdp_session::session(out, IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)));
+    let v4 = sdp_session::session(out.medias, IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)));
     assert!(
         v4.contains("c=IN IP4 203.0.113.7\r\n"),
         "IPv4 must emit addrtype IP4:\n{v4}"
@@ -1662,10 +1664,7 @@ fn connection_address_is_typed_and_emits_the_right_addrtype() {
 
     // IPv6: `c=IN IP6 <v6>`, with no brackets and no TTL (RFC 8866 §5.7).
     let v6 = sdp_session::session(
-        RtpOutput {
-            streams: Vec::new(),
-            medias: Vec::new(),
-        },
+        Vec::new(),
         IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
     );
     assert!(
@@ -1687,13 +1686,7 @@ fn connection_address_is_typed_and_emits_the_right_addrtype() {
     // under the old `&str` API: this is the closest a caller can get to it now,
     // and it yields a plain address (or a parse error), never extra fields.
     if let Ok(injected) = "1.2.3.4\r\nm=video 0 RTP/AVP 96".parse::<IpAddr>() {
-        let sdp = sdp_session::session(
-            RtpOutput {
-                streams: Vec::new(),
-                medias: Vec::new(),
-            },
-            injected,
-        );
+        let sdp = sdp_session::session(Vec::new(), injected);
         assert_eq!(
             sdp.matches("m=").count(),
             0,
@@ -1849,12 +1842,10 @@ fn duplicated_audio_fragment_is_not_emitted_as_an_oversized_au() {
     let original: Vec<Vec<u8>> = track.samples.iter().map(|s| s.data.to_vec()).collect();
 
     // Fragmented, since only then can a duplicate land inside a run.
-    let mut p = RtpPacketiser {
-        mtu: 200,
-        ssrc: SSRC,
-        ..RtpPacketiser::default()
-    };
-    let out = p.package(&media).expect("packetise with fragmentation");
+    let out = crate::rtp_run::packetise(
+        &media,
+        RtpPacketiserStage::new().with_mtu(200).with_ssrc(SSRC),
+    );
     let stream = out
         .streams
         .iter()
@@ -1921,12 +1912,10 @@ fn missing_audio_fragment_drops_the_whole_au() {
     };
     let original: Vec<Vec<u8>> = track.samples.iter().map(|s| s.data.to_vec()).collect();
 
-    let mut p = RtpPacketiser {
-        mtu: 200,
-        ssrc: SSRC,
-        ..RtpPacketiser::default()
-    };
-    let out = p.package(&media).expect("packetise with fragmentation");
+    let out = crate::rtp_run::packetise(
+        &media,
+        RtpPacketiserStage::new().with_mtu(200).with_ssrc(SSRC),
+    );
     let stream = out
         .streams
         .iter()
@@ -2014,14 +2003,7 @@ fn reordered_video_and_audio_share_one_epoch() {
     let audio_media = ademux
         .unpackage(AUDIO_TS.as_slice())
         .expect("demux aac-5-1-640k.ts");
-    let aout = {
-        let mut p = RtpPacketiser {
-            mtu: MTU,
-            ssrc: SSRC,
-            ..RtpPacketiser::default()
-        };
-        p.package(&audio_media).expect("packetise the audio")
-    };
+    let aout = crate::rtp_run::packetise(&audio_media, crate::rtp_run::stage(MTU, SSRC));
     let audio_config = audio_media
         .tracks
         .iter()
@@ -2534,7 +2516,7 @@ fn gap_before_an_fu_a_start_loses_only_the_runs_au() {
 #[test]
 fn sdp_matches_demuxed_config() {
     let media = demux_fixture();
-    let sdp = sdp_session::local_session(packetise(&media));
+    let sdp = sdp_session::local_session(packetise(&media).medias);
     let sdp = &sdp;
 
     assert!(sdp.contains("m=video"), "SDP.as_str() has m=video");

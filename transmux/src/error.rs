@@ -222,7 +222,7 @@ pub enum Error {
     },
 
     /// A [`CodecConfig`](crate::pipeline::CodecConfig) has no Matroska CodecID
-    /// mapping in [`MkvMux`](crate::mkv_mux::MkvMux) (e.g. `Vvc`/`Flac`/`Ac4`/
+    /// mapping in [`MkvMuxStage`](crate::mkv_mux::MkvMuxStage) (e.g. `Vvc`/`Flac`/`Ac4`/
     /// `MpegH`/`Mpeg2Video`/`MpegAudio`/`Dts`/`Subtitle`/`Data` — see that
     /// module's docs for the mapped set). Distinct from [`Error::UnsupportedCodec`]
     /// (that variant's message names the ISOBMFF/fMP4 carriage this variant is
