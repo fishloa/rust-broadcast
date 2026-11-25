@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `payload`: a caller-owned `PayloadRegistry` holds object-safe `PayloadDecoder`s and renders one opaque data-track sample as named `PayloadValue`s (`PayloadScalar` is text, signed/unsigned integer, float, bytes, a POSIX-epoch-microsecond timestamp or a boolean). Each plug-in is a cargo feature; `St0601Decoder` (feature `motion-imagery-metadata`) claims a data track whose sample starts with the MISB ST 0601 Universal Label and returns its items as `tag_<n>` values plus `checksum_valid`, the tag-1 running-sum check reported as a value rather than as a decode error.
+
 ### Breaking
 - `ProgressiveMux` and its `Package` impl are deleted. The replacement is
   `progressive::ProgressiveMuxStage`, a `Stage` over `MuxInput`/`MuxOutput`

@@ -78,6 +78,11 @@
 //!   [`DemuxEvent::DisplayChanged`] carrying the [`DisplayChangeSet`] that
 //!   names what changed (design: `docs/display-geometry/DESIGN.md`; tables:
 //!   `private/specs-verified/mpeg/transmux/codec/vui-colour-tables.md`).
+//! - **Payload plug-ins:** a caller-owned [`payload::PayloadRegistry`] of
+//!   object-safe [`payload::PayloadDecoder`]s turns one opaque data-track
+//!   sample into named values (a decoding crate registers itself; each plug-in
+//!   is a cargo feature). [`payload::St0601Decoder`] decodes a MISB ST 0601
+//!   UAS Datalink Local Set under `motion-imagery-metadata`.
 //! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
 //! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /
@@ -197,6 +202,7 @@ pub mod mpeg_legacy;
 pub mod mux_stage;
 pub mod nal;
 pub mod nalu_ext;
+pub mod payload;
 pub mod pipeline;
 pub mod plan_pass;
 pub mod progressive;
