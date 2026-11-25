@@ -75,6 +75,7 @@
 
 use crate::TrackId;
 use crate::units::ROUNDING_DIVISOR;
+use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::string::String;
@@ -88,7 +89,7 @@ use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 
 use crate::error::{Error, Result};
 use crate::media::Track;
-use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary};
+use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary, TrackPart};
 use crate::nal::{NalCodec, access_unit_is_idr};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::segment_cut::SegmentCutPolicy;
@@ -1055,9 +1056,23 @@ impl StreamingTsHlsSegmenter {
 
         // Drop the flushed prefix of each track's pending buffer and advance
         // its base_decode past it.
+        let mut parts = Vec::with_capacity(self.tracks.len());
         for (t, &n) in self.tracks.iter_mut().zip(&split_at) {
             let clock = &mut t.flush_clock;
             let dur: u64 = t.pending[..n].iter().map(|s| clock.tick(s)).sum();
+            if n > 0 {
+                parts.push(TrackPart {
+                    track: t.spec.track_id,
+                    start: t.base_decode,
+                    duration: dur,
+                    timescale: t.spec.timescale.get(),
+                    bytes: t.pending[..n]
+                        .iter()
+                        .map(|s| u64::try_from(s.data.len()).unwrap_or(u64::MAX))
+                        .sum(),
+                    samples: u32::try_from(n).unwrap_or(u32::MAX),
+                });
+            }
             t.base_decode += dur;
             t.pending.drain(..n);
         }
@@ -1092,10 +1107,12 @@ impl StreamingTsHlsSegmenter {
             independent: true,
             discontinuous,
         };
-        self.ready.push_back(MuxOutput::Segment(SegmentOut {
-            bytes: bytes.into(),
-            summary,
-        }));
+        self.ready
+            .push_back(MuxOutput::Segment(Box::new(SegmentOut {
+                bytes: bytes.into(),
+                summary,
+                tracks: parts,
+            })));
         Ok(())
     }
 }
@@ -1167,7 +1184,7 @@ mod tests {
         let mut out = Vec::new();
         while let Some(item) = Stage::poll(seg) {
             if let MuxOutput::Segment(segment) = item {
-                out.push(segment);
+                out.push(*segment);
             }
         }
         out

@@ -55,7 +55,7 @@ pub enum MuxOutput {
     /// An initialisation segment.
     Init(Bytes),
     /// One finished media segment and its summary.
-    Segment(SegmentOut),
+    Segment(Box<SegmentOut>),
     /// A rendered playlist or manifest.
     Text(String),
 }
@@ -65,8 +65,33 @@ pub enum MuxOutput {
 pub struct SegmentOut {
     /// The segment's bytes.
     pub bytes: Bytes,
-    /// What a manifest needs to describe it.
+    /// What a manifest needs to describe the segment as a whole.
     pub summary: SegmentSummary,
+    /// One entry per track the segment carries, in the segment's track order:
+    /// what a per-representation manifest needs (its own start, duration, byte
+    /// count and sample count), which the segment-level summary cannot express.
+    pub tracks: Vec<TrackPart>,
+}
+
+/// One track's share of a segment: the per-representation view a DASH or Smooth
+/// manifest describes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrackPart {
+    /// The track this part belongs to.
+    pub track: TrackId,
+    /// Decode time of this track's first sample in the segment, in
+    /// [`Self::timescale`] ticks.
+    pub start: u64,
+    /// This track's duration in the segment, in [`Self::timescale`] ticks.
+    pub duration: u64,
+    /// Ticks per second of [`Self::start`] and [`Self::duration`].
+    pub timescale: u32,
+    /// This track's bytes in the segment: its own fragment bytes where the
+    /// container separates tracks, its coded sample bytes where it multiplexes
+    /// them (an MPEG-2 TS segment).
+    pub bytes: u64,
+    /// The samples this track contributed to the segment.
+    pub samples: u32,
 }
 
 /// What a manifest needs to know about one segment, without its samples.

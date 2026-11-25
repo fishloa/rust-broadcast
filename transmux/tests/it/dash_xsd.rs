@@ -1,6 +1,5 @@
 #![cfg(feature = "std")]
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use std::collections::HashSet;
 use std::fs;
@@ -128,9 +127,9 @@ fn dash_mpds_validate_against_iso_schema() {
             },
         ),
     ];
-    for (name, mut pkg) in variants {
-        let mpd = pkg
-            .package(&media)
+    for (name, pkg) in variants {
+        let log = crate::packagers::log(&media);
+        let mpd = crate::packagers::dash_with(&pkg, &media, &log)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         validate(&schema, &format!("dash-{name}"), &mpd);
     }
@@ -159,14 +158,14 @@ fn dash_mpds_validate_against_iso_schema() {
     );
     timeline.base.addressing = Addressing::Timeline;
     timeline.base.segments = timeline_segments(&media);
-    for (name, mut pkg) in [
+    for (name, pkg) in [
         ("plain", plain),
         ("rate", rate),
         ("utc", utc),
         ("timeline", timeline),
     ] {
-        let mpd = pkg
-            .package(&media)
+        let log = crate::packagers::log(&media);
+        let mpd = crate::packagers::ll_dash_with(&pkg, &media, &log)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         validate(&schema, &format!("lldash-{name}"), &mpd);
     }
@@ -199,7 +198,7 @@ fn adaptation_set_ids(mpd: &str) -> Vec<String> {
 #[test]
 fn adaptation_set_ids_are_unsigned_integers_and_unique() {
     let media = media();
-    let mpd = DashPackager::default().package(&media).unwrap();
+    let mpd = crate::packagers::dash(&DashPackager::default(), &media).unwrap();
     let ids = adaptation_set_ids(&mpd);
     assert!(!ids.is_empty());
     let mut seen = HashSet::new();
@@ -215,7 +214,7 @@ fn adaptation_set_ids_are_unsigned_integers_and_unique() {
 #[test]
 fn trick_mode_supplemental_property_references_existing_set() {
     let media = media();
-    let mut pkg = DashPackager {
+    let pkg = DashPackager {
         trick_mode: Some(TrickModeAdaptationSet {
             id: 7,
             main_adaptation_set_id: 0,
@@ -232,7 +231,7 @@ fn trick_mode_supplemental_property_references_existing_set() {
         }),
         ..DashPackager::default()
     };
-    let mpd = pkg.package(&media).unwrap();
+    let mpd = crate::packagers::dash(&pkg, &media).unwrap();
 
     let mut reader = Reader::from_str(&mpd);
     let mut trick_id: Option<String> = None;
@@ -278,7 +277,7 @@ fn trick_mode_supplemental_property_references_existing_set() {
 #[test]
 fn trick_mode_distinct_values() {
     let media = four_audio_media();
-    let mut pkg = DashPackager {
+    let pkg = DashPackager {
         trick_mode: Some(TrickModeAdaptationSet {
             id: 7,
             main_adaptation_set_id: 3,
@@ -295,7 +294,7 @@ fn trick_mode_distinct_values() {
         }),
         ..DashPackager::default()
     };
-    let mpd = pkg.package(&media).unwrap();
+    let mpd = crate::packagers::dash(&pkg, &media).unwrap();
 
     let mut reader = Reader::from_str(&mpd);
     let mut trick_id: Option<String> = None;
@@ -339,7 +338,7 @@ fn trick_mode_distinct_values() {
 #[test]
 fn trick_mode_dangling_reference_errors() {
     let media = media();
-    let mut pkg = DashPackager {
+    let pkg = DashPackager {
         trick_mode: Some(TrickModeAdaptationSet {
             id: 7,
             main_adaptation_set_id: 999,
@@ -356,7 +355,7 @@ fn trick_mode_dangling_reference_errors() {
         }),
         ..DashPackager::default()
     };
-    let err = pkg.package(&media).unwrap_err();
+    let err = crate::packagers::dash(&pkg, &media).unwrap_err();
     assert!(
         matches!(
             err,

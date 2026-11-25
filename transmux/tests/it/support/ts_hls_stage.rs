@@ -21,7 +21,7 @@ pub fn drain(seg: &mut StreamingTsHlsSegmenter) -> Vec<SegmentOut> {
     let mut out = Vec::new();
     while let Some(item) = Stage::poll(seg) {
         if let MuxOutput::Segment(segment) = item {
-            out.push(segment);
+            out.push(*segment);
         }
     }
     out

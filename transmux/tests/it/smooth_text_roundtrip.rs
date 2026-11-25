@@ -3,7 +3,6 @@
 //! parser must read back (real artifact: ffmpeg CMAF `av-subtitle-frag.mp4`,
 //! AVC + `stpp`/TTML).
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use broadcast_smooth::{SmoothManifest, StreamType};
 use transmux::SmoothPackager;
@@ -20,9 +19,12 @@ fn packager_text_stream_parses_back() {
     let media =
         test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
             .expect("demux fixture");
-    let out = SmoothPackager::default().package(&media).expect("smooth");
+    let (_log, segments) =
+        crate::packagers::smooth_parts(&media, core::time::Duration::from_secs(2))
+            .expect("smooth fragments");
+    let manifest = crate::packagers::smooth(&SmoothPackager, &media).expect("smooth");
 
-    let parsed = SmoothManifest::parse(&out.manifest).expect("parse the packager's own manifest");
+    let parsed = SmoothManifest::parse(&manifest).expect("parse the packager's own manifest");
     let text = parsed
         .streams
         .iter()
@@ -36,10 +38,9 @@ fn packager_text_stream_parses_back() {
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Subtitle { .. }))
         .unwrap();
-    let frags = out
-        .fragments
+    let frags = segments
         .iter()
-        .filter(|f| f.track_id == sub.spec.track_id)
+        .filter(|f| f.summary.track == sub.spec.track_id)
         .count();
     assert_eq!(text.chunks_list.len(), frags, "one <c> per text fragment");
     // ...and the text level resolves to a muxable subtitle TrackSpec.

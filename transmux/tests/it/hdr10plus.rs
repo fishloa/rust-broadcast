@@ -12,7 +12,7 @@ use crate::bit_writer::BitWriter;
 use crate::ts_hls_stage;
 use crate::ts_mux_stage;
 use broadcast_common::error::InvalidValue;
-use broadcast_common::mux::{Package, Unpackage};
+use broadcast_common::mux::Unpackage;
 use broadcast_common::{Parse, Serialize};
 use transmux::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
 use transmux::ir::{CodecConfig, Media};
@@ -746,7 +746,7 @@ fn mpd(media: &Media, profiles: Option<&str>) -> String {
     if let Some(p) = profiles {
         packager.profiles = p.to_string();
     }
-    packager.package(media).expect("dash")
+    crate::packagers::dash(&packager, media).expect("dash")
 }
 
 #[test]

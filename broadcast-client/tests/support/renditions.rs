@@ -126,7 +126,7 @@ fn drain_segments(seg: &mut StreamingTsHlsSegmenter) -> Vec<transmux::mux_stage:
     let mut out = Vec::new();
     while let Some(item) = Stage::poll(seg) {
         if let transmux::mux_stage::MuxOutput::Segment(segment) = item {
-            out.push(segment);
+            out.push(*segment);
         }
     }
     out

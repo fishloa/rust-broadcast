@@ -543,7 +543,7 @@ fn ts_segments(
     let mut out = Vec::new();
     while let Some(item) = broadcast_common::Stage::poll(seg) {
         if let transmux::mux_stage::MuxOutput::Segment(segment) = item {
-            out.push(segment);
+            out.push(*segment);
         }
     }
     out

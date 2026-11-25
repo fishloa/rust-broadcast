@@ -38,24 +38,24 @@ fn a_packaged_fragment_reports_its_track_id_tfxd_and_clear_state() {
     let media = media();
     for track in &media.tracks {
         let start = 12_345_678_000;
-        let fragment = SmoothPackager::default()
+        let fragment = SmoothPackager
             .package_track_fragment(track, 7, start)
             .expect("package one fragment");
-        assert_eq!(fragment.track_id, track.spec.track_id);
-        assert_eq!(fragment.sequence_number, 7);
-        assert_eq!(fragment.start_time, start);
-        assert!(fragment.duration > 0);
+        assert_eq!(fragment.summary.track, track.spec.track_id);
+        assert_eq!(fragment.summary.sequence as u32, 7);
+        assert_eq!(fragment.summary.start, start);
+        assert!(fragment.summary.duration > 0);
 
         assert_eq!(
-            fragment_track_id(&fragment.data).unwrap(),
+            fragment_track_id(&fragment.bytes).unwrap(),
             track.spec.track_id
         );
-        let tfxd = fragment_tfxd(&fragment.data).expect("tfxd in the fragment");
+        let tfxd = fragment_tfxd(&fragment.bytes).expect("tfxd in the fragment");
         assert_eq!(tfxd.fragment_absolute_time, start);
-        assert_eq!(tfxd.fragment_duration, fragment.duration);
-        assert_eq!(fragment_state(&fragment.data), FragmentState::Clear);
+        assert_eq!(tfxd.fragment_duration, fragment.summary.duration);
+        assert_eq!(fragment_state(&fragment.bytes), FragmentState::Clear);
         assert_eq!(
-            fragment_state(&fragment.data[..fragment.data.len() - 3]),
+            fragment_state(&fragment.bytes[..fragment.bytes.len() - 3]),
             FragmentState::Undetermined,
             "a truncated mdat after a moof cannot be proven clear"
         );
@@ -65,13 +65,13 @@ fn a_packaged_fragment_reports_its_track_id_tfxd_and_clear_state() {
 #[test]
 fn package_track_fragment_duration_is_the_sum_of_the_sample_durations() {
     let media = media();
-    let packager = SmoothPackager::default();
+    let packager = SmoothPackager;
     let track: &Track = &media.tracks[0];
     let whole = packager.package_track_fragment(track, 1, 0).unwrap();
     let mut half = track.clone();
     half.samples.truncate(track.samples.len() / 2);
     let half = packager.package_track_fragment(&half, 1, 0).unwrap();
-    assert!(half.duration > 0 && half.duration < whole.duration);
+    assert!(half.summary.duration > 0 && half.summary.duration < whole.summary.duration);
     let mut empty = track.clone();
     empty.samples.clear();
     assert!(matches!(

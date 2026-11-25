@@ -352,6 +352,36 @@ pub fn append_iframe_track(media: &mut Media, index: usize) -> Result<(), transm
     Ok(())
 }
 
+/// A summary log for a whole [`Media`] as one segment per track: the bridge
+/// for a caller that still holds the samples.
+pub fn segment_log(media: &transmux::Media) -> transmux::segment_log::SegmentSummaryLog {
+    let mut log = transmux::segment_log::SegmentSummaryLog::new();
+    for track in &media.tracks {
+        let duration: u64 = track
+            .samples
+            .iter()
+            .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
+            .sum();
+        let bytes: u64 = track.samples.iter().map(|s| s.data.len() as u64).sum();
+        if track.samples.is_empty() {
+            continue;
+        }
+        log.push_part(
+            &transmux::mux_stage::TrackPart {
+                track: track.spec.track_id,
+                start: 0,
+                duration,
+                timescale: track.spec.timescale.get(),
+                bytes,
+                samples: u32::try_from(track.samples.len()).unwrap_or(u32::MAX),
+            },
+            track.samples.first().is_some_and(|s| s.flags.is_sync),
+        )
+        .expect("one part per track");
+    }
+    log
+}
+
 /// The track-selection helpers [`Media`] used to carry, as a test-only
 /// extension so existing tests keep their method-call shape while the
 /// production functions live in `transmux::repackage`.

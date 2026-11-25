@@ -16,7 +16,7 @@ use test_fixtures::process::tool_available;
 use transmux::TrackId;
 
 use crate::ts_mux_stage;
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::ts_demux::TsDemux;
@@ -454,8 +454,10 @@ fn trun_first_cto(trun: &[u8]) -> i64 {
 #[test]
 fn smooth_trun_durations_are_in_manifest_timescale() {
     let media = input_media();
-    let out = SmoothPackager::default().package(&media).expect("smooth");
-    assert!(out.manifest.contains("TimeScale=\"10000000\""));
+    let (_, segments) = crate::packagers::smooth_parts(&media, core::time::Duration::from_secs(2))
+        .expect("smooth fragments");
+    let manifest = crate::packagers::smooth(&SmoothPackager, &media).expect("smooth");
+    assert!(manifest.contains("TimeScale=\"10000000\""));
     let video_id = media
         .tracks
         .iter()
@@ -466,17 +468,17 @@ fn smooth_trun_durations_are_in_manifest_timescale() {
 
     let mut totals = std::collections::HashMap::<TrackId, i64>::new();
     let mut first_t = std::collections::HashMap::<TrackId, (i64, i64)>::new();
-    for f in &out.fragments {
-        let moof = child(&f.data, b"moof").expect("moof");
+    for f in &segments {
+        let moof = child(&f.bytes, b"moof").expect("moof");
         let traf = child(moof, b"traf").expect("traf");
         let samples = trun_samples(child(traf, b"trun").expect("trun"));
         let sum: i64 = samples.iter().map(|s| s.0 as i64).sum();
         assert_eq!(
-            sum, f.duration as i64,
+            sum, f.summary.duration as i64,
             "track {} fragment {}: trun durations {sum} != manifest c@d {}",
-            f.track_id, f.sequence_number, f.duration
+            f.summary.track, f.summary.sequence, f.summary.duration
         );
-        if f.track_id == video_id {
+        if f.summary.track == video_id {
             // ffprobe: every video packet lasts 3600/90000 s = 400000 @ 10 MHz.
             for s in &samples {
                 assert_eq!(
@@ -486,10 +488,10 @@ fn smooth_trun_durations_are_in_manifest_timescale() {
                 );
             }
         }
-        *totals.entry(f.track_id).or_default() += sum;
+        *totals.entry(f.summary.track).or_default() += sum;
         first_t
-            .entry(f.track_id)
-            .or_insert((f.start_time as i64, samples[0].1));
+            .entry(f.summary.track)
+            .or_insert((f.summary.start as i64, samples[0].1));
     }
     let hz = SMOOTH_HZ as f64;
     for t in &media.tracks {

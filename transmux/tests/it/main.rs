@@ -125,6 +125,9 @@ mod mpegh_ts;
 mod mux_bytes;
 mod nal_keyframe;
 mod opengop_anchor;
+#[cfg(feature = "std")]
+#[path = "support/packagers.rs"]
+mod packagers;
 mod paff_pairing;
 #[cfg(feature = "motion-imagery-metadata")]
 mod payload_plugins;
@@ -172,6 +175,8 @@ mod sample_table_digest;
 mod sdp_session;
 mod segment_cut_policy;
 mod segment_emsg;
+#[cfg(feature = "std")]
+mod segment_log;
 mod segmenter;
 mod segmenter_progress_bounds;
 #[path = "support/segmenter_stage.rs"]

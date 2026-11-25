@@ -538,7 +538,7 @@ impl AnySegmenter {
                 let mut out = Vec::new();
                 while let Some(item) = broadcast_common::Stage::poll(seg) {
                     if let transmux::mux_stage::MuxOutput::Segment(segment) = item {
-                        out.push(ReadySegment::from(segment));
+                        out.push(ReadySegment::from(*segment));
                     }
                 }
                 out
@@ -1780,7 +1780,7 @@ impl ProgramSegmenter {
                                 let mut segments: Vec<ReadySegment> = Vec::new();
                                 while let Some(item) = broadcast_common::Stage::poll(&mut old) {
                                     if let transmux::mux_stage::MuxOutput::Segment(segment) = item {
-                                        segments.push(ReadySegment::from(segment));
+                                        segments.push(ReadySegment::from(*segment));
                                     }
                                 }
                                 self.publish_in_stream_order(Vec::new(), segments);

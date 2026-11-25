@@ -47,11 +47,6 @@ const FIRST_STREAM_ORDINAL: usize = 1;
 /// fragment only once its segment has closed, so it never runs ahead of the
 /// manifest it advertises.
 const LOOK_AHEAD_FRAGMENT_COUNT: u32 = 0;
-/// Target fragment duration above which a live segment is never cut: set far
-/// above any real segment so one `Trunk` segment maps to exactly one Smooth
-/// fragment. Whole seconds because [`SmoothPackager::target_duration_secs`] is
-/// an integer.
-const SINGLE_SEGMENT_FRAGMENT_TARGET: std::time::Duration = std::time::Duration::from_secs(3600);
 /// Bits per second floor of the advertised `Bitrate` for an AAC track.
 const MIN_AUDIO_BITRATE: u64 = 64_000;
 /// Bits per second ceiling of the advertised `Bitrate` for an AAC track (320
@@ -762,9 +757,7 @@ fn chunk_timeline(
     spec: &TrackSpec,
     key: StreamKey,
 ) -> Result<Vec<ChunkTiming>, SmoothOriginError> {
-    let packager = SmoothPackager {
-        target_duration: SINGLE_SEGMENT_FRAGMENT_TARGET,
-    };
+    let packager = SmoothPackager;
     let mut demux = SegmentDemux::new(init).map_err(|error| SmoothOriginError::Codec {
         track: spec.track_id.value(),
         reason: error.to_string(),
@@ -798,7 +791,7 @@ fn chunk_timeline(
         let Ok(fragment) = packager.package_track_fragment(track, sequence_number, start) else {
             continue;
         };
-        let duration = fragment.duration;
+        let duration = fragment.summary.duration;
         chunks.push(ChunkTiming {
             sequence: *sequence,
             start,
@@ -990,15 +983,13 @@ fn package_fragment(
         track: stream.interleaved_ordinal,
         reason: "the segment does not carry the requested stream".to_string(),
     })?;
-    let fragment = SmoothPackager {
-        target_duration: SINGLE_SEGMENT_FRAGMENT_TARGET,
-    }
-    .package_track_fragment(track, chunk.sequence.value(), chunk.start)
-    .map_err(|error| SmoothOriginError::Codec {
-        track: stream.interleaved_ordinal,
-        reason: error.to_string(),
-    })?;
-    Ok(Bytes::from(fragment.data))
+    let fragment = SmoothPackager
+        .package_track_fragment(track, chunk.sequence.value(), chunk.start)
+        .map_err(|error| SmoothOriginError::Codec {
+            track: stream.interleaved_ordinal,
+            reason: error.to_string(),
+        })?;
+    Ok(fragment.bytes)
 }
 
 impl SmoothRequest {

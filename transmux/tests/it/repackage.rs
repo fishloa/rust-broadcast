@@ -794,3 +794,46 @@ fn trim_with_no_leading_sync_sample() {
     assert_eq!(kept.len(), 3, "pts 0, 3000, 6000");
     assert_eq!(kept[0].data, vec![0x40u8; 4], "kept starts at index 0");
 }
+
+/// A streaming input has no timeline origin to place a window on, so `run`
+/// refuses a window with the typed error instead of guessing.
+#[test]
+fn run_with_a_window_returns_needs_whole_input() {
+    let err = Repackage::new(Duration::from_secs(1))
+        .trim(0, 90_000)
+        .run(&[])
+        .expect_err("a streaming window must be refused");
+    assert!(
+        matches!(err, transmux::error::Error::RepackageWindowNeedsWholeInput),
+        "run with a window returns RepackageWindowNeedsWholeInput, got {err:?}"
+    );
+}
+
+/// Without a window the streaming `run` and the whole-input `run_media` are the
+/// same repackaging: both drive the same segmenter over the same demuxed
+/// samples, so the CMAF they emit is byte-identical.
+#[test]
+fn run_and_run_media_without_a_window_are_byte_identical() {
+    let ir = oracle_ir();
+    let source = Repackage::new(Duration::from_secs(2))
+        .run_media(&ir)
+        .expect("build the source CMAF")
+        .to_contiguous();
+    let whole = test_harness::collect::media_from_mp4(
+        &source,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("re-demux the source CMAF");
+
+    let streaming = Repackage::new(Duration::from_secs(1))
+        .run(&source)
+        .expect("streaming repackage");
+    let from_media = Repackage::new(Duration::from_secs(1))
+        .run_media(&whole)
+        .expect("whole-media repackage");
+    assert_eq!(
+        streaming.to_contiguous(),
+        from_media.to_contiguous(),
+        "run (streaming) and run_media (whole input) agree byte for byte"
+    );
+}

@@ -6,8 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
 ### Changed
 
+- The origin packages a fragment through `SmoothPackager::package_track_fragment`
+  (now returning a `SegmentOut`) and no longer carries a fragment target
+  duration: the packager renders manifests only.
 - The client demuxes each fragment on the stream's own `transmux::mp4_demux::Mp4Demux` stage, fed the synthetic init segment once, instead of building `init ++ fragment` and running the whole-input `Fmp4Demux` over it for every fragment: the init is parsed once per stream (a new one only on a quality switch), and a damaged fragment costs only itself (`Dropped::Fragment`) because the stage is rebuilt from the same init and the next fragment demuxes normally. `tfxd` rebasing and the encrypted-fragment probe are unchanged, and so are the samples delivered (`Output::Sample`).
 - The origin demuxes the window's segments on one stage per stream too, both when it renders the chunk timeline and when it packages a requested fragment.
 

@@ -1,10 +1,11 @@
 //! Microsoft Smooth Streaming (ISM/PIFF) output — [MS-SSTR].
 //!
 //! The Smooth-Streaming sibling of [`crate::dash::DashPackager`] and
-//! [`crate::media::HlsPackager`]: [`SmoothPackager`] renders a [`Media`] as a
-//! Smooth **client Manifest** (XML) plus a set of Smooth **fragment** responses,
-//! each a fragmented-MP4 `moof`+`mdat` carrying the Smooth-specific `tfxd`
-//! `uuid` box.
+//! [`crate::media::HlsPackager`]: [`SmoothSegmenter`] cuts a track stream into
+//! Smooth **fragment** responses, each a fragmented-MP4 `moof`+`mdat` carrying
+//! the Smooth-specific `tfxd` `uuid` box, and [`SmoothPackager`] renders the
+//! Smooth **client Manifest** (XML) from the segment summaries those fragments
+//! reported — it never sees a sample.
 //!
 //! # Structure ([MS-SSTR]; see `private/specs-verified/mpeg/transmux/smooth/ms-sstr.md`)
 //!
@@ -22,9 +23,10 @@
 //! - **`tfrf`** look-ahead (§2.2.4.5) is live-only; omitted for VOD output.
 //!
 //! The standard `mfhd`/`tfhd`/`trun`/`mdat` boxes are the same fMP4 framing
-//! (ISO/IEC 14496-12:2026 §8.8) the crate already builds; this module reuses
-//! [`crate::segmenter::Segmenter`] for keyframe-aligned segmentation and injects
-//! the `tfxd` `uuid` box into each fragment's `traf`.
+//! (ISO/IEC 14496-12:2026 §8.8) the crate already builds; [`SmoothSegmenter`]
+//! cuts each track keyframe-aligned (the [`crate::segmenter::Segmenter`] cut
+//! rule applied per track, MS-SSTR fragments being per-stream) and injects the
+//! `tfxd` `uuid` box into each fragment's `traf`.
 //!
 //! FourCC / `CodecPrivateData` (§2.2.2.5):
 //! - Video `FourCC="H264"`: `CodecPrivateData` = the hex of SPS+PPS as
@@ -45,13 +47,16 @@ use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
 use broadcast_common::len::{need_in, need_out};
 
-use broadcast_common::timescale::{Rounding, rescale_i64, rescale_u64};
-use broadcast_common::{Parse, Serialize};
+use broadcast_common::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
+use broadcast_common::{Demand, Parse, Serialize, Stage, Timestamp};
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::error::{Error, Result};
-use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
-use crate::pipeline::{CodecConfig, Sample};
+use crate::ir::{Sample, Track, TrackSpec};
+use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary};
+use crate::pipeline::CodecConfig;
+use crate::segment_log::{SegmentSummaryLog, TrackSummary};
+use crate::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use broadcast_common::wire::{be_u32, be_u64};
 use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex};
 use isobmff::box_types::{
@@ -109,8 +114,6 @@ const AAC_BITS_PER_SAMPLE: u16 = 16;
 /// Annex B start code prefixing each parameter-set NAL in `CodecPrivateData`.
 const START_CODE: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
 
-/// Default target fragment duration, in whole seconds.
-const DEFAULT_TARGET_SECS: u64 = 2;
 /// Length of one `tfxd` 64-bit time field.
 const TFXD_TIME_LEN: usize = core::mem::size_of::<u64>();
 
@@ -224,50 +227,14 @@ impl Serialize for TfxdBox {
 // SmoothPackager
 // ---------------------------------------------------------------------------
 
-/// One Smooth fragment: its packaged `moof`+`mdat` bytes plus the timing needed
-/// for the manifest `c` element.
-#[derive(Debug, Clone)]
-pub struct SmoothFragment {
-    /// Track ID this fragment belongs to.
-    pub track_id: TrackId,
-    /// `mfhd.sequence_number` (1-based, monotonically increasing).
-    pub sequence_number: u32,
-    /// Fragment start time, in [`SMOOTH_TIMESCALE`] ticks (the `c@t` on the first).
-    pub start_time: u64,
-    /// Fragment duration, in [`SMOOTH_TIMESCALE`] ticks (the `c@d`).
-    pub duration: u64,
-    /// The self-contained fragment bytes: `styp` + `moof`(+`tfxd`) + `mdat`.
-    pub data: Vec<u8>,
-}
-
-/// The Smooth Streaming output: the client Manifest plus every fragment.
-#[derive(Debug, Clone)]
-pub struct SmoothOutput {
-    /// The Smooth client Manifest XML.
-    pub manifest: String,
-    /// Every Smooth fragment, in emission order (grouped per track).
-    pub fragments: Vec<SmoothFragment>,
-}
-
-/// Render a [`Media`] as Microsoft Smooth Streaming ([MS-SSTR]).
+/// Render a Microsoft Smooth Streaming client Manifest ([MS-SSTR] §2.2.2).
 ///
-/// Segments each track keyframe-aligned (via [`crate::segmenter::Segmenter`]),
-/// emits one Smooth fragment (`moof`+`tfxd`+`mdat`) per segment, and builds a
-/// client Manifest whose `c` timeline mirrors the emitted fragments. VOD only
-/// (no live `tfrf` look-ahead).
-#[derive(Debug, Clone)]
-pub struct SmoothPackager {
-    /// Target fragment duration (keyframe-aligned cut target).
-    pub target_duration: core::time::Duration,
-}
-
-impl Default for SmoothPackager {
-    fn default() -> Self {
-        Self {
-            target_duration: core::time::Duration::from_secs(DEFAULT_TARGET_SECS),
-        }
-    }
-}
+/// The manifest never sees a sample: `tracks` is the stream set and `log` the
+/// [`SegmentSummary`]s [`SmoothSegmenter`] emitted for it, one `c` element per
+/// fragment, `Bitrate` from the coded bytes over the fragment durations. VOD
+/// only (no live `tfrf` look-ahead).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SmoothPackager;
 
 /// Per-track presentation parameters resolved for the manifest.
 struct StreamInfo {
@@ -298,73 +265,118 @@ struct FragmentTiming {
 }
 
 impl SmoothPackager {
-    /// Convert a tick count in the track's media timescale to
-    /// [`SMOOTH_TIMESCALE`] ticks with integer round-to-nearest (`no_std`-safe).
-    fn to_smooth_ticks(ticks: u64, media_timescale: broadcast_common::timescale::Timescale) -> u64 {
-        to_smooth_ticks(ticks, media_timescale)
-    }
-
-    /// Segment one track into Smooth fragments and resolve its manifest info.
+    /// Build one Smooth fragment for a single track at an explicit
+    /// smooth-timeline start (issue #1083, W13) — the live-origin path, which
+    /// already knows the window's fragment boundaries.
     ///
-    /// Cuts the track keyframe-aligned into fragments; for each, builds the
-    /// `moof`+`tfxd`+`mdat` bytes and records the `c` timing. Every time and
-    /// duration — `c@t`/`c@d`, `tfxd`, and the `trun` sample durations and
-    /// composition offsets — is in [`SMOOTH_TIMESCALE`]: a client builds the
-    /// track's timescale from the manifest (Smooth has no init segment), so
-    /// media-timescale `trun` values would play 111x/208x too short (issue
-    /// #1022). Times are the samples' own decode times on the `origin` common
-    /// to every track, so inter-track offsets survive.
-    fn build_track(
+    /// Unlike [`SmoothSegmenter`], this does not segment the track or derive
+    /// the start from the track's own decode times: it emits the whole track's
+    /// samples as a single `moof`+`tfxd`+`mdat` whose `FragmentAbsoluteTime` is
+    /// exactly `start_smooth` (in [`SMOOTH_TIMESCALE`] ticks) and whose
+    /// `FragmentDuration` is the sum of the samples' own durations. That lets
+    /// a live packager whose manifest `c@t` advertises a cumulative start
+    /// serve a fragment whose `tfxd` matches it — the requirement MS-SSTR
+    /// §2.2.4 places on a fragment response, and which a per-stream origin
+    /// cannot express.
+    ///
+    /// `track` must carry at least one sample; `sequence_number` is
+    /// `mfhd.sequence_number` (1-based).
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] on a track with no samples, or a sample whose
+    /// smooth-tick duration or composition offset overflows its serialized
+    /// field.
+    pub fn package_track_fragment(
         &self,
         track: &Track,
-        origin: &TimelineOrigin,
-        next_seq: &mut u32,
-        fragments_out: &mut Vec<SmoothFragment>,
-    ) -> Result<StreamInfo> {
-        let media_timescale = track.spec.timescale;
-        let codec = resolve_codec(&track.spec.config)?;
-
-        let timeline = smooth_timeline(track, origin, media_timescale)?;
-
-        // Segment keyframe-aligned into groups of samples.
-        let groups = segment_samples(&track.samples, media_timescale, self.target_duration);
-
-        let mut fragment_timings = Vec::with_capacity(groups.len());
-        let mut total_bytes = 0u64;
-
-        for range in groups {
-            let group = &track.samples[range.clone()];
-            let times = &timeline[range];
-            let start_smooth = times.first().map_or(0, |t| t.start);
-            let dur_smooth: u64 = times.iter().map(|t| u64::from(t.duration)).sum();
-
-            let data = build_smooth_fragment(
-                track.spec.track_id,
-                *next_seq,
-                start_smooth,
-                dur_smooth,
-                group,
-                times,
-            )?;
-
-            for s in group.iter() {
-                total_bytes += s.data.len() as u64;
-            }
-            fragments_out.push(SmoothFragment {
-                track_id: track.spec.track_id,
-                sequence_number: *next_seq,
-                start_time: start_smooth,
-                duration: dur_smooth,
-                data,
-            });
-            fragment_timings.push(FragmentTiming {
-                start_time: start_smooth,
-                duration: dur_smooth,
-            });
-            *next_seq += 1;
+        sequence_number: u32,
+        start_smooth: u64,
+    ) -> Result<SegmentOut> {
+        if track.samples.is_empty() {
+            return Err(Error::InvalidInput(
+                "cannot package a Smooth fragment from a track with no samples",
+            ));
         }
+        // Times relative to the track's own first sample: only the *durations*
+        // and composition offsets are used from here (the fragment's absolute
+        // start is the caller's `start_smooth`, not the derived one).
+        let origin = SmoothOrigin::from_tracks(core::slice::from_ref(track));
+        let times = smooth_times(&track.samples, origin, track.spec.timescale, None)?;
+        let duration: u64 = times.iter().map(|t| u64::from(t.duration)).sum();
+        let data = build_smooth_fragment(
+            track.spec.track_id,
+            sequence_number,
+            start_smooth,
+            duration,
+            &track.samples,
+            &times,
+        )?;
+        Ok(SegmentOut {
+            summary: SegmentSummary {
+                track: track.spec.track_id,
+                sequence: u64::from(sequence_number),
+                start: start_smooth,
+                duration,
+                timescale: SMOOTH_DEFAULT_TIMESCALE.get(),
+                bytes: track.samples.iter().map(|s| s.data.len() as u64).sum(),
+                independent: track.samples.first().is_some_and(|s| s.flags.is_sync),
+                discontinuous: false,
+            },
+            bytes: bytes::Bytes::from(data),
+            tracks: alloc::vec![crate::mux_stage::TrackPart {
+                track: track.spec.track_id,
+                start: start_smooth,
+                duration,
+                timescale: SMOOTH_DEFAULT_TIMESCALE.get(),
+                bytes: track.samples.iter().map(|s| s.data.len() as u64).sum(),
+                samples: u32::try_from(track.samples.len()).unwrap_or(u32::MAX),
+            }],
+        })
+    }
 
-        let total_duration: u64 = fragment_timings.iter().map(|f| f.duration).sum();
+    /// Render the client Manifest for `tracks` from the fragments `log`
+    /// recorded.
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] when `tracks` is empty, or a track's codec has
+    /// no Smooth description ([`resolve_codec`]).
+    pub fn render(&self, tracks: &[TrackSpec], log: &SegmentSummaryLog) -> Result<String> {
+        if tracks.is_empty() {
+            return Err(Error::InvalidInput(
+                "cannot render a manifest with no tracks",
+            ));
+        }
+        let mut streams = Vec::with_capacity(tracks.len());
+        for spec in tracks {
+            streams.push(self.stream_info(spec, log.track(spec.track_id))?);
+        }
+        self.render_manifest(&streams)
+    }
+
+    /// One track's manifest parameters: its codec description from the spec,
+    /// its `c` timeline and bitrate from the summaries.
+    fn stream_info(
+        &self,
+        spec: &TrackSpec,
+        summary: Option<TrackSummary<'_>>,
+    ) -> Result<StreamInfo> {
+        let codec = resolve_codec(&spec.config)?;
+        let total_duration = summary.map_or(0, |s| s.duration);
+        let total_bytes = summary.map_or(0, |s| s.bytes);
+        let fragments: Vec<FragmentTiming> = summary
+            .map(|s| {
+                s.runs()
+                    .flat_map(|run| {
+                        (0..run.segments).map(move |index| FragmentTiming {
+                            start_time: run
+                                .start
+                                .saturating_add(run.duration.saturating_mul(index)),
+                            duration: run.duration,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         // bitrate = total coded bits / duration in seconds (integer round);
         // checked_div guards the zero-duration case (→ 0).
@@ -388,59 +400,8 @@ impl SmoothPackager {
             sampling_rate: codec.sampling_rate,
             channels: codec.channels,
             qualities: STREAM_QUALITY_LEVELS,
-            fragments: fragment_timings,
+            fragments,
             total_duration,
-        })
-    }
-
-    /// Build **one** Smooth fragment for a single track at an explicit
-    /// smooth-timeline start (issue #1083, W13).
-    ///
-    /// Unlike [`Package::package`](broadcast_common::Package::package), this
-    /// does not segment the track or derive the start from the track's own
-    /// decode times: it emits the whole track's samples as a single
-    /// `moof`+`tfxd`+`mdat` whose `FragmentAbsoluteTime` is exactly
-    /// `start_smooth` (in [`SMOOTH_TIMESCALE`] ticks) and whose
-    /// `FragmentDuration` is the sum of the samples' own durations. That lets
-    /// a live packager whose manifest `c@t` advertises a cumulative start
-    /// serve a fragment whose `tfxd` matches it — the requirement MS-SSTR
-    /// §2.2.4 places on a fragment response, and which the per-track
-    /// `TimelineOrigin`-based path cannot express (it always starts at `0`).
-    ///
-    /// `track` must carry at least one sample; `sequence_number` is
-    /// `mfhd.sequence_number` (1-based).
-    pub fn package_track_fragment(
-        &self,
-        track: &Track,
-        sequence_number: u32,
-        start_smooth: u64,
-    ) -> Result<SmoothFragment> {
-        if track.samples.is_empty() {
-            return Err(Error::InvalidInput(
-                "cannot package a Smooth fragment from a track with no samples",
-            ));
-        }
-        let media_timescale = track.spec.timescale;
-        // Times relative to the track's own first sample: only the *durations*
-        // and composition offsets are used from here (the fragment's absolute
-        // start is the caller's `start_smooth`, not the derived one).
-        let origin = TimelineOrigin::of(core::iter::once(track));
-        let times = smooth_timeline(track, &origin, media_timescale)?;
-        let dur_smooth: u64 = times.iter().map(|t| u64::from(t.duration)).sum();
-        let data = build_smooth_fragment(
-            track.spec.track_id,
-            sequence_number,
-            start_smooth,
-            dur_smooth,
-            &track.samples,
-            &times,
-        )?;
-        Ok(SmoothFragment {
-            track_id: track.spec.track_id,
-            sequence_number,
-            start_time: start_smooth,
-            duration: dur_smooth,
-            data,
         })
     }
 }
@@ -551,33 +512,6 @@ fn manifest_chunks(stream: &StreamInfo) -> Vec<C> {
             }
         })
         .collect()
-}
-
-impl broadcast_common::Package for SmoothPackager {
-    type Media = Media;
-    type Output = SmoothOutput;
-    type Error = Error;
-
-    fn package(&mut self, media: &Media) -> Result<SmoothOutput> {
-        if media.tracks.is_empty() {
-            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
-        }
-        let mut fragments = Vec::new();
-        let mut streams = Vec::with_capacity(media.tracks.len());
-        // Per-track sequence numbering, 1-based (each track's fragments count
-        // up independently, as Smooth fragment responses are addressed by
-        // start time within a StreamIndex).
-        let origin = TimelineOrigin::of(&media.tracks);
-        for track in &media.tracks {
-            let mut next_seq = 1u32;
-            streams.push(self.build_track(track, &origin, &mut next_seq, &mut fragments)?);
-        }
-        let manifest = self.render_manifest(&streams)?;
-        Ok(SmoothOutput {
-            manifest,
-            fragments,
-        })
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -728,46 +662,75 @@ pub fn resolve_codec(config: &CodecConfig) -> Result<SmoothCodec> {
 // Segmentation + fragment building
 // ---------------------------------------------------------------------------
 
-/// Split a track's samples into keyframe-aligned groups, cutting a new group on
-/// a sync sample once the current group has reached the target duration.
-///
-/// Mirrors the [`Segmenter`](crate::segmenter::Segmenter) anchor-cut policy
-/// applied to a single track: every group after the first begins on a
-/// random-access point, no sample is dropped or reordered.
-fn segment_samples(
-    samples: &[Sample],
-    media_timescale: broadcast_common::timescale::Timescale,
-    target_duration: core::time::Duration,
-) -> Vec<core::ops::Range<usize>> {
-    let mut groups = Vec::new();
-    if samples.is_empty() {
-        return groups;
-    }
-    let target_ticks = target_duration
-        .as_secs()
-        .max(1)
-        .saturating_mul(u64::from(media_timescale.get()));
+/// The one decode-time origin a Smooth manifest's `c@t` values are relative
+/// to: the earliest first-sample decode time across the presented tracks, on
+/// one timescale (the same origin [`TimelineOrigin`](crate::media) gives the
+/// other packagers, compared across timescales exactly).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SmoothOrigin {
+    ticks: i64,
+    timescale: Timescale,
+}
 
-    let mut start = 0usize;
-    let mut acc_dur = 0u64;
-    for (i, s) in samples.iter().enumerate() {
-        // Cut before this sample when it is a keyframe past the target.
-        if i > start && s.flags.is_sync && acc_dur >= target_ticks {
-            groups.push(start..i);
-            start = i;
-            acc_dur = 0;
-        }
-        acc_dur += s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64;
+/// One tick per second — the timescale a [`SmoothOrigin::default`] carries, so
+/// an origin of `0` needs no specific track's timescale.
+const DEFAULT_ORIGIN_TIMESCALE: Timescale = match Timescale::new(1) {
+    Some(timescale) => timescale,
+    None => Timescale::MICROS,
+};
+
+impl SmoothOrigin {
+    /// An origin at `ticks` on `timescale`.
+    pub const fn new(ticks: i64, timescale: Timescale) -> Self {
+        Self { ticks, timescale }
     }
-    groups.push(start..samples.len());
-    groups
+
+    /// The origin of `tracks`: the earliest first-sample `dts`, or `0` when no
+    /// sample carries one. The bridge for a caller that still holds the
+    /// samples; a live source whose stream starts at zero uses
+    /// [`SmoothOrigin::default`].
+    pub fn from_tracks(tracks: &[Track]) -> Self {
+        let mut best: Option<(i64, Timescale)> = None;
+        for track in tracks {
+            let Some(dts) = track
+                .samples
+                .iter()
+                .find_map(|s| s.timing.and_then(|t| t.dts()))
+            else {
+                continue;
+            };
+            let earlier = best.is_none_or(|(ticks, timescale)| {
+                broadcast_common::timescale::cmp_ticks(dts, track.spec.timescale, ticks, timescale)
+                    .is_lt()
+            });
+            if earlier {
+                best = Some((dts, track.spec.timescale));
+            }
+        }
+        match best {
+            Some((ticks, timescale)) => Self { ticks, timescale },
+            None => Self::default(),
+        }
+    }
+
+    /// The origin expressed in `timescale` ticks, rounded down.
+    fn scaled_to(&self, timescale: Timescale) -> i64 {
+        rescale_i64(self.ticks, self.timescale, timescale, Rounding::Floor)
+    }
+}
+
+impl Default for SmoothOrigin {
+    fn default() -> Self {
+        Self {
+            ticks: 0,
+            timescale: DEFAULT_ORIGIN_TIMESCALE,
+        }
+    }
 }
 
 /// One sample's timing in [`SMOOTH_TIMESCALE`] ticks.
 #[derive(Debug, Clone, Copy)]
 struct SmoothSampleTime {
-    /// Decode time on the common origin.
-    start: u64,
     /// Decode duration: up to the next sample's decode time (so the `trun`
     /// durations of a fragment sum exactly to its `c@d`, with no per-sample
     /// rounding drift), the last sample's own duration.
@@ -776,31 +739,39 @@ struct SmoothSampleTime {
     composition_offset: i32,
 }
 
-/// Rescale a track's per-sample decode times, durations and composition
-/// offsets to [`SMOOTH_TIMESCALE`].
-fn smooth_timeline(
-    track: &Track,
-    origin: &TimelineOrigin,
-    media_timescale: broadcast_common::timescale::Timescale,
+/// Rescale one fragment's samples to [`SMOOTH_TIMESCALE`]:
+/// `next_start` is the smooth-tick start of the sample that *follows* the
+/// fragment (the cut point), which ends the fragment's last sample; `None` for
+/// the trailing fragment, whose last sample ends at its own duration.
+fn smooth_times(
+    samples: &[Sample],
+    origin: SmoothOrigin,
+    media_timescale: Timescale,
+    next_start: Option<u64>,
 ) -> Result<Vec<SmoothSampleTime>> {
-    let times = relative_decode_times(track, origin)?;
-    let starts: Vec<u64> = times
+    let base = origin.scaled_to(media_timescale);
+    let relative = |sample: &Sample| -> i64 {
+        sample
+            .timing
+            .and_then(|t| t.dts())
+            .map_or(0, |dts| dts.saturating_sub(base).max(0))
+    };
+    let starts: Vec<u64> = samples
         .iter()
-        .map(|&t| SmoothPackager::to_smooth_ticks(t.max(0) as u64, media_timescale))
+        .map(|s| to_smooth_ticks(relative(s) as u64, media_timescale))
         .collect();
-    track
-        .samples
+    samples
         .iter()
         .enumerate()
         .map(|(i, s)| {
             let start = starts[i];
-            let own_end = SmoothPackager::to_smooth_ticks(
-                (times[i].max(0) as u64)
+            let own_end = to_smooth_ticks(
+                (relative(s) as u64)
                     .saturating_add(u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0))),
                 media_timescale,
             );
-            let end = match starts.get(i + 1) {
-                Some(&next) if next >= start => next,
+            let end = match starts.get(i + 1).copied().or(next_start) {
+                Some(next) if next >= start => next,
                 _ => own_end,
             };
             let duration = u32::try_from(end - start).map_err(|_| {
@@ -824,12 +795,248 @@ fn smooth_timeline(
                 })
             })?;
             Ok(SmoothSampleTime {
-                start,
                 duration,
                 composition_offset,
             })
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// SmoothSegmenter
+// ---------------------------------------------------------------------------
+
+/// Per-track accumulation for the fragments being built.
+#[derive(Debug)]
+struct SmoothTrackState {
+    spec: TrackSpec,
+    /// Samples of the fragment being built, in decode order.
+    pending: Vec<Sample>,
+    /// Summed duration of `pending`, in this track's media timescale.
+    pending_duration: u64,
+    /// `mfhd.sequence_number` of this track's next fragment, 1-based and
+    /// per-track (Smooth addresses a fragment by start time within a
+    /// `StreamIndex`, so every stream counts its own).
+    next_sequence: u32,
+    /// Rounded-up target duration in this track's timescale.
+    target_ticks: u64,
+}
+
+/// Cut a track stream into keyframe-aligned Smooth fragments, each a
+/// `moof`+`tfxd`+`mdat` ([MS-SSTR] §2.2.4), emitted as
+/// [`MuxOutput::Segment`].
+///
+/// The cut rule is the [`Segmenter`](crate::segmenter::Segmenter) anchor rule
+/// applied per track (Smooth fragments are per-stream): a sync sample that
+/// arrives once the track has buffered at least the target duration opens the
+/// next fragment, so no sample is dropped or reordered and every fragment after
+/// the first starts on a random-access point.
+///
+/// Every time the fragment carries — `c@t`/`c@d` in the summary, `tfxd`, and
+/// the `trun` sample durations and composition offsets — is in
+/// [`SMOOTH_TIMESCALE`]: a client builds the track's timescale from the
+/// manifest (Smooth has no init segment), so media-timescale `trun` values
+/// would play 111x/208x too short (issue #1022). `c@t` is relative to
+/// `origin`, the decode time common to every track, so inter-track offsets
+/// survive.
+#[derive(Debug)]
+pub struct SmoothSegmenter {
+    tracks: Vec<SmoothTrackState>,
+    origin: SmoothOrigin,
+    /// Fragments finished but not yet polled, in emission order.
+    ready: alloc::collections::VecDeque<MuxOutput>,
+}
+
+impl SmoothSegmenter {
+    /// A segmenter for `tracks`, cutting each at `target_duration` on its own
+    /// keyframes, with `c@t` measured from `origin`.
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] if `tracks` is empty, has duplicate
+    /// `track_id`s, or `target_duration` is zero.
+    pub fn new(
+        tracks: Vec<TrackSpec>,
+        origin: SmoothOrigin,
+        target_duration: core::time::Duration,
+    ) -> Result<Self> {
+        if tracks.is_empty() {
+            return Err(Error::InvalidInput(
+                "smooth segmenter needs at least one track",
+            ));
+        }
+        if target_duration.is_zero() {
+            return Err(Error::InvalidInput("target_duration must be positive"));
+        }
+        for (i, a) in tracks.iter().enumerate() {
+            if tracks[i + 1..].iter().any(|b| b.track_id == a.track_id) {
+                return Err(Error::InvalidInput("duplicate track_id"));
+            }
+        }
+        let seconds = target_duration.as_secs().max(1);
+        Ok(Self {
+            tracks: tracks
+                .into_iter()
+                .map(|spec| SmoothTrackState {
+                    target_ticks: seconds.saturating_mul(u64::from(spec.timescale.get())),
+                    spec,
+                    pending: Vec::new(),
+                    pending_duration: 0,
+                    next_sequence: 1,
+                })
+                .collect(),
+            origin,
+            ready: alloc::collections::VecDeque::new(),
+        })
+    }
+
+    /// Buffer one sample for `track`, in decode order, cutting the previous
+    /// fragment first when this sample is a keyframe past the target.
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] for an unannounced track, a fragment build
+    /// failure, or [`MAX_PENDING_SAMPLES_PER_TRACK`] samples buffered without a
+    /// keyframe to cut on (send [`MuxInput::Flush`] to close the trailing
+    /// fragment).
+    fn push_sample(&mut self, track: TrackId, sample: Sample) -> Result<()> {
+        let index = self
+            .tracks
+            .iter()
+            .position(|t| t.spec.track_id == track)
+            .ok_or(Error::InvalidInput("smooth: unknown track_id"))?;
+        if sample.flags.is_sync
+            && self.tracks[index].pending_duration >= self.tracks[index].target_ticks
+            && !self.tracks[index].pending.is_empty()
+        {
+            let cut = self.relative_ticks(index, &sample);
+            self.cut(
+                index,
+                Some(to_smooth_ticks(cut, self.tracks[index].spec.timescale)),
+            )?;
+        }
+        if self.tracks[index].pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK {
+            return Err(crate::segmenter::no_sync_sample_error());
+        }
+        let state = &mut self.tracks[index];
+        state.pending_duration = state.pending_duration.saturating_add(u64::from(
+            sample.timing.and_then(|t| t.duration()).unwrap_or(0),
+        ));
+        state.pending.push(sample);
+        Ok(())
+    }
+
+    /// `sample`'s decode time relative to the origin, in its track's ticks.
+    fn relative_ticks(&self, index: usize, sample: &Sample) -> u64 {
+        let timescale = self.tracks[index].spec.timescale;
+        let base = self.origin.scaled_to(timescale);
+        sample
+            .timing
+            .and_then(|t| t.dts())
+            .map_or(0, |dts| dts.saturating_sub(base).max(0)) as u64
+    }
+
+    /// Cut the buffered fragment of track `index`, whose end is `next_start`
+    /// smooth ticks from the origin (`None`: its last sample's own end).
+    fn cut(&mut self, index: usize, next_start: Option<u64>) -> Result<()> {
+        let state = &mut self.tracks[index];
+        if state.pending.is_empty() {
+            return Ok(());
+        }
+        let timescale = state.spec.timescale;
+        let base = self.origin.scaled_to(timescale);
+        let start = state
+            .pending
+            .first()
+            .and_then(|s| s.timing.and_then(|t| t.dts()))
+            .map_or(0, |dts| dts.saturating_sub(base).max(0)) as u64;
+        let times = smooth_times(&state.pending, self.origin, timescale, next_start)?;
+        let start_smooth = to_smooth_ticks(start, timescale);
+        let duration: u64 = times.iter().map(|t| u64::from(t.duration)).sum();
+        let sequence = state.next_sequence;
+        let data = build_smooth_fragment(
+            state.spec.track_id,
+            sequence,
+            start_smooth,
+            duration,
+            &state.pending,
+            &times,
+        )?;
+        let summary_samples = u32::try_from(state.pending.len()).unwrap_or(u32::MAX);
+        let summary = SegmentSummary {
+            track: state.spec.track_id,
+            sequence: u64::from(sequence),
+            start: start_smooth,
+            duration,
+            timescale: SMOOTH_DEFAULT_TIMESCALE.get(),
+            bytes: state.pending.iter().map(|s| s.data.len() as u64).sum(),
+            independent: state.pending.first().is_some_and(|s| s.flags.is_sync),
+            discontinuous: false,
+        };
+        state.next_sequence += 1;
+        state.pending.clear();
+        state.pending_duration = 0;
+        self.ready
+            .push_back(MuxOutput::Segment(Box::new(SegmentOut {
+                bytes: bytes::Bytes::from(data),
+                summary,
+                tracks: alloc::vec![crate::mux_stage::TrackPart {
+                    track: state.spec.track_id,
+                    start: start_smooth,
+                    duration,
+                    timescale: SMOOTH_DEFAULT_TIMESCALE.get(),
+                    bytes: summary.bytes,
+                    samples: summary_samples,
+                }],
+            })));
+        Ok(())
+    }
+}
+
+impl Stage for SmoothSegmenter {
+    type In<'a> = MuxInput;
+    type Out = MuxOutput;
+    type Error = Error;
+
+    fn feed(&mut self, input: MuxInput, _now: Timestamp) -> Result<()> {
+        match input {
+            MuxInput::Track(spec) => {
+                if let Some(state) = self
+                    .tracks
+                    .iter_mut()
+                    .find(|t| t.spec.track_id == spec.track_id)
+                {
+                    state.target_ticks = state.target_ticks.max(u64::from(spec.timescale.get()));
+                    state.spec = *spec;
+                }
+                Ok(())
+            }
+            MuxInput::Sample { track, sample } => self.push_sample(track, sample),
+            // A Smooth fragment states its own absolute start in `tfxd`, so a
+            // decode-time jump needs no separate signalling.
+            MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::Flush => {
+                for index in 0..self.tracks.len() {
+                    self.cut(index, None)?;
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.ready.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        self.feed(MuxInput::Flush, Timestamp::ZERO)
+    }
+
+    fn demand(&self) -> Demand {
+        Demand::saturated_if(
+            self.tracks
+                .iter()
+                .any(|t| t.pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK),
+        )
+    }
 }
 
 /// Build one self-contained Smooth fragment: `styp` + `moof`(`mfhd` `traf`(
@@ -978,33 +1185,9 @@ mod tests {
     }
 
     #[test]
-    fn segment_samples_keyframe_aligned() {
-        // 4 samples, timescale 1 tick/sample, target 2s: sync at 0 and 2.
-        let mk = |sync: bool| Sample {
-            data: alloc::vec![0u8; 4].into(),
-            // Grouping is duration-driven; absolute time is irrelevant here.
-            timing: Some(crate::ir::SampleTiming::DurationOnly {
-                duration: core::num::NonZeroU32::new(1).unwrap(),
-            }),
-            flags: crate::ir::SampleFlags::new(sync),
-            provenance: None,
-            display: None,
-            protection: None,
-        };
-        let samples = alloc::vec![mk(true), mk(false), mk(true), mk(false)];
-        let groups = segment_samples(&samples, timescale(1), core::time::Duration::from_secs(2));
-        assert_eq!(groups.len(), 2);
-        assert_eq!(groups[0].len(), 2);
-        assert_eq!(groups[1].len(), 2);
-    }
-
-    #[test]
     fn to_smooth_ticks_scales() {
         // 1 second at media timescale 90000 → 10_000_000 smooth ticks.
-        assert_eq!(
-            SmoothPackager::to_smooth_ticks(90_000, timescale(90_000)),
-            10_000_000
-        );
+        assert_eq!(to_smooth_ticks(90_000, timescale(90_000)), 10_000_000);
     }
 
     fn data_spec(track_id: u32, rate: u32) -> crate::pipeline::TrackSpec {
@@ -1090,24 +1273,21 @@ mod tests {
         // 90 kHz, dts steps 3003 but declared durations 3000: a plain
         // duration sum would drift from the timeline the manifest describes.
         let track = timed_track(1, 90_000, &[(0, 3000), (3003, 3000), (6006, 3000)]);
-        let origin = TimelineOrigin::of([&track]);
-        let times = smooth_timeline(&track, &origin, timescale(90_000)).expect("timeline");
+        let origin = SmoothOrigin::from_tracks(core::slice::from_ref(&track));
+        let times =
+            smooth_times(&track.samples, origin, timescale(90_000), None).expect("timeline");
         let durations: Vec<u32> = times.iter().map(|t| t.duration).collect();
         assert_eq!(durations, alloc::vec![333_667, 333_666, 333_334]);
         let sum: u64 = times.iter().map(|t| u64::from(t.duration)).sum();
         assert_eq!(sum, 1_000_667, "trun durations sum to the timeline span");
-        assert_eq!(
-            sum,
-            times[2].start + u64::from(times[2].duration) - times[0].start
-        );
     }
 
     #[test]
     fn smooth_timeline_falls_back_to_own_duration_when_dts_goes_backwards() {
         let origin_track = timed_track(2, 1000, &[(0, 1000)]);
         let track = timed_track(1, 1000, &[(1000, 1000), (500, 1000)]);
-        let origin = TimelineOrigin::of([&origin_track, &track]);
-        let times = smooth_timeline(&track, &origin, timescale(1000)).expect("timeline");
+        let origin = SmoothOrigin::from_tracks(&[origin_track, track.clone()]);
+        let times = smooth_times(&track.samples, origin, timescale(1000), None).expect("timeline");
         let durations: Vec<u32> = times.iter().map(|t| t.duration).collect();
         assert_eq!(durations, alloc::vec![10_000_000, 10_000_000]);
     }
@@ -1117,8 +1297,8 @@ mod tests {
         let origin_track = timed_track(2, 1000, &[(0, 1000)]);
         // 500 s at 1 kHz = 5e9 ticks in the 10 MHz Smooth timescale (> u32::MAX).
         let track = timed_track(1, 1000, &[(1000, 500_000)]);
-        let origin = TimelineOrigin::of([&origin_track, &track]);
-        match smooth_timeline(&track, &origin, timescale(1000)) {
+        let origin = SmoothOrigin::from_tracks(&[origin_track, track.clone()]);
+        match smooth_times(&track.samples, origin, timescale(1000), None) {
             Err(Error::InvalidValue(v)) => {
                 assert_eq!(v.field, "trun sample_duration");
                 assert_eq!(v.value, 5_000_000_000);
@@ -1139,8 +1319,7 @@ mod tests {
             })
             .collect();
         let times: Vec<SmoothSampleTime> = (0..COUNT)
-            .map(|i| SmoothSampleTime {
-                start: i as u64 * 10_000,
+            .map(|_| SmoothSampleTime {
                 duration: 10_000,
                 composition_offset: 0,
             })

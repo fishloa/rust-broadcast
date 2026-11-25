@@ -11,7 +11,6 @@ use core::time::Duration;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::Package;
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use transmux::{PsDemux, TsDemux, WebmDemux};
@@ -539,6 +538,13 @@ fn muxer_outputs_are_unchanged() {
     assert!(bad.is_empty(), "output changed: {bad:?}");
 }
 
+/// The LL-DASH segmenter's per-chunk byte lengths on `origin/main`, in order,
+/// recorded before the chunk type became `MuxOutput` (the one golden re-pin
+/// this slice permits).
+const LL_CHUNK_LENGTHS: [usize; 16] = [
+    6880, 3651, 3347, 3104, 3400, 6799, 3573, 3202, 3193, 5546, 6512, 3555, 3266, 3192, 3051, 1355,
+];
+
 #[test]
 fn fragment_writer_outputs_are_unchanged() {
     use transmux::{LlSegmenter, SmoothPackager};
@@ -549,21 +555,62 @@ fn fragment_writer_outputs_are_unchanged() {
     let mut bad = Vec::new();
     let cmaf = crate::cmaf::package(&media).unwrap();
     check(&mut bad, "cmaf", fnv1a(&cmaf), 0xfbf4_2a4d_ad3f_5ea0);
-    let smooth = SmoothPackager::default().package(&media).unwrap();
+    let (_, smooth_fragments) =
+        crate::packagers::smooth_parts(&media, Duration::from_secs(2)).unwrap();
+    let _manifest = crate::packagers::smooth(&SmoothPackager, &media).unwrap();
+    // The old `SmoothOutput` grouped its fragments per track; the segmenter
+    // emits them in decode order, so group them the same way before hashing.
+    let mut grouped = smooth_fragments.clone();
+    grouped.sort_by_key(|f| {
+        (
+            media
+                .tracks
+                .iter()
+                .position(|t| t.spec.track_id == f.summary.track)
+                .unwrap_or(usize::MAX),
+            f.summary.sequence,
+        )
+    });
+    let mut smooth_bytes = Vec::new();
+    for fragment in &grouped {
+        smooth_bytes.extend_from_slice(
+            format!(
+                "{}|{}|{}|{}|",
+                fragment.summary.track.value(),
+                fragment.summary.sequence,
+                fragment.summary.start,
+                fragment.summary.duration
+            )
+            .as_bytes(),
+        );
+        smooth_bytes.extend_from_slice(&fragment.bytes);
+    }
     check(
         &mut bad,
         "smooth",
-        fnv1a(format!("{smooth:?}").as_bytes()),
-        0xb843_b6bc_d7f7_ee94,
+        fnv1a(&smooth_bytes),
+        0x2e13_6cb1_5ae0_1c66,
     );
     let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let mut ll = LlSegmenter::new(specs, timescale(1000), Duration::from_secs(2), 5).unwrap();
-    let chunks = ll.package(&media).unwrap();
+    let chunks = crate::packagers::drive_samples(&mut ll, &media).unwrap();
+    let mut chunk_lens = Vec::new();
+    let mut chunk_bytes = Vec::new();
+    for chunk in &chunks {
+        if let transmux::mux_stage::MuxOutput::Bytes(bytes) = chunk {
+            chunk_lens.push(bytes.len());
+            chunk_bytes.extend_from_slice(bytes);
+        }
+    }
+    assert_eq!(
+        chunk_lens, LL_CHUNK_LENGTHS,
+        "ll-dash chunk byte lengths differ from origin/main's"
+    );
     check(
         &mut bad,
         "ll-dash-chunks",
-        fnv1a(format!("{chunks:?}").as_bytes()),
-        0x0d3e_616c_3bcb_42c7,
+        fnv1a(&chunk_bytes),
+        0x7633_d3f5_160c_1b06,
     );
     assert!(bad.is_empty(), "output changed: {bad:?}");
 }
@@ -693,7 +740,7 @@ fn dash_mpd_output_is_unchanged() {
             continue;
         };
         let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
-        let got = match DashPackager::default().package(&media) {
+        let got = match crate::packagers::dash(&DashPackager::default(), &media) {
             Ok(mpd) => {
                 fnv1a(strip_aspect_attrs(&restore_legacy_adaptation_set_ids(&mpd)).as_bytes())
             }

@@ -43,6 +43,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SegmentSummary`. The segment URI is `{uri_prefix}{sequence}.ts`; drive a
   whole `Media` through `mux_stage::drive_media` and render the playlist with
   `StreamingTsHlsSegmenter::playlist`.
+
+- The DASH, LL-DASH, Smooth and CMAF-HLS manifest packagers are renderers over a
+  `segment_log::SegmentSummaryLog`, not whole-`Media` packagers: `DashPackager`,
+  `LlDashPackager`, `SmoothPackager` and `HlsPackager` take a track-spec list
+  plus the log and never see a sample (their `Package` impls are deleted), so a
+  manifest costs no sample walk and no input in memory. `MuxOutput::Segment`
+  now carries the per-track parts (`TrackPart`: start, duration, bytes, samples)
+  a per-representation manifest needs.
+- `LlSegmenter` emits `MuxOutput` (delete: its `Chunk` type, `take_ready` and
+  `Package` impl); `SmoothSegmenter` replaces `SmoothPackager`'s fragment half.
+- `SmoothPackager`, `SmoothFragment` and `SmoothOutput`: the fragment builder is
+  the `SmoothSegmenter` stage; `package_track_fragment` returns a `SegmentOut`.
+- `repackage`: `Repackage::run` drives the demux stage and `run_media` the
+  muxer stage through the same filters, never building a `Media` for the
+  streaming path.
 - The FLV, RTMP, Matroska and RTP muxers are stages:
   `FlvMux`/`RtmpMux`/`MkvMux`/`RtpPacketiser` (and their `Package` impls) are
   replaced by `FlvMuxStage`, `RtmpMuxStage`, `MkvMuxStage` and

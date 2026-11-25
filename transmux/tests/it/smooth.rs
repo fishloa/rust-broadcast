@@ -10,7 +10,6 @@
 //! strongest bite: round-tripping the real writer's output.
 #![cfg(feature = "std")]
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use std::path::PathBuf;
 
@@ -20,7 +19,7 @@ use isobmff::box_types::parse_box;
 use transmux::aac_asc::AudioSpecificConfig;
 use transmux::media::Media;
 use transmux::pipeline::{CodecConfig, build_init_segment};
-use transmux::smooth::{FOURCC_AACL, FOURCC_H264, SmoothOutput, SmoothPackager, TFXD_UUID};
+use transmux::smooth::{FOURCC_AACL, FOURCC_H264, SmoothPackager, TFXD_UUID};
 use transmux::track_spec_from_quality_level;
 use transmux::ts_demux::TsDemux;
 
@@ -43,11 +42,24 @@ fn demux_media() -> Media {
     demux.unpackage(&ts[..]).expect("demux h264-aac.ts")
 }
 
-fn build_smooth() -> (Media, SmoothOutput) {
+/// Everything the packager used to hand back as one `SmoothOutput`: the
+/// manifest plus the fragments the segmenter emitted.
+struct SmoothFixture {
+    media: Media,
+    manifest: String,
+    fragments: Vec<transmux::mux_stage::SegmentOut>,
+}
+
+fn build_smooth() -> SmoothFixture {
     let media = demux_media();
-    let mut pkg = SmoothPackager::default();
-    let out = pkg.package(&media).expect("package Smooth");
-    (media, out)
+    let (_, fragments) = crate::packagers::smooth_parts(&media, core::time::Duration::from_secs(2))
+        .expect("package Smooth fragments");
+    let manifest = crate::packagers::smooth(&SmoothPackager, &media).expect("package Smooth");
+    SmoothFixture {
+        media,
+        manifest,
+        fragments,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +110,7 @@ fn demuxed_asc(media: &Media) -> Vec<u8> {
 
 #[test]
 fn manifest_shape() {
-    let (_media, out) = build_smooth();
+    let out = build_smooth();
     let manifest = SmoothManifest::parse(&out.manifest).expect("parse manifest");
 
     assert_eq!(manifest.major_version, 2, "MajorVersion must be 2");
@@ -135,7 +147,8 @@ fn manifest_shape() {
 
 #[test]
 fn codec_signalling_correct() {
-    let (media, out) = build_smooth();
+    let out = build_smooth();
+    let media = &out.media;
     let manifest = SmoothManifest::parse(&out.manifest).expect("parse manifest");
 
     let video_si = manifest
@@ -163,7 +176,7 @@ fn codec_signalling_correct() {
         &[0x00, 0x00, 0x00, 0x01],
         "SPS start code prefix"
     );
-    let sps = demuxed_sps(&media);
+    let sps = demuxed_sps(media);
     assert_eq!(
         &cpd[4..4 + sps.len()],
         &sps[..],
@@ -179,7 +192,7 @@ fn codec_signalling_correct() {
     // Audio: FourCC AACL + CodecPrivateData == demuxed ASC bytes, bitrate positive.
     assert_eq!(audio_ql.four_cc, FOURCC_AACL);
     assert!(audio_ql.bitrate > 0, "audio bitrate must be positive");
-    let want_asc = demuxed_asc(&media);
+    let want_asc = demuxed_asc(media);
     assert_eq!(
         audio_ql.codec_private_data, want_asc,
         "audio CodecPrivateData must equal the demuxed ASC bytes"
@@ -211,13 +224,14 @@ fn codec_signalling_correct() {
 
 #[test]
 fn fragment_c_timeline() {
-    let (media, out) = build_smooth();
+    let out = build_smooth();
+    let media = &out.media;
     let manifest = SmoothManifest::parse(&out.manifest).expect("parse manifest");
 
     for si in &manifest.streams {
         let track = match si.stream_type {
-            StreamType::Video => video_track(&media),
-            StreamType::Audio => audio_track(&media),
+            StreamType::Video => video_track(media),
+            StreamType::Audio => audio_track(media),
             StreamType::Text => panic!("unexpected text stream"),
         };
 
@@ -225,7 +239,7 @@ fn fragment_c_timeline() {
         let emitted = out
             .fragments
             .iter()
-            .filter(|f| f.track_id == track.spec.track_id)
+            .filter(|f| f.summary.track == track.spec.track_id)
             .count();
         assert_eq!(
             si.chunks_list.len(),
@@ -322,43 +336,44 @@ fn find_tfxd(fragment: &[u8]) -> (u64, u64) {
 
 #[test]
 fn fragment_box_structure_and_tfxd() {
-    let (media, out) = build_smooth();
-    let vid_id = video_track(&media).spec.track_id;
+    let out = build_smooth();
+    let media = &out.media;
+    let vid_id = video_track(media).spec.track_id;
     let video_frags: Vec<_> = out
         .fragments
         .iter()
-        .filter(|f| f.track_id == vid_id)
+        .filter(|f| f.summary.track == vid_id)
         .collect();
     assert!(!video_frags.is_empty(), "video fragments present");
 
     let mut last_seq = 0u32;
     for (idx, frag) in video_frags.iter().enumerate() {
         // Parses as moof + mdat.
-        let (bx0, c0) = parse_box(&frag.data).expect("parse first box");
+        let (bx0, c0) = parse_box(&frag.bytes).expect("parse first box");
         // First box is styp; then moof, then mdat.
         assert_eq!(&bx0.header.box_type.0, b"styp");
-        let (bx1, c1) = parse_box(&frag.data[c0..]).expect("parse second box");
+        let (bx1, c1) = parse_box(&frag.bytes[c0..]).expect("parse second box");
         assert_eq!(&bx1.header.box_type.0, b"moof", "second box is moof");
-        let (bx2, _c2) = parse_box(&frag.data[c0 + c1..]).expect("parse third box");
+        let (bx2, _c2) = parse_box(&frag.bytes[c0 + c1..]).expect("parse third box");
         assert_eq!(&bx2.header.box_type.0, b"mdat", "third box is mdat");
 
         // tfxd present with the right UUID + AbsoluteTime == fragment start.
-        let (at, du) = find_tfxd(&frag.data);
+        let (at, du) = find_tfxd(&frag.bytes);
         assert_eq!(
-            at, frag.start_time,
+            at, frag.summary.start,
             "tfxd AbsoluteTime must equal the fragment start (frag {idx})"
         );
         assert_eq!(
-            du, frag.duration,
+            du, frag.summary.duration,
             "tfxd Duration must equal the fragment duration"
         );
 
         // Sequence numbers increase.
         assert!(
-            frag.sequence_number > last_seq,
+            frag.summary.sequence as u32 > last_seq,
             "sequence numbers must strictly increase"
         );
-        last_seq = frag.sequence_number;
+        last_seq = frag.summary.sequence as u32;
     }
 }
 
@@ -370,8 +385,9 @@ fn fragment_box_structure_and_tfxd() {
 
 #[test]
 fn lossless_round_trip_video() {
-    let (media, out) = build_smooth();
-    let vid = video_track(&media);
+    let out = build_smooth();
+    let media = &out.media;
+    let vid = video_track(media);
     let vid_id = vid.spec.track_id;
 
     // Build a fragmented-MP4 file: the CMAF init segment + every video
@@ -385,11 +401,11 @@ fn lossless_round_trip_video() {
     let specs = vec![spec];
     let mut file = build_init_segment(&specs, media.movie_timescale).expect("init segment");
 
-    for frag in out.fragments.iter().filter(|f| f.track_id == vid_id) {
+    for frag in out.fragments.iter().filter(|f| f.summary.track == vid_id) {
         // Strip the leading styp; append moof + mdat.
-        let (styp, sc) = parse_box(&frag.data).unwrap();
+        let (styp, sc) = parse_box(&frag.bytes).unwrap();
         assert_eq!(&styp.header.box_type.0, b"styp");
-        file.extend_from_slice(&frag.data[sc..]);
+        file.extend_from_slice(&frag.bytes[sc..]);
     }
 
     let media2 = test_harness::collect::media_from_mp4(
@@ -441,11 +457,12 @@ fn lossless_round_trip_video() {
 
 #[test]
 fn parsed_manifest_codec_glue_builds_working_init_segment() {
-    let (media, out) = build_smooth();
+    let out = build_smooth();
+    let media = &out.media;
     let manifest = SmoothManifest::parse(&out.manifest).expect("parse manifest");
 
-    let vid = video_track(&media);
-    let aud = audio_track(&media);
+    let vid = video_track(media);
+    let aud = audio_track(media);
 
     let video_si = manifest
         .streams
@@ -480,7 +497,7 @@ fn parsed_manifest_codec_glue_builds_working_init_segment() {
             width,
             height,
         } => {
-            let sps = demuxed_sps(&media);
+            let sps = demuxed_sps(media);
             assert_eq!(config.config.sps.first().unwrap().0, sps);
             let info = transmux::sps::decode_avc_sps(&sps).expect("decode real SPS");
             assert_eq!(*width, info.width as u16, "width must match the TS source");
@@ -497,7 +514,7 @@ fn parsed_manifest_codec_glue_builds_working_init_segment() {
             channel_count,
             ..
         } => {
-            let want_asc = demuxed_asc(&media);
+            let want_asc = demuxed_asc(media);
             let asc = AudioSpecificConfig::parse(&want_asc).unwrap();
             let want_rate = asc.sampling_frequency.unwrap_or(44100);
             assert_eq!(
@@ -524,11 +541,11 @@ fn parsed_manifest_codec_glue_builds_working_init_segment() {
     for frag in out
         .fragments
         .iter()
-        .filter(|f| f.track_id == vid.spec.track_id)
+        .filter(|f| f.summary.track == vid.spec.track_id)
     {
-        let (styp, sc) = parse_box(&frag.data).unwrap();
+        let (styp, sc) = parse_box(&frag.bytes).unwrap();
         assert_eq!(&styp.header.box_type.0, b"styp");
-        file.extend_from_slice(&frag.data[sc..]);
+        file.extend_from_slice(&frag.bytes[sc..]);
     }
 
     let media2 = test_harness::collect::media_from_mp4(
@@ -555,10 +572,9 @@ fn parsed_manifest_codec_glue_builds_working_init_segment() {
 #[test]
 fn empty_media_rejected() {
     let media = Media::new(vec![], timescale(90_000));
-    let mut pkg = SmoothPackager::default();
     assert!(
         matches!(
-            pkg.package(&media),
+            crate::packagers::smooth(&SmoothPackager, &media),
             Err(transmux::error::Error::InvalidInput(..))
         ),
         "empty Media must not package"
@@ -575,19 +591,17 @@ fn same_type_tracks_get_distinct_stream_names_and_urls() {
     let mut second = audio_track(&media).clone();
     second.spec.track_id = transmux::TrackId::new(99);
     media.tracks.push(second);
-    let out = SmoothPackager::default()
-        .package(&media)
-        .expect("package Smooth");
-    let manifest = SmoothManifest::parse(&out.manifest).expect("parse manifest");
-    assert_eq!(manifest.streams.len(), 3);
-    let urls: Vec<&str> = manifest.streams.iter().map(|s| s.url.as_str()).collect();
+    let manifest = crate::packagers::smooth(&SmoothPackager, &media).expect("package Smooth");
+    let parsed = SmoothManifest::parse(&manifest).expect("parse manifest");
+    assert_eq!(parsed.streams.len(), 3);
+    let urls: Vec<&str> = parsed.streams.iter().map(|s| s.url.as_str()).collect();
     for i in 0..urls.len() {
         for j in i + 1..urls.len() {
             assert_ne!(urls[i], urls[j], "fragment Url templates must be unique");
         }
     }
     // The 2nd audio stream carries an explicit Name its Url is keyed by.
-    let second = &manifest.streams[2];
+    let second = &parsed.streams[2];
     assert_eq!(second.name.as_deref(), Some("audio_2"));
     assert!(second.url.contains("Fragments(audio_2="), "{}", second.url);
 }

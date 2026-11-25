@@ -2,10 +2,9 @@
 //! empty caller-supplied duration list (ISO/IEC 23009-1 §5.3.9.4.4).
 #![cfg(feature = "std")]
 
-use broadcast_common::Package;
 use broadcast_common::Unpackage;
 use isobmff::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox};
-use transmux::dash::{Addressing, DashPackager, TrackSegments};
+use transmux::dash::{Addressing, DashPackager};
 use transmux::{CodecConfig, MpegAudioLayer, TsDemux, rfc6381_codec_string};
 
 fn esds(oti: u8) -> EsdsBox {
@@ -55,22 +54,8 @@ fn addressing_labels_are_stable() {
 fn an_empty_duration_list_falls_back_to_the_total_duration() {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
     let media = TsDemux::new().unpackage(bytes.as_slice()).expect("demux");
-    let video_id = media
-        .tracks
-        .iter()
-        .find(|t| t.config().is_video())
-        .expect("video track")
-        .spec
-        .track_id;
-    let mut packager = DashPackager {
-        segments: vec![TrackSegments {
-            track_id: video_id,
-            durations: Vec::new(),
-        }],
-        ..DashPackager::default()
-    };
-    let mpd = packager
-        .package(&media)
-        .expect("an empty list must not index durs[0]");
+    let packager = DashPackager::default();
+    let mpd = crate::packagers::dash(&packager, &media)
+        .expect("a track with no per-segment summary falls back to its total");
     assert!(mpd.contains("<SegmentTemplate"));
 }

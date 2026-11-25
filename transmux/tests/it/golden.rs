@@ -6,7 +6,6 @@
 //! instead of comparing; a run with `CI` set refuses to write.
 #![cfg(feature = "std")]
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -271,9 +270,9 @@ fn dash_mpd_variants_match_golden() {
             },
         ),
     ];
-    for (name, mut pkg) in variants {
-        let mpd = pkg
-            .package(&media)
+    for (name, pkg) in variants {
+        let log = crate::packagers::log(&media);
+        let mpd = crate::packagers::dash_with(&pkg, &media, &log)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         check(&format!("golden/dash/dash-{name}.mpd"), &mpd);
     }
@@ -331,10 +330,8 @@ fn dash_mpd_element_coverage_matches_golden() {
         ("stpp", av_subtitle_media(), DashPackager::default()),
         ("wvtt", wvtt_media(), DashPackager::default()),
     ];
-    for (name, source, mut pkg) in variants {
-        let mpd = pkg
-            .package(&source)
-            .unwrap_or_else(|e| panic!("{name}: {e}"));
+    for (name, source, pkg) in variants {
+        let mpd = crate::packagers::dash(&pkg, &source).unwrap_or_else(|e| panic!("{name}: {e}"));
         check(&format!("golden/dash/dash-cover-{name}.mpd"), &mpd);
     }
 }
@@ -348,11 +345,13 @@ fn dash_mpd_dvb_hdr10plus_coverage_matches_golden() {
     let Some(media) = hevc_hdr10plus_media() else {
         return;
     };
-    let mpd = DashPackager {
-        profiles: format!("{DVB_DASH_PROFILE_PREFIX}2020"),
-        ..DashPackager::default()
-    }
-    .package(&media)
+    let mpd = crate::packagers::dash(
+        &DashPackager {
+            profiles: format!("{DVB_DASH_PROFILE_PREFIX}2020"),
+            ..DashPackager::default()
+        },
+        &media,
+    )
     .expect("DVB-DASH HDR10+ MPD");
     for scheme in [HDR_METADATA_SCHEME, DVB_HDR_DMI_SCHEME] {
         assert!(
@@ -369,9 +368,11 @@ fn dash_mpd_dvb_hdr10plus_coverage_matches_golden() {
 #[test]
 fn dash_mpd_cbcs_coverage_matches_golden() {
     let kid = [0x11u8; 16];
-    let mpd = DashPackager::default()
-        .package(&encrypted_media(transmux::CencScheme::Cbcs, kid))
-        .expect("cbcs MPD");
+    let mpd = crate::packagers::dash(
+        &DashPackager::default(),
+        &encrypted_media(transmux::CencScheme::Cbcs, kid),
+    )
+    .expect("cbcs MPD");
     check("golden/dash/dash-cover-cbcs.mpd", &mpd);
 }
 
@@ -402,14 +403,14 @@ fn ll_dash_mpd_variants_match_golden() {
     );
     timeline.base.addressing = Addressing::Timeline;
     timeline.base.segments = timeline_segments(&media);
-    for (name, mut pkg) in [
+    for (name, pkg) in [
         ("plain", plain),
         ("rate", rate),
         ("utc", utc),
         ("timeline", timeline),
     ] {
-        let mpd = pkg
-            .package(&media)
+        let log = crate::packagers::log(&media);
+        let mpd = crate::packagers::ll_dash_with(&pkg, &media, &log)
             .unwrap_or_else(|e| panic!("{name}: {e}"));
         check(&format!("golden/dash/lldash-{name}.mpd"), &mpd);
     }
@@ -417,9 +418,9 @@ fn ll_dash_mpd_variants_match_golden() {
 
 #[test]
 fn smooth_manifest_matches_golden() {
-    let out = SmoothPackager::default().package(&media()).expect("smooth");
-    check("golden/smooth/smooth.manifest.xml", &out.manifest);
-    let parsed = SmoothManifest::parse(&out.manifest).expect("parse own manifest");
+    let manifest = crate::packagers::smooth(&SmoothPackager, &media()).expect("smooth");
+    check("golden/smooth/smooth.manifest.xml", &manifest);
+    let parsed = SmoothManifest::parse(&manifest).expect("parse own manifest");
     check("golden/smooth/smooth.parse.txt", &format!("{parsed:#?}\n"));
 }
 
@@ -441,11 +442,8 @@ fn smooth_manifest_element_coverage_matches_golden() {
         ("two-audio", two_audio),
     ];
     for (name, media) in variants {
-        let out = SmoothPackager::default().package(&media).expect(name);
-        check(
-            &format!("golden/smooth/smooth-cover-{name}.xml"),
-            &out.manifest,
-        );
+        let manifest = crate::packagers::smooth(&SmoothPackager, &media).expect(name);
+        check(&format!("golden/smooth/smooth-cover-{name}.xml"), &manifest);
     }
 }
 

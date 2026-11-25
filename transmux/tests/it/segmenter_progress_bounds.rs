@@ -200,6 +200,18 @@ const C1_FRAMES: usize = 5 * FRAMES_PER_SEC;
 /// trailing partial one closed by flush: cuts fire at frames 60, 90, 120.
 const C1_CUTS_BEFORE_FLUSH: usize = 3;
 
+/// Drain an [`LlSegmenter`](transmux::LlSegmenter)'s finished chunks.
+fn drain(seg: &mut transmux::LlSegmenter) -> Vec<bytes::Bytes> {
+    use broadcast_common::Stage;
+    let mut out = Vec::new();
+    while let Some(item) = seg.poll() {
+        if let transmux::mux_stage::MuxOutput::Bytes(bytes) = item {
+            out.push(bytes);
+        }
+    }
+    out
+}
+
 #[test]
 fn c1_zero_duration_anchor_still_cuts_segments_in_cmaf_segmenter() {
     let mut seg = Segmenter::new(vec![avc_track(1)], TS_TIMESCALE, Duration::from_secs(1))
@@ -256,10 +268,9 @@ fn c1_zero_duration_anchor_still_cuts_segments_in_ll_dash() {
         seg.push(TrackId::new(1), s).expect("push");
     }
     seg.flush().expect("flush");
-    let starts = seg
-        .take_ready()
+    let starts = drain(&mut seg)
         .iter()
-        .filter(|c| c.is_segment_start)
+        .filter(|c| c.get(4..8) == Some(b"styp"))
         .count();
     assert_eq!(
         starts,
@@ -648,9 +659,9 @@ fn hevc_video_after_audio_is_still_the_anchor_and_parts_report_real_independence
         .expect("push");
     }
     assert!(
-        ll.take_ready()
+        drain(&mut ll)
             .iter()
-            .filter(|c| c.is_segment_start)
+            .filter(|c| c.get(4..8) == Some(b"styp"))
             .count()
             > 1,
         "LL-DASH must anchor on the HEVC track too"

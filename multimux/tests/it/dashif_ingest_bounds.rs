@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use broadcast_common::Timestamp;
-use broadcast_common::mux::{Package, Unpackage};
+use broadcast_common::mux::Unpackage;
 use media_plane::ingress::HandshakePolicy;
 use media_plane::trunk::{SampleCursor, SampleCursorItem, TrunkConfig};
 use multimux::route::{RouteConfig, RouteHandle};
@@ -58,7 +58,10 @@ struct Feed {
 fn feed() -> Feed {
     let ts = test_fixtures::read("ts/h264-aac.ts");
     let media = TsDemux::new().unpackage(&ts[..]).expect("demux fixture");
-    let mpd = DashPackager::default().package(&media).expect("mpd");
+    let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let mpd = DashPackager::default()
+        .render(&specs, &test_harness::collect::segment_log(&media))
+        .expect("mpd");
     let mut reps = Vec::new();
     for (index, track) in media.tracks.iter().enumerate() {
         let init = build_init_segment(std::slice::from_ref(&track.spec), media.movie_timescale)

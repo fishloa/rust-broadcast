@@ -10,11 +10,10 @@ use core::time::Duration;
 use broadcast_dash::utc_timing::UtcScheme;
 use broadcast_dash::{Latency, Mpd, PlaybackRate, ServiceDescription, UtcTiming};
 
-use broadcast_common::Package;
-
 use crate::dash::DashPackager;
 use crate::error::{Error, Result};
-use crate::media::Media;
+use crate::ir::TrackSpec;
+use crate::segment_log::SegmentSummaryLog;
 use broadcast_common::units::MILLIS_PER_SEC;
 
 /// `ServiceDescription@id` of the one description this packager emits.
@@ -41,7 +40,7 @@ const MILLIS_ROUNDING_BIAS: f64 = 0.5;
 /// `<ProducerReferenceTime>` is omitted.
 #[derive(Debug, Clone)]
 pub struct LlDashPackager {
-    /// The underlying whole-segment packager (forced `dynamic` on package).
+    /// The underlying whole-segment packager (forced `dynamic` on render).
     pub base: DashPackager,
     /// Nominal segment duration (the `availabilityTimeOffset` base).
     pub segment_duration: Duration,
@@ -144,18 +143,14 @@ impl LlDashPackager {
     }
 }
 
-impl Package for LlDashPackager {
-    type Media = Media;
-    type Output = String;
-    type Error = Error;
-
-    /// Render the LL-DASH MPD for `media`.
+impl LlDashPackager {
+    /// Render the LL-DASH MPD for `tracks` from the segments `log` recorded.
     ///
     /// # Errors
-    /// Propagates [`DashPackager`] errors (e.g. empty track list, or no
-    /// `base.publish_time`: the LL-DASH MPD is always `dynamic`).
-    fn package(&mut self, media: &Media) -> Result<String> {
-        let mut mpd = self.base.build_mpd(media)?;
+    /// Propagates [`DashPackager::render`]'s errors (e.g. an empty track list,
+    /// or no `base.publish_time`: the LL-DASH MPD is always `dynamic`).
+    pub fn render(&self, tracks: &[TrackSpec], log: &SegmentSummaryLog) -> Result<String> {
+        let mut mpd = self.base.build_mpd(tracks, log)?;
         self.apply_ll(&mut mpd);
         mpd.to_xml()
             .map_err(|_| Error::InvalidInput("MPD serialisation failed"))

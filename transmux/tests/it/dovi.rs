@@ -7,7 +7,6 @@
 //! Spec inputs: `private/specs-verified/dolby/vision/` (DV-NOTES.md).
 #![cfg(feature = "std")]
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize, Unpackage};
 use isobmff::dovi::{DVCC_FOURCC, DVH1_FOURCC, DVVC_FOURCC};
@@ -398,18 +397,18 @@ fn p5_dash_codecs_name_the_dvh1_sample_entry() {
         transmux::rfc6381_track_codec_string(spec).unwrap(),
         expected
     );
-    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    let mpd = crate::packagers::dash(&transmux::DashPackager::default(), &media).unwrap();
     assert!(
         codecs_attrs(&mpd).contains(&expected),
         "DASH codecs {:?} must contain {expected}",
         codecs_attrs(&mpd)
     );
-    let mut ll = crate::ll_packager::ll_packager(
+    let ll = crate::ll_packager::ll_packager(
         Duration::from_secs(2),
         Duration::from_millis(500),
         Duration::from_secs(3),
     );
-    let ll_mpd = ll.package(&media).unwrap();
+    let ll_mpd = crate::packagers::ll_dash(&ll, &media).unwrap();
     assert!(codecs_attrs(&ll_mpd).contains(&expected));
 }
 
@@ -434,7 +433,7 @@ fn assert_companion_dolby_set(
     let dv = record_codec(spec.dovi.as_ref().unwrap());
     let base = transmux::rfc6381_track_codec_string(spec).unwrap();
     assert!(base.starts_with("hvc1."), "{base}");
-    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    let mpd = crate::packagers::dash(&transmux::DashPackager::default(), &media).unwrap();
     let video_sets: Vec<_> = adaptation_set_codecs(&mpd)
         .into_iter()
         .filter(|c| {
@@ -447,12 +446,12 @@ fn assert_companion_dolby_set(
         vec![vec![base.clone()], vec![dv.clone()]],
         "{mpd}"
     );
-    let mut ll = crate::ll_packager::ll_packager(
+    let ll = crate::ll_packager::ll_packager(
         Duration::from_secs(2),
         Duration::from_millis(500),
         Duration::from_secs(3),
     );
-    let ll_mpd = ll.package(&media).unwrap();
+    let ll_mpd = crate::packagers::ll_dash(&ll, &media).unwrap();
     assert!(adaptation_set_codecs(&ll_mpd).contains(&vec![dv]));
 }
 
@@ -471,7 +470,7 @@ fn p5_dash_has_no_companion_set() {
     let Some(media) = ts_media(P5_TS) else {
         return;
     };
-    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    let mpd = crate::packagers::dash(&transmux::DashPackager::default(), &media).unwrap();
     let n = adaptation_set_codecs(&mpd)
         .iter()
         .filter(|c| c.iter().any(|x| x.starts_with("dvh1.")))
@@ -513,7 +512,7 @@ fn the_p81_record_alone_emits_a_companion_set() {
     let Some(media) = ts_media(P81_TS) else {
         return;
     };
-    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    let mpd = crate::packagers::dash(&transmux::DashPackager::default(), &media).unwrap();
     assert_eq!(dvh1_set_count(&mpd), 1, "{mpd}");
 }
 
@@ -540,7 +539,7 @@ fn a_non_hevc_config_suppresses_the_companion_set() {
         width: 1_920,
         height: 1_080,
     };
-    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    let mpd = crate::packagers::dash(&transmux::DashPackager::default(), &media).unwrap();
     assert_eq!(dvh1_set_count(&mpd), 0, "{mpd}");
 }
 
@@ -554,7 +553,7 @@ fn a_dual_layer_record_suppresses_the_companion_set() {
         .as_mut()
         .expect("p81 record")
         .el_present = true;
-    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    let mpd = crate::packagers::dash(&transmux::DashPackager::default(), &media).unwrap();
     assert_eq!(dvh1_set_count(&mpd), 0, "{mpd}");
 }
 
@@ -568,7 +567,7 @@ fn a_non_hevc_profile_suppresses_the_companion_set() {
         .as_mut()
         .expect("p81 record")
         .profile = 9;
-    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    let mpd = crate::packagers::dash(&transmux::DashPackager::default(), &media).unwrap();
     assert_eq!(dvh1_set_count(&mpd), 0, "{mpd}");
 }
 
@@ -582,7 +581,7 @@ fn a_non_compatible_base_layer_suppresses_the_companion_set() {
         .as_mut()
         .expect("p81 record")
         .bl_signal_compatibility_id = DoviBlSignalCompatibilityId::None;
-    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    let mpd = crate::packagers::dash(&transmux::DashPackager::default(), &media).unwrap();
     let video_sets = adaptation_set_codecs(&mpd)
         .into_iter()
         .filter(|c| {

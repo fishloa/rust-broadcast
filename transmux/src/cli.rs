@@ -28,7 +28,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use broadcast_common::timescale::{Timescale, cmp_ticks};
-use broadcast_common::{Package, Stage, Unpackage};
+use broadcast_common::{Stage, Unpackage};
 
 use crate::dash::DashPackager;
 use crate::flv::FlvDemux;
@@ -1303,7 +1303,12 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
             // which ISO/IEC 23009-1 §6.3.4.2 forbids inside a media segment and
             // which the old whole-file `CmafMux` output put in every one.
             let mut segments: Vec<(String, Vec<u8>)> = Vec::new();
-            let mut track_segments: Vec<crate::dash::TrackSegments> = Vec::new();
+            // What the MPD describes: one summary per segment per
+            // Representation, so its `@duration`/timeline match the files
+            // written below (audit r05-W29).
+            let mut log = crate::segment_log::SegmentSummaryLog::new();
+            let specs: Vec<crate::pipeline::TrackSpec> =
+                media.tracks.iter().map(|t| t.spec.clone()).collect();
 
             // One shared set of boundaries for every Representation, so the
             // `segmentAlignment="true"` the MPD declares is true
@@ -1323,7 +1328,6 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
                     )?,
                 ));
 
-                let mut durations = Vec::with_capacity(layout[ti].len());
                 for (seg_no, (range, tfdt)) in layout[ti].iter().enumerate() {
                     let samples = &t.samples[range.clone()];
                     let bytes = crate::build_media_segment(
@@ -1331,13 +1335,19 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
                         &[crate::FragmentTrackData::new(id, *tfdt, samples)],
                     )?;
                     // The real duration, never a fabricated zero.
-                    durations.push(segment_ticks(&bytes)?);
+                    log.push_part(
+                        &crate::mux_stage::TrackPart {
+                            track: id,
+                            start: *tfdt,
+                            duration: segment_ticks(&bytes)?,
+                            timescale: t.spec.timescale.get(),
+                            bytes: bytes.len() as u64,
+                            samples: u32::try_from(samples.len()).unwrap_or(u32::MAX),
+                        },
+                        samples.first().is_some_and(|s| s.flags.is_sync),
+                    )?;
                     segments.push((format!("chunk-stream{id}-{}.m4s", seg_no + 1), bytes));
                 }
-                track_segments.push(crate::dash::TrackSegments {
-                    track_id: id,
-                    durations,
-                });
             }
 
             // The CLI writes **static files**, so every MPD it emits describes
@@ -1363,23 +1373,18 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
                 )?;
                 pkg.base.dynamic = false;
                 pkg.base.availability_start_time = None;
-                pkg.base.segments = track_segments;
                 if let Some(url) = &opts.utc_timing_url {
                     pkg =
                         pkg.with_utc_timing(crate::ll_dash::UTCTIMING_HTTP_HEAD_2014, url.clone());
                 }
-                pkg.package(&media)?
+                pkg.render(&specs, &log)?
             } else {
                 if opts.utc_timing_url.is_some() {
                     // `UTCTiming` is not modelled on the plain whole-segment
                     // packager; say so instead of silently dropping it.
                     return Err(CliError::UtcTimingNeedsLl);
                 }
-                DashPackager {
-                    segments: track_segments,
-                    ..DashPackager::default()
-                }
-                .package(&media)?
+                DashPackager::default().render(&specs, &log)?
             };
             Ok(Output::Manifest { text, segments })
         }

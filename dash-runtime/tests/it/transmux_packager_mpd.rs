@@ -3,7 +3,7 @@
 //! document dash-runtime's reader accepts, and it says what the packager was
 //! told to emit.
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use dash_runtime::mpd::Mpd;
 use dash_runtime::mpd::PresentationType;
 use dash_runtime::mpd::inherit::SegmentInfo;
@@ -40,8 +40,11 @@ fn templates(mpd: &Mpd) -> Vec<(String, TemplateInfo)> {
 #[test]
 fn number_addressing_round_trip() {
     let media = media();
-    let mut pkg = DashPackager::default();
-    let xml = pkg.package(&media).expect("package DASH MPD (Number)");
+    let pkg = DashPackager::default();
+    let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let xml = pkg
+        .render(&specs, &test_harness::collect::segment_log(&media))
+        .expect("package DASH MPD (Number)");
     let mpd = parse(&xml);
     assert_eq!(mpd.kind, PresentationType::Static);
     assert_eq!(mpd.periods.len(), 1);
@@ -108,7 +111,14 @@ fn timeline_addressing_round_trip() {
         segments,
         ..DashPackager::default()
     }
-    .package(&media)
+    .render(
+        &media
+            .tracks
+            .iter()
+            .map(|t| t.spec.clone())
+            .collect::<Vec<_>>(),
+        &test_harness::collect::segment_log(&media),
+    )
     .expect("package DASH MPD (Timeline)");
     let mpd = parse(&xml);
 
@@ -145,7 +155,11 @@ fn timeline_addressing_round_trip() {
 
 #[test]
 fn packager_output_truncations_all_error() {
-    let xml = DashPackager::default().package(&media()).expect("mpd");
+    let media = media();
+    let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let xml = DashPackager::default()
+        .render(&specs, &test_harness::collect::segment_log(&media))
+        .expect("mpd");
     let complete = xml.trim_end().len();
     let mut errors = 0;
     for end in 1..xml.len() {
@@ -177,8 +191,12 @@ fn ll_utc_timing_escapes_scheme_and_value() {
     )
     .expect("packager");
     pkg.base.publish_time = Some("2024-01-01T00:00:00Z".to_string());
-    let mut pkg = pkg.with_utc_timing("urn:x:a&b", "https://t.example/x?a=1&b=2");
-    let xml = pkg.package(&media()).expect("LL MPD");
+    let pkg = pkg.with_utc_timing("urn:x:a&b", "https://t.example/x?a=1&b=2");
+    let media = media();
+    let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let xml = pkg
+        .render(&specs, &test_harness::collect::segment_log(&media))
+        .expect("LL MPD");
     let mpd = parse(&xml);
     let timing = mpd.utc_timings.first().expect("UTCTiming");
     assert_eq!(timing.scheme_id_uri, "urn:x:a&b");

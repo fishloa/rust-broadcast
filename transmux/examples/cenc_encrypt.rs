@@ -65,8 +65,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(feature = "cenc")]
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    use broadcast_common::Unpackage;
     use broadcast_common::stage::Stage;
-    use broadcast_common::{Package, Unpackage};
     use broadcast_hls::cenc_ext_x_key;
     use transmux::cenc_segment::protect_init_segment;
     use transmux::pipeline::CodecConfig;
@@ -191,7 +191,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 5. DASH signalling: `DashPackager` auto-derives the "common"
     //    ContentProtection from `Track::encryption` — no extra wiring.
-    let mpd = DashPackager::default().package(&media)?;
+    let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let log = transmux::segment_log::SegmentSummaryLog::new();
+    let mpd = DashPackager::default().render(&specs, &log)?;
     let cp_line = mpd
         .lines()
         .find(|l| l.contains("ContentProtection"))

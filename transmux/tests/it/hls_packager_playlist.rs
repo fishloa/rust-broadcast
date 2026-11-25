@@ -10,7 +10,6 @@
 //! adds the offset instead of subtracting it, or a duration scaled by the
 //! wrong arithmetic, cannot pass.
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use core::num::NonZeroU32;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
@@ -66,12 +65,12 @@ fn duration(ticks: u32) -> Option<NonZeroU32> {
 }
 
 fn package_with(media: &Media, version: u8, msn: u64) -> String {
-    let mut packager = HlsPackager {
+    let packager = HlsPackager {
         version,
         msn: broadcast_hls::MediaSequence::new(msn),
         ..HlsPackager::default()
     };
-    packager.package(media).expect("the fixture media packages")
+    crate::packagers::hls(&packager, media).expect("the fixture media packages")
 }
 
 /// Three 3 000-tick samples (`dts` 0/3 000/6 000) whose presentation times are

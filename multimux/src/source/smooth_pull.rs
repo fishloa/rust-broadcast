@@ -146,7 +146,6 @@ mod tests {
     use axum::http::StatusCode as AxumStatusCode;
     use axum::response::{IntoResponse, Response as AxumResponse};
     use axum::routing::get;
-    use broadcast_common::Package;
     use broadcast_common::Timestamp;
     use broadcast_common::Unpackage;
     use broadcast_smooth::{SmoothManifest, StreamType};
@@ -162,7 +161,7 @@ mod tests {
 
     const SYNTHETIC_MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
         transmux::VIDEO_CLOCK_TIMESCALE;
-    use transmux::{Media, SmoothOutput, SmoothPackager, TsDemux};
+    use transmux::{Media, SmoothOrigin, SmoothPackager, SmoothSegmenter, TsDemux};
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
@@ -185,14 +184,33 @@ mod tests {
         test_fixtures::path("ts/h264-aac.ts")
     }
 
-    fn build_smooth_output() -> (Media, SmoothOutput) {
+    fn build_smooth_output() -> (Media, Vec<transmux::mux_stage::SegmentOut>, String) {
+        use transmux::mux_stage::MuxOutput;
         let ts = std::fs::read(fixture_ts_path()).expect("h264-aac.ts fixture must exist");
         let media = TsDemux::new()
             .unpackage(ts.as_slice())
             .expect("demux h264-aac.ts");
-        let mut pkg = SmoothPackager::default();
-        let out = pkg.package(&media).expect("package Smooth");
-        (media, out)
+        let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+        let origin = SmoothOrigin::from_tracks(&media.tracks);
+        let mut segmenter =
+            SmoothSegmenter::new(specs.clone(), origin, std::time::Duration::from_secs(2))
+                .expect("segmenter");
+        let mut fragments = Vec::new();
+        let mut log = transmux::segment_log::SegmentSummaryLog::new();
+        for output in transmux::mux_stage::drive_media(
+            &mut segmenter,
+            &media,
+            broadcast_common::Timestamp::ZERO,
+        )
+        .expect("drive smooth")
+        {
+            if let MuxOutput::Segment(segment) = output {
+                log.push(&segment).expect("summary");
+                fragments.push(*segment);
+            }
+        }
+        let manifest = SmoothPackager.render(&specs, &log).expect("manifest");
+        (media, fragments, manifest)
     }
 
     fn video_track_id(media: &Media) -> TrackId {
@@ -277,25 +295,25 @@ mod tests {
         stall: Option<(&str, u64)>,
         throttle_once: Option<(&str, u64)>,
     ) -> (String, tokio::task::JoinHandle<()>, Media, FragmentHits) {
-        let (media, out) = build_smooth_output();
+        let (media, out, manifest_text) = build_smooth_output();
         let video_id = video_track_id(&media);
         let audio_id = audio_track_id(&media);
 
         let mut fragments = HashMap::new();
-        for frag in &out.fragments {
-            let kind = if frag.track_id == TrackId::new(video_id.value()) {
+        for frag in &out {
+            let kind = if frag.summary.track == TrackId::new(video_id.value()) {
                 "video"
-            } else if frag.track_id == TrackId::new(audio_id.value()) {
+            } else if frag.summary.track == TrackId::new(audio_id.value()) {
                 "audio"
             } else {
                 continue;
             };
-            fragments.insert((kind.to_string(), frag.start_time), frag.data.clone());
+            fragments.insert((kind.to_string(), frag.summary.start), frag.bytes.to_vec());
         }
 
         let fragment_hits = FragmentHits::default();
         let state = FixtureState {
-            manifest: Arc::new(out.manifest.clone()),
+            manifest: Arc::new(manifest_text.clone()),
             fragments: Arc::new(fragments),
             stall: stall.map(|(k, t)| (k.to_string(), t)),
             throttle_once: throttle_once.map(|(k, t)| (k.to_string(), t)),
@@ -402,7 +420,8 @@ mod tests {
 
     fn oracle_sample_count(
         media: &Media,
-        out: &SmoothOutput,
+        out: &[transmux::mux_stage::SegmentOut],
+        manifest_text: &str,
         track_id: TrackId,
         timescale: u32,
     ) -> usize {
@@ -416,7 +435,7 @@ mod tests {
             CodecConfig::Aac { .. } => StreamType::Audio,
             _ => panic!("unexpected codec"),
         };
-        let manifest = SmoothManifest::parse(&out.manifest).expect("parse manifest");
+        let manifest = SmoothManifest::parse(manifest_text).expect("parse manifest");
         let si = manifest
             .streams
             .iter()
@@ -434,9 +453,9 @@ mod tests {
             .expect("init");
 
         let mut total = 0usize;
-        for frag in out.fragments.iter().filter(|f| f.track_id == track_id) {
+        for frag in out.iter().filter(|f| f.summary.track == track_id) {
             let mut combined = init.clone();
-            combined.extend_from_slice(&frag.data);
+            combined.extend_from_slice(&frag.bytes);
             let demuxed = test_harness::collect::media_from_mp4(
                 combined.as_slice(),
                 test_harness::collect::CollectMode::Seekable,
@@ -466,9 +485,9 @@ mod tests {
     #[tokio::test]
     async fn loopback_smooth_pull_resolves_both_tracks_and_matches_oracle_sample_count() {
         let (url, server, media) = start_fixture_server(None).await;
-        let (_media2, out) = build_smooth_output();
+        let (_media2, out, manifest_text) = build_smooth_output();
 
-        let manifest = SmoothManifest::parse(&out.manifest).expect("parse manifest");
+        let manifest = SmoothManifest::parse(&manifest_text).expect("parse manifest");
         let audio_timescale = manifest
             .streams
             .iter()
@@ -480,12 +499,14 @@ mod tests {
         let want_video = oracle_sample_count(
             &media,
             &out,
+            &manifest_text,
             TrackId::new(video_track_id(&media).value()),
             transmux::VIDEO_CLOCK_RATE,
         );
         let want_audio = oracle_sample_count(
             &media,
             &out,
+            &manifest_text,
             TrackId::new(audio_track_id(&media).value()),
             audio_timescale,
         );
@@ -569,14 +590,14 @@ mod tests {
 
     #[tokio::test]
     async fn run_smooth_pull_honours_retry_after_on_a_503() {
-        let (media, out) = build_smooth_output();
+        let (media, out, _manifest_text) = build_smooth_output();
         let video_id = video_track_id(&media);
         let first = out
-            .fragments
             .iter()
-            .find(|f| f.track_id == TrackId::new(video_id.value()))
+            .find(|f| f.summary.track == TrackId::new(video_id.value()))
             .expect("a video fragment")
-            .start_time;
+            .summary
+            .start;
         let (url, server, _media, hits) =
             start_throttling_fixture_server(None, Some(("video", first))).await;
         let route = SmoothPullRoute::new("smooth-retry-after", url);
@@ -621,19 +642,18 @@ mod tests {
     /// `Timeouts::read_idle`, not hang forever.
     #[tokio::test]
     async fn read_times_out_against_a_server_that_stalls_on_a_later_fragment() {
-        let (media, out) = build_smooth_output();
+        let (media, out, _manifest_text) = build_smooth_output();
         let audio_id = audio_track_id(&media);
         let audio_frags: Vec<_> = out
-            .fragments
             .iter()
-            .filter(|f| f.track_id == TrackId::new(audio_id.value()))
+            .filter(|f| f.summary.track == TrackId::new(audio_id.value()))
             .collect();
         assert!(
             audio_frags.len() >= 2,
             "fixture must produce at least 2 audio fragments: got {}",
             audio_frags.len()
         );
-        let stall_time = audio_frags[1].start_time;
+        let stall_time = audio_frags[1].summary.start;
 
         let (url, server, _media2) = start_fixture_server(Some(("audio", stall_time))).await;
         let route = SmoothPullRoute::new("smooth-stalled", url).with_timeouts(

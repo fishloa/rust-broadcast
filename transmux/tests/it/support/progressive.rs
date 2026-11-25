@@ -39,10 +39,11 @@ pub fn output_len(out: &[MuxOutput]) -> usize {
     let mut end = 0usize;
     for item in out {
         match item {
-            MuxOutput::Bytes(chunk)
-            | MuxOutput::Init(chunk)
-            | MuxOutput::Segment(transmux::mux_stage::SegmentOut { bytes: chunk, .. }) => {
+            MuxOutput::Bytes(chunk) | MuxOutput::Init(chunk) => {
                 end = end.saturating_add(chunk.len());
+            }
+            MuxOutput::Segment(segment) => {
+                end = end.saturating_add(segment.bytes.len());
             }
             MuxOutput::BytesAt {
                 offset,
@@ -74,10 +75,8 @@ pub fn place(out: &[MuxOutput]) -> Vec<u8> {
                 }
                 bytes[start..end].copy_from_slice(chunk);
             }
-            MuxOutput::Init(chunk)
-            | MuxOutput::Segment(transmux::mux_stage::SegmentOut { bytes: chunk, .. }) => {
-                bytes.extend_from_slice(chunk)
-            }
+            MuxOutput::Init(chunk) => bytes.extend_from_slice(chunk),
+            MuxOutput::Segment(segment) => bytes.extend_from_slice(&segment.bytes),
             MuxOutput::Text(_) => {}
             _ => {}
         }

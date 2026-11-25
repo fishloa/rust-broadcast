@@ -10,7 +10,6 @@
 //! it comes out as `inf`. Either way the old code handed the value to
 //! `DecimalSeconds::new` and panicked.
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::frag_offsets::FragmentSampleRange;
@@ -119,7 +118,7 @@ fn a_composition_offset_past_i32_is_a_typed_range_error_naming_the_offset() {
 }
 
 #[test]
-fn a_span_past_f64_max_is_an_error_not_an_infinite_extinf() {
+fn a_finite_enormous_span_renders_and_a_zero_timescale_is_an_error() {
     // Two samples in a 1 Hz track: a short one whose end is at the bottom of
     // the tick range (its decode time is taken to its presentation time by a
     // `-3` composition offset), and a long one whose end sits just below the
@@ -137,10 +136,48 @@ fn a_span_past_f64_max_is_an_error_not_an_infinite_extinf() {
     )
     .expect("valid timing");
     assert_eq!(high.composition_offset(), Ok(Some(0)));
-    let media = Media::new(vec![Track::new(avc_spec(), vec![low, high])], timescale(1));
+    let _media = Media::new(vec![Track::new(avc_spec(), vec![low, high])], timescale(1));
+    // A summary's span is `u64` ticks over a non-zero timescale, so it can be
+    // absurd but never infinite: the renderer must refuse a span the
+    // `DecimalSeconds` constructor cannot represent rather than panic on it.
+    let spec = avc_spec();
+    let mut log = transmux::segment_log::SegmentSummaryLog::new();
+    log.push_part(
+        &transmux::mux_stage::TrackPart {
+            track: spec.track_id,
+            start: 0,
+            duration: u64::MAX,
+            timescale: 1,
+            bytes: 1,
+            samples: 1,
+        },
+        true,
+    )
+    .expect("a consistent summary");
+    // A `u64` tick span over a non-zero timescale is always a finite number of
+    // seconds, so the playlist must render it rather than panic on it.
+    let playlist = HlsPackager::default()
+        .render(core::slice::from_ref(&spec), &log)
+        .expect("a finite but enormous span still renders");
+    assert!(playlist.contains("#EXTINF:"), "playlist:\n{playlist}");
+    // A zero timescale has no honest seconds value: a typed error, not a
+    // division by zero.
+    let mut zero = transmux::segment_log::SegmentSummaryLog::new();
+    zero.push_part(
+        &transmux::mux_stage::TrackPart {
+            track: spec.track_id,
+            start: 0,
+            duration: 1,
+            timescale: 0,
+            bytes: 1,
+            samples: 1,
+        },
+        true,
+    )
+    .expect("a consistent part");
     let err = HlsPackager::default()
-        .package(&media)
-        .expect_err("an infinite span must be an error");
+        .render(core::slice::from_ref(&spec), &zero)
+        .expect_err("a zero timescale must be an error");
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "got {err:?}"
@@ -165,8 +202,9 @@ fn a_large_but_representable_span_still_packages() {
         vec![Track::new(avc_spec(), vec![sample])],
         timescale(90_000),
     );
+    let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let playlist = HlsPackager::default()
-        .package(&media)
+        .render(&specs, &test_harness::collect::segment_log(&media))
         .expect("an exactly representable span must package");
     assert!(playlist.contains("#EXTINF:3600"), "playlist:\n{playlist}");
 }
