@@ -1109,7 +1109,7 @@ fn progressive_aux(
     let senc = stbl.children.iter().find_map(|child| match child {
         StblChild::Opaque(bytes)
             if bytes.len() >= BOX_HEADER_MIN_SIZE
-                && &bytes[BOX_TYPE_SIZE..BOX_HEADER_MIN_SIZE] == &crate::cenc::SENC =>
+                && bytes[BOX_TYPE_SIZE..BOX_HEADER_MIN_SIZE] == crate::cenc::SENC =>
         {
             Some(bytes.as_slice())
         }
