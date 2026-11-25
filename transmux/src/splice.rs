@@ -498,17 +498,35 @@ impl SplicePlan {
     }
 }
 
-/// Apply a [`SplicePlan`] to a per-track sample stream.
+/// Apply a splice to a per-track sample stream.
 ///
-/// A sample is passed through unchanged before the track's split, shifted by
-/// its insert shift inside the inserted run, and by its resume shift after it.
-/// A track the plan does not name passes through untouched. The stage holds no
-/// samples and emits one per feed.
+/// With a [`SplicePlan`] a sample is passed through unchanged before the
+/// track's split, shifted by its insert shift inside the inserted run, and by
+/// its resume shift after it. Without one ([`SpliceStage::switching`], Decision
+/// 6) the stage holds at most one GOP per track, capped by the caller, and
+/// [`SpliceStage::splice`] drops that held GOP so the switch lands on the
+/// preceding sync sample. A track the plan does not name passes through
+/// untouched.
 #[derive(Debug, Clone)]
 pub struct SpliceStage {
-    plan: SplicePlan,
+    plan: Option<SplicePlan>,
     counts: BTreeMap<TrackId, usize>,
+    planless: Option<Planless>,
     ready: VecDeque<(TrackId, Sample)>,
+}
+
+/// The plan-less state: one held GOP per track, bounded in bytes.
+#[derive(Debug, Clone)]
+struct Planless {
+    max_gop_bytes: u64,
+    gops: BTreeMap<TrackId, Gop>,
+}
+
+/// The samples held since a track's last emitted GOP boundary.
+#[derive(Debug, Clone, Default)]
+struct Gop {
+    held: VecDeque<Sample>,
+    bytes: u64,
 }
 
 impl SpliceStage {
@@ -516,20 +534,60 @@ impl SpliceStage {
     #[must_use]
     pub fn new(plan: SplicePlan) -> Self {
         Self {
-            plan,
+            plan: Some(plan),
             counts: BTreeMap::new(),
+            planless: None,
             ready: VecDeque::new(),
         }
     }
 
-    /// The plan this stage applies.
+    /// Apply a plan-less splice: hold at most one GOP per track, capped by
+    /// `max_gop_bytes`, and snap a [`splice`](Self::splice) to the preceding
+    /// sync sample.
     #[must_use]
-    pub fn plan(&self) -> &SplicePlan {
-        &self.plan
+    pub fn switching(max_gop_bytes: u64) -> Self {
+        Self {
+            plan: None,
+            counts: BTreeMap::new(),
+            planless: Some(Planless {
+                max_gop_bytes,
+                gops: BTreeMap::new(),
+            }),
+            ready: VecDeque::new(),
+        }
+    }
+
+    /// The plan this stage applies, when it has one.
+    #[must_use]
+    pub fn plan(&self) -> Option<&SplicePlan> {
+        self.plan.as_ref()
+    }
+
+    /// Switch source now: in plan-less mode the held GOP of every track is
+    /// dropped, so the cut lands on the preceding sync sample (the last
+    /// emitted sample ends where that sync sample begins).
+    ///
+    /// # Errors
+    /// [`Error::InvalidInput`] when the stage was built with a plan, which
+    /// already fixes the splice point.
+    pub fn splice(&mut self) -> Result<()> {
+        let Some(planless) = self.planless.as_mut() else {
+            return Err(Error::InvalidInput(
+                "splice: a plan already fixes the splice point",
+            ));
+        };
+        for gop in planless.gops.values_mut() {
+            gop.held.clear();
+            gop.bytes = 0;
+        }
+        Ok(())
     }
 
     fn shift_for(&self, track: TrackId, index: usize) -> i64 {
-        match self.plan.plan_for(track) {
+        let Some(plan) = &self.plan else {
+            return 0;
+        };
+        match plan.plan_for(track) {
             None => 0,
             Some(splice) if index < splice.split_index => 0,
             Some(splice) if index < splice.split_index.saturating_add(splice.insert_count) => {
@@ -537,6 +595,33 @@ impl SpliceStage {
             }
             Some(splice) => splice.resume_shift,
         }
+    }
+
+    fn feed_gop(&mut self, track: TrackId, sample: Sample) -> Result<()> {
+        let planless = self
+            .planless
+            .as_mut()
+            .ok_or(Error::InvalidInput("splice: no plan and no GOP state"))?;
+        let gop = planless.gops.entry(track).or_default();
+        if sample.flags.is_sync && !gop.held.is_empty() {
+            while let Some(done) = gop.held.pop_front() {
+                self.ready.push_back((track, done));
+            }
+            gop.bytes = 0;
+        }
+        if gop.held.is_empty() && !sample.flags.is_sync {
+            self.ready.push_back((track, sample));
+            return Ok(());
+        }
+        let bytes = u64::try_from(sample.data.len()).unwrap_or(u64::MAX);
+        if gop.bytes.saturating_add(bytes) > planless.max_gop_bytes {
+            return Err(Error::SpliceGopOverflow {
+                cap: planless.max_gop_bytes,
+            });
+        }
+        gop.bytes = gop.bytes.saturating_add(bytes);
+        gop.held.push_back(sample);
+        Ok(())
     }
 }
 
@@ -546,6 +631,9 @@ impl Stage for SpliceStage {
     type Error = Error;
 
     fn feed(&mut self, (track, mut sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
+        if self.plan.is_none() {
+            return self.feed_gop(track, sample);
+        }
         let index = self.counts.get(&track).copied().unwrap_or(0);
         let shift = self.shift_for(track, index);
         self.counts.insert(track, index.saturating_add(1));
@@ -563,6 +651,120 @@ impl Stage for SpliceStage {
     }
 
     fn finish(&mut self) -> Result<()> {
+        let Some(planless) = self.planless.as_mut() else {
+            return Ok(());
+        };
+        let mut held = Vec::new();
+        for (track, gop) in &mut planless.gops {
+            while let Some(sample) = gop.held.pop_front() {
+                held.push((*track, sample));
+            }
+            gop.bytes = 0;
+        }
+        for item in held {
+            self.ready.push_back(item);
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{SampleFlags, SampleTiming};
+    use alloc::vec;
+    use alloc::vec::Vec;
+
+    const GOP_SAMPLES: usize = 4;
+    const SAMPLE_BYTES: usize = 4;
+
+    fn sample(index: usize, sync: bool) -> Sample {
+        let dts = index as i64 * 100;
+        Sample {
+            data: vec![index as u8; SAMPLE_BYTES].into(),
+            timing: Some(SampleTiming::timed_with_duration(dts, dts, 100)),
+            flags: SampleFlags { is_sync: sync },
+            provenance: None,
+            display: None,
+            protection: None,
+        }
+    }
+
+    fn drain(stage: &mut SpliceStage) -> Vec<Sample> {
+        let mut out = Vec::new();
+        while let Some((_, sample)) = stage.poll() {
+            out.push(sample);
+        }
+        out
+    }
+
+    #[test]
+    fn a_planless_splice_snaps_to_the_preceding_sync_sample() {
+        let track = TrackId::new(1);
+        let mut stage = SpliceStage::switching(1 << 20);
+        let mut out = Vec::new();
+        for index in 0..10 {
+            stage
+                .feed(
+                    (track, sample(index, index % GOP_SAMPLES == 0)),
+                    Timestamp::ZERO,
+                )
+                .expect("feed");
+            out.extend(drain(&mut stage));
+        }
+        // Two complete GOPs (0..8) are out; 8 and 9 are held.
+        assert_eq!(out.len(), 8, "one GOP is held back");
+        stage.splice().expect("a plan-less splice");
+        stage.finish().expect("finish");
+        out.extend(drain(&mut stage));
+        assert_eq!(
+            out.len(),
+            8,
+            "the splice drops the held GOP, so the cut lands on the preceding sync"
+        );
+        assert_eq!(
+            out.iter()
+                .map(|s| s.timing.and_then(|t| t.dts()))
+                .collect::<Vec<_>>(),
+            (0..8).map(|i| Some(i as i64 * 100)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn a_planless_gop_over_its_byte_cap_is_a_typed_error() {
+        let track = TrackId::new(1);
+        let cap = (SAMPLE_BYTES * 3) as u64;
+        let mut stage = SpliceStage::switching(cap);
+        let mut err = None;
+        for index in 0..GOP_SAMPLES {
+            if let Err(e) = stage.feed(
+                (track, sample(index, index % GOP_SAMPLES == 0)),
+                Timestamp::ZERO,
+            ) {
+                err = Some(e);
+                break;
+            }
+        }
+        assert_eq!(err, Some(Error::SpliceGopOverflow { cap }));
+    }
+
+    #[test]
+    fn finish_flushes_a_held_gop_without_a_splice() {
+        let track = TrackId::new(1);
+        let mut stage = SpliceStage::switching(1 << 20);
+        for index in 0..6 {
+            stage
+                .feed(
+                    (track, sample(index, index % GOP_SAMPLES == 0)),
+                    Timestamp::ZERO,
+                )
+                .expect("feed");
+        }
+        stage.finish().expect("finish");
+        assert_eq!(
+            drain(&mut stage).len(),
+            6,
+            "finish emits the held GOP so no sample is lost"
+        );
     }
 }
