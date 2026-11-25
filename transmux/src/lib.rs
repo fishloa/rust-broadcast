@@ -53,10 +53,10 @@
 //!   returning a [`SpliceResult`] with discontinuity points).
 //! - **Crypto:** CENC/CBCS (`cenc`, AES-CTR/AES-CBC-pattern) decrypt
 //!   ([`CencDecryptor`]) + encrypt ([`CencEncryptor`], which populates
-//!   [`Track::encryption`] for the muxer's `sinf`/`senc`/`saio`/`saiz` box
+//!   [`TrackSpec::protection`](crate::ir::TrackSpec::protection) for the muxer's `sinf`/`senc`/`saio`/`saiz` box
 //!   emission — [`cenc_segment::protect_init_segment`] /
 //!   [`isobmff::writer::fragmented::protect_media_segment`]); DRM signalling driven off
-//!   that same `Track::encryption` — [`DashPackager`] auto-derives the
+//!   that same `TrackSpec::protection` — [`DashPackager`] auto-derives the
 //!   generic-CENC `ContentProtection` (plus caller-supplied per-DRM-system
 //!   `cenc:pssh`), [`broadcast_hls::cenc_ext_x_key`] renders the HLS
 //!   `#EXT-X-KEY` for `cbcs` (`METHOD=SAMPLE-AES`) and `cenc`
@@ -130,7 +130,7 @@
 //! |---------|---------|-------------|
 //! | `std`   | yes     | `std::error::Error` impls, plus every XML path (DASH/LL-DASH MPD, Smooth Streaming, PlayReady WRMHEADER) via `quick-xml` |
 //! | `serde` | no      | `serde::Serialize` for box types |
-//! | `cenc`  | yes     | CENC/CBCS (ISO/IEC 23001-7) AES-CTR/AES-CBC sample decrypt ([`CencDecryptor`]) + encrypt ([`CencEncryptor`]) via the RustCrypto `aes`/`ctr`/`cbc` crates. DASH/HLS DRM signalling ([`DashPackager::content_protection`], [`broadcast_hls::cenc_ext_x_key`]) reads the always-available `Track::encryption`/`cenc` box types and needs no feature |
+//! | `cenc`  | yes     | CENC/CBCS (ISO/IEC 23001-7) AES-CTR/AES-CBC sample decrypt ([`CencDecryptor`]) + encrypt ([`CencEncryptor`]) via the RustCrypto `aes`/`ctr`/`cbc` crates. DASH/HLS DRM signalling ([`DashPackager::content_protection`], [`broadcast_hls::cenc_ext_x_key`]) reads the always-available `TrackSpec::protection`/`cenc` box types and needs no feature |
 //! | `sample-aes` | no | HLS Sample-AES + full-segment AES-128 (AES-128-CBC) content protection ([`sample_aes`]); implies `cenc`, adds the RustCrypto `cbc` crate |
 //! | `cli`   | no      | the `transmux` command-line packager binary (`clap`; implies `std`) — see [`cli`] and `docs/CLI-STANDARD.md` |
 
@@ -294,7 +294,7 @@ pub use live_join::{DropReason, JoinDecision, JoinPolicy, JoinState, LiveJoin, R
 pub use ll_dash::LlDashPackager;
 pub use ll_dash::{Chunk, LlSegmenter};
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
-pub use media::{CmafMux, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackEncryption};
+pub use media::{CmafMux, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackProtection};
 pub use mkv_mux::MkvMux;
 pub use mpeg_legacy::{
     MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,

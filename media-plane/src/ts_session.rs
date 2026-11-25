@@ -1006,7 +1006,7 @@ mod tests {
     fn stalled_head_ts_bytes_n(head_aus: u32) -> Vec<u8> {
         use broadcast_common::Package;
         use transmux::media::{Media, Track};
-        use transmux::pipeline::{CodecConfig, DataCarriage};
+        use transmux::pipeline::{CodecConfig, DataCarriage, DataIdentity};
         let dur = 3000u32;
         let samples = |n: u32, len: usize, sync: bool| -> Vec<Sample> {
             (0..n)
@@ -1018,9 +1018,11 @@ mod tests {
                 .expect("valid timing")
         };
         let data = |stream_type: u8| CodecConfig::Data {
-            stream_type,
-            descriptors: Vec::new(),
-            carriage: DataCarriage::Pes,
+            identity: DataIdentity::Ts {
+                stream_type,
+                descriptors: Vec::new(),
+                carriage: DataCarriage::Pes,
+            },
         };
         let tracks = vec![
             Track::new(

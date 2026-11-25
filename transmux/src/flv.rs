@@ -836,6 +836,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                                 ),
                                 provenance: None,
                                 display: None,
+                                protection: None,
                             });
                         }
                         avc_packet_type::END_OF_SEQUENCE => {}
@@ -884,6 +885,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                                 flags: crate::ir::SampleFlags::SYNC,
                                 provenance: None,
                                 display: None,
+                                protection: None,
                             });
                         }
                         _ => {}

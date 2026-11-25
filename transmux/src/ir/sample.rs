@@ -18,6 +18,7 @@
 
 use crate::TrackId;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 use broadcast_common::timescale::{Rounding, rescale_i64};
 use bytes::Bytes;
 use core::num::NonZeroU32;
@@ -255,6 +256,45 @@ pub struct Sample {
     /// The tag travels with the sample, so it survives IR transforms and a
     /// `media-plane` `Trunk` unchanged.
     pub display: Option<Arc<DisplayInfo>>,
+    /// This sample's CENC auxiliary information (initialization vector and
+    /// subsample map), or `None` for a cleartext sample (ISO/IEC 23001-7
+    /// §12.3). An `Arc` so cloning a sample stays a refcount bump.
+    pub protection: Option<Arc<SampleProtection>>,
+}
+
+/// One sample's CENC auxiliary information (ISO/IEC 23001-7 §12.3): its
+/// initialization vector and, for a subsample-encrypted sample, the
+/// clear/protected ranges.
+///
+/// The IR-side dual of [`isobmff::writer::SampleAux`], the shape the fragment
+/// writer takes: [`From`] converts one way and back, so the field list exists
+/// once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SampleProtection {
+    /// The sample's initialization vector, as carried: 0 bytes for a
+    /// constant-IV track, else 8 or 16 (ISO/IEC 23001-7 §12.2).
+    pub iv: Bytes,
+    /// The clear/protected ranges of a subsample-encrypted sample; empty when
+    /// the whole sample is protected.
+    pub subsamples: Vec<isobmff::cenc::SubSampleEntry>,
+}
+
+impl From<&isobmff::writer::SampleAux> for SampleProtection {
+    fn from(aux: &isobmff::writer::SampleAux) -> Self {
+        Self {
+            iv: Bytes::copy_from_slice(&aux.initialization_vector),
+            subsamples: aux.subsamples.clone(),
+        }
+    }
+}
+
+impl From<&SampleProtection> for isobmff::writer::SampleAux {
+    fn from(protection: &SampleProtection) -> Self {
+        Self {
+            initialization_vector: protection.iv.to_vec(),
+            subsamples: protection.subsamples.clone(),
+        }
+    }
 }
 
 impl Sample {
@@ -272,6 +312,7 @@ impl Sample {
             flags: SampleFlags::new(false),
             provenance: None,
             display: None,
+            protection: None,
         }
     }
 
@@ -295,6 +336,7 @@ impl Sample {
             flags: SampleFlags::new(is_sync),
             provenance: None,
             display: None,
+            protection: None,
         })
     }
 
@@ -313,6 +355,7 @@ impl Sample {
             flags: SampleFlags::SYNC,
             provenance: None,
             display: None,
+            protection: None,
         }
     }
 
@@ -382,6 +425,7 @@ impl Sample {
             flags: SampleFlags::new(is_sync),
             provenance: None,
             display: None,
+            protection: None,
         })
     }
 
@@ -407,6 +451,7 @@ impl Sample {
             flags: SampleFlags::new(is_sync),
             provenance: None,
             display: None,
+            protection: None,
         })
     }
 
@@ -430,6 +475,7 @@ impl Sample {
             flags: SampleFlags::SYNC,
             provenance: None,
             display: None,
+            protection: None,
         })
     }
 
@@ -453,6 +499,7 @@ impl Sample {
             flags: SampleFlags::new(is_sync),
             provenance: None,
             display: None,
+            protection: None,
         })
     }
 
@@ -476,6 +523,14 @@ impl Sample {
     /// `self` (builder style). See [`Sample::display`].
     pub fn with_display(mut self, d: Arc<DisplayInfo>) -> Self {
         self.display = Some(d);
+        self
+    }
+
+    /// Attach this sample's CENC auxiliary information, returning `self`
+    /// (builder style). See [`Sample::protection`].
+    #[must_use]
+    pub fn with_protection(mut self, protection: Arc<SampleProtection>) -> Self {
+        self.protection = Some(protection);
         self
     }
 

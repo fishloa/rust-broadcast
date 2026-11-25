@@ -7,7 +7,7 @@
 //! Dispatches the actual cipher work to the shared, crate-internal cipher core
 //! (the same module the decrypt path uses) and records
 //! the resulting per-track/per-sample crypto metadata onto
-//! [`crate::media::Track::encryption`] — exactly the shape
+//! each sample's protection and the track's [`crate::ir::TrackProtection`] — exactly the shape
 //! [`crate::cenc_decrypt::CencDecryptor::from_fmp4`] recovers from an
 //! already-protected file (the two are duals).
 //!
@@ -48,6 +48,7 @@
 use core::fmt;
 
 use alloc::collections::BTreeSet;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 
 use broadcast_common::Encrypt;
@@ -55,9 +56,11 @@ use broadcast_common::Encrypt;
 use crate::annexb::{NAL_LENGTH_SIZE, iter_length_prefixed_nals};
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
-use crate::media::{Media, TrackEncryption};
+use crate::ir::{SampleProtection, TrackProtection};
+use crate::media::Media;
 use crate::nal::NalCodec;
 use crate::pipeline::CodecConfig;
+use bytes::Bytes;
 use isobmff::cenc::{
     CencScheme, KEY_LEN, SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox,
 };
@@ -401,7 +404,8 @@ impl Encrypt for CencEncryptor {
     type Error = Error;
 
     /// Encrypt every track's samples in `media` in place per `cfg`, recording
-    /// the resulting crypto metadata onto each [`crate::media::Track::encryption`].
+    /// the resulting crypto metadata onto each sample (`Sample::protection`) and
+    /// the track (`TrackSpec::protection`).
     ///
     /// `cfg` (scheme/KID/IV mode/pattern/subsample policy) is applied
     /// uniformly to every track in `media`, ciphered with `self`'s bound
@@ -433,7 +437,7 @@ impl Encrypt for CencEncryptor {
     ///
     /// A configuration this rejects — at either phase — leaves `media`
     /// byte-identical to its input: no track's samples are touched, and no
-    /// `Track::encryption` is populated, until the *whole* plan is proven
+    /// `TrackSpec::protection` is populated, until the *whole* plan is proven
     /// duplicate-free. This is the fix for the original backstop's timing
     /// bug: a check with the same purpose used to run only after every track
     /// had already been keystreamed in place, so a reintroduced per-track
@@ -529,10 +533,10 @@ impl Encrypt for CencEncryptor {
             media.tracks.iter_mut().zip(plan).zip(subsample_plan)
         {
             let sample_count = track.samples.len();
-            let mut entries = Vec::with_capacity(sample_count);
+            assert_eq!(track.samples.len(), track_ivs.len());
 
             // Consume the two validated plans by value — the exact IVs and
-            // subsample maps planned above, moved into their entries (never
+            // subsample maps planned above, moved onto their samples (never
             // recomputed), so nothing here can fail on a sample's contents.
             for (sample, (iv, subsamples)) in track
                 .samples
@@ -554,7 +558,14 @@ impl Encrypt for CencEncryptor {
                         )
                     })?,
                     CencScheme::Cbcs => cenc_crypto::rewrite_in_place(&mut sample.data, |buf| {
-                        cenc_crypto::cbcs_sample(&tenc, &entry, &self.key, buf, CbcsOp::Encrypt)
+                        cenc_crypto::cbcs_sample(
+                            &tenc,
+                            &entry.initialization_vector,
+                            &entry.subsamples,
+                            &self.key,
+                            buf,
+                            CbcsOp::Encrypt,
+                        )
                     })?,
                     // Unreachable in practice: the same scheme was already
                     // validated at the top of `encrypt`. Kept as an error (not
@@ -563,16 +574,18 @@ impl Encrypt for CencEncryptor {
                     other => return Err(Error::UnsupportedCencScheme { scheme: other }),
                 };
 
-                entries.push(entry);
+                sample.protection = Some(Arc::new(SampleProtection {
+                    iv: Bytes::from(entry.initialization_vector),
+                    subsamples: entry.subsamples,
+                }));
             }
 
-            debug_assert_eq!(entries.len(), sample_count);
-            track.encryption = Some(TrackEncryption {
-                scheme: cfg.scheme,
-                tenc: tenc.clone(),
-                samples: entries,
-                constant_iv_senc: cfg.constant_iv_senc,
-            });
+            debug_assert_eq!(track.samples.len(), sample_count);
+            track.spec.protection = Some(TrackProtection::new(
+                cfg.scheme,
+                tenc.clone(),
+                cfg.constant_iv_senc,
+            ));
         }
 
         // Only `IvGen::Counter` consumes `self`'s running index; a
@@ -1209,10 +1222,10 @@ mod tests {
             .expect("encrypt");
 
         let track = &mut media.tracks[0];
-        let enc = track.encryption.clone().expect("track.encryption Some");
+        let enc = track.spec.protection.clone().expect("spec.protection Some");
         assert_eq!(enc.scheme, CencScheme::Cenc);
         assert_eq!(enc.tenc.default_kid, KID);
-        assert_eq!(enc.samples.len(), track.samples.len());
+        assert!(track.samples.iter().all(|s| s.protection.is_some()));
 
         // Encryption must have actually changed at least one sample's bytes
         // (real cipher, not a passthrough).
@@ -1225,9 +1238,13 @@ mod tests {
             "encrypt must change protected bytes"
         );
 
-        for (sample, entry) in track.samples.iter_mut().zip(enc.samples.iter()) {
+        for sample in track.samples.iter_mut() {
+            let protection = sample
+                .protection
+                .clone()
+                .expect("every sample carries its protection");
             cenc_crypto::rewrite_in_place(&mut sample.data, |buf| {
-                cenc_crypto::apply_ctr(&entry.initialization_vector, &KEY, &entry.subsamples, buf)
+                cenc_crypto::apply_ctr(&protection.iv, &KEY, &protection.subsamples, buf)
             })
             .expect("reverse apply_ctr");
         }
@@ -1253,11 +1270,11 @@ mod tests {
             .expect("encrypt");
 
         let track = &mut media.tracks[0];
-        let enc = track.encryption.clone().expect("track.encryption Some");
+        let enc = track.spec.protection.clone().expect("spec.protection Some");
         assert_eq!(enc.scheme, CencScheme::Cbcs);
         assert_eq!(enc.tenc.default_crypt_byte_block, 1);
         assert_eq!(enc.tenc.default_skip_byte_block, 9);
-        assert_eq!(enc.samples.len(), track.samples.len());
+        assert!(track.samples.iter().all(|s| s.protection.is_some()));
 
         assert!(
             track
@@ -1268,9 +1285,20 @@ mod tests {
             "encrypt must change protected bytes"
         );
 
-        for (sample, entry) in track.samples.iter_mut().zip(enc.samples.iter()) {
+        for sample in track.samples.iter_mut() {
+            let protection = sample
+                .protection
+                .clone()
+                .expect("every sample carries its protection");
             cenc_crypto::rewrite_in_place(&mut sample.data, |buf| {
-                cenc_crypto::cbcs_sample(&enc.tenc, entry, &KEY, buf, CbcsOp::Decrypt)
+                cenc_crypto::cbcs_sample(
+                    &enc.tenc,
+                    &protection.iv,
+                    &protection.subsamples,
+                    &KEY,
+                    buf,
+                    CbcsOp::Decrypt,
+                )
             })
             .expect("reverse cbcs_sample");
         }
@@ -1292,9 +1320,13 @@ mod tests {
         CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
             .expect("encrypt");
-        let enc = media.tracks[0].encryption.as_ref().expect("Some");
         assert!(
-            enc.samples.iter().all(|e| e.subsamples.is_empty()),
+            media.tracks[0].samples.iter().all(|s| s
+                .protection
+                .as_ref()
+                .expect("Some")
+                .subsamples
+                .is_empty()),
             "WholeSample policy must record an empty subsample map"
         );
     }
@@ -1398,10 +1430,19 @@ mod tests {
             CencEncryptor::new(KEY)
                 .encrypt(&mut media, &cfg)
                 .unwrap_or_else(|e| panic!("{len}-byte explicit IV must be accepted: {e:?}"));
-            let enc = media.tracks[0].encryption.as_ref().expect("Some");
+            let enc = media.tracks[0].spec.protection.as_ref().expect("Some");
             assert_eq!(
                 enc.tenc.default_per_sample_iv_size, len as u8,
                 "tenc.default_per_sample_iv_size must match the actual IV length used"
+            );
+            assert!(
+                media.tracks[0].samples.iter().all(|s| s
+                    .protection
+                    .as_ref()
+                    .expect("Some")
+                    .iv
+                    .len()
+                    == len)
             );
         }
     }
@@ -1431,28 +1472,29 @@ mod tests {
         CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
             .expect("encrypt");
-        let enc = media.tracks[0].encryption.as_ref().expect("Some");
+        let enc = media.tracks[0].spec.protection.as_ref().expect("Some");
         assert_eq!(enc.tenc.default_per_sample_iv_size, 16);
         // Every recorded per-sample IV must really be 16 bytes (a tenc that
         // said 16 while senc carried 8 would desync saiz against senc).
-        assert_eq!(enc.samples.len(), n);
-        for (i, s) in enc.samples.iter().enumerate() {
-            assert_eq!(
-                s.initialization_vector.len(),
-                16,
-                "cbcs sample {i} IV must be 16 bytes"
-            );
+        let ivs: Vec<Bytes> = media.tracks[0]
+            .samples
+            .iter()
+            .map(|s| s.protection.as_ref().expect("Some").iv.clone())
+            .collect();
+        assert_eq!(ivs.len(), n);
+        for (i, iv) in ivs.iter().enumerate() {
+            assert_eq!(iv.len(), 16, "cbcs sample {i} IV must be 16 bytes");
         }
         // The IV is the 64-bit counter zero-extended into a 16-byte block:
         // sample 0 starts at 0, sample 1 at 1, …
         assert_eq!(
-            enc.samples[0].initialization_vector,
-            alloc::vec![0u8; 16],
+            ivs[0],
+            Bytes::from(alloc::vec![0u8; 16]),
             "first cbcs counter IV is counter 0"
         );
         let mut second = alloc::vec![0u8; 16];
         second[15] = 1;
-        assert_eq!(enc.samples[1].initialization_vector, second);
+        assert_eq!(ivs[1], Bytes::from(second));
     }
 
     /// Audit r05-W4: `cenc` + `IvGen::Counter` keeps the 8-byte CMAF IV.
@@ -1470,10 +1512,10 @@ mod tests {
         CencEncryptor::new(KEY)
             .encrypt(&mut media, &cfg)
             .expect("encrypt");
-        let enc = media.tracks[0].encryption.as_ref().expect("Some");
+        let enc = media.tracks[0].spec.protection.as_ref().expect("Some");
         assert_eq!(enc.tenc.default_per_sample_iv_size, 8);
-        for s in &enc.samples {
-            assert_eq!(s.initialization_vector.len(), 8);
+        for s in &media.tracks[0].samples {
+            assert_eq!(s.protection.as_ref().expect("Some").iv.len(), 8);
         }
     }
 
@@ -1628,19 +1670,28 @@ mod tests {
             );
 
             for track in &mut media.tracks {
-                let enc = track.encryption.clone().expect("track.encryption Some");
-                assert_eq!(enc.samples.len(), track.samples.len());
-                for (sample, entry) in track.samples.iter_mut().zip(enc.samples.iter()) {
+                let enc = track.spec.protection.clone().expect("spec.protection Some");
+                assert!(track.samples.iter().all(|s| s.protection.is_some()));
+                for sample in track.samples.iter_mut() {
+                    let protection = sample
+                        .protection
+                        .clone()
+                        .expect("every sample carries its protection");
                     cenc_crypto::rewrite_in_place(&mut sample.data, |buf| match scheme {
                         CencScheme::Cenc => cenc_crypto::apply_ctr(
-                            &entry.initialization_vector,
+                            &protection.iv,
                             &KEY,
-                            &entry.subsamples,
+                            &protection.subsamples,
                             buf,
                         ),
-                        CencScheme::Cbcs => {
-                            cenc_crypto::cbcs_sample(&enc.tenc, entry, &KEY, buf, CbcsOp::Decrypt)
-                        }
+                        CencScheme::Cbcs => cenc_crypto::cbcs_sample(
+                            &enc.tenc,
+                            &protection.iv,
+                            &protection.subsamples,
+                            &KEY,
+                            buf,
+                            CbcsOp::Decrypt,
+                        ),
                         // This test drives exactly the two schemes above; a
                         // third reaching here means the caller list changed
                         // without the reverse-cipher being taught about it.
@@ -1680,28 +1731,25 @@ mod tests {
             .encrypt(&mut media, &cfg)
             .expect("encrypt");
 
-        let ivs: Vec<Vec<u8>> = media
+        let ivs: Vec<Bytes> = media
             .tracks
             .iter()
             .flat_map(|t| {
-                t.encryption
-                    .as_ref()
-                    .expect("Some")
-                    .samples
+                t.samples
                     .iter()
-                    .map(|e| e.initialization_vector.clone())
+                    .map(|s| s.protection.as_ref().expect("Some").iv.clone())
             })
             .collect();
         for (i, iv) in ivs.iter().enumerate() {
             assert_eq!(
-                iv.as_slice(),
+                &iv[..],
                 &(BASE + i as u64).to_be_bytes()[..],
                 "IV {i} (Media-wide index) must be base + i"
             );
         }
         // The specific boundary the original defect got wrong.
         assert_eq!(
-            ivs[first_track_len].as_slice(),
+            &ivs[first_track_len][..],
             &(BASE + first_track_len as u64).to_be_bytes()[..],
             "track 1's first IV must continue track 0's counter, not restart at base"
         );
@@ -1726,7 +1774,9 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
         assert_eq!(snapshot_all(&media), original, "no sample may be ciphered");
-        assert!(media.tracks.iter().all(|t| t.encryption.is_none()));
+        assert!(media.tracks.iter().all(
+            |t| t.spec.protection.is_none() && t.samples.iter().all(|s| s.protection.is_none())
+        ));
     }
 
     /// A rejected `IvGen::Explicit` list (wrong total count) must be caught
@@ -1751,7 +1801,9 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
         assert_eq!(snapshot_all(&media), original, "no sample may be ciphered");
-        assert!(media.tracks.iter().all(|t| t.encryption.is_none()));
+        assert!(media.tracks.iter().all(
+            |t| t.spec.protection.is_none() && t.samples.iter().all(|s| s.protection.is_none())
+        ));
     }
 
     /// The pre-cipher plan-uniqueness backstop bites: a **planned** IV
@@ -1846,7 +1898,9 @@ mod tests {
             original,
             "a rejected plan must leave every track's samples byte-identical"
         );
-        assert!(media.tracks.iter().all(|t| t.encryption.is_none()));
+        assert!(media.tracks.iter().all(
+            |t| t.spec.protection.is_none() && t.samples.iter().all(|s| s.protection.is_none())
+        ));
     }
 
     /// **F2 regression test.** Two successive `encrypt()` calls on the SAME
@@ -1876,24 +1930,18 @@ mod tests {
         let mut media_a = clear_media();
         enc.encrypt(&mut media_a, &cfg).expect("first encrypt");
         let ivs_a: alloc::collections::BTreeSet<Vec<u8>> = media_a.tracks[0]
-            .encryption
-            .as_ref()
-            .expect("Some")
             .samples
             .iter()
-            .map(|e| e.initialization_vector.clone())
+            .map(|s| s.protection.as_ref().expect("Some").iv.to_vec())
             .collect();
 
         let mut media_b = clear_media();
         enc.encrypt(&mut media_b, &cfg)
             .expect("second encrypt, same instance/key");
         let ivs_b: alloc::collections::BTreeSet<Vec<u8>> = media_b.tracks[0]
-            .encryption
-            .as_ref()
-            .expect("Some")
             .samples
             .iter()
-            .map(|e| e.initialization_vector.clone())
+            .map(|s| s.protection.as_ref().expect("Some").iv.to_vec())
             .collect();
 
         assert!(
@@ -1914,12 +1962,9 @@ mod tests {
             .encrypt(&mut media_c, &cfg)
             .expect("fresh instance, third encrypt");
         let ivs_c: alloc::collections::BTreeSet<Vec<u8>> = media_c.tracks[0]
-            .encryption
-            .as_ref()
-            .expect("Some")
             .samples
             .iter()
-            .map(|e| e.initialization_vector.clone())
+            .map(|s| s.protection.as_ref().expect("Some").iv.to_vec())
             .collect();
         assert_eq!(
             ivs_a, ivs_c,

@@ -50,9 +50,11 @@ fn opaque_spec(track_id: TrackId) -> TrackSpec {
         track_id,
         timescale(90_000),
         transmux::CodecConfig::Data {
-            stream_type: 0x06,
-            descriptors: Vec::new(),
-            carriage: transmux::ir::DataCarriage::Pes,
+            identity: transmux::ir::DataIdentity::Ts {
+                stream_type: 0x06,
+                descriptors: Vec::new(),
+                carriage: transmux::ir::DataCarriage::Pes,
+            },
         },
     )
 }

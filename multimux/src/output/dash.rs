@@ -832,6 +832,7 @@ mod tests {
     use crate::testutil::video_spec;
     use broadcast_common::timescale::Timescale;
     use transmux::CodecConfig;
+    use transmux::ir::DataIdentity;
 
     const CONCURRENT_MANIFESTS: usize = 64;
 
@@ -998,9 +999,11 @@ mod tests {
             track_id,
             timescale(90_000),
             CodecConfig::Data {
-                stream_type: 0x06,
-                descriptors: Vec::new(),
-                carriage: transmux::ir::DataCarriage::Pes,
+                identity: DataIdentity::Ts {
+                    stream_type: 0x06,
+                    descriptors: Vec::new(),
+                    carriage: transmux::ir::DataCarriage::Pes,
+                },
             },
         )
     }

@@ -2206,6 +2206,7 @@ fn advance_one_behind(
                 flags: SampleFlags::new(prev.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
                 display: prev.display,
+                protection: None,
             },
         });
     }
@@ -2282,6 +2283,7 @@ fn flush_one_behind(
                 flags: SampleFlags::new(p.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
                 display: p.display,
+                protection: None,
             },
         });
     }
@@ -3352,9 +3354,11 @@ fn finalize_probe(
             };
             Some((
                 CodecConfig::Data {
-                    stream_type,
-                    descriptors: descriptors.to_vec(),
-                    carriage,
+                    identity: crate::ir::DataIdentity::Ts {
+                        stream_type,
+                        descriptors: descriptors.to_vec(),
+                        carriage,
+                    },
                 },
                 VIDEO_TIMESCALE,
                 kind,
@@ -6875,6 +6879,7 @@ impl<'a> Unpackage for TsDemux<'a> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::ir::DataIdentity;
     use crate::ts_mux::TsMux;
     use broadcast_common::{Package, Parse};
 
@@ -7165,9 +7170,11 @@ pub(crate) mod tests {
             TrackId::new(2),
             VIDEO_TIMESCALE,
             CodecConfig::Data {
-                stream_type: 0x7F,
-                descriptors: Vec::new(),
-                carriage: DataCarriage::Pes,
+                identity: DataIdentity::Ts {
+                    stream_type: 0x7F,
+                    descriptors: Vec::new(),
+                    carriage: DataCarriage::Pes,
+                },
             },
         );
         let data_samples: Vec<Sample> = (0..SAMPLE_COUNT)
@@ -7693,9 +7700,11 @@ pub(crate) mod tests {
             .expect("valid timing");
         let head_config = if audio_head {
             CodecConfig::Data {
-                stream_type: 0x04,
-                descriptors: Vec::new(),
-                carriage: DataCarriage::Pes,
+                identity: DataIdentity::Ts {
+                    stream_type: 0x04,
+                    descriptors: Vec::new(),
+                    carriage: DataCarriage::Pes,
+                },
             }
         } else {
             CodecConfig::Avc {
@@ -7727,9 +7736,11 @@ pub(crate) mod tests {
                     TrackId::new(2 + k as u32),
                     VIDEO_TIMESCALE,
                     CodecConfig::Data {
-                        stream_type: 0x7F,
-                        descriptors: Vec::new(),
-                        carriage: DataCarriage::Pes,
+                        identity: DataIdentity::Ts {
+                            stream_type: 0x7F,
+                            descriptors: Vec::new(),
+                            carriage: DataCarriage::Pes,
+                        },
                     },
                 ),
                 samples,
@@ -12024,9 +12035,11 @@ pub(crate) mod tests {
         demux.streams.get_mut(&SHARED_PID).unwrap().track =
             Some(TrackState::Parked(Box::new(ParkedTrack {
                 config: CodecConfig::Data {
-                    stream_type: STREAM_TYPE,
-                    descriptors: Vec::new(),
-                    carriage,
+                    identity: crate::ir::DataIdentity::Ts {
+                        stream_type: STREAM_TYPE,
+                        descriptors: Vec::new(),
+                        carriage,
+                    },
                 },
                 timescale: VIDEO_TIMESCALE,
                 kind: LiveKind::Data {
@@ -15922,9 +15935,11 @@ pub(crate) mod tests {
         let stream = demux.streams.get_mut(&pid).expect("stream");
         stream.track = Some(TrackState::Parked(Box::new(ParkedTrack {
             config: CodecConfig::Data {
-                stream_type: 0x7F,
-                descriptors: Vec::new(),
-                carriage: crate::pipeline::DataCarriage::Pes,
+                identity: DataIdentity::Ts {
+                    stream_type: 0x7F,
+                    descriptors: Vec::new(),
+                    carriage: crate::pipeline::DataCarriage::Pes,
+                },
             },
             timescale: VIDEO_TIMESCALE,
             kind: LiveKind::Data {
@@ -16147,9 +16162,11 @@ pub(crate) mod tests {
             stream.payload_packets = 0;
             stream.track = Some(TrackState::Parked(Box::new(ParkedTrack {
                 config: CodecConfig::Data {
-                    stream_type: 0x7F,
-                    descriptors: Vec::new(),
-                    carriage: crate::pipeline::DataCarriage::Pes,
+                    identity: DataIdentity::Ts {
+                        stream_type: 0x7F,
+                        descriptors: Vec::new(),
+                        carriage: crate::pipeline::DataCarriage::Pes,
+                    },
                 },
                 timescale: VIDEO_TIMESCALE,
                 kind: LiveKind::Data {
@@ -16234,9 +16251,11 @@ pub(crate) mod tests {
             stream.probe_tail = frame.clone();
             stream.track = Some(TrackState::Parked(Box::new(ParkedTrack {
                 config: CodecConfig::Data {
-                    stream_type: 0x7F,
-                    descriptors: Vec::new(),
-                    carriage: crate::pipeline::DataCarriage::Pes,
+                    identity: DataIdentity::Ts {
+                        stream_type: 0x7F,
+                        descriptors: Vec::new(),
+                        carriage: crate::pipeline::DataCarriage::Pes,
+                    },
                 },
                 timescale: VIDEO_TIMESCALE,
                 kind: LiveKind::Data {

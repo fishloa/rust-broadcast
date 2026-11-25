@@ -20,7 +20,7 @@ use multimux::push::{MuxError, PushTransport, SendMediaError, drive_push};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use transmux::TrackId;
-use transmux::ir::{CodecConfig, DataCarriage, Media, Sample, TrackSpec};
+use transmux::ir::{CodecConfig, DataCarriage, DataIdentity, Media, Sample, TrackSpec};
 
 const TRACK: u32 = 1;
 const MESSAGE_LEN: usize = 188;
@@ -108,9 +108,11 @@ fn data_spec() -> TrackSpec {
         TrackId::new(TRACK),
         timescale(),
         CodecConfig::Data {
-            stream_type: 0x06,
-            descriptors: Vec::new(),
-            carriage: DataCarriage::Pes,
+            identity: DataIdentity::Ts {
+                stream_type: 0x06,
+                descriptors: Vec::new(),
+                carriage: DataCarriage::Pes,
+            },
         },
     )
 }

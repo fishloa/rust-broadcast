@@ -106,6 +106,7 @@ mod ll_packager;
 mod manifest_protection;
 mod mkv_mux;
 mod mp4_demux;
+mod mp4_demux_data_tracks;
 mod mp4_demux_differential;
 mod mp4_demux_segments;
 mod mpeg_legacy;

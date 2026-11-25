@@ -1025,6 +1025,7 @@ fn build_media(
                 flags: crate::ir::SampleFlags::new(sync[i]),
                 provenance: None,
                 display: None,
+                protection: None,
             });
         }
 
@@ -1964,6 +1965,7 @@ mod tests {
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,
+            protection: None,
         };
         let media = Media::new(
             alloc::vec![Track::new_at(
@@ -2070,6 +2072,7 @@ mod tests {
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,
+            protection: None,
         };
         let media = Media::new(
             alloc::vec![Track::new_at(

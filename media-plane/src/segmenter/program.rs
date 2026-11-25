@@ -2137,9 +2137,11 @@ mod segmenter_tests {
             track_id,
             Timescale::try_new(90_000).expect("non-zero timescale"),
             CodecConfig::Data {
-                stream_type: 0x86,
-                descriptors: Vec::new(),
-                carriage: transmux::pipeline::DataCarriage::Sections,
+                identity: transmux::pipeline::DataIdentity::Ts {
+                    stream_type: 0x86,
+                    descriptors: Vec::new(),
+                    carriage: transmux::pipeline::DataCarriage::Sections,
+                },
             },
         )
     }

@@ -3,7 +3,10 @@
 //! Moved out of `pipeline.rs` (media plane step 2a, no-op): same types, same
 //! fields, same impls.
 
+use alloc::string::String;
 use alloc::vec::Vec;
+
+use bytes::Bytes;
 
 use broadcast_common::Serialize;
 
@@ -348,26 +351,35 @@ pub enum CodecConfig {
         /// [`Error::UnmuxableSubtitleTrack`](crate::error::Error::UnmuxableSubtitleTrack).
         sample_entry: Option<SubtitleSampleEntry>,
     },
-    /// Opaque data track (issue #557/#576): a PMT-listed elementary stream
-    /// whose `stream_type` is not a codec this crate decodes (DVB subtitles
-    /// EN 300 743, teletext EN 300 472, SMPTE 2038 ANC, ID3/KLV metadata,
-    /// SCTE-35, DSM-CC, private sections, and any other/unrecognised
-    /// `stream_type`) — carried losslessly rather than dropped. `stream_type`
-    /// per ISO/IEC 13818-1 Table 2-34; `descriptors` is the raw PMT ES_info
-    /// descriptor loop so consumers can classify it (e.g. with dvb-si's
-    /// parsers); `carriage` records whether the samples are PES payloads or
-    /// whole PSI/private sections — see [`DataCarriage`].
+    /// Opaque data track (issue #557/#576): an elementary stream whose codec
+    /// this crate does not decode (DVB subtitles EN 300 743, teletext
+    /// EN 300 472, SMPTE 2038 ANC, ID3/KLV metadata, SCTE-35, DSM-CC, GoPro
+    /// telemetry, QuickTime timecode, …) — carried losslessly rather than
+    /// dropped. [`DataIdentity`] says which container's identity the track
+    /// carries, so a muxer can tell whether it can place it.
     ///
-    /// Carried in the IR for `{TS} → IR → {TS}` / inspection; there is no
-    /// ISOBMFF sample entry for an opaque stream in this crate (out of
-    /// scope), so it does not participate in the fMP4 mux path (mirrors
-    /// [`CodecConfig::Vp8`] / [`CodecConfig::Vorbis`]) — every fMP4/CMAF mux
-    /// entry point (media plane step-2 fix wave 1) rejects such a track,
-    /// naming it, rather than silently omitting it (issue #576/#557); a
-    /// caller mixing carriable and opaque tracks must pre-filter with
+    /// Carried in the IR for `{container} → IR → {container}` / inspection.
+    /// A TS-sourced `Data` track is not ISOBMFF-muxable in this crate and a
+    /// track whose identity does not match the target container is refused
+    /// (every fMP4/CMAF mux entry point rejects it, naming it, rather than
+    /// silently omitting it — issue #576/#557); a caller mixing carriable and
+    /// opaque tracks must pre-filter with
     /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by) —
     /// see [`CodecConfig::is_muxable_in_bmff`].
     Data {
+        /// Which container's identity this opaque track carries.
+        identity: DataIdentity,
+    },
+}
+
+/// The container identity of a [`CodecConfig::Data`] track.
+///
+/// `#[non_exhaustive]`: a future container's native identity is additive.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DataIdentity {
+    /// A PMT-listed MPEG-2 TS elementary stream (ISO/IEC 13818-1 Table 2-34).
+    Ts {
         /// PMT `stream_type` (ISO/IEC 13818-1 Table 2-34).
         stream_type: u8,
         /// The raw PMT ES_info descriptor-loop bytes for this stream.
@@ -377,7 +389,38 @@ pub enum CodecConfig {
         /// reassembles it and how a muxer re-emits it.
         carriage: DataCarriage,
     },
+    /// An ISOBMFF track whose sample entry has no typed
+    /// [`CodecConfig`] in this crate (GoPro `gpmd`, QuickTime `tmcd`/`fdsc`,
+    /// a CENC `encv` entry, …).
+    Mp4 {
+        /// The track's `hdlr.handler_type` (ISO/IEC 14496-12:2026 §8.4.3).
+        handler: [u8; BOX_TYPE_SIZE],
+        /// The complete sample-entry box bytes, header included — the form
+        /// [`isobmff::writer::SampleEntry::Raw`] takes, so the entry re-muxes
+        /// byte-for-byte.
+        sample_entry: Bytes,
+    },
+    /// A Matroska track whose codec this crate does not decode.
+    Matroska {
+        /// The track's `CodecID` (Matroska).
+        codec_id: String,
+        /// The track's `CodecPrivate` bytes, when it carries any.
+        codec_private: Bytes,
+    },
 }
+
+impl DataIdentity {
+    /// A short label for this container identity.
+    pub fn name(&self) -> &'static str {
+        match self {
+            DataIdentity::Ts { .. } => "ts",
+            DataIdentity::Mp4 { .. } => "mp4",
+            DataIdentity::Matroska { .. } => "matroska",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(DataIdentity);
 
 /// `sample_size` of the audio sample entries the IR builds: the 16-bit samples
 /// AAC, MPEG audio, AC-3/E-AC-3 and FLV audio all carry (ISO/IEC 14496-12:2026

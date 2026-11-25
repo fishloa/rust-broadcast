@@ -18,6 +18,8 @@ use tokio::net::TcpStream;
 use transmux::CodecConfig;
 use transmux::TrackId;
 use transmux::flv_track_kind;
+#[cfg(test)]
+use transmux::ir::DataIdentity;
 use transmux::ir::{Media, Track, TrackSpec};
 
 /// The metadata pair the RTMP client frames (`@setDataFrame`/`onMetaData`,
@@ -487,9 +489,11 @@ mod tests {
 
     fn opaque_config() -> CodecConfig {
         CodecConfig::Data {
-            stream_type: 0x06,
-            descriptors: Vec::new(),
-            carriage: transmux::ir::DataCarriage::Pes,
+            identity: DataIdentity::Ts {
+                stream_type: 0x06,
+                descriptors: Vec::new(),
+                carriage: transmux::ir::DataCarriage::Pes,
+            },
         }
     }
 

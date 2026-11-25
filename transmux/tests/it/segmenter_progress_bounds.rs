@@ -35,6 +35,7 @@ use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Stage, Unpackage};
 use isobmff::HEVCConfigurationBox;
 use isobmff::movie_fragment::MovieFragmentBox;
+use transmux::ir::DataIdentity;
 use transmux::ll_dash::LlSegmenter;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::pipeline::DataCarriage;
@@ -85,9 +86,11 @@ fn scte35_track(track_id: u32) -> TrackSpec {
         TrackId::new(track_id),
         TS_TIMESCALE,
         CodecConfig::Data {
-            stream_type: 0x86,
-            descriptors: Vec::new(),
-            carriage: DataCarriage::Sections,
+            identity: DataIdentity::Ts {
+                stream_type: 0x86,
+                descriptors: Vec::new(),
+                carriage: DataCarriage::Sections,
+            },
         },
     )
 }

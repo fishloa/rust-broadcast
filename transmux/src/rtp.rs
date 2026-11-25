@@ -1491,6 +1491,7 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Result<Media> {
                             flags: crate::ir::SampleFlags::new(au.is_sync),
                             provenance: None,
                             display: None,
+                            protection: None,
                         }
                     })
                     .collect();

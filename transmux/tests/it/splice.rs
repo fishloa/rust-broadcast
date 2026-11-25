@@ -34,6 +34,7 @@ use isobmff::box_types::parse_box;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
 use transmux::TrackId;
+use transmux::ir::DataIdentity;
 use transmux::pipeline::DataCarriage;
 use transmux::{
     CodecConfig, Media, Sample, Segmenter, Track, TrackSpec, TsDemux, concat,
@@ -166,9 +167,11 @@ fn data_track_at(
             TrackId::new(track_id),
             Timescale::try_new(timescale).unwrap(),
             CodecConfig::Data {
-                stream_type: 0x86,
-                descriptors: Vec::new(),
-                carriage,
+                identity: DataIdentity::Ts {
+                    stream_type: 0x86,
+                    descriptors: Vec::new(),
+                    carriage,
+                },
             },
         ),
         samples,
@@ -213,9 +216,11 @@ fn data_track(
             TrackId::new(track_id),
             Timescale::try_new(timescale).unwrap(),
             CodecConfig::Data {
-                stream_type: 0x86, // SCTE-35 (ISO/IEC 13818-1 Table 2-34) — arbitrary; only used as a non-video codec-kind stand-in here
-                descriptors: Vec::new(),
-                carriage,
+                identity: DataIdentity::Ts {
+                    stream_type: 0x86, // SCTE-35 (ISO/IEC 13818-1 Table 2-34) — arbitrary; only used as a non-video codec-kind stand-in here
+                    descriptors: Vec::new(),
+                    carriage,
+                },
             },
         ),
         samples,

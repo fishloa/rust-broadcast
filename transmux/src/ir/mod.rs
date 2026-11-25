@@ -9,7 +9,8 @@
 //! - [`Track`] — one elementary track: its identity/codec config
 //!   ([`TrackSpec`] wrapping [`CodecConfig`]) plus its decode-ordered
 //!   [`Sample`]s, an absolute decode-time anchor, and optional CENC/CBCS
-//!   crypto metadata ([`TrackEncryption`]).
+//!   track crypto defaults ([`TrackProtection`]); per-sample IVs live on
+//!   [`Sample::protection`].
 //! - [`Sample`] — one coded access unit: data bytes, absolute optional
 //!   `dts`/`pts` (media plane step 2c), optional duration, [`SampleFlags`],
 //!   and optional debug-only [`Provenance`].
@@ -40,8 +41,9 @@
 //! - 33-bit (TS) / 32-bit (RTP) rollover is unwrapped once, at the demux edge
 //!   (`crate::ts_demux`, `crate::rtp`) — never re-derived downstream.
 //! - Samples within a [`Track`] are always in decode order.
-//! - [`Track::encryption`], when present, must have exactly one
-//!   [`isobmff::cenc::SampleEncryptionEntry`] per [`Track::samples`] entry.
+//! - A sample's [`SampleProtection`] carries its own IV and subsample map;
+//!   [`TrackSpec::protection`], when present, must state the scheme and `tenc`
+//!   those samples were protected under.
 //!
 //! This module is a pure type consolidation (media plane step 2a): the
 //! packagers/depackagers built on this IR ([`Mp4Demux`](crate::mp4_demux::Mp4Demux),
@@ -64,7 +66,7 @@ pub use audio_meta::{
     SupplementaryAudio,
 };
 pub(crate) use codec::AUDIO_SAMPLE_SIZE_BITS;
-pub use codec::{CodecConfig, DataCarriage, SubtitleFormat, SubtitleSampleEntry};
+pub use codec::{CodecConfig, DataCarriage, DataIdentity, SubtitleFormat, SubtitleSampleEntry};
 pub use display::{
     ActiveFormat, ActiveFormatDescription, AfdPersistence, AspectRatioIdc, BarData,
     ColourDescription, ColourPrimaries, DisplayChangeSet, DisplayGeometry, DisplayInfo,
@@ -78,5 +80,7 @@ pub use event::{
 };
 pub use ids::{ProgramNumber, TrackId};
 pub use media::{Media, PcrSample, SkippedTrack};
-pub use sample::{FragmentTrackData, Provenance, Sample, SampleFlags, SampleTiming};
-pub use track::{ConstantIvSenc, Track, TrackEncryption, TrackSpec};
+pub use sample::{
+    FragmentTrackData, Provenance, Sample, SampleFlags, SampleProtection, SampleTiming,
+};
+pub use track::{ConstantIvSenc, Track, TrackProtection, TrackSpec};

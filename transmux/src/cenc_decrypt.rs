@@ -94,6 +94,7 @@ use isobmff::box_types::{
 // `crate::cenc` (issue #564 — one shared definition for decrypt/encrypt/IR).
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
+use crate::ir::{ConstantIvSenc, SampleProtection, TrackProtection};
 use crate::media::Media;
 pub use broadcast_common::cenc::CencScheme;
 use isobmff::cenc::{KEY_LEN, SENC, SampleEncryptionEntry, TrackEncryptionBox};
@@ -313,7 +314,7 @@ impl CencDecryptor {
     /// protected-source track matches this media track's track_id" rather than
     /// silently passing ciphertext through.
     pub fn demux(&self) -> Result<Media> {
-        demux_protected(&self.file)
+        demux_protected(&self.file, &self.tracks)
     }
 
     /// Decrypt one sample's bytes in place, dispatching on the track's scheme.
@@ -331,15 +332,16 @@ impl CencDecryptor {
     fn decrypt_sample(
         scheme: CencScheme,
         tenc: &TrackEncryptionBox,
-        entry: &SampleEncryptionEntry,
+        iv: &[u8],
+        subsamples: &[isobmff::cenc::SubSampleEntry],
         key: &[u8; KEY_LEN],
         data: &mut bytes::Bytes,
     ) -> Result<bool> {
         cenc_crypto::rewrite_in_place(data, |buf| match scheme {
-            CencScheme::Cenc => {
-                cenc_crypto::apply_ctr(&entry.initialization_vector, key, &entry.subsamples, buf)
+            CencScheme::Cenc => cenc_crypto::apply_ctr(iv, key, subsamples, buf),
+            CencScheme::Cbcs => {
+                cenc_crypto::cbcs_sample(tenc, iv, subsamples, key, buf, CbcsOp::Decrypt)
             }
-            CencScheme::Cbcs => cenc_crypto::cbcs_sample(tenc, entry, key, buf, CbcsOp::Decrypt),
             // `CencScheme` is `#[non_exhaustive]` and now lives in
             // `broadcast-common`, so this arm is reachable if a future scheme
             // (`cens`/`cbc1`) is added there before the cipher for it lands
@@ -387,32 +389,33 @@ impl Decrypt for CencDecryptor {
     fn decrypt(&self, media: &mut Media, keys: &KeyMap) -> Result<()> {
         // ── Pass 1: prove the whole `Media` decryptable, mutate nothing ──
         for track in media.tracks.iter() {
-            let crypto = self
-                .tracks
+            self.tracks
                 .iter()
                 .find(|c| c.track_id == track.spec.track_id)
                 .ok_or(Error::InvalidInput(
                     "no protected-source track matches this media track's track_id",
                 ))?;
-            if crypto.tenc.default_is_protected == 0 {
+            let protection = track.spec.protection.as_ref().ok_or(Error::InvalidInput(
+                "this media track carries no CENC track protection",
+            ))?;
+            if protection.tenc.default_is_protected == 0 {
                 // Track is not protected — nothing to do.
                 continue;
             }
-            if keys.get(&crypto.tenc.default_kid).is_none() {
+            if keys.get(&protection.tenc.default_kid).is_none() {
                 return Err(Error::InvalidInput(
                     "no content key for the track's default_KID",
                 ));
             }
-            if track.samples.len() != crypto.samples.len() {
-                return Err(Error::InvalidInput(
-                    "sample count mismatch between media and senc",
-                ));
-            }
-            for (sample, entry) in track.samples.iter().zip(crypto.samples.iter()) {
+            for sample in track.samples.iter() {
+                let sample_protection = sample.protection.as_deref().ok_or(Error::InvalidInput(
+                    "a protected media sample carries no CENC auxiliary information",
+                ))?;
                 crate::cenc_crypto::validate_sample_decrypt(
-                    crypto.scheme,
-                    &crypto.tenc,
-                    entry,
+                    protection.scheme,
+                    &protection.tenc,
+                    &sample_protection.iv,
+                    &sample_protection.subsamples,
                     sample.data.len(),
                 )?;
             }
@@ -425,31 +428,32 @@ impl Decrypt for CencDecryptor {
         // are repeated as `Err` (they cannot fire, but if the two passes ever
         // drifted the result is an error, not an abort). ──
         for track in media.tracks.iter_mut() {
-            let crypto = self
-                .tracks
+            self.tracks
                 .iter()
                 .find(|c| c.track_id == track.spec.track_id)
                 .ok_or(Error::InvalidInput(
                     "no protected-source track matches this media track's track_id",
                 ))?;
-            if crypto.tenc.default_is_protected == 0 {
+            let protection = track.spec.protection.as_ref().ok_or(Error::InvalidInput(
+                "this media track carries no CENC track protection",
+            ))?;
+            if protection.tenc.default_is_protected == 0 {
                 continue;
             }
             let key = keys
-                .get(&crypto.tenc.default_kid)
+                .get(&protection.tenc.default_kid)
                 .ok_or(Error::InvalidInput(
                     "no content key for the track's default_KID",
                 ))?;
-            if track.samples.len() != crypto.samples.len() {
-                return Err(Error::InvalidInput(
-                    "sample count mismatch between media and senc",
-                ));
-            }
-            for (sample, entry) in track.samples.iter_mut().zip(crypto.samples.iter()) {
+            for sample in track.samples.iter_mut() {
+                let sample_protection = sample.protection.as_deref().ok_or(Error::InvalidInput(
+                    "a protected media sample carries no CENC auxiliary information",
+                ))?;
                 CencDecryptor::decrypt_sample(
-                    crypto.scheme,
-                    &crypto.tenc,
-                    entry,
+                    protection.scheme,
+                    &protection.tenc,
+                    &sample_protection.iv,
+                    &sample_protection.subsamples,
                     key,
                     &mut sample.data,
                 )?;
@@ -757,7 +761,7 @@ fn stsd_entry_fourcc(stsd: &[u8]) -> &'static str {
 /// from `stsz`/`stsc`/`stco`, e.g. ffmpeg's `-cenc_aes_ctr`) and fragmented
 /// CMAF (`moov` + one or more `moof`/`mdat` pairs, sample layout from each
 /// fragment's `trun`) — see [`collect_fragment_samples`].
-fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
+fn demux_protected(file: &bytes::Bytes, cryptos: &[TrackCrypto]) -> Result<Media> {
     use crate::media::{Media, Track};
     use crate::pipeline::{CodecConfig, Sample, TrackSpec};
     use isobmff::AVCConfigurationBox;
@@ -847,23 +851,37 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
                     display: None,
+                    protection: None,
                 });
             }
             samples
         };
 
-        tracks.push(Track::new(
-            TrackSpec::new(
-                track_id.into(),
-                timescale,
-                CodecConfig::Avc {
-                    config: AVCConfigurationBox::new(avc_config),
-                    width: 0,
-                    height: 0,
-                },
-            ),
-            samples,
-        ));
+        let mut samples = samples;
+        let crypto = cryptos.iter().find(|c| c.track_id == track_id.into());
+        let mut spec = TrackSpec::new(
+            track_id.into(),
+            timescale,
+            CodecConfig::Avc {
+                config: AVCConfigurationBox::new(avc_config),
+                width: 0,
+                height: 0,
+            },
+        );
+        if let Some(crypto) = crypto {
+            for (sample, entry) in samples.iter_mut().zip(crypto.samples.iter()) {
+                sample.protection = Some(alloc::sync::Arc::new(SampleProtection {
+                    iv: bytes::Bytes::copy_from_slice(&entry.initialization_vector),
+                    subsamples: entry.subsamples.clone(),
+                }));
+            }
+            spec = spec.with_protection(TrackProtection::new(
+                crypto.scheme,
+                crypto.tenc.clone(),
+                ConstantIvSenc::default(),
+            ));
+        }
+        tracks.push(Track::new(spec, samples));
     }
 
     if tracks.is_empty() {
@@ -1010,6 +1028,7 @@ fn absorb_protected_fragment(
             flags: crate::ir::SampleFlags::new(is_sync),
             provenance: None,
             display: None,
+            protection: None,
         });
         *next_dts = isobmff::frag_offsets::add_duration(dts, r.duration)?;
     }
@@ -1416,8 +1435,13 @@ mod tests {
         (0u8..64).map(|b| b.wrapping_add(i as u8 * 7)).collect()
     }
 
-    /// One track's `Media`, its samples already encrypted with `iv`.
+    /// One track's `Media`, its samples already encrypted with `iv` and
+    /// carrying that IV as their CENC auxiliary information.
     fn encrypted_media(track_id: TrackId, iv: &[u8; 8]) -> Media {
+        let sample_protection = alloc::sync::Arc::new(SampleProtection {
+            iv: bytes::Bytes::copy_from_slice(iv),
+            subsamples: Vec::new(),
+        });
         let samples = (0..SAMPLES_PER_TRACK)
             .map(|i| {
                 let mut buf = plaintext(i);
@@ -1428,12 +1452,15 @@ mod tests {
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
                     display: None,
+                    protection: Some(sample_protection.clone()),
                 }
             })
             .collect();
         Media::new(
             alloc::vec![Track::new(
-                TrackSpec::new(track_id, timescale(90_000), test_codec_config()),
+                TrackSpec::new(track_id, timescale(90_000), test_codec_config()).with_protection(
+                    TrackProtection::new(CencScheme::Cenc, tenc(), ConstantIvSenc::default(),)
+                ),
                 samples,
             )],
             timescale(90_000),
@@ -1477,9 +1504,8 @@ mod tests {
         }
     }
 
-    /// A `Media` holding **both** protected tracks, where the second track's
-    /// `senc` has the wrong sample count — so the failure is only discovered
-    /// once the loop reaches track 2.
+    /// A `Media` holding **both** protected tracks, so a fault on track 2 is
+    /// only discovered once the loop reaches it.
     fn two_track_media_second_bad() -> Media {
         let video = encrypted_media(TrackId::new(VIDEO_TRACK_ID), &VIDEO_IV);
         let audio = encrypted_media(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
@@ -1489,27 +1515,21 @@ mod tests {
         )
     }
 
-    /// A decryptor whose second track's `senc` has one fewer entry than the
-    /// media track's sample count.
-    fn decryptor_second_track_count_mismatch() -> CencDecryptor {
-        let mut second = crypto(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
-        second.samples.pop();
-        CencDecryptor {
-            file: bytes::Bytes::new(),
-            tracks: alloc::vec![crypto(TrackId::new(VIDEO_TRACK_ID), &VIDEO_IV), second],
-        }
-    }
-
-    /// Audit r05-W5: `decrypt` must be atomic. A sample-count mismatch on
-    /// **track 2** must be reported without track 1 having been decrypted in
-    /// place — otherwise the caller cannot tell which samples are now
-    /// plaintext, and under CTR a retry would XOR the already-plaintext
-    /// samples *back* to ciphertext.
+    /// Audit r05-W5: `decrypt` must be atomic. A **track 2** sample missing
+    /// its CENC auxiliary information must be reported without track 1 having
+    /// been decrypted in place — otherwise the caller cannot tell which
+    /// samples are now plaintext, and under CTR a retry would XOR the
+    /// already-plaintext samples *back* to ciphertext.
     #[test]
     fn decrypt_is_atomic_across_tracks() {
-        let dec = decryptor_second_track_count_mismatch();
+        let dec = decryptor();
         let keys = KeyMap::new().with_key(KID, KEY);
         let mut media = two_track_media_second_bad();
+        media.tracks[1]
+            .samples
+            .last_mut()
+            .expect("track 2 has samples")
+            .protection = None;
         // Ciphertext snapshot of every sample, before the call.
         let before: Vec<Vec<u8>> = media
             .tracks
@@ -1538,17 +1558,16 @@ mod tests {
     /// than the sample has, so `validate_subsample_map` rejects it.
     #[test]
     fn decrypt_is_atomic_on_bad_subsample_map_track2() {
-        let mut second = crypto(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
-        // 64-byte samples (see `plaintext`): claim 100 protected bytes.
-        second.samples[0].subsamples = alloc::vec![isobmff::cenc::SubSampleEntry {
-            bytes_of_clear_data: 0,
-            bytes_of_protected_data: 100,
-        }];
-        let dec = CencDecryptor {
-            file: bytes::Bytes::new(),
-            tracks: alloc::vec![crypto(TrackId::new(VIDEO_TRACK_ID), &VIDEO_IV), second],
-        };
+        let dec = decryptor();
         let mut media = two_track_media_second_bad();
+        // 64-byte samples (see `plaintext`): claim 100 protected bytes.
+        media.tracks[1].samples[0].protection = Some(alloc::sync::Arc::new(SampleProtection {
+            iv: bytes::Bytes::copy_from_slice(&AUDIO_IV),
+            subsamples: alloc::vec![isobmff::cenc::SubSampleEntry {
+                bytes_of_clear_data: 0,
+                bytes_of_protected_data: 100,
+            }],
+        }));
         let before: Vec<Vec<u8>> = media
             .tracks
             .iter()
@@ -1558,10 +1577,7 @@ mod tests {
         let err = dec
             .decrypt(&mut media, &KeyMap::new().with_key(KID, KEY))
             .unwrap_err();
-        assert!(
-            matches!(err, Error::InvalidInput(_) | Error::BufferTooShort(..)),
-            "got {err:?}"
-        );
+        assert!(matches!(err, Error::BufferTooShort(..)), "got {err:?}");
         let after: Vec<Vec<u8>> = media
             .tracks
             .iter()
@@ -1573,34 +1589,39 @@ mod tests {
         );
     }
 
-    /// A two-track `cbcs` decryptor whose second track's `senc` count
-    /// mismatches — the `cbcs` path must be atomic too, not only `cenc`.
+    /// A two-track `cbcs` decrypt whose second track carries a malformed
+    /// subsample map — the `cbcs` path must be atomic too, not only `cenc`.
     #[test]
     fn decrypt_is_atomic_for_cbcs() {
         let mut t = tenc();
         t.default_per_sample_iv_size = 16;
         t.default_crypt_byte_block = 1;
         t.default_skip_byte_block = 9;
-        let mk = |id: u32, iv: u8, count: usize| TrackCrypto {
-            track_id: TrackId::new(id),
-            tenc: t.clone(),
-            original_format: *b"avc1",
-            scheme: CencScheme::Cbcs,
-            samples: (0..count)
-                .map(|_| SampleEncryptionEntry {
-                    initialization_vector: alloc::vec![iv; 16],
-                    subsamples: Vec::new(),
-                })
-                .collect(),
-        };
-        let dec = CencDecryptor {
-            file: bytes::Bytes::new(),
-            tracks: alloc::vec![
-                mk(VIDEO_TRACK_ID, 0x11, SAMPLES_PER_TRACK),
-                mk(AUDIO_TRACK_ID, 0x22, SAMPLES_PER_TRACK - 1),
-            ],
-        };
+        let dec = decryptor();
         let mut media = two_track_media_second_bad();
+        for track in &mut media.tracks {
+            let protection = track
+                .spec
+                .protection
+                .as_mut()
+                .expect("encrypted_media sets a track protection");
+            protection.scheme = CencScheme::Cbcs;
+            protection.tenc = t.clone();
+            for sample in &mut track.samples {
+                sample.protection = Some(alloc::sync::Arc::new(SampleProtection {
+                    iv: bytes::Bytes::from(alloc::vec![0x22u8; 16]),
+                    subsamples: Vec::new(),
+                }));
+            }
+        }
+        // 64-byte samples (see `plaintext`): claim 100 protected bytes.
+        media.tracks[1].samples[0].protection = Some(alloc::sync::Arc::new(SampleProtection {
+            iv: bytes::Bytes::from(alloc::vec![0x22u8; 16]),
+            subsamples: alloc::vec![isobmff::cenc::SubSampleEntry {
+                bytes_of_clear_data: 0,
+                bytes_of_protected_data: 100,
+            }],
+        }));
         let before: Vec<Vec<u8>> = media
             .tracks
             .iter()
@@ -1610,7 +1631,7 @@ mod tests {
         let err = dec
             .decrypt(&mut media, &KeyMap::new().with_key(KID, KEY))
             .unwrap_err();
-        assert!(matches!(err, Error::InvalidInput(_)), "got {err:?}");
+        assert!(matches!(err, Error::BufferTooShort(..)), "got {err:?}");
         let after: Vec<Vec<u8>> = media
             .tracks
             .iter()
@@ -1627,14 +1648,16 @@ mod tests {
     /// track's KID.
     #[test]
     fn decrypt_is_atomic_when_a_key_is_missing() {
-        // Second track uses a different KID, which the key map will not hold.
-        let mut second = crypto(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
-        second.tenc.default_kid = [0xBB; KEY_LEN];
-        let dec = CencDecryptor {
-            file: bytes::Bytes::new(),
-            tracks: alloc::vec![crypto(TrackId::new(VIDEO_TRACK_ID), &VIDEO_IV), second],
-        };
+        let dec = decryptor();
         let mut media = two_track_media_second_bad();
+        // Second track uses a different KID, which the key map will not hold.
+        media.tracks[1]
+            .spec
+            .protection
+            .as_mut()
+            .expect("track 2 is protected")
+            .tenc
+            .default_kid = [0xBB; KEY_LEN];
         let before: Vec<Vec<u8>> = media
             .tracks
             .iter()

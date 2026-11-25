@@ -16,7 +16,7 @@ use media_plane::file_stream::{
 };
 use media_plane::ingress::{ProgramId, SessionEvent};
 use transmux::ir::{Track, TrackId, TrackSpec};
-use transmux::pipeline::{CodecConfig, DataCarriage};
+use transmux::pipeline::{CodecConfig, DataCarriage, DataIdentity};
 use transmux::{Media, Sample, Track as IrTrack};
 
 const CHUNK: usize = 64 << 10;
@@ -335,9 +335,11 @@ fn data_track(id: u32, samples: Vec<Sample>) -> IrTrack {
             TrackId::new(id),
             timescale(90_000),
             CodecConfig::Data {
-                stream_type: 0x06,
-                descriptors: Vec::new(),
-                carriage: DataCarriage::Pes,
+                identity: DataIdentity::Ts {
+                    stream_type: 0x06,
+                    descriptors: Vec::new(),
+                    carriage: DataCarriage::Pes,
+                },
             },
         ),
         samples,

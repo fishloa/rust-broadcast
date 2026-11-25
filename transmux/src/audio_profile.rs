@@ -152,7 +152,7 @@ pub fn apply_overrides(
 mod tests {
     use super::*;
     use crate::codec_config_ext::EsdsBoxCodecInfo;
-    use crate::ir::{CodecConfig, DataCarriage};
+    use crate::ir::{CodecConfig, DataCarriage, DataIdentity};
     use crate::mpeg_legacy::MpegAudioLayer;
     use broadcast_common::timescale::Timescale;
     use isobmff::{
@@ -269,9 +269,11 @@ mod tests {
             TrackId::new(259),
             timescale(),
             CodecConfig::Data {
-                stream_type: 0x06,
-                descriptors: Vec::new(),
-                carriage: DataCarriage::Pes,
+                identity: DataIdentity::Ts {
+                    stream_type: 0x06,
+                    descriptors: Vec::new(),
+                    carriage: DataCarriage::Pes,
+                },
             },
         )
     }

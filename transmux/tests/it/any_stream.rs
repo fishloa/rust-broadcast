@@ -50,6 +50,7 @@ use transmux::TrackId;
 use broadcast_common::{Package, Unpackage};
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
+use transmux::ir::DataIdentity;
 use transmux::pipeline::{CodecConfig, DataCarriage};
 use transmux::{CmafMux, Media, Track, TsDemux, TsHlsPackager, TsMux};
 
@@ -293,9 +294,12 @@ fn find_data_track<'a>(media: &'a Media, es: &LiveEs) -> &'a Track {
         .iter()
         .find(|t| match &t.spec.config {
             CodecConfig::Data {
-                stream_type,
-                descriptors,
-                ..
+                identity:
+                    DataIdentity::Ts {
+                        stream_type,
+                        descriptors,
+                        ..
+                    },
             } => *stream_type == es.stream_type && es.descriptor_variants.contains(descriptors),
             _ => false,
         })
@@ -320,9 +324,12 @@ fn find_data_track_exact<'a>(media: &'a Media, stream_type: u8, descriptors: &[u
         .iter()
         .find(|t| match &t.spec.config {
             CodecConfig::Data {
-                stream_type: st,
-                descriptors: d,
-                ..
+                identity:
+                    DataIdentity::Ts {
+                        stream_type: st,
+                        descriptors: d,
+                        ..
+                    },
             } => *st == stream_type && d.as_slice() == descriptors,
             _ => false,
         })
@@ -377,9 +384,12 @@ fn demux_completeness_every_live_pmt_stream_becomes_a_track() {
             (
                 None,
                 CodecConfig::Data {
-                    carriage,
-                    descriptors,
-                    ..
+                    identity:
+                        DataIdentity::Ts {
+                            carriage,
+                            descriptors,
+                            ..
+                        },
                 },
             ) => {
                 assert!(
@@ -504,9 +514,12 @@ fn ts_ir_ts_round_trip_is_payload_lossless_for_data_and_sections() {
         let orig_payloads: Vec<&[u8]> = track.samples.iter().map(|s| s.data.as_ref()).collect();
         match &track.spec.config {
             CodecConfig::Data {
-                stream_type,
-                descriptors,
-                ..
+                identity:
+                    DataIdentity::Ts {
+                        stream_type,
+                        descriptors,
+                        ..
+                    },
             } => {
                 // The re-emitted PMT must carry this Data track's exact
                 // preserved stream_type + descriptors (parsed independently
@@ -602,7 +615,9 @@ fn ts_to_fmp4_errors_naming_data_track_then_succeeds_once_filtered() {
         .map_or(TrackId::new(1), TrackId::next);
     data_track.spec.track_id = data_track_id;
     let data_stream_type = match &data_track.spec.config {
-        CodecConfig::Data { stream_type, .. } => *stream_type,
+        CodecConfig::Data {
+            identity: DataIdentity::Ts { stream_type, .. },
+        } => *stream_type,
         other => panic!("expected CodecConfig::Data, got {other:?}"),
     };
     tracks.push(data_track);
@@ -718,9 +733,12 @@ fn ts_hls_carries_every_data_and_section_track_in_every_segment_pmt() {
         .iter()
         .map(|t| match &t.spec.config {
             CodecConfig::Data {
-                stream_type,
-                descriptors,
-                ..
+                identity:
+                    DataIdentity::Ts {
+                        stream_type,
+                        descriptors,
+                        ..
+                    },
             } => Expect::Data(*stream_type, descriptors.clone()),
             CodecConfig::Eac3 { .. } => Expect::Eac3,
             other => panic!("m6-single.ts must produce only Data or E-AC-3 tracks, got {other:?}"),
@@ -766,9 +784,12 @@ fn ts_hls_carries_every_data_and_section_track_in_every_segment_pmt() {
         let orig_payloads: Vec<&[u8]> = track.samples.iter().map(|s| s.data.as_ref()).collect();
         match &track.spec.config {
             CodecConfig::Data {
-                stream_type,
-                descriptors,
-                ..
+                identity:
+                    DataIdentity::Ts {
+                        stream_type,
+                        descriptors,
+                        ..
+                    },
             } => {
                 let round = find_data_track_exact(&media2, *stream_type, descriptors);
                 let round_payloads: Vec<&[u8]> =

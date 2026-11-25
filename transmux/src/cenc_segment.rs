@@ -2,12 +2,12 @@
 //!
 //! The box-level wrapper lives in [`protect_sample_entry`];
 //! this module keeps the IR-facing pass that takes a
-//! [`TrackEncryption`] and rewrites the `moov`
+//! [`TrackProtection`] and rewrites the `moov`
 //! tree through its typed `Serialize` impl.
 
 use crate::error::{Error, Result};
 use crate::ir::TrackId;
-use crate::media::TrackEncryption;
+use crate::ir::TrackProtection;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 use isobmff::BoxIter;
@@ -25,8 +25,8 @@ use isobmff::init_segment::{MOOV, MovieBox, StblChild, protect_sample_entry};
 /// Operates as a *post-processing* pass over an already-muxed init segment
 /// rather than being wired into `pipeline::build_init_segment` itself, so it
 /// composes with any caller that already has a
-/// [`crate::media::TrackEncryption`] in hand (e.g. from
-/// `CencEncryptor::encrypt`'s `Track::encryption`) without that crypto
+/// [`crate::ir::TrackProtection`] in hand (e.g. from
+/// `CencEncryptor::encrypt`'s `TrackSpec::protection`) without that crypto
 /// metadata needing to flow through the lower-level `TrackSpec`/pipeline
 /// plumbing. `init_segment` may be the bare `ftyp`+`moov` pair or a larger
 /// buffer with more boxes following (e.g. a whole `CmafMux` output including
@@ -35,7 +35,7 @@ use isobmff::init_segment::{MOOV, MovieBox, StblChild, protect_sample_entry};
 pub fn protect_init_segment(
     init_segment: &[u8],
     track_id: TrackId,
-    encryption: &TrackEncryption,
+    protection: &TrackProtection,
 ) -> Result<Vec<u8>> {
     let mut prefix_len = 0usize;
     let mut moov_len = None;
@@ -84,7 +84,7 @@ pub fn protect_init_segment(
                 expected: "stsd sample entry",
             })?
             .clone();
-        stsd.entries[0] = protect_sample_entry(&original, encryption.scheme, &encryption.tenc)?;
+        stsd.entries[0] = protect_sample_entry(&original, protection.scheme, &protection.tenc)?;
     }
 
     let mut new_moov = alloc::vec![0u8; moov.serialized_len()];

@@ -258,10 +258,9 @@ fn audio_params(config: &CodecConfig) -> (Option<u16>, Option<u32>) {
 /// `describe_track`'s `protected_scheme` argument: the CENC/CBCS scheme name
 /// for this track's ID, when [`analyze_mp4_impl`]'s separate
 /// [`transmux::CencDecryptor`] pass recovered one (see that function's doc
-/// comment — [`Track::encryption`] itself is never populated by any of this
-/// crate's *demux* paths, only by [`transmux::CencEncryptor`] on the encode
-/// side, so this side channel is this analyzer's own bridge, not a
-/// transmux-native field).
+/// comment — `TrackSpec::protection` is not populated by this crate's *demux*
+/// paths, only by [`transmux::CencEncryptor`] on the encode side, so this side
+/// channel is this analyzer's own bridge, not a transmux-native field).
 fn describe_track(track: &Track, protected_scheme: Option<&'static str>) -> Mp4Track {
     let config = &track.spec.config;
     let (width, height) = dims(config);
@@ -282,7 +281,7 @@ fn describe_track(track: &Track, protected_scheme: Option<&'static str>) -> Mp4T
         0.0
     };
 
-    let (encrypted, encryption_scheme) = match (&track.encryption, protected_scheme) {
+    let (encrypted, encryption_scheme) = match (&track.spec.protection, protected_scheme) {
         (Some(enc), _) => (true, Some(enc.scheme.name())),
         (None, Some(scheme)) => (true, Some(scheme)),
         (None, None) => (false, None),

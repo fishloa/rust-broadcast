@@ -18,6 +18,7 @@ use dvb_si::tables::pmt::PmtSection;
 use isobmff::ObjectTypeIndication;
 use isobmff::mpegh::MHADecoderConfigurationRecord;
 use mpeg_ts::ts::SectionReassembler;
+use transmux::ir::DataIdentity;
 use transmux::ir::{Track, TrackId, TrackSpec};
 use transmux::pipeline::{CodecConfig, DataCarriage};
 use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, StreamingTsMux, TsDemux, TsMux};
@@ -54,9 +55,11 @@ fn track(id: u32, config: CodecConfig, samples: Vec<Sample>) -> Track {
 
 fn data_config(stream_type: u8, descriptors: Vec<u8>, carriage: DataCarriage) -> CodecConfig {
     CodecConfig::Data {
-        stream_type,
-        descriptors,
-        carriage,
+        identity: DataIdentity::Ts {
+            stream_type,
+            descriptors,
+            carriage,
+        },
     }
 }
 

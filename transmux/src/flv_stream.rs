@@ -675,6 +675,7 @@ impl StreamingFlvDemux {
                     flags: crate::ir::SampleFlags::new(frame_type == FRAME_TYPE_KEYFRAME),
                     provenance: None,
                     display: None,
+                    protection: None,
                 };
                 if let Some(track_id) = video.track_id {
                     video.advance(
@@ -768,6 +769,7 @@ impl StreamingFlvDemux {
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
                     display: None,
+                    protection: None,
                 };
                 if let Some(track_id) = audio.track_id {
                     audio.advance(
@@ -1519,6 +1521,7 @@ mod tests {
             flags: crate::ir::SampleFlags::SYNC,
             provenance: None,
             display: None,
+            protection: None,
         };
         track
             .advance(

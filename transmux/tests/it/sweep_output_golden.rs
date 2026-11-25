@@ -119,9 +119,11 @@ fn sample_timing_debug(s: &str) -> String {
 /// it (continuity gaps on `m6-single.ts`), which is pinned by
 /// `ts_sync_loss_degraded.rs` instead.
 fn media_debug(media: &transmux::Media) -> String {
-    let s = legacy_pcr_debug(&legacy_pid_debug(&no_display_debug(&sample_timing_debug(
-        &format!("{media:?}"),
-    ))));
+    let s = legacy_pcr_debug(&legacy_pid_debug(&no_track_encryption_debug(
+        &no_protection_debug(&no_display_debug(&sample_timing_debug(
+            &legacy_data_config_debug(&format!("{media:?}")),
+        ))),
+    )));
     match s.rfind(", degraded: [") {
         Some(i) => format!("{} }}", &s[..i]),
         None => s,
@@ -166,6 +168,99 @@ fn no_display_debug(s: &str) -> String {
             }
         }
         rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `CodecConfig::Data` used to render its TS fields directly (`Data {
+/// stream_type: 6, descriptors: [...], carriage: Pes }`); they now sit inside
+/// `identity: DataIdentity::Ts { .. }`. Flatten that one wrapper back so the
+/// goldens keep proving the demux output itself is unchanged.
+fn legacy_data_config_debug(s: &str) -> String {
+    const OPEN: &str = "Data { identity: Ts { ";
+    const CLOSE: &str = " } }";
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find(OPEN) {
+        out.push_str(&rest[..i]);
+        out.push_str("Data { ");
+        let after = &rest[i + OPEN.len()..];
+        match after.find(CLOSE) {
+            Some(end) => {
+                out.push_str(&after[..end]);
+                out.push_str(" }");
+                rest = &after[end + CLOSE.len()..];
+            }
+            None => {
+                out.push_str(after);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `Sample::protection` and `TrackSpec::protection` render in `Debug` as
+/// `, protection: <value>`; the goldens were captured before either field
+/// existed. Drop the field (the value runs to the next comma or closing brace
+/// at nesting depth 0), exactly as [`no_display_debug`] does for `display`, so
+/// every hash still proves the demux output itself is unchanged.
+fn no_protection_debug(s: &str) -> String {
+    const FIELD: &str = ", protection: ";
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find(FIELD) {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + FIELD.len()..];
+        let mut depth = 0usize;
+        let mut end = after.len();
+        for (j, c) in after.char_indices() {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' => depth = depth.saturating_sub(1),
+                '}' if depth == 0 => {
+                    end = after[..j].trim_end().len();
+                    break;
+                }
+                '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    end = j;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `Track` used to carry an `encryption` field that rendered as
+/// `, encryption: None`; it is gone (protection now rides on the samples and
+/// the track spec), but the goldens were captured with it. Re-insert the
+/// absent field so every hash still proves the demux output itself is
+/// unchanged.
+fn no_track_encryption_debug(s: &str) -> String {
+    const FIELD: &str = ", start_decode_time: ";
+    let mut out = String::with_capacity(s.len() + s.len() / 16);
+    let mut rest = s;
+    while let Some(i) = rest.find(FIELD) {
+        out.push_str(&rest[..i + FIELD.len()]);
+        let after = &rest[i + FIELD.len()..];
+        match after.find('}') {
+            Some(end) => {
+                out.push_str(after[..end].trim_end());
+                out.push_str(", encryption: None ");
+                rest = &after[end..];
+            }
+            None => {
+                out.push_str(after);
+                rest = "";
+            }
+        }
     }
     out.push_str(rest);
     out
@@ -393,7 +488,12 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
     check(
         &mut bad,
         "rtp-stream",
-        fnv1a(no_display_debug(&sample_timing_debug(&format!("{samples:?}"))).as_bytes()),
+        fnv1a(
+            no_protection_debug(&no_display_debug(&sample_timing_debug(&format!(
+                "{samples:?}"
+            ))))
+            .as_bytes(),
+        ),
         0x24e2_66a5_5d4e_7510,
     );
     assert!(bad.is_empty(), "output changed: {bad:?}");

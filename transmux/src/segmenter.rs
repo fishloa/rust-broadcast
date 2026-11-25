@@ -69,8 +69,8 @@ use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
 use crate::pipeline::{
-    CodecConfig, DataCarriage, FragmentTrackData, Sample, TrackSpec, build_init_segment,
-    build_media_segment,
+    CodecConfig, DataCarriage, DataIdentity, FragmentTrackData, Sample, TrackSpec,
+    build_init_segment, build_media_segment,
 };
 
 // ── Shared segmentation primitives (all four segmenters) ────────────────────
@@ -107,8 +107,10 @@ pub fn is_anchor_capable(config: &CodecConfig) -> bool {
     !matches!(
         config,
         CodecConfig::Data {
-            carriage: DataCarriage::Sections,
-            ..
+            identity: DataIdentity::Ts {
+                carriage: DataCarriage::Sections,
+                ..
+            },
         }
     )
 }

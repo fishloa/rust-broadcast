@@ -68,12 +68,12 @@
 //!
 //! # CENC/CBCS signalling (issue #564)
 //!
-//! When any [`Track::encryption`](crate::media::Track::encryption) in an
+//! When any [`TrackProtection`](crate::ir::TrackProtection) in an
 //! `AdaptationSet` is `Some`, `package` automatically emits the "common"
 //! generic-CENC identification element —
 //! `<ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011"
 //! value="cenc"|"cbcs" cenc:default_KID="...">` — derived from that track's
-//! [`crate::media::TrackEncryption::scheme`] and
+//! [`crate::ir::TrackProtection::scheme`] and
 //! [`isobmff::cenc::TrackEncryptionBox::default_kid`]; no caller wiring is
 //! needed for this element. (Real-world packaging protects every
 //! `Representation` in a set with the same scheme/KID; a set is assumed
@@ -203,7 +203,7 @@ const START_WITH_SAP: u8 = 1;
 
 /// `schemeIdUri` for the generic CENC/CBCS "common" protection identification
 /// element (ISO/IEC 23009-1 §5.8.4.2, ISO/IEC 23001-7) — the element
-/// auto-derived from [`crate::media::Track::encryption`] (issue #564).
+/// auto-derived from [`crate::ir::TrackSpec::protection`] (issue #564).
 pub const MP4_PROTECTION_SCHEME_URI: &str = "urn:mpeg:dash:mp4protection:2011";
 
 /// Segment addressing mode for `SegmentTemplate` (ISO/IEC 23009-1 §5.3.9.4.4
@@ -264,7 +264,7 @@ pub struct TrackSegments {
 /// and supplies them verbatim. The "common" generic-CENC element
 /// (`schemeIdUri="urn:mpeg:dash:mp4protection:2011"`) does **not** need an
 /// entry here — it is auto-derived from
-/// [`crate::media::Track::encryption`] (issue #564); see the module docs.
+/// [`crate::ir::TrackSpec::protection`] (issue #564); see the module docs.
 #[derive(Debug, Clone)]
 pub struct ContentProtectionSystem {
     /// `ContentProtection@schemeIdUri` (ISO/IEC 23009-1 §5.8.4.1) — e.g. a DRM
@@ -532,7 +532,7 @@ struct ReprInfo {
     /// `@lang` resolved from the track's `ISO_639_language_descriptor`
     /// (audio only — see [`lang_from_es_info`]).
     lang: Option<String>,
-    /// The track's [`crate::media::TrackEncryption::scheme`], if protected
+    /// The track's [`crate::ir::TrackProtection::scheme`], if protected
     /// (issue #564) — drives the auto-derived "common" `ContentProtection`.
     encryption_scheme: Option<isobmff::cenc::CencScheme>,
     /// The track's [`isobmff::cenc::TrackEncryptionBox::default_kid`], if
@@ -709,7 +709,7 @@ impl DashPackager {
             None
         };
 
-        let (encryption_scheme, encryption_kid) = match &track.encryption {
+        let (encryption_scheme, encryption_kid) = match &track.spec.protection {
             Some(enc) => (Some(enc.scheme), Some(enc.tenc.default_kid)),
             None => (None, None),
         };
@@ -1001,7 +1001,7 @@ impl DashPackager {
         }
 
         // Auto-derived "common" ContentProtection (ISO/IEC 23001-7 generic
-        // CENC signalling element) from the IR's `Track::encryption` — issue
+        // CENC signalling element) from the IR's `TrackSpec::protection` — issue
         // #564. Uses the first encrypted Representation's scheme/KID in this
         // set (real-world packaging protects every Representation in a set
         // identically; see the module docs).

@@ -113,6 +113,19 @@ fn summarize(root: &Path, key: impl Fn(&str) -> Option<String>) -> String {
         };
         let mut line = format!("{key}:");
         for t in &media.tracks {
+            // Tracks with no typed codec (a CENC `encv` entry, GoPro `gpmd`,
+            // …) are now carried as data tracks instead of being skipped.
+            // The committed golden predates that and enumerates only the
+            // codec-identified tracks; the data identities are pinned by the
+            // `mp4_demux_data_tracks` tests instead.
+            if matches!(
+                t.spec.config,
+                transmux::CodecConfig::Data {
+                    identity: transmux::ir::DataIdentity::Mp4 { .. },
+                }
+            ) {
+                continue;
+            }
             let _ = write!(line, " {}x{}", t.track_id(), t.samples.len());
         }
         s.push_str(&line);

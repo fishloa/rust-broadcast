@@ -16,6 +16,7 @@ use isobmff::{
     HEVCDecoderConfigurationRecord, SLConfigDescriptor,
 };
 use transmux::ir::DataCarriage;
+use transmux::ir::DataIdentity;
 use transmux::{CaptionDetector, CodecConfig, DetectedCaption, TsDemux, declared_caption_services};
 
 fn detect(fixture: &str, test: &str) -> Option<Vec<DetectedCaption>> {
@@ -244,9 +245,11 @@ fn mpeg2_config() -> CodecConfig {
 
 fn mpeg2_audio_config() -> CodecConfig {
     CodecConfig::Data {
-        stream_type: 0x86,
-        descriptors: vec![],
-        carriage: DataCarriage::Pes,
+        identity: DataIdentity::Ts {
+            stream_type: 0x86,
+            descriptors: vec![],
+            carriage: DataCarriage::Pes,
+        },
     }
 }
 

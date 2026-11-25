@@ -74,7 +74,7 @@ pub const CENC_KEYFORMATVERSIONS: &str = "1";
 /// URI — no DRM logic lives here) and `kid` is the track's Track Encryption
 /// Box default KID (`tenc.default_kid`, ISO/IEC 23001-7 §12.2 — the
 /// `transmux` crate's `cenc::TrackEncryptionBox::default_kid` /
-/// `media::TrackEncryption::tenc::default_kid`).
+/// `media::TrackProtection::tenc::default_kid`).
 ///
 /// `Err` if `key_uri` cannot be represented as a quoted-string (`"`, CR or
 /// LF — RFC 8216 §4.2; issue #1140 / audit r05-W10: a key-server URL

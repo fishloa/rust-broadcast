@@ -41,11 +41,10 @@ use std::process::Command;
 
 use broadcast_common::{Decrypt, Encrypt, Package, Unpackage};
 use bytes::Bytes;
-use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
     CencDecryptor, CencEncryptor, CencScheme, CmafMux, CodecConfig, ConstantIvSenc, EncryptConfig,
-    IvGen, KeyMap, Media, SubsamplePolicy, TrackEncryption,
+    IvGen, KeyMap, Media, SubsamplePolicy, TrackProtection,
 };
 
 /// Constant `cbcs` IV — the standard real-world `cbcs` convention (confirmed
@@ -120,29 +119,24 @@ fn mp4decrypt_available() -> bool {
 }
 
 /// Encrypt `media` in place per `cfg`, mux it through the real `CmafMux`
-/// packager, then apply both Task-3 protection passes. Returns the fully
-/// protected, standalone (ftyp+moov+styp+moof+mdat) fMP4 bytes.
+/// packager, then protect the init segment. Returns the fully protected,
+/// standalone (ftyp+moov+styp+moof+mdat) fMP4 bytes.
+///
+/// The media segment's `senc`/`saiz`/`saio` come from the muxer itself now
+/// that each sample carries its own protection.
 fn build_protected_fmp4(media: &mut Media, cfg: &EncryptConfig) -> Vec<u8> {
     CencEncryptor::new(KEY)
         .encrypt(&mut *media, cfg)
         .expect("CencEncryptor::encrypt");
     let track_id = media.tracks[0].spec.track_id;
-    let enc: TrackEncryption = media.tracks[0]
-        .encryption
-        .as_ref()
-        .expect("Track::encryption populated by CencEncryptor")
-        .clone();
+    let enc: TrackProtection = media.tracks[0]
+        .spec
+        .protection
+        .clone()
+        .expect("TrackSpec::protection populated by CencEncryptor");
 
     let raw = CmafMux::new(1).package(&*media).expect("CmafMux::package");
-    let with_protected_init =
-        protect_init_segment(&raw, track_id, &enc).expect("protect_init_segment");
-    let fragment_protection = FragmentProtection {
-        track_id: isobmff::TrackId::new(track_id.value()),
-        entries: &enc.samples,
-        per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
-    };
-    protect_media_segment(&with_protected_init, &[fragment_protection])
-        .expect("protect_media_segment")
+    protect_init_segment(&raw, track_id, &enc).expect("protect_init_segment")
 }
 
 /// Write `bytes` to a fresh temp file and return its path.
@@ -557,10 +551,14 @@ fn cbcs_counter_16_byte_iv_mp4decrypt_interop() {
     let protected_bytes = build_protected_fmp4(&mut media, &cfg);
 
     // The recorded per-sample IVs must be 16 bytes (the fix's whole point).
-    let enc = media.tracks[0].encryption.as_ref().expect("encryption");
+    let enc = media.tracks[0]
+        .spec
+        .protection
+        .as_ref()
+        .expect("protection");
     assert_eq!(enc.tenc.default_per_sample_iv_size, 16);
-    for s in &enc.samples {
-        assert_eq!(s.initialization_vector.len(), 16);
+    for s in &media.tracks[0].samples {
+        assert_eq!(s.protection.as_ref().expect("Some").iv.len(), 16);
     }
 
     // Self round-trip remains the hard gate.
