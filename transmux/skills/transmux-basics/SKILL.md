@@ -358,8 +358,9 @@ Input detection uses `container-probe`; an inconclusive probe is
   `Track::new`/`new_at`, `TrackSpec::new`, `Sample::new`/`timed`/`from_annexb`/
   `from_raw`) exist outside the crate; matching needs a trailing `..`.
 - **A segment is `SegmentOut { bytes, summary, tracks }`.** A manifest renders
-  from `SegmentSummaryLog` alone; it never sees a `Sample`. `MuxOutput::Text`
-  carries a rendered playlist/manifest from a segmenter that produces one.
+  from `SegmentSummaryLog` alone; it never sees a `Sample`. A segmenter that
+  also maintains a playlist exposes it directly
+  (`StreamingTsHlsSegmenter::playlist`), not through a `MuxOutput`.
 - **Drain `StreamingTsDemux::poll_event` after every `feed`.** The queue is
   unbounded; it only shrinks through `poll_event` (`with_max_degraded_events`
   caps the `InputDegraded` diagnostics, not the events).
