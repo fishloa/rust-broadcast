@@ -142,6 +142,9 @@ pub struct PsScanner {
     limits: PsLimits,
     finished: bool,
     ended: bool,
+    /// The first parse failure the scanner met, for a caller that must report
+    /// a stream with no recoverable pack as an error rather than an empty one.
+    first_error: Option<crate::Error>,
 }
 
 impl PsScanner {
@@ -154,6 +157,7 @@ impl PsScanner {
             limits,
             finished: false,
             ended: false,
+            first_error: None,
         }
     }
 
@@ -161,6 +165,13 @@ impl PsScanner {
     #[must_use]
     pub fn buffered_len(&self) -> usize {
         self.buf.len().saturating_sub(self.start)
+    }
+
+    /// The first parse failure the scanner met, if any. A stream with no
+    /// recoverable pack at all is reported from this; a recovered stream is not.
+    #[must_use]
+    pub fn first_error(&self) -> Option<&crate::Error> {
+        self.first_error.as_ref()
     }
 
     /// Append `bytes` to the scanner.
@@ -204,6 +215,9 @@ impl PsScanner {
 
         // Re-acquire sync: every unit begins with a start-code prefix.
         if !avail.starts_with(&crate::PACKET_START_CODE_PREFIX[..]) {
+            if self.first_error.is_none() && avail.len() >= START_CODE_LEN {
+                self.first_error = Some(crate::Error::BadPackStartCode(read_u32_at(avail, 0)));
+            }
             return match resync_skip(avail) {
                 Some(skipped) => {
                     self.start += skipped;
@@ -262,7 +276,10 @@ impl PsScanner {
                     Ok(Some(PsEvent::Pack(header)))
                 }
                 Err(crate::Error::Mpeg1NotSupported) => Err(crate::Error::Mpeg1NotSupported),
-                Err(_) => {
+                Err(error) => {
+                    if self.first_error.is_none() {
+                        self.first_error = Some(error);
+                    }
                     if let Some(skipped) = resync_skip(avail) {
                         self.start += skipped;
                         return Ok(Some(PsEvent::Resync {

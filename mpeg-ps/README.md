@@ -45,9 +45,10 @@ skipped byte count.
 ```rust
 use mpeg_ps::{PsEvent, PsLimits, PsScanner};
 
+let bytes = [0x00, 0x00, 0x01, 0xB9];
 let mut scanner = PsScanner::new(PsLimits::new());
 scanner.feed(&bytes);
-while let Some(event) = scanner.poll()? {
+while let Ok(Some(event)) = scanner.poll() {
     if let PsEvent::Pes { stream_id, packet } = event {
         println!("PES stream_id {stream_id:#04X}, {} bytes", packet.len());
     }
