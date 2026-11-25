@@ -797,15 +797,77 @@ fn trim_with_no_leading_sync_sample() {
 
 /// A streaming input has no timeline origin to place a window on, so `run`
 /// refuses a window with the typed error instead of guessing.
+/// A window over an empty input has no timeline origin and selects no sample:
+/// the same typed error [`trim`] gives a whole input it cannot place a window
+/// on, never a fabricated origin.
 #[test]
-fn run_with_a_window_returns_needs_whole_input() {
+fn run_with_a_window_over_empty_input_errors() {
     let err = Repackage::new(Duration::from_secs(1))
         .trim(0, 90_000)
         .run(&[])
-        .expect_err("a streaming window must be refused");
+        .expect_err("an empty input cannot place a window");
     assert!(
-        matches!(err, transmux::error::Error::RepackageWindowNeedsWholeInput),
-        "run with a window returns RepackageWindowNeedsWholeInput, got {err:?}"
+        matches!(err, transmux::error::Error::InvalidInput(_)),
+        "an empty window is an InvalidInput, got {err:?}"
+    );
+}
+
+/// The streaming `run` now honours a window: it holds until every announced
+/// track has produced its first sample (the shared origin) and the window's
+/// lower edge has snapped back to the anchor's preceding keyframe, then applies
+/// the one `trim` rule. On `trim_selects_window_and_snaps_to_keyframe`'s input
+/// and window the bytes equal `run_media`'s, and the window keeps 67 video
+/// samples.
+#[test]
+fn run_and_run_media_with_a_window_are_byte_identical() {
+    let ir = oracle_ir();
+    let source = Repackage::new(Duration::from_secs(2))
+        .run_media(&ir)
+        .expect("build the source CMAF")
+        .to_contiguous();
+    let round = test_harness::collect::media_from_mp4(
+        &source,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("re-demux the source CMAF");
+
+    let (total, ts) = anchor_total(&round);
+    assert_eq!(ts, round.movie_timescale.get());
+    let per_sample = total / 75;
+    let start = per_sample * 5;
+    let end = total - per_sample * 5;
+
+    let streaming = Repackage::new(Duration::from_secs(1))
+        .trim(start, end)
+        .run(&source)
+        .expect("streaming window");
+    let whole = Repackage::new(Duration::from_secs(1))
+        .trim(start, end)
+        .run_media(&round)
+        .expect("whole-input window");
+
+    assert_eq!(
+        streaming.init_segment, whole.init_segment,
+        "streaming and whole-input windows emit the same init segment"
+    );
+    assert_eq!(
+        streaming.media_segments, whole.media_segments,
+        "streaming and whole-input windows emit the same media segments"
+    );
+
+    let trimmed = test_harness::collect::media_from_mp4(
+        &streaming.to_contiguous(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("re-demux the trimmed output");
+    assert_eq!(
+        trimmed.tracks[0].samples.len(),
+        67,
+        "the window keeps 67 video samples"
+    );
+    assert!(
+        trimmed.tracks[0].samples[0].flags.is_sync,
+        "the window opens on a keyframe"
     );
 }
 
