@@ -4,9 +4,9 @@
 //!
 //! ```text
 //! cleartext Media (TsDemux over fixtures/ts/h264/main.ts, AVC track)
-//!   -> CencEncryptor::encrypt        (sets Track::encryption, ciphers samples)
+//!   -> CencEncryptor::encrypt        (sets sample + track protection, ciphers samples)
 //!   -> CmafMux::package              (unchanged CMAF muxer)
-//!   -> protect_init_segment + protect_media_segment
+//!   -> protect_init_segment (the fragment writer emits senc itself)
 //!                                    (splice in tenc/sinf + senc/saiz/saio)
 //!   -> a standalone, encrypted CMAF file written to a temp path
 //! ```
@@ -17,7 +17,7 @@
 //!
 //! - [`transmux::DashPackager`] auto-derives a `<ContentProtection
 //!   schemeIdUri="urn:mpeg:dash:mp4protection:2011">` element from
-//!   `Track::encryption` — no extra wiring needed.
+//!   `TrackSpec::protection` / `Sample::protection` — no extra wiring needed.
 //! - [`broadcast_hls::cenc_ext_x_key`] renders the HLS `#EXT-X-KEY` tag for
 //!   both CENC schemes (`cbcs` -> `SAMPLE-AES`, `cenc` ->
 //!   `SAMPLE-AES-CTR`, RFC 8216bis §4.4.4.4). HLS playlist syntax lives in
@@ -47,12 +47,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     use broadcast_common::{Encrypt, Package, Unpackage};
     use broadcast_hls::cenc_ext_x_key;
-    use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
     use transmux::cenc_segment::protect_init_segment;
     use transmux::pipeline::CodecConfig;
     use transmux::{
         CencEncryptor, CencScheme, CmafMux, DashPackager, EncryptConfig, IvGen, Media,
-        SubsamplePolicy, TrackEncryption, TsDemux,
+        SubsamplePolicy, TrackProtection, TsDemux,
     };
 
     // A test KID/key (never a real production key) — the standard `cbcs`
@@ -104,10 +103,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         .with_pattern((1, 9));
     CencEncryptor::new(KEY).encrypt(&mut media, &cfg)?;
     let track_id = media.tracks[0].spec.track_id;
-    let encryption: TrackEncryption = media.tracks[0]
-        .encryption
+    let encryption: TrackProtection = media.tracks[0]
+        .spec
+        .protection
         .as_ref()
-        .expect("CencEncryptor populates Track::encryption")
+        .expect("CencEncryptor populates TrackSpec::protection")
         .clone();
     println!(
         "encrypted: scheme={} kid={}",
@@ -115,17 +115,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         broadcast_common::hex::hex_encode(&encryption.tenc.default_kid)
     );
 
-    // 4. Mux the encrypted IR (unchanged CmafMux — encryption is orthogonal
-    //    to container muxing) into one combined ftyp+moov+styp+moof+mdat
-    //    buffer, then splice in the CENC/CBCS boxes.
+    // 4. Mux the encrypted IR (unchanged CmafMux) into one combined
+    //    ftyp+moov+styp+moof+mdat buffer. The fragment writer emits each
+    //    sample's `senc` from its own protection; the init segment's
+    //    `sinf`/`tenc` is the one post-processing pass left to do.
     let raw = CmafMux::new(1).package(&media)?;
-    let with_protected_init = protect_init_segment(&raw, track_id, &encryption)?;
-    let fragment_protection = FragmentProtection {
-        track_id: isobmff::TrackId::new(track_id.value()),
-        entries: &encryption.samples,
-        per_sample_iv_size: encryption.tenc.default_per_sample_iv_size,
-    };
-    let protected = protect_media_segment(&with_protected_init, &[fragment_protection])?;
+    let protected = protect_init_segment(&raw, track_id, &encryption)?;
 
     let out_path = std::env::temp_dir().join("transmux_cenc_encrypt_example.mp4");
     std::fs::write(&out_path, &protected)?;

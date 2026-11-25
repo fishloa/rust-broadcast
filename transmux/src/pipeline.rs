@@ -676,7 +676,10 @@ pub(crate) fn build_chunk(
                         duration: s.timing.and_then(|t| t.duration()).unwrap_or(0),
                         composition_offset: s.composition_offset()?.unwrap_or(0),
                         sync: s.flags.is_sync,
-                        aux: None,
+                        aux: s
+                            .protection
+                            .as_deref()
+                            .map(isobmff::writer::SampleAux::from),
                         description_index: isobmff::plan::DEFAULT_DESCRIPTION_INDEX,
                     })
                 })

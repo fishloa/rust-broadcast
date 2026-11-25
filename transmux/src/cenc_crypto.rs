@@ -67,9 +67,7 @@ use broadcast_common::error::{BufferTooShort, InvalidValue};
 use bytes::{Bytes, BytesMut};
 
 use crate::error::{Error, Result};
-use isobmff::cenc::{
-    CencScheme, KEY_LEN, SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox,
-};
+use isobmff::cenc::{CencScheme, KEY_LEN, SubSampleEntry, TrackEncryptionBox};
 
 /// Rewrite one sample's [`Bytes`] in place (media plane step 2b, G12 —
 /// `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §4).
@@ -311,21 +309,22 @@ pub(crate) fn apply_ctr(
 pub(crate) fn validate_sample_decrypt(
     scheme: CencScheme,
     tenc: &TrackEncryptionBox,
-    entry: &SampleEncryptionEntry,
+    iv: &[u8],
+    subsamples: &[SubSampleEntry],
     data_len: usize,
 ) -> Result<()> {
     match scheme {
         CencScheme::Cenc => {
-            if entry.initialization_vector.is_empty() {
+            if iv.is_empty() {
                 return Err(Error::InvalidInput(
                     "cenc (AES-CTR) sample has no per-sample IV: an all-zero counter block would \
                      reuse one keystream for every sample. cenc requires a per-sample IV in senc \
                      — a tenc.default_constant_IV (default_per_sample_iv_size == 0) is cbcs-only",
                 ));
             }
-            check_iv_len(entry.initialization_vector.len())?;
-            if !entry.subsamples.is_empty() {
-                validate_subsample_map(&entry.subsamples, data_len)?;
+            check_iv_len(iv.len())?;
+            if !subsamples.is_empty() {
+                validate_subsample_map(subsamples, data_len)?;
             }
             Ok(())
         }
@@ -335,9 +334,9 @@ pub(crate) fn validate_sample_decrypt(
                     "cbcs pattern crypt_byte_block=0 with nonzero skip leaves data unprotected",
                 ));
             }
-            resolve_cbcs_iv(entry, tenc)?;
-            if !entry.subsamples.is_empty() {
-                validate_subsample_map(&entry.subsamples, data_len)?;
+            resolve_cbcs_iv(iv, tenc)?;
+            if !subsamples.is_empty() {
+                validate_subsample_map(subsamples, data_len)?;
             }
             Ok(())
         }
@@ -352,12 +351,9 @@ pub(crate) fn validate_sample_decrypt(
 /// `tenc.default_constant_IV` (mandatory when `default_Per_Sample_IV_Size ==
 /// 0` — ISO/IEC 23001-7 §12.2). Either form is left-justified and
 /// zero-padded to 16 bytes, mirroring the `cenc` CTR counter convention.
-fn resolve_cbcs_iv(
-    entry: &SampleEncryptionEntry,
-    tenc: &TrackEncryptionBox,
-) -> Result<[u8; KEY_LEN]> {
-    let src: &[u8] = if !entry.initialization_vector.is_empty() {
-        &entry.initialization_vector
+fn resolve_cbcs_iv(iv: &[u8], tenc: &TrackEncryptionBox) -> Result<[u8; KEY_LEN]> {
+    let src: &[u8] = if !iv.is_empty() {
+        iv
     } else if let Some(civ) = tenc.default_constant_iv.as_deref() {
         civ
     } else {
@@ -474,7 +470,8 @@ pub(crate) fn cbcs_pattern(
 /// subsample boundary rather than carrying over.
 pub(crate) fn cbcs_sample(
     tenc: &TrackEncryptionBox,
-    entry: &SampleEncryptionEntry,
+    iv: &[u8],
+    subsamples: &[SubSampleEntry],
     key: &[u8; KEY_LEN],
     data: &mut [u8],
     op: CbcsOp,
@@ -495,16 +492,16 @@ pub(crate) fn cbcs_sample(
             "cbcs pattern crypt_byte_block=0 with nonzero skip leaves data unprotected",
         ));
     }
-    let seed_iv = resolve_cbcs_iv(entry, tenc)?;
+    let seed_iv = resolve_cbcs_iv(iv, tenc)?;
     // Validate the whole subsample map before touching a byte (see
     // `rewrite_in_place`'s contract and `validate_subsample_map`) — including
     // that it covers the sample exactly, so no tail of the sample is silently
     // passed through unprotected/undecrypted.
-    if !entry.subsamples.is_empty() {
-        validate_subsample_map(&entry.subsamples, data.len())?;
+    if !subsamples.is_empty() {
+        validate_subsample_map(subsamples, data.len())?;
     }
 
-    if entry.subsamples.is_empty() {
+    if subsamples.is_empty() {
         let mut chain_iv = seed_iv;
         cbcs_pattern(key, &mut chain_iv, crypt_blocks, skip_blocks, data, op);
         return Ok(());
@@ -513,7 +510,7 @@ pub(crate) fn cbcs_sample(
     // Every range below is already proven in bounds by
     // `validate_subsample_map`, so this loop cannot fail or panic.
     let mut offset = 0usize;
-    for sub in &entry.subsamples {
+    for sub in subsamples {
         offset += sub.bytes_of_clear_data as usize;
         let end = offset + sub.bytes_of_protected_data as usize;
         // Reset the chain to the sample's seed IV at the start of every
@@ -537,6 +534,7 @@ pub(crate) fn cbcs_sample(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use isobmff::cenc::SampleEncryptionEntry;
 
     const KEY: [u8; KEY_LEN] = [
         0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F,
@@ -600,7 +598,13 @@ mod tests {
             } else {
                 &tenc_cenc
             };
-            let validate = validate_sample_decrypt(scheme, tenc, entry, len);
+            let validate = validate_sample_decrypt(
+                scheme,
+                tenc,
+                &entry.initialization_vector,
+                &entry.subsamples,
+                len,
+            );
             // The cipher's own verdict on the same inputs.
             let mut buf = alloc::vec![0u8; len];
             let cipher = match scheme {
@@ -610,7 +614,14 @@ mod tests {
                     &entry.subsamples,
                     &mut buf,
                 ),
-                CencScheme::Cbcs => cbcs_sample(tenc, entry, &KEY, &mut buf, CbcsOp::Decrypt),
+                CencScheme::Cbcs => cbcs_sample(
+                    tenc,
+                    &entry.initialization_vector,
+                    &entry.subsamples,
+                    &KEY,
+                    &mut buf,
+                    CbcsOp::Decrypt,
+                ),
                 other => Err(Error::UnsupportedCencScheme { scheme: other }),
             };
             assert_eq!(
@@ -632,11 +643,24 @@ mod tests {
         };
         let mut buf = alloc::vec![0u8; 32];
         assert!(matches!(
-            validate_sample_decrypt(CencScheme::Cbcs, &bad_pattern, &entry, 32),
+            validate_sample_decrypt(
+                CencScheme::Cbcs,
+                &bad_pattern,
+                &entry.initialization_vector,
+                &entry.subsamples,
+                32,
+            ),
             Err(Error::InvalidInput(_))
         ));
         assert!(matches!(
-            cbcs_sample(&bad_pattern, &entry, &KEY, &mut buf, CbcsOp::Decrypt),
+            cbcs_sample(
+                &bad_pattern,
+                &entry.initialization_vector,
+                &entry.subsamples,
+                &KEY,
+                &mut buf,
+                CbcsOp::Decrypt,
+            ),
             Err(Error::InvalidInput(_))
         ));
     }
@@ -698,13 +722,29 @@ mod tests {
         };
 
         let mut buf = plaintext.clone();
-        cbcs_sample(&tenc, &entry, &KEY, &mut buf, CbcsOp::Encrypt).unwrap();
+        cbcs_sample(
+            &tenc,
+            &entry.initialization_vector,
+            &entry.subsamples,
+            &KEY,
+            &mut buf,
+            CbcsOp::Encrypt,
+        )
+        .unwrap();
         assert_ne!(
             buf, plaintext,
             "encryption should change the protected blocks"
         );
 
-        cbcs_sample(&tenc, &entry, &KEY, &mut buf, CbcsOp::Decrypt).unwrap();
+        cbcs_sample(
+            &tenc,
+            &entry.initialization_vector,
+            &entry.subsamples,
+            &KEY,
+            &mut buf,
+            CbcsOp::Decrypt,
+        )
+        .unwrap();
         assert_eq!(buf, plaintext);
     }
 
@@ -731,7 +771,15 @@ mod tests {
             subsamples: Vec::new(),
         };
         let mut data: Vec<u8> = (0u8..64).collect();
-        let err = cbcs_sample(&tenc, &entry, &KEY, &mut data, CbcsOp::Decrypt).unwrap_err();
+        let err = cbcs_sample(
+            &tenc,
+            &entry.initialization_vector,
+            &entry.subsamples,
+            &KEY,
+            &mut data,
+            CbcsOp::Decrypt,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
     }
 
@@ -793,7 +841,15 @@ mod tests {
             subsamples: Vec::new(),
         };
         let mut data: Vec<u8> = (0u8..64).collect();
-        let err = cbcs_sample(&tenc, &entry, &KEY, &mut data, CbcsOp::Decrypt).unwrap_err();
+        let err = cbcs_sample(
+            &tenc,
+            &entry.initialization_vector,
+            &entry.subsamples,
+            &KEY,
+            &mut data,
+            CbcsOp::Decrypt,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::InvalidValue(..)), "got {err:?}");
 
         // Same rejection when the 12-byte IV instead comes from
@@ -811,7 +867,8 @@ mod tests {
         let mut data2: Vec<u8> = (0u8..64).collect();
         let err = cbcs_sample(
             &tenc_constant,
-            &entry_empty,
+            &entry_empty.initialization_vector,
+            &entry_empty.subsamples,
             &KEY,
             &mut data2,
             CbcsOp::Decrypt,
@@ -861,7 +918,15 @@ mod tests {
         };
         let mut data: Vec<u8> = (0u8..=255).cycle().take(1000).collect();
         let untouched = data.clone();
-        let err = cbcs_sample(&tenc, &entry, &KEY, &mut data, CbcsOp::Decrypt).unwrap_err();
+        let err = cbcs_sample(
+            &tenc,
+            &entry.initialization_vector,
+            &entry.subsamples,
+            &KEY,
+            &mut data,
+            CbcsOp::Decrypt,
+        )
+        .unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)), "got {err:?}");
         assert_eq!(data, untouched, "the sample must be left byte-identical");
     }
@@ -906,7 +971,14 @@ mod tests {
                 if label == "cenc" {
                     apply_ctr(&IV8, &KEY, &overrunning, buf)
                 } else {
-                    cbcs_sample(&tenc, &entry, &KEY, buf, CbcsOp::Encrypt)
+                    cbcs_sample(
+                        &tenc,
+                        &entry.initialization_vector,
+                        &entry.subsamples,
+                        &KEY,
+                        buf,
+                        CbcsOp::Encrypt,
+                    )
                 }
             })
             .expect_err("an overrunning subsample map must be rejected");

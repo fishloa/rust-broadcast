@@ -163,6 +163,7 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
             flags: crate::ir::SampleFlags::SYNC,
             provenance: src_sample.provenance,
             display: src_sample.display.clone(),
+            protection: None,
         });
     }
 

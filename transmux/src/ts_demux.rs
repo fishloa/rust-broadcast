@@ -2206,6 +2206,7 @@ fn advance_one_behind(
                 flags: SampleFlags::new(prev.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
                 display: prev.display,
+                protection: None,
             },
         });
     }
@@ -2282,6 +2283,7 @@ fn flush_one_behind(
                 flags: SampleFlags::new(p.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
                 display: p.display,
+                protection: None,
             },
         });
     }

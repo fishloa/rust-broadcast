@@ -772,6 +772,7 @@ impl Mp4Demux {
             flags: SampleFlags::new(sref.sync),
             provenance: None,
             display: None,
+            protection: None,
         };
         let added = {
             let state = self

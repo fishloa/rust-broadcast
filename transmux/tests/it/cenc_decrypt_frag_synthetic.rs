@@ -11,7 +11,6 @@
 use broadcast_common::{Decrypt, Encrypt, Package, Unpackage};
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::movie_fragment::TrackFragmentRunBox;
-use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
     CencDecryptor, CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, KeyMap, Media,
@@ -74,33 +73,20 @@ fn find_top(data: &[u8], fourcc: &[u8; 4]) -> (usize, usize) {
         .unwrap_or_else(|| panic!("top-level box {:?} present", core::str::from_utf8(fourcc)))
 }
 
-/// Mux `media` through the real `CmafMux` packager, protect the init segment
-/// of every track, then apply the fragment protection for every track.
+/// Mux `media` through the real `CmafMux` packager (whose fragment writer
+/// emits each sample's `senc` from its own protection), then protect the init
+/// segment of every track.
 fn protect_all(media: &Media) -> Vec<u8> {
     let mut out = CmafMux::new(1).package(media).expect("CmafMux::package");
     for track in &media.tracks {
         let enc = track
-            .encryption
+            .spec
+            .protection
             .as_ref()
-            .expect("track.encryption populated by CencEncryptor");
+            .expect("TrackSpec::protection populated by CencEncryptor");
         out = protect_init_segment(&out, track.spec.track_id, enc).expect("protect_init_segment");
     }
-    let protections: Vec<FragmentProtection<'_>> = media
-        .tracks
-        .iter()
-        .map(|t| {
-            let enc = t
-                .encryption
-                .as_ref()
-                .expect("track.encryption populated by CencEncryptor");
-            FragmentProtection {
-                track_id: isobmff::TrackId::new(t.spec.track_id.value()),
-                entries: &enc.samples,
-                per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
-            }
-        })
-        .collect();
-    protect_media_segment(&out, &protections).expect("protect_media_segment")
+    out
 }
 
 /// The `(offset, size)` of the *body* of the `traf` for `track_id` inside the
@@ -202,7 +188,8 @@ fn per_sample_iv_track_without_senc_errors_instead_of_empty_iv_entries() {
     let mut protected = protect_all(&media);
     assert_eq!(
         media.tracks[0]
-            .encryption
+            .spec
+            .protection
             .as_ref()
             .expect("tenc")
             .tenc
@@ -229,7 +216,7 @@ fn per_sample_iv_track_without_senc_errors_instead_of_empty_iv_entries() {
     let before = sample_bytes(&out, 1);
     let err = dec
         .decrypt(&mut out, &keys())
-        .expect_err("decrypt must fail the sample-count check");
+        .expect_err("decrypt must fail: the samples carry no CENC auxiliary information");
     assert!(
         matches!(err, transmux::Error::InvalidInput(_)),
         "expected InvalidInput, got {err:?}"

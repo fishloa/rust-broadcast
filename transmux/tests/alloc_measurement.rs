@@ -101,11 +101,14 @@ const KEY: [u8; 16] = [
 ///   out of the cipher loop.
 /// - 60 / 4_936 / 43 (2026-09-30) — r05-W3: `assert_ctr_ranges_disjoint`
 ///   collects one small `CtrRange` per sample and sorts it.
+/// - 74 / 5_296 / 43 (2026-11-25) — per-sample protection: each sample now
+///   owns an `Arc<SampleProtection>` (one allocation per sample) instead of a
+///   parallel per-track entry list.
 ///
 /// Re-measure and update these (with a fresh date) if a legitimate change
 /// moves them; do not widen a tolerance instead.
-const CENC_MEASURED_ALLOCS: usize = 60;
-const CENC_MEASURED_ALLOC_BYTES: usize = 4_936;
+const CENC_MEASURED_ALLOCS: usize = 74;
+const CENC_MEASURED_ALLOC_BYTES: usize = 5_296;
 const CENC_MEASURED_DEALLOCS: usize = 43;
 // NOTE: the three pinned metrics (allocs/alloc_bytes/deallocs) are asserted
 // with `assert_eq!` below, not a tolerance band. A tolerance multiple (e.g.
@@ -193,8 +196,10 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
 /// - 57 / 4_160 / 40 (2026-09-30) — r05-W4: a default `cbcs` `IvGen::Counter`
 ///   now emits 16-byte per-sample IVs (not the 8-byte shape Bento4 no-ops), so
 ///   the 15 planned IVs are 8 bytes wider each — same count, +120 bytes.
-const CBCS_MEASURED_ALLOCS: usize = 57;
-const CBCS_MEASURED_ALLOC_BYTES: usize = 4_160;
+/// - 71 / 4_520 / 40 (2026-11-25) — per-sample protection (one
+///   `Arc<SampleProtection>` per sample, replacing the parallel entry list).
+const CBCS_MEASURED_ALLOCS: usize = 71;
+const CBCS_MEASURED_ALLOC_BYTES: usize = 4_520;
 const CBCS_MEASURED_DEALLOCS: usize = 40;
 
 /// Same measurement for `cbcs` (AES-CBC pattern) — a different code path

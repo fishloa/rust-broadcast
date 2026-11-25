@@ -1617,6 +1617,7 @@ mod tests {
             flags: crate::ir::SampleFlags::new(sync),
             provenance: None,
             display: None,
+            protection: None,
         }
     }
 
@@ -1699,6 +1700,7 @@ mod tests {
             flags: crate::ir::SampleFlags::SYNC,
             provenance: None,
             display: None,
+            protection: None,
         }
     }
 

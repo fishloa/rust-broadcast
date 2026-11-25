@@ -9,13 +9,12 @@
 
 #![cfg(feature = "cenc")]
 use broadcast_common::{Encrypt, Package, Unpackage};
-use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
 use std::path::PathBuf;
 use std::process::Command;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
     CencEncryptor, CencScheme, CmafMux, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,
-    SubsamplePolicy, TrackEncryption,
+    SubsamplePolicy, TrackProtection,
 };
 
 const CBCS_CONSTANT_IV: [u8; 16] = [
@@ -47,15 +46,14 @@ fn build_protected_fmp4(media: &mut Media, cfg: &EncryptConfig) -> Vec<u8> {
         .encrypt(&mut *media, cfg)
         .expect("encrypt");
     let track_id = media.tracks[0].spec.track_id;
-    let enc: TrackEncryption = media.tracks[0].encryption.as_ref().expect("enc").clone();
+    let enc: TrackProtection = media.tracks[0]
+        .spec
+        .protection
+        .as_ref()
+        .expect("protection")
+        .clone();
     let raw = CmafMux::new(1).package(&*media).expect("mux");
-    let with_protected_init = protect_init_segment(&raw, track_id, &enc).expect("protect init");
-    let fp = FragmentProtection {
-        track_id: isobmff::TrackId::new(track_id.value()),
-        entries: &enc.samples,
-        per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
-    };
-    protect_media_segment(&with_protected_init, &[fp]).expect("protect segment")
+    protect_init_segment(&raw, track_id, &enc).expect("protect init")
 }
 
 fn write_temp(bytes: &[u8], tag: &str) -> PathBuf {

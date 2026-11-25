@@ -27,11 +27,11 @@ use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
-use isobmff::cenc::{SampleEncryptionEntry, TrackEncryptionBox};
+use isobmff::cenc::TrackEncryptionBox;
 use transmux::pipeline::CodecConfig;
 use transmux::{
     Addressing, CencScheme, CmafMux, ConstantIvSenc, ContentProtectionSystem, DashPackager,
-    InbandEventStream, MP4_PROTECTION_SCHEME_URI, Media, Sample, Segmenter, TrackEncryption,
+    InbandEventStream, MP4_PROTECTION_SCHEME_URI, Media, Sample, Segmenter, TrackProtection,
     TrackSegments, TrackSpec, TsDemux,
 };
 
@@ -611,12 +611,10 @@ fn content_protection_and_inband_event_stream_hooks() {
 // DRM-system ContentProtection carrying a cenc:pssh child.
 // ---------------------------------------------------------------------------
 
-/// Build a minimal [`TrackEncryption`] carrying `scheme`/`kid`, with one
-/// (trivial) sample-encryption entry per sample so
-/// `TrackEncryption::samples.len()` matches the track's sample count (the
-/// documented invariant), even though DASH signalling never reads it.
-fn track_encryption(scheme: CencScheme, kid: [u8; 16], sample_count: usize) -> TrackEncryption {
-    TrackEncryption::new(
+/// Build a minimal [`TrackProtection`] carrying `scheme`/`kid`; DASH
+/// signalling never reads the per-sample auxiliary information.
+fn track_protection(scheme: CencScheme, kid: [u8; 16]) -> TrackProtection {
+    TrackProtection::new(
         scheme,
         TrackEncryptionBox {
             version: 0,
@@ -627,13 +625,6 @@ fn track_encryption(scheme: CencScheme, kid: [u8; 16], sample_count: usize) -> T
             default_kid: kid,
             default_constant_iv: None,
         },
-        vec![
-            SampleEncryptionEntry {
-                initialization_vector: vec![0u8; 8],
-                subsamples: vec![],
-            };
-            sample_count
-        ],
         ConstantIvSenc::default(),
     )
 }
@@ -648,8 +639,7 @@ fn track_encryption_auto_derives_common_content_protection() {
     // Encrypt every track with the same scheme/KID (the common real-world
     // shape): no caller `content_protection` wiring is needed for this.
     for t in &mut media.tracks {
-        let n = t.samples.len();
-        t.encryption = Some(track_encryption(CencScheme::Cbcs, kid, n));
+        t.spec.protection = Some(track_protection(CencScheme::Cbcs, kid));
     }
 
     let mut pkg = DashPackager::default();

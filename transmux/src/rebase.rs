@@ -132,6 +132,7 @@ mod tests {
             flags: SampleFlags::SYNC,
             provenance: None,
             display: None,
+            protection: None,
         }
     }
 

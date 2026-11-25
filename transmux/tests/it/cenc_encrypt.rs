@@ -76,12 +76,24 @@ fn all_recorded_ivs(media: &Media) -> Vec<Vec<u8>> {
         .tracks
         .iter()
         .flat_map(|t| {
-            t.encryption
-                .as_ref()
-                .expect("every track must record encryption metadata")
-                .samples
+            t.samples
                 .iter()
-                .map(|e| e.initialization_vector.clone())
+                .map(|s| s.protection.as_ref().expect("Some").iv.to_vec())
+        })
+        .collect()
+}
+
+/// One track's per-sample CENC auxiliary information, in decode order.
+fn sample_protections(track: &Track) -> Vec<transmux::ir::SampleProtection> {
+    track
+        .samples
+        .iter()
+        .map(|s| {
+            s.protection
+                .as_ref()
+                .expect("every sample must record encryption metadata")
+                .as_ref()
+                .clone()
         })
         .collect()
 }
@@ -180,13 +192,15 @@ fn cenc_double_encrypt_reproduces_cleartext() {
     assert_ne!(after_first, original, "first encrypt must change bytes");
 
     let enc = media.tracks[0]
-        .encryption
+        .spec
+        .protection
         .as_ref()
-        .expect("track.encryption populated");
+        .expect("TrackSpec::protection populated");
     assert_eq!(enc.scheme, CencScheme::Cenc);
-    assert_eq!(enc.samples.len(), media.tracks[0].samples.len());
-    for entry in &enc.samples {
-        assert_eq!(entry.initialization_vector.len(), 8, "8-byte counter IV");
+    let protections = sample_protections(&media.tracks[0]);
+    assert_eq!(protections.len(), media.tracks[0].samples.len());
+    for entry in &protections {
+        assert_eq!(entry.iv.len(), 8, "8-byte counter IV");
     }
 
     CencEncryptor::new(KEY_A)
@@ -218,14 +232,16 @@ fn cbcs_encrypt_changes_bytes_and_records_well_formed_metadata() {
     assert_ne!(encrypted_a, original, "cbcs encrypt must change bytes");
 
     let enc = media_a.tracks[0]
-        .encryption
+        .spec
+        .protection
         .as_ref()
-        .expect("track.encryption populated");
+        .expect("TrackSpec::protection populated");
     assert_eq!(enc.scheme, CencScheme::Cbcs);
     assert_eq!(enc.tenc.default_crypt_byte_block, 1);
     assert_eq!(enc.tenc.default_skip_byte_block, 9);
-    assert_eq!(enc.samples.len(), media_a.tracks[0].samples.len());
-    for (sample, entry) in media_a.tracks[0].samples.iter().zip(enc.samples.iter()) {
+    let protections = sample_protections(&media_a.tracks[0]);
+    assert_eq!(protections.len(), media_a.tracks[0].samples.len());
+    for (sample, entry) in media_a.tracks[0].samples.iter().zip(protections.iter()) {
         let covered: usize = entry
             .subsamples
             .iter()
@@ -261,9 +277,13 @@ fn whole_sample_policy_yields_empty_subsample_map() {
     CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .expect("encrypt");
-    let enc = media.tracks[0].encryption.as_ref().expect("Some");
     assert!(
-        enc.samples.iter().all(|e| e.subsamples.is_empty()),
+        media.tracks[0].samples.iter().all(|s| s
+            .protection
+            .as_ref()
+            .expect("Some")
+            .subsamples
+            .is_empty()),
         "WholeSample policy must record an empty subsample map"
     );
 }
@@ -445,7 +465,11 @@ fn constant_iv_under_cenc_errors() {
         "expected InvalidInput, got {err:?}"
     );
     assert!(
-        media.tracks[0].encryption.is_none(),
+        media.tracks[0].spec.protection.is_none()
+            && media.tracks[0]
+                .samples
+                .iter()
+                .all(|s| s.protection.is_none()),
         "a rejected config must leave the Media untouched, not half-encrypted"
     );
 }
@@ -469,16 +493,17 @@ fn constant_iv_under_cbcs_still_works() {
     CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .expect("cbcs + constant IV is the standard convention and must be accepted");
-    let enc = media.tracks[0].encryption.as_ref().expect("Some");
+    let enc = media.tracks[0].spec.protection.as_ref().expect("Some");
     assert_eq!(enc.tenc.default_per_sample_iv_size, 16);
     assert_eq!(
         enc.tenc.default_constant_iv.as_deref(),
         Some(&CONSTANT_IV[..])
     );
     assert!(
-        enc.samples
+        media.tracks[0]
+            .samples
             .iter()
-            .all(|e| e.initialization_vector == CONSTANT_IV),
+            .all(|s| &s.protection.as_ref().expect("Some").iv[..] == &CONSTANT_IV[..]),
         "default constant_iv_senc=Emit must carry the constant IV in every senc entry"
     );
     assert_ne!(snapshot(&media), original, "cbcs must change bytes");
@@ -640,8 +665,8 @@ fn rejected_encrypt_leaves_media_and_counter_untouched() {
     assert_eq!(snapshot_all(&media), snapshot_all(&pristine));
     for track in &media.tracks {
         assert!(
-            track.encryption.is_none(),
-            "a rejected encrypt must not populate Track::encryption"
+            track.spec.protection.is_none() && track.samples.iter().all(|s| s.protection.is_none()),
+            "a rejected encrypt must not populate TrackSpec::protection"
         );
     }
 
@@ -795,7 +820,13 @@ fn counter_iv_at_u64_max_is_rejected_and_leaves_state_untouched() {
         before,
         "a rejected encrypt must leave every sample byte-identical"
     );
-    assert!(media.tracks[0].encryption.is_none());
+    assert!(
+        media.tracks[0].spec.protection.is_none()
+            && media.tracks[0]
+                .samples
+                .iter()
+                .all(|s| s.protection.is_none())
+    );
 }
 
 /// The largest representable *start* is still usable once: `u64::MAX - 1`
@@ -810,13 +841,12 @@ fn counter_iv_u64_max_minus_one_is_usable_once_then_rejects() {
     enc.encrypt(&mut media, &cfg)
         .expect("u64::MAX - 1 is a valid IV and leaves the counter at u64::MAX");
     assert_eq!(enc.next_counter(), u64::MAX);
-    let iv = media.tracks[0]
-        .encryption
+    let iv = media.tracks[0].samples[0]
+        .protection
         .as_ref()
-        .expect("track.encryption Some")
-        .samples[0]
-        .initialization_vector
-        .clone();
+        .expect("sample protection Some")
+        .iv
+        .to_vec();
     assert_eq!(
         iv,
         (u64::MAX - 1).to_be_bytes().to_vec(),
@@ -924,9 +954,10 @@ fn cbcs_pattern_15_15_is_accepted_and_packs_0xff() {
         .encrypt(&mut media, &cbcs_pattern_config((15, 15)))
         .expect("15:15 is the maximum legal cbcs pattern");
     let tenc = media.tracks[0]
-        .encryption
+        .spec
+        .protection
         .as_ref()
-        .expect("track.encryption Some")
+        .expect("TrackSpec::protection Some")
         .tenc
         .clone();
     assert_eq!(tenc.default_crypt_byte_block, 15);
@@ -951,7 +982,13 @@ fn cbcs_pattern_component_above_15_is_rejected() {
             matches!(err, transmux::Error::InvalidInput(_)),
             "pattern {pattern:?}: expected InvalidInput, got {err:?}"
         );
-        assert!(media.tracks[0].encryption.is_none());
+        assert!(
+            media.tracks[0].spec.protection.is_none()
+                && media.tracks[0]
+                    .samples
+                    .iter()
+                    .all(|s| s.protection.is_none())
+        );
     }
 }
 
@@ -1053,7 +1090,7 @@ fn ctr_iv_spacing_counts_subsample_protected_bytes() {
     CencEncryptor::new(KEY_A)
         .encrypt(&mut ok, &cfg)
         .expect("32 protected bytes are two counter blocks");
-    let entries = &ok.tracks[0].encryption.as_ref().expect("Some").samples;
+    let entries = sample_protections(&ok.tracks[0]);
     assert_eq!(entries[0].subsamples.len(), 1, "one subsample per NAL");
     assert_eq!(entries[0].subsamples[0].bytes_of_clear_data, 5);
     assert_eq!(entries[0].subsamples[0].bytes_of_protected_data, 32);
@@ -1103,16 +1140,13 @@ fn vvc_media() -> Media {
 fn assert_nal_subsample_map(original: &Media, encrypted: &Media, header_len: usize) {
     let mut nals = 0usize;
     for (track, orig_track) in encrypted.tracks.iter().zip(&original.tracks) {
-        let enc = track
-            .encryption
-            .as_ref()
-            .expect("every sample must record encryption metadata");
-        assert_eq!(enc.samples.len(), track.samples.len());
+        let protections = sample_protections(track);
+        assert_eq!(protections.len(), track.samples.len());
         for ((sample, orig), entry) in track
             .samples
             .iter()
             .zip(&orig_track.samples)
-            .zip(&enc.samples)
+            .zip(protections.iter())
         {
             assert!(
                 !entry.subsamples.is_empty(),
