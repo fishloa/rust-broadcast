@@ -5,7 +5,7 @@
 //! [`Media`] IR (one [`Track`] per elementary stream, coded samples in decode
 //! order), implementing the abstract [`broadcast_common::Unpackage`] trait so
 //! `{PS} → IR → {any}` composes with the existing
-//! [`CmafMux`](crate::media::CmafMux) / [`HlsPackager`](crate::media::HlsPackager)
+//! [`CmafMuxStage`](crate::media::CmafMuxStage) / [`HlsPackager`](crate::media::HlsPackager)
 //! packagers — mirroring [`TsDemux`](crate::TsDemux).
 //!
 //! Pipeline: PS pack layer ([`mpeg_ps`]) → per-`stream_id` PES reassembly

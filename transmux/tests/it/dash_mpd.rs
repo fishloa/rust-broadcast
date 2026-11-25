@@ -31,7 +31,7 @@ use broadcast_common::{Package, Unpackage};
 use isobmff::cenc::TrackEncryptionBox;
 use transmux::pipeline::CodecConfig;
 use transmux::{
-    Addressing, CencScheme, CmafMux, ConstantIvSenc, ContentProtectionSystem, DashPackager,
+    Addressing, CencScheme, ConstantIvSenc, ContentProtectionSystem, DashPackager,
     InbandEventStream, MP4_PROTECTION_SCHEME_URI, Media, Sample, Segmenter, TrackProtection,
     TrackSegments, TrackSpec, TsDemux,
 };
@@ -117,11 +117,11 @@ fn segment_via_segmenter(media: &Media, target: Duration) -> (Vec<u8>, Vec<Vec<u
             c.idx += 1;
             (c.track_id, s)
         };
-        seg.push(TrackId::new(track_id), sample)
+        crate::segmenter_stage::feed(&mut seg, TrackId::new(track_id), sample)
             .expect("push sample");
     }
-    seg.flush().expect("flush trailing segment");
-    (init, seg.take_ready())
+    crate::segmenter_stage::flush(&mut seg).expect("flush trailing segment");
+    (init, crate::segmenter_stage::take_bytes(&mut seg))
 }
 
 /// Independently recover, for every track, the per-segment sample-duration
@@ -171,8 +171,7 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
 
     // Sanity: CmafMux can package the same IR into one real CMAF artifact
     // (evidence the IR this MPD describes is itself a valid segment set).
-    let mut cmaf = CmafMux::new(1);
-    let cmaf_bytes = cmaf.package(&media).expect("CmafMux package");
+    let cmaf_bytes = crate::cmaf::package(&media).expect("CMAF package");
     assert!(!cmaf_bytes.is_empty());
 
     // Real multi-segment cut (1.0 s target — the fixture's keyframes are
@@ -770,10 +769,10 @@ fn ffprobe_reads_the_static_mpd_if_available() {
         .expect("single-track segmenter");
         let init = seg.init_segment().expect("init segment");
         for s in &track.samples {
-            seg.push(id, s.clone()).expect("push sample");
+            crate::segmenter_stage::feed(&mut seg, id, s.clone()).expect("push sample");
         }
-        seg.flush().expect("flush");
-        let mut segs = seg.take_ready();
+        crate::segmenter_stage::flush(&mut seg).expect("flush");
+        let mut segs = crate::segmenter_stage::take_bytes(&mut seg);
         assert_eq!(
             segs.len(),
             1,

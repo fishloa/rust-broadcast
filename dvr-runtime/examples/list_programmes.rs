@@ -16,7 +16,6 @@ use dvr_runtime::{
 };
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, Trunk, TrunkConfig};
-use transmux::SegmentMeta;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::env::temp_dir().join("dvr-runtime-example-programmes");
@@ -49,9 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             SegmentSeq::new(seq),
             Duration::from_secs(2),
             Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
-            SegmentMeta {
-                discontinuous: index == 0,
-            },
+            index == 0,
         ))?;
         let wall = jiff::Timestamp::from_second(1_716_055_200 + i64::try_from(index * 2)?)?;
         recorder.poll(

@@ -31,10 +31,10 @@ use test_fixtures::vectors::DAC4_ORACLE;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use isobmff::Ac4SpecificBox;
 use transmux::pipeline::{CodecConfig, SubtitleFormat, build_init_segment};
-use transmux::{CmafMux, Media, Sample, Track, TrackSpec};
+use transmux::{Media, Sample, Track, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -141,8 +141,7 @@ fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
             *sample_entry = None;
         }
     }
-    let unfiltered_err = CmafMux::default()
-        .package(&entryless)
+    let unfiltered_err = crate::cmaf::package(&entryless)
         .expect_err("CmafMux must reject an entry-less Subtitle track");
     assert!(
         matches!(
@@ -163,8 +162,7 @@ fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
         .select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())
         .expect("the AVC track remains carriable");
     assert_eq!(carriable.tracks.len(), 1, "only the AVC track remains");
-    let fmp4 = CmafMux::default()
-        .package(&carriable)
+    let fmp4 = crate::cmaf::package(&carriable)
         .expect("CmafMux must succeed once the Subtitle track is filtered out");
     assert!(
         fmp4.windows(4).any(|w| w == b"moov"),
@@ -209,8 +207,7 @@ fn ac4_round_trips_through_cmaf_mux_then_demux() {
 
     // Mux: build_trak already had an Ac4 arm (only the demux arm was
     // missing), so this direction worked before this change too.
-    let bytes = CmafMux::new(1)
-        .package(&media)
+    let bytes = crate::cmaf::package(&media)
         .expect("CmafMux must mux an Ac4 track (already supported before step 2d)");
 
     // Demux: this is the new arm added in step 2d.

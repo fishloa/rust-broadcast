@@ -1,10 +1,10 @@
 use crate::support;
 
 use broadcast_client::{AUDIO_TRACK_ID_OFFSET, Event};
+use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Unpackage};
 use support::hls_host::{Host, Reply, SEC, full, hls_config, ts_segment};
-use transmux::{CmafMux, TrackId, TsDemux, build_init_segment};
+use transmux::{CmafMuxStage, FragmentCut, TrackId, TsDemux, build_init_segment};
 
 const PLAYLIST_URL: &str = "http://origin.test/hls/index.m3u8";
 const BLOCKING_URL: &str = "http://origin.test/hls/index.m3u8?_HLS_msn=3&_HLS_part=0";
@@ -190,7 +190,21 @@ fn cmaf_with_track_ids(first_id: u32) -> (Vec<u8>, Vec<u8>) {
     }
     let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let init = build_init_segment(&specs, MOVIE_TIMESCALE).expect("init");
-    let combined = CmafMux::new(1).package(&media).expect("cmaf");
+    let mut stage = CmafMuxStage::new(MOVIE_TIMESCALE, FragmentCut::OnFlush, 1);
+    let outputs =
+        transmux::mux_stage::drive_media(&mut stage, &media, broadcast_common::Timestamp::ZERO)
+            .expect("cmaf");
+    let mut combined = Vec::new();
+    for output in outputs {
+        match output {
+            transmux::mux_stage::MuxOutput::Init(bytes)
+            | transmux::mux_stage::MuxOutput::Bytes(bytes) => combined.extend_from_slice(&bytes),
+            transmux::mux_stage::MuxOutput::Segment(segment) => {
+                combined.extend_from_slice(&segment.bytes);
+            }
+            _ => {}
+        }
+    }
     let segment = combined[init.len()..].to_vec();
     (init, segment)
 }

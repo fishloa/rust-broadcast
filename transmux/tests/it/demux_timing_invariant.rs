@@ -45,7 +45,8 @@
 //! not go anywhere near this crate's summing code and so cannot move in
 //! lockstep with a scaling bug in it.
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Package;
+use broadcast_common::Unpackage;
 use test_fixtures::ffprobe;
 
 use transmux::pipeline::CodecConfig;

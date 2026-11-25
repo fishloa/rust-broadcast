@@ -96,7 +96,7 @@ impl SkippedTrack {
 /// This is the hub's neutral form. [`Unpackage`](broadcast_common::Unpackage)
 /// impls (e.g. [`Mp4Demux`](crate::mp4_demux::Mp4Demux)) produce a `Media`;
 /// [`Package`](broadcast_common::Package) impls (e.g.
-/// [`CmafMux`](crate::media::CmafMux), [`HlsPackager`](crate::media::HlsPackager))
+/// [`CmafMuxStage`](crate::media::CmafMuxStage), [`HlsPackager`](crate::media::HlsPackager))
 /// consume one.
 ///
 /// `#[non_exhaustive]`: this is the hub's central type and its field set is

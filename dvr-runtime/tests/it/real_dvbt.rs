@@ -16,7 +16,6 @@ use dvr_runtime::{ArchiveConfig, ArchiveContainer, ArchiveName, PeriodNum, Reten
 use media_plane::ingress::{HandshakePolicy, IngestConfig, IngestDriver, ProgramId};
 use media_plane::trunk::{SegmentEntry, Trunk, TrunkConfig};
 use media_plane::ts_session::TsIngestSession;
-use transmux::SegmentMeta;
 
 use crate::support::{cleanup, temp_dir};
 
@@ -114,9 +113,7 @@ pub fn record_into(root: std::path::PathBuf) -> Recording {
                 media_plane::ids::SegmentSeq::new(seq),
                 Duration::from_secs(2),
                 Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
-                SegmentMeta {
-                    discontinuous: index == 0,
-                },
+                index == 0,
             ))
             .expect("publish a capture slice");
         now = now.saturating_add(Duration::from_secs(2));
@@ -312,9 +309,7 @@ fn the_eit_transition_closes_p0_and_opens_p1_with_the_new_event() {
                 media_plane::ids::SegmentSeq::new(seq),
                 Duration::from_secs(2),
                 Timestamp::from_nanos(at),
-                SegmentMeta {
-                    discontinuous: seq == 1,
-                },
+                seq == 1,
             ))
             .expect("publish");
     };

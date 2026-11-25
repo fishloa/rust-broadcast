@@ -11,14 +11,15 @@
 //! 4. Sample fidelity + FLV.as_slice() round-trip: demux→mux→demux byte-identical AUs.
 //! 5. Cross-hub: FLV.as_slice() → IR → CmafMux carries avc1/avcC + mp4a and matching NALs.
 
+use broadcast_common::Package;
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize, Unpackage};
 use bytes::Bytes;
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use test_fixtures::ffprobe;
 use transmux::TrackId;
-use transmux::{CmafMux, CodecConfig, FlvDemux, FlvError, FlvMux};
+use transmux::{CodecConfig, FlvDemux, FlvError, FlvMux};
 
 static FLV: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
@@ -288,8 +289,7 @@ fn cross_hub_flv_to_cmaf() {
         .map(|s| s.data.clone())
         .collect();
 
-    let mut cmaf = CmafMux::new(1);
-    let seg = cmaf.package(&media).expect("CMAF package");
+    let seg = crate::cmaf::package(&media).expect("CMAF package");
 
     // Init moov must carry avc1/avcC (video) and mp4a (audio).
     let moov = find_top_box(&seg, b"moov").expect("moov in CMAF");

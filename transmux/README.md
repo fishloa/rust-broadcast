@@ -106,14 +106,25 @@ Demux a real H.264 plus AAC broadcast capture once, then mux the same IR to CMAF
 
 ```rust
 use broadcast_common::{Package, Unpackage};
-use transmux::{CmafMux, DashPackager, Media, TsDemux, TsMux};
+use transmux::{CmafMuxStage, DashPackager, FragmentCut, Media, TsDemux, TsMux};
 
 let ts = std::fs::read("../fixtures/ts/h264-aac.ts").unwrap();
 let media: Media = TsDemux::new().unpackage(&ts[..]).unwrap();
 assert!(media.tracks.len() >= 2, "an H.264 video and an AAC audio track");
 
-let cmaf: Vec<u8> = CmafMux::default().package(&media).unwrap();
-assert!(cmaf.len() > 1000);
+let mut stage = CmafMuxStage::new(media.movie_timescale, FragmentCut::OnFlush, 1);
+let outputs =
+    transmux::mux_stage::drive_media(&mut stage, &media, broadcast_common::Timestamp::ZERO)
+        .unwrap();
+let cmaf: usize = outputs
+    .iter()
+    .map(|output| match output {
+        transmux::mux_stage::MuxOutput::Init(b) | transmux::mux_stage::MuxOutput::Bytes(b) => b.len(),
+        transmux::mux_stage::MuxOutput::Segment(s) => s.bytes.len(),
+        _ => 0,
+    })
+    .sum();
+assert!(cmaf > 1000);
 
 let mpd: String = DashPackager::default().package(&media).unwrap();
 assert!(mpd.contains("<MPD"));
@@ -124,7 +135,7 @@ let again = TsDemux::new().unpackage(&ts_again[..]).unwrap();
 assert_eq!(again.tracks.len(), media.tracks.len());
 ```
 
-For a live source `Segmenter` owns the segment-cutting state machine (`push` samples, `take_ready` segments, `flush` at end of stream); `StreamingTsDemux` is the incremental demux (`feed`, `poll_event`, `finish`) and `Mp4Demux` is its MP4 counterpart (a `Stage` over `Mp4Input::{At, Next, Eof}`) - drain `poll` after every `feed`: the event queue is unbounded and only `poll_event` empties it (opt-in `with_max_degraded_events` caps the `InputDegraded` diagnostics). Runnable programs: `transmux_any_to_any` and `ssai_ad_stitch` (`cargo run -p transmux --example <name>`).
+For a live source `Segmenter` owns the segment-cutting state machine (a `Stage` over `MuxInput`: feed samples, `poll` segments, `MuxInput::Flush` at end of stream); `StreamingTsDemux` is the incremental demux (`feed`, `poll_event`, `finish`) and `Mp4Demux` is its MP4 counterpart (a `Stage` over `Mp4Input::{At, Next, Eof}`) - drain `poll` after every `feed`: the event queue is unbounded and only `poll_event` empties it (opt-in `with_max_degraded_events` caps the `InputDegraded` diagnostics). Runnable programs: `transmux_any_to_any` and `ssai_ad_stitch` (`cargo run -p transmux --example <name>`).
 
 ## Command-line packager (`cli` feature)
 

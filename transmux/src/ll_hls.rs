@@ -47,6 +47,7 @@ use broadcast_common::{Demand, Stage, Timestamp};
 use broadcast_hls::MediaSequence;
 
 use crate::error::{Error, Result};
+use crate::mux_stage::MuxInput;
 use crate::pipeline::build_chunk;
 use crate::pipeline::{FragmentTrackData, Sample, TrackSpec, build_init_segment};
 use crate::segmenter::{
@@ -1607,12 +1608,22 @@ pub enum LlHlsStageOutput {
 /// `Stage`, or a mix of both on the same instance — the caller uses to
 /// retrieve it.
 impl Stage for LlHlsSegmenter {
-    type In<'a> = (TrackId, Sample);
+    type In<'a> = MuxInput;
     type Out = LlHlsStageOutput;
     type Error = Error;
 
-    fn feed(&mut self, (track_id, sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
-        self.push(track_id, sample)
+    fn feed(&mut self, input: MuxInput, _now: Timestamp) -> Result<()> {
+        match input {
+            MuxInput::Sample { track, sample } => self.push(track, sample),
+            // A part carries its own `tfdt`; a decode-time jump needs no
+            // separate signalling in the LL-HLS part stream.
+            MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::Flush => self.flush(),
+            MuxInput::Track(_) => Err(Error::InvalidInput(
+                "an LlHlsSegmenter's track set is fixed at construction; start a new \
+                 LlHlsSegmenter for a changed track set",
+            )),
+        }
     }
 
     fn poll(&mut self) -> Option<Self::Out> {

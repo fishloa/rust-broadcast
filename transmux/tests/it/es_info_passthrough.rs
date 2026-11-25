@@ -32,7 +32,8 @@
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeSet;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Package;
+use broadcast_common::Unpackage;
 use transmux::{Media, Track, TsDemux, TsMux};
 
 const DESC_TAG_ISO_639_LANGUAGE: u8 = 0x0A;

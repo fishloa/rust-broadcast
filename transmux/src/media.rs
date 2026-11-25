@@ -7,9 +7,11 @@
 //! [`Sample`]s; this module holds the packagers/depackagers that convert
 //! between that IR and concrete container forms:
 //!
-//! - [`CmafMux`] : [`Package`] `<Output = Vec<u8>>` — mux a [`Media`] back into
-//!   a CMAF init segment + one media segment, a transparent wrapper over
-//!   [`build_init_segment`] / [`build_media_segment`].
+//! - [`CmafMuxStage`] : [`Stage`] `<In = MuxInput, Out = MuxOutput>` — mux
+//!   samples into a CMAF init segment plus one media segment per fragment,
+//!   writing through [`isobmff::writer::FragmentedWriter`] (the same boxes
+//!   [`build_init_segment`] and
+//!   [`build_media_segment`](crate::pipeline::build_media_segment) emit).
 //! - [`HlsPackager`] : [`Package`] `<Output = String>` — render an RFC 8216
 //!   media playlist describing a [`Media`].
 //!
@@ -31,7 +33,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
-use broadcast_common::{Package, Parse};
+use broadcast_common::{Package, Parse, Stage, Timestamp};
 
 use crate::codec_config_ext::VvcRecordCodecInfo;
 use broadcast_hls::{ByteRange, DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
@@ -41,11 +43,13 @@ use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
 use crate::ir::{
     AspectRatioIdc, CodecConfig, ColourDescription, DataIdentity, DisplayGeometry, DisplayInfo,
-    EXTENDED_SAR_IDC, FragmentTrackData, PictureRect, Sample, SubtitleFormat, SubtitleSampleEntry,
-    TrackSpec, VideoFormat, VideoSignalType,
+    EXTENDED_SAR_IDC, PictureRect, Sample, SubtitleFormat, SubtitleSampleEntry, TrackId, TrackSpec,
+    VideoFormat, VideoSignalType,
 };
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
-use crate::pipeline::{build_init_segment, build_media_segment};
+use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary};
+use crate::pipeline::build_init_segment;
+use crate::segmenter::{MediaClock, choose_anchor};
 use alloc::sync::Arc;
 use bytes::Bytes;
 use isobmff::ac4::Ac4SpecificBox;
@@ -69,72 +73,341 @@ pub use crate::ir::{Media, PcrSample, SkippedTrack, Track, TrackProtection};
 const DEFAULT_HLS_VERSION: u8 = 7;
 
 // ---------------------------------------------------------------------------
-// CmafMux — Package<Output = Vec<u8>>
+// CmafMuxStage — Stage<In = MuxInput, Out = MuxOutput>
 // ---------------------------------------------------------------------------
 
-/// Mux a [`Media`] into a CMAF init segment + one media segment (concatenated).
+/// How a [`CmafMuxStage`] decides to close the fragment it is building.
 ///
-/// A transparent wrapper: the bytes are exactly
-/// `build_init_segment(specs, movie_timescale)` followed by
-/// `build_media_segment(sequence_number, fragments)` for the equivalent input,
-/// so it composes with the rest of the crate's box layer.
-#[derive(Debug, Clone)]
-pub struct CmafMux {
-    /// `moof.mfhd` sequence number for the emitted media segment (1-based).
-    pub sequence_number: u32,
+/// There is no default: a caller states the policy, because the fragment
+/// duration is caller policy, not a property of the format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum FragmentCut {
+    /// Close the fragment only on [`MuxInput::Flush`] or the end of the
+    /// stream — one media segment for the whole input, which is what the
+    /// former whole-[`Media`] `CmafMux` emitted.
+    OnFlush,
+    /// Close a fragment before `track`'s next sync sample once the anchor
+    /// track has buffered `target` of media time. The new fragment opens on
+    /// that sync sample, as CMAF requires.
+    AnchorKeyframe {
+        /// The track whose sync samples open a fragment (the segmentation
+        /// anchor).
+        track: TrackId,
+        /// The buffered media time that must elapse before a cut.
+        target: core::time::Duration,
+    },
 }
 
-impl Default for CmafMux {
-    fn default() -> Self {
-        Self { sequence_number: 1 }
+/// Mux samples into CMAF fragments (ISO/IEC 14496-12:2026 §8.8) as a
+/// streaming [`Stage`].
+///
+/// Announce every track with [`MuxInput::Track`], feed its coded samples in
+/// decode order with [`MuxInput::Sample`], and read [`MuxOutput::Init`] once,
+/// then one [`MuxOutput::Segment`] per fragment. The fragment's `moof`/`mdat`
+/// is byte-identical to the crate's batch builders
+/// ([`build_init_segment`] + [`build_media_segment`](crate::pipeline::build_media_segment)) for the same samples.
+///
+/// At most one fragment is buffered: [`FragmentCut`] decides when it closes,
+/// and it is capped by [`isobmff::Limits::max_fragment_bytes`] (a hostile
+/// input is refused with [`isobmff::Error::FragmentTooLarge`]).
+pub struct CmafMuxStage {
+    movie_timescale: Timescale,
+    cut: FragmentCut,
+    sequence_number: u32,
+    limits: isobmff::Limits,
+    tracks: Vec<TrackSpec>,
+    writer: Option<isobmff::writer::FragmentedWriter>,
+    track_started: Vec<bool>,
+    /// Per-track elapsed-media accounting, so each fragment's `tfdt` advances
+    /// with that track's own samples (a `duration: Some(0)` stream uses the
+    /// `dts` delta instead).
+    track_clock: Vec<MediaClock>,
+    /// Each track's next absolute decode time — the `tfdt.baseMediaDecodeTime`
+    /// a newly opened fragment starts it at.
+    track_next_decode: Vec<u64>,
+    anchor: Option<TrackId>,
+    anchor_clock: MediaClock,
+    anchor_duration: u64,
+    anchor_start: Option<u64>,
+    anchor_independent: bool,
+    pending_discontinuity: bool,
+    buffered: bool,
+    next_segment_sequence: u64,
+    ready: alloc::collections::VecDeque<MuxOutput>,
+}
+
+impl core::fmt::Debug for CmafMuxStage {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CmafMuxStage")
+            .field("movie_timescale", &self.movie_timescale)
+            .field("cut", &self.cut)
+            .field("sequence_number", &self.sequence_number)
+            .field("tracks", &self.tracks)
+            .field("started", &self.writer.is_some())
+            .field("next_segment_sequence", &self.next_segment_sequence)
+            .finish_non_exhaustive()
     }
 }
 
-impl CmafMux {
-    /// Create a muxer with the given media-segment sequence number.
-    pub fn new(sequence_number: u32) -> Self {
-        Self { sequence_number }
-    }
-}
-
-impl Package for CmafMux {
-    type Media = Media;
-    type Output = Vec<u8>;
-    type Error = Error;
-
-    fn package(&mut self, media: &Media) -> Result<Vec<u8>> {
-        if media.tracks.is_empty() {
-            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
+impl CmafMuxStage {
+    /// Create a muxer for `movie_timescale` (the `mvhd` timescale), cutting
+    /// fragments as `cut` states and numbering the first `moof` with
+    /// `sequence_number`.
+    pub fn new(
+        movie_timescale: impl Into<Timescale>,
+        cut: FragmentCut,
+        sequence_number: u32,
+    ) -> Self {
+        Self {
+            movie_timescale: movie_timescale.into(),
+            cut,
+            sequence_number,
+            limits: isobmff::Limits::default(),
+            tracks: Vec::new(),
+            writer: None,
+            track_started: Vec::new(),
+            track_clock: Vec::new(),
+            track_next_decode: Vec::new(),
+            anchor: None,
+            anchor_clock: MediaClock::new(),
+            anchor_duration: 0,
+            anchor_start: None,
+            anchor_independent: true,
+            pending_discontinuity: false,
+            buffered: false,
+            next_segment_sequence: 0,
+            ready: alloc::collections::VecDeque::new(),
         }
-        // MUX = strict but filterable (media plane step-2 fix wave 1,
-        // B1-B4): `build_init_segment` below rejects (naming it) the first
-        // track it cannot place into an ISOBMFF `trak` — an opaque
-        // `CodecConfig::Data` track (issue #557/#576) or a
-        // `CodecConfig::Subtitle` track (B1) — rather than silently
-        // dropping it, so a caller mixing carriable and non-carriable
-        // streams must explicitly opt in to dropping the latter, e.g. with
-        // `select_tracks_by(&media, |t| t.spec.config.is_muxable_in_bmff())`
-        // before calling `package`. This is the single shared check every
-        // fMP4/CMAF mux entry point uses, not a `CmafMux`-only one.
-        let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-        let mut out = build_init_segment(&specs, media.movie_timescale)?;
+    }
 
-        // Each track's single-segment fragment is anchored at the track's
-        // absolute decode time (its `tfdt` baseMediaDecodeTime, ISO/IEC
-        // 14496-12:2026 §8.8.12) — the anchor a demuxer populated and the
-        // `crate::rebase` transforms condition.
-        let fragments: Vec<FragmentTrackData<'_>> = media
+    /// The initialization segment (`ftyp` + fragmented-init `moov`), or
+    /// `None` until at least one track is announced.
+    ///
+    /// # Errors
+    /// Whatever [`build_init_segment`] returns.
+    pub fn init_segment(&self) -> Result<Option<Vec<u8>>> {
+        if self.tracks.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(build_init_segment(
+            &self.tracks,
+            self.movie_timescale,
+        )?))
+    }
+
+    fn announce(&mut self, spec: TrackSpec) -> Result<()> {
+        if self.writer.is_some() {
+            return match self.tracks.iter().find(|t| t.track_id == spec.track_id) {
+                Some(existing) if *existing == spec => Ok(()),
+                Some(_) => Err(Error::InvalidInput(
+                    "CmafMuxStage: a track's setup changed after its first sample; start \
+                     a new CmafMuxStage for a changed track set",
+                )),
+                None => Err(Error::InvalidInput(
+                    "CmafMuxStage: a track was announced after the first sample; the track \
+                     set of a fragment sequence is fixed",
+                )),
+            };
+        }
+        match self.tracks.iter_mut().find(|t| t.track_id == spec.track_id) {
+            Some(existing) => *existing = spec,
+            None => self.tracks.push(spec),
+        }
+        Ok(())
+    }
+
+    fn ensure_writer(&mut self) -> Result<()> {
+        if self.writer.is_some() || self.tracks.is_empty() {
+            return Ok(());
+        }
+        let setups = crate::pipeline::track_setups(&self.tracks)?;
+        let mut writer =
+            isobmff::writer::Writer::fragmented(setups, self.movie_timescale, self.limits)?;
+        writer.set_sequence_number(self.sequence_number);
+        for spec in &self.tracks {
+            writer.set_base_decode_time(isobmff::TrackId::new(spec.track_id.value()), 0)?;
+        }
+        let init = writer.init()?;
+        self.ready.push_back(MuxOutput::Init(Bytes::from(init)));
+        self.anchor = choose_anchor(self.tracks.iter().map(|t| &t.config))
+            .ok()
+            .map(|index| self.tracks[index].track_id);
+        self.track_started = alloc::vec![false; self.tracks.len()];
+        self.track_clock = alloc::vec![MediaClock::new(); self.tracks.len()];
+        self.track_next_decode = alloc::vec![0; self.tracks.len()];
+        self.writer = Some(writer);
+        Ok(())
+    }
+
+    fn sample(&mut self, track: TrackId, sample: Sample) -> Result<()> {
+        let index =
+            self.tracks
+                .iter()
+                .position(|t| t.track_id == track)
+                .ok_or(Error::InvalidInput(
+                    "CmafMuxStage: sample for an unannounced track",
+                ))?;
+        self.ensure_writer()?;
+        let dts = sample.timing.and_then(|t| t.dts()).unwrap_or(0).max(0) as u64;
+        let is_anchor = self.anchor == Some(track);
+        if is_anchor {
+            let cut = match self.cut {
+                FragmentCut::AnchorKeyframe {
+                    track: cut_track,
+                    target,
+                } => {
+                    let timescale = self.tracks[index].timescale.get();
+                    let target_ticks = duration_ticks(target, timescale);
+                    cut_track == track
+                        && sample.flags.is_sync
+                        && self.buffered
+                        && self.anchor_duration >= target_ticks
+                }
+                _ => false,
+            };
+            if cut {
+                self.flush_fragment()?;
+            }
+        }
+        if !self.buffered {
+            self.begin_fragment()?;
+        }
+        if !self.track_started[index] {
+            if let Some(writer) = self.writer.as_mut() {
+                writer.set_base_decode_time(isobmff::TrackId::new(track.value()), dts)?;
+            }
+            self.track_next_decode[index] = dts;
+            self.track_started[index] = true;
+        }
+        if is_anchor {
+            if self.anchor_start.is_none() {
+                self.anchor_start = Some(dts);
+                self.anchor_independent = sample.flags.is_sync;
+            }
+            self.anchor_duration += self.anchor_clock.tick(&sample);
+        }
+        let meta = isobmff::writer::SampleMeta {
+            duration: sample.timing.and_then(|t| t.duration()).unwrap_or(0),
+            composition_offset: sample.composition_offset()?.unwrap_or(0),
+            sync: sample.flags.is_sync,
+            aux: sample
+                .protection
+                .as_deref()
+                .map(isobmff::writer::SampleAux::from),
+            description_index: isobmff::plan::DEFAULT_DESCRIPTION_INDEX,
+        };
+        let Some(writer) = self.writer.as_mut() else {
+            return Ok(());
+        };
+        writer.push(isobmff::TrackId::new(track.value()), meta, &sample.data)?;
+        let increment = self.track_clock[index].tick(&sample);
+        self.track_next_decode[index] = self.track_next_decode[index].saturating_add(increment);
+        self.buffered = true;
+        Ok(())
+    }
+
+    /// Open a fragment: every track's `tfdt.baseMediaDecodeTime` is the decode
+    /// time its next sample will carry, so consecutive fragments continue each
+    /// track's timeline instead of restarting it.
+    fn begin_fragment(&mut self) -> Result<()> {
+        let Some(writer) = self.writer.as_mut() else {
+            return Ok(());
+        };
+        for (index, spec) in self.tracks.iter().enumerate() {
+            writer.set_base_decode_time(
+                isobmff::TrackId::new(spec.track_id.value()),
+                self.track_next_decode[index],
+            )?;
+        }
+        Ok(())
+    }
+
+    fn flush_fragment(&mut self) -> Result<()> {
+        if !self.buffered {
+            return Ok(());
+        }
+        let brands = crate::pipeline::cmaf_segment_brands();
+        let Some(writer) = self.writer.as_mut() else {
+            return Ok(());
+        };
+        let Some(fragment) = writer.flush_with(Some(&brands), &[])? else {
+            self.buffered = false;
+            return Ok(());
+        };
+        let track = self
+            .anchor
+            .or_else(|| self.tracks.first().map(|t| t.track_id))
+            .ok_or(Error::InvalidInput("CmafMuxStage: no track to describe"))?;
+        let timescale = self
             .tracks
             .iter()
-            .map(|t| FragmentTrackData {
-                track_id: t.spec.track_id,
-                base_media_decode_time: t.start_decode_time,
-                samples: &t.samples,
-            })
-            .collect();
-        let media_seg = build_media_segment(self.sequence_number, &fragments)?;
-        out.extend_from_slice(&media_seg);
-        Ok(out)
+            .find(|t| t.track_id == track)
+            .map_or(self.movie_timescale.get(), |t| t.timescale.get());
+        let summary = SegmentSummary {
+            track,
+            sequence: self.next_segment_sequence,
+            start: self.anchor_start.unwrap_or(0),
+            duration: self.anchor_duration,
+            timescale,
+            bytes: fragment.bytes.len() as u64,
+            independent: self.anchor_independent,
+            discontinuous: self.pending_discontinuity,
+        };
+        self.next_segment_sequence += 1;
+        self.anchor_clock = MediaClock::new();
+        self.anchor_duration = 0;
+        self.anchor_start = None;
+        self.anchor_independent = true;
+        self.pending_discontinuity = false;
+        self.buffered = false;
+        self.ready.push_back(MuxOutput::Segment(SegmentOut {
+            bytes: Bytes::from(fragment.bytes),
+            summary,
+        }));
+        Ok(())
+    }
+}
+
+/// `duration` in `timescale` ticks, rounded down.
+fn duration_ticks(duration: core::time::Duration, timescale: u32) -> u64 {
+    let seconds = duration.as_secs();
+    let nanos = u64::from(duration.subsec_nanos());
+    seconds.saturating_mul(u64::from(timescale)).saturating_add(
+        nanos.saturating_mul(u64::from(timescale)) / broadcast_common::units::NANOS_PER_SEC,
+    )
+}
+
+impl Stage for CmafMuxStage {
+    type In<'a> = MuxInput;
+    type Out = MuxOutput;
+    type Error = Error;
+
+    fn feed(&mut self, input: MuxInput, _now: Timestamp) -> Result<()> {
+        match input {
+            MuxInput::Track(spec) => self.announce(*spec),
+            MuxInput::Sample { track, sample } => self.sample(track, sample),
+            MuxInput::Discontinuity { .. } => {
+                self.pending_discontinuity = true;
+                Ok(())
+            }
+            MuxInput::Flush => {
+                self.ensure_writer()?;
+                self.flush_fragment()
+            }
+        }
+    }
+
+    fn poll(&mut self) -> Option<Self::Out> {
+        self.ready.pop_front()
+    }
+
+    fn finish(&mut self) -> Result<()> {
+        if self.tracks.is_empty() {
+            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
+        }
+        self.ensure_writer()?;
+        self.flush_fragment()
     }
 }
 
@@ -268,7 +541,7 @@ fn ceil_secs(secs: f64) -> u32 {
 
 /// Render an RFC 8216 media playlist describing a [`Media`].
 ///
-/// The whole `Media` is one multi-track CMAF segment (the [`CmafMux`] output),
+/// The whole `Media` is one multi-track CMAF segment (the [`CmafMuxStage`] output),
 /// so the playlist carries a single `#EXTINF` entry whose duration is the
 /// presentation span across every timed track, pointing at
 /// `{uri_prefix}{track_id}.m4s` named after the first timed track. Segments in
@@ -1096,6 +1369,7 @@ mod tests {
     use super::*;
     use crate::TrackId;
     use crate::ir::DataIdentity;
+    use crate::pipeline::{FragmentTrackData, build_media_segment};
     use isobmff::subtitle_entries::WvttSampleEntry;
 
     /// ffmpeg's `mov` muxer cannot produce a `wvtt` sample entry (only

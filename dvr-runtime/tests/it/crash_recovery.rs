@@ -161,9 +161,7 @@ fn seg(seq: u32, secs: u64) -> SegmentCursorItem {
         SegmentSeq::new(seq),
         Duration::from_secs(secs),
         Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
-        transmux::SegmentMeta {
-            discontinuous: false,
-        },
+        false,
     ))
 }
 

@@ -13,10 +13,10 @@
 
 use std::path::PathBuf;
 
-use broadcast_common::{Package, Parse, Unpackage};
+use broadcast_common::{Parse, Unpackage};
 use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
 use transmux::TsDemux;
-use transmux::media::{CmafMux, Media};
+use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::validate::{SegmentOrigin, Severity, validate_init_segment, validate_media_segment};
 
@@ -149,7 +149,7 @@ fn ts_to_cmaf_validates_with_hvc1_sample_entry() {
     let ts = load_ts("main.ts");
     let media = TsDemux::new().unpackage(&ts).expect("demux");
 
-    let cmaf = CmafMux::default().package(&media).expect("package to CMAF");
+    let cmaf = crate::cmaf::package(&media).expect("package to CMAF");
 
     // Validator: the whole CMAF blob carries ftyp+moov (init) and moof+mdat
     // (media). Both validators must report zero errors (warnings are allowed).

@@ -12,10 +12,10 @@
 
 use std::path::PathBuf;
 
-use broadcast_common::{Package, Serialize, Unpackage};
+use broadcast_common::{Serialize, Unpackage};
 use test_fixtures::ffprobe;
 use transmux::TsDemux;
-use transmux::media::{CmafMux, Media};
+use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
 // ── Fixture loading ─────────────────────────────────────────────────────────
@@ -323,7 +323,7 @@ fn video_sample_payloads_match_ref_mp4() {
     let media = TsDemux::new().unpackage(&ts).expect("demux");
 
     // TS → IR → CMAF fMP4.
-    let fmp4 = CmafMux::default().package(&media).expect("package to CMAF");
+    let fmp4 = crate::cmaf::package(&media).expect("package to CMAF");
 
     // Re-parse our own fMP4 for the video track samples via Mp4Demux.
     let round: Media =

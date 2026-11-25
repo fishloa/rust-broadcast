@@ -25,10 +25,10 @@ use std::time::{Duration, Instant};
 
 use broadcast_common::Timestamp;
 use broadcast_common::timescale::cmp_ticks;
+use transmux::TrackId;
 use transmux::audio_profile::AudioTrackSelector;
 use transmux::ll_hls::{LlHlsSegmenter, PartCutReady, PartInfo, SegmentInfo};
 use transmux::pipeline::{Sample, TrackSpec};
-use transmux::{SegmentMeta, TrackId};
 
 use crate::ids::SegmentSeq;
 use crate::publish_queue::{PendingPublish, drain_publish_queue, part_entry};
@@ -405,9 +405,7 @@ impl AudioFollower {
                 SegmentSeq::new(seq),
                 duration,
                 Timestamp::from_nanos(start_ns),
-                SegmentMeta {
-                    discontinuous: std::mem::take(&mut self.first_discontinuous),
-                },
+                std::mem::take(&mut self.first_discontinuous),
             )));
     }
 
@@ -653,7 +651,7 @@ mod follower_tests {
             }
         };
         assert_eq!(entry.timeline_position.as_nanos(), 5_000_000_000);
-        assert!(entry.meta.discontinuous, "a resumed run is discontinuous");
+        assert!(entry.discontinuous, "a resumed run is discontinuous");
     }
 
     #[test]

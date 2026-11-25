@@ -16,10 +16,10 @@ use broadcast_common::timescale::Timescale;
 use std::fs;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Parse};
+use broadcast_common::Parse;
 use isobmff::init_segment::MovieBox;
 use isobmff::movie_fragment::MovieFragmentBox;
-use transmux::media::{CmafMux, Media};
+use transmux::media::Media;
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, TrackSpec, build_init_segment, build_media_segment,
 };
@@ -117,8 +117,7 @@ fn cmaf_package_reunpackage_preserves_structure() {
         test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
             .expect("unpackage");
 
-    let mut mux = CmafMux::new(1);
-    let repacked = mux.package(&media).expect("package");
+    let repacked = crate::cmaf::package(&media).expect("package");
 
     let media2 = test_harness::collect::media_from_mp4(
         &repacked,
@@ -177,8 +176,7 @@ fn cmaf_package_is_byte_transparent_over_build_helpers() {
             .expect("unpackage");
 
     // Package via the hub.
-    let mut mux = CmafMux::new(7);
-    let via_hub = mux.package(&media).expect("package");
+    let via_hub = crate::cmaf::package_seq(&media, 7).expect("package");
 
     // Build the equivalent output directly with the existing helpers.
     let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
@@ -201,7 +199,7 @@ fn cmaf_package_is_byte_transparent_over_build_helpers() {
 
     assert_eq!(
         via_hub, expected,
-        "CmafMux::package must be byte-identical to build_init_segment ++ build_media_segment"
+        "CmafMuxStage must be byte-identical to build_init_segment ++ build_media_segment"
     );
 
     // The output must itself re-parse as a valid movie + fragment.
@@ -229,10 +227,9 @@ fn cmaf_package_is_byte_transparent_over_build_helpers() {
 #[test]
 fn empty_media_rejected() {
     let media = Media::new(vec![], timescale(1000));
-    let mut mux = CmafMux::default();
     assert!(
         matches!(
-            mux.package(&media),
+            crate::cmaf::package(&media),
             Err(transmux::error::Error::InvalidInput(..))
         ),
         "empty Media must not package"

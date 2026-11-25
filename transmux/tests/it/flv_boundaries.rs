@@ -6,8 +6,9 @@
 //! never a value recomputed from the code under test.
 #![cfg(feature = "std")]
 
+use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Parse, Unpackage};
+use broadcast_common::{Parse, Unpackage};
 use transmux::{CodecConfig, FlvDemux, FlvError, FlvMux, Media, Sample, Track, TrackId, TrackSpec};
 
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType, tags};

@@ -7,17 +7,17 @@
 //! that decision: accumulate coded access units, cut a segment on a keyframe once
 //! it has reached a target duration, and expose finished segments to the caller.
 //!
-//! [`Segmenter`] adds exactly that state machine:
+//! [`Segmenter`] adds exactly that state machine, as a [`Stage`] over
+//! [`MuxInput`]:
 //!
 //! - [`Segmenter::init_segment`] — the `ftyp`+`moov` init, available immediately.
-//! - [`Segmenter::push`] — feed one [`Sample`] for a track, in decode order.
-//! - [`Segmenter::take_ready`] — drain media segments finished so far.
-//! - [`Segmenter::flush`] — finalize the trailing partial segment at end-of-stream.
-//! - [`Segmenter::mark_discontinuity`] — mark the *next* cut as discontinuous
+//! - [`MuxInput::Sample`] — feed one [`Sample`] for a track, in decode order.
+//! - [`Stage::poll`] — drain each finished segment as a [`MuxOutput::Segment`],
+//!   whose [`SegmentSummary`] carries the
+//!   discontinuity flag for HLS playlist assembly.
+//! - [`MuxInput::Flush`] — finalize the trailing partial segment at end-of-stream.
+//! - [`MuxInput::Discontinuity`] — mark the *next* cut as discontinuous
 //!   (RFC 8216 §4.3.2.3).
-//! - [`Segmenter::take_ready_with_meta`] — like `take_ready` but also returns
-//!   per-segment [`SegmentMeta`] that carries the discontinuity flag for HLS
-//!   playlist assembly.
 //!
 //! Segments are cut on the **anchor track** (the first video track, else the
 //! first [`is_anchor_capable`] track): when a sync sample arrives *and* the
@@ -43,22 +43,22 @@
 //! cutting mid-GOP would break CMAF's random-access guarantee. That case is
 //! bounded rather than silently mis-cut: past
 //! [`MAX_PENDING_SAMPLES_PER_TRACK`] un-cut samples,
-//! [`Stage::demand`] reports `saturated` and
-//! [`push`](Segmenter::push) returns a named error. These same three
-//! primitives are shared verbatim by the other three segmenters.
+//! [`Stage::demand`] reports `saturated` and [`Stage::feed`] returns a named
+//! error. These same three primitives are shared verbatim by the other three
+//! segmenters.
 //!
 //! # Discontinuity detection
 //!
 //! A media-timeline discontinuity (RFC 8216 §4.3.2.3) is signalled explicitly:
-//! call [`Segmenter::mark_discontinuity`] before the next [`Segmenter::push`]
-//! call that triggers a segment cut. The *next* segment that is cut will be
-//! marked discontinuous. (A `Segmenter` cannot change its tracks' codec
-//! configuration after construction, so there is no init-change to detect; a
-//! caller that starts a new `Segmenter` for a new configuration marks the
-//! discontinuity itself.)
+//! send [`MuxInput::Discontinuity`] before the next sample that triggers a
+//! segment cut. The *next* segment that is cut will be marked discontinuous.
+//! (A `Segmenter` cannot change its tracks' codec configuration after
+//! construction, so there is no init-change to detect; a caller that starts a
+//! new `Segmenter` for a new configuration sets the discontinuity itself.)
 //!
-//! The mechanism sets the [`SegmentMeta::discontinuous`] flag returned by
-//! [`Segmenter::take_ready_with_meta`], which callers can forward directly to
+//! The mechanism sets the `discontinuous` field of the
+//! [`SegmentSummary`] on the emitted
+//! [`MuxOutput::Segment`], which callers can forward directly to
 //! [`broadcast_hls::MediaSegment::discontinuous`].
 
 use crate::TrackId;
@@ -68,6 +68,7 @@ use alloc::vec::Vec;
 use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
+use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary};
 use crate::pipeline::{
     CodecConfig, DataCarriage, DataIdentity, FragmentTrackData, Sample, TrackSpec,
     build_init_segment, build_media_segment,
@@ -262,18 +263,6 @@ pub(crate) fn no_sync_sample_error() -> Error {
     )
 }
 
-/// Per-segment metadata returned alongside the media segment bytes by
-/// [`Segmenter::take_ready_with_meta`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SegmentMeta {
-    /// `true` when this segment is a media-timeline discontinuity — the
-    /// caller should emit `#EXT-X-DISCONTINUITY` (RFC 8216 §4.3.2.3)
-    /// immediately before this segment's `#EXTINF` line in the HLS playlist.
-    ///
-    /// Set by [`Segmenter::mark_discontinuity`].
-    pub discontinuous: bool,
-}
-
 /// Per-track accumulation state for the segment currently being built.
 struct TrackState {
     spec: TrackSpec,
@@ -294,8 +283,8 @@ struct TrackState {
 }
 
 /// A stateful CMAF segmenter. Build it from the same [`TrackSpec`]s used for the
-/// init segment, `push` coded samples in decode order, and pull finished media
-/// segments with `take_ready`; `flush` emits the final partial segment.
+/// init segment, feed coded samples in decode order, and poll finished media
+/// segments; a [`MuxInput::Flush`] closes the final partial segment.
 ///
 /// ```
 /// use transmux::{CodecConfig, Sample, Segmenter, TrackSpec};
@@ -330,11 +319,14 @@ struct TrackState {
 /// let mut seg = Segmenter::new(vec![spec()], broadcast_common::timescale::Timescale::try_new(1000).expect("non-zero timescale"), core::time::Duration::from_secs(2)).unwrap();
 /// let init = seg.init_segment().unwrap();      // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
-/// seg.push(transmux::TrackId::new(1), au(true)).unwrap();              // keyframe
-/// seg.push(transmux::TrackId::new(1), au(false)).unwrap();
-/// assert!(seg.take_ready().is_empty());        // still buffering: no cut yet
-/// seg.flush().unwrap();                        // trailing segment
-/// assert_eq!(seg.take_ready().len(), 1);
+/// # use broadcast_common::{Stage, Timestamp};
+/// # use transmux::mux_stage::MuxInput;
+/// let sample = |sync| MuxInput::Sample { track: transmux::TrackId::new(1), sample: au(sync) };
+/// seg.feed(sample(true), Timestamp::ZERO).unwrap();      // keyframe
+/// seg.feed(sample(false), Timestamp::ZERO).unwrap();
+/// assert!(seg.poll().is_none());               // still buffering: no cut yet
+/// seg.feed(MuxInput::Flush, Timestamp::ZERO).unwrap();   // trailing segment
+/// assert!(seg.poll().is_some());
 /// ```
 pub struct Segmenter {
     tracks: Vec<TrackState>,
@@ -351,12 +343,9 @@ pub struct Segmenter {
     anchor_clock: MediaClock,
     /// `sequence_number` of the next media segment (`moof` `mfhd`), 1-based.
     next_seq: u32,
-    /// Media segments finished but not yet taken by the caller (bytes + meta).
-    /// The single source of truth for both the inherent `take_ready`/
-    /// `take_ready_with_meta` drains and [`Stage::poll`] — whichever API the
-    /// caller uses pops from this same queue, so output is delivered exactly
-    /// once no matter which (or both) APIs drive this segmenter.
-    ready: VecDeque<(Vec<u8>, SegmentMeta)>,
+    /// Media segments finished but not yet polled by the caller, in playlist
+    /// order.
+    ready: VecDeque<SegmentOut>,
     /// Explicit discontinuity: when `true` the *next* cut is marked discontinuous.
     /// Reset to `false` after each cut.
     pending_discontinuity: bool,
@@ -461,13 +450,13 @@ impl Segmenter {
         build_init_segment(&specs, self.movie_timescale)
     }
 
-    /// Push one coded sample for `track_id`, in decode order.
+    /// Buffer one coded sample for `track`, in decode order.
     ///
     /// If this is a sync sample on the anchor track and the anchor has already
     /// buffered at least the target duration, the buffered samples are cut into a
-    /// media segment (retrievable via [`take_ready`](Self::take_ready)) *before*
-    /// this sample is buffered — so the new sample opens the next segment on a
-    /// random-access point.
+    /// media segment (emitted by [`Stage::poll`]) *before* this sample is
+    /// buffered — so the new sample opens the next segment on a random-access
+    /// point.
     ///
     /// Anchor progress is measured by [`MediaClock`]: each anchor sample's own
     /// `duration` when that is a real, non-zero span, else the `dts` delta from
@@ -476,16 +465,16 @@ impl Segmenter {
     /// would otherwise freeze the accumulator so no segment is ever cut.
     ///
     /// # Errors
-    /// [`Error::InvalidInput`] if `track_id` matches no track, the underlying
+    /// [`Error::InvalidInput`] if `track` matches no track, the underlying
     /// [`build_media_segment`] fails while cutting, or this track already holds
     /// [`MAX_PENDING_SAMPLES_PER_TRACK`] un-cut samples (no anchor sync sample
-    /// to cut on — call [`flush`](Self::flush) to close a trailing partial
+    /// to cut on — send [`MuxInput::Flush`] to close a trailing partial
     /// segment).
-    pub fn push(&mut self, track_id: TrackId, sample: Sample) -> Result<()> {
+    fn push_sample(&mut self, track: TrackId, sample: Sample) -> Result<()> {
         let idx = self
             .tracks
             .iter()
-            .position(|t| t.spec.track_id == track_id)
+            .position(|t| t.spec.track_id == track)
             .ok_or(Error::InvalidInput("push: unknown track_id"))?;
 
         // Cut before buffering when the anchor hits a keyframe past the target.
@@ -512,48 +501,21 @@ impl Segmenter {
         cut_result
     }
 
-    /// Finalize the trailing partial segment (call once at end-of-stream). A
-    /// no-op if nothing is buffered. The emitted segment, if any, is appended to
-    /// the ready queue — retrieve it with [`take_ready`](Self::take_ready).
+    /// Finalize the trailing partial segment. A no-op if nothing is buffered.
     ///
     /// # Errors
     /// Propagates a [`build_media_segment`] failure.
-    pub fn flush(&mut self) -> Result<()> {
+    fn flush_segment(&mut self) -> Result<()> {
         if self.tracks.iter().any(|t| !t.pending.is_empty()) {
             self.cut_segment()?;
         }
         Ok(())
     }
 
-    /// Mark the *next* segment cut as a media-timeline discontinuity
-    /// (RFC 8216 §4.3.2.3). The flag is consumed at the next segment boundary
-    /// and reset; call this again before each discontinuous cut.
-    pub fn mark_discontinuity(&mut self) {
-        self.pending_discontinuity = true;
-    }
-
-    /// Remove and return every media segment finished since the last call, in
-    /// order. Each element is a complete `styp`+`moof`+`mdat` segment.
-    ///
-    /// Use [`take_ready_with_meta`](Self::take_ready_with_meta) to also
-    /// retrieve per-segment metadata (including the discontinuity flag).
-    pub fn take_ready(&mut self) -> Vec<Vec<u8>> {
-        self.ready.drain(..).map(|(bytes, _meta)| bytes).collect()
-    }
-
-    /// Remove and return every media segment finished since the last call,
-    /// together with their [`SegmentMeta`]. The segments are in playlist order.
-    ///
-    /// The [`SegmentMeta::discontinuous`] flag indicates whether
-    /// `#EXT-X-DISCONTINUITY` should precede this segment's `#EXTINF` line.
-    pub fn take_ready_with_meta(&mut self) -> Vec<(Vec<u8>, SegmentMeta)> {
-        self.ready.drain(..).collect()
-    }
-
     /// Cut the buffered samples across all tracks into one media segment, advance
     /// each track's `base_decode`, and clear the buffers.
     fn cut_segment(&mut self) -> Result<()> {
-        let seg = {
+        let (seg, anchor_duration) = {
             let frags: Vec<FragmentTrackData<'_>> = self
                 .tracks
                 .iter()
@@ -567,16 +529,34 @@ impl Segmenter {
             if frags.is_empty() {
                 return Ok(());
             }
-            build_media_segment(self.next_seq, &frags)?
+            let bytes = build_media_segment(self.next_seq, &frags)?;
+            let mut anchor_clock = MediaClock::resumed_at(Some(
+                i64::try_from(self.tracks[self.anchor].base_decode).unwrap_or(i64::MAX),
+            ));
+            let anchor_duration = self.tracks[self.anchor]
+                .pending
+                .iter()
+                .map(|s| anchor_clock.tick(s))
+                .sum();
+            (bytes, anchor_duration)
         }; // immutable borrow of `self.tracks` ends here, before the mutation below
 
-        // The discontinuity flag is the explicit `mark_discontinuity` request
-        // only: `Segmenter` has no API that changes a track's `TrackSpec` after
-        // construction, so the init segment can never change between cuts (the
-        // old byte-compare rebuilt the whole `moov` on every cut to detect
-        // a change that cannot happen, audit r05-O5).
+        // The discontinuity flag is the explicit `MuxInput::Discontinuity`
+        // request only: `Segmenter` has no API that changes a track's
+        // `TrackSpec` after construction, so the init segment can never change
+        // between cuts (the old byte-compare rebuilt the whole `moov` on every
+        // cut to detect a change that cannot happen, audit r05-O5).
         let discontinuous = self.pending_discontinuity;
         self.pending_discontinuity = false;
+
+        let sequence = u64::from(self.next_seq.saturating_sub(1));
+        let track = self.tracks[self.anchor].spec.track_id;
+        let timescale = self.tracks[self.anchor].spec.timescale.get();
+        let start = self.tracks[self.anchor].base_decode;
+        let independent = self.tracks[self.anchor]
+            .pending
+            .first()
+            .is_some_and(|s| s.flags.is_sync);
 
         self.next_seq += 1;
         for t in &mut self.tracks {
@@ -590,42 +570,53 @@ impl Segmenter {
             t.pending.clear();
         }
         self.anchor_pending_dur = 0;
-        self.ready.push_back((seg, SegmentMeta { discontinuous }));
+        self.ready.push_back(SegmentOut {
+            summary: SegmentSummary {
+                track,
+                sequence,
+                start,
+                duration: anchor_duration,
+                timescale,
+                bytes: seg.len() as u64,
+                independent,
+                discontinuous,
+            },
+            bytes: bytes::Bytes::from(seg),
+        });
         Ok(())
     }
 }
 
-/// [`Stage`] adoption (media plane step 2e-2): `In = (u32, Sample)`, the
-/// segmenter's real per-call input (a track id plus one coded sample) — not
-/// the byte-stream family's `&[u8]`, which would have no honest encoding of a
-/// `Sample` (see the `stage` module docs). `Out` is
-/// [`take_ready_with_meta`](Self::take_ready_with_meta)'s item type: bytes
-/// plus the discontinuity metadata a caller needs for the HLS playlist, not a
-/// bare `Vec<u8>` that would silently drop that flag.
-///
-/// Every inherent method — [`push`](Self::push), [`take_ready`](Self::take_ready),
-/// [`take_ready_with_meta`](Self::take_ready_with_meta), [`flush`](Self::flush),
-/// [`mark_discontinuity`](Self::mark_discontinuity) — keeps working unchanged;
-/// this impl is an additional, uniform way to drive the same engine.
-/// [`Stage::poll`] and the inherent drains all read from the *same* `ready`
-/// queue (there is no separate staging copy), so a segment is delivered
-/// exactly once no matter which API — inherent, `Stage`, or a mix of both on
-/// the same instance — the caller uses to retrieve it.
+/// [`Stage`] adoption: `In = MuxInput`, `Out = MuxOutput`. A [`Segmenter`]'s
+/// track set is fixed at construction, so a [`MuxInput::Track`] is refused
+/// naming the reason; [`MuxInput::Discontinuity`] marks the next cut (RFC 8216
+/// §4.3.2.3) and [`MuxInput::Flush`] closes the trailing partial segment.
 impl Stage for Segmenter {
-    type In<'a> = (TrackId, Sample);
-    type Out = (Vec<u8>, SegmentMeta);
+    type In<'a> = MuxInput;
+    type Out = MuxOutput;
     type Error = Error;
 
-    fn feed(&mut self, (track_id, sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
-        self.push(track_id, sample)
+    fn feed(&mut self, input: MuxInput, _now: Timestamp) -> Result<()> {
+        match input {
+            MuxInput::Sample { track, sample } => self.push_sample(track, sample),
+            MuxInput::Discontinuity { .. } => {
+                self.pending_discontinuity = true;
+                Ok(())
+            }
+            MuxInput::Flush => self.flush_segment(),
+            MuxInput::Track(_) => Err(Error::InvalidInput(
+                "a Segmenter's track set is fixed at construction; start a new Segmenter \
+                 for a changed track set",
+            )),
+        }
     }
 
     fn poll(&mut self) -> Option<Self::Out> {
-        self.ready.pop_front()
+        self.ready.pop_front().map(MuxOutput::Segment)
     }
 
     fn finish(&mut self) -> Result<()> {
-        self.flush()
+        self.flush_segment()
     }
 
     /// `saturated` once any track holds [`MAX_PENDING_SAMPLES_PER_TRACK`]

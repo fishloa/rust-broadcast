@@ -7,6 +7,7 @@
 //! loudly when the private submodule is absent.
 #![cfg(feature = "std")]
 
+use broadcast_common::Package;
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use isobmff::ChromaticityXy;
@@ -245,7 +246,6 @@ fn sei_message_types(nal: &[u8]) -> Vec<u8> {
 
 #[test]
 fn demux_keeps_only_declarative_sei_messages_in_the_hvcc_array() {
-    use broadcast_common::Package;
     let Some(bytes) = test_fixtures::require_bytes(TS, "hdr10") else {
         return;
     };

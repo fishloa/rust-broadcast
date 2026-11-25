@@ -148,7 +148,6 @@ mod tests {
     use crate::trunk::{ArchiveOverrun, Trunk, TrunkConfig};
     use broadcast_common::Timestamp;
     use core::num::NonZeroUsize;
-    use transmux::SegmentMeta;
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("non-zero")
@@ -160,9 +159,7 @@ mod tests {
             SegmentSeq::new(seq),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         )
     }
 

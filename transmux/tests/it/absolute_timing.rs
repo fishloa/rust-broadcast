@@ -24,8 +24,9 @@
 //! walk, a WebM cluster/block-timecode walk, or the RTP header timestamps),
 //! never against the demuxer's own bookkeeping.
 
+use broadcast_common::Package;
+use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Unpackage};
 use transmux::TrackId;
 
 use transmux::pipeline::CodecConfig;
@@ -870,7 +871,7 @@ fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
 fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
     use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
     use isobmff::nalu_types::{AvcPps, AvcSps};
-    use transmux::media::{CmafMux, Track};
+    use transmux::media::Track;
     use transmux::pipeline::{Sample, TrackSpec};
 
     const ANCHOR: u64 = 1_234_567;
@@ -922,7 +923,7 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
     );
 
     // fMP4 #1, written by this crate.
-    let fmp4_1 = CmafMux::default().package(&media).expect("mux #1");
+    let fmp4_1 = crate::cmaf::package(&media).expect("mux #1");
     // -> IR (absolute dts/pts recovered from tfdt + trun durations + ctts) ...
     let ir = test_harness::collect::media_from_mp4(
         &fmp4_1,
@@ -930,7 +931,7 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
     )
     .expect("demux");
     // ... -> fMP4 #2.
-    let fmp4_2 = CmafMux::default().package(&ir).expect("mux #2");
+    let fmp4_2 = crate::cmaf::package(&ir).expect("mux #2");
 
     // The round-tripped IR must carry the absolute timing, not a rebased copy.
     assert_eq!(

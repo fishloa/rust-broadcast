@@ -24,8 +24,9 @@ fn timescale(value: u32) -> Timescale {
 }
 
 #[cfg(feature = "std")]
+use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Demand, Package, Stage, Unpackage};
+use broadcast_common::{Demand, Stage, Unpackage};
 use std::collections::HashSet;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;

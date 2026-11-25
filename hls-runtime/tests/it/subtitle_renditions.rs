@@ -27,7 +27,7 @@ use media_plane::egress::{AwaitPolicy, EgressResponse};
 use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::Container;
-use transmux::{CodecConfig, SegmentMeta, TrackId, TrackSpec};
+use transmux::{CodecConfig, TrackId, TrackSpec};
 
 const TARGET_SECS: Duration = Duration::from_secs(4);
 const HEARING_IMPAIRED: &str = "CHARACTERISTICS=\"public.accessibility.transcribes-spoken-dialog,public.accessibility.describes-music-and-sound\"";
@@ -118,9 +118,7 @@ fn publish_vtt(w: &SegmentWriter, seq: u32) {
         SegmentSeq::new(seq),
         Duration::from_secs(4),
         Timestamp::from_nanos(0),
-        SegmentMeta {
-            discontinuous: false,
-        },
+        false,
     ))
     .expect("monotonic sequence number");
 }
@@ -299,9 +297,7 @@ fn w_ts(w: &SegmentWriter, seq: u32) {
         SegmentSeq::new(seq),
         Duration::from_secs(4),
         Timestamp::from_nanos(0),
-        SegmentMeta {
-            discontinuous: false,
-        },
+        false,
     ))
     .expect("monotonic sequence number");
 }

@@ -21,14 +21,13 @@
 //! `initial_padding`), so `recon_pts == oracle_pts + AUDIO_CODEC_DELAY_MS`; the
 //! test documents and applies that constant.
 
-use broadcast_common::Package;
 use isobmff::box_types::parse_box;
 use test_fixtures::ffprobe;
+use transmux::Media;
 use transmux::TrackId;
 use transmux::error::Error;
 use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
-use transmux::{CmafMux, Media};
 
 /// Path to the committed WebM fixture, relative to this crate's manifest dir.
 const FIXTURE: &str = "mkv/vp9-opus.webm";
@@ -177,8 +176,7 @@ fn opus_config_from_opus_head() {
 #[test]
 fn demuxed_ir_muxes_to_fmp4_with_vp09_and_opus() {
     let m = demux();
-    let mut mux = CmafMux::default();
-    let fmp4 = mux.package(&m).expect("mux demuxed IR to CMAF");
+    let fmp4 = crate::cmaf::package(&m).expect("mux demuxed IR to CMAF");
 
     // Scan for the fourccs anywhere in the emitted bytes (they only appear if the
     // sample entries + config boxes were built from the IR configs).

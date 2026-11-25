@@ -32,7 +32,7 @@
 //!   unlaced into one sample per frame, see the module docs), FLV
 //!   ([`FlvDemux`] — non-AVC video and non-AAC audio tracks are silently
 //!   skipped, no event/error, see the module docs), RTMP ([`RtmpDemux`]).
-//! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMux`]), progressive single-file
+//! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMuxStage`]), progressive single-file
 //!   MP4 ([`ProgressiveMux`]), MPEG-2 TS ([`TsMux`]), Matroska ([`MkvMux`]),
 //!   CMAF-HLS ([`HlsPackager`]), TS-segment HLS ([`TsHlsPackager`]), DASH MPD
 //!   ([`DashPackager`]), low-latency
@@ -295,7 +295,9 @@ pub use live_join::{DropReason, JoinDecision, JoinPolicy, JoinState, LiveJoin, R
 pub use ll_dash::LlDashPackager;
 pub use ll_dash::{Chunk, LlSegmenter};
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
-pub use media::{CmafMux, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackProtection};
+pub use media::{
+    CmafMuxStage, FragmentCut, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackProtection,
+};
 pub use mkv_mux::MkvMux;
 pub use mpeg_legacy::{
     MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,
@@ -348,7 +350,7 @@ pub use sample_aes::{
     eac3_encrypt_frame, h264_decrypt_nal, h264_encrypt_nal, iv_from_sequence_number,
 };
 pub use segment_cut::{IdrWait, SegmentCutPolicy};
-pub use segmenter::{SegmentMeta, Segmenter};
+pub use segmenter::Segmenter;
 #[cfg(feature = "std")]
 pub use smooth::{
     FOURCC_AACL, FOURCC_H264, SMOOTH_DEFAULT_TIMESCALE, SMOOTH_TIMESCALE, SmoothCodec,

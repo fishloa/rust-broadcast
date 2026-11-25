@@ -153,3 +153,66 @@ fn protection_survives_demux_and_remux() {
     .expect("parse the re-muxed senc");
     assert_eq!(got.entries, want, "the re-muxed senc matches the source");
 }
+
+/// A camera capture's data tracks (timecode, telemetry, face/scene metadata)
+/// survive MP4 → CMAF → MP4: the track set, every sample's bytes, and each
+/// data track's raw sample entry are unchanged.
+#[test]
+fn gopro_data_tracks_survive_cmaf_mux() {
+    let Some(path) =
+        test_fixtures::require("mp4/camera/gopro-hero6-ble.mp4", "mp4_demux_data_tracks")
+    else {
+        return;
+    };
+    let bytes = std::fs::read(&path).expect("read gopro-hero6-ble.mp4");
+    let media = demux(&bytes);
+    assert_eq!(media.tracks.len(), 5, "the capture carries five tracks");
+
+    let out = crate::cmaf::package(&media).expect("CMAF mux");
+    let remuxed = demux(&out);
+    assert_eq!(
+        remuxed.tracks.len(),
+        media.tracks.len(),
+        "every track (typed and data) must come back"
+    );
+
+    for track in &media.tracks {
+        let other = remuxed
+            .tracks
+            .iter()
+            .find(|t| t.spec.track_id == track.spec.track_id)
+            .unwrap_or_else(|| {
+                panic!(
+                    "track {} is missing after the round trip",
+                    track.spec.track_id
+                )
+            });
+        assert_eq!(
+            track.samples.len(),
+            other.samples.len(),
+            "track {} sample count",
+            track.spec.track_id
+        );
+        for (index, (before, after)) in track.samples.iter().zip(&other.samples).enumerate() {
+            assert_eq!(
+                before.data, after.data,
+                "track {} sample {index} bytes",
+                track.spec.track_id
+            );
+        }
+        match (mp4_identity(track), mp4_identity(other)) {
+            (Some((handler, entry)), Some((other_handler, other_entry))) => {
+                assert_eq!(handler, other_handler, "data track handler");
+                assert_eq!(
+                    entry, other_entry,
+                    "data track's raw sample entry must round-trip byte-identically"
+                );
+            }
+            (None, None) => {}
+            (before, after) => panic!(
+                "track {} changed between a data and a typed track: {before:?} -> {after:?}",
+                track.spec.track_id
+            ),
+        }
+    }
+}

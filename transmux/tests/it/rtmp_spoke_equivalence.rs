@@ -11,7 +11,8 @@
 //! back to its messages and compared against the FLV tags the FLV path
 //! writes, which is the only thing that would notice.
 
-use broadcast_common::{Package, Parse, Unpackage};
+use broadcast_common::Package;
+use broadcast_common::{Parse, Unpackage};
 use rtmp_runtime::chunk::ChunkAssembler;
 use rtmp_runtime::message::{ChunkSize, MessageTypeId, ProtocolControl};
 use transmux::{FlvDemux, FlvMux, Media, RtmpDemux, RtmpMux};

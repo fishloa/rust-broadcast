@@ -1,6 +1,6 @@
 //! Low-latency DASH — chunked CMAF packaging + LL-DASH MPD signalling.
 //!
-//! Whole-segment CMAF ([`crate::segmenter::Segmenter`], [`crate::media::CmafMux`])
+//! Whole-segment CMAF ([`crate::segmenter::Segmenter`], [`crate::media::CmafMuxStage`])
 //! delivers one `moof`+`mdat` per segment: a client cannot start playing a
 //! segment until the whole thing has been produced, so end-to-end latency is at
 //! least one segment duration. **Low-latency DASH** (DASH-IF Low-latency Live
@@ -67,6 +67,7 @@ use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
 use crate::media::Media;
+use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::pipeline::{FragmentTrackData, Sample, TrackSpec, build_chunk, build_init_segment};
 use crate::segmenter::{MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor};
 use broadcast_common::Package;
@@ -89,6 +90,18 @@ pub struct Chunk {
     pub is_segment_start: bool,
     /// `mfhd.sequence_number` of this chunk's `moof`.
     pub sequence_number: u32,
+}
+
+/// The [`MuxInput`]/[`MuxOutput`] mapping of one chunk: its bytes are appended
+/// to the output stream. The chunk's segment placement
+/// ([`Chunk::segment_number`], [`Chunk::sequence_number`],
+/// [`Chunk::is_segment_start`]) stays on the [`Chunk`] itself — a chunk is a
+/// fragment, not a whole segment, so no [`SegmentSummary`](crate::mux_stage::SegmentSummary)
+/// describes it.
+impl From<Chunk> for MuxOutput {
+    fn from(chunk: Chunk) -> Self {
+        MuxOutput::Bytes(bytes::Bytes::from(chunk.data))
+    }
 }
 
 /// Per-track accumulation state for the segment currently being built.
@@ -499,12 +512,22 @@ fn take_span(t: &TrackState, target_ticks: u64) -> usize {
 /// delivered exactly once no matter which API — inherent, `Stage`, or a mix
 /// of both on the same instance — the caller uses to retrieve it.
 impl Stage for LlSegmenter {
-    type In<'a> = (TrackId, Sample);
+    type In<'a> = MuxInput;
     type Out = Chunk;
     type Error = Error;
 
-    fn feed(&mut self, (track_id, sample): Self::In<'_>, _now: Timestamp) -> Result<()> {
-        self.push(track_id, sample)
+    fn feed(&mut self, input: MuxInput, _now: Timestamp) -> Result<()> {
+        match input {
+            MuxInput::Sample { track, sample } => self.push(track, sample),
+            // A chunk carries its own `tfdt`, so a decode-time jump needs no
+            // separate signalling in the LL-DASH chunk stream.
+            MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::Flush => self.flush(),
+            MuxInput::Track(_) => Err(Error::InvalidInput(
+                "an LlSegmenter's track set is fixed at construction; start a new \
+                 LlSegmenter for a changed track set",
+            )),
+        }
     }
 
     fn poll(&mut self) -> Option<Self::Out> {

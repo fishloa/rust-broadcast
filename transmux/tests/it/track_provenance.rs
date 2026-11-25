@@ -19,9 +19,9 @@ use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use transmux::pipeline::CodecConfig;
-use transmux::{CmafMux, DemuxEvent, Media, StreamingTsDemux, TsDemux};
+use transmux::{DemuxEvent, Media, StreamingTsDemux, TsDemux};
 
 const TS_PACKET_LEN: usize = 188;
 const SYNC_BYTE: u8 = 0x47;
@@ -330,10 +330,7 @@ fn fmp4_round_trip_has_no_ts_provenance() {
     );
 
     let video_only = Media::new(vec![video_track.clone()], video_track.spec.timescale);
-    let mut mux = CmafMux::new(1);
-    let fmp4 = mux
-        .package(&video_only)
-        .expect("mux video-only track to CMAF");
+    let fmp4 = crate::cmaf::package(&video_only).expect("mux video-only track to CMAF");
 
     let redemuxed =
         test_harness::collect::media_from_mp4(&fmp4, test_harness::collect::CollectMode::Seekable)

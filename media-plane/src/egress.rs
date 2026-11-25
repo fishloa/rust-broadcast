@@ -572,9 +572,7 @@ mod tests {
             crate::ids::SegmentSeq::new(seq),
             Duration::from_secs(2),
             Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
-            transmux::SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         )
     }
 

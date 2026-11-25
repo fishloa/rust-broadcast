@@ -1294,7 +1294,7 @@ impl ArchiveWriter {
             None
         };
         let rounded = ceil_secs(entry.duration);
-        let discontinuous = entry.meta.discontinuous || self.starts_run;
+        let discontinuous = entry.discontinuous || self.starts_run;
         let mut roll = None;
         if let Some(open) = &self.open
             && open.segments > 0
@@ -1698,7 +1698,7 @@ mod tests {
             SegmentSeq::new(seq),
             Duration::from_secs(2),
             Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
-            transmux::SegmentMeta { discontinuous },
+            discontinuous,
         )
     }
 

@@ -23,7 +23,7 @@ use std::process::Command;
 use test_fixtures::process::tool_available;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Parse, Serialize};
+use broadcast_common::{Parse, Serialize};
 use isobmff::FlacSpecificBox;
 use isobmff::init_segment::{
     AudioSampleEntryV1, FlacSampleEntry, Mp4aSampleEntry, SampleDescriptionBox, SampleEntryVariant,
@@ -85,9 +85,7 @@ fn mux_one(rate: u32) -> Vec<u8> {
                 .expect("valid timing"),
         ],
     );
-    transmux::CmafMux::new(1)
-        .package(&transmux::Media::new(vec![track], timescale(1000)))
-        .expect("mux flac")
+    crate::cmaf::package(&transmux::Media::new(vec![track], timescale(1000))).expect("mux flac")
 }
 
 /// Demux a real ffmpeg-written FLAC fixture and retarget the IR to the
@@ -116,8 +114,7 @@ fn retargeted_flac_source(name: &str, rate: u32) -> transmux::Media {
 
 /// Mux one of the retargeted sources with our own muxer.
 fn mux_retargeted(name: &str, rate: u32) -> Vec<u8> {
-    transmux::CmafMux::new(1)
-        .package(&retargeted_flac_source(name, rate))
+    crate::cmaf::package(&retargeted_flac_source(name, rate))
         .expect("mux the retargeted FLAC source")
 }
 

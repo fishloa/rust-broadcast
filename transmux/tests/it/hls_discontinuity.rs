@@ -20,7 +20,7 @@ use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment, mark_init_disco
 use core::time::Duration;
 use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::TrackId;
-use transmux::{CodecConfig, Sample, SegmentMeta, Segmenter, TrackSpec};
+use transmux::{CodecConfig, Sample, Segmenter, TrackSpec};
 
 // ---------------------------------------------------------------------------
 // Helpers shared across tests
@@ -271,8 +271,8 @@ fn explicit_mark_discontinuity_bites() {
         let sync = Sample::new(vec![0u8; 4], None, None, Some(45_000), true).expect("valid timing");
         let non_sync =
             Sample::new(vec![0u8; 4], None, None, Some(45_000), false).expect("valid timing");
-        s.push(TrackId::new(1), sync).unwrap();
-        s.push(TrackId::new(1), non_sync).unwrap();
+        crate::segmenter_stage::feed(s, TrackId::new(1), sync).unwrap();
+        crate::segmenter_stage::feed(s, TrackId::new(1), non_sync).unwrap();
     };
 
     // Trigger sample (sync that causes the preceding buffer to be cut).
@@ -282,47 +282,50 @@ fn explicit_mark_discontinuity_bites() {
     // Fill segment 0's buffer (90_000 ticks pending).
     fill(&mut seg);
     // Trigger the cut for segment 0; this sync starts segment 1's buffer.
-    seg.push(TrackId::new(1), trigger()).unwrap();
+    crate::segmenter_stage::feed(&mut seg, TrackId::new(1), trigger()).unwrap();
 
-    let batch0 = seg.take_ready_with_meta();
+    let batch0 = crate::segmenter_stage::take(&mut seg);
     assert_eq!(batch0.len(), 1, "expected 1 segment after first cut");
-    assert!(!batch0[0].1.discontinuous, "segment 0 must be continuous");
+    assert!(
+        !batch0[0].summary.discontinuous,
+        "segment 0 must be continuous"
+    );
 
     // Mark the NEXT cut as discontinuous.
-    seg.mark_discontinuity();
+    crate::segmenter_stage::mark_discontinuity(&mut seg).unwrap();
 
     // Fill segment 1's buffer; the anchor already has 45_000 ticks from the trigger.
     let non_sync =
         Sample::new(vec![0u8; 4], None, None, Some(45_000), false).expect("valid timing");
-    seg.push(TrackId::new(1), non_sync).unwrap();
+    crate::segmenter_stage::feed(&mut seg, TrackId::new(1), non_sync).unwrap();
     // Now trigger the cut for segment 1 — must be discontinuous.
-    seg.push(TrackId::new(1), trigger()).unwrap();
+    crate::segmenter_stage::feed(&mut seg, TrackId::new(1), trigger()).unwrap();
 
-    let batch1 = seg.take_ready_with_meta();
+    let batch1 = crate::segmenter_stage::take(&mut seg);
     assert_eq!(batch1.len(), 1, "expected 1 segment after mark + cut");
     assert!(
-        batch1[0].1.discontinuous,
+        batch1[0].summary.discontinuous,
         "segment 1 must be discontinuous (explicitly marked)"
     );
 
     // No mark — flush remaining buffer as segment 2 (continuous).
-    seg.flush().unwrap();
-    let batch2 = seg.take_ready_with_meta();
+    crate::segmenter_stage::flush(&mut seg).unwrap();
+    let batch2 = crate::segmenter_stage::take(&mut seg);
     assert!(!batch2.is_empty(), "flush must produce a segment");
     assert!(
-        !batch2[0].1.discontinuous,
+        !batch2[0].summary.discontinuous,
         "segment 2 must be continuous (no mark)"
     );
 
     // Build a playlist and verify the rendered text.
-    let seg_metas: Vec<(Vec<u8>, SegmentMeta)> = [batch0, batch1, batch2].concat();
+    let seg_metas = [batch0, batch1, batch2].concat();
     let pl_segments: Vec<MediaSegment> = seg_metas
         .iter()
         .enumerate()
-        .map(|(i, (_bytes, meta))| MediaSegment {
+        .map(|(i, segment)| MediaSegment {
             uri: format!("s{i}.m4s"),
             duration: DecimalSeconds::new(1.0).unwrap(),
-            discontinuous: meta.discontinuous,
+            discontinuous: segment.summary.discontinuous,
             parts: vec![],
             ..Default::default()
         })

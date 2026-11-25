@@ -28,7 +28,6 @@
 //! private HEVC capture signals a non-default colour description), so HEVC
 //! colour is covered by the spec vectors in `src/sps.rs` only.
 
-use broadcast_common::Package;
 use transmux::ir::{
     CodecConfig, ColourDescription, ColourPrimaries, MatrixCoefficients, TransferCharacteristics,
     VideoFormat, VideoSignalType,
@@ -207,7 +206,7 @@ fn fmp4_round_trip(fixture: &str) {
         signalled.colour.is_some(),
         "{fixture}: no colour description"
     );
-    let fmp4 = transmux::CmafMux::new(1).package(&media).expect("CMAF mux");
+    let fmp4 = crate::cmaf::package(&media).expect("CMAF mux");
     let back =
         test_harness::collect::media_from_mp4(&fmp4, test_harness::collect::CollectMode::Seekable)
             .expect("fMP4 demux");
