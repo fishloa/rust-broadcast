@@ -104,9 +104,9 @@ async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
     // One `send_media` call carrying every sample — `drive_push` normally
     // splits this into several smaller batches, but each batch goes through
     // this exact call, so one larger batch exercises the same path.
-    let encoded = transport.encode_media(&media).expect("encode_media");
+    let encoded = transport.encode_media(&media.tracks).expect("encode_media");
     let expected_total: u64 = encoded.iter().map(|m| m.len() as u64).sum();
-    let total = tokio::time::timeout(GUARD, transport.send_media(&media))
+    let total = tokio::time::timeout(GUARD, transport.send_media(&media.tracks))
         .await
         .expect("send_media must not hang")
         .expect("send_media");
@@ -119,7 +119,7 @@ async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
     // Close the client side so the server's `read` sees EOF and returns.
     transport.close();
     let err = transport
-        .send_media(&media)
+        .send_media(&media.tracks)
         .await
         .expect_err("a closed transport must refuse a send");
     assert!(

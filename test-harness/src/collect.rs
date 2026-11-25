@@ -479,7 +479,7 @@ pub struct SpliceOutput {
 /// # Errors
 /// Whatever [`SplicePlan::concat`] or the stage returns.
 pub fn concat(a: &Media, b: &Media) -> Result<SpliceOutput, transmux::Error> {
-    let plan = SplicePlan::concat(a, b)?;
+    let plan = SplicePlan::concat(&a.tracks, &b.tracks, a.movie_timescale)?;
     drive_splice(&plan, a, Some(b))
 }
 
@@ -492,7 +492,7 @@ pub fn splice_insert(
     ad: &Media,
     at_ticks: u64,
 ) -> Result<SpliceOutput, transmux::Error> {
-    let plan = SplicePlan::insert(base, ad, at_ticks)?;
+    let plan = SplicePlan::insert(&base.tracks, &ad.tracks, base.movie_timescale, at_ticks)?;
     drive_splice(&plan, base, Some(ad))
 }
 
@@ -622,38 +622,291 @@ pub fn segment_log(media: &transmux::Media) -> transmux::segment_log::SegmentSum
     log
 }
 
-/// The track-selection helpers [`Media`] used to carry, as a test-only
-/// extension so existing tests keep their method-call shape while the
-/// production functions live in `transmux::repackage`.
+/// The whole-input helper methods tests use on a collected [`Media`]: track
+/// selection, a presentation-time window, and the anchor duration. These were
+/// `transmux` production functions until Phase 6 slice 3a; they live here (a
+/// `publish = false` test harness) so production code cannot hold a whole
+/// input.
 pub trait MediaSelectExt {
-    /// Select tracks by index; see [`transmux::repackage::select_tracks`].
+    /// Select tracks by index, preserving the given order.
     fn select_tracks(&self, indices: &[usize]) -> Result<Media, transmux::Error>;
 
-    /// Select tracks by predicate; see
-    /// [`transmux::repackage::select_tracks_by`].
+    /// Select tracks by predicate, preserving source order.
     fn select_tracks_by<F>(&self, keep: F) -> Result<Media, transmux::Error>
     where
         F: FnMut(&Track) -> bool;
 
-    /// Trim to a presentation-time window; see [`transmux::repackage::trim`].
+    /// Trim to the half-open presentation-time window `[start, end)` in the
+    /// movie timescale, snapping the anchor back to its preceding sync sample.
     fn trim(&self, start: u64, end: u64) -> Result<Media, transmux::Error>;
+
+    /// Total duration of the segmentation anchor track, in its timescale.
+    fn anchor_duration(&self) -> Option<(u64, u32)>;
 }
 
 impl MediaSelectExt for Media {
     fn select_tracks(&self, indices: &[usize]) -> Result<Media, transmux::Error> {
-        transmux::repackage::select_tracks(self, indices)
+        if indices.is_empty() {
+            return Err(transmux::Error::InvalidInput(
+                "select_tracks: empty track selection",
+            ));
+        }
+        let mut tracks = Vec::with_capacity(indices.len());
+        for &i in indices {
+            let t = self.tracks.get(i).ok_or(transmux::Error::InvalidInput(
+                "select_tracks: track index out of range",
+            ))?;
+            tracks.push(t.clone());
+        }
+        Ok(Media::new(tracks, self.movie_timescale))
     }
 
-    fn select_tracks_by<F>(&self, keep: F) -> Result<Media, transmux::Error>
+    fn select_tracks_by<F>(&self, mut keep: F) -> Result<Media, transmux::Error>
     where
         F: FnMut(&Track) -> bool,
     {
-        transmux::repackage::select_tracks_by(self, keep)
+        let tracks: Vec<Track> = self.tracks.iter().filter(|t| keep(t)).cloned().collect();
+        if tracks.is_empty() {
+            return Err(transmux::Error::InvalidInput(
+                "select_tracks_by: predicate kept no track",
+            ));
+        }
+        Ok(Media::new(tracks, self.movie_timescale))
     }
 
     fn trim(&self, start: u64, end: u64) -> Result<Media, transmux::Error> {
-        transmux::repackage::trim(self, start, end)
+        use broadcast_common::timescale::{Rounding, rescale_i64};
+        if start >= end {
+            return Err(transmux::Error::InvalidInput("trim: start must be < end"));
+        }
+        if self.tracks.is_empty() {
+            return Err(transmux::Error::InvalidInput("trim: media has no tracks"));
+        }
+        let anchor =
+            transmux::segmenter::choose_anchor(self.tracks.iter().map(|t| &t.spec.config))?;
+        let origin = origin_of(&self.tracks);
+        let anchor_track = &self.tracks[anchor];
+        let anchor_ts = anchor_track.spec.timescale;
+        let anchor_pts = presentation_times(anchor_track, origin);
+        let anchor_lo = rescale_floor(start, self.movie_timescale, anchor_ts);
+        let anchor_hi = rescale_floor(end, self.movie_timescale, anchor_ts);
+        let snapped = anchor_pts
+            .iter()
+            .position(|&p| in_window(p, anchor_lo, anchor_hi))
+            .map(|mut idx| {
+                while idx > 0 && !anchor_track.samples[idx].flags.is_sync {
+                    idx -= 1;
+                }
+                idx
+            });
+        let mut out_tracks = Vec::with_capacity(self.tracks.len());
+        let mut kept_any = false;
+        for (ti, track) in self.tracks.iter().enumerate() {
+            let ts = track.spec.timescale;
+            let pts = presentation_times(track, origin);
+            let hi = rescale_floor(end, self.movie_timescale, ts);
+            let start_idx = if ti == anchor {
+                snapped
+            } else {
+                let lo = match snapped {
+                    Some(idx) => rescale_i64(anchor_pts[idx], anchor_ts, ts, Rounding::Floor),
+                    None => rescale_floor(start, self.movie_timescale, ts),
+                };
+                pts.iter().position(|&p| in_window(p, lo, hi))
+            };
+            let mut kept = Vec::new();
+            if let Some(start_idx) = start_idx {
+                for (s, &p) in track.samples[start_idx..].iter().zip(&pts[start_idx..]) {
+                    if p >= hi {
+                        break;
+                    }
+                    kept.push(s.clone());
+                }
+            }
+            if !kept.is_empty() {
+                kept_any = true;
+            }
+            let first_dts = kept
+                .iter()
+                .find_map(|s| s.timing.and_then(|t| t.dts()))
+                .unwrap_or(0)
+                .max(0) as u64;
+            out_tracks.push(Track::new_at(track.spec.clone(), kept, first_dts));
+        }
+        if !kept_any {
+            return Err(transmux::Error::InvalidInput(
+                "trim: window selected no samples on any track",
+            ));
+        }
+        Ok(Media::new(out_tracks, self.movie_timescale))
     }
+
+    fn anchor_duration(&self) -> Option<(u64, u32)> {
+        let anchor =
+            transmux::segmenter::choose_anchor(self.tracks.iter().map(|t| &t.spec.config)).ok()?;
+        let t = &self.tracks[anchor];
+        let ticks: u64 = t
+            .samples
+            .iter()
+            .map(|s| s.timing.and_then(|x| x.duration()).unwrap_or(0) as u64)
+            .sum();
+        Some((ticks, t.spec.timescale.get()))
+    }
+}
+
+/// The earliest first-sample decode time across `tracks`, with its timescale.
+fn origin_of(tracks: &[Track]) -> (i64, broadcast_common::timescale::Timescale) {
+    use broadcast_common::timescale::{Timescale, cmp_ticks};
+    let mut best: Option<(i64, Timescale)> = None;
+    for t in tracks {
+        let Some(d) = t
+            .samples
+            .iter()
+            .find_map(|s| s.timing.and_then(|x| x.dts()))
+        else {
+            continue;
+        };
+        let ts = t.spec.timescale;
+        let earlier = match best {
+            None => true,
+            Some((bd, bts)) => cmp_ticks(d, ts, bd, bts).is_lt(),
+        };
+        if earlier {
+            best = Some((d, ts));
+        }
+    }
+    best.unwrap_or_else(|| (0, Timescale::try_new(1).expect("a non-zero timescale")))
+}
+
+/// A track's presentation times relative to `origin`, in its own timescale.
+fn presentation_times(
+    track: &Track,
+    origin: (i64, broadcast_common::timescale::Timescale),
+) -> Vec<i64> {
+    use broadcast_common::timescale::{Rounding, rescale_i64};
+    let base = rescale_i64(origin.0, origin.1, track.spec.timescale, Rounding::Floor);
+    let mut next = 0i64;
+    let mut out = Vec::with_capacity(track.samples.len());
+    for s in &track.samples {
+        let rel = match s.timing.and_then(|t| t.dts()) {
+            Some(d) => d - base,
+            None => next,
+        };
+        let duration = s.timing.and_then(|t| t.duration()).unwrap_or(0);
+        next = rel.saturating_add(i64::from(duration));
+        let offset = s.composition_offset().ok().flatten().unwrap_or(0);
+        out.push(rel.saturating_add(i64::from(offset)));
+    }
+    out
+}
+
+fn rescale_floor(
+    ticks: u64,
+    from_timescale: broadcast_common::timescale::Timescale,
+    to_timescale: broadcast_common::timescale::Timescale,
+) -> i64 {
+    use broadcast_common::timescale::{Rounding, rescale_i64};
+    rescale_i64(
+        i64::try_from(ticks).unwrap_or(i64::MAX),
+        from_timescale,
+        to_timescale,
+        Rounding::Floor,
+    )
+}
+
+fn in_window(presentation: i64, lo: i64, hi: i64) -> bool {
+    presentation >= lo && presentation < hi
+}
+
+/// Build a whole CMAF output (init + media segments) from a collected [`Media`]
+/// by driving the one [`Segmenter`](transmux::Segmenter) stage — the test-only
+/// replacement for the deleted `Repackage::run_media`.
+pub fn cmaf_from_media(
+    media: &Media,
+    target: core::time::Duration,
+) -> Result<transmux::RepackageOutput, transmux::Error> {
+    let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let mut segmenter = transmux::Segmenter::new(specs, media.movie_timescale, target)?;
+    let origin = origin_of(&media.tracks);
+    for track in &media.tracks {
+        let first = track
+            .samples
+            .first()
+            .and_then(|s| s.timing.and_then(|t| t.dts()))
+            .map_or(0, |dts| {
+                dts.saturating_sub(rescale_floor(
+                    origin.0.max(0) as u64,
+                    origin.1,
+                    track.spec.timescale,
+                ))
+                .max(0) as u64
+            });
+        segmenter.set_start_decode_time(track.spec.track_id, first)?;
+    }
+    let init_segment = segmenter.init_segment()?;
+    let mut adapter = SegmenterAdapter(segmenter);
+    let mut media_segments = Vec::new();
+    for output in transmux::mux_stage::drive_media(&mut adapter, media, Timestamp::ZERO)? {
+        if let transmux::mux_stage::MuxOutput::Segment(segment) = output {
+            media_segments.push(segment.bytes.to_vec());
+        }
+    }
+    Ok(transmux::RepackageOutput {
+        init_segment,
+        media_segments,
+    })
+}
+
+/// Drops the `Track` announcements [`drive_media`](transmux::mux_stage::drive_media)
+/// sends, since a [`Segmenter`](transmux::Segmenter) is built with its track set.
+struct SegmenterAdapter(transmux::Segmenter);
+
+impl broadcast_common::Stage for SegmenterAdapter {
+    type In<'a> = transmux::mux_stage::MuxInput;
+    type Out = transmux::mux_stage::MuxOutput;
+    type Error = transmux::Error;
+
+    fn feed(&mut self, input: Self::In<'_>, now: Timestamp) -> Result<(), transmux::Error> {
+        match input {
+            transmux::mux_stage::MuxInput::Track(_) => Ok(()),
+            other => self.0.feed(other, now),
+        }
+    }
+
+    fn poll(&mut self) -> Option<transmux::mux_stage::MuxOutput> {
+        self.0.poll()
+    }
+
+    fn finish(&mut self) -> Result<(), transmux::Error> {
+        self.0.finish()
+    }
+}
+
+/// Record a progressive sample plan from a collected [`Media`] — the test-only
+/// replacement for the deleted `PlanPass::for_media`.
+pub fn plan_from_media(media: &Media) -> Result<isobmff::plan::OwnedPlan, transmux::Error> {
+    let mut pass = transmux::PlanPass::new(media.movie_timescale);
+    for track in &media.tracks {
+        pass.feed(
+            transmux::mux_stage::MuxInput::Track(Box::new(track.spec.clone())),
+            Timestamp::ZERO,
+        )?;
+    }
+    for track in &media.tracks {
+        for sample in &track.samples {
+            pass.feed(
+                transmux::mux_stage::MuxInput::Sample {
+                    track: track.spec.track_id,
+                    sample: sample.clone(),
+                },
+                Timestamp::ZERO,
+            )?;
+        }
+    }
+    pass.finish()?;
+    pass.poll().ok_or(transmux::Error::InvalidInput(
+        "progressive: the plan pass produced no plan",
+    ))
 }
 
 /// Drive [`MatroskaDemux`](transmux::matroska_demux::MatroskaDemux) over a

@@ -22,7 +22,6 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use transmux::Repackage;
 
 use crate::support::listener;
 use crate::support::shared_it::observe_extinf;
@@ -46,9 +45,7 @@ struct Cmaf {
 fn cmaf_from_real_ts() -> Cmaf {
     let ts = std::fs::read(test_fixtures::path("ts/h264-aac-40s.ts")).expect("read fixture");
     let media = test_harness::collect::media_from_ts(&ts).expect("demux fixture");
-    let out = Repackage::new(SOURCE_SEGMENT)
-        .run_media(&media)
-        .expect("repackage");
+    let out = test_harness::collect::cmaf_from_media(&media, SOURCE_SEGMENT).expect("repackage");
     Cmaf {
         init: out.init_segment,
         segments: out.media_segments,

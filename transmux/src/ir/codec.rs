@@ -337,7 +337,7 @@ pub enum CodecConfig {
     /// [`Error::UnmuxableSubtitleTrack`](crate::error::Error::UnmuxableSubtitleTrack)
     /// (media plane step-2 fix wave 1, B1) — rather than silently dropping or
     /// mis-emitting it; a caller must pre-filter with
-    /// [`select_tracks_by`](crate::repackage::select_tracks_by).
+    /// track selection before muxing.
     Subtitle {
         /// Which subtitle wire format this track carries.
         format: SubtitleFormat,
@@ -364,7 +364,7 @@ pub enum CodecConfig {
     /// (every fMP4/CMAF mux entry point rejects it, naming it, rather than
     /// silently omitting it — issue #576/#557); a caller mixing carriable and
     /// opaque tracks must pre-filter with
-    /// [`select_tracks_by`](crate::repackage::select_tracks_by) —
+    /// track selection before muxing —
     /// see [`CodecConfig::is_muxable_in_bmff`].
     Data {
         /// Which container's identity this opaque track carries.
@@ -627,7 +627,7 @@ impl CodecConfig {
     /// a track failing this predicate is rejected, naming the track, rather
     /// than silently dropped — a caller mixing carriable and non-carriable
     /// tracks must pre-filter first (e.g. with
-    /// [`select_tracks_by`](crate::repackage::select_tracks_by)).
+    /// track selection before muxing).
     ///
     /// Does NOT cover the WebM-native [`CodecConfig::Vp8`]/[`CodecConfig::Vorbis`]
     /// (genuinely unimplemented fMP4 carriage, not a filterable policy choice
@@ -636,8 +636,7 @@ impl CodecConfig {
     /// regardless of filtering).
     ///
     /// `pub` (unlike the crate's other `CodecConfig` predicates): this is the
-    /// caller-facing filter predicate the `Unmuxable*Track` errors point to,
-    /// e.g. `select_tracks_by(&media, |t| t.spec.config.is_muxable_in_bmff())`.
+    /// caller-facing filter predicate the `Unmuxable*Track` errors point to.
     pub fn is_muxable_in_bmff(&self) -> bool {
         !(self.is_opaque_data() || self.is_subtitle_without_entry())
     }

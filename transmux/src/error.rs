@@ -94,9 +94,7 @@ pub enum Error {
     /// A streaming [`Repackage::run`](crate::repackage::Repackage::run) window
     /// held more bytes than the caller's cap before its lower edge reached a
     /// random-access point. Raise the cap with
-    /// [`Repackage::window_hold`](crate::repackage::Repackage::window_hold), or
-    /// use [`Repackage::run_media`](crate::repackage::Repackage::run_media)
-    /// over a whole input.
+    /// [`Repackage::window_hold`](crate::repackage::Repackage::window_hold).
     #[error(
         "repackage: a time window held more than {limit} bytes before its lower edge reached a keyframe"
     )]
@@ -408,9 +406,7 @@ pub enum Error {
     /// [`DataIdentity::Matroska`](crate::pipeline::DataIdentity::Matroska).
     /// Names the offending track and both families, so the caller can either
     /// map it with [`DataIdentityMap`](crate::DataIdentityMap) or pre-filter it
-    /// out (e.g. with
-    /// [`select_tracks_by`](crate::repackage::select_tracks_by)) rather than
-    /// have it silently vanish from the output.
+    /// out rather than have it silently vanish from the output.
     #[error("track {track}: data identity {have} cannot be carried by a {want} muxer")]
     DataIdentityMismatch {
         /// The offending track's [`TrackSpec::track_id`](crate::pipeline::TrackSpec::track_id).
@@ -427,8 +423,7 @@ pub enum Error {
     /// track (B1, media plane step-2 fix wave 1): reconstructing the `stpp`/
     /// `wvtt` sample entry needs more than the format tag this crate carries
     /// (`TODO(#753)`), so CMAF/fMP4 output cannot carry it yet. Names the
-    /// offending track so the caller can pre-filter it out (e.g. with
-    /// [`select_tracks_by`](crate::repackage::select_tracks_by))
+    /// offending track so the caller can pre-filter it out
     /// rather than have the whole package call fail opaquely.
     #[error(
         "cannot CMAF-mux track {track_id} (subtitle format {format}): \

@@ -172,7 +172,7 @@ impl TrackSpec {
 /// [`CodecConfig`]) with the track's decode-ordered [`Sample`]s.
 ///
 /// `#[non_exhaustive]`: matches [`TrackSpec`], [`Sample`] and
-/// [`Media`](super::Media), and
+/// the collected media, and
 /// leaves room for per-track state the pipeline has already wanted twice
 /// (`start_decode_time`); construct with [`Track::new`] or
 /// [`Track::new_at`]; destructuring or matching from another crate needs a

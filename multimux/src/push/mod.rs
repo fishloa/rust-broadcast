@@ -32,7 +32,7 @@
 //! wire container through [`PushTransport::media_muxer`]: SRT and RTSP keep a
 //! [`TsMuxStage`] and emit whole 188-byte TS packets, RTMP keeps an
 //! `RtmpMuxStage` and emits FLV `VIDEODATA`/`AUDIODATA` payloads framed into
-//! RTMP messages (issue #934) — no push path builds a `Media` per batch or per
+//! RTMP messages (issue #934) — no push path builds a whole batch per sample or per
 //! sample. A transport that answers `None` falls back to the stateless
 //! [`PushTransport::encode_media`] batch path.
 //!
@@ -64,7 +64,7 @@ pub use egress::PushTransportEgress;
 use crate::config::PushFormat;
 use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
-use transmux::ir::{Media, Sample, TrackSpec};
+use transmux::ir::{Sample, Track, TrackSpec};
 use transmux::mux_stage::{MuxInput, MuxOutput};
 use transmux::{DEFAULT_PSI_INTERVAL, TrackId, TsMuxStage};
 
@@ -79,7 +79,7 @@ pub use srt::{SrtTransport, SrtTransportConfig};
 
 /// Error from [`PushTransport::send_media`] — distinguishes a muxing failure
 /// (not a connection problem: `drive_push` drops the batch without forcing a
-/// reconnect, as the pre-#934 whole-`Media` TS muxer's failure did) from a
+/// reconnect, as the pre-#934 whole-batch TS muxer's failure did) from a
 /// transport-level send/protocol failure (`drive_push` reconnects).
 ///
 /// Generic over no transport type — every [`PushTransport::Error`] already
@@ -325,7 +325,7 @@ pub trait PushTransport: Send + 'static {
     /// messages, and hands them to an external async driver through
     /// [`media_plane::PushEgress::poll_transmit`].
     ///
-    /// Frame one whole [`Media`] as this transport's native wire messages,
+    /// Frame one whole batch of [`Track`]s as this transport's native wire messages,
     /// performing **no I/O**. Only a transport whose container is not MPEG-2
     /// TS overrides this (RTMP: `VIDEODATA`/`AUDIODATA` bodies split into
     /// per-frame, chunk-stream-framed messages via
@@ -333,7 +333,7 @@ pub trait PushTransport: Send + 'static {
     /// #934/#942). Every push transport in this crate answers
     /// [`media_muxer`](Self::media_muxer) for its live stream; only RTMP also
     /// overrides this, for the stateless batch entry point.
-    fn encode_media(&mut self, _media: &Media) -> Result<Vec<bytes::Bytes>, SendMediaError> {
+    fn encode_media(&mut self, _tracks: &[Track]) -> Result<Vec<bytes::Bytes>, SendMediaError> {
         Err(SendMediaError::Mux(MuxError::NoCarriableTrack))
     }
 
@@ -345,7 +345,7 @@ pub trait PushTransport: Send + 'static {
     ///
     /// [`egress::PushTransportEgress`] is the one driver: it announces the
     /// negotiated track set, feeds one drained sample at a time and flushes at
-    /// an idle boundary, so no push path builds a `Media` per batch or per
+    /// an idle boundary, so no push path builds a whole batch per sample or per
     /// sample.
     fn media_muxer(&mut self) -> Option<&mut dyn MediaMuxer> {
         None
@@ -355,7 +355,7 @@ pub trait PushTransport: Send + 'static {
     /// format and send it: [`encode_media`](Self::encode_media) (sans-IO),
     /// then [`send`](Self::send) (I/O) for each resulting message. The live
     /// push loop drives [`PushTransportEgress`] instead, one sample at a time;
-    /// this whole-`Media` entry point is what a caller holding the IR (a test,
+    /// this whole-batch entry point is what a caller holding the IR (a test,
     /// a one-shot replay) uses, and it is stateless: a transport that answers
     /// [`media_muxer`](Self::media_muxer) frames the live stream through that
     /// (its per-connection state), so this batch path either re-frames from
@@ -363,8 +363,8 @@ pub trait PushTransport: Send + 'static {
     ///
     /// Returns the number of payload bytes actually sent, for
     /// [`PushMetrics::bytes_sent`].
-    async fn send_media(&mut self, media: &Media) -> Result<u64, SendMediaError> {
-        let messages = self.encode_media(media)?;
+    async fn send_media(&mut self, tracks: &[Track]) -> Result<u64, SendMediaError> {
+        let messages = self.encode_media(tracks)?;
         let mut total = 0u64;
         for message in &messages {
             self.send(message)

@@ -289,7 +289,7 @@ pub(crate) fn apply_ctr(
 /// touch the buffer (IV length, subsample-map coverage of the sample exactly,
 /// `cbcs` pattern preconditions), so a single sample's decryption is already
 /// atomic. This exposes that same validation as a standalone pass so a caller
-/// decrypting a whole `Media` can prove *every* sample decryptable before
+/// decrypting a whole input can prove *every* sample decryptable before
 /// decrypting *any* of them — otherwise a failure on track 2's sample `k`
 /// leaves track 1 already decrypted in place, and the caller cannot tell which
 /// samples are now plaintext (audit r05-W5).

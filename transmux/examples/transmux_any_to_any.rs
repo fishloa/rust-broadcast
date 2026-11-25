@@ -1,16 +1,17 @@
-//! `transmux` cross-container walkthrough — one IR, many outputs.
+//! `transmux` cross-container walkthrough — one stream, many outputs.
 //!
 //! The whole point of the hub is that a source container is demuxed *once* into
-//! the neutral [`Media`] IR, then that single IR feeds any number of muxer
-//! stages and manifest renderers — no re-demux, no re-encoding.
+//! the neutral [`DemuxEvent`] sample stream, then that one stream feeds any
+//! number of muxer stages and manifest renderers — no re-demux, no re-encoding,
+//! and no whole-input buffer.
 //!
-//! This example drives `{WebM} → IR → {DASH MPD + CMAF}`:
+//! This example drives `{WebM} → {DASH MPD + CMAF}` in bounded memory:
 //!
-//! 1. Read a real VP9 + Opus WebM fixture.
-//! 2. [`MatroskaDemux`](transmux::MatroskaDemux) → [`Media`].
-//! 3. Feed that one IR to two packagers:
-//!    - [`DashPackager`] → an MPEG-DASH `.mpd` manifest (printed in full), and
-//!    - [`CmafMuxStage`](transmux::CmafMuxStage) → CMAF/fMP4 segment bytes (init + media sizes printed).
+//! 1. Open a real VP9 + Opus WebM fixture and read it in 64 KiB pieces.
+//! 2. Feed each piece to [`MatroskaDemux`](transmux::MatroskaDemux), then hand
+//!    each sample straight to [`CmafMuxStage`](transmux::CmafMuxStage).
+//! 3. Render an MPEG-DASH `.mpd` (printed in full) from the track specs and the
+//!    segment summaries the muxer emitted — never from the samples.
 //!
 //! Run it with:
 //!
@@ -18,39 +19,19 @@
 //! cargo run -p transmux --example transmux_any_to_any
 //! ```
 
+use std::io::Read;
 use std::path::PathBuf;
 
+use broadcast_common::Timestamp;
+use broadcast_common::stage::Stage;
+use transmux::matroska_demux::{IR_TIMESCALE, MatroskaDemux, MatroskaDemuxConfig, MatroskaInput};
+use transmux::mux_stage::{MuxInput, MuxOutput};
 use transmux::pipeline::CodecConfig;
-use transmux::{DashPackager, Media};
+use transmux::segment_log::SegmentSummaryLog;
+use transmux::{CmafMuxStage, DashPackager, DemuxEvent, FragmentCut, TrackSpec};
 
-/// Locate a fixture under the workspace `fixtures/` directory (a sibling of the
-/// crate's `CARGO_MANIFEST_DIR`). Read at runtime via `std::fs` — never
-/// `include_bytes!`.
-/// One CMAF init segment followed by one media segment.
-/// Mux the IR to one CMAF artifact, returning its bytes and the summary log
-/// the DASH manifest renders from (the muxer and the manifest share one pass).
-fn cmaf(
-    media: &Media,
-) -> Result<(Vec<u8>, transmux::segment_log::SegmentSummaryLog), Box<dyn std::error::Error>> {
-    let mut stage =
-        transmux::CmafMuxStage::new(media.movie_timescale, transmux::FragmentCut::OnFlush, 1);
-    let outputs =
-        transmux::mux_stage::drive_media(&mut stage, media, broadcast_common::Timestamp::ZERO)?;
-    let mut bytes = Vec::new();
-    let mut log = transmux::segment_log::SegmentSummaryLog::new();
-    for output in outputs {
-        match output {
-            transmux::mux_stage::MuxOutput::Init(part)
-            | transmux::mux_stage::MuxOutput::Bytes(part) => bytes.extend_from_slice(&part),
-            transmux::mux_stage::MuxOutput::Segment(segment) => {
-                log.push(&segment)?;
-                bytes.extend_from_slice(&segment.bytes);
-            }
-            _ => {}
-        }
-    }
-    Ok((bytes, log))
-}
+/// Size of one bounded read from the input file.
+const READ_BUF: usize = 64 * 1024;
 
 fn fixture_path(rel: &str) -> PathBuf {
     test_fixtures::path(rel)
@@ -77,10 +58,16 @@ fn describe(config: &CodecConfig) -> String {
     }
 }
 
+/// A track announcement kept for the end-of-run summary.
+struct TrackSummary {
+    spec: TrackSpec,
+    samples: u64,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let path = fixture_path("mkv/vp9-opus.webm");
-    let webm = match std::fs::read(&path) {
-        Ok(bytes) => bytes,
+    let mut file = match std::fs::File::open(&path) {
+        Ok(file) => file,
         Err(err) => {
             // A fixture-less checkout still builds and runs cleanly (exit 0).
             println!(
@@ -90,37 +77,109 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Ok(());
         }
     };
-    println!("read {} bytes from {}\n", webm.len(), path.display());
 
-    // 1 + 2. Unpackage the WebM into the neutral IR (demuxed exactly once).
-    let media: Media = test_harness::collect::media_from_matroska(
-        &webm,
-        test_harness::collect::CollectMode::Seekable,
-    )?;
-    println!("demuxed IR: {} track(s)", media.tracks.len());
-    for track in &media.tracks {
+    let mut demux = MatroskaDemux::sequential(MatroskaDemuxConfig::default());
+    let mut mux = CmafMuxStage::new(IR_TIMESCALE, FragmentCut::OnFlush, 1);
+    let mut tracks: Vec<TrackSummary> = Vec::new();
+    let mut log = SegmentSummaryLog::new();
+    let mut cmaf_len = 0usize;
+    let mut buf = [0u8; READ_BUF];
+
+    loop {
+        let read = file.read(&mut buf)?;
+        if read == 0 {
+            break;
+        }
+        demux.feed(MatroskaInput::Next(&buf[..read]), Timestamp::ZERO)?;
+        pump(&mut demux, &mut mux, &mut tracks, &mut log, &mut cmaf_len)?;
+    }
+    demux.feed(MatroskaInput::Eof, Timestamp::ZERO)?;
+    demux.finish()?;
+    pump(&mut demux, &mut mux, &mut tracks, &mut log, &mut cmaf_len)?;
+    mux.finish()?;
+    while let Some(output) = mux.poll() {
+        match output {
+            MuxOutput::Init(bytes) | MuxOutput::Bytes(bytes) => cmaf_len += bytes.len(),
+            MuxOutput::Segment(segment) => {
+                log.push(&segment)?;
+                cmaf_len += segment.bytes.len();
+            }
+            _ => {}
+        }
+    }
+
+    println!("IR: {} track(s)", tracks.len());
+    for entry in &tracks {
         println!(
             "  track {:>2}: {:<26} {:>4} samples",
-            track.track_id(),
-            describe(track.config()),
-            track.samples.len(),
+            entry.spec.track_id,
+            describe(&entry.spec.config),
+            entry.samples,
         );
     }
 
-    // 3a. The SAME IR → CMAF/fMP4 segment bytes plus the segment summary log.
-    let (cmaf, log) = cmaf(&media)?;
     println!("--- CMAF/fMP4 ---");
-    println!(
-        "segment bytes: {} (one init + one media segment)",
-        cmaf.len()
-    );
+    println!("segment bytes: {cmaf_len} (one init + one media segment)");
 
-    // 3b. The SAME IR → an MPEG-DASH manifest, rendered from the summaries the
-    //     muxer just emitted — never from the samples.
-    let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let specs: Vec<TrackSpec> = tracks.iter().map(|t| t.spec.clone()).collect();
     let mpd: String = DashPackager::default().render(&specs, &log)?;
     println!("\n--- DASH MPD ({} bytes) ---", mpd.len());
     println!("{mpd}");
 
+    Ok(())
+}
+
+/// Drain the demux's events into the summary and the muxer stage.
+fn pump(
+    demux: &mut MatroskaDemux,
+    mux: &mut CmafMuxStage,
+    tracks: &mut Vec<TrackSummary>,
+    log: &mut SegmentSummaryLog,
+    cmaf_len: &mut usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    while let Some(event) = demux.poll() {
+        match event {
+            DemuxEvent::TrackAdded(spec) => {
+                tracks.push(TrackSummary {
+                    spec: spec.clone(),
+                    samples: 0,
+                });
+                mux.feed(MuxInput::Track(Box::new(spec)), Timestamp::ZERO)?;
+            }
+            DemuxEvent::TrackUpdated(spec) => {
+                if let Some(entry) = tracks.iter_mut().find(|t| t.spec.track_id == spec.track_id) {
+                    entry.spec = spec;
+                }
+            }
+            DemuxEvent::Sample {
+                track_id, sample, ..
+            } => {
+                if let Some(entry) = tracks.iter_mut().find(|t| t.spec.track_id == track_id) {
+                    entry.samples += 1;
+                }
+                mux.feed(
+                    MuxInput::Sample {
+                        track: track_id,
+                        sample,
+                    },
+                    Timestamp::ZERO,
+                )?;
+            }
+            DemuxEvent::Discontinuity { .. } => {
+                mux.feed(MuxInput::Discontinuity { track: None }, Timestamp::ZERO)?;
+            }
+            _ => {}
+        }
+        while let Some(output) = mux.poll() {
+            match output {
+                MuxOutput::Init(bytes) | MuxOutput::Bytes(bytes) => *cmaf_len += bytes.len(),
+                MuxOutput::Segment(segment) => {
+                    log.push(&segment)?;
+                    *cmaf_len += segment.bytes.len();
+                }
+                _ => {}
+            }
+        }
+    }
     Ok(())
 }

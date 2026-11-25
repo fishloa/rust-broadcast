@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FileReaderError::FileTooLarge` is deleted: no container is read whole, so
   nothing raised it. `FileReaderConfig::max_file_bytes` is gone from
   `multimux`.
+
+- `ts_session::test_support::mux_ts`, which took a whole `transmux::Media`, is
+  now test-only (`#[cfg(test)]`); `build_ts_bytes` feeds the TS muxer stage one
+  sample at a time, so the `test-support` feature no longer exposes a
+  whole-media mux helper.
 - The classic TS-HLS segmenter now speaks the muxer stage vocabulary:
   `ProgramSegmenter` drives `transmux::StreamingTsHlsSegmenter` through
   `Stage::feed(MuxInput::Sample)`/`Stage::poll` and normalises each

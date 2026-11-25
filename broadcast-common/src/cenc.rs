@@ -16,8 +16,7 @@
 //!
 //! Those live in different crates (`transmux` owns the ISOBMFF crypto boxes,
 //! `broadcast-hls` owns the M3U8 playlist syntax), so the scheme identity
-//! belongs *below* both — here, alongside the [`Encrypt`](crate::Encrypt) /
-//! [`Decrypt`](crate::Decrypt) traits it parameterises. Defining it once here
+//! belongs *below* both — here. Defining it once here
 //! is what stops "two names for one thing" reappearing every time a new
 //! container crate needs to name a scheme (issue #564 consolidated three
 //! definitions into one; issue #878 keeps it that way across the

@@ -356,7 +356,7 @@ impl From<Error> for FlvError {
 }
 
 // ---------------------------------------------------------------------------
-// FlvDemux — Unpackage<Input = &[u8]>
+// FLV tag parsing helpers
 // ---------------------------------------------------------------------------
 
 /// One parsed FLV tag (header fields + body slice).

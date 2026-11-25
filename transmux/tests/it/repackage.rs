@@ -13,6 +13,7 @@ use isobmff::box_types::parse_box;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use std::path::PathBuf;
+use test_harness::collect::{MediaSelectExt, cmaf_from_media};
 use transmux::TrackId;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
@@ -107,9 +108,7 @@ fn coded_bytes(media: &Media, track_idx: usize) -> Vec<Bytes> {
 #[test]
 fn identity_repackage_is_lossless() {
     let ir = oracle_ir();
-    let out = Repackage::new(Duration::from_secs(2))
-        .run_media(&ir)
-        .expect("repackage");
+    let out = cmaf_from_media(&ir, Duration::from_secs(2)).expect("repackage");
     let round = test_harness::collect::media_from_mp4(
         &out.to_contiguous(),
         test_harness::collect::CollectMode::Seekable,
@@ -143,10 +142,8 @@ fn identity_repackage_is_lossless() {
 #[test]
 fn track_select_video_only() {
     let ir = oracle_ir();
-    let out = Repackage::new(Duration::from_secs(2))
-        .select_tracks(&[0])
-        .run_media(&ir)
-        .expect("repackage video-only");
+    let selected = ir.select_tracks(&[0]).expect("select video");
+    let out = cmaf_from_media(&selected, Duration::from_secs(2)).expect("repackage video-only");
     let round = test_harness::collect::media_from_mp4(
         &out.to_contiguous(),
         test_harness::collect::CollectMode::Seekable,
@@ -212,10 +209,8 @@ fn trim_selects_window_and_snaps_to_keyframe() {
         "oracle window must keep video samples"
     );
 
-    let out = Repackage::new(Duration::from_secs(2))
-        .trim(start, end)
-        .run_media(&ir)
-        .expect("trim repackage");
+    let trimmed = ir.trim(start, end).expect("trim");
+    let out = cmaf_from_media(&trimmed, Duration::from_secs(2)).expect("trim repackage");
     let round = test_harness::collect::media_from_mp4(
         &out.to_contiguous(),
         test_harness::collect::CollectMode::Seekable,
@@ -265,9 +260,7 @@ fn resegment_cut_count_and_keyframe_starts() {
     let target_ticks = (target_secs * ts as f64) as u64;
     let expected_segments = total.div_ceil(target_ticks) as usize;
 
-    let out = Repackage::new(Duration::from_secs(1))
-        .run_media(&ir)
-        .expect("resegment");
+    let out = cmaf_from_media(&ir, Duration::from_secs(1)).expect("resegment");
     assert_eq!(
         out.segment_count(),
         expected_segments,
@@ -294,9 +287,7 @@ fn resegment_cut_count_and_keyframe_starts() {
 #[test]
 fn resegment_preserves_full_sample_sequence() {
     let ir = oracle_ir();
-    let out = Repackage::new(Duration::from_millis(500))
-        .run_media(&ir)
-        .expect("resegment");
+    let out = cmaf_from_media(&ir, Duration::from_millis(500)).expect("resegment");
 
     // Re-demux the whole contiguous output and compare the full video sequence.
     let round = test_harness::collect::media_from_mp4(
@@ -485,7 +476,7 @@ fn trim_snaps_back_off_on_hevc_video_not_audio() {
     let media = Media::new(vec![audio, video], timescale(90_000));
 
     // Window starting at video's 2nd sample (pts 3000..6000) — mid-GOP.
-    let trimmed = transmux::repackage::trim(&media, 3000, 9000).expect("window selects samples");
+    let trimmed = media.trim(3000, 9000).expect("window selects samples");
     let video_out = trimmed
         .tracks
         .iter()
@@ -564,7 +555,7 @@ fn trim_window_follows_real_dts_not_duration_sum() {
     );
     let media = Media::new(vec![video], timescale(90_000));
 
-    let trimmed = transmux::repackage::trim(&media, 9000, 12000).expect("window selects samples");
+    let trimmed = media.trim(9000, 12000).expect("window selects samples");
     let video_out = &trimmed.tracks[0];
 
     assert_eq!(
@@ -669,8 +660,7 @@ fn resegment_interleaves_huge_coprime_timescales() {
         timescale(1000),
     );
 
-    let out = Repackage::new(Duration::from_secs(2))
-        .run_media(&media)
+    let out = cmaf_from_media(&media, Duration::from_secs(2))
         .expect("resegment across huge coprime timescales");
 
     // The interleave decides which *segment* each sample lands in (the
@@ -733,7 +723,7 @@ fn trim_end_is_exclusive_for_anchor_and_other_tracks() {
     );
     let media = Media::new(vec![video, audio], timescale(90_000));
 
-    let trimmed = transmux::repackage::trim(&media, 0, 6_000).expect("window selects samples");
+    let trimmed = media.trim(0, 6_000).expect("window selects samples");
     for (id, base) in [(1u32, 0x10u8), (2, 0x20)] {
         let kept = track_samples(&trimmed, id);
         assert_eq!(kept.len(), 2, "track {id}: pts 0 and 3000 only");
@@ -741,7 +731,7 @@ fn trim_end_is_exclusive_for_anchor_and_other_tracks() {
         assert_eq!(kept[1].data, vec![base + 1; 4]);
     }
 
-    let trimmed = transmux::repackage::trim(&media, 3_000, 9_000).expect("window selects samples");
+    let trimmed = media.trim(3_000, 9_000).expect("window selects samples");
     for (id, base) in [(1u32, 0x10u8), (2, 0x20)] {
         let kept = track_samples(&trimmed, id);
         assert_eq!(kept.len(), 2, "track {id}: pts 6000 is the exclusive end");
@@ -762,7 +752,8 @@ fn trim_anchor_end_edge_sample_is_not_the_snap_point() {
     );
     let media = Media::new(vec![video, audio], timescale(90_000));
 
-    let trimmed = transmux::repackage::trim(&media, 6_000, 9_000)
+    let trimmed = media
+        .trim(6_000, 9_000)
         .expect("the audio sample at 7000 is inside the window");
     assert!(
         track_samples(&trimmed, 1).is_empty(),
@@ -787,7 +778,7 @@ fn trim_with_no_leading_sync_sample() {
     );
     let media = Media::new(vec![video, audio], timescale(90_000));
 
-    let trimmed = transmux::repackage::trim(&media, 0, 9_000).expect("window selects samples");
+    let trimmed = media.trim(0, 9_000).expect("window selects samples");
     let kept = track_samples(&trimmed, 1);
     assert_eq!(kept.len(), 3, "pts 0, 3000, 6000");
     assert_eq!(kept[0].data, vec![0x40u8; 4], "kept starts at index 0");
@@ -817,8 +808,7 @@ fn run_with_a_window_over_empty_input_errors() {
 #[test]
 fn run_and_run_media_with_a_window_are_byte_identical() {
     let ir = oracle_ir();
-    let source = Repackage::new(Duration::from_secs(2))
-        .run_media(&ir)
+    let source = cmaf_from_media(&ir, Duration::from_secs(2))
         .expect("build the source CMAF")
         .to_contiguous();
     let round = test_harness::collect::media_from_mp4(
@@ -837,10 +827,8 @@ fn run_and_run_media_with_a_window_are_byte_identical() {
         .trim(start, end)
         .run(&source)
         .expect("streaming window");
-    let whole = Repackage::new(Duration::from_secs(1))
-        .trim(start, end)
-        .run_media(&round)
-        .expect("whole-input window");
+    let trimmed = round.trim(start, end).expect("trim");
+    let whole = cmaf_from_media(&trimmed, Duration::from_secs(1)).expect("whole-input window");
 
     assert_eq!(
         streaming.init_segment, whole.init_segment,
@@ -873,8 +861,7 @@ fn run_and_run_media_with_a_window_are_byte_identical() {
 #[test]
 fn run_and_run_media_without_a_window_are_byte_identical() {
     let ir = oracle_ir();
-    let source = Repackage::new(Duration::from_secs(2))
-        .run_media(&ir)
+    let source = cmaf_from_media(&ir, Duration::from_secs(2))
         .expect("build the source CMAF")
         .to_contiguous();
     let whole = test_harness::collect::media_from_mp4(
@@ -886,9 +873,8 @@ fn run_and_run_media_without_a_window_are_byte_identical() {
     let streaming = Repackage::new(Duration::from_secs(1))
         .run(&source)
         .expect("streaming repackage");
-    let from_media = Repackage::new(Duration::from_secs(1))
-        .run_media(&whole)
-        .expect("whole-media repackage");
+    let from_media =
+        cmaf_from_media(&whole, Duration::from_secs(1)).expect("whole-media repackage");
     assert_eq!(
         streaming.to_contiguous(),
         from_media.to_contiguous(),

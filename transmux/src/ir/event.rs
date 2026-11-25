@@ -161,7 +161,7 @@ pub enum InputDegradation {
     /// duplicate and signalled discontinuities (`discontinuity_indicator` in
     /// the adaptation field). `expected` is the *last-observed* CC + 1 mod 16;
     /// `got` is the wire value that arrived. The entry names no PID itself:
-    /// see [`Media::degraded_at`](crate::ir::Media::degraded_at) /
+    /// see the collected form's `degraded_at` /
     /// [`DemuxEvent::InputDegraded`]'s `provenance`.
     ContinuityGap {
         /// The expected counter (`last_cc + 1 & 0x0F`).
@@ -255,7 +255,7 @@ impl InputDegradation {
 
 broadcast_common::impl_spec_display!(InputDegradation);
 
-/// One [`DemuxEvent::InputDegraded`] as kept on [`Media::degraded_at`](crate::ir::Media::degraded_at):
+/// One [`DemuxEvent::InputDegraded`] as kept on the collected form's `degraded_at`:
 /// the [`InputDegradation`] plus *where* it was observed, so a consumer can
 /// tell damage on an unused data PID (a DSM-CC carousel) from damage on a
 /// track it keeps. `#[non_exhaustive]`: build one with [`DegradationRecord::new`].
@@ -264,9 +264,9 @@ broadcast_common::impl_spec_display!(InputDegradation);
 pub struct DegradationRecord {
     /// What degraded.
     pub kind: InputDegradation,
-    /// The track the carrying PID maps to. On a [`Media::degraded_at`](crate::ir::Media::degraded_at)
+    /// The track the carrying PID maps to. On a collected `degraded_at`
     /// record from the one-shot TS demuxer this is resolved against the final
-    /// [`Media::tracks`](crate::ir::Media::tracks) (match on
+    /// the collected tracks (match on
     /// `spec.source_pid == provenance.pid`), so damage seen before a Data /
     /// DSM-CC PID was announced still names its track (issue #1348). `None`
     /// means the PID never became a track, or the damage is stream-wide

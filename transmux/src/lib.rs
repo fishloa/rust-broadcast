@@ -1,8 +1,8 @@
 //! `transmux` — an any-to-any media container muxing hub (ISO/IEC 14496-12:2026,
 //! 13818-1, 23009-1, RFC 8216/3550, [MS-SSTR]).
 //!
-//! transmux demuxes any supported container into one neutral in-memory
-//! intermediate representation ([`Media`] / [`Track`]) and muxes from it into any
+//! transmux demuxes any supported container into one neutral intermediate
+//! representation ([`DemuxEvent`] stream) and muxes from it into any
 //! supported container — the demux and mux spokes meet at the IR, so every
 //! `{input} → {output}` combination composes, with one documented exception:
 //! WebM's VP8 and Vorbis tracks ([`CodecConfig::Vp8`]/[`CodecConfig::Vorbis`])
@@ -17,13 +17,11 @@
 //! the PlayReady [`playready_wrmheader`]/[`playready_pro`]/[`playready_pssh`]
 //! builders), which are built on `quick-xml` and need the `std` feature.
 //!
-//! The demux spoke is [`Unpackage`](broadcast_common::Unpackage) (container →
-//! IR, the batch form of a demuxer). Every muxer, segmenter, transform and
+//! The demux spoke is the streaming container stage (container →
+//! [`DemuxEvent`] stream). Every muxer, segmenter, transform and
 //! protection pass is a [`Stage`](broadcast_common::Stage) over
 //! [`mux_stage`]'s one vocabulary: [`mux_stage::MuxInput`] in,
-//! [`mux_stage::MuxOutput`] out, with [`mux_stage::drive_media`] bridging a
-//! caller that still holds a whole [`Media`]. Nothing holds the samples it
-//! converts.
+//! [`mux_stage::MuxOutput`] out. Nothing holds the samples it converts.
 //!
 //! - **Demux inputs:** MPEG-2 TS (the event-driven [`StreamingTsDemux`] —
 //!   issue #555),
@@ -339,7 +337,7 @@ pub use plan_pass::PlanPass;
 pub use progressive::ProgressiveMuxStage;
 pub use ps_demux::{PsDemuxLimits, StreamingPsDemux};
 pub use rebase::{GapStage, OffsetStage, RebaseOrigin, RebaseStage};
-pub use repackage::{Repackage, RepackageOutput, select_tracks, select_tracks_by, trim};
+pub use repackage::{Repackage, RepackageOutput};
 pub use rtcp::{
     APP_NAME_LEN, App, Bye, CompoundPacket, PT_APP, PT_BYE, PT_RECEIVER_REPORT, PT_SENDER_REPORT,
     PT_SOURCE_DESCRIPTION, REPORT_BLOCK_LEN, ReceiverReport, ReportBlock, RtcpPacket,

@@ -13,7 +13,7 @@
 //!
 //! A plan holds no samples: the per-track cut indices and tick shifts plus the
 //! [`SplicePoint`]s to signal. [`SpliceStage`] applies it per sample, so the
-//! transform never holds a whole [`Media`]. The former whole-input
+//! transform never holds a whole input. The former whole-input
 //! `concat`/`splice_insert` functions are gone with it.
 //!
 //! # Timeline model (ISO/IEC 14496-12:2026 `tfdt`)
@@ -58,12 +58,13 @@
 //! # Example
 //!
 //! ```rust
-//! use transmux::{Media, SplicePlan, SpliceStage};
+//! use transmux::{SplicePlan, SpliceStage, Track};
+//! use broadcast_common::timescale::Timescale;
 //!
-//! # fn plan(base: &Media, ad: &Media) -> transmux::Result<()> {
+//! # fn plan(base: &[Track], ad: &[Track], scale: Timescale) -> transmux::Result<()> {
 //! // Play `base` up to 90 000 presentation ticks (1 s of a 90 kHz track),
 //! // insert `ad`, then resume `base` shifted by `ad`'s span.
-//! let plan = SplicePlan::insert(base, ad, 90_000)?;
+//! let plan = SplicePlan::insert(base, ad, scale, 90_000)?;
 //! let mut stage = SpliceStage::new(plan);
 //! // Feed (TrackId, Sample) pairs in the plan's order, then finish and poll.
 //! let _ = &mut stage;
@@ -80,7 +81,7 @@ use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
 use crate::TrackId;
 use crate::error::{Error, Result};
 use crate::ir::Sample;
-use crate::media::{Media, Track};
+use crate::media::Track;
 
 /// A splice / concatenation join point in a resulting track.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,17 +187,16 @@ fn track_end_decode_time(track: &Track) -> u64 {
 /// Match `a.tracks[i]` to an index in `b`: by `track_id` first, else by index.
 /// The mapping is injective; mismatched counts, an unavailable match, or an
 /// incompatible codec kind/timescale is [`Error::InvalidInput`].
-fn match_tracks(a: &Media, b: &Media) -> Result<Vec<usize>> {
-    if a.tracks.len() != b.tracks.len() {
+fn match_tracks(a: &[Track], b: &[Track]) -> Result<Vec<usize>> {
+    if a.len() != b.len() {
         return Err(Error::InvalidInput(
             "splice: media have differing track counts",
         ));
     }
-    let mut mapping = Vec::with_capacity(a.tracks.len());
-    let mut used = alloc::vec![false; b.tracks.len()];
-    for (i, at) in a.tracks.iter().enumerate() {
+    let mut mapping = Vec::with_capacity(a.len());
+    let mut used = alloc::vec![false; b.len()];
+    for (i, at) in a.iter().enumerate() {
         let bj = b
-            .tracks
             .iter()
             .enumerate()
             .find(|(j, bt)| !used[*j] && bt.spec.track_id == at.spec.track_id)
@@ -206,7 +206,7 @@ fn match_tracks(a: &Media, b: &Media) -> Result<Vec<usize>> {
                 "splice: no unclaimed matching track in b (non-injective match)",
             ))?;
         used[bj] = true;
-        let bt = &b.tracks[bj];
+        let bt = &b[bj];
         if core::mem::discriminant(&at.spec.config) != core::mem::discriminant(&bt.spec.config) {
             return Err(Error::InvalidInput(
                 "splice: matched tracks have incompatible codecs",
@@ -323,10 +323,10 @@ impl SplicePlan {
     /// # Errors
     /// [`Error::InvalidInput`] if the track sets are incompatible, or if a
     /// matched `b` track's first sample is not a sync sample.
-    pub fn concat(a: &Media, b: &Media) -> Result<Self> {
+    pub fn concat(a: &[Track], b: &[Track], movie_timescale: Timescale) -> Result<Self> {
         let mapping = match_tracks(a, b)?;
         for &bj in &mapping {
-            if let Some(first) = b.tracks[bj].samples.first()
+            if let Some(first) = b[bj].samples.first()
                 && !first.flags.is_sync
             {
                 return Err(Error::InvalidInput(
@@ -334,10 +334,10 @@ impl SplicePlan {
                 ));
             }
         }
-        let ref_shift = pick_reference_track(&a.tracks, &b.tracks, &mapping).map(|ri| {
-            let ref_timescale = a.tracks[ri].spec.timescale;
-            let join_dts_ref = track_end_decode_time(&a.tracks[ri]) as i64;
-            let bt = &b.tracks[mapping[ri]];
+        let ref_shift = pick_reference_track(a, b, &mapping).map(|ri| {
+            let ref_timescale = a[ri].spec.timescale;
+            let join_dts_ref = track_end_decode_time(&a[ri]) as i64;
+            let bt = &b[mapping[ri]];
             let incoming_ref_start = bt
                 .samples
                 .first()
@@ -346,10 +346,10 @@ impl SplicePlan {
             (ref_timescale, join_dts_ref, incoming_ref_start)
         });
 
-        let mut tracks = Vec::with_capacity(a.tracks.len());
+        let mut tracks = Vec::with_capacity(a.len());
         let mut points = Vec::new();
-        for (i, at) in a.tracks.iter().enumerate() {
-            let bt = &b.tracks[mapping[i]];
+        for (i, at) in a.iter().enumerate() {
+            let bt = &b[mapping[i]];
             let insert_shift = match ref_shift {
                 Some((ref_ts, join_dts_ref, incoming_ref_start)) => {
                     let track_ts = at.spec.timescale;
@@ -387,7 +387,7 @@ impl SplicePlan {
         }
         Ok(Self {
             tracks,
-            movie_timescale: a.movie_timescale,
+            movie_timescale,
             points,
         })
     }
@@ -401,10 +401,15 @@ impl SplicePlan {
     /// [`Error::InvalidInput`] if the track sets are incompatible, if `base`
     /// has no video track to align on, or if a matched `ad` track's first
     /// sample is not a sync sample.
-    pub fn insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<Self> {
+    pub fn insert(
+        base: &[Track],
+        ad: &[Track],
+        movie_timescale: Timescale,
+        at_ticks: u64,
+    ) -> Result<Self> {
         let mapping = match_tracks(base, ad)?;
         for &aj in &mapping {
-            if let Some(first) = ad.tracks[aj].samples.first()
+            if let Some(first) = ad[aj].samples.first()
                 && !first.flags.is_sync
             {
                 return Err(Error::InvalidInput(
@@ -412,33 +417,32 @@ impl SplicePlan {
                 ));
             }
         }
-        let video_idx = base
-            .tracks
-            .iter()
-            .position(|t| t.spec.config.is_video())
+        let video_idx =
+            base.iter()
+                .position(|t| t.spec.config.is_video())
+                .ok_or(Error::InvalidInput(
+                    "splice_insert: base has no video track to align the splice on",
+                ))?;
+        let (snapped_video_dts, video_split) = snap_to_preceding_sync(&base[video_idx], at_ticks)
             .ok_or(Error::InvalidInput(
-                "splice_insert: base has no video track to align the splice on",
-            ))?;
-        let (snapped_video_dts, video_split) =
-            snap_to_preceding_sync(&base.tracks[video_idx], at_ticks).ok_or(
-                Error::InvalidInput("splice_insert: base video track has no samples"),
-            )?;
-        let video_timescale = u128::from(base.tracks[video_idx].spec.timescale.get());
+            "splice_insert: base video track has no samples",
+        ))?;
+        let video_timescale = u128::from(base[video_idx].spec.timescale.get());
         let video_cut_dts = snapped_video_dts;
 
-        let ref_timescale = base.tracks[video_idx].spec.timescale;
-        let join_dts_ref = boundary_decode_time(&base.tracks[video_idx], video_split) as i64;
-        let ad_video = &ad.tracks[mapping[video_idx]];
+        let ref_timescale = base[video_idx].spec.timescale;
+        let join_dts_ref = boundary_decode_time(&base[video_idx], video_split) as i64;
+        let ad_video = &ad[mapping[video_idx]];
         let incoming_ref_start = ad_video
             .samples
             .first()
             .and_then(|s| s.timing.and_then(|t| t.dts()))
             .unwrap_or(ad_video.start_decode_time as i64);
 
-        let mut tracks = Vec::with_capacity(base.tracks.len());
+        let mut tracks = Vec::with_capacity(base.len());
         let mut points = Vec::new();
-        for (i, bt) in base.tracks.iter().enumerate() {
-            let adt = &ad.tracks[mapping[i]];
+        for (i, bt) in base.iter().enumerate() {
+            let adt = &ad[mapping[i]];
             let track_ts = bt.spec.timescale;
             let split_index = if i == video_idx {
                 video_split
@@ -507,7 +511,7 @@ impl SplicePlan {
         }
         Ok(Self {
             tracks,
-            movie_timescale: base.movie_timescale,
+            movie_timescale,
             points,
         })
     }

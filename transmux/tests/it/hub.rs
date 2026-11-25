@@ -1,11 +1,11 @@
 //! Any-to-any hub gate (issue #466).
 //!
 //! Exercises both hub paths as implemented by transmux: [`Mp4Demux`] (the
-//! streaming [`Unpackage`] demuxer) and the [`CmafMuxStage`] mux stage, driven
+//! streaming MP4 demuxer) and the [`CmafMuxStage`] mux stage, driven
 //! by `mux_stage::drive_media`.
 //!
 //! EXIT CRITERIA (all bite):
-//! 1. `Mp4Demux.unpackage(av-frag.mp4)` → `Media` with exactly 2 tracks
+//! 1. `Mp4Demux` over `av-frag.mp4` → `Media` with exactly 2 tracks
 //!    (AVC video track_id=1, AAC audio track_id=2) with the same per-track
 //!    sample counts computed independently from the raw `moof`/`trun` boxes.
 //! 2. `CmafMuxStage` over `media` → re-`unpackage` → identical track/sample

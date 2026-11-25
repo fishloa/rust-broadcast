@@ -15,7 +15,7 @@ mod bit_writer;
 mod paff_gen;
 
 use std::path::Path;
-use transmux::Media;
+use transmux::{DemuxEvent, StreamingTsDemux};
 
 const FRAMES: usize = 12;
 
@@ -36,11 +36,8 @@ fn main() {
         ),
     ] {
         let rewrapped = paff_gen::ts_from_aus(&g.aus);
-        let want =
-            timestamps(&test_harness::collect::media_from_ts(&g.ts).expect("demux generated TS"));
-        let got = timestamps(
-            &test_harness::collect::media_from_ts(&rewrapped).expect("demux re-wrapped AUs"),
-        );
+        let want = timestamps(&g.ts);
+        let got = timestamps(&rewrapped);
         assert_eq!(got, want, "{name}: the AUs re-wrapped carry the same clock");
         println!(
             "{name}: {} B elementary stream, {} field AUs",
@@ -60,18 +57,20 @@ fn main() {
     }
 }
 
-fn timestamps(media: &Media) -> Vec<(Option<i64>, Option<i64>)> {
-    media
-        .tracks
-        .iter()
-        .flat_map(|t| t.samples.iter())
-        .map(|s| {
-            (
-                s.timing.and_then(|t| t.dts()),
-                s.timing.and_then(|t| t.pts()),
-            )
-        })
-        .collect()
+fn timestamps(ts: &[u8]) -> Vec<(Option<i64>, Option<i64>)> {
+    let mut demux = StreamingTsDemux::new();
+    demux.feed(ts).expect("demux generated TS");
+    demux.finish().expect("finish generated TS");
+    let mut out = Vec::new();
+    while let Some(event) = demux.poll_event() {
+        if let DemuxEvent::Sample { sample, .. } = event {
+            out.push((
+                sample.timing.and_then(|t| t.dts()),
+                sample.timing.and_then(|t| t.pts()),
+            ));
+        }
+    }
+    out
 }
 
 fn digest(bytes: &[u8]) -> String {

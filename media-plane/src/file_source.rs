@@ -18,7 +18,7 @@ use broadcast_common::{Demand, Stage, Timestamp};
 use container_probe::{Format, IsobmffLayout, Probe};
 use thiserror::Error;
 use transmux::{
-    DemuxEvent, Media, Sample, StreamingFlvDemux, StreamingTsDemux, Track, TrackId, TrackSpec,
+    DemuxEvent, Sample, StreamingFlvDemux, StreamingTsDemux, Track, TrackId, TrackSpec,
 };
 
 use crate::ingress::{IngestSession, ProgramId, SessionEvent};
@@ -556,9 +556,7 @@ pub fn demux_identified(
     // `MpegTs` always carries a `Detail::Ts { .. }`; the format arm below
     // routes by the demuxer selection and the Ts detail is ignored.
     match select_demuxer(format, detail)? {
-        DemuxerKind::StreamingTs => demux_streaming_ts(bytes)
-            .and_then(media_into_parsed)
-            .map_err(map_demux_error),
+        DemuxerKind::StreamingTs => demux_streaming_ts(bytes).map_err(map_demux_error),
         // An MP4 is streamed by `StreamingFileSession` over
         // `Mp4Demux::seekable`; the whole-buffer path has no arm for it.
         DemuxerKind::Fmp4 | DemuxerKind::Progressive | DemuxerKind::Mp4 => {
@@ -576,17 +574,8 @@ pub fn demux_identified(
         DemuxerKind::Ps => Err(FileReaderError::UnsupportedFormat {
             format: Format::MpegPs.name(),
         }),
-        DemuxerKind::StreamingFlv => demux_streaming_flv(bytes)
-            .and_then(media_into_parsed)
-            .map_err(map_demux_error),
+        DemuxerKind::StreamingFlv => demux_streaming_flv(bytes).map_err(map_demux_error),
     }
-}
-
-/// Collapse a demuxed [`Media`] into its tracks.
-fn media_into_parsed(media: Media) -> Result<ParsedFile, DemuxError> {
-    Ok(ParsedFile {
-        tracks: media.tracks,
-    })
 }
 
 /// Internal demux phase error — flattened into [`FileReaderError`] variants
@@ -612,9 +601,8 @@ fn map_demux_error(e: DemuxError) -> FileReaderError {
     }
 }
 
-/// Feed a whole TS file through [`StreamingTsDemux`] and collect its events
-/// into a [`Media`].
-fn demux_streaming_ts(bytes: &[u8]) -> Result<Media, DemuxError> {
+/// Feed a whole TS file through [`StreamingTsDemux`] and collect its tracks.
+fn demux_streaming_ts(bytes: &[u8]) -> Result<ParsedFile, DemuxError> {
     let mut demux = StreamingTsDemux::new();
     demux.feed(bytes).map_err(DemuxError::Transmux)?;
     // End of input: without `finish()` the demux never announces a track whose
@@ -624,9 +612,8 @@ fn demux_streaming_ts(bytes: &[u8]) -> Result<Media, DemuxError> {
     collect_streaming_media(&mut demux, |d| d.poll_event())
 }
 
-/// Feed a whole FLV file through [`StreamingFlvDemux`] and collect its events
-/// into a [`Media`].
-fn demux_streaming_flv(bytes: &[u8]) -> Result<Media, DemuxError> {
+/// Feed a whole FLV file through [`StreamingFlvDemux`] and collect its tracks.
+fn demux_streaming_flv(bytes: &[u8]) -> Result<ParsedFile, DemuxError> {
     let mut demux = StreamingFlvDemux::new();
     demux.feed(bytes).map_err(DemuxError::Flv)?;
     let finished = demux.finish().map_err(DemuxError::Flv);
@@ -635,13 +622,13 @@ fn demux_streaming_flv(bytes: &[u8]) -> Result<Media, DemuxError> {
     media
 }
 
-/// Drain every [`DemuxEvent`] into a [`Media`]: `TrackAdded` becomes a
+/// Drain every [`DemuxEvent`] into the parsed tracks: `TrackAdded` becomes a
 /// [`TrackSpec`], `Sample` appends to that track's samples (in emitted order,
 /// which for a given track is decode order), `TracksResolved` marks the set
 /// stable. Section-carried tracks (no timestamp) cannot be placed on the
 /// presentation timeline this reader paces off, so they are skipped with a
 /// count surfaced only for diagnostics.
-fn collect_streaming_media<D, F>(demux: &mut D, mut poll: F) -> Result<Media, DemuxError>
+fn collect_streaming_media<D, F>(demux: &mut D, mut poll: F) -> Result<ParsedFile, DemuxError>
 where
     F: FnMut(&mut D) -> Option<DemuxEvent>,
 {
@@ -691,18 +678,12 @@ where
         }
     }
 
-    let movie: Vec<Track> = tracks
+    let tracks: Vec<Track> = tracks
         .into_iter()
         .map(|(spec, samples)| Track::new(spec, samples))
         .collect();
-    Ok(Media::new(movie, MPEG_TS_MOVIE_TIMESCALE))
+    Ok(ParsedFile { tracks })
 }
-
-/// The movie timescale assigned to a TS-derived `Media`: the MPEG-2 TS
-/// 90 kHz clock (a 27 MHz system clock divided by 300), per ISO/IEC 13818-1 —
-/// every TS demuxer's track timescales are multiples of it. A named constant
-/// (not a bare `90_000`) so the value's source is cited where it is used.
-const MPEG_TS_MOVIE_TIMESCALE: Timescale = transmux::VIDEO_CLOCK_TIMESCALE;
 
 /// Window size for walking consecutive presentation-timestamp pairs.
 pub(crate) const ADJACENT_PAIR_LEN: usize = 2;
@@ -1631,7 +1612,7 @@ mod tests {
     }
 
     /// An AVC track spec at `width` — so a mid-file config change is
-    /// observable in the collected [`Media`].
+    /// observable in the collected tracks.
     fn avc_spec_sized(track_id: TrackId, width: u16) -> TrackSpec {
         let base = avc_spec(track_id, timescale(90_000));
         let transmux::CodecConfig::Avc { config, height, .. } = base.config else {
@@ -1650,7 +1631,7 @@ mod tests {
 
     /// Collect a scripted [`DemuxEvent`] sequence through the real
     /// [`collect_streaming_media`] translator.
-    fn collect_events(events: Vec<DemuxEvent>) -> Media {
+    fn collect_events(events: Vec<DemuxEvent>) -> ParsedFile {
         let mut queue: VecDeque<DemuxEvent> = events.into();
         collect_streaming_media(&mut queue, |q| q.pop_front())
             .map_err(|_| ())
@@ -1659,7 +1640,7 @@ mod tests {
 
     /// A `TrackUpdated` (a new in-band SPS, or a changed PMT descriptor) must
     /// replace the collected track's config, so late codec config reaches the
-    /// `Media` rather than being dropped.
+    /// parsed file rather than being dropped.
     #[test]
     fn collect_streaming_media_applies_a_track_updated_spec() {
         let id = TrackId::new(1);

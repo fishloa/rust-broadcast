@@ -105,7 +105,7 @@ impl ProgressiveMuxStage {
             .take()
             .ok_or(Error::InvalidInput("progressive: the plan is gone"))?;
         if plan.tracks().is_empty() {
-            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
+            return Err(Error::InvalidInput("cannot package media with no tracks"));
         }
         self.counts = vec![0; plan.tracks().len()];
         let writer = Writer::progressive(

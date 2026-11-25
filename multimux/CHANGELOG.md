@@ -8,6 +8,11 @@
   `DEFAULT_MAX_FILE_BYTES` are deleted: every container streams from disk in
   bounded memory, so the whole-file cap applied to nothing.
 
+- `PushTransport::encode_media` and `PushTransport::send_media` take a
+  `&[Track]` batch instead of a `Media`, so the push path never builds a
+  whole-input IR value. The live path was already per-connection through
+  `PushTransport::media_muxer`.
+
 ### Changed
 
 - A Program Stream file source streams through `media_plane`'s

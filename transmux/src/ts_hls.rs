@@ -24,9 +24,8 @@
 //! repetition — a receiver joining mid-stream must find the PSI at each
 //! segment boundary).
 //!
-//! For a whole [`Media`](crate::ir::Media) the caller drives the segmenter
-//! through `drive_media`, which announces every track and feeds every sample;
-//! the resulting playlist is a VOD media playlist: `#EXTM3U`,
+//! The segmenter is given every collected track and fed every
+//! sample in decode order; the resulting playlist is a VOD media playlist: `#EXTM3U`,
 //! `#EXT-X-VERSION`, `#EXT-X-TARGETDURATION` (≥ every `#EXTINF`),
 //! `#EXT-X-MEDIA-SEQUENCE`, one `#EXTINF` + `.ts` URI per segment, and a
 //! trailing `#EXT-X-ENDLIST` (RFC 8216 §4.3.3). `#EXT-X-DISCONTINUITY`
@@ -252,12 +251,12 @@ struct StreamTrackState {
     flush_clock: MediaClock,
 }
 
-/// A stateful classic-HLS segmenter for live and whole-`Media` input,
+/// A stateful classic-HLS segmenter for live and whole-input segments,
 /// mirroring how [`Segmenter`](crate::segmenter::Segmenter) drives incremental
 /// CMAF fragment production.
 ///
 /// Build it from the same [`TrackSpec`]s (in the same order) as the source
-/// `Media`'s tracks, `push` coded samples in decode order, and pull finished
+/// collected tracks, `push` coded samples in decode order, and pull finished
 /// `.ts` segments from `push`'s return value; `finish` emits the final
 /// partial segment. [`Self::playlist`] renders the current rolling media
 /// playlist over the configured window.
@@ -450,8 +449,8 @@ impl StreamingTsHlsSegmenter {
     /// the same rule the other three segmenters use.
     /// `tracks` must be given in the
     /// same order the caller will later `push` matching `track_id`s, and in
-    /// the same order as the source `Media`'s tracks, so the muxed PID/PMT
-    /// layout is the one the whole-`Media` drive produces.
+    /// the same order as the source track set, so the muxed PID/PMT
+    /// layout is the one a whole-input drive produces.
     ///
     /// # Errors
     /// [`Error::InvalidInput`] if `tracks` is empty, has duplicate
@@ -620,9 +619,9 @@ impl StreamingTsHlsSegmenter {
     /// target duration, the samples buffered so far are cut into a `.ts`
     /// segment *before* this sample is buffered, so the new keyframe opens the
     /// next segment. Non-anchor tracks are split by decode time. Feeding every
-    /// sample of a `Media` — interleaved so that no sample is fed before an
+    /// sample of every track — interleaved so that no sample is fed before an
     /// earlier-or-equal-decode-time sample on another track — then finishing
-    /// reproduces the segment boundaries and bytes a whole-`Media` drive
+    /// reproduces the segment boundaries and bytes a whole-input drive
     /// produces.
     ///
     /// Anchor progress is measured by [`MediaClock`]: each anchor sample's own

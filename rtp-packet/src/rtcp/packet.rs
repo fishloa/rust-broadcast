@@ -16,7 +16,7 @@
 //! by this crate.
 //!
 //! RTCP carries **no media** — this is a standalone wire codec for the RTP
-//! control channel, not a hub `Package`/`Unpackage` spoke.
+//! control channel.
 //!
 //! # Wire formats
 //!

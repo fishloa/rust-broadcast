@@ -6,9 +6,9 @@
 //! [`DashPackager`], [`ProgressiveMuxStage`], [`TsMuxStage`]) as
 //! `MuxOutput` arrives. It writes **no** new demux/mux logic — it is a
 //! front-end that autodetects the input container, streams it through the hub,
-//! and writes the chosen output. Samples are merged by decode time as
-//! `mux_stage::drive_media` does, so a streamed output is the same bytes the
-//! whole-`Media` path produced.
+//! and writes the chosen output. Samples are merged by decode time as the
+//! hub's decode-order interleave does, so a streamed output is the same bytes
+//! the former whole-input path produced.
 //!
 //! Follows the workspace CLI standard (see `docs/CLI-STANDARD.md`): `clap`
 //! derive, named flags (a single obvious positional `<IN>` input), auto
@@ -824,7 +824,7 @@ impl Emit for StdoutEmit {
 
 // ---------------------------------------------------------------------------
 // Decode-order interleave: the one place samples of several tracks are merged
-// by decode time, reproducing `mux_stage::drive_media`'s order for a stream
+// by decode time, reproducing the hub's decode-order interleave for a stream
 // whose tracks arrive in source order.
 // ---------------------------------------------------------------------------
 
@@ -960,7 +960,7 @@ impl Reorder {
     }
 
     /// The queued sample with the smallest decode time, ties to the earlier
-    /// announcement order (the one `drive_media` picks).
+    /// announcement order (the hub's tie-break).
     fn earliest(&self) -> Option<(usize, i64)> {
         let mut best: Option<(usize, i64, Timescale)> = None;
         for (index, state) in self.tracks.iter().enumerate() {
@@ -978,7 +978,7 @@ impl Reorder {
     }
 
     /// Release samples in decode order while every track that is still
-    /// producing has a sample queued: the same k-way merge `drive_media`
+    /// producing has a sample queued: the same k-way merge the hub
     /// performs. A track whose queue is empty is waited for (one sample of
     /// lookahead is all the merge needs); at end of input every remaining
     /// sample is released.
@@ -1165,7 +1165,7 @@ impl CliStream {
         match event {
             DemuxEvent::Sample { track_id, sample } => self.sample(track_id, sample, emit),
             DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => self.announce(spec),
-            // A whole-`Media` drive never carried a discontinuity, so the CLI
+            // A whole-input drive never carried a discontinuity, so the CLI
             // ignores one here too: forwarding it would change a byte-exact
             // segmenter/TS muxer output against the established goldens.
             _ => Ok(()),
@@ -2014,10 +2014,7 @@ fn apply_specs(
             );
             specs.retain(keeps);
             if specs.is_empty() {
-                return Err(crate::Error::InvalidInput(
-                    "select_tracks_by: predicate kept no track",
-                )
-                .into());
+                return Err(crate::Error::InvalidInput("track filter kept no track").into());
             }
         }
     }
