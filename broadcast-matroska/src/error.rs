@@ -120,6 +120,39 @@ pub enum Error {
         value: u64,
     },
 
+    /// The reader was asked to supply bytes with no outstanding demand.
+    #[error("supply without an outstanding need")]
+    SupplyWithoutNeed,
+
+    /// The supplied range did not start where the reader asked.
+    #[error("supplied offset {got} does not match the requested offset {expected}")]
+    SupplyMismatch {
+        /// Offset the reader requested.
+        expected: u64,
+        /// Offset the caller supplied.
+        got: u64,
+    },
+
+    /// A forward-only source was asked to move backwards.
+    #[error("forward-only source cannot seek back from {position} to {offset}")]
+    BackwardSeek {
+        /// Target offset.
+        offset: u64,
+        /// Furthest position already requested.
+        position: u64,
+    },
+
+    /// A seek was requested before the Segment header was read.
+    #[error("seek before the Segment header")]
+    SeekBeforeSegment,
+
+    /// No Cues entry and no Cluster header names the requested track/time.
+    #[error("no index entry for track {track}")]
+    NoIndex {
+        /// Track number the seek named.
+        track: u64,
+    },
+
     /// A parser required a particular element id and found another.
     #[error("expected element 0x{expected:X}, found 0x{found:X}")]
     UnexpectedElement {

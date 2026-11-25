@@ -11,7 +11,7 @@ pub mod ids;
 pub mod types;
 
 pub use accessors::DEFAULT_TIMESTAMP_SCALE;
-pub use block::{Block, BlockHeader, Lacing};
+pub use block::{Block, BlockHeader, LaceHeader, Lacing};
 pub use element::{
     AttachedFile, Attachments, Audio, BlockAdditionMapping, BlockAdditions, BlockGroup, BlockMore,
     ChapProcess, ChapProcessCommand, ChapterAtom, ChapterDisplay, ChapterTranslate, Chapters,

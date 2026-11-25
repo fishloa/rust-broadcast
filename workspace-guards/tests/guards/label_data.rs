@@ -254,6 +254,15 @@ pub const TABLE: &[Crate] = &[
             "FloatWidth",
             "EbmlHeaderChild",
             "Lacing",
+            // Reader/writer state-machine values, not spec/field tokens: the
+            // steps carry byte ranges, typed track tables and block facts; the
+            // writes carry bytes; the advance is the driver's owned form of a
+            // step; the error is thiserror's Display.
+            "Step",
+            "Advance",
+            "DriverStep",
+            "Write",
+            "DriverError",
         ],
         expected: None,
         min_enums: None,

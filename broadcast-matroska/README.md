@@ -29,13 +29,20 @@ order, and an element the crate does not name keeps its id and payload.
 | `matroska::element` | `Segment`, `SeekHead`/`Seek`, `Info`, `Tracks`/`TrackEntry` (`Video` with `Colour`/`Projection`, `Audio`, `ContentEncodings`), `Cluster`, `Cues`, `Chapters`, `Tags`, `Attachments`, and the rest of the registry |
 | `matroska::block` | `SimpleBlock` / `Block` (track VINT, relative timestamp, flags, none/Xiph/EBML/fixed lacing) |
 | `matroska::accessors` | typed field accessors (`track_type`, `pixel_width`, `cue_cluster_position`, …) |
-| `limits` | hostile-input caps (`Limits`) for depth, element size and child count |
+| `reader` | sans-IO reader: `step`/`supply`, `Info`/`Tracks`/`Cues`, one Block frame at a time, Cues seeking |
+| `writer` | sans-IO writer: EBML header, unknown-size `Segment`, Clusters, Cues, `Info.Duration` patch |
+| `driver` | blocking `FileReader`/`ForwardReader` (feature `std`) |
+| `limits` | hostile-input caps (`Limits`) for depth, element size, child/track/lace/Cues/Cluster counts and reads |
 
 ## Tests
 
 The round-trip gate walks every committed fixture (`fixtures/mkv/*`, six files
 across H.264/HEVC, VP8/VP9 and Opus/Vorbis) to the end and re-serializes it
-byte for byte, element by element. The fixtures are genuine ffmpeg `-c copy`
+byte for byte, element by element. Differentially, the reader reproduces
+`origin/main`'s `transmux::WebmDemux` track/sample counts, timestamps and
+sample-byte hashes through both drivers at several supply sizes, and the writer
+reproduces `transmux::MkvMuxStage`'s output length and hash byte for byte; both
+goldens are recorded with PROVENANCE (`fixtures/mkv/golden/PROVENANCE.md`). The fixtures are genuine ffmpeg `-c copy`
 remuxes of committed captures (see `fixtures/mkv/PROVENANCE.md`), so ffmpeg is
 the independent oracle for the frame bytes; the element syntax is pinned to the
 RFC 9559 transcription loaded from the private repo at test time.
@@ -66,7 +73,13 @@ types.
 ```text
 cargo run -p broadcast-matroska --example dump_elements -- fixtures/mkv/vp9-opus.webm
 cargo run -p broadcast-matroska --example list_tracks -- fixtures/mkv/vp9-opus.webm
+cargo run -p broadcast-matroska --example list_samples -- fixtures/mkv/vp9-opus.webm
+cargo run -p broadcast-matroska --example remux -- fixtures/mkv/vp9-opus.webm out.mkv
 ```
+
+The reader and writer are sans-IO and `no_std` + `alloc`: the caller feeds
+structure bytes and receives byte ranges, so neither ever holds the file. The
+`std` feature adds only the blocking drivers.
 
 ## License
 
