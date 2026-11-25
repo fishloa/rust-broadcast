@@ -5,11 +5,16 @@
 //!
 //! Run with `cargo run -p rdd29 --example parse_atmos_frame`.
 
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::{Parse, Serialize};
 use rdd29::{
     AnyElement, AtmosFrame, AudioDataDlc, BedChannel, BedDefinition1, BitDepth, ChannelId,
     FrameRate, SampleRate,
 };
+
+/// One E-AC-3 syncframe carried as an opaque `AudioDataDLC` payload: a single
+/// audio frame, kilobytes at most.
+const FRAME_LIMIT: Limit = Limit::new("Atmos audio frame", 64 * 1024);
 
 fn main() {
     // See private/specs-verified/smpte/st337/st337-PROVENANCE.md for how this fixture was extracted
@@ -17,7 +22,7 @@ fn main() {
     // decodes audio essence -- this crate treats it as an opaque
     // AudioDataDLC payload, exactly like st337 treats its burst_payload.
     let path = test_fixtures::path("audio/eac3-dependent/eac3-frame0.bin");
-    let real_audio = std::fs::read(path).expect("fixture must exist");
+    let real_audio = read_file_bounded(&path, FRAME_LIMIT).expect("fixture must exist");
 
     let bed = BedDefinition1::new(
         1,

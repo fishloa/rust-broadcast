@@ -27,11 +27,17 @@
 
 use core::time::Duration;
 
+use broadcast_common::bounded::{Limit, read_file_bounded_string};
 use broadcast_common::clock33::{PCR_WRAP_27MHZ, pcr_split};
 use buffering_runtime::{
     BufferController, Clock27, ControllerConfig, Event, Hint, micros_as_duration,
 };
+use std::path::Path;
 use std::process::ExitCode;
+
+/// A whole delivery trace: a text CSV of per-chunk arrivals, megabytes at most
+/// for a multi-hour capture.
+const TRACE_LIMIT: Limit = Limit::new("delivery trace", 16 * 1024 * 1024);
 
 /// `a` moved by the signed `delta` on the 27 MHz clock.
 fn shift(a: u64, delta: i64) -> u64 {
@@ -113,7 +119,7 @@ fn main() -> ExitCode {
 
     let mut chunks: Vec<(u64, u32, Option<u64>)> = Vec::new();
     if let Some(path) = path {
-        let text = match std::fs::read_to_string(path) {
+        let text = match read_file_bounded_string(Path::new(path), TRACE_LIMIT) {
             Ok(t) => t,
             Err(e) => {
                 eprintln!("cannot read {path}: {e}");

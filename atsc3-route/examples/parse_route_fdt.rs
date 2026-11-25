@@ -8,10 +8,16 @@
 
 use atsc3_route::RoutePacket;
 use broadcast_common::Parse;
+use broadcast_common::bounded::{Limit, read_file_bounded};
+
+/// One ROUTE FDT-Instance packet: a single ALP/TS-carried signalling message,
+/// so 1 MiB is already far past any real instance.
+const ROUTE_FDT_LIMIT: Limit = Limit::new("ROUTE FDT-Instance", 1024 * 1024);
 
 fn main() {
     let path = test_fixtures::path("atsc3/route-fdt-instance-2020-11-05.bin");
-    let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
+    let bytes =
+        read_file_bounded(&path, ROUTE_FDT_LIMIT).unwrap_or_else(|e| panic!("read {path:?}: {e}"));
 
     let pkt = RoutePacket::parse(&bytes).expect("parse ROUTE FDT-Instance packet");
 

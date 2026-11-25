@@ -15,11 +15,15 @@
 //! cargo run -p ssai-runtime --example condition_real_cue
 //! ```
 use broadcast_common::Parse;
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::clock33::Clock33;
 use isobmff::emsg::{EmsgBox, PresentationTime};
 use scte35_splice::SpliceInfoSection;
+
+/// One `emsg` box: a v1 message whose `message_data` carries one SCTE-35
+/// section (4 KiB at most), so 64 KiB is already generous.
+const EMSG_LIMIT: Limit = Limit::new("EMSG box", 64 * 1024);
 use ssai_runtime::splice::condition_splice_point;
-use std::fs;
 use std::time::Duration;
 
 fn ticks(n: u64) -> Duration {
@@ -35,7 +39,8 @@ fn on_the_pts_circle(ticks: u64) -> Clock33 {
 
 fn main() {
     let path = test_fixtures::path("scte35/emsg-splice-insert.bin");
-    let emsg_bytes = fs::read(path).expect("read real emsg fixture (see PROVENANCE.md)");
+    let emsg_bytes =
+        read_file_bounded(&path, EMSG_LIMIT).expect("read real emsg fixture (see PROVENANCE.md)");
     let emsg = EmsgBox::parse(&emsg_bytes).expect("parse real emsg box");
     assert!(emsg.is_scte35(), "fixture must carry a SCTE-35 emsg");
 

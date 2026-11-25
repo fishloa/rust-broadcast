@@ -5,15 +5,19 @@
 /// ```sh
 /// cargo run -p rmt-flute --example parse_flute
 /// ```
-use std::fs;
+use broadcast_common::bounded::{Limit, read_file_bounded};
 
 use rmt_flute::{AlcPacket, ExtFdt, FEC_PAYLOAD_ID_128_LEN, FecPayloadId128, HET_EXT_FDT};
+
+/// One FLUTE FDT packet: ALC/LCT framing plus an XML FDT-Instance body,
+/// megabytes at most.
+const FDT_LIMIT: Limit = Limit::new("FLUTE FDT packet", 1024 * 1024);
 
 fn main() {
     // A missing fixture is a hard error: an example that quietly does nothing
     // is worse than one that fails.
     let path = test_fixtures::path("flute/flute-fdt.bin");
-    let data = fs::read(&path).unwrap_or_else(|e| {
+    let data = read_file_bounded(&path, FDT_LIMIT).unwrap_or_else(|e| {
         panic!(
             "committed fixture {} could not be read: {e}",
             path.display()

@@ -4,7 +4,15 @@
 //!
 //! Run with `cargo run -p broadcast-smooth --example build_manifest`.
 
+use broadcast_common::bounded::{Limit, read_file_bounded_string};
 use broadcast_smooth::{C, SmoothManifest, StreamIndex, StreamType};
+
+/// A whole Smooth client Manifest, bounded by the ceiling the XML reader
+/// accepts for any manifest this crate parses.
+const MANIFEST_LIMIT: Limit = Limit::new(
+    "Smooth manifest",
+    broadcast_common::xml_chars::MAX_XML_BYTES as u64,
+);
 
 /// One 2 s fragment at the 10 MHz manifest time scale.
 const LIVE_FRAGMENT_TICKS: u64 = 2 * 10_000_000;
@@ -15,8 +23,10 @@ const LOOK_AHEAD_FRAGMENTS: u32 = 2;
 
 fn main() {
     let path = test_fixtures::path("smooth/av/Manifest");
-    let vetted = SmoothManifest::parse(&std::fs::read_to_string(path).expect("read the fixture"))
-        .expect("valid client manifest");
+    let vetted = SmoothManifest::parse(
+        &read_file_bounded_string(&path, MANIFEST_LIMIT).expect("read the fixture"),
+    )
+    .expect("valid client manifest");
     let video = vetted.streams[0].qualities[0].clone();
     let protection_header: String = std::env::args()
         .nth(1)

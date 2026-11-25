@@ -14,6 +14,7 @@
 
 use std::path::PathBuf;
 
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use dash_runtime::address::{
     AddressError, PlanError, PlanOptions, base_index, plan_representation,
 };
@@ -24,6 +25,9 @@ use url::Url;
 
 const DEFAULT_MPD: &str = "../fixtures/dash/manifest.mpd";
 const DEFAULT_FIRST: usize = 3;
+
+/// A whole MPD, bounded by the ceiling the MPD parser itself accepts.
+const MPD_LIMIT: Limit = Limit::new("MPD", broadcast_dash::limits::MAX_MPD_BYTES as u64);
 
 struct Args {
     mpd: PathBuf,
@@ -92,7 +96,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = parse_args()?;
     let path = std::fs::canonicalize(&args.mpd)?;
     let doc = Url::from_file_path(&path).map_err(|()| "MPD path is not absolute")?;
-    let mpd = Mpd::parse(&std::fs::read(&path)?)?;
+    let mpd = Mpd::parse(&read_file_bounded(&path, MPD_LIMIT)?)?;
     println!(
         "{} ({}), {} period(s)",
         path.display(),

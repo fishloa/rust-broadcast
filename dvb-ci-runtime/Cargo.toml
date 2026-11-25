@@ -38,7 +38,7 @@ default = []
 # `linux` adds the `/dev/dvb/adapterN/caM` CaDevice + the `ci-probe` CLI
 # (Linux-only; pulls `rustix` for the DVB CA ioctls and the readiness poll and `clap` for the CLI). The
 # portable sans-IO core needs none of it.
-linux = ["dep:rustix", "dep:clap"]
+linux = ["dep:rustix", "dep:clap", "broadcast-common/std"]
 
 [lints]
 workspace = true

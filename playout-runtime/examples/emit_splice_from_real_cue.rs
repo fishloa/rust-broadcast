@@ -12,6 +12,7 @@
 //! cargo run -p playout-runtime --example emit_splice_from_real_cue
 //! ```
 
+use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::clock33::{self, Clock33};
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
@@ -20,9 +21,12 @@ use playout_runtime::schedule::{CodecConfigId, EntryKind, Playhead, Schedule, Sc
 use playout_runtime::scte35::{BreakEdge, build_splice_insert, to_section};
 use playout_runtime::transition::next_transition;
 use scte35_splice::SpliceInfoSection;
+
+/// One `emsg` box: a v1 message whose `message_data` carries one SCTE-35
+/// section (4 KiB at most), so 64 KiB is already generous.
+const EMSG_LIMIT: Limit = Limit::new("EMSG box", 64 * 1024);
 use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceInsert, SpliceMode};
 use scte35_splice::time::SpliceTime;
-use std::fs;
 use std::time::Duration;
 
 /// The real nearest video keyframe's PTS, independently measured from this
@@ -51,7 +55,8 @@ fn ticks(n: u64) -> Duration {
 
 fn main() {
     let path = test_fixtures::path("scte35/emsg-splice-insert.bin");
-    let emsg_bytes = fs::read(path).expect("read real emsg fixture (see PROVENANCE.md)");
+    let emsg_bytes =
+        read_file_bounded(&path, EMSG_LIMIT).expect("read real emsg fixture (see PROVENANCE.md)");
     let emsg = EmsgBox::parse(&emsg_bytes).expect("parse real emsg box");
     assert!(emsg.is_scte35(), "fixture must carry a SCTE-35 emsg");
     let requested_pts = match emsg.presentation_time {
