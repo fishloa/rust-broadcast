@@ -1771,6 +1771,9 @@ pub const TABLE: &[Crate] = &[
             // `mp4_demux::Mp4Input`: a data-carrying input ADT (`At { offset, bytes }`,
             // `Next(&[u8])`, `Eof`), the stage's own drive vocabulary, not a spec code.
             "Mp4Input",
+            // `matroska_demux::MatroskaInput`: the same data-carrying input ADT
+            // (`At { offset, bytes }`, `Next(&[u8])`, `Eof`) for the Matroska stage.
+            "MatroskaInput",
             // `mux_stage::{MuxInput, MuxOutput}`: data-carrying ADTs (a track spec, a sample,
             // bytes, a segment), the muxer stages' drive vocabulary, not spec codes.
             "MuxInput",

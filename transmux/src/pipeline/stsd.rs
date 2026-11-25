@@ -485,7 +485,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             }));
             TrackMedia::audio(entry)
         }
-        // WebM-native codecs: carried in the IR (see [`crate::webm_demux`]) but
+        // WebM-native codecs: carried in the IR (see [`crate::matroska_demux`]) but
         // with no ISOBMFF sample entry in this crate — the fMP4 mux path is out
         // of scope (see `private/specs-verified/mpeg/transmux/codec/vp8-vorbis-webm.md`).
         CodecConfig::Vp8 { .. } => {

@@ -13,16 +13,13 @@
 //! The file is identified from a bounded leading prefix, then played down one
 //! of two paths by container:
 //!
-//! * **TS, FLV, MP4 and PS stream.** [`media_plane::file_stream::StreamingFileSession`]
-//!   drives an incremental demuxer; the reader answers its forward chunks
-//!   (TS/FLV/PS) or absolute byte ranges (MP4) until it asks for end of input,
-//!   then rewinds to offset 0 for the next pass. Live memory is a function of
-//!   the session's [`FileStreamLimits`] and never of the file's length, so
-//!   [`FileReaderConfig::max_file_bytes`] does not apply.
-//! * **WebM keeps today's whole-file path.** The whole file is read under the
-//!   [`FileReaderConfig::max_file_bytes`] cap, the whole-buffer demuxer
-//!   ([`transmux::WebmDemux`]) runs once over the buffer, and the parsed tracks
-//!   are replayed.
+//! * **TS, FLV, MP4, PS and Matroska stream.**
+//!   [`media_plane::file_stream::StreamingFileSession`] drives an incremental
+//!   demuxer; the reader answers its forward chunks (TS/FLV/PS) or absolute
+//!   byte ranges (MP4/Matroska) until it asks for end of input, then rewinds to
+//!   offset 0 for the next pass. Live memory is a function of the session's
+//!   [`FileStreamLimits`] and never of the file's length, so
+//!   [`FileReaderConfig::max_file_bytes`] applies to nothing.
 //!
 //! 1. **Identify** the container from a bounded prefix with
 //!    [`media_plane::file_source::probe_prefix`]. The verdict maps to a
@@ -93,14 +90,13 @@ const STANDALONE_PROGRAM: media_plane::ingress::ProgramId = media_plane::ingress
 use broadcast_common::Stage as _;
 use container_probe::DEFAULT_BUDGET;
 use media_plane::file_source::{
-    DemuxerKind, FILE_TIMED_RING, FileIngestSession, FileReaderError, PROBE_PREFIX_MAX, ParsedFile,
-    ProbeStep, PublishItem, advance_offsets, probe_and_demux, probe_prefix, secs_to_duration,
+    DemuxerKind, FILE_TIMED_RING, FileReaderError, PROBE_PREFIX_MAX, ProbeStep, probe_prefix,
 };
 use media_plane::file_stream::{
     FileDemand, FileInput, FileStreamLimits, StreamContainer, StreamingFileSession,
 };
 use media_plane::ingress::SessionEvent;
-use media_plane::trunk::{RetentionClass, Trunk, TrunkWriter};
+use media_plane::trunk::{Trunk, TrunkWriter};
 use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _};
 use tokio::task::JoinHandle;
 use transmux::TrackSpec;
@@ -137,19 +133,15 @@ pub struct FileReaderConfig {
     /// reader bounded without changing its semantics. `None` (the runtime
     /// default) loops forever.
     pub max_loops: Option<u32>,
-    /// Cap on the file's size in bytes, enforced **before** a whole-file read
-    /// — an operator-supplied path (e.g. a character device or FIFO) is never
-    /// read unbounded. Applies to WebM files only: TS, FLV, MP4 and PS stream
-    /// from disk under bounded buffers, so their size is never capped.
-    /// Defaults to [`DEFAULT_MAX_FILE_BYTES`].
+    /// Cap on the file's size in bytes. No container is read whole any more —
+    /// TS, FLV, MP4, PS and Matroska all stream from disk under bounded
+    /// buffers — so this applies to nothing; it is kept until Phase 6 deletes
+    /// the field. Defaults to [`DEFAULT_MAX_FILE_BYTES`].
     pub max_file_bytes: usize,
 }
 
-/// The default [`FileReaderConfig::max_file_bytes`]: 1 GiB. Generous enough for
-/// any real slate/filler/loop asset, small enough that a misconfigured path
-/// fails cleanly ([`FileReaderError::FileTooLarge`]) long before an unbounded
-/// read could exhaust process memory. TS, FLV and MP4 stream from disk and are
-/// not subject to it.
+/// The default [`FileReaderConfig::max_file_bytes`]: 1 GiB. Every container
+/// streams from disk, so the value applies to nothing.
 pub const DEFAULT_MAX_FILE_BYTES: usize = 1 << 30;
 
 impl FileReaderConfig {
@@ -193,7 +185,8 @@ impl FileReaderConfig {
         self
     }
 
-    /// Set [`Self::max_file_bytes`], the whole-file cap that applies to WebM
+    /// Set [`Self::max_file_bytes`]. No container reads whole any more, so the
+    /// cap applies to nothing; it is kept until Phase 6 deletes the field.
     /// only.
     pub fn with_max_file_bytes(mut self, max_file_bytes: usize) -> Self {
         self.max_file_bytes = max_file_bytes;
@@ -289,44 +282,17 @@ impl FileReader {
         SpawnedReader { handle, cancel }
     }
 
-    /// One open/probe/play attempt: TS, FLV, MP4 and PS stream from disk; WebM
-    /// takes the whole-file path.
+    /// One open/probe/play attempt: every supported container streams from
+    /// disk.
     async fn run_once(&self) -> Result<(), FileReaderError> {
         let probed = open_probed(&self.config.path).await?;
-        match stream_container(probed.demuxer) {
+        let demuxer = probed.demuxer;
+        match stream_container(demuxer) {
             Some(container) => self.publish_streaming(probed, container).await,
-            None => {
-                let parsed = self.read_capped_whole(probed).await?;
-                self.publish_looping(parsed).await
-            }
+            None => Err(FileReaderError::UnsupportedFormat {
+                format: demuxer.name(),
+            }),
         }
-    }
-
-    /// Read the whole file, probe it, and demux it into the playable tracks —
-    /// the capped path for WebM.
-    async fn read_capped_whole(&self, probed: OpenFile) -> Result<ParsedFile, FileReaderError> {
-        let cap = self.config.max_file_bytes;
-        if probed.len > cap as u64 {
-            return Err(FileReaderError::FileTooLarge {
-                path: self.config.path.clone(),
-                size: probed.len,
-                max: cap,
-            });
-        }
-
-        let path = self.config.path.clone();
-        let bytes = read_capped(&path, probed.file, cap).await?;
-
-        // Both are CPU-heavy (a `container-probe` lattice search over the whole
-        // buffer, then a full container demux) and synchronous, so they run on
-        // the blocking pool (issue #1083, W3) rather than pinning a runtime
-        // worker on every supervisor retry.
-        tokio::task::spawn_blocking(move || probe_and_demux(&bytes))
-            .await
-            .map_err(|e| FileReaderError::Read {
-                path: self.config.path.clone(),
-                source: std::io::Error::other(format!("probe/demux task failed: {e}")),
-            })?
     }
 
     /// Play a streaming file by feeding [`StreamingFileSession`] the bytes it
@@ -343,6 +309,7 @@ impl FileReader {
             .ok_or(FileReaderError::WriterUnavailable)?;
         let limits = FileStreamLimits {
             mp4: mp4_config(probed.len),
+            matroska: matroska_config(probed.len),
             ..FileStreamLimits::default()
         };
         let mut session = StreamingFileSession::new(
@@ -378,7 +345,7 @@ impl FileReader {
                 FileDemand::Rewind => {
                     let next = reprobe_stream_file(&self.config.path, container).await?;
                     file = next.file;
-                    if container == StreamContainer::Mp4 {
+                    if reads_by_range(container) {
                         session.rewound();
                     } else {
                         let read = read_chunk(&self.config.path, &mut file, &mut buffer).await?;
@@ -405,92 +372,6 @@ impl FileReader {
         }
         Ok(())
     }
-
-    /// Publish the parsed file into the trunk: announce tracks, then
-    /// pace/write samples, looping per `loop_file`/`max_loops`.
-    async fn publish_looping(&self, parsed: ParsedFile) -> Result<(), FileReaderError> {
-        // `Trunk::writer` returns `None` on every call after the first — a
-        // second reader over the same `Arc<Trunk>`, or a caller that already
-        // took the writer, must fail as a structured error, never panic.
-        let writer = self
-            .config
-            .trunk
-            .writer()
-            .ok_or(FileReaderError::WriterUnavailable)?;
-
-        let (track_refs, order, pass_ranges) = parsed.build_playout();
-
-        // A file with zero timed (PTS-carrying) samples cannot be paced,
-        // looped, or written — fail rather than spin a no-op publish loop.
-        if order.is_empty() {
-            return Err(FileReaderError::NoPlayableSamples);
-        }
-
-        // The file's earliest presentation time (across all tracks) — the
-        // pacing anchor. Each sample is due at the *advanced* start instant
-        // plus `(due_seconds - file_start_secs)`, so the file begins playing
-        // at the wall-clock start instant and continues at its natural cadence.
-        let file_start_secs = order
-            .iter()
-            .map(|i| i.due_seconds)
-            .fold(f64::INFINITY, f64::min);
-
-        // One full pass's worth of wall time, in seconds: the largest span +
-        // one frame across tracks (the same `PassRange` data the PTS offsets
-        // advance by per track — one mechanism, not two). This is what makes
-        // the pacing baseline *grow* each pass, so a looped sample's due
-        // instant is never in the past the way an unadvanced start would make
-        // it.
-        let pass_duration_secs = pass_ranges
-            .iter()
-            .map(|r| (r.span + r.frame).as_secs_f64())
-            .fold(0.0f64, f64::max);
-
-        announce_tracks(&writer, &track_refs);
-
-        let mut start = if self.config.pace {
-            Some(std::time::Instant::now())
-        } else {
-            None
-        };
-
-        let mut loop_index: u32 = 0;
-        // Per-track accumulated PTS offset in the track's own media timescale.
-        let mut offsets: Vec<i64> = vec![0i64; track_refs.len()];
-
-        loop {
-            publish_one_pass(
-                &writer,
-                &track_refs,
-                &order,
-                &offsets,
-                start,
-                file_start_secs,
-            )
-            .await?;
-
-            loop_index += 1;
-            let done =
-                !self.config.loop_file || self.config.max_loops.is_some_and(|m| loop_index >= m);
-            // Advance the per-track PTS offsets (checked). Then advance the
-            // pacing baseline by one pass's wall span, mirroring the PTS
-            // offset advance — pass N+1's due instants sit exactly one content
-            // duration after pass N's, so pacing never dumps the whole file
-            // and never spins with every target already in the past.
-            advance_offsets(&mut offsets, &pass_ranges)?;
-            if let Some(start) = &mut start {
-                *start = start
-                    .checked_add(secs_to_duration(pass_duration_secs)?)
-                    .ok_or(FileReaderError::PacingOverflow {
-                        value: pass_duration_secs,
-                    })?;
-            }
-            if done {
-                break;
-            }
-        }
-        Ok(())
-    }
 }
 
 /// One opened and identified playout file, positioned at offset 0.
@@ -500,8 +381,12 @@ struct OpenFile {
     demuxer: DemuxerKind,
 }
 
-/// The streaming container a probed demuxer selects, or `None` for the
-/// containers that still take the whole-file path.
+/// Whether the session reaches this container's bytes by absolute range.
+fn reads_by_range(container: StreamContainer) -> bool {
+    matches!(container, StreamContainer::Mp4 | StreamContainer::Matroska)
+}
+
+/// The streaming container a probed demuxer selects.
 fn stream_container(demuxer: DemuxerKind) -> Option<StreamContainer> {
     match demuxer {
         DemuxerKind::StreamingTs => Some(StreamContainer::MpegTs),
@@ -510,6 +395,7 @@ fn stream_container(demuxer: DemuxerKind) -> Option<StreamContainer> {
             Some(StreamContainer::Mp4)
         }
         DemuxerKind::Ps => Some(StreamContainer::MpegPs),
+        DemuxerKind::Webm => Some(StreamContainer::Matroska),
         _ => None,
     }
 }
@@ -616,6 +502,11 @@ fn mp4_config(total_len: u64) -> transmux::mp4_demux::Mp4DemuxConfig {
     transmux::mp4_demux::Mp4DemuxConfig::default().with_total_len(Some(total_len))
 }
 
+/// The Matroska stage policy for a file of `total_len` bytes.
+fn matroska_config(total_len: u64) -> transmux::matroska_demux::MatroskaDemuxConfig {
+    transmux::matroska_demux::MatroskaDemuxConfig::default().with_total_len(Some(total_len))
+}
+
 /// Read exactly `len` bytes at absolute `offset`, or fewer only at end of
 /// file: one seek and one bounded buffer, never a read to the end.
 async fn read_at(
@@ -674,37 +565,6 @@ fn read_error(path: &Path, source: std::io::Error) -> FileReaderError {
     }
 }
 
-/// Read an already-opened file through a `cap + 1` window, so a file that
-/// grew past the cap after the metadata check is still refused instead of
-/// held in memory unbounded.
-async fn read_capped(
-    path: &std::path::Path,
-    file: tokio::fs::File,
-    cap: usize,
-) -> Result<Vec<u8>, FileReaderError> {
-    use tokio::io::AsyncReadExt as _;
-
-    let mut bytes = Vec::new();
-    file.take((cap as u64).saturating_add(1))
-        .read_to_end(&mut bytes)
-        .await
-        .map_err(|source| FileReaderError::Read {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    if bytes.len() > cap {
-        return Err(FileReaderError::FileTooLarge {
-            path: path.to_path_buf(),
-            size: bytes.len() as u64,
-            max: cap,
-        });
-    }
-    Ok(bytes)
-}
-
-/// Stable label for a [`std::fs::FileType`], for the [`FileReaderError`]
-/// diagnostics — every non-file kind gets a distinct, named label (never a
-/// catch-all string).
 fn file_type_label(ft: std::fs::FileType) -> &'static str {
     if ft.is_dir() {
         "directory"
@@ -722,61 +582,6 @@ fn file_type_label(ft: std::fs::FileType) -> &'static str {
 /// `SessionEvent::NewProgram`.
 fn announce_tracks(writer: &TrunkWriter, specs: &[TrackSpec]) {
     writer.set_tracks(specs.to_vec());
-}
-
-/// Write one pass (one replay of the whole file): for each sample in
-/// presentation order, sleep until its PTS cadence (if pacing) and publish it
-/// with the current per-track loop offset applied.
-async fn publish_one_pass(
-    writer: &TrunkWriter,
-    track_refs: &[TrackSpec],
-    order: &[PublishItem],
-    offsets: &[i64],
-    start: Option<std::time::Instant>,
-    file_start_secs: f64,
-) -> Result<(), FileReaderError> {
-    for item in order {
-        let offset = offsets[item.track_ref];
-        if let Some(start) = start {
-            // Pace off the sample's own presentation delta: `due = start +
-            // (due_seconds - file_start_secs)`. Because the loop offset
-            // advances absolute PTS, this delta grows continuously across
-            // the loop point — the looped content plays at its natural cadence
-            // rather than dumping the whole file at once.
-            let secs = (item.due_seconds - file_start_secs).max(0.0);
-            let delta = secs_to_duration(secs)?;
-            let due = start
-                .checked_add(delta)
-                .ok_or(FileReaderError::PacingOverflow {
-                    value: item.due_seconds,
-                })?;
-            let now = std::time::Instant::now();
-            if due > now {
-                tokio::time::sleep(due - now).await;
-            }
-        }
-        let mut sample = item.sample.clone();
-        if let Some(t) = sample.timing.as_mut() {
-            let current = t.dts().unwrap_or(0);
-            let shifted = current
-                .checked_add(offset)
-                .ok_or(FileReaderError::OffsetOverflow)?;
-            t.shift(shifted - current);
-        }
-        writer.publish(
-            track_refs[item.track_ref].track_id,
-            RetentionClass::Timed,
-            sample,
-        );
-    }
-    // Yield once per pass so a `pace: false` + `loop_file: true` reader (the
-    // public `with_pace(false)` builder with the default `max_loops: None`)
-    // does not busy-spin its worker forever: with pacing off there is no
-    // sleep inside the loop, so without this `.await` the pass-boundary is a
-    // zero-cost hot loop. A single yield keeps the task fair while preserving
-    // the un-paced "write as fast as possible" contract.
-    tokio::task::yield_now().await;
-    Ok(())
 }
 
 /// The [`FileReaderConfig`] builder / constructor, kept small now that WP2
@@ -839,120 +644,27 @@ pub(crate) async fn run_file_source(
     handshake: media_plane::ingress::HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
 ) -> crate::MultimuxError {
-    // `FileReaderConfig` wants a `Trunk` to publish into; the identification
-    // helpers never publish, so the smallest possible one is all this needs.
-    let one = std::num::NonZeroUsize::MIN;
-    let scratch = media_plane::trunk::Trunk::new(
-        media_plane::trunk::TrunkConfig::default()
-            .with_timed_capacity(one)
-            .with_sparse_capacity(one)
-            .with_segment_capacity(one)
-            .with_event_capacity(one)
-            .with_part_capacity(one),
-    );
-    let reader = FileReader::new(
-        FileReaderConfig::new(std::path::PathBuf::from(path), loop_file, scratch)
-            .with_pace(false)
-            .with_max_retries(0)
-            .with_retry_interval(std::time::Duration::ZERO),
-    );
     let probed = match open_probed(std::path::Path::new(path)).await {
         Ok(probed) => probed,
         Err(e) => return e.into(),
     };
 
-    match stream_container(probed.demuxer) {
-        Some(container) => {
-            run_streaming_file_route(
-                std::path::Path::new(path),
-                probed,
-                container,
-                loop_file,
-                window_segments,
-                handshake,
-                route_handle,
-            )
-            .await
+    let Some(container) = stream_container(probed.demuxer) else {
+        return FileReaderError::UnsupportedFormat {
+            format: probed.demuxer.name(),
         }
-        None => {
-            let parsed = match reader.read_capped_whole(probed).await {
-                Ok(parsed) => parsed,
-                Err(e) => return e.into(),
-            };
-            run_whole_file_route(parsed, loop_file, window_segments, handshake, route_handle).await
-        }
-    }
-}
-
-/// The whole-file route: replay an already-demuxed PS/WebM file through a
-/// [`FileIngestSession`].
-async fn run_whole_file_route(
-    parsed: ParsedFile,
-    loop_file: bool,
-    window_segments: usize,
-    handshake: media_plane::ingress::HandshakePolicy,
-    route_handle: &std::sync::Arc<crate::route::RouteHandle>,
-) -> crate::MultimuxError {
-    let session =
-        match FileIngestSession::new(parsed, crate::route::SPTS_PROGRAM_ID, loop_file, true) {
-            Ok(s) => s,
-            Err(e) => return e.into(),
-        };
-    let mut driver = IngestDriver::new(
-        session,
-        media_plane::IngestConfig::new(handshake)
-            .with_trunk(file_trunk_config(window_segments))
-            .with_max_programs(
-                std::num::NonZeroUsize::new(1).unwrap_or(std::num::NonZeroUsize::MIN),
-            ),
-    );
-    let start = std::time::Instant::now();
-    let mut progress = crate::source::DriverProgress::new();
-    loop {
-        let now = broadcast_common::Timestamp::from_instant(start, std::time::Instant::now());
-        // Feed the session: on the first feed it emits Established + NewProgram
-        // (minting the program's Trunk), on later feeds it emits the samples —
-        // so `advance_route` below creates the segmenter *between* those two
-        // phases, before any sample lands.
-        driver.feed((), now);
-        crate::source::advance_route(&driver, route_handle, &mut progress).await;
-
-        if driver.session().drained() {
-            // Finite, non-looping file has fully run. Signal end-of-input so
-            // the segmenter FLUSHES its tail — the segmenter's `flush()` is
-            // gated on `!driver.health().is_running()`, which only becomes
-            // true once the driver is `Ended`, so without this a parked-but
-            // healthy driver would silently drop up to one `target_duration`
-            // of media. `driver.finish()` sets `Ended`, then one more
-            // `advance_route` drains the final segment before we park (zero
-            // CPU) holding the trunk so the served segments stay servable.
-            driver.finish();
-            crate::source::advance_route(&driver, route_handle, &mut progress).await;
-            std::future::pending::<()>().await;
-        }
-
-        // Pace: sleep until the next sample is due, rather than polling at 100 Hz.
-        match driver.session().next_due() {
-            Some(due) => {
-                let now = std::time::Instant::now();
-                if due > now {
-                    tokio::time::sleep(due - now).await;
-                } else {
-                    // Already due (a burst is being worked off in bounded
-                    // drains): let other tasks run between drains.
-                    tokio::task::yield_now().await;
-                }
-            }
-            // Loop refill happens on the *next* `feed` (top of this loop), so
-            // this arm is hit once per pass, not per iteration. Yield rather
-            // than sleep a fixed 1 ms: `feed` refills immediately, and a
-            // non-looping drained file is already parked by `drained()` above.
-            // (Parking on the refill notification is NOT safe here: the feed
-            // that would fire it only runs after this arm, so it would never
-            // be woken in the loop-refill case.)
-            None => tokio::task::yield_now().await,
-        }
-    }
+        .into();
+    };
+    run_streaming_file_route(
+        std::path::Path::new(path),
+        probed,
+        container,
+        loop_file,
+        window_segments,
+        handshake,
+        route_handle,
+    )
+    .await
 }
 
 /// The streaming route: read a TS/FLV/MP4 file from disk in bounded chunks or
@@ -1096,6 +808,7 @@ impl StreamingFileIngest {
     fn new(container: StreamContainer, loop_file: bool, total_len: u64) -> Self {
         let limits = FileStreamLimits {
             mp4: mp4_config(total_len),
+            matroska: matroska_config(total_len),
             ..FileStreamLimits::default()
         };
         let session = StreamingFileSession::new(
@@ -1164,7 +877,6 @@ impl media_plane::ingress::IngestSession for StreamingFileIngest {
 #[cfg(test)]
 mod playout_tests {
     use super::*;
-    use transmux::{Sample, Track};
 
     /// I8/SP1.4: dropping a [`SpawnedReader`] CANCELS the run rather than
     /// detaching it — the task must not keep playing a file forever after its
@@ -1229,26 +941,192 @@ mod playout_tests {
         }
     }
 
-    /// Finding 8 (standalone reader half): `publish_looping` rejects a file
-    /// with no timed samples before spinning.
-    #[tokio::test]
-    async fn publish_looping_rejects_no_playable_samples() {
-        let cfg = crate::source::driver_trunk_config(8);
-        let trunk = media_plane::trunk::Trunk::new(cfg);
-        let reader = FileReader::new(
-            FileReaderConfig::new(std::path::PathBuf::from("unused"), true, trunk).with_pace(false),
-        );
-        let samples = vec![Sample::new(vec![0], None, None, None, false).expect("valid timing")];
-        let parsed = ParsedFile {
-            tracks: vec![Track::new(
-                media_plane::ts_session::test_support::track_spec(transmux::TrackId::new(1)),
-                samples,
-            )],
+    /// A minimal Matroska file (EBML header + Segment + Info + Tracks + one
+    /// Cluster) with one VP8 track and one frame per `(relative ms, byte)`
+    /// entry. Element ids and sizes follow RFC 8794 §4 / RFC 9559 §27.
+    fn mkv_bytes(frames: &[(i16, u8)]) -> Vec<u8> {
+        const EBML_HEADER: [u8; 4] = [0x1A, 0x45, 0xDF, 0xA3];
+        const SEGMENT: [u8; 4] = [0x18, 0x53, 0x80, 0x67];
+        const INFO: [u8; 4] = [0x15, 0x49, 0xA9, 0x66];
+        const TIMESTAMP_SCALE: [u8; 3] = [0x2A, 0xD7, 0xB1];
+        const TRACKS: [u8; 4] = [0x16, 0x54, 0xAE, 0x6B];
+        const TRACK_ENTRY: [u8; 1] = [0xAE];
+        const TRACK_NUMBER: [u8; 1] = [0xD7];
+        const TRACK_TYPE: [u8; 1] = [0x83];
+        const CODEC_ID: [u8; 1] = [0x86];
+        const CLUSTER: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
+        const CLUSTER_TIMESTAMP: [u8; 1] = [0xE7];
+        const SIMPLE_BLOCK: [u8; 1] = [0xA3];
+
+        fn size(mut value: usize) -> Vec<u8> {
+            let mut width = 1usize;
+            while value >= (1usize << (7 * width)) - 1 {
+                width += 1;
+            }
+            let mut out = vec![0u8; width];
+            for slot in (0..width).rev() {
+                out[slot] = (value & 0xFF) as u8;
+                value >>= 8;
+            }
+            out[0] |= 1u8 << (8 - width);
+            out
+        }
+        fn element(id: &[u8], body: &[u8]) -> Vec<u8> {
+            let mut out = id.to_vec();
+            out.extend(size(body.len()));
+            out.extend_from_slice(body);
+            out
+        }
+        let info = element(&INFO, &element(&TIMESTAMP_SCALE, &[0x0F, 0x42, 0x40]));
+        let track_entry = {
+            let mut body = element(&TRACK_NUMBER, &[1]);
+            body.extend(element(&TRACK_TYPE, &[1]));
+            body.extend(element(&CODEC_ID, b"V_VP8"));
+            element(&TRACK_ENTRY, &body)
         };
-        let err = reader.publish_looping(parsed).await;
+        let tracks = element(&TRACKS, &track_entry);
+        let mut cluster_body = element(&CLUSTER_TIMESTAMP, &[0]);
+        for (relative, byte) in frames {
+            let mut payload = size(1);
+            payload.extend_from_slice(&relative.to_be_bytes());
+            payload.push(0x80);
+            // A complete VP8 key-frame header: key-frame tag, start code,
+            // 320x240 dimensions (`byte` fills the last dimension octet).
+            payload.extend_from_slice(&[0x10, 0, 0, 0x9D, 0x01, 0x2A, 0x40, 0x01, 0xF0, *byte]);
+            cluster_body.extend(element(&SIMPLE_BLOCK, &payload));
+        }
+        let cluster = element(&CLUSTER, &cluster_body);
+        let mut segment_body = info;
+        segment_body.extend(tracks);
+        segment_body.extend(cluster);
+        let mut out = element(&EBML_HEADER, &[]);
+        out.extend(element(&SEGMENT, &segment_body));
+        out
+    }
+
+    /// A stream at a file's samples: feed its byte demands until `stop` says
+    /// the released-sample count is enough.
+    async fn drive_matroska(
+        session: &mut StreamingFileSession,
+        bytes: &[u8],
+        mut stop: impl FnMut(usize) -> bool,
+    ) -> Result<usize, FileReaderError> {
+        let mut offset = 0usize;
+        let mut released = 0usize;
+        let mut eof = false;
+        for _ in 0..(bytes.len() * 4 + 64) {
+            match session.file_demand() {
+                FileDemand::BytesAt { offset: at, len } => {
+                    let start = usize::try_from(at).unwrap_or(usize::MAX).min(bytes.len());
+                    let end = start.saturating_add(len).min(bytes.len());
+                    session.feed(
+                        FileInput::At {
+                            offset: at,
+                            bytes: bytes[start..end].to_vec().into(),
+                        },
+                        broadcast_common::Timestamp::ZERO,
+                    )?;
+                }
+                FileDemand::Bytes if offset < bytes.len() => {
+                    let end = (offset + (64 << 10)).min(bytes.len());
+                    session.feed(
+                        FileInput::Bytes(&bytes[offset..end]),
+                        broadcast_common::Timestamp::ZERO,
+                    )?;
+                    offset = end;
+                }
+                FileDemand::Eof if !eof => {
+                    session.feed(FileInput::Eof, broadcast_common::Timestamp::ZERO)?;
+                    eof = true;
+                }
+                FileDemand::Done => return Ok(released),
+                _ => {}
+            }
+            while let Some(event) = session.poll() {
+                if matches!(event, SessionEvent::Sample { .. }) {
+                    released += 1;
+                }
+            }
+            if stop(released) || (eof && released > 0) {
+                return Ok(released);
+            }
+        }
+        Ok(released)
+    }
+
+    /// A file with no playable sample is refused, on the streaming path too:
+    /// a Matroska track with no Block has no timed sample for the session to
+    /// pace, loop or write.
+    #[tokio::test]
+    async fn a_streaming_matroska_file_with_no_playable_sample_is_rejected() {
+        let bytes = mkv_bytes(&[]);
+        let total = u64::try_from(bytes.len()).expect("length fits u64");
+        let mut session = StreamingFileSession::new(
+            StreamContainer::Matroska,
+            STANDALONE_PROGRAM,
+            true,
+            None,
+            false,
+            FileStreamLimits {
+                matroska: transmux::matroska_demux::MatroskaDemuxConfig::default()
+                    .with_total_len(Some(total)),
+                ..FileStreamLimits::default()
+            },
+        );
+        let outcome = drive_matroska(&mut session, &bytes, |released| released > 0).await;
+        let error = match outcome {
+            Err(error) => error,
+            Ok(_) => session.finish().expect_err("no timed sample can be played"),
+        };
         assert!(
-            matches!(err, Err(FileReaderError::NoPlayableSamples)),
-            "publish_looping must fail with NoPlayableSamples"
+            matches!(error, FileReaderError::NoPlayableSamples),
+            "a file with no playable sample must be refused, got {error:?}"
+        );
+    }
+
+    /// Pacing sleeps by the sample's own delta from the file start: the second
+    /// sample (100 ms after the first) is due ~100 ms after the first was
+    /// released, and the third (200 ms after the second) ~200 ms later.
+    #[tokio::test]
+    async fn a_streaming_matroska_file_paces_by_the_sample_delta() {
+        const SECOND_MS: u64 = 100;
+        const THIRD_MS: u64 = 200;
+        let bytes = mkv_bytes(&[(0, 1), (SECOND_MS as i16, 2), (300, 3)]);
+        let total = u64::try_from(bytes.len()).expect("length fits u64");
+        let mut session = StreamingFileSession::new(
+            StreamContainer::Matroska,
+            STANDALONE_PROGRAM,
+            false,
+            None,
+            true,
+            FileStreamLimits {
+                matroska: transmux::matroska_demux::MatroskaDemuxConfig::default()
+                    .with_total_len(Some(total)),
+                ..FileStreamLimits::default()
+            },
+        );
+        let released = drive_matroska(&mut session, &bytes, |_| false)
+            .await
+            .expect("first sample");
+        assert_eq!(released, 1, "the first sample is due immediately");
+        let due = session.next_due().expect("a paced session has a deadline");
+        let wait = due.saturating_duration_since(std::time::Instant::now());
+        assert!(
+            wait >= std::time::Duration::from_millis(50)
+                && wait <= std::time::Duration::from_millis(250),
+            "the next sample must be paced ~{SECOND_MS} ms after the first, got {wait:?}"
+        );
+        tokio::time::sleep(wait).await;
+        let released = drive_matroska(&mut session, &bytes, |_| false)
+            .await
+            .expect("second sample");
+        assert_eq!(released, 1, "the second sample is due after its delta");
+        let due = session.next_due().expect("a paced session has a deadline");
+        let wait = due.saturating_duration_since(std::time::Instant::now());
+        assert!(
+            wait >= std::time::Duration::from_millis(120)
+                && wait <= std::time::Duration::from_millis(400),
+            "the third sample must follow the second by ~{THIRD_MS} ms, got {wait:?}"
         );
     }
 
@@ -1260,104 +1138,10 @@ mod playout_tests {
         assert_eq!(file_trunk_config(500).segment_capacity.get(), 500);
     }
 
-    /// The cap is tied to the opened handle, not a path lookup: a file that
-    /// grows past the cap after the open is refused rather than read whole.
-    #[tokio::test]
-    async fn a_file_grown_past_the_cap_after_the_open_is_refused() {
-        let dir = std::env::temp_dir().join(format!("multimux-capped-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("grow.bin");
-        std::fs::write(&path, vec![0u8; 8]).unwrap();
-        let file = tokio::fs::File::open(&path).await.unwrap();
-        std::fs::write(&path, vec![0u8; 9]).unwrap();
-        let err = read_capped(&path, file, 8).await;
-        assert!(matches!(
-            err,
-            Err(FileReaderError::FileTooLarge {
-                size: 9,
-                max: 8,
-                ..
-            })
-        ));
-        let file = tokio::fs::File::open(&path).await.unwrap();
-        assert_eq!(read_capped(&path, file, 9).await.unwrap().len(), 9);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_dir(&dir);
-    }
-
-    /// The cap is inclusive: a file exactly `max_file_bytes` long is a valid
-    /// playout asset, and one byte over is refused with its real size.
-    #[tokio::test]
-    async fn a_file_exactly_at_the_size_cap_is_accepted_and_one_byte_over_is_refused() {
-        // A capped whole-file container: TS, FLV, MP4 and PS stream from disk
-        // instead and are deliberately not subject to the cap.
-        let path = test_fixtures::path("mkv/h264-aac.mkv");
-        let len = std::fs::metadata(&path).expect("fixture metadata").len() as usize;
-        assert!(len > 0);
-
-        let trunk = media_plane::trunk::Trunk::new(crate::source::driver_trunk_config(8));
-        let accepted = FileReader::new(
-            FileReaderConfig::new(path.clone(), false, trunk)
-                .with_pace(false)
-                .with_max_retries(0)
-                .with_max_file_bytes(len),
-        )
-        .run()
-        .await;
-        assert!(
-            accepted.is_ok(),
-            "a file exactly at the cap must load, got {accepted:?}"
-        );
-
-        let trunk = media_plane::trunk::Trunk::new(crate::source::driver_trunk_config(8));
-        let refused = FileReader::new(
-            FileReaderConfig::new(path, false, trunk)
-                .with_pace(false)
-                .with_max_retries(0)
-                .with_max_file_bytes(len - 1),
-        )
-        .run()
-        .await;
-        match refused {
-            Err(FileReaderError::FileTooLarge { size, max, .. }) => {
-                assert_eq!(size as usize, len, "reports the file's real size");
-                assert_eq!(max, len - 1, "reports the configured cap");
-            }
-            other => panic!("one byte over the cap must be FileTooLarge, got {other:?}"),
-        }
-    }
-
     /// Pacing sleeps by the sample's own delta from the file's start, so a
     /// 0 s, 1 s and 3 s sample play at 0 s, 1 s and 3 s from the wall-clock
     /// start (the third sample's own two-second gap), not all at once and not
     /// at a duration derived from the absolute presentation time.
-    #[tokio::test(start_paused = true)]
-    async fn pacing_sleeps_by_the_sample_delta_from_the_file_start() {
-        let item = |due_seconds: f64| PublishItem {
-            track_ref: 0,
-            sample: Sample::new(vec![0xAB], None, None, None, false).expect("valid sample"),
-            due_seconds,
-            decode_seconds: due_seconds,
-        };
-        let order = vec![item(10.0), item(11.0), item(13.0)];
-        let specs = vec![media_plane::ts_session::test_support::track_spec(
-            transmux::TrackId::new(1),
-        )];
-        let trunk = media_plane::trunk::Trunk::new(crate::source::driver_trunk_config(8));
-        let writer = trunk.writer().expect("a fresh trunk has a writer");
-        let begin = tokio::time::Instant::now();
-        let start: std::time::Instant = begin.into();
-        publish_one_pass(&writer, &specs, &order, &[0], Some(start), 10.0)
-            .await
-            .expect("pass");
-        let elapsed = tokio::time::Instant::now() - begin;
-        assert!(
-            elapsed >= std::time::Duration::from_millis(3_900)
-                && elapsed <= std::time::Duration::from_millis(4_100),
-            "the 0/1/3 s samples must sleep 0 + 1 + 3 s, got {elapsed:?}"
-        );
-    }
-
     /// The route drive loop sleeps until `next_due` rather than polling: a
     /// looping paced file never idles the runtime, so a bounded timeout still
     /// fires only if every future due instant is slept on.

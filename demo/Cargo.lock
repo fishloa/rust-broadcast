@@ -78,6 +78,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-matroska"
+version = "0.1.0"
+dependencies = [
+ "broadcast-common",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "broadcast-smooth"
 version = "0.3.0"
 dependencies = [
@@ -731,6 +740,7 @@ dependencies = [
  "broadcast-common",
  "broadcast-dash",
  "broadcast-hls",
+ "broadcast-matroska",
  "broadcast-smooth",
  "bytes",
  "cbc",

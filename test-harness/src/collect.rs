@@ -437,3 +437,53 @@ impl MediaSelectExt for Media {
         transmux::repackage::trim(self, start, end)
     }
 }
+
+/// Drive [`MatroskaDemux`](transmux::matroska_demux::MatroskaDemux) over a
+/// whole in-memory Matroska/WebM image and fold its events into a [`Media`].
+///
+/// A whole small fixture in memory is fine **here only**: this crate is a test
+/// harness. The stage itself never holds the input.
+pub fn media_from_matroska(bytes: &[u8], mode: CollectMode) -> Result<Media, transmux::Error> {
+    use transmux::matroska_demux::{MatroskaDemux, MatroskaDemuxConfig, MatroskaInput};
+    let total_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let config = MatroskaDemuxConfig::default().with_total_len(Some(total_len));
+    let mut demux = match mode {
+        CollectMode::Seekable => MatroskaDemux::seekable(config),
+        CollectMode::Sequential { .. } => MatroskaDemux::sequential(config),
+    };
+    match mode {
+        CollectMode::Seekable => loop {
+            let demand = demux.demand();
+            let Some(offset) = demand.offset else {
+                break;
+            };
+            let start = usize::try_from(offset).unwrap_or(usize::MAX);
+            let end = start.saturating_add(demand.want_bytes).min(bytes.len());
+            let slice = bytes.get(start..end).unwrap_or(&[]);
+            demux.feed(
+                MatroskaInput::At {
+                    offset,
+                    bytes: slice.to_vec().into(),
+                },
+                broadcast_common::stage::Timestamp::ZERO,
+            )?;
+        },
+        CollectMode::Sequential { chunk } => {
+            for piece in bytes.chunks(chunk.max(1)) {
+                demux.feed(
+                    MatroskaInput::Next(piece),
+                    broadcast_common::stage::Timestamp::ZERO,
+                )?;
+            }
+            demux.feed(MatroskaInput::Eof, broadcast_common::stage::Timestamp::ZERO)?;
+        }
+    }
+    demux.finish()?;
+    let mut events = Vec::new();
+    while let Some(event) = demux.poll() {
+        events.push(event);
+    }
+    let mut media = media_from_events(events);
+    media.movie_timescale = transmux::matroska_demux::IR_TIMESCALE;
+    Ok(media)
+}

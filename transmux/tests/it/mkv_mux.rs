@@ -1,15 +1,14 @@
 //! Matroska (MKV) muxer round-trip integration tests (issue #915).
 //!
-//! Each fixture is demuxed with [`WebmDemux`] (real ffmpeg captures — see
+//! Each fixture is demuxed with [`MatroskaDemux`](transmux::MatroskaDemux) (real ffmpeg captures — see
 //! `fixtures/mkv/PROVENANCE.md`), packaged back to bytes with [`MkvMuxStage`], then
-//! re-demuxed with the same [`WebmDemux`]. The two [`Media`] values (original
+//! re-demuxed with the same stage. The two [`Media`] values (original
 //! demux vs. demux-of-the-remux) are compared field-by-field: track count,
 //! codec identity/config, sample count, PTS/DTS, keyframe flags, and the
 //! coded sample bytes themselves. A muxer that dropped a sample, mis-scaled a
 //! timestamp, or corrupted `CodecPrivate` fails one of these comparisons.
 
 use transmux::pipeline::CodecConfig;
-use transmux::webm_demux::WebmDemux;
 use transmux::{Media, MkvMuxStage};
 
 /// H.264 (`fixtures/ts/h264-aac.ts`, `-c copy`'d to Matroska) + AAC.
@@ -23,8 +22,7 @@ const VP9_OPUS: &str = "mkv/vp9-opus.mkv";
 fn demux(path: &str) -> Media {
     let bytes =
         std::fs::read(test_fixtures::path(path)).unwrap_or_else(|e| panic!("read {path}: {e}"));
-    WebmDemux::new()
-        .demux(&bytes)
+    test_harness::collect::media_from_matroska(&bytes, test_harness::collect::CollectMode::Seekable)
         .unwrap_or_else(|e| panic!("demux {path}: {e}"))
 }
 
@@ -36,9 +34,11 @@ fn round_trip(path: &str) -> (Media, Media) {
         &mut MkvMuxStage::new(std::time::Duration::from_millis(5_000)),
         &original,
     );
-    let remuxed = WebmDemux::new()
-        .demux(&muxed)
-        .unwrap_or_else(|e| panic!("re-demux muxed {path}: {e}"));
+    let remuxed = test_harness::collect::media_from_matroska(
+        &muxed,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .unwrap_or_else(|e| panic!("re-demux muxed {path}: {e}"));
     (original, remuxed)
 }
 
@@ -266,8 +266,10 @@ fn mkv_double_round_trip_is_stable() {
         &mut MkvMuxStage::new(std::time::Duration::from_millis(5_000)),
         &remuxed_once,
     );
-    let remuxed_twice = WebmDemux::new()
-        .demux(&muxed_twice)
-        .expect("second re-demux");
+    let remuxed_twice = test_harness::collect::media_from_matroska(
+        &muxed_twice,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("second re-demux");
     assert_media_round_trips(&remuxed_once, &remuxed_twice);
 }

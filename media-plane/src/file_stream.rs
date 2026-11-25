@@ -1,6 +1,6 @@
-//! Bounded-memory file playout: a TS/FLV/MP4 file is fed to an incremental
-//! demuxer, merged across tracks in presentation order and released under a
-//! wall-clock pacing gate, so live memory is a function of
+//! Bounded-memory file playout: a TS/FLV/MP4/PS/Matroska file is fed to an
+//! incremental demuxer, merged across tracks in presentation order and released
+//! under a wall-clock pacing gate, so live memory is a function of
 //! [`FileStreamLimits`] and never of the file's length (issue #4057).
 //!
 //! Sans-IO: the caller owns the file handle, feeds the bytes the session asks
@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use broadcast_common::clock33::{WRAP_33BIT, unwrap_delta};
 use broadcast_common::{Demand, Stage, Timestamp};
 use bytes::Bytes;
+use transmux::matroska_demux::{MatroskaDemux, MatroskaDemuxConfig, MatroskaInput};
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use transmux::{
     DemuxEvent, Sample, StreamingFlvDemux, StreamingPsDemux, StreamingTsDemux, TrackId, TrackSpec,
@@ -70,6 +71,8 @@ pub enum StreamContainer {
     Mp4,
     /// MPEG-1/2 Program Stream ([`StreamingPsDemux`]).
     MpegPs,
+    /// Matroska / WebM ([`MatroskaDemux`]).
+    Matroska,
 }
 
 impl StreamContainer {
@@ -80,11 +83,18 @@ impl StreamContainer {
             StreamContainer::Flv => "flv",
             StreamContainer::Mp4 => "mp4",
             StreamContainer::MpegPs => "mpeg-ps",
+            StreamContainer::Matroska => "matroska",
         }
     }
 }
 
 broadcast_common::impl_spec_display!(StreamContainer);
+
+/// Whether the session reaches this container's bytes by absolute range
+/// rather than as a forward chunk stream.
+fn reads_by_range(container: StreamContainer) -> bool {
+    matches!(container, StreamContainer::Mp4 | StreamContainer::Matroska)
+}
 
 /// The memory and merge bounds of a [`StreamingFileSession`]. Every field is a
 /// knob the host sets; the defaults suit a live slate/filler loop.
@@ -110,6 +120,9 @@ pub struct FileStreamLimits {
     /// total length; a file playout sets the length so the stage can reach
     /// end of input.
     pub mp4: Mp4DemuxConfig,
+    /// The Matroska stage's caller policy: the hostile-input caps and the
+    /// input's total length, set by a file playout for the same reason.
+    pub matroska: MatroskaDemuxConfig,
 }
 
 impl Default for FileStreamLimits {
@@ -122,6 +135,7 @@ impl Default for FileStreamLimits {
             start_window_bytes: DEFAULT_START_WINDOW_BYTES,
             pts_window: DEFAULT_PTS_WINDOW,
             mp4: Mp4DemuxConfig::default(),
+            matroska: MatroskaDemuxConfig::default(),
         }
     }
 }
@@ -206,15 +220,20 @@ enum Demux {
     Mp4(Box<Mp4Demux>),
     /// MPEG-1/2 Program Stream.
     Ps(StreamingPsDemux),
+    /// Matroska / WebM (seekable byte ranges).
+    Matroska(Box<MatroskaDemux>),
 }
 
 impl Demux {
-    fn new(container: StreamContainer, mp4: &Mp4DemuxConfig) -> Self {
+    fn new(container: StreamContainer, limits: &FileStreamLimits) -> Self {
         match container {
             StreamContainer::MpegTs => Demux::Ts(StreamingTsDemux::new()),
             StreamContainer::Flv => Demux::Flv(StreamingFlvDemux::new()),
-            StreamContainer::Mp4 => Demux::Mp4(Box::new(Mp4Demux::seekable(mp4.clone()))),
+            StreamContainer::Mp4 => Demux::Mp4(Box::new(Mp4Demux::seekable(limits.mp4.clone()))),
             StreamContainer::MpegPs => Demux::Ps(StreamingPsDemux::new()),
+            StreamContainer::Matroska => {
+                Demux::Matroska(Box::new(MatroskaDemux::seekable(limits.matroska.clone())))
+            }
         }
     }
 
@@ -232,6 +251,9 @@ impl Demux {
             (Demux::Mp4(demux), FileInput::At { offset, bytes }) => demux
                 .feed(Mp4Input::At { offset, bytes }, Timestamp::ZERO)
                 .map_err(FileReaderError::Demux),
+            (Demux::Matroska(demux), FileInput::At { offset, bytes }) => demux
+                .feed(MatroskaInput::At { offset, bytes }, Timestamp::ZERO)
+                .map_err(FileReaderError::Demux),
             (demux, input) => Err(FileReaderError::WrongInput {
                 container: demux.container_name(),
                 input: input.name(),
@@ -245,6 +267,7 @@ impl Demux {
             Demux::Flv(demux) => demux.poll_event(),
             Demux::Mp4(demux) => demux.poll(),
             Demux::Ps(demux) => demux.poll(),
+            Demux::Matroska(demux) => demux.poll(),
         }
     }
 
@@ -257,6 +280,7 @@ impl Demux {
             }
             Demux::Mp4(demux) => demux.finish().map_err(FileReaderError::Demux),
             Demux::Ps(demux) => demux.finish().map_err(FileReaderError::Demux),
+            Demux::Matroska(demux) => demux.finish().map_err(FileReaderError::Demux),
         }
     }
 
@@ -264,6 +288,10 @@ impl Demux {
     fn at_demand(&self) -> Option<(u64, usize)> {
         match self {
             Demux::Mp4(demux) => {
+                let demand = demux.demand();
+                demand.offset.map(|offset| (offset, demand.want_bytes))
+            }
+            Demux::Matroska(demux) => {
                 let demand = demux.demand();
                 demand.offset.map(|offset| (offset, demand.want_bytes))
             }
@@ -277,6 +305,7 @@ impl Demux {
             Demux::Flv(_) => StreamContainer::Flv.name(),
             Demux::Mp4(_) => StreamContainer::Mp4.name(),
             Demux::Ps(_) => StreamContainer::MpegPs.name(),
+            Demux::Matroska(_) => StreamContainer::Matroska.name(),
         }
     }
 }
@@ -467,7 +496,7 @@ impl StreamingFileSession {
         pace: bool,
         limits: FileStreamLimits,
     ) -> Self {
-        let demux = Demux::new(container, &limits.mp4);
+        let demux = Demux::new(container, &limits);
         Self {
             container,
             program,
@@ -504,7 +533,7 @@ impl StreamingFileSession {
             Phase::Rewinding => FileDemand::Rewind,
             Phase::Flushing => FileDemand::Wait,
             Phase::Streaming => {
-                if self.container == StreamContainer::Mp4 {
+                if reads_by_range(self.container) {
                     let Some(demux) = self.demux.as_ref() else {
                         return FileDemand::Eof;
                     };
@@ -840,7 +869,7 @@ impl StreamingFileSession {
         }
         self.tracks.clear();
         self.pass_offsets = self.next_offsets.clone();
-        self.demux = Some(Demux::new(self.container, &self.limits.mp4));
+        self.demux = Some(Demux::new(self.container, &self.limits));
         self.phase = Phase::Rewinding;
         self.bytes_fed = 0;
         self.tracks_resolved = false;

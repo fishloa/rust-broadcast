@@ -1,7 +1,7 @@
 //! `transmux` command-line packager — the any-to-any hub as a CLI (issue #482).
 //!
 //! Drives the existing streaming demux stages ([`StreamingTsDemux`],
-//! [`Mp4Demux`], [`StreamingFlvDemux`], [`StreamingPsDemux`], [`WebmDemux`]) into the
+//! [`Mp4Demux`], [`StreamingFlvDemux`], [`StreamingPsDemux`], [`MatroskaDemux`]) into the
 //! existing mux stages ([`CmafMuxStage`], [`StreamingTsHlsSegmenter`],
 //! [`DashPackager`], [`ProgressiveMuxStage`], [`TsMuxStage`]) as
 //! `MuxOutput` arrives. It writes **no** new demux/mux logic — it is a
@@ -31,12 +31,13 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use broadcast_common::timescale::{Timescale, cmp_ticks};
-use broadcast_common::{Stage, Timestamp, Unpackage};
+use broadcast_common::{Stage, Timestamp};
 
 use crate::dash::DashPackager;
 use crate::data_identity::{DataIdentityMap, DataIdentityStage};
 use crate::flv_stream::StreamingFlvDemux;
-use crate::ir::{CodecConfig, DataCarriage, DataIdentity, DemuxEvent, Media, Sample, TrackSpec};
+use crate::ir::{CodecConfig, DataCarriage, DataIdentity, DemuxEvent, Sample, TrackSpec};
+use crate::matroska_demux::{IR_TIMESCALE, MatroskaDemux, MatroskaDemuxConfig, MatroskaInput};
 use crate::media::{CmafMuxStage, FragmentCut};
 use crate::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, TrackPart};
@@ -49,7 +50,6 @@ use crate::segmenter::{MediaClock, Segmenter, choose_anchor};
 use crate::ts_demux::StreamingTsDemux;
 use crate::ts_hls::StreamingTsHlsSegmenter;
 use crate::ts_mux::{DEFAULT_PSI_INTERVAL, TsMuxStage};
-use crate::webm_demux::WebmDemux;
 #[cfg(feature = "cenc")]
 use isobmff::box_types::KEY_ID_LEN;
 use std::time::Duration;
@@ -173,10 +173,6 @@ mod cli_error_display_tests {
                 "streaming interleave buffered more than 100 bytes of samples",
             ),
             (
-                CliError::WholeInputTooLarge { limit: 50 },
-                "input needs a whole-file read larger than 50 bytes (--max-whole-input-bytes)",
-            ),
-            (
                 CliError::BadDataIdentity("4=ts".to_string()),
                 "invalid --data-identity (4=ts): expected <track>=ts:<stream_type>[:<descriptors-hex>] | mp4:<handler>:<sample-entry-hex> | matroska:<codec_id>[:<codec-private-hex>]",
             ),
@@ -227,7 +223,7 @@ pub enum Container {
     Mp4,
     /// MPEG Program Stream → [`StreamingPsDemux`].
     MpegPs,
-    /// WebM / Matroska (EBML) → [`WebmDemux`].
+    /// WebM / Matroska (EBML) → [`MatroskaDemux`].
     WebM,
     /// FLV (Flash Video) → [`StreamingFlvDemux`].
     Flv,
@@ -368,12 +364,6 @@ pub struct Args {
     #[arg(long = "key", value_name = "KID:KEY")]
     pub keys: Vec<String>,
 
-    /// Cap, in bytes, on the whole-file read of an input this CLI cannot stream
-    /// yet (MPEG-PS, WebM/Matroska). No default: unlimited unless given; over
-    /// the cap the run fails with a typed error naming it.
-    #[arg(long = "max-whole-input-bytes", value_name = "BYTES")]
-    pub max_whole_input_bytes: Option<u64>,
-
     /// Map a data track's container identity for the output (repeatable):
     /// `ts:<stream_type>[:<descriptors-hex>]`,
     /// `mp4:<handler>:<sample-entry-hex>` or
@@ -398,7 +388,6 @@ impl fmt::Debug for Args {
             .field("segment_duration", &self.segment_duration)
             .field("ll", &self.ll)
             .field("tracks", &self.tracks)
-            .field("max_whole_input_bytes", &self.max_whole_input_bytes)
             .field("data_identity", &self.data_identity);
         #[cfg(feature = "cenc")]
         {
@@ -522,12 +511,6 @@ pub enum CliError {
         /// The cap, in bytes.
         limit: u64,
     },
-    /// A whole-file read of an unstreamable container passed the caller's cap.
-    #[error("input needs a whole-file read larger than {limit} bytes (--max-whole-input-bytes)")]
-    WholeInputTooLarge {
-        /// The cap, in bytes.
-        limit: u64,
-    },
     /// A `--data-identity` argument was malformed or named a bad track.
     #[error(
         "invalid --data-identity ({0}): expected <track>=ts:<stream_type>[:<descriptors-hex>] | mp4:<handler>:<sample-entry-hex> | matroska:<codec_id>[:<codec-private-hex>]"
@@ -585,8 +568,8 @@ fn container_from_format(format: container_probe::Format) -> CliResult<Container
         Format::MpegPs => Ok(Container::MpegPs),
         Format::WebM => Ok(Container::WebM),
         Format::Flv => Ok(Container::Flv),
-        // Matroska is demuxable by the WebM demuxer (both are EBML; WebM is a
-        // Matroska profile), so it maps to the same spoke.
+        // Matroska and WebM are one EBML family (WebM is a Matroska profile),
+        // so both map to the one Matroska stage.
         Format::Matroska => Ok(Container::WebM),
         other => Err(CliError::UnsupportedContainer(other.name())),
     }
@@ -642,8 +625,6 @@ pub struct Opts {
     pub utc_timing_url: Option<String>,
     /// Track-ID selection; empty = all tracks.
     pub tracks: Vec<TrackId>,
-    /// Cap on a whole-file read of an unstreamable input (MPEG-PS/WebM).
-    pub max_whole_input_bytes: Option<u64>,
     /// Data-track identity mappings applied before the muxer.
     pub data_identity: DataIdentityMap,
 }
@@ -656,7 +637,6 @@ impl Default for Opts {
             low_latency: false,
             utc_timing_url: None,
             tracks: Vec::new(),
-            max_whole_input_bytes: None,
             data_identity: DataIdentityMap::new(),
         }
     }
@@ -1800,7 +1780,32 @@ fn drive_seekable<R: Read + Seek>(
             }
             Ok(())
         }
-        Container::WebM => Err(CliError::UnsupportedContainer(container.name())),
+        Container::WebM => {
+            let mut demux =
+                MatroskaDemux::seekable(MatroskaDemuxConfig::default().with_total_len(total_len));
+            loop {
+                while let Some(event) = demux.poll() {
+                    sink(event, Some(IR_TIMESCALE))?;
+                }
+                let demand = demux.demand();
+                let Some(offset) = demand.offset else {
+                    break;
+                };
+                let read = read_at(reader, offset, demand.want_bytes)?;
+                demux.feed(
+                    MatroskaInput::At {
+                        offset,
+                        bytes: read,
+                    },
+                    Timestamp::ZERO,
+                )?;
+            }
+            demux.finish()?;
+            while let Some(event) = demux.poll() {
+                sink(event, Some(IR_TIMESCALE))?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -1887,7 +1892,25 @@ fn drive_forward<R: Read>(
             }
             Ok(())
         }
-        Container::WebM => Err(CliError::UnsupportedContainer(container.name())),
+        Container::WebM => {
+            let mut demux = MatroskaDemux::sequential(MatroskaDemuxConfig::default());
+            loop {
+                let read = reader.read(&mut buf)?;
+                if read == 0 {
+                    break;
+                }
+                demux.feed(MatroskaInput::Next(&buf[..read]), Timestamp::ZERO)?;
+                while let Some(event) = demux.poll() {
+                    sink(event, Some(IR_TIMESCALE))?;
+                }
+            }
+            demux.feed(MatroskaInput::Eof, Timestamp::ZERO)?;
+            demux.finish()?;
+            while let Some(event) = demux.poll() {
+                sink(event, Some(IR_TIMESCALE))?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -2088,30 +2111,6 @@ fn hex_bytes(text: &str) -> Option<bytes::Bytes> {
     broadcast_common::hex::hex_decode(text).map(bytes::Bytes::from)
 }
 
-/// Read an unstreamable container whole, bounded by the caller's cap.
-fn read_whole<R: Read>(reader: &mut R, container: Container, opts: &Opts) -> CliResult<Media> {
-    let mut buf = Vec::new();
-    match opts.max_whole_input_bytes {
-        Some(limit) => {
-            let mut limited = reader.take(limit.saturating_add(1));
-            limited.read_to_end(&mut buf)?;
-            if buf.len() as u64 > limit {
-                return Err(CliError::WholeInputTooLarge { limit });
-            }
-        }
-        None => {
-            reader.read_to_end(&mut buf)?;
-        }
-    }
-    let media = match container {
-        Container::WebM => WebmDemux::new().unpackage(&buf)?,
-        _ => {
-            return Err(CliError::UnsupportedContainer(container.name()));
-        }
-    };
-    Ok(media)
-}
-
 // ---------------------------------------------------------------------------
 // The run drivers
 // ---------------------------------------------------------------------------
@@ -2142,16 +2141,12 @@ fn run_seekable<R: Read + Seek>(
     emit: &mut dyn Emit,
     keys: DecryptKeys,
 ) -> CliResult<()> {
-    if container == Container::WebM {
-        #[cfg(feature = "cenc")]
-        if keys.is_some() {
-            return Err(crate::Error::InvalidInput(
-                "--decrypt only applies to CENC-protected MP4/CMAF input",
-            )
-            .into());
-        }
-        let media = read_whole(reader, container, opts)?;
-        return run_media_path(&media, opts, emit);
+    #[cfg(feature = "cenc")]
+    if container == Container::WebM && keys.is_some() {
+        return Err(crate::Error::InvalidInput(
+            "--decrypt only applies to CENC-protected MP4/CMAF input",
+        )
+        .into());
     }
     if opts.format == OutputFormat::Progressive {
         if !emit.seekable() {
@@ -2176,10 +2171,6 @@ fn run_forward<R: Read>(
     emit: &mut dyn Emit,
     keys: DecryptKeys,
 ) -> CliResult<()> {
-    if container == Container::WebM {
-        let media = read_whole(reader, container, opts)?;
-        return run_media_path(&media, opts, emit);
-    }
     if opts.format == OutputFormat::Progressive {
         return Err(crate::Error::ProgressiveNeedsReplayableInput.into());
     }
@@ -2375,45 +2366,6 @@ fn progressive_plan<R: Read + Seek>(
     let specs = apply_specs(collector.specs.clone(), opts, opts.format)?;
     let movie = movie_timescale(container, collector.movie);
     Ok((plan, specs, movie))
-}
-
-/// Mux an already-demuxed [`Media`] (a container this CLI cannot stream yet).
-fn run_media_path(media: &Media, opts: &Opts, emit: &mut dyn Emit) -> CliResult<()> {
-    let specs = apply_specs(
-        media
-            .tracks
-            .iter()
-            .map(|track| track.spec.clone())
-            .collect(),
-        opts,
-        opts.format,
-    )?;
-    let kept: Vec<crate::ir::Track> = media
-        .tracks
-        .iter()
-        .filter(|track| {
-            specs
-                .iter()
-                .any(|spec| spec.track_id == track.spec.track_id)
-        })
-        .cloned()
-        .collect();
-    let filtered = Media::new(kept, media.movie_timescale);
-    if opts.format == OutputFormat::Progressive && !emit.seekable() {
-        return Err(CliError::ProgressiveNeedsSeekableOutput);
-    }
-    let plan = if opts.format == OutputFormat::Progressive {
-        Some(PlanPass::for_media(&filtered)?)
-    } else {
-        None
-    };
-    let mut stream = CliStream::start(specs, media.movie_timescale, opts, emit, plan, no_keys())?;
-    for track in &filtered.tracks {
-        for sample in &track.samples {
-            stream.sample(track.spec.track_id, sample.clone(), emit)?;
-        }
-    }
-    stream.finish(emit)
 }
 
 // ---------------------------------------------------------------------------
@@ -2616,7 +2568,6 @@ pub fn run(args: Args) -> CliResult<(Container, OutputFormat)> {
         low_latency: args.ll,
         utc_timing_url: args.utc_timing_url.clone(),
         tracks: args.tracks.iter().copied().map(TrackId::new).collect(),
-        max_whole_input_bytes: args.max_whole_input_bytes,
         data_identity,
     };
     let in_path = input_path(&args).to_path_buf();

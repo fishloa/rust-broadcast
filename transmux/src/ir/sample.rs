@@ -86,7 +86,7 @@ impl Provenance {
 /// `(dts, pts)` pair, a [`SampleTiming::DurationOnly`] one is timed only by
 /// its span.
 ///
-/// `WebM` carries no decode time at all (`crate::webm_demux`), and a
+/// `WebM` carries no decode time at all (`crate::matroska_demux`), and a
 /// standalone `rtpdump` file has no `RTP-Info` to anchor one (`crate::rtp`).
 /// Such a sample knows how long it lasts and nothing about when it starts, so
 /// it says exactly that instead of borrowing a `0` timestamp. `None` on

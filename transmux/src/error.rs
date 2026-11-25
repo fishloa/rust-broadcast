@@ -373,6 +373,11 @@ pub enum Error {
     #[error("program stream: {0}")]
     Ps(#[from] mpeg_ps::Error),
 
+    /// The EBML/Matroska layer below this crate rejected the input
+    /// ([`broadcast_matroska`], RFC 8794 §4-§6 / RFC 9559 §5-§12).
+    #[error("matroska: {0}")]
+    Matroska(#[from] broadcast_matroska::Error),
+
     /// An `emsg` (Event Message Box, ISO/IEC 23009-1 §5.10.3.3) could not be
     /// serialized (e.g. the box would exceed the 4-byte `size` field range).
     #[error("emsg serialize: {0}")]

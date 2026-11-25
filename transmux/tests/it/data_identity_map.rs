@@ -356,9 +356,11 @@ fn matroska_data_identity_round_trips_through_mkv_mux() {
         &mut MkvMuxStage::new(core::time::Duration::from_millis(1_000)),
         &media,
     );
-    let remuxed = transmux::webm_demux::WebmDemux::new()
-        .demux(&mkv)
-        .expect("re-demux the Matroska output");
+    let remuxed = test_harness::collect::media_from_matroska(
+        &mkv,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("re-demux the Matroska output");
     assert_eq!(remuxed.tracks.len(), 1, "one data track");
     assert_eq!(
         remuxed.tracks[0].samples.len(),

@@ -2,449 +2,124 @@
 //!
 //! [`MkvMuxStage`] muxes a live sample stream into a Matroska (`.mkv`) file:
 //! an EBML header, then a `Segment` carrying `SeekHead` / `Info` / `Tracks` /
-//! one or more `Cluster`s of `SimpleBlock`s / `Cues`. It is the exact inverse
-//! of [`crate::webm_demux::WebmDemux`] — the two share the same CodecID ⇄
-//! [`CodecConfig`] mapping, so `{Matroska} → IR → {Matroska}` round-trips.
+//! one or more `Cluster`s of `SimpleBlock`s / `Cues`. Every EBML byte it writes
+//! comes from [`broadcast_matroska::writer::Writer`]; this module only maps the
+//! IR's [`CodecConfig`] to that writer's `TrackEntry` fields and its samples to
+//! Blocks. It is the exact inverse of
+//! [`crate::matroska_demux::MatroskaDemux`] — the two share the same CodecID
+//! ⇄ [`CodecConfig`] mapping, so `{Matroska} → IR → {Matroska}` round-trips.
 //!
 //! # Spec citations
 //!
 //! - **EBML framing** (VINT element-ID / element-size, EBML header): RFC 8794
-//!   §4 / §11.
-//! - **Matroska element IDs / semantics** (Segment, SeekHead, Info, Tracks,
-//!   Cluster, (Simple)Block, Cues): RFC 9559 §12 / §27.
-//! - **CodecID registry** (`V_MPEG4/ISO/AVC`, `V_MPEGH/ISO/HEVC`, `V_VP9`,
-//!   `V_VP8`, `V_AV1`, `A_AAC`, `A_OPUS`, `A_VORBIS`, `A_AC3`, `A_EAC3`) and the
-//!   `CodecPrivate` payload each one carries: RFC 9559 §27 codec mapping
-//!   registry (avcC/hvcC/av1C bodies verbatim; `AudioSpecificConfig` for AAC;
-//!   `OpusHead` per RFC 7845 §5.1; the Xiph-laced Vorbis headers).
+//!   §4 / §11 (`private/specs-verified/ietf/specs/rfc8794_ebml.txt`).
+//! - **Matroska elements** (Segment, SeekHead, Info, Tracks, Cluster,
+//!   (Simple)Block, Cues): RFC 9559 §5, §6, §11, §12, §20
+//!   (`private/specs-verified/ietf/specs/rfc9559_matroska.txt`).
+//! - **CodecID registry** and the `CodecPrivate` payload each carries: RFC 9559
+//!   §27 (avcC/hvcC/av1C bodies verbatim; `AudioSpecificConfig` for AAC;
+//!   `OpusHead` per RFC 7845 §5.1; the Xiph-laced Vorbis headers), transcribed
+//!   at `private/specs-verified/mpeg/transmux/webm/ebml-matroska.md`.
 //!
 //! # Scope
 //!
-//! The mapped [`CodecConfig`] variants are exactly [`crate::webm_demux::WebmDemux`]'s
-//! supported set plus the ISOBMFF-family codecs a DVR recording actually
-//! carries: [`CodecConfig::Avc`], [`CodecConfig::Hevc`], [`CodecConfig::Vp9`],
-//! [`CodecConfig::Vp8`], [`CodecConfig::Av1`], [`CodecConfig::Aac`],
-//! [`CodecConfig::Opus`], [`CodecConfig::Vorbis`], [`CodecConfig::Ac3`],
-//! [`CodecConfig::Eac3`]. Every other variant (`Vvc`/`Flac`/`Ac4`/`MpegH`/
-//! `Mpeg2Video`/`MpegAudio`/`Dts`/`Subtitle`/`Data`) is rejected with
-//! [`Error::UnsupportedMkvCodec`], naming the track, rather than silently
-//! dropped.
+//! The mapped [`CodecConfig`] variants are exactly
+//! [`crate::matroska_demux::MatroskaDemux`]'s supported set plus the ISOBMFF
+//! family a DVR recording actually carries: [`CodecConfig::Avc`],
+//! [`CodecConfig::Hevc`], [`CodecConfig::Vp9`], [`CodecConfig::Vp8`],
+//! [`CodecConfig::Av1`], [`CodecConfig::Aac`], [`CodecConfig::Opus`],
+//! [`CodecConfig::Vorbis`], [`CodecConfig::Ac3`], [`CodecConfig::Eac3`]. Every
+//! other variant is rejected with [`Error::UnsupportedMkvCodec`], naming the
+//! track, rather than silently dropped.
 //!
 //! # Cluster strategy
 //!
-//! Samples from every track are merged into one block stream by a **k-way
-//! merge on presentation time that never reorders a track's own samples**:
-//! each track's `samples` are already in decode order (the IR's documented
-//! invariant), and for AVC/HEVC with B-frame reordering that order is *not*
-//! presentation-time order (a P-frame decodes before, but may present after,
-//! the B-frames that reference it) — a track's own presentation-time sequence
-//! can therefore dip non-monotonically, and a global sort on presentation time
-//! would silently reorder a track's blocks relative to each other, desyncing
-//! decode order from reference order. The merge only decides *when* to
-//! interleave tracks, walking each track's own cursor strictly forward.
-//!
-//! The merged stream is then split into `Cluster`s: a new `Cluster` starts at
-//! every video keyframe (when the stream has a video track), and in any
-//! case at least every `MAX_CLUSTER_SPAN_WITH_VIDEO_TICKS` (5 s) — or
-//! `MAX_CLUSTER_SPAN_AUDIO_ONLY_TICKS` (1 s) for an audio-only stream.
-//! Every block is emitted as a `SimpleBlock` (no lacing, no `BlockGroup`) —
-//! valid per RFC 9559 §12 and sufficient for every codec this module maps
-//! (the signed relative timestamp already accommodates the occasional small
-//! backward dip from B-frame reordering).
+//! [`broadcast_matroska::writer::Writer`] merges the tracks by presentation
+//! time without reordering a track's own samples, cuts a `Cluster` at every
+//! video keyframe and at the caller's span (and whenever a Block's signed
+//! 16-bit relative timestamp would leave its range), writes `Cues` at the end
+//! and patches `Info.Duration` at the offset its header fixed.
 //!
 //! `TimestampScale` is fixed at `TIMESTAMP_SCALE_NS` (1 ms per tick, the
-//! Matroska default) — every track's samples are rescaled from their own
-//! [`TrackSpec::timescale`](crate::pipeline::TrackSpec::timescale) into that
-//! common tick.
-//!
-//! # `SeekHead` / `Cues`
-//!
-//! `SeekHead` indexes `Info` and `Tracks` only (both always precede every
-//! `Cluster`, so no seek entry ever needs to name one). Its `SeekPosition`
-//! entries are written at a fixed 4-byte width (giving each entry's own byte
-//! length independence from the position *value*, not just its presence) so
-//! the `SeekHead`'s own serialized size — needed to compute those very
-//! positions — can be measured from a placeholder build before the real
-//! positions are known, mirroring
-//! [`crate::progressive::ProgressiveMuxStage`]'s planned `stco`/`co64` offset
-//! arithmetic. `Cues` carries one `CuePoint` per **video** keyframe (never one
-//! per audio sample, which — unlike video — has no non-keyframe state in this
-//! IR: [`crate::pipeline::Sample::from_raw`] always marks an audio sample
-//! sync); omitted entirely when the stream has no video track.
+//! Matroska default): every track's samples are rescaled from their own
+//! [`TrackSpec`] timescale into that common tick.
 
-use crate::TrackId;
 use alloc::collections::VecDeque;
-use alloc::vec;
+use alloc::string::String;
 use alloc::vec::Vec;
 
 use broadcast_common::Serialize;
 use broadcast_common::stage::{Stage, Timestamp};
+use broadcast_matroska::writer::{
+    BlockFlags, InfoSpec, Layout, TrackSpec, Write, Writer, info_element, tracks_element,
+};
 use bytes::Bytes;
 
+use crate::TrackId;
 use crate::error::{Error, Result};
-use crate::ir::{DataIdentity, Sample, TrackSpec};
+use crate::ir::{DataIdentity, Sample, TrackSpec as IrTrackSpec};
 use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::pipeline::CodecConfig;
 use isobmff::opus::OpusSpecificBox;
 
-// ---------------------------------------------------------------------------
-// EBML header elements (RFC 8794 §11)
-// ---------------------------------------------------------------------------
-
-const ID_EBML: [u8; 4] = [0x1A, 0x45, 0xDF, 0xA3];
-const ID_EBML_VERSION: [u8; 2] = [0x42, 0x86];
-const ID_EBML_READ_VERSION: [u8; 2] = [0x42, 0xF7];
-const ID_EBML_MAX_ID_LENGTH: [u8; 2] = [0x42, 0xF2];
-const ID_EBML_MAX_SIZE_LENGTH: [u8; 2] = [0x42, 0xF3];
-const ID_DOC_TYPE: [u8; 2] = [0x42, 0x82];
-const ID_DOC_TYPE_VERSION: [u8; 2] = [0x42, 0x87];
-const ID_DOC_TYPE_READ_VERSION: [u8; 2] = [0x42, 0x85];
-
-/// `EBMLVersion` value this writer emits.
-const EBML_VERSION_VALUE: u64 = 1;
-/// `EBMLReadVersion` value this writer emits.
-const EBML_READ_VERSION_VALUE: u64 = 1;
-/// `EBMLMaxIDLength` value this writer emits (the widest element ID it uses is
-/// 4 bytes, but 4 is also the registry-wide max for a Matroska/WebM ID).
-const EBML_MAX_ID_LENGTH_VALUE: u64 = 4;
-/// `EBMLMaxSizeLength` value this writer emits (matches [`encode_vint_size`]'s
-/// widest emitted size VINT).
-const EBML_MAX_SIZE_LENGTH_VALUE: u64 = 8;
-/// `DocType` value: this writer always emits the Matroska doc type (not the
-/// `webm` subset profile), since it uses codecs (AVC/HEVC/AAC/AC-3) outside
-/// that profile.
-const DOC_TYPE: &[u8] = b"matroska";
-/// `DocTypeVersion` value this writer emits.
-const DOC_TYPE_VERSION_VALUE: u64 = 4;
-/// `DocTypeReadVersion` value this writer emits.
-const DOC_TYPE_READ_VERSION_VALUE: u64 = 2;
-
-// ---------------------------------------------------------------------------
-// Segment + children (RFC 9559 §27)
-// ---------------------------------------------------------------------------
-
-const ID_SEGMENT: [u8; 4] = [0x18, 0x53, 0x80, 0x67];
-const ID_SEEK_HEAD: [u8; 4] = [0x11, 0x4D, 0x9B, 0x74];
-const ID_SEEK: [u8; 2] = [0x4D, 0xBB];
-const ID_SEEK_ID: [u8; 2] = [0x53, 0xAB];
-const ID_SEEK_POSITION: [u8; 2] = [0x53, 0xAC];
-const ID_INFO: [u8; 4] = [0x15, 0x49, 0xA9, 0x66];
-const ID_TIMESTAMP_SCALE: [u8; 3] = [0x2A, 0xD7, 0xB1];
-const ID_DURATION: [u8; 2] = [0x44, 0x89];
-const ID_MUXING_APP: [u8; 2] = [0x4D, 0x80];
-const ID_WRITING_APP: [u8; 2] = [0x57, 0x41];
-const ID_TRACKS: [u8; 4] = [0x16, 0x54, 0xAE, 0x6B];
-const ID_TRACK_ENTRY: [u8; 1] = [0xAE];
-const ID_TRACK_NUMBER: [u8; 1] = [0xD7];
-const ID_TRACK_UID: [u8; 2] = [0x73, 0xC5];
-const ID_TRACK_TYPE: [u8; 1] = [0x83];
-const ID_CODEC_ID: [u8; 1] = [0x86];
-const ID_CODEC_PRIVATE: [u8; 2] = [0x63, 0xA2];
-const ID_VIDEO: [u8; 1] = [0xE0];
-const ID_PIXEL_WIDTH: [u8; 1] = [0xB0];
-const ID_PIXEL_HEIGHT: [u8; 1] = [0xBA];
-const ID_AUDIO: [u8; 1] = [0xE1];
-const ID_SAMPLING_FREQUENCY: [u8; 1] = [0xB5];
-const ID_CHANNELS: [u8; 1] = [0x9F];
-const ID_CLUSTER: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
-const ID_TIMESTAMP: [u8; 1] = [0xE7];
-const ID_SIMPLE_BLOCK: [u8; 1] = [0xA3];
-const ID_CUES: [u8; 4] = [0x1C, 0x53, 0xBB, 0x6B];
-const ID_CUE_POINT: [u8; 1] = [0xBB];
-const ID_CUE_TIME: [u8; 1] = [0xB3];
-const ID_CUE_TRACK_POSITIONS: [u8; 1] = [0xB7];
-const ID_CUE_TRACK: [u8; 1] = [0xF7];
-const ID_CUE_CLUSTER_POSITION: [u8; 1] = [0xF1];
-
-/// `TrackType` value for a video track (RFC 9559 §27 `TrackType`).
+/// `TimestampScale` this writer emits: 1 ms per Matroska Tick (RFC 9559 §11).
+const TIMESTAMP_SCALE_NS: u64 = 1_000_000;
+/// The `MuxingApp`/`WritingApp` this writer emits.
+const APP_NAME: &str = "transmux";
+/// `TrackType` value for a video track (RFC 9559 §27).
 const TRACK_TYPE_VIDEO: u64 = 1;
 /// `TrackType` value for an audio track.
 const TRACK_TYPE_AUDIO: u64 = 2;
-/// `TrackType` value for a metadata (opaque data) track (RFC 9559 §27).
+/// `TrackType` value for a metadata (data) track.
 const TRACK_TYPE_METADATA: u64 = 33;
-/// `SimpleBlock` keyframe flag (bit `[7]` of the flags byte, RFC 9559 §12).
-const BLOCK_FLAG_KEYFRAME: u8 = 0x80;
-/// Fixed bytes in a `SimpleBlock` body besides the track-number VINT and the
-/// frame: the `i16` relative timestamp and the flags byte (RFC 9559 §12.4).
-const SIMPLE_BLOCK_FIXED_LEN: usize = 2 + 1;
 
-/// `TimestampScale` this writer always emits: 1 ms per tick (RFC 9559 §27
-/// default, and the value that makes a [`crate::webm_demux::WebmDemux`]-sourced
-/// [`Media`] — whose IR timescale is also milliseconds — rescale losslessly).
-const TIMESTAMP_SCALE_NS: u64 = 1_000_000;
-/// `MuxingApp` / `WritingApp` value this writer emits.
-const APP_NAME: &[u8] = b"transmux";
+/// VP9 video CodecID.
+const CODEC_V_VP9: &str = "V_VP9";
+/// VP8 video CodecID.
+const CODEC_V_VP8: &str = "V_VP8";
+/// H.264/AVC video CodecID.
+const CODEC_V_AVC: &str = "V_MPEG4/ISO/AVC";
+/// H.265/HEVC video CodecID.
+const CODEC_V_HEVC: &str = "V_MPEGH/ISO/HEVC";
+/// AV1 video CodecID.
+const CODEC_V_AV1: &str = "V_AV1";
+/// AAC audio CodecID.
+const CODEC_A_AAC: &str = "A_AAC";
+/// Opus audio CodecID.
+const CODEC_A_OPUS: &str = "A_OPUS";
+/// Vorbis audio CodecID.
+const CODEC_A_VORBIS: &str = "A_VORBIS";
+/// AC-3 audio CodecID.
+const CODEC_A_AC3: &str = "A_AC3";
+/// E-AC-3 audio CodecID.
+const CODEC_A_EAC3: &str = "A_EAC3";
 
-/// Maximum ticks (ms, given [`TIMESTAMP_SCALE_NS`]) between `Cluster`
-/// boundaries when a media has at least one video track (a new `Cluster` also
-/// starts at every video keyframe, whichever comes first) — the span
-/// [`build_clusters`] groups by.
-#[cfg(test)]
-const MAX_CLUSTER_SPAN_WITH_VIDEO_TICKS: i64 = 5_000;
-/// Maximum ticks between `Cluster` boundaries for an audio-only media.
-#[cfg(test)]
-const MAX_CLUSTER_SPAN_AUDIO_ONLY_TICKS: i64 = 1_000;
-
-/// The inclusive range a `SimpleBlock`'s relative timestamp may occupy: it is
-/// a `signed int(16)` in ticks (RFC 9559 §12).
-const MIN_BLOCK_REL_TICKS: i64 = i16::MIN as i64;
-/// The inclusive upper bound of [`MIN_BLOCK_REL_TICKS`].
-const MAX_BLOCK_REL_TICKS: i64 = i16::MAX as i64;
-
-/// Fixed byte width `SeekPosition` entries are written at (RFC 8794 §4 allows
-/// any *value* to be stored in more bytes than its minimal encoding — the
-/// magnitude is unaffected by leading zero bytes): this keeps `SeekHead`'s own
-/// serialized length independent of the position *values* it carries, so it
-/// can be sized from a placeholder build before the real positions (which
-/// depend on that very length) are known. 4 bytes bounds a `SeekPosition` to
-/// 4 GiB, ample for `Info`/`Tracks` (always well under 64 KiB in practice).
-const SEEK_POSITION_FIXED_WIDTH: usize = 4;
-
-// ---------------------------------------------------------------------------
-// Matroska CodecIDs (RFC 9559 §27 codec-mapping registry) — mirrors the set
-// `crate::webm_demux::WebmDemux` maps in the opposite direction, plus the
-// ISOBMFF-family video/audio codecs a DVR recording carries.
-// ---------------------------------------------------------------------------
-
-const CODEC_V_AVC: &[u8] = b"V_MPEG4/ISO/AVC";
-const CODEC_V_HEVC: &[u8] = b"V_MPEGH/ISO/HEVC";
-const CODEC_V_VP9: &[u8] = b"V_VP9";
-const CODEC_V_VP8: &[u8] = b"V_VP8";
-const CODEC_V_AV1: &[u8] = b"V_AV1";
-const CODEC_A_AAC: &[u8] = b"A_AAC";
-const CODEC_A_OPUS: &[u8] = b"A_OPUS";
-const CODEC_A_VORBIS: &[u8] = b"A_VORBIS";
-const CODEC_A_AC3: &[u8] = b"A_AC3";
-const CODEC_A_EAC3: &[u8] = b"A_EAC3";
-
-/// `OpusHead` identification-header magic (RFC 7845 §5.1).
+/// OpusHead identification-header magic (RFC 7845 §5.1).
 const OPUS_HEAD_MAGIC: &[u8; 8] = b"OpusHead";
-/// Fixed `OpusHead` header bytes before the optional channel mapping table
-/// (RFC 7845 §5.1).
+/// Minimum OpusHead length (RFC 7845 §5.1).
 const OPUS_HEAD_HEADER_LEN: usize = 19;
 
-/// Largest entry **size** a one-byte EBML VINT holds (RFC 8794 §4).
-const VINT1_MAX: u64 = 0x7E;
-/// Largest entry size a two-byte EBML VINT holds.
-const VINT2_MAX: u64 = 0x3FFE;
-/// Largest entry size a three-byte EBML VINT holds.
-const VINT3_MAX: u64 = 0x1F_FFFE;
-/// Largest entry size a four-byte EBML VINT holds.
-const VINT4_MAX: u64 = 0x0FFF_FFFE;
-/// Largest entry size a five-byte EBML VINT holds.
-const VINT5_MAX: u64 = 0x07_FFFF_FFFE;
-/// Byte width of the VINT encoding selected for sizes above [`VINT1_MAX`].
-const VINT2_WIDTH: usize = 2;
-/// Byte width of the VINT encoding selected for sizes above [`VINT2_MAX`].
-const VINT3_WIDTH: usize = 3;
-/// Byte width of the VINT encoding selected for sizes above [`VINT3_MAX`].
-const VINT4_WIDTH: usize = 4;
-/// Byte width of the VINT encoding selected for sizes above [`VINT4_MAX`].
-const VINT5_WIDTH: usize = 5;
-/// Byte width of the widest VINT this module writes: one `u64` (RFC 8794 §4
-/// caps a VINT at 8 bytes).
-const VINT_MAX_WIDTH: usize = core::mem::size_of::<u64>();
-/// Bits each VINT byte contributes to the encoded value (RFC 8794 §4).
-const VINT_DATA_BITS_PER_BYTE: usize = 7;
-
-// ---------------------------------------------------------------------------
-// EBML element write helpers (RFC 8794 §4)
-// ---------------------------------------------------------------------------
-
-/// Encode an EBML element **size** VINT (RFC 8794 §4): the minimal width (1-8
-/// bytes) whose leading `1` marker bit plus the remaining data bits can
-/// represent `value`. The same encoding also serves an element **ID**'s
-/// *referenced* value where a VINT-with-marker is required (e.g. a
-/// `SimpleBlock`'s track number, RFC 9559 §12) — width selection is identical.
-///
-/// Values at or above `2^56` would need a 9+-byte encoding this function does
-/// not produce (EBML's own DocType/element-ID width caps make this
-/// unreachable for anything this module writes — element sizes, byte offsets,
-/// and track numbers all stay far below that bound in practice).
-fn encode_vint_size(value: u64) -> Vec<u8> {
-    let width: usize = if value <= VINT1_MAX {
-        1
-    } else if value <= VINT2_MAX {
-        VINT2_WIDTH
-    } else if value <= VINT3_MAX {
-        VINT3_WIDTH
-    } else if value <= VINT4_MAX {
-        VINT4_WIDTH
-    } else if value <= VINT5_MAX {
-        VINT5_WIDTH
-    } else {
-        VINT_MAX_WIDTH
-    };
-    let marker = 1u64 << (width * VINT_DATA_BITS_PER_BYTE);
-    let encoded = marker | value;
-    encoded.to_be_bytes()[VINT_MAX_WIDTH - width..].to_vec()
+/// One announced track, owned so the writer's borrow of it ends with `start`.
+struct OwnedTrack {
+    track_id: TrackId,
+    number: u64,
+    timescale: broadcast_common::timescale::Timescale,
+    track_type: u64,
+    codec_id: String,
+    codec_private: Option<Vec<u8>>,
+    video: Option<(u64, u64)>,
+    audio: Option<(u64, f64)>,
 }
 
-/// The VINT size field for a body of `len` bytes (a `usize` length can only
-/// fail to fit `u64` on a platform wider than any this crate targets; saturate
-/// rather than wrap).
-fn len_vint(len: usize) -> Vec<u8> {
-    encode_vint_size(u64::try_from(len).unwrap_or(u64::MAX))
+/// Convert a tick value in `timescale` units to Matroska ticks.
+fn to_matroska_ticks(ticks: i64, timescale: broadcast_common::timescale::Timescale) -> i64 {
+    let ns = (ticks as i128) * i128::from(broadcast_common::units::NANOS_PER_SEC)
+        / i128::from(timescale.get());
+    (ns / i128::from(TIMESTAMP_SCALE_NS)) as i64
 }
 
-/// Write one EBML element: `id` bytes, then the VINT size of `body`, then
-/// `body` verbatim.
-fn element(id: &[u8], body: &[u8]) -> Vec<u8> {
-    let size = encode_vint_size(body.len() as u64);
-    let mut out = Vec::with_capacity(id.len() + size.len() + body.len());
-    out.extend_from_slice(id);
-    out.extend_from_slice(&size);
-    out.extend_from_slice(body);
-    out
-}
-
-/// Write a master element: the concatenation of `children`'s already-encoded
-/// bytes, wrapped in `id`/size.
-fn master(id: &[u8], children: &[Vec<u8>]) -> Vec<u8> {
-    let body_len: usize = children.iter().map(Vec::len).sum();
-    let size = len_vint(body_len);
-    let mut out = Vec::with_capacity(id.len() + size.len() + body_len);
-    out.extend_from_slice(id);
-    out.extend_from_slice(&size);
-    for child in children {
-        out.extend_from_slice(child);
-    }
-    out
-}
-
-/// The minimal big-endian byte encoding of a uint element body (RFC 8794 §4:
-/// a uint element's value is however many bytes are present, big-endian; `0`
-/// still needs one byte).
-fn uint_bytes(value: u64) -> Vec<u8> {
-    if value == 0 {
-        return vec![0u8];
-    }
-    let full = value.to_be_bytes();
-    let first_nonzero = full
-        .iter()
-        .position(|&b| b != 0)
-        .unwrap_or(VINT_MAX_WIDTH - 1);
-    full[first_nonzero..].to_vec()
-}
-
-/// Write a uint element at its minimal byte width.
-fn uint_elem(id: &[u8], value: u64) -> Vec<u8> {
-    element(id, &uint_bytes(value))
-}
-
-/// Write a uint element at a caller-fixed byte width (padded with leading
-/// zero bytes) — see [`SEEK_POSITION_FIXED_WIDTH`] for why this exists.
-fn fixed_uint_elem(id: &[u8], value: u64, width: usize) -> Vec<u8> {
-    let full = value.to_be_bytes();
-    element(id, &full[VINT_MAX_WIDTH - width..])
-}
-
-/// Write a string/UTF-8 element (verbatim ASCII/UTF-8 bytes, no terminator).
-fn string_elem(id: &[u8], s: &[u8]) -> Vec<u8> {
-    element(id, s)
-}
-
-/// Write a binary element (verbatim opaque bytes — `CodecPrivate`, …).
-fn binary_elem(id: &[u8], data: &[u8]) -> Vec<u8> {
-    element(id, data)
-}
-
-/// Write a float element (8-byte IEEE 754 big-endian — this writer always
-/// uses the 64-bit float width for `Duration`/`SamplingFrequency`).
-fn float64_elem(id: &[u8], value: f64) -> Vec<u8> {
-    element(id, &value.to_be_bytes())
-}
-
-// ---------------------------------------------------------------------------
-// EBML Header
-// ---------------------------------------------------------------------------
-
-fn build_ebml_header() -> Vec<u8> {
-    master(
-        &ID_EBML,
-        &[
-            uint_elem(&ID_EBML_VERSION, EBML_VERSION_VALUE),
-            uint_elem(&ID_EBML_READ_VERSION, EBML_READ_VERSION_VALUE),
-            uint_elem(&ID_EBML_MAX_ID_LENGTH, EBML_MAX_ID_LENGTH_VALUE),
-            uint_elem(&ID_EBML_MAX_SIZE_LENGTH, EBML_MAX_SIZE_LENGTH_VALUE),
-            string_elem(&ID_DOC_TYPE, DOC_TYPE),
-            uint_elem(&ID_DOC_TYPE_VERSION, DOC_TYPE_VERSION_VALUE),
-            uint_elem(&ID_DOC_TYPE_READ_VERSION, DOC_TYPE_READ_VERSION_VALUE),
-        ],
-    )
-}
-
-// ---------------------------------------------------------------------------
-// Info
-// ---------------------------------------------------------------------------
-
-fn build_info(duration_ticks: f64) -> Vec<u8> {
-    master(
-        &ID_INFO,
-        &[
-            uint_elem(&ID_TIMESTAMP_SCALE, TIMESTAMP_SCALE_NS),
-            float64_elem(&ID_DURATION, duration_ticks),
-            string_elem(&ID_MUXING_APP, APP_NAME),
-            string_elem(&ID_WRITING_APP, APP_NAME),
-        ],
-    )
-}
-
-// ---------------------------------------------------------------------------
-// SeekHead
-// ---------------------------------------------------------------------------
-
-/// One `Seek` entry: the target element's ID, and its byte offset relative to
-/// the `Segment` payload start, written at [`SEEK_POSITION_FIXED_WIDTH`].
-fn seek_entry(target_id: &[u8], position: u64) -> Vec<u8> {
-    master(
-        &ID_SEEK,
-        &[
-            binary_elem(&ID_SEEK_ID, target_id),
-            fixed_uint_elem(&ID_SEEK_POSITION, position, SEEK_POSITION_FIXED_WIDTH),
-        ],
-    )
-}
-
-/// Build `SeekHead`, indexing `Info` and `Tracks` at the given byte offsets
-/// (relative to the `Segment` payload start).
-fn build_seek_head(pos_info: u64, pos_tracks: u64) -> Vec<u8> {
-    master(
-        &ID_SEEK_HEAD,
-        &[
-            seek_entry(&ID_INFO, pos_info),
-            seek_entry(&ID_TRACKS, pos_tracks),
-        ],
-    )
-}
-
-// ---------------------------------------------------------------------------
-// Tracks / TrackEntry
-// ---------------------------------------------------------------------------
-
-fn video_elem(width: u16, height: u16) -> Vec<u8> {
-    master(
-        &ID_VIDEO,
-        &[
-            uint_elem(&ID_PIXEL_WIDTH, width as u64),
-            uint_elem(&ID_PIXEL_HEIGHT, height as u64),
-        ],
-    )
-}
-
-fn audio_elem(channels: u16, sample_rate: u32) -> Vec<u8> {
-    master(
-        &ID_AUDIO,
-        &[
-            uint_elem(&ID_CHANNELS, channels as u64),
-            float64_elem(&ID_SAMPLING_FREQUENCY, sample_rate as f64),
-        ],
-    )
-}
-
-/// Rebuild the raw `OpusHead` identification header (RFC 7845 §5.1) from a
-/// decoded [`OpusSpecificBox`] — the exact inverse of
-/// `webm_demux::opus_config`'s parse.
+/// Build the `OpusHead` identification header (RFC 7845 §5.1) a `dOps` box
+/// describes.
 fn build_opus_head(dops: &OpusSpecificBox) -> Vec<u8> {
     let mut out = Vec::with_capacity(OPUS_HEAD_HEADER_LEN);
     out.extend_from_slice(OPUS_HEAD_MAGIC);
@@ -462,55 +137,59 @@ fn build_opus_head(dops: &OpusSpecificBox) -> Vec<u8> {
     out
 }
 
-/// Build one `TrackEntry`, returning its bytes plus whether it is a video
-/// track. `track_number` is the 1-based Matroska track number (this crate
-/// assigns them sequentially in [`Media::tracks`] order); `track_id` supplies
-/// `TrackUID`.
-fn build_track_entry(
-    track_number: u64,
-    track_id: TrackId,
-    config: &CodecConfig,
-) -> Result<(Vec<u8>, bool)> {
+/// Map one IR track to the writer's `TrackEntry` fields, `number` supplying the
+/// 1-based `TrackNumber` and the IR track ID the `TrackUID`.
+fn map_track(spec: &IrTrackSpec, number: u64) -> Result<OwnedTrack> {
+    let track_id = spec.track_id;
+    let config = &spec.config;
     let is_video = config.is_video();
     let track_type = match config {
         CodecConfig::Data { .. } => TRACK_TYPE_METADATA,
         _ if is_video => TRACK_TYPE_VIDEO,
         _ => TRACK_TYPE_AUDIO,
     };
-
-    let (codec_id, codec_private, sub_elem): (Vec<u8>, Option<Vec<u8>>, Vec<u8>) = match config {
+    let (codec_id, codec_private, video, audio) = match config {
         CodecConfig::Avc {
             config,
             width,
             height,
         } => (
-            CODEC_V_AVC.to_vec(),
+            CODEC_V_AVC,
             Some(config.config.try_to_bytes()?),
-            video_elem(*width, *height),
+            Some((u64::from(*width), u64::from(*height))),
+            None,
         ),
         CodecConfig::Hevc {
             config,
             width,
             height,
         } => (
-            CODEC_V_HEVC.to_vec(),
+            CODEC_V_HEVC,
             Some(config.config.try_to_bytes()?),
-            video_elem(*width, *height),
+            Some((u64::from(*width), u64::from(*height))),
+            None,
         ),
-        CodecConfig::Vp9 { width, height, .. } => {
-            (CODEC_V_VP9.to_vec(), None, video_elem(*width, *height))
-        }
-        CodecConfig::Vp8 { width, height } => {
-            (CODEC_V_VP8.to_vec(), None, video_elem(*width, *height))
-        }
+        CodecConfig::Vp9 { width, height, .. } => (
+            CODEC_V_VP9,
+            None,
+            Some((u64::from(*width), u64::from(*height))),
+            None,
+        ),
+        CodecConfig::Vp8 { width, height } => (
+            CODEC_V_VP8,
+            None,
+            Some((u64::from(*width), u64::from(*height))),
+            None,
+        ),
         CodecConfig::Av1 {
             config,
             width,
             height,
         } => (
-            CODEC_V_AV1.to_vec(),
+            CODEC_V_AV1,
             Some(config.try_to_bytes()?),
-            video_elem(*width, *height),
+            Some((u64::from(*width), u64::from(*height))),
+            None,
         ),
         CodecConfig::Aac {
             esds,
@@ -529,9 +208,10 @@ fn build_track_entry(
                      Matroska CodecPrivate",
                 ))?;
             (
-                CODEC_A_AAC.to_vec(),
+                CODEC_A_AAC,
                 Some(asc),
-                audio_elem(*channel_count, *sample_rate),
+                None,
+                Some((u64::from(*channel_count), f64::from(*sample_rate))),
             )
         }
         CodecConfig::Opus {
@@ -540,36 +220,40 @@ fn build_track_entry(
             sample_rate,
             ..
         } => (
-            CODEC_A_OPUS.to_vec(),
+            CODEC_A_OPUS,
             Some(build_opus_head(config)),
-            audio_elem(*channel_count, *sample_rate),
+            None,
+            Some((u64::from(*channel_count), f64::from(*sample_rate))),
         ),
         CodecConfig::Vorbis {
             codec_private,
             channels,
             sample_rate,
         } => (
-            CODEC_A_VORBIS.to_vec(),
+            CODEC_A_VORBIS,
             Some(codec_private.clone()),
-            audio_elem(*channels, *sample_rate),
+            None,
+            Some((u64::from(*channels), f64::from(*sample_rate))),
         ),
         CodecConfig::Ac3 {
             channel_count,
             sample_rate,
             ..
         } => (
-            CODEC_A_AC3.to_vec(),
+            CODEC_A_AC3,
             None,
-            audio_elem(*channel_count, *sample_rate),
+            None,
+            Some((u64::from(*channel_count), f64::from(*sample_rate))),
         ),
         CodecConfig::Eac3 {
             channel_count,
             sample_rate,
             ..
         } => (
-            CODEC_A_EAC3.to_vec(),
+            CODEC_A_EAC3,
             None,
-            audio_elem(*channel_count, *sample_rate),
+            None,
+            Some((u64::from(*channel_count), f64::from(*sample_rate))),
         ),
         CodecConfig::Data {
             identity:
@@ -579,9 +263,10 @@ fn build_track_entry(
                 },
             ..
         } => (
-            codec_id.as_bytes().to_vec(),
+            codec_id.as_str(),
             (!codec_private.is_empty()).then(|| codec_private.to_vec()),
-            Vec::new(),
+            None,
+            None,
         ),
         CodecConfig::Data { identity } => {
             return Err(Error::DataIdentityMismatch {
@@ -596,299 +281,31 @@ fn build_track_entry(
             });
         }
     };
-
-    let mut children = vec![
-        uint_elem(&ID_TRACK_NUMBER, track_number),
-        uint_elem(&ID_TRACK_UID, u64::from(track_id.value())),
-        uint_elem(&ID_TRACK_TYPE, track_type),
-        string_elem(&ID_CODEC_ID, &codec_id),
-        sub_elem,
-    ];
-    if let Some(priv_bytes) = codec_private {
-        children.push(binary_elem(&ID_CODEC_PRIVATE, &priv_bytes));
-    }
-    Ok((master(&ID_TRACK_ENTRY, &children), is_video))
+    Ok(OwnedTrack {
+        track_id,
+        number,
+        timescale: spec.timescale,
+        track_type,
+        codec_id: String::from(codec_id),
+        codec_private,
+        video,
+        audio,
+    })
 }
-
-// ---------------------------------------------------------------------------
-// Cluster / SimpleBlock / Cues
-// ---------------------------------------------------------------------------
-
-/// One sample, resolved to its global Matroska (`TimestampScale`-tick)
-/// presentation time, ready to be placed into a `Cluster`.
-#[derive(Debug, Clone, Copy)]
-struct BlockEvent {
-    /// Index into the announced track list.
-    track_index: usize,
-    /// 1-based Matroska `TrackNumber`.
-    track_number: u64,
-    /// Absolute presentation time, in `TimestampScale` ticks.
-    pts_ticks: i64,
-    /// Whether this sample is a sync sample (random-access point).
-    is_keyframe: bool,
-    /// Whether this event's track is video.
-    is_video: bool,
-}
-
-/// Convert a tick value in `track_timescale` units to `TimestampScale` ticks
-/// (the inverse of `webm_demux::parse_block`'s `raw_ticks * scale_ns /
-/// ns_per_ir_tick`): `ticks / track_timescale` seconds, expressed in
-/// [`TIMESTAMP_SCALE_NS`]-sized ticks.
-fn to_matroska_ticks(
-    ticks: i64,
-    track_timescale: broadcast_common::timescale::Timescale,
-    timestamp_scale_ns: u64,
-) -> i64 {
-    let ns = (ticks as i128) * (broadcast_common::units::NANOS_PER_SEC as i128)
-        / i128::from(track_timescale.get());
-    (ns / timestamp_scale_ns as i128) as i64
-}
-
-/// Bytes of the body of a `SimpleBlock` (track-number VINT + `i16` + flags + frame).
-fn simple_block_body_len(track_number: u64, data_len: usize) -> usize {
-    encode_vint_size(track_number).len() + SIMPLE_BLOCK_FIXED_LEN + data_len
-}
-
-/// Total encoded length of a `SimpleBlock` element (id + size VINT + body).
-fn simple_block_len(track_number: u64, data_len: usize) -> usize {
-    let body = simple_block_body_len(track_number, data_len);
-    ID_SIMPLE_BLOCK.len() + len_vint(body).len() + body
-}
-
-/// Append one `SimpleBlock` (RFC 9559 §12): track-number VINT, signed int16
-/// relative timestamp, flags byte (keyframe bit only — no lacing), then the
-/// frame. The frame is copied once, straight into the destination, never
-/// through a body buffer and an element buffer (audit r05-O4).
-fn write_simple_block(
-    out: &mut Vec<u8>,
-    track_number: u64,
-    rel_ts: i16,
-    is_keyframe: bool,
-    data: &[u8],
-) {
-    let body = simple_block_body_len(track_number, data.len());
-    out.extend_from_slice(&ID_SIMPLE_BLOCK);
-    out.extend_from_slice(&len_vint(body));
-    out.extend_from_slice(&encode_vint_size(track_number));
-    out.extend_from_slice(&rel_ts.to_be_bytes());
-    out.push(if is_keyframe { BLOCK_FLAG_KEYFRAME } else { 0 });
-    out.extend_from_slice(data);
-}
-
-/// Whether `ev` starts a new `Cluster` after the one currently open at
-/// `cluster_start` — the single rule [`build_clusters`] and
-/// [`MkvMuxStage`] both apply.
-///
-/// A `SimpleBlock`'s timestamp is a *signed* 16-bit value relative to the
-/// `Cluster` timestamp (RFC 9559 §12). A forward-only span rule is not enough:
-/// a backward step (a TS splice or signalled discontinuity, a timestamp wrap,
-/// or a large B-frame reorder across a keyframe) keeps `rel` inside the same
-/// `Cluster`, and once it drops below `i16::MIN` the `debug_assert` fires in
-/// debug builds while a release build wraps the cast and puts the block at an
-/// arbitrary time. A new `Cluster` starts whenever `rel` would leave the range,
-/// in either direction, at every video keyframe (when any track is video), and
-/// in any case every `max_span` ticks (audit r05-W23).
-fn starts_cluster(
-    empty: bool,
-    has_video: bool,
-    cluster_start: i64,
-    max_span: i64,
-    ev: &BlockEvent,
-) -> bool {
-    let rel = ev.pts_ticks - cluster_start;
-    empty
-        || (has_video && ev.is_video && ev.is_keyframe)
-        || rel >= max_span
-        || !(MIN_BLOCK_REL_TICKS..=MAX_BLOCK_REL_TICKS).contains(&rel)
-}
-
-/// Group a time-interleaved (decode-order-preserving per track) [`BlockEvent`]
-/// stream into `Cluster`s by [`starts_cluster`]'s rule. See the module docs.
-#[cfg(test)]
-fn build_clusters(events: &[BlockEvent], has_video: bool) -> Vec<Vec<BlockEvent>> {
-    let max_span = if has_video {
-        MAX_CLUSTER_SPAN_WITH_VIDEO_TICKS
-    } else {
-        MAX_CLUSTER_SPAN_AUDIO_ONLY_TICKS
-    };
-    let mut clusters: Vec<Vec<BlockEvent>> = Vec::new();
-    let mut current: Vec<BlockEvent> = Vec::new();
-    // The base `build_cluster` will write for the current `Cluster`: the
-    // first event's timestamp, or 0 when that is negative (an unsigned
-    // `Timestamp` cannot name it).
-    let mut cluster_start: i64 = 0;
-    for &ev in events {
-        let new_cluster =
-            starts_cluster(current.is_empty(), has_video, cluster_start, max_span, &ev);
-        if new_cluster && !current.is_empty() {
-            clusters.push(core::mem::take(&mut current));
-        }
-        if current.is_empty() {
-            // The same base `build_cluster` writes, so this function's range
-            // check and that one's are the same invariant.
-            cluster_start = ev.pts_ticks.max(0);
-        }
-        current.push(ev);
-    }
-    if !current.is_empty() {
-        clusters.push(current);
-    }
-    clusters
-}
-
-/// Serialize one `Cluster`: its base `Timestamp` (the first event's presentation
-/// time) then a `SimpleBlock` per event, in order.
-fn build_cluster(events: &[BlockEvent], data: &[Bytes]) -> Result<Vec<u8>> {
-    let first_ticks = events.first().map(|e| e.pts_ticks).unwrap_or(0);
-    // A `Cluster` `Timestamp` is an *unsigned* integer (RFC 9559 §13), so a
-    // negative base cannot be written. The old code wrote `cluster_start.max(0)`
-    // as the base while every block stayed relative to the *negative*
-    // `cluster_start`, so every block of the first `Cluster` came out shifted
-    // by `-cluster_start` ms — the ordinary case of a negative first PTS from
-    // B-frame composition (audit r05-W23). The base is now the same value the
-    // blocks are measured against, so their relative spacing is exact; a
-    // negative absolute first timestamp simply starts at `Timestamp = 0`, the
-    // earliest instant an unsigned field can name.
-    let base = first_ticks.max(0);
-    let timestamp = uint_elem(&ID_TIMESTAMP, base as u64);
-    // First pass: validate every relative timestamp and size the cluster, so the
-    // second pass writes each frame exactly once into a pre-sized buffer.
-    let mut rels: Vec<i16> = Vec::with_capacity(events.len());
-    let mut body_len = timestamp.len();
-    for (event_index, ev) in events.iter().enumerate() {
-        let rel_i64 = ev.pts_ticks - base;
-        // A silent `clamp` would write a *wrong* block time in release builds
-        // (where `debug_assert` does nothing) — the `SimpleBlock` would sit at
-        // an arbitrary instant rather than where its sample is. `build_clusters`
-        // guarantees the range, so a violation here is a bug, and a bug is an
-        // error, not a mangle (audit item 7).
-        let rel = i16::try_from(rel_i64).map_err(|_| {
-            Error::InvalidInput(
-                "mkv_mux: cluster relative timestamp exceeds the SimpleBlock i16 range",
-            )
-        })?;
-        rels.push(rel);
-        body_len += simple_block_len(ev.track_number, data[event_index].len());
-    }
-    let size = len_vint(body_len);
-    let mut out = Vec::with_capacity(ID_CLUSTER.len() + size.len() + body_len);
-    out.extend_from_slice(&ID_CLUSTER);
-    out.extend_from_slice(&size);
-    out.extend_from_slice(&timestamp);
-    for ((ev, &rel), bytes) in events.iter().zip(&rels).zip(data) {
-        write_simple_block(&mut out, ev.track_number, rel, ev.is_keyframe, bytes);
-    }
-    Ok(out)
-}
-
-/// Build `Cues`: one `CuePoint` per **video** keyframe (never audio — every
-/// audio sample in this IR is a sync sample, so indexing them would defeat
-/// the point of an index). Returns an empty `Vec` (nothing written) when
-/// there is no video keyframe to index.
-fn build_cues(entries: &[CueEntry]) -> Vec<u8> {
-    let mut cue_points: Vec<Vec<u8>> = Vec::new();
-    // `CueTime`s must be non-decreasing (RFC 9559 §20: "The CueTime … of the
-    // CuePoint … SHOULD be sorted"). A backward timestamp jump opens a new
-    // `Cluster` (r05-W23), so a later cluster's keyframe can sit at an
-    // *earlier* presentation time than an earlier one.
-    //
-    // Every keyframe still gets a cue — silently dropping one would make its
-    // cluster unreachable by seeking, which is the whole point of the index
-    // (audit item 8, round 3). Such a point is emitted at the last cue time
-    // (`max(cue_time, last)`), which keeps the index sorted while pointing at
-    // the right cluster; two cue points may then share a `CueTime`, which
-    // §20 permits (the sort is what is required, not uniqueness).
-    let mut last_cue_time: Option<i64> = None;
-    for entry in entries {
-        let raw = entry.cue_time.max(0);
-        let cue_time = last_cue_time.map_or(raw, |last| raw.max(last));
-        last_cue_time = Some(cue_time);
-        let track_positions = master(
-            &ID_CUE_TRACK_POSITIONS,
-            &[
-                uint_elem(&ID_CUE_TRACK, entry.track),
-                uint_elem(&ID_CUE_CLUSTER_POSITION, entry.offset),
-            ],
-        );
-        cue_points.push(master(
-            &ID_CUE_POINT,
-            &[uint_elem(&ID_CUE_TIME, cue_time as u64), track_positions],
-        ));
-    }
-    if cue_points.is_empty() {
-        return Vec::new();
-    }
-    master(&ID_CUES, &cue_points)
-}
-
-// ---------------------------------------------------------------------------
-// MkvMuxStage
-// ---------------------------------------------------------------------------
-
-/// The EBML "unknown size" encoding (RFC 8794 §4): a size VINT whose data bits
-/// are all set. The `Segment` is written with it — the element runs to the end
-/// of the stream — because its size is a whole-stream fact this muxer never
-/// holds; a reader walks its children to the end of the file.
-const UNKNOWN_SIZE_VINT: [u8; 8] = [0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
 
 /// Mux a Matroska (`.mkv`) byte stream from a live sample stream.
 ///
-/// The stage form of the Matroska container writer: [`MuxInput::Track`]
-/// announcements become `TrackEntry` elements, and samples are placed into
-/// `SimpleBlock`s inside one open `Cluster` at a time. The EBML header, the
-/// `Segment` (written with the RFC 8794 §4 "unknown size" encoding, since its
-/// total length is a whole-stream fact), `SeekHead`, `Info` and `Tracks` go out
-/// before the first `Cluster`; `Cues` follows the last one.
-///
-/// [`new`](Self::new) takes the `Cluster` duration: a caller policy, not a
-/// library default. A new `Cluster` also starts at every video keyframe and
-/// whenever a block's signed 16-bit relative timestamp would leave its range
-/// (RFC 9559 §12), whichever comes first.
-///
-/// The `Info.Duration` value is a whole-stream fact in a header element, so it
-/// is written as zero and patched by [`Stage::finish`] with
-/// [`MuxOutput::BytesAt`]; an output written to a pipe keeps the zero.
-#[derive(Debug, Clone)]
+/// [`new`](Self::new) takes the `Cluster` span: a caller policy, not a library
+/// default. The EBML header, the `Segment` (RFC 8794 §6.2 unknown size, since
+/// its length is a whole-stream fact), `SeekHead`, `Info` and `Tracks` go out
+/// before the first `Cluster`; `Cues` and the `Info.Duration` patch follow the
+/// last one.
 pub struct MkvMuxStage {
     cluster_duration: core::time::Duration,
-    tracks: Vec<MkvTrack>,
-    entries: Vec<Vec<u8>>,
-    pending: Vec<Option<PendingBlock>>,
-    cluster: Vec<BlockEvent>,
-    cluster_data: Vec<Bytes>,
-    cluster_start: i64,
+    tracks: Vec<OwnedTrack>,
+    writer: Option<Writer>,
     out: VecDeque<MuxOutput>,
-    payload_written: u64,
-    info_offset: u64,
-    duration_ticks: i64,
-    cues: Vec<CueEntry>,
     started: bool,
-}
-
-/// One announced Matroska track: its spec, its 1-based `TrackNumber` and
-/// whether it is video (a new `Cluster` starts at its keyframes).
-#[derive(Debug, Clone)]
-struct MkvTrack {
-    spec: TrackSpec,
-    number: u64,
-    is_video: bool,
-}
-
-/// One sample waiting to be placed in a `Cluster`: its ordering/timing facts
-/// and its coded bytes.
-#[derive(Debug, Clone)]
-struct PendingBlock {
-    event: BlockEvent,
-    data: Bytes,
-}
-
-/// One `CuePoint` source: a video keyframe's presentation time and the byte
-/// offset (relative to the `Segment` payload start) of its `Cluster`.
-#[derive(Debug, Clone, Copy)]
-struct CueEntry {
-    cue_time: i64,
-    track: u64,
-    offset: u64,
 }
 
 impl MkvMuxStage {
@@ -897,31 +314,12 @@ impl MkvMuxStage {
         Self {
             cluster_duration,
             tracks: Vec::new(),
-            entries: Vec::new(),
-            pending: Vec::new(),
-            cluster: Vec::new(),
-            cluster_data: Vec::new(),
-            cluster_start: 0,
+            writer: None,
             out: VecDeque::new(),
-            payload_written: 0,
-            info_offset: 0,
-            duration_ticks: 0,
-            cues: Vec::new(),
             started: false,
         }
     }
 
-    /// The caller's `Cluster` span, in [`TIMESTAMP_SCALE_NS`] ticks.
-    fn cluster_span_ticks(&self) -> i64 {
-        i64::try_from(self.cluster_duration.as_millis()).unwrap_or(i64::MAX)
-    }
-
-    fn has_video(&self) -> bool {
-        self.tracks.iter().any(|t| t.is_video)
-    }
-
-    /// Write the EBML header, `Segment` head, `SeekHead`, `Info` and `Tracks`,
-    /// once.
     fn start(&mut self) -> Result<()> {
         if self.started {
             return Ok(());
@@ -929,179 +327,100 @@ impl MkvMuxStage {
         if self.tracks.is_empty() {
             return Err(Error::InvalidInput("cannot mux a stream with no tracks"));
         }
-        let ebml = build_ebml_header();
-        let info = build_info(0.0);
-        let tracks_bytes = master(&ID_TRACKS, &self.entries);
-        let seekhead_placeholder = build_seek_head(0, 0);
-        let pos_info = seekhead_placeholder.len() as u64;
-        let pos_tracks = pos_info + info.len() as u64;
-        let seekhead = build_seek_head(pos_info, pos_tracks);
-        let payload_start =
-            ebml.len() as u64 + ID_SEGMENT.len() as u64 + UNKNOWN_SIZE_VINT.len() as u64;
-        self.info_offset = payload_start + seekhead.len() as u64;
-        self.payload_written = pos_tracks + tracks_bytes.len() as u64;
-        self.out.push_back(MuxOutput::Bytes(ebml.into()));
-        let mut head = Vec::with_capacity(ID_SEGMENT.len() + UNKNOWN_SIZE_VINT.len());
-        head.extend_from_slice(&ID_SEGMENT);
-        head.extend_from_slice(&UNKNOWN_SIZE_VINT);
-        self.out.push_back(MuxOutput::Bytes(head.into()));
-        self.out.push_back(MuxOutput::Bytes(seekhead.into()));
-        self.out.push_back(MuxOutput::Bytes(info.into()));
-        self.out.push_back(MuxOutput::Bytes(tracks_bytes.into()));
+        let specs: Vec<TrackSpec<'_>> = self
+            .tracks
+            .iter()
+            .map(|track| TrackSpec {
+                track_number: track.number,
+                track_uid: u64::from(track.track_id.value()),
+                track_type: track.track_type,
+                codec_id: &track.codec_id,
+                codec_private: track.codec_private.as_deref(),
+                default_duration_ns: None,
+                video: track.video,
+                audio: track.audio,
+            })
+            .collect();
+        let tracks = tracks_element(&specs)?;
+        let info = info_element(&InfoSpec {
+            timestamp_scale_ns: TIMESTAMP_SCALE_NS,
+            duration_ticks: 0.0,
+            muxing_app: APP_NAME,
+            writing_app: APP_NAME,
+        })?;
+        let writer = Writer::new(Layout::new(self.cluster_duration), &info, &tracks)?;
+        self.writer = Some(writer);
         self.started = true;
         Ok(())
     }
 
-    fn announce(&mut self, spec: TrackSpec) -> Result<()> {
+    fn announce(&mut self, spec: IrTrackSpec) -> Result<()> {
         if self.started {
             return Err(Error::InvalidInput(
                 "mkv: a track was announced after the Tracks element was written",
             ));
         }
-        if self.tracks.iter().any(|t| t.spec.track_id == spec.track_id) {
+        if self
+            .tracks
+            .iter()
+            .any(|track| track.track_id == spec.track_id)
+        {
             return Err(Error::InvalidInput("mkv: duplicate track id"));
         }
-        let number = self.tracks.len() as u64 + 1;
-        let (entry, is_video) = build_track_entry(number, spec.track_id, &spec.config)?;
-        self.entries.push(entry);
-        self.tracks.push(MkvTrack {
-            spec,
-            number,
-            is_video,
-        });
-        self.pending.push(None);
+        let number = u64::try_from(self.tracks.len())
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
+        self.tracks.push(map_track(&spec, number)?);
         Ok(())
     }
 
-    /// Queue one sample and return every `Cluster` that is now complete.
-    fn push(&mut self, track: TrackId, sample: Sample) -> Result<Vec<Vec<u8>>> {
-        let Some(index) = self.tracks.iter().position(|t| t.spec.track_id == track) else {
+    fn push(&mut self, track: TrackId, sample: Sample) -> Result<Vec<Write>> {
+        let Some(index) = self
+            .tracks
+            .iter()
+            .position(|announced| announced.track_id == track)
+        else {
             return Err(Error::InvalidInput("mkv: sample for an unannounced track"));
         };
-        let timescale = self.tracks[index].spec.timescale;
+        let Some(writer) = self.writer.as_mut() else {
+            return Err(Error::InvalidInput("mkv: the writer has not been started"));
+        };
+        let track_timescale = self.tracks[index].timescale;
+        let number = self.tracks[index].number;
         let pts = sample
             .timing
-            .and_then(|t| t.pts())
-            .or(sample.timing.and_then(|t| t.dts()))
+            .and_then(|timing| timing.pts())
+            .or_else(|| sample.timing.and_then(|timing| timing.dts()))
             .unwrap_or(0);
-        let pts_ticks = to_matroska_ticks(pts, timescale, TIMESTAMP_SCALE_NS);
-        let duration = sample.timing.and_then(|t| t.duration()).unwrap_or(0);
-        let end_ticks = to_matroska_ticks(pts + i64::from(duration), timescale, TIMESTAMP_SCALE_NS);
-        if end_ticks > self.duration_ticks {
-            self.duration_ticks = end_ticks;
-        }
-        // One pending sample per track orders the interleave; a second sample
-        // of the same track before the others catch up (a backward timestamp
-        // step, or one track simply running ahead) must not overwrite the
-        // first, which would drop it from the stream.
-        let mut clusters = Vec::new();
-        if let Some(previous) = self.pending[index].take()
-            && let Some(bytes) = self.place(previous)?
-        {
-            clusters.push(bytes);
-        }
-        self.pending[index] = Some(PendingBlock {
-            event: BlockEvent {
-                track_index: index,
-                track_number: self.tracks[index].number,
-                pts_ticks,
-                is_keyframe: sample.flags.is_sync,
-                is_video: self.tracks[index].is_video,
-            },
-            data: sample.data,
-        });
-        clusters.extend(self.take_ready()?);
-        Ok(clusters)
+        let pts_ticks = to_matroska_ticks(pts, track_timescale);
+        let duration = sample
+            .timing
+            .and_then(|timing| timing.duration())
+            .unwrap_or(0);
+        let end_ticks = to_matroska_ticks(pts.saturating_add(i64::from(duration)), track_timescale);
+        let ticks = u64::try_from(end_ticks.saturating_sub(pts_ticks)).unwrap_or(0);
+        Ok(writer.push_block(
+            number,
+            pts_ticks,
+            Some(ticks),
+            BlockFlags::keyframe(sample.flags.is_sync),
+            &sample.data,
+        )?)
     }
 
-    /// Place the earliest pending sample once every announced track holds one.
-    fn take_ready(&mut self) -> Result<Vec<Vec<u8>>> {
-        let mut clusters = Vec::new();
-        while !self.pending.iter().any(Option::is_none) {
-            let Some(index) = self.earliest() else {
-                break;
-            };
-            if let Some(block) = self.pending[index].take()
-                && let Some(bytes) = self.place(block)?
-            {
-                clusters.push(bytes);
+    fn queue(&mut self, writes: Vec<Write>) {
+        for write in writes {
+            match write {
+                Write::Append(bytes) => self.out.push_back(MuxOutput::Bytes(bytes.into())),
+                Write::At { offset, bytes } => {
+                    self.out.push_back(MuxOutput::BytesAt {
+                        offset,
+                        bytes: Bytes::from(bytes),
+                    });
+                }
+                _ => {}
             }
         }
-        Ok(clusters)
-    }
-
-    fn earliest(&self) -> Option<usize> {
-        let mut best: Option<(i64, usize)> = None;
-        for (index, pending) in self.pending.iter().enumerate() {
-            let Some(block) = pending else {
-                continue;
-            };
-            let key = (block.event.pts_ticks, index);
-            if best.is_none_or(|best| key < best) {
-                best = Some(key);
-            }
-        }
-        best.map(|(_, index)| index)
-    }
-
-    /// Append one sample to the open `Cluster`, finishing that `Cluster` first
-    /// if this sample starts a new one. Returns the finished `Cluster`'s bytes.
-    fn place(&mut self, block: PendingBlock) -> Result<Option<Vec<u8>>> {
-        let span = self.cluster_span_ticks();
-        let new_cluster = starts_cluster(
-            self.cluster.is_empty(),
-            self.has_video(),
-            self.cluster_start,
-            span,
-            &block.event,
-        );
-        let mut finished = None;
-        if new_cluster && !self.cluster.is_empty() {
-            finished = Some(self.emit_cluster()?);
-        }
-        if self.cluster.is_empty() {
-            self.cluster_start = block.event.pts_ticks.max(0);
-        }
-        self.cluster.push(block.event);
-        self.cluster_data.push(block.data);
-        Ok(finished)
-    }
-
-    /// Serialize the open `Cluster`, record its keyframes for `Cues`, and clear
-    /// it.
-    fn emit_cluster(&mut self) -> Result<Vec<u8>> {
-        let bytes = build_cluster(&self.cluster, &self.cluster_data)?;
-        let offset = self.payload_written;
-        for event in &self.cluster {
-            if event.is_video && event.is_keyframe {
-                self.cues.push(CueEntry {
-                    cue_time: event.pts_ticks.max(0),
-                    track: event.track_number,
-                    offset,
-                });
-            }
-        }
-        self.payload_written = self.payload_written.saturating_add(bytes.len() as u64);
-        self.cluster.clear();
-        self.cluster_data.clear();
-        Ok(bytes)
-    }
-
-    fn drain(&mut self) -> Result<()> {
-        let mut held: Vec<PendingBlock> =
-            self.pending.iter_mut().filter_map(Option::take).collect();
-        held.sort_by(|a, b| {
-            a.event
-                .pts_ticks
-                .cmp(&b.event.pts_ticks)
-                .then(a.event.track_index.cmp(&b.event.track_index))
-        });
-        for block in held {
-            if let Some(bytes) = self.place(block)? {
-                self.out.push_back(MuxOutput::Bytes(bytes.into()));
-            }
-        }
-        Ok(())
     }
 }
 
@@ -1115,13 +434,12 @@ impl Stage for MkvMuxStage {
             MuxInput::Track(spec) => self.announce(*spec),
             MuxInput::Sample { track, sample } => {
                 self.start()?;
-                for bytes in self.push(track, sample)? {
-                    self.out.push_back(MuxOutput::Bytes(bytes.into()));
-                }
+                let writes = self.push(track, sample)?;
+                self.queue(writes);
                 Ok(())
             }
             MuxInput::Discontinuity { .. } => Ok(()),
-            MuxInput::Flush => self.drain(),
+            MuxInput::Flush => Ok(()),
         }
     }
 
@@ -1131,20 +449,11 @@ impl Stage for MkvMuxStage {
 
     fn finish(&mut self) -> Result<()> {
         self.start()?;
-        self.drain()?;
-        if !self.cluster.is_empty() {
-            let bytes = self.emit_cluster()?;
-            self.out.push_back(MuxOutput::Bytes(bytes.into()));
-        }
-        let cues = build_cues(&self.cues);
-        if !cues.is_empty() {
-            self.out.push_back(MuxOutput::Bytes(cues.into()));
-        }
-        let duration = self.duration_ticks as f64;
-        self.out.push_back(MuxOutput::BytesAt {
-            offset: self.info_offset,
-            bytes: Bytes::from(build_info(duration)),
-        });
+        let Some(writer) = self.writer.as_mut() else {
+            return Ok(());
+        };
+        let writes = writer.finish()?;
+        self.queue(writes);
         Ok(())
     }
 }
@@ -1179,16 +488,16 @@ pub(crate) fn mux_for_test(media: &crate::media::Media) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    /// The `Cluster` span the tests give the stage: the 5 s span the
-    /// video-bearing whole-media writer used.
+    use super::*;
+    use crate::media::Media;
+    use broadcast_common::timescale::Timescale;
+
+    /// The `Cluster` span the tests give the stage.
     const TEST_CLUSTER_SPAN_MS: u64 = 5_000;
 
     fn timescale(value: u32) -> Timescale {
         Timescale::try_new(value).expect("a non-zero timescale")
     }
-
-    use super::*;
-    use broadcast_common::timescale::Timescale;
 
     /// T15: an `avcC` with more than 31 SPS cannot be encoded (5-bit count);
     /// the Matroska CodecPrivate build must return `Err`, not panic.
@@ -1215,43 +524,11 @@ mod tests {
             width: 640,
             height: 480,
         };
+        let spec = IrTrackSpec::new(TrackId::new(1), timescale(1_000), config);
         assert!(matches!(
-            build_track_entry(1, TrackId::new(1), &config),
+            map_track(&spec, 1),
             Err(crate::error::Error::FieldOverflow(..))
         ));
-    }
-
-    #[test]
-    fn vint_size_widths() {
-        assert_eq!(encode_vint_size(0), vec![0x80]);
-        assert_eq!(encode_vint_size(1), vec![0x81]);
-        assert_eq!(encode_vint_size(0x7E), vec![0xFE]);
-        assert_eq!(encode_vint_size(0x7F), vec![0x40, 0x7F]);
-        assert_eq!(encode_vint_size(2), vec![0x82]);
-        // Three/four/five-byte widths at and either side of their boundaries
-        // (RFC 8794 §4: 2^(7n)-2 largest in n bytes, next width above it).
-        assert_eq!(encode_vint_size(0x1F_FFFE), vec![0x3F, 0xFF, 0xFE]);
-        assert_eq!(encode_vint_size(0x1F_FFFF), vec![0x10, 0x1F, 0xFF, 0xFF]);
-        assert_eq!(encode_vint_size(0x0FFF_FFFE), vec![0x1F, 0xFF, 0xFF, 0xFE]);
-        assert_eq!(
-            encode_vint_size(0x0FFF_FFFF),
-            vec![0x08, 0x0F, 0xFF, 0xFF, 0xFF]
-        );
-        assert_eq!(
-            encode_vint_size(0x07_FFFF_FFFE),
-            vec![0x0F, 0xFF, 0xFF, 0xFF, 0xFE]
-        );
-        assert_eq!(
-            encode_vint_size(0x07_FFFF_FFFF),
-            vec![0x01, 0x00, 0x00, 0x07, 0xFF, 0xFF, 0xFF, 0xFF]
-        );
-    }
-
-    #[test]
-    fn uint_bytes_widths() {
-        assert_eq!(uint_bytes(0), vec![0u8]);
-        assert_eq!(uint_bytes(1), vec![1u8]);
-        assert_eq!(uint_bytes(1_000_000), vec![0x0F, 0x42, 0x40]);
     }
 
     #[test]
@@ -1267,8 +544,8 @@ mod tests {
         };
         let head = build_opus_head(&dops);
         assert_eq!(&head[0..8], OPUS_HEAD_MAGIC);
-        assert_eq!(head[8], 1); // version
-        assert_eq!(head[9], 1); // channels
+        assert_eq!(head[8], 1);
+        assert_eq!(head[9], 1);
         assert_eq!(u16::from_le_bytes([head[10], head[11]]), 312);
         assert_eq!(
             u32::from_le_bytes([head[12], head[13], head[14], head[15]]),
@@ -1276,168 +553,70 @@ mod tests {
         );
     }
 
-    /// r05-W23(a): a backward presentation-time step must open a new
-    /// `Cluster`, not push the `SimpleBlock`'s signed 16-bit relative
-    /// timestamp out of range (which `debug_assert`s in debug builds and
-    /// wraps the cast in release builds).
-    #[test]
-    fn backward_step_starts_a_new_cluster_instead_of_overflowing_the_block_timestamp() {
-        let ev = |pts: i64, video: bool, key: bool| BlockEvent {
-            track_index: 0,
-            pts_ticks: pts,
-            track_number: 1,
-            is_keyframe: key,
-            is_video: video,
-        };
-        // Start at 0, then jump back by 40 s — far outside i16's ±32.767 s.
-        let events = alloc::vec![ev(0, false, false), ev(-40_000, false, false)];
-        let clusters = build_clusters(&events, false);
-        assert_eq!(
-            clusters.len(),
-            2,
-            "a backward jump must start a new Cluster"
+    fn fixture_media() -> Media {
+        let bytes = test_fixtures::read("mkv/vp9-opus.mkv");
+        let total = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+        let mut demux = crate::matroska_demux::MatroskaDemux::seekable(
+            crate::matroska_demux::MatroskaDemuxConfig::default().with_total_len(Some(total)),
         );
-        for cluster in &clusters {
-            let base = cluster[0].pts_ticks;
-            for e in cluster {
-                let rel = e.pts_ticks - base;
-                assert!(
-                    (MIN_BLOCK_REL_TICKS..=MAX_BLOCK_REL_TICKS).contains(&rel),
-                    "relative timestamp {rel} left the i16 range"
-                );
+        loop {
+            let demand = demux.demand();
+            let Some(offset) = demand.offset else {
+                break;
+            };
+            let start = usize::try_from(offset).unwrap_or(usize::MAX);
+            let end = start.saturating_add(demand.want_bytes).min(bytes.len());
+            let slice = bytes.get(start..end).unwrap_or(&[]);
+            demux
+                .feed(
+                    crate::matroska_demux::MatroskaInput::At {
+                        offset,
+                        bytes: Bytes::copy_from_slice(slice),
+                    },
+                    Timestamp::ZERO,
+                )
+                .expect("feed");
+        }
+        demux.finish().expect("finish");
+        let mut tracks: Vec<crate::ir::Track> = Vec::new();
+        while let Some(event) = demux.poll() {
+            match event {
+                crate::ir::DemuxEvent::TrackAdded(spec) => {
+                    tracks.push(crate::ir::Track::new(spec, Vec::new()));
+                }
+                crate::ir::DemuxEvent::Sample { track_id, sample } => {
+                    if let Some(track) = tracks.iter_mut().find(|t| t.spec.track_id == track_id) {
+                        track.samples.push(sample);
+                    }
+                }
+                _ => {}
             }
         }
+        Media::new(tracks, crate::matroska_demux::IR_TIMESCALE)
     }
 
-    /// r05-W23(b): a negative first PTS (an ordinary B-frame composition
-    /// result) made `build_cluster` write `Timestamp = 0` while keeping every
-    /// block relative to the negative base, shifting the whole first `Cluster`
-    /// by `-cluster_start` ms. The cluster is now rebased, so the base is
-    /// unsigned and the blocks keep their spacing.
+    /// r05-W23(b): a negative first PTS must not shift the whole first Cluster.
     #[test]
     fn negative_first_pts_does_not_shift_the_cluster() {
-        let bytes = test_fixtures::read("mkv/vp9-opus.mkv");
-        let mut media = crate::webm_demux::WebmDemux::new()
-            .demux(&bytes)
-            .expect("demux fixture");
-        // Shift the whole timeline negative, which is what a B-frame
-        // composition (or a source with a pre-roll) produces.
+        let mut media = fixture_media();
         let shift: i64 = -30_000;
         for track in &mut media.tracks {
-            for s in &mut track.samples {
-                if let Some(t) = s.timing.as_mut() {
-                    t.shift(shift);
+            for sample in &mut track.samples {
+                if let Some(timing) = sample.timing.as_mut() {
+                    timing.shift(shift);
                 }
             }
-            // `start_decode_time` is unsigned; clamping to 0 is fine here
-            // because the blocks' own `pts` carry the real negative base.
             track.start_decode_time = track.start_decode_time.saturating_sub(shift.unsigned_abs());
         }
         let out = super::mux_for_test(&media);
-        // Locate the first Cluster and read its Timestamp + block timestamps.
         let (cluster_at, id_len, size_len, body_len) =
-            find_element(&out, &ID_CLUSTER).expect("a Cluster");
+            find_element(&out, &CLUSTER_ID).expect("a Cluster");
         let cluster = &out[cluster_at..cluster_at + id_len + size_len + body_len];
         let (ts, rels) = cluster_timestamps(cluster);
         assert!(ts >= 0, "Cluster Timestamp is unsigned; got {ts}");
-        assert!(!rels.is_empty(), "the first cluster carries blocks");
-        // The base is 0 (a `Cluster` `Timestamp` is unsigned), so the shifted
-        // timeline starts 30 s before it — repr sentable, and unchanged by the
-        // rebase.
         assert_eq!(rels[0], -30_000, "the first block keeps its real offset");
-        assert!(
-            rels.windows(2).all(|w| w[1] >= w[0] - 1000),
-            "blocks keep their relative spacing: {rels:?}"
-        );
-        // The blocks must span real time rather than collapse to one instant,
-        // which is what the old `cluster_start.max(0)` base produced: every
-        // block came out relative to the negative `cluster_start` while the
-        // written base was 0, so the whole cluster was shifted.
         let span = rels.iter().max().unwrap() - rels.iter().min().unwrap();
         assert!(span > 0, "the cluster must span real time: {rels:?}");
-    }
-
-    /// The first top-level element whose id matches, returned as
-    /// `(offset, id_len, body_len)`.
-    ///
-    /// Each level is walked by `id`/size pairs; every id this writer emits is a
-    /// fixed 1, 2 or 4 bytes and every size is a VINT, see
-    /// [`encode_vint_size`].
-    fn find_element(data: &[u8], id: &[u8]) -> Option<(usize, usize, usize, usize)> {
-        for c in 0..data.len().saturating_sub(id.len()) {
-            if &data[c..c + id.len()] != id {
-                continue;
-            }
-            // The writer emits every element id verbatim, so a match is a real
-            // element as long as a valid size VINT follows.
-            let Some((size, size_len)) = read_vint_size(data, c + id.len()) else {
-                continue;
-            };
-            if c + id.len() + size_len + size > data.len() {
-                continue;
-            }
-            return Some((c, id.len(), size_len, size));
-        }
-        None
-    }
-
-    /// The byte width of an EBML id whose first byte is `b` (the leading
-    /// zero-bit count selects 1/2/3/4 bytes; RFC 8794 §4).
-    fn vint_id_len(b: u8) -> Option<usize> {
-        if b == 0 {
-            return None;
-        }
-        Some(b.leading_zeros() as usize + 1)
-    }
-
-    /// Read a VINT size at `off`, returning `(size, width)`.
-    fn read_vint_size(data: &[u8], off: usize) -> Option<(usize, usize)> {
-        let width = vint_id_len(*data.get(off)?)?;
-        if off + width > data.len() {
-            return None;
-        }
-        let mut value = u64::from(data[off]) & (0xFF >> width);
-        for i in 1..width {
-            value = (value << 8) | u64::from(data[off + i]);
-        }
-        Some((value as usize, width))
-    }
-
-    /// Read a serialized `Cluster`'s `Timestamp` and each `SimpleBlock`'s
-    /// relative timestamp, straight off the wire.
-    ///
-    /// Every element id and size this writer emits is a one-byte VINT here
-    /// (`Timestamp`/`SimpleBlock` ids are single bytes; the bodies are far
-    /// below the 127-byte one-byte-size limit), so the layout is fixed: a
-    /// 1-byte id, a 1-byte size, then that many body bytes.
-    fn cluster_timestamps(cluster: &[u8]) -> (i64, alloc::vec::Vec<i64>) {
-        let id_len = vint_id_len(cluster[0]).expect("Cluster id");
-        let (_, size_len) = read_vint_size(cluster, id_len).expect("Cluster size");
-        let mut c = id_len + size_len;
-        let mut timestamp = None;
-        let mut rels = alloc::vec::Vec::new();
-        while c < cluster.len() {
-            let cid_len = vint_id_len(cluster[c]).expect("child id");
-            let (size, csize_len) = read_vint_size(cluster, c + cid_len).expect("child size");
-            let body_start = c + cid_len + csize_len;
-            let body = &cluster[body_start..body_start + size];
-            c = body_start + size;
-            if cluster[c - size - csize_len - cid_len..c - size - csize_len] == ID_TIMESTAMP {
-                let mut v = 0u64;
-                for &b in body {
-                    v = (v << 8) | u64::from(b);
-                }
-                timestamp = Some(v as i64);
-            } else if cluster[c - size - csize_len - cid_len..c - size - csize_len]
-                == ID_SIMPLE_BLOCK
-            {
-                // track-number VINT (1 byte for these fixtures), then int16.
-                let tn_len = vint_id_len(body[0]).expect("track number");
-                let rel = i16::from_be_bytes([body[tn_len], body[tn_len + 1]]) as i64;
-                rels.push(rel);
-            }
-        }
-        (timestamp.expect("Cluster has a Timestamp"), rels)
     }
 
     /// Independent oracle: a real negative timeline and a real backward jump
@@ -1460,9 +639,7 @@ mod tests {
             return;
         }
         let bytes = test_fixtures::read("mkv/vp9-opus.mkv");
-        let base = crate::webm_demux::WebmDemux::new()
-            .demux(&bytes)
-            .expect("demux fixture");
+        let base = fixture_media();
 
         // (a) the whole timeline shifted negative, and (b) a splice that steps
         // *backwards* by more than `i16::MAX` ticks (32.767 s) partway through
@@ -1664,39 +841,6 @@ mod tests {
         (by_stream, String::from_utf8_lossy(&out.stderr).into_owned())
     }
 
-    /// A `Cluster` whose block would leave the signed 16-bit relative range
-    /// is an *error*, never a silent `clamp`: a clamped block would be written
-    /// at an arbitrary instant in release builds (where `debug_assert` does
-    /// nothing), which is worse than refusing the input.
-    #[test]
-    fn cluster_with_an_out_of_range_block_is_rejected() {
-        // Two video events 40 s apart in one cluster: `build_cluster` is handed
-        // them directly, bypassing `build_clusters`' range guard.
-        let events = alloc::vec![
-            BlockEvent {
-                track_index: 0,
-                pts_ticks: 0,
-                track_number: 1,
-                is_keyframe: true,
-                is_video: true,
-            },
-            BlockEvent {
-                track_index: 0,
-                pts_ticks: 40_000,
-                track_number: 1,
-                is_keyframe: false,
-                is_video: true,
-            },
-        ];
-        let data = alloc::vec![Bytes::new(), Bytes::new()];
-        let err =
-            build_cluster(&events, &data).expect_err("40 s relative timestamp cannot fit an i16");
-        assert!(
-            matches!(err, Error::InvalidInput(_)),
-            "expected InvalidInput, got {err:?}"
-        );
-    }
-
     /// Several backward steps in one track (a stream spliced more than once)
     /// must still produce a file ffmpeg reads with every packet intact; the
     /// muxer must not turn repeated jumps into arbitrary reordering (audit
@@ -1713,9 +857,7 @@ mod tests {
             return;
         }
         let bytes = test_fixtures::read("mkv/vp9-opus.mkv");
-        let base = crate::webm_demux::WebmDemux::new()
-            .demux(&bytes)
-            .expect("demux fixture");
+        let base = fixture_media();
         let mut media = base.clone();
         // Three separate 5 s backward splices in the video track.
         let n = media.tracks[0].samples.len();
@@ -1749,83 +891,154 @@ mod tests {
         }
     }
 
-    /// `CueTime`s must come out non-decreasing (RFC 9559 §20). A backward
-    /// timestamp jump now opens a new `Cluster` (r05-W23), so a later
-    /// cluster's keyframe can sit at an *earlier* presentation time than an
-    /// earlier one; emitting it would leave the index unsorted and defeat a
-    /// player's binary search.
+    /// `CueTime`s must come out non-decreasing (RFC 9559 §20): a backward
+    /// timestamp jump opens a new `Cluster`, so a later Cluster's keyframe can
+    /// sit at an earlier presentation time and must be clamped up to keep the
+    /// index sorted rather than dropped.
     #[test]
     fn cues_stay_monotonic_across_a_backward_jump() {
-        let ev = |pts: i64, key: bool| BlockEvent {
-            track_index: 0,
-            pts_ticks: pts,
-            track_number: 1,
-            is_keyframe: key,
-            is_video: true,
-        };
-        // Forward keyframes at 0/5000, then a jump *back* to 2000.
-        let cluster = |pts: i64| alloc::vec![ev(pts, true)];
-        let clusters = alloc::vec![cluster(0), cluster(5_000), cluster(2_000), cluster(9_000)];
-        let offsets: alloc::vec::Vec<u64> = alloc::vec![100, 200, 300, 400];
-        let entries: alloc::vec::Vec<CueEntry> = clusters
+        use crate::ir::{Sample, SampleFlags, SampleTiming, Track};
+        use bytes::Bytes;
+
+        let spec = IrTrackSpec::new(
+            TrackId::new(1),
+            timescale(1_000),
+            CodecConfig::Vp8 {
+                width: 16,
+                height: 16,
+            },
+        );
+        let points = [(0i64, true), (5_000, true), (2_000, true), (9_000, true)];
+        let samples: Vec<Sample> = points
             .iter()
-            .zip(&offsets)
-            .flat_map(|(cluster, &offset)| {
-                cluster
-                    .iter()
-                    .filter(|e| e.is_video && e.is_keyframe)
-                    .map(move |e| CueEntry {
-                        cue_time: e.pts_ticks.max(0),
-                        track: e.track_number,
-                        offset,
-                    })
+            .map(|(pts, key)| Sample {
+                data: Bytes::from_static(&[0u8; 4]),
+                timing: Some(SampleTiming::timed_with_duration(*pts, *pts, 1_000)),
+                flags: SampleFlags::new(*key),
+                provenance: None,
+                display: None,
+                protection: None,
             })
             .collect();
-        let cues = build_cues(&entries);
-
-        // Walk the `Cues` body and read each `CuePoint`'s `CueTime`.
-        let id_len = vint_id_len(cues[0]).expect("Cues id");
-        let (_, size_len) = read_vint_size(&cues, id_len).expect("Cues size");
-        let body = &cues[id_len + size_len..];
-        let mut times: alloc::vec::Vec<u64> = alloc::vec::Vec::new();
+        let media = Media::new(vec![Track::new(spec, samples)], timescale(1_000));
+        let out = super::mux_for_test(&media);
+        let (cues_at, id_len, size_len, body_len) =
+            find_element(&out, &CUES_ID).expect("a Cues element");
+        let body = &out[cues_at + id_len + size_len..cues_at + id_len + size_len + body_len];
+        let mut times: Vec<u64> = Vec::new();
         let mut c = 0usize;
         while c < body.len() {
             let cid_len = vint_id_len(body[c]).expect("CuePoint id");
             let (size, csize_len) = read_vint_size(body, c + cid_len).expect("CuePoint size");
-            let bs = c + cid_len + csize_len;
-            if body[c..c + cid_len] == ID_CUE_POINT {
-                let inner = &body[bs..bs + size];
+            let body_start = c + cid_len + csize_len;
+            if body[c..c + cid_len] == CUE_POINT_ID {
+                let inner = &body[body_start..body_start + size];
                 let tid_len = vint_id_len(inner[0]).expect("CueTime id");
                 let (tsize, tsize_len) = read_vint_size(inner, tid_len).expect("CueTime size");
                 assert_eq!(
                     &inner[..tid_len],
-                    ID_CUE_TIME,
+                    CUE_TIME_ID,
                     "a CuePoint must start with its CueTime (RFC 9559 §20)"
                 );
-                let mut v = 0u64;
-                for &b in &inner[tid_len + tsize_len..tid_len + tsize_len + tsize] {
-                    v = (v << 8) | u64::from(b);
+                let mut value = 0u64;
+                for &byte in &inner[tid_len + tsize_len..tid_len + tsize_len + tsize] {
+                    value = (value << 8) | u64::from(byte);
                 }
-                times.push(v);
+                times.push(value);
             }
-            c = bs + size;
+            c = body_start + size;
         }
-        // Every keyframe keeps a cue; the 2000-ms one is clamped up to the
-        // 5000-ms point rather than dropped, so its cluster stays seekable.
-        assert_eq!(times, alloc::vec![0, 5_000, 5_000, 9_000], "got {times:?}");
+        assert_eq!(times, vec![0, 5_000, 5_000, 9_000], "got {times:?}");
         assert!(
-            times.windows(2).all(|w| w[1] >= w[0]),
+            times.windows(2).all(|window| window[1] >= window[0]),
             "CueTimes must be non-decreasing, got {times:?}"
         );
     }
 
     #[test]
     fn empty_media_rejected() {
-        let media = crate::media::Media::new(Vec::new(), timescale(1000));
+        let media = Media::new(Vec::new(), timescale(1_000));
         let mut stage = MkvMuxStage::new(core::time::Duration::from_millis(TEST_CLUSTER_SPAN_MS));
         assert!(matches!(
             crate::mux_stage::drive_media(&mut stage, &media, Timestamp::ZERO),
             Err(Error::InvalidInput(..))
         ));
+    }
+
+    /// A `Cues` element ID (RFC 9559 §20).
+    const CUES_ID: [u8; 4] = [0x1C, 0x53, 0xBB, 0x6B];
+    /// A `CuePoint` element ID.
+    const CUE_POINT_ID: [u8; 1] = [0xBB];
+    /// A `CueTime` element ID.
+    const CUE_TIME_ID: [u8; 1] = [0xB3];
+
+    /// A `Cluster` element ID (RFC 9559 §11).
+    const CLUSTER_ID: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
+    /// A `Timestamp` element ID.
+    const TIMESTAMP_ID: [u8; 1] = [0xE7];
+    /// A `SimpleBlock` element ID.
+    const SIMPLE_BLOCK_ID: [u8; 1] = [0xA3];
+
+    fn find_element(data: &[u8], id: &[u8]) -> Option<(usize, usize, usize, usize)> {
+        for c in 0..data.len().saturating_sub(id.len()) {
+            if &data[c..c + id.len()] != id {
+                continue;
+            }
+            let Some((size, size_len)) = read_vint_size(data, c + id.len()) else {
+                continue;
+            };
+            if c + id.len() + size_len + size > data.len() {
+                continue;
+            }
+            return Some((c, id.len(), size_len, size));
+        }
+        None
+    }
+
+    fn vint_id_len(b: u8) -> Option<usize> {
+        if b == 0 {
+            return None;
+        }
+        Some(b.leading_zeros() as usize + 1)
+    }
+
+    fn read_vint_size(data: &[u8], off: usize) -> Option<(usize, usize)> {
+        let width = vint_id_len(*data.get(off)?)?;
+        if off + width > data.len() {
+            return None;
+        }
+        let mut value = u64::from(data[off]) & (0xFF >> width);
+        for i in 1..width {
+            value = (value << 8) | u64::from(data[off + i]);
+        }
+        Some((value as usize, width))
+    }
+
+    fn cluster_timestamps(cluster: &[u8]) -> (i64, Vec<i64>) {
+        let id_len = vint_id_len(cluster[0]).expect("Cluster id");
+        let (_, size_len) = read_vint_size(cluster, id_len).expect("Cluster size");
+        let mut c = id_len + size_len;
+        let mut timestamp = None;
+        let mut rels = Vec::new();
+        while c < cluster.len() {
+            let cid_len = vint_id_len(cluster[c]).expect("child id");
+            let (size, csize_len) = read_vint_size(cluster, c + cid_len).expect("child size");
+            let body_start = c + cid_len + csize_len;
+            let body = &cluster[body_start..body_start + size];
+            let id = &cluster[c..c + cid_len];
+            c = body_start + size;
+            if id == TIMESTAMP_ID {
+                let mut value = 0u64;
+                for &byte in body {
+                    value = (value << 8) | u64::from(byte);
+                }
+                timestamp = Some(value as i64);
+            } else if id == SIMPLE_BLOCK_ID {
+                let tn_len = vint_id_len(body[0]).expect("track number");
+                let rel = i16::from_be_bytes([body[tn_len], body[tn_len + 1]]) as i64;
+                rels.push(rel);
+            }
+        }
+        (timestamp.expect("Cluster has a Timestamp"), rels)
     }
 }

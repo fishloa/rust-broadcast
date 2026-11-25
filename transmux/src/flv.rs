@@ -1,7 +1,7 @@
 //! FLV (Flash Video) container spoke — Adobe Flash Video File Format
 //! Specification **v10.1, Annex E**; see `private/specs-verified/mpeg/transmux/codec/flv.md`.
 //!
-//! FLV is a hub spoke like [`TsDemux`](crate::TsDemux) / [`WebmDemux`](crate::WebmDemux):
+//! FLV is a hub spoke like [`TsDemux`](crate::TsDemux) / [`MatroskaDemux`](crate::MatroskaDemux):
 //! [`FlvDemux`] ([`Unpackage`]) parses an FLV byte stream into the neutral
 //! [`Media`] IR, and [`FlvMuxStage`] ([`Stage`]) muxes its tracks and samples
 //! back into FLV incrementally. transmux carries the FLV mainstream — **H.264/AVC video + AAC audio**
