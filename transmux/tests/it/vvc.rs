@@ -130,7 +130,7 @@ fn vvc_dimensions_from_sps() {
 }
 
 // ---------------------------------------------------------------------------
-// Test 3 — sample fidelity: demux → IR → CmafMux → re-demux, bytes identical
+// Test 3 — sample fidelity: demux → IR → CmafMuxStage → re-demux, bytes identical
 // ---------------------------------------------------------------------------
 
 #[test]

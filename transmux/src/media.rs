@@ -1,11 +1,9 @@
 //! The any-to-any hub impls over the [`crate::ir`] media IR.
 //!
-//! This module is the transmux side of the `broadcast-common` container-mux
-//! vocabulary ([`broadcast_common::Unpackage`] / [`broadcast_common::Package`]).
 //! The [`Media`] IR itself ([`Media`]/[`Track`]/[`TrackProtection`]/[`PcrSample`],
 //! re-exported here from [`crate::ir`]) is elementary [`Track`]s of coded
-//! [`Sample`]s; this module holds the packagers/depackagers that convert
-//! between that IR and concrete container forms:
+//! [`Sample`]s; this module holds the CMAF mux stage and the HLS manifest
+//! renderer, the two `broadcast-common` container-mux roles this file owns:
 //!
 //! - [`CmafMuxStage`] : [`Stage`] `<In = MuxInput, Out = MuxOutput>` — mux
 //!   samples into a CMAF init segment plus one media segment per fragment,
@@ -86,8 +84,7 @@ const DEFAULT_HLS_VERSION: u8 = 7;
 #[non_exhaustive]
 pub enum FragmentCut {
     /// Close the fragment only on [`MuxInput::Flush`] or the end of the
-    /// stream — one media segment for the whole input, which is what the
-    /// former whole-[`Media`] `CmafMux` emitted.
+    /// stream — one media segment for the whole input.
     OnFlush,
     /// Close a fragment before `track`'s next sync sample once the anchor
     /// track has buffered `target` of media time. The new fragment opens on
@@ -689,7 +686,7 @@ impl HlsPackager {
         // produced downstream (`cli::package`'s `OutputFormat::Hls` arm) as a
         // *self-initializing* CMAF artifact: `build_init_segment` immediately
         // followed by `build_media_segment` in the same file — i.e. the exact
-        // byte layout `CmafMux` builds (media.rs doc comment above), fed the
+        // byte layout `CmafMuxStage` builds (media.rs doc comment above), fed the
         // same kept-track set (`filter_for_bmff_mux` already stripped any
         // non-muxable track before either packager runs, in the real
         // pipeline). Apple's HLS Authoring Specification requires an
@@ -701,7 +698,7 @@ impl HlsPackager {
         // `build_init_segment`'s output length — so every segment's
         // `#EXT-X-MAP` points at itself with a `BYTERANGE` covering just that
         // leading span; `build_init_segment` is a pure function of (specs,
-        // movie_timescale), the same inputs `CmafMux` uses, so this computes
+        // movie_timescale), the same inputs `CmafMuxStage` uses, so this computes
         // the true offset without needing the actual segment bytes in hand.
         let specs: Vec<TrackSpec> = kept.iter().map(|(spec, _)| (*spec).clone()).collect();
         // The init segment's length is what `#EXT-X-MAP` needs, and every box

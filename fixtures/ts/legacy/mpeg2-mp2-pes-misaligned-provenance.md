@@ -18,7 +18,7 @@ real captured audio bytes rather than fabricated data.
    mid-frame (verified: the 2nd and 3rd PES payloads in the resulting stream
    both start with non-syncword bytes).
 3. Re-muxed those chunks as a single-track `CodecConfig::MpegAudio` `Media`
-   through `transmux::ts_mux::TsMux` (the crate's own spec-correct TS/PES/
+   through `transmux::ts_mux::TsMuxStage` (the crate's own spec-correct TS/PES/
    PAT/PMT builder — same machinery the crate already trusts for muxing), one
    chunk = one PES.
 4. Independently verified structurally valid with TSDuck's `tsanalyze`: no

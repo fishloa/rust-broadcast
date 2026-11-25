@@ -414,7 +414,7 @@ fn avc_track_spec() -> Option<TrackSpec> {
         .map(|t| t.spec)
 }
 
-/// Mux AVC access units (Annex B) into a one-track TS with `TsMux`.
+/// Mux AVC access units (Annex B) into a one-track TS with `TsMuxStage`.
 fn avc_ts(spec: TrackSpec, access_units: &[Vec<u8>]) -> Vec<u8> {
     let samples: Vec<transmux::Sample> = access_units
         .iter()

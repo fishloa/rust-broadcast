@@ -161,9 +161,10 @@ Compared byte-for-byte by the same test without `GOLDEN_UPDATE`. Only Task 4
 Recorded on branch `refactor/sdp-session-2357` at commit `05691a890` (issue #2357, before the
 session builder moved into `rtsp_runtime::sdp`), so the move can be checked byte for byte:
 
-- `sdp-transmux-h264-aac.sdp` — transmux's `RtpPacketiser::package` session description for
-  `fixtures/ts/h264-aac.ts` (MTU 1400, SSRC `0x12345678`), i.e. what
-  `RtpOutput::sdp` rendered from `build_sdp`.
+- `sdp-transmux-h264-aac.sdp` — transmux's RTP packetiser session description for
+  `fixtures/ts/h264-aac.ts` (MTU 1400, SSRC `0x12345678`), recorded from the
+  `rtp_run::RtpOutput::sdp` test bridge; the packetiser is now
+  `RtpPacketiserStage` and the session builder lives in `rtsp-runtime`.
 - `sdp-push-mp2t-media.sdp` — the one `m=` block (`+ a=rtpmap`/`a=control`) multimux's RTSP
   push describes: RFC 2250 §2 MP2T, static payload type 33, 90 kHz.
 - `sdp-push-mp2t-session.sdp` — that block rendered as a session (`o=- 0 0 IN IP4 0.0.0.0`,
@@ -188,7 +189,7 @@ moved into `rtp-packet`, `transmux` and `rtsp-runtime`. It must stay byte-identi
 that move: never regenerate it.
 
 - Source: `fixtures/ts/h264-aac.ts`, first second of samples, re-muxed once through
-  `transmux::TsMux` (no muxing state in a recording) and pushed twice.
+  `transmux::TsMuxStage` (no muxing state in a recording) and pushed twice.
 - SSRC pinned with `RtspTransportConfig::test_wire` (`0x5EED_2368`); the loopback address is
   written as `<loopback>`, and each RTP timestamp — the elapsed time since the connection, the
   one field a wall-clock read sets — as `xxxx`. Every other byte, sequence numbers included, is

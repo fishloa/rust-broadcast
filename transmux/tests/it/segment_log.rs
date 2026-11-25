@@ -59,8 +59,8 @@ fn long_short_media() -> Media {
     Media::new(vec![track(1, 10, 4), track(2, 3, 8)], timescale(1000))
 }
 
-/// The MPD `origin/main` rendered for [`long_short_media`] (the pre-summaries
-/// `DashPackager::package(&media)`), captured from a worktree at
+/// The MPD `origin/main` rendered for [`long_short_media`] before manifests
+/// were built from segment summaries, captured from a worktree at
 /// `origin/main` before this change. Byte-identical is the gate.
 const LONG_SHORT_MPD: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-live:2011" type="static" minBufferTime="PT2S" mediaPresentationDuration="PT1S">

@@ -1,7 +1,7 @@
 //! Matroska (MKV) muxer round-trip integration tests (issue #915).
 //!
 //! Each fixture is demuxed with [`WebmDemux`] (real ffmpeg captures — see
-//! `fixtures/mkv/PROVENANCE.md`), packaged back to bytes with [`MkvMux`], then
+//! `fixtures/mkv/PROVENANCE.md`), packaged back to bytes with [`MkvMuxStage`], then
 //! re-demuxed with the same [`WebmDemux`]. The two [`Media`] values (original
 //! demux vs. demux-of-the-remux) are compared field-by-field: track count,
 //! codec identity/config, sample count, PTS/DTS, keyframe flags, and the
@@ -28,7 +28,7 @@ fn demux(path: &str) -> Media {
         .unwrap_or_else(|e| panic!("demux {path}: {e}"))
 }
 
-/// Demux `path`, mux the result back with [`MkvMux`], then demux that output
+/// Demux `path`, mux the result back with [`MkvMuxStage`], then demux that output
 /// again. Returns (original demux, demux-of-the-remux).
 fn round_trip(path: &str) -> (Media, Media) {
     let original = demux(path);

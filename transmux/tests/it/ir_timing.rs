@@ -792,9 +792,9 @@ fn cmaf_mux_ac3_durations_no_longer_zero() {
 #[test]
 fn data_track_errors_named_by_cmaf_unlike_vp8() {
     // Media plane step 2d: a `CodecConfig::Data` track has no ISOBMFF sample
-    // entry in this crate; `CmafMux` used to skip it gracefully (issue #576)
-    // but now names the offending track and errors instead (so it can no
-    // longer vanish from the output without the caller knowing) — the same
+    // entry in this crate, so the CMAF muxer names the offending track and
+    // errors (issue #576: it must not vanish from the output without the
+    // caller knowing) — the same
     // outcome (rejection) as the genuinely-unsupported WebM-native VP8, but
     // with a different, more specific error naming the track.
     let data_only = Media::new(
@@ -858,7 +858,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
     // PIDs (0x82/0x83/0x84) classify as real, CMAF-carriable
     // `CodecConfig::Eac3` tracks rather than opaque Data (see
     // `tests/it/any_stream.rs`), so this Media mixes carriable and opaque
-    // tracks: `CmafMux` must reject it naming one of the Data tracks, and
+    // tracks: `CmafMuxStage` must reject it naming one of the Data tracks, and
     // only succeed once the caller explicitly filters them out.
     let ts = read_fixture("m6-single.ts");
     let media = demux(&ts);
@@ -886,10 +886,10 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
         .select_tracks_by(|t| !matches!(t.spec.config, CodecConfig::Data { .. }))
         .expect("at least the E-AC-3 tracks remain carriable");
     let out = crate::cmaf::package(&carriable)
-        .expect("CmafMux must succeed once the Data tracks are explicitly filtered out");
+        .expect("CmafMuxStage must succeed once the Data tracks are explicitly filtered out");
     assert!(
         out.windows(4).any(|w| w == b"moov"),
-        "CmafMux output must contain a moov box for the carriable E-AC-3 tracks"
+        "CmafMuxStage output must contain a moov box for the carriable E-AC-3 tracks"
     );
 }
 

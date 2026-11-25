@@ -950,7 +950,7 @@ impl TrackFragmentBox {
         // precisely to declare a fragment that carries no samples for this
         // track (a sparse track inside an otherwise-populated `moof`). The old
         // "traf missing trun" rejection failed the whole `moof` — and with it
-        // `Fmp4Demux`, `cenc_decrypt` and `protect_media_segment` — on
+        // `Mp4Demux`, `cenc_decrypt` and `protect_media_segment` — on
         // conformant input (audit r05-W11).
         Ok(TrackFragmentBox {
             tfhd,
@@ -2023,7 +2023,7 @@ mod tests {
     /// `duration-is-empty` flag (`0x010000`) exists to declare a fragment
     /// with no samples for one track of a multi-track `moof`. The parser used
     /// to reject such a `traf` with "traf missing trun", which failed the
-    /// whole `moof` — and with it `Fmp4Demux`, `cenc_decrypt` and
+    /// whole `moof` — and with it `Mp4Demux`, `cenc_decrypt` and
     /// `protect_media_segment` (audit r05-W11).
     #[test]
     fn traf_without_trun_parses() {

@@ -38,7 +38,7 @@ What changed in that line, over two reviewed steps:
    `audiochannels`, and its client wrapped them in an Object (a receiving
    server turned that into a `03` script tag). The shared body carries an
    ECMA array (an `08` script tag, with the end-of-object marker) — the same
-   shape `FlvMux` writes to a file — and no `duration`, which a live stream
+   shape `FlvMuxStage` writes to a file — and no `duration`, which a live stream
    has none of.
 2. `audiosamplerate` was added back to the shared builder (issue #2369
    follow-up): Adobe FLV v10.1 §E.5

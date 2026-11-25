@@ -21,7 +21,7 @@
 //!    `feed` at all) and
 //!    [`generic_drive_helper_also_spans_segmenter_stages`] drives two
 //!    segmenters with two entirely different `Out` types (`(Vec<u8>,
-//!    SegmentMeta)` vs `Chunk`) — all five through the *exact same* generic
+//!    SegmentOut)` vs `Chunk`) — all five through the *exact same* generic
 //!    `drive::<S: Stage>` function, checked against each type's own trusted
 //!    inherent API, not just "it compiles".
 //! 2. **`StreamingTsHlsSegmenter`'s enqueue-then-poll `Stage` path yields

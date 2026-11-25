@@ -122,7 +122,7 @@ ffmpeg -y -i fixtures/ts/h264/main.ts -c:v copy \
   -encryption_kid a7e61c373e219033c21091fa607bf3b8 -f mp4 fixtures/mp4/cenc.mp4
 
 # #1080 audit r05-W6 CENC with a protected *audio* track as well (`encv` +
-# `enca`), the shape a real CENC asset has and which `CencDecryptor::demux`
+# `enca`), the shape a real CENC asset has and which the CENC decrypt path
 # used to reject outright. ffmpeg's own `-encryption_scheme` encrypts every
 # track (key/KID as for cenc.mp4 above), so a single pass produces both, with
 # the standard in-`stbl` `senc` layout:
@@ -200,7 +200,7 @@ MP4Box -dash 500 -rap -frag-rap -profile onDemand in.mp4 -out out_dash.mpd
 H.222.0 §2.14.1/§2.17.1 require every AVC/HEVC access unit carried in a TS to
 begin with an access unit delimiter. `libx264`/`libx265` do not emit one by
 default (`aud=0`), so an MP4 muxed from them carries none — the exact input a
-`Fmp4Demux → TsMux` remux receives. Kept tiny (15 frames, 320×240, one GOP).
+`Mp4Demux → TsMuxStage` remux receives. Kept tiny (15 frames, 320×240, one GOP).
 
 ```bash
 ffmpeg -y -v error -f lavfi -i "testsrc2=size=320x240:rate=25" -frames:v 15 \

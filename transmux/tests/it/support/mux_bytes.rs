@@ -1,8 +1,7 @@
 //! Drive a muxer stage over a whole [`Media`] and collect its byte stream.
 //!
-//! [`drive_media`] is the bridge from a whole `Media` to a muxer stage; what
-//! the old `Package` muxers returned as one `Vec<u8>` is now a stream of
-//! [`MuxOutput`] units, some of them `BytesAt` patches. These tests compare
+//! [`drive_media`] is the bridge from a whole `Media` to a muxer stage, whose
+//! output is a stream of [`MuxOutput`] units, some of them `BytesAt` patches. These tests compare
 //! bytes, so they apply the units to a buffer the way a seekable output file
 //! would.
 

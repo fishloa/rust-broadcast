@@ -192,7 +192,7 @@ fn demux_h264_aac_prog_audio_sample_timing_and_sync() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Round-trip: progressive → IR → fMP4 (CmafMux) → Mp4Demux
+// 2. Round-trip: progressive → IR → fMP4 (CmafMuxStage) → Mp4Demux
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -202,7 +202,7 @@ fn round_trip_progressive_to_fmp4_preserves_samples_and_codec() {
         test_harness::collect::media_from_mp4(&data, test_harness::collect::CollectMode::Seekable)
             .unwrap();
 
-    let cmaf = crate::cmaf::package(&original).expect("CmafMux::package");
+    let cmaf = crate::cmaf::package(&original).expect("CmafMuxStage output");
     let reloaded =
         test_harness::collect::media_from_mp4(&cmaf, test_harness::collect::CollectMode::Seekable)
             .expect("Mp4Demux::unpackage");

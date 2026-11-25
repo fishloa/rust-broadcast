@@ -17,7 +17,7 @@
 //! read side of the same independent tool) and demuxes ITS output — which
 //! Bento4 rewrites back to a plain (`avc1`, no `sinf`) fragmented fMP4 — with
 //! this crate's own regular, non-CENC [`Mp4Demux`], then compares NAL
-//! payloads byte-for-byte against this module's own `CencDecryptor` output.
+//! payloads byte-for-byte against this module's own `CencDecryptStage` output.
 //! `mp4decrypt` is optional at test-run time (skipped with a printed reason if
 //! absent from `PATH`), matching the established pattern for
 //! external-tool-backed tests elsewhere in this crate (see
@@ -39,7 +39,7 @@ const CBCS_MP4: &str = "mp4/h264-cbcs.mp4";
 // convenience, not real-world practice). The provenance file's third value
 // (`100102030405060708090a0b0c0d0e0f`) is the encryption-time IV passed to
 // `mp4encrypt`'s 3-part `--key <track>:<key>:<iv>` — it is not needed here:
-// `CencDecryptor` recovers the real per-sample IV from each sample's own
+// `CencDecryptStage` recovers the real per-sample IV from each sample's own
 // `senc` entry, and `mp4decrypt`'s 2-part `--key <id>:<k>` takes no IV at all.
 const KEY: [u8; 16] = [
     0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
@@ -197,7 +197,7 @@ fn cbcs_fragmented_demux_and_decrypt_succeeds() {
 
 /// Decrypt `fixture_path` with Bento4's `mp4decrypt`, demux ITS (now plain
 /// `avc1`) output with this crate's own regular fragmented demux
-/// ([`Mp4Demux`]), and assert our own `CencDecryptor` path reproduces the
+/// ([`Mp4Demux`]), and assert our own `CencDecryptStage` path reproduces the
 /// exact same NAL payloads. Skips cleanly (printing why) if `mp4decrypt`
 /// isn't on `PATH`.
 fn assert_matches_bento4_reference(fixture_rel: &str, tag: &str) {

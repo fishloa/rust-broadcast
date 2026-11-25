@@ -1,15 +1,12 @@
 //! Whole-`Media` CMAF packaging for tests: drives [`CmafMuxStage`] through
-//! [`drive_media`] and concatenates what it emits.
-//!
-//! The former `CmafMux` `Package` impl is gone; this is the test-side bridge
-//! for callers that still hold a whole `Media`.
+//! [`drive_media`] and concatenates what it emits — the test-side bridge for a
+//! caller that still holds a whole `Media`.
 
 use broadcast_common::Timestamp;
 use transmux::media::{CmafMuxStage, FragmentCut, Media};
 use transmux::mux_stage::{MuxOutput, drive_media};
 
-/// One CMAF init segment followed by one media segment (the former
-/// `CmafMux::default()` output).
+/// One CMAF init segment followed by one media segment.
 pub fn package(media: &Media) -> transmux::Result<Vec<u8>> {
     package_seq(media, 1)
 }

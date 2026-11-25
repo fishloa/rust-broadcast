@@ -11,7 +11,7 @@
 //! 1. Per-codec config round-trip: reconstructed `CodecConfig` variant matches
 //!    the fixture, and the serialized config record is byte-identical to the
 //!    config box body extracted from the source (hvcC/av1C/vpcC/dOps/dfLa/avcC).
-//! 2. Sample fidelity: demux → IR → CmafMux → re-demux keeps the coded sample
+//! 2. Sample fidelity: demux → IR → CmafMuxStage → re-demux keeps the coded sample
 //!    bytes byte-identical (same count) for every fixture.
 //! 3. Hevc output path: the Hevc IR muxes to an `hvc1` sample entry whose
 //!    `hvcC` box is byte-identical to the source.
@@ -234,7 +234,7 @@ fn avc_config_reconstructs_byte_identical() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Sample fidelity: demux → IR → CmafMux → re-demux is sample-identical
+// 2. Sample fidelity: demux → IR → CmafMuxStage → re-demux is sample-identical
 // ---------------------------------------------------------------------------
 
 fn assert_sample_fidelity(name: &str) {
@@ -293,7 +293,7 @@ fn sample_fidelity_all_codecs() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. Hevc output path: Hevc IR → CmafMux → hvc1 entry with hvcC == source
+// 3. Hevc output path: Hevc IR → CmafMuxStage → hvc1 entry with hvcC == source
 // ---------------------------------------------------------------------------
 
 #[test]

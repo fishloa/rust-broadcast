@@ -13,12 +13,12 @@ use transmux::progressive::ProgressiveMuxStage;
 /// The wall-clock length of one interleaved chunk, as the CLI chooses it.
 pub const INTERLEAVE_MILLIS: u32 = 500;
 
-/// Package `media` into one progressive MP4, `faststart` placing `moov` first.
+/// Mux `media` into one progressive MP4, `faststart` placing `moov` first.
 pub fn package(media: &Media, faststart: bool) -> Vec<u8> {
     package_with_sink(media, faststart, Sink::Seekable)
 }
 
-/// Package `media` into one progressive MP4 for a caller whose sink is `sink`.
+/// Mux `media` into one progressive MP4 for a caller whose sink is `sink`.
 pub fn package_with_sink(media: &Media, faststart: bool, sink: Sink) -> Vec<u8> {
     let plan = PlanPass::for_media(media).expect("plan progressive");
     let layout = Layout::new(

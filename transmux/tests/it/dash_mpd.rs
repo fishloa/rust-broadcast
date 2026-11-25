@@ -161,7 +161,7 @@ fn recover_segment_timing(
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Static MPD: real single-segment CMAF (CmafMux) + real multi-segment
+// Static MPD: real single-segment CMAF (CmafMuxStage) + real multi-segment
 // $Number$ nominal-duration math (Segmenter).
 // ---------------------------------------------------------------------------
 
@@ -169,7 +169,7 @@ fn recover_segment_timing(
 fn static_mpd_structure_codecs_and_number_duration_math() {
     let media = demux_media();
 
-    // Sanity: CmafMux can package the same IR into one real CMAF artifact
+    // Sanity: CmafMuxStage can package the same IR into one real CMAF artifact
     // (evidence the IR this MPD describes is itself a valid segment set).
     let cmaf_bytes = crate::cmaf::package(&media).expect("CMAF package");
     assert!(!cmaf_bytes.is_empty());
@@ -607,7 +607,7 @@ fn content_protection_and_inband_event_stream_hooks() {
 
 // ---------------------------------------------------------------------------
 // CENC/CBCS DASH signalling (issue #564): auto-derived "common"
-// ContentProtection from Track::encryption, plus caller-supplied
+// ContentProtection from TrackSpec::protection, plus caller-supplied
 // DRM-system ContentProtection carrying a cenc:pssh child.
 // ---------------------------------------------------------------------------
 

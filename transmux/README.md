@@ -39,7 +39,7 @@ Editions: where a spec is vendored in `private/specs/` the edition is verified a
 
 ## Input x output matrix
 
-Rows are the demux (`Unpackage`) inputs, columns the mux (`Package`) outputs. A cell is "yes" when every codec the IR can carry from that input reaches that output, or lists the codecs that are rejected or dropped.
+Rows are the demux inputs, columns the mux outputs. A cell is "yes" when every codec the IR can carry from that input reaches that output, or lists the codecs that are rejected or dropped.
 
 | Input \ Output | CMAF/fMP4 | Progressive MP4 | TS | MKV | CMAF-HLS / LL-HLS | TS-HLS | DASH / LL-DASH | Smooth | FLV / RTMP |
 |---|---|---|---|---|---|---|---|---|---|
@@ -51,7 +51,7 @@ Rows are the demux (`Unpackage`) inputs, columns the mux (`Package`) outputs. A 
 | FLV (`FlvDemux`) | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 | RTMP (`RtmpDemux`) | yes | yes | yes | yes | yes | yes | yes | yes | yes |
 
-Notes. The TS-carriable codecs are AVC, HEVC, MPEG-2 video, AAC, MPEG-1/2 audio, AC-3, E-AC-3, DTS, MPEG-H and opaque `Data`; VVC, AV1, VP9, Opus, FLAC, AC-4, subtitles, VP8 and Vorbis have no TS mapping in this crate, and `TsMux` drops such a track rather than erroring. The MKV mux carries AVC, HEVC, VP9, VP8, AV1, AAC, Opus, Vorbis, AC-3 and E-AC-3. `FlvMuxStage` and `RtmpMuxStage` carry only AVC video and AAC audio and reject any other codec with `FlvError::UnsupportedCodec` (RTMP/FLV errors are `RtmpFlvError`); `SmoothPackager` likewise rejects everything but H.264, AAC-LC and text. `FlvDemux` skips non-AVC video and non-AAC audio with no track and no error, whereas `TsDemux` never drops a stream (unknown stream types become opaque `Data` tracks). Where a cell names only some codecs, whether a track outside that set is rejected or dropped is per output (for TS it is dropped); this README does not enumerate it for MKV. Live producers also exist: `Segmenter` (CMAF), `LlHlsSegmenter`, `StreamingTsHlsSegmenter`, `LlSegmenter` / `LlDashPackager`.
+Notes. The TS-carriable codecs are AVC, HEVC, MPEG-2 video, AAC, MPEG-1/2 audio, AC-3, E-AC-3, DTS, MPEG-H and opaque `Data`; VVC, AV1, VP9, Opus, FLAC, AC-4, subtitles, VP8 and Vorbis have no TS mapping in this crate, and `TsMuxStage` drops such a track rather than erroring. The MKV mux carries AVC, HEVC, VP9, VP8, AV1, AAC, Opus, Vorbis, AC-3 and E-AC-3. `FlvMuxStage` and `RtmpMuxStage` carry only AVC video and AAC audio and reject any other codec with `FlvError::UnsupportedCodec` (RTMP/FLV errors are `RtmpFlvError`); `SmoothPackager` likewise rejects everything but H.264, AAC-LC and text. `FlvDemux` skips non-AVC video and non-AAC audio with no track and no error, whereas `TsDemux` never drops a stream (unknown stream types become opaque `Data` tracks). Where a cell names only some codecs, whether a track outside that set is rejected or dropped is per output (for TS it is dropped); this README does not enumerate it for MKV. Live producers also exist: `Segmenter` (CMAF), `LlHlsSegmenter`, `StreamingTsHlsSegmenter`, `LlSegmenter` / `LlDashPackager`.
 
 MPEG-H over TS: the synthesized `MPEG-H_3dAudio_descriptor` (H.222.0 Table 2-121) writes `interactivityEnabled` = 0 and `compatibleProfileSetsPresent` = 1 (no compatible-set list) because the IR carries neither. The descriptor's 6-bit `referenceChannelLayout` is taken from the `mhaC` byte; a value above `0x3F` cannot be represented there and is written as `0` (unspecified) instead of failing the mux.
 
@@ -81,7 +81,7 @@ Header parse and the container box only; no encode or decode.
 | CEA-608/708 | In-band SEI `cc_data` extraction (ATSC and GY/T 270) | n/a | interpretation lives in `cc-data` and `caption-convert` |
 | Opaque `Data` | TS PES or section carriage, `stream_type` and `ES_info` kept verbatim | n/a | TS round trip |
 
-**Encryption and DRM:** `cenc` and `cbcs` decrypt (`CencDecryptor`, `KeyMap`) and encrypt (`CencEncryptor`, which fills `Track::encryption` so `protect_init_segment` and `protect_media_segment` emit `sinf`/`senc`/`saio`/`saiz`). `pssh` init data for Widevine (protobuf), PlayReady (PRO and WRMHEADER, `std`) and FairPlay (`skd://`) in `drm`. DASH `ContentProtection` is derived from `Track::encryption`; HLS `EXT-X-KEY` comes from `broadcast_hls::cenc_ext_x_key`. Sample-AES and whole-segment AES-128 are in `sample_aes` (feature `sample-aes`).
+**Encryption and DRM:** `cenc` and `cbcs` decrypt (`CencDecryptStage`, `KeyMap`) and encrypt (`CencEncryptStage`, which fills `TrackSpec::protection` and each sample's `Sample::protection` so the fragment writer emits `senc`/`saiz`/`saio` and `protect_init_segment` splices in `sinf`). `pssh` init data for Widevine (protobuf), PlayReady (PRO and WRMHEADER, `std`) and FairPlay (`skd://`) in `drm`. DASH `ContentProtection` is derived from `TrackSpec::protection`; HLS `EXT-X-KEY` comes from `broadcast_hls::cenc_ext_x_key`. Sample-AES and whole-segment AES-128 are in `sample_aes` (feature `sample-aes`).
 
 ## Features
 
@@ -105,7 +105,7 @@ transmux = { version = "0.33", features = ["serde"] }
 Demux a real H.264 plus AAC broadcast capture once, then mux the same IR to CMAF, a DASH manifest and back to TS:
 
 ```rust
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use transmux::{CmafMuxStage, DashPackager, FragmentCut, Media, TsDemux, TsMuxStage};
 
 let ts = std::fs::read("../fixtures/ts/h264-aac.ts").unwrap();
@@ -215,7 +215,7 @@ Container only, never a codec. Sans-IO pull and push APIs, zero-copy sample fan-
 
 ## Related crates
 
-Depends on `broadcast-common` (`Package`/`Unpackage`), `broadcast-hls`, `isobmff`, `mpeg-ts`, `mpeg-pes`, `mpeg-ps`, `rtp-packet` (RTP and RTCP), `dvb-si` (typed PMT audio metadata) and optionally `container-probe`. Consumed by `media-plane` (IR and `TrackId`), `hls-runtime`, `rtmp-runtime` (dev), `multimux` and `media-doctor`. Python bindings (`transmux-py`) live outside the workspace.
+Depends on `broadcast-common` (`Parse`/`Serialize`, the `Stage` contract, and `Unpackage` for the batch demuxers), `broadcast-hls`, `isobmff`, `mpeg-ts`, `mpeg-pes`, `mpeg-ps`, `rtp-packet` (RTP and RTCP), `dvb-si` (typed PMT audio metadata) and optionally `container-probe`. Consumed by `media-plane` (IR and `TrackId`), `hls-runtime`, `rtmp-runtime` (dev), `multimux` and `media-doctor`. Python bindings (`transmux-py`) live outside the workspace.
 
 ## MSRV and licence
 

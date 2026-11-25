@@ -1,12 +1,12 @@
 //! Collect a streaming demux stage's [`DemuxEvent`]s into the per-track vectors
 //! a [`Media`] carries.
 //!
-//! The muxers still take a `Media` (streaming-first Phase 4 will change them),
-//! so the tests drive the one streaming MP4 stage over a fixture and fold its
-//! event vocabulary into one here. The fold keeps the init's track order and
-//! its sample-owned summaries (`start_decode_time`, skipped and degraded
-//! records), so a test compares exactly what the old whole-input demuxers
-//! reported on the same terms.
+//! A test that asserts on a whole `Media` drives the one streaming MP4 stage
+//! over a fixture and folds its event vocabulary into one here; the other
+//! whole-`Media` bridges in this module do the same for the mux, splice and
+//! trick-play stages. The fold keeps the init's track order and its
+//! sample-owned summaries (`start_decode_time`, skipped and degraded
+//! records), so a test can compare what the demuxer reported on those terms.
 
 use std::collections::BTreeMap;
 
