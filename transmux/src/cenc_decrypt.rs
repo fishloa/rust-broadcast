@@ -1577,10 +1577,7 @@ mod tests {
         let err = dec
             .decrypt(&mut media, &KeyMap::new().with_key(KID, KEY))
             .unwrap_err();
-        assert!(
-            matches!(err, Error::InvalidInput(_) | Error::BufferTooShort(..)),
-            "got {err:?}"
-        );
+        assert!(matches!(err, Error::BufferTooShort(..)), "got {err:?}");
         let after: Vec<Vec<u8>> = media
             .tracks
             .iter()
@@ -1634,10 +1631,7 @@ mod tests {
         let err = dec
             .decrypt(&mut media, &KeyMap::new().with_key(KID, KEY))
             .unwrap_err();
-        assert!(
-            matches!(err, Error::InvalidInput(_) | Error::BufferTooShort(..)),
-            "got {err:?}"
-        );
+        assert!(matches!(err, Error::BufferTooShort(..)), "got {err:?}");
         let after: Vec<Vec<u8>> = media
             .tracks
             .iter()
