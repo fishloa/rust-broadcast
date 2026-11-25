@@ -12,7 +12,7 @@
 //! r05-W13). That matches the one other container walker in the crate
 //! (`BoxIter::new`, which every container in the module shares):
 //! a partial child header cannot be framed, so it is `BufferTooShort`. The
-//! other TS/container demuxers (`TsDemux`, `PsDemux`, `WebmDemux`) stop at a
+//! other TS/container demuxers (`TsDemux`, `StreamingPsDemux`, `WebmDemux`) stop at a
 //! short tail instead, because a live capture legitimately ends mid-packet and
 //! there is no enclosing length to contradict — an init segment, by contrast,
 //! states its own size, so a short tail means the file is malformed.

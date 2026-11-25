@@ -99,13 +99,16 @@ fn packetise(
 mod ps_demux_copies {
 
     use super::bytes_allocated;
-    use broadcast_common::Unpackage;
-    use transmux::PsDemux;
+    use broadcast_common::Stage;
+    use broadcast_common::stage::Timestamp;
+    use transmux::StreamingPsDemux;
 
     /// r04-O6: the PS demuxer copied every video byte three times (ES concat, the
     /// per-AU `to_vec`, the Annex-B -> length-prefixed re-encode). Total bytes
     /// allocated while demuxing, as a multiple of the input size, is the
-    /// deterministic copy-count proxy.
+    /// deterministic copy-count proxy. `StreamingPsDemux` is driven in 4096-byte
+    /// chunks, as the CLI drives it, and measures 719/100 (H.264) and 177/100
+    /// (MPEG-2) against the unchanged budgets below.
     #[test]
     fn ps_demux_copies_of_the_payload() {
         for (rel, budget_x100) in [
@@ -113,8 +116,27 @@ mod ps_demux_copies {
             ("ps/ffmpeg-mpeg2video-mp2.ps", MPEG2_BUDGET_X100),
         ] {
             let bytes = test_fixtures::read(rel);
-            let (media, allocated) =
-                bytes_allocated(|| PsDemux::new().unpackage(bytes.as_slice()).unwrap());
+            let (media, allocated) = bytes_allocated(|| {
+                // The streaming demuxer is measured the way it is driven: in
+                // bounded chunks, draining each event as it arrives. Holding
+                // the whole file here would measure the test, not the stage.
+                let mut demux = StreamingPsDemux::new();
+                let mut samples = Vec::new();
+                let drain = |demux: &mut StreamingPsDemux, samples: &mut Vec<transmux::Sample>| {
+                    while let Some(event) = demux.poll() {
+                        if let transmux::DemuxEvent::Sample { sample, .. } = event {
+                            samples.push(sample);
+                        }
+                    }
+                };
+                for chunk in bytes.chunks(4096) {
+                    demux.feed(chunk, Timestamp::ZERO).unwrap();
+                    drain(&mut demux, &mut samples);
+                }
+                demux.finish().unwrap();
+                drain(&mut demux, &mut samples);
+                samples
+            });
             drop(media);
             let x100 = allocated * 100 / bytes.len();
             eprintln!("ps demux {rel}: {allocated} bytes allocated = {x100}/100 x input");

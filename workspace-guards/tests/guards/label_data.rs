@@ -1131,7 +1131,9 @@ pub const TABLE: &[Crate] = &[
         name: "mpeg-ps",
         scope: Scope::Crate,
         matcher: Matcher::Strict,
-        skip: &["Error"],
+        // `PsEvent` is the scanner's structural-event ADT (it *carries* the
+        // spec values in its variants, and is not itself a spec/field label).
+        skip: &["Error", "PsEvent"],
         expected: None,
         min_enums: None,
     },

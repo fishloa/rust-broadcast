@@ -19,6 +19,8 @@ mod error;
 mod pack_header;
 pub mod program_stream;
 pub mod program_stream_map;
+#[doc = "Sans-IO pack/PES scanner."]
+pub mod scan;
 mod scr;
 mod system_header;
 mod wire;
@@ -33,6 +35,7 @@ pub use descriptor_loop::{
 pub use error::{Error, Result};
 pub use pack_header::PackHeader;
 pub use program_stream_map::{EsMapEntry, ProgramStreamMap};
+pub use scan::{PsEvent, PsLimits, PsScanner};
 pub use scr::Scr;
 pub use system_header::{StdBufferBound, SystemHeader};
 

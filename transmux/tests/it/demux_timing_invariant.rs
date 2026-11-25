@@ -50,9 +50,7 @@ use test_fixtures::ffprobe;
 
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
-use transmux::{
-    FlvDemux, Media, PsDemux, RtmpDemux, RtmpMuxStage, RtpDepacketiser, TsDemux, WebmDemux,
-};
+use transmux::{FlvDemux, Media, RtmpDemux, RtmpMuxStage, RtpDepacketiser, TsDemux, WebmDemux};
 
 fn workspace_fixture(rel: &str) -> Vec<u8> {
     let path = test_fixtures::root().join(rel);
@@ -218,13 +216,13 @@ fn webm_demux_timing_invariant_holds() {
     );
 }
 
-// ── 6. PsDemux ────────────────────────────────────────────────────────────
+// ── 6. StreamingPsDemux ────────────────────────────────────────────────────────────
 
 #[test]
 fn ps_demux_timing_invariant_holds() {
     let ps = workspace_fixture("ps/h264-ac3.ps");
-    let media = PsDemux::new().unpackage(&ps[..]).expect("PS demux");
-    let checked = assert_timing_invariant(&media, "PsDemux");
+    let media = test_harness::collect::media_from_ps(&ps[..], 4096).expect("PS demux");
+    let checked = assert_timing_invariant(&media, "StreamingPsDemux");
     assert!(
         checked >= 2,
         "expected at least video + audio tracks checked, got {checked}"

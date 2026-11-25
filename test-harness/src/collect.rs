@@ -224,6 +224,28 @@ fn media_from_stage(mut demux: transmux::mp4_demux::Mp4Demux) -> Result<Media, t
     Ok(media)
 }
 
+/// Drive [`StreamingPsDemux`](transmux::StreamingPsDemux) over a whole
+/// in-memory Program Stream image, feeding it in `chunk`-sized pieces, and fold
+/// its events into a [`Media`].
+///
+/// A whole small fixture in memory is fine **here only**: this crate is a test
+/// harness. The stage itself never holds the input.
+pub fn media_from_ps(bytes: &[u8], chunk: usize) -> Result<Media, transmux::Error> {
+    let chunk = chunk.max(1);
+    let mut demux = transmux::StreamingPsDemux::new();
+    for piece in bytes.chunks(chunk) {
+        demux.feed(piece, broadcast_common::stage::Timestamp::ZERO)?;
+    }
+    demux.finish()?;
+    let mut events = Vec::new();
+    while let Some(event) = demux.poll() {
+        events.push(event);
+    }
+    let mut media = media_from_events(events);
+    media.movie_timescale = transmux::rtp::VIDEO_CLOCK_TIMESCALE;
+    Ok(media)
+}
+
 /// The result of driving a [`SplicePlan`] over whole medias: the joined media
 /// and the joins to signal. Field-compatible with the former whole-`Media`
 /// splice result, now produced by [`SpliceStage`].

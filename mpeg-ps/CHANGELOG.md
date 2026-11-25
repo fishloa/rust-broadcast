@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `mpeg_ps::scan::PsScanner` (re-exported as `mpeg_ps::{PsScanner, PsEvent, PsLimits}`):
+  a sans-IO pack/PES scanner that is fed the stream in pieces and yields one
+  structural unit at a time (`Pack`, `SystemHeader`, `ProgramStreamMap`, a
+  complete `Pes` packet, `Resync { skipped }`, `End`). It holds at most one
+  incomplete unit, reuses the crate's existing parsers, bounds a PES by
+  `PsLimits::max_pes_bytes` (default `MAX_PES_BYTES`, the `6 + 65535` a 16-bit
+  `PES_packet_length` can describe; over it is `Error::PesTooLarge`), and
+  resynchronises on the next `pack_start_code` after damage instead of
+  abandoning the stream. The whole-buffer `program_stream::scan_packs` stays
+  for callers that already hold the input.
 
 ## [0.10.0] - 2026-11-22
 ### Breaking

@@ -71,6 +71,10 @@ example_args() {
         atsc3/parse_slt)      echo "fixtures/atsc3/slt-lls-2019-01-07.bin" ;;
         st2022/parse_hbrmt)   echo "fixtures/rtp/st2022-6-hbrmt-payload-header.bin" ;;
         dvb-mabr/parse_session) echo "fixtures/mabr/annex-c3-gateway-config.xml" ;;
+        broadcast-matroska/dump_elements) echo "fixtures/mkv/vp9-opus.webm" ;;
+        broadcast-matroska/list_tracks)   echo "fixtures/mkv/vp9-opus.webm" ;;
+        broadcast-matroska/list_samples)  echo "fixtures/mkv/vp9-opus.webm" ;;
+        broadcast-matroska/remux)         echo "fixtures/mkv/vp9-opus.webm $WORKDIR/remux.mkv" ;;
         # Both directions are keystream transforms over opaque bytes, so each
         # runs standalone against the same input — no ordering dependency
         # between the two examples (cargo enumerates targets alphabetically,

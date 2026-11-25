@@ -477,6 +477,26 @@ pub(crate) const OTI_MPEG2_VIDEO_MAIN: u8 = 0x61;
 /// `esds` `streamType` for a VisualStream (ISO/IEC 14496-1 Table 6).
 /// `pub(crate)`: also used by `ps_demux` (C6, #1009).
 pub(crate) const STREAM_TYPE_VISUAL: u8 = 0x04;
+
+/// The `esds` an MPEG-2 video track carries: the MPEG-2 Main Visual object
+/// type (ISO/IEC 14496-1 Table 5) and a VisualStream (Table 6), with the
+/// predefined SL config. One definition shared by the TS and PS demuxers.
+pub(crate) fn mpeg2_video_esds() -> EsdsBox {
+    EsdsBox::new(ESDescriptor::new(
+        ESDS_VIDEO_ES_ID,
+        0,
+        Some(DecoderConfigDescriptor::new(
+            OTI_MPEG2_VIDEO_MAIN,
+            STREAM_TYPE_VISUAL,
+            false,
+            0,
+            0,
+            0,
+            None,
+        )),
+        Some(SLConfigDescriptor::predefined_two()),
+    ))
+}
 /// `esds` `ES_ID` assigned to the single audio elementary stream.
 const ESDS_ES_ID: u16 = 1;
 /// `esds` `ES_ID` assigned to the single video elementary stream.
@@ -3571,20 +3591,7 @@ fn finalize_probe(
         ConfigProbe::Mpeg2Video => {
             // Geometry from the first sequence_header() seen in the stream.
             let seq = Mpeg2SeqHeader::find(latest).ok()?;
-            let esds = EsdsBox::new(ESDescriptor::new(
-                ESDS_VIDEO_ES_ID,
-                0,
-                Some(DecoderConfigDescriptor::new(
-                    OTI_MPEG2_VIDEO_MAIN,
-                    STREAM_TYPE_VISUAL,
-                    false,
-                    0,
-                    0,
-                    0,
-                    None,
-                )),
-                Some(SLConfigDescriptor::predefined_two()),
-            ));
+            let esds = mpeg2_video_esds();
             Some((
                 CodecConfig::Mpeg2Video {
                     esds,
