@@ -112,7 +112,7 @@ pub enum AbandonReason {
         /// The sample-entry parser's own message when the four-CC is known but
         /// its body failed to parse (issue #952): the real cause, not just the
         /// entry name.
-        detail: Option<String>,
+        detail: Option<alloc::string::String>,
     },
     /// The sample entry is a known box this crate parses but has no
     /// [`CodecConfig`](crate::pipeline::CodecConfig) reconstruction for, so

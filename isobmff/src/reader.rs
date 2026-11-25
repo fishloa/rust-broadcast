@@ -29,6 +29,7 @@
 //! (`private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`).
 
 use alloc::collections::VecDeque;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 
@@ -255,7 +256,7 @@ pub struct SampleEntryInfo {
     /// Why a known four-CC's typed parse failed, when it did. `typed` is
     /// `None` in that case and this carries the parser's own message, so a
     /// demuxer can name the real cause (issue #952).
-    pub error: Option<String>,
+    pub error: Option<alloc::string::String>,
     /// The [`ReaderConfig`]'s private-box-registry parse of this entry, when a
     /// registration matched its four-CC; call
     /// [`RegisteredEntry::downcast_ref`](crate::registry::RegisteredEntry::downcast_ref)
