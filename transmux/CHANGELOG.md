@@ -40,6 +40,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `data_identity`: `DataIdentityMap` is a caller-built table from a source track to the `DataIdentity` it should carry in the output, and `DataIdentityStage` rewrites that data track's `MuxInput::Track` announcement while passing samples and every other input through unchanged. There is no library-chosen default: an unmapped data track reaches the muxer with its own identity.
 
 ### Breaking
+- `TsDemux`, `FlvDemux`, `RtmpDemux` and `RtpDepacketiser` (and their
+  `Unpackage` impls) are deleted: `StreamingTsDemux`, `StreamingFlvDemux` and
+  `RtpStreamDepacketiser` are the only demuxers, and RTMP ingest is
+  `rtmp-runtime`'s session engine feeding `StreamingFlvDemux`. `RtpInput`,
+  `RtpInputStream`, `RtpTimingWarning` and `MAX_TIMING_WARNINGS` go with them.
+  Each deleted demuxer's output is pinned by a per-container baseline
+  (`fixtures/{ts,flv,rtmp}/demux-baseline.txt`, plus the private TS corpus)
+  that the streaming stages reproduce fed in 1-byte, one-packet/natural and
+  64 KiB chunks. `test_harness::collect` gained `media_from_ts`,
+  `media_from_flv`, `media_from_rtmp` and `media_from_rtp` for tests that need
+  a whole `Media`.
 - `WebmDemux` and its `Unpackage` impl are deleted; `MatroskaDemux` is the one
   Matroska/WebM demuxer (a `Stage`, like `Mp4Demux` and `StreamingPsDemux`).
   `--max-whole-input-bytes` and `CliError::WholeInputTooLarge` are deleted.
