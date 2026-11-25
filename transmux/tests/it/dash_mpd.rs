@@ -22,12 +22,13 @@
 //! compile this test rather than skipping it.
 #![cfg(feature = "cenc")]
 
+use broadcast_common::Package;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Unpackage;
 use isobmff::cenc::TrackEncryptionBox;
 use transmux::pipeline::CodecConfig;
 use transmux::{

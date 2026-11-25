@@ -29,12 +29,12 @@
 //! This is the *reverse* of the ingest path: instead of demuxing inbound media
 //! and publishing samples into a `Trunk`, a push driver subscribes to a
 //! `Trunk`'s samples and muxes them outbound. Each transport picks its own
-//! wire container via [`PushTransport::encode_media`]: SRT and RTSP mux with
-//! `transmux::TsMux` (`broadcast_common::Package`) and ship one opaque TS
-//! blob per batch (the trait's default); RTMP instead splits samples into
-//! FLV-framed messages (`transmux::flv_frame_payloads`) and ships them via
-//! `send_video`/`send_audio` (issue #934) — RTMP carries FLV
-//! `VIDEODATA`/`AUDIODATA` payloads, not MPEG-2 TS.
+//! wire container through [`PushTransport::media_muxer`]: SRT and RTSP keep a
+//! [`TsMuxStage`] and emit whole 188-byte TS packets, RTMP keeps an
+//! `RtmpMuxStage` and emits FLV `VIDEODATA`/`AUDIODATA` payloads framed into
+//! RTMP messages (issue #934) — no push path builds a `Media` per batch or per
+//! sample. A transport that answers `None` falls back to the stateless
+//! [`PushTransport::encode_media`] batch path.
 //!
 //! The supervisor/origin wiring (spawning a push task per configured route)
 //! is live: `crate::origin::spawn_push_outputs` spawns one [`drive_push`]
@@ -61,11 +61,12 @@ use tokio_util::sync::CancellationToken;
 use egress::FlushOutcome;
 pub use egress::PushTransportEgress;
 
-use broadcast_common::Package;
-
 use crate::config::PushFormat;
-use transmux::ir::{Media, TrackSpec};
-use transmux::{StreamingTsMux, TsMux};
+use broadcast_common::Stage;
+use broadcast_common::stage::Timestamp;
+use transmux::ir::{Media, Sample, TrackSpec};
+use transmux::mux_stage::{MuxInput, MuxOutput};
+use transmux::{DEFAULT_PSI_INTERVAL, TrackId, TsMuxStage};
 
 /// Longest wait for a trunk wake-up before the push loop re-checks its queued
 /// flush and renegotiation work, so a lost wake cannot stall an idle source.
@@ -78,7 +79,7 @@ pub use srt::{SrtTransport, SrtTransportConfig};
 
 /// Error from [`PushTransport::send_media`] — distinguishes a muxing failure
 /// (not a connection problem: `drive_push` drops the batch without forcing a
-/// reconnect, matching the pre-#934 `TsMux::package` handling) from a
+/// reconnect, as the pre-#934 whole-`Media` TS muxer's failure did) from a
 /// transport-level send/protocol failure (`drive_push` reconnects).
 ///
 /// Generic over no transport type — every [`PushTransport::Error`] already
@@ -128,12 +129,121 @@ pub enum MuxError {
     NoCarriableTrack,
 }
 
+/// One per-connection sample muxer, as a transport hands it out.
+///
+/// Both per-sample muxers the push transports own — a TS push's
+/// [`TsMuxStage`] and RTMP's [`transmux::RtmpMuxStage`] — speak
+/// [`MuxInput`]/[`MuxOutput`], so this trait is their one object-safe view:
+/// [`PushTransport::media_muxer`] returns it and
+/// [`egress::PushTransportEgress`] is its one driver (announce the negotiated
+/// track set, feed one drained sample at a time, flush at an idle boundary).
+///
+/// The state lives and dies with the transport, so a reconnect (a new
+/// transport, a new [`PushTransportEgress`]) starts a fresh stream with fresh
+/// PSI, continuity counters and chunk-stream state.
+pub trait MediaMuxer {
+    /// Announce (or update) the track set this connection carries; an
+    /// identical set is a no-op.
+    ///
+    /// # Errors
+    /// The muxer's own error when the set cannot be added to its stream.
+    fn set_tracks(&mut self, tracks: &[TrackSpec]) -> Result<(), SendMediaError>;
+
+    /// Mux one drained sample, returning every wire message it completed.
+    ///
+    /// # Errors
+    /// The muxer's own error.
+    fn encode_sample(
+        &mut self,
+        track: TrackId,
+        sample: &Sample,
+    ) -> Result<Vec<bytes::Bytes>, SendMediaError>;
+
+    /// Emit every message the muxer still holds because the stream went idle
+    /// or ended (an interleave window, or one pending sample per track).
+    ///
+    /// # Errors
+    /// The muxer's own error.
+    fn flush(&mut self) -> Result<Vec<bytes::Bytes>, SendMediaError>;
+}
+
+/// The per-connection MPEG-2 TS muxer a TS push transport feeds one sample at
+/// a time (issue #1024, Phase 4): one [`TsMuxStage`] carrying continuity
+/// counters, the PCR and the PSI schedule across samples, and the track set it
+/// last announced.
+pub(crate) struct TsPushMux {
+    stage: TsMuxStage,
+    announced: Vec<TrackSpec>,
+}
+
+impl TsPushMux {
+    fn new() -> Self {
+        Self {
+            stage: TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL)),
+            announced: Vec::new(),
+        }
+    }
+
+    fn take_ready(&mut self) -> Vec<bytes::Bytes> {
+        let mut out = Vec::new();
+        while let Some(item) = self.stage.poll() {
+            if let MuxOutput::Bytes(chunk) = item {
+                out.push(chunk);
+            }
+        }
+        out
+    }
+}
+
+impl MediaMuxer for TsPushMux {
+    fn set_tracks(&mut self, tracks: &[TrackSpec]) -> Result<(), SendMediaError> {
+        if self.announced == tracks {
+            return Ok(());
+        }
+        for spec in tracks {
+            self.stage
+                .feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)
+                .map_err(MuxError::Package)?;
+        }
+        self.announced = tracks.to_vec();
+        Ok(())
+    }
+
+    /// Feed one sample and collect every whole TS packet the stage emits.
+    fn encode_sample(
+        &mut self,
+        track: TrackId,
+        sample: &Sample,
+    ) -> Result<Vec<bytes::Bytes>, SendMediaError> {
+        self.stage
+            .feed(
+                MuxInput::Sample {
+                    track,
+                    sample: sample.clone(),
+                },
+                Timestamp::ZERO,
+            )
+            .map_err(MuxError::Package)?;
+        Ok(self.take_ready())
+    }
+
+    /// Close the unit being built now: emit the packets the stage still holds
+    /// (its interleave window waits for the next PCR-carrying sample, so an
+    /// idle stream would otherwise leave the last few frames queued).
+    fn flush(&mut self) -> Result<Vec<bytes::Bytes>, SendMediaError> {
+        self.stage
+            .feed(MuxInput::Flush, Timestamp::ZERO)
+            .map_err(MuxError::Package)?;
+        Ok(self.take_ready())
+    }
+}
+
 /// A concrete push transport: the wire protocol half of a push output.
 ///
 /// Mirrors the ingest side's *socket-as-handle* shape (e.g.
 /// [`srt_runtime::io::SrtSocket`]) — [`connect`](Self::connect) dials out to
-/// the downstream server, [`send_media`](Self::send_media) muxes and pushes
-/// one drained batch of samples, and [`close`](Self::close) tears the
+/// the downstream server, [`media_muxer`](Self::media_muxer) hands out the
+/// connection's per-sample muxer, and [`close`](Self::close) tears the
 /// connection down.
 #[async_trait::async_trait]
 pub trait PushTransport: Send + 'static {
@@ -150,9 +260,11 @@ pub trait PushTransport: Send + 'static {
 
     /// Push one application payload to the downstream server.
     ///
-    /// The low-level "write these bytes" primitive — used by
-    /// [`send_media`](Self::send_media)'s default implementation (SRT/RTSP:
-    /// one opaque MPEG-2 TS blob per batch). **Its contract is "frame `data`
+    /// The low-level "write these bytes" primitive — what
+    /// [`send_media`](Self::send_media)'s default implementation writes, and
+    /// what [`egress::PushTransportEgress::flush_transmit`] falls back to for
+    /// a transport with no [`media_muxer`](Self::media_muxer).
+    /// **Its contract is "frame `data`
     /// as this transport's own idea of one payload"**, not "write these
     /// bytes verbatim" — for SRT/RTSP that's the same thing (there is no
     /// separate framing step), but RTMP's override always wraps `data` in a
@@ -213,54 +325,41 @@ pub trait PushTransport: Send + 'static {
     /// messages, and hands them to an external async driver through
     /// [`media_plane::PushEgress::poll_transmit`].
     ///
-    /// Default: one message, the whole batch MPEG-2 TS-muxed. When the
-    /// transport exposes a per-connection [`ts_mux`](Self::ts_mux) (SRT and
-    /// RTSP do) the batch goes through that long-lived
-    /// [`StreamingTsMux`], so continuity counters, PCR and PTS/DTS continue
-    /// across batches and PAT/PMT repeat on a media-time interval rather than
-    /// before every sample (issue #1024; the push egress hands this method ONE
-    /// sample at a time). A transport without one falls back to a fresh
-    /// one-shot [`TsMux`] per call, which is only correct for whole-stream
-    /// batches. RTMP overrides this (issue #934/#942): RTMP messages carry FLV
-    /// `VIDEODATA`/`AUDIODATA` bodies, not TS, so it splits `media` into
-    /// per-frame, chunk-stream-framed messages via `rtmp_runtime::client::
-    /// ClientSession::send_video`/`send_audio` — themselves sans-IO calls,
-    /// so this really is a clean split, not a workaround.
-    fn encode_media(&mut self, media: &Media) -> Result<Vec<bytes::Bytes>, SendMediaError> {
-        let bytes = match self.ts_mux() {
-            Some(mux) => mux.package(media),
-            None => TsMux::new().package(media),
-        }
-        .map_err(MuxError::Package)?;
-        if bytes.is_empty() {
-            return Ok(Vec::new());
-        }
-        Ok(vec![bytes::Bytes::from(bytes)])
+    /// Frame one whole [`Media`] as this transport's native wire messages,
+    /// performing **no I/O**. Only a transport whose container is not MPEG-2
+    /// TS overrides this (RTMP: `VIDEODATA`/`AUDIODATA` bodies split into
+    /// per-frame, chunk-stream-framed messages via
+    /// `rtmp_runtime::client::ClientSession::send_video`/`send_audio`, issue
+    /// #934/#942). Every push transport in this crate answers
+    /// [`media_muxer`](Self::media_muxer) for its live stream; only RTMP also
+    /// overrides this, for the stateless batch entry point.
+    fn encode_media(&mut self, _media: &Media) -> Result<Vec<bytes::Bytes>, SendMediaError> {
+        Err(SendMediaError::Mux(MuxError::NoCarriableTrack))
     }
 
-    /// The per-connection sample muxer this transport frames with, when its
-    /// wire format is one message per sample rather than one blob per batch
-    /// (RTMP). [`egress::PushTransportEgress`] feeds it
-    /// one sample at a time instead of building a one-sample `Media`.
-    fn media_muxer(&mut self) -> Option<&mut transmux::RtmpMuxStage> {
-        None
-    }
-
-    /// The per-connection streaming TS muxer the default
-    /// [`encode_media`](Self::encode_media) feeds (issue #1024). `None`
-    /// (default) keeps the legacy stateless one-shot mux. The state lives and
-    /// dies with the transport, so a reconnect (a new transport) starts a
-    /// fresh stream with fresh PSI and counters.
-    fn ts_mux(&mut self) -> Option<&mut StreamingTsMux> {
+    /// The per-connection muxer this transport frames with, when its wire
+    /// format is one message per sample: a `TsPushMux` for the TS pushes
+    /// (SRT, RTSP), `Some` once `setup` created it for RTMP. `None` (default)
+    /// keeps the stateless batch path through
+    /// [`encode_media`](Self::encode_media).
+    ///
+    /// [`egress::PushTransportEgress`] is the one driver: it announces the
+    /// negotiated track set, feeds one drained sample at a time and flushes at
+    /// an idle boundary, so no push path builds a `Media` per batch or per
+    /// sample.
+    fn media_muxer(&mut self) -> Option<&mut dyn MediaMuxer> {
         None
     }
 
     /// Mux one drained batch of samples into this transport's native wire
     /// format and send it: [`encode_media`](Self::encode_media) (sans-IO),
-    /// then [`send`](Self::send) (I/O) for each resulting message — what
-    /// SRT and RTSP push both want via the default `encode_media` (one TS
-    /// message per batch). RTMP overrides both methods (issue #934): see
-    /// [`encode_media`](Self::encode_media)'s own doc.
+    /// then [`send`](Self::send) (I/O) for each resulting message. The live
+    /// push loop drives [`PushTransportEgress`] instead, one sample at a time;
+    /// this whole-`Media` entry point is what a caller holding the IR (a test,
+    /// a one-shot replay) uses, and it is stateless: a transport that answers
+    /// [`media_muxer`](Self::media_muxer) frames the live stream through that
+    /// (its per-connection state), so this batch path either re-frames from
+    /// scratch or, without an `encode_media` override, refuses the batch.
     ///
     /// Returns the number of payload bytes actually sent, for
     /// [`PushMetrics::bytes_sent`].
@@ -735,6 +834,12 @@ pub async fn drive_push<T: PushTransport>(
         // see `PushTransportEgress::flush_transmit`'s own doc); otherwise
         // sleep out the backoff (cancellation-aware).
         if let Some(egress) = session.egress_mut() {
+            // Emit the packets the per-connection muxer still holds: a muxer
+            // keeps one interleave window, so the tail of an idle stream would
+            // otherwise wait for the next sample.
+            if let Err(error) = egress.flush_mux().await {
+                tracing::error!(error = %error, "push mux flush failed; continuing");
+            }
             let outcome = egress
                 .flush_transmit_bounded(&cancel, PUSH_FLUSH_TIMEOUT)
                 .await;

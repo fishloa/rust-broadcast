@@ -8,10 +8,10 @@
 //! `quick-xml` and asserted against real elements/attributes.
 #![cfg(feature = "std")]
 
+use broadcast_common::Package;
 use std::path::PathBuf;
 use transmux::TrackId;
 
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Stage, Unpackage};
 use std::time::Duration;

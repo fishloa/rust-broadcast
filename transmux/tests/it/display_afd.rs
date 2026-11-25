@@ -2,13 +2,13 @@
 
 #![cfg(feature = "std")]
 
-use broadcast_common::Package;
+use crate::ts_mux_stage;
 use broadcast_common::Unpackage;
 use std::sync::Arc;
 use transmux::annexb::iter_length_prefixed_nals;
 use transmux::ir::{ActiveFormatDescription, AfdPersistence, BarData, CodecConfig, DisplayInfo};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux, TsDemux};
-use transmux::{Media, Track, TsMux};
+use transmux::{Media, Track};
 
 fn avc_track_mut(media: &mut Media) -> &mut Track {
     media
@@ -112,7 +112,7 @@ fn build_avc_from_n(fixture: &str, sei_per_au: &[Vec<Vec<u8>>], n: Option<usize>
     if let Some(n) = n {
         track.samples.truncate(n);
     }
-    TsMux::new().package(&media).expect("mux")
+    ts_mux_stage::mux(&media)
 }
 
 fn build_avc_from(fixture: &str, sei_per_au: &[Vec<Vec<u8>>]) -> Vec<u8> {
@@ -136,7 +136,7 @@ fn build_hevc(sei_per_au: &[Vec<Vec<u8>>]) -> Vec<u8> {
         }
         sample.data = v.into();
     }
-    TsMux::new().package(&media).expect("mux")
+    ts_mux_stage::mux(&media)
 }
 
 fn arc_id<T>(arc: &Arc<T>) -> usize {

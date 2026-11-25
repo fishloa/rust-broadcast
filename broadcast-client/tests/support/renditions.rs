@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use broadcast_client::{Event, Sample, TrackId, TrackSpec};
+use broadcast_common::Stage;
 use transmux::CodecConfig;
 use transmux::ts_hls::StreamingTsHlsSegmenter;
 
@@ -38,13 +39,12 @@ fn restream(spec: &TrackSpec, samples: &[Sample]) -> TrackStream {
     let mut seg =
         StreamingTsHlsSegmenter::new(vec![spec.clone()], TARGET_SECS, WINDOW).expect("segmenter");
     for s in samples {
-        seg.push(spec.track_id, s.clone()).expect("push");
+        feed_sample(&mut seg, spec.track_id, s.clone());
     }
-    seg.finish().expect("finish");
-    let segments = seg
-        .take_ready()
+    Stage::finish(&mut seg).expect("finish");
+    let segments = drain_segments(&mut seg)
         .into_iter()
-        .map(|s| (s.uri, s.bytes))
+        .map(|s| (format!("seg{}.ts", s.summary.sequence), s.bytes.to_vec()))
         .collect();
     TrackStream {
         playlist: seg.playlist().expect("playlist").into_bytes(),
@@ -105,4 +105,29 @@ pub fn samples_of(events: &[Event], pick: impl Fn(TrackId) -> bool) -> Vec<Sampl
             _ => None,
         })
         .collect()
+}
+
+/// Feed one sample to the segmenter's muxer vocabulary.
+fn feed_sample(
+    seg: &mut StreamingTsHlsSegmenter,
+    track: transmux::TrackId,
+    sample: transmux::Sample,
+) {
+    Stage::feed(
+        seg,
+        transmux::mux_stage::MuxInput::Sample { track, sample },
+        broadcast_common::stage::Timestamp::ZERO,
+    )
+    .expect("feed sample");
+}
+
+/// Drain every segment the segmenter has cut so far.
+fn drain_segments(seg: &mut StreamingTsHlsSegmenter) -> Vec<transmux::mux_stage::SegmentOut> {
+    let mut out = Vec::new();
+    while let Some(item) = Stage::poll(seg) {
+        if let transmux::mux_stage::MuxOutput::Segment(segment) = item {
+            out.push(segment);
+        }
+    }
+    out
 }

@@ -289,8 +289,30 @@ mod progressive_support;
 
 mod muxer_buffering {
     use super::bytes_allocated;
-    use broadcast_common::{Package, Unpackage};
-    use transmux::{MkvMuxStage, TsDemux, TsMux};
+    use broadcast_common::Unpackage;
+    use transmux::mux_stage::{MuxOutput, drive_media};
+    use transmux::{DEFAULT_PSI_INTERVAL, MkvMuxStage, TsDemux, TsMuxStage};
+
+    /// Mux a whole `Media` through a fresh TS stage and collect its bytes.
+    fn mux_ts(media: &transmux::Media) -> Vec<u8> {
+        let mut stage = TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL));
+        let outputs = drive_media(&mut stage, media, broadcast_common::stage::Timestamp::ZERO)
+            .expect("mux to TS");
+        let total: usize = outputs
+            .iter()
+            .map(|output| match output {
+                MuxOutput::Bytes(chunk) => chunk.len(),
+                _ => 0,
+            })
+            .sum();
+        let mut bytes = Vec::with_capacity(total);
+        for output in outputs {
+            if let MuxOutput::Bytes(chunk) = output {
+                bytes.extend_from_slice(&chunk);
+            }
+        }
+        bytes
+    }
 
     /// r05-O4: the muxers buffered their whole output through 2-4 full copies.
     /// Bytes allocated by `package`, as a multiple of the produced output size.
@@ -306,7 +328,7 @@ mod muxer_buffering {
                     &media,
                 )
             });
-            let (ts, a3) = bytes_allocated(|| TsMux::new().package(&media).unwrap());
+            let (ts, a3) = bytes_allocated(|| mux_ts(&media));
             [("progressive", prog, a1), ("mkv", mkv, a2), ("ts", ts, a3)]
         };
         for (name, out, allocated) in cases {

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- The classic TS-HLS segmenter now speaks the muxer stage vocabulary:
+  `ProgramSegmenter` drives `transmux::StreamingTsHlsSegmenter` through
+  `Stage::feed(MuxInput::Sample)`/`Stage::poll` and normalises each
+  `SegmentOut` summary instead of the deleted `TsSegment` (#1024, Phase 4).
 - `FileStreamLimits` gained a required `mp4: transmux::mp4_demux::Mp4DemuxConfig` field (the stage's caller policy: read window and total length). A struct literal must now name it or spread `..FileStreamLimits::default()`. The read window stays unset by default.
 
 

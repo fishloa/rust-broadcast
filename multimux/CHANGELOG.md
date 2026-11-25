@@ -4,14 +4,19 @@
 
 ### Changed
 
-- The RTMP push transport frames each sample through `transmux::RtmpMuxStage`
-  instead of building a one-sample `transmux::Media` per sample, so a push no
-  longer materialises the media IR to publish. `PushTransport` gained
-  `media_muxer()`, the per-sample hook `PushTransportEgress` feeds directly,
-  and `MuxError::Rtmp` for that muxer's own errors. The WHEP output packetises
-  one sample with `transmux::packetise_video_sample`, without building a
-  `Track`.
-
+- Push outputs mux one sample at a time through one per-connection muxer:
+  `PushTransport::media_muxer()` hands out a `MediaMuxer` (announce the track
+  set, feed one drained sample, flush at an idle boundary), and
+  `PushTransportEgress` is its one driver — no push path builds a `Media` per
+  batch or per sample any more. The SRT and RTSP transports keep a
+  `transmux::TsMuxStage` (one interleave window, flushed once per drain pass
+  by `PushTransportEgress::flush_mux`, so an idle-or-ended stream does not
+  leave its last frames queued); RTMP frames each sample through
+  `transmux::RtmpMuxStage` through the same hook, so publishing no longer
+  materialises the media IR. `MuxError::Rtmp` carries that muxer's own errors.
+  The WHEP output packetises one sample with
+  `transmux::packetise_video_sample`, without building a `Track` (#1024,
+  Phase 4).
 - `FileReaderConfig::max_file_bytes` applies to PS and WebM file inputs only: TS, FLV and MP4 stream from disk and are no longer capped or refused for their size (#4057). MP4 playout reads the byte ranges `Mp4Demux::seekable` asks for (one bounded seek-and-read each), so an MP4 of any size plays, loops, and re-creates the stage per pass.
 
 ### Fixed

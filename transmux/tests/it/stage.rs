@@ -655,51 +655,68 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
     }
 }
 
-/// `StreamingTsHlsSegmenter` is the one segmenter whose inherent
-/// `push`/`finish` already return the cut segment **inline** rather than via
-/// a drain — under `Stage` those calls instead enqueue into a staging queue
-/// for `poll` to hand back (see the impl's own docs). This test proves that
-/// bridging is behaviour-neutral: driving the segmenter via `Stage::feed`/
-/// `poll`/`finish` yields exactly the same sequence of segments, in the same
-/// order, as collecting `push`'s/`finish`'s inline `Option<TsSegment>`
-/// return values directly.
+/// `StreamingTsHlsSegmenter` speaks the muxer vocabulary, so its `Stage` path
+/// is its only path: draining after every feed must yield exactly the same
+/// segments, in the same order, as draining once at the end.
 #[test]
-fn ts_hls_segmenter_stage_matches_inline_push() {
+fn ts_hls_segmenter_stage_matches_stepwise_draining() {
     let track = audio_track_spec();
     let samples = audio_samples(50);
 
-    // --- Inline inherent API (oracle) ---------------------------------------
-    let mut inline_seg = StreamingTsHlsSegmenter::new(vec![track.clone()], 1, 10).unwrap();
-    let mut inline_out = Vec::new();
+    // Stepwise: drain after every feed.
+    let mut stepped = StreamingTsHlsSegmenter::new(vec![track.clone()], 1, 10).unwrap();
+    let mut stepped_out = Vec::new();
     for (track_id, sample) in samples.clone() {
-        inline_seg
-            .push(TrackId::new(track_id.value()), sample)
+        stepped
+            .feed(
+                transmux::mux_stage::MuxInput::Sample {
+                    track: TrackId::new(track_id.value()),
+                    sample,
+                },
+                Timestamp::ZERO,
+            )
             .unwrap();
-        inline_out.extend(inline_seg.take_ready());
+        stepped_out.extend(poll_segments(&mut stepped));
     }
-    inline_seg.finish().unwrap();
-    inline_out.extend(inline_seg.take_ready());
+    Stage::finish(&mut stepped).unwrap();
+    stepped_out.extend(poll_segments(&mut stepped));
     assert!(
-        !inline_out.is_empty(),
+        !stepped_out.is_empty(),
         "fixture must actually exercise at least one segment cut"
     );
 
-    // --- Stage enqueue-then-poll path ----------------------------------------
-    let mut stage_seg = StreamingTsHlsSegmenter::new(vec![track], 1, 10).unwrap();
-    let stage_out = drive(&mut stage_seg, samples);
-
-    assert_eq!(
-        stage_out.len(),
-        inline_out.len(),
-        "Stage-driven enqueue-then-poll must yield the same segment count as the inline push/finish return values"
-    );
-    for (staged, inline) in stage_out.iter().zip(inline_out.iter()) {
-        assert_eq!(staged.bytes, inline.bytes);
-        assert_eq!(staged.duration, inline.duration);
-        assert_eq!(staged.discontinuous, inline.discontinuous);
-        assert_eq!(staged.uri, inline.uri);
-        assert_eq!(staged.sequence, inline.sequence);
+    // Batch: drain once at the end.
+    let mut batched = StreamingTsHlsSegmenter::new(vec![track], 1, 10).unwrap();
+    for (track_id, sample) in samples {
+        batched
+            .feed(
+                transmux::mux_stage::MuxInput::Sample {
+                    track: TrackId::new(track_id.value()),
+                    sample,
+                },
+                Timestamp::ZERO,
+            )
+            .unwrap();
     }
+    Stage::finish(&mut batched).unwrap();
+    let batched_out = poll_segments(&mut batched);
+
+    assert_eq!(batched_out.len(), stepped_out.len());
+    for (a, b) in batched_out.iter().zip(stepped_out.iter()) {
+        assert_eq!(a.bytes, b.bytes);
+        assert_eq!(a.summary, b.summary);
+    }
+}
+
+/// Every segment `seg` has cut so far.
+fn poll_segments(seg: &mut StreamingTsHlsSegmenter) -> Vec<SegmentOut> {
+    let mut out = Vec::new();
+    while let Some(item) = Stage::poll(seg) {
+        if let transmux::mux_stage::MuxOutput::Segment(segment) = item {
+            out.push(segment);
+        }
+    }
+    out
 }
 
 // ── Mixed-API tests: ONE instance driven through both the inherent and ─────

@@ -16,9 +16,9 @@
 //!    or sample entry;
 //! 3. the DASH MPD and Smooth manifest carry the track.
 
+use broadcast_common::Package;
 use std::collections::BTreeSet;
 
-use broadcast_common::Package;
 use broadcast_common::Serialize;
 use isobmff::box_support::OpaqueBox;
 use isobmff::{WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, parse_wvtt_sample};

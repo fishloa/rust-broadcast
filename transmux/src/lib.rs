@@ -33,8 +33,9 @@
 //!   ([`FlvDemux`] — non-AVC video and non-AAC audio tracks are silently
 //!   skipped, no event/error, see the module docs), RTMP ([`RtmpDemux`]).
 //! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMuxStage`]), progressive single-file
-//!   MP4 ([`ProgressiveMuxStage`]), MPEG-2 TS ([`TsMux`]), Matroska ([`MkvMuxStage`]),
-//!   CMAF-HLS ([`HlsPackager`]), TS-segment HLS ([`TsHlsPackager`]), DASH MPD
+//!   MP4 ([`ProgressiveMuxStage`]), MPEG-2 TS ([`TsMuxStage`]), Matroska ([`MkvMuxStage`]),
+//!   CMAF-HLS ([`HlsPackager`]), TS-segment HLS
+//!   ([`StreamingTsHlsSegmenter`]), DASH MPD
 //!   ([`DashPackager`]), low-latency
 //!   DASH ([`LlSegmenter`]/[`LlDashPackager`]), Microsoft Smooth Streaming
 //!   ([`SmoothPackager`] — H.264 video + AAC-LC audio only, every other codec
@@ -388,10 +389,8 @@ pub use ts_demux::{
     AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,
     InputDegradation, StreamingTsDemux, TsDemux,
 };
-pub use ts_hls::{
-    StreamingTsHlsSegmenter, TsHlsOutput, TsHlsPackager, TsSegment, UpdateTrackOutcome,
-};
-pub use ts_mux::{DEFAULT_PSI_INTERVAL, StreamingTsMux, TsContinuity, TsMux};
+pub use ts_hls::{StreamingTsHlsSegmenter, UpdateTrackOutcome};
+pub use ts_mux::{DEFAULT_PSI_INTERVAL, TsContinuity, TsMuxStage};
 pub use validate::{
     ConformanceIssue, Severity, validate_cmaf_track, validate_init_segment, validate_media_segment,
 };

@@ -7,7 +7,7 @@
 //! loudly when the private submodule is absent.
 #![cfg(feature = "std")]
 
-use broadcast_common::Package;
+use crate::ts_mux_stage;
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use isobmff::ChromaticityXy;
@@ -292,7 +292,7 @@ fn demux_keeps_only_declarative_sei_messages_in_the_hvcc_array() {
         }
         s.data = out.into();
     }
-    let ts = transmux::TsMux::new().package(&media).expect("mux");
+    let ts = ts_mux_stage::mux(&media);
     let spec = video_track(&ts);
     let CodecConfig::Hevc { config, .. } = &spec.config else {
         unreachable!()

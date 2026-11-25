@@ -14,14 +14,13 @@
 #[path = "support/paff_gen.rs"]
 mod paff_gen;
 
-use broadcast_common::Package;
+use crate::ts_mux_stage;
 use broadcast_common::Unpackage;
 use transmux::pipeline::CodecConfig;
 use transmux::slice_header::{AvcSliceHeader, decode_avc_slice_pps, parse_avc_slice_header};
 use transmux::sps::decode_avc_slice_sps;
 use transmux::{
-    DemuxEvent, Media, StreamingTsDemux, TsDemux, TsMux, iter_annexb_nals,
-    iter_length_prefixed_nals,
+    DemuxEvent, Media, StreamingTsDemux, TsDemux, iter_annexb_nals, iter_length_prefixed_nals,
 };
 
 const FRAMES: usize = 12;
@@ -233,7 +232,7 @@ fn remux_through_ts_and_fmp4_stays_one_sample_per_frame() {
     for g in [gen_tff(), gen_bff()] {
         let ir = TsDemux::new().unpackage(&g.ts).unwrap();
         // TS -> IR -> TS -> IR
-        let ts2 = TsMux::new().package(&ir).expect("remux TS");
+        let ts2 = ts_mux_stage::mux(&ir);
         let r = batch(&ts2);
         let base = r[0].pts.unwrap();
         assert_paired_from(&g, &r, "TS remux", base);
@@ -405,7 +404,7 @@ fn ffmpeg_decodes_the_generated_and_demuxed_streams_to_the_expected_frames() {
         "generator stream decodes to the expected yuv"
     );
     let ir = TsDemux::new().unpackage(&g.ts).unwrap();
-    let remuxed = TsMux::new().package(&ir).unwrap();
+    let remuxed = ts_mux_stage::mux(&ir);
     assert!(
         decode("remux.ts", &remuxed) == g.yuv,
         "demuxed+remuxed (paired) stream decodes to the same 12 frames"

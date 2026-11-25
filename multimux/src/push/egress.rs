@@ -78,7 +78,6 @@
 use std::collections::VecDeque;
 use transmux::TrackId;
 
-use broadcast_common::stage::Stage;
 use bytes::Bytes;
 use media_plane::egress::{NegotiationOutcome, PushEgress, TrackSelection};
 use media_plane::trunk::SampleCursorItem;
@@ -189,23 +188,23 @@ impl<T: PushTransport> PushTransportEgress<T> {
         // emit (one pending sample per announced track); the end of a batch is
         // that point, so whatever it still holds goes out now rather than
         // waiting for the next sample of another track.
-        if let Some(muxer) = self.transport.media_muxer() {
-            muxer
-                .feed(
-                    transmux::mux_stage::MuxInput::Flush,
-                    broadcast_common::stage::Timestamp::ZERO,
-                )
-                .map_err(|e| SendMediaError::Mux(MuxError::Rtmp(e)))?;
-            while let Some(transmux::mux_stage::MuxOutput::Bytes(bytes)) = muxer.poll() {
-                self.outbound.push_back(bytes);
-            }
-        }
+        self.flush_mux().await?;
         while let Some(message) = PushEgress::poll_transmit(self) {
             self.transport
                 .write_message(&message)
                 .await
                 .map_err(|e| SendMediaError::Transport(Box::new(e)))?;
             self.bytes_sent = self.bytes_sent.saturating_add(message.len() as u64);
+        }
+        Ok(())
+    }
+
+    /// Emit every wire message the transport's muxer still holds after an idle
+    /// period, queuing it for [`Self::flush_transmit`].
+    pub async fn flush_mux(&mut self) -> Result<(), SendMediaError> {
+        if let Some(muxer) = self.transport.media_muxer() {
+            let messages = muxer.flush()?;
+            self.outbound.extend(messages);
         }
         Ok(())
     }
@@ -258,6 +257,11 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
         self.selection = TrackSelection::new(carriable.iter().map(|t| t.track_id).collect());
         self.awaiting_sync = carriable.iter().any(|t| t.config.is_video());
         self.specs = carriable;
+        if let Some(muxer) = self.transport.media_muxer()
+            && let Err(error) = muxer.set_tracks(&self.specs)
+        {
+            return NegotiationOutcome::Error(error);
+        }
         self.committed = true;
         NegotiationOutcome::Accepted(self.selection.clone())
     }
@@ -283,20 +287,26 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
         }
         self.selection = TrackSelection::new(proposed_ids);
         self.specs = carriable;
+        if let Some(muxer) = self.transport.media_muxer()
+            && let Err(error) = muxer.set_tracks(&self.specs)
+        {
+            return NegotiationOutcome::Error(error);
+        }
         self.committed = true;
         NegotiationOutcome::Accepted(self.selection.clone())
     }
 
-    /// Builds a single-sample [`Media`] for `item`'s track and encodes it
-    /// via [`PushTransport::encode_media`] (sans-IO), queuing the resulting
-    /// wire message(s) for [`Self::flush_transmit`] to actually send. A
-    /// track not in the current selection (excluded by negotiation, or
-    /// dropped by a since-refused `renegotiate`) is silently skipped —
-    /// exclusion was already reported structurally when it was decided, not
-    /// new data loss each time a sample for it arrives. A
-    /// [`SampleCursorItem::Lagged`]/`Degraded` loss report has no sample to
-    /// encode; logging it here (rather than truly ignoring it, per this
-    /// method's own trait contract) is this adapter's reaction.
+    /// Encoding one drained sample — through the transport's
+    /// [`PushTransport::media_muxer`] when it has one, else a one-sample
+    /// `Media` through [`PushTransport::encode_media`] — queuing the
+    /// resulting wire messages (sans-IO) for
+    /// [`Self::flush_transmit`] to actually send. A track not in the current
+    /// selection (excluded by negotiation, or dropped by a since-refused
+    /// `renegotiate`) is silently skipped — exclusion was already reported
+    /// structurally when it was decided, not new data loss each time a sample
+    /// for it arrives. A [`SampleCursorItem::Lagged`]/`Degraded` loss report
+    /// has no sample to encode; logging it here (rather than truly ignoring
+    /// it, per this method's own trait contract) is this adapter's reaction.
     fn send(&mut self, item: &SampleCursorItem) -> Result<(), Self::Error> {
         let (track_id, sample) = match item {
             SampleCursorItem::Timed { track_id, sample }
@@ -337,21 +347,11 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
                 return Ok(());
             }
         }
-        // A transport whose wire format is one message per sample (RTMP)
-        // frames this sample directly: no `Media` is built for it.
+        // A per-connection muxer frames this sample directly, one message at a
+        // time: no `Media` is built for it.
         if let Some(muxer) = self.transport.media_muxer() {
-            muxer
-                .feed(
-                    transmux::mux_stage::MuxInput::Sample {
-                        track: track_id,
-                        sample: sample.clone(),
-                    },
-                    broadcast_common::stage::Timestamp::ZERO,
-                )
-                .map_err(|e| SendMediaError::Mux(MuxError::Rtmp(e)))?;
-            while let Some(transmux::mux_stage::MuxOutput::Bytes(bytes)) = muxer.poll() {
-                self.outbound.push_back(bytes);
-            }
+            self.outbound
+                .extend(muxer.encode_sample(track_id, &sample)?);
             return Ok(());
         }
         // Every carried track rides in EVERY `Media`, the sample only in its
@@ -432,6 +432,12 @@ mod tests {
             } else {
                 true
             }
+        }
+
+        /// One fixed "encoded" message per batch — the tests here judge
+        /// negotiation/queuing/flush, not the wire framing.
+        fn encode_media(&mut self, _media: &Media) -> Result<Vec<Bytes>, SendMediaError> {
+            Ok(vec![Bytes::from_static(b"m")])
         }
 
         fn close(&mut self) {}
@@ -796,6 +802,12 @@ mod tests {
 
         async fn send(&mut self, _data: &[u8]) -> Result<(), Self::Error> {
             std::future::pending().await
+        }
+
+        /// One fixed "encoded" message per batch — the tests here judge
+        /// negotiation/queuing/flush, not the wire framing.
+        fn encode_media(&mut self, _media: &Media) -> Result<Vec<Bytes>, SendMediaError> {
+            Ok(vec![Bytes::from_static(b"m")])
         }
 
         fn close(&mut self) {}

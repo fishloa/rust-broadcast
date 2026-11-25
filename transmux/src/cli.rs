@@ -2,8 +2,8 @@
 //!
 //! Wires the existing demux spokes ([`TsDemux`], [`Mp4Demux`](crate::mp4_demux::Mp4Demux), [`PsDemux`],
 //! [`WebmDemux`], [`FlvDemux`]) through the neutral [`Media`] IR into the
-//! existing mux spokes ([`CmafMuxStage`], [`TsHlsPackager`],
-//! [`DashPackager`], [`ProgressiveMuxStage`], [`TsMux`]).
+//! existing mux spokes ([`CmafMuxStage`], [`StreamingTsHlsSegmenter`],
+//! [`DashPackager`], [`ProgressiveMuxStage`], [`TsMuxStage`]).
 //!
 //! It writes **no** new demux/mux logic — it is a front-end that autodetects the
 //! input container, runs it through the hub, and writes the chosen output.
@@ -33,13 +33,14 @@ use broadcast_common::{Package, Stage, Unpackage};
 use crate::dash::DashPackager;
 use crate::flv::FlvDemux;
 use crate::media::{CmafMuxStage, FragmentCut, Media};
+use crate::mux_stage::{MuxOutput, drive_media};
 use crate::plan_pass::PlanPass;
 use crate::progressive::ProgressiveMuxStage;
 use crate::ps_demux::PsDemux;
 use crate::segmenter::{MediaClock, Segmenter};
 use crate::ts_demux::TsDemux;
-use crate::ts_hls::TsHlsPackager;
-use crate::ts_mux::TsMux;
+use crate::ts_hls::StreamingTsHlsSegmenter;
+use crate::ts_mux::{DEFAULT_PSI_INTERVAL, TsMuxStage};
 use crate::webm_demux::WebmDemux;
 #[cfg(feature = "cenc")]
 use isobmff::box_types::KEY_ID_LEN;
@@ -228,11 +229,12 @@ pub enum OutputFormat {
     Cmaf,
     /// CMAF-HLS media playlist (`.m3u8`) → CMAF segments via [`Segmenter`].
     Hls,
-    /// Classic HLS with MPEG-2 TS media segments → [`TsHlsPackager`].
+    /// Classic HLS with MPEG-2 TS media segments →
+    /// [`StreamingTsHlsSegmenter`].
     TsHls,
     /// DASH MPD manifest → [`DashPackager`].
     Dash,
-    /// MPEG-2 Transport Stream → [`TsMux`].
+    /// MPEG-2 Transport Stream → [`TsMuxStage`].
     Ts,
     /// Progressive single-file MP4 → [`ProgressiveMuxStage`].
     Progressive,
@@ -1227,7 +1229,17 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
             let media = filter_for_bmff_mux(media)?;
             Ok(Output::Bytes(package_progressive(&media)?))
         }
-        OutputFormat::Ts => Ok(Output::Bytes(TsMux::new().package(media)?)),
+        OutputFormat::Ts => {
+            let mut stage = TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL));
+            let outputs = drive_media(&mut stage, media, broadcast_common::stage::Timestamp::ZERO)?;
+            let mut bytes = Vec::new();
+            for output in outputs {
+                if let MuxOutput::Bytes(chunk) = output {
+                    bytes.extend_from_slice(&chunk);
+                }
+            }
+            Ok(Output::Bytes(bytes))
+        }
         OutputFormat::Hls => {
             // CMAF-HLS, segmented at `--segment-duration` (audit r05-W29): each
             // segment is a self-initializing CMAF artifact (init + one media
@@ -1258,15 +1270,23 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
             })
         }
         OutputFormat::TsHls => {
-            let out = TsHlsPackager::new(opts.segment_duration).package(media)?;
-            let segments = out
-                .segments
-                .into_iter()
-                .enumerate()
-                .map(|(i, bytes)| (format!("seg{i}.ts"), bytes))
-                .collect();
+            let specs: Vec<crate::TrackSpec> =
+                media.tracks.iter().map(|t| t.spec.clone()).collect();
+            let mut segmenter =
+                StreamingTsHlsSegmenter::new(specs, opts.segment_duration, usize::MAX)?;
+            let mut segments = Vec::new();
+            for output in drive_media(
+                &mut segmenter,
+                media,
+                broadcast_common::stage::Timestamp::ZERO,
+            )? {
+                if let MuxOutput::Segment(segment) = output {
+                    let name = format!("seg{}.ts", segment.summary.sequence);
+                    segments.push((name, segment.bytes.to_vec()));
+                }
+            }
             Ok(Output::Manifest {
-                text: out.playlist,
+                text: segmenter.playlist()?,
                 segments,
             })
         }

@@ -32,9 +32,9 @@
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeSet;
 
-use broadcast_common::Package;
+use crate::ts_mux_stage;
 use broadcast_common::Unpackage;
-use transmux::{Media, Track, TsDemux, TsMux};
+use transmux::{Media, Track, TsDemux};
 
 const DESC_TAG_ISO_639_LANGUAGE: u8 = 0x0A;
 const DESC_TAG_DVB_SUBTITLING: u8 = 0x59;
@@ -92,7 +92,7 @@ fn track_for_pid(media: &Media, pid: u16) -> &Track {
 }
 
 fn remux_via_ts(media: &Media) -> Media {
-    let bytes = TsMux::new().package(media).expect("remux IR back to TS");
+    let bytes = ts_mux_stage::mux(media);
     TsDemux::new()
         .unpackage(&bytes)
         .expect("re-demux the remuxed TS")

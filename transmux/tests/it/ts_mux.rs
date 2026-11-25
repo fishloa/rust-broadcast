@@ -10,19 +10,19 @@
 //! Pipeline: `ir = TsDemux(h264-aac.ts)` → `ts2 = TsMux(ir)` →
 //! `ir2 = TsDemux(ts2)`.
 
+use crate::ts_mux_stage;
 use crate::ts_psi::{
     first_section, parse_pat, parse_pmt, payload_offset, pid_of, pusi_of, split_lp,
 };
-use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Serialize, Unpackage};
 use mpeg_ts::ts::TsPacket;
 use test_fixtures::process::tool_available;
 use transmux::TrackId;
+use transmux::TsDemux;
 use transmux::ir::DataIdentity;
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
-use transmux::{TsDemux, TsMux};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -40,7 +40,7 @@ fn load_ts() -> Vec<u8> {
 fn pipeline() -> (Media, Vec<u8>, Media) {
     let ts = load_ts();
     let ir = TsDemux::new().unpackage(&ts).expect("demux fixture");
-    let ts2 = TsMux::new().package(&ir).expect("mux IR back to TS");
+    let ts2 = ts_mux_stage::mux(&ir);
     let ir2 = TsDemux::new().unpackage(&ts2).expect("re-demux mux output");
     (ir, ts2, ir2)
 }
@@ -278,7 +278,7 @@ fn mux_noaud_fixture(fixture: &str) -> (Vec<Vec<u8>>, u16) {
     let ir =
         test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
             .expect("demux the AUD-less MP4");
-    let ts = TsMux::new().package(&ir).expect("mux to TS");
+    let ts = ts_mux_stage::mux(&ir);
     let pmt = first_section(&ts, 0x1000).expect("PMT present");
     let streams = parse_pmt(&pmt);
     let video_pid = streams[0].1;
@@ -360,7 +360,7 @@ fn aud_insertion_preserves_coded_nals() {
     let ir =
         test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
             .unwrap();
-    let ts = TsMux::new().package(&ir).unwrap();
+    let ts = ts_mux_stage::mux(&ir);
     let pmt = first_section(&ts, 0x1000).unwrap();
     let streams = parse_pmt(&pmt);
     let pes = pes_payloads(&ts, streams[0].1);
@@ -447,7 +447,7 @@ fn oversized_audio_sample_is_rejected_not_clamped() {
     let track = transmux::media::Track::new(spec, vec![sample]);
     let media = Media::new(vec![track], timescale(48_000));
 
-    let err = TsMux::new().package(&media).unwrap_err();
+    let err = ts_mux_stage::try_mux_with(&media, Some(transmux::DEFAULT_PSI_INTERVAL)).unwrap_err();
     match err {
         transmux::Error::BufferCapExceeded { what, cap } => {
             assert_eq!(what, "PES_packet_length");
@@ -525,7 +525,7 @@ fn pcr_pid_is_audio_not_a_sparse_data_pid() {
             ],
         ),
     );
-    let ts = TsMux::new().package(&media).unwrap();
+    let ts = ts_mux_stage::mux(&media);
 
     // PMT: first ES is the Data track (stream_type 0x06), second is AC-3 (0x81).
     let pmt = first_section(&ts, 0x1000).expect("PMT present");
@@ -547,7 +547,7 @@ fn pcr_pid_is_audio_not_a_sparse_data_pid() {
 fn sparse_audio_gets_pcr_only_packets() {
     // 1 s between audio samples (44100 ticks) => a 1 s PCR gap without filler.
     let media = ac3_media(44_100);
-    let ts = TsMux::new().package(&media).unwrap();
+    let ts = ts_mux_stage::mux(&media);
 
     let pcr_pid = pmt_pcr_pid(&first_section(&ts, 0x1000).unwrap());
     let mut pcrs = Vec::new();
@@ -573,7 +573,7 @@ fn sparse_audio_gets_pcr_only_packets() {
 #[test]
 fn pcr_only_packets_do_not_advance_cc() {
     let media = ac3_media(44_100);
-    let ts = TsMux::new().package(&media).unwrap();
+    let ts = ts_mux_stage::mux(&media);
     let pcr_pid = pmt_pcr_pid(&first_section(&ts, 0x1000).unwrap());
 
     let mut expected: Option<u8> = None;
@@ -638,13 +638,13 @@ fn too_many_elementary_streams_is_refused() {
 
     // 16 video is legal; 17 is not.
     let ok = Media::new(clone_n(video, 16), timescale(90_000));
-    let ts = TsMux::new()
-        .package(&ok)
-        .expect("16 video streams must fit");
+    let ts = ts_mux_stage::mux(&ok);
     assert_eq!(ts.len() % TS, 0);
-    let err = TsMux::new()
-        .package(&Media::new(clone_n(video, 17), timescale(90_000)))
-        .unwrap_err();
+    let err = ts_mux_stage::try_mux_with(
+        &Media::new(clone_n(video, 17), timescale(90_000)),
+        Some(transmux::DEFAULT_PSI_INTERVAL),
+    )
+    .unwrap_err();
     match err {
         transmux::Error::TooManyElementaryStreams { family, max } => {
             assert_eq!(family, "video");
@@ -655,12 +655,12 @@ fn too_many_elementary_streams_is_refused() {
 
     // 32 audio is legal; 33 is not.
     let ok = Media::new(clone_n(audio, 32), timescale(48_000));
-    TsMux::new()
-        .package(&ok)
-        .expect("32 audio streams must fit");
-    let err = TsMux::new()
-        .package(&Media::new(clone_n(audio, 33), timescale(48_000)))
-        .unwrap_err();
+    ts_mux_stage::mux(&ok);
+    let err = ts_mux_stage::try_mux_with(
+        &Media::new(clone_n(audio, 33), timescale(48_000)),
+        Some(transmux::DEFAULT_PSI_INTERVAL),
+    )
+    .unwrap_err();
     match err {
         transmux::Error::TooManyElementaryStreams { family, max } => {
             assert_eq!(family, "audio");
@@ -725,7 +725,7 @@ fn aud_output_matches_source_frame_count_and_delimits_every_au() {
     let ir =
         test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
             .expect("demux the AUD-less MP4");
-    let ts2 = TsMux::new().package(&ir).expect("mux to TS");
+    let ts2 = ts_mux_stage::mux(&ir);
     let src_frames = u64::try_from(ir.tracks[0].samples.len()).unwrap();
 
     let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/ts-mux-oracle");
@@ -783,9 +783,7 @@ fn aud_output_matches_source_frame_count_and_delimits_every_au() {
 #[test]
 fn re_muxing_an_aud_bearing_ts_does_not_duplicate_the_aud() {
     let (_ir, _ts2, ir2) = pipeline();
-    let ts3 = TsMux::new()
-        .package(&ir2)
-        .expect("re-mux the AUD-bearing IR");
+    let ts3 = ts_mux_stage::mux(&ir2);
     let pmt = first_section(&ts3, 0x1000).expect("PMT present");
     let streams = parse_pmt(&pmt);
     let pes = pes_payloads(&ts3, streams[0].1);

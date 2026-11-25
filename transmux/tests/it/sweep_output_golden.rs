@@ -6,6 +6,7 @@
 //! fails here.
 #![cfg(feature = "std")]
 
+use crate::ts_mux_stage;
 use core::time::Duration;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
@@ -507,7 +508,6 @@ fn h264_aac_media() -> Option<transmux::Media> {
 
 #[test]
 fn muxer_outputs_are_unchanged() {
-    use transmux::TsMux;
     let Some(media) = h264_aac_media() else {
         eprintln!("SKIPPED ts/h264-aac.ts");
         return;
@@ -534,10 +534,7 @@ fn muxer_outputs_are_unchanged() {
     // default `TsMux` now repeats PAT/PMT periodically (R7); that default is
     // covered by tests/it/ts_mux_psi_repeat.rs, which proves the default output is
     // exactly this once-only output plus the PSI repeats.
-    let ts = TsMux::new()
-        .with_psi_interval(None)
-        .package(&media)
-        .unwrap();
+    let ts = ts_mux_stage::mux_with(&media, None);
     check(&mut bad, "ts", fnv1a(&ts), 0xe5b08f3fd235cf03);
     assert!(bad.is_empty(), "output changed: {bad:?}");
 }
@@ -585,7 +582,6 @@ const CODEC_MUX_FIXTURES: &[&str] = &["ts/hevc/main.ts", "ts/dolby/ac3.ts", "ts/
 
 #[test]
 fn hevc_and_dolby_muxer_outputs_are_unchanged() {
-    use transmux::TsMux;
     let want: &[(&str, u64)] = CODEC_MUX_GOLDEN;
     let mut bad = Vec::new();
     let mut i = 0;
@@ -608,10 +604,7 @@ fn hevc_and_dolby_muxer_outputs_are_unchanged() {
                 )),
             ),
             // Once-only PSI: see muxer_outputs_are_unchanged.
-            (
-                "ts",
-                hash_result(TsMux::new().with_psi_interval(None).package(&media)),
-            ),
+            ("ts", hash_result(ts_mux_stage::try_mux_with(&media, None))),
             ("cmaf", hash_result(crate::cmaf::package(&media))),
         ];
         for (kind, got) in outs {

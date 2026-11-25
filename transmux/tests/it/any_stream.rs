@@ -48,13 +48,14 @@ use std::path::PathBuf;
 use test_harness::collect::MediaSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::Package;
 use broadcast_common::Unpackage;
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
+use crate::ts_hls_stage;
+use crate::ts_mux_stage;
 use transmux::ir::DataIdentity;
 use transmux::pipeline::{CodecConfig, DataCarriage};
-use transmux::{Media, Track, TsDemux, TsHlsPackager, TsMux};
+use transmux::{Media, Track, TsDemux};
 
 const TS: usize = 188;
 
@@ -500,9 +501,7 @@ fn ts_ir_ts_round_trip_is_payload_lossless_for_data_and_sections() {
     // (0x82/0x83/0x84) are now typed `CodecConfig::Eac3`, which the muxer
     // has always been able to carry (just under its own canonical
     // `stream_type`, not the original DVB 0x06+descriptor carriage).
-    let ts2 = TsMux::new()
-        .package(&media)
-        .expect("TsMux must carry every Data and E-AC-3 track, not error");
+    let ts2 = ts_mux_stage::mux(&media);
     let media2 = demux(&ts2);
     assert_eq!(
         media2.tracks.len(),
@@ -706,9 +705,7 @@ fn ts_hls_carries_every_data_and_section_track_in_every_segment_pmt() {
     let live = live_pmt_es(&data);
     assert_eq!(live.len(), 6, "sanity: 6 live PMT-listed PIDs (see test 1)");
 
-    let out = TsHlsPackager::new(1)
-        .package(&media)
-        .expect("TS-HLS packaging must carry every Data/section/E-AC-3 track, not error");
+    let out = ts_hls_stage::hls(&media, 1);
     assert!(
         !out.segments.is_empty(),
         "must produce at least one segment"

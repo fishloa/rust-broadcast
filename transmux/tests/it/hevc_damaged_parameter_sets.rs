@@ -3,12 +3,12 @@
 //! in the same access unit still resolves the track.
 #![cfg(feature = "std")]
 
-use broadcast_common::Package;
+use crate::ts_mux_stage;
 use broadcast_common::Unpackage;
 use transmux::annexb::iter_length_prefixed_nals;
 use transmux::ir::{CodecConfig, DemuxEvent, InputDegradation};
 use transmux::nal::{NalCodec, nal_unit_type};
-use transmux::{Media, StreamingTsDemux, Track, TsDemux, TsMux};
+use transmux::{Media, StreamingTsDemux, Track, TsDemux};
 
 fn fixture() -> Vec<u8> {
     test_fixtures::read("ts/hevc/main.ts")
@@ -83,7 +83,7 @@ fn damaged_ts(insert_clean_copy: bool) -> Vec<u8> {
         }
         track.samples[0].data = join(&rebuilt).into();
     }
-    TsMux::new().package(&media).expect("mux damaged TS")
+    ts_mux_stage::mux(&media)
 }
 
 fn clean_config() -> CodecConfig {

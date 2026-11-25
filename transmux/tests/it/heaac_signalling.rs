@@ -9,14 +9,14 @@
 //! (ISO/IEC 14496-3 §1.6.2). The DVB descriptor path builds its PMT only
 //! through `dvb-si`'s serializer and the TS muxer.
 
-use broadcast_common::Package;
+use crate::ts_mux_stage;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize, Unpackage};
 use dvb_si::descriptors::aac::{AacDescriptor, AacExtension};
 use isobmff::EsdsBox;
 use transmux::{
     AudioObjectType, AudioSpecificConfig, CodecConfig, HeAacProfile, Media, SamplingFrequencyIndex,
-    TrackSpec, TsDemux, TsMux, build_init_segment, rfc6381_codec_string,
+    TrackSpec, TsDemux, build_init_segment, rfc6381_codec_string,
 };
 
 const MOVIE_TIMESCALE: Timescale = broadcast_common::timescale!(1000);
@@ -82,7 +82,7 @@ fn remux_with_aac_descriptor(fixture: &str, aac_type: u8) -> TrackSpec {
         extension: Some(AacExtension::new(false, Some(aac_type), &[])),
     };
     audio.spec.es_info_descriptors = descriptor.try_to_bytes().expect("descriptor serializes");
-    let muxed = TsMux::new().package(&media).expect("mux");
+    let muxed = ts_mux_stage::mux(&media);
     let back = TsDemux::new().unpackage(&muxed).expect("re-demux");
     audio_spec(&back)
 }
@@ -195,7 +195,7 @@ fn heaac_descriptor_demux_emits_output_rate_timescale() {
     };
     audio.spec.es_info_descriptors = descriptor.try_to_bytes().unwrap();
     let back = TsDemux::new()
-        .unpackage(&TsMux::new().package(&media).unwrap())
+        .unpackage(&ts_mux_stage::mux(&media))
         .unwrap();
     let track = back
         .tracks

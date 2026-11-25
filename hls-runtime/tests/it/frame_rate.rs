@@ -168,9 +168,9 @@ fn ts_origin_fed_with(
     }
     timeline.sort_by(|a, b| a.0.total_cmp(&b.0));
     for (_, id, sample) in timeline {
-        segmenter.push(id, sample).expect("push");
+        feed_ts(&mut segmenter, id, sample);
     }
-    segmenter.finish().expect("finish");
+    broadcast_common::Stage::finish(&mut segmenter).expect("finish");
 
     let trunk = Trunk::new(
         TrunkConfig::default()
@@ -195,19 +195,19 @@ fn ts_origin_fed_with(
     origin.set_track_specs(&specs).expect("specs");
     let mut start = 0u64;
     let mut published = Vec::new();
-    for (n, segment) in segmenter.take_ready().into_iter().enumerate() {
-        published.push((segment.bytes.clone(), segment.duration));
-        let duration = segment.duration;
+    for (n, segment) in ts_segments(&mut segmenter).into_iter().enumerate() {
+        let duration = seg_duration(&segment);
+        published.push((segment.bytes.to_vec(), duration));
         writer
             .publish_segment(SegmentEntry::new(
-                Bytes::from(segment.bytes),
+                segment.bytes,
                 SegmentSeq::new(u32::try_from(n + 1).unwrap()),
                 duration,
                 broadcast_common::Timestamp::from_nanos(start),
                 false,
             ))
             .expect("monotonic");
-        start += u64::try_from(segment.duration.as_nanos()).unwrap_or(u64::MAX);
+        start += u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX);
     }
     (origin, published)
 }
@@ -393,13 +393,12 @@ fn video_piece(
                 },
             ));
         }
-        segmenter.push(track.spec.track_id, sample).expect("push");
+        feed_ts(&mut segmenter, track.spec.track_id, sample);
     }
-    segmenter.finish().expect("finish");
-    let cut: Vec<_> = segmenter
-        .take_ready()
+    broadcast_common::Stage::finish(&mut segmenter).expect("finish");
+    let cut: Vec<_> = ts_segments(&mut segmenter)
         .into_iter()
-        .map(|segment| (segment.bytes, segment.duration))
+        .map(|segment| (segment.bytes.to_vec(), seg_duration(&segment)))
         .collect();
     (specs, cut)
 }
@@ -521,4 +520,39 @@ fn the_maximum_survives_a_faster_track_listed_first() {
         Some(broadcast_hls::FrameRate::from_millihertz(30_000)),
         "the maximum wins even when the slower track sorts last"
     );
+}
+
+/// Feed one sample to the segmenter's muxer vocabulary.
+fn feed_ts(
+    seg: &mut transmux::ts_hls::StreamingTsHlsSegmenter,
+    track: transmux::TrackId,
+    sample: transmux::Sample,
+) {
+    broadcast_common::Stage::feed(
+        seg,
+        transmux::mux_stage::MuxInput::Sample { track, sample },
+        broadcast_common::Timestamp::ZERO,
+    )
+    .expect("feed sample");
+}
+
+/// Drain every segment the segmenter has cut so far.
+fn ts_segments(
+    seg: &mut transmux::ts_hls::StreamingTsHlsSegmenter,
+) -> Vec<transmux::mux_stage::SegmentOut> {
+    let mut out = Vec::new();
+    while let Some(item) = broadcast_common::Stage::poll(seg) {
+        if let transmux::mux_stage::MuxOutput::Segment(segment) = item {
+            out.push(segment);
+        }
+    }
+    out
+}
+
+/// A segment summary's duration, in `Duration`.
+fn seg_duration(segment: &transmux::mux_stage::SegmentOut) -> Duration {
+    const NANOS_PER_SEC: u128 = 1_000_000_000;
+    let nanos = u128::from(segment.summary.duration).saturating_mul(NANOS_PER_SEC)
+        / u128::from(segment.summary.timescale.max(1));
+    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
