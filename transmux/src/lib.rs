@@ -193,6 +193,7 @@ pub(crate) mod mp4_collect;
 pub mod mp4_demux;
 pub mod mpeg2_display;
 pub mod mpeg_legacy;
+pub mod mux_stage;
 pub mod nal;
 pub mod nalu_ext;
 pub mod pipeline;
