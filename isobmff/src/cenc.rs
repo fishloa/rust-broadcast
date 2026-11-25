@@ -1122,6 +1122,9 @@ impl Serialize for SchemeInformationBox {
 /// Four-CC of the Protection Scheme Information Box (`sinf`, ISO/IEC 14496-12:2026 §13.4.2).
 pub const SINF: [u8; 4] = *b"sinf";
 
+/// Bytes of a box's 32-bit `size` field (ISO/IEC 14496-12:2026 §4.2).
+const BOX_SIZE_FIELD_LEN: usize = 4;
+
 /// A protected `encv` entry's child boxes start after the `VisualSampleEntry`
 /// fixed part: 8 bytes of box header plus the 78 bytes §12.1.3 defines.
 const ENCV_CHILD_OFFSET: usize = crate::box_types::BOX_HEADER_MIN_SIZE + 78;
@@ -1150,6 +1153,43 @@ pub fn sinf_of_sample_entry(entry: &[u8]) -> Option<&[u8]> {
         .filter_map(|item| item.ok())
         .find(|item| item.header.box_type.is(&SINF))
         .map(|item| item.bytes)
+}
+
+/// Reconstruct the cleartext sample entry a protected `encv`/`enca` entry
+/// wraps (ISO/IEC 14496-12:2026 §13.4.1): rename the four-CC back to the
+/// `frma` original format and drop the `sinf` child.
+///
+/// Returns `None` for an entry that is not `encv`/`enca`, carries no `sinf`,
+/// or whose `sinf` has no valid `frma`/box layout.
+#[must_use]
+pub fn clear_sample_entry(entry: &[u8]) -> Option<Vec<u8>> {
+    let child_start =
+        match entry.get(crate::box_types::BOX_TYPE_SIZE..2 * crate::box_types::BOX_TYPE_SIZE)? {
+            b"encv" => ENCV_CHILD_OFFSET,
+            b"enca" => ENCA_CHILD_OFFSET,
+            _ => return None,
+        };
+    let sinf = sinf_of_sample_entry(entry)?;
+    let parsed = ProtectionSchemeInfoBox::parse(sinf).ok()?;
+    let original = parsed.original_format.data_format;
+    let region = entry.get(child_start..)?;
+    let item = crate::box_types::BoxIter::new(region)
+        .filter_map(|item| item.ok())
+        .find(|item| item.four_cc() == SINF)?;
+    let start = child_start.checked_add(item.start)?;
+    let end = child_start.checked_add(item.end)?;
+    if start < crate::box_types::BOX_HEADER_MIN_SIZE || end > entry.len() || end < start {
+        return None;
+    }
+    let mut out = Vec::with_capacity(entry.len().saturating_sub(end - start));
+    out.extend_from_slice(&entry[..start]);
+    out.extend_from_slice(&entry[end..]);
+    out.get_mut(crate::box_types::BOX_TYPE_OFFSET..2 * crate::box_types::BOX_TYPE_SIZE)?
+        .copy_from_slice(&original);
+    let size = u32::try_from(out.len()).ok()?;
+    out.get_mut(..BOX_SIZE_FIELD_LEN)?
+        .copy_from_slice(&size.to_be_bytes());
+    Some(out)
 }
 
 /// Protection Scheme Information Box (`sinf`) — §13.4.2.

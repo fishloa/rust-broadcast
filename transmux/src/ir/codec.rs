@@ -418,23 +418,6 @@ impl DataIdentity {
             DataIdentity::Matroska { .. } => "matroska",
         }
     }
-
-    /// The sample-entry four-character code of an MP4 identity whose sample
-    /// entry carries a `sinf` box: a CENC/CBCS-protected track that reached
-    /// the IR as data because its protected format is not mapped yet.
-    pub fn protected_mp4_entry(&self) -> Option<[u8; isobmff::box_types::BOX_TYPE_SIZE]> {
-        let DataIdentity::Mp4 { sample_entry, .. } = self else {
-            return None;
-        };
-        isobmff::cenc::sinf_of_sample_entry(sample_entry)?;
-        sample_entry
-            .get(
-                isobmff::box_types::BOX_TYPE_OFFSET
-                    ..isobmff::box_types::BOX_TYPE_OFFSET + isobmff::box_types::BOX_TYPE_SIZE,
-            )?
-            .try_into()
-            .ok()
-    }
 }
 
 broadcast_common::impl_spec_display!(DataIdentity);
@@ -493,7 +476,8 @@ impl CodecConfig {
         })
     }
 
-    pub(crate) fn is_audio(&self) -> bool {
+    /// Whether this is an audio codec configuration.
+    pub fn is_audio(&self) -> bool {
         matches!(
             self,
             CodecConfig::Aac { .. }

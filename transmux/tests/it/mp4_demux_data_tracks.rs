@@ -216,3 +216,42 @@ fn gopro_data_tracks_survive_cmaf_mux() {
         }
     }
 }
+
+/// A protected `encv`/`enca` entry maps to the codec its `sinf`/`frma` wraps
+/// (ISO/IEC 14496-12:2026 §13.4.1), with the protection kept on the track.
+#[test]
+#[cfg(feature = "cenc")]
+fn protected_entries_map_to_their_original_codec() {
+    for name in ["mp4/h264-cenc.mp4", "mp4/cenc.mp4"] {
+        let bytes = test_fixtures::read(name);
+        let media = demux(&bytes);
+        let track = media
+            .tracks
+            .first()
+            .unwrap_or_else(|| panic!("{name}: a video track"));
+        assert!(
+            matches!(track.spec.config, CodecConfig::Avc { .. }),
+            "{name}: encv maps to its frma original format avc1, got {:?}",
+            track.spec.config
+        );
+        assert!(
+            track.spec.protection.is_some(),
+            "{name}: the sinf defaults stay on the track"
+        );
+        assert!(
+            track.samples.iter().all(|s| s.protection.is_some()),
+            "{name}: every sample carries its senc entry"
+        );
+    }
+
+    let bytes = test_fixtures::read("mp4/cenc-av-enca.mp4");
+    let media = demux(&bytes);
+    assert_eq!(media.tracks.len(), 2, "encv and enca both map");
+    assert!(
+        media
+            .tracks
+            .iter()
+            .all(|t| !matches!(t.spec.config, CodecConfig::Data { .. })),
+        "neither protected entry stays a data track"
+    );
+}

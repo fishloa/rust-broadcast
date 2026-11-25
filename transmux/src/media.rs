@@ -690,7 +690,22 @@ pub(crate) fn track_spec_from_track_info(info: &TrackInfo) -> Result<TrackSpec> 
             fourcc: String::from_utf8_lossy(&entry.fourcc).into_owned(),
         });
     }
-    let config = match entry.typed.as_ref().map(codec_config_from_entry) {
+    let protection = track_protection_from_entry(entry)?;
+    // A protected `encv`/`enca` entry is its cleartext sample entry behind a
+    // `sinf` (ISO/IEC 14496-12:2026 §13.4.1): recover the wrapped entry so the
+    // track keeps its real codec, and the clear bytes so a data track re-muxes
+    // without the protection boxes.
+    let clear_entry = if protection.is_some() {
+        isobmff::cenc::clear_sample_entry(&entry.body)
+    } else {
+        None
+    };
+    let parsed_entry = match &clear_entry {
+        Some(bytes) => Some(isobmff::init_segment::sample_entry_variant(bytes)?),
+        None => None,
+    };
+    let typed = parsed_entry.as_ref().or(entry.typed.as_ref());
+    let config = match typed.map(codec_config_from_entry) {
         Some(Ok(config)) => config,
         // No `CodecConfig` for this entry (an unknown four-CC, or a typed
         // entry such as QuickTime `tmcd` this crate does not map): carry the
@@ -698,20 +713,23 @@ pub(crate) fn track_spec_from_track_info(info: &TrackInfo) -> Result<TrackSpec> 
         None | Some(Err(Error::UnsupportedSampleEntry { .. })) => CodecConfig::Data {
             identity: DataIdentity::Mp4 {
                 handler: info.handler,
-                sample_entry: Bytes::copy_from_slice(&entry.body),
+                sample_entry: clear_entry.as_deref().map_or_else(
+                    || Bytes::copy_from_slice(&entry.body),
+                    Bytes::copy_from_slice,
+                ),
             },
         },
         Some(Err(err)) => return Err(err),
     };
     let mut spec = TrackSpec::new(info.track_id.into(), info.timescale, config);
-    if let Some(protection) = track_protection_from_entry(entry)? {
+    if let Some(protection) = protection {
         spec = spec.with_protection(protection);
     }
     // Overlay container-level display geometry (pasp / colr nclx) from the
     // sample entry onto the SPS-derived display — ISO/IEC 14496-12:2026
     // §12.1.4.1 (pasp) / §12.1.5.1 (colr). AVC/HEVC entries only; see
     // `overlay_sample_entry_display`.
-    let spec = match entry.typed.as_ref() {
+    let spec = match typed {
         Some(SampleEntryVariant::Avc1(e)) => overlay_sample_entry_display(spec, &e.extra_boxes),
         Some(SampleEntryVariant::Hevc1(e)) => overlay_sample_entry_display(spec, &e.extra_boxes),
         _ => spec,
