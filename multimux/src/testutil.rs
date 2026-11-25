@@ -379,9 +379,7 @@ pub(crate) fn record_archive_run(
                 SegmentSeq::new(seq),
                 std::time::Duration::from_secs(3),
                 broadcast_common::Timestamp::from_nanos(u64::from(seq) * 3_000_000_000),
-                transmux::SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish");
     }

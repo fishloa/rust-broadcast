@@ -103,9 +103,7 @@ fn pending_len_tracks_a_stuck_hand_off() {
             SegmentSeq::new(1),
             Duration::from_secs(2),
             Timestamp::from_nanos(0),
-            transmux::SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .expect("publish");
     driver.drive(Timestamp::from_nanos(0));

@@ -21,7 +21,6 @@ use hls_runtime::server::{
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
-use transmux::SegmentMeta;
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -60,7 +59,7 @@ fn publish_at(writer: &SegmentWriter, seq: u32, secs: u64, discontinuous: bool, 
             SegmentSeq::new(seq),
             Duration::from_secs(secs),
             Timestamp::from_nanos(start_ns),
-            SegmentMeta { discontinuous },
+            discontinuous,
         ))
         .expect("monotonic sequence");
 }

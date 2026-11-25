@@ -8,6 +8,8 @@
 //! costs only itself: its damage arrives as [`DemuxEvent::InputDegraded`] and
 //! the following segment continues under the same init.
 
+use std::collections::BTreeSet;
+
 use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
@@ -38,18 +40,21 @@ struct Collected {
 }
 
 impl Collected {
-    fn drain(&mut self, demux: &mut Mp4Demux) {
+    fn drain(&mut self, demux: &mut Mp4Demux, skip: &BTreeSet<u32>) {
         while let Some(event) = demux.poll() {
-            self.on_event(event);
+            self.on_event(event, skip);
         }
     }
 
-    fn on_event(&mut self, event: DemuxEvent) {
+    fn on_event(&mut self, event: DemuxEvent, skip: &BTreeSet<u32>) {
         match event {
             DemuxEvent::Sample {
                 track_id, sample, ..
             } => {
                 let id = track_id.value();
+                if skip.contains(&id) {
+                    return;
+                }
                 match self.tracks.iter_mut().find(|(track, _)| *track == id) {
                     Some((_, samples)) => samples.push(sample),
                     None => self.tracks.push((id, vec![sample])),
@@ -68,6 +73,43 @@ impl Collected {
     }
 }
 
+/// Split an init's tracks into those this client can carry and the CENC/CBCS
+/// ones it cannot. A `DataIdentity::Mp4` track whose sample entry carries a
+/// `sinf` box is sample-encrypted; this client decrypts AES-128 HLS/DASH
+/// segments only, so the track is reported and left out.
+fn split_encrypted(specs: Vec<TrackSpec>) -> (Vec<TrackSpec>, Vec<SkippedTrack>) {
+    let mut kept = Vec::with_capacity(specs.len());
+    let mut encrypted = Vec::new();
+    for spec in specs {
+        match encrypted_data_track(&spec) {
+            Some(track) => encrypted.push(track),
+            None => kept.push(spec),
+        }
+    }
+    (kept, encrypted)
+}
+
+fn encrypted_data_track(spec: &TrackSpec) -> Option<SkippedTrack> {
+    let transmux::ir::CodecConfig::Data {
+        identity: transmux::ir::DataIdentity::Mp4 { sample_entry, .. },
+    } = &spec.config
+    else {
+        return None;
+    };
+    isobmff::cenc::sinf_of_sample_entry(sample_entry)?;
+    let offset = isobmff::box_types::BOX_TYPE_OFFSET;
+    let fourcc = String::from_utf8_lossy(
+        sample_entry.get(offset..offset + isobmff::box_types::BOX_TYPE_SIZE)?,
+    )
+    .into_owned();
+    let mut skipped = SkippedTrack::new(
+        fourcc,
+        String::from("CENC/CBCS sample encryption is not supported by this client"),
+    );
+    skipped.track_id = Some(spec.track_id);
+    Some(skipped)
+}
+
 /// A new stage over `init`, with the init's bytes fed.
 fn stage_over(init: &[u8]) -> Result<Mp4Demux, transmux::Error> {
     let mut demux = Mp4Demux::sequential(Mp4DemuxConfig::default());
@@ -80,9 +122,11 @@ fn stage_over(init: &[u8]) -> Result<Mp4Demux, transmux::Error> {
 pub(crate) fn init_info(init: &[u8]) -> Result<InitInfo, transmux::Error> {
     let mut demux = stage_over(init)?;
     let mut collected = Collected::default();
-    collected.drain(&mut demux);
+    collected.drain(&mut demux, &BTreeSet::new());
+    let (specs, encrypted) = split_encrypted(demux.init_tracks().cloned().collect());
+    collected.skipped.extend(encrypted);
     Ok(InitInfo {
-        specs: demux.init_tracks().cloned().collect(),
+        specs,
         skipped: collected.skipped,
     })
 }
@@ -92,15 +136,26 @@ pub(crate) fn init_info(init: &[u8]) -> Result<InitInfo, transmux::Error> {
 pub(crate) struct SegmentStage {
     demux: Mp4Demux,
     init_events: Collected,
+    skipped_tracks: BTreeSet<u32>,
 }
 
 impl SegmentStage {
     /// A stage with `init` fed, ready for its first media segment.
     pub(crate) fn new(init: &[u8]) -> Result<Self, transmux::Error> {
         let mut demux = stage_over(init)?;
+        let (_specs, encrypted) = split_encrypted(demux.init_tracks().cloned().collect());
+        let skipped_tracks: BTreeSet<u32> = encrypted
+            .iter()
+            .filter_map(|track| track.track_id.map(transmux::TrackId::value))
+            .collect();
         let mut init_events = Collected::default();
-        init_events.drain(&mut demux);
-        Ok(Self { demux, init_events })
+        init_events.drain(&mut demux, &skipped_tracks);
+        init_events.skipped.extend(encrypted);
+        Ok(Self {
+            demux,
+            init_events,
+            skipped_tracks,
+        })
     }
 
     /// Feed one media segment and return its samples.
@@ -108,7 +163,7 @@ impl SegmentStage {
         self.demux.feed(Mp4Input::Next(segment), Timestamp::ZERO)?;
         self.demux.feed(Mp4Input::SegmentEnd, Timestamp::ZERO)?;
         let mut collected = Collected::default();
-        collected.drain(&mut self.demux);
+        collected.drain(&mut self.demux, &self.skipped_tracks);
         Ok(Staged {
             tracks: collected.tracks,
             damaged: self.init_events.damaged.saturating_add(collected.damaged),

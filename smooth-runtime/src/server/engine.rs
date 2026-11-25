@@ -1065,7 +1065,6 @@ mod tests {
     };
     use media_plane::TrunkConfig;
     use media_plane::trunk::SegmentEntry;
-    use transmux::SegmentMeta;
     use transmux::avc_config_from_sprop;
     use transmux::ll_hls::LlHlsSegmenter;
     use transmux::pipeline::Sample;
@@ -1308,9 +1307,7 @@ mod tests {
                 SegmentSeq::new(*published + 1),
                 SEGMENT_DURATION,
                 Timestamp::from_nanos(u64::from(*published) * SEGMENT_NANOS),
-                SegmentMeta {
-                    discontinuous: false,
-                },
+                false,
             ))
             .expect("publish segment");
         window.push((SegmentSeq::new(*published + 1), Bytes::from(bytes)));

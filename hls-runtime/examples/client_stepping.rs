@@ -23,7 +23,6 @@ use hls_runtime::server::{
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, Trunk, TrunkConfig};
-use transmux::SegmentMeta;
 use url::Url;
 
 const PLAYLIST_URL: &str = "http://origin/live/media.m3u8";
@@ -69,9 +68,7 @@ fn canned_playlist() -> String {
             SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
-            SegmentMeta {
-                discontinuous: false,
-            },
+            false,
         ))
         .unwrap();
     writer.publish_part(PartEntry::new(

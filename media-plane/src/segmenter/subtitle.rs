@@ -47,9 +47,9 @@ use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
 use caption_convert::{Cue, MediaTime, TeletextToWebVtt, cue_block};
 use dvb_si::descriptors::teletext::{TeletextEntry, TeletextType};
 use dvb_si::descriptors::{AnyDescriptor, parse_loop};
+use transmux::TrackId;
 use transmux::ll_hls::PartCutReady;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::{SegmentMeta, TrackId};
 
 use crate::ids::{PartIndex, SegmentSeq};
 use crate::publish_queue::{PendingPublish, drain_publish_queue};
@@ -535,9 +535,7 @@ impl SubtitleFollower {
                             SegmentSeq::new(u32::try_from(segment.msn.value()).unwrap_or(u32::MAX)),
                             segment.duration,
                             Timestamp::from_nanos(start_ns),
-                            SegmentMeta {
-                                discontinuous: std::mem::take(&mut self.first_discontinuous),
-                            },
+                            std::mem::take(&mut self.first_discontinuous),
                         )));
                 }
             }
@@ -1136,7 +1134,7 @@ mod tests {
         );
         assert!(first.contains("Un train met dix secondes"), "{first}");
         assert_eq!(entries[0].timeline_position.as_nanos(), 2_000_000_000);
-        assert!(entries[0].meta.discontinuous);
+        assert!(entries[0].discontinuous);
         assert_eq!(
             entries[1].timeline_position.as_nanos(),
             4_000_000_000,
