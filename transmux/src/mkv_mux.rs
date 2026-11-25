@@ -583,6 +583,13 @@ fn build_track_entry(
             (!codec_private.is_empty()).then(|| codec_private.to_vec()),
             Vec::new(),
         ),
+        CodecConfig::Data { identity } => {
+            return Err(Error::DataIdentityMismatch {
+                track: track_id,
+                have: identity.name(),
+                want: "matroska",
+            });
+        }
         other => {
             return Err(Error::UnsupportedMkvCodec {
                 codec: other.name(),

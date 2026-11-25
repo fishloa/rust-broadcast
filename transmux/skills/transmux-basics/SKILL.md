@@ -249,7 +249,7 @@ supplied explicitly.
 
 - **It never transcodes.** A codec the output container cannot carry is
   *rejected* (`CmafMux` and every fMP4/CMAF entry point with
-  `Error::UnmuxableDataTrack`/`UnmuxableSubtitleTrack`, the WebM-only VP8/Vorbis
+  `Error::DataIdentityMismatch`/`UnmuxableSubtitleTrack`, the WebM-only VP8/Vorbis
   with `UnsupportedCodec`, FLV/RTMP/Smooth with their own codec error) or
   *dropped* (`TsMux` drops a track with no TS mapping). Filter first with
   `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`; plan the

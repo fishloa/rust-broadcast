@@ -51,7 +51,9 @@
 //!   demux edge, see [`ts_demux`]);
 //!   timeline splice / concatenation → SSAI as a sample stage
 //!   ([`SpliceStage`] driven by a [`SplicePlan`], or plan-less
-//!   [`SpliceStage::switching`] holding one GOP to snap to the preceding sync).
+//!   [`SpliceStage::switching`] holding one GOP to snap to the preceding sync);
+//!   an opaque data track's container identity across families
+//!   ([`DataIdentityStage`] over a caller-built [`DataIdentityMap`]).
 //! - **Crypto:** CENC/CBCS (`cenc`, AES-CTR/AES-CBC-pattern) decrypt
 //!   ([`CencDecryptStage`]) + encrypt ([`CencEncryptStage`], which populates
 //!   [`TrackSpec::protection`](crate::ir::TrackSpec::protection) for the muxer's `sinf`/`senc`/`saio`/`saiz` box
@@ -176,6 +178,7 @@ pub mod codec_config_ext;
 pub mod container;
 #[cfg(feature = "std")]
 pub mod dash;
+pub mod data_identity;
 pub(crate) mod display_track;
 pub mod dovi_descriptor;
 pub mod drm;
@@ -271,6 +274,7 @@ pub use dash::{
     TrackSegments, TrickModeAdaptationSet, TrickModeRepr, rfc6381_codec_string,
     rfc6381_track_codec_string,
 };
+pub use data_identity::{DataIdentityMap, DataIdentityStage};
 pub use drm::{
     COMMON_SYSTEM_ID, FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID,
     cenc_kid_to_playready, fairplay_pssh, fairplay_pssh_data, playready_kid_to_cenc,

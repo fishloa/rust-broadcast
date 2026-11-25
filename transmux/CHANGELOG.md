@@ -8,8 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - `payload`: a caller-owned `PayloadRegistry` holds object-safe `PayloadDecoder`s and renders one opaque data-track sample as named `PayloadValue`s (`PayloadScalar` is text, signed/unsigned integer, float, bytes, a POSIX-epoch-microsecond timestamp or a boolean). Each plug-in is a cargo feature; `St0601Decoder` (feature `motion-imagery-metadata`) claims a data track whose sample starts with the MISB ST 0601 Universal Label and returns its items as `tag_<n>` values plus `checksum_valid`, the tag-1 running-sum check reported as a value rather than as a decode error.
+- `data_identity`: `DataIdentityMap` is a caller-built table from a source track to the `DataIdentity` it should carry in the output, and `DataIdentityStage` rewrites that data track's `MuxInput::Track` announcement while passing samples and every other input through unchanged. There is no library-chosen default: an unmapped data track reaches the muxer with its own identity.
 
 ### Breaking
+- `Error::UnmuxableDataTrack` is replaced by `Error::DataIdentityMismatch { track, have, want }`, naming the track and both container families through `DataIdentity::name()`. The TS muxer accepts only a `DataIdentity::Ts` data track, the fMP4/CMAF muxers only `DataIdentity::Mp4`, and `MkvMuxStage` only `DataIdentity::Matroska`; any other identity is that one refusal instead of a per-muxer `UnsupportedCodec` or a silent skip.
 - `ProgressiveMux` and its `Package` impl are deleted. The replacement is
   `progressive::ProgressiveMuxStage`, a `Stage` over `MuxInput`/`MuxOutput`
   built from an `isobmff::plan::OwnedPlan`, a `Layout` and the movie header:

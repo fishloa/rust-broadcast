@@ -494,10 +494,17 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
         CodecConfig::Vorbis { .. } => {
             return Err(crate::error::Error::UnsupportedCodec { codec: "Vorbis" });
         }
-        // Opaque PES data track: no ISOBMFF sample entry in this crate — the
-        // fMP4 mux path is out of scope (mirrors Vp8/Vorbis above).
-        CodecConfig::Data { .. } => {
-            return Err(crate::error::Error::UnsupportedCodec { codec: "Data" });
+        // A data track of another container family: this arm is unreachable
+        // through `track_setup` (an `Mp4` identity takes the raw-sample-entry
+        // path and every other identity is refused before this point), but the
+        // typed refusal keeps the family mismatch explicit rather than a
+        // generic unsupported-codec error.
+        CodecConfig::Data { identity, .. } => {
+            return Err(crate::error::Error::DataIdentityMismatch {
+                track: t.track_id,
+                have: identity.name(),
+                want: "mp4",
+            });
         }
         // Subtitle track: re-emit the ISOBMFF sample entry carried whole in
         // `sample_entry` (issue #1186, ex-`TODO(#753)`). The media header is

@@ -197,7 +197,7 @@
 //! [`CodecConfig::Data`] track, needing no header, on that very first access
 //! unit). This is deliberate: announcing it from the PMT would add an empty
 //! `Data` track to every service whose subtitle PID is idle, which every ISOBMFF
-//! muxer rejects (`Error::UnmuxableDataTrack`, so each consumer
+//! muxer rejects (`Error::DataIdentityMismatch`, so each consumer
 //! would have to filter it) and which would shift `track_id`s. The cost is that
 //! [`DemuxEvent::TracksResolved`] is withheld until each such PID has produced
 //! data (or [`finish`](StreamingTsDemux::finish) abandons it): PID 0x8D (HD DVB
