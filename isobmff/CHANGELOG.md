@@ -23,8 +23,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking
 
 - `registry::BoxDef` and `registry::RegisteredBox` require `Send + Sync`, so a `Reader` holding registered values can cross threads (a tokio task) and one registry can serve many readers.
+- `writer::FragmentOptions` gains `layout` and `position`, `writer::FragmentTrack` gains `trex`, and `writer::Fragment` gains `moof_offset`.
+- `writer::FragmentedWriter::trailer` appends the regenerated `mfra` when the index layout asks for one.
 ### Added
 
+- `frag_layout`: each movie fragment's write-back layout. `reader::FragmentInfo`
+  now carries the `FragmentLayout` the reader recorded for it (which `tfhd`
+  optional fields are present and their values, `default-base-is-moof`, the
+  `trun` field choices, versions and split points, the `tfdt` version, the
+  `traf`/`moof` child order including opaque boxes, and the top-level boxes
+  between fragments), and `Reader::fragment_index` the forms of the `sidx`
+  before the fragments and the `mfra` after them.
+- `writer::FragmentedWriter::set_fragment_layout` writes a fragment exactly as
+  a recorded layout states it, recomputing `tfhd.base_data_offset` and every
+  `trun.data_offset` from where the fragment is placed and refusing a
+  `tfhd`/`trun` default the samples contradict with
+  `Error::LayoutMismatch`. `set_position` states where the emitted bytes land.
+  Without a layout the output is unchanged.
+- `set_compact_layout` writes the compact form
+  `FragmentLayout::compact` derives: `tfhd` sample defaults where a track's
+  samples agree and `first_sample_flags` where only the first differs.
+- `with_sidx`/`with_mfra` emit a segment index and a trailing random-access
+  index regenerated from the offsets the writer placed its own fragments at
+  (`segment_index`, `trailer`), in the form a source recorded. Neither index is
+  ever copied: carried offsets would be stale.
 - `SampleEntryInfo::error` carries the sample-entry parser's own message when a
   known four-CC's `stsd` body fails to parse; `typed` is recovered by
   re-parsing the raw entry, so a demuxer can report the real cause (issue #952).

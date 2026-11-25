@@ -33,6 +33,7 @@ use broadcast_common::Serialize;
 use broadcast_common::timescale::Timescale;
 
 pub mod fragmented;
+mod index;
 pub mod progressive;
 
 pub use fragmented::{FragmentedWriter, RunSample, fragmented_segment, media_fragment_run};
@@ -672,13 +673,17 @@ impl Default for SampleMeta {
     }
 }
 
-/// One finished fragment: the bytes to emit and the `moof` length inside them.
+/// One finished fragment: the bytes to emit, the `moof` length inside them,
+/// and where the `moof` itself lands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fragment {
     /// `[styp] [emsg]* moof mdat`, in that order.
     pub bytes: Vec<u8>,
     /// The length of the `moof` box inside [`Fragment::bytes`].
     pub moof_len: usize,
+    /// The absolute file offset of the `moof` box, as
+    /// [`FragmentOptions::position`] places it.
+    pub moof_offset: u64,
 }
 
 /// One sample handed to [`fragmented_segment`].
@@ -699,6 +704,9 @@ pub struct FragmentTrack<'a> {
     pub base_decode_time: u64,
     /// The samples, in decode order.
     pub samples: &'a [SampleData<'a>],
+    /// The track's `trex` defaults (`§8.8.3`): what a `tfhd`/`trun` field the
+    /// layout omits inherits when the `tfhd` states no default of its own.
+    pub trex: TrexDefaults,
 }
 
 /// The segment-level choices of one fragment.
@@ -710,6 +718,13 @@ pub struct FragmentOptions<'a> {
     pub styp: Option<&'a SegmentBrands>,
     /// Event Message Boxes, emitted after `styp` and before `moof`.
     pub events: &'a [EmsgBox<'a>],
+    /// The source layout to reproduce; `None` writes this crate's canonical
+    /// per-sample form.
+    pub layout: Option<&'a crate::frag_layout::FragmentLayout>,
+    /// The absolute file offset at which the emitted bytes will be placed, so
+    /// a layout that addresses its runs from an explicit `base_data_offset`
+    /// can state it.
+    pub position: u64,
 }
 
 #[cfg(test)]

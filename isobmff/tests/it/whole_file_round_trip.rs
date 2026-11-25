@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 
 use broadcast_common::Parse;
 
+use isobmff::frag_layout::{FragmentIndex, FragmentLayout};
 use isobmff::init_segment::MovieBox;
 use isobmff::plan::OwnedPlan;
 use isobmff::sample_table::SampleRef;
@@ -21,7 +22,7 @@ use isobmff::writer::{
 use isobmff::{Limits, Reader, ReaderConfig, SampleOrder, Step, TrackId, TrackInfo};
 
 /// At least this many files must round-trip byte-identically.
-const MIN_BYTE_IDENTICAL: usize = 10;
+const MIN_BYTE_IDENTICAL: usize = 33;
 
 /// The fixture files that must come back byte for byte: every progressive
 /// fixture this workspace's muxer wrote, every one ffmpeg wrote, the tag files,
@@ -51,6 +52,19 @@ const BYTE_IDENTICAL: &[&str] = &[
     "mp4/quicktime/lavf-aac-tmcd.mov",
     "mp4/quicktime/lavf-pcm24.mov",
     "mp4/quicktime/iphone-x-live-photo.mov",
+    // The fragmented set: each `moof` is rewritten in the layout the reader
+    // recorded for it, and the trailing `mfra` is regenerated from the
+    // positions the writer placed its own fragments at.
+    "mp4/frag/av1.frag.mp4",
+    "mp4/frag/flac.frag.mp4",
+    "mp4/frag/h264-high.frag.mp4",
+    "mp4/frag/hevc-main.frag.mp4",
+    "mp4/frag/mp3.frag.mp4",
+    "mp4/frag/mpeg2video.frag.mp4",
+    "mp4/frag/opus.frag.mp4",
+    "mp4/frag/vp9.frag.mp4",
+    "mp4/frag/vvc.frag.mp4",
+    "mp4/cmaf/av-frag.mp4",
 ];
 
 /// One file that cannot be byte-identical, the exact reason, and a check that
@@ -60,75 +74,6 @@ struct Exception {
     reason: &'static str,
     verify: fn(&[u8]) -> bool,
 }
-
-/// The fragmented files. Their `moof`s state the sample layout differently from
-/// this writer (a `tfhd` carrying sample defaults or `base_data_offset`, a
-/// `trun` that flags a keyframe once per run), their random-access index is a
-/// trailing `mfra`, and the mpeg-h file carries a top-level `sidx`; the writer
-/// emits per-sample `trun` fields under `default-base-is-moof` and no index.
-const EXCEPTIONS: &[Exception] = &[
-    Exception {
-        name: "mp4/frag/av1.frag.mp4",
-        reason: FRAGMENT_REASON,
-        verify: has_mfra_and_tfhd_layout,
-    },
-    Exception {
-        name: "mp4/frag/flac.frag.mp4",
-        reason: FRAGMENT_REASON,
-        verify: has_mfra_and_tfhd_layout,
-    },
-    Exception {
-        name: "mp4/frag/h264-high.frag.mp4",
-        reason: FRAGMENT_REASON,
-        verify: has_mfra_and_tfhd_layout,
-    },
-    Exception {
-        name: "mp4/frag/hevc-main.frag.mp4",
-        reason: FRAGMENT_REASON,
-        verify: has_mfra_and_tfhd_layout,
-    },
-    Exception {
-        name: "mp4/frag/mp3.frag.mp4",
-        reason: FRAGMENT_REASON,
-        verify: has_mfra_and_tfhd_layout,
-    },
-    Exception {
-        name: "mp4/frag/mpeg2video.frag.mp4",
-        reason: FRAGMENT_REASON,
-        verify: has_mfra_and_tfhd_layout,
-    },
-    Exception {
-        name: "mp4/frag/opus.frag.mp4",
-        reason: FRAGMENT_REASON,
-        verify: has_mfra_and_tfhd_layout,
-    },
-    Exception {
-        name: "mp4/frag/vp9.frag.mp4",
-        reason: FRAGMENT_REASON,
-        verify: has_mfra_and_tfhd_layout,
-    },
-    Exception {
-        name: "mp4/frag/vvc.frag.mp4",
-        reason: FRAGMENT_REASON,
-        verify: has_mfra_and_tfhd_layout,
-    },
-    Exception {
-        name: "mp4/cmaf/av-frag.mp4",
-        reason: FRAGMENT_REASON,
-        verify: has_mfra_and_tfhd_layout,
-    },
-    Exception {
-        name: "mp4/frag/mpegh-stereo.frag.mp4",
-        reason: "carries a top-level `sidx` between the init segment and the \
-                 fragments; the writer does not re-emit a segment index",
-        verify: has_top_level_sidx,
-    },
-];
-
-const FRAGMENT_REASON: &str = "the source `moof`s state the run layout differently \
-    (a `tfhd` with sample defaults or `base_data_offset`, a `trun` with a \
-    per-run keyframe flag) and end with a trailing `mfra`; the writer emits \
-    per-sample `trun` fields under `default-base-is-moof` and no index";
 
 /// `tfhd` flags that state something about the run instead of each sample:
 /// `base_data_offset` (0x01), the three sample defaults (0x08/0x10/0x20).
@@ -213,13 +158,78 @@ fn first_tfhd_flags(bytes: &[u8]) -> Option<u32> {
     Some(u32::from_be_bytes(array) & FULL_BOX_FLAGS_MASK)
 }
 
-fn has_mfra_and_tfhd_layout(bytes: &[u8]) -> bool {
-    has_top_level(bytes, b"mfra")
-        && first_tfhd_flags(bytes).is_some_and(|flags| flags & TFHD_RUN_LAYOUT_BITS != 0)
+/// The first fragment really does state a run layout in its `tfhd`, which is
+/// what the recorded layout has to reproduce.
+fn has_tfhd_run_layout(bytes: &[u8]) -> bool {
+    first_tfhd_flags(bytes).is_some_and(|flags| flags & TFHD_RUN_LAYOUT_BITS != 0)
 }
 
-fn has_top_level_sidx(bytes: &[u8]) -> bool {
-    has_top_level(bytes, b"sidx")
+/// The one fragmented file the writer cannot reproduce: its `sidx` indexes
+/// fragments the excerpt does not carry, and its init segment's empty `stsz`
+/// declares a per-sample size the `moov` rebuild does not.
+const EXCEPTIONS: &[Exception] = &[Exception {
+    name: "mp4/frag/mpegh-stereo.frag.mp4",
+    reason: "its `sidx` states 183 references while the excerpt carries 6 \
+             fragments, so the 177 references to absent segments cannot be \
+             regenerated from the written positions; its init segment's empty \
+             `stsz` also declares a sample_size of 1, which the `moov` rebuild \
+             writes as 0",
+    verify: sidx_indexes_absent_segments_and_stsz_states_a_size,
+}];
+
+/// The first `stsz` in `moov` that declares a per-sample size while carrying
+/// no entry at all.
+fn empty_stsz_states_a_size(bytes: &[u8]) -> bool {
+    let Some(moov) = top_boxes(bytes)
+        .into_iter()
+        .find(|span| &span.fourcc == b"moov")
+    else {
+        return false;
+    };
+    let head = core::mem::size_of::<u32>();
+    for trak in children(bytes, moov.start + moov.header, moov.start + moov.size)
+        .into_iter()
+        .filter(|span| &span.fourcc == b"trak")
+    {
+        let Some(stbl) = find_child(bytes, &trak, b"mdia")
+            .and_then(|mdia| find_child(bytes, &mdia, b"minf"))
+            .and_then(|minf| find_child(bytes, &minf, b"stbl"))
+        else {
+            continue;
+        };
+        let Some(stsz) = find_child(bytes, &stbl, b"stsz") else {
+            continue;
+        };
+        let at = stsz.start + stsz.header;
+        let Some(fields) = bytes.get(at..at + 3 * head) else {
+            continue;
+        };
+        let sample_size = u32::from_be_bytes([fields[4], fields[5], fields[6], fields[7]]);
+        let count = u32::from_be_bytes([fields[8], fields[9], fields[10], fields[11]]);
+        if sample_size != 0 && count == 0 && stsz.size == stsz.header + 3 * head {
+            return true;
+        }
+    }
+    false
+}
+
+/// The source `sidx` names more fragments than the excerpt carries.
+fn sidx_indexes_absent_segments(bytes: &[u8]) -> bool {
+    let boxes = top_boxes(bytes);
+    let Some(sidx) = boxes.iter().find(|span| &span.fourcc == b"sidx") else {
+        return false;
+    };
+    let Ok(index) =
+        isobmff::timing::SegmentIndexBox::parse(&bytes[sidx.start..sidx.start + sidx.size])
+    else {
+        return false;
+    };
+    let fragments = boxes.iter().filter(|span| &span.fourcc == b"moof").count();
+    index.references.len() > fragments
+}
+
+fn sidx_indexes_absent_segments_and_stsz_states_a_size(bytes: &[u8]) -> bool {
+    sidx_indexes_absent_segments(bytes) && empty_stsz_states_a_size(bytes)
 }
 
 /// A fixture's bytes, or `None` (with a loud skip) when a private one is not
@@ -257,9 +267,11 @@ fn file_type(bytes: &[u8]) -> FileType {
     }
 }
 
-/// One fragment's `mfhd.sequence_number` and its samples, in decode order.
+/// One fragment's `mfhd.sequence_number`, the layout the reader recorded for
+/// it, and its samples in decode order.
 struct FragmentSamples {
     sequence_number: u32,
+    layout: FragmentLayout,
     samples: Vec<SampleRef>,
 }
 
@@ -268,6 +280,7 @@ struct Run {
     tracks: Vec<TrackInfo>,
     samples: Vec<SampleRef>,
     fragments: Vec<FragmentSamples>,
+    index: FragmentIndex,
     plan: OwnedPlan,
 }
 
@@ -293,6 +306,7 @@ fn drive(bytes: &[u8]) -> Run {
             Step::Tracks(step_tracks) => tracks = step_tracks.to_vec(),
             Step::Fragment(info) => fragments.push(FragmentSamples {
                 sequence_number: info.sequence_number,
+                layout: info.layout.clone(),
                 samples: Vec::new(),
             }),
             Step::Sample(sample) => {
@@ -305,6 +319,7 @@ fn drive(bytes: &[u8]) -> Run {
             _ => {}
         }
     }
+    let index = reader.fragment_index().clone();
     let plan = reader
         .plan()
         .expect("a progressive or fragmented movie has a plan")
@@ -314,6 +329,7 @@ fn drive(bytes: &[u8]) -> Run {
         tracks,
         samples,
         fragments,
+        index,
         plan,
     }
 }
@@ -434,9 +450,12 @@ fn rebuild_fragmented(bytes: &[u8], run: &Run) -> Vec<u8> {
         .expect("fragmented writer");
     writer.set_file_type(file_type(bytes));
     writer.set_movie_shell(shell);
+    writer.set_index_layout(run.index.clone());
     let mut out = writer.init().expect("init segment");
+    writer.set_position(u64::try_from(out.len()).expect("init length"));
     for fragment in &run.fragments {
         writer.set_sequence_number(fragment.sequence_number);
+        writer.set_fragment_layout(fragment.layout.clone());
         let mut based: Vec<TrackId> = Vec::new();
         for sample in &fragment.samples {
             if !based.contains(&sample.track) {
@@ -654,6 +673,50 @@ fn files_the_writer_can_reproduce_round_trip_byte_identically() {
         identical >= MIN_BYTE_IDENTICAL,
         "{identical} files round-tripped byte-identically, expected at least {MIN_BYTE_IDENTICAL}"
     );
+}
+
+/// Every fragmented file that now round-trips byte-identically really does
+/// state its sample layout the way this crate's canonical form does not: a
+/// `tfhd` carrying run defaults or an explicit base, and a trailing `mfra`. A
+/// green round trip on a canonical-layout file would prove nothing about the
+/// recorded-layout path.
+#[test]
+fn fragmented_round_trips_exercise_a_recorded_layout() {
+    for name in [
+        "mp4/frag/av1.frag.mp4",
+        "mp4/frag/flac.frag.mp4",
+        "mp4/frag/h264-high.frag.mp4",
+        "mp4/frag/hevc-main.frag.mp4",
+        "mp4/frag/mp3.frag.mp4",
+        "mp4/frag/mpeg2video.frag.mp4",
+        "mp4/frag/opus.frag.mp4",
+        "mp4/frag/vp9.frag.mp4",
+        "mp4/frag/vvc.frag.mp4",
+        "mp4/cmaf/av-frag.mp4",
+    ] {
+        let Some(source) = load(name) else {
+            continue;
+        };
+        assert!(
+            has_tfhd_run_layout(&source),
+            "{name}: the first tfhd states no run layout"
+        );
+        assert!(
+            has_top_level(&source, b"mfra"),
+            "{name}: the file does not end with an mfra"
+        );
+        let run = drive(&source);
+        assert!(
+            run.fragments
+                .iter()
+                .all(|fragment| !fragment.layout.tracks.is_empty()),
+            "{name}: a fragment recorded no track layout"
+        );
+        assert!(
+            run.index.mfra.is_some(),
+            "{name}: the walk recorded no mfra form"
+        );
+    }
 }
 
 /// Rebuild every `.mov` track's `stsd` from the typed parse (not its carried

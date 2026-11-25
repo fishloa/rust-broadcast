@@ -394,6 +394,10 @@ pub struct FragmentInfo {
     pub moof: ByteRange,
     /// The tracks this fragment carries samples for, in `traf` order.
     pub tracks: Vec<TrackId>,
+    /// How this fragment states itself: its `tfhd`/`trun` field choices, run
+    /// splits, child order and the boxes between it and the previous
+    /// fragment. The writer reproduces it byte for byte.
+    pub layout: crate::frag_layout::FragmentLayout,
 }
 
 /// A fault [`Mode::Permissive`] tolerated, reported once as [`Step::Warning`].
@@ -516,6 +520,7 @@ enum Pending {
     Index(ByteRange),
     MfraTrailer(ByteRange),
     Mfra(ByteRange),
+    MfraForm(ByteRange),
     TopLevel(ByteRange),
 }
 
@@ -529,6 +534,7 @@ impl Pending {
             | Self::Index(range)
             | Self::MfraTrailer(range)
             | Self::Mfra(range)
+            | Self::MfraForm(range)
             | Self::TopLevel(range) => *range,
         }
     }
@@ -562,6 +568,8 @@ struct FragmentState {
     range: ByteRange,
     moof: Option<MovieFragmentBox>,
     mdats: Vec<MdatRange>,
+    before: Vec<crate::box_support::OpaqueBox>,
+    layout: Option<crate::frag_layout::FragmentLayout>,
 }
 
 /// A `sidx` found in the walk, with the byte offset its `first_offset` is
@@ -662,6 +670,8 @@ pub struct Reader {
     last_fragment: Option<(u64, Vec<SampleRef>)>,
     open_box: Option<ByteRange>,
     indexes: Vec<SegmentIndex>,
+    index: crate::frag_layout::FragmentIndex,
+    between: Vec<crate::box_support::OpaqueBox>,
     seek: Option<SeekRequest>,
     #[cfg(feature = "scan-counters")]
     bytes_requested: u64,
@@ -700,6 +710,8 @@ impl Reader {
             last_fragment: None,
             open_box: None,
             indexes: Vec::new(),
+            index: crate::frag_layout::FragmentIndex::default(),
+            between: Vec::new(),
             seek: None,
             #[cfg(feature = "scan-counters")]
             bytes_requested: 0,
@@ -735,6 +747,7 @@ impl Reader {
             Pending::Index(range) => self.accept_index(range, bytes),
             Pending::MfraTrailer(_) => self.accept_mfra_trailer(bytes),
             Pending::Mfra(_) => self.accept_mfra(bytes),
+            Pending::MfraForm(_) => self.accept_mfra_form(bytes),
             Pending::TopLevel(_) => self.accept_top_level(bytes),
         }
     }
@@ -867,6 +880,7 @@ impl Reader {
         self.fragments.clear();
         self.open_box = None;
         self.last_fragment = None;
+        self.between.clear();
         self.pending = None;
         self.pos = unit_end;
         self.highest_requested = unit_end;
@@ -942,6 +956,16 @@ impl Reader {
         self.movie.as_ref().map(|movie| movie.mvhd.timescale)
     }
 
+    /// The forms of the index boxes around the fragments: the `sidx` that
+    /// precedes them and the `mfra` that follows, as the source states them.
+    ///
+    /// The walk reaches both, so this is complete once [`Step::Done`] arrives.
+    /// A source with neither carries the default (no index).
+    #[must_use]
+    pub fn fragment_index(&self) -> &crate::frag_layout::FragmentIndex {
+        &self.index
+    }
+
     /// Whether the movie is fragmented (`moov` carries `mvex`), once `moov` is
     /// parsed. `None` before the track table is known.
     #[must_use]
@@ -966,6 +990,12 @@ impl Reader {
     }
 
     fn finish_step(&mut self) -> Result<Step<'_>> {
+        for carried in core::mem::take(&mut self.between) {
+            self.top_level.push(TopLevelBox {
+                position: BoxPosition::AfterMdat,
+                data: carried,
+            });
+        }
         self.done = true;
         if let Some(warning) = self.next_warning() {
             return Ok(Step::Warning(warning));
@@ -1072,6 +1102,16 @@ impl Reader {
 
     fn accept_index(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
         let index = SegmentIndexBox::parse(bytes)?;
+        if self.index.sidx.is_none() {
+            self.index.sidx = Some(crate::frag_layout::SegmentIndexForm {
+                version: index.version,
+                flags: index.flags,
+                reference_id: TrackId::new(index.reference_id),
+                timescale: index.timescale,
+                earliest_presentation_time: index.earliest_presentation_time,
+                reference_type: index.references.first().map_or(0, |r| r.reference_type),
+            });
+        }
         if self.indexes.len() < MAX_REMEMBERED_INDEXES {
             self.indexes.push(SegmentIndex {
                 index,
@@ -1120,6 +1160,29 @@ impl Reader {
             phase: SeekPhase::Mfra,
             ..request
         });
+        Ok(())
+    }
+
+    /// Record the trailing `mfra`'s form so a rewrite can regenerate it from
+    /// its own positions. A box this crate cannot read states no form, exactly
+    /// as it was ignored before.
+    fn accept_mfra_form(&mut self, bytes: &[u8]) -> Result<()> {
+        let Ok(mfra) = MovieFragmentRandomAccessBox::parse(bytes) else {
+            return Ok(());
+        };
+        let mut tracks = Vec::with_capacity(mfra.tfra.len());
+        for tfra in &mfra.tfra {
+            tracks.push(crate::frag_layout::MfraTrackForm {
+                track_id: tfra.track_id,
+                version: tfra.version,
+                lengths: crate::frag_layout::TfraLengthSizes {
+                    traf: tfra.length_size_of_traf_num,
+                    trun: tfra.length_size_of_trun_num,
+                    sample: tfra.length_size_of_sample_num,
+                },
+            });
+        }
+        self.index.mfra = Some(crate::frag_layout::MfraForm { tracks });
         Ok(())
     }
 
@@ -1509,8 +1572,17 @@ impl Reader {
                 range: fragment,
                 moof: None,
                 mdats: Vec::new(),
+                before: core::mem::take(&mut self.between),
+                layout: None,
             });
             self.pos = end;
+            return Ok(());
+        }
+        if header.box_type.is(b"mfra") && size <= self.config.limits.max_metadata_item_bytes() {
+            let range = ByteRange { offset, len: size };
+            self.request(offset, size)?;
+            self.pos = end;
+            self.pending = Some(Pending::MfraForm(range));
             return Ok(());
         }
         if header.box_type.is(b"mdat") {
@@ -1565,11 +1637,15 @@ impl Reader {
             to_end: item.to_end(),
             largesize: item.has_largesize(),
         };
-        let position = self.top_level_position();
-        self.top_level.push(TopLevelBox {
-            position,
-            data: carried,
-        });
+        if self.saw_mdat {
+            self.between.push(carried);
+        } else {
+            let position = self.top_level_position();
+            self.top_level.push(TopLevelBox {
+                position,
+                data: carried,
+            });
+        }
         Ok(())
     }
 
@@ -1591,6 +1667,12 @@ impl Reader {
         });
         match parsed {
             Ok(mut moof) => {
+                // The layout is the moof's *wire* state: the `trex` defaults
+                // below are filled into the `tfhd` so the samples resolve, and
+                // are not fields the source wrote.
+                let mut layout = crate::frag_layout::FragmentLayout::from_moof(&moof, offset)?;
+                layout.before = core::mem::take(&mut fragment.before);
+                fragment.layout = Some(layout);
                 apply_trex_defaults(&mut moof, &self.trex);
                 fragment.moof = Some(moof);
                 Ok(())
@@ -1886,6 +1968,9 @@ impl Reader {
                 sequence_number: moof.mfhd.sequence_number,
                 moof: state.range,
                 tracks: present,
+                layout: state.layout.clone().ok_or(Error::InvalidInput(
+                    "a resolved fragment carries no recorded layout",
+                ))?,
             },
             samples: rows.into_iter().map(|(_, sample)| sample).collect(),
             truncated,
