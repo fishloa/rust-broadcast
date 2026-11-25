@@ -33,7 +33,7 @@
 //!   ([`FlvDemux`] — non-AVC video and non-AAC audio tracks are silently
 //!   skipped, no event/error, see the module docs), RTMP ([`RtmpDemux`]).
 //! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMuxStage`]), progressive single-file
-//!   MP4 ([`ProgressiveMux`]), MPEG-2 TS ([`TsMuxStage`]), Matroska ([`MkvMuxStage`]),
+//!   MP4 ([`ProgressiveMuxStage`]), MPEG-2 TS ([`TsMuxStage`]), Matroska ([`MkvMuxStage`]),
 //!   CMAF-HLS ([`HlsPackager`]), TS-segment HLS
 //!   ([`StreamingTsHlsSegmenter`]), DASH MPD
 //!   ([`DashPackager`]), low-latency
@@ -198,6 +198,7 @@ pub mod mux_stage;
 pub mod nal;
 pub mod nalu_ext;
 pub mod pipeline;
+pub mod plan_pass;
 pub mod progressive;
 pub mod ps_demux;
 pub mod rbsp;
@@ -314,7 +315,8 @@ pub use pipeline::{
     build_init_segment, build_media_segment, build_media_segment_with_events, nominal_frame_rate,
     nominal_frame_rate_millihertz, presentation_size,
 };
-pub use progressive::ProgressiveMux;
+pub use plan_pass::PlanPass;
+pub use progressive::ProgressiveMuxStage;
 pub use ps_demux::PsDemux;
 pub use rebase::{GapStage, OffsetStage, RebaseOrigin, RebaseStage};
 pub use repackage::{Repackage, RepackageOutput, select_tracks, select_tracks_by, trim};

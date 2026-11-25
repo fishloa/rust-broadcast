@@ -248,11 +248,14 @@ mod cenc_decrypt_copies {
     const CENC_SHARED_BUDGET_X100: usize = 60; // 21 after (from_fmp4_bytes is new; old code copied >= 100)
 }
 
+#[path = "it/support/progressive.rs"]
+mod progressive_support;
+
 mod muxer_buffering {
     use super::bytes_allocated;
-    use broadcast_common::{Package, Unpackage};
+    use broadcast_common::Unpackage;
     use transmux::mux_stage::{MuxOutput, drive_media};
-    use transmux::{DEFAULT_PSI_INTERVAL, MkvMuxStage, ProgressiveMux, TsDemux, TsMuxStage};
+    use transmux::{DEFAULT_PSI_INTERVAL, MkvMuxStage, TsDemux, TsMuxStage};
 
     /// Mux a whole `Media` through a fresh TS stage and collect its bytes.
     fn mux_ts(media: &transmux::Media) -> Vec<u8> {
@@ -282,7 +285,7 @@ mod muxer_buffering {
         let data = test_fixtures::read("ts/h264-aac.ts");
         let media = TsDemux::new().unpackage(data.as_slice()).unwrap();
         let cases: [(&str, Vec<u8>, usize); 3] = {
-            let (prog, a1) = bytes_allocated(|| ProgressiveMux::new(true).package(&media).unwrap());
+            let (prog, a1) = bytes_allocated(|| super::progressive_support::package(&media, true));
             let (mkv, a2) = bytes_allocated(|| {
                 super::mux_bytes(
                     &mut MkvMuxStage::new(std::time::Duration::from_millis(5_000)),

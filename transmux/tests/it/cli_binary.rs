@@ -740,3 +740,62 @@ fn bounded_runner_kills_a_hung_tool() {
     c.arg(HUNG_SLEEP_SECS);
     let _ = crate::common::run_bounded(c, std::time::Duration::from_millis(300), "sleep");
 }
+
+/// Progressive MP4 fixes its sample tables from a first pass, so an input the
+/// CLI can only read once is refused with the typed error that names the
+/// alternative instead of failing later on a plan it cannot build.
+#[test]
+fn stdin_progressive_output_is_refused_with_the_typed_error() {
+    let dir = scratch("stdin-progressive");
+    let out = dir.join("out.mp4");
+    let input = std::fs::File::open(test_fixtures::path("ts/h264-aac.ts"))
+        .expect("open the h264-aac.ts fixture");
+    let run = Command::new(bin())
+        .arg("-")
+        .arg("-o")
+        .arg(&out)
+        .arg("-f")
+        .arg("progressive")
+        .stdin(std::process::Stdio::from(input))
+        .output()
+        .expect("spawn the transmux binary");
+    assert!(
+        !run.status.success(),
+        "progressive output from stdin must be refused"
+    );
+    let stderr = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        stderr.contains("progressive MP4 needs a replayable input"),
+        "the refusal names the reason: {stderr}"
+    );
+    assert!(
+        stderr.contains("fragmented MP4"),
+        "the refusal names the alternative: {stderr}"
+    );
+    assert!(!out.exists(), "no partial output is left behind");
+}
+
+/// The refusal above is specific: every single-pass output still reads stdin.
+#[test]
+fn stdin_is_a_working_input_for_a_single_pass_output() {
+    let dir = scratch("stdin-cmaf");
+    let out = dir.join("out.cmaf");
+    let input = std::fs::File::open(test_fixtures::path("ts/h264-aac.ts"))
+        .expect("open the h264-aac.ts fixture");
+    let run = Command::new(bin())
+        .arg("-")
+        .arg("-o")
+        .arg(&out)
+        .arg("-f")
+        .arg("cmaf")
+        .stdin(std::process::Stdio::from(input))
+        .output()
+        .expect("spawn the transmux binary");
+    assert!(
+        run.status.success(),
+        "cmaf from stdin: {}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let bytes = std::fs::read(&out).expect("read the cmaf output");
+    assert_eq!(&bytes[4..8], b"ftyp", "the output is an ISOBMFF file");
+}

@@ -508,20 +508,19 @@ fn h264_aac_media() -> Option<transmux::Media> {
 
 #[test]
 fn muxer_outputs_are_unchanged() {
-    use transmux::ProgressiveMux;
     let Some(media) = h264_aac_media() else {
         eprintln!("SKIPPED ts/h264-aac.ts");
         return;
     };
     let mut bad = Vec::new();
-    let faststart = ProgressiveMux::new(true).package(&media).unwrap();
+    let faststart = crate::progressive_support::package(&media, true);
     check(
         &mut bad,
         "progressive-faststart",
         fnv1a(&faststart),
         0x0d60444d4345e766,
     );
-    let tail = ProgressiveMux::new(false).package(&media).unwrap();
+    let tail = crate::progressive_support::package(&media, false);
     check(
         &mut bad,
         "progressive-moov-last",
@@ -583,7 +582,6 @@ const CODEC_MUX_FIXTURES: &[&str] = &["ts/hevc/main.ts", "ts/dolby/ac3.ts", "ts/
 
 #[test]
 fn hevc_and_dolby_muxer_outputs_are_unchanged() {
-    use transmux::ProgressiveMux;
     let want: &[(&str, u64)] = CODEC_MUX_GOLDEN;
     let mut bad = Vec::new();
     let mut i = 0;
@@ -597,7 +595,7 @@ fn hevc_and_dolby_muxer_outputs_are_unchanged() {
         let outs = [
             (
                 "progressive",
-                hash_result(ProgressiveMux::new(true).package(&media)),
+                fnv1a(&crate::progressive_support::package(&media, true)),
             ),
             (
                 "mkv",
