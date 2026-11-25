@@ -225,6 +225,7 @@ thread_local! {
     static T_ALLOC_BYTES: Cell<usize> = const { Cell::new(0) };
     static T_DEALLOC_COUNT: Cell<usize> = const { Cell::new(0) };
     static T_LIVE_BYTES: Cell<usize> = const { Cell::new(0) };
+    static T_PEAK_BYTES: Cell<usize> = const { Cell::new(0) };
 }
 
 /// Counters for one thread; see [`ThreadCounting::snapshot`].
@@ -307,6 +308,33 @@ impl<const BUDGET: usize> ThreadCapped<BUDGET> {
     pub const fn new() -> Self {
         Self
     }
+
+    /// This thread's live bytes right now.
+    pub fn live() -> usize {
+        T_LIVE_BYTES.with(Cell::get)
+    }
+
+    /// This thread's live-byte high-water mark since the last
+    /// [`reset_peak`](Self::reset_peak).
+    ///
+    /// The budget is enforced per allocation; the peak reports whether the
+    /// work came close to it, so a test can record the measured bound rather
+    /// than only proving it was not crossed.
+    pub fn peak() -> usize {
+        T_PEAK_BYTES.with(Cell::get)
+    }
+
+    /// Zero this thread's live-byte high-water mark.
+    pub fn reset_peak() {
+        T_PEAK_BYTES.with(|peak| peak.set(T_LIVE_BYTES.with(Cell::get)));
+    }
+
+    fn record_live(live: usize) {
+        T_LIVE_BYTES.with(|cell| cell.set(live));
+        if live > T_PEAK_BYTES.with(Cell::get) {
+            T_PEAK_BYTES.with(|peak| peak.set(live));
+        }
+    }
 }
 
 // SAFETY: forwards unchanged to `System` (or returns null, which the contract
@@ -320,7 +348,7 @@ unsafe impl<const BUDGET: usize> GlobalAlloc for ThreadCapped<BUDGET> {
         // SAFETY: the caller's `Layout` contract passes through to `System`.
         let ptr = unsafe { System.alloc(layout) };
         if !ptr.is_null() {
-            T_LIVE_BYTES.with(|c| c.set(live + layout.size()));
+            Self::record_live(live + layout.size());
         }
         ptr
     }
@@ -340,7 +368,7 @@ unsafe impl<const BUDGET: usize> GlobalAlloc for ThreadCapped<BUDGET> {
         // SAFETY: `ptr`/`layout` came from this allocator; `new_size` is the caller's.
         let new_ptr = unsafe { System.realloc(ptr, layout, new_size) };
         if !new_ptr.is_null() {
-            T_LIVE_BYTES.with(|c| c.set(net_live));
+            Self::record_live(net_live);
         }
         new_ptr
     }
