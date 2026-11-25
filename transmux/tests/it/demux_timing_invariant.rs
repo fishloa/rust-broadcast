@@ -45,15 +45,13 @@
 //! not go anywhere near this crate's summing code and so cannot move in
 //! lockstep with a scaling bug in it.
 
-use broadcast_common::Package;
 use broadcast_common::Unpackage;
 use test_fixtures::ffprobe;
 
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
 use transmux::{
-    FlvDemux, Media, PsDemux, RtmpDemux, RtmpMux, RtpDepacketiser, RtpPacketiser, TsDemux,
-    WebmDemux,
+    FlvDemux, Media, PsDemux, RtmpDemux, RtmpMuxStage, RtpDepacketiser, TsDemux, WebmDemux,
 };
 
 fn workspace_fixture(rel: &str) -> Vec<u8> {
@@ -239,7 +237,7 @@ fn ps_demux_timing_invariant_holds() {
 fn rtmp_demux_timing_invariant_holds() {
     let flv = workspace_fixture("flv/av.flv");
     let ir = FlvDemux::new().unpackage(&flv[..]).expect("FLV demux");
-    let wire = RtmpMux::default().package(&ir).expect("IR -> RTMP wire");
+    let wire = crate::mux_bytes::mux_bytes(&mut RtmpMuxStage::default(), &ir);
     let media = RtmpDemux::new()
         .unpackage(&wire[..])
         .expect("RTMP wire -> IR");
@@ -253,13 +251,7 @@ fn rtmp_demux_timing_invariant_holds() {
 fn rtp_depacketiser_timing_invariant_holds() {
     let ts = workspace_fixture("ts/h264-aac.ts");
     let ir = TsDemux::new().unpackage(&ts[..]).expect("TS demux");
-    let out = RtpPacketiser {
-        mtu: 1400,
-        ssrc: 0x1234_5678,
-        ..RtpPacketiser::default()
-    }
-    .package(&ir)
-    .expect("IR -> RTP");
+    let out = crate::rtp_run::packetise(&ir, crate::rtp_run::stage(1400, 0x1234_5678));
     let media = RtpDepacketiser::new()
         .unpackage(RtpInput {
             streams: out

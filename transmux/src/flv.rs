@@ -3,8 +3,8 @@
 //!
 //! FLV is a hub spoke like [`TsDemux`](crate::TsDemux) / [`WebmDemux`](crate::WebmDemux):
 //! [`FlvDemux`] ([`Unpackage`]) parses an FLV byte stream into the neutral
-//! [`Media`] IR, and [`FlvMux`] ([`Package`]) serialises a [`Media`] back into
-//! FLV. transmux carries the FLV mainstream — **H.264/AVC video + AAC audio**
+//! [`Media`] IR, and [`FlvMuxStage`] ([`Stage`]) muxes its tracks and samples
+//! back into FLV incrementally. transmux carries the FLV mainstream — **H.264/AVC video + AAC audio**
 //! (Annex E §E.4.3.2 / §E.4.2.2) — reusing the existing
 //! [`CodecConfig::Avc`] / [`CodecConfig::Aac`]; no new codec variant.
 //!
@@ -41,6 +41,7 @@
 //! `no_std` + `alloc`.
 
 use crate::TrackId;
+use alloc::collections::VecDeque;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
@@ -54,14 +55,16 @@ use rtmp_runtime::flv::FlvHeader;
 use rtmp_runtime::flv::FlvTag as RtmpFlvTag;
 use rtmp_runtime::flv::TagType;
 
+use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize, Unpackage};
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::{NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
 use crate::error::{Error, Result};
 use crate::ir::{AUDIO_SAMPLE_SIZE_BITS, InputDegradation};
 use crate::media::{Media, Track};
+use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::mp4esds::{
@@ -95,7 +98,7 @@ pub(crate) const TAG_HEADER_LEN: usize = rtmp_runtime::flv::FLV_TAG_HEADER_LEN;
 pub(crate) const PREV_TAG_SIZE_LEN: usize = rtmp_runtime::flv::FLV_PREV_TAG_SIZE_LEN;
 /// A generous upper bound on a conformant `DataOffset` (§E.2): the header
 /// itself is always [`FLV_HEADER_LEN`] (9) bytes; this crate's own
-/// [`FlvMux`] never emits a `DataOffset` other than 9. A value far beyond
+/// [`FlvMuxStage`] never emits a `DataOffset` other than 9. A value far beyond
 /// this is not a "larger but still real" header, it is either a corrupt
 /// stream or a malicious `DataOffset` crafted to grow
 /// [`crate::flv_stream::StreamingFlvDemux`]'s pre-header buffer without
@@ -339,6 +342,23 @@ pub enum FlvError {
     SampleDurationTooLarge {
         /// The forward delta, in media-timescale ticks.
         ticks: i64,
+    },
+    /// A track was announced after the first tag was written: the FLV header
+    /// (its `TypeFlags`, §E.2) and `onMetaData` are already on the wire and
+    /// cannot name it retroactively.
+    #[error("FLV track announced after the first tag was written")]
+    TrackAfterStart,
+    /// The same track id was announced twice in one stream.
+    #[error("FLV track {track} announced twice")]
+    DuplicateTrack {
+        /// The repeated track id.
+        track: u32,
+    },
+    /// A sample named a track that was never announced.
+    #[error("FLV sample for unannounced track {track}")]
+    UnknownTrack {
+        /// The unannounced track id.
+        track: u32,
     },
 }
 
@@ -1085,42 +1105,343 @@ pub(crate) fn avc_dimensions(
 }
 
 // ---------------------------------------------------------------------------
-// FlvMux — Package<Output = Vec<u8>>
+// FlvMuxStage — Stage<In = MuxInput, Out = MuxOutput>
 // ---------------------------------------------------------------------------
 
-/// Mux a [`Media`] into an FLV byte stream (Adobe FLV v10.1 Annex E).
+/// The `onMetaData` `duration` value a file's body is written with and then
+/// patched to the stream's real length at [`Stage::finish`]: a `Number` is a
+/// fixed 8-byte double, so the patch never changes a byte count.
+const META_DURATION_PLACEHOLDER_SECONDS: f64 = 0.0;
+/// Mux FLV tags from a live sample stream (Adobe FLV v10.1 Annex E) — the
+/// stage form of the FLV container muxer.
 ///
-/// Emits the header (`TypeFlags` from the track kinds), a minimal `onMetaData`
-/// script tag (duration / width / height / codec ids), the AVC sequence-header
-/// tag (`avcC`) and AAC sequence-header tag (ASC), then the interleaved A/V
-/// type-1 tags ordered by DTS, each followed by its `PreviousTagSize`. Only
-/// [`CodecConfig::Avc`] video and [`CodecConfig::Aac`] audio are carried; any
-/// other codec is rejected with [`FlvError::UnsupportedCodec`].
+/// [`MuxInput::Track`] announcements are collected until the first tag is
+/// written; the FLV header (its `TypeFlags` (§E.2)), the minimal `onMetaData`
+/// script tag (duration / width / height / codec ids) and the AVC
+/// sequence-header (`avcC`) and AAC sequence-header (ASC) tags all go out
+/// before the first frame tag. Frame tags leave in DTS order across tracks;
+/// the stage holds at most one pending sample per announced track to order
+/// them, and [`MuxInput::Flush`] drains what it holds.
+///
+/// Only [`CodecConfig::Avc`] video and [`CodecConfig::Aac`] audio are carried;
+/// any other codec is rejected with [`FlvError::UnsupportedCodec`] when it is
+/// announced, since no FLV tag can represent it.
+///
+/// The file's `duration` is a whole-stream fact in the `onMetaData` tag, which
+/// precedes every frame tag: it is written as a zero placeholder and patched
+/// by [`Stage::finish`] with [`MuxOutput::BytesAt`] — the one output that
+/// needs a seekable sink. An output written to a pipe keeps the placeholder.
 #[derive(Debug, Default, Clone)]
-pub struct FlvMux;
+pub struct FlvMuxStage {
+    stream: FlvTagStream,
+    out: VecDeque<MuxOutput>,
+    started: bool,
+    meta_patch: Option<u64>,
+}
 
-impl FlvMux {
-    /// Create a new FLV muxer.
+impl FlvMuxStage {
+    /// Create a new FLV muxer stage.
     pub fn new() -> Self {
-        Self
+        Self::default()
+    }
+
+    /// Write the FLV header, `onMetaData` and the sequence-header tags, once.
+    ///
+    /// The metadata body goes out with a zero duration and is patched whole by
+    /// [`Stage::finish`]: a `Number` is a fixed 8-byte double and the property
+    /// set does not otherwise change, so the patch never changes a byte count.
+    fn start(&mut self) -> core::result::Result<(), FlvError> {
+        if self.started {
+            return Ok(());
+        }
+        let header = FlvHeader::new(self.stream.has_audio(), self.stream.has_video())
+            .try_to_bytes()
+            .map_err(|e| Error::FieldOverflow(field_overflow(e)))?;
+        let header_len = header.len();
+        self.out.push_back(MuxOutput::Bytes(header.into()));
+        let tags = self
+            .stream
+            .opening_tags(Some(META_DURATION_PLACEHOLDER_SECONDS))?;
+        for tag in &tags {
+            let mut buf = Vec::new();
+            tag.write_into(&mut buf)?;
+            self.out.push_back(MuxOutput::Bytes(buf.into()));
+        }
+        self.meta_patch = Some(u64::try_from(header_len + TAG_HEADER_LEN).unwrap_or(u64::MAX));
+        self.started = true;
+        Ok(())
+    }
+
+    fn push_tags(&mut self, tags: Vec<OutTag>) -> core::result::Result<(), FlvError> {
+        for tag in &tags {
+            let mut buf = Vec::new();
+            tag.write_into(&mut buf)?;
+            self.out.push_back(MuxOutput::Bytes(buf.into()));
+        }
+        Ok(())
+    }
+}
+
+impl Stage for FlvMuxStage {
+    type In<'a> = MuxInput;
+    type Out = MuxOutput;
+    type Error = FlvError;
+
+    fn feed(&mut self, input: MuxInput, _now: Timestamp) -> core::result::Result<(), FlvError> {
+        match input {
+            MuxInput::Track(spec) => {
+                if self.started {
+                    return Err(FlvError::TrackAfterStart);
+                }
+                self.stream.announce(*spec)
+            }
+            MuxInput::Sample { track, sample } => {
+                self.start()?;
+                let tags = self.stream.push(track, sample)?;
+                self.push_tags(tags)
+            }
+            MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::Flush => {
+                let tags = self.stream.flush()?;
+                self.push_tags(tags)
+            }
+        }
+    }
+
+    fn poll(&mut self) -> Option<MuxOutput> {
+        self.out.pop_front()
+    }
+
+    fn finish(&mut self) -> core::result::Result<(), FlvError> {
+        let tags = self.stream.flush()?;
+        self.push_tags(tags)?;
+        if let Some(offset) = self.meta_patch.take() {
+            let seconds = self.stream.duration_seconds();
+            let body = self.stream.meta_body(Some(seconds))?;
+            self.out.push_back(MuxOutput::BytesAt {
+                offset,
+                bytes: body.into(),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// One announced FLV track: its spec and the tag kind it muxes into.
+#[derive(Debug, Clone)]
+struct FlvTrack {
+    spec: TrackSpec,
+    kind: FlvPayloadKind,
+}
+
+/// The FLV tag pipeline [`FlvMuxStage`] drives and [`crate::rtmp::RtmpMuxStage`]
+/// reuses: track announcements, the opening tags (metadata and sequence
+/// headers), and the DTS-ordered interleave of per-track frame tags.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct FlvTagStream {
+    tracks: Vec<FlvTrack>,
+    pending: Vec<Option<Sample>>,
+    durations: Vec<u64>,
+}
+
+impl FlvTagStream {
+    /// Announce a track. Only AVC video and AAC audio have an FLV tag kind.
+    pub(crate) fn announce(&mut self, spec: TrackSpec) -> core::result::Result<(), FlvError> {
+        if self.tracks.iter().any(|t| t.spec.track_id == spec.track_id) {
+            return Err(FlvError::DuplicateTrack {
+                track: spec.track_id.value(),
+            });
+        }
+        let kind = flv_track_kind(&spec.config).ok_or(FlvError::UnsupportedCodec {
+            codec: spec.config.name(),
+        })?;
+        self.tracks.push(FlvTrack { spec, kind });
+        self.pending.push(None);
+        self.durations.push(0);
+        Ok(())
+    }
+
+    pub(crate) fn has_video(&self) -> bool {
+        self.tracks.iter().any(|t| t.kind == FlvPayloadKind::Video)
+    }
+
+    pub(crate) fn has_audio(&self) -> bool {
+        self.tracks.iter().any(|t| t.kind == FlvPayloadKind::Audio)
+    }
+
+    fn specs(&self) -> Vec<TrackSpec> {
+        self.tracks.iter().map(|t| t.spec.clone()).collect()
+    }
+
+    /// The `onMetaData` body as the file writer emits it, with the duration
+    /// taken from `duration` (`None` for a live stream, which has no length to
+    /// state).
+    fn meta_body(&self, duration: Option<f64>) -> core::result::Result<Vec<u8>, FlvError> {
+        on_metadata_body(&self.specs(), duration)
+    }
+
+    /// The tags a file writes before its first frame tag: `onMetaData`, then
+    /// the AVC and AAC sequence headers, each at timestamp 0.
+    pub(crate) fn opening_tags(
+        &self,
+        duration: Option<f64>,
+    ) -> core::result::Result<Vec<OutTag>, FlvError> {
+        let body = self.meta_body(duration)?;
+        let mut tags = vec![OutTag {
+            tag_type: TagType::Script,
+            timestamp: 0,
+            body,
+        }];
+        for payload in flv_sequence_header_payloads(&self.specs())? {
+            tags.push(OutTag {
+                tag_type: match payload.kind {
+                    FlvPayloadKind::Video => TagType::Video,
+                    FlvPayloadKind::Audio => TagType::Audio,
+                },
+                timestamp: payload.timestamp_ms,
+                body: payload.body,
+            });
+        }
+        Ok(tags)
+    }
+
+    /// Store one sample and return every frame tag that is now safely ordered.
+    pub(crate) fn push(
+        &mut self,
+        track: TrackId,
+        sample: Sample,
+    ) -> core::result::Result<Vec<OutTag>, FlvError> {
+        let Some(index) = self.tracks.iter().position(|t| t.spec.track_id == track) else {
+            return Err(FlvError::UnknownTrack {
+                track: track.value(),
+            });
+        };
+        let ticks = u64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0));
+        self.durations[index] = self.durations[index].saturating_add(ticks);
+        if sample.timing.and_then(|t| t.dts()).is_none() {
+            return Ok(Vec::new());
+        }
+        // One pending sample per track orders the interleave; a second sample
+        // of the same track before the others catch up (a backward timestamp
+        // step, or one track simply running ahead) must not overwrite the
+        // first, which would drop it from the stream.
+        let mut tags = Vec::new();
+        if let Some(previous) = self.pending[index].take() {
+            tags.push(self.frame_tag(index, &previous)?);
+        }
+        self.pending[index] = Some(sample);
+        tags.extend(self.take_ready()?);
+        Ok(tags)
+    }
+
+    /// Emit the earliest pending sample once every announced track holds one.
+    fn take_ready(&mut self) -> core::result::Result<Vec<OutTag>, FlvError> {
+        let mut tags = Vec::new();
+        while !self.pending.iter().any(Option::is_none) {
+            let Some(index) = self.earliest()? else {
+                break;
+            };
+            if let Some(sample) = self.pending[index].take() {
+                tags.push(self.frame_tag(index, &sample)?);
+            }
+        }
+        Ok(tags)
+    }
+
+    /// Emit every pending sample, in ordering-key order.
+    pub(crate) fn flush(&mut self) -> core::result::Result<Vec<OutTag>, FlvError> {
+        let mut held: Vec<(u32, usize, Sample)> = Vec::new();
+        for index in 0..self.pending.len() {
+            let Some(sample) = self.pending[index].take() else {
+                continue;
+            };
+            let Some(ms) = self.sample_ms(index, &sample)? else {
+                continue;
+            };
+            held.push((ms, index, sample));
+        }
+        held.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        let mut tags = Vec::with_capacity(held.len());
+        for (_, index, sample) in held {
+            tags.push(self.frame_tag(index, &sample)?);
+        }
+        Ok(tags)
+    }
+
+    /// The index of the pending sample with the smallest `(ms, track index)`
+    /// key.
+    fn earliest(&self) -> core::result::Result<Option<usize>, FlvError> {
+        let mut best: Option<(u32, usize)> = None;
+        for (index, pending) in self.pending.iter().enumerate() {
+            let Some(sample) = pending else {
+                continue;
+            };
+            let Some(ms) = self.sample_ms(index, sample)? else {
+                continue;
+            };
+            if best.is_none_or(|(best_ms, best_index)| (ms, index) < (best_ms, best_index)) {
+                best = Some((ms, index));
+            }
+        }
+        Ok(best.map(|(_, index)| index))
+    }
+
+    /// A sample's FLV tag `Timestamp` in milliseconds (§E.4.1).
+    fn sample_ms(
+        &self,
+        index: usize,
+        sample: &Sample,
+    ) -> core::result::Result<Option<u32>, FlvError> {
+        let Some(dts) = sample.timing.and_then(|t| t.dts()) else {
+            return Ok(None);
+        };
+        clamped_ms(dts, self.tracks[index].spec.timescale).map(Some)
+    }
+
+    /// One sample's frame tag: a `VIDEODATA` (§E.4.3) or `AUDIODATA` (§E.4.2)
+    /// tag body at the sample's own DTS.
+    fn frame_tag(&self, index: usize, sample: &Sample) -> core::result::Result<OutTag, FlvError> {
+        let FlvTrack { spec, kind } = &self.tracks[index];
+        let Some(timestamp) = self.sample_ms(index, sample)? else {
+            return Err(FlvError::Codec(Error::InvalidInput(
+                "FLV frame tag needs a sample DTS",
+            )));
+        };
+        match kind {
+            FlvPayloadKind::Video => {
+                let comp = composition_time_ms(
+                    sample.composition_offset()?.map_or(0, i64::from),
+                    spec.timescale,
+                )?;
+                Ok(OutTag {
+                    tag_type: TagType::Video,
+                    timestamp,
+                    body: video_frame_body(sample.flags.is_sync, comp, &sample.data),
+                })
+            }
+            FlvPayloadKind::Audio => Ok(OutTag {
+                tag_type: TagType::Audio,
+                timestamp,
+                body: audio_frame_body(audio_sound_type(spec), &sample.data),
+            }),
+        }
+    }
+
+    /// The longest track's total sample duration, in seconds.
+    pub(crate) fn duration_seconds(&self) -> f64 {
+        let mut max = META_DURATION_PLACEHOLDER_SECONDS;
+        for (index, ticks) in self.durations.iter().enumerate() {
+            let secs = *ticks as f64 / f64::from(self.tracks[index].spec.timescale.get());
+            if secs > max {
+                max = secs;
+            }
+        }
+        max
     }
 }
 
 /// A tag ready to serialise: its type, timestamp (ms) and fully-built body.
-/// The `FieldOverflow` behind a shared-codec serialize error: the only failure
-/// a tag or header serializer can have is a field that did not fit.
-fn field_overflow(error: RtmpError) -> broadcast_common::len::FieldOverflow {
-    match error {
-        RtmpError::FieldOverflow(overflow) => overflow,
-        _ => broadcast_common::len::FieldOverflow {
-            field: "FLV tag",
-            value: 0,
-            max: 0,
-        },
-    }
-}
-
-struct OutTag {
+pub(crate) struct OutTag {
     tag_type: TagType,
     timestamp: u32,
     body: Vec<u8>,
@@ -1136,20 +1457,48 @@ impl OutTag {
         out.extend_from_slice(&bytes);
         Ok(())
     }
+
+    /// The tag's body — the bytes an RTMP Audio/Video/Data message carries
+    /// (Adobe RTMP 1.0 §7.1.4/§7.1.5).
+    pub(crate) fn body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// The tag's `TagType` (§E.4.1).
+    pub(crate) fn tag_type(&self) -> TagType {
+        self.tag_type
+    }
+
+    /// The tag's `Timestamp` in milliseconds (§E.4.1).
+    pub(crate) fn timestamp(&self) -> u32 {
+        self.timestamp
+    }
 }
 
-/// Locate `media`'s (at most one) AVC video track and (at most one) AAC
-/// audio track — shared by [`FlvMux::package`] and the RTMP-payload builders
-/// [`flv_sequence_header_payloads`]/[`flv_frame_payloads`] (issue #934).
-/// Errors if any *other* track carries a codec FLV cannot represent, or if
-/// neither an AVC nor an AAC track is present at all.
+/// The `FieldOverflow` behind a shared-codec serialize error: the only failure
+/// a tag or header serializer can have is a field that did not fit.
+fn field_overflow(error: RtmpError) -> broadcast_common::len::FieldOverflow {
+    match error {
+        RtmpError::FieldOverflow(overflow) => overflow,
+        _ => broadcast_common::len::FieldOverflow {
+            field: "FLV tag",
+            value: 0,
+            max: 0,
+        },
+    }
+}
+
+/// Locate the (at most one) AVC video and (at most one) AAC audio track among
+/// `tracks` — shared by the stage and the per-spec payload builders. Every
+/// other codec an FLV writer is handed is refused, because no FLV tag can
+/// represent it.
 fn locate_av_tracks(
-    media: &Media,
-) -> core::result::Result<(Option<&Track>, Option<&Track>), FlvError> {
-    let mut video: Option<&Track> = None;
-    let mut audio: Option<&Track> = None;
-    for t in &media.tracks {
-        match &t.spec.config {
+    tracks: &[TrackSpec],
+) -> core::result::Result<(Option<&TrackSpec>, Option<&TrackSpec>), FlvError> {
+    let mut video: Option<&TrackSpec> = None;
+    let mut audio: Option<&TrackSpec> = None;
+    for t in tracks {
+        match &t.config {
             CodecConfig::Avc { .. } if video.is_none() => video = Some(t),
             CodecConfig::Aac { .. } if audio.is_none() => audio = Some(t),
             CodecConfig::Avc { .. } | CodecConfig::Aac { .. } => {}
@@ -1168,9 +1517,9 @@ fn locate_av_tracks(
 
 /// Build the AVC sequence-header (`avcC`) tag body for `vt`, or `None` if
 /// `vt`'s config isn't [`CodecConfig::Avc`] (defensive; callers only pass a
-/// track [`locate_av_tracks`] already classified as video).
-fn video_sequence_header_body(vt: &Track) -> core::result::Result<Option<Vec<u8>>, FlvError> {
-    let CodecConfig::Avc { config, .. } = &vt.spec.config else {
+/// spec [`locate_av_tracks`] already classified as video).
+fn video_sequence_header_body(vt: &TrackSpec) -> core::result::Result<Option<Vec<u8>>, FlvError> {
+    let CodecConfig::Avc { config, .. } = &vt.config else {
         return Ok(None);
     };
     let mut avcc = vec![0u8; config.config.serialized_len()];
@@ -1182,15 +1531,15 @@ fn video_sequence_header_body(vt: &Track) -> core::result::Result<Option<Vec<u8>
     let mut body = Vec::with_capacity(VIDEO_TAG_BODY_HEADER_LEN + avcc.len());
     body.push((FRAME_TYPE_KEYFRAME << FRAME_TYPE_SHIFT) | CODEC_ID_AVC);
     body.push(avc_packet_type::SEQUENCE_HEADER);
-    body.extend_from_slice(&[0, 0, 0]); // CompositionTime = 0
+    body.extend_from_slice(&[0, 0, 0]);
     body.extend_from_slice(&avcc);
     Ok(Some(body))
 }
 
 /// This audio track's `SoundType` (mono/stereo, §E.4.2) from its channel
 /// count. Defensive default (stereo) if `at` isn't [`CodecConfig::Aac`].
-fn audio_sound_type(at: &Track) -> u8 {
-    match &at.spec.config {
+fn audio_sound_type(at: &TrackSpec) -> u8 {
+    match &at.config {
         CodecConfig::Aac { channel_count, .. } if *channel_count <= 1 => SOUND_TYPE_MONO,
         _ => SOUND_TYPE_STEREO,
     }
@@ -1198,9 +1547,9 @@ fn audio_sound_type(at: &Track) -> u8 {
 
 /// Build the AAC sequence-header (`AudioSpecificConfig`) tag body for `at`,
 /// or `None` if `at`'s config isn't [`CodecConfig::Aac`] (defensive; callers
-/// only pass a track [`locate_av_tracks`] already classified as audio).
-fn audio_sequence_header_body(at: &Track) -> core::result::Result<Option<Vec<u8>>, FlvError> {
-    let CodecConfig::Aac { esds, .. } = &at.spec.config else {
+/// only pass a spec [`locate_av_tracks`] already classified as audio).
+fn audio_sequence_header_body(at: &TrackSpec) -> core::result::Result<Option<Vec<u8>>, FlvError> {
+    let CodecConfig::Aac { esds, .. } = &at.config else {
         return Ok(None);
     };
     let asc = esds_asc_bytes(esds)?;
@@ -1241,16 +1590,12 @@ fn audio_frame_body(sound_type: u8, data: &[u8]) -> Vec<u8> {
 }
 
 /// Rescale `ticks` (in `timescale`-ticks-per-second) to FLV's millisecond
-/// clock ([`FLV_TIMESCALE`]), for the streaming payload builders below.
+/// clock ([`FLV_TIMESCALE`]).
 ///
-/// Unlike [`FlvMux::package`], whose per-tag `Timestamp` is a running sum of
-/// `Sample::duration` starting at zero (correct for muxing one whole
-/// already-ms-normalised file, matching [`FlvDemux`]'s output), the
-/// streaming builders below feed a live push driver that calls them once per
-/// drained batch, never once for the whole stream — "start of this batch" is
-/// not "start of the stream". They use each `Sample::timing` (`.dts`)/`pts` directly
-/// (absolute, in the track's own [`crate::pipeline::TrackSpec::timescale`],
-/// per the media-plane architecture) and rescale here instead.
+/// Each sample's [`Sample::timing`] `.dts` is absolute, in its track's own
+/// [`TrackSpec::timescale`](crate::pipeline::TrackSpec::timescale), so a live
+/// publisher that fed only one batch cannot reset the clock to that batch's
+/// start: the absolute value is rescaled here instead.
 fn ticks_to_ms(ticks: i64, timescale: Timescale) -> Result<i64> {
     Ok(rescale_i64(
         ticks,
@@ -1260,21 +1605,8 @@ fn ticks_to_ms(ticks: i64, timescale: Timescale) -> Result<i64> {
     ))
 }
 
-/// [`ticks_to_ms`] for a value that must land in an FLV `Timestamp` (the UI24
-/// low field plus the UI8 extended high byte, i.e. a 32-bit millisecond clock,
-/// §E.4.1): a value outside `u32` is an error, never a silent wrap.
-fn ms_from_ticks(ticks: i64, timescale: Timescale) -> core::result::Result<u32, FlvError> {
-    let ms = ticks_to_ms(ticks, timescale)?;
-    if ms < 0 || ms > u32::MAX as i64 {
-        return Err(FlvError::Codec(Error::InvalidInput(
-            "FLV tag timestamp does not fit the 32-bit millisecond clock",
-        )));
-    }
-    Ok(ms as u32)
-}
-
 /// [`ticks_to_ms`] for the RTMP/FLV payload path: a negative value (a DTS
-/// before the clock origin) clamps to 0 as before, but a value past the 32-bit
+/// before the clock origin) clamps to 0, but a value past the 32-bit
 /// millisecond clock is an error rather than a silent `as u32` wrap (#1129).
 fn clamped_ms(ticks: i64, timescale: Timescale) -> core::result::Result<u32, FlvError> {
     u32::try_from(ticks_to_ms(ticks, timescale)?.max(0)).map_err(|_| {
@@ -1287,7 +1619,7 @@ fn clamped_ms(ticks: i64, timescale: Timescale) -> core::result::Result<u32, Flv
 /// The `CompositionTime` field of an `AVCVIDEOPACKET` (§E.4.3.2) is a signed
 /// 24-bit value in FLV's millisecond clock. `offset` is in `timescale` ticks,
 /// so it is rescaled first; a value that does not fit SI24 is an error rather
-/// than the silent truncation the raw write used to perform.
+/// than a silent truncation.
 fn composition_time_ms(offset: i64, timescale: Timescale) -> core::result::Result<i32, FlvError> {
     let ms = ticks_to_ms(offset, timescale)?;
     if ms < SI24_MIN as i64 || ms > SI24_MAX as i64 {
@@ -1305,9 +1637,9 @@ fn composition_time_ms(offset: i64, timescale: Timescale) -> core::result::Resul
 /// type + timestamp framing, so only the tag *body* belongs on the wire.
 ///
 /// Built by [`flv_sequence_header_payloads`] (the `avcC`/ASC bodies, sent
-/// once) and [`flv_frame_payloads`] (the per-frame bodies, sent
-/// continuously) — see either for the exact byte layout, which is identical
-/// to what [`FlvMux::package`] writes into each of its FLV tags.
+/// once) and [`flv_frame_payload`] (the per-frame bodies, sent continuously) —
+/// see either for the exact byte layout, which is identical to what
+/// [`FlvMuxStage`] writes into each of its FLV tags.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlvPayload {
     /// Video or audio.
@@ -1346,17 +1678,17 @@ impl FlvPayloadKind {
 
 broadcast_common::impl_spec_display!(FlvPayloadKind);
 
-/// Build the AVC/AAC sequence-header payloads for `media`'s (at most one)
-/// AVC video track and (at most one) AAC audio track (issue #934) — the
-/// `avcC` and `AudioSpecificConfig` bodies a downstream RTMP consumer needs
-/// **once**, before any frame payload, to initialise its decoder. `media`'s
-/// tracks need no samples for this — only [`TrackSpec::config`](crate::pipeline::TrackSpec::config)
-/// is read. Timestamp is always 0, matching the sequence-header tags
-/// [`FlvMux::package`] emits before its interleaved frame tags.
+/// Build the AVC/AAC sequence-header payloads for the (at most one) AVC video
+/// and (at most one) AAC audio track among `tracks` (issue #934) — the `avcC`
+/// and `AudioSpecificConfig` bodies a downstream RTMP consumer needs **once**,
+/// before any frame payload, to initialise its decoder. Only
+/// [`TrackSpec::config`](crate::pipeline::TrackSpec::config) is read.
+/// Timestamp is always 0, matching the sequence-header tags
+/// [`FlvMuxStage`] writes before its interleaved frame tags.
 pub fn flv_sequence_header_payloads(
-    media: &Media,
+    tracks: &[TrackSpec],
 ) -> core::result::Result<Vec<FlvPayload>, FlvError> {
-    let (video, audio) = locate_av_tracks(media)?;
+    let (video, audio) = locate_av_tracks(tracks)?;
     let mut out = Vec::new();
     if let Some(vt) = video
         && let Some(body) = video_sequence_header_body(vt)?
@@ -1379,187 +1711,37 @@ pub fn flv_sequence_header_payloads(
     Ok(out)
 }
 
-/// Build the per-frame `VIDEODATA`/`AUDIODATA` payload bodies for `media`'s
-/// samples (issue #934), interleaved by absolute timestamp across tracks —
-/// same tag-body layout [`FlvMux::package`] writes into each `OutTag`, without
-/// file/tag framing. Each sample's `Sample::timing` (`.dts`)(crate::pipeline::Sample::dts)
-/// (absolute, in its track's own timescale) is rescaled to FLV's millisecond
-/// clock (this crate's internal `ticks_to_ms` helper) — safe to call once per
-/// drained batch from a live push driver, unlike `package`'s zero-based
-/// running sum (see that helper's doc for why). A sample with `dts: None` is
-/// skipped — this crate never fabricates a timestamp (matches
-/// [`Sample::composition_offset`]'s "no timestamp" convention).
-pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>, FlvError> {
-    let (video, audio) = locate_av_tracks(media)?;
-    // (timestamp_ms, seq_tiebreak, payload): seq preserves each track's own
-    // emission order for same-millisecond ties, mirroring `package`.
-    let mut items: Vec<(u32, u32, FlvPayload)> = Vec::new();
-    let mut seq = 0u32;
-    if let Some(vt) = video {
-        let timescale = vt.spec.timescale;
-        for s in &vt.samples {
-            let Some(dts) = s.timing.and_then(|t| t.dts()) else {
-                continue;
-            };
-            let ts_ms = clamped_ms(dts, timescale)?;
-            let comp_ms =
-                composition_time_ms(s.composition_offset()?.map_or(0, i64::from), timescale)?;
-            let body = video_frame_body(s.flags.is_sync, comp_ms, &s.data);
-            items.push((
-                ts_ms,
-                seq,
-                FlvPayload {
-                    kind: FlvPayloadKind::Video,
-                    timestamp_ms: ts_ms,
-                    body,
-                },
-            ));
-            seq += 1;
+/// Build one sample's `VIDEODATA`/`AUDIODATA` payload body (issue #934) —
+/// the same tag-body layout [`FlvMuxStage`] writes into each frame tag,
+/// without file/tag framing. `None` for a track FLV has no tag kind for.
+/// Each sample's `Sample::timing` `.dts` (absolute, in its track's own
+/// timescale) is rescaled to FLV's millisecond clock.
+pub fn flv_frame_payload(
+    spec: &TrackSpec,
+    sample: &Sample,
+) -> core::result::Result<Option<FlvPayload>, FlvError> {
+    let Some(kind) = flv_track_kind(&spec.config) else {
+        return Ok(None);
+    };
+    let Some(dts) = sample.timing.and_then(|t| t.dts()) else {
+        return Ok(None);
+    };
+    let timestamp_ms = clamped_ms(dts, spec.timescale)?;
+    let body = match kind {
+        FlvPayloadKind::Video => {
+            let comp = composition_time_ms(
+                sample.composition_offset()?.map_or(0, i64::from),
+                spec.timescale,
+            )?;
+            video_frame_body(sample.flags.is_sync, comp, &sample.data)
         }
-    }
-    if let Some(at) = audio {
-        let timescale = at.spec.timescale;
-        let sound_type = audio_sound_type(at);
-        for s in &at.samples {
-            let Some(dts) = s.timing.and_then(|t| t.dts()) else {
-                continue;
-            };
-            let ts_ms = clamped_ms(dts, timescale)?;
-            let body = audio_frame_body(sound_type, &s.data);
-            items.push((
-                ts_ms,
-                seq,
-                FlvPayload {
-                    kind: FlvPayloadKind::Audio,
-                    timestamp_ms: ts_ms,
-                    body,
-                },
-            ));
-            seq += 1;
-        }
-    }
-    items.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-    Ok(items.into_iter().map(|(_, _, p)| p).collect())
-}
-
-impl Package for FlvMux {
-    type Media = Media;
-    type Output = Vec<u8>;
-    type Error = FlvError;
-
-    fn package(&mut self, media: &Media) -> core::result::Result<Vec<u8>, FlvError> {
-        let (video, audio) = locate_av_tracks(media)?;
-
-        let mut out = Vec::new();
-
-        // --- Header (§E.2) ---
-        let header = FlvHeader::new(audio.is_some(), video.is_some());
-        out.extend_from_slice(
-            &header
-                .try_to_bytes()
-                .map_err(|e| Error::FieldOverflow(field_overflow(e)))?,
-        );
-
-        // --- onMetaData script tag (§E.4.1) ---
-        let meta = on_metadata_body(media, Some(media_duration_seconds(media)))?;
-        OutTag {
-            tag_type: TagType::Script,
-            timestamp: 0,
-            body: meta,
-        }
-        .write_into(&mut out)?;
-
-        // --- Sequence-header tags ---
-        if let Some(vt) = video
-            && let Some(body) = video_sequence_header_body(vt)?
-        {
-            OutTag {
-                tag_type: TagType::Video,
-                timestamp: 0,
-                body,
-            }
-            .write_into(&mut out)?;
-        }
-        let sound_type = audio.map(audio_sound_type).unwrap_or(SOUND_TYPE_STEREO);
-        if let Some(at) = audio
-            && let Some(body) = audio_sequence_header_body(at)?
-        {
-            OutTag {
-                tag_type: TagType::Audio,
-                timestamp: 0,
-                body,
-            }
-            .write_into(&mut out)?;
-        }
-
-        // --- Interleaved A/V type-1 tags, ordered by DTS ---
-        // Precompute (dts, tag) for each track, then merge-sort by dts. Note:
-        // this `dts` is a running sum of `Sample::duration` from zero (this
-        // whole-file muxer's own model — see `ticks_to_ms`'s doc for how the
-        // streaming builders below differ), in the *track's own* timescale,
-        // rescaled to FLV's millisecond clock on the way into the tag (see
-        // `ticks_to_ms`): FLV's `Timestamp`/`CompositionTime` are milliseconds
-        // (§E.4.1/§E.4.3.2), and `Sample::duration` is in
-        // [`TrackSpec::timescale`](crate::ir::TrackSpec::timescale). Those
-        // coincide only when the input came from [`FlvDemux`] (timescale
-        // 1000); a 90 kHz `TsDemux` input used to be written 90× too large,
-        // silently truncating any composition offset past the SI24 range.
-        let mut items: Vec<(u32, u32, OutTag)> = Vec::new(); // (dts, seq_tiebreak, tag)
-        let mut seq = 0u32;
-        if let Some(vt) = video {
-            let timescale = vt.spec.timescale;
-            let mut ticks = 0i64;
-            for s in &vt.samples {
-                // Rounding each absolute position (rather than accumulating
-                // rounded deltas) keeps the tag clock non-decreasing: the
-                // running tick sum is monotonic by construction, so truncating
-                // division cannot step it backwards.
-                let dts = ms_from_ticks(ticks, timescale)?;
-                let comp =
-                    composition_time_ms(s.composition_offset()?.map_or(0, i64::from), timescale)?;
-                let body = video_frame_body(s.flags.is_sync, comp, &s.data);
-                items.push((
-                    dts,
-                    seq,
-                    OutTag {
-                        tag_type: TagType::Video,
-                        timestamp: dts,
-                        body,
-                    },
-                ));
-                seq += 1;
-                ticks =
-                    ticks.saturating_add(s.timing.and_then(|t| t.duration()).unwrap_or(0) as i64);
-            }
-        }
-        if let Some(at) = audio {
-            let timescale = at.spec.timescale;
-            let mut ticks = 0i64;
-            for s in &at.samples {
-                let dts = ms_from_ticks(ticks, timescale)?;
-                let body = audio_frame_body(sound_type, &s.data);
-                items.push((
-                    dts,
-                    seq,
-                    OutTag {
-                        tag_type: TagType::Audio,
-                        timestamp: dts,
-                        body,
-                    },
-                ));
-                seq += 1;
-                ticks =
-                    ticks.saturating_add(s.timing.and_then(|t| t.duration()).unwrap_or(0) as i64);
-            }
-        }
-        // Stable sort by DTS, tie-broken by original emission order.
-        items.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-        for (_, _, tag) in &items {
-            tag.write_into(&mut out)?;
-        }
-
-        Ok(out)
-    }
+        FlvPayloadKind::Audio => audio_frame_body(audio_sound_type(spec), &sample.data),
+    };
+    Ok(Some(FlvPayload {
+        kind,
+        timestamp_ms,
+        body,
+    }))
 }
 
 /// The `AudioTagHeader` first byte for AAC (§E.4.2): SoundFormat(4)=10,
@@ -1583,23 +1765,6 @@ fn esds_asc_bytes(esds: &EsdsBox) -> core::result::Result<Vec<u8>, FlvError> {
         )))
 }
 
-/// Longest track duration in whole seconds (integer, for the `onMetaData` field).
-fn media_duration_seconds(media: &Media) -> f64 {
-    let mut max = 0.0f64;
-    for t in &media.tracks {
-        let ticks: u64 = t
-            .samples
-            .iter()
-            .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
-            .sum();
-        let secs = ticks as f64 / f64::from(t.spec.timescale.get());
-        if secs > max {
-            max = secs;
-        }
-    }
-    max
-}
-
 // --- onMetaData (Adobe FLV v10.1 §E.4.1, AMF0 §2), encoded by rtmp-runtime -----
 
 /// FLV `videocodecid` for AVC (= `CodecID` 7).
@@ -1615,11 +1780,11 @@ const AAC_CHANNELS_STEREO: u32 = 2;
 /// The `onMetaData` body — the AMF0 `onMetaData` name followed by one ECMA
 /// array of the informational properties FLV players read, in the order they
 /// are written (Adobe FLV v10.1 §E.4.1, AMF0 §2) — that every FLV/RTMP writer
-/// in the workspace emits, so a file muxed by [`FlvMux`] and a stream
+/// in the workspace emits, so a file muxed by [`FlvMuxStage`] and a stream
 /// published over RTMP describe the same tracks with the same bytes.
 ///
 /// `duration` is the only property a caller decides: a file knows its own
-/// length ([`FlvMux`] passes the media's), a live publisher does not and
+/// length ([`FlvMuxStage`] passes the media's), a live publisher does not and
 /// passes `None`, which omits the key rather than claiming a length. A caller
 /// that must carry the file's tag bytes must also read the properties back:
 /// one written as an AMF0 Object re-reads as one, so re-encoding its value
@@ -1634,25 +1799,23 @@ const AAC_CHANNELS_STEREO: u32 = 2;
 /// [`FlvError::Codec`] wrapping the AMF0 field overflow when a key exceeds
 /// its length prefix.
 pub fn on_metadata_body(
-    media: &Media,
+    tracks: &[TrackSpec],
     duration: Option<f64>,
 ) -> core::result::Result<Vec<u8>, FlvError> {
-    let video = media
-        .tracks
+    let video = tracks
         .iter()
-        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }));
-    let audio = media
-        .tracks
+        .find(|t| matches!(t.config, CodecConfig::Avc { .. }));
+    let audio = tracks
         .iter()
-        .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }));
+        .find(|t| matches!(t.config, CodecConfig::Aac { .. }));
     if video.is_none() && audio.is_none() {
         return Err(FlvError::NoSupportedTrack);
     }
-    let (width, height) = match video.map(|t| &t.spec.config) {
+    let (width, height) = match video.map(|t| &t.config) {
         Some(CodecConfig::Avc { width, height, .. }) => (*width, *height),
         _ => (0, 0),
     };
-    let audio = match audio.map(|t| &t.spec.config) {
+    let audio = match audio.map(|t| &t.config) {
         Some(CodecConfig::Aac {
             sample_rate,
             channel_count,
@@ -1850,7 +2013,7 @@ mod tests {
             Ok(1000)
         );
         assert_eq!(
-            ms_from_ticks(90_000, Timescale::try_new(90_000).expect("non-zero")),
+            clamped_ms(90_000, Timescale::try_new(90_000).expect("non-zero")),
             Ok(1000)
         );
     }

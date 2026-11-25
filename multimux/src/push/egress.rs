@@ -78,6 +78,7 @@
 use std::collections::VecDeque;
 use transmux::TrackId;
 
+use broadcast_common::stage::Stage;
 use bytes::Bytes;
 use media_plane::egress::{NegotiationOutcome, PushEgress, TrackSelection};
 use media_plane::trunk::SampleCursorItem;
@@ -184,6 +185,21 @@ impl<T: PushTransport> PushTransportEgress<T> {
     /// of `send` calls (see the module doc for why `PushEgress::send`
     /// itself cannot do this: it is synchronous).
     pub async fn flush_transmit(&mut self) -> Result<(), SendMediaError> {
+        // A per-sample muxer holds a sample until its ordering key is safe to
+        // emit (one pending sample per announced track); the end of a batch is
+        // that point, so whatever it still holds goes out now rather than
+        // waiting for the next sample of another track.
+        if let Some(muxer) = self.transport.media_muxer() {
+            muxer
+                .feed(
+                    transmux::mux_stage::MuxInput::Flush,
+                    broadcast_common::stage::Timestamp::ZERO,
+                )
+                .map_err(|e| SendMediaError::Mux(MuxError::Rtmp(e)))?;
+            while let Some(transmux::mux_stage::MuxOutput::Bytes(bytes)) = muxer.poll() {
+                self.outbound.push_back(bytes);
+            }
+        }
         while let Some(message) = PushEgress::poll_transmit(self) {
             self.transport
                 .write_message(&message)
@@ -320,6 +336,23 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
             } else {
                 return Ok(());
             }
+        }
+        // A transport whose wire format is one message per sample (RTMP)
+        // frames this sample directly: no `Media` is built for it.
+        if let Some(muxer) = self.transport.media_muxer() {
+            muxer
+                .feed(
+                    transmux::mux_stage::MuxInput::Sample {
+                        track: track_id,
+                        sample: sample.clone(),
+                    },
+                    broadcast_common::stage::Timestamp::ZERO,
+                )
+                .map_err(|e| SendMediaError::Mux(MuxError::Rtmp(e)))?;
+            while let Some(transmux::mux_stage::MuxOutput::Bytes(bytes)) = muxer.poll() {
+                self.outbound.push_back(bytes);
+            }
+            return Ok(());
         }
         // Every carried track rides in EVERY `Media`, the sample only in its
         // own track (the others empty): the TS muxer derives the PIDs, the

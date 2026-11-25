@@ -120,6 +120,9 @@ pub enum MuxError {
     /// The FLV framing an RTMP push needs refused the batch.
     #[error(transparent)]
     Flv(#[from] transmux::FlvError),
+    /// The RTMP framing an RTMP push needs refused the batch.
+    #[error(transparent)]
+    Rtmp(#[from] transmux::RtmpFlvError),
     /// The transport carries none of the batch's codecs.
     #[error("no track of this batch is carriable on this transport")]
     NoCarriableTrack,
@@ -233,6 +236,14 @@ pub trait PushTransport: Send + 'static {
             return Ok(Vec::new());
         }
         Ok(vec![bytes::Bytes::from(bytes)])
+    }
+
+    /// The per-connection sample muxer this transport frames with, when its
+    /// wire format is one message per sample rather than one blob per batch
+    /// (RTMP). [`egress::PushTransportEgress`] feeds it
+    /// one sample at a time instead of building a one-sample `Media`.
+    fn media_muxer(&mut self) -> Option<&mut transmux::RtmpMuxStage> {
+        None
     }
 
     /// The per-connection streaming TS muxer the default
