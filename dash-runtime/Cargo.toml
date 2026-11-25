@@ -32,6 +32,7 @@ tracing          = "0.1"
 
 [dev-dependencies]
 quick-xml        = { workspace = true }
+test-alloc       = { path = "../test-alloc" }
 test-fixtures     = { path = "../test-fixtures" }
 test-harness     = { path = "../test-harness" }
 workspace-guards  = { path = "../workspace-guards" }
