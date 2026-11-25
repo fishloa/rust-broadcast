@@ -136,14 +136,49 @@ impl<'a> Reporter<'a> {
 
 /// Decode every claimed sample of an in-memory TS image.
 pub fn decode_ts(ts: &[u8], registry: &PayloadRegistry, emit: &mut dyn FnMut(DecodedSample<'_>)) {
-    let mut demux = StreamingTsDemux::new();
-    let mut reporter = Reporter::new(registry, emit);
-    if demux.feed(ts).is_err() {
-        return;
+    let mut decoder = TsPayloadDecoder::new(registry, emit);
+    for packet in ts.chunks_exact(mpeg_ts::ts::TS_PACKET_SIZE) {
+        decoder.feed(packet);
     }
-    let _ = demux.finish();
-    while let Some(event) = demux.poll_event() {
-        reporter.event(&event);
+    decoder.finish();
+}
+
+/// The incremental half of [`decode_ts`]: feed one 188-byte TS packet at a
+/// time, so a file on disk is demuxed in bounded memory.
+pub struct TsPayloadDecoder<'a> {
+    demux: StreamingTsDemux,
+    reporter: Reporter<'a>,
+}
+
+impl<'a> TsPayloadDecoder<'a> {
+    /// A decoder that has seen no packet yet.
+    #[must_use]
+    pub fn new(registry: &'a PayloadRegistry, emit: &'a mut dyn FnMut(DecodedSample<'_>)) -> Self {
+        Self {
+            demux: StreamingTsDemux::new(),
+            reporter: Reporter::new(registry, emit),
+        }
+    }
+
+    /// Feed one TS packet.
+    pub fn feed(&mut self, packet: &[u8]) {
+        if self.demux.feed(packet).is_err() {
+            return;
+        }
+        self.drain();
+    }
+
+    /// End of stream: flush the demuxer's buffered access units.
+    pub fn finish(&mut self) {
+        let _ = self.demux.finish();
+        self.drain();
+    }
+
+    /// Route every queued event to the reporter.
+    fn drain(&mut self) {
+        while let Some(event) = self.demux.poll_event() {
+            self.reporter.event(&event);
+        }
     }
 }
 

@@ -22,6 +22,7 @@
 //! distinguished only by their `table_id_extension` (the `program_number`),
 //! so keying on PID alone emits a finding on every repetition.
 
+use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
@@ -29,12 +30,11 @@ use mpeg_ts::pid::Pid;
 use broadcast_common::Parse;
 use dvb_si::tables::pat::{self, PatSection};
 use dvb_si::tables::pmt;
-use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
+use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
-use crate::Diagnostic;
-use crate::Report;
 use crate::diagnostics::codec_common::{current_pat, current_pmt, declared_pmt_pids};
 use crate::report::{Finding, Location, Severity};
+use crate::{Diagnostic, DiagnosticScan, PmtStreamIndex, Report};
 
 /// Identifies one versioned table within the multiplex: the PSI PID it is
 /// carried on, its `table_id` and its `table_id_extension`.
@@ -66,123 +66,137 @@ const fn table_labels(table_id: u8) -> Option<(&'static str, &'static str)> {
     }
 }
 
-impl PatPmtVersionCheck {
-    fn process_section(
-        &self,
-        packet_index: usize,
-        pid: Pid,
-        raw: &[u8],
-        versions: &mut BTreeMap<TableKey, u8>,
-        report: &mut Report,
-    ) {
-        // Typed parse first: it yields the table_id_extension, version_number
-        // and current_next_indicator without any hand-rolled bit masking. For
-        // a PAT the same gate discovery uses (CRC + current_next) is applied
-        // here, so the two can never disagree about which sections are real.
-        if pid == pat::PID && current_pat(raw).is_none() {
-            return;
-        }
-        let (table_id, table_id_extension, version) = if pid == pat::PID {
-            let Ok(pat) = PatSection::parse(raw) else {
-                return;
-            };
-            (pat::TABLE_ID, pat.transport_stream_id, pat.version_number)
-        } else {
-            let Some(pmt) = current_pmt(raw) else {
-                return;
-            };
-            (pmt::TABLE_ID, pmt.program_number, pmt.version_number)
-        };
-
-        let Some((rule_id, table_name)) = table_labels(table_id) else {
-            return;
-        };
-
-        let key = TableKey {
-            pid,
-            table_id,
-            table_id_extension,
-        };
-
-        if let Some(&prev_ver) = versions.get(&key)
-            && prev_ver != version
-        {
-            report.push(Finding::new(
-                Severity::Info,
-                Location::at_pid(packet_index, pid),
-                rule_id,
-                alloc::format!(
-                    "{table_name} version_number changed: {prev_ver} → {version} \
-                     (table_id_ext=0x{table_id_extension:04X})",
-                ),
-            ));
-        }
-
-        versions.insert(key, version);
+fn process_section(
+    packet_index: usize,
+    pid: Pid,
+    raw: &[u8],
+    versions: &mut BTreeMap<TableKey, u8>,
+    report: &mut Report,
+) {
+    // Typed parse first: it yields the table_id_extension, version_number
+    // and current_next_indicator without any hand-rolled bit masking. For
+    // a PAT the same gate discovery uses (CRC + current_next) is applied
+    // here, so the two can never disagree about which sections are real.
+    if pid == pat::PID && current_pat(raw).is_none() {
+        return;
     }
+    let (table_id, table_id_extension, version) = if pid == pat::PID {
+        let Ok(pat) = PatSection::parse(raw) else {
+            return;
+        };
+        (pat::TABLE_ID, pat.transport_stream_id, pat.version_number)
+    } else {
+        let Some(pmt) = current_pmt(raw) else {
+            return;
+        };
+        (pmt::TABLE_ID, pmt.program_number, pmt.version_number)
+    };
+
+    let Some((rule_id, table_name)) = table_labels(table_id) else {
+        return;
+    };
+
+    let key = TableKey {
+        pid,
+        table_id,
+        table_id_extension,
+    };
+
+    if let Some(&prev_ver) = versions.get(&key)
+        && prev_ver != version
+    {
+        report.push(Finding::new(
+            Severity::Info,
+            Location::at_pid(packet_index, pid),
+            rule_id,
+            alloc::format!(
+                "{table_name} version_number changed: {prev_ver} → {version} \
+                     (table_id_ext=0x{table_id_extension:04X})",
+            ),
+        ));
+    }
+
+    versions.insert(key, version);
 }
 
 impl Diagnostic for PatPmtVersionCheck {
-    fn run(&self, ts: &[u8], report: &mut Report) {
-        let n_packets = ts.len() / TS_PACKET_SIZE;
-
-        // SectionReassembler per PID for PSI sections.
+    fn scan(&self, _pmt: &PmtStreamIndex) -> Box<dyn DiagnosticScan> {
         let mut reassemblers: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
-        // Track (pid, table_id, table_id_ext) -> version_number.
-        let mut versions: BTreeMap<TableKey, u8> = BTreeMap::new();
-
         // Always watch the PAT PID.
         reassemblers.entry(pat::PID).or_default();
+        Box::new(PatPmtVersionScan {
+            reassemblers,
+            versions: BTreeMap::new(),
+            index: 0,
+        })
+    }
+}
 
-        for i in 0..n_packets {
-            let offset = i * TS_PACKET_SIZE;
-            let raw = &ts[offset..offset + TS_PACKET_SIZE];
+/// One streaming pass of [`PatPmtVersionCheck`].
+struct PatPmtVersionScan {
+    /// SectionReassembler per PID for PSI sections.
+    reassemblers: BTreeMap<Pid, SectionReassembler>,
+    /// Track (pid, table_id, table_id_ext) -> version_number.
+    versions: BTreeMap<TableKey, u8>,
+    index: usize,
+}
 
-            let Ok(pkt) = TsPacket::parse(raw) else {
-                continue;
-            };
+impl DiagnosticScan for PatPmtVersionScan {
+    fn feed(&mut self, raw: &[u8], report: &mut Report) {
+        let i = self.index;
+        self.index += 1;
 
-            let pid = pkt.header.pid;
+        let Ok(pkt) = TsPacket::parse(raw) else {
+            return;
+        };
 
-            // Only process PIDs we're watching.
-            if !reassemblers.contains_key(&pid) {
-                continue;
-            }
+        let pid = pkt.header.pid;
 
-            let Some(payload) = pkt.payload else {
-                continue;
-            };
+        // Only process PIDs we're watching.
+        if !self.reassemblers.contains_key(&pid) {
+            return;
+        }
 
-            let pusi = pkt.header.pusi;
-            reassemblers.get_mut(&pid).unwrap().feed(payload, pusi);
+        let Some(payload) = pkt.payload else {
+            return;
+        };
 
-            // Collect new PMT PIDs discovered during drain — we cannot borrow
-            // `reassemblers` mutably while iterating over sections.
-            let mut new_pmt_pids: Vec<Pid> = Vec::new();
+        let pusi = pkt.header.pusi;
+        let Some(reassembler) = self.reassemblers.get_mut(&pid) else {
+            return;
+        };
+        reassembler.feed(payload, pusi);
 
-            while let Some(section) = reassemblers.get_mut(&pid).unwrap().pop_section() {
-                let section_data = &section[..];
-                self.process_section(i, pid, section_data, &mut versions, report);
+        // Collect new PMT PIDs discovered during drain — we cannot borrow
+        // `reassemblers` mutably while iterating over sections.
+        let mut new_pmt_pids: Vec<Pid> = Vec::new();
 
-                // PAT discovery goes through the SAME gate as version
-                // tracking — typed parse, CRC-valid, current — so a corrupt
-                // or next-generation PAT cannot register a PMT PID
-                // (audit MD-W1(a)/(c)), and a PAT entry naming PID 0 or the
-                // reserved NULL PID is ignored rather than watched.
-                if pid == pat::PID
-                    && let Some(pat) = current_pat(section_data)
-                {
-                    for pmt_pid in declared_pmt_pids(&pat) {
-                        if !new_pmt_pids.contains(&pmt_pid) {
-                            new_pmt_pids.push(pmt_pid);
-                        }
+        while let Some(section) = self
+            .reassemblers
+            .get_mut(&pid)
+            .and_then(SectionReassembler::pop_section)
+        {
+            let section_data = &section[..];
+            process_section(i, pid, section_data, &mut self.versions, report);
+
+            // PAT discovery goes through the SAME gate as version
+            // tracking — typed parse, CRC-valid, current — so a corrupt
+            // or next-generation PAT cannot register a PMT PID
+            // (audit MD-W1(a)/(c)), and a PAT entry naming PID 0 or the
+            // reserved NULL PID is ignored rather than watched.
+            if pid == pat::PID
+                && let Some(pat) = current_pat(section_data)
+            {
+                for pmt_pid in declared_pmt_pids(&pat) {
+                    if !new_pmt_pids.contains(&pmt_pid) {
+                        new_pmt_pids.push(pmt_pid);
                     }
                 }
             }
+        }
 
-            for pmt_pid in new_pmt_pids {
-                reassemblers.entry(pmt_pid).or_default();
-            }
+        for pmt_pid in new_pmt_pids {
+            self.reassemblers.entry(pmt_pid).or_default();
         }
     }
 }
@@ -196,6 +210,7 @@ mod tests {
     };
     use dvb_si::tables::pmt::StreamType;
     use mpeg_ts::section::Section;
+    use mpeg_ts::ts::TS_PACKET_SIZE;
 
     /// ISO/IEC 13818-1 §2.4.4.1: the 3-byte section header precedes the bytes
     /// counted by `section_length`.

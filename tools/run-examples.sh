@@ -80,9 +80,9 @@ example_args() {
         # between the two examples (cargo enumerates targets alphabetically,
         # which would run descramble first).
         dvb-csa/scramble_file)
-            echo "fixtures/atsc3/slt-lls-2019-01-07.bin $WORKDIR/scrambled.bin 0102030405060708" ;;
+            echo "fixtures/ts/h264-aac.ts $WORKDIR/scrambled.ts 0102030405060708" ;;
         dvb-csa/descramble_file)
-            echo "fixtures/atsc3/slt-lls-2019-01-07.bin $WORKDIR/descrambled.bin 0102030405060708" ;;
+            echo "fixtures/ts/h264-aac.ts $WORKDIR/descrambled.ts 0102030405060708" ;;
         dvr-runtime/record_ts_file)
             echo "fixtures/ts/h264-aac.ts" ;;
         isobmff/parse_boxes)  echo "fixtures/mp4/progressive/av-faststart.mp4" ;;

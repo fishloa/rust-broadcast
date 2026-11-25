@@ -5,9 +5,9 @@
 
 use core::time::Duration;
 use dvb_conformance::{ConformanceEvent, ConformanceMonitor, Priority};
+use mpeg_ts::reader::PacketReader;
 use std::collections::BTreeMap;
 
-const PKT: usize = 188;
 const INTER_PACKET_US: u64 = 40;
 
 fn main() {
@@ -15,7 +15,7 @@ fn main() {
     // sibling crate. A committed fixture that cannot be read is a bug, not a
     // reason to skip — so a missing/unreadable fixture is a hard failure.
     let path = test_fixtures::path("ts/m6-single.ts");
-    let data = std::fs::read(&path).unwrap_or_else(|e| {
+    let file = std::fs::File::open(&path).unwrap_or_else(|e| {
         panic!(
             "committed fixture {} could not be read: {e}",
             path.display()
@@ -24,12 +24,10 @@ fn main() {
 
     let mut monitor = ConformanceMonitor::new();
     let mut events: Vec<ConformanceEvent> = Vec::new();
-    for (i, pkt) in data.chunks(PKT).enumerate() {
-        if pkt.len() < PKT {
-            break;
-        }
+    for (i, pkt) in PacketReader::new(file).enumerate() {
+        let pkt = pkt.unwrap_or_else(|e| panic!("fixture read failed: {e}"));
         let t = Duration::from_micros(i as u64 * INTER_PACKET_US);
-        events.extend_from_slice(monitor.feed(pkt, t));
+        events.extend_from_slice(monitor.feed(&pkt, t));
     }
 
     let (mut p1, mut p2, mut p3) = (0u32, 0u32, 0u32);

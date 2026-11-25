@@ -11,15 +11,15 @@ use std::collections::BTreeMap;
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let path = test_fixtures::path("ts/m6-single.ts");
-    let data = match std::fs::read(path) {
-        Ok(b) => b,
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(f) => f,
         Err(e) => {
             eprintln!("fixture not available ({e}); nothing to do");
             return;
         }
     };
 
-    let reader = tokio::io::BufReader::new(std::io::Cursor::new(data));
+    let reader = tokio::io::BufReader::new(file);
     let mut stream = SectionStream::new(reader);
 
     let mut tables: BTreeMap<&'static str, u32> = BTreeMap::new();

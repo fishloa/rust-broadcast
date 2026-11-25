@@ -8,16 +8,16 @@
 use dvb_t2mi::payload::AnyPayload;
 use dvb_t2mi::pump::T2miPump;
 use mpeg_ts::pid::Pid;
+use mpeg_ts::reader::PacketReader;
 
 const T2MI_PID: Pid = Pid::from_const(0x0040);
-const PKT: usize = 188;
 
 fn main() {
     // Fixtures live in the workspace-shared `fixtures/` tree, not under the
     // crate. A committed fixture that cannot be read is a bug, not a reason
     // to skip — so a missing/unreadable fixture is a hard failure.
     let path = test_fixtures::path("t2mi/colombia-capital-t2mi.ts");
-    let data = std::fs::read(&path).unwrap_or_else(|e| {
+    let file = std::fs::File::open(&path).unwrap_or_else(|e| {
         panic!(
             "committed fixture {} could not be read: {e}",
             path.display()
@@ -27,11 +27,9 @@ fn main() {
     let mut pump = T2miPump::new(T2MI_PID);
     let (mut bbframes, mut l1, mut timestamps, mut other) = (0u32, 0u32, 0u32, 0u32);
 
-    for pkt in data.chunks(PKT) {
-        if pkt.len() < PKT {
-            break;
-        }
-        for event in pump.feed_ts(pkt) {
+    for pkt in PacketReader::new(file) {
+        let pkt = pkt.unwrap_or_else(|e| panic!("fixture read failed: {e}"));
+        for event in pump.feed_ts(&pkt) {
             match event.payload() {
                 Ok(AnyPayload::Bbframe(_)) => bbframes += 1,
                 Ok(AnyPayload::L1Current(_)) => l1 += 1,

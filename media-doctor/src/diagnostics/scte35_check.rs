@@ -17,16 +17,17 @@
 //! the named event and neither open nor close a splice). Well-formed, balanced
 //! out→in pairs produce no findings.
 
+use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
+use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
 use dvb_si::tables::pmt::StreamType;
 
-use crate::Diagnostic;
-use crate::Report;
-use crate::diagnostics::codec_common::{collect_pmt_streams, pids_with_stream_type};
+use crate::diagnostics::codec_common::pids_with_stream_type;
 use crate::report::{Finding, Location, Severity};
-use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
+use crate::{Diagnostic, DiagnosticScan, PmtStreamIndex, Report};
+use mpeg_ts::ts::TsPacket;
 use scte35_splice::{NoCue, SpliceTracker};
 
 /// Checks SCTE-35 splice insertion consistency across the stream.
@@ -50,85 +51,97 @@ pub struct Scte35Check;
 const SCTE35_PID: Pid = Pid::from_const(0x01F0);
 
 impl Diagnostic for Scte35Check {
-    fn run(&self, ts: &[u8], report: &mut Report) {
-        let n_packets = ts.len() / TS_PACKET_SIZE;
-        let mut pid_states: BTreeMap<Pid, SpliceTracker> = BTreeMap::new();
+    fn needs_pmt_streams(&self) -> bool {
+        true
+    }
 
-        // Discover the real SCTE-35 PID(s) from the PMT (`stream_type
-        // 0x86`, ANSI/SCTE 35 §8.1), the same source `watch.rs` uses —
-        // instead of the old hard-coded `SCTE35_PID`, which missed every
-        // real capture that (correctly) carries its cue elsewhere, and would
-        // misparse unrelated PES on `0x01F0` as SCTE-35 garbage on streams
-        // that happen to use that PID for something else.
-        let declared = collect_pmt_streams(ts);
-        let mut scte35_pids = pids_with_stream_type(&declared, StreamType::Scte35);
+    fn scan(&self, pmt: &PmtStreamIndex) -> Box<dyn DiagnosticScan> {
+        let declared = pmt.streams();
+        let mut scte35_pids = pids_with_stream_type(declared, StreamType::Scte35);
         if declared.is_empty() {
             // No PSI at all to discover a PID from (e.g. a minimal
             // synthetic fixture with no PAT/PMT) — fall back to the
             // conventional PID rather than watching nothing.
             scte35_pids.push(SCTE35_PID);
         }
+        Box::new(Scte35Scan {
+            pid_states: BTreeMap::new(),
+            scte35_pids,
+            index: 0,
+        })
+    }
+}
 
-        for i in 0..n_packets {
-            let offset = i * TS_PACKET_SIZE;
-            let raw = &ts[offset..offset + TS_PACKET_SIZE];
+/// One streaming pass of [`Scte35Check`].
+struct Scte35Scan {
+    pid_states: BTreeMap<Pid, SpliceTracker>,
+    scte35_pids: Vec<Pid>,
+    index: usize,
+}
 
-            let Ok(pkt) = TsPacket::parse(raw) else {
-                continue;
-            };
+impl DiagnosticScan for Scte35Scan {
+    fn feed(&mut self, raw: &[u8], report: &mut Report) {
+        let i = self.index;
+        self.index += 1;
 
-            let pid = pkt.header.pid;
+        let Ok(pkt) = TsPacket::parse(raw) else {
+            return;
+        };
 
-            // Only watch PID(s) the PMT declares as SCTE-35 (or the
-            // fallback above).
-            if !scte35_pids.contains(&pid) {
-                continue;
-            }
+        let pid = pkt.header.pid;
 
-            let payload = match pkt.payload {
-                Some(pl) => pl,
-                None => continue,
-            };
-
-            let state = pid_states.entry(pid).or_default();
-            let outcome = state.feed(
-                payload,
-                pkt.header.pusi,
-                pkt.header.continuity_counter,
-                pkt.adaptation_field()
-                    .and_then(Result::ok)
-                    .is_some_and(|af| af.discontinuity_indicator),
-                |event| {
-                    if event.duplicate_open {
-                        // Duplicate open "out" with no intervening "in".
-                        report.push(Finding::new(
-                            Severity::Warning,
-                            Location::at_pid(i, pid),
-                            "scte35-dup-out",
-                            alloc::format!(
-                                "duplicate open splice_insert: out event_id {} \
-                                 with no intervening in",
-                                event.event_id,
-                            ),
-                        ));
-                    }
-                },
-            );
-            if let Err(NoCue::Malformed { error, .. }) = outcome {
-                report.push(Finding::new(
-                    Severity::Error,
-                    Location::at_pid(i, pid),
-                    "scte35-malformed",
-                    alloc::format!("corrupt splice_info_section: {error}"),
-                ));
-            }
+        // Only watch PID(s) the PMT declares as SCTE-35 (or the
+        // conventional fallback when the stream carries no PSI).
+        if !self.scte35_pids.contains(&pid) {
+            return;
         }
 
-        for (&pid, state) in pid_states.iter() {
+        let payload = match pkt.payload {
+            Some(pl) => pl,
+            None => return,
+        };
+
+        let state = self.pid_states.entry(pid).or_default();
+        let outcome = state.feed(
+            payload,
+            pkt.header.pusi,
+            pkt.header.continuity_counter,
+            pkt.adaptation_field()
+                .and_then(Result::ok)
+                .is_some_and(|af| af.discontinuity_indicator),
+            |event| {
+                if event.duplicate_open {
+                    // Duplicate open "out" with no intervening "in".
+                    report.push(Finding::new(
+                        Severity::Warning,
+                        Location::at_pid(i, pid),
+                        "scte35-dup-out",
+                        alloc::format!(
+                            "duplicate open splice_insert: out event_id {} \
+                             with no intervening in",
+                            event.event_id,
+                        ),
+                    ));
+                }
+            },
+        );
+        if let Err(NoCue::Malformed { error, .. }) = outcome {
+            report.push(Finding::new(
+                Severity::Error,
+                Location::at_pid(i, pid),
+                "scte35-malformed",
+                alloc::format!("corrupt splice_info_section: {error}"),
+            ));
+        }
+    }
+
+    fn finish(&mut self, report: &mut Report) {
+        let last = self.index.saturating_sub(1);
+        for (&pid, state) in self.pid_states.iter() {
             for eid in state.open_events() {
                 report.push(Finding::new(
                     Severity::Warning,
-                    Location::at_pid(n_packets.saturating_sub(1), pid),
+                    Location::at_pid(last, pid),
                     "scte35-unbalanced",
                     alloc::format!(
                         "unbalanced splice_insert: out event_id {eid} with no matching in",

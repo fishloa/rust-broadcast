@@ -29,6 +29,10 @@ const MANIFEST_FILE: &str = "Manifest";
 /// manifest this crate parses.
 const MANIFEST_LIMIT: Limit = Limit::new("Smooth manifest", 4 * 1024 * 1024);
 
+/// One media fragment. The manifest is the real bound; this ceiling only stops
+/// a runaway read of an origin that lies.
+const FRAGMENT_LIMIT: Limit = Limit::new("Smooth fragment", 64 << 20);
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_DIR);
     let mut args = std::env::args().skip(1);
@@ -68,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let body = if is_manifest {
                 read_file_bounded(&path, MANIFEST_LIMIT).map_err(|_| ())
             } else {
-                std::fs::read(&path).map_err(|_| ())
+                read_file_bounded(&path, FRAGMENT_LIMIT).map_err(|_| ())
             };
             match body {
                 Ok(body) if is_manifest => client.on_manifest(now(now_us), id, &body),

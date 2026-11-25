@@ -46,6 +46,10 @@ const ORIGIN: &str = "http://fixtures.invalid";
 /// A whole MPD, bounded by the ceiling the MPD parser itself accepts.
 const MPD_LIMIT: Limit = Limit::new("MPD", broadcast_dash::limits::MAX_MPD_BYTES as u64);
 
+/// One media segment or its initialisation segment. The manifest is the real
+/// bound; this ceiling only stops a runaway read of an origin that lies.
+const SEGMENT_LIMIT: Limit = Limit::new("DASH media segment", 64 << 20);
+
 fn origin_path(root: &Path, url: &str) -> Option<PathBuf> {
     let url = Url::parse(url).ok()?;
     if url.scheme() != "http" || url.host_str() != Some("fixtures.invalid") {
@@ -107,7 +111,7 @@ fn parse_args() -> Result<Args, String> {
 
 fn read(root: &Path, url: &str) -> Result<Vec<u8>, Failure> {
     let path = origin_path(root, url).ok_or(Failure::Status(404))?;
-    std::fs::read(path).map_err(|_| Failure::Status(404))
+    read_file_bounded(&path, SEGMENT_LIMIT).map_err(|_| Failure::Status(404))
 }
 
 fn availability(mpd: &Mpd, base: &Url) -> BTreeMap<String, i64> {

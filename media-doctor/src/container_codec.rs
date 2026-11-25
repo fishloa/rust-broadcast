@@ -251,7 +251,7 @@ fn check_hevc_sample_entries(moov: &[u8], report: &mut Report) {
 /// A minimal ISOBMFF sniff: the first box is a `size(4)+type(4)` header
 /// naming a top-level box type every ISOBMFF/CMAF/DASH file starts with,
 /// including the compressed `!mov` / `!mof` (ISO/IEC 14496-12:2026 §8.16).
-fn looks_like_isobmff(bytes: &[u8]) -> bool {
+pub fn looks_like_isobmff(bytes: &[u8]) -> bool {
     if bytes.len() < isobmff::box_types::BOX_HEADER_MIN_SIZE {
         return false;
     }

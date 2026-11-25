@@ -211,6 +211,12 @@ impl Report {
         self.findings.push(finding);
     }
 
+    /// Move every finding of `other` into this report, keeping `other`'s
+    /// order after the findings already here.
+    pub fn append(&mut self, mut other: Report) {
+        self.findings.append(&mut other.findings);
+    }
+
     /// Iterate over findings.
     pub fn findings(&self) -> &[Finding] {
         &self.findings

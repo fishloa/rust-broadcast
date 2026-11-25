@@ -12,9 +12,10 @@
 //! cargo run -p dash-runtime --example list_segments -- --mpd fixtures/dash/timeline-gpac/timeline.mpd --first 3
 //! ```
 
+use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
-use broadcast_common::bounded::{Limit, read_file_bounded};
+use broadcast_common::bounded::{Limit, read_bounded, read_file_bounded};
 use dash_runtime::address::{
     AddressError, PlanError, PlanOptions, base_index, plan_representation,
 };
@@ -28,6 +29,11 @@ const DEFAULT_FIRST: usize = 3;
 
 /// A whole MPD, bounded by the ceiling the MPD parser itself accepts.
 const MPD_LIMIT: Limit = Limit::new("MPD", broadcast_dash::limits::MAX_MPD_BYTES as u64);
+
+/// A Representation's `sidx`, as its MPD's `indexRange` names it. The MPD is
+/// the real bound; this ceiling only stops a hostile or corrupt range from
+/// demanding an unbounded read.
+const INDEX_RANGE_LIMIT: Limit = Limit::new("DASH sidx index range", 1 << 20);
 
 struct Args {
     mpd: PathBuf,
@@ -83,12 +89,15 @@ fn sidx_of(
     let file = resolved
         .to_file_path()
         .map_err(|()| "BaseURL is not a file")?;
-    let bytes = std::fs::read(file)?;
-    let (a, b) = (
-        range.first as usize,
-        range.last.ok_or("open-ended range")? as usize,
-    );
-    let sidx = base_index::parse_index(bytes.get(a..=b).ok_or("indexRange outside the file")?)?;
+    let last = range.last.ok_or("open-ended range")?;
+    let len = last
+        .checked_sub(range.first)
+        .and_then(|span| span.checked_add(1))
+        .ok_or("indexRange is not a forward range")?;
+    let mut file = std::fs::File::open(file)?;
+    file.seek(SeekFrom::Start(range.first))?;
+    let bytes = read_bounded(file.by_ref().take(len), INDEX_RANGE_LIMIT)?;
+    let sidx = base_index::parse_index(&bytes)?;
     Ok((sidx, base_index::anchor_after(&range)?))
 }
 

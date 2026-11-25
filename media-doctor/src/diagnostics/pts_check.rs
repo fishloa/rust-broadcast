@@ -23,14 +23,14 @@
 //! A signalled TS-layer discontinuity (`discontinuity_indicator == 1`) resets
 //! the per-PID baseline so a jump across the discontinuity is not flagged.
 
+use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 use mpeg_ts::pid::Pid;
 
-use crate::Diagnostic;
-use crate::Report;
 use crate::report::{Finding, Location, Severity};
+use crate::{Diagnostic, DiagnosticScan, PmtStreamIndex, Report};
 use mpeg_pes::PesPacket;
-use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
+use mpeg_ts::ts::TsPacket;
 
 /// 33-bit PTS/DTS modulus (2^33). Alias for
 /// [`broadcast_common::clock33::WRAP_33BIT`] — the shared owner of the
@@ -105,61 +105,68 @@ impl Default for PtsPidState {
 pub struct PtsCheck;
 
 impl Diagnostic for PtsCheck {
-    fn run(&self, ts: &[u8], report: &mut Report) {
-        let n_packets = ts.len() / TS_PACKET_SIZE;
-        let mut pid_states: BTreeMap<Pid, PtsPidState> = BTreeMap::new();
+    fn scan(&self, _pmt: &PmtStreamIndex) -> Box<dyn DiagnosticScan> {
+        Box::new(PtsScan {
+            pid_states: BTreeMap::new(),
+            index: 0,
+        })
+    }
+}
 
-        for i in 0..n_packets {
-            let offset = i * TS_PACKET_SIZE;
-            let raw = &ts[offset..offset + TS_PACKET_SIZE];
+/// One streaming pass of [`PtsCheck`].
+struct PtsScan {
+    pid_states: BTreeMap<Pid, PtsPidState>,
+    index: usize,
+}
 
-            let Ok(pkt) = TsPacket::parse(raw) else {
-                continue;
-            };
+impl DiagnosticScan for PtsScan {
+    fn feed(&mut self, raw: &[u8], report: &mut Report) {
+        let i = self.index;
+        self.index += 1;
 
-            let pid = pkt.header.pid;
+        let Ok(pkt) = TsPacket::parse(raw) else {
+            return;
+        };
 
-            // Check for TS-layer discontinuity: if present, reset the entire
-            // PES state (assembler + baseline) so the jump across the
-            // discontinuity is not flagged — then **fall through** and feed
-            // this packet's payload. The discontinuity packet is normally the
-            // `payload_unit_start_indicator` start of the first PES after the
-            // break, so skipping it would silently drop that access unit and
-            // leave the first post-break timestamp unbaselined and unchecked
-            // (audit MD-W5).
-            if pkt.header.has_adaptation()
-                && let Some(Ok(af)) = pkt.adaptation_field()
-                && af.discontinuity_indicator
-            {
-                pid_states.remove(&pid);
-            }
+        let pid = pkt.header.pid;
 
-            let payload = match pkt.payload {
-                Some(p) => p,
-                None => continue,
-            };
-
-            if payload.is_empty() {
-                continue;
-            }
-
-            let pus = pkt.header.pusi;
-
-            let state = pid_states.entry(pid).or_default();
-            if let Some(pes_bytes) = state.assembler.feed(pus, payload) {
-                check_pes(&pes_bytes, i, pid, report, &mut state.prev_decode);
-            }
+        // Check for TS-layer discontinuity: if present, reset the entire
+        // PES state (assembler + baseline) so the jump across the
+        // discontinuity is not flagged — then **fall through** and feed
+        // this packet's payload. The discontinuity packet is normally the
+        // `payload_unit_start_indicator` start of the first PES after the
+        // break, so skipping it would silently drop that access unit and
+        // leave the first post-break timestamp unbaselined and unchecked
+        // (audit MD-W5).
+        if pkt.header.has_adaptation()
+            && let Some(Ok(af)) = pkt.adaptation_field()
+            && af.discontinuity_indicator
+        {
+            self.pid_states.remove(&pid);
         }
 
-        for (&pid, state) in pid_states.iter_mut() {
+        let payload = match pkt.payload {
+            Some(p) => p,
+            None => return,
+        };
+
+        if payload.is_empty() {
+            return;
+        }
+
+        let pus = pkt.header.pusi;
+
+        let state = self.pid_states.entry(pid).or_default();
+        if let Some(pes_bytes) = state.assembler.feed(pus, payload) {
+            check_pes(&pes_bytes, i, pid, report, &mut state.prev_decode);
+        }
+    }
+
+    fn finish(&mut self, report: &mut Report) {
+        let last = self.index.saturating_sub(1);
+        for (&pid, state) in self.pid_states.iter_mut() {
             if let Some(pes_bytes) = state.assembler.flush() {
-                check_pes(
-                    &pes_bytes,
-                    n_packets.saturating_sub(1),
-                    pid,
-                    report,
-                    &mut state.prev_decode,
-                );
+                check_pes(&pes_bytes, last, pid, report, &mut state.prev_decode);
             }
         }
     }

@@ -15,9 +15,10 @@
 //! ```
 
 use std::collections::{BTreeMap, VecDeque};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
-use broadcast_common::bounded::{Limit, read_file_bounded};
+use broadcast_common::bounded::{Limit, read_bounded, read_file_bounded};
 use broadcast_common::stage::Timestamp;
 use dash_runtime::client::{
     Action, DashClient, DashConfig, Error, Failure, FailureClass, Output, PullLimits, ResourceId,
@@ -35,6 +36,10 @@ const ORIGIN: &str = "http://fixtures.invalid";
 
 /// A whole MPD, bounded by the ceiling the MPD parser itself accepts.
 const MPD_LIMIT: Limit = Limit::new("MPD", broadcast_dash::limits::MAX_MPD_BYTES as u64);
+
+/// One media segment or its initialisation segment. The manifest is the real
+/// bound; this ceiling only stops a runaway read of an origin that lies.
+const SEGMENT_LIMIT: Limit = Limit::new("DASH media segment", 64 << 20);
 
 fn origin_path(root: &Path, url: &str) -> Option<PathBuf> {
     let url = Url::parse(url).ok()?;
@@ -93,16 +98,14 @@ fn read_mpd(root: &Path, url: &str) -> Result<Vec<u8>, Failure> {
 
 fn read(root: &Path, url: &str, range: Option<(u64, u64)>) -> Result<Vec<u8>, Failure> {
     let path = origin_path(root, url).ok_or(Failure::Status(404))?;
-    let bytes = std::fs::read(path).map_err(|_| Failure::Status(404))?;
     match range {
-        None => Ok(bytes),
+        None => read_file_bounded(&path, SEGMENT_LIMIT).map_err(|_| Failure::Status(404)),
         Some((offset, len)) => {
-            let start = usize::try_from(offset).map_err(|_| Failure::Status(416))?;
-            let end = start.saturating_add(usize::try_from(len).unwrap_or(usize::MAX));
-            bytes
-                .get(start..end.min(bytes.len()))
-                .map(<[u8]>::to_vec)
-                .ok_or(Failure::Status(416))
+            let mut file = std::fs::File::open(&path).map_err(|_| Failure::Status(404))?;
+            file.seek(SeekFrom::Start(offset))
+                .map_err(|_| Failure::Status(416))?;
+            let limit = Limit::new("DASH media segment", len);
+            read_bounded(file.by_ref().take(len), limit).map_err(|_| Failure::Status(416))
         }
     }
 }

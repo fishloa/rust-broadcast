@@ -50,21 +50,36 @@ pub struct PcrDiscontinuity {
 /// on every PCR-bearing PID.
 ///
 /// Trailing bytes that do not form a complete 188-byte packet are ignored.
+/// For a capture that does not fit in memory use
+/// [`PcrDiscontinuityScanner`], which is the same pass fed in pieces.
 ///
 /// # Example
 ///
 /// ```rust,no_run
-/// use ts_fix::discontinuity::detect_pcr_discontinuities;
+/// use std::fs::File;
+/// use std::io::{BufReader, Read};
+/// use ts_fix::discontinuity::PcrDiscontinuityScanner;
 ///
-/// let bytes = std::fs::read("capture.ts").unwrap();
-/// for d in detect_pcr_discontinuities(&bytes) {
-///     if !d.flagged {
-///         println!(
-///             "unflagged PCR break on PID 0x{:04X} at packet {}",
-///             d.pid, d.packet_index
-///         );
+/// const CHUNK: usize = 1 << 20;
+///
+/// let mut reader = BufReader::with_capacity(CHUNK, File::open("capture.ts")?);
+/// let mut scanner = PcrDiscontinuityScanner::new();
+/// let mut chunk = vec![0u8; CHUNK];
+/// loop {
+///     let read = reader.read(&mut chunk)?;
+///     if read == 0 {
+///         break;
+///     }
+///     for d in scanner.feed(&chunk[..read]) {
+///         if !d.flagged {
+///             println!(
+///                 "unflagged PCR break on PID 0x{:04X} at packet {}",
+///                 d.pid, d.packet_index
+///             );
+///         }
 ///     }
 /// }
+/// # Ok::<(), std::io::Error>(())
 /// ```
 ///
 /// # Spec
@@ -73,11 +88,76 @@ pub struct PcrDiscontinuity {
 /// Table 5.0b, indicator 2.3b.
 #[must_use]
 pub fn detect_pcr_discontinuities(ts_bytes: &[u8]) -> Vec<PcrDiscontinuity> {
-    let mut detector = PcrDiscDetector::new();
-    let mut found = Vec::new();
+    PcrDiscontinuityScanner::new().feed(ts_bytes)
+}
 
-    for (index, packet) in ts_bytes.chunks_exact(TS_PACKET_SIZE).enumerate() {
-        let packet_index = index as u64;
+/// The streaming form of [`detect_pcr_discontinuities`]: feed the capture in
+/// pieces of any size.
+///
+/// The per-packet rule it applies is the batch pass's: a PCR-bearing packet
+/// with `discontinuity_indicator` set (ISO/IEC 13818-1 §2.4.3.5) is a
+/// signalled break, and an unflagged jump beyond 100 ms is ETSI TR 101 290
+/// v1.4.1 §5.2.2 Table 5.0b indicator 2.3b.
+///
+/// Complete 188-byte packets are examined as they arrive; a trailing partial
+/// packet is carried to the next [`feed`](Self::feed). Anything left partial
+/// when the input ends is ignored, exactly as the batch pass ignores it.
+pub struct PcrDiscontinuityScanner {
+    detector: PcrDiscDetector,
+    packet_index: u64,
+    leftover: [u8; TS_PACKET_SIZE],
+    leftover_len: usize,
+}
+
+impl PcrDiscontinuityScanner {
+    /// A scanner that has seen no byte yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            detector: PcrDiscDetector::new(),
+            packet_index: 0,
+            leftover: [0u8; TS_PACKET_SIZE],
+            leftover_len: 0,
+        }
+    }
+
+    /// Feed the next piece of the capture, returning every discontinuity the
+    /// completed packets in it exposed.
+    #[must_use]
+    pub fn feed(&mut self, bytes: &[u8]) -> Vec<PcrDiscontinuity> {
+        let mut found = Vec::new();
+        let mut offset = 0usize;
+
+        if self.leftover_len > 0 {
+            let want = TS_PACKET_SIZE - self.leftover_len;
+            let take = want.min(bytes.len());
+            self.leftover[self.leftover_len..self.leftover_len + take]
+                .copy_from_slice(&bytes[..take]);
+            self.leftover_len += take;
+            offset = take;
+            if self.leftover_len < TS_PACKET_SIZE {
+                return found;
+            }
+            let packet = self.leftover;
+            self.examine(&packet, &mut found);
+            self.leftover_len = 0;
+        }
+
+        while offset + TS_PACKET_SIZE <= bytes.len() {
+            self.examine(&bytes[offset..offset + TS_PACKET_SIZE], &mut found);
+            offset += TS_PACKET_SIZE;
+        }
+
+        let rest = &bytes[offset..];
+        self.leftover[..rest.len()].copy_from_slice(rest);
+        self.leftover_len = rest.len();
+        found
+    }
+
+    /// Examine one complete packet, appending what it exposed.
+    fn examine(&mut self, packet: &[u8], found: &mut Vec<PcrDiscontinuity>) {
+        let packet_index = self.packet_index;
+        self.packet_index += 1;
 
         // Flagged: a direct, threshold-free read of discontinuity_indicator
         // on a PCR-bearing packet (a legal system-time-base change).
@@ -96,7 +176,7 @@ pub fn detect_pcr_discontinuities(ts_bytes: &[u8]) -> Vec<PcrDiscontinuity> {
         // Unflagged: TR 101 290 §5.2.2 indicator 2.3b, reused from
         // dvb-conformance. Must run on every packet (flagged or not) to keep
         // the detector's per-PID PCR state synced with the true input.
-        if let Some(pid) = detector.feed(packet) {
+        if let Some(pid) = self.detector.feed(packet) {
             found.push(PcrDiscontinuity {
                 pid,
                 packet_index,
@@ -104,6 +184,10 @@ pub fn detect_pcr_discontinuities(ts_bytes: &[u8]) -> Vec<PcrDiscontinuity> {
             });
         }
     }
+}
 
-    found
+impl Default for PcrDiscontinuityScanner {
+    fn default() -> Self {
+        Self::new()
+    }
 }

@@ -18,14 +18,14 @@
 //! Non-payload-bearing packets (AFC `00` or `10`) do not advance the CC; an
 //! adaptation-only packet (AFC `10`) must repeat the PID's last CC value.
 
+use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 use mpeg_ts::pid::Pid;
 
 use mpeg_ts::ts_dup::{DuplicateVerdict, check_duplicate};
 
-use crate::Diagnostic;
-use crate::Report;
 use crate::report::{Finding, Location, Severity};
+use crate::{Diagnostic, DiagnosticScan, PmtStreamIndex, Report};
 use mpeg_ts::ts::{ContinuityCounter, TS_PACKET_SIZE, TsPacket};
 
 /// `discontinuity_indicator`, the top bit of the adaptation-field flags byte
@@ -73,127 +73,137 @@ struct CcState {
 pub struct CcAnomalyCheck;
 
 impl Diagnostic for CcAnomalyCheck {
-    fn run(&self, ts: &[u8], report: &mut Report) {
-        let n_packets = ts.len() / TS_PACKET_SIZE;
-        let mut pid_states: BTreeMap<Pid, CcState> = BTreeMap::new();
+    fn scan(&self, _pmt: &PmtStreamIndex) -> Box<dyn DiagnosticScan> {
+        Box::new(CcAnomalyScan {
+            pid_states: BTreeMap::new(),
+            index: 0,
+        })
+    }
+}
 
-        for i in 0..n_packets {
-            let offset = i * TS_PACKET_SIZE;
-            let raw = &ts[offset..offset + TS_PACKET_SIZE];
+/// One streaming pass of [`CcAnomalyCheck`].
+struct CcAnomalyScan {
+    pid_states: BTreeMap<Pid, CcState>,
+    index: usize,
+}
 
-            let Ok(pkt) = TsPacket::parse(raw) else {
-                continue;
-            };
+impl DiagnosticScan for CcAnomalyScan {
+    fn feed(&mut self, raw: &[u8], report: &mut Report) {
+        let i = self.index;
+        self.index += 1;
 
-            let hdr = &pkt.header;
-            let pid = hdr.pid;
+        let Ok(pkt) = TsPacket::parse(raw) else {
+            return;
+        };
 
-            // Skip null packets — CC is undefined (§2.4.3.3).
-            if pid == mpeg_ts::pid::well_known::NULL {
-                continue;
-            }
+        let hdr = &pkt.header;
+        let pid = hdr.pid;
 
-            let cc = hdr.continuity_counter;
+        // Skip null packets — CC is undefined (§2.4.3.3).
+        if pid == mpeg_ts::pid::well_known::NULL {
+            return;
+        }
 
-            // An adaptation-only packet (AFC 10) does not increment the CC
-            // (§2.4.3.3): it must repeat the PID's last value.
-            if !hdr.has_payload() {
-                if hdr.has_adaptation()
-                    && let Some(state) = pid_states.get_mut(&pid)
-                    && state.initialized
-                {
-                    let discontinuity = raw[ADAPTATION_FIELD_LENGTH_OFFSET] > 0
-                        && (raw[ADAPTATION_FIELD_FLAGS_OFFSET] & AF_DISCONTINUITY_INDICATOR) != 0;
-                    if discontinuity {
-                        state.last_cc = cc;
-                        state.dup_used = false;
-                    } else if cc != state.last_cc {
-                        report.push(Finding::new(
-                            Severity::Error,
-                            Location::at_pid(i, pid),
-                            "cc-anomaly",
-                            alloc::format!(
-                                "PID 0x{pid:04X}: adaptation-only packet carries CC={cc}, \
-                                 expected the unincremented CC={} (§2.4.3.3)",
-                                state.last_cc
-                            ),
-                        ));
-                    }
-                }
-                continue;
-            }
+        let cc = hdr.continuity_counter;
 
-            let state = pid_states.entry(pid).or_insert(CcState {
-                initialized: false,
-                last_cc: ContinuityCounter::ZERO,
-                last_packet: [0; TS_PACKET_SIZE],
-                dup_used: false,
-            });
-
-            if !state.initialized {
-                state.initialized = true;
-                state.last_cc = cc;
-                state.last_packet = snapshot(raw);
-                continue;
-            }
-
-            let has_discontinuity = if hdr.has_adaptation() {
-                let af_len = raw[ADAPTATION_FIELD_LENGTH_OFFSET] as usize;
-                af_len > 0 && (raw[ADAPTATION_FIELD_FLAGS_OFFSET] & AF_DISCONTINUITY_INDICATOR) != 0
-            } else {
-                false
-            };
-
-            if has_discontinuity {
-                // §2.4.3.5: discontinuity_indicator == 1 legalises any CC
-                // value here; reset the duplicate-run tracking too.
-                state.last_cc = cc;
-                state.last_packet = snapshot(raw);
-                state.dup_used = false;
-                continue;
-            }
-
-            match check_duplicate(&state.last_packet, raw, state.dup_used) {
-                DuplicateVerdict::Legal => {
-                    // Byte-identical (PCR excepted) to the predecessor —
-                    // leave last_cc/last_packet in place, just record that
-                    // the one legal repeat has now been used.
-                    state.dup_used = true;
-                }
-                DuplicateVerdict::IllegalThirdRepeat => {
+        // An adaptation-only packet (AFC 10) does not increment the CC
+        // (§2.4.3.3): it must repeat the PID's last value.
+        if !hdr.has_payload() {
+            if hdr.has_adaptation()
+                && let Some(state) = self.pid_states.get_mut(&pid)
+                && state.initialized
+            {
+                let discontinuity = raw[ADAPTATION_FIELD_LENGTH_OFFSET] > 0
+                    && (raw[ADAPTATION_FIELD_FLAGS_OFFSET] & AF_DISCONTINUITY_INDICATOR) != 0;
+                if discontinuity {
+                    state.last_cc = cc;
+                    state.dup_used = false;
+                } else if cc != state.last_cc {
                     report.push(Finding::new(
                         Severity::Error,
                         Location::at_pid(i, pid),
                         "cc-anomaly",
                         alloc::format!(
-                            "PID 0x{pid:04X}: third consecutive repeat of CC={cc} \
-                             (§2.4.3.3 permits two, and only two)"
+                            "PID 0x{pid:04X}: adaptation-only packet carries CC={cc}, \
+                             expected the unincremented CC={} (§2.4.3.3)",
+                            state.last_cc
                         ),
                     ));
-                    state.dup_used = true;
                 }
-                DuplicateVerdict::NotDuplicate => {
-                    let expected = state.last_cc.next();
-                    if cc != expected {
-                        report.push(Finding::new(
-                            Severity::Error,
-                            Location::at_pid(i, pid),
-                            "cc-anomaly",
-                            alloc::format!(
-                                "PID 0x{pid:04X}: expected CC={expected}, got CC={cc} \
-                                 (not a legal duplicate or signalled discontinuity)"
-                            ),
-                        ));
-                    }
-                    state.dup_used = false;
-                    state.last_cc = cc;
-                    state.last_packet = snapshot(raw);
-                }
-                // `DuplicateVerdict` is `#[non_exhaustive]`; there is no
-                // fourth variant today, but a future addition must not
-                // silently fall through as "not a duplicate".
-                _ => unreachable!("unhandled DuplicateVerdict variant"),
             }
+            return;
+        }
+
+        let state = self.pid_states.entry(pid).or_insert(CcState {
+            initialized: false,
+            last_cc: ContinuityCounter::ZERO,
+            last_packet: [0; TS_PACKET_SIZE],
+            dup_used: false,
+        });
+
+        if !state.initialized {
+            state.initialized = true;
+            state.last_cc = cc;
+            state.last_packet = snapshot(raw);
+            return;
+        }
+
+        let has_discontinuity = if hdr.has_adaptation() {
+            let af_len = raw[ADAPTATION_FIELD_LENGTH_OFFSET] as usize;
+            af_len > 0 && (raw[ADAPTATION_FIELD_FLAGS_OFFSET] & AF_DISCONTINUITY_INDICATOR) != 0
+        } else {
+            false
+        };
+
+        if has_discontinuity {
+            // §2.4.3.5: discontinuity_indicator == 1 legalises any CC
+            // value here; reset the duplicate-run tracking too.
+            state.last_cc = cc;
+            state.last_packet = snapshot(raw);
+            state.dup_used = false;
+            return;
+        }
+
+        match check_duplicate(&state.last_packet, raw, state.dup_used) {
+            DuplicateVerdict::Legal => {
+                // Byte-identical (PCR excepted) to the predecessor —
+                // leave last_cc/last_packet in place, just record that
+                // the one legal repeat has now been used.
+                state.dup_used = true;
+            }
+            DuplicateVerdict::IllegalThirdRepeat => {
+                report.push(Finding::new(
+                    Severity::Error,
+                    Location::at_pid(i, pid),
+                    "cc-anomaly",
+                    alloc::format!(
+                        "PID 0x{pid:04X}: third consecutive repeat of CC={cc} \
+                         (§2.4.3.3 permits two, and only two)"
+                    ),
+                ));
+                state.dup_used = true;
+            }
+            DuplicateVerdict::NotDuplicate => {
+                let expected = state.last_cc.next();
+                if cc != expected {
+                    report.push(Finding::new(
+                        Severity::Error,
+                        Location::at_pid(i, pid),
+                        "cc-anomaly",
+                        alloc::format!(
+                            "PID 0x{pid:04X}: expected CC={expected}, got CC={cc} \
+                             (not a legal duplicate or signalled discontinuity)"
+                        ),
+                    ));
+                }
+                state.dup_used = false;
+                state.last_cc = cc;
+                state.last_packet = snapshot(raw);
+            }
+            // `DuplicateVerdict` is `#[non_exhaustive]`; there is no
+            // fourth variant today, but a future addition must not
+            // silently fall through as "not a duplicate".
+            _ => unreachable!("unhandled DuplicateVerdict variant"),
         }
     }
 }

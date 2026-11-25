@@ -21,20 +21,19 @@
 //! without adding new decode surface to `transmux` — out of bounds for this
 //! issue (`media-doctor` consumes `transmux`, it does not extend it).
 
+use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
+use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
 use dvb_si::tables::pmt::StreamType;
 use transmux::annexb::iter_annexb_nals;
 use transmux::sps::decode_avc_sps;
 
-use crate::Diagnostic;
-use crate::Report;
-use crate::diagnostics::codec_common::{
-    collect_pmt_streams, for_each_access_unit, pids_with_stream_type,
-};
+use crate::diagnostics::codec_common::{AccessUnitScanner, pids_with_stream_type};
 use crate::report::{Finding, Location, Severity};
+use crate::{Diagnostic, DiagnosticScan, PmtStreamIndex, Report};
 
 /// H.264 `nal_unit_type` mask (ITU-T H.264 §7.3.1, bits `[4:0]`).
 const H264_NAL_TYPE_MASK: u8 = 0x1F;
@@ -47,50 +46,92 @@ const H264_NAL_SPS: u8 = 7;
 pub struct InterlaceCheck;
 
 impl Diagnostic for InterlaceCheck {
-    fn run(&self, ts: &[u8], report: &mut Report) {
-        let declared = collect_pmt_streams(ts);
-        let avc_pids = pids_with_stream_type(&declared, StreamType::H264);
-        if avc_pids.is_empty() {
+    fn needs_pmt_streams(&self) -> bool {
+        true
+    }
+
+    fn scan(&self, pmt: &PmtStreamIndex) -> Box<dyn DiagnosticScan> {
+        let avc_pids = pids_with_stream_type(pmt.streams(), StreamType::H264);
+        // `false` = not yet decoded; `true` = already reported, stop looking
+        // on this PID.
+        let reported = avc_pids.iter().map(|&p| (p, false)).collect();
+        Box::new(InterlaceScan {
+            avc_pids,
+            reported,
+            assembler: AccessUnitScanner::new(),
+        })
+    }
+}
+
+/// One streaming pass of [`InterlaceCheck`].
+struct InterlaceScan {
+    avc_pids: Vec<Pid>,
+    reported: BTreeMap<Pid, bool>,
+    assembler: AccessUnitScanner,
+}
+
+impl DiagnosticScan for InterlaceScan {
+    fn feed(&mut self, packet: &[u8], report: &mut Report) {
+        if self.avc_pids.is_empty() {
             return;
         }
+        let Self {
+            avc_pids,
+            reported,
+            assembler,
+        } = self;
+        let mut wanted = |pid: Pid| avc_pids.contains(&pid);
+        assembler.feed(packet, &mut wanted, &mut |payload, packet_index, pid| {
+            scan_payload(reported, payload, packet_index, pid, report)
+        });
+    }
 
-        // `None` = not yet decoded; `Some(true)` = already reported, stop
-        // looking on this PID.
-        let mut reported: BTreeMap<Pid, bool> = avc_pids.iter().map(|&p| (p, false)).collect();
+    fn finish(&mut self, report: &mut Report) {
+        let Self {
+            reported,
+            assembler,
+            ..
+        } = self;
+        assembler.finish(&mut |payload, packet_index, pid| {
+            scan_payload(reported, payload, packet_index, pid, report)
+        });
+    }
+}
 
-        for_each_access_unit(
-            ts,
-            |pid| avc_pids.contains(&pid),
-            |payload, packet_index, pid| {
-                let Some(done) = reported.get(&pid).copied() else {
-                    return;
-                };
-                if done {
-                    return;
-                }
-                for nal in iter_annexb_nals(payload) {
-                    if nal.is_empty() || nal[0] & H264_NAL_TYPE_MASK != H264_NAL_SPS {
-                        continue;
-                    }
-                    let Ok(info) = decode_avc_sps(nal) else {
-                        continue;
-                    };
-                    reported.insert(pid, true);
-                    if !info.frame_mbs_only {
-                        report.push(Finding::new(
-                            Severity::Info,
-                            Location::at_pid(packet_index, pid),
-                            "avc-interlaced-content",
-                            format!(
-                                "AVC SPS on PID 0x{pid:04X} has frame_mbs_only_flag=0 \
-                                 (interlaced coding tools enabled) — ITU-T H.264 §7.3.2.1.1"
-                            ),
-                        ));
-                    }
-                    break;
-                }
-            },
-        );
+/// Check one access unit for the first decodable AVC SPS on `pid`.
+fn scan_payload(
+    reported: &mut BTreeMap<Pid, bool>,
+    payload: &[u8],
+    packet_index: usize,
+    pid: Pid,
+    report: &mut Report,
+) {
+    let Some(done) = reported.get(&pid).copied() else {
+        return;
+    };
+    if done {
+        return;
+    }
+    for nal in iter_annexb_nals(payload) {
+        if nal.is_empty() || nal[0] & H264_NAL_TYPE_MASK != H264_NAL_SPS {
+            continue;
+        }
+        let Ok(info) = decode_avc_sps(nal) else {
+            continue;
+        };
+        reported.insert(pid, true);
+        if !info.frame_mbs_only {
+            report.push(Finding::new(
+                Severity::Info,
+                Location::at_pid(packet_index, pid),
+                "avc-interlaced-content",
+                format!(
+                    "AVC SPS on PID 0x{pid:04X} has frame_mbs_only_flag=0 \
+                     (interlaced coding tools enabled) — ITU-T H.264 §7.3.2.1.1"
+                ),
+            ));
+        }
+        break;
     }
 }
 

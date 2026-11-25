@@ -1310,7 +1310,9 @@ dependencies = [
  "dvb-t2mi",
  "mpeg-ts",
  "serde_json",
+ "test-alloc",
  "test-fixtures",
+ "test-harness",
 ]
 
 [[package]]
@@ -4463,7 +4465,9 @@ dependencies = [
  "mpeg-pes",
  "mpeg-ts",
  "scte35-splice",
+ "test-alloc",
  "test-fixtures",
+ "test-harness",
  "thiserror 2.0.21",
 ]
 

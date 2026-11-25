@@ -14,6 +14,29 @@
 
 use container_probe::Probe;
 
+/// Largest prefix this example reads: enough for every probe tier, and far
+/// below a full capture.
+const PROBE_READ_LEN: usize = 4 << 20;
+
+/// Read at most `PROBE_READ_LEN` bytes of the file.
+fn read_prefix(path: &str) -> Result<Vec<u8>, std::io::Error> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut prefix = vec![0u8; PROBE_READ_LEN];
+    let mut filled = 0usize;
+    while filled < prefix.len() {
+        match file.read(&mut prefix[filled..]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    prefix.truncate(filled);
+    Ok(prefix)
+}
+
 fn main() {
     let path = std::env::args().nth(1).unwrap_or_else(|| {
         // Absolute, via CARGO_MANIFEST_DIR: a bare relative path only resolves
@@ -23,7 +46,14 @@ fn main() {
             .to_string_lossy()
             .into_owned()
     });
-    let data = match std::fs::read(&path) {
+    let total = match std::fs::metadata(&path) {
+        Ok(metadata) => metadata.len(),
+        Err(e) => {
+            eprintln!("failed to read {path}: {e}");
+            std::process::exit(2);
+        }
+    };
+    let data = match read_prefix(&path) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("failed to read {path}: {e}");
@@ -31,14 +61,14 @@ fn main() {
         }
     };
 
-    println!("streaming probe of {path} ({} bytes total)", data.len());
+    println!("streaming probe of {path} ({total} bytes total)");
     println!("feeding a growing prefix, starting at 64 bytes and doubling:");
     println!("  budget     verdict");
 
     let mut budget = 64usize;
     loop {
         let p = container_probe::probe_with_budget(&data, budget);
-        let full = budget >= data.len();
+        let full = budget >= data.len() || u64::try_from(budget).unwrap_or(u64::MAX) >= total;
         match &p {
             Probe::Identified {
                 format, confidence, ..

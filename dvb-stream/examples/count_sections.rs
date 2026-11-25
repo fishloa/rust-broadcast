@@ -3,8 +3,9 @@
 //!
 //! Run with: `cargo run -p dvb-stream --example count_sections`
 //!
-//! Reads the committed `m6-single.ts` fixture (from the sibling `dvb-si` crate)
-//! into memory and feeds it through the stream via a `Cursor`.
+//! Opens the committed `m6-single.ts` fixture (from the sibling `dvb-si` crate)
+//! as an async file and streams its packets in bounded chunks, so the capture
+//! is never held whole.
 
 use dvb_stream::SectionStream;
 use futures_util::StreamExt;
@@ -12,15 +13,15 @@ use futures_util::StreamExt;
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
     let path = test_fixtures::path("ts/m6-single.ts");
-    let data = match std::fs::read(path) {
-        Ok(b) => b,
+    let file = match tokio::fs::File::open(&path).await {
+        Ok(f) => f,
         Err(e) => {
             eprintln!("fixture not available ({e}); nothing to do");
             return;
         }
     };
 
-    let reader = tokio::io::BufReader::new(std::io::Cursor::new(data));
+    let reader = tokio::io::BufReader::new(file);
     let mut stream = SectionStream::new(reader);
 
     let mut sections = 0u32;
