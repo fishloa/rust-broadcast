@@ -1,6 +1,6 @@
-//! Elementary track identity + crypto — [`Track`], [`TrackSpec`], [`TrackEncryption`].
+//! Elementary track identity + crypto — [`Track`], [`TrackSpec`], [`TrackProtection`].
 //!
-//! Moved out of `media.rs` ([`Track`], [`TrackEncryption`]) and `pipeline.rs`
+//! Moved out of `media.rs` ([`Track`]) and `pipeline.rs`
 //! ([`TrackSpec`]) (media plane step 2a, no-op): same types, same fields,
 //! same impls.
 
@@ -55,6 +55,10 @@ pub struct TrackSpec {
     /// (SMPTE ST 2094-40) T.35 prefix SEI, so the track holds dynamic
     /// metadata on top of any [`hdr`](Self::hdr) static metadata.
     pub hdr10plus: bool,
+    /// CENC/CBCS crypto metadata for this track, or `None` for cleartext
+    /// (ISO/IEC 23001-7 §12.2). Per-sample IVs and subsample maps live on
+    /// [`Sample::protection`](super::Sample::protection) instead.
+    pub protection: Option<TrackProtection>,
 }
 
 impl core::fmt::Debug for TrackSpec {
@@ -75,6 +79,9 @@ impl core::fmt::Debug for TrackSpec {
         }
         if self.hdr10plus {
             d.field("hdr10plus", &self.hdr10plus);
+        }
+        if let Some(protection) = &self.protection {
+            d.field("protection", protection);
         }
         d.finish()
     }
@@ -104,6 +111,7 @@ impl TrackSpec {
             hdr,
             dovi: None,
             hdr10plus: false,
+            protection: None,
         }
     }
 
@@ -137,6 +145,12 @@ impl TrackSpec {
         self.program_number = Some(program_number);
         self
     }
+
+    /// Attach the track's CENC/CBCS crypto metadata, returning `self`.
+    pub fn with_protection(mut self, protection: TrackProtection) -> Self {
+        self.protection = Some(protection);
+        self
+    }
 }
 
 /// One elementary track: its identity/codec config plus its coded samples.
@@ -147,7 +161,7 @@ impl TrackSpec {
 /// `#[non_exhaustive]`: matches [`TrackSpec`], [`Sample`] and
 /// [`Media`](super::Media), and
 /// leaves room for per-track state the pipeline has already wanted twice
-/// (`start_decode_time`, `encryption`). Construct with [`Track::new`] or
+/// (`start_decode_time`); construct with [`Track::new`] or
 /// [`Track::new_at`]; destructuring or matching from another crate needs a
 /// trailing `..`.
 #[derive(Debug, Clone)]
@@ -178,13 +192,6 @@ pub struct Track {
     /// [`crate::rebase`] (rebase-to-zero, offset), which shift every sample's
     /// `dts`/`pts` in lockstep.
     pub start_decode_time: u64,
-    /// CENC/CBCS crypto metadata for this track's samples, or `None` for
-    /// cleartext. Populated by [`CencEncryptor`](crate::cenc_encrypt::CencEncryptor)'s
-    /// [`Encrypt`](broadcast_common::Encrypt) impl (issue #564) or by a
-    /// demuxer of an already-protected source (e.g.
-    /// [`crate::cenc_decrypt::CencDecryptor::demux`]); read by the muxer's
-    /// crypto-box emission (`sinf`/`senc`/`saio`/`saiz`).
-    pub encryption: Option<TrackEncryption>,
 }
 
 impl Track {
@@ -194,7 +201,6 @@ impl Track {
             spec,
             samples,
             start_decode_time: 0,
-            encryption: None,
         }
     }
 
@@ -205,7 +211,6 @@ impl Track {
             spec,
             samples,
             start_decode_time,
-            encryption: None,
         }
     }
 
@@ -232,49 +237,44 @@ impl Track {
     }
 }
 
-/// Per-track CENC/CBCS crypto carrier attached to [`Track::encryption`].
+/// Per-track CENC/CBCS crypto defaults carried on [`TrackSpec::protection`]
+/// (ISO/IEC 23001-7 §12.2).
 ///
-/// The IR-side dual of the metadata [`crate::cenc_decrypt::CencDecryptor`]
-/// harvests from an already-protected file's `sinf`/`tenc`/`senc` boxes: this
-/// is exactly the shape [`CencEncryptor`](crate::cenc_encrypt::CencEncryptor)
-/// produces (issue #564), and it is what the muxer's crypto-box emission
-/// (`sinf`/`senc`/`saio`/`saiz`) reads back to (re)build the boxes without
-/// needing to know how the samples were protected.
+/// The per-sample IVs and subsample maps are on
+/// [`Sample::protection`](super::Sample::protection), so this is everything a
+/// track states once: the protection scheme, the `tenc` box (KID, per-sample
+/// IV size, and, for `cbcs`, the pattern's `crypt`:`skip` block counts and any
+/// constant IV), and the constant-IV `senc` emission policy.
 ///
-/// `#[non_exhaustive]`: construct with [`TrackEncryption::new`] — the
+/// `#[non_exhaustive]`: construct with [`TrackProtection::new`] — the
 /// ISO/IEC 23001-7 metadata set is still growing here (e.g. multi-`pssh`
 /// carriage), and each addition should be additive.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub struct TrackEncryption {
+pub struct TrackProtection {
     /// The protection scheme (`cenc` AES-CTR or `cbcs` AES-CBC pattern).
     pub scheme: isobmff::cenc::CencScheme,
     /// Track-level crypto defaults — KID, per-sample IV size, and (for
     /// `cbcs`) the pattern's `crypt`:`skip` block counts — ISO/IEC 23001-7
     /// §12.2.
     pub tenc: isobmff::cenc::TrackEncryptionBox,
-    /// Per-sample IV + subsample map, in decode order — ISO/IEC 23001-7 §12.3.
-    /// `samples.len()` must equal the owning [`Track`]'s `samples.len()`.
-    pub samples: Vec<isobmff::cenc::SampleEncryptionEntry>,
     /// Whether a `cbcs` + [`crate::IvGen::Constant`](crate::cenc_encrypt::IvGen::Constant)
     /// track should emit a `senc` box with the constant IV replicated per
     /// sample. See [`ConstantIvSenc`].
     pub constant_iv_senc: ConstantIvSenc,
 }
 
-impl TrackEncryption {
-    /// Build a track's crypto carrier from its scheme, `tenc` defaults, and
-    /// per-sample IV/subsample entries in decode order.
+impl TrackProtection {
+    /// Build a track's crypto defaults from its scheme, `tenc` box and
+    /// constant-IV `senc` policy.
     pub fn new(
         scheme: isobmff::cenc::CencScheme,
         tenc: isobmff::cenc::TrackEncryptionBox,
-        samples: Vec<isobmff::cenc::SampleEncryptionEntry>,
         constant_iv_senc: ConstantIvSenc,
     ) -> Self {
         Self {
             scheme,
             tenc,
-            samples,
             constant_iv_senc,
         }
     }

@@ -2,7 +2,7 @@
 //!
 //! This module is the transmux side of the `broadcast-common` container-mux
 //! vocabulary ([`broadcast_common::Unpackage`] / [`broadcast_common::Package`]).
-//! The [`Media`] IR itself ([`Media`]/[`Track`]/[`TrackEncryption`]/[`PcrSample`],
+//! The [`Media`] IR itself ([`Media`]/[`Track`]/[`TrackProtection`]/[`PcrSample`],
 //! re-exported here from [`crate::ir`]) is elementary [`Track`]s of coded
 //! [`Sample`]s; this module holds the packagers/depackagers that convert
 //! between that IR and concrete container forms:
@@ -23,7 +23,7 @@
 //! [`Encrypt`](broadcast_common::Encrypt) by
 //! [`CencEncryptor`](crate::cenc_encrypt::CencEncryptor) — both behind the
 //! `cenc` feature (issues #465/#564). Either direction records its per-track
-//! crypto metadata onto [`Track::encryption`].
+//! crypto metadata onto [`TrackSpec::protection`](crate::ir::TrackSpec::protection) and per-sample [`SampleProtection`](crate::ir::SampleProtection).
 
 use alloc::format;
 use alloc::string::String;
@@ -59,10 +59,10 @@ use isobmff::opus::OpusSpecificBox;
 use isobmff::reader::TrackInfo;
 use isobmff::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 
-/// [`Media`], [`Track`], [`TrackEncryption`], [`PcrSample`] moved to
+/// [`Media`], [`Track`], [`TrackProtection`], [`PcrSample`] moved to
 /// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
 /// `crate::media::`/`transmux::media::` path keeps resolving unchanged.
-pub use crate::ir::{Media, PcrSample, SkippedTrack, Track, TrackEncryption};
+pub use crate::ir::{Media, PcrSample, SkippedTrack, Track, TrackProtection};
 
 /// `#EXT-X-VERSION` for the fMP4 playlists [`HlsPackager`] writes (RFC 8216 §7).
 const DEFAULT_HLS_VERSION: u8 = 7;
@@ -1415,6 +1415,7 @@ mod tests {
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,
+            protection: None,
         };
         let init = build_init_segment(std::slice::from_ref(&spec), TIMESCALE).expect("init");
         // The init segment really declares the 2-byte size.
@@ -1510,6 +1511,7 @@ mod tests {
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,
+            protection: None,
         };
         let init = build_init_segment(std::slice::from_ref(&spec), TIMESCALE).expect("init");
         let hdr = init
