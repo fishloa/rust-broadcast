@@ -430,16 +430,26 @@ pub(crate) struct TimelineOrigin {
 impl TimelineOrigin {
     /// The origin of `tracks`; `0` when no sample carries a `dts`.
     pub(crate) fn of<'t>(tracks: impl IntoIterator<Item = &'t Track>) -> Self {
+        Self::from_first_decode_times(tracks.into_iter().map(|t| {
+            (
+                t.samples
+                    .iter()
+                    .find_map(|s| s.timing.and_then(|t| t.dts())),
+                t.spec.timescale,
+            )
+        }))
+    }
+
+    /// The origin from each track's first decodable sample time, in that
+    /// track's timescale; `0` when no track carries one.
+    pub(crate) fn from_first_decode_times(
+        tracks: impl IntoIterator<Item = (Option<i64>, Timescale)>,
+    ) -> Self {
         let mut best: Option<(i64, Timescale)> = None;
-        for t in tracks {
-            let Some(d) = t
-                .samples
-                .iter()
-                .find_map(|s| s.timing.and_then(|t| t.dts()))
-            else {
+        for (d, ts) in tracks {
+            let Some(d) = d else {
                 continue;
             };
-            let ts = t.spec.timescale;
             let earlier = match best {
                 None => true,
                 Some((bd, bts)) => cmp_ticks(d, ts, bd, bts).is_lt(),
@@ -473,18 +483,38 @@ impl TimelineOrigin {
 /// shared timeline cannot express it; the old saturating subtraction placed
 /// it at the wrong end of the timeline instead).
 pub(crate) fn relative_decode_times(track: &Track, origin: &TimelineOrigin) -> Result<Vec<i64>> {
-    let base = origin.in_timescale(track.spec.timescale);
-    let mut out = Vec::with_capacity(track.samples.len());
+    relative_times(
+        track.spec.timescale,
+        origin,
+        track.samples.iter().map(|s| {
+            (
+                s.timing.and_then(|t| t.dts()),
+                s.timing.and_then(|t| t.duration()).unwrap_or(0),
+            )
+        }),
+    )
+}
+
+/// [`relative_decode_times`] over descriptors rather than samples: each entry
+/// is a sample's absolute `dts` (when it has one) and its own duration.
+pub(crate) fn relative_times(
+    timescale: Timescale,
+    origin: &TimelineOrigin,
+    samples: impl IntoIterator<Item = (Option<i64>, u32)>,
+) -> Result<Vec<i64>> {
+    let base = origin.in_timescale(timescale);
+    let samples = samples.into_iter();
+    let mut out = Vec::with_capacity(samples.size_hint().0);
     let mut next: i64 = 0;
-    for s in &track.samples {
-        let t = match s.timing.and_then(|t| t.dts()) {
+    for (dts, duration) in samples {
+        let t = match dts {
             Some(d) => d.checked_sub(base).ok_or(Error::InvalidInput(
                 "sample decode time is more than i64 ticks from the timeline origin",
             ))?,
             None => next,
         };
         out.push(t);
-        next = t.saturating_add(i64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)));
+        next = t.saturating_add(i64::from(duration));
     }
     Ok(out)
 }

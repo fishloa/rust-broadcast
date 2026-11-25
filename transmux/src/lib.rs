@@ -197,6 +197,7 @@ pub mod mux_stage;
 pub mod nal;
 pub mod nalu_ext;
 pub mod pipeline;
+pub mod plan_pass;
 pub mod progressive;
 pub mod ps_demux;
 pub mod rbsp;
@@ -313,6 +314,7 @@ pub use pipeline::{
     build_init_segment, build_media_segment, build_media_segment_with_events, nominal_frame_rate,
     nominal_frame_rate_millihertz, presentation_size,
 };
+pub use plan_pass::PlanPass;
 pub use progressive::ProgressiveMux;
 pub use ps_demux::PsDemux;
 pub use rebase::{GapStage, OffsetStage, RebaseOrigin, RebaseStage};
