@@ -7,7 +7,7 @@
 //! This example drives `{WebM} → IR → {DASH MPD + CMAF}`:
 //!
 //! 1. Read a real VP9 + Opus WebM fixture.
-//! 2. [`WebmDemux`] → [`Media`] (via [`Unpackage`](broadcast_common::Unpackage)).
+//! 2. [`MatroskaDemux`](transmux::MatroskaDemux) → [`Media`].
 //! 3. Feed that one IR to two packagers:
 //!    - [`DashPackager`] → an MPEG-DASH `.mpd` manifest (printed in full), and
 //!    - [`CmafMuxStage`](transmux::CmafMuxStage) → CMAF/fMP4 segment bytes (init + media sizes printed).
@@ -20,9 +20,8 @@
 
 use std::path::PathBuf;
 
-use broadcast_common::Unpackage;
 use transmux::pipeline::CodecConfig;
-use transmux::{DashPackager, Media, WebmDemux};
+use transmux::{DashPackager, Media};
 
 /// Locate a fixture under the workspace `fixtures/` directory (a sibling of the
 /// crate's `CARGO_MANIFEST_DIR`). Read at runtime via `std::fs` — never
@@ -94,7 +93,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("read {} bytes from {}\n", webm.len(), path.display());
 
     // 1 + 2. Unpackage the WebM into the neutral IR (demuxed exactly once).
-    let media: Media = WebmDemux::new().unpackage(&webm[..])?;
+    let media: Media = test_harness::collect::media_from_matroska(
+        &webm,
+        test_harness::collect::CollectMode::Seekable,
+    )?;
     println!("demuxed IR: {} track(s)", media.tracks.len());
     for track in &media.tracks {
         println!(

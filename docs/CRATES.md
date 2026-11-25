@@ -456,7 +456,7 @@ Parses and serializes the EBML element framing (Element IDs, Element Data Sizes 
 - **Cargo description:** EBML (RFC 8794) and Matroska/WebM (RFC 9559) element syntax, no_std.
 - **Version (in-tree):** 0.1.0 · **Status:** not on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** none
+- **Used by (workspace):** [`transmux`](#transmux)
 - **Links:** [README](../broadcast-matroska/README.md) · [CHANGELOG](../broadcast-matroska/CHANGELOG.md) · [docs + spec pointer](../broadcast-matroska/docs/)
 
 #### broadcast-smooth
@@ -521,7 +521,7 @@ Demuxes any supported container into one neutral IR (`Media` / `Track`) and muxe
 - **Standards:** ISO/IEC 14496-12:2026 / -15 / -30, ISO/IEC 23000-19 (CMAF), ISO/IEC 23009-1 (DASH), ISO/IEC 23001-7 (CENC), ISO/IEC 13818-1, RFC 8216, RFC 3550, MS-SSTR, GY/T 420-2025 (AVS2/AVS3/Audio Vivid in ISOBMFF); editions mostly unverified (several ISO texts are paid and not vendored)
 - **Cargo description:** Any-to-any media container muxing hub: demux TS, fMP4/CMAF, MPEG-PS, WebM, FLV, or RTMP into one neutral IR and mux to CMAF/fMP4, progressive MP4, TS, DASH, low-latency DASH, HLS, low-latency HLS, Smooth Streaming, or RTMP. CENC/CBCS encrypt+decrypt, SSAI splice, RTP/RTCP, and an fMP4/CMAF conformance validator; parses codec config headers only, samples stay opaque. no_std + alloc, except the XML manifest paths (DASH/Smooth/PlayReady), which need the std feature.
 - **Version (in-tree):** 0.33.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 3
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`isobmff`](#isobmff), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`broadcast-matroska`](#broadcast-matroska), [`broadcast-smooth`](#broadcast-smooth), [`cc-data`](#cc-data), [`container-probe`](#container-probe), [`dvb-si`](#dvb-si), [`isobmff`](#isobmff), [`mpeg-pes`](#mpeg-pes), [`mpeg-ps`](#mpeg-ps), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`dash-runtime`](#dash-runtime), [`dvr-runtime`](#dvr-runtime), [`hls-runtime`](#hls-runtime), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime), [`test-harness`](#test-harness)
 - **Links:** [README](../transmux/README.md) · [CHANGELOG](../transmux/CHANGELOG.md) · [crates.io](https://crates.io/crates/transmux) · [docs.rs](https://docs.rs/transmux)
 
@@ -1141,6 +1141,7 @@ flowchart BT
   timed_metadata --> scte35_splice
   transmux --> broadcast_dash
   transmux --> broadcast_hls
+  transmux --> broadcast_matroska
   transmux --> broadcast_smooth
   transmux --> cc_data
   transmux --> container_probe

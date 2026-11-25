@@ -14,12 +14,11 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
+use broadcast_common::{Demand, Stage, Timestamp};
 use container_probe::{Format, IsobmffLayout, Probe};
 use thiserror::Error;
 use transmux::{
     DemuxEvent, Media, Sample, StreamingFlvDemux, StreamingTsDemux, Track, TrackId, TrackSpec,
-    WebmDemux,
 };
 
 use crate::ingress::{IngestSession, ProgramId, SessionEvent};
@@ -104,10 +103,9 @@ pub enum FileReaderError {
         /// The file-type label the metadata reported.
         kind: &'static str,
     },
-    /// The file is a regular file but exceeds the configured size cap
-    /// (the configured `max_file_bytes`) — an operator-supplied path is
-    /// never read unbounded, so a multi-gigabyte (or `/dev/zero`-backed) file
-    /// fails here rather than after the read has exhausted the process.
+    /// A whole-file read exceeded the configured size cap. No container is
+    /// read whole any more, so nothing raises this today; the variant is kept
+    /// until Phase 6 removes the cap field and this error with it.
     #[error("file {path:?} is {size} bytes, over the {max} byte cap")]
     FileTooLarge {
         /// The path that exceeds the cap.
@@ -198,7 +196,8 @@ pub enum DemuxerKind {
     /// [`Mp4Demux`](transmux::mp4_demux::Mp4Demux), which decides the layout
     /// itself while reading.
     Mp4,
-    /// Matroska / WebM → [`WebmDemux`].
+    /// Matroska / WebM → [`MatroskaDemux`](transmux::matroska_demux::MatroskaDemux),
+    /// driven by the streaming file session.
     Webm,
     /// MPEG-1/2 Program Stream → [`StreamingPsDemux`](transmux::StreamingPsDemux).
     Ps,
@@ -579,12 +578,11 @@ pub fn demux_identified(
                 format: Format::Isobmff.name(),
             })
         }
-        DemuxerKind::Webm => {
-            let mut d = WebmDemux::new();
-            Ok(ParsedFile {
-                tracks: d.unpackage(bytes)?.tracks,
-            })
-        }
+        // A Matroska file streams through `MatroskaDemux` in
+        // `StreamingFileSession`; this whole-buffer path has no arm for it.
+        DemuxerKind::Webm => Err(FileReaderError::UnsupportedFormat {
+            format: Format::Matroska.name(),
+        }),
         // A Program Stream streams through `StreamingPsDemux` in
         // `StreamingFileSession`; this whole-buffer path has no arm for it.
         DemuxerKind::Ps => Err(FileReaderError::UnsupportedFormat {

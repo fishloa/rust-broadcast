@@ -4410,6 +4410,7 @@ dependencies = [
  "broadcast-common",
  "broadcast-dash",
  "broadcast-hls",
+ "broadcast-matroska",
  "broadcast-smooth",
  "bytes",
  "cbc",

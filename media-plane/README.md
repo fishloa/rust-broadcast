@@ -116,7 +116,7 @@ The full ingress to `Trunk` to cursor pipeline, driven by `IngestDriver` against
 - **`retention`:** `Retention::HotOnly` and `Tiered`, `RetentionDriver` draining a pinning segment cursor into a caller-supplied sans-IO `SegmentSink`, and `locate` for catch-up against an evicted segment.
 - **`ts_session` (feature `std`):** `TsIngestSession`, the shared MPEG-2 TS ingest session every TS-carrying source of a host feeds (program tracking, held-sample and silent-PID bounds).
 - **`file_source` (feature `std`):** the sans-IO file playout core: `select_demuxer`/`probe_and_demux`, `ParsedFile`, `PublishItem`, `FileIngestSession` (paced, looping replay with monotonic offsets).
-- **`file_stream` (feature `std`):** `StreamingFileSession`, the bounded-memory playout session for TS, FLV and MP4 (`FileInput`/`FileDemand`, per-track merge, wall-clock pacing, looping).
+- **`file_stream` (feature `std`):** `StreamingFileSession`, the bounded-memory playout session for TS, FLV, MP4, PS and Matroska (`FileInput`/`FileDemand`, per-track merge, wall-clock pacing, looping).
 - **`segmenter` (feature `std`):** `program::ProgramSegmenter` (cuts a `Trunk`'s samples into parts and segments for fMP4 or TS, `SegmenterConfig`, `SegmenterEvent`, `TsHlsIdrFallback`), `audio::AudioFollower` (split-mux audio renditions) and `subtitle::SubtitleFollower` (WebVTT renditions from DVB teletext, `teletext_pages`).
 - **`publish_queue` (feature `std`):** `PendingPublish`, `drain_publish_queue`, `part_entry`: the non-blocking queue a segmenter publishes to a `Trunk` through.
 

@@ -154,7 +154,7 @@ Each route names one ingest transport (`InputSpec`):
 | `dash_pull` | Pull a remote DASH MPD and its segments (every Period; static and dynamic MPDs), via `dash-runtime`'s client | optional `auth`; `allow_cross_origin` (default `false`) |
 | `smooth_pull` | Pull a remote Smooth Streaming manifest and its fragments | optional `auth` |
 | `rtmp` | **Push** ingest: binds a listen port and accepts RTMP publishers (FLV), via `rtmp-runtime` | `app`/`stream_key` filters; concurrent publishers |
-| `file` | A local media file on disk, identified from a bounded prefix with `container-probe` and demuxed by the matching `transmux` demuxer | `loop` (default `true`); paced to wall clock, including across the loop point. TS, FLV and MP4 stream from disk in bounded memory, whatever their size; PS and WebM are still read whole under the reader's size cap until the later container-streaming phases (#4057) |
+| `file` | A local media file on disk, identified from a bounded prefix with `container-probe` and demuxed by the matching `transmux` demuxer | `loop` (default `true`); paced to wall clock, including across the loop point. TS, FLV, MP4, PS and Matroska/WebM stream from disk in bounded memory, whatever their size (#4057) |
 | `dashif_ingest` | **Push** ingest: binds a `listen` address and accepts DASH-IF Live Media Ingest (Interface-1, CMAF) POST/PUT from an encoder/packager | optional `auth`, `publishing_point`, `max_object_bytes`, `body_timeout_secs` — see [DASH-IF ingest](#dash-if-live-media-ingest) |
 | `whip` | **Push** ingest: binds a `listen` address and accepts WHIP (RFC 9725) publishers; H.264 video only (feature `whip`, ICE + DTLS-SRTP via `webrtc-runtime`) | see [WHIP / WHEP](#whip--whep-session-resources) |
 

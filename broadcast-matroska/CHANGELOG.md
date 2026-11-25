@@ -6,6 +6,18 @@ All notable changes to this crate are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- In `Mode::Permissive` the reader types each `TrackEntry` on its own: a
+  corrupt entry is reported and skipped while the other tracks are still
+  announced (a strict reader still fails the whole `Tracks` master).
+- A malformed or out-of-range `Info.TimestampScale` is reported and the
+  default scale is kept instead of failing the file in permissive mode.
+- An element whose id is not a known Segment/Cluster child, or whose declared
+  size runs past its parent, is reported and recovered by scanning for the
+  next known element id; a resync that finds no boundary no longer emits a
+  second report for the same damage.
+
 ### Added
 
 - Initial crate: EBML (RFC 8794) element framing, the scalar payload codecs,

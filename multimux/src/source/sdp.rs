@@ -186,32 +186,31 @@ pub const MAX_SDP_FILE_BYTES: u64 = 64 * 1024;
 /// [`MultimuxError::Sdp`] when the file cannot be opened or read, is not a
 /// regular file, or holds more than [`MAX_SDP_FILE_BYTES`].
 pub async fn load_sdp(spec: &str) -> Result<Vec<u8>> {
-    use tokio::io::AsyncReadExt as _;
-
     let Some(path) = spec.strip_prefix('@') else {
         return Ok(spec.as_bytes().to_vec());
     };
-    let read_err = |e: std::io::Error| {
+    let read_err = |e: broadcast_common::bounded::BoundedReadError| {
         MultimuxError::Sdp(format!("failed to read SDP file {path:?}: {e}").into())
     };
-    let file = tokio::fs::File::open(path).await.map_err(read_err)?;
-    let metadata = file.metadata().await.map_err(read_err)?;
+    let file = tokio::fs::File::open(path)
+        .await
+        .map_err(|e| read_err(e.into()))?;
+    let metadata = file.metadata().await.map_err(|e| read_err(e.into()))?;
     if !metadata.is_file() {
         return Err(MultimuxError::Sdp(
             format!("SDP path {path:?} is not a regular file").into(),
         ));
     }
-    let mut bytes = Vec::new();
-    file.take(MAX_SDP_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .await
-        .map_err(read_err)?;
-    if bytes.len() as u64 > MAX_SDP_FILE_BYTES {
-        return Err(MultimuxError::Sdp(
-            format!("SDP file {path:?} is over the {MAX_SDP_FILE_BYTES}-byte limit").into(),
-        ));
-    }
-    Ok(bytes)
+    let file = file.into_std().await;
+    tokio::task::spawn_blocking(move || {
+        broadcast_common::bounded::read_bounded(
+            file,
+            broadcast_common::bounded::Limit::new("SDP file", MAX_SDP_FILE_BYTES),
+        )
+    })
+    .await
+    .map_err(|_| MultimuxError::Sdp("SDP read task failed".into()))?
+    .map_err(read_err)
 }
 
 #[cfg(test)]

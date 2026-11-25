@@ -1019,4 +1019,105 @@ mod tests {
         assert!(Block::parse(&[0xFF, 0x00]).is_err());
         assert!(Block::parse(&[0x00, 0x00, 0x00]).is_err());
     }
+    /// The Block header of these fixtures is four octets; `rest` is the lace
+    /// section (`frame_sizes` takes its length, not the whole Block's).
+    fn lace(rest: &[u8], kind: LacingKind) -> Result<LaceHeader> {
+        LaceHeader::parse(rest, kind, 256)
+    }
+
+    fn sizes(rest: &[u8], kind: LacingKind) -> Result<Vec<u64>> {
+        lace(rest, kind)?.frame_sizes(u64::try_from(rest.len()).unwrap())
+    }
+
+    /// webm_demux's `ebml_lacing_negative_running_size_is_rejected`.
+    #[test]
+    fn ebml_lacing_negative_running_size_is_rejected() {
+        let rest = [0x02u8, 0x82, 0xBC];
+        assert!(matches!(
+            lace(&rest, LacingKind::Ebml),
+            Err(Error::InvalidBlock {
+                what: "EBML lace size is negative"
+            })
+        ));
+    }
+
+    /// webm_demux's `ebml_lacing_zero_running_size_reaches_the_zero_length_rule`.
+    #[test]
+    fn ebml_lacing_zero_running_size_reaches_the_zero_length_rule() {
+        let rest = [0x02u8, 0x82, 0xBD, 0xAA, 0xBB, 0xCC];
+        assert!(matches!(
+            sizes(&rest, LacingKind::Ebml),
+            Err(Error::InvalidBlock {
+                what: "laced frame has zero length"
+            })
+        ));
+    }
+
+    /// webm_demux's `fixed_lacing_needs_a_whole_multiple`.
+    #[test]
+    fn fixed_lacing_needs_a_whole_multiple() {
+        let rest = [0x01u8, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE];
+        assert!(matches!(
+            sizes(&rest, LacingKind::Fixed),
+            Err(Error::InvalidBlock {
+                what: "fixed lace frames are not equal"
+            })
+        ));
+    }
+
+    /// webm_demux's `zero_length_laced_frames_are_rejected`.
+    #[test]
+    fn zero_length_laced_frames_are_rejected() {
+        let rest = [0xFFu8];
+        assert!(matches!(
+            sizes(&rest, LacingKind::Fixed),
+            Err(Error::InvalidBlock {
+                what: "laced frame has zero length"
+            })
+        ));
+    }
+
+    /// webm_demux's `xiph_laced_zero_length_frame_is_rejected`.
+    #[test]
+    fn xiph_laced_zero_length_frame_is_rejected() {
+        let rest = [0x01u8, 0x00, 0xAA];
+        assert!(matches!(
+            sizes(&rest, LacingKind::Xiph),
+            Err(Error::InvalidBlock {
+                what: "laced frame has zero length"
+            })
+        ));
+    }
+
+    /// webm_demux's `a_full_lace_count_is_accepted_and_the_cap_is_the_format_maximum`.
+    #[test]
+    fn a_full_lace_count_is_accepted_and_the_cap_is_the_format_maximum() {
+        assert_eq!(
+            crate::limits::DEFAULT_MAX_LACE_FRAMES,
+            u32::from(u8::MAX) + 1,
+            "the cap is the format's own maximum frame count"
+        );
+        let mut rest = alloc::vec![0xFFu8];
+        rest.extend(::core::iter::repeat_n(0xAAu8, 256));
+        let header = lace(&rest, LacingKind::Fixed).expect("256 fixed frames");
+        assert_eq!(header.frame_count(), 256);
+        let sizes = header
+            .frame_sizes(u64::try_from(rest.len()).unwrap())
+            .expect("each frame one byte");
+        assert_eq!(sizes.len(), 256);
+        assert!(sizes.iter().all(|size| *size == 1));
+    }
+
+    /// webm_demux's `ebml_laced_block_reads_a_width_8_first_lace_size`: the
+    /// width-8 size is decoded, so the block reaches the zero-length rule.
+    #[test]
+    fn ebml_laced_block_reads_a_width_8_first_lace_size() {
+        let rest = [0x01u8, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xAA];
+        assert!(matches!(
+            sizes(&rest, LacingKind::Ebml),
+            Err(Error::InvalidBlock {
+                what: "laced frame has zero length"
+            })
+        ));
+    }
 }

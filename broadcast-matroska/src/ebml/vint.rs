@@ -345,6 +345,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn vint_one_byte_reads_the_value_and_the_unknown_marker() {
+        // webm_demux's `vint_one_byte`: 0x81 -> width 1, value 1; 0xFF is the
+        // one-octet unknown size (all data bits set).
+        let (size, used) = VintSize::parse(&[0x81]).unwrap();
+        assert_eq!(used, 1);
+        assert_eq!(size.value(), Some(1));
+        assert_eq!(size.width().get(), 1);
+        let (size, used) = VintSize::parse(&[0xFF]).unwrap();
+        assert_eq!(used, 1);
+        assert!(size.is_unknown());
+        assert_eq!(size.width().get(), 1);
+    }
+
+    #[test]
+    fn vint_two_byte_reads_the_value() {
+        // webm_demux's `vint_two_byte`: 0x40 0x02 -> width 2, value 2.
+        let (size, used) = VintSize::parse(&[0x40, 0x02]).unwrap();
+        assert_eq!(used, 2);
+        assert_eq!(size.value(), Some(2));
+        assert_eq!(size.width().get(), 2);
+    }
+
+    #[test]
+    fn a_width_8_zero_length_field_is_a_known_zero() {
+        // webm_demux's `every_vint_reader_agrees_on_a_width_8_zero_length_field`:
+        // 0x01 starts an 8-octet VINT and the data bits are all zero, so this
+        // is the known value 0 at width 8, never "truncated" or "unknown".
+        let (size, used) =
+            VintSize::parse(&[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]).unwrap();
+        assert_eq!(used, 8);
+        assert_eq!(size.value(), Some(0));
+        assert_eq!(size.width().get(), 8);
+        assert!(!size.is_unknown());
+    }
+
+    #[test]
     fn element_id_reads_with_marker_bits_kept() {
         let (id, used) = ElementId::parse(&[0x18, 0x53, 0x80, 0x67]).unwrap();
         assert_eq!(used, 4);

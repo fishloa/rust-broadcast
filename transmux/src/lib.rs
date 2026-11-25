@@ -31,7 +31,7 @@
 //!   stage [`mp4_demux::Mp4Demux`] (seekable byte ranges or forward-only
 //!   input), MPEG
 //!   Program Stream ([`StreamingPsDemux`]),
-//!   WebM/Matroska ([`WebmDemux`] — Xiph/EBML/fixed-size laced blocks are
+//!   WebM/Matroska ([`MatroskaDemux`] — Xiph/EBML/fixed-size laced blocks are
 //!   unlaced into one sample per frame, see the module docs), FLV
 //!   ([`FlvDemux`] — non-AVC video and non-AAC audio tracks are silently
 //!   skipped, no event/error, see the module docs), RTMP ([`RtmpDemux`]).
@@ -225,6 +225,7 @@ pub mod stitch;
 pub(crate) mod test_bits;
 pub mod timeline;
 pub use rtp_packet::rtcp;
+pub mod matroska_demux;
 pub mod rtmp;
 pub mod rtp;
 pub mod rtp_align;
@@ -252,7 +253,6 @@ pub mod ts_mux;
 pub(crate) mod units;
 pub mod user_data;
 pub mod validate;
-pub mod webm_demux;
 
 pub use aac_asc::{
     AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacProfile,
@@ -393,6 +393,7 @@ pub use hdr10plus::{
     AdditionalWindow, BezierToneMapping, ColorVolumeTransform, DistributionPoint,
     Hdr10PlusMetadata, OverlapProcessOption, PeakLuminanceTable, WindowRegion,
 };
+pub use matroska_demux::{IR_TIMESCALE, MatroskaDemux, MatroskaDemuxConfig, MatroskaInput};
 #[cfg(feature = "std")]
 pub use smooth_codec::track_spec_from_quality_level;
 pub use splice::{SplicePlan, SplicePoint, SpliceStage, TrackSplice, snap_to_preceding_sync};
@@ -411,4 +412,3 @@ pub use ts_mux::{DEFAULT_PSI_INTERVAL, TsContinuity, TsMuxStage};
 pub use validate::{
     ConformanceIssue, Severity, validate_cmaf_track, validate_init_segment, validate_media_segment,
 };
-pub use webm_demux::{IR_TIMESCALE, WebmDemux};

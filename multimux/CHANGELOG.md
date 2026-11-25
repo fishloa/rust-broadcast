@@ -5,9 +5,11 @@
 ### Changed
 
 - A Program Stream file source streams through `media_plane`'s
-  `StreamContainer::MpegPs` / `transmux::StreamingPsDemux`; live memory is the
-  session's `FileStreamLimits`, never the file's length, so
-  `FileReaderConfig::max_file_bytes` now applies to WebM only.
+  `StreamContainer::MpegPs` / `transmux::StreamingPsDemux`, and a Matroska/WebM
+  source through `StreamContainer::Matroska` /
+  `transmux::MatroskaDemux`; live memory is the session's `FileStreamLimits`,
+  never the file's length, so `FileReaderConfig::max_file_bytes` applies to
+  nothing.
 - Push outputs mux one sample at a time through one per-connection muxer:
   `PushTransport::media_muxer()` hands out a `MediaMuxer` (announce the track
   set, feed one drained sample, flush at an idle boundary), and
@@ -32,7 +34,7 @@
   one sample with `transmux::packetise_video_sample`, without building a
   `Track`.
 
-- `FileReaderConfig::max_file_bytes` applies to PS and WebM file inputs only: TS, FLV and MP4 stream from disk and are no longer capped or refused for their size (#4057). MP4 playout reads the byte ranges `Mp4Demux::seekable` asks for (one bounded seek-and-read each), so an MP4 of any size plays, loops, and re-creates the stage per pass.
+- Every file input streams from disk and is no longer capped or refused for its size: `FileReaderConfig::max_file_bytes` applies to nothing (#4057; Matroska joins in Phase 5 slice 4). MP4 playout reads the byte ranges `Mp4Demux::seekable` asks for (one bounded seek-and-read each), so an MP4 of any size plays, loops, and re-creates the stage per pass.
 
 ### Fixed
 

@@ -50,7 +50,7 @@ use test_fixtures::ffprobe;
 
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
-use transmux::{FlvDemux, Media, RtmpDemux, RtmpMuxStage, RtpDepacketiser, TsDemux, WebmDemux};
+use transmux::{FlvDemux, Media, RtmpDemux, RtmpMuxStage, RtpDepacketiser, TsDemux};
 
 fn workspace_fixture(rel: &str) -> Vec<u8> {
     let path = test_fixtures::root().join(rel);
@@ -208,7 +208,11 @@ fn flv_demux_timing_invariant_holds() {
 #[test]
 fn webm_demux_timing_invariant_holds() {
     let webm = workspace_fixture("mkv/vp9-opus.webm");
-    let media = WebmDemux::new().unpackage(&webm[..]).expect("WebM demux");
+    let media = test_harness::collect::media_from_matroska(
+        &webm,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("WebM demux");
     let checked = assert_timing_invariant(&media, "WebmDemux");
     assert!(
         checked >= 2,

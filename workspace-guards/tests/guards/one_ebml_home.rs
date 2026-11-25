@@ -2,9 +2,9 @@
 //!
 //! Every EBML/Matroska Element ID, the VINT size encoding and the element walk
 //! are `broadcast-matroska`'s. A workspace member that spells a Matroska
-//! element ID itself is drift: the two copies `transmux` carries today
-//! (`webm_demux.rs` reading, `mkv_mux.rs` writing) disagree with each other and
-//! with RFC 9559, and they are the reason this crate exists.
+//! element ID itself is drift: the two hand-written copies `transmux` used to
+//! carry disagreed with each other and with RFC 9559, and they are the reason
+//! this crate exists.
 //!
 //! The scan looks for the distinctive four-octet IDs, spelled either as a
 //! `u32` hexadecimal literal (underscores optional) or as a `[u8; 4]` byte
@@ -17,8 +17,8 @@
 //!
 //! The one long-lived exception is `container-probe`: it must depend only on
 //! `broadcast-common` at runtime, so it keeps its magic and is pinned to this
-//! crate by dev-only drift tests. `transmux`'s entries are the hand-written
-//! WebM/Matroska code this crate replaces in Phase 5 slices 3–4.
+//! crate by dev-only drift tests. `transmux` reads and writes Matroska only
+//! through this crate, so it has no entry.
 
 use workspace_guards::src_files;
 

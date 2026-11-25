@@ -13,7 +13,7 @@
 //! bite: wrong VINT/block parsing yields wrong sizes.
 //!
 //! The demuxer emits an IR whose timescale is milliseconds
-//! ([`transmux::webm_demux::IR_TIMESCALE`] = 1000), so a sample's reconstructed
+//! ([`transmux::matroska_demux::IR_TIMESCALE`] = 1000), so a sample's reconstructed
 //! PTS (cumulative sample durations from the track's first block) is directly in
 //! the oracle's units. For **video** the reconstructed PTS equals the oracle PTS
 //! exactly. For **audio**, ffprobe shifts the presentation time back by the Opus
@@ -21,14 +21,20 @@
 //! `initial_padding`), so `recon_pts == oracle_pts + AUDIO_CODEC_DELAY_MS`; the
 //! test documents and applies that constant.
 
+use crate::webm_build::synth_mkv;
 use isobmff::box_types::parse_box;
 use test_fixtures::ffprobe;
+use test_harness::collect::{CollectMode, media_from_matroska};
 use transmux::Media;
 use transmux::TrackId;
 use transmux::error::Error;
 use transmux::ir::DataIdentity;
 use transmux::pipeline::CodecConfig;
-use transmux::webm_demux::WebmDemux;
+
+/// Drive the streaming Matroska demux over a whole in-memory file.
+fn demux_webm(bytes: &[u8]) -> Result<transmux::Media, transmux::Error> {
+    media_from_matroska(bytes, CollectMode::Seekable)
+}
 
 /// Path to the committed WebM fixture, relative to this crate's manifest dir.
 const FIXTURE: &str = "mkv/vp9-opus.webm";
@@ -41,8 +47,7 @@ const AUDIO_CODEC_DELAY_MS: i64 = 7;
 
 fn demux() -> Media {
     let bytes = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
-    let mut d = WebmDemux::new();
-    d.demux(&bytes).expect("demux webm")
+    demux_webm(&bytes).expect("demux webm")
 }
 
 /// Test 1 — stream enumeration: exactly 2 tracks, track 0 = VP9 video,
@@ -744,9 +749,7 @@ fn laced_blocks_are_unlaced_like_the_unlaced_fixture() {
     // carried over one per block, unlaced. Rebuilding it that way exercises the
     // identical layout, so a difference can only come from the lacing itself,
     // never from an extraction artefact of this test's own walker.
-    let mut reference_demux = WebmDemux::new();
-    let reference = reference_demux
-        .demux(&laced_mkv::build(&data, audio_track, 1, laced_mkv::XIPH))
+    let reference = demux_webm(&laced_mkv::build(&data, audio_track, 1, laced_mkv::XIPH))
         .expect("unlaced rebuild demuxes");
     let reference_audio = reference
         .tracks
@@ -761,9 +764,7 @@ fn laced_blocks_are_unlaced_like_the_unlaced_fixture() {
 
     for (mode, name) in [(laced_mkv::XIPH, "Xiph"), (laced_mkv::EBML, "EBML")] {
         let bytes = laced_mkv::build(&data, audio_track, 3, mode);
-        let mut d = WebmDemux::new();
-        let laced = d
-            .demux(&bytes)
+        let laced = demux_webm(&bytes)
             .unwrap_or_else(|e| panic!("{name}-laced WebM must demux, got {e:?}"));
 
         assert_eq!(
@@ -807,8 +808,7 @@ fn fixed_lacing_yields_one_sample_per_frame() {
     // equal length as fixed lacing requires.
     let seed = all.iter().find(|b| b.track == 2).expect("an audio block");
     let bytes = laced_mkv::fixed_three(&data, seed);
-    let mut d = WebmDemux::new();
-    let m = d.demux(&bytes).expect("fixed-laced WebM must demux");
+    let m = demux_webm(&bytes).expect("fixed-laced WebM must demux");
 
     // The rebuilt file carries only the audio track, so it is the sole track
     // and takes the first id.
@@ -852,8 +852,7 @@ fn laced_audio(
         .map(|(rel_ts, frames)| (2u64, *rel_ts, 0x80u8, frames.clone()))
         .collect();
     let bytes = laced_mkv::build_custom(data, &tracks, &cluster);
-    let mut demux = WebmDemux::new();
-    let media = demux.demux(&bytes).expect("laced file must demux");
+    let media = demux_webm(&bytes).expect("laced file must demux");
     assert!(
         !media.tracks.is_empty(),
         "the rebuilt file must carry the audio track (bytes {} long)",
@@ -1075,9 +1074,7 @@ fn timing_holds_for_every_lacing_mode() {
                 "{name}: the EBML block must carry a negative first delta, got {first_delta}"
             );
         }
-        let mut demux = WebmDemux::new();
-        let media = demux
-            .demux(&bytes)
+        let media = demux_webm(&bytes)
             .unwrap_or_else(|e| panic!("{name}-laced file must demux, got {e:?}"));
         let audio = media
             .tracks
@@ -1144,8 +1141,7 @@ fn default_duration_is_rounded_not_truncated() {
             (2, 69, 0x80, vec![frames[0].clone()]),
         ],
     );
-    let mut demux = WebmDemux::new();
-    let media = demux.demux(&bytes).expect("demux");
+    let media = demux_webm(&bytes).expect("demux");
     let audio = media
         .tracks
         .iter()
@@ -1178,7 +1174,7 @@ fn default_duration_is_rounded_not_truncated() {
 /// both give 23. The pathological values below are where they part.
 #[test]
 fn ns_to_ticks_rounds_rather_than_truncates() {
-    use transmux::webm_demux::ns_to_ir_ticks;
+    use transmux::matroska_demux::ns_to_ir_ticks;
 
     // 1 ms in ticks, exactly.
     assert_eq!(ns_to_ir_ticks(1_000_000), 1);
@@ -1260,9 +1256,7 @@ fn unsupported_codec_ids_are_carried_as_data_tracks_not_dispatched() {
         &tracks,
         &[(1, &[0xAA, 0xBB]), (2, &[0xCC, 0xDD]), (3, &[0xEE, 0xFF])],
     );
-    let media = WebmDemux::new()
-        .demux(&bytes)
-        .expect("an unmapped CodecID is carried, never fatal");
+    let media = demux_webm(&bytes).expect("an unmapped CodecID is carried, never fatal");
     assert_eq!(
         media.tracks.len(),
         3,
@@ -1328,7 +1322,7 @@ fn opus_channel_mapping_table_is_parsed() {
     assert_eq!(head.len(), 27, "19 fixed + 2 counts + 6 mapping bytes");
     let tracks = vec![crate::webm_build::track_entry(1, 2, b"A_OPUS", &head)];
     let bytes = crate::webm_build::file(&tracks, &[(1, &[0xAA])]);
-    let media = WebmDemux::new().demux(&bytes).expect("family-1 OpusHead");
+    let media = demux_webm(&bytes).expect("family-1 OpusHead");
 
     let CodecConfig::Opus { config, .. } = &media.tracks[0].spec.config else {
         panic!("expected Opus, got {:?}", media.tracks[0].spec.config);
@@ -1348,9 +1342,7 @@ fn opus_channel_mapping_table_short_by_one_byte_is_an_error() {
     let head = opus_head_with_mapping();
     let tracks = vec![crate::webm_build::track_entry(1, 2, b"A_OPUS", &head[..26])];
     let bytes = crate::webm_build::file(&tracks, &[(1, &[0xAA])]);
-    let err = WebmDemux::new()
-        .demux(&bytes)
-        .expect_err("a head short of its mapping table must not parse");
+    let err = demux_webm(&bytes).expect_err("a head short of its mapping table must not parse");
     match err {
         Error::BufferTooShort(b) => {
             assert_eq!(b.need, 27, "19 fixed + 2 counts + 6 channels");
@@ -1368,159 +1360,6 @@ fn opus_channel_mapping_table_short_by_one_byte_is_an_error() {
 // these are built byte-by-byte from the RFC 8794 framing (element ID + size
 // VINT + body) around real codec config bytes.
 // ---------------------------------------------------------------------------
-pub mod synth_mkv {
-    pub const EBML_HEADER: u32 = 0x1A45_DFA3;
-    pub const SEGMENT: u32 = 0x1853_8067;
-    pub const TRACKS: u32 = 0x1654_AE6B;
-    pub const TRACK_ENTRY: u32 = 0xAE;
-    pub const TRACK_NUMBER: u32 = 0xD7;
-    pub const TRACK_TYPE: u32 = 0x83;
-    pub const CODEC_ID: u32 = 0x86;
-    pub const CODEC_PRIVATE: u32 = 0x63A2;
-    pub const VIDEO: u32 = 0xE0;
-    pub const AUDIO: u32 = 0xE1;
-    pub const PIXEL_WIDTH: u32 = 0xB0;
-    pub const PIXEL_HEIGHT: u32 = 0xBA;
-    pub const CHANNELS: u32 = 0x9F;
-    pub const SAMPLING_FREQUENCY: u32 = 0xB5;
-    pub const DEFAULT_DURATION: u32 = 0x23E383;
-    pub const CLUSTER: u32 = 0x1F43B675;
-    pub const CLUSTER_TIMESTAMP: u32 = 0xE7;
-    pub const SIMPLE_BLOCK: u32 = 0xA3;
-    pub const BLOCK_GROUP: u32 = 0xA0;
-    pub const BLOCK: u32 = 0xA1;
-    pub const REFERENCE_BLOCK: u32 = 0xFB;
-    pub const BLOCK_DURATION: u32 = 0x9B;
-    pub const LACING_FIXED: u8 = 0x04;
-    pub const KEYFRAME: u8 = 0x80;
-
-    pub fn encode_size(mut value: usize) -> Vec<u8> {
-        let mut len = 1usize;
-        while value >= (1usize << (7 * len)) - 1 {
-            len += 1;
-        }
-        let mut out = vec![0u8; len];
-        for k in (0..len).rev() {
-            out[k] = (value & 0xFF) as u8;
-            value >>= 8;
-        }
-        out[0] |= 1u8 << (8 - len);
-        out
-    }
-
-    pub fn element(id: u32, body: &[u8]) -> Vec<u8> {
-        let bytes = id.to_be_bytes();
-        let first = bytes.iter().position(|&b| b != 0).unwrap_or(3);
-        let mut out = bytes[first..].to_vec();
-        out.extend(encode_size(body.len()));
-        out.extend_from_slice(body);
-        out
-    }
-
-    pub fn uint(id: u32, value: u64) -> Vec<u8> {
-        let be = value.to_be_bytes();
-        let first = be.iter().position(|&b| b != 0).unwrap_or(7);
-        element(id, &be[first..])
-    }
-
-    pub fn float(id: u32, value: f32) -> Vec<u8> {
-        element(id, &value.to_bits().to_be_bytes())
-    }
-
-    pub fn block_payload(track: u64, rel_ts: i16, flags: u8, body: &[u8]) -> Vec<u8> {
-        let mut out = encode_size(track as usize);
-        out.extend_from_slice(&rel_ts.to_be_bytes());
-        out.push(flags);
-        out.extend_from_slice(body);
-        out
-    }
-
-    pub fn simple_block(track: u64, rel_ts: i16, flags: u8, body: &[u8]) -> Vec<u8> {
-        element(SIMPLE_BLOCK, &block_payload(track, rel_ts, flags, body))
-    }
-
-    pub fn block(track: u64, rel_ts: i16, flags: u8, body: &[u8]) -> Vec<u8> {
-        element(BLOCK, &block_payload(track, rel_ts, flags, body))
-    }
-
-    pub fn track_entry(
-        number: u64,
-        track_type: u64,
-        codec_id: &[u8],
-        codec_private: &[u8],
-        extra: &[u8],
-    ) -> Vec<u8> {
-        let mut body = uint(TRACK_NUMBER, number);
-        body.extend(uint(TRACK_TYPE, track_type));
-        body.extend(element(CODEC_ID, codec_id));
-        if !codec_private.is_empty() {
-            body.extend(element(CODEC_PRIVATE, codec_private));
-        }
-        body.extend_from_slice(extra);
-        element(TRACK_ENTRY, &body)
-    }
-
-    pub fn tracks(entries: &[Vec<u8>]) -> Vec<u8> {
-        let mut body = Vec::new();
-        for e in entries {
-            body.extend_from_slice(e);
-        }
-        element(TRACKS, &body)
-    }
-
-    /// EBML header + one Segment holding `tracks` and `cluster` (already a
-    /// complete Cluster element, see [`cluster`]).
-    pub fn file(tracks_elem: &[u8], cluster: &[u8]) -> Vec<u8> {
-        let mut segment = tracks_elem.to_vec();
-        segment.extend_from_slice(cluster);
-        let mut out = element(EBML_HEADER, &[]);
-        out.extend(element(SEGMENT, &segment));
-        out
-    }
-
-    pub fn vp8_video_track() -> Vec<u8> {
-        let mut video = uint(PIXEL_WIDTH, 320);
-        video.extend(uint(PIXEL_HEIGHT, 240));
-        tracks(&[track_entry(1, 1, b"V_VP8", &[], &element(VIDEO, &video))])
-    }
-
-    pub fn opus_head() -> Vec<u8> {
-        let mut cp = Vec::from(*b"OpusHead");
-        cp.push(1);
-        cp.push(2);
-        cp.extend_from_slice(&[0, 0]);
-        cp.extend_from_slice(&48_000u32.to_le_bytes());
-        cp.extend_from_slice(&[0, 0]);
-        cp.push(0);
-        assert_eq!(cp.len(), 19);
-        cp
-    }
-
-    pub fn opus_audio_track() -> Vec<u8> {
-        tracks(&[track_entry(1, 2, b"A_OPUS", &opus_head(), &[])])
-    }
-
-    pub fn vorbis_audio_track(id_header_len: usize) -> Vec<u8> {
-        let mut id = vec![0x01u8];
-        id.extend_from_slice(b"vorbis");
-        id.extend_from_slice(&[0, 0, 0, 0]);
-        id.push(2);
-        id.extend_from_slice(&44_100u32.to_le_bytes());
-        assert_eq!(id.len(), 16);
-        let id = &id[..id_header_len];
-        let mut cp = vec![2u8, id_header_len as u8, 0];
-        cp.extend_from_slice(id);
-        tracks(&[track_entry(1, 2, b"A_VORBIS", &cp, &[])])
-    }
-
-    pub fn cluster(timestamp: u64, children: &[Vec<u8>]) -> Vec<u8> {
-        let mut body = uint(CLUSTER_TIMESTAMP, timestamp);
-        for c in children {
-            body.extend_from_slice(c);
-        }
-        element(CLUSTER, &body)
-    }
-}
 
 #[test]
 fn vp8_keyframe_header_needs_all_ten_bytes() {
@@ -1532,9 +1371,8 @@ fn vp8_keyframe_header_needs_all_ten_bytes() {
             &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &frame9)],
         ),
     );
-    let mut demux = WebmDemux::new();
     assert!(
-        demux.demux(&short).is_err(),
+        demux_webm(&short).is_err(),
         "a 9-byte VP8 key-frame header must be rejected, not indexed past its end"
     );
 
@@ -1547,10 +1385,7 @@ fn vp8_keyframe_header_needs_all_ten_bytes() {
             &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &frame10)],
         ),
     );
-    let mut demux = WebmDemux::new();
-    let media = demux
-        .demux(&full)
-        .expect("a 10-byte header carries width/height");
+    let media = demux_webm(&full).expect("a 10-byte header carries width/height");
     let CodecConfig::Vp8 { width, height } = &media.tracks[0].spec.config else {
         panic!("track is not VP8: {:?}", media.tracks[0].spec.config);
     };
@@ -1567,7 +1402,7 @@ fn vorbis_identification_header_needs_all_sixteen_bytes() {
                 &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &[0xAA])],
             ),
         );
-        WebmDemux::new().demux(&file)
+        demux_webm(&file)
     }
 
     assert!(
@@ -1602,9 +1437,7 @@ fn an_unlaced_block_is_one_frame_whatever_its_first_payload_byte() {
         "the file must be shorter than the 256 frames 0xFF would declare ({} bytes)",
         file.len()
     );
-    let media = WebmDemux::new()
-        .demux(&file)
-        .expect("an unlaced block's payload is not a lace count");
+    let media = demux_webm(&file).expect("an unlaced block's payload is not a lace count");
     assert_eq!(media.tracks.len(), 1);
     assert_eq!(media.tracks[0].samples.len(), 1);
     assert_eq!(media.tracks[0].samples[0].data, vec![0xFF]);
@@ -1625,7 +1458,7 @@ fn fixed_lacing_with_a_count_byte_of_two_yields_three_samples() {
             )],
         ),
     );
-    let media = WebmDemux::new().demux(&file).expect("fixed-laced block");
+    let media = demux_webm(&file).expect("fixed-laced block");
     assert_eq!(media.tracks[0].samples.len(), 3);
     assert_eq!(media.tracks[0].samples[0].data, vec![0xAA, 0xAA]);
     assert_eq!(media.tracks[0].samples[1].data, vec![0xBB, 0xBB]);
@@ -1646,9 +1479,7 @@ fn a_block_shorter_than_its_header_is_a_degraded_unit() {
             )],
         ),
     );
-    let media = WebmDemux::new()
-        .demux(&short)
-        .expect("a short block must degrade, not fail or panic");
+    let media = demux_webm(&short).expect("a short block must degrade, not fail or panic");
     assert_eq!(media.degraded.len(), 1);
     assert!(matches!(
         media.degraded[0],
@@ -1665,9 +1496,7 @@ fn a_block_shorter_than_its_header_is_a_degraded_unit() {
             )],
         ),
     );
-    let media = WebmDemux::new()
-        .demux(&full)
-        .expect("a complete block parses");
+    let media = demux_webm(&full).expect("a complete block parses");
     assert_eq!(media.tracks[0].samples.len(), 1);
     assert_eq!(media.tracks[0].samples[0].data, vec![0xAA]);
 }
@@ -1692,7 +1521,7 @@ fn block_group_reference_block_marks_non_sync_and_damage_degrades() {
         &synth_mkv::opus_audio_track(),
         &synth_mkv::cluster(0, &[with_reference, without_reference]),
     );
-    let media = WebmDemux::new().demux(&file).expect("two BlockGroups");
+    let media = demux_webm(&file).expect("two BlockGroups");
     assert_eq!(media.tracks[0].samples.len(), 2);
     assert!(
         !media.tracks[0].samples[0].flags.is_sync,
@@ -1722,7 +1551,7 @@ fn block_group_reference_block_marks_non_sync_and_damage_degrades() {
         .windows(4)
         .position(|w| w == [0xA0, 0x82, 0xA1, 0x85])
         .expect("truncated BlockGroup element in the file");
-    let media = WebmDemux::new().demux(&file).expect("damaged BlockGroups");
+    let media = demux_webm(&file).expect("damaged BlockGroups");
     assert_eq!(media.degraded.len(), 1, "{:?}", media.degraded);
     match media.degraded[0] {
         InputDegradation::MalformedUnit { position } => assert_eq!(
@@ -1766,7 +1595,7 @@ fn default_duration_times_a_laced_block() {
             )],
         ),
     );
-    let media = WebmDemux::new().demux(&file).expect("laced Opus track");
+    let media = demux_webm(&file).expect("laced Opus track");
     let samples = &media.tracks[0].samples;
     assert_eq!(samples.len(), 3);
     let dts: Vec<i64> = samples

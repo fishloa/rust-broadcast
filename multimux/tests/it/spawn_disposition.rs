@@ -26,16 +26,16 @@ const DISPOSITION: &[(&str, &str, u32, &str)] = &[
         "the process-wide metrics upkeep task; ends with the Tokio runtime that installed the recorder",
     ),
     (
+        "source/sdp.rs",
+        "load_sdp",
+        1,
+        "spawn_blocking bounded SDP file read; awaited inline (owned by the caller)",
+    ),
+    (
         "source/file_reader.rs",
         "spawn",
         1,
         "FileReader::spawn -> SpawnedReader (owns a CancellationToken; Drop cancels)",
-    ),
-    (
-        "source/file_reader.rs",
-        "read_capped_whole",
-        1,
-        "spawn_blocking for the whole-file probe/demux of a capped container; awaited inline (owned by the caller)",
     ),
     (
         "route.rs",
