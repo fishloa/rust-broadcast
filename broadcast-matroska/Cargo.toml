@@ -34,3 +34,11 @@ serde = ["dep:serde", "broadcast-common/serde"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "dump_elements"
+required-features = ["std"]
+
+[[example]]
+name = "list_tracks"
+required-features = ["std"]
