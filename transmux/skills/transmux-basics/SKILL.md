@@ -16,8 +16,8 @@ boxes and derive metadata. It never encodes or decodes media.
 **It does:** demux TS / fMP4 / progressive MP4 / MPEG-PS / WebM / FLV / RTMP
 into the IR; mux the IR to CMAF, progressive MP4, TS, MKV, HLS (CMAF, TS,
 low-latency), DASH (static, live, low-latency), Smooth, FLV, RTMP; streaming
-segmenters; IR timeline transforms (rebase, offset, gap, splice/concat);
-CENC/CBCS decrypt and encrypt; an fMP4/CMAF conformance validator; and the
+segmenters; IR timeline stages (rebase, offset, gap, trick-play, splice);
+CENC/CBCS protection stages; an fMP4/CMAF conformance validator; and the
 `cli`-gated `transmux` packager binary.
 
 **It does not:** encode/decode, build ABR ladders, acquire DRM licences, or
@@ -28,184 +28,263 @@ lives in `broadcast-hls`; DASH MPD syntax in `broadcast-dash`.
 entry here, so they cannot enter the fMP4/CMAF/TS/DASH/HLS/Smooth path
 (`Error::UnsupportedCodec`); only WebM→WebM/MKV round-trips them.
 
-## The core loop: `Unpackage` in, `Package` out
+## The core loop: demux to the IR, drive a mux stage
 
-The two `broadcast_common` traits are the whole hub: `Unpackage` (container →
-IR) and `Package` (IR → container). Demux once, feed the same `Media` to every
-output.
+Batch demuxers implement `broadcast_common::Unpackage` (container → IR). Every
+muxer, segmenter and protection pass is a
+`Stage<In<'a> = MuxInput, Out = MuxOutput>` over `transmux::mux_stage`:
+`MuxInput::{Track, Sample, Discontinuity, Flush}` in,
+`MuxOutput::{Bytes, BytesAt, Init, Segment, Text}` out. `drive_media` is the
+bridge for a caller that still holds a whole `Media`.
+
+<!-- Snippet map: this block is copied verbatim from `transmux/README.md`
+     "Quick start", which `lib.rs` compiles as a doctest through
+     `#[doc = include_str!("../README.md")]`. -->
 
 ```rust
-use broadcast_common::{Package, Unpackage};
-use transmux::{CmafMux, DashPackager, Media, TsDemux, TsMux};
+use broadcast_common::Unpackage;
+use transmux::{CmafMuxStage, DashPackager, FragmentCut, Media, TsDemux, TsMuxStage};
 
 let ts = std::fs::read("../fixtures/ts/h264-aac.ts").unwrap();
 let media: Media = TsDemux::new().unpackage(&ts[..]).unwrap();
 assert!(media.tracks.len() >= 2, "an H.264 video and an AAC audio track");
 
-let cmaf: Vec<u8> = CmafMux::default().package(&media).unwrap();
-assert!(cmaf.len() > 1000);
+let mut stage = CmafMuxStage::new(media.movie_timescale, FragmentCut::OnFlush, 1);
+let outputs =
+    transmux::mux_stage::drive_media(&mut stage, &media, broadcast_common::Timestamp::ZERO)
+        .unwrap();
+let cmaf: usize = outputs
+    .iter()
+    .map(|output| match output {
+        transmux::mux_stage::MuxOutput::Init(b) | transmux::mux_stage::MuxOutput::Bytes(b) => b.len(),
+        transmux::mux_stage::MuxOutput::Segment(s) => s.bytes.len(),
+        _ => 0,
+    })
+    .sum();
+assert!(cmaf > 1000);
 
-let mpd: String = DashPackager::default().package(&media).unwrap();
+let mut log = transmux::segment_log::SegmentSummaryLog::new();
+for output in &outputs {
+    if let transmux::mux_stage::MuxOutput::Segment(segment) = output {
+        log.push(segment).unwrap();
+    }
+}
+let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+let mpd: String = DashPackager::default().render(&specs, &log).unwrap();
 assert!(mpd.contains("<MPD"));
 
-// And back: TsMux is the byte-level inverse of TsDemux.
-let ts_again: Vec<u8> = TsMux::default().package(&media).unwrap();
+// And back: the TS muxer stage is the byte-level inverse of TsDemux.
+let mut stage = transmux::TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
+let out = transmux::mux_stage::drive_media(
+    &mut stage,
+    &media,
+    broadcast_common::stage::Timestamp::ZERO,
+)
+.unwrap();
+let mut ts_again = Vec::new();
+for item in out {
+    if let transmux::mux_stage::MuxOutput::Bytes(chunk) = item {
+        ts_again.extend_from_slice(&chunk);
+    }
+}
 let again = TsDemux::new().unpackage(&ts_again[..]).unwrap();
 assert_eq!(again.tracks.len(), media.tracks.len());
 ```
-(`transmux/README.md`, section "Quick start" — the crate README's one
-integration-tested example)
 
-Demuxers and muxers (each one trait impl): `TsDemux`, `Mp4Demux`,
-`PsDemux`, `WebmDemux`, `FlvDemux`, `RtmpDemux` /
-`CmafMux`, `ProgressiveMux` (`ProgressiveMux::new(faststart)`), `TsMux`,
-`MkvMux`, `FlvMux`, `RtmpMux`, `HlsPackager`, `TsHlsPackager`, `DashPackager`,
-`LlDashPackager` (`std`), `SmoothPackager`. `DashPackager`'s and `HlsPackager`'s
-`Package::Output` is `String` (a manifest/playlist), not bytes.
+The types each direction speaks:
 
-The whole walkthrough over a real WebM (`WebmDemux` → one IR → `DashPackager`
-plus `CmafMux`) is `transmux/examples/transmux_any_to_any.rs`; TS → CMAF is
-`transmux/examples/transmux_hub.rs`.
+- **Demux:** batch `TsDemux`, `PsDemux`, `WebmDemux`, `FlvDemux`, `RtmpDemux`,
+  `RtpDepacketiser` (`Unpackage`); streaming `StreamingTsDemux` (fed bytes,
+  `poll_event`), `StreamingFlvDemux`, and `Mp4Demux`, the one MP4 demuxer
+  (a `Stage` over `Mp4DemuxConfig`/`Mp4Input::{At, Next, SegmentEnd, Eof}`).
+- **Mux stages:** `CmafMuxStage` (`FragmentCut::OnFlush` or
+  `FragmentCut::AnchorKeyframe`), `ProgressiveMuxStage` (two-pass, with
+  `PlanPass`), `TsMuxStage`, `MkvMuxStage`, `FlvMuxStage`, `RtmpMuxStage`,
+  `RtpPacketiserStage`.
+- **Segmenters:** `Segmenter` (CMAF), `StreamingTsHlsSegmenter` (classic TS-HLS
+  plus its rolling `playlist()`), `LlHlsSegmenter` (LL-HLS parts),
+  `LlSegmenter` (LL-DASH chunks), `SmoothSegmenter`.
+- **Manifest renderers** never see a sample: they take a track-spec slice and a
+  `SegmentSummaryLog` and return a `String` — `HlsPackager`,
+  `DashPackager`, `LlDashPackager`, `SmoothPackager`, all via
+  `.render(&specs, &log)`.
 
 ## The IR
 
+<!-- Snippet map: `print_track_summary` from
+     `transmux/examples/transmux_hub.rs`, a compiled example. -->
+
 ```rust
-let media: Media = TsDemux::new().unpackage(&ts[..]).unwrap();
-for track in &media.tracks {
+fn print_track_summary(media: &Media) {
     println!(
-        "track {:>2}: {:>5} samples @ {} Hz",
-        track.track_id(),
-        track.samples.len(),
-        track.timescale(),
+        "IR: {} track(s), movie timescale {} ticks/s",
+        media.tracks.len(),
+        media.movie_timescale.get()
     );
+    for track in &media.tracks {
+        println!(
+            "  track {:>2}: {:<28} {:>5} samples @ {} Hz",
+            track.track_id(),
+            describe(track.config()),
+            track.samples.len(),
+            track.timescale().get(),
+        );
+    }
 }
 ```
-(`transmux/examples/transmux_hub.rs`, `print_track_summary`)
 
 - `Media` — `tracks`, `movie_timescale` (`mvhd`), plus the TS-only `pcr`
   timeline and the diagnostics `skipped`, `degraded`, `degraded_at`. It is
   `#[non_exhaustive]`: construct with `Media::new(tracks, movie_timescale)`.
-- `Track` — `spec`, `samples` (decode order), `start_decode_time` (first
-  sample's absolute DTS anchor), `encryption` (`None` = cleartext).
-- `TrackSpec` — `track_id: TrackId`, `timescale: u32`, `config: CodecConfig`,
-  plus TS source fields (`source_pid`, `es_info_descriptors`, `program_number`),
-  `display` (geometry/SAR/colour) and `hdr`/`dovi`. Build with
-  `TrackSpec::new(TrackId::new(1), 90_000, config)`.
+- `Track` — `spec`, `samples` (decode order), `start_decode_time` (the first
+  sample's absolute DTS anchor). Construct with `Track::new`/`Track::new_at`.
+- `TrackSpec` — `track_id: TrackId`, `timescale: Timescale`, `config:
+  CodecConfig`, `protection: Option<TrackProtection>` (`None` = cleartext),
+  plus the TS source fields (`source_pid`, `es_info_descriptors`,
+  `program_number`), `display` (geometry/SAR/colour), `hdr`, `dovi` and
+  `hdr10plus`. Build with
+  `TrackSpec::new(TrackId::new(1), Timescale::try_new(90_000)?, config)`.
 - `Sample` — `data: bytes::Bytes` (**length-prefixed** NAL data for AVC/HEVC,
-  raw frame for audio), `dts`/`pts: Option<i64>` **absolute** in the track
-  timescale, `duration: Option<u32>`, `flags.is_sync`, `display`. Build with
-  `Sample::new(data, Some(dts), Some(pts), Some(duration), is_sync)`; an Annex B
-  access unit goes through `Sample::from_annexb(..)` first.
+  raw frame for audio), `timing: Option<SampleTiming>` (`Timed { dts, pts,
+  duration }` absolute in the track timescale, or `DurationOnly`; `None` only
+  for a section-carried sample), `flags` (`SYNC`), `display`, `provenance`,
+  `protection`. Build with `Sample::new(data, dts, pts, duration, is_sync)`,
+  `Sample::timed(..)`, `Sample::from_annexb(..)` or `Sample::from_raw(..)`.
 - `CodecConfig` — one variant per codec (`Avc`, `Hevc`, `Vvc`, `Av1`, `Vp9`,
   `Mpeg2Video`, `Aac`, `Ac3`, `Eac3`, `Ac4`, `Dts`, `Opus`, `Flac`, `Vorbis`,
   `MpegAudio`, `MpegH`, `Vp8`, `Subtitle`, `Data`, …). It is `#[non_exhaustive]`.
 
 Feeding hand-built samples to `build_init_segment` / `build_media_segment`
 (`FragmentTrackData::new(track_id, base_media_decode_time, &samples)`) is the
-samples-in path; `CmafMux` is exactly that pair over a whole `Media`.
+samples-in path; `CmafMuxStage` emits exactly that pair, one fragment at a time.
 
-## Streaming, not just batch
+## Streaming output
 
-For a live or large source use the incremental demuxer:
-`StreamingTsDemux::feed(bytes)` then drain `StreamingTsDemux::poll_event()` —
-the event queue is unbounded and only `poll_event` empties it; call
-`finish()` at end of stream. Batch `TsDemux::unpackage` is a thin wrapper over
-it.
+<!-- Snippet map: the doctest on `transmux::segmenter::Segmenter`. -->
 
-For live output `Segmenter` owns the cut state machine: `Segmenter::new(specs,
-movie_timescale, target_secs)`, then `init_segment()`, `push(track_id,
-sample)` in decode order, `take_ready()`, `flush()` at end of stream, and
-`mark_discontinuity()` to flag the next cut (RFC 8216 §4.3.2.3). It cuts on the
-anchor track's sync samples (first video track, else first anchor-capable
-track). `LlHlsSegmenter` (parts), `StreamingTsHlsSegmenter`
-(TS segments, rolling playlist) and `LlSegmenter` are the siblings.
+```rust
+let mut seg = Segmenter::new(vec![spec()], broadcast_common::timescale::Timescale::try_new(1000).expect("non-zero timescale"), core::time::Duration::from_secs(2)).unwrap();
+let init = seg.init_segment().unwrap();      // ftyp + moov
+assert_eq!(&init[4..8], b"ftyp");
+let sample = |sync| MuxInput::Sample { track: transmux::TrackId::new(1), sample: au(sync) };
+seg.feed(sample(true), Timestamp::ZERO).unwrap();      // keyframe
+seg.feed(sample(false), Timestamp::ZERO).unwrap();
+assert!(seg.poll().is_none());               // still buffering: no cut yet
+seg.feed(MuxInput::Flush, Timestamp::ZERO).unwrap();   // trailing segment
+assert!(seg.poll().is_some());
+```
+
+`Segmenter` cuts on the anchor track's sync samples (first video track, else the
+first anchor-capable track). `LlHlsSegmenter` emits parts before a segment
+closes; `StreamingTsHlsSegmenter` keeps a rolling playlist window.
+
+A live demux drains its event queue: `StreamingTsDemux::feed(bytes)` then
+`poll_event()` until `None` (the queue is unbounded and only `poll_event`
+empties it), then `finish()` at end of stream. `Mp4Demux` is driven with
+`Mp4Input` and drained with `Stage::poll`, which yields `DemuxEvent`s.
 
 ## Repackaging (select / trim / resegment)
 
-`Repackage` composes fMP4 demux, IR transforms and resegmentation:
+<!-- Snippet map: the doctest on `transmux::repackage::Repackage`. -->
 
 ```rust
-let out = transmux::Repackage::new(6.0)      // target segment duration, seconds
-    .select_tracks(&[0])                     // keep only track index 0
-    .trim(0, 90_000)                         // first second (movie timescale)
+let out = Repackage::new(core::time::Duration::from_secs(2)) // 2-second target segments
+    .select_tracks(&[0])               // keep only track 0 (video)
     .run(fmp4)?;
 let _init = out.init_segment;
-let _media = out.media_segments;             // Vec<Vec<u8>>
+let _media = out.media_segments;       // Vec<Vec<u8>>
 ```
-(`transmux/src/repackage.rs`, `Repackage::run` doc example)
 
-The transforms are also usable directly on any IR: `Media::select_tracks(&[…])`,
-`Media::select_tracks_by(|t| …)`, `Media::trim(start, end)` (window in the
-**movie** timescale, snapped back to a keyframe),
-`Repackage::run_media(&media)`, and `RepackageOutput::to_contiguous()` for one
-contiguous fragmented-MP4 stream.
+`Repackage::run` drives an `Mp4Demux` and a `Segmenter`. A caller holding a
+whole `Media` uses `run_media(&media)` instead; `select_tracks`,
+`select_tracks_by` and `trim` live in `repackage` for it. `trim(start, end)` is
+a window in the **movie** timescale, snapped back to a keyframe;
+`RepackageOutput::to_contiguous()` joins the segments into one fragmented-MP4
+stream.
 
-Timeline transforms (in `transmux::rebase`, all `&mut Media`): `rebase_to_zero`
-(per-track, first sample → 0), `apply_offset(delta_ticks)` (signed, saturates at
-0) and `insert_discontinuity_gap(track, at_sample_index, gap_ticks)`. They move
-each sample's absolute `dts`/`pts` **and** `Track::start_decode_time` in
-lockstep; 33-bit MPEG wrap is already unrolled at the demux edge.
+## Timeline stages
+
+`Sample` timing is absolute, so the transforms shift absolute `dts`/`pts` and
+never reconstruct a running sum. 33-bit MPEG wrap is already unrolled at the
+demux edge.
+
+<!-- Snippet map: the `transmux::rebase` module doctest. -->
 
 ```rust
-apply_offset(&mut media, DELTA);
-assert_eq!(media.tracks[0].start_decode_time, ANCHOR + DELTA as u64);
-let fmp4 = CmafMux::default().package(&media).expect("package");
+use transmux::{GapStage, OffsetStage, RebaseOrigin, RebaseStage, TrackId};
+
+// Exact per-track origins, as a sample plan supplies them.
+let rebase = RebaseStage::with_origin(
+    RebaseOrigin::new()
+        .with(TrackId::new(1), 90_000)
+        .with(TrackId::new(2), 48_000),
+);
+// Or discover one common origin across the announced tracks, holding at
+// most a two-second window and one mebibyte of output.
+let discovered =
+    RebaseStage::start_window(core::time::Duration::from_secs(2), 1_048_576);
+let shifted = OffsetStage::new(48_000);
+let gapped = GapStage::new(9_000, 42);
 ```
-(`transmux/tests/it/rebase.rs`, test `apply_offset_bites`)
+
+`RebaseStage` is fed `MuxInput` (a track announcement carries the timescale its
+origin is converted into); `OffsetStage` and `GapStage` are fed
+`(TrackId, Sample)`. `TrickPlayStage` derives an I-frame-only track and
+announces it through `MuxInput::Track`.
 
 ## Splice / concat (SSAI)
 
-`splice_insert(base, ad, at_ticks)` plays `base` to the splice time, inserts
-`ad`, and resumes `base` shifted by `ad`'s duration; `concat(a, b)` appends on a
-monotonic timeline. Both return a `SpliceResult { media, discontinuity_points }`
-— signal each `SplicePoint` downstream as `#EXT-X-DISCONTINUITY` / a DASH
-`emsg`.
+A `SplicePlan` holds no samples: per-track cut indices and tick shifts, plus
+the `SplicePoint`s to signal downstream as `#EXT-X-DISCONTINUITY` or a DASH
+`emsg`. `SpliceStage` applies it one sample at a time.
+
+<!-- Snippet map: the `transmux::splice` module doctest. -->
 
 ```rust
-let result = splice_insert(&base_media, &ad_media, at_ticks)?;
+use transmux::{Media, SplicePlan, SpliceStage};
 
-let mut points_by_track: BTreeMap<TrackId, Vec<usize>> = BTreeMap::new();
-for p in &result.discontinuity_points {
-    points_by_track
-        .entry(p.track_id)
-        .or_default()
-        .push(p.sample_index);
-}
+// Play `base` up to 90 000 presentation ticks (1 s of a 90 kHz track),
+// insert `ad`, then resume `base` shifted by `ad`'s span.
+let plan = SplicePlan::insert(base, ad, 90_000)?;
+let mut stage = SpliceStage::new(plan);
+// Feed (TrackId, Sample) pairs in the plan's order, then finish and poll.
+let _ = &mut stage;
 ```
-(`transmux/examples/ssai_ad_stitch/demo.rs`, step 5 "The actual splice")
 
-Requirements: the `ad`'s first sample of every matched track must be a sync
-sample, else `Error::InvalidInput`; the splice time snaps back to the base
-video track's preceding sync sample (`snap_to_preceding_sync`); incoming
-samples are rebased onto the join so intact assets with unrelated origins line
-up. Full runnable wiring (SCTE-35 cue → splice → HLS/DASH):
-`transmux/examples/ssai_ad_stitch/`.
+`SplicePlan::concat(a, b)` is the append case. The `ad`'s first sample of every
+matched track must be a sync sample (`Error::InvalidInput` otherwise);
+`SplicePlan::insert` snaps the requested time back to the base video track's
+preceding sync sample (`snap_to_preceding_sync`). Built with
+`SpliceStage::switching(max_gop_bytes)` instead of a plan, the stage holds at
+most one GOP, waits for a sync point, and applies `splice()` on demand
+(`Error::SpliceGopOverflow` past the cap). Full SCTE-35 cue → splice → HLS/DASH
+wiring: `transmux/examples/ssai_ad_stitch/`.
 
-## CENC decrypt (feature `cenc`, on by default)
+## CENC / CBCS (feature `cenc`, on by default)
+
+Protection is a stage pair: `CencEncryptStage` ciphers each sample and fills
+`TrackSpec::protection` plus `Sample::protection`; `CencDecryptStage` takes a
+`KeyMap` and clears them. The demuxer already surfaces a protected track's
+`tenc` defaults and each sample's IV/subsample map, so decryption needs no
+second file walk.
+
+<!-- Snippet map: the `transmux::cenc_encrypt` module doctest. -->
 
 ```rust
-use broadcast_common::Decrypt;
+use transmux::{CencEncryptStage, CencScheme, EncryptConfig, SubsamplePolicy};
 
-let mut key_map = crate::cenc_decrypt::KeyMap::new();
-for spec in keys {
-    let (kid, key) = parse_key(spec)?;
-    key_map.insert(kid, key);
-}
-let decryptor = crate::cenc_decrypt::CencDecryptor::from_fmp4(input)?;
-let mut media = decryptor.demux()?;
-decryptor.decrypt(&mut media, &key_map)?;
+let cfg = EncryptConfig::new(CencScheme::Cenc, [0x11; 16], SubsamplePolicy::Video);
+// One stage per content key: its IV counter continues across every feed.
+let stage = CencEncryptStage::new([0x22; 16], cfg)?;
 ```
-(`transmux/src/cli.rs`, `decrypt_input` — the `--decrypt` path; drop the
-`crate::` prefix outside the crate: `transmux::KeyMap`,
-`transmux::CencDecryptor`)
 
-`from_fmp4` harvests `sinf`/`tenc` + per-sample `senc` from a protected fMP4
-(progressive or fragmented); `demux()` gives the IR with **still-encrypted**
-samples, `decrypt(&mut media, &KeyMap)` ciphers them back in place. `cenc`
-(AES-CTR) and `cbcs` (AES-CBC pattern) are supported; `cens`/`cbc1` are not
-(`Error::UnsupportedCencScheme`). `CencEncryptor` is the inverse and fills
-`Track::encryption`, which is what makes the packagers emit
-`sinf`/`senc`/`saio`/`saiz` and DRM signalling.
+`cenc` (AES-CTR) and `cbcs` (AES-CBC pattern) are supported; `cens`/`cbc1` are
+not (`Error::UnsupportedCencScheme`). `CencDecryptStage::new(KeyMap)` is the
+inverse. The fragment writer emits `senc`/`saiz`/`saio` from the samples
+themselves; `cenc_segment::protect_init_segment` splices `sinf`/`tenc` into the
+init segment. DASH `ContentProtection` is derived from `TrackSpec::protection`;
+HLS `EXT-X-KEY` comes from `broadcast_hls::cenc_ext_x_key`. HLS Sample-AES and
+whole-segment AES-128 are `SampleAesStage` (`sample-aes` feature).
 
 ## Conformance validation
 
@@ -218,29 +297,38 @@ decode, malformed input yields issues rather than panics.
 
 ## CLI (`cli` feature)
 
+<!-- Snippet map: copied verbatim from `transmux/README.md` "Command-line
+     packager"; the same invocations are exercised by `tests/it/cli*.rs`. -->
+
 ```console
 $ cargo install transmux --features cli
 $ transmux in.ts -o out.cmaf                                  # TS to CMAF, format inferred
 $ transmux in.mp4 -o out.m3u8 -f hls --segment-duration 4     # MP4 to CMAF-HLS, 4 s segments
 $ transmux in.ps -o out.mpd -f dash --ll                      # PS to low-latency DASH
 $ transmux enc.mp4 -o dec.mp4 -f progressive --decrypt --key <KID>:<KEY>
+$ cat in.ts | transmux - -o out.cmaf -f cmaf             # a forward-only stdin source streams
 ```
-(`transmux/README.md`, section "Command-line packager")
 
 `-f` takes `cmaf | hls | ts-hls | dash | ts | progressive` (default: inferred
-from `-o`'s extension). Input container is detected with `container-probe`
-(MPEG-TS including 192-byte M2TS, MP4/CMAF, MPEG-PS, WebM/Matroska, FLV); an
-inconclusive probe is `unknown input container` — the format must then be
-supplied explicitly.
+from `-o`'s extension). Every input is streamed through its container's stage;
+MPEG-PS and WebM are still read whole under `--max-whole-input-bytes`. An opaque
+data track crosses container families only when mapped with
+`--data-identity <track>=ts:<stream_type>[:<descriptors-hex>]` (or
+`mp4:<handler>:<sample-entry-hex>`, `matroska:<codec_id>[:<codec-private-hex>]`):
+the CLI builds the `DataIdentityMap` a `DataIdentityStage` applies, and without
+it another family's muxer refuses the track with `Error::DataIdentityMismatch`.
+Input detection uses `container-probe`; an inconclusive probe is
+`unknown input container`, so the format must be given explicitly.
 
 ## Features
 
 | Feature | Default | Effect |
 |---|---|---|
 | `std` | on | `std::error::Error`, and every XML path (DASH/LL-DASH MPD, Smooth, PlayReady WRMHEADER) — off → `#![no_std]` + `alloc`, no `DashPackager`/`SmoothPackager`/`LlDashPackager`/SDP |
-| `cenc` | on | CENC/CBCS decrypt + encrypt; off → no `CencDecryptor`/`CencEncryptor` |
+| `cenc` | on | CENC/CBCS decrypt + encrypt; off → no `CencEncryptStage`/`CencDecryptStage` |
 | `serde` | off | `Serialize` on box and IR types |
 | `sample-aes` | off | HLS Sample-AES + whole-segment AES-128 (implies `cenc`) |
+| `motion-imagery-metadata` | off | typed MISB ST 0601 values and the `payload::St0601Decoder` plug-in |
 | `cli` | off | the `transmux` binary (implies `std`) |
 
 `no_std`: `transmux = { version = "…", default-features = false, features = ["cenc"] }`.
@@ -248,27 +336,30 @@ supplied explicitly.
 ## Pitfalls
 
 - **It never transcodes.** A codec the output container cannot carry is
-  *rejected* (`CmafMux` and every fMP4/CMAF entry point with
-  `Error::DataIdentityMismatch`/`UnmuxableSubtitleTrack`, the WebM-only VP8/Vorbis
-  with `UnsupportedCodec`, FLV/RTMP/Smooth with their own codec error) or
-  *dropped* (`TsMux` drops a track with no TS mapping). Filter first with
-  `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`; plan the
-  codec set from the README input × output matrix, not by trial and error.
+  *rejected* (`CmafMuxStage` and every fMP4/CMAF entry point with
+  `Error::DataIdentityMismatch`/`UnmuxableSubtitleTrack`, the WebM-only
+  VP8/Vorbis with `UnsupportedCodec`, FLV/RTMP/Smooth with their own codec
+  error) or *dropped* (`TsMuxStage` drops a track with no TS mapping). Filter
+  first with `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`;
+  plan the codec set from the README input × output matrix, not by trial and
+  error.
 - **`Sample::data` for AVC/HEVC is length-prefixed, not Annex B.** Convert with
   `Sample::from_annexb(..)`; feeding Annex B straight to a muxer produces
   garbage NAL framing with no error.
-- **Timestamps are absolute, and never fabricated.** `dts`/`pts` are absolute
-  ticks in the *track's own* timescale (`90000` video vs `44100` audio);
-  `None` only for section-carried tracks (SCTE-35, DSM-CC, private sections).
-  Rescaling between timescales is `Sample::rescale_timescale(from, to)`. Do
-  not re-derive timing as `start_decode_time + Σ duration` — a per-fragment
-  `tfdt` reseed makes that wrong; read each sample's `dts`.
-- **`Media`, `Track`, `TrackSpec`, `Sample` are `#[non_exhaustive]`.** Only
-  the constructors (`Media::new`, `Track::new`/`new_at`, `TrackSpec::new`,
-  `Sample::new`/`from_annexb`/`from_raw`) exist outside the crate; matching
-  needs a trailing `..`.
-- **`DashPackager`/`HlsPackager` return `String`, `CmafMux` returns `Vec<u8>`.**
-  Read the `Package::Output` type rather than assuming bytes.
+- **Timestamps are absolute, and never fabricated.** `dts`/`pts` live on
+  `Sample::timing` as absolute ticks in the *track's own* timescale (`90000`
+  video vs `44100` audio); `None` only for section-carried tracks (SCTE-35,
+  DSM-CC, private sections). Rescaling between timescales is
+  `Sample::rescale_timescale(from, to)`. Do not re-derive timing as
+  `start_decode_time + Σ duration` — a per-fragment `tfdt` reseed makes that
+  wrong; read each sample's `timing.dts()`.
+- **`Media`, `Track`, `TrackSpec`, `Sample`, `SampleTiming` are
+  `#[non_exhaustive]`.** Only the constructors (`Media::new`,
+  `Track::new`/`new_at`, `TrackSpec::new`, `Sample::new`/`timed`/`from_annexb`/
+  `from_raw`) exist outside the crate; matching needs a trailing `..`.
+- **A segment is `SegmentOut { bytes, summary, tracks }`.** A manifest renders
+  from `SegmentSummaryLog` alone; it never sees a `Sample`. `MuxOutput::Text`
+  carries a rendered playlist/manifest from a segmenter that produces one.
 - **Drain `StreamingTsDemux::poll_event` after every `feed`.** The queue is
   unbounded; it only shrinks through `poll_event` (`with_max_degraded_events`
   caps the `InputDegraded` diagnostics, not the events).
