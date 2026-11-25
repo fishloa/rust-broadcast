@@ -12,6 +12,7 @@
 //! 4. Sample fidelity + FLV.as_slice() round-trip: demux→mux→demux byte-identical AUs.
 //! 5. Cross-hub: FLV.as_slice() → IR → CmafMuxStage carries avc1/avcC + mp4a and matching NALs.
 
+use broadcast_common::error::BufferTooShort;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 use bytes::Bytes;
@@ -732,10 +733,9 @@ fn flv_tag_starts(flv: &[u8]) -> Vec<(usize, u8, usize)> {
 }
 
 /// The tail rule is *only* for the tail: a stream whose very first tag is
-/// already incomplete has nothing to return, so the streaming demuxer reports
-/// the truncation at end of input rather than inventing a track.
+/// already incomplete has nothing to return, so it still errors.
 #[test]
-fn incomplete_first_tag_is_reported_as_truncated() {
+fn incomplete_first_tag_still_errors() {
     // Real fixture header + PreviousTagSize0, then an 11-byte tag header
     // declaring 1000 body bytes, with none of the body present.
     let mut bytes = FLV.as_slice()[..13].to_vec();
@@ -743,12 +743,17 @@ fn incomplete_first_tag_is_reported_as_truncated() {
     bytes.extend_from_slice(&[0x00, 0x03, 0xE8]); // DataSize = 1000
     bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0]); // Timestamp + StreamID
 
-    let mut demux = StreamingFlvDemux::new();
-    demux.feed(&bytes).expect("the body has not arrived yet");
-    demux.finish();
+    let err = test_harness::collect::media_from_flv(&bytes)
+        .expect_err("an incomplete first tag must be reported");
     assert!(
-        demux.last_walk_was_truncated(),
-        "an incomplete first tag is reported at end of input"
+        matches!(
+            err,
+            FlvError::Codec(transmux::Error::BufferTooShort(BufferTooShort {
+                what: "FLV tag body",
+                ..
+            }))
+        ),
+        "expected TagOverrun, got {err:?}"
     );
 }
 
@@ -952,7 +957,7 @@ fn push_flv_tag(out: &mut Vec<u8>, tag_type: u8, timestamp: u32, body: &[u8]) {
 // ---------------------------------------------------------------------------
 
 /// A tag whose body overruns the buffer ends the walk, and the caller can tell:
-/// `last_walk_was_truncated()` reports it, so a truncated capture is not
+/// `ended_inside_a_tag()` reports it, so a truncated capture is not
 /// indistinguishable from a complete one.
 #[test]
 fn truncated_tail_is_reported_through_the_public_api() {
@@ -973,8 +978,8 @@ fn truncated_tail_is_reported_through_the_public_api() {
     let truncated = |bytes: &[u8]| {
         let mut demux = StreamingFlvDemux::new();
         demux.feed(bytes).expect("feed the stream");
-        demux.finish();
-        demux.last_walk_was_truncated()
+        demux.finish().expect("the fixture is complete");
+        demux.ended_inside_a_tag()
     };
     assert!(
         truncated(&FLV.as_slice()[..cut]),
@@ -1015,9 +1020,9 @@ fn tag_missing_only_its_previous_tag_size_is_accepted() {
     );
     let mut demux = StreamingFlvDemux::new();
     demux.feed(body_only).expect("feed the stream");
-    demux.finish();
+    demux.finish().expect("the fixture is complete");
     assert!(
-        !demux.last_walk_was_truncated(),
+        !demux.ended_inside_a_tag(),
         "a missing PreviousTagSize is not a truncated tail"
     );
 }

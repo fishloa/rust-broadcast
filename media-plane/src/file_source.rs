@@ -629,8 +629,10 @@ fn demux_streaming_ts(bytes: &[u8]) -> Result<Media, DemuxError> {
 fn demux_streaming_flv(bytes: &[u8]) -> Result<Media, DemuxError> {
     let mut demux = StreamingFlvDemux::new();
     demux.feed(bytes).map_err(DemuxError::Flv)?;
-    demux.finish();
-    collect_streaming_media(&mut demux, |d| d.poll_event())
+    let finished = demux.finish().map_err(DemuxError::Flv);
+    let media = collect_streaming_media(&mut demux, |d| d.poll_event());
+    finished?;
+    media
 }
 
 /// Drain every [`DemuxEvent`] into a [`Media`]: `TrackAdded` becomes a

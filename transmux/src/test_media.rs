@@ -101,7 +101,7 @@ pub(crate) fn media_from_ts_with_afd(bytes: &[u8], afd: AfdPersistence) -> crate
 pub(crate) fn media_from_flv(bytes: &[u8]) -> core::result::Result<Media, crate::flv::FlvError> {
     let mut demux = crate::StreamingFlvDemux::new();
     demux.feed(bytes)?;
-    demux.finish();
+    demux.finish()?;
     let mut tracks: alloc::vec::Vec<Track> = alloc::vec::Vec::new();
     let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
     while let Some(event) = demux.poll_event() {

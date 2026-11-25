@@ -97,6 +97,9 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Media {
                 track_id, reason, ..
             } => skipped.push(skipped_from_reason(reason, track_id)),
             DemuxEvent::InputDegraded { kind, .. } => degraded.push(kind),
+            DemuxEvent::DamagedSpan { offset, .. } => {
+                degraded.push(InputDegradation::MalformedUnit { position: offset })
+            }
             _ => {}
         }
     }
@@ -381,7 +384,7 @@ pub fn media_from_flv_chunked(
     for piece in bytes.chunks(chunk.max(1)) {
         demux.feed(piece)?;
     }
-    demux.finish();
+    demux.finish()?;
     let mut events = Vec::new();
     while let Some(event) = demux.poll_event() {
         events.push(event);

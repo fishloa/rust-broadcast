@@ -42,7 +42,7 @@ fn feed_and_drain(
 
 /// `finish` then drain the trailing events it queues.
 fn finish_and_drain(demux: &mut StreamingFlvDemux) -> Vec<DemuxEvent> {
-    demux.finish();
+    demux.finish().expect("the fixture is complete");
     let mut events = Vec::new();
     while let Some(ev) = demux.poll_event() {
         events.push(ev);
@@ -464,17 +464,19 @@ fn corrupt_tag_is_drained_and_the_stream_continues() {
     write_tag(&mut out, 9, 0, &avc_nalu_body(0xAA));
 
     let mut demux = StreamingFlvDemux::new();
-    let err = demux
+    demux
         .feed(&out)
-        .expect_err("the corrupt avcC must be reported");
+        .expect("a corrupt avcC tag is skipped, not fatal");
+    let mut events = Vec::new();
+    while let Some(ev) = demux.poll_event() {
+        events.push(ev);
+    }
     assert!(
-        matches!(err, FlvError::Codec(_)),
-        "expected a codec-config error, got {err:?}"
+        events
+            .iter()
+            .any(|ev| matches!(ev, DemuxEvent::DamagedSpan { .. })),
+        "the corrupt avcC is reported as a damaged span"
     );
-
-    // Bites: before the fix the same corrupt tag was re-parsed here and this
-    // returned the identical error again (and forever after).
-    let events = feed_and_drain(&mut demux, &[]).expect("the next feed must make progress");
     let resumed: Vec<TrackId> = events
         .iter()
         .filter_map(|ev| match ev {

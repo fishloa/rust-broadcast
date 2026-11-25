@@ -299,7 +299,7 @@ async fn flv_publishes_its_trailing_samples_at_end_of_input() {
     let bytes = std::fs::read(fixture(rel)).unwrap();
     let mut demux = transmux::StreamingFlvDemux::new();
     demux.feed(&bytes).expect("feed flv");
-    demux.finish();
+    demux.finish().expect("the fixture is complete");
     let mut expected = 0usize;
     while let Some(ev) = demux.poll_event() {
         if matches!(ev, DemuxEvent::Sample { .. }) {

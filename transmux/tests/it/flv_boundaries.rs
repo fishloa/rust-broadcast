@@ -388,24 +388,40 @@ fn an_unsupported_codec_is_named_in_the_mux_error() {
     );
 }
 
+fn header_short_read(len: usize) -> FlvError {
+    test_harness::collect::media_from_flv(&vec![0u8; len])
+        .expect_err("a header this short cannot demux")
+}
+
 #[test]
-fn a_header_shorter_than_nine_bytes_yields_no_tracks() {
+fn a_header_shorter_than_nine_bytes_is_a_header_short_read() {
     for len in 0..9usize {
-        let media = test_harness::collect::media_from_flv(&vec![0u8; len])
-            .expect("a partial header is not an error until more bytes arrive");
-        assert!(
-            media.tracks.is_empty(),
-            "len {len}: a header this short has no track"
+        let FlvError::Codec(transmux::Error::BufferTooShort(short)) = header_short_read(len) else {
+            panic!("len {len}: wrong variant");
+        };
+        assert_eq!(
+            short,
+            broadcast_common::error::BufferTooShort {
+                need: 9,
+                have: len,
+                what: "FLV header",
+            },
+            "len {len}"
         );
     }
 }
 
 #[test]
-fn a_nine_byte_header_alone_has_no_tracks() {
+fn a_nine_byte_header_alone_is_a_tag_short_read() {
     let header = &flv_prefix()[..9];
-    let media = test_harness::collect::media_from_flv(header)
-        .expect("a header with no following tag is not an error");
-    assert!(media.tracks.is_empty(), "no tag, no track");
+    let FlvError::Codec(transmux::Error::BufferTooShort(short)) =
+        test_harness::collect::media_from_flv(header).expect_err("no tag")
+    else {
+        panic!("wrong variant");
+    };
+    assert_eq!(short.need, 13);
+    assert_eq!(short.have, 9);
+    assert_eq!(short.what, "FLV header");
 }
 
 #[test]
@@ -419,12 +435,17 @@ fn a_bad_signature_is_reported_with_its_bytes() {
 }
 
 #[test]
-fn a_header_data_offset_past_the_buffer_has_no_tracks() {
+fn a_header_data_offset_past_the_buffer_is_a_short_read() {
     let mut bytes = flv_prefix();
     bytes[5..9].copy_from_slice(&100u32.to_be_bytes());
-    let media = test_harness::collect::media_from_flv(&bytes)
-        .expect("the announced header has not arrived, so nothing is decoded");
-    assert!(media.tracks.is_empty());
+    let FlvError::Codec(transmux::Error::BufferTooShort(short)) =
+        test_harness::collect::media_from_flv(&bytes).expect_err("DataOffset past the buffer")
+    else {
+        panic!("wrong variant");
+    };
+    assert_eq!(short.need, 100);
+    assert_eq!(short.have, 13);
+    assert_eq!(short.what, "FLV tag body");
 }
 
 #[test]
@@ -440,17 +461,22 @@ fn a_header_data_offset_below_the_header_is_named() {
 }
 
 #[test]
-fn an_incomplete_first_tag_is_reported_as_truncated() {
+fn an_incomplete_first_tag_reports_the_overrun() {
     let mut bytes = flv_prefix();
     bytes.push(9);
     bytes.extend_from_slice(&[0x00, 0x03, 0xE8]);
     bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0]);
-    let mut demux = transmux::StreamingFlvDemux::new();
-    demux.feed(&bytes).expect("the body has not arrived yet");
-    demux.finish();
+    let FlvError::Codec(transmux::Error::BufferTooShort(short)) =
+        test_harness::collect::media_from_flv(&bytes).expect_err("incomplete first tag")
+    else {
+        panic!("wrong variant");
+    };
+    assert_eq!(short.what, "FLV tag body");
     assert!(
-        demux.last_walk_was_truncated(),
-        "the overrun is reported at end of input"
+        short.need > short.have,
+        "need {} have {}",
+        short.need,
+        short.have
     );
 }
 
@@ -458,8 +484,11 @@ fn an_incomplete_first_tag_is_reported_as_truncated() {
 fn a_video_tag_shorter_than_its_header_is_skipped() {
     for body in [Vec::new(), vec![0x17], vec![0x17, 0x01, 0x00, 0x00]] {
         let flv = flv_with(&[(9, 0, body.clone())]);
-        let media = test_harness::collect::media_from_flv(&flv).expect("nothing to decode");
-        assert!(media.tracks.is_empty(), "body {body:?}");
+        assert_eq!(
+            test_harness::collect::media_from_flv(&flv).unwrap_err(),
+            FlvError::NoSupportedTrack,
+            "body {body:?}"
+        );
     }
 }
 
@@ -478,8 +507,10 @@ fn a_five_byte_video_tag_carries_an_empty_access_unit() {
 #[test]
 fn an_audio_tag_shorter_than_two_bytes_is_skipped() {
     let flv = flv_with(&[(8, 0, vec![0xAF])]);
-    let media = test_harness::collect::media_from_flv(&flv).expect("nothing to decode");
-    assert!(media.tracks.is_empty());
+    assert_eq!(
+        test_harness::collect::media_from_flv(&flv).unwrap_err(),
+        FlvError::NoSupportedTrack
+    );
 }
 
 #[test]

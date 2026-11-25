@@ -105,7 +105,7 @@ fn fixture_tags() -> Vec<(u8, u32, Vec<u8>)> {
 fn streaming_media(flv: &[u8]) -> Vec<(u32, Vec<transmux::Sample>)> {
     let mut demux = StreamingFlvDemux::new();
     demux.feed(flv).expect("streaming demux");
-    demux.finish();
+    demux.finish().expect("the fixture is complete");
     let mut by_track: std::collections::BTreeMap<u32, Vec<transmux::Sample>> = Default::default();
     while let Some(ev) = demux.poll_event() {
         if let transmux::DemuxEvent::Sample {

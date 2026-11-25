@@ -146,9 +146,12 @@ impl RtmpSource {
         }
         self.now_us = now_us;
         let demux = &mut self.demux;
+        let mut finish_error = None;
         self.policy
             .poll_timeout_with(Timestamp::from_micros(now_us), |events| {
-                demux.finish();
+                if let Err(error) = demux.finish() {
+                    finish_error = Some(error.to_string());
+                }
                 let mut sampled = false;
                 while let Some(ev) = demux.poll_event() {
                     sampled |= matches!(ev, DemuxEvent::Sample { .. });
@@ -156,6 +159,10 @@ impl RtmpSource {
                 }
                 sampled
             });
+        if let Some(reason) = finish_error {
+            self.events
+                .push_back(Event::Status(Status::DemuxError { reason }));
+        }
         self.pump_policy(now_us);
     }
 
@@ -308,7 +315,11 @@ impl RtmpSource {
     }
 
     fn flush_demux(&mut self, now_us: u64) {
-        self.demux.finish();
+        if let Err(error) = self.demux.finish() {
+            self.events.push_back(Event::Status(Status::DemuxError {
+                reason: error.to_string(),
+            }));
+        }
         if self.drain_demux() {
             self.policy.on_sample(Timestamp::from_micros(now_us));
         }

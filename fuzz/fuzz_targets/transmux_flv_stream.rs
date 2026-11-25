@@ -9,5 +9,5 @@ fuzz_target!(|data: &[u8]| {
     let mut d = transmux::StreamingFlvDemux::new();
     let _ = d.feed(data);
     while d.poll_event().is_some() {}
-    d.finish();
+    let _ = d.finish();
 });

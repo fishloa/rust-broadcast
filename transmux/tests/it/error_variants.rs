@@ -47,13 +47,14 @@ fn an_rtmp_chunk_size_beyond_the_u32_field_is_reported_not_wrapped() {
 }
 
 #[test]
-fn an_flv_with_no_tags_has_no_tracks() {
+fn an_flv_with_no_tags_has_no_supported_track() {
     let header = [
         b'F', b'L', b'V', 0x01, 0x05, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x00, 0x00,
     ];
-    let media =
-        test_harness::collect::media_from_flv(&header).expect("a tagless stream is not an error");
-    assert!(media.tracks.is_empty(), "no tag carries a track");
+    assert_eq!(
+        test_harness::collect::media_from_flv(&header).unwrap_err(),
+        FlvError::NoSupportedTrack
+    );
 }
 
 #[test]
