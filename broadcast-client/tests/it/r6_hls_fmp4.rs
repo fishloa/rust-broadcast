@@ -114,8 +114,9 @@ fn a_stream_whose_every_track_is_skipped_ends_fatal_not_ended() {
 }
 
 fn oracle_counts(bytes: &[u8]) -> std::collections::BTreeMap<u32, usize> {
-    use broadcast_common::Unpackage;
-    let media = transmux::Fmp4Demux::new().unpackage(bytes).unwrap();
+    let media =
+        test_harness::collect::media_from_mp4(bytes, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
     media
         .tracks
         .iter()

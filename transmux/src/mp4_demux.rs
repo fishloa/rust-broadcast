@@ -49,6 +49,13 @@ use crate::media::{
 /// The fragment ordinal at which unresolved tracks are declared resolved.
 const FRAGMENTS_BEFORE_RESOLVE: u32 = 2;
 
+/// Bytes in a box header's 32-bit `size` field (ISO/IEC 14496-12:2026 §4.2).
+const BOX_SIZE_FIELD_SIZE: usize = 4;
+
+/// Capacity a sequential stage retains at a segment end. Nothing: the buffer a
+/// finished segment grew must not become the next segment's floor.
+const SEGMENT_END_RETAINED_CAPACITY: usize = 0;
+
 /// Which way the stage reaches its input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SourceMode {
@@ -204,6 +211,7 @@ pub struct Mp4Demux {
     saw_tracks: bool,
     resolved: bool,
     fragments: u32,
+    last_structure: u64,
     staged: Option<OwnedStep>,
     structure: Option<ByteRange>,
     batch: Vec<SampleRef>,
@@ -252,6 +260,7 @@ impl Mp4Demux {
             saw_tracks: false,
             resolved: false,
             fragments: 0,
+            last_structure: 0,
             staged: None,
             structure: None,
             batch: Vec::new(),
@@ -283,6 +292,29 @@ impl Mp4Demux {
         self.reader.is_fragmented()
     }
 
+    /// Every mapped track's spec, as the `moov` announced it, available as
+    /// soon as that `moov` has been parsed (an init alone, no `finish`).
+    ///
+    /// The NAL length prefix is already canonical here. A legacy codec's
+    /// provisional config is the reader's; the first sample may refine it, and
+    /// [`DemuxEvent::TrackAdded`] then carries the refined spec.
+    pub fn init_tracks(&self) -> impl Iterator<Item = &TrackSpec> + '_ {
+        self.tracks
+            .iter()
+            .filter_map(|state| state.mapped.as_ref().map(|mapped| &mapped.spec))
+    }
+
+    /// Bytes the sequential buffer currently holds, and the capacity it keeps
+    /// allocated for more.
+    ///
+    /// A consumer that sizes its own reads can assert its memory policy
+    /// against this. After a segment end the stage retains no capacity, never
+    /// the finished segment's.
+    #[must_use]
+    pub fn buffered(&self) -> (usize, usize) {
+        (self.buf.len(), self.buf.capacity())
+    }
+
     /// Declare that the bytes fed so far end one sequential media segment and
     /// keep the `moov` and its track state for the next.
     ///
@@ -302,7 +334,7 @@ impl Mp4Demux {
         self.batch.clear();
         let result = self.reader.end_of_unit(unit_end).map_err(Error::from);
         let pumped = result.and_then(|()| self.pump());
-        self.buf.clear();
+        self.buf = BytesMut::with_capacity(SEGMENT_END_RETAINED_CAPACITY);
         self.buf_start = unit_end;
         self.done = false;
         pumped
@@ -397,7 +429,16 @@ impl Mp4Demux {
         if let Some(step) = self.staged.take() {
             return Ok(Some(step));
         }
-        Ok(match self.reader.step()? {
+        let step = match self.reader.step() {
+            Ok(step) => step,
+            Err(isobmff::Error::SampleDataBudgetExceeded { .. }) => {
+                self.push_malformed(self.last_structure);
+                self.done = true;
+                return Ok(None);
+            }
+            Err(err) => return Err(err.into()),
+        };
+        Ok(match step {
             Step::Need(range) => Some(OwnedStep::Need(range)),
             Step::Tracks(infos) => Some(OwnedStep::Tracks(infos.to_vec())),
             Step::Metadata(_) => None,
@@ -419,16 +460,18 @@ impl Mp4Demux {
         self.tracks.clear();
         for info in infos {
             match track_spec_from_track_info(&info) {
-                Ok(spec) => {
+                Ok(mut spec) => {
                     let (in_band, extra) = info
                         .entries
                         .first()
                         .and_then(|entry| entry.typed.as_ref())
                         .map_or((false, Vec::new()), track_entry_inband_and_extras);
+                    let length_size = nal_length_size(&spec.config);
+                    normalise_spec_nal_length(&mut spec);
                     self.tracks.push(TrackState {
                         id: info.track_id,
                         mapped: Some(Mapped {
-                            length_size: nal_length_size(&spec.config),
+                            length_size,
                             spec,
                             in_band,
                             extra,
@@ -441,7 +484,7 @@ impl Mp4Demux {
                 Err(err) => {
                     self.events.push_back(DemuxEvent::TrackAbandoned {
                         track_id: Some(info.track_id.into()),
-                        reason: abandon_reason(&err),
+                        reason: abandon_reason(&err, &info),
                         provenance: EventProvenance::default(),
                     });
                     self.tracks.push(TrackState {
@@ -491,9 +534,6 @@ impl Mp4Demux {
                 if mapped.live {
                     return None;
                 }
-                if mapped.length_size.is_some() {
-                    normalise_spec_nal_length(&mut mapped.spec);
-                }
                 mapped.live = true;
                 Some(mapped.spec.clone())
             })
@@ -517,6 +557,14 @@ impl Mp4Demux {
         });
     }
 
+    fn push_malformed(&mut self, position: u64) {
+        self.events.push_back(DemuxEvent::InputDegraded {
+            track: None,
+            kind: InputDegradation::MalformedUnit { position },
+            provenance: EventProvenance::default(),
+        });
+    }
+
     fn push_truncated(&mut self, position: u64) {
         self.events.push_back(DemuxEvent::InputDegraded {
             track: None,
@@ -526,7 +574,7 @@ impl Mp4Demux {
     }
 }
 
-fn abandon_reason(err: &Error) -> AbandonReason {
+fn abandon_reason(err: &Error, info: &TrackInfo) -> AbandonReason {
     match err {
         Error::UnsupportedSampleEntry { fourcc }
             if fourcc.len() == isobmff::box_types::BOX_TYPE_SIZE =>
@@ -535,7 +583,15 @@ fn abandon_reason(err: &Error) -> AbandonReason {
             for (slot, byte) in bytes.iter_mut().zip(fourcc.as_bytes()) {
                 *slot = *byte;
             }
-            AbandonReason::UnsupportedSampleEntry { fourcc: bytes }
+            let detail = info
+                .entries
+                .iter()
+                .find(|entry| entry.fourcc == bytes)
+                .and_then(|entry| entry.error.clone());
+            AbandonReason::UnsupportedSampleEntry {
+                fourcc: bytes,
+                detail,
+            }
         }
         Error::UnsupportedSampleEntry { .. } => AbandonReason::UnsupportedCodec,
         Error::UnexpectedBox { expected } => AbandonReason::MalformedTrack { expected },
@@ -733,7 +789,6 @@ impl Mp4Demux {
             } else {
                 let fragmented = self.reader.is_fragmented() == Some(true);
                 refine_legacy_config(&mut mapped.spec.config, &sample);
-                normalise_spec_nal_length(&mut mapped.spec);
                 if mapped.in_band && fragmented {
                     mapped.tagger = InbandDisplayTagger::new(&mapped.spec.config, &mapped.extra);
                 }
@@ -813,6 +868,7 @@ impl Mp4Demux {
         let available = self.buf.len() - rel;
         let wanted = usize::try_from(range.len).unwrap_or(usize::MAX);
         if available >= wanted {
+            self.last_structure = range.offset;
             self.reader
                 .supply(range.offset, &self.buf[rel..rel + wanted])?;
             self.discard_to(range.end());
@@ -877,10 +933,46 @@ impl Mp4Demux {
             self.batch_range = None;
             self.emit_batch_bytes(range, bytes)?;
         } else {
+            self.last_structure = range.offset;
             self.structure = None;
-            self.reader.supply(range.offset, &bytes)?;
+            let short = got_len < range.len;
+            if short {
+                self.eof = true;
+            }
+            match self.reader.supply(range.offset, &bytes) {
+                Ok(()) => {}
+                Err(err) if is_truncation_error(&err) => {
+                    self.truncate_structure(range);
+                }
+                Err(isobmff::Error::BoxSizeUnderflow { .. })
+                    if self.saw_tracks
+                        && usize::try_from(range.len)
+                            .is_ok_and(|len| len > isobmff::box_types::BOX_HEADER_MIN_SIZE)
+                        && bytes.len()
+                            >= isobmff::box_types::BOX_TYPE_SIZE + BOX_SIZE_FIELD_SIZE
+                        && read_box_size(&bytes)
+                            >= u32::try_from(isobmff::box_types::BOX_HEADER_MIN_SIZE)
+                                .unwrap_or(u32::MAX) =>
+                {
+                    self.push_malformed(range.offset);
+                    self.reader.end_of_unit(range.end())?;
+                    self.done = false;
+                }
+                Err(isobmff::Error::SampleDataBudgetExceeded { .. }) => {
+                    self.push_malformed(range.offset);
+                    self.reader.end_of_unit(range.end())?;
+                    self.done = false;
+                }
+                Err(err) => return Err(err.into()),
+            }
         }
-        self.pump()
+        let pumped = self.pump();
+        if pumped.as_ref().err().is_some_and(is_truncation_error_crate) {
+            self.push_truncated(range.offset);
+            self.done = true;
+            return Ok(());
+        }
+        pumped
     }
 
     fn emit_batch_bytes(&mut self, range: ByteRange, bytes: Bytes) -> Result<()> {
@@ -924,10 +1016,6 @@ impl Mp4Demux {
         self.batch_range.map(|range| range.offset)
     }
 
-    fn missing_bytes(&self, range: ByteRange) -> usize {
-        usize::try_from(range.end().saturating_sub(self.buf_end())).unwrap_or(usize::MAX)
-    }
-
     fn demand_inner(&self) -> Demand {
         if self.poisoned.is_some() {
             return Demand::saturated();
@@ -949,16 +1037,15 @@ impl Mp4Demux {
                 Demand::saturated()
             }
             SourceMode::Sequential => {
-                if let Some(range) = self.batch_range {
-                    return Demand::new(self.missing_bytes(range));
-                }
-                if let Some(range) = self.structure {
-                    return Demand::new(self.missing_bytes(range));
+                let cap = self.config.limits.max_need_bytes();
+                let buffered = u64::try_from(self.buf.len()).unwrap_or(u64::MAX);
+                if buffered >= cap {
+                    return Demand::saturated();
                 }
                 if self.done || self.finished || self.eof {
                     return Demand::saturated();
                 }
-                Demand::new(0)
+                Demand::new(usize::try_from(cap - buffered).unwrap_or(usize::MAX))
             }
         }
     }
@@ -970,6 +1057,21 @@ fn is_truncation_error(err: &isobmff::Error) -> bool {
         isobmff::Error::BufferTooShort(_)
             | isobmff::Error::LargesizeBufferTooShort { .. }
             | isobmff::Error::UuidBufferTooShort { .. }
+    )
+}
+
+fn read_box_size(bytes: &[u8]) -> u32 {
+    let mut size = [0u8; BOX_SIZE_FIELD_SIZE];
+    size.copy_from_slice(&bytes[..4]);
+    u32::from_be_bytes(size)
+}
+
+fn is_truncation_error_crate(err: &Error) -> bool {
+    matches!(
+        err,
+        Error::BufferTooShort(_)
+            | Error::LargesizeBufferTooShort { .. }
+            | Error::UuidBufferTooShort { .. }
     )
 }
 
@@ -1052,12 +1154,67 @@ impl Stage for Mp4Demux {
         }
         self.finished = true;
         self.eof = true;
-        self.pump()?;
+        if let Err(err) = self.pump() {
+            if !is_truncation_error_crate(&err) {
+                return Err(err);
+            }
+            let position = self
+                .structure
+                .or(self.batch_range)
+                .map_or(self.buf_start, |range| range.offset);
+            self.structure = None;
+            self.batch_range = None;
+            self.push_truncated(position);
+            self.done = true;
+        }
         self.finish_flush();
         Ok(())
     }
 
     fn demand(&self) -> Demand {
         self.demand_inner()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::DemuxEvent;
+
+    const INIT: &str = "hls/cmaf-fmp4/init.mp4";
+
+    #[test]
+    fn init_tracks_are_available_before_finish() {
+        let bytes = test_fixtures::read(INIT);
+        let mut demux = Mp4Demux::sequential(Mp4DemuxConfig::default());
+        demux
+            .feed(Mp4Input::Next(&bytes), Timestamp::ZERO)
+            .expect("feed init");
+        let before: Vec<TrackSpec> = demux.init_tracks().cloned().collect();
+        assert!(!before.is_empty(), "the moov announces its tracks");
+
+        demux.finish().expect("finish");
+        let mut announced: Vec<TrackSpec> = Vec::new();
+        while let Some(event) = demux.poll() {
+            if let DemuxEvent::TrackAdded(spec) = event {
+                announced.push(spec);
+            }
+        }
+        assert_eq!(announced, before, "TrackAdded carries the init's own specs");
+    }
+
+    #[test]
+    fn buffered_reports_len_and_capacity() {
+        let bytes = test_fixtures::read(INIT);
+        let mut demux = Mp4Demux::sequential(Mp4DemuxConfig::default());
+        demux
+            .feed(Mp4Input::Next(&bytes), Timestamp::ZERO)
+            .expect("feed init");
+        let (len, capacity) = demux.buffered();
+        assert!(capacity >= len);
+        demux
+            .feed(Mp4Input::SegmentEnd, Timestamp::ZERO)
+            .expect("segment end");
+        assert_eq!(demux.buffered(), (0, 0), "the buffer is released");
     }
 }

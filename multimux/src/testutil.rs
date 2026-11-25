@@ -220,14 +220,15 @@ pub(crate) async fn get_bytes(app: &axum::Router, path: &str) -> (axum::http::St
 /// The decode time of the first sample of the served segment `seq`: its
 /// `tfdt`, read by demuxing the init and the segment together.
 pub(crate) async fn served_first_dts(app: &axum::Router, seq: u64) -> i64 {
-    use broadcast_common::Unpackage;
     let (status, init) = get_bytes(app, "/cam/init-1.mp4").await;
     assert_eq!(status, axum::http::StatusCode::OK);
     let (status, segment) = get_bytes(app, &format!("/cam/seg-1-{seq}.m4s")).await;
     assert_eq!(status, axum::http::StatusCode::OK, "segment {seq}");
-    let media = transmux::Fmp4Demux::new()
-        .unpackage(&[init, segment].concat())
-        .expect("demux");
+    let media = test_harness::collect::media_from_mp4(
+        &[init, segment].concat(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux");
     media.tracks[0].samples[0]
         .timing
         .and_then(|t| t.dts())

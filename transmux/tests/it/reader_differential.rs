@@ -1,4 +1,4 @@
-//! Differential: the `isobmff` progressive reader against `ProgressiveDemux`.
+//! Differential: the `isobmff` progressive reader against `Mp4Demux`.
 //!
 //! For every fixture the demuxer accepts, each track it keeps must agree with
 //! the reader sample by sample on timing, sync and size; the coded bytes must
@@ -7,11 +7,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use broadcast_common::Unpackage;
 use isobmff::sample_table::SampleRef;
 use isobmff::{Reader, ReaderConfig, SampleOrder, Step};
 use transmux::pipeline::CodecConfig;
-use transmux::progressive_demux::ProgressiveDemux;
 
 /// Tracks the corpus walk must compare: a checkout with no usable files fails
 /// rather than passing vacuously.
@@ -79,7 +77,7 @@ fn reader_rows(bytes: &[u8]) -> isobmff::Result<(Vec<isobmff::TrackId>, Vec<Samp
             }
             Step::Sample(sample) => samples.push(sample),
             Step::Tracks(infos) => tracks = infos.iter().map(|info| info.track_id).collect(),
-            Step::Metadata(_) => {}
+            Step::Fragment(_) | Step::Metadata(_) | Step::Warning(_) => {}
             Step::Done => break,
             _ => break,
         }
@@ -88,17 +86,17 @@ fn reader_rows(bytes: &[u8]) -> isobmff::Result<(Vec<isobmff::TrackId>, Vec<Samp
 }
 
 #[test]
-fn the_reader_agrees_with_the_progressive_demuxer() {
+fn the_reader_agrees_with_the_progressive_demux_stage() {
     let mut compared_tracks = 0usize;
     let mut compared_samples = 0usize;
     for (key, path) in fixtures() {
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
-        let Ok(mut demux) = ProgressiveDemux::new(bytes.len().max(1)) else {
-            continue;
-        };
-        let Ok(media) = demux.unpackage(bytes.as_slice()) else {
+        let Ok(media) = test_harness::collect::media_from_mp4(
+            &bytes,
+            test_harness::collect::CollectMode::Seekable,
+        ) else {
             continue;
         };
         if media.tracks.is_empty() {
@@ -136,8 +134,13 @@ fn the_reader_agrees_with_the_progressive_demuxer() {
                     usize::try_from(timing.dts().expect("dts")).expect("dts"),
                     "{key}: track {id} decode time"
                 );
+                let expected_duration = if reader_sample.duration == 0 {
+                    None
+                } else {
+                    Some(reader_sample.duration)
+                };
                 assert_eq!(
-                    Some(reader_sample.duration),
+                    expected_duration,
                     timing.duration(),
                     "{key}: track {id} duration"
                 );

@@ -6,11 +6,9 @@
 //! more"), so N x 16 input bytes still cost N x 40 MiB: 16 `trun`s (256 bytes)
 //! allocate ~640 MiB+. FAILS on the code under review.
 
-use broadcast_common::Unpackage;
 use isobmff::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
 use isobmff::movie_fragment::MovieFragmentBox;
 use test_alloc::ThreadCounting;
-use transmux::Fmp4Demux;
 
 #[global_allocator]
 static ALLOC: ThreadCounting = ThreadCounting::new();
@@ -87,11 +85,14 @@ fn many_zero_width_truns_through_fmp4_demux_stay_bounded() {
     let ins = trun_at + trun_size;
     data.splice(ins..ins, extra);
 
-    let (res, snap) = ThreadCounting::measure(|| Fmp4Demux::new().unpackage(&data).map(|_| ()));
+    let (res, snap) = ThreadCounting::measure(|| {
+        test_harness::collect::media_from_mp4(&data, test_harness::collect::CollectMode::Seekable)
+            .map(|_| ())
+    });
     drop(res);
     assert!(
         snap.bytes <= BUDGET,
-        "{} extra input bytes made Fmp4Demux allocate {} MiB",
+        "{} extra input bytes made Mp4Demux allocate {} MiB",
         TRUNS * 16,
         snap.bytes >> 20
     );

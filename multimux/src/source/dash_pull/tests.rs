@@ -19,11 +19,10 @@ use axum::extract::{Path as AxumPath, State};
 use axum::http::{HeaderMap, Method, StatusCode as AxumStatus, header};
 use axum::response::{IntoResponse, Response as AxumResponse};
 use axum::routing::get;
-use broadcast_common::{Timestamp, Unpackage};
+use broadcast_common::Timestamp;
 use headers::HeaderMapExt;
 use media_plane::ingress::HandshakePolicy;
 use media_plane::trunk::{SampleCursorItem, TrunkConfig};
-use transmux::media::Fmp4Demux;
 use transmux::{CodecConfig, Sample, TrackId, TrackSpec};
 
 use super::{DashPullRoute, run_with_clock};
@@ -277,13 +276,15 @@ impl Pull {
 fn demux_pair(init: &[u8], segment: &[u8]) -> Vec<Sample> {
     let mut whole = init.to_vec();
     whole.extend_from_slice(segment);
-    Fmp4Demux::new()
-        .unpackage(whole.as_slice())
-        .expect("oracle demux")
-        .tracks
-        .into_iter()
-        .flat_map(|t| t.samples)
-        .collect()
+    test_harness::collect::media_from_mp4(
+        whole.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("oracle demux")
+    .tracks
+    .into_iter()
+    .flat_map(|t| t.samples)
+    .collect()
 }
 
 fn expected(dir: &str, init: &str, segments: &[&str]) -> Vec<Sample> {
@@ -599,13 +600,15 @@ async fn an_on_demand_sidx_presentation_plays_with_byte_range_requests() {
 
     let whole = |name: &str| -> Vec<Sample> {
         let bytes = std::fs::read(fixture(&format!("ondemand-sidx/{name}"))).expect("fixture");
-        Fmp4Demux::new()
-            .unpackage(bytes.as_slice())
-            .expect("oracle demux")
-            .tracks
-            .into_iter()
-            .flat_map(|t| t.samples)
-            .collect()
+        test_harness::collect::media_from_mp4(
+            bytes.as_slice(),
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .expect("oracle demux")
+        .tracks
+        .into_iter()
+        .flat_map(|t| t.samples)
+        .collect()
     };
     assert_same(&delivered.video(), &whole("v_dashinit.mp4"), "video");
     assert_same(&delivered.audio(), &whole("a_dashinit.mp4"), "audio");
@@ -631,13 +634,15 @@ async fn a_server_that_ignores_range_is_sliced_to_the_requested_part() {
         .await;
     result.expect("ends cleanly");
     let bytes = std::fs::read(fixture("ondemand-sidx/v_dashinit.mp4")).expect("fixture");
-    let whole: Vec<Sample> = Fmp4Demux::new()
-        .unpackage(bytes.as_slice())
-        .expect("oracle demux")
-        .tracks
-        .into_iter()
-        .flat_map(|t| t.samples)
-        .collect();
+    let whole: Vec<Sample> = test_harness::collect::media_from_mp4(
+        bytes.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("oracle demux")
+    .tracks
+    .into_iter()
+    .flat_map(|t| t.samples)
+    .collect();
     assert_same(&delivered.video(), &whole, "video");
     assert!(origin.hits().iter().all(|h| h.status == 200));
 }

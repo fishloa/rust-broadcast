@@ -11,9 +11,8 @@
 //! Fixtures: real ffmpeg output with real `uuid` children spliced in —
 //! see `../fixtures/mp4/uuid-boxes/PROVENANCE.md`.
 
-use broadcast_common::{Parse, Serialize, Unpackage};
+use broadcast_common::{Parse, Serialize};
 use isobmff::MovieBox;
-use transmux::Fmp4Demux;
 
 const DIR: &str = "mp4/uuid-boxes";
 
@@ -59,15 +58,17 @@ fn moov_uuid_child_round_trips_byte_exact() {
 }
 
 /// A media segment's `moof` carries a `uuid` child, and its `traf` carries
-/// another. `Fmp4Demux` re-serialises neither, but the *parsed* boxes must
+/// another. `Mp4Demux` re-serialises neither, but the *parsed* boxes must
 /// keep every child so `protect_media_segment` (and any rewrite) does not
 /// strip them; this pins the parse side against the real fixture.
 #[test]
 fn moof_and_traf_uuid_children_are_preserved_on_parse() {
     let data = read("segment-uuid.mp4");
-    let media = Fmp4Demux::new()
-        .unpackage(data.as_slice())
-        .expect("the segment demuxes");
+    let media = test_harness::collect::media_from_mp4(
+        data.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("the segment demuxes");
     assert!(
         media.tracks.iter().any(|t| !t.samples.is_empty()),
         "the segment still yields samples with uuid children present"

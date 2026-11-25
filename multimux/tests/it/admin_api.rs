@@ -2145,9 +2145,11 @@ async fn a_reload_whose_init_changed_starts_a_new_dash_period() {
     );
     let mut init_and_segment = seen.new_init.clone();
     init_and_segment.extend_from_slice(&seen.new_first_segment);
-    let media =
-        broadcast_common::Unpackage::unpackage(&mut transmux::Fmp4Demux::new(), &init_and_segment)
-            .expect("the first new segment demuxes with the new init");
+    let media = test_harness::collect::media_from_mp4(
+        &init_and_segment,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("the first new segment demuxes with the new init");
     let decode_time = media.tracks[0].samples[0]
         .timing
         .and_then(|t| t.dts())
@@ -2442,9 +2444,11 @@ async fn an_identical_init_reload_lists_only_served_dash_segments() {
     );
     let mut init_and_segment = seen.new_init.clone();
     init_and_segment.extend_from_slice(&seen.new_first_segment);
-    let media =
-        broadcast_common::Unpackage::unpackage(&mut transmux::Fmp4Demux::new(), &init_and_segment)
-            .expect("the first new segment demuxes with the new init");
+    let media = test_harness::collect::media_from_mp4(
+        &init_and_segment,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("the first new segment demuxes with the new init");
     assert_eq!(
         u64::try_from(
             media.tracks[0].samples[0]

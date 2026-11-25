@@ -7,11 +7,8 @@
 //! (ISO/IEC 14496-12:2026 §12.1.3) and `tkhd`'s 16.16 `width`/`height`
 //! (§8.3.2). A zero here would let a track mux as 0x0 with every other gate
 //! green.
-
-use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use transmux::TrackSpec;
-use transmux::media::Fmp4Demux;
 use transmux::pipeline::{self, CodecConfig};
 
 const WIDTH: u16 = 1920;
@@ -26,9 +23,9 @@ fn timescale(value: u32) -> Timescale {
 fn resized_spec(rel: &str) -> TrackSpec {
     let bytes =
         std::fs::read(test_fixtures::path(rel)).unwrap_or_else(|e| panic!("read {rel}: {e}"));
-    let media = Fmp4Demux::new()
-        .unpackage(&bytes)
-        .unwrap_or_else(|e| panic!("demux {rel}: {e}"));
+    let media =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .unwrap_or_else(|e| panic!("demux {rel}: {e}"));
     let mut spec = media
         .tracks
         .into_iter()

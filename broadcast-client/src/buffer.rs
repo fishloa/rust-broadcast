@@ -1489,10 +1489,13 @@ mod tests {
 
     #[test]
     fn av1_and_vp9_tracks_are_default_rendered_video() {
-        use transmux::Fmp4Demux;
         for fixture in ["mp4/frag/av1.frag.mp4", "mp4/frag/vp9.frag.mp4"] {
             let data = test_fixtures::read(fixture);
-            let media = Fmp4Demux::new().unpackage(&data[..]).unwrap();
+            let media = test_harness::collect::media_from_mp4(
+                &data[..],
+                test_harness::collect::CollectMode::Seekable,
+            )
+            .unwrap();
             let video = media
                 .tracks
                 .iter()

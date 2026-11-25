@@ -24,7 +24,7 @@ use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
 use transmux::ts_demux::TsDemux;
 use transmux::{
-    AspectRatioIdc, Fmp4Demux, Media, MediaKind, Sample, SmoothPackager, Track, TrackId, TrackSpec,
+    AspectRatioIdc, Media, MediaKind, Sample, SmoothPackager, Track, TrackId, TrackSpec,
     playready_wrmheader,
 };
 
@@ -83,8 +83,7 @@ fn hevc_hdr10plus_media() -> Option<Media> {
 /// The real AVC + `stpp`/TTML capture (`fixtures/mp4/cmaf-av-subtitle`).
 fn av_subtitle_media() -> Media {
     let bytes = test_fixtures::read("mp4/cmaf-av-subtitle/av-subtitle-frag.mp4");
-    Fmp4Demux::new()
-        .unpackage(&bytes[..])
+    test_harness::collect::media_from_mp4(&bytes[..], test_harness::collect::CollectMode::Seekable)
         .expect("demux cmaf AVC + stpp fixture")
 }
 

@@ -16,13 +16,11 @@
 //!    [`Error::InvalidInput`] rather than producing an empty track.
 
 use broadcast_common::timescale::Timescale;
+use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use std::fs;
 use transmux::TrackId;
-
-use broadcast_common::Unpackage;
-use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::error::Error;
-use transmux::media::{Fmp4Demux, Track};
+use transmux::media::Track;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::trickplay::derive_iframe_track;
 
@@ -194,8 +192,9 @@ fn synthetic_duration_folding() {
 #[test]
 fn real_fixture_video_trickplay() {
     let file = av_frag_fixture();
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("demux av-frag.mp4");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("demux av-frag.mp4");
 
     // The fixture has video as the first track.
     let video = media

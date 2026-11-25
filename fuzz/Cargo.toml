@@ -567,12 +567,6 @@ test = false
 doc  = false
 
 [[bin]]
-name = "transmux_progressive_demux"
-path = "fuzz_targets/transmux_progressive_demux.rs"
-test = false
-doc  = false
-
-[[bin]]
 name = "ts_fix"
 path = "fuzz_targets/ts_fix.rs"
 test = false

@@ -37,7 +37,7 @@ fn program_splice_time(cue: &SpliceInsert) -> SpliceTime {
 /// (`fixtures/scte35/PROVENANCE.md`, "Cue-to-IDR alignment"). Hard-coded
 /// as the independently-verified ground truth, exactly as
 /// `ssai-runtime/examples/condition_real_cue.rs` does — re-deriving it needs
-/// a working `Fmp4Demux` track and this exact fixture currently defeats that
+/// a working `Mp4Demux` track and this exact fixture currently defeats that
 /// (issue #952, documented in the same PROVENANCE.md).
 const NEAREST_KEYFRAME_PTS: u64 = 160_767_315_906_000;
 

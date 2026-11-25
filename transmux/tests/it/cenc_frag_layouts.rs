@@ -13,9 +13,9 @@
 //! traf, ffmpeg fails the audio) — see the README's "could not be proven".
 #![cfg(feature = "cenc")]
 
-use broadcast_common::{Decrypt, Unpackage};
+use broadcast_common::Decrypt;
+use transmux::Media;
 use transmux::cenc_decrypt::{CencDecryptor, KeyMap};
-use transmux::{Fmp4Demux, Media};
 
 /// The fixture's KID/KEY (`fixtures/mp4/cenc-layouts/PROVENANCE.md`).
 const KID: [u8; 16] = [
@@ -35,8 +35,11 @@ fn read(name: &str) -> Vec<u8> {
 /// The clear reference: `clear.mp4` demuxed to its video track's samples.
 fn clear_video_samples() -> Vec<Vec<u8>> {
     let bytes = read("clear.mp4");
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(bytes.as_slice()).expect("demux clear.mp4");
+    let media = test_harness::collect::media_from_mp4(
+        bytes.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux clear.mp4");
     video_samples(&media)
 }
 

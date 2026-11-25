@@ -14,7 +14,7 @@ use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use isobmff::DtsSpecificBox;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
-use transmux::{Fmp4Demux, TsDemux, TsMux};
+use transmux::{TsDemux, TsMux};
 
 const TS: usize = 188;
 
@@ -276,9 +276,9 @@ fn fmp4_round_trip_preserves_ddts_and_sample_bytes() {
     let mut mux = CmafMux::new(1);
     let fmp4 = mux.package(&media).expect("mux to fMP4");
 
-    let media2 = Fmp4Demux::new()
-        .unpackage(&fmp4)
-        .expect("demux round-tripped fMP4");
+    let media2 =
+        test_harness::collect::media_from_mp4(&fmp4, test_harness::collect::CollectMode::Seekable)
+            .expect("demux round-tripped fMP4");
     let track2 = dts_track(&media2);
     let CodecConfig::Dts { config: ddts2, .. } = track2.config() else {
         unreachable!()

@@ -247,7 +247,7 @@ pub enum Error {
     /// §8.5.2) describes a codec this crate has no
     /// [`CodecConfig`](crate::pipeline::CodecConfig) reconstruction for —
     /// e.g. a proprietary or as-yet-unimplemented FourCC
-    /// ([`Fmp4Demux`](crate::media::Fmp4Demux), media plane step 2d). Once a
+    /// ([`Mp4Demux`](crate::mp4_demux::Mp4Demux), media plane step 2d). Once a
     /// genuine gap (not merely undecoded metadata: `stpp`/`wvtt`/`ac-4` all
     /// reconstruct), the track is rejected rather than silently dropped, so
     /// the caller learns *which* sample entry it was.
@@ -314,15 +314,6 @@ pub enum Error {
     /// state, so the caller may simply continue feeding new input (it will
     /// resync at the next natural boundary) or treat this as a recoverable
     /// per-connection error, at its discretion.
-    ///
-    /// Also returned by
-    /// [`ProgressiveDemux`](crate::progressive_demux::ProgressiveDemux)'s
-    /// [`Stage`](broadcast_common::Stage) adapter (issue B7, media plane step
-    /// 2 fix wave 3) when `feed` would grow its whole-file buffer past the
-    /// `max_bytes` bound supplied at construction — there this buffer has no
-    /// partial-unit resync point to drop and continue from, so the caller
-    /// should treat it as fatal for that `Stage` instance rather than keep
-    /// feeding.
     #[error("{what} buffer exceeded its {cap}-byte cap and was dropped")]
     BufferCapExceeded {
         /// Human-readable name of the buffer that overflowed.

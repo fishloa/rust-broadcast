@@ -572,11 +572,11 @@ This is also the fix for the existing `TrackUpdated` ordering defect (§2).
 | `StreamingTsDemux` (MPEG-2 video) | Phase 1b if approved (Q6) | Phase 3 AFD; Phase 1b sequence geometry |
 | Batch `TsDemux` -> `Media` | same (final spec, last wins) | per-AU tags only (no event list in `Media`) |
 | `PsDemux` -> `Media` | Phase 1 (H.264 from avcC; MPEG-2 from first sequence header) | per-AU tags only (no event list in `Media`): H.264 via `SpsTracker`, MPEG-2 via `Mpeg2DisplayTracker` |
-| `Fmp4Demux` (avc1/hvc1: params out of band) | Phase 1 from avcC/hvcC; `colr` and `pasp` overlay (§6.3) | a change needs a new sample entry = new init = new `Media`; no in-segment change possible |
-| `Fmp4Demux` (avc3/hev1: in-band params) | Phase 1 | Phase 2b: scan in-band SPS in samples, tag samples. `tfhd.sample_description_index` (multiple entries) stays unsupported (existing gap) |
+| `Mp4Demux` (avc1/hvc1: params out of band) | Phase 1 from avcC/hvcC; `colr` and `pasp` overlay (§6.3) | a change needs a new sample entry = new init = new `Media`; no in-segment change possible |
+| `Mp4Demux` (avc3/hev1: in-band params) | Phase 1 | Phase 2b: scan in-band SPS in samples, tag samples. `tfhd.sample_description_index` (multiple entries) stays unsupported (existing gap) |
 | `StreamingFlvDemux` (RTMP) | Phase 1 via `TrackSpec::new` on each sequence header | Phase 2 must verify FLV's `TrackUpdated` is not also one sample early (not checked here) |
 | `rtp_stream` | Phase 1 via `TrackSpec::new` | Phase 2 audit, same check |
-| `hls-runtime` client | inherits `Fmp4Demux` / TS demux | inherits |
+| `hls-runtime` client | inherits `Mp4Demux` / TS demux | inherits |
 | `media-plane` / `multimux` | `TracksChanged` snapshot carries `TrackSpec.display` | `Sample.display` flows through the `Trunk` unchanged |
 
 H.265 VPS: carries no display syntax; a VPS-only change never raises

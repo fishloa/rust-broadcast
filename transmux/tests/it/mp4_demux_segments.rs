@@ -4,20 +4,19 @@
 //! Every multi-segment group under the committed DASH, CMAF-HLS and SCTE-35
 //! DASH fixture directories is walked. For each segment in turn the test
 //! damages it three ways, feeds init and then every segment followed by
-//! `SegmentEnd`, and compares each track with `Fmp4Demux` over
+//! `SegmentEnd`, and compares each track with `Mp4Demux` over
 //! `init ++ segment` — the per-segment behaviour a consumer relied on before
 //! one long-lived stage. Undamaged segments must be identical, the damaged one
-//! must match what `Fmp4Demux` recovers from it, and the segment after it must
+//! must match what `Mp4Demux` recovers from it, and the segment after it must
 //! be complete.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use broadcast_common::Unpackage;
 use broadcast_common::stage::{Stage, Timestamp};
 use transmux::ir::SampleTiming;
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
-use transmux::{Fmp4Demux, InputDegradation, Media, TrackSpec};
+use transmux::{InputDegradation, Media, TrackSpec};
 
 /// Groups the walk must compare (a checkout with no usable files fails rather
 /// than passing vacuously).
@@ -59,14 +58,24 @@ fn add_tracks(expected: &mut BTreeMap<u32, Expected>, media: &Media) {
     }
 }
 
-/// Demux `init ++ segment` with the whole-input demuxer, the per-segment
-/// behaviour this stage replaces.
+/// A fresh stage over the init plus one segment: the per-segment result the
+/// long-lived stage must reproduce.
 fn fmp4_segment(init: &[u8], segment: &[u8]) -> Media {
-    let mut input = init.to_vec();
-    input.extend_from_slice(segment);
-    Fmp4Demux::new()
-        .unpackage(&input)
-        .unwrap_or_else(|err| panic!("Fmp4Demux rejected init ++ segment: {err:?}"))
+    let mut demux = Mp4Demux::sequential(Mp4DemuxConfig::default());
+    feed_bytes(&mut demux, init);
+    demux
+        .feed(Mp4Input::SegmentEnd, Timestamp::ZERO)
+        .expect("init segment end");
+    feed_bytes(&mut demux, segment);
+    demux
+        .feed(Mp4Input::SegmentEnd, Timestamp::ZERO)
+        .expect("segment end");
+    demux.finish().expect("finish");
+    let mut events = Vec::new();
+    while let Some(event) = demux.poll() {
+        events.push(event);
+    }
+    test_harness::collect::media_from_events(events)
 }
 
 fn feed_bytes(demux: &mut Mp4Demux, bytes: &[u8]) {
@@ -410,7 +419,7 @@ fn a_damaged_segment_costs_only_itself() {
                 {
                     assert!(
                         !stage.degraded.is_empty(),
-                        "{} segment {victim} {}: Fmp4Demux reported a degraded unit the stage \
+                        "{} segment {victim} {}: Mp4Demux reported a degraded unit the stage \
                          did not",
                         group.name,
                         harm.name()

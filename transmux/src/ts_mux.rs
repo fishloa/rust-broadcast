@@ -5,7 +5,7 @@
 //! stream, coded samples in decode order) and produces a whole-packet MPEG-2 TS
 //! byte stream, implementing the abstract [`broadcast_common::Package`] trait so
 //! `{any} → IR → {TS}` composes with the existing
-//! [`Fmp4Demux`](crate::media::Fmp4Demux) / [`TsDemux`](crate::TsDemux)
+//! [`Mp4Demux`](crate::mp4_demux::Mp4Demux) / [`TsDemux`](crate::TsDemux)
 //! depackagers. It is the byte-level inverse of [`TsDemux`](crate::TsDemux):
 //! a `TsMux → TsDemux` round-trip recovers an equivalent IR (same tracks, codec
 //! configs, coded NAL payloads, frame counts, and per-sample timing).

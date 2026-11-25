@@ -42,7 +42,7 @@
 //! HEVC (H.265) elementary streams are carried into the IR: the in-band
 //! VPS/SPS/PPS NAL units are gathered from the Annex-B access units, decoded
 //! into an `hvcC` [`HEVCConfigurationBox`], and emitted as a `hvc1`
-//! [`CodecConfig::Hevc`] track — identical to the config `Fmp4Demux` recovers
+//! [`CodecConfig::Hevc`] track — identical to the config `Mp4Demux` recovers
 //! from an fMP4 `hvcC` (issue #467). DTS elementary streams (stream_type
 //! `0x82`/`0x85`/`0x8A`) are carried: the core-substream frame header
 //! (`0x7FFE8001` sync) is parsed into a core-only `ddts` [`CodecConfig::Dts`]

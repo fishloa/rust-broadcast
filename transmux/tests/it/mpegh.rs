@@ -22,10 +22,10 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use broadcast_common::{Package, Parse, Serialize};
 use isobmff::{MHAC_CONFIGURATION_VERSION, MHAC_FOURCC, MHADecoderConfigurationRecord};
 use isobmff::{SampleDescriptionBox, SampleEntryVariant};
-use transmux::{CmafMux, CodecConfig, Fmp4Demux};
+use transmux::{CmafMux, CodecConfig};
 
 static FIXTURE: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("mp4/frag/mpegh-stereo.frag.mp4"));
@@ -99,8 +99,11 @@ fn source_mhac_body(mp4: &[u8]) -> &[u8] {
 
 /// Demux the fixture to the IR and return the single MPEG-H track.
 fn demux_fixture() -> transmux::Media {
-    let mut demux = Fmp4Demux::new();
-    demux.unpackage(FIXTURE.as_slice()).expect("demux fixture")
+    test_harness::collect::media_from_mp4(
+        FIXTURE.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux fixture")
 }
 
 fn mpegh_track(media: &transmux::Media) -> &transmux::Track {
@@ -183,7 +186,7 @@ fn config_fields_decoded_from_record() {
 
 // ---------------------------------------------------------------------------
 // Gate 3: sample-fidelity round-trip.
-//   Fmp4Demux → IR → CmafMux → re-Fmp4Demux; coded MPEG-H sample bytes are
+//   Mp4Demux → IR → CmafMux → re-Mp4Demux; coded MPEG-H sample bytes are
 //   byte-identical to the first demux, same count (derived, never hardcoded).
 // ---------------------------------------------------------------------------
 #[test]
@@ -199,8 +202,11 @@ fn sample_bytes_round_trip_byte_identical() {
     // Re-mux to CMAF, then re-demux.
     let mut mux = CmafMux::new(1);
     let remuxed = mux.package(&first).expect("re-mux to CMAF");
-    let mut demux2 = Fmp4Demux::new();
-    let second = demux2.unpackage(&remuxed).expect("re-demux");
+    let second = test_harness::collect::media_from_mp4(
+        &remuxed,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("re-demux");
     let track2 = mpegh_track(&second);
 
     assert_eq!(

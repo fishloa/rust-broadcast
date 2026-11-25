@@ -83,7 +83,6 @@ WHOLE_FILE_GLOBS: dict[str, tuple[str, ...]] = {
     "emsg": ("fixtures/scte35/*emsg*.bin",),
     "timed_metadata_convert": ("fixtures/scte35/*emsg*.bin", "fixtures/hls/handbuilt/daterange*.m3u8"),
     "transmux_webm_demux": ("fixtures/mkv/*.webm", "fixtures/mkv/*.mkv"),
-    "transmux_progressive_demux": ("fixtures/mp4/h264-aac-prog.mp4", "fixtures/mp4/h264-high.mp4"),
     "isobmff_reader": ("fixtures/mp4/**/*.mp4", "fixtures/mp4/**/*.m4a"),
     "isobmff_reader_fragmented": ("fixtures/mp4/**/*.mp4", "fixtures/dash/**/*.m4s", "fixtures/hls/cmaf-fmp4/*.m4s"),
     # The whole-file target reads, rewrites and compares: a real file image is

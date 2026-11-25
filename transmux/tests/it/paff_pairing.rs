@@ -19,7 +19,7 @@ use transmux::pipeline::CodecConfig;
 use transmux::slice_header::{AvcSliceHeader, decode_avc_slice_pps, parse_avc_slice_header};
 use transmux::sps::decode_avc_slice_sps;
 use transmux::{
-    CmafMux, DemuxEvent, Fmp4Demux, Media, StreamingTsDemux, TsDemux, TsMux, iter_annexb_nals,
+    CmafMux, DemuxEvent, Media, StreamingTsDemux, TsDemux, TsMux, iter_annexb_nals,
     iter_length_prefixed_nals,
 };
 
@@ -238,7 +238,11 @@ fn remux_through_ts_and_fmp4_stays_one_sample_per_frame() {
         assert_paired_from(&g, &r, "TS remux", base);
         // IR -> fMP4 -> IR
         let mp4 = CmafMux::default().package(&ir).expect("mux fMP4");
-        let back = Fmp4Demux::new().unpackage(&mp4).expect("demux fMP4");
+        let back = test_harness::collect::media_from_mp4(
+            &mp4,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .expect("demux fMP4");
         let n = avc_samples(&back).len();
         assert_eq!(n, FRAMES, "fMP4 round trip keeps 12 samples");
         for s in avc_samples(&back) {

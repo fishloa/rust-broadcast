@@ -1,7 +1,7 @@
 //! fMP4/CMAF repackaging — IR transforms + a driver (ISO/IEC 14496-12:2026; CMAF
 //! ISO/IEC 23000-19).
 //!
-//! `transmux` is an any-to-any container hub: [`Fmp4Demux`]
+//! `transmux` is an any-to-any container hub: [`Mp4Demux`](crate::mp4_demux::Mp4Demux)
 //! parses fragmented ISOBMFF/CMAF into the neutral [`Media`] IR, and
 //! [`Segmenter`] / [`CmafMux`](crate::media::CmafMux) mux the IR back into CMAF.
 //! *Repackaging* composes those two ends with pure transforms on the IR in the
@@ -34,11 +34,10 @@
 
 use alloc::vec::Vec;
 
-use broadcast_common::Unpackage;
 use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
 
 use crate::error::{Error, Result};
-use crate::media::{Fmp4Demux, Media, TimelineOrigin, Track, relative_decode_times};
+use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::pipeline::TrackSpec;
 use crate::segmenter::{Segmenter, choose_anchor};
 
@@ -359,9 +358,10 @@ impl Repackage {
     /// transforms, and resegment.
     ///
     /// # Errors
-    /// Propagates [`Fmp4Demux`] / transform / [`Segmenter`] errors.
+    /// Propagates [`Mp4Demux`](crate::mp4_demux::Mp4Demux) / transform /
+    /// [`Segmenter`] errors.
     pub fn run(&self, fmp4: &[u8]) -> Result<RepackageOutput> {
-        let media = Fmp4Demux::new().unpackage(fmp4)?;
+        let media = crate::mp4_collect::media_from_mp4(fmp4)?;
         self.run_media(&media)
     }
 
@@ -430,8 +430,7 @@ pub struct RepackageOutput {
 
 impl RepackageOutput {
     /// Concatenate the init segment and every media segment into one contiguous
-    /// fragmented-MP4 byte stream — the form
-    /// [`Fmp4Demux`] re-parses.
+    /// fragmented-MP4 byte stream — the form the streaming MP4 stage re-parses.
     pub fn to_contiguous(&self) -> Vec<u8> {
         let total =
             self.init_segment.len() + self.media_segments.iter().map(Vec::len).sum::<usize>();

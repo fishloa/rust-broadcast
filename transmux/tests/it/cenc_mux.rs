@@ -859,9 +859,11 @@ fn protected_segment_with_an_opaque_moof_child_matches_mp4decrypt() {
     let bytes = std::fs::read(&output).expect("read mp4decrypt output");
     let _ = std::fs::remove_dir_all(&dir);
 
-    let ref_media = transmux::Fmp4Demux::new()
-        .unpackage(bytes.as_slice())
-        .expect("demux mp4decrypt output");
+    let ref_media = test_harness::collect::media_from_mp4(
+        bytes.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux mp4decrypt output");
     let ref_samples: Vec<Vec<u8>> = ref_media.tracks[0]
         .samples
         .iter()

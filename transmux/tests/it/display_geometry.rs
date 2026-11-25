@@ -14,7 +14,7 @@
 //! carry a `TrackSpec`). Fixtures are loaded through `test_fixtures`; the
 //! private submodule is skipped, not failed, when it is not checked out.
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Package;
 use transmux::ir::{AspectRatioIdc, CodecConfig};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux, TsDemux};
 
@@ -230,7 +230,7 @@ fn track_updated_lands_after_the_last_old_config_sample() {
 }
 
 /// The geometry survives an fMP4 (CMAF) round trip: anamorphic TS input,
-/// `CmafMux` then `Fmp4Demux`. Both `TrackSpec`s derive it from the same
+/// `CmafMux` then `Mp4Demux`. Both `TrackSpec`s derive it from the same
 /// `avcC` (the muxer rewrites the init segment, so this is not a pass-through
 /// of the demuxed spec).
 #[test]
@@ -254,9 +254,9 @@ fn cmaf_round_trip_keeps_the_sample_aspect_ratio() {
         "TS input must carry 16:11: {before:?}"
     );
     let fmp4 = transmux::CmafMux::new(1).package(&media).expect("CMAF mux");
-    let back = transmux::Fmp4Demux::new()
-        .unpackage(&fmp4)
-        .expect("fMP4 demux");
+    let back =
+        test_harness::collect::media_from_mp4(&fmp4, test_harness::collect::CollectMode::Seekable)
+            .expect("fMP4 demux");
     let after: Vec<Option<(u16, u16)>> = back
         .tracks
         .iter()

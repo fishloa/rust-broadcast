@@ -1,7 +1,4 @@
 //! Per-AU display tagging for in-band-parameter-set fMP4 (avc3/hev1), Phase 2b.
-
-use broadcast_common::Unpackage;
-use transmux::media::Fmp4Demux;
 use transmux::{CodecConfig, Media};
 
 fn inband_track(media: &Media) -> &transmux::Track {
@@ -24,7 +21,9 @@ fn melodie_avc3_all_samples_sar_64_45() {
     else {
         return;
     };
-    let media = Fmp4Demux::new().unpackage(&bytes).unwrap();
+    let media =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
     let track = inband_track(&media);
     assert!(!track.samples.is_empty());
     for s in &track.samples {
@@ -53,7 +52,9 @@ fn pasp_overrides_the_in_band_sps_sar() {
         .expect("pasp box");
     assert_eq!(&bytes[at + 4..at + 12], [0, 0, 0, 64, 0, 0, 0, 45]);
     bytes[at + 4..at + 12].copy_from_slice(&[0, 0, 0, 16, 0, 0, 0, 11]);
-    let media = Fmp4Demux::new().unpackage(&bytes).unwrap();
+    let media =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
     let track = inband_track(&media);
     assert!(!track.samples.is_empty());
     for s in &track.samples {
@@ -67,7 +68,9 @@ fn sarswitch_avc3_switch_at_sps_change() {
     else {
         return;
     };
-    let media = Fmp4Demux::new().unpackage(&bytes).unwrap();
+    let media =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
     let track = inband_track(&media);
 
     // Independent oracle: scan each sample's length-prefixed NALs for an SPS
@@ -140,7 +143,9 @@ fn avc1_out_of_band_keeps_display_none() {
     else {
         return;
     };
-    let media = Fmp4Demux::new().unpackage(&bytes).unwrap();
+    let media =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
     // only check if an avc track exists
     if let Some(track) = media
         .tracks
@@ -163,7 +168,9 @@ fn hostile_overrun_length_prefix_does_not_panic() {
     };
     // Find the first sample's NAL bytes in the file so we can corrupt its
     // (2-byte) length prefix in place, keeping the avc3 sample entry.
-    let media = Fmp4Demux::new().unpackage(&bytes).unwrap();
+    let media =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
     let track = media
         .tracks
         .iter()
@@ -181,7 +188,9 @@ fn hostile_overrun_length_prefix_does_not_panic() {
     bytes[pos - 2] = 0xFF;
     bytes[pos - 1] = 0xFF;
 
-    let media2 = Fmp4Demux::new().unpackage(&bytes).unwrap();
+    let media2 =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
     let track2 = media2
         .tracks
         .iter()
@@ -221,9 +230,11 @@ fn hevc_with_entry(fourcc: &[u8; 4]) -> Vec<u8> {
 
 #[test]
 fn hev1_in_band_hevc_is_tagged_per_access_unit() {
-    let media = Fmp4Demux::new()
-        .unpackage(hevc_with_entry(b"hev1").as_slice())
-        .expect("demux");
+    let media = test_harness::collect::media_from_mp4(
+        hevc_with_entry(b"hev1").as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux");
     let track = hevc_track(&media);
     assert!(!track.samples.is_empty());
     for (i, s) in track.samples.iter().enumerate() {
@@ -247,9 +258,11 @@ fn hev1_in_band_hevc_is_tagged_per_access_unit() {
 
 #[test]
 fn dvhe_dolby_vision_hevc_is_tagged_per_access_unit() {
-    let media = Fmp4Demux::new()
-        .unpackage(hevc_with_entry(b"dvhe").as_slice())
-        .expect("demux");
+    let media = test_harness::collect::media_from_mp4(
+        hevc_with_entry(b"dvhe").as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux");
     let track = hevc_track(&media);
     assert!(!track.samples.is_empty());
     for (i, s) in track.samples.iter().enumerate() {
@@ -262,9 +275,11 @@ fn dvhe_dolby_vision_hevc_is_tagged_per_access_unit() {
 
 #[test]
 fn hvc1_out_of_band_hevc_is_not_tagged() {
-    let media = Fmp4Demux::new()
-        .unpackage(hevc_with_entry(b"hvc1").as_slice())
-        .expect("demux");
+    let media = test_harness::collect::media_from_mp4(
+        hevc_with_entry(b"hvc1").as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux");
     let track = hevc_track(&media);
     assert!(!track.samples.is_empty());
     for (i, s) in track.samples.iter().enumerate() {

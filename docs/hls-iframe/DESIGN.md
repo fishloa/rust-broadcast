@@ -67,7 +67,7 @@ playlists (archived segments are not in the `Window`, so `iframe_len` is unavail
 ## 4. Verification plan (the gate, not the claim)
 
 1. **Geometry oracle.** For every entry on real fixtures: `sample_ranges` over the FULL segment → sample 0 of the video track is sync, `start == mdat payload start`, `len == end`; the served range bytes
-   equal `segment[0..len)`; and the I-frame's bytes `[start..end)` equal the demuxed first video sample (`Fmp4Demux` over the FULL segment). (A truncated range is NOT fed to `Fmp4Demux`:
+   equal `segment[0..len)`; and the I-frame's bytes `[start..end)` equal the demuxed first video sample (`Mp4Demux` over the FULL segment). (A truncated range is NOT fed to `Mp4Demux`:
    its `moof` describes more samples than the truncated `mdat` holds, so the demuxer correctly errors — the rev-1 "demux the slice" oracle was wrong.)
 2. **Apple `mediastreamvalidator`** over master + media + I-frame playlist + segments: zero errors (this is the check that the truncated-`mdat` ranges are accepted; no player is available here).
    Harness bites: a wrong `len`, a wrong `BANDWIDTH`, a dropped `EXT-X-I-FRAMES-ONLY` are each rejected — find which the validator rejects and assert exactly those.

@@ -4,7 +4,7 @@
 //! (H.264 video + AAC audio — 75 video + 131 audio samples).
 //!
 //! Every test bites: chunk bytes are parsed with a std-only top-level box walker
-//! and re-demuxed via `Fmp4Demux` (no hardcoded offsets); the MPD is parsed with
+//! and re-demuxed via `Mp4Demux` (no hardcoded offsets); the MPD is parsed with
 //! `quick-xml` and asserted against real elements/attributes.
 #![cfg(feature = "std")]
 
@@ -16,7 +16,7 @@ use broadcast_common::{Package, Stage, Unpackage};
 use std::time::Duration;
 use transmux::Sample;
 use transmux::ll_dash::{Chunk, LlSegmenter};
-use transmux::media::{Fmp4Demux, Media, Track};
+use transmux::media::{Media, Track};
 use transmux::pipeline::{FragmentTrackData, TrackSpec};
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use transmux::ts_demux::TsDemux;
@@ -134,8 +134,8 @@ fn demux_bytes(init: &[u8], body: &[u8]) -> Media {
     let mut buf = Vec::with_capacity(init.len() + body.len());
     buf.extend_from_slice(init);
     buf.extend_from_slice(body);
-    let mut d = Fmp4Demux::new();
-    d.unpackage(&buf[..]).expect("re-demux fMP4")
+    test_harness::collect::media_from_mp4(&buf[..], test_harness::collect::CollectMode::Seekable)
+        .expect("re-demux fMP4")
 }
 
 /// The whole-segment media segment bytes produced by the batch path, for the

@@ -1,4 +1,4 @@
-//! Oracle consumer: `Fmp4Demux` fragment addressing (audit r05-W7).
+//! Oracle consumer: `Mp4Demux` fragment addressing (audit r05-W7).
 //!
 //! Consumes the CLEAR variants of `../fixtures/mp4/cenc-layouts/` — the
 //! three addressing forms a real muxer writes (`clear_ffmpeg_{default,
@@ -8,13 +8,11 @@
 //! per-sample plaintext as `clear.mp4` (whose per-sample hashes are pinned in
 //! `clear-samples.txt`), for **all** tracks.
 //!
-//! `Fmp4Demux` shares its §8.8.7/§8.8.8 resolver with `CencDecryptor`
+//! `Mp4Demux` shares its §8.8.7/§8.8.8 resolver with `CencDecryptor`
 //! (`frag_offsets`), so this proves the demuxer's side of the same rule set.
 #![cfg(feature = "std")]
-
-use broadcast_common::Unpackage;
 use transmux::TrackId;
-use transmux::{CodecConfig, Fmp4Demux, Media};
+use transmux::{CodecConfig, Media};
 
 const DIR: &str = "mp4/cenc-layouts";
 
@@ -25,9 +23,11 @@ fn read(name: &str) -> Vec<u8> {
 
 fn demux(name: &str) -> Media {
     let bytes = read(name);
-    let mut d = Fmp4Demux::new();
-    d.unpackage(bytes.as_slice())
-        .unwrap_or_else(|e| panic!("{name}: demux: {e}"))
+    test_harness::collect::media_from_mp4(
+        bytes.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .unwrap_or_else(|e| panic!("{name}: demux: {e}"))
 }
 
 /// `(track_id, per-sample bytes)` for every track, in moov order.
@@ -133,9 +133,11 @@ fn top_boxes(data: &[u8]) -> Vec<([u8; 4], usize, usize)> {
 #[test]
 fn truncated_final_box_is_tolerated() {
     let full = read("clear.mp4");
-    let media = Fmp4Demux::new()
-        .unpackage(full.as_slice())
-        .expect("the whole file demuxes");
+    let media = test_harness::collect::media_from_mp4(
+        full.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("the whole file demuxes");
     let full_samples: usize = media.tracks.iter().map(|t| t.samples.len()).sum();
     assert!(full_samples > 0);
 
@@ -147,9 +149,11 @@ fn truncated_final_box_is_tolerated() {
     // Make sure the cut lands inside the body, not exactly on the boundary.
     assert!(truncated.len() > last_start + 8, "cut inside the last box");
 
-    let partial = Fmp4Demux::new()
-        .unpackage(truncated.as_slice())
-        .expect("a truncated tail must not fail the demux");
+    let partial = test_harness::collect::media_from_mp4(
+        truncated.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("a truncated tail must not fail the demux");
     let partial_samples: usize = partial.tracks.iter().map(|t| t.samples.len()).sum();
     assert!(
         partial_samples > 0,
@@ -258,13 +262,15 @@ fn two_moofs_before_one_mdat_keeps_both_fragments() {
     control.extend_from_slice(&moofs[0]);
     control.extend_from_slice(&mdat);
 
-    let control_samples: usize = Fmp4Demux::new()
-        .unpackage(control.as_slice())
-        .expect("moof + mdat")
-        .tracks
-        .iter()
-        .map(|t| t.samples.len())
-        .sum();
+    let control_samples: usize = test_harness::collect::media_from_mp4(
+        control.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("moof + mdat")
+    .tracks
+    .iter()
+    .map(|t| t.samples.len())
+    .sum();
     assert_eq!(
         control_samples, 1,
         "the control fragment carries one sample"
@@ -274,9 +280,11 @@ fn two_moofs_before_one_mdat_keeps_both_fragments() {
     two.extend_from_slice(&moofs[0]);
     two.extend_from_slice(&moofs[1]);
     two.extend_from_slice(&mdat);
-    let two_media = Fmp4Demux::new()
-        .unpackage(two.as_slice())
-        .expect("moof, moof, mdat");
+    let two_media = test_harness::collect::media_from_mp4(
+        two.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("moof, moof, mdat");
     let two_samples: usize = two_media.tracks.iter().map(|t| t.samples.len()).sum();
     assert_eq!(
         two_samples, 2,
@@ -312,7 +320,7 @@ fn patch_tfhd_base_and_offset(moof: &mut [u8], base: u64) {
 }
 
 /// Independent oracle: the truncated file must still be readable by ffprobe
-/// (which also tolerates a short tail), so `Fmp4Demux` is not accepting
+/// (which also tolerates a short tail), so `Mp4Demux` is not accepting
 /// something no real reader accepts. Skips without `ffprobe`.
 #[test]
 fn truncated_tail_matches_ffprobe_success() {
@@ -371,9 +379,11 @@ fn mid_file_size_underflow_box_is_an_error() {
     // later fragments.
     assert!(moof_at + moof_len <= corrupt.len());
 
-    let err = Fmp4Demux::new()
-        .unpackage(corrupt.as_slice())
-        .expect_err("a mid-file size underflow must be rejected");
+    let err = test_harness::collect::media_from_mp4(
+        corrupt.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect_err("a mid-file size underflow must be rejected");
     assert!(
         matches!(err, transmux::Error::BoxSizeUnderflow { .. }),
         "a size of 3 is a size underflow, not end-of-data; got {err:?}"
@@ -395,13 +405,13 @@ fn a_tail_cut_inside_a_uuid_header_is_tolerated() {
         .expect("a moof")
         .1;
     let clean = &full[..init_end];
-    let reference: usize = Fmp4Demux::new()
-        .unpackage(clean)
-        .expect("the init-only prefix demuxes")
-        .tracks
-        .iter()
-        .map(|t| t.samples.len())
-        .sum();
+    let reference: usize =
+        test_harness::collect::media_from_mp4(clean, test_harness::collect::CollectMode::Seekable)
+            .expect("the init-only prefix demuxes")
+            .tracks
+            .iter()
+            .map(|t| t.samples.len())
+            .sum();
 
     // Append a `uuid` box header that claims an 8-byte body but is cut off
     // inside its 16-byte usertype.
@@ -413,9 +423,11 @@ fn a_tail_cut_inside_a_uuid_header_is_tolerated() {
         truncated.extend_from_slice(&header);
         truncated.extend_from_slice(&vec![0xAB; cut - 8]);
 
-        let media = Fmp4Demux::new()
-            .unpackage(truncated.as_slice())
-            .expect("a uuid header cut at the tail must not fail the demux");
+        let media = test_harness::collect::media_from_mp4(
+            truncated.as_slice(),
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .expect("a uuid header cut at the tail must not fail the demux");
         let got: usize = media.tracks.iter().map(|t| t.samples.len()).sum();
         assert_eq!(
             got, reference,

@@ -1,6 +1,6 @@
 //! `transmux` command-line packager — the any-to-any hub as a CLI (issue #482).
 //!
-//! Wires the existing demux spokes ([`TsDemux`], [`Fmp4Demux`], [`PsDemux`],
+//! Wires the existing demux spokes ([`TsDemux`], [`Mp4Demux`](crate::mp4_demux::Mp4Demux), [`PsDemux`],
 //! [`WebmDemux`], [`FlvDemux`]) through the neutral [`Media`] IR into the
 //! existing mux spokes ([`CmafMux`], [`TsHlsPackager`],
 //! [`DashPackager`], [`ProgressiveMux`], [`TsMux`]).
@@ -32,7 +32,7 @@ use broadcast_common::{Package, Unpackage};
 
 use crate::dash::DashPackager;
 use crate::flv::FlvDemux;
-use crate::media::{CmafMux, Fmp4Demux, Media};
+use crate::media::{CmafMux, Media};
 use crate::progressive::ProgressiveMux;
 use crate::ps_demux::PsDemux;
 use crate::segmenter::{MediaClock, Segmenter};
@@ -184,7 +184,7 @@ mod availability_start_time_tests {
 pub enum Container {
     /// MPEG-2 Transport Stream → [`TsDemux`].
     MpegTs,
-    /// ISO-BMFF fragmented MP4 / CMAF → [`Fmp4Demux`].
+    /// ISO-BMFF fragmented MP4 / CMAF → [`Mp4Demux`](crate::mp4_demux::Mp4Demux).
     Mp4,
     /// MPEG Program Stream → [`PsDemux`].
     MpegPs,
@@ -579,7 +579,7 @@ pub fn run_bytes(input: &[u8], opts: &Opts) -> CliResult<Output> {
 fn demux(container: Container, input: &[u8]) -> CliResult<Media> {
     let media = match container {
         Container::MpegTs => TsDemux::new().unpackage(input)?,
-        Container::Mp4 => Fmp4Demux::new().unpackage(input)?,
+        Container::Mp4 => crate::mp4_collect::media_from_mp4(input)?,
         Container::MpegPs => PsDemux::new().unpackage(input)?,
         Container::WebM => WebmDemux::new().unpackage(input)?,
         // FlvDemux has its own error type; map it into the library Error.

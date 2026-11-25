@@ -116,14 +116,12 @@ impl Stitcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::Fmp4Demux;
+    use broadcast_common::Parse;
     use broadcast_common::units::MICROS_PER_SEC;
-    use broadcast_common::{Parse, Unpackage};
 
     fn spec(id: u32, timescale: u32) -> TrackSpec {
         let init = std::fs::read(test_fixtures::path("dash/init-stream1.m4s")).expect("init");
-        let mut spec = Fmp4Demux::new()
-            .unpackage(init.as_slice())
+        let mut spec = crate::mp4_collect::media_from_mp4(init.as_slice())
             .expect("demux init")
             .tracks
             .remove(0)

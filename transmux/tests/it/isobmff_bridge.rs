@@ -279,22 +279,24 @@ fn track_ids_print_and_serialise_alike() {
     }
 }
 
-/// `Fmp4Demux` scans the file's `mdat`s exactly once however many
-/// fragments/trafs it holds (was once per traf: O(fragments x boxes)).
+/// `Mp4Demux`'s streaming reader never scans the whole file for `mdat`s,
+/// however many fragments/trafs it holds (was once per traf: O(fragments x
+/// boxes)).
 #[cfg(feature = "scan-counters")]
 #[test]
 fn demux_scans_mdats_once_per_file() {
-    use broadcast_common::Unpackage;
     let path = test_fixtures::path("mp4/cenc-layouts/clear-multitrun-omit-implicit.mp4");
     let bytes = std::fs::read(path).expect("fixture");
     let before = isobmff::frag_offsets::mdat_scans_on_thread();
-    let media = transmux::Fmp4Demux::new()
-        .unpackage(bytes.as_slice())
-        .expect("demux");
+    let media = test_harness::collect::media_from_mp4(
+        bytes.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux");
     assert!(media.tracks.iter().map(|t| t.samples.len()).sum::<usize>() > 1);
     assert_eq!(
         isobmff::frag_offsets::mdat_scans_on_thread() - before,
-        1,
-        "one mdat scan per file"
+        0,
+        "the streaming reader locates mdats as it walks; it never scans the whole file"
     );
 }

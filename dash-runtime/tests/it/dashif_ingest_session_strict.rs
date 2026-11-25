@@ -11,7 +11,6 @@ use media_plane::ingress::SessionEvent;
 use transmux::FragmentTrackData;
 use transmux::Sample;
 use transmux::dash::DashPackager;
-use transmux::media::Fmp4Demux;
 use transmux::pipeline::{build_init_segment, build_media_segment};
 use transmux::ts_demux::TsDemux;
 
@@ -80,13 +79,15 @@ fn segment(id: &str, number: u64) -> ObjectKind {
 fn oracle(init: &[u8], seg: &[u8]) -> Vec<Sample> {
     let mut combined = init.to_vec();
     combined.extend_from_slice(seg);
-    Fmp4Demux::new()
-        .unpackage(combined.as_slice())
-        .expect("oracle demux")
-        .tracks
-        .into_iter()
-        .flat_map(|t| t.samples)
-        .collect()
+    test_harness::collect::media_from_mp4(
+        combined.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("oracle demux")
+    .tracks
+    .into_iter()
+    .flat_map(|t| t.samples)
+    .collect()
 }
 
 fn live_session(p: &Presentation) -> DashifIngestSession {
@@ -128,7 +129,11 @@ fn new_program_carries_remapped_ids_and_specs_in_mpd_order() {
     assert_eq!(tracks.len(), p.reps.len());
     for (i, ((_, init, _), spec)) in p.reps.iter().zip(tracks).enumerate() {
         assert_eq!(spec.track_id.value(), u32::try_from(i + 1).unwrap());
-        let local = Fmp4Demux::new().unpackage(init.as_slice()).unwrap();
+        let local = test_harness::collect::media_from_mp4(
+            init.as_slice(),
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .unwrap();
         assert_eq!(spec.timescale, local.tracks[0].spec.timescale);
     }
 }

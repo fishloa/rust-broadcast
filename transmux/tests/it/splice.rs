@@ -185,7 +185,7 @@ fn data_track_at(
 /// `timed = true` builds samples with real, evenly-spaced `dts`/`pts` (like
 /// [`sample`], zero-based); `timed = false` builds section-carried samples
 /// (`dts`/`pts`/`duration` all `None`, ISO/IEC 13818-1 §2.4.4 PSI/private
-/// sections — SCTE-35/DSM-CC), matching how `Fmp4Demux`/`TsDemux` actually
+/// sections — SCTE-35/DSM-CC), matching how `Mp4Demux`/`TsDemux` actually
 /// populate one in this crate. Every sample is a sync sample (real audio is
 /// always sync; a section has no such distinction).
 fn data_track(

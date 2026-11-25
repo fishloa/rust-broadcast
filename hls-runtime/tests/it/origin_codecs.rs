@@ -12,7 +12,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use broadcast_common::{Timestamp, Unpackage};
+use broadcast_common::Timestamp;
 use broadcast_hls::MasterPlaylist;
 use bytes::Bytes;
 use hls_runtime::server::{
@@ -77,7 +77,11 @@ fn publish(writer: &SegmentWriter, seq: u32, bytes: &[u8]) {
 
 fn video_specs(fixture: &str) -> Option<Vec<TrackSpec>> {
     let data = test_fixtures::require_bytes(fixture, "origin_codecs")?;
-    let media = transmux::Fmp4Demux::new().unpackage(&data[..]).ok()?;
+    let media = test_harness::collect::media_from_mp4(
+        &data[..],
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .ok()?;
     Some(
         media
             .tracks

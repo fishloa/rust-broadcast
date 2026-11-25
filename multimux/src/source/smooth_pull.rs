@@ -158,7 +158,7 @@ mod tests {
     use std::time::Duration;
     use transmux::pipeline::build_init_segment;
     use transmux::pipeline::{CodecConfig, TrackSpec};
-    use transmux::{Fmp4Demux, TrackId, track_spec_from_quality_level};
+    use transmux::{TrackId, track_spec_from_quality_level};
 
     const SYNTHETIC_MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
         transmux::VIDEO_CLOCK_TIMESCALE;
@@ -437,9 +437,11 @@ mod tests {
         for frag in out.fragments.iter().filter(|f| f.track_id == track_id) {
             let mut combined = init.clone();
             combined.extend_from_slice(&frag.data);
-            let demuxed = Fmp4Demux::new()
-                .unpackage(combined.as_slice())
-                .expect("oracle demux");
+            let demuxed = test_harness::collect::media_from_mp4(
+                combined.as_slice(),
+                test_harness::collect::CollectMode::Seekable,
+            )
+            .expect("oracle demux");
             total += demuxed
                 .tracks
                 .iter()
@@ -457,7 +459,7 @@ mod tests {
     /// — the #758-lesson "audio silently dropped" class of bug this guards
     /// against.
     ///
-    /// MUTATION-CHECKED: dropping the `Fmp4Demux::unpackage`/emit in
+    /// MUTATION-CHECKED: dropping the `Mp4Demux::unpackage`/emit in
     /// `emit_fragment_samples`, or never advancing `StreamState::plan` in
     /// `pump_fragment_fetches`, makes the counts stay `0`; collapsing the
     /// local->global remap makes `per_track.len()` go 2 -> 1.

@@ -23,14 +23,14 @@ use std::process::Command;
 use test_fixtures::process::tool_available;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use broadcast_common::{Package, Parse, Serialize};
 use isobmff::FlacSpecificBox;
 use isobmff::init_segment::{
     AudioSampleEntryV1, FlacSampleEntry, Mp4aSampleEntry, SampleDescriptionBox, SampleEntryVariant,
     SamplingRateBox,
 };
+use transmux::TrackSpec;
 use transmux::ir::CodecConfig;
-use transmux::{ProgressiveDemux, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -99,10 +99,11 @@ fn mux_one(rate: u32) -> Vec<u8> {
 /// external-tool test confirms with ffprobe — so the mux tests set it here;
 /// the samples are the fixture's real coded bytes.
 fn retargeted_flac_source(name: &str, rate: u32) -> transmux::Media {
-    let mut media = ProgressiveDemux::new(16 * 1024 * 1024)
-        .expect("demuxer")
-        .unpackage(&fixture(name))
-        .expect("demux the ffmpeg-made FLAC fixture");
+    let mut media = test_harness::collect::media_from_mp4(
+        &fixture(name),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux the ffmpeg-made FLAC fixture");
     assert_eq!(media.tracks.len(), 1, "one audio track in {name}");
     assert_eq!(media.skipped.len(), 0, "nothing skipped in {name}");
     media.tracks[0].spec.timescale = Timescale::try_new(rate).unwrap();
@@ -649,10 +650,9 @@ fn mp4a_v0_entry_round_trips() {
 #[test]
 fn muxed_192k_track_demuxes_back_to_the_true_rate() {
     let ours = mux_one(192_000);
-    let demuxed = ProgressiveDemux::new(16 * 1024 * 1024)
-        .expect("demuxer")
-        .unpackage(&ours)
-        .expect("demux our own 192k output");
+    let demuxed =
+        test_harness::collect::media_from_mp4(&ours, test_harness::collect::CollectMode::Seekable)
+            .expect("demux our own 192k output");
     let rate = demuxed.tracks.iter().find_map(|t| match &t.spec.config {
         CodecConfig::Flac { sample_rate, .. } => Some(*sample_rate),
         _ => None,
@@ -664,10 +664,9 @@ fn muxed_192k_track_demuxes_back_to_the_true_rate() {
 #[test]
 fn muxed_48k_track_demuxes_back_to_48000() {
     let ours = mux_one(48_000);
-    let demuxed = ProgressiveDemux::new(16 * 1024 * 1024)
-        .expect("demuxer")
-        .unpackage(&ours)
-        .expect("demux our own 48k output");
+    let demuxed =
+        test_harness::collect::media_from_mp4(&ours, test_harness::collect::CollectMode::Seekable)
+            .expect("demux our own 48k output");
     let rate = demuxed.tracks.iter().find_map(|t| match &t.spec.config {
         CodecConfig::Flac { sample_rate, .. } => Some(*sample_rate),
         _ => None,

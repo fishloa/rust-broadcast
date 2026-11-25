@@ -117,10 +117,14 @@ fn start_demux(plain: &[u8]) -> core::result::Result<Mp4Demux, transmux::Error> 
 /// track the demuxer abandoned.
 fn abandoned_track(reason: AbandonReason) -> (String, String) {
     match reason {
-        AbandonReason::UnsupportedSampleEntry { fourcc } => {
+        AbandonReason::UnsupportedSampleEntry { fourcc, detail } => {
             let fourcc = String::from_utf8_lossy(&fourcc).into_owned();
-            let text =
-                format!("sample entry '{fourcc}' has no CodecConfig reconstruction in this crate");
+            let text = match detail {
+                Some(detail) => format!("sample entry '{fourcc}' rejected: {detail}"),
+                None => format!(
+                    "sample entry '{fourcc}' has no CodecConfig reconstruction in this crate"
+                ),
+            };
             (fourcc, text)
         }
         AbandonReason::UnsupportedCodec => (

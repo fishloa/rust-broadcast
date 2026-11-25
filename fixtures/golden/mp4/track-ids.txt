@@ -10,13 +10,13 @@ fixtures/mkv/vorbis.webm: 1x45
 fixtures/mkv/vp8-opus.webm: 1x25 2x51
 fixtures/mkv/vp9-opus.mkv: 1x50 2x101
 fixtures/mkv/vp9-opus.webm: 1x50 2x101
-fixtures/mp4/aac-sgpd.mp4: 1x0
-fixtures/mp4/av1.mp4: 1x0
-fixtures/mp4/cenc-av-enca.mp4: 2x0
+fixtures/mp4/aac-sgpd.mp4: 1x131
+fixtures/mp4/av1.mp4: 1x12
+fixtures/mp4/cenc-av-enca.mp4: 2x45
 fixtures/mp4/cenc.mp4:
 fixtures/mp4/cmaf/av-frag.mp4: 1x75 2x131
-fixtures/mp4/colr-hdr.mp4: 1x0
-fixtures/mp4/flac.mp4: 1x0
+fixtures/mp4/colr-hdr.mp4: 1x8
+fixtures/mp4/flac.mp4: 1x10
 fixtures/mp4/frag/av1.frag.mp4: 1x12
 fixtures/mp4/frag/flac.frag.mp4: 1x10
 fixtures/mp4/frag/h264-high.frag.mp4: 1x15
@@ -28,21 +28,21 @@ fixtures/mp4/frag/opus.frag.mp4: 1x51
 fixtures/mp4/frag/vp9.frag.mp4: 1x12
 fixtures/mp4/frag/vvc.frag.mp4: 1x12
 fixtures/mp4/h264-aac-frag.mp4: 1x50 2x88
-fixtures/mp4/h264-aac-prog.mp4: 1x0 2x0
+fixtures/mp4/h264-aac-prog.mp4: 1x50 2x88
 fixtures/mp4/h264-cbcs.mp4: 2x88
 fixtures/mp4/h264-cenc.mp4: 2x88
-fixtures/mp4/h264-high.mp4: 1x0
+fixtures/mp4/h264-high.mp4: 1x15
 fixtures/mp4/hevc-frag.mp4: 1x50
-fixtures/mp4/hevc-main.mp4: 1x0
+fixtures/mp4/hevc-main.mp4: 1x15
 fixtures/mp4/llcmaf/ll-chunked.mp4: 1x75 2x131
 fixtures/mp4/noaud/h264-noaud.mp4: 1x15
 fixtures/mp4/noaud/hevc-noaud.mp4: 1x15
-fixtures/mp4/opus.mp4: 1x0
+fixtures/mp4/opus.mp4: 1x51
 fixtures/mp4/prft.mp4: 1x75
-fixtures/mp4/progressive/av-faststart.mp4: 1x0 2x0
-fixtures/mp4/progressive/av-prog.mp4: 1x0 2x0
-fixtures/mp4/stpp.mp4: 1x0
-fixtures/mp4/vp9.mp4: 1x0
+fixtures/mp4/progressive/av-faststart.mp4: 1x75 2x131
+fixtures/mp4/progressive/av-prog.mp4: 1x75 2x131
+fixtures/mp4/stpp.mp4: 1x1
+fixtures/mp4/vp9.mp4: 1x12
 fixtures/pes/dirac-vc2-extended-stream-id.ts:
 fixtures/pes/pes-pts-dts-stuffing.ts:
 fixtures/ps/ffmpeg-ac3-dts-with-fake-ac3-sync.ps: 1x50 2x58
@@ -60,7 +60,7 @@ fixtures/t2mi/colombia-capital-t2mi.ts:
 fixtures/ts/aac-5-1-640k.ts: 1x142
 fixtures/ts/af-pcr-stuffing.ts:
 fixtures/ts/af-transport-private-data.ts:
-fixtures/ts/demux-oracle/h264-aac.ref.mp4: 1x0 2x0
+fixtures/ts/demux-oracle/h264-aac.ref.mp4: 1x75 2x131
 fixtures/ts/dolby/ac3.ts: 1x58
 fixtures/ts/dolby/eac3-dvb-0x06.ts: 1x58
 fixtures/ts/dolby/eac3.ts: 1x58
@@ -80,8 +80,8 @@ fixtures/ts/h264/high422.ts: 1x15
 fixtures/ts/h264/high444.ts: 1x15
 fixtures/ts/h264/interlaced.ts: 1x16
 fixtures/ts/h264/main.ts: 1x15
-fixtures/ts/heaac/heaac-v1.mp4: 1x0
-fixtures/ts/heaac/heaac-v2.mp4: 1x0
+fixtures/ts/heaac/heaac-v1.mp4: 1x47
+fixtures/ts/heaac/heaac-v2.mp4: 1x47
 fixtures/ts/hevc/main.ts: 1x15
 fixtures/ts/hevc/main10.ts: 1x15
 fixtures/ts/legacy/mpeg2-mp2-pes-misaligned.ts: 1x39

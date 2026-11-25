@@ -61,7 +61,7 @@ broadcast_common::impl_spec_display!(DataCarriage);
 /// The wire format of a [`CodecConfig::Subtitle`] track (media plane step 2d).
 ///
 /// `Ttml`/`WebVtt` are ISOBMFF sample entries this crate demuxes
-/// ([`crate::media::Fmp4Demux`]); `DvbBitmap`/`Teletext` name the PES-carried
+/// ([`crate::mp4_demux::Mp4Demux`]); `DvbBitmap`/`Teletext` name the PES-carried
 /// broadcast subtitle formats a TS demuxer can identify from their PMT
 /// descriptors (ETSI EN 300 468) but does not yet classify as
 /// `CodecConfig::Subtitle` itself (still `CodecConfig::Data` on that path
@@ -322,7 +322,7 @@ pub enum CodecConfig {
     },
     /// Subtitle track (media plane step 2d): a TTML/WebVTT ISOBMFF sample
     /// entry (`stpp`/`wvtt`, ISO/IEC 14496-30) demuxed by
-    /// [`crate::media::Fmp4Demux`], carried losslessly rather than dropped.
+    /// [`crate::mp4_demux::Mp4Demux`], carried losslessly rather than dropped.
     /// Samples are opaque payloads (TTML XML documents / WebVTT `vttc`/`vtte`
     /// boxes) — this crate never parses cue contents, only the sample
     /// entry's format tag.

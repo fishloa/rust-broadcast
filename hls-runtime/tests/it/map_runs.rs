@@ -4,11 +4,9 @@
 
 use test_harness::fmp4_split;
 
-use std::collections::BTreeMap;
-
-use broadcast_common::Unpackage;
 use fmp4_split::{Split, split};
 use hls_runtime::client::{Action, HlsClient, Output, ResourceId};
+use std::collections::BTreeMap;
 use transmux::sample_aes::aes128_encrypt_segment;
 use url::Url;
 
@@ -30,7 +28,9 @@ fn source(name: &str) -> Source {
 }
 
 fn counts(bytes: &[u8]) -> BTreeMap<u32, usize> {
-    let media = transmux::Fmp4Demux::new().unpackage(bytes).unwrap();
+    let media =
+        test_harness::collect::media_from_mp4(bytes, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
     media
         .tracks
         .iter()

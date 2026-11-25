@@ -1,5 +1,5 @@
 //! The live client against REAL captures: the ffmpeg live MPDs and segments
-//! exactly as written (samples compared with a direct `Fmp4Demux` of the same
+//! exactly as written (samples compared with a direct `Mp4Demux` of the same
 //! files), and the real livesim2 MPD refresh pair.
 
 use crate::common;

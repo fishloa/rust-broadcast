@@ -1,17 +1,15 @@
 //! A muxed Representation (video and audio in one init) and an encrypted track, played from real
 //! fragmented MP4 files that the committed fixtures provide, split into an init and segments and
-//! described by a minimal `SegmentList` MPD. The oracle is `Fmp4Demux` over the whole file.
+//! described by a minimal `SegmentList` MPD. The oracle is `Mp4Demux` over the whole file.
 
 use crate::support::dash_common;
 use crate::support::dash_sim;
 use crate::support::fmp4_split;
 
 use broadcast_client::{Config, ErrorKind, Event};
-use broadcast_common::Unpackage;
 use dash_common::loopback::{Origin, Sig, sigs};
 use dash_common::world::World;
 use dash_sim::{DashSim, SEC, StaticBackend};
-use transmux::Fmp4Demux;
 
 const HOST: &str = "http://dash.test";
 const GROUP: usize = 4;
@@ -38,9 +36,11 @@ fn build(fixture: &str) -> (DashSim, Vec<Vec<Sig>>) {
         World::new(1_700_000_000 * 1_000_000),
         Box::new(StaticBackend(origin)),
     );
-    let media = Fmp4Demux::new()
-        .unpackage(whole.as_slice())
-        .expect("oracle");
+    let media = test_harness::collect::media_from_mp4(
+        whole.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("oracle");
     let oracle = media.tracks.iter().map(|t| sigs(&t.samples)).collect();
     (sim, oracle)
 }

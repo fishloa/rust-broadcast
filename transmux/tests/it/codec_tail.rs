@@ -1,11 +1,11 @@
-//! Codec-tail gate (issue #467): complete `Fmp4Demux` codec-config
+//! Codec-tail gate (issue #467): complete `Mp4Demux` codec-config
 //! reconstruction + `CodecConfig::Hevc`.
 //!
 //! For each fragmented fixture the demux→remux round-trip is a *self-oracle*:
 //! the fixture's own config box is the truth. All assertions are computed
 //! against the source bytes (no hardcoded offsets): a box-tree walker extracts
 //! the config box body straight from the fixture and it is compared, byte for
-//! byte, against the record `Fmp4Demux` reconstructed.
+//! byte, against the record `Mp4Demux` reconstructed.
 //!
 //! EXIT CRITERIA (all bite):
 //! 1. Per-codec config round-trip: reconstructed `CodecConfig` variant matches
@@ -20,9 +20,9 @@
 
 use std::fs;
 
-use broadcast_common::{Package, Serialize, Unpackage};
+use broadcast_common::{Package, Serialize};
 use bytes::Bytes;
-use transmux::media::{CmafMux, Fmp4Demux};
+use transmux::media::CmafMux;
 use transmux::pipeline::CodecConfig;
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -146,8 +146,9 @@ fn hevc_config_reconstructs_byte_identical() {
     // The fixture's HEVC sample entry is `hev1` (in-band-capable); config in hvcC.
     let want = extract_config_box(&file, b"hev1", VISUAL_FIXED, b"hvcC");
 
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("unpackage hevc");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("unpackage hevc");
     assert_eq!(media.tracks.len(), 1, "hevc fixture has one track");
     let cfg = media.tracks[0].config();
     let CodecConfig::Hevc { config, .. } = cfg else {
@@ -165,8 +166,9 @@ fn hevc_config_reconstructs_byte_identical() {
 fn av1_config_reconstructs_byte_identical() {
     let file = fixture("av1.frag.mp4");
     let want = extract_config_body(&file, b"av01", VISUAL_FIXED, b"av1C");
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("unpackage av1");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("unpackage av1");
     let cfg = media.tracks[0].config();
     let CodecConfig::Av1 { config, .. } = cfg else {
         panic!("expected CodecConfig::Av1, got {cfg:?}");
@@ -178,8 +180,9 @@ fn av1_config_reconstructs_byte_identical() {
 fn vp9_config_reconstructs_byte_identical() {
     let file = fixture("vp9.frag.mp4");
     let want = extract_config_body(&file, b"vp09", VISUAL_FIXED, b"vpcC");
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("unpackage vp9");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("unpackage vp9");
     let cfg = media.tracks[0].config();
     let CodecConfig::Vp9 { config, .. } = cfg else {
         panic!("expected CodecConfig::Vp9, got {cfg:?}");
@@ -191,8 +194,9 @@ fn vp9_config_reconstructs_byte_identical() {
 fn opus_config_reconstructs_byte_identical() {
     let file = fixture("opus.frag.mp4");
     let want = extract_config_body(&file, b"Opus", AUDIO_FIXED, b"dOps");
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("unpackage opus");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("unpackage opus");
     let cfg = media.tracks[0].config();
     let CodecConfig::Opus { config, .. } = cfg else {
         panic!("expected CodecConfig::Opus, got {cfg:?}");
@@ -204,8 +208,9 @@ fn opus_config_reconstructs_byte_identical() {
 fn flac_config_reconstructs_byte_identical() {
     let file = fixture("flac.frag.mp4");
     let want = extract_config_body(&file, b"fLaC", AUDIO_FIXED, b"dfLa");
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("unpackage flac");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("unpackage flac");
     let cfg = media.tracks[0].config();
     let CodecConfig::Flac { config, .. } = cfg else {
         panic!("expected CodecConfig::Flac, got {cfg:?}");
@@ -219,8 +224,9 @@ fn avc_config_reconstructs_byte_identical() {
     let file = fixture("h264-high.frag.mp4");
     // `AVCConfigurationBox` serializes to the full `avcC` box (header + record).
     let want = extract_config_box(&file, b"avc1", VISUAL_FIXED, b"avcC");
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("unpackage avc");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("unpackage avc");
     let cfg = media.tracks[0].config();
     let CodecConfig::Avc { config, .. } = cfg else {
         panic!("expected CodecConfig::Avc, got {cfg:?}");
@@ -234,10 +240,9 @@ fn avc_config_reconstructs_byte_identical() {
 
 fn assert_sample_fidelity(name: &str) {
     let file = fixture(name);
-    let mut demux = Fmp4Demux::new();
-    let media = demux
-        .unpackage(&file)
-        .unwrap_or_else(|e| panic!("{name} unpackage: {e:?}"));
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .unwrap_or_else(|e| panic!("{name} unpackage: {e:?}"));
     assert!(!media.tracks.is_empty(), "{name} has tracks");
     let first: Vec<Bytes> = media.tracks[0]
         .samples
@@ -251,10 +256,11 @@ fn assert_sample_fidelity(name: &str) {
         .package(&media)
         .unwrap_or_else(|e| panic!("{name} package: {e:?}"));
 
-    let mut demux2 = Fmp4Demux::new();
-    let media2 = demux2
-        .unpackage(&repacked)
-        .unwrap_or_else(|e| panic!("{name} re-unpackage: {e:?}"));
+    let media2 = test_harness::collect::media_from_mp4(
+        &repacked,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .unwrap_or_else(|e| panic!("{name} re-unpackage: {e:?}"));
 
     assert_eq!(
         media.tracks.len(),
@@ -299,8 +305,9 @@ fn hevc_output_path_emits_hvc1_with_source_hvcc() {
     let file = fixture("hevc-main.frag.mp4");
     let want_hvcc_body = extract_config_body(&file, b"hev1", VISUAL_FIXED, b"hvcC");
 
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("unpackage hevc");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("unpackage hevc");
     assert!(
         matches!(media.tracks[0].config(), CodecConfig::Hevc { .. }),
         "track 0 is Hevc"
@@ -350,10 +357,11 @@ fn enumeration_yields_expected_variants() {
     ];
     for (name, is_variant) in cases {
         let file = fixture(name);
-        let mut demux = Fmp4Demux::new();
-        let media = demux
-            .unpackage(&file)
-            .unwrap_or_else(|e| panic!("{name}: {e:?}"));
+        let media = test_harness::collect::media_from_mp4(
+            &file,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .unwrap_or_else(|e| panic!("{name}: {e:?}"));
         assert_eq!(media.tracks.len(), 1, "{name} exposes one track");
         assert!(
             is_variant(media.tracks[0].config()),

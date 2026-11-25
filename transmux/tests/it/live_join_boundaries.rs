@@ -1,9 +1,6 @@
 //! `LiveJoin` decision, policy, VVC and leading-picture boundary gates
 //! (issue #1162 R4; H.264 §7.4.1.2.4, H.265 Table 7-1, H.266 Table 5).
 #![cfg(feature = "std")]
-
-use broadcast_common::Unpackage;
-use transmux::media::Fmp4Demux;
 use transmux::{
     CodecConfig, DropReason, JoinDecision, JoinPolicy, LiveJoin, NalCodec, RapKind, Sample,
 };
@@ -19,9 +16,11 @@ fn timed_au(nals: &[&[u8]], pts: i64) -> Sample {
 
 fn vvc_config() -> CodecConfig {
     let bytes = test_fixtures::read("mp4/frag/vvc.frag.mp4");
-    let media = Fmp4Demux::new()
-        .unpackage(bytes.as_slice())
-        .expect("demux vvc fixture");
+    let media = test_harness::collect::media_from_mp4(
+        bytes.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux vvc fixture");
     media
         .tracks
         .iter()

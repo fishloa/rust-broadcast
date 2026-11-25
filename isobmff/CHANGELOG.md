@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The reader keeps every `moof` queued ahead of its `mdat` (r05-W26).** A
+  fragment written the CMF2 way (one `moof` per track, then one `mdat` holding
+  both tracks' data, §8.8.4) used to overwrite the previous pending `moof`, so
+  the first fragment's samples were silently dropped. The reader now holds the
+  queued `moof`s, counts their bytes against `Limits::max_fragment_bytes`
+  (exceeding it is the existing `LimitExceeded`), and resolves and emits each
+  one in file order once the following `mdat`(s) arrive, on both a seekable and
+  a forward-only source. `tests/it/reader_fragmented.rs` rewrites a real
+  two-track fragment into that shape and reads every sample back through
+  `FileReader` and `ForwardReader`.
+
 ### Breaking
 
 - `registry::BoxDef` and `registry::RegisteredBox` require `Send + Sync`, so a `Reader` holding registered values can cross threads (a tokio task) and one registry can serve many readers.
@@ -34,6 +47,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   index regenerated from the offsets the writer placed its own fragments at
   (`segment_index`, `trailer`), in the form a source recorded. Neither index is
   ever copied: carried offsets would be stale.
+- `SampleEntryInfo::error` carries the sample-entry parser's own message when a
+  known four-CC's `stsd` body fails to parse; `typed` is recovered by
+  re-parsing the raw entry, so a demuxer can report the real cause (issue #952).
 
 - `registry`: `BoxRegistry` registers a private box or sample entry from outside
   the crate. `BoxDef` names its four-CC (or `uuid` extended type) and an

@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use broadcast_common::{Parse, Timestamp, Unpackage};
+use broadcast_common::{Parse, Timestamp};
 use broadcast_hls::MediaPlaylist;
 use bytes::Bytes;
 use hls_runtime::server::{
@@ -17,11 +17,11 @@ use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::Container;
 use transmux::SegmentMeta;
+use transmux::TrackId;
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, TrackSpec, build_init_segment, build_media_segment,
 };
 use transmux::ts_demux::TsDemux;
-use transmux::{Fmp4Demux, TrackId};
 
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
@@ -192,9 +192,13 @@ fn iframe_geometry_oracle() {
             "iframe_len must equal end of first video sample"
         );
 
-        // Fmp4Demux first video sample equals those bytes
+        // Mp4Demux first video sample equals those bytes
         let full = [fixture_bytes("init.mp4"), seg_bytes.clone()].concat();
-        let media = Fmp4Demux::new().unpackage(&full).expect("demux");
+        let media = test_harness::collect::media_from_mp4(
+            &full,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .expect("demux");
         let video = media
             .tracks
             .iter()

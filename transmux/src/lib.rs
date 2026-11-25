@@ -24,9 +24,9 @@
 //!
 //! - **Demux (`Unpackage`) inputs:** MPEG-2 TS ([`TsDemux`], a thin batch
 //!   wrapper over the event-driven [`StreamingTsDemux`] — issue #555),
-//!   fMP4/CMAF ([`Fmp4Demux`]), progressive (non-fragmented) MP4
-//!   ([`ProgressiveDemux`] — issue #561), and the streaming MP4 stage
-//!   [`mp4_demux::Mp4Demux`] (seekable byte ranges or forward-only input), MPEG
+//!   fMP4/CMAF and progressive (non-fragmented) MP4 through the streaming MP4
+//!   stage [`mp4_demux::Mp4Demux`] (seekable byte ranges or forward-only
+//!   input), MPEG
 //!   Program Stream ([`PsDemux`]),
 //!   WebM/Matroska ([`WebmDemux`] — Xiph/EBML/fixed-size laced blocks are
 //!   unlaced into one sample per frame, see the module docs), FLV
@@ -189,6 +189,7 @@ pub mod ll_hls;
 pub mod media;
 pub mod mhas;
 pub mod mkv_mux;
+pub(crate) mod mp4_collect;
 pub mod mp4_demux;
 pub mod mpeg2_display;
 pub mod mpeg_legacy;
@@ -196,7 +197,6 @@ pub mod nal;
 pub mod nalu_ext;
 pub mod pipeline;
 pub mod progressive;
-pub mod progressive_demux;
 pub mod ps_demux;
 pub mod rbsp;
 pub mod rebase;
@@ -294,9 +294,7 @@ pub use live_join::{DropReason, JoinDecision, JoinPolicy, JoinState, LiveJoin, R
 pub use ll_dash::LlDashPackager;
 pub use ll_dash::{Chunk, LlSegmenter};
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
-pub use media::{
-    CmafMux, Fmp4Demux, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackEncryption,
-};
+pub use media::{CmafMux, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackEncryption};
 pub use mkv_mux::MkvMux;
 pub use mpeg_legacy::{
     MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,
@@ -313,7 +311,6 @@ pub use pipeline::{
     nominal_frame_rate_millihertz, presentation_size,
 };
 pub use progressive::ProgressiveMux;
-pub use progressive_demux::ProgressiveDemux;
 pub use ps_demux::PsDemux;
 pub use rebase::{apply_offset, insert_discontinuity_gap, rebase_to_zero};
 pub use repackage::{Repackage, RepackageOutput};

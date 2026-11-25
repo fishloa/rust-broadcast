@@ -669,12 +669,12 @@ pub enum RetentionClass {
 ///   question — `multimux` takes its routes from a JSON config, so once
 ///   these capacities become operator-configurable a stray `0` would take
 ///   down the server process instead of producing a config error. It also
-///   contradicted `transmux::ProgressiveDemux::new`'s deliberate
+///   contradicted `transmux::Mp4Demux::new`'s deliberate
 ///   panic-to-fallible change, which is exactly the kind of
 ///   two-crates-apart inconsistency that makes an API feel arbitrary.
 /// - **A fallible `TrunkConfig` constructor returning `Result<Self, _>`** (the
-///   `ProgressiveDemux` shape): correct, but strictly worse *here*.
-///   `ProgressiveDemux` already returns `Result` as part of its `Stage`
+///   `Mp4Demux` shape): correct, but strictly worse *here*.
+///   `Mp4Demux` already returns `Result` as part of its `Stage`
 ///   contract and already has an `Error` type; `TrunkConfig` has neither, so
 ///   this would mean inventing a construction error type and threading
 ///   `?`/`unwrap` through every construction site to encode one bit of

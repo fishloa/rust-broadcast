@@ -9,10 +9,10 @@
 use broadcast_common::timescale::Timescale;
 use std::fs;
 
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use broadcast_common::{Package, Parse, Serialize};
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use test_fixtures::ffprobe;
-use transmux::media::{CmafMux, Fmp4Demux};
+use transmux::media::CmafMux;
 use transmux::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use transmux::pipeline::CodecConfig;
 use transmux::ts_demux::TsDemux;
@@ -55,8 +55,9 @@ fn find_fourcc(data: &[u8], fourcc: &[u8; 4]) -> Option<usize> {
 #[test]
 fn fmp4_mpeg2_video_config_and_dims() {
     let mp4 = fixture(&["mp4", "frag", "mpeg2video.frag.mp4"]);
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&mp4).expect("demux mpeg2 video mp4");
+    let media =
+        test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
+            .expect("demux mpeg2 video mp4");
 
     assert_eq!(media.tracks.len(), 1, "one video track");
     let track = &media.tracks[0];
@@ -105,8 +106,9 @@ fn fmp4_mpeg2_video_config_and_dims() {
 #[test]
 fn fmp4_mpeg_audio_config() {
     let mp4 = fixture(&["mp4", "frag", "mp3.frag.mp4"]);
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&mp4).expect("demux mp3 mp4");
+    let media =
+        test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
+            .expect("demux mp3 mp4");
 
     assert_eq!(media.tracks.len(), 1, "one audio track");
     let track = &media.tracks[0];
@@ -145,14 +147,18 @@ fn fmp4_mpeg_audio_config() {
 
 fn assert_sample_roundtrip(rel: &[&str]) {
     let mp4 = fixture(rel);
-    let mut d1 = Fmp4Demux::new();
-    let media = d1.unpackage(&mp4).expect("demux");
+    let media =
+        test_harness::collect::media_from_mp4(&mp4, test_harness::collect::CollectMode::Seekable)
+            .expect("demux");
 
     let mut mux = CmafMux::default();
     let remuxed = mux.package(&media).expect("re-mux");
 
-    let mut d2 = Fmp4Demux::new();
-    let media2 = d2.unpackage(&remuxed).expect("re-demux");
+    let media2 = test_harness::collect::media_from_mp4(
+        &remuxed,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("re-demux");
 
     assert_eq!(
         media.tracks.len(),

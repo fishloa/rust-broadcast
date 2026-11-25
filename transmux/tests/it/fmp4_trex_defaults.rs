@@ -5,9 +5,6 @@
 //! has `trun` flags 0x205 (data offset, first-sample flags, sample size) and
 //! no `tfhd` defaults. It came out with every sample at `dts` 0, duration 0.
 
-use broadcast_common::Unpackage;
-use transmux::media::Fmp4Demux;
-
 const VIDEO_TIMESCALE_TICKS_PER_FRAME: i64 = 512;
 const FRAGMENT_TICKS: i64 = 25_600;
 
@@ -18,11 +15,13 @@ fn demux(init: &str, segments: &[&str]) -> transmux::Track {
             "dash/multiperiod-restart/{segment}"
         )));
     }
-    Fmp4Demux::new()
-        .unpackage(whole.as_slice())
-        .expect("demux")
-        .tracks
-        .remove(0)
+    test_harness::collect::media_from_mp4(
+        whole.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux")
+    .tracks
+    .remove(0)
 }
 
 #[test]
@@ -175,9 +174,11 @@ fn demux_assembled(trex_size: u32, per_sample_size: bool) -> transmux::Media {
     let (moof, mdat) = moof_and_mdat(per_sample_size);
     file.extend_from_slice(&moof);
     file.extend_from_slice(&mdat);
-    Fmp4Demux::new()
-        .unpackage(file.as_slice())
-        .expect("a fragment whose sizes come from trex demuxes")
+    test_harness::collect::media_from_mp4(
+        file.as_slice(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("a fragment whose sizes come from trex demuxes")
 }
 
 #[test]

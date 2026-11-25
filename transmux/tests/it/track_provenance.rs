@@ -21,7 +21,7 @@ use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
-use transmux::{CmafMux, DemuxEvent, Fmp4Demux, Media, StreamingTsDemux, TsDemux};
+use transmux::{CmafMux, DemuxEvent, Media, StreamingTsDemux, TsDemux};
 
 const TS_PACKET_LEN: usize = 188;
 const SYNC_BYTE: u8 = 0x47;
@@ -335,9 +335,9 @@ fn fmp4_round_trip_has_no_ts_provenance() {
         .package(&video_only)
         .expect("mux video-only track to CMAF");
 
-    let redemuxed = Fmp4Demux::new()
-        .unpackage(&fmp4)
-        .expect("re-demux the fMP4 output");
+    let redemuxed =
+        test_harness::collect::media_from_mp4(&fmp4, test_harness::collect::CollectMode::Seekable)
+            .expect("re-demux the fMP4 output");
     assert_eq!(redemuxed.tracks.len(), 1, "one video track in the fMP4");
     let fmp4_track = &redemuxed.tracks[0];
     assert_eq!(

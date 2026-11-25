@@ -92,7 +92,7 @@ broadcast_common::impl_spec_display!(DiscontinuityKind);
 /// Why a [`DemuxEvent::TrackAbandoned`] was raised. `#[non_exhaustive]`: a
 /// future abandonment cause adds a variant, not a breaking change.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AbandonReason {
     /// The track's codec config never became recoverable before end of
     /// input (e.g. a PMT-listed H.264 PID whose SPS/PPS never arrived) —
@@ -109,6 +109,10 @@ pub enum AbandonReason {
     UnsupportedSampleEntry {
         /// The rejected sample entry's four-CC, e.g. `b"tmcd"`.
         fourcc: [u8; isobmff::box_types::BOX_TYPE_SIZE],
+        /// The sample-entry parser's own message when the four-CC is known but
+        /// its body failed to parse (issue #952): the real cause, not just the
+        /// entry name.
+        detail: Option<alloc::string::String>,
     },
     /// The sample entry is a known box this crate parses but has no
     /// [`CodecConfig`](crate::pipeline::CodecConfig) reconstruction for, so

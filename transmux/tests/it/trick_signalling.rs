@@ -27,13 +27,13 @@ use broadcast_common::timescale::Timescale;
 use std::fs;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Unpackage};
+use broadcast_common::Package;
 use broadcast_hls::{
     DecimalSeconds, IFrameVariant, MasterPlaylist, MediaPlaylist, MediaSegment, Variant,
 };
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::dash::{DashPackager, TRICKMODE_SCHEME, TrickModeAdaptationSet, TrickModeRepr};
-use transmux::media::{Fmp4Demux, Track};
+use transmux::media::Track;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::trickplay::derive_iframe_track;
 
@@ -329,8 +329,9 @@ fn dash_trick_mode_adaptation_set() {
 #[test]
 fn ir_trick_track_wired_to_signalling() {
     let file = av_frag_fixture();
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("demux av-frag.mp4");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("demux av-frag.mp4");
 
     // Find the video track.
     let video = media

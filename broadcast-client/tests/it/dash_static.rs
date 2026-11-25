@@ -1,5 +1,5 @@
 //! Static (VOD) DASH presentations through a `Session`: the real committed captures play to
-//! completion, and the delivered samples equal what `Fmp4Demux` makes of the concatenated init and
+//! completion, and the delivered samples equal what `Mp4Demux` makes of the concatenated init and
 //! segments (the oracle never sees the session).
 
 use crate::support::dash_common;

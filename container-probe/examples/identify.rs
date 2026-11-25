@@ -24,8 +24,8 @@ fn detail_text(detail: &Detail) -> String {
                 .map(|b| String::from_utf8_lossy(&b).into_owned())
                 .unwrap_or_else(|| "<none>".into());
             // `layout` is what a consumer needs to pick a demuxer: a
-            // fragmented file wants transmux's `Fmp4Demux`, a progressive one
-            // `ProgressiveDemux`. The major brand cannot tell them apart —
+            // fragmented file wants transmux's `Mp4Demux`, a progressive one
+            // `Mp4Demux`. The major brand cannot tell them apart —
             // real fragmented and progressive files share the `isom` brand.
             format!("ISOBMFF: major brand '{brand}', {boxes_walked} boxes chained, {layout} layout")
         }

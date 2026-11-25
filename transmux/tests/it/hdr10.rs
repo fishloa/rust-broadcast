@@ -162,9 +162,9 @@ fn init_segment_round_trips_through_the_fmp4_demuxer() {
         .retain(|a| a.nal_unit_type != transmux::hdr::HEVC_PREFIX_SEI_NUT);
     assert!(HdrStaticMetadata::from_hevc_record(&config.config).is_none());
     let init = build_init_segment(&[boxes_only], timescale(1000)).expect("init");
-    let media = transmux::Fmp4Demux::new()
-        .unpackage(&init)
-        .expect("fmp4 demux");
+    let media =
+        test_harness::collect::media_from_mp4(&init, test_harness::collect::CollectMode::Seekable)
+            .expect("fmp4 demux");
     assert_eq!(media.tracks[0].spec.hdr, spec.hdr);
     assert!(spec.hdr.is_some());
 }

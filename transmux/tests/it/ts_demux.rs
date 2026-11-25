@@ -325,10 +325,10 @@ fn video_sample_payloads_match_ref_mp4() {
     // TS → IR → CMAF fMP4.
     let fmp4 = CmafMux::default().package(&media).expect("package to CMAF");
 
-    // Re-parse our own fMP4 for the video track samples via Fmp4Demux.
-    let round: Media = transmux::Fmp4Demux::new()
-        .unpackage(&fmp4)
-        .expect("re-parse our CMAF");
+    // Re-parse our own fMP4 for the video track samples via Mp4Demux.
+    let round: Media =
+        test_harness::collect::media_from_mp4(&fmp4, test_harness::collect::CollectMode::Seekable)
+            .expect("re-parse our CMAF");
     let our_video = &round.tracks[0];
     assert_eq!(
         our_video.samples.len(),

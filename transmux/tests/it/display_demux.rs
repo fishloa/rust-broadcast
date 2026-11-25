@@ -2,13 +2,11 @@
 //! `pasp` and `colr nclx` are applied to `TrackSpec::display`.
 
 use broadcast_common::Package;
-use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use transmux::TrackSpec;
 use transmux::ir::{
     AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, VideoFormat, VideoSignalType,
 };
-use transmux::media::Fmp4Demux;
 use transmux::pipeline;
 use transmux::ts_demux::TsDemux;
 
@@ -35,8 +33,9 @@ fn dims(spec: &TrackSpec) -> (u32, u32) {
 }
 
 fn demux_display(bytes: &[u8]) -> Option<DisplayGeometry> {
-    let mut d = Fmp4Demux::new();
-    let media = d.unpackage(bytes).ok()?;
+    let media =
+        test_harness::collect::media_from_mp4(bytes, test_harness::collect::CollectMode::Seekable)
+            .ok()?;
     media
         .tracks
         .into_iter()

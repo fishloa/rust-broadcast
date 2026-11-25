@@ -30,10 +30,10 @@ use std::fs;
 use test_fixtures::vectors::DAC4_ORACLE;
 use transmux::TrackId;
 
-use broadcast_common::{Package, Parse, Serialize, Unpackage};
+use broadcast_common::{Package, Parse, Serialize};
 use isobmff::Ac4SpecificBox;
 use transmux::pipeline::{CodecConfig, SubtitleFormat, build_init_segment};
-use transmux::{CmafMux, Fmp4Demux, Media, Sample, Track, TrackSpec};
+use transmux::{CmafMux, Media, Sample, Track, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -50,10 +50,9 @@ fn fixture(name: &str) -> Vec<u8> {
 fn ordering_guard_subtitle_track_present_after_demux() {
     let file = fixture("av-subtitle-frag.mp4");
 
-    let mut demux = Fmp4Demux::new();
-    let media = demux
-        .unpackage(&file)
-        .expect("a CMAF file with AVC + stpp tracks must still demux (codec coverage first)");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("a CMAF file with AVC + stpp tracks must still demux (codec coverage first)");
 
     assert_eq!(media.tracks.len(), 2, "AVC video + stpp subtitle track");
 
@@ -127,10 +126,9 @@ fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
     // failed. `is_muxable_in_bmff()` (new in this fix) covers both `Data`
     // and `Subtitle`, so filtering with it is the fix.
     let file = fixture("av-subtitle-frag.mp4");
-    let mut demux = Fmp4Demux::new();
-    let media = demux
-        .unpackage(&file)
-        .expect("demux av-subtitle-frag.mp4 (AVC + stpp)");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("demux av-subtitle-frag.mp4 (AVC + stpp)");
     assert_eq!(media.tracks.len(), 2, "AVC video + stpp subtitle track");
 
     // Since #1186 the demuxed `stpp` track carries its sample entry, so
@@ -173,10 +171,9 @@ fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
     );
 
     // Full end-to-end: the repackaged CMAF must itself re-demux cleanly.
-    let mut redemux = Fmp4Demux::new();
-    let round = redemux
-        .unpackage(&fmp4)
-        .expect("the repackaged CMAF must re-parse");
+    let round =
+        test_harness::collect::media_from_mp4(&fmp4, test_harness::collect::CollectMode::Seekable)
+            .expect("the repackaged CMAF must re-parse");
     assert_eq!(round.tracks.len(), 1);
     assert!(matches!(
         round.tracks[0].spec.config,
@@ -216,10 +213,9 @@ fn ac4_round_trips_through_cmaf_mux_then_demux() {
         .expect("CmafMux must mux an Ac4 track (already supported before step 2d)");
 
     // Demux: this is the new arm added in step 2d.
-    let mut demux = Fmp4Demux::new();
-    let reparsed = demux
-        .unpackage(&bytes)
-        .expect("ac-4 sample entry must now demux to CodecConfig::Ac4, not error");
+    let reparsed =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("ac-4 sample entry must now demux to CodecConfig::Ac4, not error");
 
     assert_eq!(reparsed.tracks.len(), 1);
     let track = &reparsed.tracks[0];
@@ -270,8 +266,9 @@ fn fmp4_demux_skips_a_genuinely_unsupported_sample_entry_naming_it_not_failing_t
     // multi-track test below (`fmp4_demux_skips_one_unmodelled_track_but_keeps_the_rest`)
     // is the one that actually bites that distinction.
     let file = fixture("av-frag.mp4");
-    let mut demux = Fmp4Demux::new();
-    let media = demux.unpackage(&file).expect("demux av-frag.mp4");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("demux av-frag.mp4");
     let avc_spec = media
         .tracks
         .iter()
@@ -294,10 +291,11 @@ fn fmp4_demux_skips_a_genuinely_unsupported_sample_entry_naming_it_not_failing_t
     mutated[pos..pos + 4].copy_from_slice(b"zzz9");
     assert_ne!(mutated, init, "mutation must actually change the bytes");
 
-    let mut demux2 = Fmp4Demux::new();
-    let out = demux2
-        .unpackage(&mutated)
-        .expect("an unrecognised sample entry must be skipped, not fail the whole file");
+    let out = test_harness::collect::media_from_mp4(
+        &mutated,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("an unrecognised sample entry must be skipped, not fail the whole file");
     assert!(
         out.tracks.is_empty(),
         "the only track was unrecognised, so no track survives"
@@ -324,17 +322,16 @@ fn fmp4_demux_skips_one_unmodelled_track_but_keeps_the_rest() {
     // CMAF (AVC + AAC + `stpp` subtitle, `av-aac-subtitle-frag.mp4` — see
     // PROVENANCE.md) with ONLY the subtitle track's sample-entry four-CC
     // mutated to something no `SampleEntryVariant` matches. If a demuxer
-    // were fatal on one bad track (the pre-fix `Fmp4Demux` behaviour), this
+    // were fatal on one bad track (the pre-fix `Mp4Demux` behaviour), this
     // whole file would fail to demux at all; if it silently dropped the
-    // skip without recording it (the pre-fix `ProgressiveDemux` behaviour),
+    // skip without recording it (the pre-fix `Mp4Demux` behaviour),
     // `skipped` would stay empty. Only "2 tracks survive, the third is
     // named in `skipped`" proves DEMUX = lenient but loud actually holds
     // across more than one track.
     let file = fixture("av-aac-subtitle-frag.mp4");
-    let mut probe = Fmp4Demux::new();
-    let media = probe
-        .unpackage(&file)
-        .expect("demux av-aac-subtitle-frag.mp4 unmutated");
+    let media =
+        test_harness::collect::media_from_mp4(&file, test_harness::collect::CollectMode::Seekable)
+            .expect("demux av-aac-subtitle-frag.mp4 unmutated");
     assert_eq!(
         media.tracks.len(),
         3,
@@ -358,11 +355,11 @@ fn fmp4_demux_skips_one_unmodelled_track_but_keeps_the_rest() {
     );
     mutated[pos..pos + 4].copy_from_slice(b"zzz9");
     assert_ne!(mutated, file, "mutation must actually change the bytes");
-
-    let mut demux = Fmp4Demux::new();
-    let out = demux
-        .unpackage(&mutated)
-        .expect("one unmodelled track must not fail the whole file");
+    let out = test_harness::collect::media_from_mp4(
+        &mutated,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("one unmodelled track must not fail the whole file");
 
     assert_eq!(
         out.tracks.len(),

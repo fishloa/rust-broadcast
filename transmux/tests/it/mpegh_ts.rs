@@ -22,7 +22,7 @@ use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use isobmff::MHADecoderConfigurationRecord;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
-use transmux::{Fmp4Demux, TsDemux, TsMux};
+use transmux::{TsDemux, TsMux};
 
 const TS: usize = 188;
 
@@ -249,7 +249,7 @@ fn demux_enumerates_mpegh_track_with_recovered_config() {
 
 // ---------------------------------------------------------------------------
 // Gate 2: TS -> IR -> fMP4 -> IR round-trip: mhaC config + sample bytes
-// byte-identical (via CmafMux -> Fmp4Demux, the existing mhm1/mhaC path).
+// byte-identical (via CmafMux -> Mp4Demux, the existing mhm1/mhaC path).
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -266,9 +266,11 @@ fn fmp4_round_trip_preserves_config_and_sample_bytes() {
         let mut mux = CmafMux::new(1);
         let fmp4 = mux.package(&media).expect("mux to fMP4");
 
-        let media2 = Fmp4Demux::new()
-            .unpackage(&fmp4)
-            .expect("demux round-tripped fMP4");
+        let media2 = test_harness::collect::media_from_mp4(
+            &fmp4,
+            test_harness::collect::CollectMode::Seekable,
+        )
+        .expect("demux round-tripped fMP4");
         let track2 = mpegh_track(&media2);
         let CodecConfig::MpegH { config: cfg2, .. } = track2.config() else {
             unreachable!()

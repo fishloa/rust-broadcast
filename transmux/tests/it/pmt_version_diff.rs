@@ -697,7 +697,7 @@ fn track_abandoned_config_unrecoverable_is_actually_emitted() {
                 reason,
                 provenance,
                 ..
-            } => Some((*track_id, *reason, provenance.pid)),
+            } => Some((*track_id, reason.clone(), provenance.pid)),
             _ => None,
         })
         .collect();

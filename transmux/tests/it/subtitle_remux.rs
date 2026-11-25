@@ -7,10 +7,10 @@
 //! available (ffmpeg cannot write it), so it is a spec-vector round trip.
 
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Serialize, Unpackage};
+use broadcast_common::{Package, Serialize};
 use isobmff::{VttCueBox, WvttSampleEntry};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
-use transmux::{CmafMux, Fmp4Demux, Media, Sample, Track, TrackId, TrackSpec};
+use transmux::{CmafMux, Media, Sample, Track, TrackId, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -34,7 +34,11 @@ fn subtitle_track(m: &Media) -> &Track {
 
 #[test]
 fn stpp_track_carries_entry_and_remuxes_through_cmaf() {
-    let original = Fmp4Demux::new().unpackage(&fixture()).unwrap();
+    let original = test_harness::collect::media_from_mp4(
+        &fixture(),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .unwrap();
     let orig_sub = subtitle_track(&original);
     let CodecConfig::Subtitle {
         format,
@@ -63,7 +67,9 @@ fn stpp_track_carries_entry_and_remuxes_through_cmaf() {
     assert!(sthd < stpp, "media header before the sample table");
     assert!(find(&out, b"subt").is_some(), "subt handler");
 
-    let round = Fmp4Demux::new().unpackage(&out).unwrap();
+    let round =
+        test_harness::collect::media_from_mp4(&out, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
     let new_sub = subtitle_track(&round);
     assert_eq!(
         new_sub.spec.config_subtitle_entry(),
@@ -116,7 +122,9 @@ fn wvtt_spec_vector_round_trips_with_nmhd() {
     let media = Media::new(vec![Track::new(spec, vec![sample])], timescale(1000));
     let out = CmafMux::default().package(&media).expect("wvtt muxes");
     assert!(find(&out, b"nmhd").is_some() && find(&out, b"text").is_some());
-    let round = Fmp4Demux::new().unpackage(&out).unwrap();
+    let round =
+        test_harness::collect::media_from_mp4(&out, test_harness::collect::CollectMode::Seekable)
+            .unwrap();
     let t = subtitle_track(&round);
     assert_eq!(
         t.spec.config_subtitle_entry(),

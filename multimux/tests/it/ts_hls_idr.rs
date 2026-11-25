@@ -20,7 +20,7 @@ use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
 use transmux::media::{Media, Track};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::{Fmp4Demux, NalCodec, TsDemux, TsMux, access_unit_is_idr};
+use transmux::{NalCodec, TsDemux, TsMux, access_unit_is_idr};
 
 use crate::support::listener;
 use listener::bind_tcp;
@@ -352,9 +352,9 @@ async fn fmp4_outputs_unchanged_by_policy() {
 
     let mut whole = init_idr;
     whole.extend_from_slice(&seg_idr);
-    let ir = Fmp4Demux::new()
-        .unpackage(&whole)
-        .expect("demux fMP4 segment");
+    let ir =
+        test_harness::collect::media_from_mp4(&whole, test_harness::collect::CollectMode::Seekable)
+            .expect("demux fMP4 segment");
     let video = ir
         .tracks
         .iter()

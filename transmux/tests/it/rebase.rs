@@ -3,7 +3,7 @@
 //!
 //! These tests bite end-to-end against the real box layer: the absolute
 //! decode-time anchor ([`Track::start_decode_time`]) is populated by
-//! [`Fmp4Demux`] from the fragment `tfdt` (ISO/IEC 14496-12:2026 §8.8.12),
+//! [`Mp4Demux`] from the fragment `tfdt` (ISO/IEC 14496-12:2026 §8.8.12),
 //! consumed by [`CmafMux`] as the first segment's `baseMediaDecodeTime`, and
 //! transformed by the [`transmux::rebase`] functions. Every test asserts a value
 //! observed through the muxer/demuxer, so a hardcoded-0 muxer or a no-op
@@ -29,12 +29,12 @@
 //! 5. A `None`-timed (section-carried) sample is never given a fabricated
 //!    timestamp by any transform.
 
+use broadcast_common::Package;
 use broadcast_common::timescale::Timescale;
-use broadcast_common::{Package, Unpackage};
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::nalu_types::{AvcPps, AvcSps};
 use transmux::TrackId;
-use transmux::media::{CmafMux, Fmp4Demux, Media, Track};
+use transmux::media::{CmafMux, Media, Track};
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,
 };
@@ -146,11 +146,13 @@ fn fmp4_demux_populates_start_decode_time_from_tfdt() {
     fmp4.extend_from_slice(&media_seg);
 
     // Re-demux and read the anchor back — must equal the tfdt, not 0.
-    let media = Fmp4Demux::new().unpackage(&fmp4).expect("demux");
+    let media =
+        test_harness::collect::media_from_mp4(&fmp4, test_harness::collect::CollectMode::Seekable)
+            .expect("demux");
     assert_eq!(media.tracks.len(), 1);
     assert_eq!(
         media.tracks[0].start_decode_time, KNOWN_BASE,
-        "Fmp4Demux must set start_decode_time from the first fragment tfdt"
+        "Mp4Demux must set start_decode_time from the first fragment tfdt"
     );
     // media plane step 2c: the samples themselves are absolute, seeded from the
     // same tfdt — the anchor is no longer the only place the time lives.

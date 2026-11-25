@@ -61,7 +61,7 @@ fn main() {
     // (67ms) AFTER the cue. That is real-world, non-IDR-aligned behaviour,
     // not a fixture bug — hard-coded here as the independently-verified
     // ground truth rather than re-deriving it, since that derivation needs a
-    // working `Fmp4Demux` track and this exact fixture currently defeats
+    // working `Mp4Demux` track and this exact fixture currently defeats
     // that (issue #952).
     let nearest_keyframe_pts = on_the_pts_circle(160_767_315_906_000);
     let candidates = [nearest_keyframe_pts];

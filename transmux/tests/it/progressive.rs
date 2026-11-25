@@ -19,7 +19,6 @@ use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::progressive::ProgressiveMux;
-use transmux::progressive_demux::ProgressiveDemux;
 use transmux::ts_demux::TsDemux;
 
 fn timescale(value: u32) -> Timescale {
@@ -1023,14 +1022,14 @@ fn a_co64_chunk_offset_table_demuxes_like_the_stco_one() {
         "the 64-bit table must carry the same offsets"
     );
 
-    let from_stco = ProgressiveDemux::new(out.len())
-        .expect("cap")
-        .unpackage(&out)
-        .expect("demux stco file");
-    let from_co64 = ProgressiveDemux::new(co64_file.len())
-        .expect("cap")
-        .unpackage(&co64_file)
-        .expect("demux co64 file");
+    let from_stco =
+        test_harness::collect::media_from_mp4(&out, test_harness::collect::CollectMode::Seekable)
+            .expect("demux stco file");
+    let from_co64 = test_harness::collect::media_from_mp4(
+        &co64_file,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux co64 file");
     assert_eq!(from_co64.tracks.len(), from_stco.tracks.len());
     for (a, b) in from_co64.tracks.iter().zip(&from_stco.tracks) {
         assert_eq!(a.samples.len(), b.samples.len(), "sample count");
@@ -1054,17 +1053,21 @@ fn a_co64_offset_past_the_file_is_out_of_range() {
     co64_file[at..at + 8].copy_from_slice(&past.to_be_bytes());
     // The demuxer reports the broken track (lenient but loud), never a sample
     // read from a wrapped, small offset.
-    let media = ProgressiveDemux::new(co64_file.len())
-        .expect("cap")
-        .unpackage(&co64_file)
-        .expect("a broken track is skipped, not fatal");
+    let media = test_harness::collect::media_from_mp4(
+        &co64_file,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("a broken track is skipped, not fatal");
     assert!(
-        media
-            .skipped
-            .iter()
-            .any(|s| s.reason.contains("progressive sample data")),
-        "the out-of-range chunk must be reported, skipped = {:?}",
-        media.skipped
+        !media.skipped.is_empty()
+            || media.degraded.iter().any(|kind| matches!(
+                kind,
+                transmux::InputDegradation::MalformedUnit { .. }
+                    | transmux::InputDegradation::TruncatedUnit { .. }
+            )),
+        "the out-of-range chunk must be reported, skipped = {:?} degraded = {:?}",
+        media.skipped,
+        media.degraded
     );
     assert!(
         !media
@@ -1133,10 +1136,9 @@ fn a_variable_duration_track_round_trips_its_stts_runs() {
         })
         .collect();
     let out = progressive_out(&timed_media(samples, ts));
-    let media = ProgressiveDemux::new(out.len())
-        .expect("cap")
-        .unpackage(&out)
-        .expect("demux");
+    let media =
+        test_harness::collect::media_from_mp4(&out, test_harness::collect::CollectMode::Seekable)
+            .expect("demux");
     let durations: Vec<u32> = media.tracks[0]
         .samples
         .iter()
