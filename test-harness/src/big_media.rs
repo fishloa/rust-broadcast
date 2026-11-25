@@ -18,8 +18,8 @@ use broadcast_common::{Parse, Serialize, Unpackage};
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
 use transmux::mux_stage::{MuxOutput, drive_media};
 use transmux::{
-    CodecConfig, DEFAULT_PSI_INTERVAL, FlvDemux, FlvPayloadKind, Media, TsDemux, TsMuxStage,
-    flv_frame_payload, flv_sequence_header_payloads, on_metadata_body,
+    CodecConfig, DEFAULT_PSI_INTERVAL, FlvDemux, FlvPayloadKind, Media, Sample, TsDemux,
+    TsMuxStage, flv_frame_payload, flv_sequence_header_payloads, on_metadata_body,
 };
 
 /// Nanoseconds in one second: turns a timescale-tick span into a [`Duration`]
@@ -856,6 +856,10 @@ pub struct BigFmp4Options {
     pub sample_bytes: u32,
     /// Write a trailing `mfra` with `tfra` entries for evenly spaced fragments.
     pub with_mfra: bool,
+    /// Write a CENC-protected file (`cenc`, AES-CTR) through the crypto and
+    /// CMAF muxer stages, one sample at a time, instead of the sparse
+    /// cleartext fragments (see [`write_big_fmp4`]).
+    pub protect: bool,
 }
 
 impl Default for BigFmp4Options {
@@ -865,6 +869,7 @@ impl Default for BigFmp4Options {
             fragment_count: BIG_FMP4_FRAGMENTS,
             sample_bytes: BIG_FMP4_SAMPLE_BYTES,
             with_mfra: true,
+            protect: false,
         }
     }
 }
@@ -886,13 +891,50 @@ pub struct BigFmp4 {
     pub moof_bytes: u64,
     /// Each fragment's `moof` offset, in file order.
     pub moof_offsets: Vec<u64>,
+    /// `(track id, samples written)` in track order.
+    pub samples_per_track: Vec<(u32, u64)>,
+    /// The CENC report, when [`BigFmp4Options::protect`] asked for a protected
+    /// file.
+    pub cenc: Option<BigFmp4Cenc>,
 }
 
-/// Write a real fragmented MP4 of at least [`BigFmp4Options::target_bytes`]: a
-/// real `ftyp`, a real `moov` with `mvex`/`trex` and empty sample tables, then
-/// `fragment_count` `moof`+`mdat` pairs whose payloads are never written, and
-/// optionally the trailing `mfra`.
+/// What a CENC-protected [`write_big_fmp4`] run reports about its cleartext
+/// samples, for a caller checking that a decrypt reproduced them.
+#[derive(Debug, Clone)]
+pub struct BigFmp4Cenc {
+    /// Track the protected samples belong to.
+    pub track_id: u32,
+    /// The Key ID every fragment's `tenc` carries.
+    pub key_id: [u8; BIG_FMP4_KEY_LEN],
+    /// The content key that protects the fragments.
+    pub content_key: [u8; BIG_FMP4_KEY_LEN],
+    /// CRC-32/MPEG-2 of each of the first [`BigFmp4Cenc::hashes`] cleartext
+    /// samples, in decode order.
+    pub head_hashes: Vec<u32>,
+    /// CRC-32/MPEG-2 of each of the last [`BigFmp4Cenc::hashes`] cleartext
+    /// samples, in decode order.
+    pub tail_hashes: Vec<u32>,
+    /// How many leading and trailing samples each hash list covers.
+    pub hashes: usize,
+}
+
+/// Write a fragmented MP4 of at least [`BigFmp4Options::target_bytes`].
+///
+/// With [`BigFmp4Options::protect`] the file is real: `ftyp` + a protected
+/// `moov`, then one `moof`+`mdat` per sample whose **ciphertext** is written,
+/// produced by [`CencEncryptStage`] feeding [`CmafMuxStage`] one sample at a
+/// time (`cenc`, AES-CTR, subsample encryption for the video track), so the
+/// generator itself never holds the file. Without it the fragments' payloads
+/// are left sparse and never written.
 pub fn write_big_fmp4(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
+    if opts.protect {
+        write_big_fmp4_cenc(path, opts)
+    } else {
+        write_big_fmp4_sparse(path, opts)
+    }
+}
+
+fn write_big_fmp4_sparse(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
     use broadcast_common::timescale::Timescale;
     use isobmff::init_segment::{MovieExtendsBox, TrackExtendsBox};
     use isobmff::movie_fragment::{
@@ -1095,7 +1137,318 @@ pub fn write_big_fmp4(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
         with_mfra: opts.with_mfra,
         moof_bytes: moof_len as u64,
         moof_offsets,
+        samples_per_track: vec![(BIG_MP4_VIDEO_TRACK, u64::from(count))],
+        cenc: None,
     }
+}
+
+// ── CENC-protected fragmented MP4 ───────────────────────────────────────────
+
+/// Bytes in one CENC Key ID / content key.
+const BIG_FMP4_KEY_LEN: usize = 16;
+/// The Key ID the generated CENC fragments announce.
+pub const BIG_FMP4_CENC_KEY_ID: [u8; BIG_FMP4_KEY_LEN] = [
+    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+];
+/// The content key that protects the generated CENC fragments.
+pub const BIG_FMP4_CENC_CONTENT_KEY: [u8; BIG_FMP4_KEY_LEN] = [
+    0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf,
+];
+/// How many leading and trailing cleartext samples the generated CENC report
+/// hashes.
+const BIG_FMP4_CENC_HASHES: usize = 8;
+/// First byte of the filler SEI payload's repeating pattern: keeps every
+/// payload byte non-zero, so an Annex B round-trip of the cleartext cannot
+/// mistake a run for a start-code prefix.
+const BIG_FMP4_FILLER_PATTERN_MIN: u8 = 0x40;
+/// One past the filler SEI payload's last pattern byte.
+const BIG_FMP4_FILLER_PATTERN_END: u8 = 0xc0;
+/// Bytes of the per-sample variation written at the start of the filler SEI
+/// payload (the protected region), so no two samples are identical.
+const BIG_FMP4_CENC_VARY_BYTES: usize = 8;
+/// Width of a length-prefixed NAL unit's length field.
+const BIG_FMP4_NAL_LENGTH_SIZE: usize = 4;
+/// AVC SEI NAL unit type (`nal_unit_type` 6, ITU-T H.264 Table 7-1).
+const BIG_FMP4_AVC_SEI: u8 = 6;
+/// Mask selecting an AVC NAL unit's `nal_unit_type` from its first byte
+/// (ITU-T H.264 §7.3.1: `forbidden_zero_bit` + 2-bit `nal_ref_idc` above it).
+const BIG_FMP4_AVC_NAL_TYPE_MASK: u8 = 0x1f;
+/// The generated track's media timescale.
+const BIG_FMP4_VIDEO_TIMESCALE: u32 = 90_000;
+/// The generated track's id.
+const BIG_FMP4_CENC_TRACK: u32 = 1;
+/// Byte value XORed into each variation byte; `0x00` varies to `0xff`, so a
+/// varied byte is never zero either.
+const BIG_FMP4_CENC_VARY_XOR: u8 = 0xff;
+/// Sequence number of the first generated `moof`.
+const BIG_FMP4_CENC_FIRST_SEQUENCE: u32 = 1;
+/// Bits per byte, for extracting the per-index variation bytes.
+const BIG_FMP4_BITS_PER_BYTE: u32 = 8;
+
+/// Write a CENC-protected fragmented MP4 of at least
+/// [`BigFmp4Options::target_bytes`], one sample at a time.
+///
+/// Every sample is the committed source fixture's keyframe access unit with a
+/// filler SEI NAL inserted before its first slice (so the picture, its SPS/PPS
+/// and its sync flag stay real, and the muxer never has to add parameter sets
+/// itself) and its payload padded to [`BigFmp4Options::sample_bytes`]. Each
+/// sample's variation bytes make it distinct, so a decrypt that applied the
+/// wrong IV cannot pass a hash comparison.
+fn write_big_fmp4_cenc(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
+    use broadcast_common::stage::{Stage, Timestamp};
+    use broadcast_common::timescale::Timescale;
+    use isobmff::cenc::CencScheme;
+    use transmux::cenc_encrypt::{CencEncryptStage, EncryptConfig, SubsamplePolicy};
+    use transmux::mux_stage::{MuxInput, MuxOutput};
+    use transmux::{CmafMuxStage, FragmentCut, TrackId};
+
+    let timescale = expect(
+        "generated video timescale",
+        Timescale::try_new(BIG_FMP4_VIDEO_TIMESCALE),
+    );
+    let source = read_source(&test_fixtures::path(BIG_MP4_SOURCE_ENTRY));
+    let media = expect(
+        "demux the source fixture",
+        crate::collect::media_from_mp4(&source, crate::collect::CollectMode::Seekable),
+    );
+    let video = media
+        .tracks
+        .iter()
+        .find(|track| matches!(track.spec.config, CodecConfig::Avc { .. }))
+        .expect("the source fixture carries an AVC track");
+    let (template, variation_at) = cenc_sample_template(&video.samples, opts.sample_bytes);
+    let mut spec = video.spec.clone();
+    spec.track_id = TrackId::new(BIG_FMP4_CENC_TRACK);
+    spec.timescale = timescale;
+
+    let needed = opts
+        .target_bytes
+        .div_ceil(u64::from(opts.sample_bytes).max(1));
+    let count = opts
+        .fragment_count
+        .max(u32::try_from(needed).unwrap_or(u32::MAX));
+
+    let mut encrypt = expect(
+        "build the CENC encrypt stage",
+        CencEncryptStage::new(
+            BIG_FMP4_CENC_CONTENT_KEY,
+            EncryptConfig::new(
+                CencScheme::Cenc,
+                BIG_FMP4_CENC_KEY_ID,
+                SubsamplePolicy::Video,
+            ),
+        ),
+    );
+    let mut mux = CmafMuxStage::new(
+        expect(
+            "movie timescale",
+            Timescale::try_new(BIG_MP4_MOVIE_TIMESCALE),
+        ),
+        FragmentCut::OnFlush,
+        BIG_FMP4_CENC_FIRST_SEQUENCE,
+    );
+    expect(
+        "announce the source track to the encrypt stage",
+        encrypt.feed(MuxInput::Track(Box::new(spec)), Timestamp::ZERO),
+    );
+    let protected = loop {
+        match encrypt.poll() {
+            Some(MuxInput::Track(spec)) => break *spec,
+            Some(_) => {}
+            None => panic!("big_media: the encrypt stage dropped the track announcement"),
+        }
+    };
+    let protection = protected
+        .protection
+        .clone()
+        .expect("the encrypt stage protects the announced track");
+    expect(
+        "announce the protected track to the CMAF muxer",
+        mux.feed(MuxInput::Track(Box::new(protected)), Timestamp::ZERO),
+    );
+
+    let mut file = BufWriter::new(expect("create big CENC fmp4", File::create(path)));
+    let mut written = 0u64;
+    let mut moof_bytes = 0u64;
+    let mut head_hashes = Vec::with_capacity(BIG_FMP4_CENC_HASHES);
+    let mut tail_hashes: std::collections::VecDeque<u32> =
+        std::collections::VecDeque::with_capacity(BIG_FMP4_CENC_HASHES);
+    for index in 0..count {
+        let sample = cenc_sample(&template, variation_at, index);
+        let hash = broadcast_common::crc32_mpeg2::compute(&sample.data);
+        if head_hashes.len() < BIG_FMP4_CENC_HASHES {
+            head_hashes.push(hash);
+        } else {
+            if tail_hashes.len() == BIG_FMP4_CENC_HASHES {
+                tail_hashes.pop_front();
+            }
+            tail_hashes.push_back(hash);
+        }
+        expect(
+            "encrypt one sample",
+            encrypt.feed(
+                MuxInput::Sample {
+                    track: TrackId::new(BIG_FMP4_CENC_TRACK),
+                    sample,
+                },
+                Timestamp::ZERO,
+            ),
+        );
+        while let Some(input) = encrypt.poll() {
+            if let MuxInput::Sample { track, sample } = input {
+                expect(
+                    "mux one protected sample",
+                    mux.feed(MuxInput::Sample { track, sample }, Timestamp::ZERO),
+                );
+            }
+        }
+        expect(
+            "close the fragment",
+            mux.feed(MuxInput::Flush, Timestamp::ZERO),
+        );
+        while let Some(output) = mux.poll() {
+            match output {
+                MuxOutput::Init(init) => {
+                    let protected_init = expect(
+                        "protect the init segment",
+                        transmux::cenc_segment::protect_init_segment(
+                            &init,
+                            TrackId::new(BIG_FMP4_CENC_TRACK),
+                            &protection,
+                        ),
+                    );
+                    written += write_bytes(&mut file, &protected_init);
+                }
+                MuxOutput::Segment(segment) => {
+                    if moof_bytes == 0 {
+                        moof_bytes = moof_length(&segment.bytes);
+                    }
+                    written += write_bytes(&mut file, &segment.bytes);
+                }
+                _ => {}
+            }
+        }
+    }
+    expect("flush big CENC fmp4", file.flush());
+    let bytes = expect("file length", file.get_ref().metadata()).len();
+    assert_eq!(bytes, written, "the CENC fragment writer lost bytes");
+    BigFmp4 {
+        bytes,
+        moov_bytes: 0,
+        fragment_count: count,
+        sample_bytes: opts.sample_bytes,
+        with_mfra: false,
+        moof_bytes,
+        moof_offsets: Vec::new(),
+        samples_per_track: vec![(BIG_FMP4_CENC_TRACK, u64::from(count))],
+        cenc: Some(BigFmp4Cenc {
+            track_id: BIG_FMP4_CENC_TRACK,
+            key_id: BIG_FMP4_CENC_KEY_ID,
+            content_key: BIG_FMP4_CENC_CONTENT_KEY,
+            head_hashes,
+            tail_hashes: tail_hashes.into_iter().collect(),
+            hashes: BIG_FMP4_CENC_HASHES,
+        }),
+    }
+}
+
+/// Byte length of the first `moof` box in a CMAF segment.
+fn moof_length(segment: &[u8]) -> u64 {
+    isobmff::box_types::find_box(segment, &isobmff::segments::MOOF)
+        .map(|moof| u64::try_from(moof.len()).unwrap_or(0))
+        .unwrap_or(0)
+}
+
+/// The cleartext sample every generated fragment carries, before its per-index
+/// variation is applied: the source fixture's keyframe access unit with a
+/// filler SEI NAL inserted before its first VCL NAL and sized so the whole
+/// sample is `sample_bytes`. Returns the template and the byte offset of the
+/// filler payload's first variation byte.
+fn cenc_sample_template(samples: &[Sample], sample_bytes: u32) -> (Vec<u8>, usize) {
+    let keyframe = samples
+        .iter()
+        .find(|sample| sample.flags.is_sync)
+        .expect("the source fixture has a keyframe");
+    let nals = expect(
+        "split the keyframe into NAL units",
+        transmux::iter_length_prefixed_nals(&keyframe.data),
+    );
+    let mut before_vcl = Vec::new();
+    let mut from_vcl = Vec::new();
+    let mut seen_vcl = false;
+    for nal in &nals {
+        let first_type = nal.first().map(|byte| byte & BIG_FMP4_AVC_NAL_TYPE_MASK);
+        if !seen_vcl && first_type.is_some_and(|kind| (1..=5).contains(&kind)) {
+            seen_vcl = true;
+            push_nal(&mut from_vcl, nal);
+        } else if seen_vcl {
+            push_nal(&mut from_vcl, nal);
+        } else {
+            push_nal(&mut before_vcl, nal);
+        }
+    }
+    assert!(
+        seen_vcl,
+        "the source fixture's keyframe has no VCL NAL to fill around"
+    );
+    let filler_overhead = BIG_FMP4_NAL_LENGTH_SIZE + 1;
+    let fixed = before_vcl.len() + filler_overhead + from_vcl.len();
+    let filler_payload = usize::try_from(sample_bytes)
+        .expect("sample size")
+        .saturating_sub(fixed);
+    let mut template = Vec::with_capacity(fixed + filler_payload);
+    template.extend_from_slice(&before_vcl);
+    template.extend_from_slice(
+        &u32::try_from(filler_payload.saturating_add(1))
+            .expect("filler NAL length")
+            .to_be_bytes(),
+    );
+    template.push(BIG_FMP4_AVC_SEI);
+    let variation_at = template.len();
+    let span =
+        usize::from(BIG_FMP4_FILLER_PATTERN_END.saturating_sub(BIG_FMP4_FILLER_PATTERN_MIN)).max(1);
+    for index in 0..filler_payload {
+        let offset = u8::try_from(index % span).unwrap_or(0);
+        template.push(BIG_FMP4_FILLER_PATTERN_MIN + offset);
+    }
+    template.extend_from_slice(&from_vcl);
+    (template, variation_at)
+}
+
+/// Append one NAL unit to a length-prefixed sample.
+fn push_nal(out: &mut Vec<u8>, nal: &[u8]) {
+    out.extend_from_slice(&u32::try_from(nal.len()).unwrap_or(u32::MAX).to_be_bytes());
+    out.extend_from_slice(nal);
+}
+
+/// One generated cleartext sample: the [`cenc_sample_template`] with this
+/// sample's protected variation bytes written at `variation_at`.
+fn cenc_sample(template: &[u8], variation_at: usize, index: u32) -> Sample {
+    let mut data = template.to_vec();
+    for slot in 0..BIG_FMP4_CENC_VARY_BYTES {
+        let shift = u32::try_from(slot).unwrap_or(0) * BIG_FMP4_BITS_PER_BYTE;
+        let byte = u8::try_from((u64::from(index) >> shift) & u64::from(u8::MAX)).unwrap_or(0)
+            ^ BIG_FMP4_CENC_VARY_XOR;
+        if let Some(target) = data.get_mut(variation_at.saturating_add(slot)) {
+            *target = byte;
+        }
+    }
+    let dts = i64::from(index) * i64::from(BIG_FMP4_SAMPLE_DELTA);
+    expect(
+        "build a generated sample",
+        Sample::new(
+            data,
+            Some(dts),
+            Some(dts),
+            Some(BIG_FMP4_SAMPLE_DELTA),
+            true,
+        ),
+    )
+}
+
+fn write_bytes(file: &mut impl Write, bytes: &[u8]) -> u64 {
+    expect("write big CENC bytes", file.write_all(bytes));
+    expect("sum bytes", u64::try_from(bytes.len()))
 }
 
 #[cfg(test)]
