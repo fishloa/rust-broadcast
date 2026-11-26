@@ -191,7 +191,7 @@ impl CodecProvider for SymphoniaProvider {
     }
 
     fn info(&self) -> ProviderInfo {
-        ProviderInfo::new(PROVIDER, LIBRARY_VERSION)
+        ProviderInfo::new(PROVIDER, env!("CARGO_PKG_VERSION"))
             .with_library(format!("{LIBRARY} {LIBRARY_VERSION}"))
             .with_licence(LIBRARY_LICENCE)
     }
