@@ -73,7 +73,7 @@ Code sites (`ZenithMedia/rust/src/demux.rs`, `src/lib.rs`, `tools/stream-cut/src
    ```
    `serde_json::json!({ "track": t.spec.track_id })` in stream-cut keeps compiling and prints the same bare number (`TrackId` serializes transparently).
 2. **`pid: spec.source_pid.unwrap_or(0)`** (demux.rs:223): `source_pid` is `Option<Pid>` now: `spec.source_pid.map_or(0, |p| p.value())` (FFI `pid: u16` unchanged).
-3. **`config.try_to_bytes()`** (demux.rs:249-269): already the new API, nothing to do. `use broadcast_common::Serialize;` stays valid.
+3. **`config.try_to_bytes()`** (demux.rs:249-269): already the new API, nothing to do. `use broadcast_core::Serialize;` stays valid.
 4. **`CodecConfig` matches**: if any `match` names `CodecConfig::Subtitle { format }` add `, ..` (it now carries `sample_entry`). `Media` is `#[non_exhaustive]` and has `degraded`: a damaged TS/PS/fMP4/WebM/FLV input now **succeeds** with `Media::degraded` populated where it used to fail the whole demux; if `stream-cut` relied on the error as a validity gate, check `media.degraded.is_empty()`.
 5. **Behaviour**: `StreamingTsDemux` now recognises an AC-3 core + dependent E-AC-3 frame as one E-AC-3 access unit (7.1 streams produce a track; `dec3` `num_dep_sub` is the dependent count), drops an orphan dependent frame instead of emitting a one-frame-long sample (timeline no longer shifts), and the three `m6-*` fixtures' E-AC-3 track gains one real frame (7 -> 8 samples). Re-run any golden sample-count test that touches E-AC-3.
 6. Hostile-input bounds: `trun` with no per-sample fields can no longer drive a 10 GB allocation (#1130); ISOBMFF boxes past 4 GiB use `largesize`.

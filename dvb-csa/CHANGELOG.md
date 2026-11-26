@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ### Added
 
 - `KEY_LEN`, the control-word length that appears in `ControlWord`'s public tuple field and in `ControlWord::from_bytes`, so callers can name the array length instead of writing `8`.

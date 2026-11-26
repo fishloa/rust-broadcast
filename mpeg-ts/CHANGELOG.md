@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ### Added
 
 - `reader::PacketReader` (feature `std`): yields the aligned 188-byte packets of any `std::io::Read`, resynchronising through `TsResync` as the stream arrives, so a capture is framed in bounded memory. `reader::READ_CHUNK_LEN` names the read granularity.

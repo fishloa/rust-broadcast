@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
 ### Added
 - `UL_LEN`, `PACKAGE_ID_LEN`, `U16_LEN` and `UID_BATCH_HEADER_LEN`: the fixed wire widths named in this crate's public array-typed fields and functions (§4.2/§4.3).
 

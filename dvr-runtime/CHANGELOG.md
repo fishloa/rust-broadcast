@@ -8,6 +8,8 @@ All notable changes to this crate are documented here. The format follows
 
 ### Breaking
 
+- The wire-format contract types now come from `broadcast-core`.
+
 - `recover::scan_fmp4_data` is replaced by the sans-IO `recover::Fmp4Scan`
   (`step`/`supply`), which reads box headers only: each `step` names the next
   header to read and `supply` answers it, so a caller seeks over the payloads

@@ -4,6 +4,8 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 ### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
 - `Error::Emsg` carries `isobmff::Error` (was `mp4_emsg::Error`): the `emsg`
   box crate was absorbed into `isobmff`, and the crate now depends on
   `isobmff` instead of `mp4-emsg`.

@@ -124,33 +124,33 @@ Computed from `cargo metadata` over normal + build edges **and versioned dev-dep
 
 1. `broadcast-common-v10.0.0`  
    needs live first: (nothing in this wave)
-2. `broadcast-auth-v0.5.0`  
+2. `broadcast-loudness-v0.5.0`  
+   needs live first: (nothing in this wave)
+3. `scte104-v0.6.0`  
+   needs live first: (nothing in this wave)
+4. `broadcast-auth-v0.5.0`  
    needs live first: `broadcast-common`
-3. `broadcast-hls-v0.4.0`  
+5. `broadcast-hls-v0.4.0`  
    needs live first: `broadcast-common`
-4. `broadcast-loudness-v0.5.0`  
+6. `cc-data-v0.7.0`  
    needs live first: `broadcast-common`
-5. `cc-data-v0.7.0`  
+7. `dvb-mabr-v0.3.0`  
    needs live first: `broadcast-common`
-6. `dvb-mabr-v0.3.0`  
+8. `dvb-simulcrypt-v0.7.0`  
    needs live first: `broadcast-common`
-7. `dvb-simulcrypt-v0.7.0`  
+9. `dvb-vbi-v0.5.0`  
    needs live first: `broadcast-common`
-8. `dvb-vbi-v0.5.0`  
+10. `mpeg-pes-v0.6.0`  
    needs live first: `broadcast-common`
-9. `mpeg-pes-v0.6.0`  
+11. `mpeg-ts-v0.6.0`  
    needs live first: `broadcast-common`
-10. `mpeg-ts-v0.6.0`  
+12. `rdd29-v0.5.0`  
    needs live first: `broadcast-common`
-11. `rdd29-v0.5.0`  
+13. `rmt-flute-v0.7.0`  
    needs live first: `broadcast-common`
-12. `rmt-flute-v0.7.0`  
+14. `rtmp-runtime-v0.8.0`  
    needs live first: `broadcast-common`
-13. `rtmp-runtime-v0.8.0`  
-   needs live first: `broadcast-common`
-14. `rtp-packet-v0.5.0`  
-   needs live first: `broadcast-common`
-15. `scte104-v0.6.0`  
+15. `rtp-packet-v0.5.0`  
    needs live first: `broadcast-common`
 16. `srt-runtime-v0.6.0`  
    needs live first: `broadcast-common`
@@ -188,7 +188,7 @@ Computed from `cargo metadata` over normal + build edges **and versioned dev-dep
 32. `webrtc-runtime-v0.4.0`  
    needs live first: `broadcast-auth`, `broadcast-common`, `rtp-packet`
 33. `container-probe-v0.2.0`  
-   needs live first: `broadcast-common`, `mpeg-ps`, `mpeg-ts`, `st377-1`
+   needs live first: `mpeg-ps`, `mpeg-ts`, `st377-1`
 34. `dvb-ci-v0.10.0`  
    needs live first: `v12.0.0`, `broadcast-common`, `mpeg-ts`
 35. `dvb-stream-v0.7.0`  

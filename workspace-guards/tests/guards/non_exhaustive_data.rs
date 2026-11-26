@@ -67,6 +67,7 @@ pub const TABLE: &[Crate] = &[
     // private fields, built via `TsHttpPolicy::new`), not a config value.
     // `SrtCallerConfig`/`UdpConfig` etc. already carry the attribute.
     runtime("broadcast-client", &["TsHttpPolicy"], &["PlayoutConfig"]),
+    plain("broadcast-core"),
     Crate {
         name: "broadcast-common",
         // `xml::Frame`: a private-to-the-module traversal stack that this

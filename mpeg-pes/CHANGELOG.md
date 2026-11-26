@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ### Added
 
 - `ESCR_FIELD_LEN`: the 6-byte `ESCR` field width (ISO/IEC 13818-1 §2.4.3.7, Table 2-21) that `Escr`'s public constructors name, so their published signatures resolve to a documented constant.

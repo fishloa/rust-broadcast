@@ -158,6 +158,17 @@ pub const TABLE: &[Crate] = &[
     // carry a hand-written `Display` impl (a structured error message), which
     // this guard's `has_impl` check recognizes directly.
     Crate {
+        name: "broadcast-core",
+        scope: Scope::Crate,
+        matcher: Matcher::Strict,
+        // `BitError` is a structured error (hand-written `Display`), not a
+        // spec/field label; `CencScheme` and `Rounding` carry `name()` +
+        // `impl_spec_display!`, so the set is pinned below.
+        skip: &["BitError"],
+        expected: Some(&["CencScheme", "Rounding"]),
+        min_enums: Some(2),
+    },
+    Crate {
         name: "broadcast-common",
         scope: Scope::Crate,
         matcher: Matcher::Strict,

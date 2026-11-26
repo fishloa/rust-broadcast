@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ### Changed
 - Internal: the BBHEADER's multi-byte fields are read and written through their slices instead of byte-by-byte offset pairs. No output byte change.
 

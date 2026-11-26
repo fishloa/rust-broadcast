@@ -5,6 +5,10 @@ All notable changes to `srt-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
 ### Added
 
 - `crypto::AES_BLOCK_LEN`, `crypto::WRAP_ICV_LEN`, `handshake_sm::IPV4_ADDR_WORDS`, `packet::handshake::PEER_IP_WORDS` and `packet::key_material::ICV_LEN`: the lengths these modules expose in their public function signatures and public field types, so a caller can size its own buffers from them.

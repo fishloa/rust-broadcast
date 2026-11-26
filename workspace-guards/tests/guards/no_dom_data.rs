@@ -7,6 +7,14 @@ use crate::no_dom::Crate;
 
 pub const TABLE: &[Crate] = &[
     Crate {
+        name: "broadcast-core",
+        allowed_types: &[],
+        allowed_fns: &[],
+        // no XML: the moved contract types never touch quick-xml, so the
+        // type/entity/markup rules still apply (and find nothing)
+        needs_xml_module: false,
+    },
+    Crate {
         name: "broadcast-common",
         allowed_types: &[
             (

@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
 ### Added
 
 - `BRAND_LEN`: the byte length of an ISO/IEC 14496-12 major brand, already the type of `Detail::Isobmff`'s `major_brand` field, is now public so callers can name it.

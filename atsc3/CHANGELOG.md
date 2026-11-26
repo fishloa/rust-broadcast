@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ### Changed
 
 - `LlsEnvelope::decompress` takes the `broadcast_common::bounded::Limit` it reads the decompressed body under, and an over-limit body now fails with the new `Error::TooLarge { limit_name, limit_bytes }` instead of inflating until memory runs out. `MAX_DECOMPRESSED_LLS_LIMIT` is the 4 MiB limit the crate's own callers use.

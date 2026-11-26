@@ -6,6 +6,10 @@ All notable changes to this crate are documented here. The format follows
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ### Changed
 
 - In `Mode::Permissive` the reader types each `TrackEntry` on its own: a

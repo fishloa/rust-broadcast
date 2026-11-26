@@ -11,7 +11,7 @@ description = "A worked example: one private ISO BMFF box and one private sample
 
 [dependencies]
 isobmff = { path = "../../isobmff" }
-broadcast-core = { path = "../../broadcast-core", version = "0.1.0", default-features = false }
+broadcast-core = { path = "../../broadcast-core", default-features = false }
 
 [lints]
 workspace = true

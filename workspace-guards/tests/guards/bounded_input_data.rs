@@ -24,6 +24,7 @@ pub const TABLE: &[Crate] = &[
         // The one capped whole-document read.
         allow: &[("src/bounded.rs", "the one capped whole-document read")],
     },
+    plain("broadcast-core"),
     plain("broadcast-matroska"),
     plain("broadcast-auth"),
     plain("dvb-si"),

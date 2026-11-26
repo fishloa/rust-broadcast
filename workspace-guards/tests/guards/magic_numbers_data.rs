@@ -32,6 +32,10 @@ pub const TABLE: &[Crate] = &[
         allow: &[],
     },
     Crate {
+        name: "broadcast-core",
+        allow: &[],
+    },
+    Crate {
         name: "broadcast-common",
         allow: &[
             (

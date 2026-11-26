@@ -21,7 +21,7 @@ head     = []
 
 [dependencies]
 broadcast-common = { path = "../../broadcast-common" }
-broadcast-core = { path = "../../broadcast-core", version = "0.1.0" }
+broadcast-core = { path = "../../broadcast-core" }
 mpeg-ts          = { path = "../../mpeg-ts" }
 dvb-si           = { path = "../../dvb-si" }
 dvb-t2mi         = { path = "../../dvb-t2mi" }

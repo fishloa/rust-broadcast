@@ -4,6 +4,10 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ## [0.10.0] - 2026-11-22
 ### Breaking
 

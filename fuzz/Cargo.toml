@@ -20,7 +20,7 @@ dvb-si     = { path = "../dvb-si" }
 
 [dependencies]
 broadcast-common   = { path = "../broadcast-common" }
-broadcast-core = { path = "../broadcast-core", version = "0.1.0" }
+broadcast-core = { path = "../broadcast-core" }
 broadcast-matroska = { path = "../broadcast-matroska" }
 http               = "1"
 headers            = "0.4"

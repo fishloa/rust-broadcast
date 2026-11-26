@@ -31,6 +31,7 @@ pub const TABLE: &[Crate] = &[
     plain("broadcast-matroska"),
     plain("broadcast-client"),
     plain("broadcast-common"),
+    plain("broadcast-core"),
     plain("broadcast-dash"),
     plain("broadcast-hls"),
     plain("broadcast-loudness"),

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Breaking
 
+- The wire-format contract types now come from `broadcast-core`.
+
 - `rtmp-runtime`, `rtp-packet`, `mpeg-ps`, `broadcast-matroska`, `broadcast-hls` and `cc-data` are no longer unconditional dependencies: each now backs one feature (`flv`, `rtp`, `ps`, `matroska`, `hls`, `captions`) that gates the modules using it, and all six are on by default, so the default build is unchanged. A `default-features = false` build keeps the IR and the MP4/TS paths only:
   - `flv`: `flv`, `flv_stream`, `rtmp` and their re-exports (`FlvMuxStage`, `StreamingFlvDemux`, `RtmpMuxStage`, the FLV payload helpers).
   - `rtp`: `rtp_align`, `rtp_stream`, `rtp_dts`, the `rtcp` re-export and the RTP wire items inside `rtp` (`RtpPacket`, `RtpPacketiserStage`, the packetise/depacketise functions, `Mp2tPacketiser`). `rtp` also keeps the payload-format types and clock constants the IR, the TS path and the SDP parsing use.
