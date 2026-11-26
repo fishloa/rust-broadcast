@@ -20,7 +20,7 @@ use multimux::push::{MuxError, PushTransport, SendMediaError, drive_push};
 use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 use transmux::TrackId;
-use transmux::ir::{CodecConfig, DataCarriage, DataIdentity, Media, Sample, TrackSpec};
+use transmux::ir::{CodecConfig, DataCarriage, DataIdentity, Sample, TrackSpec};
 
 const TRACK: u32 = 1;
 const MESSAGE_LEN: usize = 188;
@@ -82,9 +82,8 @@ impl PushTransport for ScriptedTransport {
         Ok(())
     }
 
-    fn encode_media(&mut self, media: &Media) -> Result<Vec<Bytes>, SendMediaError> {
-        let poisoned = media
-            .tracks
+    fn encode_media(&mut self, tracks: &[transmux::Track]) -> Result<Vec<Bytes>, SendMediaError> {
+        let poisoned = tracks
             .iter()
             .flat_map(|track| track.samples.iter())
             .any(|sample| sample.data.as_ref() == POISON);

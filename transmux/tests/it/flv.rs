@@ -1,6 +1,6 @@
 //! FLV.as_slice() (Flash Video) spoke integration tests (issue #513).
 //!
-//! Exercises [`transmux::FlvDemux`] ([`Unpackage`]) and the
+//! Exercises [`transmux::StreamingFlvDemux`] and the
 //! [`transmux::FlvMuxStage`] mux stage against the committed real fixture
 //! `fixtures/flv/av.flv`
 //! (H.264 + AAC) and its ffprobe oracle `fixtures/flv/av.packets.csv`.

@@ -529,7 +529,6 @@ pub mod test_support {
     use broadcast_common::timescale::Timescale;
     use std::num::NonZeroUsize;
     use transmux::TsMuxStage;
-    use transmux::media::Track;
     use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
     fn nz(n: usize) -> NonZeroUsize {
@@ -537,6 +536,7 @@ pub mod test_support {
     }
 
     /// Mux a whole `Media` through one TS muxer stage, collecting its bytes.
+    #[cfg(test)]
     pub fn mux_ts(media: &transmux::Media) -> Vec<u8> {
         let mut stage = TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
         let outputs = transmux::mux_stage::drive_media(
@@ -607,6 +607,17 @@ pub mod test_support {
         )
     }
 
+    fn drain_ts(stage: &mut TsMuxStage, bytes: &mut Vec<u8>) {
+        use broadcast_common::stage::Stage;
+        use transmux::mux_stage::MuxOutput;
+
+        while let Some(output) = stage.poll() {
+            if let MuxOutput::Bytes(chunk) = output {
+                bytes.extend_from_slice(&chunk);
+            }
+        }
+    }
+
     /// Builds a real (not hand-faked) single-track muxed TS byte stream via
     /// the workspace's own `transmux::TsMuxStage` packager — the "real fixture,
     /// not inline bytes" discipline this project requires, since a
@@ -628,24 +639,41 @@ pub mod test_support {
         let frame_dur =
             u32::try_from(broadcast_common::clock33::PTS_HZ / u64::from(FRAME_RATE_FPS))
                 .unwrap_or(u32::MAX);
-        let samples: Vec<Sample> = (0..count)
-            .map(|i| {
-                let nal = [IDR_NAL_HEADER, nal_byte, (i % BYTE_RANGE) as u8];
-                let mut data = (nal.len() as u32).to_be_bytes().to_vec();
-                data.extend_from_slice(&nal);
-                Sample::new(
-                    data,
-                    Some(i64::from(i) * i64::from(frame_dur)),
-                    Some(i64::from(i) * i64::from(frame_dur)),
-                    Some(frame_dur),
-                    i % gop == 0,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()
+        use broadcast_common::stage::Stage;
+        use transmux::mux_stage::MuxInput;
+
+        let mut stage = TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
+        stage
+            .feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)
+            .expect("announce track");
+        let mut bytes = Vec::new();
+        drain_ts(&mut stage, &mut bytes);
+        for i in 0..count {
+            let nal = [IDR_NAL_HEADER, nal_byte, (i % BYTE_RANGE) as u8];
+            let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+            data.extend_from_slice(&nal);
+            let sample = Sample::new(
+                data,
+                Some(i64::from(i) * i64::from(frame_dur)),
+                Some(i64::from(i) * i64::from(frame_dur)),
+                Some(frame_dur),
+                i % gop == 0,
+            )
             .expect("valid timing");
-        let track = Track::new(spec, samples);
-        let media = transmux::media::Media::new(vec![track], transmux::VIDEO_CLOCK_TIMESCALE);
-        mux_ts(&media)
+            stage
+                .feed(
+                    MuxInput::Sample {
+                        track: spec.track_id,
+                        sample,
+                    },
+                    Timestamp::ZERO,
+                )
+                .expect("mux sample");
+            drain_ts(&mut stage, &mut bytes);
+        }
+        stage.finish().expect("finish muxer");
+        drain_ts(&mut stage, &mut bytes);
+        bytes
     }
 }
 

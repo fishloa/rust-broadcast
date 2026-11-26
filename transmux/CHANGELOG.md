@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Breaking
+
+- The whole-input repackaging helpers are deleted: `Repackage::run_media`, `repackage::{select_tracks, select_tracks_by, trim}`, `Media::anchor_duration` and `PlanPass::for_media`. Callers that held a `Media` use the streaming `Repackage::run` and the mux/segmenter stages; tests collect through `test_harness::collect` (which now owns the track-selection, window and plan helpers).
+- `SplicePlan::concat` and `SplicePlan::insert` take the two track slices and the movie timescale (`&[Track]`, `&[Track]`, `Timescale`) instead of two `Media`, so a caller need not wrap per-track samples in the IR.
+- `Segmenter::set_start_decode_time` is public: a caller feeding a segmenter directly must anchor each track's first `tfdt` (the streaming `Repackage::run` already did).
+
 ### Added
 - `matroska_demux::MatroskaDemux`, the streaming Matroska/WebM stage over
   `broadcast_matroska::reader::Reader`: it answers the reader's byte-range

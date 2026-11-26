@@ -20,7 +20,7 @@
 //! [`RebaseStage`] is fed [`MuxInput`] because a track announcement carries the
 //! timescale its origin must be converted into; [`OffsetStage`] and
 //! [`GapStage`] are fed `(TrackId, Sample)`. No transform holds a whole
-//! [`Media`](crate::ir::Media).
+//! input.
 //!
 //! **33-bit MPEG-2 Systems wrap-unrolling happens at the demux edge**
 //! ([`crate::ts_demux`] unwraps the wire's 33-bit PTS/DTS once,

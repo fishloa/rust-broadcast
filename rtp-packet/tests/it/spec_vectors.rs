@@ -7,7 +7,7 @@
 //! when this file was written: unlike `rtp-packet` (whose
 //! `../fixtures/rtp/rtp-simple.bin` was captured by running this workspace's
 //! own `transmux::RtpPacketiserStage`), transmux's RTCP module (`transmux::rtcp`,
-//! pre-extraction) was never wired to a hub `Package`/`Unpackage` spoke — a
+//! pre-extraction) was never wired to a hub container spoke — a
 //! standalone codec with no producer in this repo, and no live network/pcap
 //! access was reachable from that sandboxed environment. That gap is now
 //! closed for the compound-packet path by `tests/it/real_browser_fixture.rs`

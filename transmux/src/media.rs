@@ -452,7 +452,7 @@ impl Stage for CmafMuxStage {
 
     fn finish(&mut self) -> Result<()> {
         if self.tracks.is_empty() {
-            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
+            return Err(Error::InvalidInput("cannot package media with no tracks"));
         }
         self.ensure_writer()?;
         self.flush_fragment()
@@ -476,18 +476,6 @@ pub(crate) struct TimelineOrigin {
 }
 
 impl TimelineOrigin {
-    /// The origin of `tracks`; `0` when no sample carries a `dts`.
-    pub(crate) fn of<'t>(tracks: impl IntoIterator<Item = &'t Track>) -> Self {
-        Self::from_first_decode_times(tracks.into_iter().map(|t| {
-            (
-                t.samples
-                    .iter()
-                    .find_map(|s| s.timing.and_then(|t| t.dts())),
-                t.spec.timescale,
-            )
-        }))
-    }
-
     /// The origin from each track's first decodable sample time, in that
     /// track's timescale; `0` when no track carries one.
     pub(crate) fn from_first_decode_times(
@@ -519,52 +507,6 @@ impl TimelineOrigin {
     pub(crate) fn in_timescale(&self, timescale: Timescale) -> i64 {
         rescale_i64(self.ticks, self.timescale, timescale, Rounding::Floor)
     }
-}
-
-/// Each sample's decode time relative to `origin`, in the track's own
-/// timescale: the sample's own absolute `dts`, falling back to the previous
-/// sample's time + duration only for a track that carries no `dts` at all
-/// (section-carried data), which then starts at the origin.
-///
-/// A sample more than the whole `i64` tick range from the origin has no
-/// representable relative decode time and is [`Error::InvalidInput`] (one
-/// shared timeline cannot express it; the old saturating subtraction placed
-/// it at the wrong end of the timeline instead).
-pub(crate) fn relative_decode_times(track: &Track, origin: &TimelineOrigin) -> Result<Vec<i64>> {
-    relative_times(
-        track.spec.timescale,
-        origin,
-        track.samples.iter().map(|s| {
-            (
-                s.timing.and_then(|t| t.dts()),
-                s.timing.and_then(|t| t.duration()).unwrap_or(0),
-            )
-        }),
-    )
-}
-
-/// [`relative_decode_times`] over descriptors rather than samples: each entry
-/// is a sample's absolute `dts` (when it has one) and its own duration.
-pub(crate) fn relative_times(
-    timescale: Timescale,
-    origin: &TimelineOrigin,
-    samples: impl IntoIterator<Item = (Option<i64>, u32)>,
-) -> Result<Vec<i64>> {
-    let base = origin.in_timescale(timescale);
-    let samples = samples.into_iter();
-    let mut out = Vec::with_capacity(samples.size_hint().0);
-    let mut next: i64 = 0;
-    for (dts, duration) in samples {
-        let t = match dts {
-            Some(d) => d.checked_sub(base).ok_or(Error::InvalidInput(
-                "sample decode time is more than i64 ticks from the timeline origin",
-            ))?,
-            None => next,
-        };
-        out.push(t);
-        next = t.saturating_add(i64::from(duration));
-    }
-    Ok(out)
 }
 
 /// Presentation span in seconds of the segments `tracks` recorded: from the

@@ -96,9 +96,8 @@ pub(crate) fn track_setups(tracks: &[TrackSpec]) -> Result<Vec<isobmff::writer::
         // rather than silently omitted — every mux entry point built on this
         // function (`CmafMuxStage`, `ProgressiveMuxStage`, `Segmenter`,
         // `LlSegmenter`, `LlHlsSegmenter`) shares this one check, so a
-        // Media containing e.g. a DVB subtitle/DSM-CC/SCTE-35 track fails
-        // the same way everywhere; the caller must pre-filter first (e.g.
-        // with `select_tracks_by`).
+        // track set containing e.g. a DVB subtitle/DSM-CC/SCTE-35 track fails
+        // the same way everywhere; the caller must pre-filter first.
         if !t.config.is_muxable_in_bmff() {
             return Err(unmuxable_track_error(t));
         }

@@ -4,9 +4,8 @@
 //! speaks the muxer stage vocabulary ([`MuxInput`]/[`MuxOutput`]): feed it the
 //! tracks to carry (announced, or updated mid-stream) and their coded samples
 //! in decode order, and it emits whole 188-byte TS packets as
-//! [`MuxOutput::Bytes`]. A caller that still holds a whole
-//! [`Media`](crate::ir::Media) drives it through
-//! [`drive_media`](crate::mux_stage::drive_media). It is the byte-level inverse
+//! [`MuxOutput::Bytes`]. A caller that still holds collected tracks feeds
+//! it through the same decode-order interleave. It is the byte-level inverse
 //! of [`StreamingTsDemux`](crate::StreamingTsDemux): a `TsMuxStage → StreamingTsDemux` round-trip recovers
 //! an equivalent IR (same tracks, codec configs, coded NAL payloads, frame
 //! counts, and per-sample timing).
@@ -656,7 +655,7 @@ struct StageTrack {
     plan: Option<EsPlan>,
     /// Decode time of the next sample, relative to the stream origin, in this
     /// track's own timescale (the running value
-    /// [`relative_decode_times`] derives for a sample with no `dts`).
+    /// the shared rule derives for a sample with no `dts`).
     next: i64,
     /// Interleave order of the last packet this track produced — a track's own
     /// orders never decrease, so its packets never reorder.
@@ -1035,7 +1034,7 @@ impl Stage for TsMuxStage {
 
     fn finish(&mut self) -> Result<()> {
         if self.tracks.is_empty() {
-            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
+            return Err(Error::InvalidInput("cannot package media with no tracks"));
         }
         if self.tracks.iter().all(|t| t.plan.is_none()) {
             let specs: Vec<TrackSpec> = self.tracks.iter().map(|t| t.spec.clone()).collect();

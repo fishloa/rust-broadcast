@@ -116,7 +116,7 @@ const BLOCK_LEN_U128: u128 = 16;
 /// is **not** sufficient: under `cenc` (AES-CTR) two samples sharing a key and
 /// a counter block produce ciphertexts whose XOR is the XOR of their
 /// plaintexts — a two-time pad that discloses both without the key. Every
-/// variant below is therefore indexed/counted across the **whole `Media`** of
+/// variant below is therefore indexed/counted across the **whole input** of
 /// one [`CencEncryptStage::feed`] call — and, for [`IvGen::Counter`], across every
 /// call ever made on the same [`CencEncryptStage`] instance (see that type's
 /// docs): uniqueness does not reset just because a second call started.
@@ -145,8 +145,7 @@ pub enum IvGen {
     #[default]
     Counter,
     /// Caller-supplied per-sample IVs, one per sample of the **whole
-    /// `Media`**: exactly `media.tracks.iter().map(|t| t.samples.len()).sum()`
-    /// entries, consumed in (track, sample) order (track 0's samples first,
+    /// input**: exactly one entry per fed sample, consumed in (track, sample) order (track 0's samples first,
     /// then track 1's, …). A list sized to a single track's sample count is
     /// rejected — see this enum's docs for why per-track IV lists are unsafe.
     ///
@@ -701,7 +700,7 @@ pub(crate) fn nal_subsamples(codec: NalCodec, data: &[u8]) -> Result<Vec<SubSamp
 ///   all-zero or malformed AES-CTR/CBC counter (a two-time-pad, in the
 ///   all-zero case). An empty list falls back to the scheme's counter IV
 ///   width (there is no sample to measure; [`CencEncryptStage::validate_iv_gen`]
-///   will itself reject the count mismatch against the `Media`'s real total
+///   will itself reject the count mismatch against the input's real total
 ///   sample count).
 fn tenc_iv_fields(
     scheme: CencScheme,

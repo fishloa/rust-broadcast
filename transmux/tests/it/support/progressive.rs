@@ -7,7 +7,6 @@ use broadcast_common::stage::Timestamp;
 use isobmff::writer::{Interleave, Layout, MovieHeader, Sink};
 use transmux::media::Media;
 use transmux::mux_stage::{MuxOutput, drive_media};
-use transmux::plan_pass::PlanPass;
 use transmux::progressive::ProgressiveMuxStage;
 
 /// The wall-clock length of one interleaved chunk, as the CLI chooses it.
@@ -20,7 +19,7 @@ pub fn package(media: &Media, faststart: bool) -> Vec<u8> {
 
 /// Mux `media` into one progressive MP4 for a caller whose sink is `sink`.
 pub fn package_with_sink(media: &Media, faststart: bool, sink: Sink) -> Vec<u8> {
-    let plan = PlanPass::for_media(media).expect("plan progressive");
+    let plan = test_harness::collect::plan_from_media(media).expect("plan progressive");
     let layout = Layout::new(
         faststart,
         Interleave::ByDuration {

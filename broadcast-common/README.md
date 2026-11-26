@@ -14,7 +14,7 @@ wire type parse/serialize symmetric, the small codecs the DVB/MPEG family
 shares (CRC, BCD, MJD, odd parity, hex), the clock arithmetic that PTS/DTS,
 PCR, SCTE-35 and SRT all need, the range-checking helpers serializers use
 instead of silent masking, and the vocabulary traits of the muxing hub
-(`Unpackage`/`Package`/`Encrypt`/`Decrypt`) and the incremental `Stage` driver.
+and the incremental `Stage` driver.
 Use it directly when you implement a new wire type in the workspace's style or
 need one of those primitives.
 
@@ -123,7 +123,6 @@ Runnable examples: `cargo run -p broadcast-common --example crc_and_bcd` and
 | `hex` | `hex_encode`, `hex_encode_upper`, `hex_decode` (even-length hex of either case, else `None`), `hex_decode_into` (exactly `2 * out.len()` digits into a fixed slice, typed `HexDecodeError`) |
 | `seq` | `SeqSpace` (`add`, `diff`, `lt`/`leq`/`gt`/`geq`, `in_closed_range`), `MAX_SEQ_BITS` |
 | `cenc` | `CencScheme` (`from_four_cc`, `name`), `SCHEME_CENC`, `SCHEME_CBCS` |
-| `mux` | `Unpackage`, `Package` (batch container demux/mux), `Decrypt`, `Encrypt` (in-place sample protection); inverse pairs, generic over `Input`/`Output`/`Media`/`Config`/`Keys`/`Error` |
 | `stage` | `Stage` (`feed`/`poll`/`finish`, `next_deadline`/`on_deadline`, `demand`), `Timestamp` (monotonic microseconds, saturating arithmetic), `Demand` |
 | `backoff` | `RetrySchedule` (`new`, `seeded`, `from_steps`, `with_offset`, `delay_for_attempt`, `raw_delay_for_attempt`): the one capped retry/reconnect schedule; pure policy, no clock |
 | `bounded` | `read_bounded`, `read_file_bounded`, `read_file_bounded_string` under a named `Limit` (`Limit::new`), `BoundedReadError` (`TooLarge { limit_name, limit_bytes }`, `Io`, `NotUtf8`): the one whole-document read, so a wrong or hostile path cannot exhaust memory |

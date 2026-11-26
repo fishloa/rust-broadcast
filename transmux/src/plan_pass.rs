@@ -9,7 +9,7 @@
 //! [`OwnedPlan`] at [`Stage::finish`]. Sample bytes
 //! are never held: a sample's coded payload is consumed for its length only.
 //!
-//! The per-track timing rules are the ones the former whole-`Media`
+//! The per-track timing rules are the ones the former whole-input
 //! progressive muxer applied (ISO/IEC 14496-12:2026 §8.6): `stts` carries the
 //! gap to the next sample's decode time (its own duration for the last sample,
 //! or where the next decode time goes backwards), `ctts` carries
@@ -33,7 +33,7 @@ use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::timescale::{Rounding, Timescale, rescale, rescale_u64};
 
 use crate::error::{Error, Result};
-use crate::ir::{Media, Sample, TrackId, TrackSpec};
+use crate::ir::{Sample, TrackId, TrackSpec};
 use crate::media::TimelineOrigin;
 use crate::mux_stage::MuxInput;
 use isobmff::plan::{DEFAULT_DESCRIPTION_INDEX, OwnedPlan, PlanBuilder, PlanSample};
@@ -123,31 +123,6 @@ impl PlanPass {
             ready: None,
             finished: false,
         }
-    }
-
-    /// Record the plan of a whole [`Media`] in one pass.
-    ///
-    /// For a caller that already holds the media (and so can replay it for the
-    /// muxer). The per-track sample order is all a plan depends on, so this
-    /// feeds each track's samples in turn.
-    ///
-    /// # Errors
-    ///
-    /// Whatever the pass returns for the media.
-    pub fn for_media(media: &Media) -> Result<OwnedPlan> {
-        let mut pass = Self::new(media.movie_timescale);
-        for track in &media.tracks {
-            pass.announce(track.spec.clone())?;
-        }
-        for track in &media.tracks {
-            for sample in &track.samples {
-                pass.push_sample(track.spec.track_id, sample)?;
-            }
-        }
-        pass.finish()?;
-        pass.poll().ok_or(Error::InvalidInput(
-            "progressive: the plan pass produced no plan",
-        ))
     }
 
     fn announce(&mut self, spec: TrackSpec) -> Result<()> {
@@ -280,7 +255,7 @@ impl PlanPass {
     /// Finish every track's last sample and build the plan.
     fn finalize(&mut self) -> Result<()> {
         if self.tracks.is_empty() {
-            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
+            return Err(Error::InvalidInput("cannot package media with no tracks"));
         }
         self.ensure_builder()?;
         for index in 0..self.tracks.len() {

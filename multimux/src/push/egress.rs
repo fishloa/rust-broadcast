@@ -81,7 +81,7 @@ use transmux::TrackId;
 use bytes::Bytes;
 use media_plane::egress::{NegotiationOutcome, PushEgress, TrackSelection};
 use media_plane::trunk::SampleCursorItem;
-use transmux::ir::{Media, Track, TrackSpec};
+use transmux::ir::{Track, TrackSpec};
 
 use crate::push::{MuxError, PushTransport, SendMediaError};
 
@@ -93,7 +93,7 @@ pub struct PushTransportEgress<T: PushTransport> {
     selection: TrackSelection,
     /// The full [`TrackSpec`]s backing `selection`, in the same order —
     /// `send` looks a drained item's spec up here to build the single-sample
-    /// [`Media`] it hands to [`PushTransport::encode_media`].
+    /// batch it hands to [`PushTransport::encode_media`].
     specs: Vec<TrackSpec>,
     /// Set once the first `negotiate` accepts a selection — governs whether
     /// `renegotiate` may still freely adopt a changed proposal (see the
@@ -298,7 +298,7 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
 
     /// Encoding one drained sample — through the transport's
     /// [`PushTransport::media_muxer`] when it has one, else a one-sample
-    /// `Media` through [`PushTransport::encode_media`] — queuing the
+    /// batch through [`PushTransport::encode_media`] — queuing the
     /// resulting wire messages (sans-IO) for
     /// [`Self::flush_transmit`] to actually send. A track not in the current
     /// selection (excluded by negotiation, or dropped by a since-refused
@@ -327,7 +327,7 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
             // exactly like `crate::push::drive_push`'s own `_ => {}` arm.
             _ => return Ok(()),
         };
-        let Some((carried_video, timescale)) = self
+        let Some((carried_video, _timescale)) = self
             .specs
             .iter()
             .find(|s| s.track_id == track_id)
@@ -348,15 +348,15 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
             }
         }
         // A per-connection muxer frames this sample directly, one message at a
-        // time: no `Media` is built for it.
+        // time: no batch is built for it.
         if let Some(muxer) = self.transport.media_muxer() {
             self.outbound
                 .extend(muxer.encode_sample(track_id, &sample)?);
             return Ok(());
         }
-        // Every carried track rides in EVERY `Media`, the sample only in its
+        // Every carried track rides in EVERY batch, the sample only in its
         // own track (the others empty): the TS muxer derives the PIDs, the
-        // PMT and the PCR PID from the track set, so a one-track `Media` per
+        // PMT and the PCR PID from the track set, so a one-track batch per
         // sample would map every track onto the first ES PID and flip the
         // PMT frame to frame (#1024).
         let tracks = self
@@ -370,9 +370,8 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
                 };
                 Track::new(s.clone(), samples)
             })
-            .collect();
-        let media = Media::new(tracks, timescale);
-        let messages = self.transport.encode_media(&media)?;
+            .collect::<Vec<Track>>();
+        let messages = self.transport.encode_media(&tracks)?;
         self.outbound.extend(messages);
         Ok(())
     }
@@ -436,7 +435,7 @@ mod tests {
 
         /// One fixed "encoded" message per batch — the tests here judge
         /// negotiation/queuing/flush, not the wire framing.
-        fn encode_media(&mut self, _media: &Media) -> Result<Vec<Bytes>, SendMediaError> {
+        fn encode_media(&mut self, _tracks: &[Track]) -> Result<Vec<Bytes>, SendMediaError> {
             Ok(vec![Bytes::from_static(b"m")])
         }
 
@@ -806,7 +805,7 @@ mod tests {
 
         /// One fixed "encoded" message per batch — the tests here judge
         /// negotiation/queuing/flush, not the wire framing.
-        fn encode_media(&mut self, _media: &Media) -> Result<Vec<Bytes>, SendMediaError> {
+        fn encode_media(&mut self, _tracks: &[Track]) -> Result<Vec<Bytes>, SendMediaError> {
             Ok(vec![Bytes::from_static(b"m")])
         }
 
@@ -997,7 +996,7 @@ mod tests {
 
         /// Encode each batch as N distinct "frames" (one per byte of the
         /// single sample), so ordering across messages is observable.
-        fn encode_media(&mut self, _media: &Media) -> Result<Vec<Bytes>, SendMediaError> {
+        fn encode_media(&mut self, _tracks: &[Track]) -> Result<Vec<Bytes>, SendMediaError> {
             Ok(vec![Bytes::from_static(b"f0"), Bytes::from_static(b"f1")])
         }
 

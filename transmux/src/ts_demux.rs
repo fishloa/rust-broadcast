@@ -1,4 +1,4 @@
-//! MPEG-2 Transport Stream demuxer → hub [`Media`](crate::media::Media) IR.
+//! MPEG-2 Transport Stream demuxer → hub [`DemuxEvent`] stream.
 //!
 //! [`StreamingTsDemux`] (issue #555) is the **one** demux core: an
 //! event-driven, incremental engine that consumes TS bytes of any size or
@@ -9,8 +9,8 @@
 //! currently-known PMT-declared PID has resolved — the "safe to build a
 //! multi-track segmenter now" signal. It is also the **input** side of the
 //! any-to-any container hub: a caller that holds a whole buffer feeds it, calls
-//! `finish()`, and folds the event stream into a [`Media`](crate::media::Media) (the workspace test
-//! harness does exactly that in `collect::media_from_ts`), then muxes it with
+//! `finish()`, and folds the event stream into one collected track set (the
+//! workspace test harness does exactly that in `collect::media_from_ts`), then muxes it with
 //! the existing [`CmafMuxStage`](crate::media::CmafMuxStage) /
 //! [`HlsPackager`](crate::media::HlsPackager) packagers. There is no separate
 //! whole-buffer implementation; every behaviour below is produced by the
@@ -120,7 +120,7 @@
 //! family a track uses. The demuxer also collects every PCR observation on a
 //! program's PMT-announced `PCR_PID` (issue #1354: other PIDs' PCRs are
 //! dropped once the PMTs are known, and each event carries its
-//! `provenance.program_number`), both into [`Media`](crate::media::Media)'s `pcr` field (batch) and
+//! `provenance.program_number`), both into a collected track set's `pcr` field and
 //! as [`DemuxEvent::ClockReference`] (streaming).
 //!
 //! # Draining the streaming queue

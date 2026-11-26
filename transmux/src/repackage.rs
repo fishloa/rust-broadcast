@@ -6,11 +6,11 @@
 //! parses fragmented ISOBMFF/CMAF and emits [`DemuxEvent`]s, and
 //! [`Segmenter`] muxes them back into CMAF media segments. *Repackaging*
 //! composes those two ends with two optional filters in between — no new box
-//! parsing, and no whole [`Media`] held anywhere:
+//! parsing, and no whole input held anywhere:
 //!
 //! - **track-select** — [`Repackage::select_tracks`] keeps a chosen subset of
 //!   tracks (by announcement position), preserving the source order and
-//!   [`TrackSpec`]s. It works on either input.
+//!   [`TrackSpec`]s.
 //! - **trim** — [`Repackage::trim`] keeps only the samples whose *presentation
 //!   time* (composition time = decode time + `composition_offset`) falls in the
 //!   half-open window `[start, end)`, expressed in the **movie timescale**.
@@ -21,18 +21,16 @@
 //!   snapped instant, so audio and video stay aligned. Window times are on one
 //!   decode-time origin common to every track (the earliest first-sample
 //!   `dts`), and the resegmented output keeps each track's offset from that
-//!   origin in its first `tfdt`. [`Repackage::run_media`] has the whole
-//!   input; the streaming [`Repackage::run`] holds samples until every
+//!   origin in its first `tfdt`. [`Repackage::run`] holds samples until every
 //!   announced track has produced its first sample (that origin) and the lower
 //!   edge has reached a random-access point, bounded by
 //!   [`Repackage::window_hold`] ([`Error::RepackageWindowHoldExceeded`] past
-//!   it). Both apply the one [`trim`] rule.
+//!   it). Both apply the one window rule.
 //! - **resegment** — [`Segmenter`] at a new target segment duration produces
 //!   fresh CMAF init + media segments cut on the anchor track's keyframes.
 //!
-//! [`Repackage`] is the driver: it demuxes fMP4 bytes ([`Repackage::run`]) or
-//! takes an already-demuxed [`Media`] ([`Repackage::run_media`]) and returns the
-//! CMAF init segment plus the media segments. Neither path builds a [`Media`].
+//! [`Repackage`] is the driver: it demuxes fMP4 bytes ([`Repackage::run`]) and
+//! returns the CMAF init segment plus the media segments.
 //!
 //! `no_std` + `alloc`.
 
@@ -44,17 +42,18 @@ use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
-use crate::ir::{DemuxEvent, Media, Sample, Track, TrackId, TrackSpec};
-use crate::media::{TimelineOrigin, relative_decode_times};
+use crate::ir::{DemuxEvent, Sample, TrackId, TrackSpec};
+#[cfg(test)]
+use crate::ir::{Media, Track};
 use crate::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
-use crate::mux_stage::{MuxInput, MuxOutput, drive_media};
+use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::segmenter::{Segmenter, choose_anchor};
 
 /// A repackaging driver: demux fragmented MP4 → optional track-select → optional
 /// trim → resegment at a new target duration → CMAF segments.
 ///
-/// Compose it fluently; a time window is honoured by [`Repackage::run_media`]
-/// (a whole input), never by the streaming [`Repackage::run`]:
+/// Compose it fluently; a time window is honoured by the streaming
+/// [`Repackage::run`]:
 ///
 /// ```no_run
 /// use transmux::Repackage;
@@ -153,37 +152,6 @@ impl Repackage {
         sink.finish()?;
         sink.outputs()
     }
-
-    /// Apply the configured filters to an already-demuxed [`Media`] and
-    /// resegment, returning the CMAF init + media segments.
-    ///
-    /// # Errors
-    /// A window that selects no sample, or any [`Segmenter`] error.
-    pub fn run_media(&self, media: &Media) -> Result<RepackageOutput> {
-        // The caller already holds the whole `Media`, so the filters run as the
-        // one shared whole-input pass over it — the window's presentation-time
-        // boundary rule is subtle enough (origin, inclusive start, exclusive
-        // end, the snap back to the preceding sync sample) that it lives in one
-        // place rather than being re-derived by a streaming look-alike.
-        let filtered;
-        let input = if self.select.is_none() && self.trim.is_none() {
-            media
-        } else {
-            let selected = match &self.select {
-                Some(indices) => select_tracks(media, indices)?,
-                None => media.clone(),
-            };
-            filtered = match self.trim {
-                Some((start, end)) => trim(&selected, start, end)?,
-                None => selected,
-            };
-            &filtered
-        };
-        let mut sink = RepackageSink::plain(self.target_duration);
-        sink.set_movie_timescale(Some(input.movie_timescale));
-        let outputs = drive_media(&mut sink, input, Timestamp::ZERO)?;
-        Ok(collect(&outputs))
-    }
 }
 
 /// Split a demux stage's queued events into the repackaging stage.
@@ -241,53 +209,6 @@ impl RepackageOutput {
     }
 }
 
-/// The segmentation anchor track within a [`Media`]: the first video track
-/// (any [`CodecConfig::is_video`](crate::pipeline::CodecConfig::is_video)
-/// codec — AVC, HEVC, AV1, VVC, …), else the first anchor-capable track.
-///
-/// Delegates to [`crate::segmenter::choose_anchor`] — the single shared
-/// selection rule ([`Segmenter`] uses the same function — issue #628 fixed
-/// this exact "only AVC counts as anchor" bug there) — rather than
-/// maintaining a second, independently-drifting copy of the rule here. This
-/// module used to check only `matches!(t.spec.config, CodecConfig::Avc {
-/// .. })`, so HEVC/AV1/VVC-only media (all supported elsewhere in this
-/// crate) fell through to `unwrap_or(0)`: track 0, which may be audio,
-/// making segment/trim boundaries cut on audio "sync samples" instead of
-/// video keyframes — on ordinary, well-formed input, no malformation
-/// required (audit finding #6). An input with genuinely no anchor-capable
-/// track (e.g. only section-carried data tracks) is now a real, explicit
-/// error instead of a silent index-0 fallback.
-fn anchor_index(media: &Media) -> Result<usize> {
-    choose_anchor(media.tracks.iter().map(|t| &t.spec.config))
-}
-
-/// The composition (presentation) time of each sample of a track, in that
-/// track's media timescale, on the decode-time `origin` common to every track
-/// of the [`Media`]. Element `i` is `dts[i] + composition_offset[i]`, where
-/// `dts[i]` is the sample's own absolute
-/// `Sample::timing` (`.dts`)(crate::pipeline::Sample::dts) shifted by the origin —
-/// falling back to a duration-accumulated reconstruction only for a track
-/// that carries no timestamp at all.
-///
-/// Reading each sample's real `dts` (issue #993) rather than only ever
-/// accumulating `duration` matters whenever the two can diverge: a
-/// discontinuity/gap between fragments, a dropped or duplicated sample the
-/// duration sum doesn't reflect, or ordinary sub-tick rounding between a
-/// track's nominal per-sample duration and its measured decode-time deltas.
-/// One origin for every track (issue #1021) keeps a trim window at the same
-/// instant on every track: a per-track rebase would move a track that starts
-/// later than the others by its start offset.
-///
-/// Returned as `i64` because a composition offset is signed and may push an
-/// early sample's presentation time slightly negative.
-fn presentation_times(track: &Track, origin: &TimelineOrigin) -> Result<Vec<i64>> {
-    relative_decode_times(track, origin)?
-        .into_iter()
-        .zip(&track.samples)
-        .map(|(dts, s)| Ok(dts + i64::from(s.composition_offset()?.unwrap_or(0))))
-        .collect()
-}
-
 /// Convert a window edge given in the movie timescale to a track's media
 /// timescale, rounding down (`floor`) so the half-open `[start, end)` semantics
 /// are preserved without dropping a boundary sample.
@@ -333,37 +254,14 @@ fn earliest_decode_time_track(media: &Media, dts: &[u128], cursors: &[usize]) ->
     best
 }
 
-/// Select a subset of tracks by their **index** (position in
-/// [`Media::tracks`]), preserving the given order.
-///
-/// This and [`select_tracks_by`]/[`trim`] are the track-selection helpers the
-/// former [`Media`] methods became: they are whole-input operations (a window
-/// needs the timeline), kept for the [`Repackage`] driver and its tests, not
-/// sample stages.
-///
-/// # Errors
-/// [`Error::InvalidInput`] if `indices` is empty or names an out-of-range
-/// track index.
-pub fn select_tracks(media: &Media, indices: &[usize]) -> Result<Media> {
-    if indices.is_empty() {
-        return Err(Error::InvalidInput("select_tracks: empty track selection"));
-    }
-    let mut tracks = Vec::with_capacity(indices.len());
-    for &i in indices {
-        let t = media.tracks.get(i).ok_or(Error::InvalidInput(
-            "select_tracks: track index out of range",
-        ))?;
-        tracks.push(t.clone());
-    }
-    Ok(Media::new(tracks, media.movie_timescale))
+/// The one half-open presentation-time test both [`trim`] and the streaming
+/// [`Repackage::run`] window apply: `lo <= presentation < hi`.
+fn in_window(presentation: i64, lo: i64, hi: i64) -> bool {
+    presentation >= lo && presentation < hi
 }
 
-/// Select a subset of tracks by predicate over each [`Track`], preserving
-/// source order.
-///
-/// # Errors
-/// [`Error::InvalidInput`] if the predicate keeps no track.
-pub fn select_tracks_by<F>(media: &Media, mut keep: F) -> Result<Media>
+#[cfg(test)]
+pub(crate) fn select_tracks_by<F>(media: &Media, mut keep: F) -> Result<Media>
 where
     F: FnMut(&Track) -> bool,
 {
@@ -374,112 +272,6 @@ where
         ));
     }
     Ok(Media::new(tracks, media.movie_timescale))
-}
-
-/// The one half-open presentation-time test both [`trim`] and the streaming
-/// [`Repackage::run`] window apply: `lo <= presentation < hi`.
-fn in_window(presentation: i64, lo: i64, hi: i64) -> bool {
-    presentation >= lo && presentation < hi
-}
-
-/// Trim to the half-open presentation-time window `[start, end)`, expressed in
-/// the **movie timescale** ([`Media::movie_timescale`]).
-///
-/// For each track the window is rescaled into that track's media timescale and
-/// every sample whose composition (presentation) time lies in `[start, end)`
-/// is kept. The anchor track is back-trimmed to the nearest sync sample at or
-/// before the first sample the raw window would select, and every other
-/// track's lower edge moves back to that same instant.
-///
-/// # Errors
-/// [`Error::InvalidInput`] if `start >= end`, the media has no tracks, the
-/// window selects no sample on any track, or no track is anchor-capable.
-pub fn trim(media: &Media, start: u64, end: u64) -> Result<Media> {
-    if start >= end {
-        return Err(Error::InvalidInput("trim: start must be < end"));
-    }
-    if media.tracks.is_empty() {
-        return Err(Error::InvalidInput("trim: media has no tracks"));
-    }
-    let anchor = anchor_index(media)?;
-    let origin = TimelineOrigin::of(&media.tracks);
-
-    let anchor_track = &media.tracks[anchor];
-    let anchor_ts = anchor_track.spec.timescale;
-    let anchor_pts = presentation_times(anchor_track, &origin)?;
-    let anchor_lo = rescale_floor(start, media.movie_timescale, anchor_ts);
-    let anchor_hi = rescale_floor(end, media.movie_timescale, anchor_ts);
-    let snapped = anchor_pts
-        .iter()
-        .position(|&p| in_window(p, anchor_lo, anchor_hi))
-        .map(|mut idx| {
-            while idx > 0 && !anchor_track.samples[idx].flags.is_sync {
-                idx -= 1;
-            }
-            idx
-        });
-
-    let mut out_tracks = Vec::with_capacity(media.tracks.len());
-    let mut kept_any = false;
-    for (ti, track) in media.tracks.iter().enumerate() {
-        let ts = track.spec.timescale;
-        let pts = presentation_times(track, &origin)?;
-        let hi = rescale_floor(end, media.movie_timescale, ts);
-        let start_idx = if ti == anchor {
-            snapped
-        } else {
-            let lo = match snapped {
-                Some(idx) => rescale_i64(anchor_pts[idx], anchor_ts, ts, Rounding::Floor),
-                None => rescale_floor(start, media.movie_timescale, ts),
-            };
-            pts.iter().position(|&p| in_window(p, lo, hi))
-        };
-        let mut kept = Vec::new();
-        if let Some(start_idx) = start_idx {
-            for (s, &p) in track.samples[start_idx..].iter().zip(&pts[start_idx..]) {
-                if p >= hi {
-                    break;
-                }
-                kept.push(s.clone());
-            }
-        }
-        if !kept.is_empty() {
-            kept_any = true;
-        }
-        let first_dts = kept
-            .iter()
-            .find_map(|s| s.timing.and_then(|t| t.dts()))
-            .unwrap_or(0)
-            .max(0) as u64;
-        out_tracks.push(Track::new_at(track.spec.clone(), kept, first_dts));
-    }
-    if !kept_any {
-        return Err(Error::InvalidInput(
-            "trim: window selected no samples on any track",
-        ));
-    }
-    Ok(Media::new(out_tracks, media.movie_timescale))
-}
-
-impl Media {
-    /// Total duration of the segmentation anchor track (`anchor_index`: first
-    /// video track, else the first anchor-capable track) in that track's media
-    /// timescale — the denominator for how many segments a resegmentation at a
-    /// given target will produce.
-    ///
-    /// Returns `(anchor_duration_ticks, anchor_timescale)`, or `None` for empty
-    /// media (or, only on an already pathological input, no anchor-capable
-    /// track).
-    pub fn anchor_duration(&self) -> Option<(u64, u32)> {
-        let anchor = anchor_index(self).ok()?;
-        let t = &self.tracks[anchor];
-        let ticks: u64 = t
-            .samples
-            .iter()
-            .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
-            .sum();
-        Some((ticks, t.spec.timescale.get()))
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -621,8 +413,8 @@ impl WindowHold {
     }
 }
 
-/// A sample's relative decode time and presentation time, following
-/// [`relative_decode_times`]'s rule for a sample with no `dts`.
+/// A sample's relative decode time and presentation time, following the
+/// shared rule for a sample with no `dts`.
 fn relative_presentation(
     sample: &Sample,
     origin: (i64, Timescale),
@@ -688,24 +480,6 @@ impl RepackageSink {
             window: repackage
                 .trim
                 .map(|(start, end)| WindowHold::new(start, end, repackage.hold)),
-        }
-    }
-
-    /// A sink with no track filter: every announced track's samples are muxed.
-    fn plain(target_duration: core::time::Duration) -> Self {
-        Self {
-            target_duration,
-            select: None,
-            movie_timescale: None,
-            announced: Vec::new(),
-            seen: 0,
-            init_announced: false,
-            kept: Vec::new(),
-            origin: None,
-            started: Vec::new(),
-            segmenter: None,
-            pending: VecDeque::new(),
-            window: None,
         }
     }
 

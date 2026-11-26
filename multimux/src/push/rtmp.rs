@@ -22,7 +22,7 @@ use transmux::TrackId;
 use transmux::flv_track_kind;
 #[cfg(test)]
 use transmux::ir::DataIdentity;
-use transmux::ir::{Media, Track, TrackSpec};
+use transmux::ir::{Track, TrackSpec};
 use transmux::mux_stage::{MuxInput, MuxOutput};
 
 /// The metadata pair the publish client frames (`@setDataFrame`/`onMetaData`,
@@ -357,7 +357,7 @@ impl PushTransport for RtmpTransport {
     }
 
     /// The connection's per-sample muxer, so the push egress feeds it one
-    /// sample at a time instead of building a one-sample `Media`.
+    /// sample at a time instead of building a one-sample batch.
     fn media_muxer(&mut self) -> Option<&mut dyn crate::push::MediaMuxer> {
         self.muxer
             .as_mut()
@@ -377,20 +377,18 @@ impl PushTransport for RtmpTransport {
     /// when `setup` already did so — the stage then writes the metadata and
     /// sequence headers as part of this batch, which is what a caller that
     /// skipped `setup` needs.
-    fn encode_media(&mut self, media: &Media) -> Result<Vec<bytes::Bytes>, SendMediaError> {
-        let carried: Vec<&transmux::Track> = media
-            .tracks
+    fn encode_media(&mut self, tracks: &[Track]) -> Result<Vec<bytes::Bytes>, SendMediaError> {
+        let carried: Vec<&Track> = tracks
             .iter()
             .filter(|t| flv_track_kind(&t.spec.config).is_some())
             .collect();
 
         // Refusing a track the wire format cannot carry is legitimate;
         // refusing it *silently* is not. Report it once per connection.
-        let refused = media.tracks.len() - carried.len();
+        let refused = tracks.len() - carried.len();
         if refused > 0 && !self.warned_refused_tracks {
             self.warned_refused_tracks = true;
-            let refused_track_ids: Vec<TrackId> = media
-                .tracks
+            let refused_track_ids: Vec<TrackId> = tracks
                 .iter()
                 .filter(|t| flv_track_kind(&t.spec.config).is_none())
                 .map(|t| t.spec.track_id)
@@ -450,8 +448,8 @@ impl PushTransport for RtmpTransport {
     /// each resulting chunk-framed RTMP message straight to the socket —
     /// bypasses [`send`](Self::send) (which would re-frame the bytes as a
     /// *new* video message) and the trait's default `TsMuxStage` path entirely.
-    async fn send_media(&mut self, media: &Media) -> Result<u64, SendMediaError> {
-        let messages = self.encode_media(media)?;
+    async fn send_media(&mut self, tracks: &[Track]) -> Result<u64, SendMediaError> {
+        let messages = self.encode_media(tracks)?;
         let mut total = 0u64;
         for message in &messages {
             self.write_message(message)
@@ -724,19 +722,13 @@ mod tests {
                 muxer: None,
                 warned_refused_tracks: false,
             };
-            let mixed = Media::new(
-                vec![
-                    Track::new(spec(1, avc_config()), Vec::new()),
-                    Track::new(spec(2, opaque_config()), Vec::new()),
-                    Track::new(spec(3, opaque_config()), Vec::new()),
-                    Track::new(spec(4, opaque_config()), Vec::new()),
-                ],
-                transmux::VIDEO_CLOCK_TIMESCALE,
-            );
-            let all_carriable = Media::new(
-                vec![Track::new(spec(1, avc_config()), Vec::new())],
-                transmux::VIDEO_CLOCK_TIMESCALE,
-            );
+            let mixed = vec![
+                Track::new(spec(1, avc_config()), Vec::new()),
+                Track::new(spec(2, opaque_config()), Vec::new()),
+                Track::new(spec(3, opaque_config()), Vec::new()),
+                Track::new(spec(4, opaque_config()), Vec::new()),
+            ];
+            let all_carriable = vec![Track::new(spec(1, avc_config()), Vec::new())];
             // An all-carriable batch first: `refused == 0` must not warn at
             // all (a `>= 0` boundary would).
             let _ = transport.encode_media(&all_carriable);

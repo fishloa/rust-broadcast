@@ -13,7 +13,6 @@ use bytes::Bytes;
 use isobmff::writer::{Interleave, Layout, MovieHeader, Sink};
 use transmux::media::Media;
 use transmux::mux_stage::{MuxInput, drive_media};
-use transmux::plan_pass::PlanPass;
 use transmux::progressive::ProgressiveMuxStage;
 use transmux::{Error, TrackId};
 
@@ -58,7 +57,7 @@ fn stage(
 #[test]
 fn plan_sizes_match_the_conditioned_samples() {
     let media = demux();
-    let plan = PlanPass::for_media(&media).expect("plan the capture");
+    let plan = test_harness::collect::plan_from_media(&media).expect("plan the capture");
     assert_eq!(
         plan.tracks().len(),
         media.tracks.len(),
@@ -154,7 +153,7 @@ fn an_append_only_sink_writes_the_same_file() {
 #[test]
 fn a_larger_sample_is_refused_naming_track_and_index() {
     let media = demux();
-    let plan = PlanPass::for_media(&media).expect("plan the capture");
+    let plan = test_harness::collect::plan_from_media(&media).expect("plan the capture");
     let mut mutated = media.clone();
     let track = mutated.tracks.first_mut().expect("a track");
     let id = track.spec.track_id;
@@ -185,7 +184,7 @@ fn a_larger_sample_is_refused_naming_track_and_index() {
 #[test]
 fn a_caller_side_short_sample_is_refused_naming_track_and_index() {
     let media = demux();
-    let plan = PlanPass::for_media(&media).expect("plan the capture");
+    let plan = test_harness::collect::plan_from_media(&media).expect("plan the capture");
     let mut mutated = media.clone();
     let track = mutated.tracks.first_mut().expect("a track");
     let id = track.spec.track_id;
@@ -212,7 +211,7 @@ fn a_caller_side_short_sample_is_refused_naming_track_and_index() {
 #[test]
 fn a_missing_sample_is_refused_at_finish() {
     let media = demux();
-    let plan = PlanPass::for_media(&media).expect("plan the capture");
+    let plan = test_harness::collect::plan_from_media(&media).expect("plan the capture");
     let first = media.tracks.first().expect("a track");
     let id = first.spec.track_id;
     let missing = u32::try_from(first.samples.len().saturating_sub(1)).expect("index fits");
@@ -262,7 +261,7 @@ fn a_missing_sample_is_refused_at_finish() {
 #[test]
 fn a_sample_past_the_plan_is_refused() {
     let media = demux();
-    let plan = PlanPass::for_media(&media).expect("plan the capture");
+    let plan = test_harness::collect::plan_from_media(&media).expect("plan the capture");
     let first = media.tracks.first().expect("a track");
     let id = first.spec.track_id;
     let mut stage = stage(plan, &media, true, Sink::Seekable);
@@ -315,7 +314,7 @@ fn a_sample_past_the_plan_is_refused() {
 #[test]
 fn an_unplanned_track_is_refused() {
     let media = demux();
-    let plan = PlanPass::for_media(&media).expect("plan the capture");
+    let plan = test_harness::collect::plan_from_media(&media).expect("plan the capture");
     let mut stage = stage(plan, &media, true, Sink::Seekable);
     let sample = media.tracks.first().expect("a track").samples[0].clone();
     let error = stage

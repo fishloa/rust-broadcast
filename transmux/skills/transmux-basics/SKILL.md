@@ -30,7 +30,7 @@ entry here, so they cannot enter the fMP4/CMAF/TS/DASH/HLS/Smooth path
 
 ## The core loop: demux to the IR, drive a mux stage
 
-Batch demuxers implement `broadcast_common::Unpackage` (container → IR). Every
+Streaming demux stages implement `broadcast_common::Stage` and emit `DemuxEvent`s. Every
 muxer, segmenter and protection pass is a
 `Stage<In<'a> = MuxInput, Out = MuxOutput>` over `transmux::mux_stage`:
 `MuxInput::{Track, Sample, Discontinuity, Flush}` in,
@@ -42,7 +42,7 @@ bridge for a caller that still holds a whole `Media`.
      `#[doc = include_str!("../README.md")]`. -->
 
 ```rust
-use broadcast_common::Unpackage;
+use broadcast_common::Stage;
 use transmux::{CmafMuxStage, DashPackager, FragmentCut, Media, TsDemux, TsMuxStage};
 
 let ts = std::fs::read("../fixtures/ts/h264-aac.ts").unwrap();
@@ -94,7 +94,7 @@ assert_eq!(again.tracks.len(), media.tracks.len());
 The types each direction speaks:
 
 - **Demux:** batch `TsDemux`, `FlvDemux`, `RtmpDemux`, `RtpDepacketiser`
-  (`Unpackage`); streaming `StreamingTsDemux` (fed bytes, `poll_event`),
+  (`StreamingTsDemux`, fed bytes, `poll_event`),
   `StreamingFlvDemux`, `StreamingPsDemux`, `Mp4Demux` (a `Stage` over
   `Mp4DemuxConfig`/`Mp4Input::{At, Next, SegmentEnd, Eof}`) and
   `MatroskaDemux` (a `Stage` over
@@ -197,12 +197,11 @@ let _init = out.init_segment;
 let _media = out.media_segments;       // Vec<Vec<u8>>
 ```
 
-`Repackage::run` drives an `Mp4Demux` and a `Segmenter`. A caller holding a
-whole `Media` uses `run_media(&media)` instead; `select_tracks`,
-`select_tracks_by` and `trim` live in `repackage` for it. `trim(start, end)` is
-a window in the **movie** timescale, snapped back to a keyframe;
-`RepackageOutput::to_contiguous()` joins the segments into one fragmented-MP4
-stream.
+`Repackage::run` drives an `Mp4Demux` and a `Segmenter` in bounded memory.
+`.select_tracks(&[indices])` keeps a chosen subset and `.trim(start, end)` is a
+window in the **movie** timescale, snapped back to a keyframe; both are honoured
+during `run`. `RepackageOutput::to_contiguous()` joins the segments into one
+fragmented-MP4 stream.
 
 ## Timeline stages
 
@@ -342,7 +341,8 @@ Input detection uses `container-probe`; an inconclusive probe is
   `Error::DataIdentityMismatch`/`UnmuxableSubtitleTrack`, the WebM-only
   VP8/Vorbis with `UnsupportedCodec`, FLV/RTMP/Smooth with their own codec
   error) or *dropped* (`TsMuxStage` drops a track with no TS mapping). Filter
-  first with `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`;
+  first with `.select_tracks(&[..])` on `Repackage`, or by dropping the track's
+  events before the muxer;
   plan the codec set from the README input × output matrix, not by trial and
   error.
 - **`Sample::data` for AVC/HEVC is length-prefixed, not Annex B.** Convert with

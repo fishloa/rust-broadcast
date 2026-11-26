@@ -251,7 +251,7 @@ fn write_all(
 /// The workspace progressive muxer, two-pass: a plan pass, then the stage.
 fn transmux_progressive(media: &transmux::Media, faststart: bool) -> Vec<u8> {
     use transmux::mux_stage::{MuxOutput, drive_media};
-    let plan = transmux::plan_pass::PlanPass::for_media(media).expect("plan progressive");
+    let plan = test_harness::collect::plan_from_media(media).expect("plan progressive");
     let layout = Layout::new(
         faststart,
         Interleave::ByDuration { millis: 500 },
