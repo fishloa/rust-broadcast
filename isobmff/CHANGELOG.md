@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A rewritten fragmented init keeps its empty `stsz`'s constant
+  `sample_size` (#4148).** A source `stsz` with `sample_count == 0` and a
+  non-zero constant `sample_size` (value 1 in a real MPEH-G init segment) was
+  rebuilt with `sample_size == 0`, so the init segment did not round-trip. The
+  fragmented writer now carries the source's constant size into the empty
+  `stsz` it rebuilds.
+
 - **The reader keeps every `moof` queued ahead of its `mdat` (r05-W26).** A
   fragment written the CMF2 way (one `moof` per track, then one `mdat` holding
   both tracks' data, §8.8.4) used to overwrite the previous pending `moof`, so
