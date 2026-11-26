@@ -29,6 +29,7 @@ mod clap_precedence;
 mod classify_nals;
 mod cli;
 mod cli_binary;
+mod cli_discontinuity;
 #[path = "support/cmaf.rs"]
 mod cmaf;
 mod cmaf_stage;

@@ -62,6 +62,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StreamingFlvDemux` resynchronises past FLV tag framing it cannot parse and keeps the tags after the damage, instead of stopping at the first damaged tag and losing the tail. It decides with `rtmp_runtime::flv::resync_decision`, the incremental form of the same consistency rule the whole-buffer `tags_resync` walks with, so the stage never holds more than one tag's declared size plus the bytes needed to validate the next tag header. Damage is reported on the event stream as the new `DemuxEvent::DamagedSpan { offset, dropped_bytes }` (one event per skipped span), which `test_harness::collect` folds into `Media::degraded`.
 - `StreamingFlvDemux::finish` diagnoses an input that ends before it can yield anything: a header shorter than 9/13 bytes, a `DataOffset` past the input and an incomplete first tag are `FlvError::Codec(BufferTooShort)`, and a complete input carrying no supported track is `FlvError::NoSupportedTrack`. Everything decodable is queued before the error.
 
+### Fixed
+- The `transmux` CLI forwards a demux discontinuity to the output stage
+  (issue #4147). `DemuxEvent::Discontinuity` becomes `MuxInput::Discontinuity`
+  once the decode-order interleave has released every sample the break follows,
+  so a segmenter marks the cut that starts after the break. A CMAF-HLS playlist
+  now writes `#EXT-X-DISCONTINUITY` for a segment the segmenter marked (it
+  rendered every segment as continuous) and `#EXT-X-DISCONTINUITY-SEQUENCE`
+  stays `0` for the complete playlist; the TS-HLS playlist already carried the
+  tag once the mark reached it. `tests/it/cli_discontinuity.rs` pins both
+  against two plays of `fixtures/ts/h264-aac.ts` back to back, whose seam is a
+  real backward jump of the 90 kHz timeline.
+- `TsMuxStage` signals `MuxInput::Discontinuity` instead of refusing it
+  (issue #4147): the next packet of each affected elementary PID — on the PCR
+  PID, the packet carrying the new time base's first PCR — carries the
+  adaptation-field `discontinuity_indicator` (ISO/IEC 13818-1 §2.4.3.5),
+  gaining an adaptation field where it had none. `track: None` marks every
+  announced PID, `track: Some(id)` only that track's; PSI packets stay
+  unmarked and the continuity counters keep counting (§2.4.3.3). The CLI's
+  `-f ts` output therefore remuxes a capture whose timeline breaks, where it
+  used to fail, and `-f dash` keeps refusing one (a single-period MPD cannot
+  signal a break).
+
 ### Breaking
 - `TsDemux`, `FlvDemux`, `RtmpDemux` and `RtpDepacketiser` (and their
   `Unpackage` impls) are deleted: `StreamingTsDemux`, `StreamingFlvDemux` and
