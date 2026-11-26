@@ -90,9 +90,20 @@ Header parse and the container box only; no encode or decode.
 | `std` | yes | `std::error::Error` impls and every XML path (DASH and LL-DASH MPD generate and parse, Smooth, PlayReady WRMHEADER on `quick-xml`), SDP generation (`sdp-types`), `base_url` (`url`), `jiff` durations. Without it the crate is `no_std` + `alloc`. |
 | `serde` | no | `Serialize` on box types and IR types. |
 | `cenc` | yes | CENC and CBCS crypto (`aes`, `ctr`, `cbc`, with `zeroize` and constant-time key compare). DRM signalling does not need it. |
-| `sample-aes` | no | HLS Sample-AES and whole-segment AES-128; implies `cenc`. |
+| `flv` | yes | The FLV container spoke: `FlvMuxStage`, `StreamingFlvDemux`, and the RTMP signalling that carries FLV, over `rtmp-runtime`'s wire layer. |
+| `rtp` | yes | The RTP/RTCP spoke: `RtpPacketiserStage`, `RtpStreamDepacketiser`, the RTCP packet types and the A/V alignment helper, over `rtp-packet`. The payload-format types and clock constants the IR and the SDP path share stay available without it. |
+| `ps` | yes | The MPEG-2 Program Stream demux stage `StreamingPsDemux`, over `mpeg-ps`. |
+| `matroska` | yes | The EBML/Matroska/WebM spoke: `MatroskaDemux` and `MkvMuxStage`, over `broadcast-matroska`. |
+| `hls` | yes | The HLS segmenters (`StreamingTsHlsSegmenter`, `LlHlsSegmenter`), the `HlsPackager` playlist renderer and the HLS `INSTREAM-ID` half of caption detection, over `broadcast-hls`. |
+| `captions` | yes | Caption presence detection (`caption_detect`): the `cc_data()` triplet walk and the CEA-608/708 service decoders from `cc-data`. |
+| `sample-aes` | no | HLS Sample-AES and whole-segment AES-128; implies `cenc` and `hls`. |
 | `motion-imagery-metadata` | no | Typed MISB ST 0601 values: `LocalSetItem::value_typed()` returns `motion_imagery_metadata::St0601Value`, decoded by the [`motion-imagery-metadata`](https://crates.io/crates/motion-imagery-metadata) crate (built on Matt Busel's `misb`). Also provides `payload::St0601Decoder`, the payload plug-in that renders a data-track sample as ST 0601 values. |
-| `cli` | no | The `transmux` binary (`clap`, `container-probe`; implies `std`). |
+| `cli` | no | The `transmux` binary (`clap`, `container-probe`; implies `std` and every container spoke). |
+
+Every container spoke is a feature, so a consumer that repackages fMP4 or TS only
+can turn the rest off: `features = ["std"]` with `default-features = false`
+compiles the IR plus the MP4/TS paths, with no FLV, RTP, Program Stream,
+Matroska, HLS or caption code.
 
 `serde` is opt-in and off by default; enable it explicitly:
 

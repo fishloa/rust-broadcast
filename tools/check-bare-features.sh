@@ -18,7 +18,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
-each_feature_alone=(multimux)
+each_feature_alone=(multimux transmux)
 
 members=$(cargo metadata --no-deps --format-version 1 --locked | python3 -c '
 import json, os, sys

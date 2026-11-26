@@ -61,9 +61,9 @@ use alloc::collections::VecDeque;
 #[cfg(feature = "std")]
 use alloc::format;
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
 #[cfg(feature = "rtp")]
 use broadcast_common::error::BufferTooShort;
+use broadcast_common::error::InvalidValue;
 #[cfg(feature = "rtp")]
 use broadcast_common::wire::u16_at;
 

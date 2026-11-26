@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Breaking
 
+- `rtmp-runtime`, `rtp-packet`, `mpeg-ps`, `broadcast-matroska`, `broadcast-hls` and `cc-data` are no longer unconditional dependencies: each now backs one feature (`flv`, `rtp`, `ps`, `matroska`, `hls`, `captions`) that gates the modules using it, and all six are on by default, so the default build is unchanged. A `default-features = false` build keeps the IR and the MP4/TS paths only:
+  - `flv`: `flv`, `flv_stream`, `rtmp` and their re-exports (`FlvMuxStage`, `StreamingFlvDemux`, `RtmpMuxStage`, the FLV payload helpers).
+  - `rtp`: `rtp_align`, `rtp_stream`, `rtp_dts`, the `rtcp` re-export and the RTP wire items inside `rtp` (`RtpPacket`, `RtpPacketiserStage`, the packetise/depacketise functions, `Mp2tPacketiser`). `rtp` also keeps the payload-format types and clock constants the IR, the TS path and the SDP parsing use.
+  - `ps`: `ps_demux` and `StreamingPsDemux`/`PsDemuxLimits`.
+  - `matroska`: `matroska_demux` and `mkv_mux` (`MatroskaDemux`, `MkvMuxStage`, `IR_TIMESCALE`).
+  - `hls`: `ll_hls`, `ts_hls`, `media::HlsPackager` and the HLS `INSTREAM-ID` half of `caption_detect`. `sample-aes` now implies it.
+  - `captions`: `caption_detect` (`CaptionDetector`, `DetectedCaption`, `declared_caption_services`).
+  `Error` variants that wrap a gated crate's error (`Ps`, `Matroska`, `HlsAttrValue`) are gated with it. `dvb-si` stays an unconditional dependency: the TS mux and demux parse and build PAT/PMT and the MPEG-H 3D audio descriptor through it, and `TrackSpec::audio_metadata` reads its ES-info descriptors.
 - The whole-input repackaging helpers are deleted: `Repackage::run_media`, `repackage::{select_tracks, select_tracks_by, trim}`, `Media::anchor_duration` and `PlanPass::for_media`. Callers that held a `Media` use the streaming `Repackage::run` and the mux/segmenter stages; tests collect through `test_harness::collect` (which now owns the track-selection, window and plan helpers).
 - The whole-input IR types `Media` and `Track` are deleted, with `mux_stage::drive_media` and their re-exports. A demux emits `DemuxEvent`s (a track spec plus samples) and every mux/segmenter/transform stage consumes them one sample at a time; tests collect through `test_harness::collect::{Collected, CollectedTrack, drive}`.
 - `SplicePlan::concat` and `SplicePlan::insert` take a payload-free `SpliceIndex` (built one `DemuxEvent` or sample timing at a time with `SpliceIndexBuilder`) instead of whole-track slices; they read only timing and flags.

@@ -143,8 +143,14 @@
 //! | `std`   | yes     | `std::error::Error` impls, plus every XML path (DASH/LL-DASH MPD, Smooth Streaming, PlayReady WRMHEADER) via `quick-xml` |
 //! | `serde` | no      | `serde::Serialize` for box types |
 //! | `cenc`  | yes     | CENC/CBCS (ISO/IEC 23001-7) AES-CTR/AES-CBC sample decrypt ([`CencDecryptStage`]) + encrypt ([`CencEncryptStage`]) via the RustCrypto `aes`/`ctr`/`cbc` crates. DASH/HLS DRM signalling ([`DashPackager::content_protection`], [`broadcast_hls::cenc_ext_x_key`]) reads the always-available `TrackSpec::protection`/`cenc` box types and needs no feature |
-//! | `sample-aes` | no | HLS Sample-AES + full-segment AES-128 (AES-128-CBC) content protection ([`sample_aes`]); implies `cenc`, adds the RustCrypto `cbc` crate |
-//! | `cli`   | no      | the `transmux` command-line packager binary (`clap`; implies `std`) — see [`cli`] and `docs/CLI-STANDARD.md` |
+//! | `flv`   | yes     | the FLV container spoke — [`FlvMuxStage`], [`StreamingFlvDemux`], and the RTMP signalling that carries FLV, over `rtmp-runtime` |
+//! | `rtp`   | yes     | the RTP/RTCP spoke — [`RtpPacketiserStage`], [`RtpStreamDepacketiser`], the RTCP packet types, the A/V alignment helper, over `rtp-packet` |
+//! | `ps`    | yes     | the MPEG-2 Program Stream demux stage ([`StreamingPsDemux`]), over `mpeg-ps` |
+//! | `matroska` | yes  | the EBML/Matroska/WebM spoke — [`MatroskaDemux`] and [`MkvMuxStage`], over `broadcast-matroska` |
+//! | `hls`   | yes     | the HLS segmenters ([`StreamingTsHlsSegmenter`], [`LlHlsSegmenter`]), the [`HlsPackager`] playlist renderer, and the HLS `INSTREAM-ID` half of caption detection, over `broadcast-hls` |
+//! | `captions` | yes  | caption presence detection ([`caption_detect`]) over `cc-data` |
+//! | `sample-aes` | no | HLS Sample-AES + full-segment AES-128 (AES-128-CBC) content protection ([`sample_aes`]); implies `cenc` and `hls`, adds the RustCrypto `cbc` crate |
+//! | `cli`   | no      | the `transmux` command-line packager binary (`clap`; implies `std` and every container spoke) — see [`cli`] and `docs/CLI-STANDARD.md` |
 
 // The crate is `no_std` without the `std` feature, but its in-crate test modules
 // use the std prelude (`Vec`, `String`, `vec!`, `eprintln!`, `thread_local!`)
@@ -333,9 +339,9 @@ pub use ll_dash::LlDashPackager;
 pub use ll_dash::LlSegmenter;
 #[cfg(feature = "hls")]
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
-pub use media::{CmafMuxStage, FragmentCut, PcrSample, SkippedTrack, TrackProtection};
 #[cfg(feature = "hls")]
 pub use media::HlsPackager;
+pub use media::{CmafMuxStage, FragmentCut, PcrSample, SkippedTrack, TrackProtection};
 #[cfg(feature = "matroska")]
 pub use mkv_mux::MkvMuxStage;
 pub use mpeg_legacy::{
@@ -369,13 +375,13 @@ pub use rtcp::{
 pub use rtmp::{RtmpFlvError, RtmpMuxStage};
 #[cfg(feature = "std")]
 pub use rtp::sdp_media;
-#[cfg(feature = "rtp")]
-pub use rtp::{
-    RtpPacket, RtpPacketiserStage, depacketise_klv, packetise_klv, packetise_video_sample,
-};
 pub use rtp::{
     DEFAULT_AAC_CLOCK_RATE, DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT,
     KLV_ENCODING_NAME, NAL_TYPE_IDR, RtpMediaKind, VIDEO_CLOCK_RATE, VIDEO_CLOCK_TIMESCALE,
+};
+#[cfg(feature = "rtp")]
+pub use rtp::{
+    RtpPacket, RtpPacketiserStage, depacketise_klv, packetise_klv, packetise_video_sample,
 };
 #[cfg(feature = "rtp")]
 pub use rtp_align::{AlignOut, AvSync, SR_SWITCH_TOLERANCE_US, TrackAligner};

@@ -80,12 +80,12 @@ use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
 use mpeg_pes::StreamId;
 use mpeg_ts::mux::SectionPacketiser;
+#[cfg(feature = "hls")]
+use mpeg_ts::ts::PID_MASK_HI;
 use mpeg_ts::ts::{
     AdaptationFieldControl, CC_MASK, ContinuityCounter, Pcr, ScramblingControl, TS_PACKET_SIZE,
     TsHeader,
 };
-#[cfg(feature = "hls")]
-use mpeg_ts::ts::PID_MASK_HI;
 
 use crate::TrackId;
 use crate::aac_asc::{ADTS_HEADER_SIZE, AudioSpecificConfig};
