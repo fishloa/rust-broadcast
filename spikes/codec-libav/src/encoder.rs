@@ -186,7 +186,7 @@ fn refused_option(options: &[(&str, String)], error: &ffmpeg_next::Error) -> Cod
     let message = error.to_string();
     match options.iter().find(|(key, _)| message.contains(key)) {
         Some((key, _)) => CodecError::refused(format!("option `{key}`: {message}")),
-        None => refused("libav encoder", error),
+        None => refused("this implementation", error),
     }
 }
 
@@ -422,32 +422,36 @@ impl Encoder for LibavEncoder {
     }
 
     fn receive(&mut self) -> Result<Option<Packet<'static>>, CodecError> {
-        let mut coded = ffmpeg_next::Packet::empty();
-        let result = match &mut self.opened {
-            Opened::Video(encoder) => encoder.receive_packet(&mut coded),
-            Opened::Audio(encoder) => encoder.receive_packet(&mut coded),
-        };
-        match result {
-            Ok(()) => {}
-            Err(error) if try_again(&error) || drained(&error) => return Ok(None),
-            Err(error) => {
-                return Err(CodecError::failed(format!(
-                    "libav encoder `{}` receive: {error}",
-                    self.implementation
-                )));
+        loop {
+            let mut coded = ffmpeg_next::Packet::empty();
+            let result = match &mut self.opened {
+                Opened::Video(encoder) => encoder.receive_packet(&mut coded),
+                Opened::Audio(encoder) => encoder.receive_packet(&mut coded),
+            };
+            match result {
+                Ok(()) => {}
+                Err(error) if try_again(&error) || drained(&error) => return Ok(None),
+                Err(error) => {
+                    return Err(CodecError::failed(format!(
+                        "libav encoder `{}` receive: {error}",
+                        self.implementation
+                    )));
+                }
             }
+            // A zero-length packet carries no coded bytes (the FLAC encoder
+            // emits one at flush); the seam's Packet is an access unit.
+            let Some(data) = coded.data().filter(|data| !data.is_empty()) else {
+                continue;
+            };
+            let mut packet = Packet::owned(data.to_vec()).with_key(coded.is_key());
+            if let Some(pts) = coded.pts() {
+                packet = packet.with_pts(pts);
+            }
+            if let Some(dts) = coded.dts() {
+                packet = packet.with_dts(dts);
+            }
+            return Ok(Some(packet));
         }
-        let Some(data) = coded.data() else {
-            return Err(CodecError::failed("an empty coded packet"));
-        };
-        let mut packet = Packet::owned(data.to_vec()).with_key(coded.is_key());
-        if let Some(pts) = coded.pts() {
-            packet = packet.with_pts(pts);
-        }
-        if let Some(dts) = coded.dts() {
-            packet = packet.with_dts(dts);
-        }
-        Ok(Some(packet))
     }
 
     fn finish(&mut self) -> Result<(), CodecError> {

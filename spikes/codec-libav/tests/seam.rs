@@ -6,7 +6,8 @@ use std::time::Duration;
 
 use broadcast_codec::{
     AudioParameters, AudioSamples, ChannelLayout, CodecError, CodecId, CodecParameters, Decoder,
-    Direction, Frame, Packet, PixelFormat, Registry, SampleLayout, VideoFrame, VideoStorage,
+    Direction, Encoder, Frame, Packet, PixelFormat, Registry, SampleLayout, VideoFrame,
+    VideoStorage,
 };
 use broadcast_core::Serialize;
 use broadcast_loudness::LoudnessMeter;
@@ -38,6 +39,26 @@ const FFMPEG_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Bytes per packed 8-bit 4:2:0 pixel: one luma plus a half of each chroma.
 const YUV420P_FRAME_BYTES: usize = 3;
+/// The media timescale the TS fixture states.
+const TS_TIMESCALE: u32 = 90_000;
+/// The MPEG-2 video bit rate the round trip asks for, in bits per second.
+const MPEG2_BIT_RATE: u64 = 5_000_000;
+/// The MPEG-2 video group length the round trip asks for, in pictures.
+const MPEG2_GOP: u32 = 25;
+/// Ticks per second the MPEG-2 encoder is configured for: one per picture.
+const MPEG2_TICKS: u32 = 25;
+/// The committed PCM fixture (mono, 48 kHz, signed 16-bit).
+const PCM_FIXTURE: &str = "audio/pcm-s16le.wav";
+/// Its sample rate.
+const PCM_SAMPLE_RATE: u32 = 48_000;
+/// Samples per frame handed to the FLAC encoder.
+const FLAC_BLOCK_SAMPLES: usize = 4_608;
+/// Bytes of a RIFF/WAVE header before the first chunk.
+const RIFF_HEADER_LEN: usize = 12;
+/// Bytes of a chunk id and its size field.
+const CHUNK_HEADER_LEN: usize = 8;
+/// Bytes of a chunk id.
+const CHUNK_ID_LEN: usize = 4;
 
 /// One coded access unit, ready to send.
 #[derive(Debug, Clone)]
@@ -420,4 +441,196 @@ fn t3_adts_loudness_matches_the_pinned_value() {
     let (measured, decoded) = measure_adts(registry);
     assert!(decoded > 0);
     assert!((measured - EXPECTED_LUFS).abs() <= TOLERANCE_LU);
+}
+
+/// Drive one encoder over `frames` and return every packet it produced.
+fn encode(encoder: &mut dyn Encoder, frames: Vec<Frame>) -> Vec<Packet<'static>> {
+    let mut packets = Vec::new();
+    for frame in frames {
+        loop {
+            match encoder.send(frame.clone()) {
+                Ok(()) => break,
+                Err(CodecError::Full) => drain_encoded(encoder, &mut packets),
+                Err(error) => panic!("send: {error}"),
+            }
+        }
+        drain_encoded(encoder, &mut packets);
+    }
+    encoder.finish().expect("finish");
+    drain_encoded(encoder, &mut packets);
+    packets
+}
+
+/// Drain every ready coded packet.
+fn drain_encoded(encoder: &mut dyn Encoder, packets: &mut Vec<Packet<'static>>) {
+    while let Some(packet) = encoder.receive().expect("receive") {
+        packets.push(packet);
+    }
+}
+
+#[test]
+fn t4_video_encode_round_trip() {
+    let Some(registry) = registry() else {
+        return;
+    };
+    let Some((parameters, units)) = ts_track(true) else {
+        panic!("the fixture must carry a H.264 track");
+    };
+    let mut decoder = registry.decoder(&parameters).expect("an H.264 decoder");
+    let frames = decode(&mut *decoder, &units);
+    assert_eq!(frames.len(), TS_VIDEO_FRAMES);
+
+    let config = broadcast_codec::EncoderConfig::new(
+        CodecId::Mpeg2Video,
+        broadcast_codec::Timescale::from_nonzero(
+            NonZeroU32::new(MPEG2_TICKS).expect("a non-zero timescale"),
+        ),
+    )
+    .with_video(broadcast_codec::VideoParameters::new(
+        NonZeroU32::new(TS_WIDTH).expect("a width"),
+        NonZeroU32::new(TS_HEIGHT).expect("a height"),
+    ))
+    .with_bit_rate(std::num::NonZeroU64::new(MPEG2_BIT_RATE).expect("a bit rate"))
+    .with_gop(NonZeroU32::new(MPEG2_GOP).expect("a group length"));
+    let mut encoder = registry.encoder(&config).expect("an MPEG-2 video encoder");
+    let sent = frames.len();
+    let source = broadcast_codec::Timescale::from_nonzero(
+        NonZeroU32::new(TS_TIMESCALE).expect("a non-zero timescale"),
+    );
+    let target = broadcast_codec::Timescale::from_nonzero(
+        NonZeroU32::new(MPEG2_TICKS).expect("a non-zero timescale"),
+    );
+    let frames: Vec<Frame> = frames
+        .into_iter()
+        .map(|frame| {
+            let Frame::Video(video) = frame else {
+                panic!("a picture from the H.264 decoder");
+            };
+            match video.pts() {
+                Some(pts) => {
+                    let ticks = broadcast_core::timescale::rescale_i64(
+                        pts,
+                        source,
+                        target,
+                        broadcast_core::timescale::Rounding::Nearest,
+                    );
+                    Frame::Video(video.with_pts(ticks))
+                }
+                None => Frame::Video(video),
+            }
+        })
+        .collect();
+    let packets = encode(&mut *encoder, frames);
+    assert!(!packets.is_empty(), "the encoder produced no packets");
+
+    let reported = encoder.parameters().expect("parameters once encoding");
+    assert_eq!(reported.codec(), CodecId::Mpeg2Video);
+    let video_parameters = reported.video().expect("the video half");
+    assert_eq!(video_parameters.coded_width().get(), TS_WIDTH);
+    assert_eq!(video_parameters.coded_height().get(), TS_HEIGHT);
+
+    let mut decoder = registry
+        .decoder(reported)
+        .expect("a decoder for what the encoder reports");
+    let units: Vec<Unit> = packets
+        .iter()
+        .map(|packet| Unit {
+            data: packet.data().to_vec(),
+            pts: packet.pts(),
+            dts: packet.dts(),
+            key: packet.key(),
+        })
+        .collect();
+    let round_tripped = decode(&mut *decoder, &units);
+    assert_eq!(round_tripped.len(), sent, "frames in equal frames out");
+    assert_eq!(round_tripped.len(), TS_VIDEO_FRAMES);
+    for frame in &round_tripped {
+        let picture = video(frame);
+        assert_eq!(picture.width().get(), TS_WIDTH);
+        assert_eq!(picture.height().get(), TS_HEIGHT);
+    }
+}
+
+#[test]
+fn t5_audio_encode_round_trip() {
+    let Some(registry) = registry() else {
+        return;
+    };
+    let samples = wav_samples(PCM_FIXTURE);
+    let rate = NonZeroU32::new(PCM_SAMPLE_RATE).expect("a sample rate");
+    let config = broadcast_codec::EncoderConfig::new(
+        CodecId::Flac,
+        broadcast_codec::Timescale::from_nonzero(rate),
+    )
+    .with_audio(AudioParameters::new(rate, ChannelLayout::Mono));
+    let mut encoder = registry.encoder(&config).expect("a FLAC encoder");
+
+    let mut frames = Vec::new();
+    for chunk in samples.chunks(FLAC_BLOCK_SAMPLES) {
+        let frame = broadcast_codec::AudioFrame::new(
+            rate,
+            ChannelLayout::Mono,
+            SampleLayout::Interleaved,
+            AudioSamples::S16(chunk.to_vec()),
+        )
+        .expect("a whole sample count");
+        frames.push(Frame::Audio(frame));
+    }
+    let packets = encode(&mut *encoder, frames);
+    assert!(!packets.is_empty());
+
+    let reported = encoder.parameters().expect("parameters once encoding");
+    assert_eq!(reported.codec(), CodecId::Flac);
+    let mut decoder = registry
+        .decoder(reported)
+        .expect("a FLAC decoder for what the encoder reports");
+    let units: Vec<Unit> = packets
+        .iter()
+        .map(|packet| Unit {
+            data: packet.data().to_vec(),
+            pts: packet.pts(),
+            dts: packet.dts(),
+            key: packet.key(),
+        })
+        .collect();
+    let decoded = decode(&mut *decoder, &units);
+    let mut round_tripped = Vec::new();
+    for frame in &decoded {
+        let audio = audio(frame);
+        let AudioSamples::S16(values) = audio.samples() else {
+            panic!("libav decoded FLAC to a non-16-bit format");
+        };
+        round_tripped.extend_from_slice(values);
+    }
+    assert_eq!(round_tripped, samples, "FLAC is lossless");
+}
+
+/// The signed 16-bit samples of the committed WAV fixture.
+fn wav_samples(fixture: &str) -> Vec<i16> {
+    let bytes = test_fixtures::read(fixture);
+    let data = wav_data(&bytes).expect("a WAV data chunk");
+    data.chunks_exact(2)
+        .map(|pair| i16::from_le_bytes([pair[0], pair[1]]))
+        .collect()
+}
+
+/// The `data` chunk's payload of a RIFF/WAVE file.
+fn wav_data(bytes: &[u8]) -> Option<&[u8]> {
+    let mut offset = RIFF_HEADER_LEN;
+    while offset + CHUNK_HEADER_LEN <= bytes.len() {
+        let id = bytes.get(offset..offset + CHUNK_ID_LEN)?;
+        let size = u32::from_le_bytes(
+            bytes
+                .get(offset + CHUNK_ID_LEN..offset + CHUNK_HEADER_LEN)?
+                .try_into()
+                .ok()?,
+        );
+        let start = offset + CHUNK_HEADER_LEN;
+        let end = start.checked_add(usize::try_from(size).ok()?)?;
+        if id == b"data" {
+            return bytes.get(start..end);
+        }
+        offset = end + (size % 2) as usize;
+    }
+    None
 }
