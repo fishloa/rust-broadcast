@@ -5,6 +5,7 @@ mod captions;
 mod cenc;
 mod codec_config_boxes;
 mod container_child_order;
+mod coverage;
 mod esds_config;
 mod fixture_scte35;
 mod fixture_v1_scte35_livesim;

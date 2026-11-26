@@ -430,10 +430,11 @@ impl<'a> Iterator for ParseChildren<'_, 'a> {
 /// [`BoxRegistry::register_override`] is used: replacing the crate's own parse
 /// silently would change what every reader of the file sees.
 fn crate_types(fourcc: &[u8; BOX_TYPE_SIZE]) -> bool {
-    matches!(
-        fourcc,
-        // Top level and movie boxes.
-        b"ftyp"
+    crate::coverage::is_typed(fourcc)
+        || matches!(
+            fourcc,
+            // Top level and movie boxes.
+            b"ftyp"
             | b"styp"
             | b"moov"
             | b"mvhd"
@@ -448,7 +449,6 @@ fn crate_types(fourcc: &[u8; BOX_TYPE_SIZE]) -> bool {
             | b"minf"
             | b"vmhd"
             | b"smhd"
-            | b"nmhd"
             | b"sthd"
             | b"dinf"
             | b"dref"
@@ -470,7 +470,6 @@ fn crate_types(fourcc: &[u8; BOX_TYPE_SIZE]) -> bool {
             | b"sbgp"
             | b"mvex"
             | b"trex"
-            | b"mehd"
             // Movie fragments.
             | b"moof"
             | b"mfhd"
@@ -574,8 +573,7 @@ fn crate_types(fourcc: &[u8; BOX_TYPE_SIZE]) -> bool {
             | b"dvcC"
             | b"dvvC"
             | b"dva1"
-            | b"btrt"
-    )
+        )
 }
 
 #[cfg(test)]

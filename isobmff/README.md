@@ -13,6 +13,12 @@ It never knows the media IR or a codec bitstream.
 
 ## Coverage
 
+Typed 76 of 167 registry box types (ISO/IEC 14496-12:2026). The
+`tests/it/coverage.rs` test loads
+`private/specs-verified/mpeg/isobmff/box-registry-14496-12-2026.tsv` and pins
+every remaining type under its issue tier, so these counts cannot drift; the
+types themselves are the one table in `src/coverage.rs`.
+
 | Module | Boxes (four-CC) |
 |---|---|
 | `box_types` | `size`/`type` header, `largesize`, `uuid` usertype, the `BoxIter` walker |
@@ -44,8 +50,12 @@ It never knows the media IR or a codec bitstream.
 | `hdr_boxes` | `mdcv`, `clli` |
 | `timing` | `stts`, `ctts`, `cslg`, `elst`, `sidx` |
 | `visual_ext` | `pasp`, `clap`, `colr` |
+| `audio_boxes` | `chnl`, `dmix`, `ludt`/`tlou`/`alou`, `labl` |
+| `track_desc` | `elng`, `kind`, `trgr` (`msrc`/`ster`), `tsel`, `stvi` |
+| `index_boxes` | `ssix`, `leva`, `pdin`, `trep` |
+| `sample_tables_extra` | `stdp`, `padb`, `stsg` |
 | `cenc` | `tenc`, `senc`, `pssh`, `saiz`, `saio`, `sinf`, `frma`, `schm`, `schi` |
-| `sample_groups` | `prft`, `sgpd`, `sbgp`, `subs`, `ssrt` |
+| `sample_groups` | `prft`, `sgpd`, `sbgp`, `csgp`, `subs`, `ssrt` |
 | `movie_fragment` | `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun` |
 | `limits` | hostile-input caps (`Limits`) for the Phase 2 reader |
 | `writer` | sans-IO fragmented writer (init segment, `moof`+`mdat`, CENC media-segment protection, recorded/compact fragment layouts, regenerated `sidx`/`mfra`) and progressive writer (`Writer::progressive`: whole-file layout from a plan, `stco`/`co64`, seekable or append-only sink) |
