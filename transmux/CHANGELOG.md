@@ -9,7 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking
 
 - The whole-input repackaging helpers are deleted: `Repackage::run_media`, `repackage::{select_tracks, select_tracks_by, trim}`, `Media::anchor_duration` and `PlanPass::for_media`. Callers that held a `Media` use the streaming `Repackage::run` and the mux/segmenter stages; tests collect through `test_harness::collect` (which now owns the track-selection, window and plan helpers).
-- `SplicePlan::concat` and `SplicePlan::insert` take the two track slices and the movie timescale (`&[Track]`, `&[Track]`, `Timescale`) instead of two `Media`, so a caller need not wrap per-track samples in the IR.
+- The whole-input IR types `Media` and `Track` are deleted, with `mux_stage::drive_media` and their re-exports. A demux emits `DemuxEvent`s (a track spec plus samples) and every mux/segmenter/transform stage consumes them one sample at a time; tests collect through `test_harness::collect::{Collected, CollectedTrack, drive}`.
+- `SplicePlan::concat` and `SplicePlan::insert` take a payload-free `SpliceIndex` (built one `DemuxEvent` or sample timing at a time with `SpliceIndexBuilder`) instead of whole-track slices; they read only timing and flags.
+- `SmoothOrigin::from_tracks` takes an iterator of `(Timescale, &[Sample])`, and `SmoothPackager::package_track_fragment` takes a `&TrackSpec` and `&[Sample]` instead of a whole `Track`.
 - `Segmenter::set_start_decode_time` is public: a caller feeding a segmenter directly must anchor each track's first `tfdt` (the streaming `Repackage::run` already did).
 
 ### Added
