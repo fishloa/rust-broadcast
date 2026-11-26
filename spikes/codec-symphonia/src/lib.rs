@@ -23,9 +23,9 @@ use std::collections::VecDeque;
 use std::num::NonZeroU32;
 
 use broadcast_codec::{
-    AudioFrame, AudioSamples, ChannelLayout, CodecDescriptor, CodecError, CodecId,
-    CodecParameters, CodecProvider, Decoder, Direction, Encoder, EncoderConfig, Frame, Packet,
-    Probe, ProviderInfo, SampleFormat, SampleLayout,
+    AudioFrame, AudioSamples, ChannelLayout, CodecDescriptor, CodecError, CodecId, CodecParameters,
+    CodecProvider, Decoder, Direction, Encoder, EncoderConfig, Frame, Packet, Probe, ProviderInfo,
+    SampleFormat, SampleLayout,
 };
 use symphonia::core::audio::{Channels, Position};
 use symphonia::core::codecs::audio::well_known::CODEC_ID_AAC;
@@ -203,12 +203,7 @@ impl CodecProvider for SymphoniaProvider {
         ]
     }
 
-    fn probe(
-        &self,
-        _implementation: &str,
-        _direction: Direction,
-        _codec: CodecId,
-    ) -> Probe {
+    fn probe(&self, _implementation: &str, _direction: Direction, _codec: CodecId) -> Probe {
         Probe::available()
     }
 
