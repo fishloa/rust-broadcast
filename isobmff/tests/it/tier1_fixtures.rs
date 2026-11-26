@@ -1,5 +1,7 @@
-//! Tier 1 boxes found in real files written by GPAC 26.07 (`MP4Box`), with the
-//! values cross-checked against `mp4dump` for the same file.
+//! Tier 1 boxes found in real files written by GPAC 26.07 (`MP4Box`), ffmpeg
+//! 8.1.2 and Apple's `afconvert`, with the values cross-checked against
+//! `mp4dump` (where it prints the box) or an independent bit-level read of the
+//! file's bytes for the same file.
 //!
 //! `fixtures/mp4/boxes/PROVENANCE.md` records the source, the exact command and
 //! the tool version for each file. Every typed box is serialized back and
@@ -7,7 +9,15 @@
 
 use broadcast_core::{Parse, Serialize};
 use isobmff::metadata::{Udta, UdtaChild};
+use isobmff::reader::TrackInfo;
 use isobmff::{BoxIter, MovieBox, parse_box};
+
+/// Offset of the first child box of an `AudioSampleEntryV0` inside the entry's
+/// own bytes: the 8-byte box header plus the 28-byte tail (§12.2.3.2).
+const AUDIO_ENTRY_CHILDREN_OFFSET: usize = 8 + 28;
+/// Offset of `channelcount` inside an `AudioSampleEntryV0`'s own bytes: the
+/// 8-byte box header plus the 16-byte offset within the tail (§12.2.3.2).
+const AUDIO_ENTRY_CHANNELCOUNT_OFFSET: usize = 8 + 16;
 
 fn moov_of(file: &[u8]) -> Vec<u8> {
     for item in BoxIter::new(file) {
@@ -160,4 +170,129 @@ fn reader_surfaces_the_fragment_subsegment_index() {
             _ => {}
         }
     }
+}
+
+#[test]
+fn chnl_fixture_carries_both_wire_forms_ffmpeg_writes() {
+    let file = test_fixtures::read("mp4/boxes/chnl-ipcm.mp4");
+    let moov = moov_of(&file);
+    let movie = MovieBox::parse(&moov).expect("moov parses");
+    assert_eq!(movie.tracks.len(), 2);
+
+    let mut layouts = Vec::new();
+    let mut channel_counts = Vec::new();
+    for track in &movie.tracks {
+        let info = TrackInfo::from_trak(track).expect("track info");
+        let entry = info.entries.first().expect("one stsd entry");
+        assert_eq!(entry.fourcc, *b"ipcm");
+        let chnl = BoxIter::new(&entry.body[AUDIO_ENTRY_CHILDREN_OFFSET..])
+            .filter_map(|child| child.ok())
+            .find(|child| child.four_cc() == *b"chnl")
+            .expect("chnl inside the ipcm entry");
+        let layout = isobmff::ChannelLayoutBox::parse(chnl.bytes).expect("chnl parses");
+        assert_eq!(
+            layout.try_to_bytes().expect("chnl bytes"),
+            chnl.bytes,
+            "chnl re-serializes byte-exact"
+        );
+        let count =
+            &entry.body[AUDIO_ENTRY_CHANNELCOUNT_OFFSET..AUDIO_ENTRY_CHANNELCOUNT_OFFSET + 2];
+        channel_counts.push(u16::from_be_bytes(count.try_into().expect("channelcount")));
+        layouts.push(layout);
+    }
+
+    // Track 1 is stereo, so ffmpeg names the standard layout instead of listing
+    // positions, and the omitted-channel map is present and empty.
+    let stereo = &layouts[0];
+    assert_eq!(stereo.version(), 0);
+    assert!(stereo.is_channel_structured());
+    assert!(!stereo.is_object_structured());
+    assert_eq!(stereo.defined_layout(), Some(2));
+    assert_eq!(stereo.omitted_channels_map(), Some(0));
+    assert!(stereo.speaker_positions().is_empty());
+
+    // Track 2 has no standard layout, so every position is carried explicitly,
+    // and `layout_channel_count` is the sample entry's own channel count.
+    let surround = &layouts[1];
+    assert_eq!(surround.defined_layout(), Some(0));
+    assert_eq!(surround.omitted_channels_map(), None);
+    let positions: Vec<u8> = surround
+        .speaker_positions()
+        .iter()
+        .map(|position| position.speaker_position())
+        .collect();
+    assert_eq!(positions, [0, 1, 2, 3, 8, 9]);
+    assert_eq!(usize::from(channel_counts[1]), positions.len());
+}
+
+#[test]
+fn tsel_fixture_is_the_switch_group_mp4box_writes() {
+    let file = test_fixtures::read("mp4/boxes/tsel.mp4");
+    let moov = moov_of(&file);
+    let movie = MovieBox::parse(&moov).expect("moov parses");
+    let traks = children(&moov, *b"trak");
+    assert_eq!(movie.tracks.len(), 2);
+
+    let selected = TrackInfo::from_trak(&movie.tracks[0]).expect("track 0");
+    let tsel = selected.track_selection.expect("tsel on track 1");
+    assert_eq!(tsel.switch_group(), 7);
+    assert_eq!(tsel.attributes(), &[*b"cdec", *b"scsz"]);
+    assert_eq!(
+        tsel.try_to_bytes().expect("tsel bytes"),
+        one_child(&one_child(&traks[0], *b"udta"), *b"tsel")
+    );
+
+    let other = TrackInfo::from_trak(&movie.tracks[1]).expect("track 1");
+    assert!(
+        other.track_selection.is_none(),
+        "the second track joins no switch group"
+    );
+}
+
+#[test]
+fn ludt_fixture_carries_apples_track_loudness() {
+    let file = test_fixtures::read("mp4/boxes/loudness.m4a");
+    let moov = moov_of(&file);
+    let movie = MovieBox::parse(&moov).expect("moov parses");
+    assert_eq!(movie.tracks.len(), 1);
+
+    let info = TrackInfo::from_trak(&movie.tracks[0]).expect("track info");
+    let loudness = info.loudness.expect("ludt under trak/udta");
+    assert!(loudness.album().is_empty(), "Apple writes only tlou");
+    assert_eq!(loudness.track().len(), 1);
+
+    let base = loudness.track()[0].base();
+    assert_eq!(base.version(), 1);
+    assert_eq!(base.entries().len(), 1);
+    let entry = &base.entries()[0];
+    assert_eq!(entry.eq_set_id(), Some(0));
+    assert_eq!(entry.downmix_id(), 0);
+    assert_eq!(entry.drc_set_id(), 0);
+    assert_eq!(entry.sample_peak_level(), 1103);
+    assert_eq!(entry.true_peak_level(), 1102);
+    assert_eq!(entry.measurement_system_for_tp(), 2);
+    assert_eq!(entry.reliability_for_tp(), 3);
+    let measurements: Vec<(u8, u8, u8, u8)> = entry
+        .measurements()
+        .iter()
+        .map(|measurement| {
+            (
+                measurement.method_definition(),
+                measurement.method_value(),
+                measurement.measurement_system(),
+                measurement.reliability(),
+            )
+        })
+        .collect();
+    assert_eq!(measurements, [(1, 143, 2, 3), (4, 144, 0, 0)]);
+
+    let udta = one_child(&children(&moov, *b"trak")[0], *b"udta");
+    assert_eq!(
+        loudness.try_to_bytes().expect("ludt bytes"),
+        one_child(&udta, *b"ludt")
+    );
+    assert_eq!(
+        loudness.track()[0].try_to_bytes().expect("tlou bytes"),
+        one_child(&one_child(&udta, *b"ludt"), *b"tlou")
+    );
 }

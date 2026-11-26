@@ -1,11 +1,14 @@
 //! Tier 1 boxes no installed tool emits, tested with bytes hand-assembled from
 //! the clause.
 //!
-//! GPAC 26.07 and ffmpeg 8.1.2 expose no option for these (see
-//! `fixtures/mp4/boxes/PROVENANCE.md`, "Boxes no installed tool produced"), so
-//! each byte sequence below is built from the syntax block it names. The four
-//! boxes a real file does carry (`elng`, `kind`, `trgr`, `ssix`) are covered in
-//! `tier1_fixtures.rs`.
+//! GPAC 26.07, ffmpeg 8.1.2 and Apple's `afconvert` expose no option for these
+//! (see `fixtures/mp4/boxes/PROVENANCE.md`, "Boxes no installed tool
+//! produced"), so each byte sequence below is built from the syntax block it
+//! names. The boxes a real file does carry (`elng`, `kind`, `trgr`, `ssix`,
+//! `chnl`, `tsel`, `ludt`, `tlou`) are covered in `tier1_fixtures.rs`; the
+//! `chnl` version-1 case here keeps a form no fixture reaches, the `tlou` case
+//! keeps the version-0 entry, and the rest stay as the clause's own reading of
+//! a form a fixture now proves.
 
 use broadcast_core::{Parse, Serialize};
 

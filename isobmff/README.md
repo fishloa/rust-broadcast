@@ -76,6 +76,38 @@ types themselves are the one table in `src/coverage.rs`.
 Every type implements the workspace `Parse` / `Serialize` pair, so a parse →
 serialize round-trip is byte-identical.
 
+## Tier 1 box evidence
+
+The tier 1 boxes (issue #4167) are proven one of two ways: against bytes an
+independent tool wrote, or against bytes assembled from the clause. A
+fixture-backed box is asserted field by field against that tool's own dump and
+re-serialized byte-exact from the file's bytes; a clause-assembled box says so
+in its test. `fixtures/mp4/boxes/PROVENANCE.md` records the exact command, the
+tool version and the dump for every file, and lists what was tried for each box
+that no installed tool writes.
+
+| Box | Clause | Evidence | File |
+|---|---|---|---|
+| `chnl` | §12.2.4 | real: written by ffmpeg 8.1.2, dumped by GPAC 26.07 | `mp4/boxes/chnl-ipcm.mp4` |
+| `dmix` | §12.2.5 | clause-assembled | — |
+| `ludt` | §12.2.7 | real: Apple `afconvert --soundcheck-generate` | `mp4/boxes/loudness.m4a` |
+| `tlou` | §12.2.7 | real: same file | `mp4/boxes/loudness.m4a` |
+| `alou` | §12.2.7 | clause-assembled | — |
+| `labl` | §8.10.5 | clause-assembled | — |
+| `elng` | §8.4.6 | real: GPAC 26.07 | `mp4/boxes/track-description.mp4` |
+| `kind` | §8.10.4 | real: GPAC 26.07 | `mp4/boxes/track-description.mp4` |
+| `trgr` | §8.3.4 | real: GPAC 26.07 | `mp4/boxes/track-description.mp4`, `mp4/boxes/track-group-ster.mp4` |
+| `tsel` | §8.10.3 | real: GPAC 26.07, dumped by `MP4Box -disox` | `mp4/boxes/tsel.mp4` |
+| `stvi` | §13.5.4.2 | clause-assembled | — |
+| `ssix` | §8.14.4 | real: GPAC 26.07 `-dash -ssix` | `mp4/boxes/ssix-sidx.mp4` |
+| `leva` | §8.8.13 | clause-assembled | — |
+| `pdin` | §8.1.3 | clause-assembled | — |
+| `trep` | §8.8.15 | clause-assembled | — |
+| `csgp` | §8.9.5 | clause-assembled | — |
+| `stdp` | §8.5.3 | clause-assembled | — |
+| `padb` | §8.7.6 | clause-assembled | — |
+| `stsg` | §8.13.6 | clause-assembled | — |
+
 ## Example
 
 Open a file and iterate its samples in five lines:
