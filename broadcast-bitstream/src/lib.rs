@@ -20,6 +20,10 @@ pub mod au;
 pub mod bitreader;
 mod error;
 pub mod facts;
+#[cfg(all(feature = "hevc", feature = "isobmff"))]
+pub mod hdr;
+#[cfg(feature = "hevc")]
+pub mod hdr10plus;
 #[cfg(any(feature = "h264", feature = "hevc"))]
 pub mod interlace;
 pub mod nal;
@@ -36,6 +40,13 @@ pub use annexb::{
 };
 pub use au::{AccessUnitSplitter, split_access_units};
 pub use error::{Error, Result};
+#[cfg(all(feature = "hevc", feature = "isobmff"))]
+pub use hdr::HdrStaticMetadata;
+#[cfg(feature = "hevc")]
+pub use hdr10plus::{
+    AdditionalWindow, BezierToneMapping, ColorVolumeTransform, DistributionPoint,
+    Hdr10PlusMetadata, OverlapProcessOption, PeakLuminanceTable, WindowRegion, WindowRegionBuilder,
+};
 #[cfg(feature = "h264")]
 pub use interlace::avc_facts;
 #[cfg(feature = "hevc")]

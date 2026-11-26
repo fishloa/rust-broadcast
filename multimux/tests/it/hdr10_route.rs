@@ -30,7 +30,7 @@ fn strip_sei_nals(data: &[u8]) -> (Vec<u8>, usize) {
         let len = u32::from_be_bytes(data[at..at + NAL_LENGTH_PREFIX].try_into().unwrap()) as usize;
         let end = at + NAL_LENGTH_PREFIX + len;
         let nal_type = (data[at + NAL_LENGTH_PREFIX] >> HEVC_NAL_TYPE_SHIFT) & HEVC_NAL_TYPE_MASK;
-        if nal_type == transmux::hdr::HEVC_PREFIX_SEI_NUT {
+        if nal_type == broadcast_bitstream::nal::HEVC_PREFIX_SEI_NUT {
             removed += 1;
         } else {
             out.extend_from_slice(&data[at..end]);
@@ -49,7 +49,7 @@ fn without_in_band_sei(mut sources: Vec<Source>) -> Vec<Source> {
         config
             .config
             .arrays
-            .retain(|a| a.nal_unit_type != transmux::hdr::HEVC_PREFIX_SEI_NUT);
+            .retain(|a| a.nal_unit_type != broadcast_bitstream::nal::HEVC_PREFIX_SEI_NUT);
         let mut removed = 0;
         for sample in &mut src.samples {
             let (data, n) = strip_sei_nals(&sample.data);

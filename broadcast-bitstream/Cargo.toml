@@ -74,3 +74,7 @@ required-features = ["h264"]
 [[test]]
 name = "slice_header_pps"
 required-features = ["h264"]
+
+[[test]]
+name = "hdr10plus"
+required-features = ["hevc"]

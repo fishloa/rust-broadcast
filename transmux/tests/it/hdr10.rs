@@ -8,11 +8,12 @@
 #![cfg(feature = "std")]
 
 use crate::ts_mux_stage;
+use broadcast_bitstream::HdrStaticMetadata;
 use broadcast_core::timescale::Timescale;
 use isobmff::ChromaticityXy;
+use transmux::build_init_segment;
 use transmux::codec_config_ext::HevcRecordCodecInfo;
 use transmux::ir::{CodecConfig, TrackSpec};
-use transmux::{HdrStaticMetadata, build_init_segment};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -113,7 +114,7 @@ fn detects_pq_bt2020_and_exact_static_metadata() {
     );
 
     let hdr = spec.hdr.expect("hdr static metadata");
-    let m = hdr.mastering_display.expect("mastering display");
+    let m = hdr.mastering_display().expect("mastering display");
     let xy = |x, y| ChromaticityXy { x, y };
     assert_eq!(
         m.display_primaries,
@@ -122,7 +123,7 @@ fn detects_pq_bt2020_and_exact_static_metadata() {
     assert_eq!(m.white_point, xy(15635, 16450));
     assert_eq!(m.max_display_mastering_luminance, 10_000_000);
     assert_eq!(m.min_display_mastering_luminance, 1);
-    let c = hdr.content_light_level.expect("content light level");
+    let c = hdr.content_light_level().expect("content light level");
     assert_eq!(c.max_content_light_level, 1000);
     assert_eq!(c.max_pic_average_light_level, 400);
 }
@@ -158,7 +159,7 @@ fn init_segment_round_trips_through_the_fmp4_demuxer() {
     config
         .config
         .arrays
-        .retain(|a| a.nal_unit_type != transmux::hdr::HEVC_PREFIX_SEI_NUT);
+        .retain(|a| a.nal_unit_type != broadcast_bitstream::nal::HEVC_PREFIX_SEI_NUT);
     assert!(HdrStaticMetadata::from_hevc_record(&config.config).is_none());
     let init = build_init_segment(&[boxes_only], timescale(1000)).expect("init");
     let media =
@@ -254,8 +255,8 @@ fn demux_keeps_only_declarative_sei_messages_in_the_hvcc_array() {
         .position(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }))
         .unwrap();
     let hdr = media.tracks[idx].spec.hdr.expect("hdr");
-    let mdcv = broadcast_core::Serialize::try_to_bytes(&hdr.mastering_display.unwrap()).unwrap();
-    let clli = broadcast_core::Serialize::try_to_bytes(&hdr.content_light_level.unwrap()).unwrap();
+    let mdcv = broadcast_core::Serialize::try_to_bytes(hdr.mastering_display().unwrap()).unwrap();
+    let clli = broadcast_core::Serialize::try_to_bytes(hdr.content_light_level().unwrap()).unwrap();
     let other = [0xB5u8, 0x00, 0x3C, 0x00, 0x01, 0x04];
 
     let mut rbsp = Vec::new();
@@ -306,7 +307,7 @@ fn demux_keeps_only_declarative_sei_messages_in_the_hvcc_array() {
     assert_eq!(
         spec.hdr
             .expect("hdr")
-            .content_light_level
+            .content_light_level()
             .unwrap()
             .max_content_light_level,
         1000

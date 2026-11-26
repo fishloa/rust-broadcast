@@ -461,6 +461,7 @@ mod tests {
         assert_eq!(PicStruct::from_code(13, true), None);
     }
 
+    #[cfg(feature = "hevc")]
     #[test]
     fn source_scan_type_codes_map_per_d33() {
         assert_eq!(SourceScanType::from_code(0), SourceScanType::Interlaced);
@@ -473,12 +474,15 @@ mod tests {
 #[cfg(test)]
 mod access_unit_facts {
     use super::*;
+    #[cfg(feature = "h264")]
     use crate::slice_header::AvcParamSets;
+    #[cfg(feature = "h264")]
     use crate::sps::decode_avc_slice_sps;
     use alloc::vec;
     use alloc::vec::Vec;
     use test_fixtures::bits::BitWriter;
 
+    #[cfg(feature = "hevc")]
     /// Build an HEVC SPS NAL whose RPS section exercises inter-RPS prediction
     /// (so the VUI is only reachable with the exact (7-61)/(7-62) counts) and
     /// whose VUI carries `field_seq`/`frame_field_info_present`.
@@ -489,8 +493,10 @@ mod access_unit_facts {
     /// `aspect_ratio_idc` and, for Extended_SAR, `(sar_width, sar_height)`; the
     /// writer of the `aspect_ratio_info_present_flag` block (identical H.264
     /// §E.1.1 / H.265 §E.2.1 syntax).
+    #[cfg(feature = "hevc")]
     type AspectBits = Option<(u8, Option<(u16, u16)>)>;
 
+    #[cfg(feature = "hevc")]
     fn put_aspect(s: &mut BitWriter, aspect: AspectBits) {
         s.bit(aspect.is_some()); // aspect_ratio_info_present_flag
         if let Some((idc, ext)) = aspect {
@@ -502,6 +508,7 @@ mod access_unit_facts {
         }
     }
 
+    #[cfg(feature = "hevc")]
     fn hevc_sps_full(
         field_seq: bool,
         ffi: bool,
@@ -589,6 +596,7 @@ mod access_unit_facts {
         nal
     }
 
+    #[cfg(feature = "hevc")]
     fn hevc_nal(nal_type: u8, body: &[u8]) -> Vec<u8> {
         let mut v = vec![nal_type << 1, 0x01];
         v.extend_from_slice(body);
@@ -597,6 +605,7 @@ mod access_unit_facts {
 
     /// A HEVC prefix SEI carrying a `pic_timing` with the given
     /// `pic_struct`/`source_scan_type`/`duplicate_flag` (§D.2.3).
+    #[cfg(feature = "hevc")]
     fn hevc_pic_timing_sei(pic_struct: u64, scan: u64) -> Vec<u8> {
         let mut p = BitWriter::new();
         p.u(4, pic_struct);
@@ -609,6 +618,7 @@ mod access_unit_facts {
         hevc_nal(39, &body)
     }
 
+    #[cfg(feature = "hevc")]
     #[test]
     fn hevc_pic_struct_and_scan_type_are_read_from_prefix_sei() {
         let sps = hevc_interlace_sps(true, true, true, 0);
@@ -652,6 +662,7 @@ mod access_unit_facts {
     /// Build an H.264 SPS (profile 66, `pic_order_cnt_type` 2 so slice headers
     /// carry no POC syntax). `hrd`: optional `(cpb_removal_delay_length_minus1,
     /// dpb_output_delay_length_minus1)` for the NAL HRD, `vcl` likewise.
+    #[cfg(feature = "h264")]
     fn avc_interlace_sps(
         mbaff: bool,
         pic_struct_present: bool,
@@ -712,6 +723,7 @@ mod access_unit_facts {
         nal
     }
 
+    #[cfg(feature = "h264")]
     fn avc_pps() -> Vec<u8> {
         let mut s = BitWriter::new();
         s.ue(0); // pic_parameter_set_id
@@ -736,6 +748,7 @@ mod access_unit_facts {
     }
 
     /// An I slice (type 7), `frame_num` 0, as a frame or as a top/bottom field.
+    #[cfg(feature = "h264")]
     fn avc_slice(field: Option<bool>) -> Vec<u8> {
         let mut s = BitWriter::new();
         s.ue(0); // first_mb_in_slice
@@ -759,6 +772,7 @@ mod access_unit_facts {
 
     /// An H.264 `pic_timing` SEI NAL: `cpb`/`dpb` delay bit lengths, then
     /// `pic_struct` (§D.1.3), then a zero clock-timestamp-flag tail.
+    #[cfg(feature = "h264")]
     fn avc_pic_timing_sei(delays: Option<(u32, u32)>, pic_struct: u64) -> Vec<u8> {
         let mut p = BitWriter::new();
         if let Some((cpb, dpb)) = delays {
@@ -774,6 +788,7 @@ mod access_unit_facts {
         nal
     }
 
+    #[cfg(feature = "h264")]
     fn avc_ps(sps: &[u8]) -> AvcParamSets {
         let mut ps = AvcParamSets::new();
         ps.observe_nal(sps);
@@ -781,6 +796,7 @@ mod access_unit_facts {
         ps
     }
 
+    #[cfg(feature = "h264")]
     #[test]
     fn avc_sps_scan_flags_and_pic_timing_layout() {
         let paff = decode_avc_slice_sps(&avc_interlace_sps(false, false, None, None)).unwrap();
@@ -804,6 +820,7 @@ mod access_unit_facts {
         assert_eq!(clash.pic_timing(), None);
     }
 
+    #[cfg(feature = "h264")]
     #[test]
     fn avc_pic_struct_is_read_after_the_hrd_delays() {
         let sps = avc_interlace_sps(true, true, Some((4, 3)), None);
@@ -828,6 +845,7 @@ mod access_unit_facts {
         assert_eq!(f.bottom_field_first, Some(false));
     }
 
+    #[cfg(feature = "h264")]
     #[test]
     fn avc_field_pair_parity_comes_from_the_first_slice() {
         let ps = avc_ps(&avc_interlace_sps(false, false, None, None));

@@ -358,6 +358,61 @@ pub const TABLE: &[Banned] = &[
         issue: "broadcast-bitstream bs1",
     },
     Banned {
+        name: "transmux::hdr10plus",
+        reason: "the HDR10+ ST 2094-40 model and its SEI codec live in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::Hdr10PlusMetadata",
+        reason: "Hdr10PlusMetadata lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::WindowRegion",
+        reason: "WindowRegion lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::ColorVolumeTransform",
+        reason: "ColorVolumeTransform lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::PeakLuminanceTable",
+        reason: "PeakLuminanceTable lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::BezierToneMapping",
+        reason: "BezierToneMapping lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::DistributionPoint",
+        reason: "DistributionPoint lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::AdditionalWindow",
+        reason: "AdditionalWindow lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::OverlapProcessOption",
+        reason: "OverlapProcessOption lives in broadcast_bitstream::hdr10plus",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::HdrStaticMetadata",
+        reason: "HdrStaticMetadata lives in broadcast_bitstream::hdr",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
+        name: "transmux::hdr",
+        reason: "the HDR static metadata type and its SEI codec live in broadcast_bitstream::hdr",
+        issue: "broadcast-bitstream bs2c",
+    },
+    Banned {
         name: "transmux::VideoScan",
         reason: "the coded interlace facts live in broadcast_bitstream::interlace",
         issue: "broadcast-bitstream bs2b",

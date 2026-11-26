@@ -253,14 +253,15 @@ use crate::ac3_syncframe::{
 };
 use crate::dts_core::{DTS_CORE_SYNC_WORD, DtsCoreFrameInfo};
 use crate::error::{Error, Result};
-use crate::hdr::{HEVC_PREFIX_SEI_NUT, HdrStaticMetadata};
 use crate::mhas::find_mpegh3da_config;
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
 use crate::nal_params::{ParamKind, parameter_set_is_valid};
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
+use broadcast_bitstream::HdrStaticMetadata;
 use broadcast_bitstream::annexb::{
     NAL_LENGTH_SIZE_MINUS_ONE, annexb_to_length_prefixed, iter_annexb_nals,
 };
+use broadcast_bitstream::nal::HEVC_PREFIX_SEI_NUT;
 use broadcast_bitstream::nal::{
     AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, access_unit_is_rap, is_keyframe_nal,
     nal_unit_type,
@@ -6140,7 +6141,7 @@ impl StreamingTsDemux {
                     // anchor value needs computing here at all.
                     let hdr10plus = matches!(config, CodecConfig::Hevc { .. })
                         && backlog.first().is_some_and(|au| {
-                            crate::hdr10plus::Hdr10PlusMetadata::annexb_access_unit_carries_hdr10plus(
+                            broadcast_bitstream::Hdr10PlusMetadata::annexb_access_unit_carries_hdr10plus(
                                 &au.data,
                             )
                         });

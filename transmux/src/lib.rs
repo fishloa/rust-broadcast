@@ -196,8 +196,6 @@ pub mod flv;
 #[cfg(feature = "flv")]
 pub mod flv_stream;
 pub mod h262;
-pub mod hdr;
-pub mod hdr10plus;
 pub mod interlace;
 pub mod ir;
 pub mod klv;
@@ -398,11 +396,6 @@ pub use timeline::{
 // re-exported at the crate root — it would collide with `mp4esds::StreamType`
 // (an unrelated ES descriptor field); reach it via `broadcast_smooth`.
 pub use dovi_descriptor::DoviVideoStreamDescriptor;
-pub use hdr::HdrStaticMetadata;
-pub use hdr10plus::{
-    AdditionalWindow, BezierToneMapping, ColorVolumeTransform, DistributionPoint,
-    Hdr10PlusMetadata, OverlapProcessOption, PeakLuminanceTable, WindowRegion,
-};
 #[cfg(feature = "matroska")]
 pub use matroska_demux::{IR_TIMESCALE, MatroskaDemux, MatroskaDemuxConfig, MatroskaInput};
 #[cfg(feature = "std")]

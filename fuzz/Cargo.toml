@@ -646,3 +646,9 @@ name = "broadcast_bitstream_slice_header"
 path = "fuzz_targets/broadcast_bitstream_slice_header.rs"
 test = false
 doc  = false
+
+[[bin]]
+name = "broadcast_bitstream_hdr10plus"
+path = "fuzz_targets/broadcast_bitstream_hdr10plus.rs"
+test = false
+doc  = false
