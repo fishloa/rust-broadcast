@@ -219,7 +219,7 @@ impl Loci {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         need_in(body, MIN_BODY_LEN, "loci body")?;
         let version = body[0];
-        let flags = broadcast_common::wire::u24_at(body, FULLBOX_FLAGS_OFFSET);
+        let flags = broadcast_core::wire::u24_at(body, FULLBOX_FLAGS_OFFSET);
         let language = super::u16_at(body, FULLBOX_EXTRA_SIZE);
         let mut cursor = PREFIX_LEN;
         let name = take_c_string(body, &mut cursor, "loci name")?;

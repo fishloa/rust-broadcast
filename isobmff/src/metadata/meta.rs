@@ -109,7 +109,7 @@ impl Hdlr {
             .map_err(|_| Error::InvalidInput("hdlr handler_type"))?;
         Ok(Self {
             version: body[0],
-            flags: broadcast_common::wire::u24_at(body, FULLBOX_FLAGS_OFFSET),
+            flags: broadcast_core::wire::u24_at(body, FULLBOX_FLAGS_OFFSET),
             pre_defined: super::u32_at(body, FULLBOX_EXTRA_SIZE),
             handler_type,
             reserved,
@@ -282,7 +282,7 @@ impl Meta {
             (
                 MetaFlavor::Iso,
                 body[0],
-                broadcast_common::wire::u24_at(body, FULLBOX_FLAGS_OFFSET),
+                broadcast_core::wire::u24_at(body, FULLBOX_FLAGS_OFFSET),
                 &body[FULLBOX_EXTRA_SIZE..],
             )
         };

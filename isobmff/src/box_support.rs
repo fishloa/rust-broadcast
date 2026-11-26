@@ -11,10 +11,10 @@ use crate::box_types::{
 };
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::wire::{u24_at, u32_at};
 use broadcast_core::Serialize;
 use broadcast_core::error::BufferTooShort;
 use broadcast_core::len::need_out;
+use broadcast_core::wire::{u24_at, u32_at};
 
 /// Byte offset of a FullBox 24-bit `flags` field in a whole box.
 pub const FULLBOX_FLAGS_WIRE_OFFSET: usize =

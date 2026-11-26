@@ -47,7 +47,7 @@ use broadcast_core::len::{need_in, need_out};
 use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
-use broadcast_common::wire::u16_at;
+use broadcast_core::wire::u16_at;
 
 // ---------------------------------------------------------------------------
 // Named constants — SMPTE ST 336 / MISB ST 0601 (no magic numbers)

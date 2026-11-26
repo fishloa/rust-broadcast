@@ -2,8 +2,9 @@
 
 **The frozen wire-format contract of the rust-broadcast workspace: the
 symmetric `Parse`/`Serialize` traits, checked field-width helpers, MSB-first
-bit I/O, typed reserved-bit fields, media timescales, the shared error kinds
-and the container-independent CENC scheme identity.**
+bit I/O, typed reserved-bit fields, the big-endian wire field readers, media
+timescales, the shared error kinds and the container-independent CENC scheme
+identity.**
 
 ## What it does / what it does not
 
@@ -30,6 +31,7 @@ wraps in its own `Error`.
 | `reserved` | Typed runs of reserved bits that round-trip what was parsed. |
 | `timescale` (`timescale!`) | A non-zero media timescale and wrap-safe rescaling. |
 | `cenc` (`CencScheme`) | The container-independent CENC scheme identity. |
+| `wire` | Big-endian field readers over one bounds-checked `take`: the checked `read_u8`/`read_u16`/`read_u32`/`read_u48`/`be_u16`/`be_u32`/`be_u64` and the `*_at` readers for an offset the caller's own guard already covers. |
 | `impl_spec_display!` | The `Display`-from-`name()` macro every public spec enum uses. |
 
 ## Feature flags

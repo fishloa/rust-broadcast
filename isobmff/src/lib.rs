@@ -7,10 +7,9 @@
 //!
 //! This crate is deliberately below [`transmux`](https://docs.rs/transmux):
 //! it knows box syntax only, never the media IR or a codec bitstream. Its one
-//! workspace dependencies are [`broadcast_core`] and [`broadcast_common`], so a
-//! parser that only needs
-//! to walk MP4 boxes — a validator, a segmenter, a probe — no longer pulls in
-//! the whole container-muxing hub.
+//! workspace dependency is [`broadcast_core`], so a parser that only needs to
+//! walk MP4 boxes — a validator, a segmenter, a probe — no longer pulls in the
+//! whole container-muxing hub.
 //!
 //! Every wire structure implements the same symmetric pair as the rest of the
 //! workspace: [`Parse`](broadcast_core::Parse) borrows from the input, and

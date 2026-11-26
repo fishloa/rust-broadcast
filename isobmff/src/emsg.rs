@@ -36,9 +36,9 @@
 //! integers first / strings last in v1) per `private/specs-verified/mpeg/mp4-emsg/emsg.md`.
 
 use alloc::vec::Vec;
-use broadcast_common::wire::{u24_at, u32_at, u64_at};
 use broadcast_core::len::{need_in, need_out};
 use broadcast_core::timescale::Timescale;
+use broadcast_core::wire::{u24_at, u32_at, u64_at};
 
 use crate::error::{Error, Result};
 

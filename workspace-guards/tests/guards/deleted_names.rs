@@ -78,12 +78,13 @@ fn matching_brace(text: &str) -> Option<usize> {
 }
 
 /// `true` when `name` occurs in `text` as a whole identifier rather than as
-/// the prefix of a longer one (`CmafMux` must not match `CmafMuxStage`). A
+/// the prefix of a longer one (`CmafMux` must not match `CmafMuxStage`, and
+/// `broadcast_common::wire` must not match `broadcast_common::wire_enum`). A
 /// qualified name (one containing `::`) matches as written or as a member of
 /// a `prefix::{...}` group.
 fn names_deleted(text: &str, name: &str) -> bool {
     if let Some((prefix, leaf)) = name.rsplit_once("::") {
-        return text.contains(name) || !group_offsets(text, prefix, leaf).is_empty();
+        return names_whole_identifier(text, name) || !group_offsets(text, prefix, leaf).is_empty();
     }
     names_whole_identifier(text, name)
 }
@@ -192,5 +193,29 @@ fn a_grouped_import_names_every_member() {
     assert!(!names_deleted(
         "use broadcast_common::{bcd, clock33, crc32_mpeg2};",
         "broadcast_common::Parse"
+    ));
+}
+
+#[test]
+fn a_qualified_name_stops_at_the_identifier_boundary() {
+    assert!(names_deleted(
+        "use broadcast_common::wire;",
+        "broadcast_common::wire"
+    ));
+    assert!(names_deleted(
+        "broadcast_common::wire::read_u8(bytes)",
+        "broadcast_common::wire"
+    ));
+    assert!(names_deleted(
+        "use broadcast_common::{clock33, wire};",
+        "broadcast_common::wire"
+    ));
+    assert!(!names_deleted(
+        "broadcast_common::wire_enum! { Apple = 1 }",
+        "broadcast_common::wire"
+    ));
+    assert!(!names_deleted(
+        "use broadcast_common::wire_enum;",
+        "broadcast_common::wire"
     ));
 }

@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `init_segment::sample_entry_variant` is public so a demuxer can reparse that
   cleartext entry.
 
+### Changed
+
+- The crate depends on `broadcast-core` only. The big-endian field readers it
+  used from `broadcast-common` now live in `broadcast_core::wire`, so
+  `broadcast-common` is a dev-dependency (tests and two examples) rather than
+  a normal one, and an outside project adopting `isobmff` takes the frozen
+  contract and nothing else of the workspace.
+
 ### Fixed
 
 - **A rewritten fragmented init keeps its empty `stsz`'s constant

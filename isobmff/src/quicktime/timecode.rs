@@ -6,10 +6,10 @@
 //! "Timecode Sample Data".
 
 use alloc::vec::Vec;
-use broadcast_common::wire::{u16_at, u32_at};
 use broadcast_core::Parse;
 use broadcast_core::Serialize;
 use broadcast_core::len::{fit_u16, need_in, need_out};
+use broadcast_core::wire::{u16_at, u32_at};
 
 use crate::box_support::OpaqueBox;
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxIter};

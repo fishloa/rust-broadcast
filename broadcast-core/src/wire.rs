@@ -14,8 +14,7 @@
 //! The checked readers return [`BufferTooShort`] so a caller converts it into
 //! its own error type through the `#[from]` wrapper every wire crate declares.
 
-use alloc::vec::Vec;
-use broadcast_core::error::BufferTooShort;
+use crate::error::BufferTooShort;
 
 /// Byte width of the 24-bit fields (ISO/IEC 14496-12:2026 `size` prefixes,
 /// `esds` lengths).
@@ -92,16 +91,6 @@ pub fn be_u16(bytes: &[u8], off: usize, what: &'static str) -> Result<u16, Buffe
 pub fn be_u32(bytes: &[u8], off: usize, what: &'static str) -> Result<u32, BufferTooShort> {
     let mut cursor = off;
     read_u32(bytes, &mut cursor, what)
-}
-
-/// A 16-bit-length-prefixed byte string (an `avcC` SPS/PPS entry).
-pub fn read_nalu_16(
-    bytes: &[u8],
-    cursor: &mut usize,
-    what: &'static str,
-) -> Result<Vec<u8>, BufferTooShort> {
-    let len = usize::from(read_u16(bytes, cursor, what)?);
-    Ok(take(bytes, cursor, len, what)?.to_vec())
 }
 
 /// A big-endian `u64` at absolute offset `off` (the ISOBMFF version-1 64-bit

@@ -42,7 +42,7 @@ use alloc::vec::Vec;
 use crate::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
 use crate::bitreader::BitReader;
 use crate::rbsp::{EMULATION_BYTE_RUN_LEN, EMULATION_PREVENTION_BYTE};
-use broadcast_common::wire::{be_u16, be_u32};
+use broadcast_core::wire::{be_u16, be_u32};
 use isobmff::nalu_types::{HEVC_PPS_NUT, HEVC_SPS_NUT, HEVC_SUFFIX_SEI_NUT, HEVC_VPS_NUT};
 
 // ── AVC (ITU-T H.264 §7.3.1, Table 7-1) ─────────────────────────────────────

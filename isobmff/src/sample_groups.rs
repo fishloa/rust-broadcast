@@ -38,9 +38,9 @@ use crate::box_types::{
 };
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::wire::{be_u16, be_u32, be_u64, i16_at};
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::{need_in, need_out};
+use broadcast_core::wire::{be_u16, be_u32, be_u64, i16_at};
 
 use broadcast_core::{Parse, Serialize};
 

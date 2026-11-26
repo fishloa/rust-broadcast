@@ -39,9 +39,9 @@ use crate::box_support::bounded_entry_count;
 use crate::error::{Error, Result};
 use crate::nalu_types::{HevcNalArray, HevcNalUnit, VALID_LENGTH_SIZES};
 use alloc::vec::Vec;
-use broadcast_common::wire::{read_u8, read_u16, read_u32, read_u48};
 use broadcast_core::error::InvalidValue;
 use broadcast_core::len::{need_in, need_out};
+use broadcast_core::wire::{read_u8, read_u16, read_u32, read_u48};
 use broadcast_core::{Parse, Serialize};
 use core::fmt;
 

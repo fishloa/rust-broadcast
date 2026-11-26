@@ -19,9 +19,10 @@
 //! Run with `CORE_API_PIN_BLESS=1` to rewrite the committed file from the
 //! current tree (a reviewable diff).
 //!
-//! Two companion checks live here because they concern the same boundary:
-//! `broadcast-core` must have no non-optional dependency, and
-//! `broadcast-common` must not re-export anything from it.
+//! Three companion checks live here because they concern the same boundary:
+//! `broadcast-core` must have no non-optional dependency, `broadcast-common`
+//! must not re-export anything from it, and `isobmff` must reach it without
+//! `broadcast-common` in its normal dependency list.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -529,6 +530,38 @@ fn broadcast_core_has_no_required_dependency() {
     assert!(
         problems.is_empty(),
         "broadcast-core must have no non-optional dependency (G1); these are not optional:\n{}",
+        problems.join("\n")
+    );
+}
+
+/// `isobmff` is the crate an outside project adopts to read a container
+/// without the workspace's muxing hub. It reached `broadcast-common` only for
+/// the byte readers `broadcast-core` now owns, so a `broadcast-common` entry
+/// back in its normal dependency list would make every adopter take an
+/// unrelated crate's version line.
+#[test]
+fn isobmff_depends_on_broadcast_core_not_broadcast_common() {
+    let text = fs::read_to_string(crate_dir("isobmff").join("Cargo.toml"))
+        .expect("read isobmff/Cargo.toml");
+    let mut in_deps = false;
+    let mut problems = Vec::new();
+    for line in text.lines() {
+        let t = line.trim();
+        if t.starts_with('[') {
+            in_deps = t == "[dependencies]";
+            continue;
+        }
+        if !in_deps || t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        if t.starts_with("broadcast-common") {
+            problems.push(t.to_string());
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "isobmff must depend on broadcast-core only (wr1); these name \
+         broadcast-common in [dependencies]:\n{}",
         problems.join("\n")
     );
 }
