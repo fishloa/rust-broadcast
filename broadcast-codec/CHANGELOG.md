@@ -20,4 +20,77 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 - `ContentLightLevel`, `MasteringDisplay` and `ItuT35` metadata, carried by
   `VideoFrame` through `with_content_light`, `with_mastering_display` and
   `with_itu_t35`.
-- `pcm_passthrough` and `drain_contract` examples.
+- `pcm_passthrough`, `drain_contract` and `registry` examples.
+- Providers and the registry: `CodecProvider` (the object-safe trait one
+  adapter implements), `CodecDescriptor`, `CodecId`, `Direction`,
+  `SampleFormat`, `EncoderConfig` (typed settings plus ordered
+  provider-specific options), `Registry` (a value the application builds, with
+  `prefer`, `fallback` and `select_with`), `Preference` applied to one or both
+  directions, `Fallback::{Strict, NextCandidate}`, and the text form
+  `Preference: FromStr`/`Display` with `parse_preferences` for a
+  comma-separated list. The whole selection rule is stated at the crate root
+  and pinned by one test per clause.
+- `CodecId::from_name`, the textual inverse of `CodecId::name`: `h264` and
+  `H.264` name the same codec.
+- A run-time inventory: `ProviderInfo` (the adapter's name and version, the
+  underlying library and its version, the library's licence as the library or
+  its manifest states it, and free-text notes) returned by
+  `CodecProvider::info`, and `Registry::providers` for every provider in
+  registration order; `CodecDescriptor::profiles` for the codec variants an
+  implementation handles; `Availability` and `Probe` for whether an
+  implementation opens here, `CodecProvider::probe` (defaulting to unknown)
+  and `Registry::inventory`, which never probes unless asked; `InventoryEntry`
+  with its one-line `Display`; and `render_inventory`, which renders a whole
+  inventory as a plain table. The `registry` example prints it.
+- `CodecId::Other` now has a text form, `other:<8 hex digits>` (lower case),
+  accepted by `CodecId::from_name` and written by the preference text form, so
+  a format the enum does not name can be preferred and listed. `other` alone is
+  still an unknown codec.
+- `CodecProfile`, the typed codec-variant key the stream and the implementation
+  share: H.264, HEVC, VVC, AV1, VP9, MPEG-2 video and AAC profiles named as
+  their specifications name them, plus `Other { codec, tag }`. `codec()` says
+  which codec a profile belongs to, `token()`/`from_token` are the text form
+  (`h264/high10`, `aac/lc`, `other:00000007/deadbeef`) and `profile_token()` is
+  the profile half for a table that already names the codec. No profile
+  identifier number is in this crate: mapping one to a variant is the bitstream
+  parser's and the adapter's job.
+- `CodecParameters::profile`/`with_profile` and
+  `EncoderConfig::profile`/`with_profile`: the profile a stream is in and the
+  profile an encoder is asked to produce, refused with `ProfileError` when the
+  profile belongs to another codec.
+- `CodecProvider::profiles` (defaulting to the union over the provider's
+  descriptors, first-seen order, no duplicates) and `Registry::profiles`, which
+  attributes each profile to the providers that state it.
+- `Registry::candidates_for` and `Registry::encoder_candidates_for`, which
+  apply the new profile clause, and `Registry::rejected_for` and
+  `Registry::encoder_rejected_for`, which report each removed candidate and why
+  (`ProfileRejection`).
+- The preference text form gained an optional profile: `h264/high10=libav`,
+  `dec:aac/he=oxideav:fdk`. `Preference::with_profile` builds one, and
+  `PreferenceError::UnknownProfile` names a profile token that names none of
+  the codec's profiles. A profiled preference applies only to streams of that
+  profile and outranks one for the bare codec.
+
+### Breaking
+
+- `CodecDescriptor::profiles` is `&[CodecProfile]` rather than `&[String]`, and
+  `with_profiles` takes an iterator and returns `Result<Self, ProfileError>`, so
+  a descriptor cannot state a profile another codec owns. Empty still means
+  "not stated", not "all".
+- The selection rule gained a clause (now rule 4, ahead of the fallback rules):
+  a candidate that states profiles without the stream's profile is removed, and
+  the remaining rules number 5 to 7. `Registry::candidates` keeps its signature
+  and reports the order alone; `candidates_for`/`encoder_candidates_for` apply
+  the clause. A selector or preference that picks a removed candidate is an
+  error naming it, never a silent switch to another.
+- `Registry::prefer` replaces an earlier preference for the same codec, profile
+  and direction, so a profiled preference and a bare one for the same codec now
+  coexist instead of replacing each other.
+- `CodecProvider` gained a required `info` method: every adapter must say who
+  it is and under what terms. `CodecProvider::probe` has a default answer of
+  `Availability::Unknown`, so probing is opt-in.
+- `CodecError`'s message-bearing payloads are `Cow<'static, str>` rather than
+  `&'static str`, so the registry can name the provider, implementation or
+  codec it refused at run time. `CodecError` is no longer `Copy`; the
+  `refused`/`failed`/`unsupported` constructors take `impl Into<Cow<'static,
+  str>>` and are no longer `const`.

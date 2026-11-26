@@ -2,7 +2,7 @@
 name         = "broadcast-codec"
 version      = "0.1.0"
 edition      = "2024"
-description  = "Codec seam for rust-broadcast: raw audio/video frame types and the sans-IO Decoder/Encoder traits an outside codec plugs into. Holds no codec itself. no_std + alloc."
+description  = "Codec seam for rust-broadcast: raw audio/video frame types, the sans-IO Decoder/Encoder traits an outside codec plugs into, and the registry that chooses among providers. Holds no codec itself. no_std + alloc."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["codec", "decoder", "encoder", "frame", "no-std"]
@@ -32,4 +32,8 @@ required-features = ["std"]
 
 [[example]]
 name = "drain_contract"
+required-features = ["std"]
+
+[[example]]
+name = "registry"
 required-features = ["std"]
