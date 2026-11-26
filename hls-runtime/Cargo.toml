@@ -60,9 +60,6 @@ std = ["broadcast-common/std", "broadcast-common/lang", "thiserror/std", "transm
 serde = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "url/serde"]
 
 [dev-dependencies]
-# Loopback mock HTTP servers (tokio is
-# already a dependency; these are features only).
-tokio             = { version = "1", features = ["net", "io-util", "rt", "macros", "time", "test-util"] }
 test-fixtures     = { path = "../test-fixtures" }
 test-harness     = { path = "../test-harness" }
 # The one audited counting allocator: the per-segment concatenation bound in

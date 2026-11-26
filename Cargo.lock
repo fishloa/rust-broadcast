@@ -399,7 +399,6 @@ version = "0.8.0"
 dependencies = [
  "broadcast-auth",
  "broadcast-common",
- "broadcast-dash",
  "broadcast-hls",
  "buffering-runtime",
  "dash-runtime",
@@ -1714,7 +1713,6 @@ dependencies = [
  "test-harness",
  "thiserror 2.0.21",
  "timed-metadata",
- "tokio",
  "transmux",
  "url",
 ]
@@ -2030,7 +2028,6 @@ version = "0.1.0"
 dependencies = [
  "broadcast-common",
  "serde",
- "serde_json",
  "test-alloc",
  "test-fixtures",
  "test-harness",

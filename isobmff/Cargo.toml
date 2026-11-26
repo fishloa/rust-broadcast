@@ -31,7 +31,6 @@ test-fixtures = { path = "../test-fixtures" }
 test-harness  = { path = "../test-harness" }
 # Counting/capping test allocator (path-only, publish = false; never published).
 test-alloc    = { path = "../test-alloc" }
-serde_json    = { workspace = true }
 
 [features]
 default = ["std"]
