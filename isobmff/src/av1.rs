@@ -14,9 +14,9 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::InvalidValue;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// FourCC of the AV1 config box.
 pub const AV1C_FOURCC: [u8; 4] = *b"av1C";
@@ -204,7 +204,7 @@ impl Serialize for Av1ConfigurationBox {
 
 use crate::box_types::BOX_HEADER_MIN_SIZE;
 use crate::sample_entries::VisualSampleEntryFields;
-use broadcast_common::error::BufferTooShort;
+use broadcast_core::error::BufferTooShort;
 
 /// FourCC of the AV1 sample entry.
 pub const AV01_FOURCC: [u8; 4] = *b"av01";
@@ -268,7 +268,7 @@ impl Serialize for Av1SampleEntry {
         // often carries `pasp` *before* it (audit item 3, round 3).
         let write_config = |buf: &mut [u8], c: &mut usize| -> Result<()> {
             let len = BOX_HEADER_MIN_SIZE + self.config.serialized_len();
-            let len = broadcast_common::len::fit_u32(len, "config box size")?;
+            let len = broadcast_core::len::fit_u32(len, "config box size")?;
             buf[*c..*c + crate::box_types::BOX_TYPE_SIZE].copy_from_slice(&len.to_be_bytes());
             *c += crate::box_types::BOX_TYPE_SIZE;
             buf[*c..*c + crate::box_types::BOX_TYPE_SIZE].copy_from_slice(&AV1C_FOURCC);

@@ -5,7 +5,7 @@
 //! field (127), the 16-bit extension word count (65535), the 8-bit padding
 //! count (255), and the 5-bit RTCP `RC`/`SC`/subtype fields (31).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::rtcp::{
     App, Bye, Error as RtcpError, ReceiverReport, ReportBlock, RtcpPacket, RtcpPacketType,
     RtcpPadding, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
@@ -72,7 +72,7 @@ fn csrc_count_maximum_round_trips_and_one_more_is_rejected() {
     let mut out = vec![0u8; p.serialized_len()];
     assert_eq!(
         p.serialize_into(&mut out),
-        Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "csrc.len()",
             value: 16,
             reason: "exceeds the 4-bit CC field maximum (15)",
@@ -93,7 +93,7 @@ fn payload_type_maximum_round_trips_and_one_more_is_rejected() {
     let mut out = vec![0u8; p.serialized_len()];
     assert_eq!(
         p.serialize_into(&mut out),
-        Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "payload_type",
             value: 128,
             reason: "exceeds the 7-bit PT field maximum (127)",
@@ -122,7 +122,7 @@ fn extension_word_count_maximum_round_trips_and_one_more_is_rejected() {
     let mut out = vec![0u8; p.serialized_len()];
     assert_eq!(
         p.serialize_into(&mut out),
-        Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "extension.data.len()/4",
             value: 65_536,
             reason: "exceeds the 16-bit length field maximum",
@@ -148,7 +148,7 @@ fn padding_count_maximum_round_trips_and_one_more_is_rejected() {
     let mut out = vec![0u8; p.serialized_len()];
     assert_eq!(
         p.serialize_into(&mut out),
-        Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "padding.len()",
             value: 256,
             reason: "exceeds the 8-bit padding-count field maximum (255)",
@@ -179,7 +179,7 @@ fn sr_report_count_maximum_round_trips_and_one_more_is_rejected() {
     assert_eq!(
         too_many.serialize_into(&mut out),
         Err(RtcpError::InvalidValue(
-            broadcast_common::error::InvalidValue {
+            broadcast_core::error::InvalidValue {
                 field: "rtcp_report_count",
                 value: 32,
                 reason: "exceeds 5-bit RC field",
@@ -220,7 +220,7 @@ fn sdes_source_count_maximum_round_trips_and_one_more_is_rejected() {
     assert_eq!(
         too_many.serialize_into(&mut out),
         Err(RtcpError::InvalidValue(
-            broadcast_common::error::InvalidValue {
+            broadcast_core::error::InvalidValue {
                 field: "rtcp_source_count",
                 value: 32,
                 reason: "exceeds 5-bit SC field",
@@ -260,7 +260,7 @@ fn sdes_item_text_maximum_round_trips_and_one_more_is_rejected() {
     assert_eq!(
         too_long.serialize_into(&mut out),
         Err(RtcpError::InvalidValue(
-            broadcast_common::error::InvalidValue {
+            broadcast_core::error::InvalidValue {
                 field: "sdes_item_len",
                 value: 256,
                 reason: "exceeds 8-bit SDES item length",
@@ -289,7 +289,7 @@ fn bye_source_count_maximum_round_trips_and_one_more_is_rejected() {
     assert_eq!(
         too_many.serialize_into(&mut out),
         Err(RtcpError::InvalidValue(
-            broadcast_common::error::InvalidValue {
+            broadcast_core::error::InvalidValue {
                 field: "rtcp_source_count",
                 value: 32,
                 reason: "exceeds 5-bit SC field",
@@ -319,7 +319,7 @@ fn bye_reason_maximum_round_trips_and_one_more_is_rejected() {
     assert_eq!(
         too_long.serialize_into(&mut out),
         Err(RtcpError::InvalidValue(
-            broadcast_common::error::InvalidValue {
+            broadcast_core::error::InvalidValue {
                 field: "bye_reason_len",
                 value: 256,
                 reason: "exceeds 8-bit reason length",
@@ -348,7 +348,7 @@ fn app_subtype_maximum_round_trips_and_one_more_is_rejected() {
     assert_eq!(
         too_high.serialize_into(&mut out),
         Err(RtcpError::InvalidValue(
-            broadcast_common::error::InvalidValue {
+            broadcast_core::error::InvalidValue {
                 field: "app_subtype",
                 value: 32,
                 reason: "exceeds 5-bit subtype field",
@@ -379,7 +379,7 @@ fn unknown_packet_count_maximum_round_trips_and_one_more_is_rejected() {
     assert_eq!(
         too_high.serialize_into(&mut out),
         Err(RtcpError::InvalidValue(
-            broadcast_common::error::InvalidValue {
+            broadcast_core::error::InvalidValue {
                 field: "unknown_count",
                 value: 32,
                 reason: "exceeds 5-bit RC/SC field",
@@ -465,7 +465,7 @@ fn truncated_rtcp_bodies_report_the_exact_needed_bytes() {
     assert_eq!(
         ReceiverReport::parse(&[0x80, 0xC9, 0x00, 0x00]),
         Err(RtcpError::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 4,
                 have: 0,
                 what: "RR ssrc",
@@ -478,7 +478,7 @@ fn truncated_rtcp_bodies_report_the_exact_needed_bytes() {
     assert_eq!(
         SourceDescription::parse(&sdes),
         Err(RtcpError::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 5,
                 have: 4,
                 what: "SDES item type",
@@ -493,7 +493,7 @@ fn truncated_rtcp_bodies_report_the_exact_needed_bytes() {
     assert_eq!(
         SourceDescription::parse(&sdes),
         Err(RtcpError::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 9,
                 have: 8,
                 what: "SDES item length",
@@ -547,7 +547,7 @@ fn truncated_app_body_needs_the_full_ssrc_and_name() {
     assert_eq!(
         App::parse(&[0x80, 0xCC, 0x00, 0x00]),
         Err(RtcpError::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 8,
                 have: 0,
                 what: "RTCP APP ssrc+name",
@@ -565,7 +565,7 @@ fn bye_declaring_more_sources_than_the_body_holds_is_rejected() {
     assert_eq!(
         Bye::parse(&bytes),
         Err(RtcpError::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 16,
                 have: 8,
                 what: "RTCP BYE sources",

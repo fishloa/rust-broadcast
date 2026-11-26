@@ -6,7 +6,7 @@
 //! untyped field round-tripping.
 
 use crate::ebml::scalar::{Binary, Date, Text};
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 use crate::error::Result;
 use crate::matroska::block::Block;

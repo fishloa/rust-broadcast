@@ -19,13 +19,13 @@
 //! consumes 4 bytes for it first). See `private/specs-verified/scte/scte35-splice/dvb_ta/dsmcc-stream-event.md`.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::section::SpliceInfoSection;
 use crate::{NIBBLE_MASK, U32_LEN, be};
-use broadcast_common::len::{fit_bits, fit_u8};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{fit_bits, fit_u8};
+use broadcast_core::{Parse, Serialize};
 
 const HEADER_LEN: usize = 2;
 const FLAGS_OFFSET: usize = 1;
@@ -104,7 +104,7 @@ impl TimelineType {
         }
     }
 }
-broadcast_common::impl_spec_display!(TimelineType, Reserved);
+broadcast_core::impl_spec_display!(TimelineType, Reserved);
 
 /// The SCTE 35 carriage body of a stream-event payload (`event_type`-selected).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,7 +209,7 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
         }
         if dvb_data_length < 1 {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 1,
                     have: dvb_data_length,
                     what: "DSM-CC_stream_event_payload_binary flags byte",
@@ -222,7 +222,7 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
         let temi = if timeline_type == TimelineType::Temi {
             if dvb_data_length < TEMI_DVB_DATA_LEN || bytes.len() < TEMI_TOTAL_LEN {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: TEMI_TOTAL_LEN,
                         have: bytes.len(),
                         what: "DSM-CC_stream_event_payload_binary temi fields",
@@ -246,7 +246,7 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
         // private_data_length(8).
         if bytes.len() <= pos {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + 1,
                     have: bytes.len(),
                     what: "DSM-CC_stream_event_payload_binary private_data_length",
@@ -257,7 +257,7 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
         pos += 1;
         let private_data = if private_data_length > 0 {
             if private_data_length < PRIVATE_DATA_SPECIFIER_LEN {
-                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "DSM-CC_stream_event_payload_binary.private_data_length",
                     value: private_data_length as u64,
                     reason: "must be >= 4 (32-bit private_data_specifier) when present",
@@ -285,7 +285,7 @@ impl<'a> Parse<'a> for StreamEventPayload<'a> {
             // carousel_object_name_length(8) + chars.
             if bytes.len() <= pos {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + 1,
                         have: bytes.len(),
                         what: "DSM-CC_stream_event_payload_binary carousel_object_name_length",
@@ -347,7 +347,7 @@ impl Serialize for StreamEventPayload<'_> {
         // The temi_* bytes are present iff timeline_type == 0x2 (§6.3.1), so
         // the two must agree or the output would not re-parse equal.
         if (timeline_bits == TIMELINE_TYPE_TEMI) != self.temi.is_some() {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "DSM-CC_stream_event_payload_binary.temi",
                 reason: "temi_* fields must be present exactly when timeline_type is 0x2 (TEMI)",
             }));
@@ -367,7 +367,7 @@ impl Serialize for StreamEventPayload<'_> {
 
         let pdl = self.private_data_field_len();
         if pdl > u8::MAX as usize {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "DSM-CC_stream_event_payload_binary.private_data_length",
                 value: pdl as u64,
                 max: u64::from(u8::MAX),
@@ -389,7 +389,7 @@ impl Serialize for StreamEventPayload<'_> {
             }
             Scte35Carriage::CarouselObject(name) => {
                 if name.len() > u8::MAX as usize {
-                    return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                         field: "DSM-CC_stream_event_payload_binary.carousel_object_name_length",
                         value: name.len() as u64,
                         max: u64::from(u8::MAX),

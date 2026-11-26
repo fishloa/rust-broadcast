@@ -5,9 +5,9 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_u32, need_in, need_out};
+use broadcast_core::len::{fit_u32, need_in, need_out};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
@@ -114,14 +114,14 @@ impl RandomIndexPack {
         // truncates it on a 32-bit target instead of rejecting an
         // over-range value.
         let len = usize::try_from(len).map_err(|_| {
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: usize::MAX,
                 have: bytes.len(),
                 what: "Random Index Pack value (length exceeds platform usize)",
             })
         })?;
         let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: usize::MAX,
                 have: bytes.len(),
                 what: "Random Index Pack value (length overflow)",
@@ -179,7 +179,7 @@ impl<'a> Parse<'a> for RandomIndexPack {
         let (rip, consumed) = Self::parse_prefix(bytes)?;
         if consumed != bytes.len() {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: consumed,
                     have: bytes.len(),
                     what: "Random Index Pack (trailing bytes after exact-fit parse)",
@@ -318,12 +318,12 @@ mod tests {
     fn trailing_length_beyond_u32_is_rejected_not_wrapped() {
         let max = usize::try_from(u32::MAX).unwrap();
         assert_eq!(
-            broadcast_common::len::fit_u32(max, "Random Index Pack Length"),
+            broadcast_core::len::fit_u32(max, "Random Index Pack Length"),
             Ok(u32::MAX)
         );
         assert!(matches!(
-            broadcast_common::len::fit_u32(max + 1, "Random Index Pack Length"),
-            Err(broadcast_common::len::FieldOverflow {
+            broadcast_core::len::fit_u32(max + 1, "Random Index Pack Length"),
+            Err(broadcast_core::len::FieldOverflow {
                 field: "Random Index Pack Length",
                 ..
             })

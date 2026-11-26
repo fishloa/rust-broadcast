@@ -3,8 +3,8 @@
 //! `ts/h264-aac.ts` fixture, plus hand-built `moof` structures for the encrypted
 //! and malformed classifications, plus `package_track_fragment`'s own contract.
 
-use broadcast_common::Serialize;
-use broadcast_common::error::BufferTooShort;
+use broadcast_core::Serialize;
+use broadcast_core::error::BufferTooShort;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::Error;
 use transmux::smooth::{SmoothPackager, TfxdBox};

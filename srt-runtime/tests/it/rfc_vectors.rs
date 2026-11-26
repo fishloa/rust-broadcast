@@ -17,7 +17,7 @@
 
 #![cfg(feature = "crypto")]
 
-use broadcast_common::error::InvalidField;
+use broadcast_core::error::InvalidField;
 use srt_runtime::Error;
 use srt_runtime::crypto::{derive_kek, pbkdf2_hmac_sha1, unwrap_sek, wrap_sek};
 

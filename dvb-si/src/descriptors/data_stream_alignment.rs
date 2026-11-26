@@ -5,8 +5,8 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for data_stream_alignment_descriptor.
 pub const TAG: u8 = 0x06;
@@ -68,7 +68,7 @@ impl AlignmentType {
         }
     }
 }
-broadcast_common::impl_spec_display!(AlignmentType, Reserved);
+broadcast_core::impl_spec_display!(AlignmentType, Reserved);
 
 /// Data Stream Alignment Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]

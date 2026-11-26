@@ -18,6 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 
@@ -28,8 +29,8 @@ test-fixtures = { path = "../test-fixtures" }
 default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`.
-std = ["broadcast-common/std", "thiserror/std", "serde?/std"]
-serde = ["dep:serde", "broadcast-common/serde"]
+std = ["broadcast-common/std", "broadcast-core/std", "thiserror/std", "serde?/std"]
+serde = ["dep:serde", "broadcast-common/serde", "broadcast-core/serde"]
 
 [lints]
 workspace = true

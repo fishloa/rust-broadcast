@@ -13,9 +13,9 @@
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, LARGESIZE_SIZE};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::Serialize;
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::Serialize;
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::len::{need_in, need_out};
 
 const BRAND_BOX_FIXED_LEN: usize = BOX_TYPE_SIZE + core::mem::size_of::<u32>();
 const MINOR_VERSION_OFFSET: usize = BOX_TYPE_SIZE;
@@ -77,7 +77,7 @@ impl BrandBox {
         // `ftyp`/`styp` are brand lists and their reader takes the compact
         // form only; a size past 32 bits is a typed error, never a wrap
         // (#1147).
-        let size = broadcast_common::len::fit_u32(need, "ftyp/styp size")?;
+        let size = broadcast_core::len::fit_u32(need, "ftyp/styp size")?;
         buf[..core::mem::size_of::<u32>()].copy_from_slice(&size.to_be_bytes());
         buf[core::mem::size_of::<u32>()..BOX_HEADER_MIN_SIZE].copy_from_slice(four_cc);
         buf[BOX_HEADER_MIN_SIZE..BOX_HEADER_MIN_SIZE + BOX_TYPE_SIZE]
@@ -374,7 +374,7 @@ mod tests {
         let out = insert_event_message_boxes_after_styp(&segment, &emsg);
         assert_eq!(out, [lead, styp, emsg, moof].concat());
     }
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     #[test]
     fn ftyp_round_trip() {

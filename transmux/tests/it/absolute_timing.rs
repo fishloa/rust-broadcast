@@ -25,7 +25,7 @@
 //! never against the demuxer's own bookkeeping.
 
 use crate::ts_mux_stage;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use transmux::TrackId;
 
 use test_harness::collect::Collected as Media;

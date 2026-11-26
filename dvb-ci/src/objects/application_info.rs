@@ -9,8 +9,8 @@ use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use crate::wire::be_u16;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 /// `application_type` (Table, p. 28).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,7 +54,7 @@ impl ApplicationType {
         }
     }
 }
-broadcast_common::impl_spec_display!(ApplicationType, Reserved);
+broadcast_core::impl_spec_display!(ApplicationType, Reserved);
 
 /// `application_info_enq()` — header-only enquiry (Table 20).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -176,7 +176,7 @@ impl<'a> Parse<'a> for ApplicationInfo<'a> {
         let menu_end = APP_INFO_PREFIX + menu_string_length;
         if body.len() < menu_end {
             return Err(Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "application_info menu_string",
                     declared: menu_string_length,
                     actual: body.len() - APP_INFO_PREFIX,

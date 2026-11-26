@@ -10,8 +10,8 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::DvbText;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for application_icons_descriptor (AIT namespace).
 pub const TAG: u8 = 0x0B;
@@ -106,7 +106,7 @@ impl IconFormat {
         }
     }
 }
-broadcast_common::impl_spec_display!(IconFormat);
+broadcast_core::impl_spec_display!(IconFormat);
 
 /// The 16-bit `icon_flags` field (Table 7): one bit per [`IconFormat`]; the
 /// top nibble (`xxxx 0000 0000 0000`) is `reserved_future_use` and is carried
@@ -215,8 +215,7 @@ impl Serialize for ApplicationIconsDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        let loc_len =
-            broadcast_common::len::fit_u8(self.icon_locator.len(), "icon_locator_length")?;
+        let loc_len = broadcast_core::len::fit_u8(self.icon_locator.len(), "icon_locator_length")?;
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut pos = HEADER_LEN;

@@ -1,4 +1,4 @@
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_ci::Error;
 use dvb_ci::tpdu::{NewTc, ResponseTpdu};
 

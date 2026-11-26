@@ -11,7 +11,7 @@ use crate::segments::{
     HEADER_LEN, PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET,
     SEGMENT_TYPE_OFFSET,
 };
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// Offset of `sync_byte` within a segment header.
 const SYNC_BYTE_OFFSET: usize = 0;
@@ -143,7 +143,7 @@ macro_rules! declare_segments {
                 buf: &mut [u8],
             ) -> crate::Result<usize> {
                 let len = HEADER_LEN + data.len();
-                broadcast_common::len::need_out(buf, len)?;
+                broadcast_core::len::need_out(buf, len)?;
                 buf[SYNC_BYTE_OFFSET] = crate::pes_data_field::SYNC_BYTE;
                 buf[SEGMENT_TYPE_OFFSET] = segment_type;
                 buf[PAGE_ID_OFFSET..PAGE_ID_OFFSET + PAGE_ID_LEN]

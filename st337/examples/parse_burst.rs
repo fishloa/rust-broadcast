@@ -5,7 +5,7 @@
 //! Run with `cargo run -p st337 --example parse_burst`.
 
 use broadcast_common::bounded::{Limit, read_file_bounded};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st337::{Burst, DataMode};
 
 /// One IEC 61937 burst payload: a single compressed-audio frame, kilobytes at

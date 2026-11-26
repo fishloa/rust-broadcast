@@ -5,8 +5,8 @@
 
 use core::time::Duration;
 
-use broadcast_common::Parse;
 use broadcast_common::stage::Timestamp;
+use broadcast_core::Parse;
 use mpeg_ts::mux::{
     MIN_SECTION_INTERVAL, SectionInterval, SectionPacketiser, SectionRejection, SiMux,
 };

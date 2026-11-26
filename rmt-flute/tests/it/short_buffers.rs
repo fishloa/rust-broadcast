@@ -11,7 +11,7 @@ fn real_alc_packet_rejects_every_short_buffer() {
         pkt.serialized_len(),
         |buf| pkt.serialize_into(buf),
         |e| match e {
-            Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+            Error::OutputBufferTooSmall(broadcast_core::error::OutputBufferTooSmall {
                 need,
                 have,
             }) => Some((*need, *have)),

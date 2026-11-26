@@ -1,7 +1,7 @@
 #![no_main]
 
-use std::sync::OnceLock;
 use broadcast_common::stage::Timestamp;
+use std::sync::OnceLock;
 
 use libfuzzer_sys::fuzz_target;
 use smooth_runtime::{Action, FetchFailure, SmoothClient, SmoothClientConfig};
@@ -60,7 +60,9 @@ fuzz_target!(|data: &[u8]| {
     for _ in 0..STEP_BUDGET {
         while let Some(action) = client.poll(Timestamp::from_micros(now)) {
             match action {
-                Action::FetchManifest { id, .. } => client.on_manifest(Timestamp::from_micros(now), id, &manifest),
+                Action::FetchManifest { id, .. } => {
+                    client.on_manifest(Timestamp::from_micros(now), id, &manifest)
+                }
                 Action::FetchFragment { id, stream, .. } => {
                     let base = if stream.0 == 0 {
                         &corpus.video

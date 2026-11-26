@@ -27,7 +27,7 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_si::tables::pat::{self, PatSection};
 use dvb_si::tables::pmt;
 use mpeg_ts::ts::{SectionReassembler, TsPacket};

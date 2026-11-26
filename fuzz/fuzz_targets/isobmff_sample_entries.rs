@@ -1,6 +1,6 @@
 #![no_main]
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use libfuzzer_sys::fuzz_target;
 
 // Fuzz the `stsd` sample-entry readers (every codec the dispatcher knows) in

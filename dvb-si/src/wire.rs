@@ -15,7 +15,7 @@ pub(crate) fn be_u16(bytes: &[u8], off: usize, what: &'static str) -> Result<u16
     match bytes.get(off..).and_then(|s| s.first_chunk::<U16_LEN>()) {
         Some(b) => Ok(u16::from_be_bytes(*b)),
         None => Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: off.saturating_add(U16_LEN),
                 have: bytes.len(),
                 what,
@@ -29,7 +29,7 @@ pub(crate) fn be_u32(bytes: &[u8], off: usize, what: &'static str) -> Result<u32
     match bytes.get(off..).and_then(|s| s.first_chunk::<U32_LEN>()) {
         Some(b) => Ok(u32::from_be_bytes(*b)),
         None => Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: off.saturating_add(U32_LEN),
                 have: bytes.len(),
                 what,
@@ -54,7 +54,7 @@ mod tests {
         assert!(matches!(
             be_u16(&[1], 0, "t"),
             Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 2,
                     have: 1,
                     what: "t"

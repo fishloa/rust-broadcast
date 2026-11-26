@@ -2,7 +2,7 @@
 //! property, so it is pinned literally, together with both edges of the
 //! accept/reject boundary.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use rtmp_runtime::RtmpError;
 use rtmp_runtime::amf0::{Amf0Value, MAX_AMF0_VALUES};
 use rtmp_runtime::chunk::{ChunkWriter, Message};

@@ -1,7 +1,7 @@
 //! Biting round-trip, multi-parameter boundary, field-mutation, and
 //! enum-value-drift tests for the SimulCrypt generic message framing.
 
-use broadcast_common::traits::Serialize;
+use broadcast_core::traits::Serialize;
 use dvb_simulcrypt::{
     CpSigMessageType, CpSigParameterType, DataType, EcmgErrorStatus, EcmgScsMessageType,
     EcmgScsParameterType, EmmgErrorStatus, EmmgMuxMessageType, EmmgMuxParameterType, Interface,
@@ -779,7 +779,7 @@ fn trailing_partial_parameter_header_is_buffer_too_short() {
     ];
     assert_eq!(
         SimulcryptMessage::parse_on(Interface::EcmgScs, wire).unwrap_err(),
-        dvb_simulcrypt::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        dvb_simulcrypt::Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: PARAMETER_HEADER_LEN,
             have: 3,
             what: "parameter TLV header",

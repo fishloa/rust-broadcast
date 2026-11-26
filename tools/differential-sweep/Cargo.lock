@@ -104,6 +104,7 @@ name = "broadcast-common"
 version = "14.0.0"
 dependencies = [
  "base64 0.23.1",
+ "broadcast-core",
  "erased-serde",
  "headers",
  "hex",
@@ -117,10 +118,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "broadcast-dash"
 version = "0.3.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "jiff",
  "quick-xml",
  "thiserror",
@@ -131,6 +140,7 @@ name = "broadcast-hls"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "jiff",
  "serde",
  "thiserror",
@@ -141,6 +151,7 @@ name = "broadcast-matroska"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror",
 ]
@@ -150,6 +161,7 @@ name = "broadcast-smooth"
 version = "0.3.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "thiserror",
 ]
 
@@ -173,6 +185,7 @@ name = "caption-convert"
 version = "0.8.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "cc-data",
  "dvb-vbi",
  "serde",
@@ -194,6 +207,7 @@ name = "cc-data"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror",
 ]
@@ -271,7 +285,7 @@ checksum = "be95d4a884358a21a199689323c29e9256b4a1b315e22f183d155422041d3a9a"
 name = "container-probe"
 version = "0.6.0"
 dependencies = [
- "broadcast-common",
+ "broadcast-core",
 ]
 
 [[package]]
@@ -337,6 +351,7 @@ name = "dash-runtime"
 version = "0.7.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-dash",
  "container-probe",
  "headers",
@@ -355,6 +370,7 @@ name = "differential-sweep"
 version = "0.0.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "dash-runtime",
  "dvb-si",
@@ -406,6 +422,7 @@ name = "dvb-bbframe"
 version = "16.0.1"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror",
 ]
@@ -415,6 +432,7 @@ name = "dvb-conformance"
 version = "16.0.1"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "dvb-si",
  "mpeg-ts",
  "serde",
@@ -425,6 +443,7 @@ name = "dvb-si"
 version = "16.0.1"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "encoding_rs",
  "jiff",
@@ -438,6 +457,7 @@ name = "dvb-t2mi"
 version = "16.0.1"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "dvb-bbframe",
  "jiff",
@@ -451,6 +471,7 @@ name = "dvb-vbi"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror",
 ]
@@ -706,6 +727,7 @@ name = "isobmff"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror",
 ]
@@ -783,6 +805,7 @@ name = "media-doctor"
 version = "0.18.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-dash",
  "broadcast-hls",
  "dvb-conformance",
@@ -802,6 +825,7 @@ name = "media-plane"
 version = "0.14.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "bytes",
  "caption-convert",
@@ -833,6 +857,7 @@ name = "mpeg-pes"
 version = "0.10.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror",
 ]
@@ -842,6 +867,7 @@ name = "mpeg-ps"
 version = "0.10.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "mpeg-pes",
  "serde",
  "thiserror",
@@ -852,6 +878,7 @@ name = "mpeg-ts"
 version = "0.10.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "serde",
  "thiserror",
@@ -980,6 +1007,7 @@ name = "rtmp-runtime"
 version = "0.12.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "subtle",
  "thiserror",
 ]
@@ -989,6 +1017,7 @@ name = "rtp-packet"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror",
 ]
@@ -1010,6 +1039,7 @@ name = "scte35-splice"
 version = "8.0.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "mpeg-ts",
  "serde",
  "thiserror",
@@ -1109,6 +1139,7 @@ name = "st291"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "mpeg-pes",
  "rtp-packet",
  "serde",
@@ -1191,6 +1222,7 @@ name = "timed-metadata"
 version = "0.12.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "cc-data",
  "dvb-vbi",
@@ -1248,6 +1280,7 @@ version = "0.33.0"
 dependencies = [
  "aes",
  "broadcast-common",
+ "broadcast-core",
  "broadcast-dash",
  "broadcast-hls",
  "broadcast-matroska",

@@ -370,8 +370,8 @@ mod muxer_buffering {
 
 mod segmenter_cuts {
     use super::measure;
-    use broadcast_common::timescale::Timescale;
     use broadcast_common::{Stage, Timestamp};
+    use broadcast_core::timescale::Timescale;
     use core::time::Duration;
     use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
     use transmux::TrackId;
@@ -461,7 +461,7 @@ mod segmenter_cuts {
 
 mod hvcc_prealloc {
     use super::measure;
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     use isobmff::HEVCDecoderConfigurationRecord;
 
     /// A 22-byte hvcC header (`lengthSizeMinusOne = 3`) declaring 255 arrays whose
@@ -493,7 +493,7 @@ mod hvcc_prealloc {
 
 mod heaac_signaling_allocs {
     use super::measure;
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     use transmux::AudioSpecificConfig;
 
     /// r04-O2: `heaac_signaling()` (and `rfc6381()` through it) re-serialized the

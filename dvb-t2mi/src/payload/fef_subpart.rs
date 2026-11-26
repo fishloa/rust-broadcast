@@ -8,12 +8,12 @@
 //! - 0x0003: TX-SIG FEF (reserved 32 bits)
 //! - 0x0004..0xFFFF: Reserved for future use
 
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 use core::fmt;
 
 use broadcast_common::wire_enum;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use super::BYTE_MASK_U32;
 use crate::packet::be_u16;
@@ -24,7 +24,7 @@ wire_enum! {
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
     pub enum SubpartVariety: u16, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
-        broadcast_common::error::InvalidValue {
+        broadcast_core::error::InvalidValue {
             field: "subpart_variety",
             value: u64::from(value),
             reason: "must be 0x0000..=0x0003 (Table 13)",
@@ -54,7 +54,7 @@ impl SubpartVariety {
         }
     }
 }
-broadcast_common::impl_spec_display!(SubpartVariety);
+broadcast_core::impl_spec_display!(SubpartVariety);
 
 wire_enum! {
     /// PRBS type for SubpartVariety::Prbs.
@@ -62,7 +62,7 @@ wire_enum! {
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
     pub enum PrbsType: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
-        broadcast_common::error::InvalidValue {
+        broadcast_core::error::InvalidValue {
             field: "prbs_type",
             value: u64::from(value),
             reason: "must be 0x00 (user-defined, §5.2.12)",
@@ -83,7 +83,7 @@ impl PrbsType {
         }
     }
 }
-broadcast_common::impl_spec_display!(PrbsType);
+broadcast_core::impl_spec_display!(PrbsType);
 
 /// FEF sub-part payload (type 0x33) per ETSI TS 102 773 §5.2.12.
 ///
@@ -162,7 +162,7 @@ impl<'a> Parse<'a> for FefSubPartPayload<'a> {
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
         let (hdr, rest) = bytes.split_first_chunk::<FEF_SUBPART_HEADER_LEN>().ok_or(
-            crate::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            crate::Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: FEF_SUBPART_HEADER_LEN,
                 have: bytes.len(),
                 what: "FefSubPartPayload header",
@@ -175,7 +175,7 @@ impl<'a> Parse<'a> for FefSubPartPayload<'a> {
             .any(|b| *b != 0)
         {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "32-bit RFU (rfu1)",
                     expected: 0,
                     found: u64::from(u32::from_be_bytes(
@@ -190,7 +190,7 @@ impl<'a> Parse<'a> for FefSubPartPayload<'a> {
         // rfu2: byte 11 (8 bits) + byte 12 [7:6] (2 bits) = 10 bits — must be 0
         if hdr[RFU2_BYTE_OFFSET] != 0 || (hdr[LENGTH_HIGH_OFFSET] & RFU2_PREFIX_MASK != 0) {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "10-bit RFU (rfu2)",
                     expected: 0,
                     found: (u64::from(hdr[RFU2_BYTE_OFFSET]) << RFU2_HIGH_SHIFT)
@@ -233,7 +233,7 @@ impl Serialize for FefSubPartPayload<'_> {
 
         if self.subpart_length > SUBPART_LENGTH_MAX {
             return Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "subpart_length",
                     value: u64::from(self.subpart_length),
                     max: u64::from(SUBPART_LENGTH_MAX),
@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(
             FefSubPartPayload::parse(&buf).err(),
             Some(crate::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "subpart_variety",
                     value: 4,
                     reason: "must be 0x0000..=0x0003 (Table 13)"
@@ -343,7 +343,7 @@ mod tests {
         assert_eq!(
             FefSubPartPayload::parse(&buf).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "32-bit RFU (rfu1)",
                     expected: 0,
                     found: 16777216
@@ -359,7 +359,7 @@ mod tests {
         assert_eq!(
             FefSubPartPayload::parse(&buf).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "10-bit RFU (rfu2)",
                     expected: 0,
                     found: 4
@@ -375,7 +375,7 @@ mod tests {
         assert_eq!(
             FefSubPartPayload::parse(&buf).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "10-bit RFU (rfu2)",
                     expected: 0,
                     found: 3
@@ -432,7 +432,7 @@ mod tests {
         assert!(matches!(
             SubpartVariety::try_from(0x0004),
             Err(crate::error::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "subpart_variety",
                     value: 4,
                     ..
@@ -442,7 +442,7 @@ mod tests {
         assert!(matches!(
             SubpartVariety::try_from(0xFFFF),
             Err(crate::error::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "subpart_variety",
                     value: 65535,
                     ..

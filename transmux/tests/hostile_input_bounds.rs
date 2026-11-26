@@ -17,7 +17,7 @@
 
 #![cfg(feature = "cenc")]
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use isobmff::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox, SgpdEntry};
 
 /// Per-thread live-allocation budget. Generous versus every legitimate path

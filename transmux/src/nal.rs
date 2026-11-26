@@ -139,7 +139,7 @@ impl NalCodec {
     }
 }
 
-broadcast_common::impl_spec_display!(NalCodec);
+broadcast_core::impl_spec_display!(NalCodec);
 
 /// The raw `nal_unit_type` from a single NAL unit's header, or `None` if the
 /// slice is shorter than that codec's NAL header.

@@ -7,9 +7,9 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for local_time_offset_descriptor.
 pub const TAG: u8 = 0x58;
@@ -316,12 +316,12 @@ impl Serialize for LocalTimeOffsetDescriptor {
         let mut offset = HEADER_LEN;
         for entry in &self.entries {
             buf[offset..offset + COUNTRY_CODE_LEN].copy_from_slice(&entry.country_code.0);
-            let region_id = broadcast_common::len::fit_bits(
+            let region_id = broadcast_core::len::fit_bits(
                 u64::from(entry.country_region_id),
                 REGION_ID_BITS,
                 "country_region_id",
             )? as u8;
-            let flags = (broadcast_common::len::fit_mask(
+            let flags = (broadcast_core::len::fit_mask(
                 region_id,
                 REGION_ID_MASK >> REGION_ID_SHIFT,
                 "region_id",

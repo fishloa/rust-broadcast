@@ -3,9 +3,9 @@
 //! reading past the buffer, and a packet longer than its own length field
 //! (trailing bytes after it, e.g. the next sub-packet) parses fine.
 
-use broadcast_common::Parse;
-use broadcast_common::Serialize;
-use broadcast_common::error::BufferTooShort;
+use broadcast_core::Parse;
+use broadcast_core::Serialize;
+use broadcast_core::error::BufferTooShort;
 use rist_runtime::{Error, GenericNack, NackFci, PacketRange, RangeNack, RttEcho};
 
 const PT_RTPFB: u8 = 205;

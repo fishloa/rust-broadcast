@@ -24,7 +24,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use broadcast_common::Timestamp;
-use broadcast_common::timescale::cmp_ticks;
+use broadcast_core::timescale::cmp_ticks;
 use transmux::TrackId;
 use transmux::audio_profile::AudioTrackSelector;
 use transmux::ll_hls::{LlHlsSegmenter, PartCutReady, PartInfo, SegmentInfo};
@@ -122,8 +122,8 @@ pub struct AudioFollower {
     pending: VecDeque<PendingPublish>,
     pending_since: Option<Instant>,
     held: VecDeque<Sample>,
-    origin: Option<(i64, broadcast_common::timescale::Timescale)>,
-    timescale: broadcast_common::timescale::Timescale,
+    origin: Option<(i64, broadcast_core::timescale::Timescale)>,
+    timescale: broadcast_core::timescale::Timescale,
     cuts: VecDeque<PartCutReady>,
     newest_dts: Option<i64>,
     next_seq: u32,
@@ -140,7 +140,7 @@ pub struct AudioFollower {
 fn part_target_for_frame_ms(
     part_target: Duration,
     frame_ticks: u32,
-    timescale: broadcast_common::timescale::Timescale,
+    timescale: broadcast_core::timescale::Timescale,
 ) -> Option<u32> {
     if frame_ticks == 0 {
         return None;
@@ -421,7 +421,7 @@ mod part_target_tests {
     }
 
     use super::part_target_for_frame_ms;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use std::time::Duration;
 
     /// Whole milliseconds as the part target the follower is configured with.
@@ -492,8 +492,8 @@ mod follower_tests {
         );
     }
 
-    fn ts_90k() -> broadcast_common::timescale::Timescale {
-        broadcast_common::timescale::Timescale::try_new(90_000).expect("non-zero timescale")
+    fn ts_90k() -> broadcast_core::timescale::Timescale {
+        broadcast_core::timescale::Timescale::try_new(90_000).expect("non-zero timescale")
     }
 
     fn frame(dts: i64) -> Sample {

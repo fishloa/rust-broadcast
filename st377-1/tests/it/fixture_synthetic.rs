@@ -13,7 +13,7 @@
 //! own tables would still be caught (unlike a plain in-memory round-trip
 //! test alone).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st377_1::{
     ContentStorage, EssenceContainerData, Identification, KlvItem, LocalSet, PartitionKind,
     PartitionPack, PartitionStatus, Preface, PrimerPack, RandomIndexPack, StructuralSetKind,

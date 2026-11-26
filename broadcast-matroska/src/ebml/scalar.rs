@@ -6,7 +6,7 @@
 //! of zero or eight, so a non-minimal integer or a four-octet float re-emits
 //! exactly as read.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 
@@ -106,14 +106,14 @@ impl Unsigned {
             return if value == 0 {
                 Ok(Self { value, width })
             } else {
-                Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                Err(Error::InvalidField(broadcast_core::error::InvalidField {
                     field: "Unsigned",
                     reason: "value does not fit the requested width",
                 }))
             };
         }
         if width.get() < minimal_unsigned_width(value).get() {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "Unsigned",
                 reason: "value does not fit the requested width",
             }));
@@ -164,14 +164,14 @@ impl Serialize for Unsigned {
             return if self.value == 0 {
                 Ok(0)
             } else {
-                Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                Err(Error::InvalidField(broadcast_core::error::InvalidField {
                     field: "Unsigned",
                     reason: "value does not fit the encoded width",
                 }))
             };
         }
         if width < minimal_unsigned_width(self.value).get() {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "Unsigned",
                 reason: "value does not fit the encoded width",
             }));
@@ -536,7 +536,7 @@ impl Serialize for Binary<'_> {
 
 /// The output-buffer-too-small error for a field of `need` bytes.
 fn missing_output(need: usize, have: usize) -> Error {
-    Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall { need, have })
+    Error::OutputBufferTooSmall(broadcast_core::error::OutputBufferTooSmall { need, have })
 }
 
 /// Narrowest non-empty width that holds `value`.

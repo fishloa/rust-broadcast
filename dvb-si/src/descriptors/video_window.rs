@@ -4,8 +4,8 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for video_window_descriptor.
 pub const TAG: u8 = 0x08;
@@ -91,17 +91,17 @@ impl Serialize for VideoWindowDescriptor {
         buf[1] = BODY_LEN;
         // 14 / 14 / 4-bit fields; wider values used to be masked down
         // silently (audit r03-W3 class).
-        let ho = broadcast_common::len::fit_bits(
+        let ho = broadcast_core::len::fit_bits(
             u64::from(self.horizontal_offset),
             SIZE_BITS,
             "horizontal_offset",
         )? as u16;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.vertical_offset),
             SIZE_BITS,
             "vertical_offset",
         )?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.window_priority),
             NIBBLE_MASK.count_ones(),
             "window_priority",
@@ -112,11 +112,7 @@ impl Serialize for VideoWindowDescriptor {
         buf[HEADER_LEN + MIDDLE_BYTE_OFFSET] = (self.vertical_offset >> FIELD2_MID_SHIFT) as u8;
         buf[HEADER_LEN + LOW_NIBBLE_OFFSET] = ((self.vertical_offset & u16::from(NIBBLE_MASK))
             << NIBBLE_SHIFT) as u8
-            | broadcast_common::len::fit_mask(
-                self.window_priority,
-                NIBBLE_MASK,
-                "window_priority",
-            )?;
+            | broadcast_core::len::fit_mask(self.window_priority, NIBBLE_MASK, "window_priority")?;
         Ok(len)
     }
 }

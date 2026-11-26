@@ -25,7 +25,8 @@ fuzz_target!(|data: &[u8]| {
     let flags = u32::from(data[2]);
     let body = &data[3..];
 
-    let _ = isobmff::cenc::SampleEncryptionBox::parse_body(body, version, flags, per_sample_iv_size);
+    let _ =
+        isobmff::cenc::SampleEncryptionBox::parse_body(body, version, flags, per_sample_iv_size);
     let _ = isobmff::cenc::SampleAuxInfoSizesBox::parse_body(body, version, flags);
     let _ = isobmff::cenc::SampleAuxInfoOffsetsBox::parse_body(body, version, flags);
     // The full-box entry points too (they re-read version/flags from the bytes).

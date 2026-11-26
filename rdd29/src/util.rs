@@ -1,6 +1,6 @@
 //! Shared bit-level parse/serialize helpers used across element modules.
 
-use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_core::bits::{BitReader, BitWriter};
 
 use crate::error::{BitResultExt, Error, Result};
 
@@ -24,7 +24,7 @@ pub(crate) fn read_reserved(
 ) -> Result<()> {
     let found = r.read_bits(width).ctx(field)?;
     if found != expected {
-        return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+        return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
             field,
             expected,
             found,
@@ -79,7 +79,7 @@ pub(crate) fn write_align_bits(
         return if align_bits == 0 {
             Ok(())
         } else {
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field,
                 value: u64::from(align_bits),
                 reason: "no padding bits are needed here, but align_bits is nonzero",
@@ -88,7 +88,7 @@ pub(crate) fn write_align_bits(
     }
     let max = (1u16 << pad) - 1;
     if u16::from(align_bits) > max {
-        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field,
             value: u64::from(align_bits),
             reason: "does not fit in the number of padding bits needed here",
@@ -103,7 +103,7 @@ pub(crate) fn write_align_bits(
 pub(crate) fn expect_fully_consumed(r: &BitReader<'_>, what: &'static str) -> Result<()> {
     let remaining = r.bits_remaining();
     if remaining != 0 {
-        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: what,
             value: remaining as u64,
             reason: "trailing unparsed bits remain in the element body",

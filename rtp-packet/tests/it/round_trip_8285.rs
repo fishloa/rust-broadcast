@@ -30,7 +30,7 @@
 
 #![cfg(feature = "rfc8285")]
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::rfc8285::{
     ExtensionElements, OneByteElement, OneByteElements, OneByteId, TwoByteElement, TwoByteElements,
     TwoByteId, parse_extensions,
@@ -345,7 +345,7 @@ fn two_byte_element_missing_its_length_byte_reports_the_exact_need() {
     assert_eq!(
         TwoByteElements::parse(&[0x01]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 2,
                 have: 1,
                 what: "RFC 8285 two-byte extension element length byte",

@@ -13,13 +13,13 @@
 //! A boundary the core marks as continuous, and a presentation that never
 //! signals a discontinuity, are passed through untouched.
 //!
-//! Every track's timescale is a `broadcast_common::timescale::Timescale`
+//! Every track's timescale is a `broadcast_core::timescale::Timescale`
 //! (non-zero by construction: a wire `mdhd.timescale` of `0` is refused when
 //! the box parses), so nothing here can treat a zero as `1`.
 
 use alloc::collections::BTreeMap;
 
-use broadcast_common::timescale::{Rounding, Timescale, from_micros, to_micros};
+use broadcast_core::timescale::{Rounding, Timescale, from_micros, to_micros};
 
 use crate::{Sample, TrackId, TrackSpec};
 
@@ -47,7 +47,7 @@ fn ticks_to_us(ticks: i64, timescale: Timescale) -> i128 {
 }
 
 /// `us` microseconds as ticks at `timescale`, saturating at the `i64` range.
-/// Uses `broadcast_common::timescale` so the conversion lives in one place;
+/// Uses `broadcast_core::timescale` so the conversion lives in one place;
 /// `us_to_ticks_agrees_with_the_old_arithmetic` pins the rounding.
 fn us_to_ticks(us: i128, timescale: Timescale) -> i64 {
     let ticks = from_micros(us, timescale, Rounding::Nearest);
@@ -116,8 +116,8 @@ impl Stitcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Parse;
     use broadcast_common::units::MICROS_PER_SEC;
+    use broadcast_core::Parse;
 
     fn spec(id: u32, timescale: u32) -> TrackSpec {
         let init = std::fs::read(test_fixtures::path("dash/init-stream1.m4s")).expect("init");
@@ -196,7 +196,7 @@ mod tests {
             .expect_err("a wire mdhd.timescale of 0 must not parse");
         assert_eq!(
             err,
-            isobmff::Error::InvalidValue(broadcast_common::error::InvalidValue {
+            isobmff::Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "timescale",
                 value: 0,
                 reason: "must be non-zero",
@@ -204,7 +204,7 @@ mod tests {
         );
         let ok = isobmff::init_segment::MediaHeaderBox::parse(&mdhd_v0(90_000))
             .expect("a non-zero mdhd.timescale parses");
-        assert_eq!(ok.timescale, broadcast_common::timescale!(90_000));
+        assert_eq!(ok.timescale, broadcast_core::timescale!(90_000));
         assert!(Timescale::try_new(0).is_err(), "the type has no zero value");
     }
 

@@ -1,6 +1,6 @@
 //! Message Descriptor — ETSI EN 300 468 V1.20.1 §6.4.8 (tag_extension 0x08).
 use super::*;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for Message<'a> {
     const TAG_EXTENSION: u8 = 0x08;

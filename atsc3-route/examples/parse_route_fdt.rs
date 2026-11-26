@@ -7,8 +7,8 @@
 //! Run with `cargo run -p atsc3-route --example parse_route_fdt`.
 
 use atsc3_route::RoutePacket;
-use broadcast_common::Parse;
 use broadcast_common::bounded::{Limit, read_file_bounded};
+use broadcast_core::Parse;
 
 /// One ROUTE FDT-Instance packet: a single ALP/TS-carried signalling message,
 /// so 1 MiB is already far past any real instance.

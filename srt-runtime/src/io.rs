@@ -66,9 +66,9 @@
 //! `tokio` feature, the crate stays `no_std`+`alloc` and nothing in this
 //! module is compiled.
 
-use broadcast_common::error::InvalidField;
 use broadcast_common::stage::Timestamp;
 use broadcast_common::timeouts::Timeouts;
+use broadcast_core::error::InvalidField;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -3430,7 +3430,7 @@ mod socket_id_tests {
 
 #[cfg(test)]
 mod isn_tests {
-    use broadcast_common::error::InvalidField;
+    use broadcast_core::error::InvalidField;
 
     use super::*;
     use crate::packet::{
@@ -3520,7 +3520,7 @@ mod adapter_tests {
         AckCif, AckPacket, DataPacket, DropReqPacket, EncryptionKeyField, HandshakeExtensionFlags,
         HandshakeExtensions, HandshakePacket, PacketPosition,
     };
-    use broadcast_common::error::BufferTooShort;
+    use broadcast_core::error::BufferTooShort;
 
     const PEER: &str = "10.0.0.1:9999";
     /// TSBPD latency used by the test drivers (the spec minimum, §4.5.1).

@@ -14,7 +14,7 @@
 
 use crate::ts_hls_stage;
 use crate::ts_psi::{first_section, parse_pmt, pid_of, pusi_of, split_lp};
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::pipeline::CodecConfig;
 

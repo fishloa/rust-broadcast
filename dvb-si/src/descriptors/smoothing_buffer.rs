@@ -6,9 +6,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for smoothing_buffer_descriptor.
 pub const TAG: u8 = 0x10;
@@ -106,13 +106,13 @@ impl Serialize for SmoothingBufferDescriptor {
         need_out(buf, len)?;
         // 22-bit fields: a wider value used to be masked down silently
         // (audit r03-W3 class).
-        let slr = broadcast_common::len::fit_bits(
+        let slr = broadcast_core::len::fit_bits(
             u64::from(self.sb_leak_rate),
             FIELD_BITS,
             "sb_leak_rate",
         )? as u32;
         let ss =
-            broadcast_common::len::fit_bits(u64::from(self.sb_size), FIELD_BITS, "sb_size")? as u32;
+            broadcast_core::len::fit_bits(u64::from(self.sb_size), FIELD_BITS, "sb_size")? as u32;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         let packed = ((self.reserved_leak_rate.get() as u32) << FIELD_BITS) | slr;

@@ -13,11 +13,11 @@ pub enum Error {
     /// Input buffer shorter than
     /// required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// A KLV triplet or BER length token failure (SMPTE ST 336 framing, as
     /// constrained for MXF by `private/specs-verified/smpte/st377-1/st377-1.md`
@@ -94,7 +94,7 @@ pub enum Error {
     /// A count or length did not fit its wire width (it would otherwise be
     /// silently truncated by the narrowing cast).
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::len::FieldOverflow),
     /// A UTF-16 string property contained an invalid UTF-16 code unit
     /// sequence (unpaired surrogate).
     #[error("invalid UTF-16 in property {tag:#06X} ({name})")]

@@ -11,10 +11,10 @@ use crate::box_types::{
 };
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::Serialize;
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::len::need_out;
 use broadcast_common::wire::{u24_at, u32_at};
+use broadcast_core::Serialize;
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::len::need_out;
 
 /// Byte offset of a FullBox 24-bit `flags` field in a whole box.
 pub const FULLBOX_FLAGS_WIRE_OFFSET: usize =
@@ -134,7 +134,7 @@ pub fn serialize_flat_table<E>(
     let need = flat_table_len(entries.len(), entry_len);
     need_out(buf, need)?;
     let mut c = crate::box_types::write_full_box_header(buf, fourcc, need, version, flags, false)?;
-    let entry_count = broadcast_common::len::fit_u32(entries.len(), "entry_count")?;
+    let entry_count = broadcast_core::len::fit_u32(entries.len(), "entry_count")?;
     buf[c..c + BOX_TYPE_SIZE].copy_from_slice(&entry_count.to_be_bytes());
     c += BOX_TYPE_SIZE;
     for entry in entries {
@@ -455,7 +455,7 @@ impl OpaqueBox {
             buf[c..c + LARGESIZE_SIZE].copy_from_slice(&size.to_be_bytes());
             c += LARGESIZE_SIZE;
         } else {
-            let size32 = broadcast_common::len::fit_u32(size as usize, "opaque box size")?;
+            let size32 = broadcast_core::len::fit_u32(size as usize, "opaque box size")?;
             buf[c..c + BOX_TYPE_SIZE].copy_from_slice(&size32.to_be_bytes());
             c += BOX_TYPE_SIZE;
             buf[c..c + BOX_TYPE_SIZE].copy_from_slice(&self.box_type);

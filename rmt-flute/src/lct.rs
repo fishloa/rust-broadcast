@@ -17,8 +17,8 @@
 //! the space up to `HDR_LEN` words ([`crate::ext`]).
 
 use alloc::vec::Vec;
-use broadcast_common::error::UnsupportedVersion;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::error::UnsupportedVersion;
+use broadcast_core::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::ext::{self, HeaderExtension, WORD};
@@ -107,14 +107,14 @@ pub struct LctHeader<'a> {
 fn flags_from_lengths(cci: usize, tsi: usize, toi: usize) -> Result<(u8, u8, u8, u8)> {
     // CCI: 4*(C+1) bytes → C in 0..=3.
     if cci == 0 || !cci.is_multiple_of(WORD) {
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "CCI",
             reason: "CCI length must be a non-zero multiple of 4 bytes",
         }));
     }
     let words = cci / WORD;
     if !(CCI_WORDS_MIN..=CCI_WORDS_MAX).contains(&words) {
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "CCI",
             reason: "CCI length must be 4, 8, 12 or 16 bytes (C in 0..=3)",
         }));
@@ -126,13 +126,13 @@ fn flags_from_lengths(cci: usize, tsi: usize, toi: usize) -> Result<(u8, u8, u8,
     let h_tsi = !tsi.is_multiple_of(WORD);
     let h_toi = !toi.is_multiple_of(WORD);
     if h_tsi != h_toi {
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "H",
             reason: "TSI and TOI must agree on the shared half-word (H) bit",
         }));
     }
     if !tsi.is_multiple_of(H_HALFWORD_LEN) || !toi.is_multiple_of(H_HALFWORD_LEN) {
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "TSI/TOI",
             reason: "TSI and TOI lengths must be a whole number of 16-bit half-words",
         }));
@@ -143,7 +143,7 @@ fn flags_from_lengths(cci: usize, tsi: usize, toi: usize) -> Result<(u8, u8, u8,
     let s = (s_bytes / WORD) as u8;
     let o = (o_bytes / WORD) as u8;
     if s > 1 {
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "S",
             reason: "TSI 32-bit-word count (S) must be 0 or 1",
         }));
@@ -161,7 +161,7 @@ fn flags_from_lengths(cci: usize, tsi: usize, toi: usize) -> Result<(u8, u8, u8,
     // workspace's byte-exact round-trip invariant, and it is reachable by a
     // well-behaved sender: wide TOIs are legitimate in FLUTE.
     if o > O_FLAG_MASK as u8 {
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "O",
             reason: "TOI 32-bit-word count (O) must be 0..=3 (2-bit field)",
         }));
@@ -300,26 +300,26 @@ impl<'a> LctHeader<'a> {
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
         need_out(out, total)?;
-        broadcast_common::len::fit_bits(self.version as u64, VERSION_BITS, "version")?;
+        broadcast_core::len::fit_bits(self.version as u64, VERSION_BITS, "version")?;
         if self.version != LCT_VERSION {
             return Err(Error::UnsupportedVersion(UnsupportedVersion {
                 what: "LCT",
                 found: self.version,
             }));
         }
-        broadcast_common::len::fit_bits(self.psi as u64, PSI_BITS, "PSI")?;
-        broadcast_common::len::fit_bits(self.reserved as u64, RES_BITS, "Res")?;
+        broadcast_core::len::fit_bits(self.psi as u64, PSI_BITS, "PSI")?;
+        broadcast_core::len::fit_bits(self.reserved as u64, RES_BITS, "Res")?;
         // Validate the flag-derived widths (also yields C/S/O/H).
         let (c, s, o, h) = flags_from_lengths(self.cci.len(), self.tsi.len(), self.toi.len())?;
 
         let words = total / WORD;
         if !total.is_multiple_of(WORD) {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "HDR_LEN",
                 reason: "total LCT header length is not a multiple of 4 bytes",
             }));
         }
-        broadcast_common::len::fit_bits(words as u64, HDR_LEN_BITS, "HDR_LEN")?;
+        broadcast_core::len::fit_bits(words as u64, HDR_LEN_BITS, "HDR_LEN")?;
 
         // Pack the first 16-bit word MSB-first:
         // V(4) C(2) PSI(2) S(1) O(2) H(1) Res(2) A(1) B(1).
@@ -352,7 +352,7 @@ impl<'a> LctHeader<'a> {
     }
 }
 
-impl broadcast_common::Serialize for LctHeader<'_> {
+impl broadcast_core::Serialize for LctHeader<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -364,7 +364,7 @@ impl broadcast_common::Serialize for LctHeader<'_> {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for LctHeader<'a> {
+impl<'a> broadcast_core::Parse<'a> for LctHeader<'a> {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -422,7 +422,7 @@ mod tests {
         // The raw-byte shape accepted any length; the typed value refuses it.
         assert!(matches!(
             Toi::new(0, 16),
-            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "TOI",
                 ..
             }))
@@ -689,7 +689,7 @@ mod tests {
         let mut out = vec![0u8; 32];
         assert!(matches!(
             hdr.serialize_into(&mut out),
-            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "H",
                 ..
             }))

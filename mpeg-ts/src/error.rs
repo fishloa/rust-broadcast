@@ -14,19 +14,19 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// CRC-32 validation failed for a table section.
     #[error(transparent)]
-    CrcMismatch(#[from] broadcast_common::error::CrcMismatch),
+    CrcMismatch(#[from] broadcast_core::error::CrcMismatch),
 
     /// A fixed marker did not match (TS sync byte, expected `0x47`).
     #[error(transparent)]
-    InvalidSync(#[from] broadcast_common::error::InvalidSync),
+    InvalidSync(#[from] broadcast_core::error::InvalidSync),
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// A `section_length` declared more bytes than the containing buffer could hold.
     #[error("section_length {declared} exceeds remaining buffer ({available} bytes)")]
@@ -54,9 +54,9 @@ pub enum Error {
     ClockOutOfRange(#[from] broadcast_common::clock33::ClockOutOfRange),
 
     /// A length or count field's value does not fit its wire field
-    /// (see `broadcast_common::len`, #1129).
+    /// (see `broadcast_core::len`, #1129).
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::len::FieldOverflow),
 
     /// The packet has no adaptation field, so it has no PCR (and no OPCR)
     /// slot to rewrite.

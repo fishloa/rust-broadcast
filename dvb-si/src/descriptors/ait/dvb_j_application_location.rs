@@ -9,8 +9,8 @@
 use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for dvb_j_application_location_descriptor (AIT namespace).
 pub const TAG: u8 = 0x04;
@@ -110,12 +110,11 @@ impl Serialize for DvbJApplicationLocationDescriptor<'_> {
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
-        buf[pos] =
-            broadcast_common::len::fit_u8(self.base_directory.len(), "base_directory_length")?;
+        buf[pos] = broadcast_core::len::fit_u8(self.base_directory.len(), "base_directory_length")?;
         pos += 1;
         buf[pos..pos + self.base_directory.len()].copy_from_slice(self.base_directory.raw());
         pos += self.base_directory.len();
-        buf[pos] = broadcast_common::len::fit_u8(
+        buf[pos] = broadcast_core::len::fit_u8(
             self.classpath_extension.len(),
             "classpath_extension_length",
         )?;

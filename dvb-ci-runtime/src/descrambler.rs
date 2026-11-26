@@ -325,7 +325,7 @@ mod tests {
         r_apdu, ser,
     };
     use crate::managed::CaError;
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     use mpeg_ts::pid::well_known::CAT as CAT_PID;
 
     fn packet(pid: Pid, fill: u8) -> Vec<u8> {

@@ -30,8 +30,8 @@ use crate::nal::{NalCodec, caption_cc_data};
 use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use broadcast_common::Parse;
 use broadcast_common::parity::has_odd_parity;
+use broadcast_core::Parse;
 use cc_data::decode::{Cea608Channel, Cea608Decoder, Cea708Decoder};
 use cc_data::{CcData, CcType};
 use dvb_si::descriptors::atsc_caption_service::{AtscCaptionKind, AtscCaptionService};
@@ -128,7 +128,7 @@ pub fn declared_caption_services(es_info_descriptors: &[u8]) -> Vec<AtscCaptionS
         .collect()
 }
 
-broadcast_common::impl_spec_display!(DetectedCaption);
+broadcast_core::impl_spec_display!(DetectedCaption);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Carriage {

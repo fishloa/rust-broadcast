@@ -2,7 +2,7 @@
 
 use crate::error::{Error, Result};
 use crate::pid::Pid;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 /// Size of one MPEG-TS packet (ETSI EN 300 468 §3.2, ISO/IEC 13818-1 §2.4.3.2).
 pub const TS_PACKET_SIZE: usize = 188;
@@ -125,7 +125,7 @@ impl ScramblingControl {
     }
 }
 
-broadcast_common::impl_spec_display!(ScramblingControl);
+broadcast_core::impl_spec_display!(ScramblingControl);
 
 /// 2-bit `adaptation_field_control` field — ITU-T H.222.0 (08/2023) Table 2-5.
 ///
@@ -194,7 +194,7 @@ impl AdaptationFieldControl {
     }
 }
 
-broadcast_common::impl_spec_display!(AdaptationFieldControl);
+broadcast_core::impl_spec_display!(AdaptationFieldControl);
 
 /// ISO/IEC 13818-1 §2.4.3.3: transport header byte 1 bit 7 = tei (Transport Error Indicator).
 const TEI_MASK: u8 = 0x80;
@@ -444,7 +444,7 @@ impl TsHeader {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for TsHeader {
+impl<'a> broadcast_core::Parse<'a> for TsHeader {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -452,7 +452,7 @@ impl<'a> broadcast_common::Parse<'a> for TsHeader {
     }
 }
 
-impl broadcast_common::Serialize for TsHeader {
+impl broadcast_core::Serialize for TsHeader {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
@@ -576,7 +576,7 @@ impl<'a> TsPacket<'a> {
     pub fn parse(buf: &'a [u8]) -> Result<Self> {
         need_in(buf, TS_PACKET_SIZE, "TsPacket")?;
         if buf[0] != TS_SYNC_BYTE {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "TS sync byte",
                 expected: u32::from(TS_SYNC_BYTE),
                 found: u32::from(buf[0]),
@@ -584,7 +584,7 @@ impl<'a> TsPacket<'a> {
         }
 
         let raw: &[u8; TS_PACKET_SIZE] = buf[..TS_PACKET_SIZE].try_into().map_err(|_| {
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: TS_PACKET_SIZE,
                 have: buf.len(),
                 what: "TsPacket::parse (array conversion)",
@@ -812,7 +812,7 @@ impl Pcr {
             buf.get(from..end)
                 .and_then(|s| s.try_into().ok())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: end,
                         have: buf.len(),
                         what: "adaptation_field PCR",
@@ -869,7 +869,7 @@ impl LtwOffset {
     /// Wrap a value, or [`Error::FieldOverflow`] if it does not fit 15 bits.
     pub fn new(value: u16) -> Result<Self> {
         let fitted =
-            broadcast_common::len::fit_bits(u64::from(value), LTW_OFFSET_BITS, "ltw_offset")?;
+            broadcast_core::len::fit_bits(u64::from(value), LTW_OFFSET_BITS, "ltw_offset")?;
         Ok(Self(fitted as u16))
     }
 
@@ -959,17 +959,17 @@ impl SeamlessSplice {
     /// The 5 `DTS_next_AU` field bytes, or [`Error::FieldOverflow`] when a
     /// field does not fit its wire width.
     pub fn to_marked_field(&self) -> Result<[u8; DTS_NEXT_AU_FIELD_LEN]> {
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.splice_type),
             SPLICE_TYPE_BITS,
             "seamless_splice.splice_type",
         )?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             self.dts_next_au,
             DTS_NEXT_AU_BITS,
             "seamless_splice.DTS_next_AU",
         )?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.marker_bits),
             SPLICE_MARKER_BITS,
             "seamless_splice.marker_bit",
@@ -1089,11 +1089,8 @@ impl PiecewiseRate {
 
     /// Wrap a value, or [`Error::FieldOverflow`] if it does not fit 22 bits.
     pub fn new(value: u32) -> Result<Self> {
-        let fitted = broadcast_common::len::fit_bits(
-            u64::from(value),
-            PIECEWISE_RATE_BITS,
-            "piecewise_rate",
-        )?;
+        let fitted =
+            broadcast_core::len::fit_bits(u64::from(value), PIECEWISE_RATE_BITS, "piecewise_rate")?;
         Ok(Self(fitted as u32))
     }
 
@@ -1153,7 +1150,7 @@ impl<'a> AdaptationFieldExtension<'a> {
         // At least 1 byte (the flags byte) must be present inside the extension.
         if data.len() < 1 + ext_len || ext_len < 1 {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 2.max(1 + ext_len),
                     have: data.len(),
                     what: "adaptation_field_extension body",
@@ -1237,9 +1234,9 @@ impl<'a> AdaptationFieldExtension<'a> {
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        buf[0] = broadcast_common::len::fit_u8(need - 1, "adaptation_field_extension_length")?;
+        buf[0] = broadcast_core::len::fit_u8(need - 1, "adaptation_field_extension_length")?;
 
-        let mut flags = broadcast_common::len::fit_mask(
+        let mut flags = broadcast_core::len::fit_mask(
             self.reserved_flags,
             AFE_RESERVED_FLAGS_MASK,
             "adaptation_field_extension.reserved",
@@ -1261,7 +1258,7 @@ impl<'a> AdaptationFieldExtension<'a> {
 
         if let Some(ltw) = self.ltw {
             let ltw_valid = if ltw.ltw_valid_flag { AFE_LTW_FLAG } else { 0 };
-            let offset = broadcast_common::len::fit_bits(
+            let offset = broadcast_core::len::fit_bits(
                 u64::from(ltw.ltw_offset.get()),
                 LTW_OFFSET_BITS,
                 "ltw_offset",
@@ -1271,13 +1268,13 @@ impl<'a> AdaptationFieldExtension<'a> {
             cursor += LTW_FIELD_LEN;
         }
         if let Some(rate) = self.piecewise_rate {
-            let rate = broadcast_common::len::fit_bits(
+            let rate = broadcast_core::len::fit_bits(
                 u64::from(rate.get()),
                 PIECEWISE_RATE_BITS,
                 "piecewise_rate",
             )?;
             // reserved(2) | 22-bit rate (ISO/IEC 13818-1 Table 2-6).
-            buf[cursor] = (broadcast_common::len::fit_mask(
+            buf[cursor] = (broadcast_core::len::fit_mask(
                 self.piecewise_rate_reserved,
                 PIECEWISE_RATE_RESERVED_VALUE,
                 "piecewise_rate.reserved",
@@ -1357,7 +1354,7 @@ impl Default for AdaptationField<'_> {
 
 /// Overwrite the 6 reserved bits of an encoded PCR/OPCR field.
 pub(crate) fn set_pcr_reserved(field: &mut [u8], reserved: u8) -> Result<()> {
-    let reserved = broadcast_common::len::fit_bits(
+    let reserved = broadcast_core::len::fit_bits(
         u64::from(reserved),
         PCR_RESERVED_BITS_COUNT,
         "pcr_reserved",
@@ -1396,7 +1393,7 @@ impl<'a> AdaptationField<'a> {
     /// `TsPacket::parse` captures and hands them off.
     pub(crate) fn parse(af: &'a [u8]) -> Result<Self> {
         let flags = *af.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "adaptation_field flags",
@@ -1426,7 +1423,7 @@ impl<'a> AdaptationField<'a> {
         };
         let splice_countdown = if flags & AF_SPLICING_FLAG != 0 {
             let b = *af.get(cursor).ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cursor + 1,
                     have: af.len(),
                     what: "adaptation_field splice_countdown",
@@ -1442,7 +1439,7 @@ impl<'a> AdaptationField<'a> {
         // transport_private_data_length(8) + transport_private_data_byte * N
         let transport_private_data = if flags & AF_TRANSPORT_PRIVATE_DATA_FLAG != 0 {
             let tpd_len = *af.get(cursor).ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cursor + 1,
                     have: af.len(),
                     what: "transport_private_data_length",
@@ -1451,7 +1448,7 @@ impl<'a> AdaptationField<'a> {
             cursor += 1;
             let end = cursor + tpd_len;
             let slice = af.get(cursor..end).ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: end,
                     have: af.len(),
                     what: "transport_private_data",
@@ -1466,7 +1463,7 @@ impl<'a> AdaptationField<'a> {
         // adaptation_field_extension (ISO/IEC 13818-1 §2.4.3.5):
         let extension = if flags & AF_EXTENSION_FLAG != 0 {
             let ext_data = af.get(cursor..).ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cursor + 1,
                     have: af.len(),
                     what: "adaptation_field_extension",
@@ -1588,7 +1585,7 @@ impl<'a> AdaptationField<'a> {
             cursor += 1;
         }
         if let Some(tpd) = self.transport_private_data {
-            buf[cursor] = broadcast_common::len::fit_u8(
+            buf[cursor] = broadcast_core::len::fit_u8(
                 tpd.len(),
                 "adaptation_field.transport_private_data_length",
             )?;

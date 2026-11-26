@@ -6,8 +6,8 @@
 //!   mp4a sample entry (assert both found).
 //! EXIT CRITERION 3: A leaf-box unit test (mvhd v0) round-trips (in `init_segment` module).
 
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse, Serialize};
 use isobmff::TrackId;
 use isobmff::{MovieBox, SampleDescriptionBox, SampleEntryVariant};
 

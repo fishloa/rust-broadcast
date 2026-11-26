@@ -3,7 +3,7 @@
 //! (ITU-T H.264 §9.1), and RBSP trailing bits (§7.3.2.11).
 
 use alloc::vec::Vec;
-use broadcast_common::bits::BitBuf;
+use broadcast_core::bits::BitBuf;
 
 #[derive(Default)]
 pub(crate) struct BitWriter {

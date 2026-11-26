@@ -1,7 +1,7 @@
 //! All three lacing forms built from a real frame payload, plus the fixture's
 //! own blocks (RFC 9559 §12).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use broadcast_matroska::ebml::vint::{VintSize, VintWidth};
 use broadcast_matroska::matroska::block::{
     FLAG_KEYFRAME, FLAG_LACING_EBML, FLAG_LACING_FIXED, FLAG_LACING_XIPH, XIPH_CONTINUATION,

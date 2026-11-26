@@ -2,7 +2,7 @@
 //! is allocated, so a hostile packet with a long invalid text field costs no
 //! allocation of the text's size (it used to `to_vec()` first, then validate).
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use rtp_packet::rtcp::{Bye, SourceDescription};
 use test_alloc::ThreadCounting;
 

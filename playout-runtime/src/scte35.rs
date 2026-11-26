@@ -2,7 +2,7 @@
 //! [#748](https://github.com/fishloa/rust-broadcast/issues/748)):
 //! `splice_insert()` — ANSI/SCTE 35 2023r1 §9.7.3, Table 10 — built and
 //! serialized with `scte35-splice`'s own
-//! [`Serialize`](broadcast_common::Serialize), not hand-assembled bytes.
+//! [`Serialize`](broadcast_core::Serialize), not hand-assembled bytes.
 //!
 //! This module decides *what* cue to emit and *where* (after conditioning);
 //! it does not decide *how the splice lands* against real segment/keyframe
@@ -45,7 +45,7 @@ impl BreakEdge {
         }
     }
 }
-broadcast_common::impl_spec_display!(BreakEdge);
+broadcast_core::impl_spec_display!(BreakEdge);
 
 /// Build a `splice_insert()` command for a transition, snapping its target
 /// instant onto the nearest of `candidates` (real segment or keyframe
@@ -109,7 +109,7 @@ pub fn build_splice_insert(
 
 /// Wrap a built [`SpliceInsert`] into a clear (unencrypted)
 /// `splice_info_section()`, ready to serialize
-/// (`broadcast_common::Serialize::to_bytes`) onto the SCTE-35 elementary
+/// (`broadcast_core::Serialize::to_bytes`) onto the SCTE-35 elementary
 /// stream/PID.
 #[must_use]
 pub fn to_section<'a>(insert: SpliceInsert) -> SpliceInfoSection<'a> {
@@ -122,7 +122,7 @@ pub fn to_section<'a>(insert: SpliceInsert) -> SpliceInfoSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
     use ssai_runtime::Error as SsaiError;
 
     const WRAP: u64 = clock33::WRAP_33BIT;

@@ -8,8 +8,8 @@ use super::descriptor_body;
 use crate::descriptors::lang_text::LANG_LEN;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for data_broadcast_descriptor.
 pub const TAG: u8 = 0x64;
@@ -144,13 +144,13 @@ impl Serialize for DataBroadcastDescriptor<'_> {
         pos += ID_LEN;
         buf[pos] = self.component_tag;
         pos += COMPONENT_TAG_LEN;
-        buf[pos] = broadcast_common::len::fit_u8(self.selector.len(), "selector_length")?;
+        buf[pos] = broadcast_core::len::fit_u8(self.selector.len(), "selector_length")?;
         pos += SELECTOR_LEN_FIELD;
         buf[pos..pos + self.selector.len()].copy_from_slice(self.selector);
         pos += self.selector.len();
         buf[pos..pos + LANG_LEN].copy_from_slice(&self.language_code.0);
         pos += LANG_LEN;
-        buf[pos] = broadcast_common::len::fit_u8(self.text.len(), "text_length")?;
+        buf[pos] = broadcast_core::len::fit_u8(self.text.len(), "text_length")?;
         pos += TEXT_LEN_FIELD;
         buf[pos..pos + self.text.len()].copy_from_slice(self.text.raw());
         Ok(len)

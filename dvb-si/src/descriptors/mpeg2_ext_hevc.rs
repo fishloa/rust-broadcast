@@ -45,7 +45,7 @@
 use crate::error::Result;
 use crate::h222_bits::{BITS_PER_BYTE, BitReader, BitWriter, invalid};
 use alloc::vec::Vec;
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::reserved::ReservedOnes;
 
 const TAG: u8 = super::mpeg2_extension::TAG;
 /// `copied_44bits` width (the 43 profile-dependent bits + the 1-bit

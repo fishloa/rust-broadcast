@@ -5,7 +5,7 @@
 //!
 //! Run with `cargo run -p st12-1 --example parse_frame`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st12_1::{FrameRate, LtcFrame};
 
 fn main() {

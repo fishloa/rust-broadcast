@@ -224,7 +224,7 @@ impl AspectRatioIdc {
     }
 }
 
-broadcast_common::impl_spec_display!(AspectRatioIdc, Reserved);
+broadcast_core::impl_spec_display!(AspectRatioIdc, Reserved);
 
 /// A *specified* sample (pixel) aspect ratio: both terms non-zero. Unspecified
 /// is `Option::None` at every use site, never a `0:0` sentinel.
@@ -402,7 +402,7 @@ impl VideoFormat {
     }
 }
 
-broadcast_common::impl_spec_display!(VideoFormat, Reserved);
+broadcast_core::impl_spec_display!(VideoFormat, Reserved);
 
 /// H.264 Table E-3 / H.265 Table E.3 `colour_primaries` (identical rows in
 /// both specs), the wire form kept losslessly.
@@ -504,7 +504,7 @@ impl ColourPrimaries {
     }
 }
 
-broadcast_common::impl_spec_display!(ColourPrimaries, Reserved);
+broadcast_core::impl_spec_display!(ColourPrimaries, Reserved);
 
 /// H.264 Table E-4 / H.265 Table E.4 `transfer_characteristics` (identical
 /// rows in both specs), the wire form kept losslessly.
@@ -635,7 +635,7 @@ impl TransferCharacteristics {
     }
 }
 
-broadcast_common::impl_spec_display!(TransferCharacteristics, Reserved);
+broadcast_core::impl_spec_display!(TransferCharacteristics, Reserved);
 
 /// H.264 Table E-5 / H.265 Table E.5 `matrix_coefficients` (identical rows in
 /// both specs), the wire form kept losslessly.
@@ -771,7 +771,7 @@ impl MatrixCoefficients {
     }
 }
 
-broadcast_common::impl_spec_display!(MatrixCoefficients, Reserved);
+broadcast_core::impl_spec_display!(MatrixCoefficients, Reserved);
 
 /// `colour_description_present_flag == 1`: H.264 §E.2.1 Tables E-3..E-5 /
 /// H.265 §E.3.1 Tables E.3..E.5.
@@ -1107,7 +1107,7 @@ impl ActiveFormatDescription {
         }
     }
 }
-broadcast_common::impl_spec_display!(ActiveFormatDescription, Reserved);
+broadcast_core::impl_spec_display!(ActiveFormatDescription, Reserved);
 
 /// TS 101 154 Table B.7. Only the signalled pair is `Some`; the 14-bit values
 /// are kept as wire values.
@@ -1137,7 +1137,7 @@ impl UserDataCarriage {
         }
     }
 }
-broadcast_common::impl_spec_display!(UserDataCarriage);
+broadcast_core::impl_spec_display!(UserDataCarriage);
 
 /// Picture-level "area of interest" state in force for an access unit.
 #[non_exhaustive]
@@ -1186,7 +1186,7 @@ impl AfdPersistence {
         }
     }
 }
-broadcast_common::impl_spec_display!(AfdPersistence);
+broadcast_core::impl_spec_display!(AfdPersistence);
 
 /// Carried twice, always behind `alloc::sync::Arc` because it is shared by
 /// every picture of a configuration and never copied per sample:

@@ -50,7 +50,7 @@ It does **not**:
 ## Quick start
 
 ```rust
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st337::{Burst, DataMode};
 
 let payload = [0xDE, 0xAD, 0xBE, 0xEF];

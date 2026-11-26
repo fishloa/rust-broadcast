@@ -5,8 +5,8 @@ use crate::segments::{
     PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
     be_u16,
 };
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// The CLUT_definition_segment segment_type.
 pub const SEGMENT_TYPE: u8 = 0x12;
@@ -106,7 +106,7 @@ impl ClutEntry {
         // The flags byte's reserved bits are `[4:1]` only; a stray bit there
         // would corrupt a flag (#1108/DS-O2 class).
         if self.reserved_flags & !RESERVED_FLAGS_MASK != 0 {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "CLUT_entry.reserved",
                 value: u64::from(self.reserved_flags),
                 reason: "reserved bits must lie in bits [4:1] of the flags byte",
@@ -123,7 +123,7 @@ impl ClutEntry {
                 ("CLUT_entry T_value", self.t_value, REDUCED_T_MAX),
             ];
             if let Some((field, value, _)) = components.into_iter().find(|&(_, v, max)| v > max) {
-                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field,
                     value: u64::from(value),
                     reason: "reduced-range entry needs Y<=63, Cr<=15, Cb<=15, T<=3",
@@ -234,7 +234,7 @@ impl<'a> Parse<'a> for ClutDefinitionSegment {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HEADER_LEN + FIXED_LEN, "CLUT_definition_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "sync_byte",
                 expected: u32::from(crate::pes_data_field::SYNC_BYTE),
                 found: u32::from(bytes[0]),
@@ -308,12 +308,12 @@ impl Serialize for ClutDefinitionSegment {
             .copy_from_slice(&seg_len.to_be_bytes());
 
         buf[HEADER_LEN + CLUT_ID_OFFSET] = self.clut_id;
-        buf[HEADER_LEN + CLUT_VERSION_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + CLUT_VERSION_OFFSET] = (broadcast_core::len::fit_mask(
             self.clut_version_number,
             CLUT_VERSION_RFU_MASK,
             "clut_version_number",
         )? << CLUT_VERSION_SHIFT)
-            | broadcast_common::len::fit_mask(self.reserved, CLUT_VERSION_RFU_MASK, "reserved")?;
+            | broadcast_core::len::fit_mask(self.reserved, CLUT_VERSION_RFU_MASK, "reserved")?;
 
         let mut off = HEADER_LEN + FIXED_LEN;
         for entry in &self.entries {
@@ -328,7 +328,7 @@ impl Serialize for ClutDefinitionSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     /// DS-O2 (#1108): a reduced-range component wider than its 6/4/4/2-bit slot
     /// used to be shifted into its neighbour's bits (silent corruption); it
@@ -411,7 +411,7 @@ mod tests {
         ];
         assert!(matches!(
             ClutDefinitionSegment::parse(&bytes),
-            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 found: 0x00,
                 ..
             }))

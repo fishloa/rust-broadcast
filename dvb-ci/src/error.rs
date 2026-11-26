@@ -9,10 +9,10 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input shorter than required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
     /// Output buffer smaller than `serialized_len()`.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
     /// An object's 3-byte `apdu_tag` did not match the expected value.
     #[error("unexpected apdu_tag: got {got:#08X}, expected {expected:#08X} ({what})")]
     UnexpectedApduTag {
@@ -54,7 +54,7 @@ pub enum Error {
     /// A declared `length_field` did not match the actual body length, or the
     /// body did not fit the fixed shape the object requires.
     #[error(transparent)]
-    LengthMismatch(#[from] broadcast_common::error::LengthMismatch),
+    LengthMismatch(#[from] broadcast_core::error::LengthMismatch),
     /// A fixed-shape object had a body length the spec does not allow.
     #[error("invalid object body for {what}: {reason}")]
     InvalidObject {

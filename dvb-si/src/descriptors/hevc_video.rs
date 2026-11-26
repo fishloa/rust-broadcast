@@ -8,9 +8,9 @@
 use super::descriptor_body;
 use super::hdr_wcg_idc::HdrWcgIdc;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for HEVC_video_descriptor.
 pub const TAG: u8 = 0x38;
@@ -347,13 +347,13 @@ impl Serialize for HevcVideoDescriptor {
                 reason: "exceeds 5-bit field",
             });
         }
-        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN] = (broadcast_core::len::fit_mask(
             self.profile_space,
             PROFILE_SPACE_MASK,
             "profile_space",
         )? << PROFILE_SPACE_SHIFT)
             | ((u8::from(self.tier_flag)) << TIER_FLAG_SHIFT)
-            | broadcast_common::len::fit_mask(self.profile_idc, PROFILE_IDC_MASK, "profile_idc")?;
+            | broadcast_core::len::fit_mask(self.profile_idc, PROFILE_IDC_MASK, "profile_idc")?;
 
         // profile_compatibility_indication (32 bits big-endian)
         buf[HEADER_LEN + PROFILE_COMPATIBILITY_OFFSET..HEADER_LEN + CONSTRAINT_FLAGS_OFFSET]
@@ -361,7 +361,7 @@ impl Serialize for HevcVideoDescriptor {
 
         // constraint flags byte: flags(4) | copied_44bits hi 4 bits
         let copied =
-            broadcast_common::len::fit_mask(self.copied_44bits, COPIED_BITS_MASK, "copied_44bits")?;
+            broadcast_core::len::fit_mask(self.copied_44bits, COPIED_BITS_MASK, "copied_44bits")?;
         buf[HEADER_LEN + CONSTRAINT_FLAGS_OFFSET] = (u8::from(self.progressive_source_flag)
             << PROGRESSIVE_SOURCE_FLAG_SHIFT)
             | (u8::from(self.interlaced_source_flag) << INTERLACED_SOURCE_FLAG_SHIFT)
@@ -387,7 +387,7 @@ impl Serialize for HevcVideoDescriptor {
             | (u8::from(self.sub_pic_hrd_params_not_present_flag)
                 << SUB_PIC_HRD_PARAMS_NOT_PRESENT_FLAG_SHIFT)
             | ((self.reserved.get() as u8) << RESERVED_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.hdr_wcg_idc.to_u8(),
                 HDR_WCG_IDC_MASK,
                 "hdr_wcg_idc",
@@ -411,13 +411,13 @@ impl Serialize for HevcVideoDescriptor {
                     reason: "exceeds 3-bit field",
                 });
             }
-            buf[HEADER_LEN + TEMPORAL_ID_MIN_OFFSET] = (broadcast_common::len::fit_mask(
+            buf[HEADER_LEN + TEMPORAL_ID_MIN_OFFSET] = (broadcast_core::len::fit_mask(
                 ts.temporal_id_min,
                 TEMPORAL_ID_MASK,
                 "temporal_id_min",
             )? << TEMPORAL_ID_SHIFT)
                 | ts.reserved_min.get() as u8;
-            buf[HEADER_LEN + TEMPORAL_ID_MAX_OFFSET] = (broadcast_common::len::fit_mask(
+            buf[HEADER_LEN + TEMPORAL_ID_MAX_OFFSET] = (broadcast_core::len::fit_mask(
                 ts.temporal_id_max,
                 TEMPORAL_ID_MASK,
                 "temporal_id_max",

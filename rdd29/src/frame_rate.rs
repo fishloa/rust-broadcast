@@ -101,7 +101,7 @@ impl FrameRate {
             Self::Fps24 | Self::Fps25 | Self::Fps30 => Ok(PAN_SUB_BLOCKS_24_30),
             Self::Fps48 | Self::Fps50 | Self::Fps60 => Ok(PAN_SUB_BLOCKS_48_60),
             Self::Fps96 | Self::Fps100 | Self::Fps120 => Ok(PAN_SUB_BLOCKS_96_120),
-            Self::Reserved(v) => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Self::Reserved(v) => Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "FrameRate",
                 value: u64::from(v),
                 reason: "reserved FrameRate has no Table 7 NumPanSubBlocks entry",
@@ -110,7 +110,7 @@ impl FrameRate {
     }
 }
 
-broadcast_common::impl_spec_display!(FrameRate, Reserved);
+broadcast_core::impl_spec_display!(FrameRate, Reserved);
 
 #[cfg(test)]
 mod tests {

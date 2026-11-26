@@ -1,6 +1,6 @@
 //! DTS Neural Descriptor — ETSI EN 300 468 Annex L.1, Table L.1 (tag_extension 0x0F).
 use super::*;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 impl<'a> ExtensionBodyDef<'a> for DtsNeural<'a> {
     const TAG_EXTENSION: u8 = 0x0F;
@@ -23,7 +23,7 @@ impl<'a> Parse<'a> for DtsNeural<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         let (&config_id, additional_info) = sel.split_first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "DTS-Neural descriptor body",

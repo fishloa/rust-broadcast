@@ -1,8 +1,8 @@
 use crate::support;
 
 use broadcast_client::{BufferEvent, Config, Event};
-use broadcast_common::Serialize;
 use broadcast_common::stage::Timestamp;
+use broadcast_core::Serialize;
 use support::rtsp_host::{BASE_URL, Host, MediaFixture, Server};
 use transmux::{CodecConfig, TrackSpec};
 

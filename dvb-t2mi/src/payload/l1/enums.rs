@@ -700,7 +700,7 @@ impl TxInputStreamType {
         }
     }
 }
-broadcast_common::impl_spec_display!(TxInputStreamType, Reserved);
+broadcast_core::impl_spec_display!(TxInputStreamType, Reserved);
 
 impl GuardInterval {
     /// Human-readable spec label (EN 302 755 Table 22).
@@ -718,7 +718,7 @@ impl GuardInterval {
         }
     }
 }
-broadcast_common::impl_spec_display!(GuardInterval, Reserved);
+broadcast_core::impl_spec_display!(GuardInterval, Reserved);
 
 impl L1Modulation {
     /// Human-readable spec label (EN 302 755 Table 24).
@@ -733,7 +733,7 @@ impl L1Modulation {
         }
     }
 }
-broadcast_common::impl_spec_display!(L1Modulation, Reserved);
+broadcast_core::impl_spec_display!(L1Modulation, Reserved);
 
 impl L1CodeRate {
     /// Human-readable spec label (EN 302 755 Table 25).
@@ -745,7 +745,7 @@ impl L1CodeRate {
         }
     }
 }
-broadcast_common::impl_spec_display!(L1CodeRate, Reserved);
+broadcast_core::impl_spec_display!(L1CodeRate, Reserved);
 
 impl L1FecType {
     /// Human-readable spec label (EN 302 755 Table 26).
@@ -757,7 +757,7 @@ impl L1FecType {
         }
     }
 }
-broadcast_common::impl_spec_display!(L1FecType, Reserved);
+broadcast_core::impl_spec_display!(L1FecType, Reserved);
 
 impl PilotPattern {
     /// Human-readable spec label (EN 302 755 Table 27).
@@ -776,7 +776,7 @@ impl PilotPattern {
         }
     }
 }
-broadcast_common::impl_spec_display!(PilotPattern, Reserved);
+broadcast_core::impl_spec_display!(PilotPattern, Reserved);
 
 impl T2Version {
     /// Human-readable spec label (EN 302 755 Table 28).
@@ -790,7 +790,7 @@ impl T2Version {
         }
     }
 }
-broadcast_common::impl_spec_display!(T2Version, Reserved);
+broadcast_core::impl_spec_display!(T2Version, Reserved);
 
 impl PlpType {
     /// Human-readable spec label (EN 302 755 Table 30).
@@ -804,7 +804,7 @@ impl PlpType {
         }
     }
 }
-broadcast_common::impl_spec_display!(PlpType, Reserved);
+broadcast_core::impl_spec_display!(PlpType, Reserved);
 
 impl PlpPayloadType {
     /// Human-readable spec label (EN 302 755 Table 31).
@@ -819,7 +819,7 @@ impl PlpPayloadType {
         }
     }
 }
-broadcast_common::impl_spec_display!(PlpPayloadType, Reserved);
+broadcast_core::impl_spec_display!(PlpPayloadType, Reserved);
 
 impl PlpModulation {
     /// Human-readable spec label (EN 302 755 Table 33).
@@ -834,7 +834,7 @@ impl PlpModulation {
         }
     }
 }
-broadcast_common::impl_spec_display!(PlpModulation, Reserved);
+broadcast_core::impl_spec_display!(PlpModulation, Reserved);
 
 impl PlpFecType {
     /// Human-readable spec label (EN 302 755 Table 34).
@@ -847,7 +847,7 @@ impl PlpFecType {
         }
     }
 }
-broadcast_common::impl_spec_display!(PlpFecType, Reserved);
+broadcast_core::impl_spec_display!(PlpFecType, Reserved);
 
 impl PlpMode {
     /// Human-readable spec label (EN 302 755 Table 35).
@@ -861,7 +861,7 @@ impl PlpMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(PlpMode, Reserved);
+broadcast_core::impl_spec_display!(PlpMode, Reserved);
 
 impl AuxStreamType {
     /// Human-readable spec label (EN 302 755 Table 36).
@@ -873,7 +873,7 @@ impl AuxStreamType {
         }
     }
 }
-broadcast_common::impl_spec_display!(AuxStreamType, Reserved);
+broadcast_core::impl_spec_display!(AuxStreamType, Reserved);
 
 impl PaprReductionV0 {
     /// Human-readable spec label (EN 302 755 Table 23a).
@@ -888,7 +888,7 @@ impl PaprReductionV0 {
         }
     }
 }
-broadcast_common::impl_spec_display!(PaprReductionV0, Reserved);
+broadcast_core::impl_spec_display!(PaprReductionV0, Reserved);
 
 impl PaprReductionVn {
     /// Human-readable spec label (EN 302 755 Table 23b).
@@ -903,7 +903,7 @@ impl PaprReductionVn {
         }
     }
 }
-broadcast_common::impl_spec_display!(PaprReductionVn, Reserved);
+broadcast_core::impl_spec_display!(PaprReductionVn, Reserved);
 
 impl PaprReduction {
     /// Human-readable spec label, delegating to the version-specific table.
@@ -915,7 +915,7 @@ impl PaprReduction {
         }
     }
 }
-broadcast_common::impl_spec_display!(PaprReduction);
+broadcast_core::impl_spec_display!(PaprReduction);
 
 impl PlpCodeRate {
     /// Human-readable spec label (EN 302 755 Table 32, T2-base column).
@@ -932,7 +932,7 @@ impl PlpCodeRate {
         }
     }
 }
-broadcast_common::impl_spec_display!(PlpCodeRate, Reserved);
+broadcast_core::impl_spec_display!(PlpCodeRate, Reserved);
 
 #[cfg(test)]
 mod tests {

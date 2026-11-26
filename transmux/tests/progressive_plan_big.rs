@@ -15,7 +15,7 @@
 //! plan-sized tables, not a fraction of the 4 GiB file.
 
 use broadcast_common::stage::{Stage, Timestamp};
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use test_alloc::ThreadCapped;

@@ -1,7 +1,7 @@
 //! T2-MI payload type 0x12: P2 bias balancing cells — §5.2.6.
 
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use super::{BYTE_MASK_U16, RFU_TOP_BIT_SHIFT};
 
@@ -53,7 +53,7 @@ impl<'a> Parse<'a> for P2BiasPayload {
             || (bytes[COUNT_HIGH_OFFSET] & RFU_TOP_BIT_MASK) != 0
         {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "17-bit RFU",
                     expected: 0,
                     found: (u64::from(bytes[RFU_FIRST_OFFSET]) << RFU_HIGH_SHIFT)
@@ -92,7 +92,7 @@ impl Serialize for P2BiasPayload {
 
         if self.num_active_bias_cells_per_p2 > COUNT_MAX {
             return Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "num_active_bias_cells_per_p2",
                     value: u64::from(self.num_active_bias_cells_per_p2),
                     max: u64::from(COUNT_MAX),
@@ -139,7 +139,7 @@ mod tests {
         assert_eq!(
             P2BiasPayload::parse(&buf).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "17-bit RFU",
                     expected: 0,
                     found: 1
@@ -150,7 +150,7 @@ mod tests {
         assert_eq!(
             P2BiasPayload::parse(&[0x00u8, 0x01, 0x00, 0x00, 0x00]).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "17-bit RFU",
                     expected: 0,
                     found: 512
@@ -189,7 +189,7 @@ mod tests {
         assert_eq!(
             payload.serialize_into(&mut buf).err(),
             Some(crate::Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall { need: 5, have: 4 }
+                broadcast_core::error::OutputBufferTooSmall { need: 5, have: 4 }
             ))
         );
     }

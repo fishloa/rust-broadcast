@@ -7,8 +7,8 @@
 //! captures through `TsDemux` -> `build_init_segment` and cross-check with
 //! ffprobe.
 
-use broadcast_common::Parse;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Parse;
+use broadcast_core::timescale::Timescale;
 use isobmff::{AVCDecoderConfigurationRecord, HEVCDecoderConfigurationRecord};
 use isobmff::{AVCSampleEntry, HEVCSampleEntry};
 use transmux::ir::{

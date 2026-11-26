@@ -22,8 +22,8 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for carousel_identifier_descriptor.
 pub const TAG: u8 = 0x13;
@@ -339,7 +339,7 @@ impl Serialize for CarouselIdentifierDescriptor<'_> {
                 pos += FS1_ORIGINAL_SIZE_LEN;
                 buf[pos] = *timeout;
                 pos += FS1_TIMEOUT_LEN;
-                buf[pos] = broadcast_common::len::fit_u8(object_key.len(), "ObjectKeyDataLength")?;
+                buf[pos] = broadcast_core::len::fit_u8(object_key.len(), "ObjectKeyDataLength")?;
                 pos += FS1_OBJECT_KEY_LENGTH_LEN;
                 buf[pos..pos + object_key.len()].copy_from_slice(object_key);
                 pos += object_key.len();

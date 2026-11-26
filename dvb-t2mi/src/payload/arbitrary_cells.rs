@@ -1,7 +1,7 @@
 //! T2-MI payload type 0x02: Arbitrary cell insertion — §5.2.3.
 
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 use super::BYTE_MASK_U32;
 use crate::packet::be_u16;
@@ -65,7 +65,7 @@ impl<'a> Parse<'a> for ArbitraryCellsPayload<'a> {
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
         let (hdr, rest) = bytes.split_first_chunk::<ARB_CELLS_HEADER_LEN>().ok_or(
-            crate::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            crate::Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: ARB_CELLS_HEADER_LEN,
                 have: bytes.len(),
                 what: "ArbitraryCellsPayload header",
@@ -81,7 +81,7 @@ impl<'a> Parse<'a> for ArbitraryCellsPayload<'a> {
             || (hdr[START_CELL_HIGH_OFFSET] & RFU_PREFIX_MASK != 0)
         {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "18-bit RFU",
                     expected: 0,
                     found: (u64::from(hdr[RFU_FIRST_OFFSET]) << RFU_HIGH_SHIFT)
@@ -123,7 +123,7 @@ impl Serialize for ArbitraryCellsPayload<'_> {
 
         if self.start_cell_address > CELL_ADDR_MASK {
             return Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "start_cell_address",
                     value: u64::from(self.start_cell_address),
                     max: u64::from(CELL_ADDR_MASK),
@@ -184,7 +184,7 @@ mod tests {
         assert_eq!(
             ArbitraryCellsPayload::parse(&buf).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "18-bit RFU",
                     expected: 0,
                     found: 1024
@@ -200,7 +200,7 @@ mod tests {
         assert_eq!(
             ArbitraryCellsPayload::parse(&buf).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "18-bit RFU",
                     expected: 0,
                     found: 3

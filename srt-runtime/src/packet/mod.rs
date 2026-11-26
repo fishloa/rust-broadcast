@@ -39,7 +39,7 @@ pub use nak::{LossListEntry, NakPacket};
 pub use number::{AckNumber, MessageNumber, SeqNo, SocketId, SrtTimestamp};
 
 use crate::error::{Error, Result};
-use broadcast_common::len::need_in;
+use broadcast_core::len::need_in;
 
 /// Length in bytes of the fixed SRT header shared by data and control packets
 /// (`draft-sharabayko-srt-01` §3, Figure 2): 4 header words = 16 bytes, before
@@ -129,7 +129,7 @@ impl<'a> SrtPacket<'a> {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for SrtPacket<'a> {
+impl<'a> broadcast_core::Parse<'a> for SrtPacket<'a> {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -137,7 +137,7 @@ impl<'a> broadcast_common::Parse<'a> for SrtPacket<'a> {
     }
 }
 
-impl broadcast_common::Serialize for SrtPacket<'_> {
+impl broadcast_core::Serialize for SrtPacket<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {

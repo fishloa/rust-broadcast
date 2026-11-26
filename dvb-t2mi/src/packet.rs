@@ -1,7 +1,7 @@
 //! T2-MI packet header and type parsing — ETSI TS 102 773 §5.1, Table 1.
 
-use broadcast_common::len::need_out;
 use broadcast_common::wire_enum;
+use broadcast_core::len::need_out;
 
 /// T2-MI packet header size (ETSI TS 102 773 §5.1).
 pub(crate) const HEADER_LEN: usize = 6;
@@ -100,7 +100,7 @@ impl PacketType {
         }
     }
 }
-broadcast_common::impl_spec_display!(PacketType);
+broadcast_core::impl_spec_display!(PacketType);
 
 /// T2-MI packet header (6 bytes / 48 bits) per §5.1.
 ///
@@ -127,7 +127,7 @@ pub struct Header {
     pub payload_len_bits: u16,
 }
 
-impl<'a> broadcast_common::Parse<'a> for Header {
+impl<'a> broadcast_core::Parse<'a> for Header {
     type Error = crate::error::Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self, crate::error::Error> {
@@ -136,7 +136,7 @@ impl<'a> broadcast_common::Parse<'a> for Header {
         let (hdr, _) = bytes
             .split_first_chunk::<HEADER_LEN>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: HEADER_LEN,
                     have: bytes.len(),
                     what: "T2MI Header",
@@ -153,7 +153,7 @@ impl<'a> broadcast_common::Parse<'a> for Header {
         // byte 2 [3] = rfu — spec says must be 0
         if hdr[SUPERFRAME_BYTE_OFFSET] & SECOND_HEADER_BYTE_RFU_MASK != 0 {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "byte 2 bit 3",
                     expected: 0,
                     found: u64::from(hdr[SUPERFRAME_BYTE_OFFSET] & SECOND_HEADER_BYTE_RFU_MASK),
@@ -167,7 +167,7 @@ impl<'a> broadcast_common::Parse<'a> for Header {
         // byte 3 = rfu — spec says must be 0
         if hdr[RFU_BYTE_OFFSET] != 0 {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "byte 3",
                     expected: 0,
                     found: u64::from(hdr[RFU_BYTE_OFFSET]),
@@ -220,7 +220,7 @@ impl Header {
             packet
                 .split_first_chunk::<HEADER_LEN>()
                 .ok_or(crate::error::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: HEADER_LEN,
                         have: packet.len(),
                         what: "T2MI Header",
@@ -256,7 +256,7 @@ impl Header {
     }
 }
 
-impl broadcast_common::Serialize for Header {
+impl broadcast_core::Serialize for Header {
     type Error = crate::error::Error;
 
     fn serialized_len(&self) -> usize {
@@ -268,7 +268,7 @@ impl broadcast_common::Serialize for Header {
 
         if self.t2mi_stream_id > T2MI_STREAM_ID_MASK {
             return Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "t2mi_stream_id",
                     value: u64::from(self.t2mi_stream_id),
                     max: u64::from(T2MI_STREAM_ID_MASK),
@@ -277,7 +277,7 @@ impl broadcast_common::Serialize for Header {
         }
         if self.superframe_idx > SUPERFRAME_IDX_MAX {
             return Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "superframe_idx",
                     value: u64::from(self.superframe_idx),
                     max: u64::from(SUPERFRAME_IDX_MAX),
@@ -300,7 +300,7 @@ impl broadcast_common::Serialize for Header {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     #[test]
     fn packet_type_try_from_all_valid() {
@@ -350,7 +350,7 @@ mod tests {
         let buf = [0x00u8; 5];
         let result = Header::parse(&buf);
         let err = result.unwrap_err();
-        if let crate::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        if let crate::Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need,
             have,
             what,
@@ -424,7 +424,7 @@ mod tests {
         let result = Header::parse(&buf);
         assert_eq!(
             result.unwrap_err(),
-            crate::Error::ReservedBits(broadcast_common::error::ReservedBits {
+            crate::Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "byte 2 bit 3",
                 expected: 0,
                 found: 8
@@ -439,7 +439,7 @@ mod tests {
         assert_eq!(
             result.err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "byte 3",
                     expected: 0,
                     found: 1
@@ -552,7 +552,7 @@ mod tests {
         assert_eq!(
             result.err(),
             Some(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "t2mi_stream_id",
                     value: 8,
                     max: 7
@@ -576,7 +576,7 @@ mod tests {
         assert_eq!(
             hdr.serialize_into(&mut buf).err(),
             Some(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "superframe_idx",
                     value: 16,
                     max: 15

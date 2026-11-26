@@ -42,7 +42,7 @@
 use crate::error::Result;
 use crate::h222_bits::{BITS_PER_BYTE, BitReader, BitWriter, invalid};
 use alloc::vec::Vec;
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::reserved::ReservedOnes;
 
 /// Wire width of a 16-bit word.
 const WORD_BITS: usize = u16::BITS as usize;
@@ -368,7 +368,7 @@ impl VirtualSegmentationBoundary {
     }
 }
 
-broadcast_common::impl_spec_display!(VirtualSegmentationBoundary);
+broadcast_core::impl_spec_display!(VirtualSegmentationBoundary);
 
 /// One partition of the virtual segmentation descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

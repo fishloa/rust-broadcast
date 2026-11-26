@@ -56,7 +56,7 @@ struct with every spec field, and serializes back to identical bytes. It builds
 ## Quick start
 
 ```rust
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_ci::AnyApdu;
 use dvb_ci::length::LengthForm;
 use dvb_ci::objects::ca_info::CaInfo;
@@ -100,7 +100,7 @@ Two runnable examples ship with the crate (`cargo run -p dvb-ci --example <name>
 ## Design notes
 
 - **Symmetric Parse/Serialize.** Every wire type implements
-  `broadcast_common::Parse` / `Serialize`; parse to serialize is byte-identical or
+  `broadcast_core::Parse` / `Serialize`; parse to serialize is byte-identical or
   the parse is an error (a longer `length_field` than a fixed layout allows is
   rejected). A property test drives every dispatch enum with pseudo-random bodies.
 - **Preserved framing.** A CAM may code a length in a longer form than necessary

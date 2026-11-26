@@ -18,7 +18,7 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_si::tables::pat::{self, PatSection};
 use dvb_si::tables::pmt::{PmtSection, StreamType};
 use mpeg_pes::PesAssembler;
@@ -326,7 +326,7 @@ pub(crate) mod tests {
     use super::collect_pmt_streams;
     use alloc::vec::Vec;
 
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use dvb_si::descriptors::any::DescriptorLoop;
     use dvb_si::tables::pat::{PatEntry, PatSection};
     use dvb_si::tables::pmt::{PmtSection, PmtStream, StreamType};

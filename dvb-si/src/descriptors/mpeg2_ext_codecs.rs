@@ -14,7 +14,7 @@ use super::hdr_wcg_idc::HdrWcgIdc;
 use crate::error::Result;
 use crate::h222_bits::{BITS_PER_BYTE, BitReader, BitWriter, invalid};
 use alloc::vec::Vec;
-use broadcast_common::reserved::{ReservedOnes, ReservedZero};
+use broadcast_core::reserved::{ReservedOnes, ReservedZero};
 
 const TAG: u8 = super::mpeg2_extension::TAG;
 /// Width of the `reserved(1)` fields in the media-service structs.
@@ -263,7 +263,7 @@ impl MediaTypeIdc {
         }
     }
 }
-broadcast_common::impl_spec_display!(MediaTypeIdc, Reserved);
+broadcast_core::impl_spec_display!(MediaTypeIdc, Reserved);
 
 /// `configuration_type` (Table 2-149).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -314,7 +314,7 @@ impl ConfigurationType {
         }
     }
 }
-broadcast_common::impl_spec_display!(ConfigurationType, Reserved);
+broadcast_core::impl_spec_display!(ConfigurationType, Reserved);
 
 /// `ID_length_code` 7: the length is carried explicitly in `ID_len`.
 pub const ID_LENGTH_CODE_EXPLICIT: u8 = 7;

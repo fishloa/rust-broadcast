@@ -19,7 +19,7 @@
 use crate::TrackId;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use broadcast_common::timescale::{Rounding, rescale_i64};
+use broadcast_core::timescale::{Rounding, rescale_i64};
 use bytes::Bytes;
 use core::num::NonZeroU32;
 
@@ -369,8 +369,8 @@ impl Sample {
     /// tick, so a span never silently becomes nothing).
     pub fn rescale_timescale(
         self,
-        from: broadcast_common::timescale::Timescale,
-        to: broadcast_common::timescale::Timescale,
+        from: broadcast_core::timescale::Timescale,
+        to: broadcast_core::timescale::Timescale,
     ) -> crate::error::Result<Self> {
         if from == to {
             return Ok(self);
@@ -595,8 +595,8 @@ pub fn timing_of(
 /// never rescales away to nothing.
 fn rescale_ticks(
     ticks: NonZeroU32,
-    from: broadcast_common::timescale::Timescale,
-    to: broadcast_common::timescale::Timescale,
+    from: broadcast_core::timescale::Timescale,
+    to: broadcast_core::timescale::Timescale,
 ) -> crate::error::Result<NonZeroU32> {
     let rescaled = rescale_i64(i64::from(ticks.get()), from, to, Rounding::Floor);
     let rescaled = u32::try_from(rescaled).map_err(|_| {
@@ -635,7 +635,7 @@ impl<'a> FragmentTrackData<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
 
     fn nz(value: u32) -> NonZeroU32 {
         NonZeroU32::new(value).expect("a positive span")

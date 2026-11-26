@@ -2,7 +2,7 @@
 //! committed `cw-provision.bin`, assert its decoded fields, and verify a
 //! byte-exact round-trip. The CW inside `CP_CW_combination` is opaque.
 
-use broadcast_common::traits::Serialize;
+use broadcast_core::traits::Serialize;
 use dvb_simulcrypt::{
     EcmgScsMessageType, EcmgScsParameterType, Interface, MessageType, ParameterType,
     SimulcryptMessage,

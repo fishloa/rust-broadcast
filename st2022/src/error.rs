@@ -15,16 +15,16 @@ pub enum Error {
     /// Input buffer shorter than
     /// required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// A field value did not fit its wire bit-width, or a derived count was
     /// inconsistent (e.g. the header extension length).
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
     /// `clock_frequency` (`CF`, §6.4) requires the 32-bit Video Timestamp
     /// row to be present exactly when `clock_frequency` !=
     /// [`ClockFrequency::NoTimestamp`], but the header disagreed.

@@ -14,11 +14,11 @@
 use crate::error::{Error, Result};
 use alloc::vec;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::reserved::ReservedZero;
 use broadcast_common::wire_enum;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::reserved::ReservedZero;
+use broadcast_core::{Parse, Serialize};
 
 /// table_id for the Satellite Access Table.
 pub const TABLE_ID: u8 = 0x4D;
@@ -164,13 +164,13 @@ fn pad_to_byte(bits: usize) -> usize {
 // ── Bit-level reader/writer ──────────────────────────────────────────────────
 
 struct BitReader<'a> {
-    inner: broadcast_common::bits::BitReader<'a>,
+    inner: broadcast_core::bits::BitReader<'a>,
 }
 
 impl<'a> BitReader<'a> {
     fn new(data: &'a [u8]) -> Self {
         Self {
-            inner: broadcast_common::bits::BitReader::new(data),
+            inner: broadcast_core::bits::BitReader::new(data),
         }
     }
     fn remaining_bits(&self) -> usize {
@@ -183,7 +183,7 @@ impl<'a> BitReader<'a> {
     // `Error::BufferTooShort` in the workspace: `need` is the byte the read
     // must reach, `have` the whole bytes the body holds.
     fn overrun(&self, bits: usize) -> Error {
-        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: (self.inner.bits_read() + bits).div_ceil(u8::BITS as usize),
             have: self.inner.total_bits() / u8::BITS as usize,
             what: "SatSection bit reader overrun",
@@ -214,7 +214,7 @@ impl<'a> BitReader<'a> {
     }
 }
 
-// The writer is [`broadcast_common::bits::BitWriter`], the one MSB-first
+// The writer is [`broadcast_core::bits::BitWriter`], the one MSB-first
 // writer in the workspace. This adapter keeps the SAT's own contract on top
 // of it: a value wider than its field is `Error::FieldOverflow` (#1129
 // class, so a count such as `frag.delivery_system_ids.len()` into a 10-bit
@@ -222,13 +222,13 @@ impl<'a> BitReader<'a> {
 // does not fit the output is `Error::BufferTooShort` in whole bytes, never a
 // silent truncation.
 struct BitWriter<'a> {
-    inner: broadcast_common::bits::BitWriter<'a>,
+    inner: broadcast_core::bits::BitWriter<'a>,
 }
 
 impl<'a> BitWriter<'a> {
     fn new(buf: &'a mut [u8]) -> Self {
         Self {
-            inner: broadcast_common::bits::BitWriter::new(buf),
+            inner: broadcast_core::bits::BitWriter::new(buf),
         }
     }
     fn bits_written(&self) -> usize {
@@ -236,7 +236,7 @@ impl<'a> BitWriter<'a> {
     }
     fn overrun(&self, bits: usize) -> Error {
         Error::BufferTooShort(
-            broadcast_common::bits::BitError::OutOfBounds {
+            broadcast_core::bits::BitError::OutOfBounds {
                 needed_bits: bits,
                 remaining_bits: self.inner.capacity_bits() - self.inner.bits_written(),
             }
@@ -244,7 +244,7 @@ impl<'a> BitWriter<'a> {
         )
     }
     fn write_u(&mut self, bits: u8, val: u64) -> Result<()> {
-        broadcast_common::len::fit_bits(val, u32::from(bits), "SatSection field")?;
+        broadcast_core::len::fit_bits(val, u32::from(bits), "SatSection field")?;
         self.inner
             .write_bits(val, u32::from(bits))
             .map_err(|_| self.overrun(usize::from(bits)))
@@ -254,7 +254,7 @@ impl<'a> BitWriter<'a> {
         let max = (1i64 << (bits - 1)) - 1;
         let min = -(1i64 << (bits - 1));
         if val < min || val > max {
-            return Err(broadcast_common::len::FieldOverflow {
+            return Err(broadcast_core::len::FieldOverflow {
                 field: "SatSection signed field",
                 value: val.unsigned_abs(),
                 max: max as u64,
@@ -280,7 +280,7 @@ wire_enum! {
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
     pub enum SatTableId: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
-        broadcast_common::error::InvalidValue {
+        broadcast_core::error::InvalidValue {
             field: "satellite_table_id",
             value: u64::from(value),
             reason: "reserved (EN 300 468 §5.2.11.1 Table 11b)",
@@ -513,7 +513,7 @@ impl AssociationType {
         }
     }
 }
-broadcast_common::impl_spec_display!(AssociationType, Reserved);
+broadcast_core::impl_spec_display!(AssociationType, Reserved);
 
 /// Leap-second signalling info (present when `association_type == 1`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -609,7 +609,7 @@ impl TimePlanMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(TimePlanMode, Reserved);
+broadcast_core::impl_spec_display!(TimePlanMode, Reserved);
 
 /// Mode-specific data in a beamhopping plan entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -858,7 +858,7 @@ impl InterpolationType {
         }
     }
 }
-broadcast_common::impl_spec_display!(InterpolationType, ReservedOther);
+broadcast_core::impl_spec_display!(InterpolationType, ReservedOther);
 
 /// Ephemeris acceleration (optional, 3 × 32-bit spfmsbf).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1434,7 +1434,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
     let used = sat_body_serialized_len(&body);
     if used != data.len() {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: data.len().saturating_sub(used),
                 have: 0,
                 what: "SatSection trailing body bytes after the last whole entry",
@@ -1456,7 +1456,7 @@ fn sat_body_parse_entries(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
             3 => SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody { plans: Vec::new() }),
             _ => {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: 1,
                         have: 0,
                         what: "SatSection body (non-loop type requires data)",
@@ -1485,7 +1485,7 @@ fn sat_parse_position_v2(r: &mut BitReader<'_>) -> Result<SatBody> {
         let position = if position_system == 0 {
             if r.remaining_bits() < ORBITAL_BITS {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: (ORBITAL_BITS).div_ceil(u8::BITS as usize),
                         have: r.remaining_bits() / u8::BITS as usize,
                         what: "SatSection PositionV2 Orbital fields",
@@ -1503,7 +1503,7 @@ fn sat_parse_position_v2(r: &mut BitReader<'_>) -> Result<SatBody> {
         } else {
             if r.remaining_bits() < SGP4_BITS {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: (SGP4_BITS).div_ceil(u8::BITS as usize),
                         have: r.remaining_bits() / u8::BITS as usize,
                         what: "SatSection PositionV2 SGP4 fields",
@@ -1556,7 +1556,7 @@ fn sat_parse_cell_fragment(r: &mut BitReader<'_>) -> Result<SatBody> {
         let centre = if first_occurrence {
             if r.remaining_bits() < CELL_CENTRE_BITS {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: (CELL_CENTRE_BITS).div_ceil(u8::BITS as usize),
                         have: r.remaining_bits() / u8::BITS as usize,
                         what: "SatSection CellFragment centre",
@@ -1584,7 +1584,7 @@ fn sat_parse_cell_fragment(r: &mut BitReader<'_>) -> Result<SatBody> {
         let dsid_count = r.read_u(LOOP_COUNT_BITS)? as usize;
         if r.remaining_bits() < dsid_count * usize::from(WORD_BITS) {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: (dsid_count * usize::from(WORD_BITS)).div_ceil(u8::BITS as usize),
                     have: r.remaining_bits() / u8::BITS as usize,
                     what: "SatSection CellFragment delivery_system_ids",
@@ -1600,7 +1600,7 @@ fn sat_parse_cell_fragment(r: &mut BitReader<'_>) -> Result<SatBody> {
         let nds_count = r.read_u(LOOP_COUNT_BITS)? as usize;
         if r.remaining_bits() < nds_count * DELIVERY_SYSTEM_ENTRY_BITS {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: (nds_count * DELIVERY_SYSTEM_ENTRY_BITS).div_ceil(u8::BITS as usize),
                     have: r.remaining_bits() / u8::BITS as usize,
                     what: "SatSection CellFragment new_delivery_systems",
@@ -1625,7 +1625,7 @@ fn sat_parse_cell_fragment(r: &mut BitReader<'_>) -> Result<SatBody> {
         let ods_count = r.read_u(LOOP_COUNT_BITS)? as usize;
         if r.remaining_bits() < ods_count * DELIVERY_SYSTEM_ENTRY_BITS {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: (ods_count * DELIVERY_SYSTEM_ENTRY_BITS).div_ceil(u8::BITS as usize),
                     have: r.remaining_bits() / u8::BITS as usize,
                     what: "SatSection CellFragment obsolescent_delivery_systems",
@@ -1665,7 +1665,7 @@ fn sat_parse_cell_fragment(r: &mut BitReader<'_>) -> Result<SatBody> {
 fn sat_parse_time_association(r: &mut BitReader<'_>) -> Result<SatBody> {
     if r.remaining_bits() < TIME_ASSOC_MIN_BITS {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: (TIME_ASSOC_MIN_BITS).div_ceil(u8::BITS as usize),
                 have: r.remaining_bits() / u8::BITS as usize,
                 what: "SatSection TimeAssociation body",
@@ -1723,7 +1723,7 @@ fn sat_parse_beamhopping_time_plan(r: &mut BitReader<'_>, data: &[u8]) -> Result
             TimePlanMode::DwellOnTime => {
                 if r.remaining_bits() < MODE0_BITS {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: (MODE0_BITS).div_ceil(u8::BITS as usize),
                             have: r.remaining_bits() / u8::BITS as usize,
                             what: "SatSection Beamhopping Mode0",
@@ -1750,7 +1750,7 @@ fn sat_parse_beamhopping_time_plan(r: &mut BitReader<'_>, data: &[u8]) -> Result
             TimePlanMode::Bitmap => {
                 if r.remaining_bits() < MODE1_HEADER_BITS {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: (MODE1_HEADER_BITS).div_ceil(u8::BITS as usize),
                             have: r.remaining_bits() / u8::BITS as usize,
                             what: "SatSection Beamhopping Mode1 header",
@@ -1763,7 +1763,7 @@ fn sat_parse_beamhopping_time_plan(r: &mut BitReader<'_>, data: &[u8]) -> Result
                 let current_slot = r.read_u(BIT_MAP_BITS)? as u16;
                 if r.remaining_bits() < bit_map_size as usize {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: (bit_map_size as usize).div_ceil(u8::BITS as usize),
                             have: r.remaining_bits() / u8::BITS as usize,
                             what: "SatSection Beamhopping Mode1 bitmap",
@@ -1788,7 +1788,7 @@ fn sat_parse_beamhopping_time_plan(r: &mut BitReader<'_>, data: &[u8]) -> Result
             TimePlanMode::GridRevisitSleep => {
                 if r.remaining_bits() < MODE2_BITS {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: (MODE2_BITS).div_ceil(u8::BITS as usize),
                             have: r.remaining_bits() / u8::BITS as usize,
                             what: "SatSection Beamhopping Mode2",
@@ -1845,7 +1845,7 @@ fn sat_parse_beamhopping_time_plan(r: &mut BitReader<'_>, data: &[u8]) -> Result
         // (r02-W14) — reject it instead.
         if r.bits_consumed() > plan_end_bits {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: r.bits_consumed() - plan_end_bits,
                     have: 0,
                     what: "SatSection Beamhopping plan_length shorter than plan fields",
@@ -1875,7 +1875,7 @@ fn sat_parse_beamhopping_time_plan(r: &mut BitReader<'_>, data: &[u8]) -> Result
 fn sat_parse_position_v3(r: &mut BitReader<'_>) -> Result<SatBody> {
     if r.remaining_bits() < POS_V3_HEADER_BITS {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: (POS_V3_HEADER_BITS).div_ceil(u8::BITS as usize),
                 have: r.remaining_bits() / u8::BITS as usize,
                 what: "SatSection PositionV3 body header",
@@ -1904,7 +1904,7 @@ fn sat_parse_position_v3(r: &mut BitReader<'_>) -> Result<SatBody> {
         let metadata = if metadata_flag {
             if r.remaining_bits() < METADATA_FIXED_BITS {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: (METADATA_FIXED_BITS).div_ceil(u8::BITS as usize),
                         have: r.remaining_bits() / u8::BITS as usize,
                         what: "SatSection PositionV3 metadata",
@@ -1927,7 +1927,7 @@ fn sat_parse_position_v3(r: &mut BitReader<'_>) -> Result<SatBody> {
             let usable_start_time = if usable_start_time_flag {
                 if r.remaining_bits() < USABLE_TIME_BITS {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: (USABLE_TIME_BITS).div_ceil(u8::BITS as usize),
                             have: r.remaining_bits() / u8::BITS as usize,
                             what: "SatSection PositionV3 usable_start_time",
@@ -1950,7 +1950,7 @@ fn sat_parse_position_v3(r: &mut BitReader<'_>) -> Result<SatBody> {
             let usable_stop_time = if usable_stop_time_flag {
                 if r.remaining_bits() < USABLE_TIME_BITS {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: (USABLE_TIME_BITS).div_ceil(u8::BITS as usize),
                             have: r.remaining_bits() / u8::BITS as usize,
                             what: "SatSection PositionV3 usable_stop_time",
@@ -2008,7 +2008,7 @@ fn sat_parse_position_v3(r: &mut BitReader<'_>) -> Result<SatBody> {
         for _ in 0..ephemeris_data_count {
             if r.remaining_bits() < entry_bits {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: (entry_bits).div_ceil(u8::BITS as usize),
                         have: r.remaining_bits() / u8::BITS as usize,
                         what: "SatSection PositionV3 ephemeris_data entry",
@@ -2051,7 +2051,7 @@ fn sat_parse_position_v3(r: &mut BitReader<'_>) -> Result<SatBody> {
         let covariance = if covariance_flag {
             if r.remaining_bits() < COV_BITS {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: (COV_BITS).div_ceil(u8::BITS as usize),
                         have: r.remaining_bits() / u8::BITS as usize,
                         what: "SatSection PositionV3 covariance",
@@ -2261,12 +2261,12 @@ impl Serialize for SatSection {
             self.reserved_b1.get() as u8,
         )? | ((section_length >> YEAR_BITS) as u8 & super::SECTION_LENGTH_HI_MASK);
         buf[SECTION_LENGTH_LO_OFFSET] = (section_length & u16::from(u8::MAX)) as u8;
-        broadcast_common::len::fit_mask(
+        broadcast_core::len::fit_mask(
             self.table_count,
             (u16::from(TABLE_COUNT_HI_MASK) << YEAR_BITS) | u16::from(u8::MAX),
             "table_count",
         )?;
-        buf[SATELLITE_TABLE_ID_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[SATELLITE_TABLE_ID_OFFSET] = (broadcast_core::len::fit_mask(
             self.satellite_table_id,
             SATELLITE_TABLE_ID_MASK,
             "satellite_table_id",
@@ -2568,7 +2568,7 @@ mod tests {
 
         let err = SatSection::parse(&bytes).unwrap_err();
         assert!(
-            matches!(err, Error::BufferTooShort(broadcast_common::error::BufferTooShort { what, .. }) if what.contains("plan_length")),
+            matches!(err, Error::BufferTooShort(broadcast_core::error::BufferTooShort { what, .. }) if what.contains("plan_length")),
             "expected a plan_length error, got {err:?}"
         );
     }
@@ -2595,7 +2595,7 @@ mod tests {
     fn rejects_short_buffer() {
         assert!(matches!(
             SatSection::parse(&[0x4D, 0xF0]).unwrap_err(),
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "SatSection",
                 ..
             })

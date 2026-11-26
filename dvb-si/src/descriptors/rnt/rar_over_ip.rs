@@ -12,9 +12,9 @@ use crate::descriptors::mjd_time::{MJD_BCD_LEN, MjdBcdTime};
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::DvbText;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for RAR_over_IP_descriptor (RNT namespace).
 pub const TAG: u8 = 0x41;
@@ -124,10 +124,9 @@ impl Serialize for RarOverIpDescriptor<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        let weighting =
-            broadcast_common::len::fit_mask(self.weighting, WEIGHTING_MASK, "weighting")?;
+        let weighting = broadcast_core::len::fit_mask(self.weighting, WEIGHTING_MASK, "weighting")?;
         let reserved = self.reserved.get() as u8;
-        let url_len = broadcast_common::len::fit_u8(self.url.len(), "url_length")?;
+        let url_len = broadcast_core::len::fit_u8(self.url.len(), "url_length")?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let b = &mut buf[HEADER_LEN..];
         self.first_valid_date.write(b, 0);

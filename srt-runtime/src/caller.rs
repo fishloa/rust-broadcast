@@ -71,7 +71,7 @@ impl CallerHandshakeState {
     }
 }
 
-broadcast_common::impl_spec_display!(CallerHandshakeState);
+broadcast_core::impl_spec_display!(CallerHandshakeState);
 
 /// A driveable Caller-side SRT handshake (`draft-sharabayko-srt-01` §4.3.1).
 #[derive(Debug)]

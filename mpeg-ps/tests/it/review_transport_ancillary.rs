@@ -11,7 +11,7 @@
 //!    condition (`nextbits() == '1'`, ISO/IEC 13818-1 Table 2-40), so a value
 //!    serializes to bytes that parse back as a different header.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use mpeg_ps::{Error, PackHeader, Scr, StdBufferBound, SystemHeader};
 
 fn header() -> SystemHeader {

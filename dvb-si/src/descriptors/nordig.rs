@@ -19,9 +19,9 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 // ---------------------------------------------------------------------------
 // NordigLogicalChannelV1 — tag 0x83, 14-bit LCN
@@ -357,7 +357,7 @@ impl Serialize for NordigLogicalChannelV2 {
         let mut offset = V2_HEADER_LEN;
         for cl in &self.channel_lists {
             buf[offset] = cl.channel_list_id;
-            buf[offset + 1] = broadcast_common::len::fit_u8(
+            buf[offset + 1] = broadcast_core::len::fit_u8(
                 cl.channel_list_name.len(),
                 "channel_list_name_length",
             )?;
@@ -367,8 +367,7 @@ impl Serialize for NordigLogicalChannelV2 {
             buf[offset..offset + COUNTRY_CODE_LEN].copy_from_slice(&cl.country_code.0);
             offset += COUNTRY_CODE_LEN;
             let desc_len = V2_SERVICE_ENTRY_LEN * cl.services.len();
-            buf[offset] =
-                broadcast_common::len::fit_u8(desc_len, "channel_list_descriptor_length")?;
+            buf[offset] = broadcast_core::len::fit_u8(desc_len, "channel_list_descriptor_length")?;
             offset += 1;
             for svc in &cl.services {
                 if svc.logical_channel_number > V2_LCN_MAX {

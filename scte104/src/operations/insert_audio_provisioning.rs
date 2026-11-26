@@ -6,11 +6,11 @@
 //! `private/specs-verified/scte/scte104/ansi_scte_104/audio-and-alternate-break.md`.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for insert_audio_provisioning request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x0112;
@@ -84,7 +84,7 @@ impl CodecIndex {
     }
 }
 
-broadcast_common::impl_spec_display!(CodecIndex, Unknown);
+broadcast_core::impl_spec_display!(CodecIndex, Unknown);
 
 /// One `for (i<audio_count)` entry of Table 9-34.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,7 +99,7 @@ pub struct AudioProvisioningEntry {
 /// insert_audio_provisioning request — §9.8.12, Table 9-34.
 ///
 /// `audio_count` is `entries.len()`, written through
-/// `broadcast_common::len::fit_u8` on serialize.
+/// `broadcast_core::len::fit_u8` on serialize.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct InsertAudioProvisioning {
@@ -111,7 +111,7 @@ impl<'a> Parse<'a> for InsertAudioProvisioning {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (&count, rest) = bytes.split_first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "insert_audio_provisioning audio_count",
@@ -120,7 +120,7 @@ impl<'a> Parse<'a> for InsertAudioProvisioning {
         let need = usize::from(count) * ENTRY_LEN;
         if rest.len() < need {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 1 + need,
                     have: bytes.len(),
                     what: "insert_audio_provisioning entries",
@@ -146,7 +146,7 @@ impl Serialize for InsertAudioProvisioning {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        buf[0] = broadcast_common::len::fit_u8(
+        buf[0] = broadcast_core::len::fit_u8(
             self.entries.len(),
             "insert_audio_provisioning.audio_count",
         )?;

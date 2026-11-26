@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 thiserror  = { version = "2", default-features = false }
 libm       = { version = "0.2", default-features = false }
 
@@ -28,7 +28,7 @@ test-fixtures = { path = "../test-fixtures" }
 
 [features]
 default = ["std"]
-std = ["broadcast-common/std", "thiserror/std"]
+std = ["broadcast-core/std", "thiserror/std"]
 
 [lints]
 workspace = true

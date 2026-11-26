@@ -61,8 +61,8 @@ use core::num::NonZeroU32;
 
 use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::timescale::Timescale;
 use broadcast_common::wire::u16_at;
+use broadcast_core::timescale::Timescale;
 use mpeg_ps::{PsEvent, PsLimits, PsScanner};
 
 use crate::TrackId;
@@ -143,7 +143,7 @@ const SAMPLES_PER_DURATION: usize = 2;
 
 /// The video clock: 90 kHz, the PES/PS timestamp timescale
 /// (ISO/IEC 13818-1 §2.4.3.7).
-const VIDEO_TIMESCALE: Timescale = broadcast_common::timescale!(crate::rtp::VIDEO_CLOCK_RATE);
+const VIDEO_TIMESCALE: Timescale = broadcast_core::timescale!(crate::rtp::VIDEO_CLOCK_RATE);
 
 /// The frame duration assumed when fewer than two decode timestamps are known.
 const DEFAULT_FRAME_DURATION: i128 = 3600;

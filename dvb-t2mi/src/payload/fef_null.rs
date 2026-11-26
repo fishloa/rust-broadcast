@@ -2,12 +2,12 @@
 //!
 //! Null FEF part — modulator generates P1 preamble per S1/S2, zeros for remainder.
 
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 use core::fmt;
 
 use broadcast_common::wire_enum;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use super::RFU_TOP_BIT_SHIFT;
 
@@ -17,7 +17,7 @@ wire_enum! {
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
     pub enum S1Field: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
-        broadcast_common::error::InvalidValue {
+        broadcast_core::error::InvalidValue {
             field: "s1_field",
             value: u64::from(value),
             reason: "must be 0..=7",
@@ -65,7 +65,7 @@ impl S1Field {
         self.meaning()
     }
 }
-broadcast_common::impl_spec_display!(S1Field);
+broadcast_core::impl_spec_display!(S1Field);
 
 /// S2 field 1 (upper 3 bits of the 4-bit S2 field) per EN 302 755 §7.2.3 Tables 19-20.
 ///
@@ -145,7 +145,7 @@ impl S2Field1 {
         self.fft_size()
     }
 }
-broadcast_common::impl_spec_display!(S2Field1);
+broadcast_core::impl_spec_display!(S2Field1);
 
 /// FEF part: Null payload (type 0x30) per ETSI TS 102 773 §5.2.9.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -202,7 +202,7 @@ impl<'a> Parse<'a> for FefNullPayload {
         // rfu spans all of byte 1 plus the top bit of byte 2.
         if bytes[RFU_BYTE_OFFSET] != 0 || bytes[S1_S2_BYTE_OFFSET] & S1_S2_RFU_MASK != 0 {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "9-bit rfu",
                     expected: 0,
                     found: (u64::from(bytes[RFU_BYTE_OFFSET]) << 1)
@@ -235,7 +235,7 @@ impl Serialize for FefNullPayload {
         need_out(buf, self.serialized_len())?;
         if self.s2_field > S2_MASK {
             return Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "s2_field",
                     value: u64::from(self.s2_field),
                     max: u64::from(S2_MASK),
@@ -284,7 +284,7 @@ mod tests {
         assert_eq!(
             FefNullPayload::parse(&buf).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "9-bit rfu",
                     expected: 0,
                     found: 62

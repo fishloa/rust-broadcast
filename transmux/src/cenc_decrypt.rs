@@ -55,7 +55,7 @@ use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::ir::{CodecConfig, DataIdentity, TrackId, TrackProtection, TrackSpec};
 use crate::mux_stage::MuxInput;
-pub use broadcast_common::cenc::CencScheme;
+pub use broadcast_core::cenc::CencScheme;
 
 /// A map of content keys, keyed by 16-byte Key ID (KID).
 ///
@@ -406,7 +406,7 @@ mod tests {
     fn protected_track(id: u32, tenc: TrackEncryptionBox) -> Track {
         let mut spec = TrackSpec::new(
             TrackId::new(id),
-            broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
+            broadcast_core::timescale::Timescale::try_new(90_000).expect("timescale"),
             CodecConfig::Data {
                 identity: DataIdentity::Mp4 {
                     handler: *b"vide",
@@ -600,7 +600,7 @@ mod tests {
         let mut stage = CencDecryptStage::new(keys());
         let spec = TrackSpec::new(
             TrackId::new(1),
-            broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
+            broadcast_core::timescale::Timescale::try_new(90_000).expect("timescale"),
             CodecConfig::Data {
                 identity: DataIdentity::Mp4 {
                     handler: *b"vide",

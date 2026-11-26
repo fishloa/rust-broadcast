@@ -8,7 +8,7 @@
 //! literal, and a round trip must reproduce the same bytes. There is no real
 //! SAT capture in the fixtures.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::tables::sat::*;
 
 /// Build the Table 11a framing around a hand-packed body:

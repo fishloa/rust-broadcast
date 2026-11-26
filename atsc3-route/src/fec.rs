@@ -27,8 +27,8 @@
 //! but has **no real-capture corroboration**. [`SourceFecPayloadId`] and the
 //! SPI-bit dispatch in [`crate::RoutePacket`] *are* real-fixture verified.
 
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 
@@ -136,7 +136,7 @@ impl Serialize for RepairFecPayloadId {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, ROUTE_FEC_PAYLOAD_ID_LEN)?;
-        broadcast_common::len::fit_bits(u64::from(self.esi), ESI_BITS, "ESI")?;
+        broadcast_core::len::fit_bits(u64::from(self.esi), ESI_BITS, "ESI")?;
         let packed = (u32::from(self.sbn) << ESI_BITS) | self.esi;
         buf[..ROUTE_FEC_PAYLOAD_ID_LEN].copy_from_slice(&packed.to_be_bytes());
         Ok(ROUTE_FEC_PAYLOAD_ID_LEN)
@@ -155,7 +155,7 @@ impl Serialize for RepairFecPayloadId {
 /// out-of-band bit the caller already knows (the packet's SPI), not itself a
 /// spec/field token — like the workspace's `Any*` dispatch enums, it is
 /// exempt from the #204 label convention (see `workspace-guards/tests/guards/label.rs`'s
-/// SKIP list) and does not implement [`broadcast_common::Parse`] directly:
+/// SKIP list) and does not implement [`broadcast_core::Parse`] directly:
 /// that trait's single-argument `parse(bytes)` signature has no way to carry
 /// the SPI bit the format needs. Use [`RouteFecPayloadId::parse`] instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -251,9 +251,10 @@ mod tests {
         let mut out = [0u8; ROUTE_FEC_PAYLOAD_ID_LEN];
         assert!(matches!(
             id.serialize_into(&mut out),
-            Err(Error::FieldOverflow(
-                broadcast_common::error::FieldOverflow { field: "ESI", .. }
-            ))
+            Err(Error::FieldOverflow(broadcast_core::error::FieldOverflow {
+                field: "ESI",
+                ..
+            }))
         ));
     }
 

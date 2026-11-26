@@ -15,7 +15,7 @@
 //! has no defined wire format (RFC 5740 §4.4.1) — exposed as opaque content.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::ext::{self, HeaderExtension, WORD};
@@ -171,7 +171,7 @@ impl NormMessageType {
     }
 }
 
-broadcast_common::impl_spec_display!(NormMessageType, Other);
+broadcast_core::impl_spec_display!(NormMessageType, Other);
 
 /// Converts a message's total header byte length into the `hdr_len` word
 /// count every NORM message type's `serialize_into` writes into the common
@@ -184,13 +184,13 @@ broadcast_common::impl_spec_display!(NormMessageType, Other);
 /// true forever).
 fn hdr_len_words(header_bytes: usize, what: &'static str) -> Result<u8> {
     if !header_bytes.is_multiple_of(WORD) {
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: what,
             reason: "header length is not a multiple of 4 bytes",
         }));
     }
     let words = header_bytes / WORD;
-    Ok(broadcast_common::len::fit_u8(words, what)?)
+    Ok(broadcast_core::len::fit_u8(words, what)?)
 }
 
 /// The NORM common message header (RFC 5740 §4.1, Figure 1): 8 bytes carrying
@@ -236,9 +236,9 @@ impl NormCommonHeader {
     /// (caller computes it from the message body). Returns bytes written.
     pub fn serialize_into(&self, out: &mut [u8], hdr_len: u8) -> Result<usize> {
         need_out(out, COMMON_HEADER_LEN)?;
-        broadcast_common::len::fit_bits(self.version as u64, VERSION_BITS, "version")?;
+        broadcast_core::len::fit_bits(self.version as u64, VERSION_BITS, "version")?;
         let ty = self.message_type.to_u8();
-        broadcast_common::len::fit_bits(ty as u64, TYPE_BITS, "type")?;
+        broadcast_core::len::fit_bits(ty as u64, TYPE_BITS, "type")?;
         out[COMMON_VERSION_OFFSET] = (self.version << VERSION_SHIFT) | (ty & NIBBLE_MASK);
         out[COMMON_HDR_LEN_OFFSET] = hdr_len;
         out[COMMON_SEQUENCE_OFFSET..COMMON_SOURCE_ID_OFFSET]
@@ -279,8 +279,8 @@ impl SenderWord {
     /// Serialize the 4-byte sender word into `out`.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         need_out(out, SENDER_WORD_LEN)?;
-        broadcast_common::len::fit_bits(self.backoff as u64, BACKOFF_BITS, "backoff")?;
-        broadcast_common::len::fit_bits(self.gsize as u64, GSIZE_BITS, "gsize")?;
+        broadcast_core::len::fit_bits(self.backoff as u64, BACKOFF_BITS, "backoff")?;
+        broadcast_core::len::fit_bits(self.gsize as u64, GSIZE_BITS, "gsize")?;
         out[SENDER_INSTANCE_OFFSET..SENDER_GRTT_OFFSET]
             .copy_from_slice(&self.instance_id.to_be_bytes());
         out[SENDER_GRTT_OFFSET] = self.grtt;
@@ -289,7 +289,7 @@ impl SenderWord {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for SenderWord {
+impl<'a> broadcast_core::Parse<'a> for SenderWord {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -297,7 +297,7 @@ impl<'a> broadcast_common::Parse<'a> for SenderWord {
     }
 }
 
-impl broadcast_common::Serialize for SenderWord {
+impl broadcast_core::Serialize for SenderWord {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -362,7 +362,7 @@ impl<'a> NormInfo<'a> {
     pub fn parse(data: &'a [u8]) -> Result<Self> {
         let (common, hdr_len) = NormCommonHeader::parse(data)?;
         if common.message_type != NormMessageType::Info {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "message_type",
                 reason: "expected NORM_INFO (type 1)",
             }));
@@ -416,7 +416,7 @@ impl<'a> NormInfo<'a> {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for NormInfo<'a> {
+impl<'a> broadcast_core::Parse<'a> for NormInfo<'a> {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -424,7 +424,7 @@ impl<'a> broadcast_common::Parse<'a> for NormInfo<'a> {
     }
 }
 
-impl broadcast_common::Serialize for NormInfo<'_> {
+impl broadcast_core::Serialize for NormInfo<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -505,7 +505,7 @@ impl<'a> NormData<'a> {
     pub fn parse(data: &'a [u8], fec_payload_id_len: usize) -> Result<Self> {
         let (common, hdr_len) = NormCommonHeader::parse(data)?;
         if common.message_type != NormMessageType::Data {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "message_type",
                 reason: "expected NORM_DATA (type 2)",
             }));
@@ -566,7 +566,7 @@ impl<'a> NormData<'a> {
     }
 }
 
-impl broadcast_common::Serialize for NormData<'_> {
+impl broadcast_core::Serialize for NormData<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -645,7 +645,7 @@ impl NormCmdType {
     }
 }
 
-broadcast_common::impl_spec_display!(NormCmdType, Other);
+broadcast_core::impl_spec_display!(NormCmdType, Other);
 
 /// NORM ack_type (RFC 5740 §4.2.3, shared by NORM_CMD(ACK_REQ) and NORM_ACK).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -693,7 +693,7 @@ impl NormAckType {
     }
 }
 
-broadcast_common::impl_spec_display!(NormAckType, Reserved, Application);
+broadcast_core::impl_spec_display!(NormAckType, Reserved, Application);
 
 /// The sub-type-specific **fixed** body of a NORM_CMD message (RFC 5740
 /// §4.2.3, Figures 10-16): the bytes between the sub-type word and the
@@ -865,7 +865,7 @@ impl<'a> NormCmd<'a> {
     pub fn parse(data: &'a [u8], fec_payload_id_len: usize) -> Result<Self> {
         let (common, hdr_len) = NormCommonHeader::parse(data)?;
         if common.message_type != NormMessageType::Cmd {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "message_type",
                 reason: "expected NORM_CMD (type 3)",
             }));
@@ -998,7 +998,7 @@ impl<'a> NormCmd<'a> {
     }
 }
 
-impl broadcast_common::Serialize for NormCmd<'_> {
+impl broadcast_core::Serialize for NormCmd<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -1072,7 +1072,7 @@ impl<'a> NormFeedback<'a> {
             common.message_type,
             NormMessageType::Nack | NormMessageType::Ack
         ) {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "message_type",
                 reason: "expected NORM_NACK (type 4) or NORM_ACK (type 5)",
             }));
@@ -1130,7 +1130,7 @@ impl<'a> NormFeedback<'a> {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for NormFeedback<'a> {
+impl<'a> broadcast_core::Parse<'a> for NormFeedback<'a> {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -1138,7 +1138,7 @@ impl<'a> broadcast_common::Parse<'a> for NormFeedback<'a> {
     }
 }
 
-impl broadcast_common::Serialize for NormFeedback<'_> {
+impl broadcast_core::Serialize for NormFeedback<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -1405,7 +1405,7 @@ mod tests {
 
     #[test]
     fn norm_types_round_trip_through_the_traits() {
-        use broadcast_common::{Parse, Serialize};
+        use broadcast_core::{Parse, Serialize};
 
         let s = sender();
         let wire = Serialize::try_to_bytes(&s).unwrap();
@@ -1632,21 +1632,21 @@ mod tests {
         // must be rejected, not misread.
         assert!(matches!(
             NormData::parse(&out, 0),
-            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "message_type",
                 ..
             }))
         ));
         assert!(matches!(
             NormCmd::parse(&out, 0),
-            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "message_type",
                 ..
             }))
         ));
         assert!(matches!(
             NormFeedback::parse(&out),
-            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "message_type",
                 ..
             }))
@@ -1656,7 +1656,7 @@ mod tests {
         wrong_type[0] = (wrong_type[0] & 0xF0) | NormMessageType::Data.to_u8();
         assert!(matches!(
             NormInfo::parse(&wrong_type),
-            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "message_type",
                 ..
             }))

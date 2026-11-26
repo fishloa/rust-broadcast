@@ -4,6 +4,8 @@
 
 ### Breaking
 
+- The `traits` (`Parse`, `Serialize`), `len`, `bits`, `error`, `reserved`, `timescale` and `cenc` modules and the `impl_spec_display!` macro moved to the new `broadcast-core` crate; this crate re-exports nothing from them. Import them from `broadcast_core::…`.
+
 - The `mux` module and its four container-mux traits (`Unpackage`, `Package`, `Encrypt`, `Decrypt`) are deleted. No production type implemented any of them: every demuxer, muxer, segmenter and protection pass is a `stage::Stage`, and the streaming demux stages are the only demuxers.
 
 ### Added

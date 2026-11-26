@@ -26,7 +26,7 @@
 
 use scte35_splice::{SpliceInfoSection, judge_splice_time, splice_event};
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 use crate::record::record_counter;
 
@@ -75,7 +75,7 @@ impl Scte35Sanity {
         }
     }
 }
-broadcast_common::impl_spec_display!(Scte35Sanity);
+broadcast_core::impl_spec_display!(Scte35Sanity);
 
 /// Check one raw `splice_info_section` (as reassembled from a PMT-declared
 /// SCTE-35 PID, ANSI/SCTE 35 §9.6.1, `table_id = 0xFC`) against a reference
@@ -132,7 +132,7 @@ pub fn check_section(section: &[u8], now_pts: u64) -> Scte35Sanity {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use scte35_splice::commands::AnyCommand;
     use scte35_splice::commands::{ProgramSplice, SpliceInsert, SpliceInsertComponent, SpliceMode};
     use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
@@ -390,7 +390,7 @@ mod tests {
 
     #[test]
     fn well_formed_encrypted_section_is_encrypted_not_malformed() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         let mut s = SpliceInfoSection::new_clear(
             AnyCommand::SpliceInsert(SpliceInsert::default()),
             SpliceDescriptorLoop::new(&[]),

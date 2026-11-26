@@ -40,9 +40,7 @@ fn drive_seekable(data: &[u8], order: SampleOrder) {
             break;
         };
         let start = usize::try_from(offset).unwrap_or(usize::MAX);
-        let end = start
-            .saturating_add(demand.want_bytes)
-            .min(data.len());
+        let end = start.saturating_add(demand.want_bytes).min(data.len());
         let bytes = data.get(start..end).unwrap_or(&[]).to_vec();
         if demux
             .feed(
@@ -88,11 +86,7 @@ fn drive_sequential(data: &[u8], chunk: usize, per_segment: usize) {
         }
         offset += take;
         fed += 1;
-        if fed % per_segment == 0
-            && demux
-                .feed(Mp4Input::SegmentEnd, Timestamp::ZERO)
-                .is_err()
-        {
+        if fed % per_segment == 0 && demux.feed(Mp4Input::SegmentEnd, Timestamp::ZERO).is_err() {
             break;
         }
     }

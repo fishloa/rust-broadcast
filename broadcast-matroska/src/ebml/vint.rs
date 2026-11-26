@@ -7,7 +7,7 @@
 //! more octets than its value needs; preserving that width is what makes a
 //! re-serialize byte-identical.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 

@@ -3530,7 +3530,7 @@ mod tests {
     }
 
     use super::*;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use std::sync::mpsc;
     use std::thread;
     use transmux::pipeline::{CodecConfig, DataCarriage, DataIdentity};
@@ -4992,7 +4992,7 @@ mod tests {
     /// `timed_metadata::Timeline::push_scte35`'s 33-bit wrap-unroll across a
     /// genuine wrap boundary (see `a_33_bit_pts_wrap_does_not_corrupt_event_log_ordering`).
     fn splice_insert_bytes(event_id: u32, pts_time: u64) -> Vec<u8> {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::AnyCommand;
         use scte35_splice::commands::{ProgramSplice, SpliceInsert, SpliceMode};

@@ -70,7 +70,7 @@ impl DecoderConfigFlags {
         }
     }
 }
-broadcast_common::impl_spec_display!(DecoderConfigFlags, Reserved);
+broadcast_core::impl_spec_display!(DecoderConfigFlags, Reserved);
 
 #[cfg(test)]
 mod tests {

@@ -230,11 +230,12 @@ use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use mpeg_ts::pid::Pid;
 
-use broadcast_common::timescale::{Rounding, rescale};
-use broadcast_common::{Demand, Parse, Serialize, Stage, Timestamp};
+use broadcast_common::{Demand, Stage, Timestamp};
+use broadcast_core::timescale::{Rounding, rescale};
+use broadcast_core::{Parse, Serialize};
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{
@@ -526,7 +527,7 @@ const MPEGH_SAMPLE_RATE_UNSPECIFIED: u32 = 0;
 /// (issue #1171).
 const MPEGH_CONFIG_LEN_MAX: usize = u16::MAX as usize;
 /// Video media timescale (90 kHz — the TS/PES timestamp clock).
-const VIDEO_TIMESCALE: Timescale = broadcast_common::timescale!(crate::rtp::VIDEO_CLOCK_RATE);
+const VIDEO_TIMESCALE: Timescale = broadcast_core::timescale!(crate::rtp::VIDEO_CLOCK_RATE);
 /// Samples per AAC access unit (ISO/IEC 14496-3 — one frame = 1024 samples).
 const AAC_SAMPLES_PER_FRAME: u32 = 1024;
 /// Bytes of an MPEG audio frame header (ISO/IEC 11172-3 §2.4.1.3).
@@ -737,7 +738,7 @@ fn unwrap_ts(prev_unwrapped: i128, prev_raw: u64, raw: u64) -> i128 {
 /// AAC samples), which is exactly the quantity every downstream consumer
 /// (RTP packetisation, segmentation, `tfdt`) reads. For a 90 kHz track (video,
 /// opaque `Data`) this is the identity.
-fn rescale_to_track(anchor_90k: i128, timescale: broadcast_common::timescale::Timescale) -> i64 {
+fn rescale_to_track(anchor_90k: i128, timescale: broadcast_core::timescale::Timescale) -> i64 {
     to_ticks(rescale(
         anchor_90k,
         VIDEO_TIMESCALE,
@@ -1625,7 +1626,7 @@ struct LiveTrack {
     config: CodecConfig,
     /// This track's media timescale, for the same [`DemuxEvent::TrackUpdated`]
     /// reconstruction.
-    timescale: broadcast_common::timescale::Timescale,
+    timescale: broadcast_core::timescale::Timescale,
     /// The AVC/HEVC parameter sets this track has seen, tracked as each appears
     /// so a re-probe can tell a real change from a repeat and is not blind to a
     /// parameter set that arrived in an earlier access unit (r04-W51).
@@ -1748,7 +1749,7 @@ enum TrackState {
 /// per-PID `StreamState` stays small.
 struct ParkedTrack {
     config: CodecConfig,
-    timescale: broadcast_common::timescale::Timescale,
+    timescale: broadcast_core::timescale::Timescale,
     kind: LiveKind,
     backlog: Vec<BufferedAu>,
 }
@@ -6724,9 +6725,9 @@ impl Stage for StreamingTsDemux {
 pub(crate) mod tests {
     use super::*;
     use crate::ir::DataIdentity;
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
 
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
 
     fn timescale(value: u32) -> Timescale {
         Timescale::try_new(value).expect("a non-zero timescale")
@@ -11236,7 +11237,7 @@ pub(crate) mod tests {
     fn constant_increment_44100_aac_emits_no_timeline_reanchor() {
         /// What a muxer that rounds `1024 * 90000 / 44100` to an integer emits.
         const PES_INCREMENT_TICKS: i128 = 2090;
-        const SAMPLE_RATE: Timescale = broadcast_common::timescale!(44_100);
+        const SAMPLE_RATE: Timescale = broadcast_core::timescale!(44_100);
         /// ~11.6 s of audio. Accumulated drift here is ~102 ticks: far past
         /// the old 3-tick threshold (which would have fired ~34 times), far
         /// short of the 1800-tick (20 ms) bound the fix derives.
@@ -11291,7 +11292,7 @@ pub(crate) mod tests {
     #[test]
     fn a_real_timeline_gap_emits_exactly_one_reanchor() {
         const PES_INCREMENT_TICKS: i128 = 2090;
-        const SAMPLE_RATE: Timescale = broadcast_common::timescale!(44_100);
+        const SAMPLE_RATE: Timescale = broadcast_core::timescale!(44_100);
         const FRAMES_BEFORE: i128 = 50;
         const FRAMES_AFTER: i128 = 50;
         /// Two seconds of 90 kHz — orders of magnitude past any muxer drift.
@@ -16803,7 +16804,7 @@ pub(crate) mod tests {
 
     #[test]
     fn an_he_aac_probe_sets_the_output_to_core_duration_scale() {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use dvb_si::descriptors::aac::{AacDescriptor, AacExtension};
         let descriptor = AacDescriptor {
             profile_and_level: 0x58,

@@ -88,7 +88,7 @@ impl StreamContainer {
     }
 }
 
-broadcast_common::impl_spec_display!(StreamContainer);
+broadcast_core::impl_spec_display!(StreamContainer);
 
 /// Whether the session reaches this container's bytes by absolute range
 /// rather than as a forward chunk stream.
@@ -169,7 +169,7 @@ impl FileInput<'_> {
     }
 }
 
-broadcast_common::impl_spec_display!(FileInput<'_>);
+broadcast_core::impl_spec_display!(FileInput<'_>);
 
 /// What the session needs from the caller next.
 #[non_exhaustive]
@@ -208,7 +208,7 @@ impl FileDemand {
     }
 }
 
-broadcast_common::impl_spec_display!(FileDemand);
+broadcast_core::impl_spec_display!(FileDemand);
 
 /// The demuxer the session drives, one variant per supported container.
 enum Demux {

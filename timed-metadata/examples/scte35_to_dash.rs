@@ -9,7 +9,7 @@
 //! cargo run -p timed-metadata --example scte35_to_dash
 //! ```
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::emsg::PresentationTime;
 use timed_metadata::{TimeAnchor, Timeline, convert::EmsgConfig};
 

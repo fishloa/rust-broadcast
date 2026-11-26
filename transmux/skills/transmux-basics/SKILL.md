@@ -165,7 +165,7 @@ samples-in path; `CmafMuxStage` emits exactly that pair, one fragment at a time.
 <!-- Snippet map: the doctest on `transmux::segmenter::Segmenter`. -->
 
 ```rust
-let mut seg = Segmenter::new(vec![spec()], broadcast_common::timescale::Timescale::try_new(1000).expect("non-zero timescale"), core::time::Duration::from_secs(2)).unwrap();
+let mut seg = Segmenter::new(vec![spec()], broadcast_core::timescale::Timescale::try_new(1000).expect("non-zero timescale"), core::time::Duration::from_secs(2)).unwrap();
 let init = seg.init_segment().unwrap();      // ftyp + moov
 assert_eq!(&init[4..8], b"ftyp");
 let sample = |sync| MuxInput::Sample { track: transmux::TrackId::new(1), sample: au(sync) };

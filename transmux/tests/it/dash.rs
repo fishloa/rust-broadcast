@@ -11,11 +11,11 @@
 //! the crate itself computes, not hardcoded literals.
 #![cfg(feature = "std")]
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use std::path::PathBuf;
 use transmux::TrackId;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use transmux::aac_asc::AudioSpecificConfig;
 use transmux::dash::{DashPackager, MPD_NAMESPACE};
 use transmux::pipeline::CodecConfig;

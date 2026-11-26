@@ -18,7 +18,7 @@
 //! typed wrappers do the splitting.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 
@@ -142,7 +142,7 @@ impl<'a> HeaderExtension<'a> {
                 });
             }
             let hel = total / WORD;
-            broadcast_common::len::fit_bits(hel as u64, HEL_BITS, "HEL")?;
+            broadcast_core::len::fit_bits(hel as u64, HEL_BITS, "HEL")?;
             out[1] = hel as u8;
             out[2..total].copy_from_slice(self.content);
             Ok(total)
@@ -150,7 +150,7 @@ impl<'a> HeaderExtension<'a> {
     }
 }
 
-impl broadcast_common::Serialize for HeaderExtension<'_> {
+impl broadcast_core::Serialize for HeaderExtension<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -188,7 +188,7 @@ pub fn serialize_chain(exts: &[HeaderExtension<'_>], out: &mut [u8]) -> Result<u
     Ok(off)
 }
 
-impl<'a> broadcast_common::Parse<'a> for HeaderExtension<'a> {
+impl<'a> broadcast_core::Parse<'a> for HeaderExtension<'a> {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {

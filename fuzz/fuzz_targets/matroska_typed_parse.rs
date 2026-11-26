@@ -1,6 +1,6 @@
 #![no_main]
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use broadcast_matroska::matroska::{Document, Element};
 use libfuzzer_sys::fuzz_target;
 

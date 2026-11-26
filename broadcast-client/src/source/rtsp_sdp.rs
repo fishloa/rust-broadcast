@@ -3,7 +3,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use rtsp_runtime::{MAX_TRACKS, PlayPlan};
 use sdp_types::Media;
 use transmux::pipeline::CodecConfig;

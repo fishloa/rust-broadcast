@@ -1,7 +1,7 @@
 //! `OutputBufferTooSmall { need, have }` for every buffer shorter than a
 //! host-control `Tune` APDU.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_ci::Error;
 use dvb_ci::objects::host_control::Tune;
 
@@ -15,7 +15,7 @@ fn tune_rejects_every_short_buffer() {
         tune.serialized_len(),
         |buf| tune.serialize_into(buf),
         |e| match e {
-            Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+            Error::OutputBufferTooSmall(broadcast_core::error::OutputBufferTooSmall {
                 need,
                 have,
             }) => Some((*need, *have)),

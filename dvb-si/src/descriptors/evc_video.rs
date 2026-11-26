@@ -21,7 +21,7 @@ use super::vvc_video::TemporalIdRange;
 use crate::error::Result;
 use crate::h222_bits::{BITS_PER_BYTE, BitReader, BitWriter, impl_h222_descriptor};
 use alloc::vec::Vec;
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::reserved::ReservedOnes;
 
 /// Descriptor tag of `EVC_video_descriptor` (Table 2-45: 58).
 pub const TAG: u8 = 0x3A;
@@ -223,7 +223,7 @@ impl_h222_descriptor!(EvcVideoDescriptor, TAG, "EvcVideoDescriptor", "EVC_VIDEO"
 mod tests {
     use super::*;
     use alloc::vec;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     #[test]
     fn spec_vector_round_trip() {

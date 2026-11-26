@@ -25,9 +25,9 @@ use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::{LANG_CODE_LEN, LangCode};
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_bits, fit_u8, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{fit_bits, fit_u8, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for the ATSC caption_service_descriptor.
 pub const TAG: u8 = 0x86;
@@ -93,7 +93,7 @@ impl AtscCaptionKind {
         }
     }
 }
-broadcast_common::impl_spec_display!(AtscCaptionKind);
+broadcast_core::impl_spec_display!(AtscCaptionKind);
 
 /// One caption service entry of the descriptor loop (Table 6.26).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,7 +190,7 @@ impl<'a> Parse<'a> for AtscCaptionServiceDescriptor {
         )?;
         let Some(&head) = body.first() else {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: COUNT_BYTE_LEN,
                     have: 0,
                     what: "AtscCaptionServiceDescriptor",

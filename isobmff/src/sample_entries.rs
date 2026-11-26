@@ -21,10 +21,10 @@ use crate::error::{Error, Result};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use broadcast_common::Serialize;
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{be_u16, be_u32};
+use broadcast_core::Serialize;
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::len::{need_in, need_out};
 
 /// Length of the VisualSampleEntry fixed fields (ISO/IEC 14496-12:2026 §12.1.3).
 /// 6+2(data_ref_index)+8+2(width)+2(height)+4(horiz)+4(vert)+4(reserved)+2(frame_count)+
@@ -264,7 +264,7 @@ impl OpaqueBox {
         need_out(buf, need)?;
         // This opaque child is compact-form only (its reader is too): a size
         // past 32 bits is a typed error, never a wrap (#1147).
-        let size = broadcast_common::len::fit_u32(need, "opaque child size")?;
+        let size = broadcast_core::len::fit_u32(need, "opaque child size")?;
         buf[..core::mem::size_of::<u32>()].copy_from_slice(&size.to_be_bytes());
         buf[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE].copy_from_slice(&self.box_type);
         buf[BOX_HEADER_MIN_SIZE..BOX_HEADER_MIN_SIZE + self.data.len()].copy_from_slice(&self.data);
@@ -950,7 +950,7 @@ mod tests {
     use crate::avc_config::AVCDecoderConfigurationRecord;
     use crate::hevc_config::HEVCDecoderConfigurationRecord;
     use alloc::vec;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     fn make_avc_config() -> AVCDecoderConfigurationRecord {
         AVCDecoderConfigurationRecord {

@@ -12,9 +12,9 @@
 //! 4. Sample fidelity + FLV.as_slice() round-trip: demux→mux→demux byte-identical AUs.
 //! 5. Cross-hub: FLV.as_slice() → IR → CmafMuxStage carries avc1/avcC + mp4a and matching NALs.
 
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse, Serialize};
 use bytes::Bytes;
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use test_fixtures::ffprobe;
@@ -495,7 +495,7 @@ fn first_frame(
 /// composition offset was truncated into SI24.
 #[test]
 fn package_rescales_non_ms_timescales() {
-    const VIDEO_TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
+    const VIDEO_TIMESCALE: Timescale = broadcast_core::timescale!(90_000);
     const FRAME_TICKS: u32 = 3_000; // 30 fps at 90 kHz
 
     // One AVC `avc1` from the real fixture, so the muxer has a valid config.
@@ -599,7 +599,7 @@ fn package_rejects_oversized_composition_time() {
     let track = test_harness::collect::CollectedTrack::new(
         transmux::TrackSpec::new(
             TrackId::new(1),
-            broadcast_common::timescale!(1000),
+            broadcast_core::timescale!(1000),
             CodecConfig::Avc {
                 config,
                 width: 320,
@@ -609,7 +609,7 @@ fn package_rejects_oversized_composition_time() {
         vec![sample],
     );
     let media =
-        test_harness::collect::Collected::new(vec![track], broadcast_common::timescale!(1000));
+        test_harness::collect::Collected::new(vec![track], broadcast_core::timescale!(1000));
 
     let err = crate::mux_bytes::mux_result(&mut FlvMuxStage::new(), &media)
         .expect_err("oversized CompositionTime must be rejected");
@@ -643,7 +643,7 @@ fn frame_payloads_reject_out_of_range_timestamps() {
         let track = test_harness::collect::CollectedTrack::new(
             transmux::TrackSpec::new(
                 TrackId::new(1),
-                broadcast_common::timescale!(1000),
+                broadcast_core::timescale!(1000),
                 CodecConfig::Avc {
                     config: config.clone(),
                     width: 320,
@@ -652,7 +652,7 @@ fn frame_payloads_reject_out_of_range_timestamps() {
             ),
             vec![sample],
         );
-        test_harness::collect::Collected::new(vec![track], broadcast_common::timescale!(1000))
+        test_harness::collect::Collected::new(vec![track], broadcast_core::timescale!(1000))
     };
     // Sanity: in-range input is accepted (so the Errs below are the guards).
     assert!(first_frame(&media_with(0, 0)).is_ok());

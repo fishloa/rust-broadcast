@@ -6,13 +6,13 @@
 
 use broadcast_common::bcd::{MAX_NIBBLES, bcd_to_decimal, decimal_to_bcd};
 use broadcast_common::ber::{decode_ber_length, encode_ber_length_as};
-use broadcast_common::bits::{BitError, BitReader, BitWriter};
 use broadcast_common::content_range::ContentRange;
 use broadcast_common::klv::{BerLength, KlvError, KlvItem, collect_klv_items, walk_klv_items};
 use broadcast_common::net::{InterfaceError, JoinMismatch, MulticastInterface};
 use broadcast_common::stage::{Stage, Timestamp};
-use broadcast_common::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
-use broadcast_common::traits::Serialize;
+use broadcast_core::bits::{BitError, BitReader, BitWriter};
+use broadcast_core::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
+use broadcast_core::traits::Serialize;
 
 #[test]
 fn skipping_the_exact_remaining_bits_lands_on_the_end() {

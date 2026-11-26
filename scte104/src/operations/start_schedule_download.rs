@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for start_schedule_download_request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x0103;
@@ -15,7 +15,7 @@ pub const OP_ID: u16 = 0x0103;
 /// start_schedule_download_request_data() — §9.7.1, Table 9-18.
 ///
 /// `num_provider_avails` is not a stored field: it is always
-/// `provider_avail_ids.len()`, written through `broadcast_common::len::fit_u8`
+/// `provider_avail_ids.len()`, written through `broadcast_core::len::fit_u8`
 /// on serialize (audit run-09 S4-W1).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]

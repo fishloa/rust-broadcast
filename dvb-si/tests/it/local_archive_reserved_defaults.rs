@@ -21,7 +21,7 @@
 //!   text (audit section 12.2).
 #![cfg(feature = "ts")]
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::descriptors::data_broadcast_id::{
     DATA_BROADCAST_ID_SSU, DataBroadcastIdDescriptor, IdSelector,
 };

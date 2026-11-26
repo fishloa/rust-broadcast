@@ -6,7 +6,7 @@
 //!
 //! ```ignore
 //! #[error(transparent)]
-//! BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+//! BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 //! ```
 //!
 //! so the struct, its `Display` message and its field names exist once (the
@@ -32,8 +32,7 @@
 //! unexpected table id) are deliberately absent.
 
 /// An input buffer held fewer bytes than the structure being parsed needs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("buffer too short: need {need} bytes, have {have} (while parsing {what})")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BufferTooShort {
     /// Bytes required to proceed.
     pub need: usize,
@@ -44,8 +43,7 @@ pub struct BufferTooShort {
 }
 
 /// An output buffer was smaller than the serialized form requires.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("output buffer too small: need {need}, have {have}")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct OutputBufferTooSmall {
     /// Required size.
     pub need: usize,
@@ -54,8 +52,7 @@ pub struct OutputBufferTooSmall {
 }
 
 /// A value did not fit the wire field it is written to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("{field} = {value} exceeds the field maximum {max}")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FieldOverflow {
     /// Spec name of the field, e.g. "section_length".
     pub field: &'static str,
@@ -66,8 +63,7 @@ pub struct FieldOverflow {
 }
 
 /// A CRC-32 carried on the wire disagrees with the one computed over the data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("{what} CRC-32 mismatch: computed {computed:#010x}, expected {expected:#010x}")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CrcMismatch {
     /// The structure the CRC protects, e.g. "PSM", "SNDU", "section".
     pub what: &'static str,
@@ -81,8 +77,7 @@ pub struct CrcMismatch {
 ///
 /// `expected` and `found` are widened to `u32` so one kind covers an 8-bit
 /// sync byte, a 16-bit sync word and a 24/32-bit start code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("invalid {what}: expected {expected:#x}, got {found:#x}")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidSync {
     /// The marker's name, e.g. "TS sync byte", "Pa sync word".
     pub what: &'static str,
@@ -94,8 +89,7 @@ pub struct InvalidSync {
 
 /// A reserved field did not hold the value the spec requires (all ones, or
 /// zero).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("reserved field {field} must be {expected:#x}, found {found:#x}")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReservedBits {
     /// Spec name of the reserved field.
     pub field: &'static str,
@@ -106,8 +100,7 @@ pub struct ReservedBits {
 }
 
 /// A field held a value the spec does not allow.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("field {field} value {value} invalid: {reason}")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidValue {
     /// Spec name of the field.
     pub field: &'static str,
@@ -119,8 +112,7 @@ pub struct InvalidValue {
 
 /// A field is structurally invalid and has no single offending number (a bad
 /// combination, a missing mandatory part).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("invalid field {field}: {reason}")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct InvalidField {
     /// Spec name of the field.
     pub field: &'static str,
@@ -129,8 +121,7 @@ pub struct InvalidField {
 }
 
 /// A format version number this crate does not support.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("unsupported {what} version {found}")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnsupportedVersion {
     /// The structure carrying the version, e.g. "RTP", "emsg".
     pub what: &'static str,
@@ -140,8 +131,7 @@ pub struct UnsupportedVersion {
 
 /// A length field disagrees with the number of bytes actually present or
 /// computed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("length mismatch for {what}: declared {declared}, actual {actual}")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LengthMismatch {
     /// The structure whose length is checked.
     pub what: &'static str,
@@ -150,6 +140,108 @@ pub struct LengthMismatch {
     /// The length actually found or computed.
     pub actual: usize,
 }
+
+impl core::fmt::Display for BufferTooShort {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "buffer too short: need {} bytes, have {} (while parsing {})",
+            self.need, self.have, self.what
+        )
+    }
+}
+impl core::error::Error for BufferTooShort {}
+
+impl core::fmt::Display for OutputBufferTooSmall {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "output buffer too small: need {}, have {}",
+            self.need, self.have
+        )
+    }
+}
+impl core::error::Error for OutputBufferTooSmall {}
+
+impl core::fmt::Display for FieldOverflow {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{} = {} exceeds the field maximum {}",
+            self.field, self.value, self.max
+        )
+    }
+}
+impl core::error::Error for FieldOverflow {}
+
+impl core::fmt::Display for CrcMismatch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "{} CRC-32 mismatch: computed {:#010x}, expected {:#010x}",
+            self.what, self.computed, self.expected
+        )
+    }
+}
+impl core::error::Error for CrcMismatch {}
+
+impl core::fmt::Display for InvalidSync {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "invalid {}: expected {:#x}, got {:#x}",
+            self.what, self.expected, self.found
+        )
+    }
+}
+impl core::error::Error for InvalidSync {}
+
+impl core::fmt::Display for ReservedBits {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "reserved field {} must be {:#x}, found {:#x}",
+            self.field, self.expected, self.found
+        )
+    }
+}
+impl core::error::Error for ReservedBits {}
+
+impl core::fmt::Display for InvalidValue {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "field {} value {} invalid: {}",
+            self.field, self.value, self.reason
+        )
+    }
+}
+impl core::error::Error for InvalidValue {}
+
+impl core::fmt::Display for InvalidField {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "invalid field {}: {}", self.field, self.reason)
+    }
+}
+impl core::error::Error for InvalidField {}
+
+impl core::fmt::Display for UnsupportedVersion {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "unsupported {} version {}", self.what, self.found)
+    }
+}
+impl core::error::Error for UnsupportedVersion {}
+
+impl core::fmt::Display for LengthMismatch {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "length mismatch for {}: declared {}, actual {}",
+            self.what, self.declared, self.actual
+        )
+    }
+}
+impl core::error::Error for LengthMismatch {}
 
 #[cfg(test)]
 mod tests {

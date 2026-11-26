@@ -10,9 +10,9 @@
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for application_storage_descriptor (AIT namespace).
 pub const TAG: u8 = 0x10;
@@ -89,7 +89,7 @@ impl StorageProperty {
         }
     }
 }
-broadcast_common::impl_spec_display!(StorageProperty, Reserved);
+broadcast_core::impl_spec_display!(StorageProperty, Reserved);
 
 /// Application Storage Descriptor (AIT tag 0x10).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,7 +171,7 @@ impl Serialize for ApplicationStorageDescriptor {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         let reserved = self.reserved_flags.get() as u8;
-        let version = broadcast_common::len::fit_mask(self.version, VERSION_MASK, "version")?;
+        let version = broadcast_core::len::fit_mask(self.version, VERSION_MASK, "version")?;
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[HEADER_LEN + STORAGE_PROPERTY_OFFSET] = self.storage_property.to_u8();

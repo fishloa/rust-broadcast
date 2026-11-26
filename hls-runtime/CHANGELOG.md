@@ -7,6 +7,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ### Changed
 
 - The playback client demuxes with one streaming `transmux::mp4_demux::Mp4Demux` per Media Initialization Section instead of building an `init + segment` buffer and running a whole-input demuxer over it for every fetched Part/Segment: the init is fed once and each body in bounded pieces, so a segment's samples no longer cost a second copy of the whole body, and a damaged segment costs only itself. Decoded output (`Output::Init`/`Tracks`/`Samples`/`TrackSkipped`/`FragmentDamaged`) is unchanged.

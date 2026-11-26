@@ -19,7 +19,7 @@ use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
 use crate::descriptors::{AnyDescriptor, DescriptorLoop, DescriptorRegistry};
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use mpeg_ts::section::Section;
 
 mod bat;

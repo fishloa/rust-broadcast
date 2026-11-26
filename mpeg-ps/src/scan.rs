@@ -44,7 +44,7 @@ use crate::pack_header::{PACK_START_CODE, PackHeader};
 use crate::program_stream_map::{MAP_STREAM_ID, ProgramStreamMap, program_stream_map_wire_len};
 use crate::system_header::{SYSTEM_HEADER_START_CODE, SystemHeader};
 use crate::wire::{read_u16_at, read_u32_at};
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 use crate::{PROGRAM_END_CODE, Result};
 
@@ -522,7 +522,7 @@ fn find_pack_start(data: &[u8]) -> Option<usize> {
 mod tests {
     use super::*;
     use alloc::vec;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     /// A pack header with no stuffing (14 bytes), byte-identical to the
     /// crate's own round-trip fixture pattern.

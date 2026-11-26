@@ -15,8 +15,8 @@ use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 /// `text()` object (Table 46): a run of `text_char` bytes (EN 300 468 Annex A).
 ///
@@ -70,7 +70,7 @@ impl<'a> Text<'a> {
         let body_end = body_start + len_value;
         if bytes.len() < body_end {
             return Err(Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "text component",
                     declared: len_value,
                     actual: bytes.len().saturating_sub(body_start),
@@ -109,7 +109,7 @@ impl<'a> Parse<'a> for Text<'a> {
         // The whole APDU must be exactly this component.
         if consumed != bytes.len() {
             return Err(Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "text",
                     declared: consumed,
                     actual: bytes.len(),
@@ -248,7 +248,7 @@ impl AnswId {
         }
     }
 }
-broadcast_common::impl_spec_display!(AnswId, Reserved);
+broadcast_core::impl_spec_display!(AnswId, Reserved);
 
 /// `answ()` object (Table 48): the user input reply.
 ///
@@ -284,7 +284,7 @@ impl<'a> Parse<'a> for Answ<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::ANSW, "answ")?;
         let id_byte = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "answ answ_id",
@@ -406,7 +406,7 @@ impl<'a> Menu<'a> {
         let more = expected == tag::MENU_MORE || expected == tag::LIST_MORE;
         let (length_form, body) = super::parse_apdu_header(bytes, expected, what)?;
         let choice_nb = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what,
@@ -555,7 +555,7 @@ impl<'a> Parse<'a> for MenuAnsw {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::MENU_ANSW, "menu_answ")?;
         let choice_ref = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "menu_answ choice_ref",

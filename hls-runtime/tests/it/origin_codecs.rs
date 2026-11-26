@@ -402,7 +402,7 @@ fn a_measured_fmp4_frame_rate_appears_in_the_variant() {
     // decides the last millihertz.
     let spec = TrackSpec::new(
         transmux::TrackId::new(1),
-        broadcast_common::timescale::Timescale::try_new(90_009).expect("timescale"),
+        broadcast_core::timescale::Timescale::try_new(90_009).expect("timescale"),
         CodecConfig::Avc {
             config: crate::dummy_avc_config::dummy_avc_config(),
             width: 320,

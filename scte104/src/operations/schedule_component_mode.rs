@@ -5,12 +5,12 @@
 //! `(component_tag, time)`.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 use crate::error::{Error, Result};
 use crate::time::SpliceScheduleTime;
 use crate::traits::OperationDef;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for schedule_component_mode_request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x010D;
@@ -42,7 +42,7 @@ impl<'a> Parse<'a> for ScheduleComponentMode {
         let count = bytes.len() / ENTRY_LEN;
         if !bytes.len().is_multiple_of(ENTRY_LEN) {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: (count + 1) * ENTRY_LEN,
                     have: bytes.len(),
                     what: "schedule_component_mode data",

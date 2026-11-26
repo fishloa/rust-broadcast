@@ -13,8 +13,8 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for provider_usage_descriptor (AIT namespace).
 pub const TAG: u8 = 0x13;
@@ -80,7 +80,7 @@ impl Serialize for ProviderUsageDescriptor<'_> {
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut pos = HEADER_LEN;
         for n in &self.provider_names {
-            buf[pos] = broadcast_common::len::fit_u8(n.len(), "provider_name_length")?;
+            buf[pos] = broadcast_core::len::fit_u8(n.len(), "provider_name_length")?;
             pos += NAME_LEN_FIELD;
             buf[pos..pos + n.len()].copy_from_slice(n);
             pos += n.len();

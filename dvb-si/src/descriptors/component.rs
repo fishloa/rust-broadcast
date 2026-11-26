@@ -7,8 +7,8 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LANG_CODE_LEN, LangCode};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for component_descriptor.
 pub const TAG: u8 = 0x50;
@@ -92,12 +92,12 @@ impl Serialize for ComponentDescriptor<'_> {
         // High nibble = stream_content_ext, low nibble = stream_content (§6.2.8).
         // Both are public u8 fields; mask at the shift so a caller-constructed
         // value wider than its nibble cannot bleed into the neighbour (r03-W2).
-        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN] = (broadcast_core::len::fit_mask(
             self.stream_content_ext,
             STREAM_CONTENT_MASK,
             "stream_content_ext",
         )? << STREAM_CONTENT_EXT_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.stream_content,
                 STREAM_CONTENT_MASK,
                 "stream_content",

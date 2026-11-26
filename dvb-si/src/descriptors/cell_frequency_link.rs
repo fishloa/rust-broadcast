@@ -21,8 +21,8 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for cell_frequency_link_descriptor.
 pub const TAG: u8 = 0x6D;
@@ -190,7 +190,7 @@ impl Serialize for CellFrequencyLinkDescriptor {
             buf[pos..pos + FREQUENCY_OFFSET].copy_from_slice(&e.cell_id.to_be_bytes());
             buf[pos + FREQUENCY_OFFSET..pos + SUBCELL_INFO_LOOP_LENGTH_OFFSET]
                 .copy_from_slice(&e.frequency.to_be_bytes());
-            buf[pos + SUBCELL_INFO_LOOP_LENGTH_OFFSET] = broadcast_common::len::fit_u8(
+            buf[pos + SUBCELL_INFO_LOOP_LENGTH_OFFSET] = broadcast_core::len::fit_u8(
                 e.subcells.len() * SUBCELL_LEN,
                 "subcell_info_loop_length",
             )?;

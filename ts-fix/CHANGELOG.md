@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ### Added
 
 - `discontinuity::PcrDiscontinuityScanner`, the streaming form of `detect_pcr_discontinuities`: a capture is fed in pieces of any size instead of being held whole.

@@ -4,7 +4,7 @@
 use super::{aac_config_from_fmtp, avc_config_from_fmtp, fmtp_param, rtpmap_clock_rate};
 use crate::pipeline::CodecConfig;
 use alloc::vec::Vec;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 
 /// `configurationVersion` of the placeholder `avcC` of a track whose parameter sets arrive in-band.

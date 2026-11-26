@@ -25,7 +25,7 @@ use crate::support::{
     PAT_PID, PMT1_PID, PMT2_PID, build_two_program_ts, dummy_es_packet, null_packet, serialize_pat,
     serialize_pmt,
 };
-use broadcast_common::traits::{Parse, Serialize};
+use broadcast_core::traits::{Parse, Serialize};
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::cat::CatSection;
 use dvb_si::tables::pat::{PatEntry, PatSection};

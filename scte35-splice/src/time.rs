@@ -8,8 +8,8 @@
 
 use crate::error::{Error, Result};
 use broadcast_common::clock33::Clock33;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// One second of the program clock in 90 kHz ticks.
 pub const TICKS_PER_SECOND: u64 = 90_000;
@@ -133,7 +133,7 @@ impl<'a> Parse<'a> for SpliceTime {
                 | (u64::from(bytes[PTS_LOW_OFFSET]) << PTS_LOW_SHIFT)
                 | u64::from(bytes[PTS_BOTTOM_OFFSET]);
             let pts_time = Clock33::try_new(pts).map_err(|e| {
-                Error::InvalidValue(broadcast_common::error::InvalidValue {
+                Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "splice_time.pts_time",
                     value: e.value,
                     reason: "pts_time is a 33-bit field; the flag bit set means the top data bit cannot be set",
@@ -224,7 +224,7 @@ impl Serialize for BreakDuration {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, Self::LEN)?;
         if self.duration > PTS_MAX {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "break_duration.duration",
                 value: self.duration,
                 max: PTS_MAX,
@@ -344,7 +344,7 @@ mod tests {
         assert_eq!(
             bd.try_to_bytes().err(),
             Some(crate::error::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "break_duration.duration",
                     value: 1u64 << 33,
                     max: PTS_MAX

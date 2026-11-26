@@ -1,4 +1,4 @@
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use mpeg_ps::SystemHeader;
 use mpeg_ps::program_stream;
 
@@ -121,7 +121,7 @@ fn real_fixture_walk() {
     }
 }
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use mpeg_ps::DescriptorLoop;
 use mpeg_ps::ProgramStreamMap;
 

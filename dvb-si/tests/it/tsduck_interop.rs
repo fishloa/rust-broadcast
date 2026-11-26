@@ -9,7 +9,7 @@
 //! '1', so the `HDR_WCG_idc` (bits [1:0]) assertion catches any parser that
 //! reads it from the wrong bit position.
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::descriptors::hdr_wcg_idc::HdrWcgIdc;
 use dvb_si::descriptors::video_stream::FrameRateCode;
@@ -228,7 +228,7 @@ fn decodes_tsduck_compiled_simple_descriptors() {
 
 #[test]
 fn decodes_tsduck_compiled_protection_message() {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use dvb_si::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
 
     let data = fixture("tsduck-protection-message-pmt.bin");
@@ -264,7 +264,7 @@ fn decodes_tsduck_compiled_protection_message() {
 
 #[test]
 fn decodes_tsduck_compiled_cpcm_delivery_signalling() {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use dvb_si::descriptors::extension::{ExtensionBody, ExtensionDescriptor, ExtensionTag};
 
     let data = fixture("tsduck-cpcm-delivery-signalling-pmt.bin");
@@ -298,7 +298,7 @@ fn decodes_tsduck_compiled_cpcm_delivery_signalling() {
 
 #[test]
 fn decodes_tsduck_compiled_dts_descriptors() {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use dvb_si::descriptors::extension::SamplingFrequency;
     use dvb_si::descriptors::extension::{
         ExtensionBody, ExtensionDescriptor, ExtensionTag, FrameDurationCode, MaxPayloadCode,

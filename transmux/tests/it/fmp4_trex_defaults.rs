@@ -110,7 +110,7 @@ fn avc_spec() -> transmux::pipeline::TrackSpec {
     };
     transmux::pipeline::TrackSpec::new(
         transmux::TrackId::new(TRACK_ID),
-        broadcast_common::timescale!(90_000),
+        broadcast_core::timescale!(90_000),
         transmux::pipeline::CodecConfig::Avc {
             config: isobmff::avc_config::AVCConfigurationBox::new(record),
             width: 16,
@@ -123,7 +123,7 @@ fn avc_spec() -> transmux::pipeline::TrackSpec {
 /// default (`build_init_segment` writes 0, the "not declared" value).
 fn init_with_trex_sample_size(size: u32) -> Vec<u8> {
     let mut init =
-        transmux::pipeline::build_init_segment(&[avc_spec()], broadcast_common::timescale!(90_000))
+        transmux::pipeline::build_init_segment(&[avc_spec()], broadcast_core::timescale!(90_000))
             .expect("the AVC init segment builds");
     let at = init
         .windows(4)

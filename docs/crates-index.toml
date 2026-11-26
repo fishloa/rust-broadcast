@@ -89,11 +89,19 @@ blurb = "`publish = false` dev-dependencies shared by the workspace's test suite
 
 # ---------------------------------------------------------------- foundation
 
+[crate.broadcast-core]
+domain = "foundation"
+summary = "Frozen wire-format contract: Parse/Serialize, checked field widths, bit I/O, shared errors, timescale and the CENC scheme identity."
+standards = "ISO/IEC 23001-7 scheme identity (`cenc`); no format of its own"
+what = "The stable floor every wire crate builds on: the symmetric `Parse<'a>` / `Serialize` traits, the checked field-width helpers (`len`), MSB-first bit I/O (`bits`), the shared error kinds (`error`), typed reserved-bit fields (`reserved`), the media `timescale` codec and the container-independent CENC scheme identity, plus the `impl_spec_display!` macro. `#![no_std]` + `alloc`, no non-optional dependency; the public API is meant to be frozen (pinned by the `core_api_pin` guard). Unpublished until its release lane runs."
+crates_io = false
+lifecycle = "internal"
+
 [crate.broadcast-common]
 domain = "foundation"
-summary = "Shared Parse/Serialize traits, CRC-32/MPEG-2, BCD/time/hex codecs, mux traits, 33-bit clock arithmetic."
-standards = "ISO/IEC 13818-1 CRC-32 (Annex A); ISO/IEC 23001-7 scheme identity (`cenc`)"
-what = "The base of the workspace: the zero-copy `Parse<'a>` / `Serialize` trait pair every wire type implements, the MPEG-2 CRC-32, BCD/MJD time and hex codecs, range-checked length narrowing for serializers (`len`), the container `mux` traits, the `cenc::CencScheme` identity shared by `transmux` and `broadcast-hls`, and `clock33` wrapping 33-bit PTS/DTS arithmetic. It implements no protocol on its own. Versioned independently of the DVB lockstep."
+summary = "CRC-32/MPEG-2, BCD/time/hex codecs, 33-bit clock arithmetic, the incremental Stage contract and the bounded XML reader."
+standards = "ISO/IEC 13818-1 CRC-32 (Annex A)"
+what = "Shared foundations above the frozen `broadcast-core` contract: the MPEG-2 CRC-32, BCD/MJD time and hex codecs, `clock33` wrapping 33-bit PTS/DTS arithmetic and the 27 MHz PCR clock, the incremental `stage::Stage` driver, and the bounded quick-xml tree reader. It re-exports nothing from `broadcast-core` and implements no protocol on its own. Versioned independently of the DVB lockstep."
 crates_io = true
 lifecycle = "active"
 

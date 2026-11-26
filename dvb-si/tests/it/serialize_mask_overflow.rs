@@ -5,7 +5,7 @@
 //! so rejecting everything cannot satisfy it. The lexical half is
 //! the `serialize_mask` guard in workspace-guards.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::descriptors::component::ComponentDescriptor;
 use dvb_si::descriptors::short_smoothing_buffer::ShortSmoothingBufferDescriptor;
 use dvb_si::descriptors::system_clock::SystemClockDescriptor;

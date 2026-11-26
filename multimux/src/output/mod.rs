@@ -309,7 +309,7 @@ impl OutputKind {
     }
 }
 
-broadcast_common::impl_spec_display!(OutputKind);
+broadcast_core::impl_spec_display!(OutputKind);
 
 /// One delivery protocol's axum **manifest** routes for a single stream,
 /// mounted by the origin under `/{stream}/` alongside every other configured

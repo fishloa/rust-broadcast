@@ -19,7 +19,7 @@ wire_enum! {
     #[non_exhaustive]
     #[rustfmt::skip] // deliberate column-aligned discriminants
     pub enum TableId: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
-        broadcast_common::error::InvalidValue {
+        broadcast_core::error::InvalidValue {
             field: "table_id",
             value: u64::from(value),
             reason: "not a TableId variant (EN 300 468 §5.1.3 Table 2)",
@@ -217,7 +217,7 @@ mod tests {
         assert!(matches!(
             TableId::try_from(0x99),
             Err(crate::error::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "table_id",
                     value: 0x99,
                     ..
@@ -240,4 +240,4 @@ mod tests {
     }
 }
 
-broadcast_common::impl_spec_display!(TableId);
+broadcast_core::impl_spec_display!(TableId);

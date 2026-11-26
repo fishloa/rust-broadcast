@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::metadata::{Chpl, Ilst, ItemKey, Keys, Meta, Metadata, MetadataItem, Udta};
 use isobmff::{Limits, MovieBox, Reader, ReaderConfig, SampleOrder, Step};
 

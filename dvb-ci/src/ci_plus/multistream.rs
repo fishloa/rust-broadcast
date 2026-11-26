@@ -17,8 +17,8 @@ use crate::objects;
 use crate::reserved::ReservedZero;
 use crate::wire::be_u16;
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
 /// Resource-scoped `apdu_tag`s for the Multi-stream resource (Table 2).

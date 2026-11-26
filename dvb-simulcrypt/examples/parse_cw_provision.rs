@@ -7,7 +7,7 @@
 /// cargo run -p dvb-simulcrypt --example parse_cw_provision
 /// ```
 use broadcast_common::bounded::{Limit, read_file_bounded};
-use broadcast_common::traits::Serialize;
+use broadcast_core::traits::Serialize;
 use dvb_simulcrypt::{
     EcmgScsParameterType, Interface, MessageType, ParameterType, SimulcryptMessage,
 };

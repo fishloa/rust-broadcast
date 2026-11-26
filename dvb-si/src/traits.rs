@@ -1,7 +1,7 @@
-//! SI-specific traits. `Parse` is provided by `broadcast_common`
+//! SI-specific traits. `Parse` is provided by `broadcast_core`
 //! and imported directly at call sites.
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 /// Implemented by every typed descriptor; drives [`crate::descriptors::AnyDescriptor`]
 /// dispatch. `TAG` is the wire descriptor_tag this type parses.
@@ -20,7 +20,7 @@ pub trait DescriptorDef<'a>: Parse<'a, Error = crate::error::Error> {
 ///
 /// Third-party types may implement this trait to register private table_ids
 /// via [`TableRegistry`][crate::tables::TableRegistry].
-pub trait TableDef<'a>: broadcast_common::Parse<'a, Error = crate::error::Error> {
+pub trait TableDef<'a>: broadcast_core::Parse<'a, Error = crate::error::Error> {
     /// Inclusive `(lo, hi)` table_id ranges this type parses.
     ///
     /// Single-id types use a single-element slice `&[(id, id)]`.

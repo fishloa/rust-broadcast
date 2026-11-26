@@ -14,10 +14,10 @@
 //! size).
 
 use alloc::collections::BTreeMap;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 use core::time::Duration;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::RtmpError;
 use crate::ids::{ChunkStreamId, MessageStreamId, Timestamp};
@@ -188,7 +188,7 @@ fn read_u24_be(b: &[u8]) -> u32 {
 /// bits is [`RtmpError::FieldOverflow`], never silently masked (#1129):
 /// `message length` is a caller-supplied `u32`, so it really can overflow.
 fn write_u24_be(v: u32, buf: &mut [u8], field: &'static str) -> Result<()> {
-    let v = broadcast_common::len::fit_bits(u64::from(v), U24_BITS, field)? as u32;
+    let v = broadcast_core::len::fit_bits(u64::from(v), U24_BITS, field)? as u32;
     buf[0] = (v >> U24_SHIFT_HIGH) as u8;
     buf[1] = (v >> U24_SHIFT_LOW) as u8;
     buf[U24_LOW_BYTE] = v as u8;
@@ -252,7 +252,7 @@ impl Fmt {
     }
 }
 
-broadcast_common::impl_spec_display!(Fmt);
+broadcast_core::impl_spec_display!(Fmt);
 
 // ── Basic Header (§5.3.1.1) ─────────────────────────────────────────────
 
@@ -1203,7 +1203,7 @@ impl ChunkAssembler {
                 (
                     ResolvedHeader {
                         timestamp: existing.timestamp.checked_add(timestamp_delta).ok_or(
-                            RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                            RtmpError::FieldOverflow(broadcast_core::len::FieldOverflow {
                                 field: "timestamp",
                                 value: existing.timestamp.millis() as u64
                                     + delta_millis(timestamp_delta) as u64,
@@ -1241,7 +1241,7 @@ impl ChunkAssembler {
                 (
                     ResolvedHeader {
                         timestamp: existing.timestamp.checked_add(timestamp_delta).ok_or(
-                            RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                            RtmpError::FieldOverflow(broadcast_core::len::FieldOverflow {
                                 field: "timestamp",
                                 value: existing.timestamp.millis() as u64
                                     + delta_millis(timestamp_delta) as u64,
@@ -1301,7 +1301,7 @@ impl ChunkAssembler {
                                 .timestamp
                                 .checked_add(existing.timestamp_delta)
                                 .ok_or(RtmpError::FieldOverflow(
-                                    broadcast_common::len::FieldOverflow {
+                                    broadcast_core::len::FieldOverflow {
                                         field: "timestamp",
                                         value: existing.timestamp.millis() as u64
                                             + delta_millis(existing.timestamp_delta) as u64,
@@ -1337,7 +1337,7 @@ impl ChunkAssembler {
         // doc for why this bound is safe for real RTMP traffic.
         if resolved.message_length > MAX_MESSAGE_LEN {
             return Err(RtmpError::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "message_length",
                     value: u64::from(resolved.message_length),
                     max: u64::from(MAX_MESSAGE_LEN),
@@ -1519,7 +1519,7 @@ impl ChunkWriter {
             });
         }
         let chunk_size = usize::try_from(self.chunk_size.value()).unwrap_or(usize::MAX);
-        let message_length = broadcast_common::len::fit_u24(msg.payload.len(), "message_length")?;
+        let message_length = broadcast_core::len::fit_u24(msg.payload.len(), "message_length")?;
         let extended = needs_extended_timestamp(msg.timestamp.millis());
 
         let mut out = Vec::with_capacity(TYPE0_LEN + msg.payload.len() + TYPE0_CAPACITY_SLACK);
@@ -1615,7 +1615,7 @@ fn payload_bytes_copied_for_test() -> usize {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::BufferTooShort;
+    use broadcast_core::error::BufferTooShort;
 
     use super::*;
 
@@ -2226,7 +2226,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                RtmpError::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "message_length",
                     ..
                 })
@@ -3014,7 +3014,7 @@ mod tests {
         );
         assert!(matches!(
             err,
-            RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+            RtmpError::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "message_length",
                 ..
             })

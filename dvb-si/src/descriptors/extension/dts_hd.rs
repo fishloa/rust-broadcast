@@ -1,8 +1,8 @@
 //! DTS-HD Descriptor — ETSI EN 300 468 V1.20.1 Annex G §G.3.1, Tables G.6–G.10 (tag_extension 0x0E).
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
 
 impl<'a> ExtensionBodyDef<'a> for DtsHd<'a> {
     const TAG_EXTENSION: u8 = 0x0E;
@@ -238,7 +238,7 @@ impl SamplingFrequency {
         }
     }
 }
-broadcast_common::impl_spec_display!(SamplingFrequency);
+broadcast_core::impl_spec_display!(SamplingFrequency);
 
 /// Maximum `channel_count` (5-bit field).
 const MAX_CHANNEL_COUNT: u8 = 0x1F;
@@ -307,13 +307,13 @@ impl Serialize for SubstreamInfo {
         }
         let na = (num_assets - 1) as u8;
         buf[1] = (na << NUM_ASSETS_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.channel_count,
                 MAX_CHANNEL_COUNT,
                 "channel_count",
             )?;
         buf[SUBSTREAM_LFE_BYTE_OFFSET] = ((u8::from(self.lfe_flag)) << LFE_FLAG_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.sampling_frequency.to_u8(),
                 SAMPLING_FREQUENCY_MASK,
                 "sampling_frequency",
@@ -330,7 +330,7 @@ impl Serialize for SubstreamInfo {
             }
             // `asset_construction` is a raw 5-bit field; mask at the shift so
             // a wider value cannot bleed into the three flag bits (r03-W2).
-            buf[pos] = (broadcast_common::len::fit_mask(
+            buf[pos] = (broadcast_core::len::fit_mask(
                 a.asset_construction,
                 ASSET_CONSTRUCTION_MASK,
                 "asset_construction",
@@ -371,7 +371,7 @@ impl<'a> Parse<'a> for DtsHd<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         let first = *sel.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "DTS-HD descriptor body",
@@ -477,7 +477,7 @@ fn parse_asset_info(sel: &[u8], pos: &mut usize) -> Result<AssetInfo> {
 
     let component_type = if component_type_flag {
         let ct = *sel.get(*pos).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: *pos + 1,
                 have: sel.len(),
                 what: "asset_info component_type",
@@ -492,7 +492,7 @@ fn parse_asset_info(sel: &[u8], pos: &mut usize) -> Result<AssetInfo> {
     let iso_639_language_code = if language_code_flag {
         let need_lang = *pos + ISO_639_LEN;
         let lang_bytes = sel.get(*pos..need_lang).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: need_lang,
                 have: sel.len(),
                 what: "asset_info ISO_639_language_code",

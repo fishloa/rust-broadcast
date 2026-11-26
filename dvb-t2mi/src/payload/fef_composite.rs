@@ -3,10 +3,10 @@
 //! Carries composition information for FEF parts. The actual sub-parts
 //! are delivered via type 0x33 packets.
 
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 use core::fmt;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use super::RFU_TOP_BIT_SHIFT;
 use super::fef_null::{
@@ -73,7 +73,7 @@ impl<'a> Parse<'a> for FefCompositePayload {
             bytes
                 .split_first_chunk::<FEF_COMPOSITE_LEN>()
                 .ok_or(crate::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: FEF_COMPOSITE_LEN,
                         have: bytes.len(),
                         what: "FefCompositePayload header",
@@ -83,7 +83,7 @@ impl<'a> Parse<'a> for FefCompositePayload {
         // byte 1 [7]: rfu1 — must be 0
         if hdr[S1_S2_BYTE_OFFSET] & S1_S2_RFU_MASK != 0 {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "byte 1 [7] rfu1",
                     expected: 0,
                     found: u64::from(hdr[S1_S2_BYTE_OFFSET] >> RFU_TOP_BIT_SHIFT),
@@ -96,7 +96,7 @@ impl<'a> Parse<'a> for FefCompositePayload {
             .any(|b| *b != 0)
         {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "32-bit RFU (rfu2)",
                     expected: 0,
                     found: u64::from(u32::from_be_bytes(
@@ -132,7 +132,7 @@ impl Serialize for FefCompositePayload {
 
         if self.s2_field > S2_MASK {
             return Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "s2_field",
                     value: u64::from(self.s2_field),
                     max: u64::from(S2_MASK),
@@ -183,7 +183,7 @@ mod tests {
         assert_eq!(
             FefCompositePayload::parse(&buf).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "byte 1 [7] rfu1",
                     expected: 0,
                     found: 1
@@ -198,7 +198,7 @@ mod tests {
         assert_eq!(
             FefCompositePayload::parse(&buf).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "32-bit RFU (rfu2)",
                     expected: 0,
                     found: 16_777_216
@@ -242,7 +242,7 @@ mod tests {
         assert_eq!(
             payload.serialize_into(&mut buf).err(),
             Some(crate::Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall { need: 8, have: 7 }
+                broadcast_core::error::OutputBufferTooSmall { need: 8, have: 7 }
             ))
         );
     }

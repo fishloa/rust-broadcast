@@ -3,8 +3,8 @@ use url::Url;
 
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
 use broadcast_client::{Action, Config, ConnId, Event, Session};
-use broadcast_common::Serialize;
 use broadcast_common::stage::Timestamp;
+use broadcast_core::Serialize;
 use rtsp_runtime::transport::{Transport, TransportSpec};
 use rtsp_types::{Message, StatusCode, Version, headers};
 use transmux::pipeline::CodecConfig;

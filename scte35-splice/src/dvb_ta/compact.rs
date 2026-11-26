@@ -33,12 +33,12 @@
 //! built from the spec table's own widths rather than a third-party oracle.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 use crate::dvb_ta::das_descriptor::{DasNibbleOrder, EquivalentSegmentationType};
 use crate::error::{Error, Result};
-use broadcast_common::bits::{BitError, BitReader, BitWriter};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::bits::{BitError, BitReader, BitWriter};
+use broadcast_core::{Parse, Serialize};
 
 /// `message_type` for [`CompactTimeSignal`] (§8.3.3, Table 5).
 pub const MESSAGE_TYPE_TIME_SIGNAL: u8 = 0x00;
@@ -128,7 +128,7 @@ fn bit_err(e: BitError, have: usize, what: &'static str) -> Error {
         BitError::OutOfBounds {
             needed_bits,
             remaining_bits,
-        } => Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        } => Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: have
                 + needed_bits
                     .saturating_sub(remaining_bits)
@@ -137,7 +137,7 @@ fn bit_err(e: BitError, have: usize, what: &'static str) -> Error {
             what,
         }),
         BitError::ValueTooWide { value, bits } => {
-            Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: what,
                 value,
                 max: u64::MAX
@@ -146,13 +146,13 @@ fn bit_err(e: BitError, have: usize, what: &'static str) -> Error {
             })
         }
         BitError::TooManyBits { requested } => {
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: what,
                 value: u64::from(requested),
                 reason: "bit width exceeds the 64-bit carrier",
             })
         }
-        _ => Error::InvalidField(broadcast_common::error::InvalidField {
+        _ => Error::InvalidField(broadcast_core::error::InvalidField {
             field: what,
             reason: "unrepresentable bit-field value",
         }),
@@ -188,7 +188,7 @@ impl<'a> Parse<'a> for CompactScte35 {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let &message_type = bytes.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "compact_SCTE_35 message_type",
@@ -198,7 +198,7 @@ impl<'a> Parse<'a> for CompactScte35 {
         match message_type {
             MESSAGE_TYPE_TIME_SIGNAL => Ok(Self::TimeSignal(CompactTimeSignal::parse(body)?)),
             MESSAGE_TYPE_SPLICE_INSERT => Ok(Self::SpliceInsert(CompactSpliceInsert::parse(body)?)),
-            _ => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            _ => Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "compact_SCTE_35.message_type",
                 value: u64::from(message_type),
                 reason: "unknown / reserved message_type",
@@ -270,7 +270,7 @@ impl<'a> Parse<'a> for CompactTimeSignal {
         let have = bytes.len();
         if have * BITS_PER_BYTE < TS_FIXED_BITS {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: TS_FIXED_BITS / BITS_PER_BYTE,
                     have,
                     what: "compact_time_signal fixed prefix",
@@ -330,26 +330,26 @@ impl Serialize for CompactTimeSignal {
         const WHAT: &str = "compact_time_signal";
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let upid_len = broadcast_common::len::fit_u8(
+        let upid_len = broadcast_core::len::fit_u8(
             self.segmentation_upid.len(),
             "compact_time_signal.segmentation_upid_length",
         )?;
         if self.pts_time > PTS_AND_DURATION_MASK {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "compact_time_signal.pts_time",
                 value: self.pts_time,
                 max: PTS_AND_DURATION_MASK,
             }));
         }
         if self.segmentation_duration > SEGMENTATION_DURATION_MASK {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "compact_time_signal.segmentation_duration",
                 value: self.segmentation_duration,
                 max: SEGMENTATION_DURATION_MASK,
             }));
         }
         if self.encryption_algorithm > ENCRYPTION_ALGORITHM_MAX {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "compact_time_signal.encryption_algorithm",
                 value: u64::from(self.encryption_algorithm),
                 max: u64::from(ENCRYPTION_ALGORITHM_MAX),
@@ -406,7 +406,7 @@ fn check_e_crc(encrypted_packet: bool, e_crc_32: Option<u32>) -> Result<()> {
     if encrypted_packet == e_crc_32.is_some() {
         Ok(())
     } else {
-        Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "e_crc_32",
             reason: "must be Some exactly when encrypted_packet is set",
         }))
@@ -491,7 +491,7 @@ impl CompactSpliceInsert {
         let have = bytes.len();
         if have * BITS_PER_BYTE < SI_FIXED_BITS {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: SI_FIXED_BITS / BITS_PER_BYTE,
                     have,
                     what: "compact_splice_insert fixed fields",
@@ -516,7 +516,7 @@ impl CompactSpliceInsert {
             // descriptor_length (N) counts break_num + breaks_expected + the
             // type/reserved byte (3) plus the upid.
             if desc_len < DAS_DESCRIPTOR_MIN_LEN {
-                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "compact_splice_insert.descriptor_length",
                     value: desc_len as u64,
                     reason: "DAS body length must be at least 3 (break_num, breaks_expected, type)",
@@ -605,21 +605,21 @@ impl CompactSpliceInsert {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let desc_len = match &self.das {
-            Some(das) => Some(broadcast_common::len::fit_u8(
+            Some(das) => Some(broadcast_core::len::fit_u8(
                 DAS_DESCRIPTOR_MIN_LEN + das.upid.len(),
                 "compact_splice_insert.das.descriptor_length",
             )?),
             None => None,
         };
         if self.pts_time > PTS_AND_DURATION_MASK {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "compact_splice_insert.pts_time",
                 value: self.pts_time,
                 max: PTS_AND_DURATION_MASK,
             }));
         }
         if self.duration > PTS_AND_DURATION_MASK {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "compact_splice_insert.duration",
                 value: self.duration,
                 max: PTS_AND_DURATION_MASK,
@@ -659,14 +659,11 @@ impl CompactSpliceInsert {
                 .map_err(e)?;
             // AMBIGUITY: nibble order per `order` (Table 8 vs Table 1).
             // `join` masks to 4 bits; reject an over-range value instead.
-            let das_reserved = broadcast_common::len::fit_mask(
-                das.reserved,
-                DAS_RESERVED_DEFAULT,
-                "das_reserved",
-            )?;
+            let das_reserved =
+                broadcast_core::len::fit_mask(das.reserved, DAS_RESERVED_DEFAULT, "das_reserved")?;
             // `bits()` is verbatim for `Reserved(v)`: reject an over-range value
             // instead of masking it into a different equivalent type.
-            let das_type = broadcast_common::len::fit_mask(
+            let das_type = broadcast_core::len::fit_mask(
                 das.equivalent_segmentation_type.bits(),
                 DAS_RESERVED_DEFAULT,
                 "equivalent_segmentation_type",
@@ -774,7 +771,7 @@ mod tests {
         assert_eq!(
             ts.try_to_bytes().err(),
             Some(crate::error::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "compact_time_signal.pts_time",
                     value: 1u64 << 33,
                     max: PTS_AND_DURATION_MASK
@@ -789,7 +786,7 @@ mod tests {
         ts.segmentation_duration = 1u64 << 40;
         assert_eq!(
             ts.try_to_bytes().err(),
-            Some(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            Some(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "compact_time_signal.segmentation_duration",
                 value: 1u64 << 40,
                 max: SEGMENTATION_DURATION_MASK
@@ -802,7 +799,7 @@ mod tests {
         let bytes = sample_time_signal().try_to_bytes().unwrap();
         for cut in 0..bytes.len() {
             match CompactTimeSignal::parse(&bytes[..cut]) {
-                Err(Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                Err(Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                     need,
                     have,
                     ..
@@ -850,7 +847,7 @@ mod tests {
         assert_eq!(
             si.try_to_bytes().err(),
             Some(crate::error::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "compact_splice_insert.pts_time",
                     value: 1u64 << 33,
                     max: PTS_AND_DURATION_MASK
@@ -866,7 +863,7 @@ mod tests {
         assert_eq!(
             si.try_to_bytes().err(),
             Some(crate::error::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "compact_splice_insert.duration",
                     value: 1u64 << 33,
                     max: PTS_AND_DURATION_MASK
@@ -976,7 +973,7 @@ mod tests {
         let bytes = [0x7F, 0, 0, 0, 0];
         assert_eq!(
             CompactScte35::parse(&bytes).unwrap_err(),
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "compact_SCTE_35.message_type",
                 value: 0x7F,
                 reason: "unknown / reserved message_type"

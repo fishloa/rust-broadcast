@@ -10,12 +10,12 @@
 //! `pdf2md` against ANSI/SCTE 104 2023 pp. 75-76 and p. 80-81).
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use super::{U16_LEN, U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for provisioning_request (§8.3, Table 8-3).
 pub const OP_ID: u16 = 0x000B;
@@ -141,14 +141,14 @@ impl InjectorComponentList {
         let n_audio = self.audio_component_tags.len();
         let n_data = self.data_component_tags.len();
         buf[VIDEO_COMPONENT_TAG_OFFSET] = self.video_component_tag;
-        buf[NUMBER_OF_AUDIO_COMPONENTS_OFFSET] = broadcast_common::len::fit_u8(
+        buf[NUMBER_OF_AUDIO_COMPONENTS_OFFSET] = broadcast_core::len::fit_u8(
             n_audio,
             "injector_component_list.number_of_audio_components",
         )?;
         let mut pos = COMPONENT_LIST_HEADER_LEN;
         buf[pos..pos + n_audio].copy_from_slice(&self.audio_component_tags);
         pos += n_audio;
-        buf[pos] = broadcast_common::len::fit_u8(
+        buf[pos] = broadcast_core::len::fit_u8(
             n_data,
             "injector_component_list.number_of_data_components",
         )?;
@@ -260,7 +260,7 @@ impl ProvisioningService {
         // service), or a nonzero `component_mode` with no list bytes to
         // satisfy the parse it triggers (`BufferTooShort`).
         if (self.component_mode != 0) != self.injector_component_list.is_some() {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "provisioning_request_data.component_mode",
                 reason: "must be nonzero if and only if injector_component_list is present",
             }));
@@ -268,7 +268,7 @@ impl ProvisioningService {
         buf[0..4].copy_from_slice(&self.injector_ip_address.to_be_bytes());
         buf[4..6].copy_from_slice(&self.injector_socket_number.to_be_bytes());
         buf[6..6 + SERVICE_NAME_LEN].copy_from_slice(&self.service_name);
-        buf[NUMBER_OF_DPI_PIDS_OFFSET] = broadcast_common::len::fit_u8(
+        buf[NUMBER_OF_DPI_PIDS_OFFSET] = broadcast_core::len::fit_u8(
             self.dpi_pids.len(),
             "provisioning_request_data.number_of_DPI_PIDs",
         )?;
@@ -323,7 +323,7 @@ impl Serialize for ProvisioningRequest {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        buf[0] = broadcast_common::len::fit_u8(
+        buf[0] = broadcast_core::len::fit_u8(
             self.services.len(),
             "provisioning_request_data.service_count",
         )?;
@@ -556,7 +556,7 @@ mod tests {
         };
         assert_eq!(
             nonzero_mode_no_list.try_to_bytes().err(),
-            Some(Error::InvalidField(broadcast_common::error::InvalidField {
+            Some(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "provisioning_request_data.component_mode",
                 reason: "must be nonzero if and only if injector_component_list is present"
             }))
@@ -575,7 +575,7 @@ mod tests {
         };
         assert_eq!(
             zero_mode_with_list.try_to_bytes().err(),
-            Some(Error::InvalidField(broadcast_common::error::InvalidField {
+            Some(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "provisioning_request_data.component_mode",
                 reason: "must be nonzero if and only if injector_component_list is present"
             }))

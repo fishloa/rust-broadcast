@@ -3,7 +3,7 @@ use alloc::vec::Vec;
 use core::time::Duration;
 use mpeg_ts::pid::Pid;
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_si::descriptors::any::DescriptorLoop;
 use dvb_si::tables::eit::{EitKind, EitSection};
 use dvb_si::tables::nit::{NitKind, NitSection};

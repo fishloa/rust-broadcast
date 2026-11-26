@@ -26,9 +26,9 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::{ReservedOnes, ReservedZero};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::{ReservedOnes, ReservedZero};
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for s2_satellite_delivery_system_descriptor.
 pub const TAG: u8 = 0x79;
@@ -135,7 +135,7 @@ impl TsGsMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(TsGsMode, Reserved);
+broadcast_core::impl_spec_display!(TsGsMode, Reserved);
 
 /// S2 Satellite Delivery System Descriptor (§6.2.13.3, Table 42).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -323,7 +323,7 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
 
         let mut flags = ((self.reserved_zero_future_use.get() as u8) << FLAG_RESERVED_BIT_SHIFT)
             | ((self.reserved_future_use.get() as u8) << FLAG_RESERVED_FU_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.ts_gs_mode.to_u8(),
                 TS_GS_MODE_MASK,
                 "ts_gs_mode",
@@ -349,7 +349,7 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
                     field: "scrambling_sequence_index",
                     reason: "required when scrambling_sequence_selector is set",
                 })?;
-            let index = broadcast_common::len::fit_mask(
+            let index = broadcast_core::len::fit_mask(
                 index,
                 SCRAMBLING_INDEX_MAX,
                 "scrambling_sequence_index",

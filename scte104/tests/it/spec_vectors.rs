@@ -16,7 +16,7 @@
 //! near this crate's `Parse`/`Serialize` impls, then separately checks that
 //! re-serializing reproduces the vector byte-for-byte.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte104::operations::insert_segmentation_descriptor::InsertSegmentationDescriptor;
 use scte104::operations::provisioning_request::{
     DpiPidEntry, InjectorComponentList, ProvisioningRequest, ProvisioningService,

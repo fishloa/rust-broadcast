@@ -13,8 +13,8 @@ use crate::error::{Error, Result};
 use crate::length;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 /// `comms_command_id` values (Table 52, p. 52).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,7 +73,7 @@ impl CommsCommandId {
         }
     }
 }
-broadcast_common::impl_spec_display!(CommsCommandId, Reserved);
+broadcast_core::impl_spec_display!(CommsCommandId, Reserved);
 
 /// `connection_descriptor_type` values (Table 53, p. 52).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +117,7 @@ impl ConnectionDescriptorType {
         }
     }
 }
-broadcast_common::impl_spec_display!(ConnectionDescriptorType, Reserved);
+broadcast_core::impl_spec_display!(ConnectionDescriptorType, Reserved);
 
 /// `connection_descriptor()` object (Table 53): carries the connection info.
 ///
@@ -163,7 +163,7 @@ impl<'a> ConnectionDescriptor<'a> {
         let body_end = body_start + len_value;
         if bytes.len() < body_end {
             return Err(Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "connection_descriptor",
                     declared: len_value,
                     actual: bytes.len().saturating_sub(body_start),
@@ -172,7 +172,7 @@ impl<'a> ConnectionDescriptor<'a> {
         }
         let body = &bytes[body_start..body_end];
         let type_byte = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "connection_descriptor type",
@@ -210,7 +210,7 @@ impl<'a> Parse<'a> for ConnectionDescriptor<'a> {
         let (c, consumed) = Self::parse_component(bytes)?;
         if consumed != bytes.len() {
             return Err(Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "connection_descriptor",
                     declared: consumed,
                     actual: bytes.len(),
@@ -295,7 +295,7 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::COMMS_CMD, "comms_cmd")?;
         let id_byte = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "comms_cmd command_id",
@@ -325,7 +325,7 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
             }
             CommsCommandId::GetNextBuffer => {
                 let comms_phase_id = *rest.first().ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: 1,
                         have: 0,
                         what: "comms_cmd get_next_buffer",
@@ -505,7 +505,7 @@ impl CommsReplyId {
         }
     }
 }
-broadcast_common::impl_spec_display!(CommsReplyId, Reserved);
+broadcast_core::impl_spec_display!(CommsReplyId, Reserved);
 
 /// `comms_reply()` object (Table 54): id + signed return_value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -605,7 +605,7 @@ impl<'a> Parse<'a> for CommsSend<'a> {
         };
         let (length_form, body) = super::parse_apdu_header(bytes, expected, "comms_send")?;
         let comms_phase_id = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "comms_send comms_phase_id",
@@ -686,7 +686,7 @@ impl<'a> Parse<'a> for CommsRcv<'a> {
         };
         let (length_form, body) = super::parse_apdu_header(bytes, expected, "comms_rcv")?;
         let comms_phase_id = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "comms_rcv comms_phase_id",

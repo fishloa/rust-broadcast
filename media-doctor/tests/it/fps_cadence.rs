@@ -6,7 +6,7 @@
 //! timing value (25 fps for the AVC and HEVC fixtures). Only the PES cadence
 //! is synthesised, which is what the check compares against.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_si::descriptors::any::DescriptorLoop;
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{PmtSection, PmtStream, StreamType};

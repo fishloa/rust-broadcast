@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use test_harness::collect::CollectedSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::cenc::{
     ProtectionSchemeInfoBox, SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox, SampleEncryptionBox,
     SampleEncryptionEntry,

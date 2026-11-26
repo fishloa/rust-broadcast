@@ -14,7 +14,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// `packet_type` byte is not in Table 1 (0x00..=0x02, 0x10..=0x12, 0x20..=0x21, 0x30..=0x33).
     #[error("invalid T2-MI packet_type {found:#04x} — reserved per ETSI TS 102 773 Table 1")]
@@ -25,23 +25,23 @@ pub enum Error {
 
     /// A reserved (RFU) bit group was not zero.
     #[error(transparent)]
-    ReservedBits(#[from] broadcast_common::error::ReservedBits),
+    ReservedBits(#[from] broadcast_core::error::ReservedBits),
 
     /// A field held a value its spec clause forbids.
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
 
     /// A field is structurally invalid with no single offending number.
     #[error(transparent)]
-    InvalidField(#[from] broadcast_common::error::InvalidField),
+    InvalidField(#[from] broadcast_core::error::InvalidField),
 
     /// A value (or a length) does not fit the wire field it is serialized into.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::len::FieldOverflow),
 
     /// A length field disagrees with the bytes actually present.
     #[error(transparent)]
-    LengthMismatch(#[from] broadcast_common::error::LengthMismatch),
+    LengthMismatch(#[from] broadcast_core::error::LengthMismatch),
 
     /// An individual-addressing `function_length` is below 2. It counts the whole
     /// `function()` including its own `function_tag` and `function_length`
@@ -70,7 +70,7 @@ pub enum Error {
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// Payload length declared more bits than remaining bytes.
     #[error(
@@ -85,9 +85,9 @@ pub enum Error {
 
     /// CRC-32 validation failed.
     #[error(transparent)]
-    CrcMismatch(#[from] broadcast_common::error::CrcMismatch),
+    CrcMismatch(#[from] broadcast_core::error::CrcMismatch),
 
-    /// A bit-field error from [`broadcast_common::bits::BitReader`] / [`broadcast_common::bits::BitWriter`].
+    /// A bit-field error from [`broadcast_core::bits::BitReader`] / [`broadcast_core::bits::BitWriter`].
     #[error("L1 bit-field error: {0}")]
-    L1Bits(#[from] broadcast_common::bits::BitError),
+    L1Bits(#[from] broadcast_core::bits::BitError),
 }

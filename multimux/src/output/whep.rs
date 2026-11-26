@@ -96,9 +96,9 @@ use std::time::{Duration, Instant};
 use transmux::TrackId;
 
 use broadcast_auth::Verifier;
-use broadcast_common::Parse;
-use broadcast_common::Serialize;
 use broadcast_common::stage::Timestamp;
+use broadcast_core::Parse;
+use broadcast_core::Serialize;
 use media_plane::trunk::{SampleCursorItem, Trunk};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::mpsc;
@@ -1078,7 +1078,7 @@ fn trunk_with_avc_track() -> Arc<Trunk> {
 /// long-running session's large absolute tick count.
 /// RTP timestamps are modulo 2^32 (RFC 3550 §5.1), so the rescaled
 /// value wraps into the 32-bit range before it is placed in the header.
-fn rescale_to_90k(ticks: u64, from_timescale: broadcast_common::timescale::Timescale) -> u32 {
+fn rescale_to_90k(ticks: u64, from_timescale: broadcast_core::timescale::Timescale) -> u32 {
     transmux::rtp::rescale_ts(ticks, from_timescale, VIDEO_CLOCK_TIMESCALE)
 }
 
@@ -1788,7 +1788,7 @@ mod tests {
         Timescale::try_new(value).expect("a non-zero timescale")
     }
     use crate::webrtc_session::Resource;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use tokio::io::AsyncWriteExt as _;
     use tokio::net::TcpStream;
 

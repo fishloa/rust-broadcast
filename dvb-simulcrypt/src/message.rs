@@ -23,9 +23,9 @@
 //! preserves them losslessly rather than discarding).
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::traits::Serialize;
+use broadcast_core::traits::Serialize;
 
 use crate::error::{Error, Result};
 use crate::registry::{Interface, MessageType, ParameterType};
@@ -202,7 +202,7 @@ impl<'a> SimulcryptMessage<'a> {
         while off < body.len() {
             if body.len() - off < PARAMETER_HEADER_LEN {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: PARAMETER_HEADER_LEN,
                         have: body.len() - off,
                         what: "parameter TLV header",
@@ -254,7 +254,7 @@ impl Serialize for SimulcryptMessage<'_> {
         need_out(buf, total)?;
 
         let body_len = self.body_len();
-        let message_length = broadcast_common::len::fit_u16(body_len, "message_length")?;
+        let message_length = broadcast_core::len::fit_u16(body_len, "message_length")?;
 
         buf[0] = self.protocol_version;
         buf[MESSAGE_TYPE_HI_OFFSET..MESSAGE_LENGTH_HI_OFFSET]
@@ -264,7 +264,7 @@ impl Serialize for SimulcryptMessage<'_> {
         let mut off = HEADER_LEN;
         for p in &self.parameters {
             let plen = p.value.len();
-            let parameter_length = broadcast_common::len::fit_u16(plen, "parameter_length")?;
+            let parameter_length = broadcast_core::len::fit_u16(plen, "parameter_length")?;
             buf[off + PARAMETER_TYPE_HI_OFFSET..off + PARAMETER_LENGTH_HI_OFFSET]
                 .copy_from_slice(&p.ptype.to_u16().to_be_bytes());
             buf[off + PARAMETER_LENGTH_HI_OFFSET..off + PARAMETER_HEADER_LEN]

@@ -63,7 +63,7 @@ impl AfdSignal {
     }
 }
 
-broadcast_common::impl_spec_display!(AfdSignal);
+broadcast_core::impl_spec_display!(AfdSignal);
 
 /// Parsed picture-level user data from one access unit.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

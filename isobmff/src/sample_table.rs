@@ -19,8 +19,8 @@ use crate::limits::Limits;
 use crate::timing::{CompositionOffsetBox, TimeToSampleBox};
 use crate::track_id::TrackId;
 use alloc::vec::Vec;
-use broadcast_common::Parse;
-use broadcast_common::error::BufferTooShort;
+use broadcast_core::Parse;
+use broadcast_core::error::BufferTooShort;
 
 /// Zero-based index a `stss` sync list is compared against, plus one.
 const SYNC_INDEX_BIAS: u32 = 1;
@@ -872,14 +872,14 @@ fn validate_stsc(entries: &[StscEntry]) -> Result<()> {
     let mut previous = 0u32;
     for entry in entries {
         if entry.first_chunk <= previous {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "stsc.first_chunk",
                 value: u64::from(entry.first_chunk),
                 reason: "first_chunk must be >= 1 and strictly ascending (ISO/IEC 14496-12:2026 §8.7.4)",
             }));
         }
         if entry.sample_description_index == 0 {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "stsc.sample_description_index",
                 value: 0,
                 reason: "sample_description_index is one-based (ISO/IEC 14496-12:2026 §8.7.4)",
@@ -1089,7 +1089,7 @@ pub fn build_stsc_with_descriptions(
     for (index, (&count, &description)) in
         samples_per_chunk.iter().zip(description_index).enumerate()
     {
-        let first_chunk = broadcast_common::len::fit_u32(index.saturating_add(1), "first_chunk")?;
+        let first_chunk = broadcast_core::len::fit_u32(index.saturating_add(1), "first_chunk")?;
         append_stsc(&mut entries, first_chunk, count, description);
     }
     Ok(SampleToChunkBox {

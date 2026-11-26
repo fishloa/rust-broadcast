@@ -30,7 +30,8 @@
 
 use std::num::NonZeroUsize;
 
-use broadcast_common::{Serialize, Timestamp};
+use broadcast_common::Timestamp;
+use broadcast_core::Serialize;
 use media_plane::ingress::{HandshakePolicy, ListenDriver, SessionId};
 use media_plane::trunk::TrunkConfig;
 use multimux::ingest_golden::{

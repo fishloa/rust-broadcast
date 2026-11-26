@@ -3,7 +3,7 @@
 //! 256` on the serializer, the short-form reserved bits, and the minimum
 //! long-form length check.
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use mpeg_ts::section::{Section, validate_crc};
 
 fn long_form(table_id: u8, private_indicator: bool, extension_id: u16, payload: &[u8]) -> Vec<u8> {

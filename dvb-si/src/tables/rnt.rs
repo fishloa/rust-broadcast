@@ -10,9 +10,9 @@ use crate::descriptors::rnt::RntDescriptorLoop;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// `table_id` for the Resolution provider Notification Table.
 pub const TABLE_ID: u8 = 0x79;
@@ -101,7 +101,7 @@ impl CridAuthorityPolicy {
         }
     }
 }
-broadcast_common::impl_spec_display!(CridAuthorityPolicy);
+broadcast_core::impl_spec_display!(CridAuthorityPolicy);
 
 /// Context ID type — ETSI TS 102 323 §5.2.2 Table 2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,7 +156,7 @@ impl ContextIdType {
         }
     }
 }
-broadcast_common::impl_spec_display!(ContextIdType, DvbReserved, UserDefined);
+broadcast_core::impl_spec_display!(ContextIdType, DvbReserved, UserDefined);
 
 /// A CRID authority entry within a resolution provider (Table 1, §5.2.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -350,7 +350,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
         while pos < payload_end {
             if pos + RP_INFO_LEN_FIELD > payload_end {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + RP_INFO_LEN_FIELD,
                         have: payload_end,
                         what: "RntSection resolution_provider_info_length",
@@ -370,7 +370,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
 
             if pos + RP_NAME_LEN_FIELD > rp_end {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + RP_NAME_LEN_FIELD,
                         have: rp_end,
                         what: "RntSection resolution_provider_name_length",
@@ -381,7 +381,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
             pos += RP_NAME_LEN_FIELD;
             if pos + name_len > rp_end {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + name_len,
                         have: rp_end,
                         what: "RntSection resolution_provider_name",
@@ -393,7 +393,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
 
             if pos + RP_DESC_LEN_FIELD > rp_end {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + RP_DESC_LEN_FIELD,
                         have: rp_end,
                         what: "RntSection resolution_provider_descriptors_length",
@@ -418,7 +418,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
             while pos < rp_end {
                 if pos + CA_NAME_LEN_FIELD > rp_end {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + CA_NAME_LEN_FIELD,
                             have: rp_end,
                             what: "RntSection CRID_authority_name_length",
@@ -429,7 +429,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
                 pos += CA_NAME_LEN_FIELD;
                 if pos + ca_name_len > rp_end {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + ca_name_len,
                             have: rp_end,
                             what: "RntSection CRID_authority_name",
@@ -441,7 +441,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
 
                 if pos + CA_HEADER_LEN > rp_end {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + CA_HEADER_LEN,
                             have: rp_end,
                             what: "RntSection CRID_authority header",
@@ -531,7 +531,7 @@ impl Serialize for RntSection<'_> {
         buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
         buf[CONTEXT_ID_TYPE_OFFSET] = self.context_id_type.to_u8();
 
-        let cdl = broadcast_common::len::fit_bits(
+        let cdl = broadcast_core::len::fit_bits(
             self.common_descriptors.len() as u64,
             LOOP_LEN_BITS,
             "common_descriptors_length",
@@ -550,7 +550,7 @@ impl Serialize for RntSection<'_> {
         let mut pos = cd_end;
         for rp in &self.resolution_providers {
             let rp_body_len = resolution_provider_serialized_len(rp);
-            let rp_info_length = broadcast_common::len::fit_bits(
+            let rp_info_length = broadcast_core::len::fit_bits(
                 rp_body_len as u64,
                 LOOP_LEN_BITS,
                 "resolution_provider_loop_length",
@@ -563,13 +563,13 @@ impl Serialize for RntSection<'_> {
             pos += RP_INFO_LEN_FIELD;
 
             let rp_name_len =
-                broadcast_common::len::fit_u8(rp.name.len(), "resolution_provider_name_length")?;
+                broadcast_core::len::fit_u8(rp.name.len(), "resolution_provider_name_length")?;
             buf[pos] = rp_name_len;
             pos += RP_NAME_LEN_FIELD;
             buf[pos..pos + rp.name.len()].copy_from_slice(rp.name.raw());
             pos += rp.name.len();
 
-            let rdl = broadcast_common::len::fit_bits(
+            let rdl = broadcast_core::len::fit_bits(
                 rp.descriptors.len() as u64,
                 LOOP_LEN_BITS,
                 "resolution_provider_descriptors_length",
@@ -585,19 +585,19 @@ impl Serialize for RntSection<'_> {
 
             for ca in &rp.crid_authorities {
                 let ca_name_len =
-                    broadcast_common::len::fit_u8(ca.name.len(), "crid_authority_name_length")?;
+                    broadcast_core::len::fit_u8(ca.name.len(), "crid_authority_name_length")?;
                 buf[pos] = ca_name_len;
                 pos += CA_NAME_LEN_FIELD;
                 buf[pos..pos + ca.name.len()].copy_from_slice(ca.name.raw());
                 pos += ca.name.len();
 
-                let adl = broadcast_common::len::fit_bits(
+                let adl = broadcast_core::len::fit_bits(
                     ca.descriptors.len() as u64,
                     LOOP_LEN_BITS,
                     "crid_authority_descriptors_length",
                 )?;
                 buf[pos] = ((ca.reserved.get() as u8) << CRID_POLICY_RESERVED_SHIFT)
-                    | (broadcast_common::len::fit_mask(
+                    | (broadcast_core::len::fit_mask(
                         ca.crid_authority_policy.to_u8(),
                         CRID_POLICY_MASK,
                         "crid_authority_policy",

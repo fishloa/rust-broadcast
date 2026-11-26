@@ -66,7 +66,7 @@ impl MetadataFormat {
         }
     }
 }
-broadcast_common::impl_spec_display!(MetadataFormat, Reserved0, Reserved1, Private);
+broadcast_core::impl_spec_display!(MetadataFormat, Reserved0, Reserved1, Private);
 
 #[cfg(test)]
 mod tests {

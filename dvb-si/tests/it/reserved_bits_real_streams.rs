@@ -4,7 +4,7 @@
 //! files) and records the reserved-bit pattern each descriptor actually carries.
 #![cfg(feature = "ts")]
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::{
     avc_timing_and_hrd::AvcTimingAndHrdDescriptor, maximum_bitrate::MaximumBitrateDescriptor,

@@ -37,8 +37,8 @@
 use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::len::need_out;
+use broadcast_core::bits::{BitReader, BitWriter};
+use broadcast_core::len::need_out;
 
 /// SDP `a=rtpmap` encoding name and MIME subtype of the payload
 /// (T/AI 109.7 10.1.3.2, 10.1.4.2).
@@ -98,14 +98,14 @@ const HEX_RADIX: u32 = 16;
 
 /// Convert a bit-level read failure into a [`BufferTooShort`] carrying the
 /// real byte counts, naming `what` (the field being read).
-fn short_bit(what: &'static str, error: broadcast_common::bits::BitError) -> Error {
-    let mut too_short = broadcast_common::error::BufferTooShort::from(error);
+fn short_bit(what: &'static str, error: broadcast_core::bits::BitError) -> Error {
+    let mut too_short = broadcast_core::error::BufferTooShort::from(error);
     too_short.what = what;
     Error::BufferTooShort(too_short)
 }
 
 fn bad(field: &'static str, value: u64, reason: &'static str) -> Error {
-    Error::InvalidValue(broadcast_common::error::InvalidValue {
+    Error::InvalidValue(broadcast_core::error::InvalidValue {
         field,
         value,
         reason,
@@ -205,7 +205,7 @@ impl GaContent {
         }
     }
 }
-broadcast_common::impl_spec_display!(GaContent);
+broadcast_core::impl_spec_display!(GaContent);
 
 /// `audio_codec_id == 2` header (general full-rate), Table A.6 + the trailing
 /// `frame_error_check()` of Table A.4.
@@ -265,7 +265,7 @@ impl AatfFrameHeader {
         }
     }
 }
-broadcast_common::impl_spec_display!(AatfFrameHeader);
+broadcast_core::impl_spec_display!(AatfFrameHeader);
 
 /// An `aatf_frame()` start: syncword, `audio_codec_id`, `anc_data_index`, the
 /// codec header, and the bytes after the byte-aligned header.
@@ -1120,7 +1120,7 @@ mod tests {
         assert_eq!(
             AatfFrame::parse(&[0xFF, 0xE0, 0, 0]).err(),
             Some(crate::error::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "syncword",
                     value: 0xFFE,
                     reason: "must be 0xFFF"
@@ -1178,7 +1178,7 @@ mod tests {
         assert_eq!(
             ga(0, GaContent::ReservedProfile(0), Some(0)).serialize_into(&mut buf),
             Err(crate::error::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "coding_profile",
                     value: 0,
                     reason: "does not match the content variant",
@@ -1225,7 +1225,7 @@ mod tests {
             )
             .serialize_into(&mut [0u8; 2])),
             Err(crate::error::Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall { have: 2, .. }
+                broadcast_core::error::OutputBufferTooSmall { have: 2, .. }
             ))
         ));
     }

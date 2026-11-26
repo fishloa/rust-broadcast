@@ -222,7 +222,7 @@ dvb-si = { version = "3.1", features = ["yoke"] }
 
 ```rust
 use std::sync::Arc;
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_si::owned::Owned;
 use dvb_si::tables::pmt::Pmt;
 

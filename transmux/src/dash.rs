@@ -107,8 +107,8 @@ use crate::nalu_ext::AvcSpsCodecInfo;
 use crate::pipeline::CodecConfig;
 use crate::segment_log::{SegmentSummaryLog, TrackSummary};
 use crate::sps::rfc6381_avc1;
-use broadcast_common::error::InvalidField;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::error::InvalidField;
+use broadcast_core::timescale::Timescale;
 use broadcast_dash::{
     AdaptationSet, Descriptor, Mpd, Period, PresentationType, Representation, SegmentTemplate,
     SegmentTimeline, TimelineEntry,
@@ -234,7 +234,7 @@ impl Addressing {
     }
 }
 
-broadcast_common::impl_spec_display!(Addressing);
+broadcast_core::impl_spec_display!(Addressing);
 
 /// Per-`Representation` segment durations for `$Time$`/`SegmentTimeline`
 /// addressing — supplied by the caller from its own segmentation: one duration
@@ -343,7 +343,7 @@ impl MediaKind {
     }
 }
 
-broadcast_common::impl_spec_display!(MediaKind);
+broadcast_core::impl_spec_display!(MediaKind);
 
 /// True if `config` is an audio codec (mirrors `CodecConfig::is_audio`, which is
 /// private to the pipeline module).

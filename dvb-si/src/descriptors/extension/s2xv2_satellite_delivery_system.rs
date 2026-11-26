@@ -12,8 +12,8 @@
 use super::*;
 use crate::descriptors::satellite_delivery_system::{Polarization, RollOff};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedZero;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedZero;
 
 impl<'a> ExtensionBodyDef<'a> for S2Xv2SatelliteDeliverySystem<'a> {
     const TAG_EXTENSION: u8 = 0x24;
@@ -250,7 +250,7 @@ impl S2Xv2Mode {
         matches!(self, Self::S2XSuperframe | Self::S2XSuperframeTimeSlicing)
     }
 }
-broadcast_common::impl_spec_display!(S2Xv2Mode, Reserved);
+broadcast_core::impl_spec_display!(S2Xv2Mode, Reserved);
 
 /// Superframe block present in S2Xv2_mode 4 and 5 (Table 144b §6.4.6.5.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -424,7 +424,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         let (dsid_bytes, _) =
             sel.split_first_chunk::<{ FREQUENCY_LEN }>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: S2XV2_CORE_LEN,
                         have: sel.len(),
                         what: "S2Xv2 body",
@@ -469,7 +469,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         let (freq_bytes, _) = sel[FREQUENCY_OFFSET..]
             .split_first_chunk::<{ FREQUENCY_LEN }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: S2XV2_CORE_LEN,
                     have: sel.len(),
                     what: "S2Xv2 body",
@@ -480,7 +480,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         let (sr_bytes, _) = sel[SYMBOL_RATE_OFFSET..]
             .split_first_chunk::<{ SYMBOL_RATE_LEN }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: S2XV2_CORE_LEN,
                     have: sel.len(),
                     what: "S2Xv2 body",
@@ -552,7 +552,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
                     .get(pos..)
                     .and_then(|s| s.split_first_chunk::<{ SECONDARY_DS_ID_LEN }>())
                     .ok_or(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + SECONDARY_DS_ID_LEN,
                             have: sel.len(),
                             what: "S2Xv2 body (secondary_delivery_system_id)",
@@ -613,7 +613,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
                     .get(pos..)
                     .and_then(|s| s.split_first_chunk::<{ BH_PLAN_ID_LEN }>())
                     .ok_or(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + BH_PLAN_ID_LEN,
                             have: sel.len(),
                             what: "S2Xv2 body (beamhopping_time_plan_id)",
@@ -703,23 +703,23 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
         // Bytes 0–3: delivery_system_id.
         buf[0..4].copy_from_slice(&self.delivery_system_id.to_be_bytes());
         // Byte 4: S2Xv2_mode(4) | multiple_input_stream_flag(1) | roll_off(3).
-        buf[B4_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[B4_OFFSET] = (broadcast_core::len::fit_mask(
             self.s2xv2_mode.to_u8(),
             S2XV2_MODE_MASK,
             "s2xv2_mode",
         )? << S2XV2_MODE_SHIFT)
             | (u8::from(self.multiple_input_stream_flag) << MULTIPLE_INPUT_STREAM_FLAG_SHIFT)
-            | broadcast_common::len::fit_mask(self.roll_off.to_u8(), ROLL_OFF_MASK, "roll_off")?;
+            | broadcast_core::len::fit_mask(self.roll_off.to_u8(), ROLL_OFF_MASK, "roll_off")?;
         // Byte 5: reserved(2) | NCR_reference(1) | NCR_version(1) | channel_bond(2) | polarization(2).
         buf[B5_OFFSET] = ((self.reserved_zero_future_use_2.get() as u8) << B5_RESERVED_SHIFT)
             | (u8::from(self.ncr_reference) << NCR_REFERENCE_SHIFT)
             | (u8::from(self.ncr_version) << NCR_VERSION_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.channel_bond,
                 CHANNEL_BOND_MASK,
                 "channel_bond",
             )? << CHANNEL_BOND_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.polarization.to_u8(),
                 POLARIZATION_MASK,
                 "polarization",
@@ -732,18 +732,18 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
             None => self.reserved_zero_future_use_1.get() as u8,
         };
         buf[B6_OFFSET] = (scram_bit << SCRAMBLING_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.ts_gs_s2x_mode,
                 TSGS_MODE_MASK,
                 "ts_gs_s2x_mode",
             )? << TSGS_MODE_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.receiver_profiles,
                 RECEIVER_PROFILES_MASK,
                 "receiver_profiles",
             )?;
         // Bytes 7–9: satellite_id (24 bits): reject, never drop the top byte.
-        let _ = broadcast_common::len::fit_bits(
+        let _ = broadcast_core::len::fit_bits(
             u64::from(self.satellite_id),
             SATELLITE_ID_BITS,
             "satellite_id",
@@ -769,7 +769,7 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
                     field: "scrambling_sequence_index",
                     reason: "required when scrambling_sequence_selector is set",
                 })?;
-            let idx = broadcast_common::len::fit_mask(
+            let idx = broadcast_core::len::fit_mask(
                 idx,
                 SCRAMBLING_INDEX_MASK,
                 "scrambling_sequence_index",
@@ -791,7 +791,7 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
             // zero-length list, which `fit_bits` rejects rather than masking to 0.
             let minus_one = (self.secondary_delivery_system_ids.len() as u64).wrapping_sub(1);
             let n =
-                broadcast_common::len::fit_bits(minus_one, 1, "num_channel_bonds_minus_one")? as u8;
+                broadcast_core::len::fit_bits(minus_one, 1, "num_channel_bonds_minus_one")? as u8;
             buf[p] = ((self.reserved_zero_future_use_7.get() as u8) << 1) | n;
             p += 1;
             for &id in &self.secondary_delivery_system_ids {
@@ -803,12 +803,12 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
         if let Some(sf) = &self.superframe {
             // 20-bit scrambling indices: wider values used to be masked down
             // silently (audit r03-W3 class).
-            broadcast_common::len::fit_bits(
+            broadcast_core::len::fit_bits(
                 u64::from(sf.reference_scrambling_index),
                 SUPERFRAME_SCRAMBLING_BITS,
                 "reference_scrambling_index",
             )?;
-            broadcast_common::len::fit_bits(
+            broadcast_core::len::fit_bits(
                 u64::from(sf.payload_scrambling_index),
                 SUPERFRAME_SCRAMBLING_BITS,
                 "payload_scrambling_index",
@@ -834,7 +834,7 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
                 // The nibble is reserved_zero_future_use when SFFI is absent.
                 sf.reserved_zero_future_use_4.get() as u8
             };
-            let sffi_nibble = broadcast_common::len::fit_mask(sffi_nibble, NIBBLE_MASK, "sffi")?;
+            let sffi_nibble = broadcast_core::len::fit_mask(sffi_nibble, NIBBLE_MASK, "sffi")?;
             let psi_hi = (sf.payload_scrambling_index >> HIGH_BYTE_SHIFT) as u8 & NIBBLE_MASK;
             buf[p + SUPERFRAME_B4_OFFSET] = (sffi_nibble << NIBBLE_SHIFT) | psi_hi;
             buf[p + SUPERFRAME_PSI_MID_OFFSET] =
@@ -852,16 +852,12 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
                 buf[p..p + BH_PLAN_ID_LEN].copy_from_slice(&bh_id.to_be_bytes());
                 p += BH_PLAN_ID_LEN;
             }
-            buf[p] = (broadcast_common::len::fit_mask(
+            buf[p] = (broadcast_core::len::fit_mask(
                 sf.superframe_pilots_wh_sequence_number,
                 PILOTS_MASK,
                 "superframe_pilots_wh_sequence_number",
             )? << PILOTS_SHIFT)
-                | broadcast_common::len::fit_mask(
-                    sf.postamble_pli,
-                    POSTAMBLE_MASK,
-                    "postamble_pli",
-                )?;
+                | broadcast_core::len::fit_mask(sf.postamble_pli, POSTAMBLE_MASK, "postamble_pli")?;
             p += 1;
         }
         // Reserved tail.

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- The wire-format contract types now come from `broadcast-core`.
+
 - `FileReaderError::FileTooLarge` is deleted: no container is read whole, so
   nothing raised it. `FileReaderConfig::max_file_bytes` is gone from
   `multimux`.

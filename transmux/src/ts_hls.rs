@@ -82,8 +82,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Stage, Timestamp};
+use broadcast_core::timescale::Timescale;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 
 use crate::error::{Error, Result};
@@ -278,7 +278,7 @@ struct StreamTrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::try_new(90_000).expect("non-zero timescale"), CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_core::timescale::Timescale::try_new(90_000).expect("non-zero timescale"), CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -1213,7 +1213,7 @@ mod tests {
     // second" picked the SCTE-35 track as the anchor: its buffered duration
     // could never advance, `push` never returned a segment, and every
     // track's `pending` buffer grew without bound.
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use isobmff::mp4esds::{
         DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
     };
@@ -1273,7 +1273,7 @@ mod tests {
     fn aac_track(track_id: TrackId, timescale: u32) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            broadcast_common::timescale::Timescale::try_new(timescale).expect("timescale"),
+            broadcast_core::timescale::Timescale::try_new(timescale).expect("timescale"),
             CodecConfig::Aac {
                 esds: dummy_esds(),
                 channel_count: 2,

@@ -9,9 +9,9 @@
 use super::descriptor_body;
 use crate::descriptors::content_time_base_indicator::ContentTimeBaseIndicator;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for content_labeling_descriptor.
 pub const TAG: u8 = 0x24;
@@ -214,7 +214,7 @@ fn write_33bit(
 ) -> Result<()> {
     // A value wider than 33 bits used to be masked down silently (audit
     // r03-W3 class).
-    let v = broadcast_common::len::fit_bits(value, TIME_BASE_VALUE_BITS, "time_base_value")?;
+    let v = broadcast_core::len::fit_bits(value, TIME_BASE_VALUE_BITS, "time_base_value")?;
     buf[pos] = ((reserved.get() as u8) << RESERVED_SHIFT)
         | ((v >> TIME_BASE_HI_SHIFT) as u8 & LOW_BIT_MASK);
     buf[pos + 1..pos + TIME_BASE_FIELD_LEN].copy_from_slice(&(v as u32).to_be_bytes());
@@ -418,7 +418,7 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         need_out(buf, len)?;
         // The indicator selects which optional blocks are on the wire; a
         // disagreement with the Options would misframe on re-parse (r03-W5).
-        let ind = broadcast_common::len::fit_mask(
+        let ind = broadcast_core::len::fit_mask(
             self.content_time_base_indicator.to_u8(),
             CONTENT_TIME_BASE_INDICATOR_MASK,
             "content_time_base_indicator",
@@ -455,7 +455,7 @@ impl Serialize for ContentLabelingDescriptor<'_> {
             pos += FORMAT_IDENTIFIER_LEN;
         }
 
-        let mut flags = (broadcast_common::len::fit_mask(
+        let mut flags = (broadcast_core::len::fit_mask(
             self.content_time_base_indicator.to_u8(),
             CONTENT_TIME_BASE_INDICATOR_MASK,
             "content_time_base_indicator",
@@ -470,7 +470,7 @@ impl Serialize for ContentLabelingDescriptor<'_> {
 
         if let Some(rec) = self.content_reference_id_record {
             buf[pos] =
-                broadcast_common::len::fit_u8(rec.len(), "content_reference_id_record_length")?;
+                broadcast_core::len::fit_u8(rec.len(), "content_reference_id_record_length")?;
             pos += 1;
             buf[pos..pos + rec.len()].copy_from_slice(rec);
             pos += rec.len();
@@ -487,12 +487,12 @@ impl Serialize for ContentLabelingDescriptor<'_> {
 
         if let Some(cid) = self.content_id {
             buf[pos] = ((self.content_id_reserved.get() as u8) << CONTENT_ID_RESERVED_SHIFT)
-                | broadcast_common::len::fit_mask(cid, CONTENT_ID_MASK, "cid")?;
+                | broadcast_core::len::fit_mask(cid, CONTENT_ID_MASK, "cid")?;
             pos += 1;
         }
 
         if let Some(ref assoc) = self.time_base_association {
-            buf[pos] = broadcast_common::len::fit_u8(
+            buf[pos] = broadcast_core::len::fit_u8(
                 assoc.data.len(),
                 "content_time_base_association_data_length",
             )?;

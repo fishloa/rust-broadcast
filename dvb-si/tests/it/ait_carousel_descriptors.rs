@@ -11,7 +11,7 @@
 //! any capture, so those are covered by the syntax-table vectors below (which
 //! cite the spec clause).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::carousel::UnMessage;
 use dvb_si::carousel::biop::message::ModuleInfo;
 use dvb_si::descriptors::ait::{

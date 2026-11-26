@@ -9,9 +9,9 @@
 use crate::descriptors::int::IntDescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// `table_id` for IP/MAC Notification Table.
 pub const TABLE_ID: u8 = 0x4C;
@@ -64,7 +64,7 @@ impl IntActionType {
         }
     }
 }
-broadcast_common::impl_spec_display!(IntActionType, DvbReserved);
+broadcast_core::impl_spec_display!(IntActionType, DvbReserved);
 
 const OUTER_HEADER_LEN: usize = 3;
 const INT_FIXED_LEN: usize = 9;
@@ -222,7 +222,7 @@ impl<'a> Parse<'a> for IntSection<'a> {
         while pos < payload_end {
             if pos + LOOP_LEN_FIELD > payload_end {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + LOOP_LEN_FIELD,
                         have: payload_end,
                         what: "IntSection target_descriptor_loop length",
@@ -245,7 +245,7 @@ impl<'a> Parse<'a> for IntSection<'a> {
 
             if pos + LOOP_LEN_FIELD > payload_end {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + LOOP_LEN_FIELD,
                         have: payload_end,
                         what: "IntSection operational_descriptor_loop length",
@@ -311,7 +311,7 @@ impl Serialize for IntSection<'_> {
 
         // 24-bit field: the top byte of a wider value used to be dropped
         // silently (audit r03-W3 class).
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.platform_id),
             PLATFORM_ID_BITS,
             "platform_id",
@@ -334,7 +334,7 @@ impl Serialize for IntSection<'_> {
         buf[OFF_PLATFORM_ID_LAST] = (self.platform_id & u32::from(u8::MAX)) as u8;
         buf[OFF_PROCESSING_ORDER] = self.processing_order;
 
-        let pdl = broadcast_common::len::fit_bits(
+        let pdl = broadcast_core::len::fit_bits(
             self.platform_descriptors.len() as u64,
             super::DESC_LOOP_LEN_BITS,
             "platform_descriptors_loop_length",
@@ -351,7 +351,7 @@ impl Serialize for IntSection<'_> {
 
         let mut pos = plat_end;
         for entry in &self.loops {
-            let tl = broadcast_common::len::fit_bits(
+            let tl = broadcast_core::len::fit_bits(
                 entry.target_descriptors.len() as u64,
                 super::DESC_LOOP_LEN_BITS,
                 "target_descriptor_loop_length",
@@ -366,7 +366,7 @@ impl Serialize for IntSection<'_> {
                 .copy_from_slice(entry.target_descriptors.raw());
             pos += entry.target_descriptors.len();
 
-            let ol = broadcast_common::len::fit_bits(
+            let ol = broadcast_core::len::fit_bits(
                 entry.operational_descriptors.len() as u64,
                 super::DESC_LOOP_LEN_BITS,
                 "operational_descriptor_loop_length",
@@ -522,7 +522,7 @@ mod tests {
     fn parse_rejects_buffer_too_short() {
         assert!(matches!(
             IntSection::parse(&[TABLE_ID, 0xF0]).unwrap_err(),
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "IntSection",
                 ..
             })

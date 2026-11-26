@@ -27,7 +27,7 @@
 //! # Example
 //!
 //! ```
-//! use broadcast_common::{Parse, Serialize};
+//! use broadcast_core::{Parse, Serialize};
 //! use isobmff::registry::{BoxDef, BoxRegistry};
 //! use isobmff::Error;
 //!
@@ -68,7 +68,7 @@ use alloc::vec::Vec;
 use core::any::Any;
 use core::fmt;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::box_types::{BOX_TYPE_SIZE, BoxIter, UUID, UUID_TYPE_SIZE, parse_box};
 use crate::error::{Error, Result};

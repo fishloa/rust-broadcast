@@ -14,7 +14,7 @@
 //! reachable through the public API and is silently truncated. The lexical
 //! `serialize_mask` guard (workspace-guards) does not see these because the mask lives in a
 //! helper, not on `self.field` in a `serialize_into`.
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use mpeg_ts::pid::Pid;
 
@@ -39,7 +39,7 @@ fn pat_version_number_32_is_rejected_not_wrapped_to_0() {
 #[test]
 fn pat_entry_reserved_cannot_hold_more_than_3_bits() {
     let mut e = PatEntry::new(1, Pid::from_const(0x100));
-    e.reserved = broadcast_common::reserved::ReservedOnes::<3>::from_bits(0x0F);
+    e.reserved = broadcast_core::reserved::ReservedOnes::<3>::from_bits(0x0F);
     assert_eq!(
         e.reserved.get(),
         0x07,
@@ -51,7 +51,7 @@ fn pat_entry_reserved_cannot_hold_more_than_3_bits() {
 #[test]
 fn section_bits_reserved_cannot_hold_more_than_2_bits() {
     let mut p = PatSection::new(1, 0, true, 0, 0, vec![]);
-    p.bits.reserved_b1 = broadcast_common::reserved::ReservedOnes::<2>::from_bits(0x07);
+    p.bits.reserved_b1 = broadcast_core::reserved::ReservedOnes::<2>::from_bits(0x07);
     assert_eq!(
         p.bits.reserved_b1.get(),
         0x03,

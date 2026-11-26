@@ -3,7 +3,7 @@
 //! A wire length/count must be range-checked before it is narrowed:
 //! `buf[0] = x.len() as u8;` silently wraps a 256-byte body to length 0 and
 //! misframes everything after it. The fix is
-//! `broadcast_common::len::fit_u8`/`fit_u16`/`fit_u32`/`fit_bits` (compare in
+//! `broadcast_core::len::fit_u8`/`fit_u16`/`fit_u32`/`fit_bits` (compare in
 //! `usize`, then narrow) or an explicit `> MAX` early return.
 //!
 //! This is the cheap lexical half of the guard (the behavioural half is each
@@ -88,7 +88,7 @@ fn check(c: &Crate, files: &[(String, String)]) -> Vec<String> {
                     continue;
                 }
                 problems.push(format!(
-                    "{c_name}: {rel}:{}: silent u8 clamp in a length writer (use broadcast_common::len::fit_u8): {t}",
+                    "{c_name}: {rel}:{}: silent u8 clamp in a length writer (use broadcast_core::len::fit_u8): {t}",
                     n + 1
                 ));
                 continue;
@@ -109,7 +109,7 @@ fn check(c: &Crate, files: &[(String, String)]) -> Vec<String> {
             let header_end = function_header_end(&lines, start, n);
             if !has_guard(&lines[header_end + 1..=n].join("\n")) {
                 problems.push(format!(
-                    "{}: {rel}:{}: unchecked length narrowing or silent u8 clamp (use broadcast_common::len::fit_*): {t}",
+                    "{}: {rel}:{}: unchecked length narrowing or silent u8 clamp (use broadcast_core::len::fit_*): {t}",
                     c.name,
                     n + 1
                 ));

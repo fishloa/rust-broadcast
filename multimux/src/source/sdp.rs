@@ -220,7 +220,7 @@ mod tests {
     }
 
     use super::*;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use transmux::rtp::RtpMediaKind;
 
     // Minimal H.264 SDP (one video media) with a real sprop-parameter-sets

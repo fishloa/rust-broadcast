@@ -1,6 +1,6 @@
 use broadcast_client::{Action, Config, ConnId, Event, Session, UdpMode};
-use broadcast_common::Serialize;
 use broadcast_common::stage::Timestamp;
+use broadcast_core::Serialize;
 use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.

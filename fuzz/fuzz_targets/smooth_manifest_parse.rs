@@ -13,7 +13,10 @@ fuzz_target!(|data: &[u8]| {
             let xml = manifest.to_xml().expect("the model renders");
             let reparsed = broadcast_smooth::SmoothManifest::parse(&xml)
                 .expect("a serialized manifest re-parses");
-            assert_eq!(reparsed, manifest, "the model round-trips through its serializer");
+            assert_eq!(
+                reparsed, manifest,
+                "the model round-trips through its serializer"
+            );
         }
     }
 });

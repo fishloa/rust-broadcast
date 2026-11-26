@@ -2399,7 +2399,7 @@ mod tests {
     use crate::route::HealthState;
     use crate::route::RouteHandle;
     use crate::testutil::body_string;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use tower::ServiceExt;
 
     /// #3684: `/healthz` answers `200` with an empty body, without queueing,

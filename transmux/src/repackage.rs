@@ -38,8 +38,8 @@ use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
-use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Demand, Stage, Timestamp};
+use broadcast_core::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 
 #[cfg(test)]
 use crate::collect::{Collected as Media, CollectedTrack as Track};
@@ -846,7 +846,7 @@ mod tests {
     use crate::ir::CodecConfig;
     use crate::pipeline::Sample;
     use alloc::vec;
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
 
     /// A track with `count` samples one tick apart, at `timescale`.
     fn track(timescale: u32, count: usize) -> Track {
@@ -1009,7 +1009,7 @@ mod tests {
             .expect_err("a wire mdhd.timescale of 0 must not parse");
         assert_eq!(
             err,
-            isobmff::Error::InvalidValue(broadcast_common::error::InvalidValue {
+            isobmff::Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "timescale",
                 value: 0,
                 reason: "must be non-zero",
@@ -1023,7 +1023,7 @@ mod tests {
             .expect_err("a wire mvhd.timescale of 0 must not parse");
         assert_eq!(
             err,
-            isobmff::Error::InvalidValue(broadcast_common::error::InvalidValue {
+            isobmff::Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "timescale",
                 value: 0,
                 reason: "must be non-zero",

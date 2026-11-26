@@ -6,9 +6,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedZero;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedZero;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for AC-3 audio.
 pub const TAG: u8 = 0x6A;
@@ -108,7 +108,7 @@ impl Ac3ServiceType {
         }
     }
 }
-broadcast_common::impl_spec_display!(Ac3ServiceType, Unknown);
+broadcast_core::impl_spec_display!(Ac3ServiceType, Unknown);
 
 /// AC-3 / Enhanced AC-3 channel mode — EN 300 468 Annex D Table D.5.
 ///
@@ -187,7 +187,7 @@ impl Ac3ChannelMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(Ac3ChannelMode, Unknown);
+broadcast_core::impl_spec_display!(Ac3ChannelMode, Unknown);
 
 /// Decoded AC-3 component_type — ETSI EN 300 468 Annex D Table D.1.
 ///

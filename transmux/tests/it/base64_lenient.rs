@@ -1,6 +1,6 @@
 //! RFC 4648 §10 vectors, plus the leniency real SDP producers depend on.
-use broadcast_common::Serialize;
 use broadcast_common::base64::{base64_decode_lenient as base64_decode, base64_encode};
+use broadcast_core::Serialize;
 use transmux::rtp_sdp::avc_config_from_sprop;
 
 const VECTORS: [(&str, &str); 7] = [

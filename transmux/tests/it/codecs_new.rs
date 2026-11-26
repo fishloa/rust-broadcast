@@ -10,9 +10,9 @@
 //! Fixtures: `fixtures/mp4/{av1,opus,flac,vp9}.mp4`, `fixtures/ts/heaac/heaac-v{1,2}.mp4`.
 //! Oracle refs: `fixtures/mp4/PROVENANCE.md`, `fixtures/ts/ac4/dac4-oracle.md`.
 
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse, Serialize};
 use isobmff::{
     Ac4SpecificBox, Av1ConfigurationBox, EsdsBox, FlacSpecificBox, OpusSpecificBox,
     Vp9ConfigurationBox,

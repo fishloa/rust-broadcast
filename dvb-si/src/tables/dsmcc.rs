@@ -11,9 +11,9 @@
 //! for SSI=0 the serializer re-emits the preserved checksum bytes.
 
 use crate::error::{Error, Result};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// First table_id in the DSM-CC section range (inclusive).
 pub const TABLE_ID_FIRST: u8 = 0x3A;

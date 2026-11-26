@@ -19,7 +19,7 @@
 //! `serialize`/`parse` agree with each other but disagree with the spec
 //! would still be caught.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st12_1::{BinaryGroupFlags, BinaryGroupUsage, FrameRate, LtcFrame};
 
 // ── Worked example: Time Address = 01:23:45:13 (private/specs-verified/smpte/st12-1/st12-1.md) ───────────

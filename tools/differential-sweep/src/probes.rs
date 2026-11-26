@@ -325,7 +325,7 @@ pub fn transmux_run(fx: &Fixture, _: &Cfg) -> Option<Value> {
 // dvb-si
 // ---------------------------------------------------------------------------
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::{AnyDescriptor, DescriptorLoop, parse_loop};
 use dvb_si::tables::AnyTableSection;
@@ -762,7 +762,7 @@ pub fn mpeg_ts(fx: &Fixture, _: &Cfg) -> Option<Value> {
 // ---------------------------------------------------------------------------
 
 fn scte35_one(bytes: &[u8], stats: &mut BTreeMap<String, u64>) {
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     match scte35_splice::SpliceInfoSection::parse(bytes) {
         Err(e) => bump(stats, format!("err:{}", variant_name(&format!("{e:?}")))),
         Ok(s) => {

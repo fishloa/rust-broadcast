@@ -11,7 +11,7 @@ use crate::error::TransportError;
 use crate::tshttp::TsHttpClient;
 use crate::tshttp::TsHttpConfig as TsConfig;
 use broadcast_common::clock33::PCR_TIMESCALE;
-use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
+use broadcast_core::timescale::{Rounding, Timescale, rescale_u64};
 use transmux::{DemuxEvent, TrackId, TrackSpec};
 
 use mpeg_ts::pid::Pid;

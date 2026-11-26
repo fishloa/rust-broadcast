@@ -95,7 +95,7 @@ impl BaselineNamespace {
     }
 }
 
-broadcast_common::impl_spec_display!(BaselineNamespace);
+broadcast_core::impl_spec_display!(BaselineNamespace);
 
 /// Reject a root element that isn't `expected` in a recognized MABR baseline
 /// namespace (2019 or 2024). Previously only the local name was checked, so

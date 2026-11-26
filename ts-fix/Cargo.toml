@@ -12,6 +12,7 @@ readme       = "README.md"
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 mpeg-ts   = { path = "../mpeg-ts",  version = "0.10.0", default-features = false }
 mpeg-pes  = { path = "../mpeg-pes", version = "0.10.0", default-features = false }
 dvb-si    = { path = "../dvb-si",   version = "16.0.0",   default-features = false }
@@ -26,7 +27,7 @@ clap      = { workspace = true, optional = true, features = ["derive"] }
 
 [features]
 default = ["std", "cli"]
-std     = ["broadcast-common/std", "mpeg-ts/std", "mpeg-pes/std", "dvb-si/std", "dvb-conformance/std", "thiserror/std"]
+std     = ["broadcast-common/std", "broadcast-core/std", "mpeg-ts/std", "mpeg-pes/std", "dvb-si/std", "dvb-conformance/std", "thiserror/std"]
 # STD-ONLY: the `ts-fix` binary (clap) — not built by the CI thumbv7em step.
 # The `ts-fix` binary. On by default so `cargo install ts-fix` keeps working.
 cli     = ["std", "dep:clap"]

@@ -66,7 +66,7 @@ impl SeqVerdict {
     }
 }
 
-broadcast_common::impl_spec_display!(SeqVerdict);
+broadcast_core::impl_spec_display!(SeqVerdict);
 
 impl SeqValidity {
     /// §A.1 `init_seq(s, seq)`.

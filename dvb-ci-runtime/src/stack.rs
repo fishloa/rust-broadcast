@@ -13,7 +13,7 @@ use crate::resource::{
 use crate::session::{SessionLayer, SessionOut};
 use crate::transport::{Out as TransportOut, TcState, Transport};
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_ci::builder::{build_ca_pmt, build_ca_pmt_for_caids};
 use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
 use dvb_ci::objects::mmi_high::{Answ, AnswId, MenuAnsw};
@@ -452,7 +452,7 @@ impl CiStack {
 mod tests {
     use super::*;
     use crate::transport::DEFAULT_POLL_INTERVAL;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use dvb_ci::resource::RESOURCE_MANAGER;
     use dvb_ci::spdu::{OpenSessionRequest, tags as spdu_tags};
     use dvb_ci::tpdu::{SbValue, tags as tpdu_tags};
@@ -923,7 +923,7 @@ mod tests {
     /// Parse every `ca_pmt` (tag `9F 80 32`) found in the written frames,
     /// returning each one's `cmd_id` + programme CA-descriptor bytes (owned).
     fn all_ca_pmts(actions: &[Action]) -> Vec<CaPmtSummary> {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         use dvb_ci::objects::ca_pmt::CaPmt;
         let tag = [0x9F, 0x80, 0x32];
         let mut out = Vec::new();

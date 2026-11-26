@@ -7,7 +7,7 @@
 //! CRC), written out as literals: a table that lowers its floor would otherwise
 //! parse a hostile section past its declared end with every other test green.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::Error;
 use dvb_si::descriptors::{DescriptorLoop, RntDescriptorLoop, UntDescriptorLoop};
 use dvb_si::tables::SectionVersion;

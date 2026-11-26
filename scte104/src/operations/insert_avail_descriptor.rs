@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for insert_avail_descriptor_request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x010A;
@@ -14,7 +14,7 @@ pub const OP_ID: u16 = 0x010A;
 /// insert_avail_descriptor_request_data() — §9.8.4, Table 9-26.
 ///
 /// `num_provider_avails` is not a stored field: it is always
-/// `provider_avail_ids.len()`, written through `broadcast_common::len::fit_u8`
+/// `provider_avail_ids.len()`, written through `broadcast_core::len::fit_u8`
 /// on serialize (audit run-09 S4-W1) — the same class of bug as
 /// `InsertDescriptor`'s former `descriptor_count` field.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -114,7 +114,7 @@ mod tests {
         };
         assert_eq!(
             op.try_to_bytes().err(),
-            Some(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            Some(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "insert_avail_descriptor.num_provider_avails",
                 value: 256,
                 max: 255

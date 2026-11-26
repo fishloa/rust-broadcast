@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ### Changed
 
 - The origin packages a fragment through `SmoothPackager::package_track_fragment`

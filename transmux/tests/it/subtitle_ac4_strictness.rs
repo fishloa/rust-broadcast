@@ -25,13 +25,13 @@
 //! reused here to get a real `avcC` config for the single-track skip test
 //! without hand-fabricating one).
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use std::fs;
 use test_fixtures::vectors::DAC4_ORACLE;
 use test_harness::collect::CollectedSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::Ac4SpecificBox;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, build_init_segment};

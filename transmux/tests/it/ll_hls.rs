@@ -10,7 +10,7 @@
 //!  - a part's sample set is reconstructed and compared to `build_media_segment`.
 
 use crate::hub_fixtures::{audio_track, dummy_avc_config, video_track};
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use broadcast_hls::{DecimalSeconds, LowLatencyConfig, MediaPlaylist, MediaSegment, PartSpec};
 use core::time::Duration;
 use isobmff::movie_fragment::MovieFragmentBox;

@@ -6,8 +6,8 @@
 use super::{U16_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for inject_section_data_request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x0100;
@@ -64,7 +64,7 @@ impl Serialize for InjectSectionData<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let command_length = broadcast_common::len::fit_u16(
+        let command_length = broadcast_core::len::fit_u16(
             self.scte35_command_contents.len(),
             "inject_section_data.SCTE35_command_length",
         )?;

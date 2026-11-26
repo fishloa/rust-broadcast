@@ -1,4 +1,4 @@
-use broadcast_common::error::{BufferTooShort, FieldOverflow};
+use broadcast_core::error::{BufferTooShort, FieldOverflow};
 use ule::{Error, Sndu, TypeField};
 
 #[test]

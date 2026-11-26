@@ -8,7 +8,7 @@
 //! count that is not a multiple of 4 also leaves orphan bytes after the last
 //! whole FCI / range entry, which are silently dropped.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rist_runtime::{GenericNack, RangeNack};
 
 const SSRC: u32 = 0xD561_5604;

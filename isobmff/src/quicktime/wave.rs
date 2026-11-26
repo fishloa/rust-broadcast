@@ -8,8 +8,8 @@
 //! "siDecompressionParam atom ('wave')".
 
 use alloc::vec::Vec;
-use broadcast_common::Serialize;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::Serialize;
+use broadcast_core::len::{need_in, need_out};
 
 use crate::box_support::OpaqueBox;
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxIter};
@@ -63,7 +63,7 @@ impl WaveAtom {
                     let payload = item.payload();
                     if payload.len() < BOX_TYPE_SIZE {
                         return Err(Error::BufferTooShort(
-                            broadcast_common::error::BufferTooShort {
+                            broadcast_core::error::BufferTooShort {
                                 need: BOX_TYPE_SIZE,
                                 have: payload.len(),
                                 what: "wave frma format",

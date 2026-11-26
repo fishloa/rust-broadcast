@@ -12,11 +12,11 @@
 //! 4. Sample round-trip: first video sample re-parsed from mdat matches
 //!    annexb_to_length_prefixed(first_video_au).
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use std::vec::Vec;
 use transmux::TrackId;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::StblChild;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::init_segment::{MovieBox, SampleEntryVariant};

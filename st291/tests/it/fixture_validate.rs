@@ -56,7 +56,7 @@ fn hand_built_nonconformant_packet_is_reported() {
 #[cfg(feature = "rtp")]
 #[test]
 fn synthetic_rtp_fixture_conforms_to_st291() {
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     use st291::AncRtpPayload;
 
     let data = test_fixtures::read("rtp/anc-rtp.bin");

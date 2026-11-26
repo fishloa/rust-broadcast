@@ -8,7 +8,7 @@
 use crate::descriptors::entry_list::{HEADER_LEN, parse_masked, write_masked};
 use crate::error::Result;
 use alloc::vec::Vec;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use core::net::Ipv6Addr;
 
 /// Descriptor tag for target_IPv6_address_descriptor.

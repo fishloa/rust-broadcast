@@ -5,8 +5,8 @@
 use super::*;
 use crate::descriptors::satellite_delivery_system::{Polarization, RollOff};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedZero;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedZero;
 
 impl<'a> ExtensionBodyDef<'a> for S2XSatelliteDeliverySystem<'a> {
     const TAG_EXTENSION: u8 = 0x17;
@@ -71,7 +71,7 @@ impl S2XMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(S2XMode, Reserved);
+broadcast_core::impl_spec_display!(S2XMode, Reserved);
 
 /// TS/GS S2X mode — ETSI EN 300 468 Table 143.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,7 +127,7 @@ impl TsGsS2XMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(TsGsS2XMode, Reserved);
+broadcast_core::impl_spec_display!(TsGsS2XMode, Reserved);
 
 /// `receiver_profiles` bit `b0` (Table 141): broadcast services.
 const RECEIVER_PROFILE_BROADCAST: u8 = 0x01;
@@ -488,7 +488,7 @@ fn parse_channel_common(sel: &[u8], pos: &mut usize) -> Result<ChannelCommon> {
     let (freq_bytes, _) = sel[*pos..]
         .split_first_chunk::<{ CHANNEL_FREQUENCY_LEN }>()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: *pos + BOND_BASE_LEN,
                 have: sel.len(),
                 what: "S2X body",
@@ -498,7 +498,7 @@ fn parse_channel_common(sel: &[u8], pos: &mut usize) -> Result<ChannelCommon> {
     let (orb_bytes, _) = sel[*pos + CHANNEL_ORBITAL_OFFSET..]
         .split_first_chunk::<{ CHANNEL_ORBITAL_LEN }>()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: *pos + BOND_BASE_LEN,
                 have: sel.len(),
                 what: "S2X body",
@@ -545,7 +545,7 @@ fn write_channel_common(
     buf[*p + CHANNEL_ORBITAL_OFFSET..*p + CHANNEL_ORBITAL_OFFSET + CHANNEL_ORBITAL_LEN]
         .copy_from_slice(&orbital_position.to_be_bytes());
     buf[*p + CHANNEL_PACKED_OFFSET] = packed;
-    let sr = broadcast_common::len::fit_mask(symbol_rate, SYMBOL_RATE_MASK, "symbol_rate")?;
+    let sr = broadcast_core::len::fit_mask(symbol_rate, SYMBOL_RATE_MASK, "symbol_rate")?;
     buf[*p + CHANNEL_RESERVED_SYMBOL_OFFSET] = ((reserved_zero_future_use_4.get() as u8)
         << RZFU_CHANNEL_BITS)
         | ((sr >> SYMBOL_RATE_HIGH_SHIFT) as u8 & SYMBOL_RATE_HIGH_MASK);
@@ -564,11 +564,11 @@ fn pack_we_pol_mis_ro(
     ro: RollOff,
 ) -> Result<u8> {
     Ok((u8::from(we) << WEST_EAST_FLAG_SHIFT)
-        | (broadcast_common::len::fit_mask(pol.to_u8(), POLARIZATION_MASK, "polarization")?
+        | (broadcast_core::len::fit_mask(pol.to_u8(), POLARIZATION_MASK, "polarization")?
             << POLARIZATION_SHIFT)
         | (u8::from(mis) << MULTIPLE_INPUT_STREAM_FLAG_SHIFT)
         | ((reserved_zero_future_use_1.get() as u8) << PACKED_RZFU_1_SHIFT)
-        | broadcast_common::len::fit_mask(ro.to_u8(), ROLL_OFF_MASK, "roll_off")?)
+        | broadcast_core::len::fit_mask(ro.to_u8(), ROLL_OFF_MASK, "roll_off")?)
 }
 
 impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
@@ -727,20 +727,20 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
         need_out(buf, len)?;
         // `receiver_profiles` is a raw 5-bit field and `ts_gs_s2x_mode` a raw
         // 2-bit field; mask at the shift so high bits cannot bleed (r03-W2).
-        buf[0] = (broadcast_common::len::fit_mask(
+        buf[0] = (broadcast_core::len::fit_mask(
             self.receiver_profiles,
             RECEIVER_PROFILES_MASK,
             "receiver_profiles",
         )? << RECEIVER_PROFILES_SHIFT)
             | self.reserved_zero_future_use_3a.get() as u8;
-        buf[1] = (broadcast_common::len::fit_mask(
+        buf[1] = (broadcast_core::len::fit_mask(
             self.s2x_mode.to_u8(),
             S2X_MODE_VALUE_MASK,
             "s2x_mode",
         )? << S2X_MODE_SHIFT)
             | (u8::from(self.scrambling_sequence_selector) << SCRAMBLING_SELECTOR_SHIFT)
             | ((self.reserved_zero_future_use_3b.get() as u8) << RZFU_3B_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.ts_gs_s2x_mode.to_u8(),
                 TSGS_S2X_MODE_VALUE_MASK,
                 "ts_gs_s2x_mode",
@@ -755,7 +755,7 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
                     field: "scrambling_sequence_index",
                     reason: "required when scrambling_sequence_selector is set",
                 })?;
-            let idx = broadcast_common::len::fit_mask(
+            let idx = broadcast_core::len::fit_mask(
                 idx,
                 SCRAMBLING_INDEX_MAX,
                 "scrambling_sequence_index",
@@ -795,8 +795,7 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
             // masking to 0.
             let minus_one = (self.channel_bonds.len() as u64).wrapping_sub(1);
             buf[p] = ((self.reserved_zero_future_use_7.get() as u8) << RZFU_7_SHIFT)
-                | broadcast_common::len::fit_bits(minus_one, 1, "num_channel_bonds_minus_one")?
-                    as u8;
+                | broadcast_core::len::fit_bits(minus_one, 1, "num_channel_bonds_minus_one")? as u8;
             p += 1;
             for bond in &self.channel_bonds {
                 write_channel_common(

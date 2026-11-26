@@ -7,7 +7,7 @@
 //! `hvc1` file carries `array_completeness` 0 on its parameter sets), so
 //! every record here must also round-trip byte for byte.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::init_segment::{SampleDescriptionBox, SampleEntryVariant};
 use isobmff::sample_entries::HEVCSampleEntry;
 use isobmff::{HEVCDecoderConfigurationRecord, HevcNalArray, HevcNalUnit};

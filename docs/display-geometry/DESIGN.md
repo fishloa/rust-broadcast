@@ -162,7 +162,7 @@ existing paths (`TrackSpec`, `DemuxEvent`, `Sample`), the same way
 
 New module `transmux::ir::display`, re-exported at the crate root. All types
 are `#[non_exhaustive]`; every public enum gets `name()` + 
-`broadcast_common::impl_spec_display!` (#204). No raw byte arrays in the public
+`broadcast_core::impl_spec_display!` (#204). No raw byte arrays in the public
 API (no-raw-byte rule); every wire code point is an enum with a lossless
 catch-all.
 

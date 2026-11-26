@@ -41,12 +41,12 @@ use broadcast_common::hex::hex_encode;
 
 /// A CENC protection scheme (`schm.scheme_type`) — ISO/IEC 23001-7 §4.
 ///
-/// Re-exported from [`broadcast_common::cenc`], which holds the single
+/// Re-exported from [`broadcast_core::cenc`], which holds the single
 /// definition. CENC is *Common* Encryption — a container-independent scheme
 /// identity — so it sits below both this crate and `transmux` (which owns the
 /// ISOBMFF `schm`/`tenc`/`senc` boxes carrying it), rather than being defined
 /// twice and converted at the boundary (issues #564, #878).
-pub use broadcast_common::CencScheme;
+pub use broadcast_core::CencScheme;
 
 // ---------------------------------------------------------------------------
 // CENC/CBCS DRM signalling — ISO/IEC 23001-7 `cbcs` over CMAF-HLS (issue #564).
@@ -238,7 +238,7 @@ impl PreloadHintType {
     }
 }
 
-broadcast_common::impl_spec_display!(PreloadHintType);
+broadcast_core::impl_spec_display!(PreloadHintType);
 
 /// What a [`ParseDiagnostic`] reports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,7 +274,7 @@ impl ParseDiagnosticKind {
     }
 }
 
-broadcast_common::impl_spec_display!(ParseDiagnosticKind);
+broadcast_core::impl_spec_display!(ParseDiagnosticKind);
 
 /// A defect [`MediaPlaylist::parse`] tolerated instead of failing the playlist: parsing went on,
 /// and the offending tag was dropped unless its [`ParseDiagnosticKind`] says it is kept. Read
@@ -598,7 +598,7 @@ impl PlaylistType {
     }
 }
 
-broadcast_common::impl_spec_display!(PlaylistType);
+broadcast_core::impl_spec_display!(PlaylistType);
 
 // ---------------------------------------------------------------------------
 // Multivariant Playlist Tags — RFC 8216bis §4.4.6.4 / §4.4.6.5 / §4.4.6.6.
@@ -627,7 +627,7 @@ impl SessionDataFormat {
     }
 }
 
-broadcast_common::impl_spec_display!(SessionDataFormat);
+broadcast_core::impl_spec_display!(SessionDataFormat);
 
 /// The mutually-exclusive `VALUE`/`URI` content of `#EXT-X-SESSION-DATA`
 /// (RFC 8216bis §4.4.6.4: "Each ... tag MUST contain either a VALUE or URI
@@ -697,7 +697,7 @@ impl EncryptionMethod {
     }
 }
 
-broadcast_common::impl_spec_display!(EncryptionMethod);
+broadcast_core::impl_spec_display!(EncryptionMethod);
 
 /// `#EXT-X-SESSION-KEY` (RFC 8216bis §4.4.6.5) — preloadable decryption key
 /// info for a [`MasterPlaylist`] (Multivariant Playlist only), carrying the
@@ -4093,7 +4093,7 @@ impl VideoRange {
     }
 }
 
-broadcast_common::impl_spec_display!(VideoRange);
+broadcast_core::impl_spec_display!(VideoRange);
 
 /// `FRAME-RATE` for an `#EXT-X-STREAM-INF` — Apple HLS authoring
 /// specification item 9.15 (MUST for every variant that includes video) and
@@ -4165,7 +4165,7 @@ impl MediaType {
     }
 }
 
-broadcast_common::impl_spec_display!(MediaType);
+broadcast_core::impl_spec_display!(MediaType);
 
 /// Typed `INSTREAM-ID` value for an `#EXT-X-MEDIA` rendition
 /// (RFC 8216bis §4.4.6.1).

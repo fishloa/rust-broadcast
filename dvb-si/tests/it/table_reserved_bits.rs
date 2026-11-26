@@ -22,7 +22,7 @@
 //!    is present.
 #![cfg(feature = "ts")]
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::AnyTableSection;
@@ -489,7 +489,7 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
                 signature_key_identifier: &[0x11],
                 signature: &[0x90, 0x91],
                 reserved_section_hashes_loop_length:
-                    broadcast_common::reserved::ReservedOnes::from_bits(0x0F),
+                    broadcast_core::reserved::ReservedOnes::from_bits(0x0F),
             },
         )),
         true,
@@ -591,7 +591,7 @@ fn any_table_section_serialize_unknown_copies_raw_and_other_is_rejected() {
     assert_eq!(
         unknown.serialize_into(&mut small),
         Err(dvb_si::Error::OutputBufferTooSmall(
-            broadcast_common::error::OutputBufferTooSmall { need: 4, have: 3 }
+            broadcast_core::error::OutputBufferTooSmall { need: 4, have: 3 }
         ))
     );
 
@@ -750,8 +750,8 @@ fn typed_header_bits_round_trip_off_spec_values() {
     let mut pat = PatSection::new(1, 0, true, 0, 0, vec![]);
     let mut bits = SectionBits::dvb();
     bits.private_indicator = false;
-    bits.reserved_b1 = broadcast_common::reserved::ReservedOnes::<2>::from_bits(0);
-    bits.reserved_b5 = broadcast_common::reserved::ReservedOnes::<2>::from_bits(0);
+    bits.reserved_b1 = broadcast_core::reserved::ReservedOnes::<2>::from_bits(0);
+    bits.reserved_b5 = broadcast_core::reserved::ReservedOnes::<2>::from_bits(0);
     pat.bits = bits;
     let b = ser(&pat);
     assert_eq!(

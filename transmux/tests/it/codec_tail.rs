@@ -20,7 +20,7 @@
 
 use std::fs;
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use bytes::Bytes;
 use transmux::pipeline::CodecConfig;
 

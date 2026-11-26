@@ -60,7 +60,7 @@ impl Container {
     }
 }
 
-broadcast_common::impl_spec_display!(Container);
+broadcast_core::impl_spec_display!(Container);
 
 impl Default for Container {
     /// [`Container::Fmp4`] — preserves every pre-#873 caller's behaviour.

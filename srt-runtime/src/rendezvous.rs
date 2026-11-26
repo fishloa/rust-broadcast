@@ -96,7 +96,7 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidField;
+use broadcast_core::error::InvalidField;
 use core::time::Duration;
 
 use crate::error::{Error, Result};
@@ -156,7 +156,7 @@ impl RendezvousHandshakeState {
     }
 }
 
-broadcast_common::impl_spec_display!(RendezvousHandshakeState);
+broadcast_core::impl_spec_display!(RendezvousHandshakeState);
 
 /// The role a [`RendezvousHandshake`] plays, resolved by the cookie contest
 /// (`draft-sharabayko-srt-01` §4.3.2, L2107-2135): "When one party's cookie
@@ -184,7 +184,7 @@ impl RendezvousRole {
     }
 }
 
-broadcast_common::impl_spec_display!(RendezvousRole);
+broadcast_core::impl_spec_display!(RendezvousRole);
 
 /// The sign bit of a 32-bit cookie, tested inside a wider (`i64`) type that
 /// has not been sign-extended into that width — see [`cookie_contest`].

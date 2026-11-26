@@ -1,6 +1,6 @@
 //! Typed errors for MPD parsing.
 
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 use thiserror::Error;
 
 /// Which bound of [`crate::limits::Limits`] was exceeded.

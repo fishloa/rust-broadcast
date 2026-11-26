@@ -14,7 +14,7 @@
 //! AVC + `stpp`/TTML). `wvtt` has no real producer available (ffmpeg
 //! cannot write it), so it is a spec-vector.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::{WvttSampleEntry, XmlSubtitleSampleEntry};
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};

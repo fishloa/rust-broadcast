@@ -3,14 +3,14 @@
 //! bits (not bytes). Internal helper, not part of the public API.
 //!
 //! The writer checks every value against its field width with
-//! [`broadcast_common::len::fit_bits`] (an over-wide value is
+//! [`broadcast_core::len::fit_bits`] (an over-wide value is
 //! `Error::FieldOverflow`, never masked), so the descriptors built on it
 //! cannot silently truncate a field.
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::bits::BitBuf;
-use broadcast_common::len::{FieldOverflow, fit_bits};
+use broadcast_core::bits::BitBuf;
+use broadcast_core::len::{FieldOverflow, fit_bits};
 
 /// Bits in one byte, the width every whole-byte bit access uses.
 pub(crate) const BITS_PER_BYTE: usize = u8::BITS as usize;
@@ -18,10 +18,10 @@ const MISALIGNED_BYTES: &str = "whole-byte access at a non-byte-aligned bit posi
 pub(crate) const DESCRIPTOR_HEADER_LEN: usize = 2;
 
 /// MSB-first bit reader over a descriptor body, a thin error-mapping adapter
-/// over [`broadcast_common::bits::BitReader`].
+/// over [`broadcast_core::bits::BitReader`].
 pub(crate) struct BitReader<'a> {
     data: &'a [u8],
-    inner: broadcast_common::bits::BitReader<'a>,
+    inner: broadcast_core::bits::BitReader<'a>,
     what: &'static str,
 }
 
@@ -29,13 +29,13 @@ impl<'a> BitReader<'a> {
     pub(crate) fn new(data: &'a [u8], what: &'static str) -> Self {
         Self {
             data,
-            inner: broadcast_common::bits::BitReader::new(data),
+            inner: broadcast_core::bits::BitReader::new(data),
             what,
         }
     }
 
     fn short(&self, need_bits: usize) -> Error {
-        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: (self.inner.bits_read() + need_bits).div_ceil(BITS_PER_BYTE),
             have: self.data.len(),
             what: self.what,
@@ -103,7 +103,7 @@ impl<'a> BitReader<'a> {
 }
 
 /// MSB-first bit writer; every field is range-checked. A thin error-mapping
-/// adapter over [`broadcast_common::bits::BitBuf`].
+/// adapter over [`broadcast_core::bits::BitBuf`].
 #[derive(Default)]
 pub(crate) struct BitWriter {
     inner: BitBuf,
@@ -152,7 +152,7 @@ impl BitWriter {
 /// `write_body(&self) -> Result<Vec<u8>>`.
 macro_rules! impl_h222_descriptor {
     ($ty:ty, $tag:expr, $what:literal, $name:literal) => {
-        impl<'a> broadcast_common::Parse<'a> for $ty {
+        impl<'a> broadcast_core::Parse<'a> for $ty {
             type Error = crate::error::Error;
 
             fn parse(bytes: &'a [u8]) -> crate::error::Result<Self> {
@@ -166,7 +166,7 @@ macro_rules! impl_h222_descriptor {
             }
         }
 
-        impl broadcast_common::Serialize for $ty {
+        impl broadcast_core::Serialize for $ty {
             type Error = crate::error::Error;
 
             fn serialized_len(&self) -> usize {
@@ -178,7 +178,7 @@ macro_rules! impl_h222_descriptor {
             fn serialize_into(&self, buf: &mut [u8]) -> crate::error::Result<usize> {
                 let body = self.write_body()?;
                 let len = $crate::h222_bits::DESCRIPTOR_HEADER_LEN + body.len();
-                ::broadcast_common::len::need_out(buf, len)?;
+                ::broadcast_core::len::need_out(buf, len)?;
                 $crate::descriptors::write_descriptor_header(buf, $tag, body.len())?;
                 buf[$crate::h222_bits::DESCRIPTOR_HEADER_LEN..len].copy_from_slice(&body);
                 Ok(len)

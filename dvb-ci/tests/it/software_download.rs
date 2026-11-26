@@ -2,8 +2,8 @@
 //! TS 101 699 §6.7): exact wire bytes, serialize-length returns, field offsets,
 //! truncation sweeps and length-field ceilings.
 
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::{Parse, Serialize};
 use dvb_ci::Error;
 use dvb_ci::ci_ext::software_download::{
     DownloadCancel, DownloadDataBlock, DownloadDataRequest, DownloadInfoRequest,

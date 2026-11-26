@@ -11,9 +11,9 @@
 //! version 2 ('stsd')".
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{i16_at, u16_at, u32_at, u64_at};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use crate::box_support::OpaqueBox;
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxIter};

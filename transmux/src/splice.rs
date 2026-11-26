@@ -59,7 +59,7 @@
 //!
 //! ```rust
 //! use transmux::{SpliceIndex, SplicePlan, SpliceStage};
-//! use broadcast_common::timescale::Timescale;
+//! use broadcast_core::timescale::Timescale;
 //!
 //! # fn plan(base: &SpliceIndex, ad: &SpliceIndex, scale: Timescale) -> transmux::Result<()> {
 //! // Play `base` up to 90 000 presentation ticks (1 s of a 90 kHz track),
@@ -78,7 +78,7 @@ use core::num::NonZeroU32;
 use core::ops::Deref;
 
 use broadcast_common::stage::{Stage, Timestamp};
-use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
+use broadcast_core::timescale::{Rounding, Timescale, rescale_i64};
 
 use crate::TrackId;
 use crate::error::{Error, Result};

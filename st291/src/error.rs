@@ -1,7 +1,7 @@
 //! Error type for ST 291-1 ANC-data parsing/serialization (shared by every
 //! transport: ST 2038 MPEG-2 TS/PES and RFC 8331 RTP).
 
-use broadcast_common::bits::BitError;
+use broadcast_core::bits::BitError;
 
 /// Result alias for ST 2038 parsing.
 pub type Result<T> = core::result::Result<T, Error>;
@@ -12,22 +12,22 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input shorter than required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// `packet_start_code_prefix` was not `0x000001`.
     #[error(transparent)]
-    InvalidSync(#[from] broadcast_common::error::InvalidSync),
+    InvalidSync(#[from] broadcast_core::error::InvalidSync),
     /// `stream_id` was not `0xBD` (private_stream_1).
     #[error("invalid stream_id: {0:#04X} (expected 0xBD private_stream_1)")]
     BadStreamId(u8),
     /// A required marker / fixed-bit pattern did not hold, or a reserved
     /// field was not zero.
     #[error(transparent)]
-    ReservedBits(#[from] broadcast_common::error::ReservedBits),
+    ReservedBits(#[from] broadcast_core::error::ReservedBits),
     /// `PTS_DTS_flags` was not `'10'` (ST 2038 mandates PTS-only).
     #[error("invalid PTS_DTS_flags: {0:#04b} (expected 0b10, PTS only)")]
     BadPtsDtsFlags(u8),
@@ -42,7 +42,7 @@ pub enum Error {
     PesLengthTooLarge(usize),
     /// A value did not fit in its wire bit-width.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::error::FieldOverflow),
     /// `user_data_words.len()` does not equal the expected UDW count
     /// (`data_count & 0xFF`); serializing would zero-fill or truncate.
     #[error("inconsistent user_data_words length: have {have}, need {need} (data_count & 0xFF)")]
@@ -74,7 +74,7 @@ pub enum Error {
     /// feature) — catches a corrupted `Length` or a corrupted `ANC_Count`
     /// (either one desyncs the two).
     #[error(transparent)]
-    LengthMismatch(#[from] broadcast_common::error::LengthMismatch),
+    LengthMismatch(#[from] broadcast_core::error::LengthMismatch),
     /// [`crate::anc_content::AncContent::verify_checksum`] found the stored
     /// `Checksum_Word` did not match the ST 291-1 computation over the
     /// current `did`/`sdid`/`data_count`/`user_data_words` (see

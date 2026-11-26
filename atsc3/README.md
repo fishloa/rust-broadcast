@@ -38,7 +38,7 @@ The envelope parse/serialize is `no_std` + `alloc`; without `std` the compressed
 
 ```rust
 use atsc3::{LlsEnvelope, LlsTableId, Slt};
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 // A real LLS_table() capture: a gzip-compressed SLT with two ROUTE services.
 let bytes = test_fixtures::read("atsc3/slt-lls-2019-01-07.bin");

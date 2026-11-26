@@ -41,8 +41,8 @@ use super::mpegh_3d_audio::{
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag of the MPEG-2 `Extension_descriptor` (Table 2-45: 63).
 pub const TAG: u8 = 0x3F;
@@ -214,7 +214,7 @@ impl Mpeg2ExtensionTag {
         }
     }
 }
-broadcast_common::impl_spec_display!(Mpeg2ExtensionTag, Reserved);
+broadcast_core::impl_spec_display!(Mpeg2ExtensionTag, Reserved);
 
 /// Body of an MPEG-2 `Extension_descriptor`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,7 +326,7 @@ impl Mpeg2ExtensionBody {
         self.kind().name()
     }
 }
-broadcast_common::impl_spec_display!(Mpeg2ExtensionBody);
+broadcast_core::impl_spec_display!(Mpeg2ExtensionBody);
 
 /// MPEG-2 `Extension_descriptor` (Table 2-109).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -497,7 +497,7 @@ mod tests {
     use super::*;
     use crate::descriptors::mpegh_3d_audio::*;
     use alloc::vec;
-    use broadcast_common::reserved::ReservedOnes;
+    use broadcast_core::reserved::ReservedOnes;
 
     fn d(body: &[u8]) -> Vec<u8> {
         let mut v = vec![TAG, body.len() as u8];

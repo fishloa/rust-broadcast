@@ -15,9 +15,9 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for logical_channel_descriptor.
 pub const TAG: u8 = 0x83;
@@ -139,7 +139,7 @@ impl Serialize for LogicalChannelDescriptor {
             } else {
                 0
             };
-            let lcn = broadcast_common::len::fit_bits(
+            let lcn = broadcast_core::len::fit_bits(
                 u64::from(entry.logical_channel_number),
                 LCN_BITS,
                 "logical_channel_number",

@@ -10,7 +10,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 use crate::error::{Error, Result};
 use crate::local_set::{LocalSet, StructuralSetKind};
@@ -153,7 +153,7 @@ crate::sets::declare_set_serialize!(SourceClip, SourceClip);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     /// SMPTE-RP 224 Picture essence data definition UL (test placeholder).
     const PICTURE_DD: UlBytes = UlBytes([

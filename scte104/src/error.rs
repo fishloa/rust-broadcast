@@ -16,7 +16,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Declared length exceeds the remaining bytes available in the buffer.
     #[error("length {declared} exceeds remaining buffer ({available} bytes) for {what}")]
@@ -31,23 +31,23 @@ pub enum Error {
 
     /// A reserved field carried a non-reserved value.
     #[error(transparent)]
-    ReservedBits(#[from] broadcast_common::error::ReservedBits),
+    ReservedBits(#[from] broadcast_core::error::ReservedBits),
 
     /// A field carried a value its spec clause forbids (the offending value
     /// is carried).
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
 
     /// A field is structurally invalid with no single offending number.
     #[error(transparent)]
-    InvalidField(#[from] broadcast_common::error::InvalidField),
+    InvalidField(#[from] broadcast_core::error::InvalidField),
 
     /// Output buffer for `serialize_into` was too small.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// A length or count field's value does not fit its wire field
-    /// (see `broadcast_common::len`, #1129).
+    /// (see `broadcast_core::len`, #1129).
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::len::FieldOverflow),
 }

@@ -5,7 +5,7 @@ use crate::error::{Error, Result};
 use crate::stream_id::StreamId;
 use crate::timestamp::{self, Dts, Pts};
 use broadcast_common::clock33::{Clock27, ClockOutOfRange};
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 const MIN_LEN: usize = 6; // start_code(3) + stream_id(1) + PES_packet_length(2)
 const HEADER_FIXED: usize = 3; // 2 flag bytes + PES_header_data_length
@@ -214,7 +214,7 @@ impl ScramblingControl {
     }
 }
 
-broadcast_common::impl_spec_display!(ScramblingControl, Reserved);
+broadcast_core::impl_spec_display!(ScramblingControl, Reserved);
 
 // ── ES_rate (ISO/IEC 13818-1 §2.4.3.7 Table 2-21) ──────────────────────────
 
@@ -232,11 +232,9 @@ impl EsRate {
     /// field.
     ///
     /// # Errors
-    /// [`broadcast_common::error::FieldOverflow`] when `rate >= 2^22`.
-    pub fn try_new(
-        rate: u32,
-    ) -> core::result::Result<Self, broadcast_common::error::FieldOverflow> {
-        let fitted = broadcast_common::len::fit_bits(u64::from(rate), ES_RATE_BITS, "ES_rate")?;
+    /// [`broadcast_core::error::FieldOverflow`] when `rate >= 2^22`.
+    pub fn try_new(rate: u32) -> core::result::Result<Self, broadcast_core::error::FieldOverflow> {
+        let fitted = broadcast_core::len::fit_bits(u64::from(rate), ES_RATE_BITS, "ES_rate")?;
         Ok(Self(fitted as u32))
     }
 
@@ -384,10 +382,10 @@ impl Escr {
     /// wider than 9 bits, or `reserved` wider than 2 bits — never silently
     /// masks (#1129 class, #2747).
     pub fn to_field_bytes(self) -> Result<[u8; ESCR_FIELD_LEN]> {
-        let b = broadcast_common::len::fit_bits(self.base, ESCR_BASE_BITS, "ESCR_base")?;
+        let b = broadcast_core::len::fit_bits(self.base, ESCR_BASE_BITS, "ESCR_base")?;
         let e =
-            broadcast_common::len::fit_bits(u64::from(self.extension), ESCR_EXT_BITS, "ESCR_ext")?;
-        broadcast_common::len::fit_mask(self.reserved, ESCR_RESERVED_VALUE, "ESCR reserved")?;
+            broadcast_core::len::fit_bits(u64::from(self.extension), ESCR_EXT_BITS, "ESCR_ext")?;
+        broadcast_core::len::fit_mask(self.reserved, ESCR_RESERVED_VALUE, "ESCR reserved")?;
         Ok([
             // B0: reserved(2)='11' | base[32:30](3) | marker(1)='1' | base[29:28](2)
             (self.reserved << ESCR_RESERVED_SHIFT)
@@ -503,8 +501,8 @@ impl TrickMode {
     /// (`field_id` 2 bits, `frequency_truncation` 2 bits, `rep_cntrl` 5 bits,
     /// `reserved` 3 bits) — never silently masks (#2747).
     pub fn to_byte(self) -> Result<u8> {
-        use broadcast_common::len::fit_bits;
-        use broadcast_common::len::fit_mask;
+        use broadcast_core::len::fit_bits;
+        use broadcast_core::len::fit_mask;
         match self {
             TrickMode::FastForward {
                 field_id,
@@ -726,7 +724,7 @@ impl<'a> PesExtension<'a> {
                 .get(cursor..end)
                 .and_then(|s| s.try_into().ok())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: end,
                         have: data.len(),
                         what: "PES_private_data",
@@ -740,7 +738,7 @@ impl<'a> PesExtension<'a> {
 
         let pack_header = if flags & EXT_PACK_HEADER != 0 {
             let pack_len = *data.get(cursor).ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cursor + 1,
                     have: data.len(),
                     what: "pack_field_length",
@@ -749,7 +747,7 @@ impl<'a> PesExtension<'a> {
             cursor += 1;
             let end = cursor + pack_len;
             let slice = data.get(cursor..end).ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: end,
                     have: data.len(),
                     what: "pack_header",
@@ -800,7 +798,7 @@ impl<'a> PesExtension<'a> {
 
         let pes_extension_field = if flags & EXT_FLAG_2 != 0 {
             let len_byte = *data.get(cursor).ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cursor + 1,
                     have: data.len(),
                     what: "PES_extension_field_length",
@@ -813,7 +811,7 @@ impl<'a> PesExtension<'a> {
             cursor += 1;
             let end = cursor + ext_len;
             let field_bytes = data.get(cursor..end).ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: end,
                     have: data.len(),
                     what: "PES_extension_field",
@@ -822,7 +820,7 @@ impl<'a> PesExtension<'a> {
             cursor = end;
             // First byte: stream_id_extension_flag(1) + 7 more bits (Table 2-21).
             let (sie_byte, rest) = field_bytes.split_first().ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 1,
                     have: 0,
                     what: "PES_extension_field.stream_id_extension byte",
@@ -874,7 +872,7 @@ impl<'a> PesExtension<'a> {
         let need = self.serialized_len();
         need_out(buf, need)?;
 
-        let mut flags = broadcast_common::len::fit_mask(
+        let mut flags = broadcast_core::len::fit_mask(
             self.reserved_bits,
             EXT_RESERVED_VALUE,
             "PES_extension.reserved",
@@ -902,20 +900,19 @@ impl<'a> PesExtension<'a> {
             cursor += PES_PRIVATE_DATA_LEN;
         }
         if let Some(ph) = self.pack_header {
-            buf[cursor] =
-                broadcast_common::len::fit_u8(ph.len(), "PES_extension.pack_field_length")?;
+            buf[cursor] = broadcast_core::len::fit_u8(ph.len(), "PES_extension.pack_field_length")?;
             cursor += 1;
             buf[cursor..cursor + ph.len()].copy_from_slice(ph);
             cursor += ph.len();
         }
         if let Some(ppsc) = self.program_packet_sequence_counter {
             // byte 0: marker(1) | counter(7)
-            let counter = broadcast_common::len::fit_mask(
+            let counter = broadcast_core::len::fit_mask(
                 ppsc.counter,
                 LOW7_MASK,
                 "program_packet_sequence_counter.counter",
             )?;
-            let original_stuff_length = broadcast_common::len::fit_mask(
+            let original_stuff_length = broadcast_core::len::fit_mask(
                 ppsc.original_stuff_length,
                 ORIGINAL_STUFF_LENGTH_MASK,
                 "program_packet_sequence_counter.original_stuff_length",
@@ -930,7 +927,7 @@ impl<'a> PesExtension<'a> {
         if let Some(ps) = self.p_std_buffer {
             // '01' | scale(1) | size(13)
             // size is 13 bits: reject, never mask, an over-range value (#1129).
-            let size = broadcast_common::len::fit_bits(
+            let size = broadcast_core::len::fit_bits(
                 u64::from(ps.size),
                 P_STD_BUFFER_SIZE_BITS,
                 "PES_extension.P-STD_buffer_size",
@@ -945,7 +942,7 @@ impl<'a> PesExtension<'a> {
             let field_len = 1 + ef.rest.len(); // stream_id_extension byte + rest
             // Table 2-21: the length is 7 bits, not 8 (issue #1052) — the high
             // bit written below is `marker_bit`, always 1.
-            let checked = broadcast_common::len::fit_bits(
+            let checked = broadcast_core::len::fit_bits(
                 field_len as u64,
                 LOW7_BITS,
                 "PES_extension.PES_extension_field_length",
@@ -1119,7 +1116,7 @@ impl PesHeader<'_> {
         if let Some(rate) = self.es_rate {
             // The two marker bits are 2 low bits of `es_rate_marker_bits`; reject
             // a value wider than that rather than silently dropping its high bits.
-            let marker_bits = broadcast_common::len::fit_mask(
+            let marker_bits = broadcast_core::len::fit_mask(
                 self.es_rate_marker_bits,
                 ES_RATE_MARKERS_VALUE,
                 "ES_rate marker bits",
@@ -1144,8 +1141,7 @@ impl PesHeader<'_> {
         }
         // additional_copy_info: marker(1) | info(7).
         if let Some(aci) = self.additional_copy_info {
-            let info =
-                broadcast_common::len::fit_mask(aci.info, LOW7_MASK, "additional_copy_info")?;
+            let info = broadcast_core::len::fit_mask(aci.info, LOW7_MASK, "additional_copy_info")?;
             let marker = if aci.marker {
                 ADDITIONAL_COPY_INFO_MARKER
             } else {
@@ -1282,7 +1278,7 @@ impl<'a> PesPacket<'a> {
     fn parse_select(b: &'a [u8], lenient: bool) -> Result<(Self, Option<Truncation>)> {
         need_in(b, MIN_LEN, "PES packet header")?;
         if b[..crate::PACKET_START_CODE_PREFIX.len()] != PACKET_START_CODE_PREFIX {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "packet_start_code_prefix",
                 expected: PACKET_START_CODE_PREFIX_VALUE,
                 found: read_u32_at(b, 0) >> BYTE_SHIFT,
@@ -1345,7 +1341,7 @@ impl<'a> PesPacket<'a> {
         // serialize write header bytes beyond the declared length).
         if pes_packet_length != 0 && hdr_end > payload_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: hdr_end,
                     have: payload_end,
                     what: "PES_header_data_length exceeds PES_packet_length",
@@ -1520,7 +1516,7 @@ impl<'a> PesPacket<'a> {
             Ok(n) if n != 0 => n,
             _ if self.stream_id.unbounded_length_allowed() => 0,
             _ => {
-                return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "PES_packet_length",
                     value: body_len as u64,
                     max: u64::from(u16::MAX),
@@ -1561,7 +1557,7 @@ impl<'a> PesPacket<'a> {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for PesPacket<'a> {
+impl<'a> broadcast_core::Parse<'a> for PesPacket<'a> {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -1569,7 +1565,7 @@ impl<'a> broadcast_common::Parse<'a> for PesPacket<'a> {
     }
 }
 
-impl broadcast_common::Serialize for PesPacket<'_> {
+impl broadcast_core::Serialize for PesPacket<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -1610,7 +1606,7 @@ mod tests {
         assert_eq!(
             pkt.serialize_into(&mut out),
             Err(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need: b.len(),
                     have: b.len() - 1
                 }

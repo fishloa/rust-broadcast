@@ -53,9 +53,9 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use super::error::{Error, PaddingCountError, Result};
 use crate::ids::{ExtendedSeqNo, Ssrc};
@@ -147,7 +147,7 @@ fn be_u32(bytes: &[u8], off: usize, what: &'static str) -> Result<u32> {
             u32::from_be_bytes(raw)
         })
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: off + WORD_LEN,
                 have: bytes.len(),
                 what,
@@ -165,7 +165,7 @@ fn be_u16(bytes: &[u8], off: usize, what: &'static str) -> Result<u16> {
             u16::from_be_bytes(raw)
         })
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: off + core::mem::size_of::<u16>(),
                 have: bytes.len(),
                 what,
@@ -206,14 +206,14 @@ impl RtcpPadding {
     /// [`Error::InvalidValue`] when `count` is zero, or larger than 255.
     pub fn new(count: usize) -> Result<Self> {
         if count == 0 {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "rtcp_padding_count",
                 value: 0,
                 reason: "must be nonzero (the count octet counts itself)",
             }));
         }
-        let count_u8 = broadcast_common::len::fit_u8(count, "rtcp_padding_count").map_err(|e| {
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+        let count_u8 = broadcast_core::len::fit_u8(count, "rtcp_padding_count").map_err(|e| {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: e.field,
                 value: e.value,
                 reason: "exceeds 8-bit RTCP padding count",
@@ -246,7 +246,7 @@ impl RtcpPadding {
         }
         if body.is_empty() {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 1,
                     have: 0,
                     what,
@@ -254,7 +254,7 @@ impl RtcpPadding {
             ));
         }
         let count = padding_count(body).map_err(|e| {
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "rtcp_padding_count",
                 value: e.count as u64,
                 reason: "must be nonzero and no larger than the packet body",
@@ -288,7 +288,7 @@ fn split_padding<'a>(
         return Ok((body, None));
     };
     if padding.octets.len() > body.len() {
-        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "rtcp_padding_count",
             value: padding.octets.len() as u64,
             reason: "larger than the packet body",
@@ -359,7 +359,7 @@ impl RtcpPacketType {
     }
 }
 
-broadcast_common::impl_spec_display!(RtcpPacketType, Unknown);
+broadcast_core::impl_spec_display!(RtcpPacketType, Unknown);
 
 // ---------------------------------------------------------------------------
 // Common header (RFC 3550 §6.1 / §6.4.1)
@@ -396,7 +396,7 @@ impl CommonHeader {
         need_in(bytes, RTCP_HEADER_LEN, "RTCP common header")?;
         let version = bytes[VERSION_OFFSET] >> VERSION_SHIFT;
         if version != RTCP_VERSION {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "rtcp_version",
                 value: version as u64,
                 reason: "must be 2",
@@ -435,7 +435,7 @@ impl CommonHeader {
 fn length_words_minus_one(total_len: usize) -> Result<u16> {
     let words = (total_len / WORD_LEN).saturating_sub(1);
     u16::try_from(words).map_err(|_| {
-        Error::InvalidValue(broadcast_common::error::InvalidValue {
+        Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "rtcp_length",
             value: total_len as u64,
             reason: "packet exceeds the 16-bit RTCP length field (max 262140 bytes)",
@@ -489,7 +489,7 @@ impl ReportBlock {
         const MIN: i32 = -0x80_0000;
         const MAX: i32 = 0x7F_FFFF;
         if !(MIN..=MAX).contains(&self.cumulative_lost) {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "cumulative_lost",
                 value: i64::from(self.cumulative_lost) as u64,
                 reason: "outside the 24-bit signed range -8388608..=8388607",
@@ -567,7 +567,7 @@ fn parse_report_blocks(bytes: &[u8], count: usize) -> Result<Vec<ReportBlock>> {
 /// 32-bit words (RFC 3550 §6.4.1/§6.4.2: the packet length is in words).
 fn check_profile_extensions(ext: &[u8]) -> Result<()> {
     if !ext.len().is_multiple_of(WORD_LEN) {
-        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "profile_extensions_len",
             value: ext.len() as u64,
             reason: "must be a multiple of 4 bytes (32-bit words)",
@@ -579,7 +579,7 @@ fn check_profile_extensions(ext: &[u8]) -> Result<()> {
 /// Validate a report-block list fits the 5-bit `RC` count field.
 fn check_report_count(blocks: &[ReportBlock]) -> Result<u8> {
     if blocks.len() > MAX_COUNT {
-        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "rtcp_report_count",
             value: blocks.len() as u64,
             reason: "exceeds 5-bit RC field",
@@ -664,7 +664,7 @@ impl<'a> Parse<'a> for SenderReport {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let hdr = CommonHeader::parse(bytes)?;
         if hdr.packet_type != PT_SENDER_REPORT {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "rtcp_pt",
                 value: hdr.packet_type as u64,
                 reason: "expected SR (200)",
@@ -810,7 +810,7 @@ impl<'a> Parse<'a> for ReceiverReport {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let hdr = CommonHeader::parse(bytes)?;
         if hdr.packet_type != PT_RECEIVER_REPORT {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "rtcp_pt",
                 value: hdr.packet_type as u64,
                 reason: "expected RR (201)",
@@ -963,14 +963,14 @@ impl SdesItemType {
     fn wire_type(&self) -> Result<u8> {
         match self {
             SdesItemType::Unknown(0) => {
-                Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "sdes_item_type",
                     value: 0,
                     reason: "item type 0 is the chunk terminator and cannot be carried as an item",
                 }))
             }
             _ if matches!(self, SdesItemType::Unknown(c) if *c != 0 && SdesItemType::from_type(*c) != *self) => {
-                Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "sdes_item_type",
                     value: self.item_type() as u64,
                     reason: "Unknown must carry a code outside the defined RFC 3550 set, \
@@ -997,7 +997,7 @@ impl SdesItemType {
     }
 }
 
-broadcast_common::impl_spec_display!(SdesItemType, Unknown);
+broadcast_core::impl_spec_display!(SdesItemType, Unknown);
 
 /// A single SDES item: a typed, length-prefixed text field (RFC 3550 §6.5).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1055,7 +1055,7 @@ impl<'a> Parse<'a> for SourceDescription {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let hdr = CommonHeader::parse(bytes)?;
         if hdr.packet_type != PT_SOURCE_DESCRIPTION {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "rtcp_pt",
                 value: hdr.packet_type as u64,
                 reason: "expected SDES (202)",
@@ -1081,7 +1081,7 @@ impl<'a> Parse<'a> for SourceDescription {
             off += consumed;
         }
         if off < body.len() {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "sdes_chunk_count",
                 value: hdr.count as u64,
                 reason: "bytes remain after the declared chunk count",
@@ -1099,7 +1099,7 @@ fn parse_sdes_chunk(bytes: &[u8]) -> Result<(SdesChunk, usize)> {
     let mut items = Vec::new();
     loop {
         let t = *bytes.get(off).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: off + 1,
                 have: bytes.len(),
                 what: "SDES item type",
@@ -1110,7 +1110,7 @@ fn parse_sdes_chunk(bytes: &[u8]) -> Result<(SdesChunk, usize)> {
             break;
         }
         let len = *bytes.get(off).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: off + 1,
                 have: bytes.len(),
                 what: "SDES item length",
@@ -1119,7 +1119,7 @@ fn parse_sdes_chunk(bytes: &[u8]) -> Result<(SdesChunk, usize)> {
         off += 1;
         let end = off + len;
         let text_bytes = bytes.get(off..end).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: end,
                 have: bytes.len(),
                 what: "SDES item text",
@@ -1128,7 +1128,7 @@ fn parse_sdes_chunk(bytes: &[u8]) -> Result<(SdesChunk, usize)> {
         let text = core::str::from_utf8(text_bytes)
             .map(String::from)
             .map_err(|_| {
-                Error::InvalidValue(broadcast_common::error::InvalidValue {
+                Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "sdes_item_text",
                     value: 0,
                     reason: "not valid UTF-8",
@@ -1158,7 +1158,7 @@ impl Serialize for SourceDescription {
         let len = self.serialized_len();
         need_out(buf, len)?;
         if self.chunks.len() > MAX_COUNT {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "rtcp_source_count",
                 value: self.chunks.len() as u64,
                 reason: "exceeds 5-bit SC field",
@@ -1183,7 +1183,7 @@ impl Serialize for SourceDescription {
             let mut io = off + WORD_LEN;
             for item in &chunk.items {
                 if item.text.len() > u8::MAX as usize {
-                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                         field: "sdes_item_len",
                         value: item.text.len() as u64,
                         reason: "exceeds 8-bit SDES item length",
@@ -1238,7 +1238,7 @@ impl<'a> Parse<'a> for Bye {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let hdr = CommonHeader::parse(bytes)?;
         if hdr.packet_type != PT_BYE {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "rtcp_pt",
                 value: hdr.packet_type as u64,
                 reason: "expected BYE (203)",
@@ -1273,7 +1273,7 @@ impl<'a> Parse<'a> for Bye {
             let text = core::str::from_utf8(&body[off..end])
                 .map(String::from)
                 .map_err(|_| {
-                    Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    Error::InvalidValue(broadcast_core::error::InvalidValue {
                         field: "bye_reason",
                         value: 0,
                         reason: "not valid UTF-8",
@@ -1310,7 +1310,7 @@ impl Serialize for Bye {
         let len = self.serialized_len();
         need_out(buf, len)?;
         if self.sources.len() > MAX_COUNT {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "rtcp_source_count",
                 value: self.sources.len() as u64,
                 reason: "exceeds 5-bit SC field",
@@ -1319,7 +1319,7 @@ impl Serialize for Bye {
         if let Some(r) = &self.reason
             && r.len() > u8::MAX as usize
         {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "bye_reason_len",
                 value: r.len() as u64,
                 reason: "exceeds 8-bit reason length",
@@ -1390,7 +1390,7 @@ impl<'a> Parse<'a> for App {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let hdr = CommonHeader::parse(bytes)?;
         if hdr.packet_type != PT_APP {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "rtcp_pt",
                 value: hdr.packet_type as u64,
                 reason: "expected APP (204)",
@@ -1438,14 +1438,14 @@ impl Serialize for App {
         let len = self.serialized_len();
         need_out(buf, len)?;
         if !len.is_multiple_of(WORD_LEN) {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "app_data_len",
                 value: self.data.len() as u64,
                 reason: "APP data plus padding must be 32-bit aligned",
             }));
         }
         if self.subtype > RTCP_COUNT_MASK {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "app_subtype",
                 value: self.subtype as u64,
                 reason: "exceeds 5-bit subtype field",
@@ -1539,7 +1539,7 @@ impl RtcpPacket {
     }
 }
 
-broadcast_common::impl_spec_display!(RtcpPacket);
+broadcast_core::impl_spec_display!(RtcpPacket);
 
 impl<'a> Parse<'a> for RtcpPacket {
     type Error = Error;
@@ -1605,7 +1605,7 @@ impl Serialize for RtcpPacket {
                         | RtcpPacketType::Bye
                         | RtcpPacketType::App
                 ) {
-                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                         field: "unknown_packet_type",
                         value: *packet_type as u64,
                         reason: "PT 200-204 are recognized types and cannot be carried as Unknown",
@@ -1614,14 +1614,14 @@ impl Serialize for RtcpPacket {
                 let len = RTCP_HEADER_LEN + payload.len();
                 need_out(buf, len)?;
                 if !len.is_multiple_of(WORD_LEN) {
-                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                         field: "unknown_payload_len",
                         value: payload.len() as u64,
                         reason: "RTCP packet payload must be 32-bit aligned",
                     }));
                 }
                 if *count > RTCP_COUNT_MASK {
-                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                         field: "unknown_count",
                         value: *count as u64,
                         reason: "exceeds 5-bit RC/SC field",
@@ -1672,7 +1672,7 @@ impl CompoundPacket {
     fn check_leading_report(&self) -> Result<()> {
         match self.packets.first() {
             Some(p) if p.is_report() || matches!(p, RtcpPacket::Unknown { .. }) => Ok(()),
-            Some(_) => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Some(_) => Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "rtcp_compound",
                 value: self.packets[0].packet_type().pt() as u64,
                 reason: "compound packet must begin with SR, RR, or an unrecognized-PT \
@@ -1885,7 +1885,7 @@ mod tests {
         let mut buf = vec![0u8; 256];
         assert!(matches!(
             sr.serialize_into(&mut buf),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "profile_extensions_len",
                 ..
             }))
@@ -1907,7 +1907,7 @@ mod tests {
         bytes[3] += 1; // length in words
         assert!(matches!(
             ReceiverReport::parse(&bytes),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "profile_extensions_len",
                 ..
             }))
@@ -1987,7 +1987,7 @@ mod tests {
         let mut buf = vec![0u8; sdes.serialized_len()];
         assert!(matches!(
             sdes.serialize_into(&mut buf),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "sdes_item_type",
                 ..
             }))
@@ -2007,7 +2007,7 @@ mod tests {
         let mut buf = vec![0u8; sdes.serialized_len()];
         assert!(matches!(
             sdes.serialize_into(&mut buf),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "sdes_item_type",
                 ..
             }))
@@ -2046,7 +2046,7 @@ mod tests {
         bytes[3] += 1;
         assert!(matches!(
             SourceDescription::parse(&bytes),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "sdes_chunk_count",
                 ..
             }))
@@ -2273,7 +2273,7 @@ mod tests {
         let err = app.serialize_into(&mut buf).unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "rtcp_length",
                 ..
             })
@@ -2330,7 +2330,7 @@ mod tests {
             assert!(
                 matches!(
                     p.serialize_into(&mut buf),
-                    Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                         field: "unknown_packet_type",
                         ..
                     }))
@@ -2433,7 +2433,7 @@ mod tests {
         let mut buf = vec![0u8; app.serialized_len()];
         assert!(matches!(
             app.serialize_into(&mut buf),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "app_data_len",
                 ..
             }))

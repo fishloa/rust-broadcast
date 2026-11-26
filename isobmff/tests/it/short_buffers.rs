@@ -16,7 +16,7 @@ fn real_emsg_boxes_reject_every_short_buffer() {
             b.serialized_len(),
             |buf| b.serialize_into(buf),
             |e| match e {
-                Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+                Error::OutputBufferTooSmall(broadcast_core::error::OutputBufferTooSmall {
                     need,
                     have,
                 }) => Some((*need, *have)),
@@ -30,7 +30,7 @@ fn real_emsg_boxes_reject_every_short_buffer() {
 fn a_truncated_header_is_a_missing_fullbox_header() {
     assert_eq!(
         EmsgBox::parse(&[0u8; 4]).unwrap_err(),
-        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: 12,
             have: 4,
             what: "emsg FullBox header",
@@ -80,7 +80,7 @@ fn a_short_v1_body_is_buffer_too_short_at_every_length_under_twenty() {
         data[..12].copy_from_slice(&emsg_header((12 + len) as u32, 1));
         assert_eq!(
             EmsgBox::parse(&data).unwrap_err(),
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: 20,
                 have: len,
                 what: "emsg v1 integer fields",

@@ -134,7 +134,7 @@ impl OwnedTsPacket {
     /// The `discontinuity` field defaults to `false`; set it manually if needed.
     pub fn parse(raw: [u8; TS_PACKET_SIZE]) -> Result<Self> {
         if raw[0] != TS_SYNC_BYTE {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "TS sync byte",
                 expected: u32::from(TS_SYNC_BYTE),
                 found: u32::from(raw[0]),
@@ -404,7 +404,7 @@ fn clock_reference_offset(
         }
         ClockReferenceSlot::FlagClear => Err(Error::NoClockReference { which }),
         ClockReferenceSlot::Truncated { need, have } => Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need,
                 have,
                 what: which,

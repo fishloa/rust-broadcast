@@ -5,7 +5,7 @@
 //! producer, so the media framing is checked against something other than this
 //! workspace.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::RtpPacket;
 
 const FIXTURE: &str = "rist/rist-simple-profile-librist.bin";

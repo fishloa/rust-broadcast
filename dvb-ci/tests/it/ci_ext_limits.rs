@@ -2,8 +2,8 @@
 //! ceilings, 255-byte application strings and the dispatch of the EIT objects
 //! (ETSI TS 101 699 §6.1.3.3 Tab. 32-34; §6.5 Tab. 62-66).
 
-use broadcast_common::error::LengthMismatch;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::LengthMismatch;
+use broadcast_core::{Parse, Serialize};
 use dvb_ci::Error;
 use dvb_ci::ci_ext::application_mmi::{AckCode, ApplicationMmiApdu, RequestStart};
 use dvb_ci::ci_ext::broadcast_service_gateway::{

@@ -20,8 +20,8 @@
 //! scheme's consumer — `dvb-mabr` and `atsc3-route` both need exactly this
 //! shape (issue #944).
 
-use broadcast_common::error::FieldOverflow;
-use broadcast_common::len::fit_bits;
+use broadcast_core::error::FieldOverflow;
+use broadcast_core::len::fit_bits;
 
 use crate::error::{Error, Result};
 
@@ -91,13 +91,13 @@ impl SourceBlockPartition {
         max_source_block_length: u32,
     ) -> Result<Self> {
         if encoding_symbol_length == 0 {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "Encoding-Symbol-Length",
                 reason: "must be non-zero",
             }));
         }
         if max_source_block_length == 0 {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "Maximum-Source-Block-Length",
                 reason: "must be non-zero",
             }));
@@ -237,14 +237,14 @@ mod tests {
     fn rejects_zero_divisors() {
         assert!(matches!(
             SourceBlockPartition::new(100, 0, 10),
-            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "Encoding-Symbol-Length",
                 ..
             }))
         ));
         assert!(matches!(
             SourceBlockPartition::new(100, 10, 0),
-            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "Maximum-Source-Block-Length",
                 ..
             }))
@@ -348,7 +348,7 @@ mod tests {
         // a `FecPayloadId128` cannot address.
         assert!(matches!(
             SourceBlockPartition::new(1 << 32, 1, 1),
-            Err(Error::FieldOverflow(broadcast_common::error::FieldOverflow {
+            Err(Error::FieldOverflow(broadcast_core::error::FieldOverflow {
                 field: "Source Block Number",
                 max,
                 ..
@@ -358,7 +358,7 @@ mod tests {
         // Block Length.
         assert!(matches!(
             SourceBlockPartition::new(65_536, 1, 65_536),
-            Err(Error::FieldOverflow(broadcast_common::error::FieldOverflow {
+            Err(Error::FieldOverflow(broadcast_core::error::FieldOverflow {
                 field: "Source Block Length",
                 max,
                 ..

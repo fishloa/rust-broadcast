@@ -1,7 +1,7 @@
 //! `OutputBufferTooSmall { need, have }` for every buffer shorter than a
 //! cc_data() carrying a CEA-608 and a CEA-708 triplet.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use cc_data::{CcData, CcTriplet, CcType, Error};
 
 #[test]
@@ -30,7 +30,7 @@ fn cc_data_rejects_every_short_buffer() {
         cc.serialized_len(),
         |buf| cc.serialize_into(buf),
         |e| match e {
-            Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+            Error::OutputBufferTooSmall(broadcast_core::error::OutputBufferTooSmall {
                 need,
                 have,
             }) => Some((*need, *have)),
@@ -42,8 +42,8 @@ fn cc_data_rejects_every_short_buffer() {
 #[test]
 fn a_one_byte_cc_data_is_a_missing_header() {
     assert_eq!(
-        <CcData as broadcast_common::Parse>::parse(&[0x40]).unwrap_err(),
-        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        <CcData as broadcast_core::Parse>::parse(&[0x40]).unwrap_err(),
+        Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: 2,
             have: 1,
             what: "cc_data header",

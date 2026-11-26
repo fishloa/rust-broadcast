@@ -5,7 +5,7 @@
 //! the order `StreamingTsDemux` emits them, exactly as a live ingest does.
 
 use crate::ts_hls_stage;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use std::collections::HashMap;
 use test_harness::collect::Collected as Media;
 use transmux::ir::DataIdentity;

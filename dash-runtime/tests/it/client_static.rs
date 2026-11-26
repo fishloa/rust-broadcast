@@ -3,7 +3,7 @@
 //! (the oracle never sees the client).
 
 use crate::common;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

@@ -270,7 +270,7 @@ mod tests {
         assert_eq!(
             items[1].as_ref().err(),
             Some(&crate::error::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 6,
                     have: 3,
                     what: "descriptor body in loop"

@@ -1,7 +1,7 @@
 //! Network Change Notify Descriptor — ETSI EN 300 468 §6.4.9 (tag_extension 0x07).
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 /// Change type — ETSI EN 300 468 §6.4.10 Table 151
 /// (`private/specs-verified/dvb/dvb-si/enums/en_300_468/151-change-type-coding.md`).
@@ -85,7 +85,7 @@ impl ChangeType {
         }
     }
 }
-broadcast_common::impl_spec_display!(ChangeType, MinorReserved, MajorReserved);
+broadcast_core::impl_spec_display!(ChangeType, MinorReserved, MajorReserved);
 
 const CELL_HEADER_LEN: usize = 2; // cell_id(16)
 const LOOP_LENGTH_LEN: usize = 1; // loop_length(8)
@@ -241,7 +241,7 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<{ CELL_ID_LEN }>())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + CELL_HEADER_LEN + LOOP_LENGTH_LEN,
                         have: sel.len(),
                         what: "network_change_notify body",
@@ -260,7 +260,7 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
                 // At minimum we need CHANGE_BASE_LEN bytes for a basic entry.
                 if remaining < CHANGE_BASE_LEN {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: inner_end - remaining + CHANGE_BASE_LEN,
                             have: sel.len(),
                             what: "network_change_notify body",
@@ -291,7 +291,7 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
                 let invariant_ts = if invariant_ts_present == 1 {
                     if pos + INVARIANT_TS_LEN > inner_end {
                         return Err(Error::BufferTooShort(
-                            broadcast_common::error::BufferTooShort {
+                            broadcast_core::error::BufferTooShort {
                                 need: pos + INVARIANT_TS_LEN,
                                 have: sel.len(),
                                 what: "network_change_notify body",
@@ -302,7 +302,7 @@ impl<'a> Parse<'a> for NetworkChangeNotify {
                         .get(pos..)
                         .and_then(|s| s.split_first_chunk::<INVARIANT_TS_LEN>())
                         .ok_or(Error::BufferTooShort(
-                            broadcast_common::error::BufferTooShort {
+                            broadcast_core::error::BufferTooShort {
                                 need: pos + INVARIANT_TS_LEN,
                                 have: sel.len(),
                                 what: "network_change_notify body",
@@ -369,22 +369,22 @@ impl Serialize for NetworkChangeNotify {
             pos += CELL_ID_LEN;
             let loop_length: usize = cell.changes.iter().map(change_serialized_len).sum();
             let loop_length =
-                broadcast_common::len::fit_bits(loop_length as u64, u8::BITS, "loop_length")?
+                broadcast_core::len::fit_bits(loop_length as u64, u8::BITS, "loop_length")?
                     as usize;
             buf[pos] = loop_length as u8;
             pos += 1;
             for ch in &cell.changes {
-                let st = broadcast_common::len::fit_bits(
+                let st = broadcast_core::len::fit_bits(
                     ch.start_time_of_change,
                     START_TIME_BITS,
                     "start_time_of_change",
                 )?;
-                let dur = broadcast_common::len::fit_bits(
+                let dur = broadcast_core::len::fit_bits(
                     u64::from(ch.change_duration),
                     DURATION_BITS,
                     "change_duration",
                 )?;
-                let receiver_category = broadcast_common::len::fit_bits(
+                let receiver_category = broadcast_core::len::fit_bits(
                     u64::from(ch.receiver_category),
                     RECEIVER_CATEGORY_BITS,
                     "receiver_category",
@@ -396,13 +396,13 @@ impl Serialize for NetworkChangeNotify {
                 let dur = dur as u32;
                 buf[pos + DURATION_OFFSET..pos + DURATION_OFFSET + DURATION_LEN]
                     .copy_from_slice(&dur.to_be_bytes()[DURATION_U64_OFFSET..]);
-                let packed = (broadcast_common::len::fit_mask(
+                let packed = (broadcast_core::len::fit_mask(
                     receiver_category,
                     RECEIVER_CATEGORY_MASK,
                     "receiver_category",
                 )? << RECEIVER_CATEGORY_SHIFT)
                     | ((ch.invariant_ts.is_some() as u8) << INVARIANT_TS_PRESENT_SHIFT)
-                    | broadcast_common::len::fit_mask(
+                    | broadcast_core::len::fit_mask(
                         ch.change_type.to_u8(),
                         CHANGE_TYPE_MASK,
                         "change_type",

@@ -1,8 +1,8 @@
 //! VVC Subpictures Descriptor — ETSI EN 300 468 §6.4.17 (tag_extension 0x23).
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedZero;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedZero;
 
 impl<'a> ExtensionBodyDef<'a> for VvcSubpictures<'a> {
     const TAG_EXTENSION: u8 = 0x23;
@@ -92,7 +92,7 @@ impl<'a> Parse<'a> for VvcSubpictures<'a> {
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 1,
                     have: sel.len(),
                     what: "vvc_subpictures body",
@@ -168,7 +168,7 @@ impl Serialize for VvcSubpictures<'_> {
         need_out(buf, len)?;
         // byte 0: default_service_mode(1) | service_description_present(1) | number_of_vvc_subpictures(6)
         let service_description_present = self.service_description.is_some();
-        let number_of_vvc_subpictures = broadcast_common::len::fit_bits(
+        let number_of_vvc_subpictures = broadcast_core::len::fit_bits(
             self.subpictures.len() as u64,
             SUBPICTURE_COUNT_BITS,
             "number_of_vvc_subpictures",
@@ -183,14 +183,14 @@ impl Serialize for VvcSubpictures<'_> {
             p += SUBPICTURE_ENTRY_LEN;
         }
         buf[p] = ((self.reserved_zero_future_use.get() as u8) << RESERVED_FUTURE_USE_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.processing_mode,
                 PROCESSING_MODE_MASK,
                 "processing_mode",
             )?;
         p += 1;
         if let Some(text) = &self.service_description {
-            buf[p] = broadcast_common::len::fit_u8(text.len(), "service_description_length")?;
+            buf[p] = broadcast_core::len::fit_u8(text.len(), "service_description_length")?;
             p += 1;
             buf[p..p + text.len()].copy_from_slice(text.raw());
         }

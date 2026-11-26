@@ -62,7 +62,7 @@ pub(crate) fn be<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]>
         .and_then(|s| s.first_chunk::<N>())
         .copied()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: offset + N,
                 have: bytes.len(),
                 what: "fixed-width big-endian field",
@@ -116,7 +116,7 @@ pub(crate) fn parse_provider_avail_ids(
 ) -> Result<Vec<u32>> {
     let Some(&count) = bytes.first() else {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: what_count,
@@ -143,7 +143,7 @@ pub(crate) fn write_provider_avail_ids(
 ) -> Result<usize> {
     let need = provider_avail_ids_len(ids);
     need_out(buf, need)?;
-    buf[0] = broadcast_common::len::fit_u8(ids.len(), what_count)?;
+    buf[0] = broadcast_core::len::fit_u8(ids.len(), what_count)?;
     for (chunk, &id) in buf[1..need]
         .chunks_exact_mut(PROVIDER_AVAIL_ID_LEN)
         .zip(ids)
@@ -330,11 +330,11 @@ pub struct AsAliveResponse;
 // ── Parse / Serialize impls for the simple single-operation types ──
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::time::TIME_LEN;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 macro_rules! impl_empty_body {
     ($ty:ident, $what:literal, $oid:expr) => {
@@ -440,7 +440,7 @@ impl Serialize for InjectResponse {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if buf.is_empty() {
             return Err(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall { need: 1, have: 0 },
+                broadcast_core::error::OutputBufferTooSmall { need: 1, have: 0 },
             ));
         }
         buf[0] = self.message_number;

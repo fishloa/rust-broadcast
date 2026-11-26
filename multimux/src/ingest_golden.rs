@@ -308,12 +308,6 @@ pub fn render_programs_of<S: IngestSession>(driver: &IngestDriver<S>) -> Vec<Str
     lines
 }
 
-/// One [`SessionEvent`] as a golden line — the same rendering
-/// [`RecordingSession`] applies, for a caller observing events on its own.
-pub fn render_event(event: &SessionEvent) -> String {
-    Recorded::of(event).event().to_string()
-}
-
 /// This session's health, as one stable token.
 pub fn render_health<S: IngestSession>(
     driver: &ListenDriver<RecordingListener<S>>,

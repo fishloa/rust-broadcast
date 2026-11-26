@@ -52,7 +52,7 @@ SCTE 35 section as bytes).
 
 ```rust
 use scte104::{SingleOperationMessage, MultipleOperationMessage, operations::{AnyOperation, Operation, splice_request::{SpliceRequest, SpliceInsertType}}};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 // Build a splice_request single_operation_message (basic response wrap).
 let msg = SingleOperationMessage::new_request(

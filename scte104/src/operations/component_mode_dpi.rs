@@ -4,12 +4,12 @@
 //! mode DPI. Carries a variable-length loop of `(component_tag, component_preroll)`.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 use super::{U16_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for component_mode_DPI_request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x0106;
@@ -44,7 +44,7 @@ impl<'a> Parse<'a> for ComponentModeDpi {
         let count = bytes.len() / ENTRY_LEN;
         if !bytes.len().is_multiple_of(ENTRY_LEN) {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: (count + 1) * ENTRY_LEN,
                     have: bytes.len(),
                     what: "component_mode_DPI data",

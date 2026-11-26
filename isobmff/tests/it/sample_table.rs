@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use isobmff::Limits;
 use isobmff::TrackId;
 use isobmff::init_segment::{MOOV, MovieBox, SampleTableBox, StblChild, TrackBox};

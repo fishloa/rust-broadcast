@@ -28,7 +28,7 @@
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::tables::pmt::PmtStream;
 use dvb_subtitle::{

@@ -557,7 +557,7 @@ fn pat_pmt_ts(
     version: u8,
     current_next: bool,
 ) -> Vec<u8> {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use dvb_si::descriptors::any::DescriptorLoop;
     use dvb_si::tables::pat::{PatEntry, PatSection};
     use dvb_si::tables::pmt::{PmtSection, PmtStream};
@@ -801,7 +801,7 @@ fn corrupt_pat_payload_registers_no_pmt_pid() {
 /// must not put those PIDs under watch.
 #[test]
 fn nit_and_null_pids_are_not_tracked() {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use dvb_si::tables::pat::{PatEntry, PatSection};
     use mpeg_ts::mux::SectionPacketiser;
 

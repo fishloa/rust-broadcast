@@ -7,7 +7,7 @@
 //! BER functions it re-exports resolve from the crate root (not only from
 //! `broadcast_common::klv`).
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use st377_1::{
     BerLength, KlvItem, ber_length_size_for, collect_klv_items, decode_ber_length,
     encode_ber_length_as, walk_klv_items,

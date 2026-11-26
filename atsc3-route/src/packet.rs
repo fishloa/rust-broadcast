@@ -8,8 +8,8 @@
 //! piece of the ROUTE delta that a caller could also use directly against a
 //! hand-driven [`rmt_flute::AlcPacket`].
 
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 use rmt_flute::{LctHeader, PSI_SPI};
 
 use crate::codepoint::Codepoint;
@@ -59,25 +59,25 @@ pub struct RoutePacket<'a> {
 /// (§A.3.4/§A.3.6, `private/specs-verified/atsc/atsc3/a331-route.md` §1's table).
 fn validate_route_lct(lct: &LctHeader<'_>) -> Result<()> {
     if lct.version != ROUTE_VERSION {
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "LCT V",
             reason: "ROUTE mandates LCT version 1 (V = 0001)",
         }));
     }
     if lct.cci.len() != ROUTE_CCI_LEN {
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "LCT C",
             reason: "ROUTE mandates C = 00 (4-byte CCI)",
         }));
     }
     if lct.tsi.len() != ROUTE_TSI_LEN {
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "LCT S/H",
             reason: "ROUTE mandates S = 1, H = 0 (4-byte TSI)",
         }));
     }
     if lct.toi.len() != ROUTE_TOI_LEN {
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "LCT O/H",
             reason: "ROUTE mandates O = 01, H = 0 (4-byte TOI)",
         }));
@@ -87,7 +87,7 @@ fn validate_route_lct(lct: &LctHeader<'_>) -> Result<()> {
     // packets (§A.4.2.4, `private/specs-verified/atsc/atsc3/a331-route.md` §1's PSI row).
     let spi = lct.psi & PSI_SPI != 0;
     if spi && lct.psi != ROUTE_PSI_SOURCE {
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "LCT PSI",
             reason: "ROUTE source packets mandate PSI = 10 (both bits fixed)",
         }));
@@ -222,7 +222,7 @@ mod tests {
         };
         assert!(matches!(
             pkt.serialize_into(&mut out),
-            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "LCT C",
                 ..
             }))
@@ -256,7 +256,7 @@ mod tests {
         };
         assert!(matches!(
             pkt.serialize_into(&mut out),
-            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "LCT PSI",
                 ..
             }))

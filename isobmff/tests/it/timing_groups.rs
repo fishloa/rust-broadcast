@@ -7,8 +7,8 @@
 //! - `subs`: build from a spec vector, round-trip.
 //! - Mutation: mutating a field changes the serialized bytes.
 
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse, Serialize};
 use isobmff::Error;
 use isobmff::TrackId;
 use isobmff::sample_groups::{

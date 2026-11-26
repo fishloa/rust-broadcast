@@ -75,7 +75,7 @@ fn assert_codec_config_equal(a: &CodecConfig, b: &CodecConfig) {
                 height: hb,
             },
         ) => {
-            use broadcast_common::Serialize;
+            use broadcast_core::Serialize;
             assert_eq!(
                 ca.config.try_to_bytes().unwrap(),
                 cb.config.try_to_bytes().unwrap(),
@@ -95,7 +95,7 @@ fn assert_codec_config_equal(a: &CodecConfig, b: &CodecConfig) {
                 height: hb,
             },
         ) => {
-            use broadcast_common::Serialize;
+            use broadcast_core::Serialize;
             assert_eq!(
                 ca.config.try_to_bytes().unwrap(),
                 cb.config.try_to_bytes().unwrap(),

@@ -15,8 +15,8 @@
 //! tighter than 6000 ticks. A broken implementation that always reports an
 //! exact match (or silently accepts any drift) fails this test — the
 //! anti-cheat property "tests must bite" requires.
-use broadcast_common::Parse;
 use broadcast_common::clock33::Clock33;
+use broadcast_core::Parse;
 use isobmff::emsg::{EmsgBox, PresentationTime};
 use scte35_splice::SpliceInfoSection;
 use ssai_runtime::error::Error;

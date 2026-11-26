@@ -53,7 +53,7 @@ impl SnapMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(SnapMode);
+broadcast_core::impl_spec_display!(SnapMode);
 
 /// `X-RESTRICT` identifier (Appendix D §D.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,7 +89,7 @@ impl RestrictMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(RestrictMode);
+broadcast_core::impl_spec_display!(RestrictMode);
 
 /// Which of the mutually-exclusive `X-ASSET-URI` / `X-ASSET-LIST` attributes
 /// identifies the interstitial content. Appendix D §D.2: "An Interstitial

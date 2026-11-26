@@ -5,8 +5,8 @@ use crate::segments::{
     PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
     be_u16,
 };
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// The page_composition_segment segment_type.
 pub const SEGMENT_TYPE: u8 = 0x10;
@@ -76,7 +76,7 @@ impl PageState {
     }
 }
 
-broadcast_common::impl_spec_display!(PageState, Reserved);
+broadcast_core::impl_spec_display!(PageState, Reserved);
 
 /// A single region entry within a page composition segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,7 +138,7 @@ impl<'a> Parse<'a> for PageCompositionSegment {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HEADER_LEN + FIXED_LEN, "page_composition_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "sync_byte",
                 expected: u32::from(crate::pes_data_field::SYNC_BYTE),
                 found: u32::from(bytes[0]),
@@ -174,7 +174,7 @@ impl<'a> Parse<'a> for PageCompositionSegment {
         // this very check, could never end up holding anything).
         if !region_data.len().is_multiple_of(REGION_ENTRY_LEN) {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: (region_count + 1) * REGION_ENTRY_LEN,
                     have: region_data.len(),
                     what: "page_composition_segment regions",
@@ -217,17 +217,17 @@ impl Serialize for PageCompositionSegment {
             .copy_from_slice(&seg_len.to_be_bytes());
 
         buf[HEADER_LEN + PAGE_TIME_OUT_OFFSET] = self.page_time_out;
-        buf[HEADER_LEN + PAGE_STATE_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + PAGE_STATE_OFFSET] = (broadcast_core::len::fit_mask(
             self.page_version_number,
             PAGE_VERSION_MASK,
             "page_version_number",
         )? << PAGE_VERSION_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.page_state.to_bits(),
                 PAGE_STATE_MASK,
                 "page_state",
             )? << PAGE_STATE_SHIFT)
-            | broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
+            | broadcast_core::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
 
         for (i, region) in self.regions.iter().enumerate() {
             let off = HEADER_LEN + FIXED_LEN + i * REGION_ENTRY_LEN;
@@ -240,7 +240,7 @@ impl Serialize for PageCompositionSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     #[test]
     fn round_trip() {
@@ -277,7 +277,7 @@ mod tests {
         ];
         assert!(matches!(
             PageCompositionSegment::parse(&bytes),
-            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 found: 0x00,
                 ..
             }))

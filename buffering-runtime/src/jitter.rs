@@ -53,7 +53,7 @@ impl SampleOutcome {
         }
     }
 }
-broadcast_common::impl_spec_display!(SampleOutcome);
+broadcast_core::impl_spec_display!(SampleOutcome);
 
 /// Current estimator outputs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]

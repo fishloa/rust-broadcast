@@ -1,11 +1,11 @@
 //! Error type returned by every ISO BMFF box parser and builder in this crate.
 //!
-//! The shared failure kinds ([`BufferTooShort`](broadcast_common::error::BufferTooShort),
-//! [`OutputBufferTooSmall`](broadcast_common::error::OutputBufferTooSmall),
-//! [`InvalidValue`](broadcast_common::error::InvalidValue),
-//! [`InvalidField`](broadcast_common::error::InvalidField),
-//! [`FieldOverflow`](broadcast_common::error::FieldOverflow),
-//! [`UnsupportedVersion`](broadcast_common::error::UnsupportedVersion)) are
+//! The shared failure kinds ([`BufferTooShort`](broadcast_core::error::BufferTooShort),
+//! [`OutputBufferTooSmall`](broadcast_core::error::OutputBufferTooSmall),
+//! [`InvalidValue`](broadcast_core::error::InvalidValue),
+//! [`InvalidField`](broadcast_core::error::InvalidField),
+//! [`FieldOverflow`](broadcast_core::error::FieldOverflow),
+//! [`UnsupportedVersion`](broadcast_core::error::UnsupportedVersion)) are
 //! wrapped transparently so a caller can convert them through its own
 //! `#[from]`; the rest are ISO BMFF-specific.
 
@@ -33,7 +33,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Box size was declared as 1 (triggers largesize) but fewer than 8 bytes available.
     #[error("largesize indicated but buffer too short: need {need}, have {have}")]
@@ -64,15 +64,15 @@ pub enum Error {
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// A field had an invalid or reserved value.
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
 
     /// A field was missing or structurally invalid.
     #[error(transparent)]
-    InvalidField(#[from] broadcast_common::error::InvalidField),
+    InvalidField(#[from] broadcast_core::error::InvalidField),
 
     /// A box did not carry the four-CC the parser expected.
     #[error("unexpected box: expected {expected}")]
@@ -127,7 +127,7 @@ pub enum Error {
     /// masked it) would have silently wrapped and emitted a misframed box or
     /// section; this is returned instead.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::error::FieldOverflow),
 
     /// A count or size read from the input exceeded a configured
     /// [`Limits`](crate::Limits) cap before anything was allocated from it.
@@ -180,7 +180,7 @@ pub enum Error {
 
     /// The `FullBox` `version` was a value this parser does not implement.
     #[error(transparent)]
-    UnsupportedVersion(#[from] broadcast_common::error::UnsupportedVersion),
+    UnsupportedVersion(#[from] broadcast_core::error::UnsupportedVersion),
 
     /// The box type at bytes `[4:8]` was not `emsg`.
     #[error("not an emsg box: type {found:?}")]

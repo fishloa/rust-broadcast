@@ -9,7 +9,7 @@ use crate::JoinDecision;
 use crate::Sample;
 use crate::TrackId;
 use crate::TrackSpec;
-use broadcast_common::timescale::{Rounding, Timescale, to_micros};
+use broadcast_core::timescale::{Rounding, Timescale, to_micros};
 
 /// A span as whole microseconds, saturating past the `i128` range.
 fn span_us(span: Duration) -> i128 {

@@ -8,13 +8,13 @@ use std::collections::{BTreeSet, VecDeque};
 use std::io;
 use std::time::{Duration, Instant};
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_ci::builder::{build_ca_pmt, build_ca_pmt_for_caids};
 use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
 use dvb_si::tables::cat::CatSection;
 use dvb_si::tables::pmt::PmtSection;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 use crate::device::{CaDevice, MAX_CA_FRAME, SlotInfo};
 use crate::event::{Action, Event, HostRequest, HotPlug, MmiEvent, Notification};
@@ -941,7 +941,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::device::{DeviceOp, MockCaDevice};
     use crate::event::{HostControlEvent, HotPlug, Notification};
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use dvb_ci::tpdu::tags;
 
     pub(crate) fn ser<S: Serialize>(s: &S) -> Vec<u8> {
@@ -1168,7 +1168,7 @@ pub(crate) mod tests {
 
     #[test]
     fn profile_reply_advertises_host_control() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         use dvb_ci::objects::resource_manager::{Profile, ProfileEnq};
         use dvb_ci::resource::{HOST_CONTROL, RESOURCE_MANAGER};
 
@@ -2189,7 +2189,7 @@ pub(crate) mod tests {
 
     #[test]
     fn add_service_builds_and_sends_ca_pmt_matching_builder_oracle() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let mut d = driver_with_sessions();
         d.take_notifications();
@@ -2229,7 +2229,7 @@ pub(crate) mod tests {
 
     #[test]
     fn add_service_rejects_pmt_without_ca_descriptor() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let mut d = driver_with_sessions();
         let pmt_bytes = build_clear_pmt_fixture(999);
@@ -2264,7 +2264,7 @@ pub(crate) mod tests {
     /// recorded, and `pump` returns it as `Err` — twice in a row.
     #[test]
     fn requery_tick_serialize_failure_errors_from_pump_instead_of_panicking() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let clock = TestClock::new();
         let mut d = driver_with_sessions().with_clock(clock.as_fn());
@@ -2384,7 +2384,7 @@ pub(crate) mod tests {
 
     #[test]
     fn add_service_second_call_uses_add_list_management() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let mut d = driver_with_sessions();
         d.take_notifications();
@@ -2460,7 +2460,7 @@ pub(crate) mod tests {
 
     #[test]
     fn add_service_filters_ca_descriptors_to_cam_advertised_caids() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         use dvb_ci::objects::ca_info::CaInfo;
 
         let mut d = driver_with_sessions();
@@ -2523,7 +2523,7 @@ pub(crate) mod tests {
 
     #[test]
     fn requery_timer_filters_ca_descriptors_to_cam_advertised_caids() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         use dvb_ci::objects::ca_info::CaInfo;
 
         let clock = TestClock::new();
@@ -2652,7 +2652,7 @@ pub(crate) mod tests {
 
     #[test]
     fn set_cat_computes_emm_pids_as_cat_inter_ca_info_caids() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         use dvb_ci::objects::ca_info::CaInfo;
         use dvb_si::tables::cat::CatSection;
 
@@ -2691,7 +2691,7 @@ pub(crate) mod tests {
 
     #[test]
     fn set_cat_before_ca_info_is_not_an_error_and_recomputes_once_ca_info_arrives() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         use dvb_ci::objects::ca_info::CaInfo;
         use dvb_si::tables::cat::CatSection;
 
@@ -2741,7 +2741,7 @@ pub(crate) mod tests {
     /// list that PID exactly once, not twice.
     #[test]
     fn set_cat_emm_pids_dedups_when_two_caids_share_one_emm_pid() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         use dvb_ci::objects::ca_info::CaInfo;
         use dvb_si::tables::cat::CatSection;
 
@@ -2823,7 +2823,7 @@ pub(crate) mod tests {
 
     #[test]
     fn descramble_pids_is_the_union_of_active_services_es_pids() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let mut d = driver_with_sessions();
         d.take_notifications();
@@ -2885,7 +2885,7 @@ pub(crate) mod tests {
 
     #[test]
     fn requery_timer_resends_ca_pmt_then_reply_change_emits_one_entitlement() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         use dvb_ci::objects::ca_pmt_reply::CaEnable;
 
         let clock = TestClock::new();
@@ -3004,7 +3004,7 @@ pub(crate) mod tests {
 
     #[test]
     fn requery_timer_unchanged_reply_across_two_requeries_emits_no_entitlement() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         use dvb_ci::objects::ca_pmt_reply::CaEnable;
 
         let mut d = driver_with_sessions();
@@ -3056,7 +3056,7 @@ pub(crate) mod tests {
 
     #[test]
     fn requery_reply_withdrawn_to_none_emits_no_entitlement() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         use dvb_ci::objects::ca_pmt_reply::CaEnable;
 
         let mut d = driver_with_sessions();
@@ -3097,7 +3097,7 @@ pub(crate) mod tests {
 
     #[test]
     fn requery_disabled_by_default_sends_nothing() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         // #1032: no `set_requery_interval` call at all — `REQUERY_DEFAULT`
         // (`Duration::ZERO`) must leave re-query off by default (it stays opt-in
@@ -3144,7 +3144,7 @@ pub(crate) mod tests {
 
     #[test]
     fn set_requery_interval_zero_disables_resend_after_being_enabled() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let mut d = driver_with_sessions();
         // Enable, then explicitly disable again — proves `Duration::ZERO`
@@ -3185,7 +3185,7 @@ pub(crate) mod tests {
 
     #[test]
     fn requery_timer_resends_every_active_service_not_just_one() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let clock = TestClock::new();
         let mut d = driver_with_sessions().with_clock(clock.as_fn());
@@ -3278,7 +3278,7 @@ pub(crate) mod tests {
 
     #[test]
     fn requery_after_remove_resends_only_the_surviving_service() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let clock = TestClock::new();
         let mut d = driver_with_sessions().with_clock(clock.as_fn());
@@ -3372,7 +3372,7 @@ pub(crate) mod tests {
 
     #[test]
     fn remove_service_sends_update_not_selected_and_drops_from_managed_state() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let mut d = driver_with_sessions();
         d.take_notifications();
@@ -3439,7 +3439,7 @@ pub(crate) mod tests {
 
     #[test]
     fn cam_removed_edge_clears_managed_state() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         use dvb_ci::objects::ca_info::CaInfo;
         use dvb_si::tables::cat::CatSection;
 
@@ -3506,7 +3506,7 @@ pub(crate) mod tests {
 
     #[test]
     fn update_service_not_managed_returns_not_managed_and_sends_nothing() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let mut d = driver_with_sessions();
         d.take_notifications();
@@ -3533,7 +3533,7 @@ pub(crate) mod tests {
 
     #[test]
     fn update_service_no_ca_descriptor_leaves_record_unchanged() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let mut d = driver_with_sessions();
         d.take_notifications();
@@ -3570,7 +3570,7 @@ pub(crate) mod tests {
     /// is untouched; A's record is the NEW one (its PIDs, built bytes and raw PMT).
     #[test]
     fn update_service_sends_one_update_ca_pmt_with_the_new_pids_and_replaces_only_that_record() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let mut d = driver_with_sessions();
         d.take_notifications();
@@ -3647,7 +3647,7 @@ pub(crate) mod tests {
     /// NEW raw PMT (distinct PIDs, so the old PMT would produce different bytes).
     #[test]
     fn remove_service_after_update_service_uses_the_new_pmt() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let mut d = driver_with_sessions();
         d.take_notifications();
@@ -3686,7 +3686,7 @@ pub(crate) mod tests {
     /// (#1067): a CAM advertising only Viaccess must not be sent the Nagra descriptor.
     #[test]
     fn update_service_filters_caids_like_add_service() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         let mut d = driver_with_sessions();
         d.take_notifications();

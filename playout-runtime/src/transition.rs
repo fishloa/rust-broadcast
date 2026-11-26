@@ -137,7 +137,7 @@ pub fn next_transition(schedule: &Schedule, now: Playhead) -> Option<PlannedTran
 mod tests {
     use super::*;
     use crate::schedule::{CodecConfigId, EntryKind, Playhead, ScheduleEntry};
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
 
     fn entry(
         id: &str,
@@ -258,7 +258,7 @@ mod tests {
         sched
             .push(entry("ad-1", EntryKind::Ad, 90_000, 0, 2))
             .unwrap();
-        let clock = broadcast_common::timescale!(90_000);
+        let clock = broadcast_core::timescale!(90_000);
         let name = |t: &PlannedTransition<'_>| t.from.id.clone();
         let before = next_transition(&sched, Playhead::new(500, Timescale::MICROS));
         let after = next_transition(&sched, Playhead::new(4_500, clock));

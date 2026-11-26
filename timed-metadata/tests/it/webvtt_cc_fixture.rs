@@ -21,7 +21,7 @@
 //! option 3, explicitly sanctioned for exactly this situation).
 #![cfg(feature = "cc-data")]
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use cc_data::CcData;
 use cc_data::decode::Cea608Channel;
 use std::fs;

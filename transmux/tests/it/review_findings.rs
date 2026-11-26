@@ -202,7 +202,7 @@ fn panics<R>(f: impl FnOnce() -> R + std::panic::UnwindSafe) -> bool {
 /// to these readers. Before #1147 the body was `bytes[8..]` and the guards held.
 #[test]
 fn short_largesize_sample_entries_panic_instead_of_erroring() {
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     use isobmff::{
         Av1SampleEntry, AvsVideoSampleEntry, SampleDescriptionBox, VisualSampleEntryFields,
         XmlSubtitleSampleEntry,
@@ -257,7 +257,7 @@ fn compact_box(fourcc: &[u8; 4], body: &[u8]) -> Vec<u8> {
 /// (No real AVS3 MP4 fixture is committed for this crate, CRATE-ACCEPTANCE.)
 #[test]
 fn avs3_entry_with_trailing_config_bytes_is_not_byte_identical_after_round_trip() {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use isobmff::AvsVideoSampleEntry;
     // VisualSampleEntry fixed fields (78 bytes): dri 1, 1920x1080, 72 dpi, frame_count 1, depth 0x18, pre_defined -1.
     let mut visual = vec![0u8; 78];
@@ -291,7 +291,7 @@ fn avs3_entry_with_trailing_config_bytes_is_not_byte_identical_after_round_trip(
 /// it declared). Parse must reject it or serialize must reproduce it.
 #[test]
 fn vttc_with_duplicate_payl_parses_but_cannot_be_serialized() {
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
     use isobmff::VttCueBox;
     let payl_a = compact_box(b"payl", b"one");
     let payl_b = compact_box(b"payl", b"two");

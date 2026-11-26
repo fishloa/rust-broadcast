@@ -31,7 +31,7 @@ use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
 use mpeg_ts::pid::Pid;
 
-use broadcast_common::traits::Parse;
+use broadcast_core::traits::Parse;
 use dvb_si::descriptors::ca::CaDescriptor;
 use dvb_si::descriptors::{AnyDescriptor, parse_loop};
 use dvb_si::tables::cat::CatSection;

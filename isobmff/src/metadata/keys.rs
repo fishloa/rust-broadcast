@@ -12,8 +12,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use broadcast_common::len::{fit_u32, need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{fit_u32, need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use crate::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET, box_len,

@@ -16,7 +16,7 @@ use crate::error::{Error, Result};
 use crate::nal::NAL_TYPE_MASK;
 use crate::sps::{AvcSliceSps, decode_avc_slice_sps};
 use alloc::collections::BTreeMap;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
 
 /// `nal_unit_type` of a non-IDR coded slice (Table 7-1).
 const NAL_SLICE: u8 = 1;
@@ -467,7 +467,7 @@ fn peek_pps_id(nal: &[u8]) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::InvalidValue;
+    use broadcast_core::error::InvalidValue;
 
     use super::*;
     use crate::test_bits::BitWriter;

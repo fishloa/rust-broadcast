@@ -3,8 +3,8 @@
 //! whose packet type this crate does not model (TR-06-1:2020 §5.2, RFC 3550
 //! §6.4.1).
 
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::{Parse, Serialize};
 use rist_runtime::{
     Error, GenericNack, NackFci, ReportPart, RistReceiverCompound, RistSenderCompound, RttEcho,
     RttEchoKind, UnknownPacket,

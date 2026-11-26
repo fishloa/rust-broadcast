@@ -10,8 +10,8 @@
 //! `fixtures/atsc3/PROVENANCE.md`):
 //!   cargo run -p atsc3 --example parse_slt -- fixtures/atsc3/slt-lls-2019-01-07.bin
 
-use broadcast_common::Parse;
 use broadcast_common::bounded::{Limit, read_file_bounded};
+use broadcast_core::Parse;
 use std::env;
 use std::path::Path;
 use std::process;

@@ -5,7 +5,7 @@
 //! `vvcC` box. The `vvcC` box body (FullBox header + `VvcDecoderConfigurationRecord`)
 //! is the byte-exact oracle. Every test walks the box tree — no hardcoded offsets.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use bytes::Bytes;
 use isobmff::vvc_config::{
     VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalArray, VvcNalUnitType, VvcPtlRecord,

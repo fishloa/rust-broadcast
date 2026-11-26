@@ -9,7 +9,7 @@ use mpeg_ts::ts::Pcr;
 use std::collections::HashMap;
 use std::fs;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::section::Section;
 use mpeg_ts::ts::{
     AdaptationFieldControl, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsHeader,

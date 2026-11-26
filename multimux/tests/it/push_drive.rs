@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 
 use crate::support::shared_it::{HANG_GUARD, nz};
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use bytes::Bytes;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use multimux::config::{PushFormat, ReconnectPolicy};

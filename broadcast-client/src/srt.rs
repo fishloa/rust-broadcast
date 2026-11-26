@@ -52,7 +52,7 @@ impl SrtKeyLength {
     }
 }
 
-broadcast_common::impl_spec_display!(SrtKeyLength);
+broadcast_core::impl_spec_display!(SrtKeyLength);
 
 /// Passphrase encryption of an SRT connection. The passphrase is a secret: it is wiped on drop and
 /// never shown by `Debug`.

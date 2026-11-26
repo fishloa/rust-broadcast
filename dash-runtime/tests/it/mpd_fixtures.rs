@@ -1,7 +1,7 @@
 //! Every committed DASH MPD parses, and the parse is pinned against values read
 //! out of the real files.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

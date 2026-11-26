@@ -5,8 +5,8 @@
 //! ```sh
 //! cargo run -p st291 --example parse_anc_rtp --features rtp
 //! ```
-use broadcast_common::Serialize;
 use broadcast_common::bounded::{Limit, read_file_bounded};
+use broadcast_core::Serialize;
 use st291::AncRtpPayload;
 
 /// One RTP packet carrying ANC data: its 16-bit length field caps the

@@ -11,8 +11,8 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::process::ExitCode;
 
-use broadcast_common::Parse;
 use broadcast_common::bounded::{Limit, read_bounded};
+use broadcast_core::Parse;
 
 use broadcast_matroska::Limits;
 use broadcast_matroska::driver::{DriverStep, FileReader};

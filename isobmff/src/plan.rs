@@ -184,7 +184,7 @@ impl BoxPosition {
     }
 }
 
-broadcast_common::impl_spec_display!(BoxPosition);
+broadcast_core::impl_spec_display!(BoxPosition);
 
 /// One top-level box outside `ftyp`/`moov`/`mdat` (`free`, `wide`, `uuid`,
 /// `skip`, a trailing `mfra`), carried with its position so a rewrite

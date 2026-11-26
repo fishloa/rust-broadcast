@@ -41,8 +41,8 @@ use crate::reserved::{ReservedOnes, ReservedZero};
 use crate::tag::ApduTag;
 use crate::wire::be_u16;
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the CICAM Player resource (Table 71).
 pub mod tag {
@@ -126,7 +126,7 @@ impl PlayerVerifyStatus {
         }
     }
 }
-broadcast_common::impl_spec_display!(PlayerVerifyStatus, Reserved);
+broadcast_core::impl_spec_display!(PlayerVerifyStatus, Reserved);
 
 // --- input_status (Table 56) ---
 
@@ -181,7 +181,7 @@ impl InputStatus {
         }
     }
 }
-broadcast_common::impl_spec_display!(InputStatus, Reserved);
+broadcast_core::impl_spec_display!(InputStatus, Reserved);
 
 // --- play_status (Table 59) ---
 
@@ -231,7 +231,7 @@ impl PlayStatus {
         }
     }
 }
-broadcast_common::impl_spec_display!(PlayStatus, Reserved);
+broadcast_core::impl_spec_display!(PlayStatus, Reserved);
 
 // --- Command (Table 61) / seek_mode (Table 62) ---
 
@@ -276,7 +276,7 @@ impl SeekMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(SeekMode, Reserved);
+broadcast_core::impl_spec_display!(SeekMode, Reserved);
 
 // --- update_status (Table 70) ---
 
@@ -321,7 +321,7 @@ impl UpdateStatus {
         }
     }
 }
-broadcast_common::impl_spec_display!(UpdateStatus, Reserved);
+broadcast_core::impl_spec_display!(UpdateStatus, Reserved);
 
 // ---------------------------------------------------------------------------
 // CICAM_player_verify_req (Table 49)
@@ -377,7 +377,7 @@ impl Serialize for PlayerVerifyReq<'_> {
 fn parse_service_location<'a>(body: &'a [u8], what: &'static str) -> Result<&'a [u8]> {
     if body.len() < SERVICE_LOCATION_PREFIX {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: SERVICE_LOCATION_PREFIX,
                 have: body.len(),
                 what,
@@ -388,7 +388,7 @@ fn parse_service_location<'a>(body: &'a [u8], what: &'static str) -> Result<&'a 
     let end = SERVICE_LOCATION_PREFIX + len;
     if body.len() < end {
         return Err(Error::LengthMismatch(
-            broadcast_common::error::LengthMismatch {
+            broadcast_core::error::LengthMismatch {
                 what,
                 declared: len,
                 actual: body.len().saturating_sub(SERVICE_LOCATION_PREFIX),
@@ -625,11 +625,11 @@ impl Serialize for PlayerCapabilitiesReply {
         let body_len = CAPABILITIES_PREFIX + self.component_types.len() * COMPONENT_TYPE_LEN;
         let mut pos =
             objects::write_apdu_header(tag::CAPABILITIES_REPLY, body_len, self.length_form, buf)?;
-        let count = broadcast_common::len::fit_u16(self.component_types.len(), "component_types")
+        let count = broadcast_core::len::fit_u16(self.component_types.len(), "component_types")
             .map_err(|_| Error::InvalidObject {
-            what: "CICAM_player_capabilities_reply",
-            reason: "more than 65535 component types",
-        })?;
+                what: "CICAM_player_capabilities_reply",
+                reason: "more than 65535 component types",
+            })?;
         buf[pos..pos + COMPONENT_TYPE_COUNT_LEN].copy_from_slice(&count.to_be_bytes());
         pos += CAPABILITIES_PREFIX;
         for c in &self.component_types {
@@ -689,7 +689,7 @@ impl<'a> Parse<'a> for PlayerStartReq<'a> {
         let end = START_REQ_PREFIX + pmt_length;
         if body.len() < end {
             return Err(Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "CICAM_player_start_req PMT",
                     declared: pmt_length,
                     actual: body.len().saturating_sub(START_REQ_PREFIX),
@@ -728,7 +728,7 @@ impl Serialize for PlayerStartReq<'_> {
                     0
                 };
         let pmt_length =
-            broadcast_common::len::fit_u16(self.pmt.len(), "PMT_length").map_err(|_| {
+            broadcast_core::len::fit_u16(self.pmt.len(), "PMT_length").map_err(|_| {
                 Error::InvalidObject {
                     what: "CICAM_player_start_req",
                     reason: "PMT longer than 65535 bytes",
@@ -1136,7 +1136,7 @@ fn parse_lts_id_body(
     let (length_form, body) = objects::parse_apdu_header(bytes, expected, what)?;
     if body.len() < LTS_ID_BODY {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: LTS_ID_BODY,
                 have: body.len(),
                 what,
@@ -1397,7 +1397,7 @@ impl<'a> Parse<'a> for PlayerUpdateReq<'a> {
         let end = UPDATE_REQ_PREFIX + pmt_length;
         if body.len() < end {
             return Err(Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "CICAM_player_update_req PMT",
                     declared: pmt_length,
                     actual: body.len().saturating_sub(UPDATE_REQ_PREFIX),
@@ -1422,7 +1422,7 @@ impl Serialize for PlayerUpdateReq<'_> {
         let pos = objects::write_apdu_header(tag::UPDATE_REQ, body_len, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         let pmt_length =
-            broadcast_common::len::fit_u16(self.pmt.len(), "PMT_length").map_err(|_| {
+            broadcast_core::len::fit_u16(self.pmt.len(), "PMT_length").map_err(|_| {
                 Error::InvalidObject {
                     what: "CICAM_player_update_req",
                     reason: "PMT longer than 65535 bytes",

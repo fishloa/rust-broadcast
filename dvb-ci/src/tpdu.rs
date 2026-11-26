@@ -10,8 +10,8 @@
 use crate::error::{Error, Result};
 use crate::length::{self, LengthForm};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// `tpdu_tag` values — Table A.16 (p. 70). One byte each.
 pub mod tags {
@@ -95,7 +95,7 @@ impl DataBlock {
         }
     }
 }
-broadcast_common::impl_spec_display!(DataBlock);
+broadcast_core::impl_spec_display!(DataBlock);
 
 // --- single-field connection-management objects (tag + length + t_c_id) ---
 
@@ -155,7 +155,7 @@ impl<'a> Parse<'a> for TcObject {
             });
         }
         let t_c_id = *bytes.get(1 + hdr).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1 + hdr + 1,
                 have: bytes.len(),
                 what: "TcObject t_c_id",
@@ -314,7 +314,7 @@ impl<'a> Parse<'a> for CommandTpdu<'a> {
         let end = start + len;
         if bytes.len() < end {
             return Err(Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "C_TPDU",
                     declared: len,
                     actual: bytes.len().saturating_sub(start),
@@ -471,7 +471,7 @@ fn parse_fixed<'a>(
 ) -> Result<(LengthForm, &'a [u8])> {
     if bytes.is_empty() {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what,
@@ -496,7 +496,7 @@ fn parse_fixed<'a>(
     let end = start + body_len;
     if bytes.len() < end {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: end,
                 have: bytes.len(),
                 what,

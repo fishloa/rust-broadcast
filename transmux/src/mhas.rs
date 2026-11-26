@@ -53,19 +53,19 @@ const MHAS_LENGTH_BITS: (u32, u32, u32) = (11, 24, 24);
 
 /// A big-endian, MSB-first bit cursor over a byte slice.
 ///
-/// Thin wrapper over [`broadcast_common::bits::BitReader`] — the actual bit
+/// Thin wrapper over [`broadcast_core::bits::BitReader`] — the actual bit
 /// extraction lives there (shared with `dvb-t2mi`/`rdd29`/`st291`; an overrun
 /// or bit-order fix there now reaches this reader too), so this type only
 /// adds the `Option`-returning shape the MHAS walker below wants, plus
 /// `byte_pos`/`seek_to_byte`.
 struct BitReader<'a> {
-    inner: broadcast_common::bits::BitReader<'a>,
+    inner: broadcast_core::bits::BitReader<'a>,
 }
 
 impl<'a> BitReader<'a> {
     fn new(data: &'a [u8]) -> Self {
         Self {
-            inner: broadcast_common::bits::BitReader::new(data),
+            inner: broadcast_core::bits::BitReader::new(data),
         }
     }
 

@@ -4,8 +4,8 @@
 //! Each value puts distinct data in every sub-field (including the high bits of
 //! 22-bit fields) so a shifted, masked or dropped field cannot round-trip.
 
-use broadcast_common::len::FieldOverflow;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::FieldOverflow;
+use broadcast_core::{Parse, Serialize};
 use dvb_t2mi::Error;
 use dvb_t2mi::payload::{
     ArbitraryCellsPayload, FefCompositePayload, FefIqPayload, FefNullPayload, FefSubPartPayload,
@@ -66,7 +66,7 @@ fn arbitrary_cells_rfu_reports_the_combined_value() {
     let buf = [0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00];
     assert_eq!(
         ArbitraryCellsPayload::parse(&buf).err(),
-        Some(Error::ReservedBits(broadcast_common::error::ReservedBits {
+        Some(Error::ReservedBits(broadcast_core::error::ReservedBits {
             field: "18-bit RFU",
             expected: 0,
             found: 4,
@@ -140,7 +140,7 @@ fn fef_iq_rfu_reports_the_combined_nine_bit_value() {
     let buf = [0x00, 0x00, 0x80];
     assert_eq!(
         FefIqPayload::parse(&buf).err(),
-        Some(Error::ReservedBits(broadcast_common::error::ReservedBits {
+        Some(Error::ReservedBits(broadcast_core::error::ReservedBits {
             field: "9-bit rfu",
             expected: 0,
             found: 1,
@@ -182,7 +182,7 @@ fn fef_null_rfu_reports_the_combined_nine_bit_value() {
     let buf = [0x00, 0x00, 0x80];
     assert_eq!(
         FefNullPayload::parse(&buf).err(),
-        Some(Error::ReservedBits(broadcast_common::error::ReservedBits {
+        Some(Error::ReservedBits(broadcast_core::error::ReservedBits {
             field: "9-bit rfu",
             expected: 0,
             found: 1,
@@ -286,7 +286,7 @@ fn p2_bias_rfu_reports_the_combined_seventeen_bit_value() {
     let buf = [0x00, 0x00, 0x40, 0x00, 0x00];
     assert_eq!(
         P2BiasPayload::parse(&buf).err(),
-        Some(Error::ReservedBits(broadcast_common::error::ReservedBits {
+        Some(Error::ReservedBits(broadcast_core::error::ReservedBits {
             field: "17-bit RFU",
             expected: 0,
             found: 0x80,

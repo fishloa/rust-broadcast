@@ -2,7 +2,7 @@
 //! serialized length and the parsed-batch reuse rule (ST 377-1:2019 §7,
 //! `private/specs-verified/smpte/st377-1/st377-1.md` Tables 4/6/7/8).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st377_1::{Error, PartitionKind, PartitionPack, PartitionStatus, UidBatch, UlBytes};
 
 fn ul(byte: u8) -> UlBytes {

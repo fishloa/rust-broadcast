@@ -2,7 +2,7 @@
 //!
 //! For every table crate: scan `src/` for every `pub enum`, subtract the crate's
 //! `skip` list, and fail if any remaining enum has neither
-//! `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+//! `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
 //! impl. A present `Display` delegates to an inherent `name()`, so this one
 //! check transitively enforces the whole convention (issue #806).
 //!
@@ -220,7 +220,7 @@ fn every_public_spec_enum_has_a_display_impl() {
     assert!(
         missing.is_empty(),
         "public enum(s) missing a #204 Display/name() label (or a skip entry in label_data.rs):\n{}\n\
-         Add `broadcast_common::impl_spec_display!(Name)` plus an inherent `name()`, \
+         Add `broadcast_core::impl_spec_display!(Name)` plus an inherent `name()`, \
          or add the enum to the crate's skip list if it is not a spec/field label.",
         missing.join("\n")
     );

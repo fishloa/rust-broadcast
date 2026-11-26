@@ -433,8 +433,8 @@ mod instant {
     use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
     pub const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
-    const VIDEO_TIMESCALE: broadcast_common::timescale::Timescale =
-        broadcast_common::timescale!(90_000);
+    const VIDEO_TIMESCALE: broadcast_core::timescale::Timescale =
+        broadcast_core::timescale!(90_000);
     const FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
     const FRAME_COUNT: u32 = 24;
 

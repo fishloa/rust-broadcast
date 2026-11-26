@@ -1,7 +1,7 @@
 //! RFC 3339 range/overflow behaviour of the anchor (SP5, jiff).
 use std::fs;
 
-use broadcast_common::traits::Parse;
+use broadcast_core::traits::Parse;
 use scte35_splice::SpliceInfoSection;
 use timed_metadata::anchor::try_format_rfc3339_ms;
 use timed_metadata::convert::scte35_to_daterange;

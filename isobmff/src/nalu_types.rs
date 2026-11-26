@@ -5,8 +5,8 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::Serialize;
-use broadcast_common::len::need_out;
+use broadcast_core::Serialize;
+use broadcast_core::len::need_out;
 
 /// `lengthSizeMinusOne` of an AVC/HEVC/VVC decoder configuration record must be 0, 1, or 3
 /// (value 2 is invalid).
@@ -89,7 +89,7 @@ impl Serialize for HevcNalUnit {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let len = broadcast_common::len::fit_u16(self.0.len(), "nalUnitLength")?;
+        let len = broadcast_core::len::fit_u16(self.0.len(), "nalUnitLength")?;
         buf[..2].copy_from_slice(&len.to_be_bytes());
         buf[2..need].copy_from_slice(&self.0);
         Ok(need)
@@ -164,7 +164,7 @@ impl Serialize for HevcNalArray {
         cursor += 1;
 
         // numNalus as u16
-        let count = broadcast_common::len::fit_u16(self.nalus.len(), "numNalus")?;
+        let count = broadcast_core::len::fit_u16(self.nalus.len(), "numNalus")?;
         buf[cursor..cursor + HevcNalUnit::LENGTH_FIELD_SIZE].copy_from_slice(&count.to_be_bytes());
         cursor += HevcNalUnit::LENGTH_FIELD_SIZE;
 
@@ -190,7 +190,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "nalUnitLength",
                     ..
                 })
@@ -220,7 +220,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "numNalus",
                     ..
                 })

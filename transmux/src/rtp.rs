@@ -62,16 +62,16 @@ use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::vec::Vec;
 #[cfg(feature = "rtp")]
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::error::InvalidValue;
-#[cfg(feature = "rtp")]
 use broadcast_common::wire::u16_at;
+#[cfg(feature = "rtp")]
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::error::InvalidValue;
 
 #[cfg(feature = "rtp")]
 use broadcast_common::stage::{Stage, Timestamp};
-use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
+use broadcast_core::timescale::{Rounding, Timescale, rescale_u64};
 #[cfg(feature = "rtp")]
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 #[cfg(feature = "rtp")]
 use bytes::Bytes;
 #[cfg(feature = "rtp")]
@@ -123,7 +123,7 @@ const DYNAMIC_PT_MAX: u8 = 127;
 /// Default video RTP clock rate (RFC 6184 — H.264 is carried at 90 kHz).
 pub const VIDEO_CLOCK_RATE: u32 = 90_000;
 /// [`VIDEO_CLOCK_RATE`] as a [`Timescale`], for the IR timescale of a 90 kHz track.
-pub const VIDEO_CLOCK_TIMESCALE: Timescale = broadcast_common::timescale!(VIDEO_CLOCK_RATE);
+pub const VIDEO_CLOCK_TIMESCALE: Timescale = broadcast_core::timescale!(VIDEO_CLOCK_RATE);
 /// Default audio RTP clock rate when the
 /// caller does not supply the stream's own (RFC 3551 §4.5 lists 48000 as a
 /// registered audio clock rate; the negotiated rate belongs in the SDP's
@@ -212,7 +212,7 @@ impl RtpMediaKind {
     }
 }
 
-broadcast_common::impl_spec_display!(RtpMediaKind);
+broadcast_core::impl_spec_display!(RtpMediaKind);
 
 // ---------------------------------------------------------------------------
 // Output types
@@ -813,8 +813,8 @@ impl SeqCounter {
 /// into the 32-bit range rather than saturating or erroring.
 pub fn rescale_ts(
     ticks: u64,
-    from: broadcast_common::timescale::Timescale,
-    to: broadcast_common::timescale::Timescale,
+    from: broadcast_core::timescale::Timescale,
+    to: broadcast_core::timescale::Timescale,
 ) -> u32 {
     let v = rescale_u64(ticks, from, to, Rounding::Nearest);
     (v & u64::from(u32::MAX)) as u32
@@ -2660,7 +2660,7 @@ mod tests {
             other => panic!("expected BufferTooShort, got {other:?}"),
         }
         match map_rtp_error(rtp_packet::Error::UnsupportedVersion(
-            broadcast_common::error::UnsupportedVersion {
+            broadcast_core::error::UnsupportedVersion {
                 what: "RTP",
                 found: 1,
             },

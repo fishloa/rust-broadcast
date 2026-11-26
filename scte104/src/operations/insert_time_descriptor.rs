@@ -6,8 +6,8 @@
 use super::{U16_LEN, U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for insert_time_descriptor (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x0110;
@@ -64,7 +64,7 @@ impl Serialize for InsertTimeDescriptor {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, LEN)?;
         if self.tai_seconds >> (TAI_SECONDS_LEN as u32 * BYTE_SHIFT) != 0 {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "insert_time_descriptor.TAI_seconds",
                 value: self.tai_seconds,
                 max: (1 << (TAI_SECONDS_LEN as u32 * BYTE_SHIFT)) - 1,
@@ -122,7 +122,7 @@ mod tests {
         assert_eq!(
             op.try_to_bytes().err(),
             Some(crate::error::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "insert_time_descriptor.TAI_seconds",
                     value: 1 << 48,
                     max: (1 << 48) - 1

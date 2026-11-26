@@ -3,7 +3,7 @@
 //!
 //! Run with `cargo run -p rtp-packet --example build_sender_report`.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use rtp_packet::rtcp::{ReportBlock, SenderReport};
 use rtp_packet::{ExtendedSeqNo, Ssrc};
 

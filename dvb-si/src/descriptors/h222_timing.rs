@@ -18,7 +18,7 @@
 use crate::error::Result;
 use crate::h222_bits::{BitReader, BitWriter};
 use alloc::vec::Vec;
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::reserved::ReservedOnes;
 
 /// Default of every `reserved` field of these descriptors (H.222.0 clause 2.1:
 /// "reserved" bits are `1`).

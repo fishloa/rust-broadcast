@@ -5,7 +5,7 @@
 //! Shows the symmetric build/parse contract without needing a TS source —
 //! every table type works the same way.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use mpeg_ts::pid::Pid;
 

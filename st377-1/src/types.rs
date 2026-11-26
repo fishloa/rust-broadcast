@@ -5,7 +5,7 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_u32, need_out};
+use broadcast_core::len::{fit_u32, need_out};
 
 use crate::error::{Error, Result};
 
@@ -40,7 +40,7 @@ pub(crate) fn be<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]>
         .and_then(|s| s.first_chunk::<N>())
         .copied()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: offset + N,
                 have: bytes.len(),
                 what: "fixed-width big-endian field",
@@ -487,7 +487,7 @@ impl ReleaseType {
     }
 }
 
-broadcast_common::impl_spec_display!(ReleaseType, Reserved);
+broadcast_core::impl_spec_display!(ReleaseType, Reserved);
 
 /// Wire size of [`ProductVersion`] — always 10 bytes.
 pub const PRODUCT_VERSION_LEN: usize = 10;
@@ -945,7 +945,7 @@ mod tests {
         assert_eq!(fit_u32(max, "batch count"), Ok(u32::MAX));
         assert!(matches!(
             fit_u32(max + 1, "batch count"),
-            Err(broadcast_common::len::FieldOverflow {
+            Err(broadcast_core::len::FieldOverflow {
                 field: "batch count",
                 ..
             })

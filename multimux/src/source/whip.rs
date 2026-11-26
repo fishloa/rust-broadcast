@@ -85,8 +85,9 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use transmux::TrackId;
 
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Demand, Parse as _, Serialize as _, Stage, Timestamp};
+use broadcast_common::{Demand, Stage, Timestamp};
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse as _, Serialize as _};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::{Notify, OnceCell, mpsc};
 use tokio::task::JoinSet;

@@ -1,8 +1,8 @@
 //! TPDU truncation boundaries and the segmented-data (`Tdata_more`) tag —
 //! ETSI EN 50221 Annex A §A.4.1, Tables A.1/A.2/A.16.
 
-use broadcast_common::error::{BufferTooShort, LengthMismatch};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::{BufferTooShort, LengthMismatch};
+use broadcast_core::{Parse, Serialize};
 use dvb_ci::Error;
 use dvb_ci::tpdu::{self, CommandTpdu, DataBlock, NewTc, ResponseTpdu, TcObject};
 

@@ -3,7 +3,7 @@
 //! Each case also pins that the widest legal value still round-trips, so the
 //! guard cannot be "satisfied" by rejecting everything.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::descriptors::{
     multiplex_buffer_utilization::MultiplexBufferUtilizationDescriptor,
     mvc_extension::MvcExtensionDescriptor, smoothing_buffer::SmoothingBufferDescriptor,

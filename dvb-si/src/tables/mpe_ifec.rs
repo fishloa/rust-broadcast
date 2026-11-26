@@ -39,9 +39,9 @@
 
 use crate::error::{Error, Result};
 use crate::tables::real_time_parameters::{RTP_LEN, RealTimeParametersBits};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// table_id for the MPE-IFEC section.
 pub const TABLE_ID: u8 = 0x7A;

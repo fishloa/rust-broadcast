@@ -7,8 +7,8 @@
 
 use std::time::Duration;
 
-use broadcast_common::impl_spec_display;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::impl_spec_display;
+use broadcast_core::timescale::Timescale;
 
 use crate::error::Unsupported;
 use crate::utc_timing::UtcScheme;

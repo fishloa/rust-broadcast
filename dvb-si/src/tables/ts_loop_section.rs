@@ -7,8 +7,8 @@ use super::{CRC_LEN, SectionBits};
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
 
 /// Width of the `reserved_future_use` length fields.
 pub const TS_LOOP_RESERVED_BITS: u32 = 4;
@@ -124,7 +124,7 @@ pub(super) fn parse<'a>(bytes: &'a [u8], labels: &Labels) -> Result<Parsed<'a>> 
     let ts_loop_start = desc_end;
     if body_end - ts_loop_start < LOOP_LENGTH_FIELD_LEN {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: body_end - ts_loop_start + LOOP_LENGTH_FIELD_LEN,
                 have: body_end - ts_loop_start,
                 what: labels.loop_header,
@@ -146,7 +146,7 @@ pub(super) fn parse<'a>(bytes: &'a [u8], labels: &Labels) -> Result<Parsed<'a>> 
     while pos < loop_end {
         if pos + TS_HEADER_LEN > loop_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + TS_HEADER_LEN,
                     have: loop_end,
                     what: labels.entry,
@@ -220,7 +220,7 @@ pub(super) fn serialize_into(table_id: u8, view: &View<'_, '_>, buf: &mut [u8]) 
     buf[super::SECTION_NUMBER_OFFSET] = view.section_number;
     buf[super::LAST_SECTION_NUMBER_OFFSET] = view.last_section_number;
 
-    let desc_length = broadcast_common::len::fit_bits(
+    let desc_length = broadcast_core::len::fit_bits(
         view.descriptors.len() as u64,
         super::DESC_LOOP_LEN_BITS,
         view.descriptors_length_what,
@@ -234,7 +234,7 @@ pub(super) fn serialize_into(table_id: u8, view: &View<'_, '_>, buf: &mut [u8]) 
     buf[desc_start..desc_start + view.descriptors.len()].copy_from_slice(view.descriptors.raw());
 
     let ts_loop_start = desc_start + view.descriptors.len();
-    let ts_loop_length = broadcast_common::len::fit_bits(
+    let ts_loop_length = broadcast_core::len::fit_bits(
         (len - ts_loop_start - LOOP_LENGTH_FIELD_LEN - CRC_LEN) as u64,
         super::DESC_LOOP_LEN_BITS,
         "transport_stream_loop_length",
@@ -250,7 +250,7 @@ pub(super) fn serialize_into(table_id: u8, view: &View<'_, '_>, buf: &mut [u8]) 
         buf[pos..pos + TS_TSID_LEN].copy_from_slice(&ts.transport_stream_id.to_be_bytes());
         buf[pos + TS_TSID_LEN..pos + TS_DESC_LENGTH_OFFSET]
             .copy_from_slice(&ts.original_network_id.to_be_bytes());
-        let ts_desc_length = broadcast_common::len::fit_bits(
+        let ts_desc_length = broadcast_core::len::fit_bits(
             ts.descriptors.len() as u64,
             super::DESC_LOOP_LEN_BITS,
             "transport_descriptors_length",

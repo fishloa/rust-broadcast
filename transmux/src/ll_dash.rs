@@ -118,7 +118,7 @@ struct TrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::try_new(90_000).expect("non-zero timescale"), CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_core::timescale::Timescale::try_new(90_000).expect("non-zero timescale"), CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -132,7 +132,7 @@ struct TrackState {
 /// #         .expect("valid timing")
 /// # }
 /// // 2 s target segments, one video frame per chunk (per-frame LL).
-/// let mut seg = LlSegmenter::new(vec![spec()], broadcast_common::timescale::Timescale::try_new(1000).expect("non-zero timescale"), core::time::Duration::from_secs(2), 1).unwrap();
+/// let mut seg = LlSegmenter::new(vec![spec()], broadcast_core::timescale::Timescale::try_new(1000).expect("non-zero timescale"), core::time::Duration::from_secs(2), 1).unwrap();
 /// let init = seg.init_segment().unwrap();       // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
 /// seg.push(transmux::TrackId::new(1), au(true)).unwrap();               // keyframe
@@ -146,7 +146,7 @@ struct TrackState {
 /// ```
 pub struct LlSegmenter {
     tracks: Vec<TrackState>,
-    movie_timescale: broadcast_common::timescale::Timescale,
+    movie_timescale: broadcast_core::timescale::Timescale,
     /// Index into `tracks` of the segmentation anchor (keyframe cut boundary).
     anchor: usize,
     /// Target segment duration in the *anchor track's* media timescale.
@@ -188,7 +188,7 @@ impl LlSegmenter {
     /// or no track is anchor-capable (every track is section-carried).
     pub fn new(
         tracks: Vec<TrackSpec>,
-        movie_timescale: impl Into<broadcast_common::timescale::Timescale>,
+        movie_timescale: impl Into<broadcast_core::timescale::Timescale>,
         target_duration: core::time::Duration,
         chunk_samples: usize,
     ) -> Result<Self> {

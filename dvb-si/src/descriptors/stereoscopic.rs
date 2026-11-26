@@ -11,7 +11,7 @@
 use crate::error::Result;
 use crate::h222_bits::{BitReader, BitWriter, impl_h222_descriptor};
 use alloc::vec::Vec;
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::reserved::ReservedOnes;
 
 /// Tag of `MPEG2_stereoscopic_video_format_descriptor` (Table 2-45: 52).
 pub const TAG_VIDEO_FORMAT: u8 = 0x34;
@@ -158,7 +158,7 @@ impl StereoscopicServiceType {
         }
     }
 }
-broadcast_common::impl_spec_display!(StereoscopicServiceType, Reserved);
+broadcast_core::impl_spec_display!(StereoscopicServiceType, Reserved);
 
 /// `Stereoscopic_program_info_descriptor()` — Table 2-105.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,7 +286,7 @@ impl UpsamplingFactor {
         }
     }
 }
-broadcast_common::impl_spec_display!(UpsamplingFactor, Reserved, UserPrivate);
+broadcast_core::impl_spec_display!(UpsamplingFactor, Reserved, UserPrivate);
 
 /// The `base_video_flag`-selected part of `Stereoscopic_video_info_descriptor()`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -417,7 +417,7 @@ mod tests {
     use super::*;
     use alloc::string::ToString;
     use alloc::vec;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     fn rt<T>(b: &[u8]) -> T
     where

@@ -22,8 +22,8 @@ use core::time::Duration;
 
 use tstd::TstdModel;
 
-use broadcast_common::Parse;
 use broadcast_common::units::{MICROS_PER_MILLI, MICROS_PER_SEC, MILLIS_PER_SEC};
+use broadcast_core::Parse;
 use dvb_si::tables::eit::EitSection;
 use dvb_si::tables::pat::{PatSection, TABLE_ID as PAT_TABLE_ID};
 use dvb_si::tables::pmt::PmtSection;
@@ -260,7 +260,7 @@ impl Priority {
         }
     }
 }
-broadcast_common::impl_spec_display!(Priority);
+broadcast_core::impl_spec_display!(Priority);
 
 /// A TR 101 290 measurement indicator.
 ///
@@ -496,7 +496,7 @@ impl Indicator {
         }
     }
 }
-broadcast_common::impl_spec_display!(Indicator);
+broadcast_core::impl_spec_display!(Indicator);
 
 /// One raised conformance error.
 #[derive(Debug, Clone, PartialEq, Eq)]

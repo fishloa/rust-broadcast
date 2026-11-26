@@ -1,7 +1,7 @@
 //! The two global elements every EBML document type may carry: `Void`
 //! (RFC 8794 §11.3.2) and `CRC-32` (§11.3.1).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::ebml::ElementHeader;
 use crate::error::{Error, Result};
@@ -44,7 +44,7 @@ impl Crc32 {
             });
         }
         if payload.len() != CRC32_OCTETS {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "CRC-32",
                 reason: "payload is not four octets",
             }));
@@ -94,7 +94,7 @@ impl Serialize for Crc32 {
         let target = buf
             .get_mut(used..used + CRC32_OCTETS)
             .ok_or(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need: used + CRC32_OCTETS,
                     have,
                 },
@@ -162,7 +162,7 @@ impl Serialize for Void<'_> {
         let target =
             buf.get_mut(used..used + self.padding.len())
                 .ok_or(Error::OutputBufferTooSmall(
-                    broadcast_common::error::OutputBufferTooSmall {
+                    broadcast_core::error::OutputBufferTooSmall {
                         need: used + self.padding.len(),
                         have,
                     },

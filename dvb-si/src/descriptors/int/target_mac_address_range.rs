@@ -8,7 +8,7 @@
 use crate::descriptors::entry_list::{Entry, MacAddress, list_len, parse_list, write_list};
 use crate::error::Result;
 use alloc::vec::Vec;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for target_MAC_address_range_descriptor.
 pub const TAG: u8 = 0x0E;

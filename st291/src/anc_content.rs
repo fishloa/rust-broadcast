@@ -32,7 +32,7 @@
 use alloc::vec::Vec;
 
 #[cfg(any(feature = "ts", feature = "rtp"))]
-use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_core::bits::{BitReader, BitWriter};
 
 // Parity/checksum (below) is transport-independent ST 291-1 material, so
 // `Error`/`Result` are imported unconditionally, not just under `ts`/`rtp`.
@@ -59,7 +59,7 @@ pub(crate) const W_CHECKSUM: u32 = 10;
 /// validation as well as this module's content fields.
 #[cfg(any(feature = "ts", feature = "rtp"))]
 pub(crate) fn check_field_width(what: &'static str, value: u64, bits: u32) -> Result<u64> {
-    broadcast_common::len::fit_bits(value, bits, what)?;
+    broadcast_core::len::fit_bits(value, bits, what)?;
     Ok(value)
 }
 
@@ -257,7 +257,7 @@ impl AncContent {
     /// [`Error::FieldOverflow`] if `udw8s.len()` exceeds `u8::MAX`
     /// (`Data_Count`'s 8-bit value field).
     pub fn build(did8: u8, sdid8: u8, udw8s: &[u8]) -> Result<Self> {
-        let count = broadcast_common::len::fit_u8(udw8s.len(), "Data_Count")?;
+        let count = broadcast_core::len::fit_u8(udw8s.len(), "Data_Count")?;
         let mut content = Self {
             did: Self::with_parity(did8),
             sdid: Self::with_parity(sdid8),
@@ -277,7 +277,7 @@ impl AncContent {
     /// (`Data_Count`'s 8-bit value field).
     #[cfg(any(feature = "ts", feature = "rtp"))]
     pub(crate) fn derived_data_count(&self) -> Result<u16> {
-        let count = broadcast_common::len::fit_u8(self.user_data_words.len(), "Data_Count")?;
+        let count = broadcast_core::len::fit_u8(self.user_data_words.len(), "Data_Count")?;
         Ok(Self::with_parity(count))
     }
 
@@ -297,7 +297,7 @@ impl AncContent {
     /// [`Error::FieldOverflow`] if `n` exceeds `u8::MAX`.
     #[cfg(feature = "ts")]
     pub(crate) fn udw_count_fields(n: usize) -> Result<usize> {
-        let count = broadcast_common::len::fit_u8(n, "Data_Count")?;
+        let count = broadcast_core::len::fit_u8(n, "Data_Count")?;
         Ok(usize::from(count))
     }
 
@@ -710,12 +710,10 @@ mod parity_checksum_tests {
         let udws = alloc::vec![0u8; 256];
         assert!(matches!(
             AncContent::build(0x00, 0x00, &udws),
-            Err(Error::FieldOverflow(
-                broadcast_common::error::FieldOverflow {
-                    field: "Data_Count",
-                    ..
-                }
-            ))
+            Err(Error::FieldOverflow(broadcast_core::error::FieldOverflow {
+                field: "Data_Count",
+                ..
+            }))
         ));
     }
 }

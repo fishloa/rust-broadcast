@@ -10,9 +10,9 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for graphics_constraints_descriptor (AIT namespace).
 pub const TAG: u8 = 0x14;
@@ -87,7 +87,7 @@ impl GraphicsConfiguration {
         }
     }
 }
-broadcast_common::impl_spec_display!(GraphicsConfiguration, Reserved);
+broadcast_core::impl_spec_display!(GraphicsConfiguration, Reserved);
 
 /// Graphics Constraints Descriptor (AIT tag 0x14).
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -112,7 +112,7 @@ impl DataUnitId {
     }
 }
 
-broadcast_common::impl_spec_display!(DataUnitId, Reserved, UserDefined);
+broadcast_core::impl_spec_display!(DataUnitId, Reserved, UserDefined);
 
 #[cfg(test)]
 mod tests {

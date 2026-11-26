@@ -6,6 +6,10 @@ versioning.
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ### Added
 - Public constants for the reserved-bit widths that appear in the public `reserved*` fields of the APDU objects (`ReservedOnes<…>` / `ReservedZero<…>`), and for the `start_time` / `duration` array lengths of `EitEvent`, so a caller can name the types it sees instead of restating a bare literal.
 

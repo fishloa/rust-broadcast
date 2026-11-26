@@ -28,7 +28,7 @@ pub fn descriptor_body<'a>(
 ) -> Result<(u32, &'a [u8])> {
     if bytes.len() < TAG_AND_LENGTH_LEN {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: TAG_AND_LENGTH_LEN,
                 have: bytes.len(),
                 what,
@@ -53,7 +53,7 @@ pub fn descriptor_body<'a>(
     }
     if declared < IDENTIFIER_LEN {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: HEADER_LEN,
                 have: total,
                 what,
@@ -64,7 +64,7 @@ pub fn descriptor_body<'a>(
     let (id_bytes, _) = bytes[2..total]
         .split_first_chunk::<IDENTIFIER_LEN>()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: HEADER_LEN,
                 have: total,
                 what,
@@ -82,7 +82,7 @@ pub fn descriptor_body<'a>(
 /// check even where a caller already validates its own body length.
 pub fn write_header(buf: &mut [u8], tag: u8, identifier: u32, body_len: usize) -> Result<()> {
     buf[0] = tag;
-    buf[1] = broadcast_common::len::fit_u8(
+    buf[1] = broadcast_core::len::fit_u8(
         IDENTIFIER_LEN + body_len,
         "splice_descriptor.descriptor_length",
     )?;

@@ -12,12 +12,13 @@ keywords     = ["smpte", "st2022", "hbrmt", "sdi-over-ip", "broadcast"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 thiserror        = { version = "2", default-features = false }
 
 [features]
 default = ["std"]
-std     = ["broadcast-common/std", "serde?/std"]
-serde   = ["dep:serde", "broadcast-common/serde"]
+std     = ["broadcast-common/std", "broadcast-core/std", "serde?/std"]
+serde   = ["dep:serde", "broadcast-common/serde", "broadcast-core/serde"]
 
 [dependencies.serde]
 version          = "1"

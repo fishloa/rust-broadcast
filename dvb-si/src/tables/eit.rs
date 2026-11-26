@@ -11,8 +11,8 @@ use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::tables::RunningStatus;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// table_id for present/following on the actual TS.
 pub const TABLE_ID_PF_ACTUAL: u8 = 0x4E;
@@ -228,7 +228,7 @@ impl<'a> Parse<'a> for EitSection<'a> {
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<EVENT_ID_LEN>())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + EVENT_ID_LEN,
                         have: events_end,
                         what: "EitSection event_id",
@@ -269,7 +269,7 @@ impl<'a> Parse<'a> for EitSection<'a> {
 
         if pos != events_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: events_end - pos,
                     have: 0,
                     what: "EitSection trailing event bytes",
@@ -333,7 +333,7 @@ impl Serialize for EitSection<'_> {
                 .copy_from_slice(&ev.start_time_raw);
             buf[pos + EVENT_DURATION_OFFSET..pos + EVENT_STATUS_OFFSET]
                 .copy_from_slice(&ev.duration_raw);
-            let dll = broadcast_common::len::fit_bits(
+            let dll = broadcast_core::len::fit_bits(
                 ev.descriptors.len() as u64,
                 DESCRIPTORS_LOOP_LEN_BITS,
                 "descriptors_loop_length",
@@ -714,7 +714,7 @@ mod tests {
         let err = EitSection::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: 18,
                 have: 3,
                 ..
@@ -897,7 +897,7 @@ mod tests {
         let err = EitSection::parse(&v).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "EitSection trailing event bytes",
                 ..
             })

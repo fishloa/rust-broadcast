@@ -17,9 +17,9 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::wire::U16_LEN;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for linkage_descriptor.
 pub const TAG: u8 = 0x4A;
@@ -202,7 +202,7 @@ impl LinkageType {
         }
     }
 }
-broadcast_common::impl_spec_display!(LinkageType, ExtendedEventLinkage, Reserved);
+broadcast_core::impl_spec_display!(LinkageType, ExtendedEventLinkage, Reserved);
 
 /// Hand-over type — ETSI EN 300 468 Table 62.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -256,7 +256,7 @@ impl HandOverType {
         }
     }
 }
-broadcast_common::impl_spec_display!(HandOverType, Reserved);
+broadcast_core::impl_spec_display!(HandOverType, Reserved);
 
 /// Link type — ETSI EN 300 468 Table 66.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -320,7 +320,7 @@ impl LinkType {
         }
     }
 }
-broadcast_common::impl_spec_display!(LinkType, Reserved);
+broadcast_core::impl_spec_display!(LinkType, Reserved);
 
 /// Target id type — ETSI EN 300 468 Table 67.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -377,7 +377,7 @@ impl TargetIdType {
         }
     }
 }
-broadcast_common::impl_spec_display!(TargetIdType, Reserved);
+broadcast_core::impl_spec_display!(TargetIdType, Reserved);
 
 /// Mobile hand-over info — EN 300 468 Table 61 (`linkage_type == 0x08`).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -423,7 +423,7 @@ impl MobileHandOverInfo {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        let flags_byte = (broadcast_common::len::fit_mask(
+        let flags_byte = (broadcast_core::len::fit_mask(
             self.hand_over_type.to_u8(),
             HANDOVER_TYPE_VALUE_MASK,
             "hand_over_type",
@@ -655,9 +655,9 @@ impl ExtendedEventLinkageEntry {
             byte2 |= EXT_EVENT_SIMULCAST_MASK;
         }
         byte2 |=
-            broadcast_common::len::fit_mask(self.link_type.to_u8(), TYPE_VALUE_MASK, "link_type")?
+            broadcast_core::len::fit_mask(self.link_type.to_u8(), TYPE_VALUE_MASK, "link_type")?
                 << EXT_LINK_TYPE_SHIFT;
-        byte2 |= broadcast_common::len::fit_mask(
+        byte2 |= broadcast_core::len::fit_mask(
             self.target_id.target_id_type().to_u8(),
             TYPE_VALUE_MASK,
             "target_id_type",
@@ -711,7 +711,7 @@ impl ExtendedEventLinkageInfo {
         let loop_len: usize = self.entries.iter().map(|e| e.serialized_len()).sum();
         let total = 1 + loop_len;
         need_out(buf, total)?;
-        buf[0] = broadcast_common::len::fit_u8(loop_len, "linkage_extended_event_loop_length")?;
+        buf[0] = broadcast_core::len::fit_u8(loop_len, "linkage_extended_event_loop_length")?;
         let mut pos = 1;
         for entry in &self.entries {
             let written = entry.serialize_into(&mut buf[pos..])?;

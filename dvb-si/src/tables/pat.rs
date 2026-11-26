@@ -6,9 +6,9 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
 /// PAT table_id (ISO/IEC 13818-1 Table 2-30).
@@ -147,7 +147,7 @@ impl<'a> Parse<'a> for PatSection {
         while pos < end {
             if pos + ENTRY_LEN > end {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: ENTRY_LEN,
                         have: end - pos,
                         what: "PatSection trailing entry bytes",
@@ -418,7 +418,7 @@ mod tests {
         bytes[crc_pos - CRC_LEN..crc_pos].copy_from_slice(&crc.to_be_bytes());
         assert!(matches!(
             PatSection::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "PatSection trailing entry bytes",
                 ..
             })

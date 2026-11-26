@@ -46,7 +46,7 @@ impl AacAdditionalInfo {
         }
     }
 }
-broadcast_common::impl_spec_display!(AacAdditionalInfo, Reserved);
+broadcast_core::impl_spec_display!(AacAdditionalInfo, Reserved);
 
 #[cfg(test)]
 mod tests {

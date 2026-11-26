@@ -1,8 +1,8 @@
 //! Element framing — RDD 29:2019 §2/§4.1/§5.1 (`ReadElement()`, Table 1).
 
-use broadcast_common::Parse;
-use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::Parse;
+use broadcast_core::bits::{BitReader, BitWriter};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::audio_data_dlc::AudioDataDlc;
 use crate::bed_definition::BedDefinition1;
@@ -82,7 +82,7 @@ impl ElementId {
     }
 }
 
-broadcast_common::impl_spec_display!(ElementId, Reserved);
+broadcast_core::impl_spec_display!(ElementId, Reserved);
 
 /// Any parsed Dolby Atmos bitstream element — the result of one
 /// `ReadElement()` dispatch (§4.1). A tag-dispatch enum (see this crate's
@@ -120,7 +120,7 @@ impl<'a> AnyElement<'a> {
     }
 
     fn body_len(&self) -> usize {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         match self {
             Self::BedDefinition1(b) => b.serialized_len(),
             Self::ObjectDefinition1(o) => o.serialized_len(),
@@ -143,7 +143,7 @@ impl<'a> AnyElement<'a> {
     /// [`Self::serialized_len`]; otherwise any error the concrete element
     /// type's own `serialize_into` can return.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         // Body length computed once (audit RD-O1, #1114): it recurses into
         // the element's own `serialized_len`, so it is not free.
         let body_len = self.body_len();
@@ -190,7 +190,7 @@ impl<'a> AnyElement<'a> {
         debug_assert!(r.is_byte_aligned());
         let header_len = r.bits_read() / BITS_PER_BYTE;
         let element_size = usize::try_from(element_size).map_err(|_| {
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "ElementSize",
                 value: element_size,
                 reason: "does not fit in this platform's usize",
@@ -198,7 +198,7 @@ impl<'a> AnyElement<'a> {
         })?;
         let body_end = header_len
             .checked_add(element_size)
-            .ok_or(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            .ok_or(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "ElementSize",
                 value: element_size as u64,
                 reason: "overflowed usize",
@@ -208,14 +208,13 @@ impl<'a> AnyElement<'a> {
         let element = match element_id {
             ELEMENT_ID_BED_DEFINITION1 => Self::BedDefinition1(BedDefinition1::parse(body)?),
             ELEMENT_ID_OBJECT_DEFINITION1 => {
-                let frame_rate = frame_rate.ok_or(Error::InvalidValue(
-                    broadcast_common::error::InvalidValue {
+                let frame_rate =
+                    frame_rate.ok_or(Error::InvalidValue(broadcast_core::error::InvalidValue {
                         field: "ObjectDefinition1",
                         value: 0,
                         reason: "parsing an OBJECT_DEFINITION1 element requires the enclosing \
                              ATMOSFrame's FrameRate as context",
-                    },
-                ))?;
+                    }))?;
                 Self::ObjectDefinition1(ObjectDefinition1::parse_with_frame_rate(body, frame_rate)?)
             }
             ELEMENT_ID_AUDIO_DATA_DLC => Self::AudioDataDlc(AudioDataDlc::parse(body)?),

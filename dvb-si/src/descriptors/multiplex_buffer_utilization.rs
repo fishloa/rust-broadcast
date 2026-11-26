@@ -5,9 +5,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for multiplex_buffer_utilization_descriptor.
 pub const TAG: u8 = 0x0C;
@@ -113,12 +113,12 @@ impl Serialize for MultiplexBufferUtilizationDescriptor {
         need_out(buf, len)?;
         // 15-bit LTW offsets; a wider value used to be masked down silently
         // (audit r03-W3 class).
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.ltw_offset_lower_bound),
             BOUND_FIELD_BITS,
             "ltw_offset_lower_bound",
         )?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.ltw_offset_upper_bound),
             BOUND_FIELD_BITS,
             "ltw_offset_upper_bound",

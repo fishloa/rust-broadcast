@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use isobmff::frag_offsets::{FragmentSampleRange, MdatRange, mdat_ranges, sample_ranges_in};
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::sample_table::SampleRef;
@@ -1076,8 +1076,8 @@ fn cmf2_shape(bytes: &[u8]) -> Option<(Vec<u8>, u64)> {
             trun.tr_flags |= TRUN_DATA_OFFSET_PRESENT;
             trun.data_offset = Some(i32::try_from(first_rel).ok()?);
         }
-        let mut serialized = vec![0u8; broadcast_common::Serialize::serialized_len(&piece)];
-        broadcast_common::Serialize::serialize_into(&piece, &mut serialized).ok()?;
+        let mut serialized = vec![0u8; broadcast_core::Serialize::serialized_len(&piece)];
+        broadcast_core::Serialize::serialize_into(&piece, &mut serialized).ok()?;
         pieces.push(serialized);
     }
     let prefix_len = moof_start;
@@ -1095,8 +1095,8 @@ fn cmf2_shape(bytes: &[u8]) -> Option<(Vec<u8>, u64)> {
         for traf in &mut reparsed.traf {
             traf.tfhd.base_data_offset = Some(base);
         }
-        let mut serialized = vec![0u8; broadcast_common::Serialize::serialized_len(&reparsed)];
-        broadcast_common::Serialize::serialize_into(&reparsed, &mut serialized).ok()?;
+        let mut serialized = vec![0u8; broadcast_core::Serialize::serialized_len(&reparsed)];
+        broadcast_core::Serialize::serialize_into(&reparsed, &mut serialized).ok()?;
         if first_len.is_none() {
             first_len = Some(u64::try_from(serialized.len()).ok()?);
         }

@@ -19,7 +19,7 @@
 
 use std::path::{Path, PathBuf};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceInsert, SpliceMode};
 use scte35_splice::descriptors::AnySpliceDescriptor;

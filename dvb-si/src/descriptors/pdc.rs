@@ -7,9 +7,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for PDC_descriptor.
 pub const TAG: u8 = 0x69;
@@ -162,7 +162,7 @@ impl Serialize for PdcDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
         // reserved_future_use(4) preserved from parse (default 1111).
         let raw = (u32::from(self.reserved_future_use.get() as u8) << RESERVED_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.programme_identification_label,
                 PIL_MASK,
                 "programme_identification_label",

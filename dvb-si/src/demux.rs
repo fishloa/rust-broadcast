@@ -12,7 +12,7 @@
 //! [`SectionEvent::parse`]) borrow the event lazily.
 //!
 //! ```
-//! use broadcast_common::Serialize;
+//! use broadcast_core::Serialize;
 //! use dvb_si::demux::{SiDemux, SiDemuxConfig};
 //! use dvb_si::tables::AnyTableSection;
 //! use dvb_si::tables::pat::{PatSection, PatEntry};
@@ -230,7 +230,7 @@ impl SectionEvent {
     /// # Errors
     /// Propagates `T::parse` errors.
     pub fn parse<'s, T: crate::traits::TableDef<'s>>(&'s self) -> crate::Result<T> {
-        <T as broadcast_common::Parse>::parse(&self.bytes)
+        <T as broadcast_core::Parse>::parse(&self.bytes)
     }
 }
 
@@ -644,7 +644,7 @@ impl SiDemux {
     /// implausible, and we never panic.
     fn follow_pat(&mut self, event: &SectionEvent) {
         use crate::tables::pat::PatSection;
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         let bytes = &event.bytes;
         if bytes.len() < MIN_SECTION_LEN + LONG_FORM_EXTRA + CRC_LEN {
             return;
@@ -958,7 +958,7 @@ mod tests {
     #[test]
     fn a_next_pat_does_not_change_the_followed_pmt_pids() {
         use crate::tables::pat::{PatEntry, PatSection};
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use mpeg_ts::pid::Pid;
 
         fn pat_bytes(v: u8, cur: bool, sn: u8, last: u8, pid: u16) -> Vec<u8> {

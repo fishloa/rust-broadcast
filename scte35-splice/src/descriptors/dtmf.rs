@@ -4,12 +4,12 @@
 //! a `preroll` (tenths of a second) and `dtmf_count` ASCII DTMF characters.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 use super::header::{self, CUEI, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `splice_descriptor_tag` for DTMF_descriptor (§10.1, Table 16).
 pub const TAG: u8 = 0x01;
@@ -59,7 +59,7 @@ impl<'a> Parse<'a> for DtmfDescriptor {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "DTMF_descriptor")?;
         if body.len() < DTMF_HEADER_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: HEADER_LEN + DTMF_HEADER_LEN,
                     have: bytes.len(),
                     what: "DTMF_descriptor preroll/count",
@@ -70,7 +70,7 @@ impl<'a> Parse<'a> for DtmfDescriptor {
         let dtmf_count = (body[DTMF_COUNT_OFFSET] >> DTMF_COUNT_SHIFT) as usize; // 3-bit count, 5 reserved
         if body.len() < DTMF_HEADER_LEN + dtmf_count {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: HEADER_LEN + DTMF_HEADER_LEN + dtmf_count,
                     have: bytes.len(),
                     what: "DTMF_descriptor chars",
@@ -94,7 +94,7 @@ impl Serialize for DtmfDescriptor {
         let need = self.serialized_len();
         need_out(buf, need)?;
         if self.dtmf_chars.len() > DTMF_COUNT_MAX {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "DTMF_descriptor.dtmf_count",
                 value: self.dtmf_chars.len() as u64,
                 max: DTMF_COUNT_MAX as u64,

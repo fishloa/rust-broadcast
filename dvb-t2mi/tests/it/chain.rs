@@ -49,7 +49,7 @@ const PAYLOAD_FLAG: u8 = 0x10;
 /// Build a PAT section for TSID 1, version 0, one program (program 1 → PID 0x0100).
 /// Returns the full byte sequence including the CRC-32 trailer.
 fn build_pat_section() -> Vec<u8> {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use dvb_si::tables::pat::{PatEntry, PatSection};
 
     let pat = PatSection::new(

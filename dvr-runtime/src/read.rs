@@ -115,7 +115,7 @@ impl UnsupportedTag {
     }
 }
 
-broadcast_common::impl_spec_display!(UnsupportedTag);
+broadcast_core::impl_spec_display!(UnsupportedTag);
 
 /// Why one period's playlist is not a readable archive period.
 #[derive(Debug, thiserror::Error)]

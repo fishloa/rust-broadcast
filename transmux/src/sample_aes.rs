@@ -507,7 +507,7 @@ impl HlsEncryptionMethod {
     }
 }
 
-broadcast_common::impl_spec_display!(HlsEncryptionMethod);
+broadcast_core::impl_spec_display!(HlsEncryptionMethod);
 
 /// Format a 16-byte IV as the `0x`-prefixed 32-hex-digit `EXT-X-KEY` `IV`
 /// attribute value (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §9).
@@ -623,7 +623,7 @@ impl SampleAesOp {
     }
 }
 
-broadcast_common::impl_spec_display!(SampleAesOp);
+broadcast_core::impl_spec_display!(SampleAesOp);
 
 /// What [`SampleAesStage`] does to one track's samples.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1250,7 +1250,7 @@ mod tests {
         let mut stage = SampleAesStage::new(NIST_KEY, NIST_IV, SampleAesOp::Encrypt);
         let spec = crate::TrackSpec::new(
             TrackId::new(1),
-            broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
+            broadcast_core::timescale::Timescale::try_new(90_000).expect("timescale"),
             CodecConfig::Data {
                 identity: crate::ir::DataIdentity::Ts {
                     stream_type: 6,

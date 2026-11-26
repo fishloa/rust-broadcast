@@ -97,8 +97,7 @@ impl ExtensionRegistry {
         self.custom.insert(
             tag_ext,
             Box::new(|sel| {
-                Ok(Box::new(<T as broadcast_common::Parse>::parse(sel)?)
-                    as Box<dyn ExtensionObject>)
+                Ok(Box::new(<T as broadcast_core::Parse>::parse(sel)?) as Box<dyn ExtensionObject>)
             }),
         );
         self
@@ -184,7 +183,7 @@ mod tests {
         const NAME: &'static str = "MY_EXT_BODY";
     }
 
-    impl<'a> broadcast_common::Parse<'a> for MyExtBody {
+    impl<'a> broadcast_core::Parse<'a> for MyExtBody {
         type Error = crate::error::Error;
         fn parse(sel: &'a [u8]) -> Result<Self> {
             Ok(Self {
@@ -238,7 +237,7 @@ mod tests {
             ),
         };
         let mut buf = vec![0u8; d.serialized_len()];
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         d.serialize_into(&mut buf).unwrap();
 
         let re = reg.parse(&buf).unwrap();

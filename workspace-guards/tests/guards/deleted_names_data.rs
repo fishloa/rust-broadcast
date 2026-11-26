@@ -23,6 +23,61 @@ pub const EXEMPT: &[&str] = &["workspace-guards"];
 /// names the deleted item instead.
 pub const TABLE: &[Banned] = &[
     Banned {
+        name: "broadcast_common::Parse",
+        reason: "the Parse trait lives in broadcast_core::traits (re-exported at its root)",
+        issue: "streaming-first P6 S8",
+    },
+    Banned {
+        name: "broadcast_common::Serialize",
+        reason: "the Serialize trait lives in broadcast_core::traits (re-exported at its root)",
+        issue: "streaming-first P6 S8",
+    },
+    Banned {
+        name: "broadcast_common::CencScheme",
+        reason: "the CENC scheme identity lives in broadcast_core::cenc",
+        issue: "streaming-first P6 S8",
+    },
+    Banned {
+        name: "broadcast_common::traits",
+        reason: "the Parse/Serialize traits live in broadcast_core::traits",
+        issue: "streaming-first P6 S8",
+    },
+    Banned {
+        name: "broadcast_common::len",
+        reason: "the checked field-width helpers live in broadcast_core::len",
+        issue: "streaming-first P6 S8",
+    },
+    Banned {
+        name: "broadcast_common::bits",
+        reason: "bit I/O lives in broadcast_core::bits",
+        issue: "streaming-first P6 S8",
+    },
+    Banned {
+        name: "broadcast_common::error",
+        reason: "the shared error kinds live in broadcast_core::error",
+        issue: "streaming-first P6 S8",
+    },
+    Banned {
+        name: "broadcast_common::reserved",
+        reason: "typed reserved-bit fields live in broadcast_core::reserved",
+        issue: "streaming-first P6 S8",
+    },
+    Banned {
+        name: "broadcast_common::timescale",
+        reason: "the media timescale codec lives in broadcast_core::timescale",
+        issue: "streaming-first P6 S8",
+    },
+    Banned {
+        name: "broadcast_common::cenc",
+        reason: "the CENC scheme identity lives in broadcast_core::cenc",
+        issue: "streaming-first P6 S8",
+    },
+    Banned {
+        name: "broadcast_common::impl_spec_display",
+        reason: "the Display-from-name macro is broadcast_core::impl_spec_display",
+        issue: "streaming-first P6 S8",
+    },
+    Banned {
         name: "Fmp4Demux",
         reason: "the one MP4 demuxer is transmux::mp4_demux::Mp4Demux",
         issue: "#4057",

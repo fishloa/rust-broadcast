@@ -7,7 +7,8 @@
 //! (`test-091.ts`, private fixtures only).
 
 use broadcast_common::base64::base64_decode_strict;
-use broadcast_common::{Parse, Serialize, crc32_mpeg2};
+use broadcast_common::crc32_mpeg2;
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 
 const SEEDS: &[&str] = &[
@@ -83,7 +84,7 @@ fn a_sentinel_with_alignment_stuffing_is_an_error_not_a_guess() {
     assert_eq!(
         SpliceInfoSection::parse(&b).err(),
         Some(scte35_splice::Error::InvalidField(
-            broadcast_common::error::InvalidField {
+            broadcast_core::error::InvalidField {
                 field: "splice_info_section.splice_command_length",
                 reason: "0xFFF sentinel and the command's extent cannot be derived from its structure"
             }

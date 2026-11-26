@@ -23,7 +23,7 @@
 //!   retained for round-trip fidelity.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::data_unit_id::DataUnitId;
 use crate::error::{Error, Result};
@@ -191,7 +191,7 @@ impl TeletextDataField {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for TeletextDataField {
+impl<'a> broadcast_core::Parse<'a> for TeletextDataField {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -199,7 +199,7 @@ impl<'a> broadcast_common::Parse<'a> for TeletextDataField {
     }
 }
 
-impl broadcast_common::Serialize for TeletextDataField {
+impl broadcast_core::Serialize for TeletextDataField {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -257,7 +257,7 @@ impl VpsDataField {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for VpsDataField {
+impl<'a> broadcast_core::Parse<'a> for VpsDataField {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -265,7 +265,7 @@ impl<'a> broadcast_common::Parse<'a> for VpsDataField {
     }
 }
 
-impl broadcast_common::Serialize for VpsDataField {
+impl broadcast_core::Serialize for VpsDataField {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -336,14 +336,14 @@ impl WssDataField {
     /// `wss_data_block` is range-checked and the preserved RFU tail is emitted.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         need_out(out, WSS_FIELD_LEN)?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             self.wss_data_block as u64,
             WSS_DATA_BLOCK_BITS,
             "wss_data_block",
         )?;
         out[0] = self.header.to_byte()?;
         out[WSS_DATA_BLOCK_HI_OFFSET] = (self.wss_data_block >> WSS_DATA_BLOCK_HI_SHIFT) as u8;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             self.reserved_tail as u64,
             RESERVED_FUTURE_USE_BITS,
             "reserved_future_use",
@@ -355,7 +355,7 @@ impl WssDataField {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for WssDataField {
+impl<'a> broadcast_core::Parse<'a> for WssDataField {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -363,7 +363,7 @@ impl<'a> broadcast_common::Parse<'a> for WssDataField {
     }
 }
 
-impl broadcast_common::Serialize for WssDataField {
+impl broadcast_core::Serialize for WssDataField {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -420,7 +420,7 @@ impl ClosedCaptioningDataField {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for ClosedCaptioningDataField {
+impl<'a> broadcast_core::Parse<'a> for ClosedCaptioningDataField {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -428,7 +428,7 @@ impl<'a> broadcast_common::Parse<'a> for ClosedCaptioningDataField {
     }
 }
 
-impl broadcast_common::Serialize for ClosedCaptioningDataField {
+impl broadcast_core::Serialize for ClosedCaptioningDataField {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -489,7 +489,7 @@ impl<'a> MonochromeDataField<'a> {
         let n_pixels = data[MONO_N_PIXELS_OFFSET] as usize;
         // §4.9.2 mandates n_pixels > 0; a zero-n_pixels unit is non-conformant.
         if n_pixels == 0 {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "n_pixels",
                 reason: "n_pixels shall be > 0 (ETSI EN 301 775 §4.9.2)",
             }));
@@ -515,8 +515,8 @@ impl<'a> MonochromeDataField<'a> {
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
         need_out(out, total)?;
-        broadcast_common::len::fit_bits(self.line_offset as u64, LINE_OFFSET_BITS, "line_offset")?;
-        broadcast_common::len::fit_bits(self.samples.len() as u64, u8::BITS, "n_pixels")?;
+        broadcast_core::len::fit_bits(self.line_offset as u64, LINE_OFFSET_BITS, "line_offset")?;
+        broadcast_core::len::fit_bits(self.samples.len() as u64, u8::BITS, "n_pixels")?;
         let mut b0 = self.line_offset;
         if self.first_segment {
             b0 |= MONO_FIRST_SEGMENT;
@@ -536,7 +536,7 @@ impl<'a> MonochromeDataField<'a> {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for MonochromeDataField<'a> {
+impl<'a> broadcast_core::Parse<'a> for MonochromeDataField<'a> {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -544,7 +544,7 @@ impl<'a> broadcast_common::Parse<'a> for MonochromeDataField<'a> {
     }
 }
 
-impl broadcast_common::Serialize for MonochromeDataField<'_> {
+impl broadcast_core::Serialize for MonochromeDataField<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -697,7 +697,7 @@ impl<'a> DataUnitPayload<'a> {
     }
 }
 
-impl broadcast_common::Serialize for DataUnitPayload<'_> {
+impl broadcast_core::Serialize for DataUnitPayload<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -732,7 +732,7 @@ pub struct DataUnit<'a> {
 /// Reject a `stuffing_byte` run that is not all `0xFF` (Table 1).
 fn check_stuffing(bytes: &[u8]) -> Result<()> {
     if bytes.iter().any(|&b| b != crate::data_unit_id::ID_STUFFING) {
-        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "stuffing_byte",
             reason: "stuffing_byte shall be 0xFF (ETSI EN 301 775 Table 1)",
         }));
@@ -754,7 +754,7 @@ impl<'a> DataUnit<'a> {
     /// the extra `0xFF` bytes would re-parse as part of the payload.
     fn check_stuffing_allowed(&self) -> Result<()> {
         if self.stuffing != 0 && self.payload_owns_whole_body() {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "DataUnit.stuffing",
                 reason: "must be 0 for an Opaque or Stuffing payload (its whole body is the payload)",
             }));
@@ -774,7 +774,7 @@ impl<'a> DataUnit<'a> {
     /// already longer than `length`.
     pub fn padded_to(mut self, length: u8) -> Result<Self> {
         if self.payload_owns_whole_body() {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "DataUnit.stuffing",
                 reason: "an Opaque or Stuffing payload cannot be padded (its whole body is the payload)",
             }));
@@ -901,7 +901,7 @@ impl<'a> DataUnit<'a> {
         let total = self.serialized_len();
         need_out(out, total)?;
         let length = self.data_unit_length();
-        broadcast_common::len::fit_bits(length as u64, u8::BITS, "data_unit_length")?;
+        broadcast_core::len::fit_bits(length as u64, u8::BITS, "data_unit_length")?;
         out[0] = self.id.to_u8();
         out[LINE_HEADER_LEN] = length as u8;
         let written = self
@@ -915,7 +915,7 @@ impl<'a> DataUnit<'a> {
     }
 }
 
-impl broadcast_common::Serialize for DataUnit<'_> {
+impl broadcast_core::Serialize for DataUnit<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -992,7 +992,7 @@ impl<'a> DataField<'a> {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for DataField<'a> {
+impl<'a> broadcast_core::Parse<'a> for DataField<'a> {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -1000,7 +1000,7 @@ impl<'a> broadcast_common::Parse<'a> for DataField<'a> {
     }
 }
 
-impl broadcast_common::Serialize for DataField<'_> {
+impl broadcast_core::Serialize for DataField<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -1034,7 +1034,7 @@ const MONO_MAX_PIXELS: usize = 251;
 const MONO_Y_RANGE: core::ops::RangeInclusive<u8> = 0x10..=0xEB;
 
 fn violation(field: &'static str, reason: &'static str) -> Error {
-    Error::InvalidField(broadcast_common::error::InvalidField { field, reason })
+    Error::InvalidField(broadcast_core::error::InvalidField { field, reason })
 }
 
 impl DataUnit<'_> {
@@ -1512,7 +1512,7 @@ mod tests {
         assert_eq!(
             DataUnit::parse(&data).err(),
             Some(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 16,
                     have: 3,
                     what: "data_unit body"
@@ -1530,7 +1530,7 @@ mod tests {
         ];
         assert!(matches!(
             DataUnit::parse(&data),
-            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "stuffing_byte",
                 ..
             }))
@@ -1565,7 +1565,7 @@ mod tests {
             matches!(
                 result,
                 Err(crate::error::Error::InvalidField(
-                    broadcast_common::error::InvalidField {
+                    broadcast_core::error::InvalidField {
                         field: "n_pixels",
                         ..
                     }
@@ -1857,7 +1857,7 @@ mod tests {
         wire[last] = 0x00;
         assert!(matches!(
             DataUnit::parse(&wire),
-            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "stuffing_byte",
                 ..
             }))
@@ -1866,7 +1866,7 @@ mod tests {
         assert_eq!(
             DataUnit::parse(&[0xFF, 0x02, 0xFF, 0x00]).err(),
             Some(crate::Error::InvalidField(
-                broadcast_common::error::InvalidField {
+                broadcast_core::error::InvalidField {
                     field: "stuffing_byte",
                     reason: "stuffing_byte shall be 0xFF (ETSI EN 301 775 Table 1)"
                 }
@@ -1930,7 +1930,7 @@ mod tests {
         assert_eq!(
             short.validate().err(),
             Some(crate::Error::InvalidField(
-                broadcast_common::error::InvalidField {
+                broadcast_core::error::InvalidField {
                     field: "data_unit_length",
                     reason: "shall be 0x2C when data_identifier is 0x10-0x1F (EN 301 775 §4.4.2); pad with DataUnit::padded_to"
                 }
@@ -1943,7 +1943,7 @@ mod tests {
         assert_eq!(
             bad_di.validate().err(),
             Some(crate::Error::InvalidField(
-                broadcast_common::error::InvalidField {
+                broadcast_core::error::InvalidField {
                     field: "data_identifier",
                     reason: "shall be 0x10-0x1F or 0x99-0x9B for VBI data (EN 301 775 §4.1)"
                 }
@@ -1964,7 +1964,7 @@ mod tests {
         assert_eq!(
             reparsed.validate().err(),
             Some(crate::Error::InvalidField(
-                broadcast_common::error::InvalidField {
+                broadcast_core::error::InvalidField {
                     field: "line_offset",
                     reason: "VPS is generated only on field_parity 1, line_offset 16 (§4.6.2)"
                 }
@@ -1996,7 +1996,7 @@ mod tests {
                 .validate()
                 .err(),
             Some(crate::Error::InvalidField(
-                broadcast_common::error::InvalidField {
+                broadcast_core::error::InvalidField {
                     field: "framing_code",
                     reason: "does not match the data_unit_id's Teletext variant (§4.5.2)"
                 }
@@ -2021,7 +2021,7 @@ mod tests {
         assert_eq!(
             mono(&[0x00; 4]).validate().err(),
             Some(crate::Error::InvalidField(
-                broadcast_common::error::InvalidField {
+                broadcast_core::error::InvalidField {
                     field: "Y_value",
                     reason: "shall be 0x10..=0xEB (ITU-R BT.601, Table 12)"
                 }
@@ -2030,7 +2030,7 @@ mod tests {
         assert_eq!(
             mono(&[0xF0; 4]).validate().err(),
             Some(crate::Error::InvalidField(
-                broadcast_common::error::InvalidField {
+                broadcast_core::error::InvalidField {
                     field: "Y_value",
                     reason: "shall be 0x10..=0xEB (ITU-R BT.601, Table 12)"
                 }

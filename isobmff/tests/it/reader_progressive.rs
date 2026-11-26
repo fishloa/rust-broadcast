@@ -383,8 +383,8 @@ fn identity_matrix() -> [i32; 9] {
 }
 
 fn tiny_mp4() -> Vec<u8> {
-    use broadcast_common::Serialize;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::Serialize;
+    use broadcast_core::timescale::Timescale;
     use isobmff::TrackId;
     use isobmff::box_support::OpaqueBox;
     use isobmff::init_segment::{

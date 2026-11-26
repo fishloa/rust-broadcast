@@ -4,7 +4,7 @@
 //! round-trips. Per-module unit round-trips already cover each element type
 //! in isolation.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rdd29::{
     AnyElement, AtmosFrame, AudioDataDlc, AudioDescription, BedChannel, BedDefinition1, BitDepth,
     ChannelId, DecorCoefPrefix, FrameRate, ObjectDefinition1, ObjectSpreadMode, PanInfo,

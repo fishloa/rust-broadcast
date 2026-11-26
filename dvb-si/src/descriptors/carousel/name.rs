@@ -8,8 +8,8 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::Result;
 use crate::text::DvbText;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for name_descriptor (data-carousel namespace).
 pub const TAG: u8 = 0x02;
@@ -92,7 +92,7 @@ mod tests {
         let mut out = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut out),
-            Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "descriptor_length",
                 ..
             }))

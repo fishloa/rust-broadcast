@@ -37,10 +37,10 @@
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, FULLBOX_EXTRA_SIZE};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{U24_LEN, read_u16, read_u32, take};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 use core::fmt;
 
 // ---------------------------------------------------------------------------
@@ -185,7 +185,7 @@ fn write_varint_width(
         }));
     }
     if value > MAX_DESCRIPTOR_SIZE {
-        return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "descriptor size",
             value: value as u64,
             max: MAX_DESCRIPTOR_SIZE as u64,
@@ -659,7 +659,7 @@ impl Serialize for DecoderConfigDescriptor {
             | ((self.up_stream as u8) << UP_STREAM_SHIFT)
             | RESERVED_FLAG;
         cursor += 1;
-        broadcast_common::len::fit_bits(u64::from(self.buffer_size_db), U24_BITS, "bufferSizeDB")?;
+        broadcast_core::len::fit_bits(u64::from(self.buffer_size_db), U24_BITS, "bufferSizeDB")?;
         buf[cursor..cursor + U24_LEN].copy_from_slice(&[
             (self.buffer_size_db >> u16::BITS) as u8,
             (self.buffer_size_db >> u8::BITS) as u8,
@@ -1049,7 +1049,7 @@ impl Serialize for ESDescriptor {
 
         // URL
         if let Some(u) = &self.url {
-            buf[cursor] = broadcast_common::len::fit_u8(u.len(), "URLstring length")?;
+            buf[cursor] = broadcast_core::len::fit_u8(u.len(), "URLstring length")?;
             cursor += 1;
             buf[cursor..cursor + u.len()].copy_from_slice(u.as_bytes());
             cursor += u.len();
@@ -1204,7 +1204,7 @@ impl Serialize for EsdsBox {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::InvalidValue;
+    use broadcast_core::error::InvalidValue;
 
     use super::*;
     use alloc::vec;
@@ -1649,7 +1649,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "URLstring length",
                     ..
                 })
@@ -1877,7 +1877,7 @@ mod tests {
             assert!(
                 matches!(
                     err,
-                    Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                         field: "URLstring length",
                         ..
                     })

@@ -9,7 +9,7 @@ use super::descriptor_body;
 use super::teletext::{ENTRY_LEN, HEADER_LEN, TeletextEntry, parse_entries, serialize_entries};
 use crate::error::Result;
 use alloc::vec::Vec;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for VBI_teletext_descriptor.
 pub const TAG: u8 = 0x46;

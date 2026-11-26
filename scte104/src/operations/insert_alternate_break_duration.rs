@@ -8,8 +8,8 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for insert_alternate_break_duration request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x0113;
@@ -31,7 +31,7 @@ impl<'a> Parse<'a> for InsertAlternateBreakDuration {
         let (head, _) = bytes
             .split_first_chunk::<LEN>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: LEN,
                     have: bytes.len(),
                     what: "insert_alternate_break_duration",

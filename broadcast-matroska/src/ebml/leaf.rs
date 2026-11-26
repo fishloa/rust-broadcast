@@ -5,7 +5,7 @@
 //! [`scalar`](crate::ebml::scalar), never a raw blob (`Binary` is the one
 //! genuinely opaque type, RFC 8794 §7.8).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::ebml::ElementHeader;
 use crate::ebml::scalar::{Binary, Date, Float, Signed, Text, Unsigned};
@@ -203,7 +203,7 @@ impl Serialize for Unknown<'_> {
         let target =
             buf.get_mut(used..used + self.payload.len())
                 .ok_or(Error::OutputBufferTooSmall(
-                    broadcast_common::error::OutputBufferTooSmall {
+                    broadcast_core::error::OutputBufferTooSmall {
                         need: used + self.payload.len(),
                         have,
                     },

@@ -20,9 +20,9 @@ use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
 use crate::units::BITS_PER_KILOBIT;
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::need_in;
 use broadcast_common::wire::u16_at;
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::need_in;
 use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox, Ec3Substream, acmod_channels};
 
 // AC-3 syncword (big-endian).
@@ -1281,7 +1281,7 @@ pub fn ec3_specific_box_from_syncframes(frames: &[Ec3SyncframeInfo]) -> Result<E
     // does not fit is a real (if improbable) stream this box cannot
     // describe, so fail rather than wrap.
     let num_ind_sub =
-        broadcast_common::len::fit_bits(last_ind as u64, NUM_IND_SUB_BITS as u32, "num_ind_sub")?
+        broadcast_core::len::fit_bits(last_ind as u64, NUM_IND_SUB_BITS as u32, "num_ind_sub")?
             as u8;
     // §F.6.1: the box carries exactly `num_ind_sub + 1` independent
     // substreams, and `serialize_into` refuses any other count. Damaged
@@ -1296,7 +1296,7 @@ pub fn ec3_specific_box_from_syncframes(frames: &[Ec3SyncframeInfo]) -> Result<E
         }));
     }
     let data_rate =
-        broadcast_common::len::fit_bits(data_rate as u64, DATA_RATE_BITS as u32, "dec3 data_rate")?
+        broadcast_core::len::fit_bits(data_rate as u64, DATA_RATE_BITS as u32, "dec3 data_rate")?
             as u16;
     Ok(Ec3SpecificBox {
         data_rate,
@@ -1361,7 +1361,7 @@ const EAC3_CHANMAP_TO_CHAN_LOC: [(u8, u8); 9] = [
 pub(crate) mod tests {
     use super::*;
     use alloc::vec;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     #[test]
     fn ec3_channels_with_lfe_counts_chan_loc_dependents() {

@@ -29,7 +29,7 @@ use alloc::vec::Vec;
 
 use crate::ebml::document::EbmlHeader;
 use crate::ebml::vint::{MAX_ELEMENT_ID_OCTETS, MAX_VINT_OCTETS};
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 use crate::ebml::ElementHeader;
 use crate::error::{Error, Result};
@@ -102,7 +102,7 @@ impl Source {
     }
 }
 
-broadcast_common::impl_spec_display!(Source);
+broadcast_core::impl_spec_display!(Source);
 
 /// How strictly the reader treats known real-world faults.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -127,7 +127,7 @@ impl Mode {
     }
 }
 
-broadcast_common::impl_spec_display!(Mode);
+broadcast_core::impl_spec_display!(Mode);
 
 /// How a [`Reader::seek_to`] found its Cluster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -150,7 +150,7 @@ impl SeekMethod {
     }
 }
 
-broadcast_common::impl_spec_display!(SeekMethod);
+broadcast_core::impl_spec_display!(SeekMethod);
 
 /// Where a seek positioned the walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -434,7 +434,7 @@ impl Warning {
     }
 }
 
-broadcast_common::impl_spec_display!(Warning);
+broadcast_core::impl_spec_display!(Warning);
 
 /// Where the next element header lives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -660,7 +660,7 @@ impl Reader {
         let supplied = u64::try_from(bytes.len()).map_err(|_| Error::SizeOverflow)?;
         if supplied > pending.len {
             self.pending = Some(pending);
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "supply",
                 reason: "supplied range is longer than the reader asked for",
             }));
@@ -827,7 +827,7 @@ impl Reader {
             return Ok(());
         }
         self.phase = Phase::Header { at };
-        Err(Error::InvalidField(broadcast_common::error::InvalidField {
+        Err(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "resync",
             reason: "no level-1 element id within the resync cap",
         }))
@@ -1264,7 +1264,7 @@ impl Reader {
 
     fn overrun(&mut self, offset: u64, _end: u64, _parent_end: u64, at: Where) -> Result<()> {
         if !self.tolerated() {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "element size",
                 reason: "element runs past its parent",
             }));
@@ -1272,7 +1272,7 @@ impl Reader {
         self.malformed(
             at,
             offset,
-            Error::InvalidField(broadcast_common::error::InvalidField {
+            Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "element size",
                 reason: "element runs past its parent",
             }),
@@ -1511,7 +1511,7 @@ impl Reader {
         };
         let timestamp_scale_ns = info.timestamp_scale();
         if timestamp_scale_ns == 0 || i64::try_from(timestamp_scale_ns).is_err() {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "TimestampScale",
                 reason: "must fit the non-zero signed tick arithmetic",
             }));
@@ -1596,7 +1596,7 @@ impl Reader {
                 continue;
             };
             let time = i64::try_from(time).map_err(|_| {
-                Error::InvalidField(broadcast_common::error::InvalidField {
+                Error::InvalidField(broadcast_core::error::InvalidField {
                     field: "CueTime",
                     reason: "does not fit a signed tick",
                 })
@@ -1700,7 +1700,7 @@ impl Reader {
         match kind {
             UnsignedKind::ClusterTimestamp => {
                 let timestamp = i64::try_from(value).map_err(|_| {
-                    Error::InvalidField(broadcast_common::error::InvalidField {
+                    Error::InvalidField(broadcast_core::error::InvalidField {
                         field: "Timestamp",
                         reason: "does not fit a signed tick",
                     })
@@ -1744,7 +1744,7 @@ impl Reader {
                 let timestamp =
                     self.cluster_timestamp
                         .checked_add(relative)
-                        .ok_or(Error::InvalidField(broadcast_common::error::InvalidField {
+                        .ok_or(Error::InvalidField(broadcast_core::error::InvalidField {
                             field: "Block timestamp",
                             reason: "cluster timestamp plus relative timestamp overflowed",
                         }))?;
@@ -1865,7 +1865,7 @@ impl Reader {
         let count = u32::try_from(block.frames.len()).map_err(|_| Error::SizeOverflow)?;
         let timestamp_ns = i128::from(block.timestamp)
             .checked_mul(i128::from(self.timestamp_scale_ns))
-            .ok_or(Error::InvalidField(broadcast_common::error::InvalidField {
+            .ok_or(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "Block timestamp",
                 reason: "ticks times TimestampScale overflowed",
             }))?;

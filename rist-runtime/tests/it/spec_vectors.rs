@@ -6,7 +6,7 @@
 //!
 //! Both NACK formats must express this same loss pattern.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rist_runtime::{GenericNack, NackFci, PT_RTPFB, PacketRange, RIST_APP_NAME_U32, RangeNack};
 
 /// The scenario's media SSRC.

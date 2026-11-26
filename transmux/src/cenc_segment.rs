@@ -9,7 +9,7 @@ use crate::TrackId;
 use crate::TrackProtection;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::BoxIter;
 use isobmff::init_segment::{MOOV, MovieBox, StblChild, protect_sample_entry};
 

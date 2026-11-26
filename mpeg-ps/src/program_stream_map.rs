@@ -5,13 +5,14 @@
 //! It uses start-code prefix `0x000001` + `map_stream_id` `0xBC`.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::PREFIX_LEN;
 use crate::descriptor_loop::DescriptorLoop;
 use crate::error::{Error, Result};
 use crate::wire::read_u16_at;
-use broadcast_common::{Parse, Serialize, crc32_mpeg2};
+use broadcast_common::crc32_mpeg2;
+use broadcast_core::{Parse, Serialize};
 
 /// `packet_start_code_prefix` — `0x000001`.
 const PACKET_START_CODE_PREFIX: u32 = 0x00_0001;
@@ -152,7 +153,7 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
         if b.len() < MIN_PSM_LEN {
             // prefix + psm_length(2) + CRC(4) = minimum
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: MIN_PSM_LEN,
                     have: b.len(),
                     what: "program_stream_map",
@@ -186,7 +187,7 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
         let stored_crc = read_u32_at(b, crc_data_end);
         let computed_crc = crc32_mpeg2::compute(crc_data);
         if computed_crc != stored_crc {
-            return Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
+            return Err(Error::CrcMismatch(broadcast_core::error::CrcMismatch {
                 what: "PSM",
                 computed: computed_crc,
                 expected: stored_crc,
@@ -277,7 +278,7 @@ fn parse_es_loop(data: &[u8], single_flag: bool) -> Result<Vec<EsMapEntry<'_>>> 
                 // Extension form with pseudo descriptor
                 if es_info_length < PSEUDO_DESCRIPTOR_LEN {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: PSEUDO_DESCRIPTOR_LEN,
                             have: es_info_length,
                             what: "pseudo descriptor for stream_id_extension",
@@ -346,7 +347,7 @@ fn write_es_loop(entries: &[EsMapEntry<'_>], out: &mut [u8]) -> Result<()> {
         dst[ES_STREAM_ID_OFFSET] = e.elementary_stream_id;
         let info_len = entry_len - ES_ENTRY_HEADER_LEN;
         let info_len =
-            broadcast_common::len::fit_u16(info_len, "elementary_stream_map.ES_info_length")?;
+            broadcast_core::len::fit_u16(info_len, "elementary_stream_map.ES_info_length")?;
         dst[ES_INFO_LENGTH_OFFSET..ES_ENTRY_HEADER_LEN].copy_from_slice(&info_len.to_be_bytes());
         let mut c = ES_ENTRY_HEADER_LEN;
         if let Some(ext) = e.stream_id_extension {
@@ -356,7 +357,7 @@ fn write_es_loop(entries: &[EsMapEntry<'_>], out: &mut [u8]) -> Result<()> {
             // pseudo_descriptor_length: 8-bit field covering the marker+
             // extension byte plus the descriptors. Checked in usize before
             // narrowing — `1 + len as u8` used to overflow at 255 (#1129).
-            dst[c + PSEUDO_LENGTH_OFFSET] = broadcast_common::len::fit_u8(
+            dst[c + PSEUDO_LENGTH_OFFSET] = broadcast_core::len::fit_u8(
                 1 + e.descriptors.len(),
                 "elementary_stream_map.pseudo_descriptor_length",
             )?;
@@ -397,14 +398,14 @@ impl Serialize for ProgramStreamMap<'_> {
         // program_stream_map_length max is 1018 (0x3FA) per Table 2-41 — checked
         // in usize before any narrowing (#1129).
         if map_length > MAP_LENGTH_MAX {
-            return Err(broadcast_common::len::FieldOverflow {
+            return Err(broadcast_core::len::FieldOverflow {
                 field: "program_stream_map.program_stream_map_length",
                 value: map_length as u64,
                 max: MAP_LENGTH_MAX as u64,
             }
             .into());
         }
-        let map_length = broadcast_common::len::fit_u16(
+        let map_length = broadcast_core::len::fit_u16(
             map_length,
             "program_stream_map.program_stream_map_length",
         )?;
@@ -413,7 +414,7 @@ impl Serialize for ProgramStreamMap<'_> {
         // flags: current_next(1) + single_extension(1) + reserved(1, convention
         // is set) + version(5). W8 (#1119): the reserved bit (bit 5) was
         // always written 0 instead of the conventional 1.
-        let version = broadcast_common::len::fit_bits(
+        let version = broadcast_core::len::fit_bits(
             u64::from(self.version),
             VERSION_BITS,
             "program_stream_map.program_stream_map_version",
@@ -434,11 +435,11 @@ impl Serialize for ProgramStreamMap<'_> {
         // both 16-bit fields; `map_length <= MAP_LENGTH_MAX` above already
         // bounds each of them well under `u16::MAX`, but check explicitly
         // rather than relying on that aggregate bound holding (#1129).
-        let prog_info_len_u16 = broadcast_common::len::fit_u16(
+        let prog_info_len_u16 = broadcast_core::len::fit_u16(
             prog_info_len,
             "program_stream_map.program_stream_info_length",
         )?;
-        let es_loop_len_u16 = broadcast_common::len::fit_u16(
+        let es_loop_len_u16 = broadcast_core::len::fit_u16(
             es_loop_len,
             "program_stream_map.elementary_stream_map_length",
         )?;

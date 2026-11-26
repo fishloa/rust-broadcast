@@ -103,7 +103,7 @@ impl LlsTableId {
     }
 }
 
-broadcast_common::impl_spec_display!(LlsTableId, Reserved);
+broadcast_core::impl_spec_display!(LlsTableId, Reserved);
 
 #[cfg(test)]
 mod tests {

@@ -16,3 +16,6 @@ workspace = true
 
 [lib]
 doctest = false
+
+[dependencies]
+broadcast-core = { path = "../broadcast-core", version = "0.1.0" }

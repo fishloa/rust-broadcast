@@ -24,7 +24,7 @@
 use core::time::Duration;
 use std::collections::BTreeMap;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use compliance_probe::Probe;
 use media_doctor::{Scte35Check, Severity, WatchState};
 use mpeg_ts::pid::Pid;

@@ -12,7 +12,7 @@
 //! - `enter_menu` (`9F 80 22`, EN 50221 Table 22) — header-only.
 
 use crate::error::{Error, Result};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for Application Information v2 (Table 87).
 pub mod tag {
@@ -97,7 +97,7 @@ impl ApplicationTypeV2 {
         }
     }
 }
-broadcast_common::impl_spec_display!(ApplicationTypeV2, Reserved);
+broadcast_core::impl_spec_display!(ApplicationTypeV2, Reserved);
 
 /// `application_info_enq()` — header-only enquiry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

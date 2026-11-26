@@ -6,7 +6,7 @@
 use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `close_mmi_cmd_id` values (Table, p. 36).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,7 +50,7 @@ impl CloseMmiCmdId {
         }
     }
 }
-broadcast_common::impl_spec_display!(CloseMmiCmdId, Reserved);
+broadcast_core::impl_spec_display!(CloseMmiCmdId, Reserved);
 
 /// `close_mmi()` object (Table 33).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,7 +76,7 @@ impl<'a> Parse<'a> for CloseMmi {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::CLOSE_MMI, "close_mmi")?;
         let cmd_byte = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "close_mmi cmd_id",

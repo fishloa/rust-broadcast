@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use axum::Router;
 use axum::http::StatusCode;
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use broadcast_hls::{MasterPlaylist, MediaPlaylist};
 use isobmff::MovieBox;
 use isobmff::movie_fragment::MovieFragmentBox;

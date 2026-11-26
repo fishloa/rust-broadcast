@@ -28,8 +28,8 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for cell_list_descriptor.
 pub const TAG: u8 = 0x6C;
@@ -194,8 +194,8 @@ fn read_extents(b: &[u8]) -> (u16, u16) {
 
 /// Encode a packed 24-bit extent pair into 3 bytes.
 fn write_extents(buf: &mut [u8], lat: u16, long: u16) -> Result<()> {
-    let lat = broadcast_common::len::fit_mask(lat, EXTENT_MASK, "cell_extent_of_latitude")?;
-    let long = broadcast_common::len::fit_mask(long, EXTENT_MASK, "cell_extent_of_longitude")?;
+    let lat = broadcast_core::len::fit_mask(lat, EXTENT_MASK, "cell_extent_of_latitude")?;
+    let long = broadcast_core::len::fit_mask(long, EXTENT_MASK, "cell_extent_of_longitude")?;
     buf[EXTENT_LAT_OFFSET] = (lat >> EXTENT_NIBBLE_BITS) as u8;
     buf[EXTENT_NIBBLE_OFFSET] = (((lat & EXTENT_LO_NIBBLE_MASK) << EXTENT_NIBBLE_BITS)
         | (long >> EXTENT_LONG_HI_SHIFT)) as u8;
@@ -329,7 +329,7 @@ impl Serialize for CellListDescriptor {
                 e.cell_extent_of_latitude,
                 e.cell_extent_of_longitude,
             )?;
-            buf[pos + SUBCELL_INFO_LOOP_LENGTH_OFFSET] = broadcast_common::len::fit_u8(
+            buf[pos + SUBCELL_INFO_LOOP_LENGTH_OFFSET] = broadcast_core::len::fit_u8(
                 e.subcells.len() * SUBCELL_LEN,
                 "subcell_info_loop_length",
             )?;

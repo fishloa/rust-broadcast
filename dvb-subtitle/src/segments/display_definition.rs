@@ -7,8 +7,8 @@ use crate::segments::{
     PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
     be_u16,
 };
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// The display_definition_segment segment_type as listed in Table 7.
 pub const SEGMENT_TYPE: u8 = 0x14;
@@ -77,7 +77,7 @@ impl<'a> Parse<'a> for DisplayDefinitionSegment {
         let min = HEADER_LEN + FIXED_BODY_LEN;
         need_in(bytes, min, "display_definition_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "sync_byte",
                 expected: u32::from(crate::pes_data_field::SYNC_BYTE),
                 found: u32::from(bytes[0]),
@@ -173,13 +173,13 @@ impl Serialize for DisplayDefinitionSegment {
             .copy_from_slice(&seg_len.to_be_bytes());
 
         // Fixed body byte 0: version(4b) | window_flag(1b) | reserved(3b)
-        buf[HEADER_LEN + FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + FLAGS_OFFSET] = (broadcast_core::len::fit_mask(
             self.dds_version_number,
             DDS_VERSION_MASK,
             "dds_version_number",
         )? << DDS_VERSION_SHIFT)
             | (u8::from(self.display_window_flag) << DISPLAY_WINDOW_FLAG_SHIFT)
-            | broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
+            | broadcast_core::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
         // Fixed body bytes 1-4: display_width, display_height
         buf[HEADER_LEN + DISPLAY_WIDTH_OFFSET..HEADER_LEN + DISPLAY_HEIGHT_OFFSET]
             .copy_from_slice(&self.display_width.to_be_bytes());
@@ -210,7 +210,7 @@ impl Serialize for DisplayDefinitionSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     #[test]
     fn round_trip_no_window() {
@@ -242,7 +242,7 @@ mod tests {
         ];
         assert!(matches!(
             DisplayDefinitionSegment::parse(&bytes),
-            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 found: 0x00,
                 ..
             }))

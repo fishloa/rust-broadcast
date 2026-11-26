@@ -4,7 +4,7 @@
 //!
 //! The wire types are `Udta`, `Meta`, `Keys`, `Ilst`, `Data`, `Mean`, `Name`,
 //! `Chpl` and `Loci`; each implements the symmetric
-//! [`Parse`](broadcast_common::Parse)/[`Serialize`] pair, so an unknown atom (a GoPro `FIRM`, a `free`, an item with a data type
+//! [`Parse`](broadcast_core::Parse)/[`Serialize`] pair, so an unknown atom (a GoPro `FIRM`, a `free`, an item with a data type
 //! this crate does not name) round-trips byte for byte as an [`OpaqueBox`].
 //! [`Metadata`] is the logical view: one item list gathered from a `udta`
 //! and/or a `meta`, with `©xyz` as an [`Iso6709`] and a Nero chapter list as
@@ -32,7 +32,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt::Write as _;
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 
 use crate::box_support::OpaqueBox;
 use crate::box_types::BOX_TYPE_SIZE;

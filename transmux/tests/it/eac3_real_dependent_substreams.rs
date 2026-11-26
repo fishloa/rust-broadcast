@@ -15,7 +15,7 @@
 //! this stream (an AC-3 syncframe was not an independent substream), so the TS
 //! demux produced no track.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use isobmff::Ec3SpecificBox;
 use test_harness::collect::Collected as Media;
 use transmux::ac3_syncframe::{

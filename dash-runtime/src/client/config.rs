@@ -8,7 +8,7 @@
 
 use core::time::Duration;
 
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 use thiserror::Error;
 
 /// Default time one `UTCTiming` request may take.

@@ -7,8 +7,8 @@
 use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for simple_application_boundary_descriptor (AIT namespace).
 pub const TAG: u8 = 0x17;
@@ -106,13 +106,13 @@ impl Serialize for SimpleApplicationBoundaryDescriptor<'_> {
         }
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
-        buf[HEADER_LEN] = broadcast_common::len::fit_u8(
+        buf[HEADER_LEN] = broadcast_core::len::fit_u8(
             self.boundary_extensions.len(),
             "boundary_extension_count",
         )?;
         let mut pos = HEADER_LEN + COUNT_LEN;
         for e in &self.boundary_extensions {
-            buf[pos] = broadcast_common::len::fit_u8(e.len(), "boundary_extension_length")?;
+            buf[pos] = broadcast_core::len::fit_u8(e.len(), "boundary_extension_length")?;
             buf[pos + 1..pos + 1 + e.len()].copy_from_slice(e);
             pos += 1 + e.len();
         }

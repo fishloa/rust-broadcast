@@ -10,8 +10,8 @@
 //! by design.
 
 use crate::error::{Error, Result};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// `table_id` of the scene description stream section.
 pub const TABLE_ID_SCENE_DESCRIPTION: u8 = 0x04;
@@ -194,8 +194,8 @@ mod tests {
     fn reserved_and_private_bits_preserved() {
         let mut s = Iso14496Section::new(0x04, 1, 0, true, 0, 0, &[]);
         s.bits.private_indicator = true;
-        s.bits.reserved_b1 = broadcast_common::reserved::ReservedOnes::<2>::from_bits(0);
-        s.bits.reserved_b5 = broadcast_common::reserved::ReservedOnes::<2>::from_bits(0);
+        s.bits.reserved_b1 = broadcast_core::reserved::ReservedOnes::<2>::from_bits(0);
+        s.bits.reserved_b5 = broadcast_core::reserved::ReservedOnes::<2>::from_bits(0);
         let b = rt(&s);
         assert_eq!(b[1] & 0xF0, 0xC0);
         assert_eq!(b[5] & 0xC0, 0);

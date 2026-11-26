@@ -3,7 +3,7 @@
 //! `eq -> true` or an `&& -> ||` replacement is invisible unless a test
 //! asserts two values differing in exactly one field are unequal.
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use st377_1::{
     BerLength, ContentStorage, KlvItem, LocalSet, LocalTagEntry, MaterialPackage, MxfTimestamp,
     PackageId, PartitionLocation, PartitionPack, Preface, PrimerPack, RandomIndexPack, Sequence,

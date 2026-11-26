@@ -6,7 +6,7 @@
 //! UNMUTATED segment must still serialize byte-exactly (so rejecting
 //! everything cannot satisfy the test).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_subtitle::{AnySegment, Error, PesDataField};
 fn is_overflow<T>(r: Result<T, Error>) -> bool {
     matches!(r, Err(Error::FieldOverflow(_)))

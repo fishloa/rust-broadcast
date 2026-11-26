@@ -155,7 +155,7 @@ mod st0601 {
     use alloc::format;
     use alloc::string::{String, ToString};
     use alloc::vec::Vec;
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     use bytes::Bytes;
 
     use crate::error::Result;
@@ -269,8 +269,8 @@ mod tests {
         }
     }
 
-    fn timescale() -> broadcast_common::timescale::Timescale {
-        broadcast_common::timescale::Timescale::try_new(90_000).expect("90 kHz")
+    fn timescale() -> broadcast_core::timescale::Timescale {
+        broadcast_core::timescale::Timescale::try_new(90_000).expect("90 kHz")
     }
 
     fn data_track() -> TrackSpec {
@@ -319,7 +319,7 @@ mod tests {
     #[cfg(feature = "motion-imagery-metadata")]
     #[test]
     fn st0601_claims_only_data_track_packets() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         use crate::klv::{LocalSetItem, TAG_PRECISION_TIMESTAMP, UasLocalSet};
 

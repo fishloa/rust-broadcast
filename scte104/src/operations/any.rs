@@ -6,7 +6,7 @@
 //! literal to the type's `OperationDef::OP_ID`.
 
 use crate::error::Result;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 /// Declares [`AnyOperation`] + its dispatcher from one operation-type list.
 macro_rules! declare_operations {
@@ -75,7 +75,7 @@ macro_rules! declare_operations {
             /// Parse an operation `body` by its `opID`. Reserved / unimplemented
             /// types yield [`AnyOperation::Unknown`].
             pub fn dispatch(op_id: u16, body: &$lt [u8]) -> Result<Self> {
-                use broadcast_common::{Parse, Serialize};
+                use broadcast_core::{Parse, Serialize};
                 match op_id {
                     $(
                         $oid => {
@@ -99,7 +99,7 @@ macro_rules! declare_operations {
             /// will write (the `data_length`).
             #[must_use]
             pub fn body_len(&self) -> usize {
-                use broadcast_common::Serialize;
+                use broadcast_core::Serialize;
                 match self {
                     $(
                         Self::$variant(c) => c.serialized_len(),
@@ -110,7 +110,7 @@ macro_rules! declare_operations {
 
             /// Serialize just the operation body (no opID+length) into `buf`.
             pub fn serialize_body_into(&self, buf: &mut [u8]) -> Result<usize> {
-                use broadcast_common::Serialize;
+                use broadcast_core::Serialize;
                 match self {
                     $(
                         Self::$variant(c) => c.serialize_into(buf),
@@ -252,7 +252,7 @@ mod tests {
     use super::*;
     use crate::operations::splice_request::{SpliceInsertType, SpliceRequest};
     use alloc::vec;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     #[test]
     fn unknown_op_id_round_trips_body() {

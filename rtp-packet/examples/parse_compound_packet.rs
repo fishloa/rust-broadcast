@@ -4,7 +4,7 @@
 //!
 //! Run with `cargo run -p rtp-packet --example parse_compound_packet`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::rtcp::{
     CompoundPacket, ReportBlock, RtcpPacket, SdesChunk, SdesItem, SdesItemType, SenderReport,
     SourceDescription,

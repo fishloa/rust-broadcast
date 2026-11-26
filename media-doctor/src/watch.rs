@@ -879,7 +879,7 @@ pub(crate) mod tests {
         state: &mut WatchState,
         feed: &mut impl FnMut(&mut WatchState, &[u8; TS_PACKET_SIZE]),
     ) {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use dvb_si::tables::pat::{PatEntry, PatSection};
         let pat = PatSection::new(1, 0, true, 0, 0, alloc::vec![PatEntry::new(1, PAT_PMT_PID)]);
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
@@ -906,7 +906,7 @@ pub(crate) mod tests {
 
     /// A PAT section packet listing `programs`, at `version`.
     fn pat_packet(programs: &[u16], version: u8) -> [u8; TS_PACKET_SIZE] {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use dvb_si::tables::pat::{PatEntry, PatSection};
         let pat = PatSection::new(
             1,
@@ -960,7 +960,7 @@ pub(crate) mod tests {
     /// A PMT section packet for program 1, version `version`, declaring
     /// `shape`.
     fn pmt_section_packet(shape: u8, pmt_pid: Pid, version: u8, cc: &[u8]) -> [u8; TS_PACKET_SIZE] {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use dvb_si::descriptors::any::DescriptorLoop;
         use dvb_si::tables::pmt::{PmtSection, PmtStream};
         let streams: alloc::vec::Vec<PmtStream<'_>> = pmt_shape(shape)
@@ -991,7 +991,7 @@ pub(crate) mod tests {
         elem_pid: Pid,
         cc: &[u8],
     ) -> [u8; TS_PACKET_SIZE] {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use dvb_si::descriptors::any::DescriptorLoop;
         use dvb_si::tables::pmt::{PmtSection, PmtStream};
         let pmt = PmtSection::new(
@@ -1049,7 +1049,7 @@ pub(crate) mod tests {
 
     /// A `splice_info_section` with a `splice_insert` on `pid`.
     fn scte35_packet(pid: Pid, event_id: u32, out: bool) -> [u8; TS_PACKET_SIZE] {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::{AnyCommand, SpliceInsert};
         use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
@@ -1196,8 +1196,8 @@ pub(crate) mod tests {
     /// section spec-correct by construction.
     #[test]
     fn scte35_declared_in_pmt_is_reassembled_and_counted() {
-        use broadcast_common::Serialize;
         use broadcast_common::clock33::Clock33;
+        use broadcast_core::Serialize;
         use dvb_si::descriptors::DescriptorLoop;
         use dvb_si::tables::pat::{PatEntry, PatSection};
         use dvb_si::tables::pmt::{PmtSection, PmtStream};
@@ -1383,7 +1383,7 @@ pub(crate) mod tests {
     /// forever (`media_doctor_scte35_open_events` only ever grew).
     #[test]
     fn scte35_auto_return_and_matched_pairs_do_not_stay_open() {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use dvb_si::descriptors::DescriptorLoop;
         use dvb_si::tables::pat::{PatEntry, PatSection};
         use dvb_si::tables::pmt::{PmtSection, PmtStream};
@@ -1514,7 +1514,7 @@ pub(crate) mod tests {
     /// after the break, and its timestamp baselines every later comparison.
     #[test]
     fn discontinuity_packet_payload_is_still_fed() {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use dvb_si::descriptors::DescriptorLoop;
         use dvb_si::tables::pat::{PatEntry, PatSection};
         use dvb_si::tables::pmt::{PmtSection, PmtStream};
@@ -1643,7 +1643,7 @@ pub(crate) mod tests {
     /// `codec-signalling-mismatch` on every audio access unit.
     #[test]
     fn pmt_version_change_retracks_a_pid_whose_codec_moved() {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use dvb_si::descriptors::DescriptorLoop;
         use dvb_si::tables::pat::{PatEntry, PatSection};
         use dvb_si::tables::pmt::{PmtSection, PmtStream};

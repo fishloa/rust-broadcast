@@ -49,7 +49,7 @@
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use broadcast_common::stage::{Stage, Timestamp};
-use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
+use broadcast_core::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 
 use crate::TrackId;
 use crate::error::{Error, Result};

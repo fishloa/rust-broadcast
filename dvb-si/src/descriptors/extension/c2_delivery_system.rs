@@ -1,7 +1,7 @@
 //! C2 Delivery System Descriptor — ETSI EN 300 468 §6.4.6.1 (tag_extension 0x0D).
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 impl ExtensionBodyDef<'_> for C2DeliverySystem {
     const TAG_EXTENSION: u8 = 0x0D;
@@ -76,7 +76,7 @@ impl C2TuningFrequencyType {
         }
     }
 }
-broadcast_common::impl_spec_display!(C2TuningFrequencyType, Reserved);
+broadcast_core::impl_spec_display!(C2TuningFrequencyType, Reserved);
 
 /// Active OFDM symbol duration — ETSI EN 300 468 Table 117.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -122,7 +122,7 @@ impl ActiveOfdmSymbolDuration {
         }
     }
 }
-broadcast_common::impl_spec_display!(ActiveOfdmSymbolDuration, Reserved);
+broadcast_core::impl_spec_display!(ActiveOfdmSymbolDuration, Reserved);
 
 /// C2 guard interval — ETSI EN 300 468 Table 118.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,7 +168,7 @@ impl C2GuardInterval {
         }
     }
 }
-broadcast_common::impl_spec_display!(C2GuardInterval, Reserved);
+broadcast_core::impl_spec_display!(C2GuardInterval, Reserved);
 
 /// C2_delivery_system body (Table 115) — fully typed, fixed 7 bytes with no
 /// reserved bits in any edition (audit §6.1 class E). Bytes after the 7 defined
@@ -225,7 +225,7 @@ impl<'a> Parse<'a> for C2DeliverySystem {
         let (freq_bytes, _) = sel[C2_FREQUENCY_OFFSET..]
             .split_first_chunk::<C2_FREQUENCY_LEN>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: C2_LEN,
                     have: sel.len(),
                     what: "C2_delivery_system body",
@@ -258,17 +258,17 @@ impl Serialize for C2DeliverySystem {
         buf[0] = self.plp_id;
         buf[1] = self.data_slice_id;
         buf[2..6].copy_from_slice(&self.c2_system_tuning_frequency.to_be_bytes());
-        buf[C2_PACKED_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[C2_PACKED_OFFSET] = (broadcast_core::len::fit_mask(
             self.c2_system_tuning_frequency_type.to_u8(),
             C2_FREQUENCY_TYPE_MASK,
             "c2_system_tuning_frequency_type",
         )? << C2_FREQUENCY_TYPE_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.active_ofdm_symbol_duration.to_u8(),
                 C2_OFDM_DURATION_MASK,
                 "active_ofdm_symbol_duration",
             )? << C2_OFDM_DURATION_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.guard_interval.to_u8(),
                 C2_GUARD_INTERVAL_MASK,
                 "guard_interval",

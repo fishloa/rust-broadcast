@@ -108,7 +108,7 @@ impl VideoScan {
     }
 }
 
-broadcast_common::impl_spec_display!(VideoScan);
+broadcast_core::impl_spec_display!(VideoScan);
 
 /// `pic_struct` of a picture timing SEI: H.264 Table D-1 (values 0..=8) or
 /// H.265 Table D.2 (values 0..=12). Reserved values are not representable;
@@ -225,7 +225,7 @@ impl PicStruct {
     }
 }
 
-broadcast_common::impl_spec_display!(PicStruct);
+broadcast_core::impl_spec_display!(PicStruct);
 
 /// HEVC `source_scan_type` of a picture timing SEI (H.265 §D.3.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -259,7 +259,7 @@ impl SourceScanType {
     }
 }
 
-broadcast_common::impl_spec_display!(SourceScanType);
+broadcast_core::impl_spec_display!(SourceScanType);
 
 /// The coded interlace structure of one video sample.
 ///

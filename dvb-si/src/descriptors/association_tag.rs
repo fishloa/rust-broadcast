@@ -36,8 +36,8 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for association_tag_descriptor.
 pub const TAG: u8 = 0x14;
@@ -185,7 +185,7 @@ impl Serialize for AssociationTagDescriptor<'_> {
         pos += ASSOCIATION_TAG_LEN;
         buf[pos..pos + USE_LEN].copy_from_slice(&self.usage.to_be_bytes());
         pos += USE_LEN;
-        buf[pos] = broadcast_common::len::fit_u8(self.selector.len(), "selector_length")?;
+        buf[pos] = broadcast_core::len::fit_u8(self.selector.len(), "selector_length")?;
         pos += SELECTOR_LENGTH_LEN;
         buf[pos..pos + self.selector.len()].copy_from_slice(self.selector);
         pos += self.selector.len();

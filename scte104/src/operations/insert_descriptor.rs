@@ -4,11 +4,11 @@
 //! descriptor loop of the resulting splice_info_section.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for insert_descriptor_request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x0108;
@@ -19,7 +19,7 @@ const DESCRIPTOR_HEADER_LEN: usize = 2;
 /// insert_descriptor_request_data() — §9.8.5, Table 9-27.
 ///
 /// `descriptor_count` is not a stored field: it is always
-/// `descriptor_images.len()`, written through `broadcast_common::len::fit_u8`
+/// `descriptor_images.len()`, written through `broadcast_core::len::fit_u8`
 /// on serialize (audit run-09 S4-W1). A separately-stored count could
 /// disagree with the vec it is meant to describe — e.g.
 /// `InsertDescriptor { descriptor_count: 2, descriptor_images: vec![one] }`
@@ -81,7 +81,7 @@ impl Serialize for InsertDescriptor<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        buf[0] = broadcast_common::len::fit_u8(
+        buf[0] = broadcast_core::len::fit_u8(
             self.descriptor_images.len(),
             "insert_descriptor.descriptor_count",
         )?;
@@ -144,7 +144,7 @@ mod tests {
         };
         assert_eq!(
             op.try_to_bytes().err(),
-            Some(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            Some(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "insert_descriptor.descriptor_count",
                 value: 256,
                 max: 255

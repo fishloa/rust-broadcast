@@ -1,8 +1,8 @@
 //! `CmafMuxStage`: one init, then one segment per fragment cut, with each
 //! track's `tfdt` continuing across fragments.
 
-use broadcast_common::timescale::Timescale;
 use broadcast_common::{Stage, Timestamp};
+use broadcast_core::timescale::Timescale;
 use transmux::ir::CodecConfig;
 use transmux::mux_stage::{MuxInput, MuxOutput};
 use transmux::pipeline::{Sample, TrackSpec};

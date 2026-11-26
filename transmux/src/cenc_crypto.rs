@@ -63,7 +63,7 @@
 
 use aes::cipher::Block;
 use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit, StreamCipher};
-use broadcast_common::error::{BufferTooShort, InvalidValue};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
 use bytes::{Bytes, BytesMut};
 
 use crate::error::{Error, Result};

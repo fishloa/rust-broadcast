@@ -2,7 +2,7 @@
 //! variant through the public entry point (ANSI/SCTE 104 2023 Table 8-3 /
 //! Table 8-4, `private/specs-verified/scte/scte104/ansi_scte_104/`).
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use scte104::operations::provisioning_request::ProvisioningRequest;
 use scte104::operations::{AnySingleOperation, FaultRequest};
 use scte104::time::Time;

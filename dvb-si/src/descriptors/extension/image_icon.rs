@@ -1,7 +1,7 @@
 //! Image Icon Descriptor — ETSI EN 300 468 §6.4.7 (tag_extension 0x00).
 use super::*;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
 
 /// `descriptor_number(4)`/`last_descriptor_number(4)` raw field mask —
 /// masked at the shift so a wide value cannot bleed across the nibble
@@ -109,7 +109,7 @@ impl IconTransportMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(IconTransportMode, Reserved);
+broadcast_core::impl_spec_display!(IconTransportMode, Reserved);
 
 impl<'a> ExtensionBodyDef<'a> for ImageIcon<'a> {
     const TAG_EXTENSION: u8 = 0x00;
@@ -408,25 +408,25 @@ impl Serialize for ImageIcon<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         // byte0: descriptor_number(4) | last_descriptor_number(4)
-        buf[0] = (broadcast_common::len::fit_mask(
+        buf[0] = (broadcast_core::len::fit_mask(
             self.descriptor_number,
             DESCRIPTOR_NUMBER_MASK,
             "descriptor_number",
         )? << DESCRIPTOR_NUMBER_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.last_descriptor_number,
                 DESCRIPTOR_NUMBER_MASK,
                 "last_descriptor_number",
             )?;
         // byte1: reserved_future_use(5) (preserved) | icon_id(3)
         buf[1] = ((self.reserved_future_use.get() as u8) << ICON_RESERVED_SHIFT)
-            | broadcast_common::len::fit_mask(self.icon_id, ICON_ID_MASK, "icon_id")?;
+            | broadcast_core::len::fit_mask(self.icon_id, ICON_ID_MASK, "icon_id")?;
         let mut p = IMAGE_ICON_PREFIX_LEN;
         match &self.body {
             ImageIconBody::First(f) => {
                 // Packed byte: icon_transport_mode(2) | position_flag(1) | ...
                 let position_flag = u8::from(f.position.is_some());
-                let itm = broadcast_common::len::fit_mask(
+                let itm = broadcast_core::len::fit_mask(
                     f.icon_transport_mode.to_u8(),
                     TRANSPORT_MODE_VALUE_MASK,
                     "icon_transport_mode",
@@ -435,7 +435,7 @@ impl Serialize for ImageIcon<'_> {
                     // ... | coordinate_system(3) | reserved_future_use(2) (preserved)
                     buf[p] = (itm << TRANSPORT_MODE_SHIFT)
                         | (position_flag << POSITION_FLAG_SHIFT)
-                        | (broadcast_common::len::fit_mask(
+                        | (broadcast_core::len::fit_mask(
                             pos.coordinate_system,
                             COORDINATE_SYSTEM_MASK,
                             "coordinate_system",
@@ -443,12 +443,12 @@ impl Serialize for ImageIcon<'_> {
                         | pos.reserved_future_use.get() as u8;
                     p += 1;
                     // 3 origin bytes: 12+12 bits packed
-                    let h = broadcast_common::len::fit_mask(
+                    let h = broadcast_core::len::fit_mask(
                         pos.icon_horizontal_origin,
                         ORIGIN_MASK,
                         "icon_horizontal_origin",
                     )?;
-                    let v = broadcast_common::len::fit_mask(
+                    let v = broadcast_core::len::fit_mask(
                         pos.icon_vertical_origin,
                         ORIGIN_MASK,
                         "icon_vertical_origin",
@@ -469,19 +469,19 @@ impl Serialize for ImageIcon<'_> {
                     p += 1;
                 }
                 // icon_type_length + run
-                buf[p] = broadcast_common::len::fit_u8(f.icon_type.len(), "icon_type_length")?;
+                buf[p] = broadcast_core::len::fit_u8(f.icon_type.len(), "icon_type_length")?;
                 p += 1;
                 buf[p..p + f.icon_type.len()].copy_from_slice(f.icon_type.raw());
                 p += f.icon_type.len();
                 // Payload
                 match &f.payload {
                     IconLocation::Data(d) => {
-                        buf[p] = broadcast_common::len::fit_u8(d.len(), "icon_data_length")?;
+                        buf[p] = broadcast_core::len::fit_u8(d.len(), "icon_data_length")?;
                         p += 1;
                         buf[p..p + d.len()].copy_from_slice(d);
                     }
                     IconLocation::Url(u) => {
-                        buf[p] = broadcast_common::len::fit_u8(u.len(), "icon_url_length")?;
+                        buf[p] = broadcast_core::len::fit_u8(u.len(), "icon_url_length")?;
                         p += 1;
                         buf[p..p + u.len()].copy_from_slice(u.raw());
                     }
@@ -489,7 +489,7 @@ impl Serialize for ImageIcon<'_> {
                 }
             }
             ImageIconBody::Continuation { icon_data } => {
-                buf[p] = broadcast_common::len::fit_u8(icon_data.len(), "icon_data_length")?;
+                buf[p] = broadcast_core::len::fit_u8(icon_data.len(), "icon_data_length")?;
                 p += 1;
                 buf[p..p + icon_data.len()].copy_from_slice(icon_data);
             }

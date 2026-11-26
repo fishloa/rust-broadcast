@@ -1187,7 +1187,7 @@ impl PresentEventTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use jiff::Timestamp;
 
     fn utc(y: i16, mo: i8, d: i8, h: i8, mi: i8, s: i8) -> Timestamp {

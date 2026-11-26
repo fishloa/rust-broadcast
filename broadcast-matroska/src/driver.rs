@@ -154,7 +154,7 @@ fn need_read_len(range: ByteRange, limits: &Limits) -> Result<usize, DriverError
         }));
     }
     usize::try_from(range.len).map_err(|_| {
-        DriverError::Format(Error::InvalidField(broadcast_common::error::InvalidField {
+        DriverError::Format(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "need",
             reason: "length does not fit a buffer",
         }))
@@ -170,7 +170,7 @@ fn frame_read_len(range: ByteRange, limits: &Limits) -> Result<usize, DriverErro
         }));
     }
     usize::try_from(range.len).map_err(|_| {
-        DriverError::Format(Error::InvalidField(broadcast_common::error::InvalidField {
+        DriverError::Format(Error::InvalidField(broadcast_core::error::InvalidField {
             field: "frame",
             reason: "length does not fit a buffer",
         }))

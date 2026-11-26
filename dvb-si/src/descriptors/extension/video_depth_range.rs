@@ -1,7 +1,7 @@
 //! Video Depth Range Descriptor — ETSI EN 300 468 §6.4.16.1 (tag_extension 0x10).
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 /// Range type — ETSI EN 300 468 §6.4.16.1 Table 161
 /// (`private/specs-verified/dvb/dvb-si/enums/en_300_468/161-range-type-coding.md`).
@@ -51,7 +51,7 @@ impl RangeType {
         }
     }
 }
-broadcast_common::impl_spec_display!(RangeType, Reserved);
+broadcast_core::impl_spec_display!(RangeType, Reserved);
 
 impl<'a> ExtensionBodyDef<'a> for VideoDepthRange<'a> {
     const TAG_EXTENSION: u8 = 0x10;
@@ -120,7 +120,7 @@ impl<'a> Parse<'a> for VideoDepthRange<'a> {
             // Need at least range_type + range_length (Table 160).
             if sel.len() - pos < VD_RANGE_HDR_LEN {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + VD_RANGE_HDR_LEN,
                         have: sel.len(),
                         what: "video_depth_range body",
@@ -249,7 +249,7 @@ impl Serialize for VideoDepthRange<'_> {
                     p += VD_RANGE_HDR_LEN;
                 }
                 DepthRangeBody::Other(s) => {
-                    buf[p + 1] = broadcast_common::len::fit_u8(s.len(), "depth_range_length")?;
+                    buf[p + 1] = broadcast_core::len::fit_u8(s.len(), "depth_range_length")?;
                     buf[p + VD_RANGE_HDR_LEN..p + VD_RANGE_HDR_LEN + s.len()].copy_from_slice(s);
                     p += VD_RANGE_HDR_LEN + s.len();
                 }

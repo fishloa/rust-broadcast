@@ -8,10 +8,10 @@
 use crate::box_types::BOX_TYPE_SIZE;
 use crate::error::{Error, Result};
 use alloc::string::String;
-use broadcast_common::error::InvalidValue;
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::u16_at;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::InvalidValue;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// FourCC of the Dolby Vision configuration box for `dv_profile <= 7`.
 pub const DVCC_FOURCC: [u8; 4] = *b"dvcC";
@@ -107,7 +107,7 @@ impl DoviBlSignalCompatibilityId {
     }
 }
 
-broadcast_common::impl_spec_display!(DoviBlSignalCompatibilityId, Reserved);
+broadcast_core::impl_spec_display!(DoviBlSignalCompatibilityId, Reserved);
 
 /// How the Dolby Vision stream is announced at the ISOBMFF sample-entry level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,7 +130,7 @@ impl DoviSampleEntryKind {
     }
 }
 
-broadcast_common::impl_spec_display!(DoviSampleEntryKind);
+broadcast_core::impl_spec_display!(DoviSampleEntryKind);
 
 /// `DOVIDecoderConfigurationRecord` (ISOBMFF spec 3.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

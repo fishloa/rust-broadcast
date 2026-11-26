@@ -278,7 +278,7 @@ impl XmlLimit {
     }
 }
 
-crate::impl_spec_display!(XmlLimit);
+broadcast_core::impl_spec_display!(XmlLimit);
 
 /// A bound that was exceeded and its ceiling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -412,7 +412,7 @@ impl WriteRefusal {
     }
 }
 
-crate::impl_spec_display!(WriteRefusal);
+broadcast_core::impl_spec_display!(WriteRefusal);
 
 impl core::error::Error for WriteRefusal {}
 

@@ -8,7 +8,7 @@
 //! SH_delivery_system and 0x7F/0x19 audio_preselection; the targeted
 //! reproducers are in `review_descriptor_findings.rs`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use std::collections::BTreeMap;
 #[cfg(feature = "serde")]
 use std::collections::BTreeMap as Counts;

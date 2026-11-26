@@ -54,7 +54,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written
     // `Display` impl.
     Crate {
         name: "atsc3",
@@ -68,7 +68,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention.
     //
@@ -100,7 +100,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention.
     //
@@ -149,7 +149,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention (issue #806).
     //
@@ -157,6 +157,17 @@ pub const TABLE: &[Crate] = &[
     // SKIP is empty: both public enums (`BitError`, `klv::KlvError`) already
     // carry a hand-written `Display` impl (a structured error message), which
     // this guard's `has_impl` check recognizes directly.
+    Crate {
+        name: "broadcast-core",
+        scope: Scope::Crate,
+        matcher: Matcher::Strict,
+        // `BitError` is a structured error (hand-written `Display`), not a
+        // spec/field label; `CencScheme` and `Rounding` carry `name()` +
+        // `impl_spec_display!`, so the set is pinned below.
+        skip: &["BitError"],
+        expected: Some(&["CencScheme", "Rounding"]),
+        min_enums: Some(2),
+    },
     Crate {
         name: "broadcast-common",
         scope: Scope::Crate,
@@ -221,7 +232,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (errors only — all other public enums in broadcast-hls are
     // spec/field label enums), and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     // A present `Display` delegates to an inherent `name()`, so it transitively
     // guarantees `name()` exists — this one check enforces the whole convention
     // and catches a new `pub enum` that nobody labelled.
@@ -289,7 +300,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error / dispatch-wrapper enums that carry no spec label), and
     // fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     Crate {
         name: "broadcast-loudness",
         scope: Scope::Crate,
@@ -304,7 +315,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error / dispatch-wrapper enums that carry no spec label), and
     // fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     Crate {
         name: "buffering-runtime",
         scope: Scope::Crate,
@@ -318,7 +329,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error enums that carry no spec label), and fails if any
-    // remaining enum has neither `broadcast_common::impl_spec_display!(Name)`
+    // remaining enum has neither `broadcast_core::impl_spec_display!(Name)`
     // nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
@@ -348,7 +359,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
     // `name() -> &'static str`, a present `Display` transitively guarantees
@@ -413,7 +424,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention (issue #806).
     //
@@ -531,7 +542,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error / iterator / dispatch-wrapper enums that carry no spec
     // label), and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
     // `name() -> &'static str`, a present `Display` transitively guarantees
@@ -552,7 +563,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention (issue #806).
     //
@@ -591,7 +602,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention (issue #806).
     //
@@ -666,7 +677,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (errors + `Any*` dispatch wrappers), and fails if any remaining
-    // enum has neither `broadcast_common::impl_spec_display!(Name)` nor a hand-written
+    // enum has neither `broadcast_core::impl_spec_display!(Name)` nor a hand-written
     // `Display` impl. A present `Display` delegates to an inherent `name()`, so it
     // transitively guarantees `name()` exists — this one check enforces the whole
     // convention and catches a new `pub enum` that nobody labelled.
@@ -698,7 +709,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention (issue #806).
     //
@@ -716,7 +727,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
     // `name() -> &'static str`, a present `Display` transitively guarantees
@@ -807,7 +818,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error / dispatch-wrapper enums that carry no spec label), and
     // fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
     // `name() -> &'static str`, a present `Display` transitively guarantees
@@ -827,7 +838,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention (issue #806).
     //
@@ -852,7 +863,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error / dispatch-wrapper enums that carry no spec label), and
     // fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
     // `name() -> &'static str`, a present `Display` transitively guarantees
@@ -874,7 +885,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error / dispatch-wrapper enums that carry no spec label), and
     // fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
     // `name() -> &'static str`, a present `Display` transitively guarantees
@@ -897,7 +908,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention.
     //
@@ -945,7 +956,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     Crate {
         name: "media-doctor",
         scope: Scope::Crate,
@@ -963,7 +974,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl.
     //
     // # Why this crate's skip-list is almost everything
@@ -1101,7 +1112,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention (issue #806).
     //
@@ -1124,7 +1135,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention (issue #806).
     //
@@ -1145,7 +1156,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error / dispatch-wrapper enums that carry no spec label), and
     // fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
     // `name() -> &'static str`, a present `Display` transitively guarantees
@@ -1163,7 +1174,7 @@ pub const TABLE: &[Crate] = &[
         // # Coded `u8` fields vs. public enums
         //
         // This guard checks that every `pub enum` in `src/` has a `Display` impl
-        // (via `broadcast_common::impl_spec_display!`). It does **not** check raw `u8`
+        // (via `broadcast_core::impl_spec_display!`). It does **not** check raw `u8`
         // fields that encode spec values without a typed enum accessor — those
         // require manual review.
         //
@@ -1180,7 +1191,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention (issue #806).
     //
@@ -1286,7 +1297,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written
     // `Display` impl.
     //
     // `rdd29` has eight spec/field enums, each carrying `name()` +
@@ -1323,7 +1334,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written
     // `Display` impl.
     //
     // `rist-runtime` has two spec/field enums: [`rist_runtime::RttEchoKind`]
@@ -1342,7 +1353,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
     // `name() -> &'static str`, a present `Display` transitively guarantees
@@ -1369,7 +1380,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error / dispatch-wrapper enums that carry no spec label), and
     // fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
     // `name() -> &'static str`, a present `Display` transitively guarantees
@@ -1382,7 +1393,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error / data-carrying ADT / wire-variant enums that carry no
     // spec label), and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
@@ -1434,7 +1445,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error / dispatch-wrapper enums that carry no spec label), and
     // fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
     // `name() -> &'static str`, a present `Display` transitively guarantees
@@ -1473,7 +1484,7 @@ pub const TABLE: &[Crate] = &[
     // not compile otherwise), so this single check enforces the whole convention.
     //
     // `rtsp-runtime` is a standalone RTSP crate with no DVB dependency, so it does
-    // **not** pull `broadcast_common::impl_spec_display!`; the spec/field enums
+    // **not** pull `broadcast_core::impl_spec_display!`; the spec/field enums
     // (`SessionState`, `LowerTransport`, `Delivery`) carry hand-written `name()` +
     // `Display` instead. This guard accepts either form.
     Crate {
@@ -1507,7 +1518,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention (issue #806).
     //
@@ -1532,7 +1543,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (errors + `Any*` dispatch wrappers), and fails if any remaining
-    // enum has neither `broadcast_common::impl_spec_display!(Name)` nor a hand-written
+    // enum has neither `broadcast_core::impl_spec_display!(Name)` nor a hand-written
     // `Display` impl. A present `Display` delegates to an inherent `name()`, so it
     // transitively guarantees `name()` exists — this one check enforces the whole
     // convention and catches a new `pub enum` that nobody labelled.
@@ -1557,7 +1568,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has no `Display` impl. Every
     // non-skipped enum here gets its `Display` from
-    // `broadcast_common::impl_spec_display!`, which requires an inherent
+    // `broadcast_core::impl_spec_display!`, which requires an inherent
     // `name()` — so a present `Display` implies the whole convention is
     // satisfied.
     Crate {
@@ -1605,7 +1616,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error / dispatch-wrapper enums that carry no spec label), and
     // fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // `st12-1` defines two public spec/field enums today: [`st12_1::FrameRate`]
     // (ST 12-1 Table 3's three flag-bit-position columns) and
@@ -1625,7 +1636,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written
     // `Display` impl.
     Crate {
         name: "st2022",
@@ -1650,7 +1661,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error / dispatch-wrapper enums that carry no spec label), and
     // fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
     // `name() -> &'static str`, a present `Display` transitively guarantees
@@ -1671,7 +1682,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error enums that carry no spec label), and fails if any
-    // remaining enum has neither `broadcast_common::impl_spec_display!(Name)`
+    // remaining enum has neither `broadcast_core::impl_spec_display!(Name)`
     // nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
@@ -1701,7 +1712,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error enums that carry no spec label), and fails if any
-    // remaining enum has neither `broadcast_common::impl_spec_display!(Name)`
+    // remaining enum has neither `broadcast_core::impl_spec_display!(Name)`
     // nor a hand-written `Display` impl.
     //
     // `st377-1` defines five public spec/field enums today:
@@ -1729,7 +1740,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     // A present `Display` delegates to an inherent `name()`, so it transitively
     // guarantees `name()` exists — this one check enforces the whole convention
     // and catches a new `pub enum` that nobody labelled.
@@ -1754,7 +1765,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
     // `name() -> &'static str`, a present `Display` transitively guarantees
@@ -1948,7 +1959,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention (issue #806).
     //
@@ -1972,7 +1983,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention.
     //
@@ -2002,7 +2013,7 @@ pub const TABLE: &[Crate] = &[
     //
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list, and fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display`
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display`
     // impl. A present `Display` delegates to an inherent `name()`, so this one
     // check transitively enforces the whole convention (issue #806).
     //
@@ -2039,7 +2050,7 @@ pub const TABLE: &[Crate] = &[
     // Scans this crate's `src/` for every `pub enum`, subtracts a documented
     // skip-list (error / dispatch-wrapper enums that carry no spec label), and
     // fails if any remaining enum has neither
-    // `broadcast_common::impl_spec_display!(Name)` nor a hand-written `Display` impl.
+    // `broadcast_core::impl_spec_display!(Name)` nor a hand-written `Display` impl.
     //
     // Because the project-wide `Display` impl delegates to an inherent
     // `name() -> &'static str`, a present `Display` transitively guarantees

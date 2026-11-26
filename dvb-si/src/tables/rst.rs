@@ -12,9 +12,9 @@
 use super::RunningStatus;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Width of the `reserved_future_use` entry field.
 pub const RST_RESERVED_BITS: u32 = 5;
@@ -130,7 +130,7 @@ impl<'a> Parse<'a> for RstSection {
         }
         if !section_length.is_multiple_of(ENTRY_LEN) {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: (section_length / ENTRY_LEN + 1) * ENTRY_LEN,
                     have: section_length,
                     what: "RstSection entry alignment",
@@ -279,7 +279,7 @@ mod tests {
         let bytes = [TABLE_ID, 0x70, 0x04, 0x00, 0x00, 0x00, 0x00];
         assert!(matches!(
             RstSection::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "RstSection entry alignment",
                 ..
             })

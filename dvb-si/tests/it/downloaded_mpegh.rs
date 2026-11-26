@@ -10,7 +10,7 @@
 //! `MPEG extended descriptor: MPEG-H 3D Audio (0x08)`).
 #![cfg(feature = "ts")]
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::descriptors::mpeg2_extension::{Mpeg2ExtensionBody, Mpeg2ExtensionDescriptor};

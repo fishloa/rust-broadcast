@@ -39,10 +39,10 @@ use crate::box_support::bounded_entry_count;
 use crate::error::{Error, Result};
 use crate::nalu_types::{HevcNalArray, HevcNalUnit, VALID_LENGTH_SIZES};
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{read_u8, read_u16, read_u32, read_u48};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::InvalidValue;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 use core::fmt;
 
 // ---------------------------------------------------------------------------
@@ -386,7 +386,7 @@ impl Serialize for HEVCDecoderConfigurationRecord {
         cursor += 1;
 
         // numOfArrays
-        buf[cursor] = broadcast_common::len::fit_u8(self.arrays.len(), "numOfArrays")?;
+        buf[cursor] = broadcast_core::len::fit_u8(self.arrays.len(), "numOfArrays")?;
         cursor += 1;
 
         // NAL arrays
@@ -399,12 +399,12 @@ impl Serialize for HEVCDecoderConfigurationRecord {
             buf[cursor] = first_byte;
             cursor += 1;
 
-            let num = broadcast_common::len::fit_u16(arr.nalus.len(), "numNalus")?;
+            let num = broadcast_core::len::fit_u16(arr.nalus.len(), "numNalus")?;
             buf[cursor..cursor + core::mem::size_of::<u16>()].copy_from_slice(&num.to_be_bytes());
             cursor += core::mem::size_of::<u16>();
 
             for nalu in &arr.nalus {
-                let len = broadcast_common::len::fit_u16(nalu.0.len(), "nalUnitLength")?;
+                let len = broadcast_core::len::fit_u16(nalu.0.len(), "nalUnitLength")?;
                 buf[cursor..cursor + core::mem::size_of::<u16>()]
                     .copy_from_slice(&len.to_be_bytes());
                 cursor += core::mem::size_of::<u16>();
@@ -489,11 +489,11 @@ impl Serialize for HEVCConfigurationBox {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::InvalidValue;
+    use broadcast_core::error::InvalidValue;
 
     use super::*;
     use alloc::vec;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     fn make_minimal_hvcc_body() -> Vec<u8> {
         let mut body = Vec::new();
@@ -691,7 +691,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "nalUnitLength",
                     ..
                 })
@@ -729,7 +729,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "numOfArrays",
                     ..
                 })

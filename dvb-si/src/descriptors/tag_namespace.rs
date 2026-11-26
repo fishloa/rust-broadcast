@@ -71,7 +71,7 @@ macro_rules! declare_tag_namespace {
             /// caller turns that into `Unknown`). `Some(Err)` is a typed
             /// parse failure for a recognised tag.
             pub(crate) fn dispatch(tag: u8, full: &$lt [u8]) -> Option<crate::error::Result<Self>> {
-                use broadcast_common::Parse;
+                use broadcast_core::Parse;
                 match tag {
                     $(
                         $tag => Some(<$($path)::+>::parse(full).map(Self::$variant)),

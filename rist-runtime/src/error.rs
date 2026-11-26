@@ -12,16 +12,16 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input (on parse) or output buffer (on serialize) shorter than required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Output buffer passed to `serialize_into` was smaller than
     /// `serialized_len()`.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// The RTCP version field was not 2 (RFC 3550 §6.4.1).
     #[error(transparent)]
-    UnsupportedVersion(#[from] broadcast_common::error::UnsupportedVersion),
+    UnsupportedVersion(#[from] broadcast_core::error::UnsupportedVersion),
 
     /// The RIST APP name field was not `0x52495354` ("RIST").
     #[error("invalid RIST APP name: expected 0x52495354, got 0x{0:08X}")]
@@ -104,7 +104,7 @@ pub enum Error {
     /// similar) would have silently wrapped and emitted a misframed packet;
     /// this is returned instead.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::error::FieldOverflow),
 }
 
 impl From<rtp_packet::rtcp::PaddingCountError> for Error {

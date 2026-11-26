@@ -2,7 +2,7 @@
 //! distinct flag values, the multi-entry stream loop (normal and 6-byte
 //! extended entries), and every marker bit.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use mpeg_ps::{Error, StdBufferBound, SystemHeader};
 
 /// Hand-assembled Table 2-40 bytes:
@@ -128,7 +128,7 @@ fn a_fixed_body_shorter_than_six_bytes_names_the_exact_need() {
     let bytes: &[u8] = &[0x00, 0x00, 0x01, 0xBB, 0x00, 0x03, 0x80, 0x00, 0x01];
     assert_eq!(
         SystemHeader::parse(bytes).unwrap_err(),
-        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: 12,
             have: 9,
             what: "system_header fixed body",

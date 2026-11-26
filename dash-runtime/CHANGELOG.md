@@ -4,6 +4,10 @@ All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ### Changed
 
 - The ingest session's test MPDs render from a summary log, matching the

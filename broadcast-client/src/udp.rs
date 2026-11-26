@@ -107,7 +107,7 @@ impl UdpMode {
     }
 }
 
-broadcast_common::impl_spec_display!(UdpMode);
+broadcast_core::impl_spec_display!(UdpMode);
 
 /// Datagram counters of a UDP, RTP or SRT session ([`crate::Session::datagram_stats`]). They
 /// accumulate over the life of the session, reconnects included.

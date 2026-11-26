@@ -6,10 +6,10 @@
 //! optional text description.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
-use broadcast_common::Serialize;
-use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_core::Serialize;
+use broadcast_core::bits::{BitReader, BitWriter};
 
 use crate::error::{BitResultExt, Error, Result};
 use crate::frame_rate::FrameRate;
@@ -106,7 +106,7 @@ impl ZoneId {
     ];
 }
 
-broadcast_common::impl_spec_display!(ZoneId);
+broadcast_core::impl_spec_display!(ZoneId);
 
 /// The 2-bit `ZoneGain` code — RDD 29 §5.4.7 Table 9.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -149,7 +149,7 @@ impl ZoneGain {
     }
 }
 
-broadcast_common::impl_spec_display!(ZoneGain, Reserved);
+broadcast_core::impl_spec_display!(ZoneGain, Reserved);
 
 /// The 2-bit `ObjectSpreadMode` code — RDD 29 §5.4.8 Table 10.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -207,7 +207,7 @@ impl ObjectSpreadMode {
     }
 }
 
-broadcast_common::impl_spec_display!(ObjectSpreadMode, Reserved);
+broadcast_core::impl_spec_display!(ObjectSpreadMode, Reserved);
 
 /// The 2-bit `ObjectDecorCoefPrefix` code — RDD 29 §5.4.10 Table 11.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -264,7 +264,7 @@ impl DecorCoefPrefix {
     }
 }
 
-broadcast_common::impl_spec_display!(DecorCoefPrefix);
+broadcast_core::impl_spec_display!(DecorCoefPrefix);
 
 /// One sub-block's pan/rendering info (present when `PanInfoExists == 1`) —
 /// RDD 29 §4.4/§5.4.2-§5.4.11.
@@ -353,7 +353,7 @@ impl<'a> AudioDescription<'a> {
     /// would be indistinguishable from the terminator on the wire).
     pub fn with_text(text: &'a [u8]) -> Result<Self> {
         if text.contains(&0) {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "AudioDescription.text",
                 value: 0,
                 reason: "text must not contain an embedded NUL byte",
@@ -410,7 +410,7 @@ impl<'a> ObjectDefinition1<'a> {
         if let Some(first) = pan_sub_blocks.first()
             && first.pan.is_none()
         {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "ObjectDefinition1.pan_sub_blocks[0]",
                 value: 0,
                 reason: "sub-block 0 always carries pan info (PanInfoExists is implied 1)",
@@ -428,7 +428,7 @@ impl<'a> ObjectDefinition1<'a> {
     /// Parse an `ObjectDefinition1` element body.
     ///
     /// Unlike every other element type in this crate, `ObjectDefinition1`
-    /// cannot implement [`broadcast_common::Parse`]: its pan-info loop
+    /// cannot implement [`broadcast_core::Parse`]: its pan-info loop
     /// length (`NumPanSubBlocks`, §5.4.1 Table 7) is derived from the
     /// enclosing `ATMOSFrame`'s `FrameRate`, which is not available from
     /// `bytes` alone — RDD 29's own syntax makes this element's body
@@ -563,7 +563,7 @@ impl<'a> ObjectDefinition1<'a> {
         debug_assert!(r.is_byte_aligned());
         let flag_start = r.bits_read() / (u8::BITS as usize);
         let flag_byte = *bytes.get(flag_start).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: flag_start + 1,
                 have: bytes.len(),
                 what: "ObjectDefinition1.AudioDescription",
@@ -576,7 +576,7 @@ impl<'a> ObjectDefinition1<'a> {
             let nul_offset = bytes[text_start..]
                 .iter()
                 .position(|&b| b == AUDIO_DESCRIPTION_TERMINATOR)
-                .ok_or(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                .ok_or(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "ObjectDefinition1.AudioDescription",
                     value: 0,
                     reason: "NULL-terminated text ran past the end of the element body",
@@ -624,7 +624,7 @@ impl<'a> ObjectDefinition1<'a> {
         if let Some(first) = self.pan_sub_blocks.first()
             && first.pan.is_none()
         {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "ObjectDefinition1.pan_sub_blocks[0]",
                 value: 0,
                 reason: "sub-block 0 always carries pan info (PanInfoExists is implied 1)",
@@ -634,7 +634,7 @@ impl<'a> ObjectDefinition1<'a> {
             if let Some(info) = &sb.pan
                 && info.decor_coef_prefix.reads_coef() != info.decor_coef.is_some()
             {
-                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "ObjectDefinition1.pan_sub_blocks[i].decor_coef",
                     value: i as u64,
                     reason: "decor_coef must be Some iff decor_coef_prefix reads a coefficient \
@@ -644,7 +644,7 @@ impl<'a> ObjectDefinition1<'a> {
         }
         let text_follows = self.audio_description.flag_byte & AUDIO_DESCRIPTION_TEXT_FOLLOWS != 0;
         if text_follows != self.audio_description.text.is_some() {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "ObjectDefinition1.audio_description",
                 value: u64::from(self.audio_description.flag_byte),
                 reason: "text must be Some iff flag_byte's 0x80 bit is set",
@@ -884,7 +884,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "ObjectDefinition1.pan_sub_blocks[0]",
                 value: 0,
                 reason: "sub-block 0 always carries pan info (PanInfoExists is implied 1)"
@@ -896,7 +896,7 @@ mod tests {
     fn embedded_nul_in_text_is_rejected() {
         assert_eq!(
             AudioDescription::with_text(b"bad\0text").err(),
-            Some(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Some(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "AudioDescription.text",
                 value: 0,
                 reason: "text must not contain an embedded NUL byte"
@@ -912,7 +912,7 @@ mod tests {
             ObjectDefinition1::parse_with_frame_rate(&bytes, FrameRate::Reserved(0x9)).unwrap_err();
         assert_eq!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "FrameRate",
                 value: 9,
                 reason: "reserved FrameRate has no Table 7 NumPanSubBlocks entry"
@@ -1082,7 +1082,7 @@ mod tests {
         bytes.push(0x00);
         assert!(matches!(
             ObjectDefinition1::parse_with_frame_rate(&bytes, FrameRate::Fps120),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "ObjectDefinition1",
                 ..
             }))
@@ -1100,7 +1100,7 @@ mod tests {
         assert_eq!(
             ObjectDefinition1::parse_with_frame_rate(&bytes[..flag_start], FrameRate::Fps120),
             Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: flag_start + 1,
                     have: flag_start,
                     what: "ObjectDefinition1.AudioDescription",

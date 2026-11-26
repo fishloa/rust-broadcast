@@ -5,8 +5,8 @@ use crate::segments::{
     PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
     be_u16,
 };
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// The end_of_display_set_segment segment_type.
 pub const SEGMENT_TYPE: u8 = 0x80;
@@ -27,7 +27,7 @@ impl<'a> Parse<'a> for EndOfDisplaySetSegment {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HEADER_LEN, "end_of_display_set_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "sync_byte",
                 expected: u32::from(crate::pes_data_field::SYNC_BYTE),
                 found: u32::from(bytes[0]),
@@ -68,7 +68,7 @@ impl Serialize for EndOfDisplaySetSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     #[test]
     fn serialize_into_short_output_is_output_buffer_too_small() {
@@ -78,7 +78,7 @@ mod tests {
         assert_eq!(
             seg.serialize_into(&mut out),
             Err(crate::Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall { need: 6, have: 5 }
+                broadcast_core::error::OutputBufferTooSmall { need: 6, have: 5 }
             ))
         );
     }
@@ -110,7 +110,7 @@ mod tests {
         let bytes = [0x00, 0x80, 0x00, 0x01, 0x00, 0x00];
         assert!(matches!(
             EndOfDisplaySetSegment::parse(&bytes),
-            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 found: 0x00,
                 ..
             }))

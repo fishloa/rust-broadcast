@@ -34,7 +34,7 @@ use transmux::mux_stage::{MuxInput, MuxOutput};
 fn on_metadata_values(
     body: &[u8],
 ) -> Result<Vec<(String, rtmp_runtime::amf0::Amf0Value)>, rtmp_runtime::RtmpError> {
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
     use rtmp_runtime::amf0::Amf0Value;
     let name = Amf0Value::parse(body)?;
     let rest = &body[name.serialized_len()..];

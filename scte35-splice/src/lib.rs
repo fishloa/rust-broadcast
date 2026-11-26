@@ -42,7 +42,7 @@ pub(crate) fn be<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]>
         .and_then(|s| s.first_chunk::<N>())
         .copied()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: offset + N,
                 have: bytes.len(),
                 what: "fixed-width big-endian field",

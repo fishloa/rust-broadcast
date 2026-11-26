@@ -4,6 +4,8 @@
 
 ### Breaking
 
+- The wire-format contract types now come from `broadcast-core`.
+
 - `FileReaderConfig::max_file_bytes`, `with_max_file_bytes` and
   `DEFAULT_MAX_FILE_BYTES` are deleted: every container streams from disk in
   bounded memory, so the whole-file cap applied to nothing.

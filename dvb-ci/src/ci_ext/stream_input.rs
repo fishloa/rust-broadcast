@@ -19,8 +19,8 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for StreamInput (Tables 13-20).
 pub mod tag {
@@ -96,7 +96,7 @@ impl SystemIdentifier {
         }
     }
 }
-broadcast_common::impl_spec_display!(SystemIdentifier, Reserved);
+broadcast_core::impl_spec_display!(SystemIdentifier, Reserved);
 
 /// `DeliverySystemInfoReq()` (Table 13) — host → module: header-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

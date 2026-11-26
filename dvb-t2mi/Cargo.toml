@@ -17,6 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 broadcast-common   = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 dvb-bbframe  = { path = "../dvb-bbframe", version = "16.0.0", optional = true, default-features = false }
 mpeg-ts      = { path = "../mpeg-ts", version = "0.10.0", optional = true, default-features = false }
 jiff         = { version = "1", default-features = false, optional = true }
@@ -46,11 +47,11 @@ default = ["std", "ts"]
 # needs only `alloc`.
 # Every optional feature except `std` itself (`ts`, `serde`, `jiff`, `yoke`) is
 # no_std+alloc-clean and is built on thumbv7em in CI.
-std     = ["broadcast-common/std", "dvb-bbframe?/std", "mpeg-ts?/std", "jiff?/std", "thiserror/std", "serde?/std", "bytes?/std"]
+std     = ["broadcast-common/std", "broadcast-core/std", "dvb-bbframe?/std", "mpeg-ts?/std", "jiff?/std", "thiserror/std", "serde?/std", "bytes?/std"]
 # `ts`: the feed-and-iterate pump (feed_ts) and the InnerTsRecovery driver,
 # which pulls in `bytes` and the `dvb-bbframe` BBFrame extractor.
 ts      = ["dep:bytes", "dep:dvb-bbframe", "dep:mpeg-ts"]
-serde   = ["dep:serde", "broadcast-common/serde", "mpeg-ts?/serde"]
+serde   = ["dep:serde", "broadcast-common/serde", "broadcast-core/serde", "mpeg-ts?/serde"]
 
 # `jiff`: decoded UTC emission-time accessor on T2TimestampPayload
 # (`jiff::Timestamp`). Mirrors dvb-si's jiff feature; OFF by default.

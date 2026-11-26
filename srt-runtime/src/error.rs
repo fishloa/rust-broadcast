@@ -11,13 +11,13 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input shorter than required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
     /// The output buffer passed to `serialize_into` was too small.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
     /// A field value did not fit in its wire bit-width.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::error::FieldOverflow),
     /// The Control Information Field length did not match any known ACK
     /// variant (Full / Small / Light — `draft-sharabayko-srt-01` §3.2.4).
     #[error("ACK CIF length {len} does not match Full (28), Small (16), or Light (4)")]
@@ -67,11 +67,11 @@ pub enum Error {
     /// `Type-specific Information` word where the packet type does not use
     /// it) carried a non-zero value.
     #[error(transparent)]
-    ReservedBits(#[from] broadcast_common::error::ReservedBits),
+    ReservedBits(#[from] broadcast_core::error::ReservedBits),
     /// A general structural constraint (not a bit-width overflow) was
     /// violated — e.g. a length that must be a whole number of 4-byte words.
     #[error(transparent)]
-    InvalidField(#[from] broadcast_common::error::InvalidField),
+    InvalidField(#[from] broadcast_core::error::InvalidField),
     /// A Control Information Field documented as absent (Keep-Alive,
     /// Congestion Warning, Shutdown, ACKACK, Peer Error — §3.2) carried extra
     /// bytes.

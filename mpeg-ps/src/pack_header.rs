@@ -6,8 +6,8 @@
 
 use crate::error::{Error, Result};
 use crate::scr::{self, Scr};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// `pack_start_code` — `0x000001BA`.
 pub const PACK_START_CODE: u32 = 0x0000_01BA;
@@ -149,12 +149,12 @@ impl Serialize for PackHeader<'_> {
         if self.program_mux_rate == 0 {
             return Err(Error::ZeroMuxRate);
         }
-        let mux = broadcast_common::len::fit_bits(
+        let mux = broadcast_core::len::fit_bits(
             u64::from(self.program_mux_rate),
             PROGRAM_MUX_RATE_BITS,
             "pack_header.program_mux_rate",
         )? as u32;
-        let reserved = broadcast_common::len::fit_bits(
+        let reserved = broadcast_core::len::fit_bits(
             u64::from(self.reserved),
             RESERVED_BITS,
             "pack_header.reserved",

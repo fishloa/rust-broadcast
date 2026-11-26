@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
 ### Added
 - `mpeg_ps::scan::PsScanner` (re-exported as `mpeg_ps::{PsScanner, PsEvent, PsLimits}`):
   a sans-IO pack/PES scanner that is fed the stream in pieces and yields one

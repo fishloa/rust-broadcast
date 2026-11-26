@@ -1,7 +1,7 @@
 //! Serialize/parse consistency of the DVB-TA stream-event payload and the
 //! compact encrypted-packet CRC (adversarial review, signalling-captions).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::dvb_ta::{
     CompactSpliceInsert, Scte35Carriage, StreamEventPayload, TimelineType,
 };
@@ -40,7 +40,7 @@ fn reserved_timeline_aliasing_temi_needs_temi_fields() {
             .try_to_bytes()
             .err(),
         Some(scte35_splice::error::Error::InvalidField(
-            broadcast_common::error::InvalidField {
+            broadcast_core::error::InvalidField {
                 field: "DSM-CC_stream_event_payload_binary.temi",
                 reason: "temi_* fields must be present exactly when timeline_type is 0x2 (TEMI)"
             }
@@ -85,7 +85,7 @@ fn compact_splice_insert_e_crc_must_match_encrypted_flag() {
     assert_eq!(
         si.try_to_bytes().err(),
         Some(scte35_splice::error::Error::InvalidField(
-            broadcast_common::error::InvalidField {
+            broadcast_core::error::InvalidField {
                 field: "e_crc_32",
                 reason: "must be Some exactly when encrypted_packet is set"
             }
@@ -98,7 +98,7 @@ fn compact_splice_insert_e_crc_must_match_encrypted_flag() {
     assert_eq!(
         si.try_to_bytes().err(),
         Some(scte35_splice::Error::InvalidField(
-            broadcast_common::error::InvalidField {
+            broadcast_core::error::InvalidField {
                 field: "e_crc_32",
                 reason: "must be Some exactly when encrypted_packet is set"
             }

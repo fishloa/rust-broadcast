@@ -1,6 +1,6 @@
 //! The one box walker: strict vs clamped mode, and child iteration.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use isobmff::segments::FileTypeBox;
 use isobmff::{BoxIter, Error};
 

@@ -17,6 +17,10 @@ Binding for every public API in the workspace. New code follows them; a lane tha
 - URLs as `url::Url`; HTTP method/headers as `http` types.
 - Units of one quantity are the same across crates.
 
+## Wire formats
+
+- The symmetric `Parse<'a>` / `Serialize` contract, the shared error kinds, the checked field-width helpers, the bit I/O, the media `timescale`, the typed reserved-bit fields and the CENC scheme identity live in `broadcast_core` (the frozen floor, versioned apart from the DVB lockstep). A wire crate implements them from there; it depends on `broadcast-common` only for the stage/clock/codec/XML pieces, which sit above the contract.
+
 ## Construction
 
 - Config: `Config::default()` + `with_*` setters (or `new(required..)` when fields are mandatory); struct `#[non_exhaustive]`.

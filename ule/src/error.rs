@@ -9,10 +9,10 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input shorter than required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
     /// The output buffer passed to `serialize_into` was too small.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
     /// The SNDU `Length` field is inconsistent with the available bytes.
     ///
     /// `Length` counts from the byte after the Type field up to and including
@@ -26,10 +26,10 @@ pub enum Error {
     },
     /// The 32-bit CRC trailer did not match the recomputed value (RFC 4326 §4.6).
     #[error(transparent)]
-    CrcMismatch(#[from] broadcast_common::error::CrcMismatch),
+    CrcMismatch(#[from] broadcast_core::error::CrcMismatch),
     /// A value did not fit the wire field it is written to.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::error::FieldOverflow),
     /// An extension header was malformed (bad H-LEN/H-Type or truncated body).
     #[error("invalid extension header: {reason}")]
     InvalidExtensionHeader {

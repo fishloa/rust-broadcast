@@ -14,8 +14,8 @@
 
 use crate::error::{Error, Result};
 use crate::tag::ApduTag;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 /// Declares [`AnyApdu`] + its dispatcher from one `apdu_tag` list.
 macro_rules! declare_apdus {

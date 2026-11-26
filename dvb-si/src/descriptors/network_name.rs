@@ -2,8 +2,8 @@
 
 use crate::error::Result;
 use crate::text::DvbText;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 use super::descriptor_body;
 
@@ -98,7 +98,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::BufferTooShort(broadcast_common::error::BufferTooShort { need: 2, .. })
+                Error::BufferTooShort(broadcast_core::error::BufferTooShort { need: 2, .. })
             ),
             "expected BufferTooShort(need=2), got {err:?}"
         );
@@ -138,7 +138,7 @@ mod tests {
         let mut tiny = vec![0u8; 1];
         let err = parsed.serialize_into(&mut tiny).unwrap_err();
         assert!(
-            matches!(err, Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall { need, .. }) if need == parsed.serialized_len()),
+            matches!(err, Error::OutputBufferTooSmall(broadcast_core::error::OutputBufferTooSmall { need, .. }) if need == parsed.serialized_len()),
             "expected OutputBufferTooSmall(need={}), got {err:?}",
             parsed.serialized_len()
         );

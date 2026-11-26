@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ### Added
 
 - `EXT_CONTENT_LEN` (the fixed-length EXT_FDT/EXT_CENC content width, RFC 6726 §3.4.1/§3.4.3) and `SUBTYPE_TRAILING_LEN` (the reserved trailing bytes of a NORM_CMD sub-type word, RFC 5740 §4.2.3): the lengths those crates' public accessors name, so the signatures resolve to documented constants.

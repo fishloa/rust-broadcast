@@ -47,19 +47,19 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 #[cfg(test)]
-use broadcast_common::Parse;
-use broadcast_common::error::BufferTooShort;
+use broadcast_core::Parse;
+use broadcast_core::error::BufferTooShort;
 #[cfg(test)]
-use broadcast_common::len::need_in;
+use broadcast_core::len::need_in;
 use rtmp_runtime::RtmpError;
 use rtmp_runtime::amf0::{Amf0Value, amf0_values};
 use rtmp_runtime::flv::FlvHeader;
 use rtmp_runtime::flv::FlvTag as RtmpFlvTag;
 use rtmp_runtime::flv::TagType;
 
-use broadcast_common::Serialize;
 use broadcast_common::stage::{Stage, Timestamp};
-use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
+use broadcast_core::Serialize;
+use broadcast_core::timescale::{Rounding, Timescale, rescale_i64};
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::error::{Error, Result};
@@ -175,7 +175,7 @@ pub(crate) mod aac_packet_type {
 /// so sample durations / composition offsets round-trip losslessly.
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
-pub(crate) const FLV_TIMESCALE: Timescale = broadcast_common::timescale!(1000);
+pub(crate) const FLV_TIMESCALE: Timescale = broadcast_core::timescale!(1000);
 
 /// Smallest `CompositionTime` representable as the signed 24-bit field
 /// `SI24` of an `AVCVIDEOPACKET` (§E.4.3.2).
@@ -1099,10 +1099,10 @@ impl OutTag {
 
 /// The `FieldOverflow` behind a shared-codec serialize error: the only failure
 /// a tag or header serializer can have is a field that did not fit.
-fn field_overflow(error: RtmpError) -> broadcast_common::len::FieldOverflow {
+fn field_overflow(error: RtmpError) -> broadcast_core::len::FieldOverflow {
     match error {
         RtmpError::FieldOverflow(overflow) => overflow,
-        _ => broadcast_common::len::FieldOverflow {
+        _ => broadcast_core::len::FieldOverflow {
             field: "FLV tag",
             value: 0,
             max: 0,
@@ -1298,7 +1298,7 @@ impl FlvPayloadKind {
     }
 }
 
-broadcast_common::impl_spec_display!(FlvPayloadKind);
+broadcast_core::impl_spec_display!(FlvPayloadKind);
 
 /// Build the AVC/AAC sequence-header payloads for the (at most one) AVC video
 /// and (at most one) AAC audio track among `tracks` (issue #934) — the `avcC`
@@ -1540,7 +1540,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                FlvError::Codec(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                FlvError::Codec(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "DataSize",
                     ..
                 }))

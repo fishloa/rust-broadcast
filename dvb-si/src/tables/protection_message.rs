@@ -24,9 +24,9 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// table_id for all protection messages (TS 102 809 §9.3.4; coded per EN 300 468 §5.1.3).
 pub const TABLE_ID: u8 = 0x7B;
@@ -90,7 +90,7 @@ impl ReferenceType {
         }
     }
 }
-broadcast_common::impl_spec_display!(ReferenceType, Unallocated);
+broadcast_core::impl_spec_display!(ReferenceType, Unallocated);
 
 /// table_id(1) + section_length hi/lo(2) + extension(2) + version/cni(1)
 /// + section_number(1) + last_section_number(1) = 8-byte common header.
@@ -360,7 +360,7 @@ fn parse_authentication_message(body: &[u8]) -> Result<ProtectionMessageBody<'_>
     // extension_bytes_length(8) + extension bytes (§9.4.3 Table 42 tail).
     if loop_end >= body.len() {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: loop_end + 1,
                 have: body.len(),
                 what: "ProtectionMessageSection::extension_bytes_length",
@@ -380,7 +380,7 @@ fn parse_authentication_message(body: &[u8]) -> Result<ProtectionMessageBody<'_>
     // signature_key_identifier_length(8) + key id bytes (Table 43 spillover, PDF p. 71).
     if ext_end >= body.len() {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: ext_end + 1,
                 have: body.len(),
                 what: "ProtectionMessageSection::signature_key_identifier_length",
@@ -449,7 +449,7 @@ fn parse_certificate_collection(body: &[u8]) -> Result<ProtectionMessageBody<'_>
     // invariant.
     if pos != body.len() {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: body.len() - pos,
                 have: 0,
                 what: "ProtectionMessageSection::CertificateCollection trailing bytes",
@@ -560,12 +560,12 @@ impl ProtectionMessageBody<'_> {
                             reason: "length must equal section_hash_length",
                         });
                     }
-                    buf[pos] = (broadcast_common::len::fit_mask(
+                    buf[pos] = (broadcast_core::len::fit_mask(
                         h.reference_type.to_u8(),
                         REFERENCE_TYPE_MASK,
                         "reference_type",
                     )? << REFERENCE_TYPE_SHIFT)
-                        | broadcast_common::len::fit_bits(
+                        | broadcast_core::len::fit_bits(
                             h.reference.len() as u64,
                             REFERENCE_TYPE_BITS,
                             "h.reference",
@@ -576,11 +576,11 @@ impl ProtectionMessageBody<'_> {
                     buf[pos..pos + h.hash.len()].copy_from_slice(h.hash);
                     pos += h.hash.len();
                 }
-                buf[pos] = broadcast_common::len::fit_u8(extension_bytes.len(), "extension_bytes")?;
+                buf[pos] = broadcast_core::len::fit_u8(extension_bytes.len(), "extension_bytes")?;
                 pos += 1;
                 buf[pos..pos + extension_bytes.len()].copy_from_slice(extension_bytes);
                 pos += extension_bytes.len();
-                buf[pos] = broadcast_common::len::fit_u8(
+                buf[pos] = broadcast_core::len::fit_u8(
                     signature_key_identifier.len(),
                     "signature_key_identifier",
                 )?;
@@ -605,7 +605,7 @@ impl ProtectionMessageBody<'_> {
                 }
                 // reserved(4) emitted 1s | certificate_count(4).
                 buf[0] = (((*reserved_certificate_count).get() as u8) << CERTIFICATE_COUNT_SHIFT)
-                    | broadcast_common::len::fit_bits(
+                    | broadcast_core::len::fit_bits(
                         certificates.len() as u64,
                         CERTIFICATE_COUNT_BITS,
                         "certificates",
@@ -807,7 +807,7 @@ mod tests {
     fn rejects_short_buffer() {
         assert!(matches!(
             ProtectionMessageSection::parse(&[0x7B, 0xB0]).unwrap_err(),
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "ProtectionMessageSection",
                 ..
             })

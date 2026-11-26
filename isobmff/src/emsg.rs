@@ -36,9 +36,9 @@
 //! integers first / strings last in v1) per `private/specs-verified/mpeg/mp4-emsg/emsg.md`.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::timescale::Timescale;
 use broadcast_common::wire::{u24_at, u32_at, u64_at};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::timescale::Timescale;
 
 use crate::error::{Error, Result};
 
@@ -134,7 +134,7 @@ impl PresentationTime {
     }
 }
 
-broadcast_common::impl_spec_display!(PresentationTime, Delta, Absolute);
+broadcast_core::impl_spec_display!(PresentationTime, Delta, Absolute);
 
 /// A parsed/owned MPEG-DASH Event Message Box (`emsg`).
 ///
@@ -259,7 +259,7 @@ impl<'a> EmsgBox<'a> {
         let flags = u24_at(item.body, VERSION_LEN);
 
         let version = EmsgVersion::from_u8(version).ok_or(Error::UnsupportedVersion(
-            broadcast_common::error::UnsupportedVersion {
+            broadcast_core::error::UnsupportedVersion {
                 what: "emsg",
                 found: version,
             },
@@ -338,13 +338,13 @@ impl<'a> EmsgBox<'a> {
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         const FLAGS_MAX: u32 = 0x00FF_FFFF;
         let flags = self.flags;
-        broadcast_common::len::fit_mask(flags, FLAGS_MAX, "flags")?;
+        broadcast_core::len::fit_mask(flags, FLAGS_MAX, "flags")?;
         reject_interior_nul(self.scheme_id_uri, "scheme_id_uri")?;
         reject_interior_nul(self.value, "value")?;
 
         let total = self.serialized_len();
         need_out(out, total)?;
-        broadcast_common::len::fit_u32(total, "size")?;
+        broadcast_core::len::fit_u32(total, "size")?;
 
         // size u32, type 'emsg', version u8, flags u24.
         out[SIZE_OFFSET..BOX_TYPE_OFFSET].copy_from_slice(&(total as u32).to_be_bytes());
@@ -389,7 +389,7 @@ impl<'a> EmsgBox<'a> {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for EmsgBox<'a> {
+impl<'a> broadcast_core::Parse<'a> for EmsgBox<'a> {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -397,7 +397,7 @@ impl<'a> broadcast_common::Parse<'a> for EmsgBox<'a> {
     }
 }
 
-impl broadcast_common::Serialize for EmsgBox<'_> {
+impl broadcast_core::Serialize for EmsgBox<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -473,7 +473,7 @@ mod tests {
 
     use super::*;
     use alloc::vec;
-    use broadcast_common::error::InvalidValue;
+    use broadcast_core::error::InvalidValue;
 
     // v0: construct → serialize → exact wire bytes → reparse → equal.
     #[test]
@@ -645,7 +645,7 @@ mod tests {
         assert!(matches!(
             EmsgBox::parse(&out),
             Err(Error::UnsupportedVersion(
-                broadcast_common::error::UnsupportedVersion { found: 9, .. }
+                broadcast_core::error::UnsupportedVersion { found: 9, .. }
             ))
         ));
     }
@@ -757,9 +757,10 @@ mod tests {
         };
         assert!(matches!(
             b.to_vec(),
-            Err(Error::FieldOverflow(
-                broadcast_common::error::FieldOverflow { field: "flags", .. }
-            ))
+            Err(Error::FieldOverflow(broadcast_core::error::FieldOverflow {
+                field: "flags",
+                ..
+            }))
         ));
     }
 

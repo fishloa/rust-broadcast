@@ -2,8 +2,8 @@
 //! the curated spec transcription this module implements field-for-field.
 
 use broadcast_common::bcd::bcd_to_decimal;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 
@@ -133,7 +133,7 @@ impl FrameRate {
     }
 }
 
-broadcast_common::impl_spec_display!(FrameRate);
+broadcast_core::impl_spec_display!(FrameRate);
 
 impl FrameRate {
     /// The highest frame number this counting mode uses: `29` (30-frame,
@@ -217,7 +217,7 @@ impl BinaryGroupUsage {
     }
 }
 
-broadcast_common::impl_spec_display!(BinaryGroupUsage);
+broadcast_core::impl_spec_display!(BinaryGroupUsage);
 
 /// The three binary group flag bits (§8.3.3), resolved from an [`LtcFrame`]
 /// against a chosen [`FrameRate`] (see [`LtcFrame::binary_group_flags`]).
@@ -303,7 +303,7 @@ impl LtcFrame {
     /// [`Error::InvalidValue`] when `frames` exceeds `rate.max_frame()`.
     pub fn validate_for_rate(&self, rate: FrameRate) -> Result<()> {
         if self.frames > rate.max_frame() {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "frames",
                 value: u64::from(self.frames),
                 reason: "exceeds the maximum frame number of this frame rate",
@@ -343,28 +343,28 @@ impl LtcFrame {
     /// cannot silently round-trip.
     fn validate(&self) -> Result<()> {
         if self.hours > MAX_HOURS {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "hours",
                 value: u64::from(self.hours),
                 reason: "exceeds the 24-hour-clock maximum (23)",
             }));
         }
         if self.minutes > MAX_MINUTES_SECONDS {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "minutes",
                 value: u64::from(self.minutes),
                 reason: "exceeds the maximum (59)",
             }));
         }
         if self.seconds > MAX_MINUTES_SECONDS {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "seconds",
                 value: u64::from(self.seconds),
                 reason: "exceeds the maximum (59)",
             }));
         }
         if self.frames > MAX_FRAMES {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "frames",
                 value: u64::from(self.frames),
                 reason: "exceeds the widest supported frame-rate maximum (29)",
@@ -388,14 +388,14 @@ impl<'a> Parse<'a> for LtcFrame {
         let sync = bytes[SYNC_WORD_OFFSET..SYNC_WORD_OFFSET + SYNC_WORD_LEN]
             .first_chunk::<SYNC_WORD_LEN>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: SYNC_WORD_OFFSET + SYNC_WORD_LEN,
                     have: bytes.len(),
                     what: "LTC sync word",
                 },
             ))?;
         if *sync != SYNC_WORD {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "sync word",
                 expected: u32::from(u16::from_be_bytes(SYNC_WORD)),
                 found: u32::from(u16::from_be_bytes(*sync)),
@@ -555,7 +555,7 @@ mod tests {
         assert_eq!(
             f.serialize_into(&mut out),
             Err(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need: FRAME_LEN,
                     have: FRAME_LEN - 1
                 }
@@ -622,7 +622,7 @@ mod tests {
         assert!(matches!(
             LtcFrame::parse(&bytes),
             Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 10,
                     have: 9,
                     ..
@@ -638,7 +638,7 @@ mod tests {
         let mut out = [0u8; FRAME_LEN];
         assert!(matches!(
             f.serialize_into(&mut out),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "hours",
                 ..
             }))
@@ -652,7 +652,7 @@ mod tests {
         let mut out = [0u8; FRAME_LEN];
         assert!(matches!(
             f.serialize_into(&mut out),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "frames",
                 ..
             }))

@@ -14,8 +14,8 @@ use crate::ts_mux_stage;
 use crate::ts_psi::{
     first_section, parse_pat, parse_pmt, payload_offset, pid_of, pusi_of, split_lp,
 };
-use broadcast_common::Serialize;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Serialize;
+use broadcast_core::timescale::Timescale;
 use mpeg_ts::ts::TsPacket;
 use test_fixtures::process::tool_available;
 use test_harness::collect::Collected as Media;

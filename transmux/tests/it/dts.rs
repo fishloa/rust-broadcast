@@ -7,8 +7,8 @@
 //! When a real DTS-in-MP4 fixture becomes available, add a byte-exact
 //! `real_fixture_round_trip` test here and remove this note.
 
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse, Serialize};
 use isobmff::BoxIter;
 use isobmff::SampleEntryVariant;
 use isobmff::{DDTS_BODY_LEN, DTSC_FOURCC, DtsSpecificBox};

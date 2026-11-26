@@ -13,9 +13,9 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
@@ -67,7 +67,7 @@ impl ItemLengthMode {
     }
 }
 
-broadcast_common::impl_spec_display!(ItemLengthMode);
+broadcast_core::impl_spec_display!(ItemLengthMode);
 
 /// The fixed bytes of every Structural Metadata Set Key (Table 16) other
 /// than byte 6 (item length mode, [`ItemLengthMode`]), byte 8 (registry
@@ -514,14 +514,14 @@ impl<'a> LocalSet<'a> {
         let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
         let value_start = UL_LEN + len_token_size;
         let len = usize::try_from(len).map_err(|_| {
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: usize::MAX,
                 have: bytes.len(),
                 what: "Local Set value (length exceeds platform usize)",
             })
         })?;
         let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: usize::MAX,
                 have: bytes.len(),
                 what: "Local Set value (length overflow)",
@@ -549,7 +549,7 @@ impl<'a> LocalSet<'a> {
             // truncates it on a 32-bit target instead of rejecting an
             // over-range value.
             let item_len = usize::try_from(item_len).map_err(|_| {
-                Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                     need: usize::MAX,
                     have: rest.len(),
                     what: "Local Set item value (length exceeds platform usize)",
@@ -559,7 +559,7 @@ impl<'a> LocalSet<'a> {
             let value_end = value_start
                 .checked_add(item_len)
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: usize::MAX,
                         have: rest.len(),
                         what: "Local Set item value (length overflow)",
@@ -605,7 +605,7 @@ impl<'a> Parse<'a> for LocalSet<'a> {
         let (set, consumed) = Self::parse_prefix(bytes)?;
         if consumed != bytes.len() {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: consumed,
                     have: bytes.len(),
                     what: "Local Set (trailing bytes after exact-fit parse)",

@@ -7,9 +7,9 @@
 //! ```sh
 //! cargo run -p ssai-runtime --example session_playlist
 //! ```
-use broadcast_common::Parse;
 use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::clock33::Clock33;
+use broadcast_core::Parse;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 use isobmff::emsg::{EmsgBox, PresentationTime};
 use scte35_splice::SpliceInfoSection;

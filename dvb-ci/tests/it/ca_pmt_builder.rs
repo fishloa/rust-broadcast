@@ -7,7 +7,7 @@
 
 use std::fs;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_ci::builder::build_ca_pmt;
 use dvb_ci::objects::ca_pmt::{CaPmt, CaPmtCmdId, CaPmtListManagement};
 use dvb_si::tables::pmt::PmtSection;

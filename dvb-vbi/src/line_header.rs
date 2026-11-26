@@ -73,12 +73,8 @@ impl LineHeader {
     /// line_offset. Errors if `line_offset` does not fit in 5 bits or
     /// `reserved` in 2.
     pub fn to_byte(self) -> Result<u8> {
-        broadcast_common::len::fit_bits(
-            self.reserved as u64,
-            RESERVED_BITS,
-            "reserved_future_use",
-        )?;
-        broadcast_common::len::fit_bits(self.line_offset as u64, LINE_OFFSET_BITS, "line_offset")?;
+        broadcast_core::len::fit_bits(self.reserved as u64, RESERVED_BITS, "reserved_future_use")?;
+        broadcast_core::len::fit_bits(self.line_offset as u64, LINE_OFFSET_BITS, "line_offset")?;
         let mut b = self.reserved << RESERVED_SHIFT;
         if self.field_parity {
             b |= FIELD_PARITY_MASK;

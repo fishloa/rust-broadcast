@@ -6,11 +6,11 @@
 use core::time::Duration;
 
 use broadcast_common::backoff::{GrowthFactor, InvalidBackoff, RetrySchedule};
-use broadcast_common::bits::BitError;
 use broadcast_common::clock33::{Clock27, Clock33, ClockOutOfRange};
 use broadcast_common::klv::KlvError;
 use broadcast_common::net::{InterfaceError, JoinMismatch};
-use broadcast_common::timescale::Timescale;
+use broadcast_core::bits::BitError;
+use broadcast_core::timescale::Timescale;
 
 #[test]
 fn a_27_mhz_clock_reads_in_seconds() {
@@ -207,7 +207,7 @@ fn a_klv_error_renders_each_condition() {
 
 #[test]
 fn a_klv_error_wrapping_a_shared_kind_renders_it_without_a_source() {
-    use broadcast_common::error::{BufferTooShort, InvalidValue, OutputBufferTooSmall};
+    use broadcast_core::error::{BufferTooShort, InvalidValue, OutputBufferTooSmall};
     use core::error::Error as _;
 
     let short = KlvError::BufferTooShort(BufferTooShort {

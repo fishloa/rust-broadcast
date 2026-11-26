@@ -213,7 +213,7 @@ fn dvb_capture_records_and_reads_back() {
 
 #[test]
 fn the_eit_transition_closes_p0_and_opens_p1_with_the_new_event() {
-    use broadcast_common::{Parse as WireParse, Serialize as WireSerialize};
+    use broadcast_core::{Parse as WireParse, Serialize as WireSerialize};
     use dvb_si::tables::RunningStatus;
     use dvb_si::tables::eit::{EitKind, EitSection};
 

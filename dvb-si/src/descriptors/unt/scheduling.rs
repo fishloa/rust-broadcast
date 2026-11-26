@@ -10,8 +10,8 @@
 use crate::descriptors::mjd_time::{MJD_BCD_LEN, MjdBcdTime};
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for scheduling_descriptor (UNT namespace).
 pub const TAG: u8 = 0x01;
@@ -81,7 +81,7 @@ impl TimeUnit {
         }
     }
 }
-broadcast_common::impl_spec_display!(TimeUnit);
+broadcast_core::impl_spec_display!(TimeUnit);
 
 /// scheduling_descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -167,13 +167,10 @@ impl Serialize for SchedulingDescriptor<'_> {
         self.start_date_time.write(b, 0);
         self.end_date_time.write(b, MJD_BCD_LEN);
         let period_unit =
-            broadcast_common::len::fit_mask(self.period_unit.to_u8(), UNIT_MASK, "period_unit")?;
-        let duration_unit = broadcast_common::len::fit_mask(
-            self.duration_unit.to_u8(),
-            UNIT_MASK,
-            "duration_unit",
-        )?;
-        let cycle_unit = broadcast_common::len::fit_mask(
+            broadcast_core::len::fit_mask(self.period_unit.to_u8(), UNIT_MASK, "period_unit")?;
+        let duration_unit =
+            broadcast_core::len::fit_mask(self.duration_unit.to_u8(), UNIT_MASK, "duration_unit")?;
+        let cycle_unit = broadcast_core::len::fit_mask(
             self.estimated_cycle_time_unit.to_u8(),
             UNIT_MASK,
             "estimated_cycle_time_unit",

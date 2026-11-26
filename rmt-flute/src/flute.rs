@@ -62,7 +62,7 @@ impl ExtFdt {
     pub fn parse(content: &[u8]) -> Result<Self> {
         if content.len() != EXT_CONTENT_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: EXT_CONTENT_LEN,
                     have: content.len(),
                     what: "EXT_FDT content",
@@ -83,8 +83,8 @@ impl ExtFdt {
 
     /// Encode the 3 content bytes (the 24 bits after HET).
     pub fn to_content(&self) -> Result<[u8; EXT_CONTENT_LEN]> {
-        broadcast_common::len::fit_bits(self.version as u64, FDT_VERSION_BITS, "EXT_FDT V")?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(self.version as u64, FDT_VERSION_BITS, "EXT_FDT V")?;
+        broadcast_core::len::fit_bits(
             self.instance_id as u64,
             FDT_INSTANCE_ID_BITS,
             "FDT Instance ID",
@@ -108,7 +108,7 @@ impl ExtFdt {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for ExtFdt {
+impl<'a> broadcast_core::Parse<'a> for ExtFdt {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -116,7 +116,7 @@ impl<'a> broadcast_common::Parse<'a> for ExtFdt {
     }
 }
 
-impl broadcast_common::Serialize for ExtFdt {
+impl broadcast_core::Serialize for ExtFdt {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -124,7 +124,7 @@ impl broadcast_common::Serialize for ExtFdt {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
-        broadcast_common::len::need_out(buf, EXT_CONTENT_LEN)?;
+        broadcast_core::len::need_out(buf, EXT_CONTENT_LEN)?;
         buf[..EXT_CONTENT_LEN].copy_from_slice(&self.to_content()?);
         Ok(EXT_CONTENT_LEN)
     }
@@ -182,7 +182,7 @@ impl CencAlgorithm {
     }
 }
 
-broadcast_common::impl_spec_display!(CencAlgorithm, Other);
+broadcast_core::impl_spec_display!(CencAlgorithm, Other);
 
 /// EXT_CENC — FDT Instance Content Encoding Header (RFC 6726 §3.4.3, HET = 193,
 /// fixed-length).
@@ -209,7 +209,7 @@ impl ExtCenc {
     pub fn parse(content: &[u8]) -> Result<Self> {
         if content.len() != EXT_CONTENT_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: EXT_CONTENT_LEN,
                     have: content.len(),
                     what: "EXT_CENC content",
@@ -236,7 +236,7 @@ impl ExtCenc {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for ExtCenc {
+impl<'a> broadcast_core::Parse<'a> for ExtCenc {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -244,7 +244,7 @@ impl<'a> broadcast_common::Parse<'a> for ExtCenc {
     }
 }
 
-impl broadcast_common::Serialize for ExtCenc {
+impl broadcast_core::Serialize for ExtCenc {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -252,7 +252,7 @@ impl broadcast_common::Serialize for ExtCenc {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
-        broadcast_common::len::need_out(buf, EXT_CONTENT_LEN)?;
+        broadcast_core::len::need_out(buf, EXT_CONTENT_LEN)?;
         buf[..EXT_CONTENT_LEN].copy_from_slice(&self.to_content());
         Ok(EXT_CONTENT_LEN)
     }

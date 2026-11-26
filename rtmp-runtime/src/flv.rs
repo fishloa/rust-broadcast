@@ -19,9 +19,9 @@
 //!
 //! Spec: `private/specs-verified/rtmp/rtmp-runtime/rtmp.md` sections 6.6 and 9.
 
-use broadcast_common::error::OutputBufferTooSmall;
-use broadcast_common::len::{fit_u24, fit_u32, need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::OutputBufferTooSmall;
+use broadcast_core::len::{fit_u24, fit_u32, need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use crate::RtmpError;
 use crate::chunk::Message;
@@ -109,7 +109,7 @@ pub(crate) fn unpack_aggregate(
             }
         };
         let back_pointer = crate::be_u32(body, back_end - AGG_BACK_POINTER_LEN);
-        let expected_back_pointer = match broadcast_common::len::fit_u32(
+        let expected_back_pointer = match broadcast_core::len::fit_u32(
             AGG_SUB_MESSAGE_HEADER_LEN + data_size,
             "Back Pointer",
         ) {
@@ -359,7 +359,7 @@ impl TagType {
     }
 }
 
-broadcast_common::impl_spec_display!(TagType, Reserved);
+broadcast_core::impl_spec_display!(TagType, Reserved);
 
 /// One FLV tag (§E.4.1): its header fields, body, and the `PreviousTagSize`
 /// that follows it, so a single value is a self-contained slice of an FLV
@@ -437,7 +437,7 @@ impl<'a> Parse<'a> for FlvTag<'a> {
         // redundant (it repeats this tag's size), so the body is what this
         // decode needs and the trailer is not checked.
         let body = bytes.get(FLV_TAG_HEADER_LEN..body_end).ok_or_else(|| {
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: body_end.saturating_add(FLV_PREV_TAG_SIZE_LEN),
                 have: bytes.len(),
                 what: "FLV tag",
@@ -901,7 +901,7 @@ pub fn tags_resync<'a>(input: &'a [u8], header: &FlvHeader<'a>) -> FlvResult<Res
             let need = body_end.saturating_add(FLV_PREV_TAG_SIZE_LEN);
             if walk.tags.is_empty() && walk.damaged.is_empty() {
                 return Err(RtmpError::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need,
                         have: input.len(),
                         what: "FLV tag body",

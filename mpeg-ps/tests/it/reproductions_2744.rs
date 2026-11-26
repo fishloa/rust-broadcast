@@ -3,7 +3,7 @@
 //! parser discards and the serializer invents (`pseudo_descriptor_tag` /
 //! `pseudo_descriptor_length`), and no `Serialize` for `Pack`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use mpeg_ps::DescriptorLoop;
 use mpeg_ps::{Error, PackHeader, ProgramStreamMap, Scr};
 

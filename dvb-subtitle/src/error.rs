@@ -9,18 +9,18 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input shorter than required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// The `data_identifier` was not the required `0x20`.
     #[error("bad data_identifier: {0:#04X} (expected 0x20)")]
     BadDataIdentifier(u8),
     /// A fixed marker did not match (`sync_byte`, expected `0x0F`).
     #[error(transparent)]
-    InvalidSync(#[from] broadcast_common::error::InvalidSync),
+    InvalidSync(#[from] broadcast_core::error::InvalidSync),
     /// The `end_of_PES_data_field_marker` was not `0xFF`.
     #[error("bad end_of_PES_data_field_marker: {0:#04X} (expected 0xFF)")]
     BadEndOfPesMarker(u8),
@@ -37,7 +37,7 @@ pub enum Error {
     /// before narrowing, so an over-range value is rejected instead of
     /// silently masked/wrapped.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::len::FieldOverflow),
     /// A `DisparityRegion` had 0 or more than 4 subregions — the wire
     /// `number_of_subregions_minus_1` field (Table 29) is 2 bits, so only
     /// 1..=4 subregions are representable.
@@ -64,5 +64,5 @@ pub enum Error {
     /// A field value does not fit the bits the wire format gives it (e.g. a
     /// reduced-range CLUT colour component wider than its 6/4/2-bit slot).
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
 }

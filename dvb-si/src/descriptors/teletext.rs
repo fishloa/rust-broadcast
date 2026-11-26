@@ -8,8 +8,8 @@ use crate::descriptors::lang_text::LANG_LEN;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for teletext_descriptor.
 pub const TAG: u8 = 0x56;
@@ -84,7 +84,7 @@ impl TeletextType {
         }
     }
 }
-broadcast_common::impl_spec_display!(TeletextType, Reserved);
+broadcast_core::impl_spec_display!(TeletextType, Reserved);
 
 /// One teletext component. Also the entry type of the VBI teletext descriptor
 /// (EN 300 468 Table 108 is the same 5-byte loop entry as Table 101).
@@ -154,12 +154,12 @@ pub(super) fn serialize_entries(
     let mut pos = HEADER_LEN;
     for e in entries {
         buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-        buf[pos + LANG_LEN] = (broadcast_common::len::fit_mask(
+        buf[pos + LANG_LEN] = (broadcast_core::len::fit_mask(
             e.teletext_type.to_u8(),
             TELETEXT_TYPE_MASK,
             "teletext_type",
         )? << TYPE_AND_MAGAZINE_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 e.magazine_number,
                 MAGAZINE_NUMBER_MASK,
                 "magazine_number",

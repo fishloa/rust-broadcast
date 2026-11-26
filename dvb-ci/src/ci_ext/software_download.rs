@@ -27,8 +27,8 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::wire::be_u16;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Download resource (Tables 75-78).
 pub mod tag {
@@ -327,7 +327,7 @@ fn parse_dsmcc_header<'a>(
     const HDR: usize = DSMCC_HEADER_LEN;
     if body.len() < HDR {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: HDR,
                 have: body.len(),
                 what,
@@ -362,7 +362,7 @@ fn parse_dsmcc_header<'a>(
     let adaptation_length = body[ADAPTATION_LENGTH_OFFSET] as usize;
     if body.len() < HDR + adaptation_length {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: HDR + adaptation_length,
                 have: body.len(),
                 what,
@@ -375,7 +375,7 @@ fn parse_dsmcc_header<'a>(
     let actual_message_length = body.len() - HDR;
     if declared_message_length != actual_message_length {
         return Err(Error::LengthMismatch(
-            broadcast_common::error::LengthMismatch {
+            broadcast_core::error::LengthMismatch {
                 what,
                 declared: declared_message_length,
                 actual: actual_message_length,
@@ -449,7 +449,7 @@ impl<'a> Parse<'a> for DownloadInfoRequest<'a> {
         // bufferSize(4) maximumBlockSize(2) compatibilityDescriptorLength(2).
         if rest.len() < INFO_REQUEST_FIXED + BLOCK_LENGTH_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: INFO_REQUEST_FIXED + BLOCK_LENGTH_LEN,
                     have: rest.len(),
                     what,
@@ -471,7 +471,7 @@ impl<'a> Parse<'a> for DownloadInfoRequest<'a> {
         let compat_block_end = compat_start + BLOCK_LENGTH_LEN + compat_len;
         if rest.len() < compat_block_end + BLOCK_LENGTH_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: compat_block_end + BLOCK_LENGTH_LEN,
                     have: rest.len(),
                     what,
@@ -484,7 +484,7 @@ impl<'a> Parse<'a> for DownloadInfoRequest<'a> {
         let priv_end = priv_start + priv_len;
         if rest.len() < priv_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: priv_end,
                     have: rest.len(),
                     what,
@@ -591,7 +591,7 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
         const FIXED: usize = INFO_RESPONSE_FIXED + BLOCK_LENGTH_LEN;
         if rest.len() < FIXED {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: FIXED,
                     have: rest.len(),
                     what,
@@ -625,7 +625,7 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
         // + numberOfModules(2) at compat_block_end.
         if rest.len() < compat_block_end + BLOCK_LENGTH_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: compat_block_end + BLOCK_LENGTH_LEN,
                     have: rest.len(),
                     what,
@@ -639,7 +639,7 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
             // moduleId(2) moduleSize(4) moduleVersion(1) moduleInfoLength(1).
             if rest.len() < mpos + MODULE_INFO_FIXED {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: mpos + MODULE_INFO_FIXED,
                         have: rest.len(),
                         what,
@@ -650,7 +650,7 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
             mpos += MODULE_INFO_FIXED + module_info_len;
             if rest.len() < mpos {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: mpos,
                         have: rest.len(),
                         what,
@@ -661,7 +661,7 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
         let modules = &rest[compat_block_end..mpos];
         if rest.len() < mpos + BLOCK_LENGTH_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: mpos + BLOCK_LENGTH_LEN,
                     have: rest.len(),
                     what,
@@ -673,7 +673,7 @@ impl<'a> Parse<'a> for DownloadInfoResponse<'a> {
         let priv_end = priv_start + priv_len;
         if rest.len() < priv_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: priv_end,
                     have: rest.len(),
                     what,
@@ -781,7 +781,7 @@ impl<'a> Parse<'a> for DownloadCancel<'a> {
         const FIXED: usize = CANCEL_FIXED + BLOCK_LENGTH_LEN;
         if rest.len() < FIXED {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: FIXED,
                     have: rest.len(),
                     what,
@@ -802,7 +802,7 @@ impl<'a> Parse<'a> for DownloadCancel<'a> {
         let priv_end = priv_start + priv_len;
         if rest.len() < priv_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: priv_end,
                     have: rest.len(),
                     what,
@@ -890,7 +890,7 @@ impl<'a> Parse<'a> for DownloadDataRequest<'a> {
         const FIXED: usize = 5;
         if rest.len() < FIXED {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: FIXED,
                     have: rest.len(),
                     what,
@@ -963,7 +963,7 @@ impl<'a> Parse<'a> for DownloadDataBlock<'a> {
         const FIXED: usize = 6;
         if rest.len() < FIXED {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: FIXED,
                     have: rest.len(),
                     what,

@@ -16,6 +16,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 # XML codec: the only XML dependency of the crates that read or write XML (transmux,
 # dvb-mabr, ttml-subtitle, multimux). std-only (quick-xml needs std).
 quick-xml = { workspace = true, optional = true }
@@ -40,7 +41,7 @@ required-features = ["std"]
 default = ["std"]
 # `std` is REQUIRED for the XML document/validation paths (`quick-xml` is
 # std-only); only the `time` expression parser is no_std+alloc.
-std = ["broadcast-common/std", "broadcast-common/xml", "thiserror/std", "dep:quick-xml"]
+std = ["broadcast-common/std", "broadcast-core/std", "broadcast-common/xml", "thiserror/std", "dep:quick-xml"]
 
 [lints]
 workspace = true

@@ -4,7 +4,7 @@
 //! cargo run -p isobmff --example build_ftyp
 //! ```
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use isobmff::segments::FileTypeBox;
 
 fn main() {

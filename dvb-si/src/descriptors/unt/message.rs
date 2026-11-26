@@ -9,8 +9,8 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LANG_CODE_LEN, LangCode};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for message_descriptor (UNT namespace).
 pub const TAG: u8 = 0x04;
@@ -72,12 +72,12 @@ impl Serialize for MessageDescriptor<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        let number = broadcast_common::len::fit_mask(
+        let number = broadcast_core::len::fit_mask(
             self.descriptor_number,
             NIBBLE_MASK,
             "descriptor_number",
         )?;
-        let last = broadcast_common::len::fit_mask(
+        let last = broadcast_core::len::fit_mask(
             self.last_descriptor_number,
             NIBBLE_MASK,
             "last_descriptor_number",
@@ -133,7 +133,7 @@ mod tests {
         };
         assert!(matches!(
             d.serialize_into(&mut [0u8; 8]),
-            Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "descriptor_number",
                 ..
             }))

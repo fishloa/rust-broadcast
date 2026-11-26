@@ -17,8 +17,8 @@ use crate::objects;
 use crate::reserved::ReservedZero;
 use crate::resource::ResourceId;
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 /// Reserved bits in front of `module_id`.
 pub const MODULE_ID_RESERVED_BITS: u32 = 2;
@@ -145,7 +145,7 @@ impl ModuleIdCommandKind {
         }
     }
 }
-broadcast_common::impl_spec_display!(ModuleIdCommandKind, Reserved);
+broadcast_core::impl_spec_display!(ModuleIdCommandKind, Reserved);
 
 /// `module_id_command()` — host acknowledges or sets the Module ID (Table 7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

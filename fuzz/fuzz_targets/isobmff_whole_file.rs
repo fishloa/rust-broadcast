@@ -188,14 +188,8 @@ fn rewrite_progressive(data: &[u8], run: &Run) -> Option<Vec<u8>> {
         shell.mvhd.creation_time,
         shell.mvhd.modification_time,
     );
-    let mut writer = Writer::progressive(
-        plan.clone(),
-        layout,
-        file_type(data),
-        header,
-        fuzz_limits(),
-    )
-    .ok()?;
+    let mut writer =
+        Writer::progressive(plan.clone(), layout, file_type(data), header, fuzz_limits()).ok()?;
     let len = writer.file_len();
     if len > MAX_FILE_BYTES {
         return None;
@@ -219,7 +213,11 @@ fn rewrite_progressive(data: &[u8], run: &Run) -> Option<Vec<u8>> {
 fn rewrite_fragmented(data: &[u8], run: &Run) -> Option<Vec<u8>> {
     let plan = typed_plan(run)?;
     let shell = plan.shell()?.clone();
-    let setups: Vec<TrackSetup> = plan.tracks().iter().map(|track| track.setup.clone()).collect();
+    let setups: Vec<TrackSetup> = plan
+        .tracks()
+        .iter()
+        .map(|track| track.setup.clone())
+        .collect();
     let mut writer = Writer::fragmented(setups, shell.mvhd.timescale, fuzz_limits()).ok()?;
     writer.set_file_type(file_type(data));
     writer.set_movie_shell(shell);
@@ -313,11 +311,18 @@ fuzz_target!(|data: &[u8]| {
     );
     let want = descriptors(data, &source);
     let got = descriptors(&rewritten, &read_back);
-    assert_eq!(got.len(), want.len(), "the rewrite describes a different sample count");
+    assert_eq!(
+        got.len(),
+        want.len(),
+        "the rewrite describes a different sample count"
+    );
     for (key, expected) in &want {
         let actual = got
             .get(key)
             .unwrap_or_else(|| panic!("the rewrite has no sample {key:?}"));
-        assert_eq!(actual, expected, "the rewrite describes sample {key:?} differently");
+        assert_eq!(
+            actual, expected,
+            "the rewrite describes sample {key:?} differently"
+        );
     }
 });

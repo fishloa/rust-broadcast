@@ -28,9 +28,9 @@ use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::{LANG_CODE_LEN, LangCode};
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_bits, fit_u8, need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{fit_bits, fit_u8, need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
 /// Descriptor tag for the China caption_service_descriptor.
@@ -120,7 +120,7 @@ impl ChinaCaptionCharSet {
         }
     }
 }
-broadcast_common::impl_spec_display!(ChinaCaptionCharSet, Reserved);
+broadcast_core::impl_spec_display!(ChinaCaptionCharSet, Reserved);
 
 /// One caption service entry of the descriptor loop (Table 8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -3,7 +3,7 @@
 //! continuity-counter wrap distance is exercised in both directions, and the
 //! trait `serialize_into` really writes the four header bytes.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::resync::PacketStride;
 use mpeg_ts::ts::{

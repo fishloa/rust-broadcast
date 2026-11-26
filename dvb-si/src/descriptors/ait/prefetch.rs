@@ -12,8 +12,8 @@ use super::label_bytes::LabelBytes;
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for prefetch_descriptor (AIT namespace; the clause is titled "pre-fetch").
 pub const TAG: u8 = 0x0C;
@@ -113,7 +113,7 @@ impl Serialize for PrefetchDescriptor<'_> {
         buf[HEADER_LEN] = self.transport_protocol_label;
         let mut pos = HEADER_LEN + TRANSPORT_PROTOCOL_LABEL_LEN;
         for e in &self.entries {
-            buf[pos] = broadcast_common::len::fit_u8(e.label.len(), "label_length")?;
+            buf[pos] = broadcast_core::len::fit_u8(e.label.len(), "label_length")?;
             pos += LABEL_LEN_FIELD;
             buf[pos..pos + e.label.len()].copy_from_slice(e.label.as_bytes());
             pos += e.label.len();

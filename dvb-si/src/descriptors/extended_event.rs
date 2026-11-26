@@ -9,8 +9,8 @@ use crate::descriptors::lang_text::LANG_LEN;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for extended_event_descriptor.
 pub const TAG: u8 = 0x4E;
@@ -162,12 +162,12 @@ impl Serialize for ExtendedEventDescriptor<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN] = (broadcast_core::len::fit_mask(
             self.descriptor_number,
             NUMBER_MASK,
             "descriptor_number",
         )? << DESCRIPTOR_NUMBER_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.last_descriptor_number,
                 NUMBER_MASK,
                 "last_descriptor_number",
@@ -181,22 +181,22 @@ impl Serialize for ExtendedEventDescriptor<'_> {
             .map(|i| 1 + i.description.len() + 1 + i.value.len())
             .sum();
         buf[HEADER_LEN + ITEMS_LEN_OFFSET] =
-            broadcast_common::len::fit_u8(items_bytes, "length_of_items")?;
+            broadcast_core::len::fit_u8(items_bytes, "length_of_items")?;
 
         let mut pos = HEADER_LEN + ITEMS_LEN_OFFSET + ITEMS_LEN_FIELD;
         for item in &self.items {
             buf[pos] =
-                broadcast_common::len::fit_u8(item.description.len(), "item_description_length")?;
+                broadcast_core::len::fit_u8(item.description.len(), "item_description_length")?;
             let d_start = pos + 1;
             let d_end = d_start + item.description.len();
             buf[d_start..d_end].copy_from_slice(item.description.raw());
-            buf[d_end] = broadcast_common::len::fit_u8(item.value.len(), "item_length")?;
+            buf[d_end] = broadcast_core::len::fit_u8(item.value.len(), "item_length")?;
             let v_start = d_end + 1;
             let v_end = v_start + item.value.len();
             buf[v_start..v_end].copy_from_slice(item.value.raw());
             pos = v_end;
         }
-        buf[pos] = broadcast_common::len::fit_u8(self.text.len(), "text_length")?;
+        buf[pos] = broadcast_core::len::fit_u8(self.text.len(), "text_length")?;
         buf[pos + 1..pos + 1 + self.text.len()].copy_from_slice(self.text.raw());
         Ok(len)
     }
@@ -348,7 +348,7 @@ mod tests {
         let bytes = &[0x4E, 0x00, 0, 0, 0, 0, 0, 0];
         assert!(matches!(
             ExtendedEventDescriptor::parse(bytes).unwrap_err(),
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "ExtendedEventDescriptor body",
                 ..
             })

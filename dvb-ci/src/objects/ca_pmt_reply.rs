@@ -16,8 +16,8 @@ use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use crate::wire::be_u16;
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
 /// `CA_enable` 7-bit value (Table, p. 32).
@@ -77,7 +77,7 @@ impl CaEnable {
         }
     }
 }
-broadcast_common::impl_spec_display!(CaEnable, Rfu);
+broadcast_core::impl_spec_display!(CaEnable, Rfu);
 
 /// One ES entry in a `ca_pmt_reply`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -201,7 +201,7 @@ pub(crate) fn parse_reply_streams(
     while pos < body.len() {
         if pos + ES_LEN > body.len() {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + ES_LEN,
                     have: body.len(),
                     what,

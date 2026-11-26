@@ -7,8 +7,8 @@
 //! The lexical half (length narrowing) is the `truncation` guard in
 //! workspace-guards.
 
-use broadcast_common::Serialize;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Serialize;
+use broadcast_core::timescale::Timescale;
 use isobmff::sample_groups::ProducerReferenceTimeBox;
 use isobmff::{MediaHeaderBox, MovieHeaderBox, TrackHeaderBox, TrackId};
 

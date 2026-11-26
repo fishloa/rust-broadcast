@@ -7,7 +7,7 @@
 //! (ISO/IEC 14496-12:2026 §12.1.3) and `tkhd`'s 16.16 `width`/`height`
 //! (§8.3.2). A zero here would let a track mux as 0x0 with every other gate
 //! green.
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use transmux::TrackSpec;
 use transmux::pipeline::{self, CodecConfig};
 

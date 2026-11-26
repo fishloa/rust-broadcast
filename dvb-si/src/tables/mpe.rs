@@ -30,9 +30,9 @@
 //! CRC_32 on serialize and `checksum` is ignored.
 
 use crate::error::{Error, Result};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// table_id for an MPE `datagram_section` — the DSM-CC private-data value
 /// (ISO/IEC 13818-6); see [`crate::tables::dsmcc`] for the raw view.
@@ -316,14 +316,14 @@ impl Serialize for MpeDatagramSection<'_> {
         // 2-bit scrambling fields must fit; reject over-range values rather
         // than silently truncating (mirrors cit/sdt guarding derived fields).
         if self.payload_scrambling_control > SCRAMBLING_CONTROL_MASK {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "payload_scrambling_control",
                 value: u64::from(self.payload_scrambling_control),
                 max: u64::from(SCRAMBLING_CONTROL_MASK),
             }));
         }
         if self.address_scrambling_control > SCRAMBLING_CONTROL_MASK {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "address_scrambling_control",
                 value: u64::from(self.address_scrambling_control),
                 max: u64::from(SCRAMBLING_CONTROL_MASK),
@@ -346,12 +346,12 @@ impl Serialize for MpeDatagramSection<'_> {
 
         // Byte 5: reserved(2)=11 | payload_sc(2) | address_sc(2) | LLC_SNAP(1) | cni(1).
         buf[super::VERSION_FLAGS_OFFSET] = ((self.reserved_b5.get() as u8) << RESERVED_B5_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.payload_scrambling_control,
                 SCRAMBLING_CONTROL_MASK,
                 "payload_scrambling_control",
             )? << PAYLOAD_SCRAMBLING_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.address_scrambling_control,
                 SCRAMBLING_CONTROL_MASK,
                 "address_scrambling_control",
@@ -470,7 +470,7 @@ mod tests {
         let err = MpeDatagramSection::parse(&[TABLE_ID, 0x00]).unwrap_err();
         assert_eq!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: MIN_SECTION_LEN,
                 have: 2,
                 what: "MpeDatagramSection"
@@ -584,7 +584,7 @@ mod tests {
         let mut buf = vec![0u8; sec.serialized_len()];
         assert_eq!(
             sec.serialize_into(&mut buf).unwrap_err(),
-            Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "payload_scrambling_control",
                 value: 4,
                 max: 3,

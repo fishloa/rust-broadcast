@@ -12,8 +12,8 @@
 
 use alloc::vec::Vec;
 
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use crate::box_support::OpaqueBox;
 use crate::box_types::{

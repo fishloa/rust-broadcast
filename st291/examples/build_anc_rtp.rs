@@ -5,7 +5,7 @@
 /// ```sh
 /// cargo run -p st291 --example build_anc_rtp --features rtp
 /// ```
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use rtp_packet::{RtpPacket, SeqNo, Ssrc};
 use st291::{
     ANC_RTP_DEFAULT_CLOCK_RATE, AncContent, AncRtpPayload, ExtendedSequenceNumber, FieldSense,

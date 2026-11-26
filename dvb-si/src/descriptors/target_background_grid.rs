@@ -4,8 +4,8 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for target_background_grid_descriptor.
 pub const TAG: u8 = 0x07;
@@ -91,13 +91,13 @@ impl Serialize for TargetBackgroundGridDescriptor {
         buf[1] = BODY_LEN;
         // 14 / 14 / 4-bit fields; wider values used to be masked down
         // silently (audit r03-W3 class).
-        let hs = broadcast_common::len::fit_bits(
+        let hs = broadcast_core::len::fit_bits(
             u64::from(self.horizontal_size),
             SIZE_BITS,
             "horizontal_size",
         )? as u16;
-        broadcast_common::len::fit_bits(u64::from(self.vertical_size), SIZE_BITS, "vertical_size")?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(u64::from(self.vertical_size), SIZE_BITS, "vertical_size")?;
+        broadcast_core::len::fit_bits(
             u64::from(self.aspect_ratio_information),
             NIBBLE_MASK.count_ones(),
             "aspect_ratio_information",
@@ -108,7 +108,7 @@ impl Serialize for TargetBackgroundGridDescriptor {
         buf[HEADER_LEN + MIDDLE_BYTE_OFFSET] = (self.vertical_size >> FIELD2_MID_SHIFT) as u8;
         buf[HEADER_LEN + LOW_NIBBLE_OFFSET] = ((self.vertical_size & u16::from(NIBBLE_MASK))
             << NIBBLE_SHIFT) as u8
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.aspect_ratio_information,
                 NIBBLE_MASK,
                 "aspect_ratio_information",

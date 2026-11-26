@@ -11,13 +11,13 @@
 //! populated field can never contradict a flag and be dropped on serialize.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::time::{BreakDuration, SpliceTime};
 use crate::traits::CommandDef;
 use crate::{CANCEL_INDICATOR_MASK, U16_LEN, U32_LEN, be};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `splice_command_type` for splice_insert (§9.6.1, Table 7).
 pub const COMMAND_TYPE: u8 = 0x05;
@@ -73,8 +73,8 @@ impl ProgramSplice {
     }
 }
 
-broadcast_common::impl_spec_display!(ProgramSplice);
-broadcast_common::impl_spec_display!(SpliceMode);
+broadcast_core::impl_spec_display!(ProgramSplice);
+broadcast_core::impl_spec_display!(SpliceMode);
 
 /// How a [`SpliceInsert`] splices: the `program_splice_flag` /
 /// `splice_immediate_flag` / `component_count` block of §9.7.3, Table 10.
@@ -163,10 +163,8 @@ impl SpliceMode {
                 immediate,
                 components,
             } => {
-                buf[0] = broadcast_common::len::fit_u8(
-                    components.len(),
-                    "splice_insert.component_count",
-                )?;
+                buf[0] =
+                    broadcast_core::len::fit_u8(components.len(), "splice_insert.component_count")?;
                 let mut pos = 1;
                 for c in components {
                     buf[pos] = c.component_tag;
@@ -270,7 +268,7 @@ impl<'a> Parse<'a> for SpliceInsert {
         let (hdr, _) = bytes
             .split_first_chunk::<SPLICE_INSERT_HEADER_LEN>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: SPLICE_INSERT_HEADER_LEN,
                     have: bytes.len(),
                     what: "splice_insert header",
@@ -345,7 +343,7 @@ impl<'a> Parse<'a> for SpliceInsert {
             bytes[pos..]
                 .split_first_chunk::<TRAILER_LEN>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + TRAILER_LEN,
                         have: bytes.len(),
                         what: "splice_insert trailer",
@@ -383,7 +381,7 @@ impl Serialize for SpliceInsert {
             (u8::from(self.cancel.is_some()) << TOP_BIT_SHIFT) | CANCEL_RESERVED_BITS;
         if let Some(cancelled) = self.cancel {
             if cancelled != self.splice_event_id {
-                return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                     field: "splice_insert.splice_event_cancel_indicator",
                     reason: "a cancel names one event, so splice_event_id and the cancelled id must agree",
                 }));
@@ -552,7 +550,7 @@ mod tests {
         assert!(matches!(
             cmd.try_to_bytes(),
             Err(crate::error::Error::InvalidField(
-                broadcast_common::error::InvalidField {
+                broadcast_core::error::InvalidField {
                     field: "splice_insert.splice_event_cancel_indicator",
                     ..
                 }

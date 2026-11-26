@@ -16,8 +16,8 @@
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for subgroup_association_descriptor (data-carousel namespace).
 pub const TAG: u8 = 0x0B;
@@ -61,7 +61,7 @@ impl SubgroupTag {
 
     /// Encode to the 5 wire bytes; errors when `oui` exceeds 24 bits.
     pub fn to_bytes(self) -> Result<[u8; BODY_LEN]> {
-        let oui = broadcast_common::len::fit_mask(self.oui, OUI_MASK, "subgroup_tag OUI")?;
+        let oui = broadcast_core::len::fit_mask(self.oui, OUI_MASK, "subgroup_tag OUI")?;
         let o = oui.to_be_bytes();
         let s = self.subgroup.to_be_bytes();
         let [_, oui_hi, oui_mid, oui_lo] = o;

@@ -2,7 +2,7 @@
 //! bounds: the bit-width arithmetic, the `bit_err` mapping, the DAS
 //! `descriptor_length` gate, and every truncation boundary.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::Error;
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, SpliceNull};
@@ -43,7 +43,7 @@ fn compact_time_signal_rejects_a_short_fixed_prefix() {
     assert_eq!(
         CompactTimeSignal::parse(&[0u8; 16]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 17,
                 have: 16,
                 what: "compact_time_signal fixed prefix",
@@ -60,7 +60,7 @@ fn compact_time_signal_reports_a_truncated_upid_with_real_byte_counts() {
     assert_eq!(
         CompactTimeSignal::parse(&bytes),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 18,
                 have: 17,
                 what: "compact_time_signal",
@@ -86,7 +86,7 @@ fn compact_time_signal_field_maxima_are_the_bit_widths() {
             ..max.clone()
         }
         .try_to_bytes(),
-        Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "compact_time_signal.pts_time",
             value: 1 << 33,
             max: (1 << 33) - 1,
@@ -98,7 +98,7 @@ fn compact_time_signal_field_maxima_are_the_bit_widths() {
             ..max.clone()
         }
         .try_to_bytes(),
-        Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "compact_time_signal.segmentation_duration",
             value: 1 << 40,
             max: (1 << 40) - 1,
@@ -110,7 +110,7 @@ fn compact_time_signal_field_maxima_are_the_bit_widths() {
             ..max
         }
         .try_to_bytes(),
-        Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "compact_time_signal.encryption_algorithm",
             value: 0x40,
             max: 0x3F,
@@ -176,7 +176,7 @@ fn compact_splice_insert_rejects_a_short_fixed_prefix() {
     assert_eq!(
         CompactSpliceInsert::parse(&[0u8; 18]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 19,
                 have: 18,
                 what: "compact_splice_insert fixed fields",
@@ -191,7 +191,7 @@ fn compact_splice_insert_rejects_a_das_length_below_three() {
     bytes[19] = 2;
     assert_eq!(
         CompactSpliceInsert::parse(&bytes),
-        Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "compact_splice_insert.descriptor_length",
             value: 2,
             reason: "DAS body length must be at least 3 (break_num, breaks_expected, type)",
@@ -229,7 +229,7 @@ fn an_over_wide_reserved_row_is_a_typed_field_overflow() {
     let mut out = vec![0u8; insert.serialized_len()];
     assert_eq!(
         insert.serialize_into(&mut out),
-        Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "compact_splice_insert",
             value: 0x7F,
             max: 0x3F,
@@ -244,7 +244,7 @@ fn the_das_descriptor_rejects_a_body_shorter_than_its_fixed_fields() {
     assert_eq!(
         DvbDasDescriptor::parse(&bytes),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 9,
                 have: 6,
                 what: "DVB_DAS_descriptor body",
@@ -365,7 +365,7 @@ fn stream_event_payload_declared_lengths_past_the_buffer_overflow() {
     assert_eq!(
         StreamEventPayload::parse(&[1, 0xE2]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 4,
                 have: 2,
                 what: "DSM-CC_stream_event_payload_binary temi fields",
@@ -376,7 +376,7 @@ fn stream_event_payload_declared_lengths_past_the_buffer_overflow() {
     // A private_data_length below the 4-byte specifier.
     assert_eq!(
         StreamEventPayload::parse(&[1, 0xF0, 0x03, 0x00]),
-        Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "DSM-CC_stream_event_payload_binary.private_data_length",
             value: 3,
             reason: "must be >= 4 (32-bit private_data_specifier) when present",
@@ -424,7 +424,7 @@ fn a_temi_timeline_needs_four_bytes_even_with_a_long_dvb_data_region() {
     assert_eq!(
         StreamEventPayload::parse(&[3, 0xE2, 0x11, 0x22]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 5,
                 have: 4,
                 what: "DSM-CC_stream_event_payload_binary private_data_length",
@@ -448,7 +448,7 @@ fn a_private_data_block_ending_exactly_at_the_buffer_needs_the_carriage() {
     assert_eq!(
         StreamEventPayload::parse(&exact),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 8,
                 have: 7,
                 what: "DSM-CC_stream_event_payload_binary carousel_object_name_length",
@@ -468,7 +468,7 @@ fn a_missing_carousel_length_reports_the_absolute_need() {
     assert_eq!(
         StreamEventPayload::parse(&[1, 0xF0, 0x00]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 4,
                 have: 3,
                 what: "DSM-CC_stream_event_payload_binary carousel_object_name_length",
@@ -525,7 +525,7 @@ fn private_data_and_carousel_name_maxima_are_255() {
     };
     assert_eq!(
         over_private.try_to_bytes(),
-        Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "DSM-CC_stream_event_payload_binary.private_data_length",
             value: 256,
             max: 255,
@@ -539,7 +539,7 @@ fn private_data_and_carousel_name_maxima_are_255() {
     };
     assert_eq!(
         over_name.try_to_bytes(),
-        Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "DSM-CC_stream_event_payload_binary.carousel_object_name_length",
             value: 256,
             max: 255,
@@ -553,7 +553,7 @@ fn a_dvb_data_region_filling_the_buffer_needs_the_private_data_length() {
     assert_eq!(
         StreamEventPayload::parse(&[1, 0xF0]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 3,
                 have: 2,
                 what: "DSM-CC_stream_event_payload_binary private_data_length",

@@ -2,7 +2,7 @@
 //! the DASH-IF IOP v4.3 Table 10 worked example.
 
 use crate::common;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

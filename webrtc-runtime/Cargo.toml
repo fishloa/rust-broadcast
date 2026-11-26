@@ -21,6 +21,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 # take their default (std) features in every configuration; the `std` feature
 # below is kept as a name so `default-features = false` consumers still resolve.
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", features = ["url"] }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0" }
 # The client's credentials are `broadcast_auth::Credentials` (one auth
 # vocabulary across the runtimes, issue #2661 2.2); the core is `std`.
 broadcast-auth = { path = "../broadcast-auth", version = "0.9.0" }
@@ -65,7 +66,7 @@ subtle      = { version = "2", default-features = false, optional = true }
 
 [features]
 default = ["std"]
-std     = ["broadcast-common/std", "thiserror/std"]
+std     = ["broadcast-common/std", "broadcast-core/std", "thiserror/std"]
 serde   = ["dep:serde"]
 # Hidden fault-injection / loopback-test hooks on `media::MediaTransport`
 # (`with_certificate_for_test`, `force_next_timer_error`, `force_stuck_timer`,

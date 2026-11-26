@@ -1,6 +1,6 @@
 #![no_main]
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use libfuzzer_sys::fuzz_target;
 use rtmp_runtime::amf0::Amf0Value;
 use rtmp_runtime::chunk::ChunkAssembler;

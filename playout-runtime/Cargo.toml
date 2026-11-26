@@ -17,6 +17,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 # Splice-point conditioning (nearest-boundary snap with an explicit
 # tolerance): this crate decides *when* a transition happens, ssai-runtime
 # decides *how the splice lands* — see the crate-root docs. Not duplicated
@@ -39,9 +40,9 @@ default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc` — the schedule, transition planning, and SCTE-35
 # emission-point construction never touch a socket or a clock.
-std = ["broadcast-common/std", "ssai-runtime/std", "scte35-splice/std", "thiserror/std", "serde?/std"]
+std = ["broadcast-common/std", "broadcast-core/std", "ssai-runtime/std", "scte35-splice/std", "thiserror/std", "serde?/std"]
 # Derive serde on the public schedule/transition/decision types.
-serde = ["dep:serde", "broadcast-common/serde", "ssai-runtime/serde", "scte35-splice/serde"]
+serde = ["dep:serde", "broadcast-common/serde", "broadcast-core/serde", "ssai-runtime/serde", "scte35-splice/serde"]
 
 [lints]
 workspace = true

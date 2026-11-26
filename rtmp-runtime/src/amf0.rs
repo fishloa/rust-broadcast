@@ -34,8 +34,8 @@
 //! SKIP-list candidate rather than a `name()`/`impl_spec_display!` target
 //! (tracked for the crate's Task 10 label-coverage pass).
 
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::{Parse, Serialize};
 
 use crate::RtmpError;
 use alloc::string::String;
@@ -173,7 +173,7 @@ fn read_utf8_short(bytes: &[u8]) -> Result<(String, usize)> {
     // `usize` platform, and matches the same guard on `read_utf8_long`
     // below where the addend genuinely can overflow.
     let total = U16_LEN.checked_add(len).ok_or(RtmpError::FieldOverflow(
-        broadcast_common::len::FieldOverflow {
+        broadcast_core::len::FieldOverflow {
             field: "AMF0 string length",
             value: u64::from(u16::MAX),
             max: u64::try_from(usize::MAX).unwrap_or(u64::MAX),
@@ -203,7 +203,7 @@ fn read_utf8_long(bytes: &[u8]) -> Result<(String, usize)> {
     // and misparse a length claim that should instead be rejected as too
     // short. `checked_add` catches that instead of wrapping.
     let total = U32_LEN.checked_add(len).ok_or(RtmpError::FieldOverflow(
-        broadcast_common::len::FieldOverflow {
+        broadcast_core::len::FieldOverflow {
             field: "AMF0 long string length",
             value: u64::from(u32::MAX),
             max: u64::try_from(usize::MAX).unwrap_or(u64::MAX),
@@ -251,7 +251,7 @@ fn parse_pairs(
         consumed = after_key
             .checked_add(value_len)
             .ok_or(RtmpError::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "AMF0 object pair length",
                     value: u64::from(u32::try_from(after_key).unwrap_or(u32::MAX))
                         + u64::from(u32::try_from(value_len).unwrap_or(u32::MAX)),
@@ -351,7 +351,7 @@ fn parse_value(bytes: &[u8], depth: usize, values: &mut usize) -> Result<(Amf0Va
                 let (value, consumed) = parse_value(rest, depth + 1, values)?;
                 elements.push(value);
                 rest = rest.get(consumed..).ok_or(RtmpError::FieldOverflow(
-                    broadcast_common::len::FieldOverflow {
+                    broadcast_core::len::FieldOverflow {
                         field: "AMF0 strict array element length",
                         value: u64::try_from(consumed).unwrap_or(u64::MAX),
                         max: u64::try_from(rest.len()).unwrap_or(u64::MAX),
@@ -400,7 +400,7 @@ fn parse_value(bytes: &[u8], depth: usize, values: &mut usize) -> Result<(Amf0Va
 /// The `FieldOverflow` for a value sequence whose total length does not fit a
 /// `usize`: the sum of real element lengths against the addressable maximum.
 fn sequence_length_overflow(so_far: usize, next: usize) -> RtmpError {
-    RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+    RtmpError::FieldOverflow(broadcast_core::len::FieldOverflow {
         field: "amf0 value sequence length",
         value: u64::from(u32::try_from(so_far).unwrap_or(u32::MAX))
             + u64::from(u32::try_from(next).unwrap_or(u32::MAX)),
@@ -427,7 +427,7 @@ fn write_pairs(pairs: &[(String, Amf0Value)], buf: &mut [u8]) -> Result<usize> {
                 "amf0 object key output",
             ));
         }
-        let key_len = broadcast_common::len::fit_u16(k.len(), "amf0 object key length")?;
+        let key_len = broadcast_core::len::fit_u16(k.len(), "amf0 object key length")?;
         buf[offset..offset + U16_LEN].copy_from_slice(&key_len.to_be_bytes());
         buf[offset + U16_LEN..offset + key_total].copy_from_slice(k.as_bytes());
         offset += key_total;
@@ -504,7 +504,7 @@ impl Serialize for Amf0Value {
             }
             Amf0Value::LongString(s) => {
                 marker_byte[0] = marker::LONG_STRING;
-                let len = broadcast_common::len::fit_u32(s.len(), "amf0 long string length")?;
+                let len = broadcast_core::len::fit_u32(s.len(), "amf0 long string length")?;
                 body[..U32_LEN].copy_from_slice(&len.to_be_bytes());
                 body[U32_LEN..].copy_from_slice(s.as_bytes());
             }
@@ -516,14 +516,13 @@ impl Serialize for Amf0Value {
             Amf0Value::Undefined => marker_byte[0] = marker::UNDEFINED,
             Amf0Value::EcmaArray(pairs) => {
                 marker_byte[0] = marker::ECMA_ARRAY;
-                let count = broadcast_common::len::fit_u32(pairs.len(), "amf0 ECMA array count")?;
+                let count = broadcast_core::len::fit_u32(pairs.len(), "amf0 ECMA array count")?;
                 body[..U32_LEN].copy_from_slice(&count.to_be_bytes());
                 write_pairs(pairs, &mut body[U32_LEN..])?;
             }
             Amf0Value::StrictArray(values) => {
                 marker_byte[0] = marker::STRICT_ARRAY;
-                let count =
-                    broadcast_common::len::fit_u32(values.len(), "amf0 strict array count")?;
+                let count = broadcast_core::len::fit_u32(values.len(), "amf0 strict array count")?;
                 body[..U32_LEN].copy_from_slice(&count.to_be_bytes());
                 let mut offset = U32_LEN;
                 for v in values {
@@ -584,7 +583,7 @@ impl Command {
         let (txn_value, txn_len) =
             parse_value(payload.get(offset..).unwrap_or_default(), 0, &mut values)?;
         offset = offset.checked_add(txn_len).ok_or(RtmpError::FieldOverflow(
-            broadcast_common::len::FieldOverflow {
+            broadcast_core::len::FieldOverflow {
                 field: "RTMP command transaction id offset",
                 value: u64::try_from(offset).unwrap_or(u64::MAX),
                 max: u64::try_from(usize::MAX).unwrap_or(u64::MAX),
@@ -599,7 +598,7 @@ impl Command {
         while offset < payload.len() {
             let (value, len) = parse_value(&payload[offset..], 0, &mut values)?;
             offset = offset.checked_add(len).ok_or(RtmpError::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "RTMP command argument offset",
                     value: u64::try_from(offset).unwrap_or(u64::MAX),
                     max: u64::try_from(usize::MAX).unwrap_or(u64::MAX),
@@ -744,7 +743,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                RtmpError::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "amf0 object key length",
                     ..
                 })

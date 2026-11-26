@@ -9,8 +9,8 @@
 //! inspector (`MP4Box -diso`), never derived from this crate's own
 //! serializer.
 
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse, Serialize};
 use isobmff::TrackId;
 use isobmff::cenc::SampleAuxInfoSizesBox;
 use isobmff::init_segment::{MovieHeaderBox, Mp4aSampleEntry, SampleSizeBox, TrackHeaderBox};

@@ -2,7 +2,7 @@
 //! descriptor, serialize → parse → equal, and parse → serialize → byte-identical.
 //! Round-trip is the crate's primary, fabrication-proof correctness oracle.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{
     AnyCommand, BandwidthReservation, PrivateCommand, ProgramSplice, SpliceInsert, SpliceMode,
@@ -276,7 +276,7 @@ fn pts_adjustment_33bit_wrap_boundary() {
     assert_eq!(
         bad.serialize_into(&mut buf).err(),
         Some(scte35_splice::Error::FieldOverflow(
-            broadcast_common::len::FieldOverflow {
+            broadcast_core::len::FieldOverflow {
                 field: "splice_info_section.pts_adjustment",
                 value: PTS_MODULUS,
                 max: PTS_MAX

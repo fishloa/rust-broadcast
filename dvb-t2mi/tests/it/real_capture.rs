@@ -104,7 +104,7 @@ fn typed_pid_filter_selects_the_t2mi_pid_on_a_real_capture() {
 /// function header (`function_length` = 4 for a 2-byte body).
 #[test]
 fn colombia_individual_addressing_time_offsets_decode_and_round_trip() {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use dvb_t2mi::packet::Header;
     use dvb_t2mi::payload::individual_addressing::FunctionBody;
 

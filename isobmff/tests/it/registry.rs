@@ -2,8 +2,8 @@
 //! crate does not type come back typed through [`BoxRegistry`], come back
 //! opaque without one, and the file round-trips byte-identically either way.
 
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse, Serialize};
 
 use isobmff::box_support::{ChildOrder, OpaqueBox};
 use isobmff::box_types::{BOX_HEADER_MIN_SIZE, write_box_header, write_full_box_header};
@@ -78,7 +78,7 @@ impl Serialize for AcmeCalibrationBox {
         written += 4;
         buf[written..written + 4].copy_from_slice(&self.shift.to_be_bytes());
         written += 4;
-        buf[written] = broadcast_common::len::fit_u8(self.label.len(), "acal label")?;
+        buf[written] = broadcast_core::len::fit_u8(self.label.len(), "acal label")?;
         written += 1;
         buf[written..written + self.label.len()].copy_from_slice(&self.label);
         written += self.label.len();

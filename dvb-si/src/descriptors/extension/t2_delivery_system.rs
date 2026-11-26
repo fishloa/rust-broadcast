@@ -2,7 +2,7 @@
 use super::*;
 use alloc::vec;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 impl ExtensionBodyDef<'_> for T2DeliverySystem {
     const TAG_EXTENSION: u8 = 0x04;
@@ -100,7 +100,7 @@ impl T2SisoMiso {
         }
     }
 }
-broadcast_common::impl_spec_display!(T2SisoMiso, Reserved);
+broadcast_core::impl_spec_display!(T2SisoMiso, Reserved);
 
 /// Bandwidth — ETSI EN 300 468 Table 135.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -166,7 +166,7 @@ impl T2Bandwidth {
         }
     }
 }
-broadcast_common::impl_spec_display!(T2Bandwidth, Reserved);
+broadcast_core::impl_spec_display!(T2Bandwidth, Reserved);
 
 /// Guard interval — ETSI EN 300 468 Table 136.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,7 +237,7 @@ impl T2GuardInterval {
         }
     }
 }
-broadcast_common::impl_spec_display!(T2GuardInterval, Reserved);
+broadcast_core::impl_spec_display!(T2GuardInterval, Reserved);
 
 /// Transmission mode — ETSI EN 300 468 Table 137.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -303,7 +303,7 @@ impl T2TransmissionMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(T2TransmissionMode, Reserved);
+broadcast_core::impl_spec_display!(T2TransmissionMode, Reserved);
 
 // ---------------------------------------------------------------------------
 //  Structs
@@ -416,7 +416,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
             sel[1..]
                 .split_first_chunk::<{ T2_SYSTEM_ID_LEN }>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: T2_FIXED_PREFIX_LEN,
                         have: sel.len(),
                         what: "T2_delivery_system body",
@@ -466,7 +466,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                     .get(pos..)
                     .and_then(|s| s.split_first_chunk::<{ CELL_ID_LEN }>())
                     .ok_or(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + CELL_ID_LEN,
                             have: sel.len(),
                             what: "T2_delivery_system body",
@@ -477,7 +477,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                 let centre_frequencies = if tfs {
                     if pos >= sel.len() {
                         return Err(Error::BufferTooShort(
-                            broadcast_common::error::BufferTooShort {
+                            broadcast_core::error::BufferTooShort {
                                 need: pos + 1,
                                 have: sel.len(),
                                 what: "T2_delivery_system body",
@@ -499,7 +499,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                             .get(pos..)
                             .and_then(|s| s.split_first_chunk::<{ CENTRE_FREQUENCY_LEN }>())
                             .ok_or(Error::BufferTooShort(
-                                broadcast_common::error::BufferTooShort {
+                                broadcast_core::error::BufferTooShort {
                                     need: pos + CENTRE_FREQUENCY_LEN,
                                     have: sel.len(),
                                     what: "T2_delivery_system body",
@@ -515,7 +515,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                         .get(pos..)
                         .and_then(|s| s.split_first_chunk::<{ CENTRE_FREQUENCY_LEN }>())
                         .ok_or(Error::BufferTooShort(
-                            broadcast_common::error::BufferTooShort {
+                            broadcast_core::error::BufferTooShort {
                                 need: pos + CENTRE_FREQUENCY_LEN,
                                 have: sel.len(),
                                 what: "T2_delivery_system body",
@@ -527,7 +527,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                 };
                 if pos >= sel.len() {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + 1,
                             have: sel.len(),
                             what: "T2_delivery_system body",
@@ -549,7 +549,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
                         .get(pos + SUBCELL_TRANSPOSER_OFFSET..)
                         .and_then(|s| s.split_first_chunk::<{ CENTRE_FREQUENCY_LEN }>())
                         .ok_or(Error::BufferTooShort(
-                            broadcast_common::error::BufferTooShort {
+                            broadcast_core::error::BufferTooShort {
                                 need: pos + SUBCELL_LEN,
                                 have: sel.len(),
                                 what: "T2_delivery_system body",
@@ -622,19 +622,19 @@ impl Serialize for T2DeliverySystem {
             self.other_frequency_flag,
             self.tfs_flag,
         ) {
-            buf[p] = (broadcast_common::len::fit_mask(sm.to_u8(), T2_SISO_MISO_VALUE_MASK, "sm")?
+            buf[p] = (broadcast_core::len::fit_mask(sm.to_u8(), T2_SISO_MISO_VALUE_MASK, "sm")?
                 << T2_SISO_MISO_SHIFT)
-                | (broadcast_common::len::fit_mask(bw.to_u8(), T2_BANDWIDTH_VALUE_MASK, "bw")?
+                | (broadcast_core::len::fit_mask(bw.to_u8(), T2_BANDWIDTH_VALUE_MASK, "bw")?
                     << T2_BANDWIDTH_SHIFT)
-                | broadcast_common::len::fit_mask(
+                | broadcast_core::len::fit_mask(
                     self.reserved_future_use,
                     T2_RESERVED_MASK,
                     "reserved_future_use",
                 )?;
             buf[p + 1] =
-                (broadcast_common::len::fit_mask(gi.to_u8(), T2_GUARD_INTERVAL_VALUE_MASK, "gi")?
+                (broadcast_core::len::fit_mask(gi.to_u8(), T2_GUARD_INTERVAL_VALUE_MASK, "gi")?
                     << T2_GUARD_INTERVAL_SHIFT)
-                    | (broadcast_common::len::fit_mask(
+                    | (broadcast_core::len::fit_mask(
                         tm.to_u8(),
                         T2_TRANSMISSION_MODE_VALUE_MASK,
                         "tm",
@@ -646,7 +646,7 @@ impl Serialize for T2DeliverySystem {
                 buf[p..p + CELL_ID_LEN].copy_from_slice(&cell.cell_id.to_be_bytes());
                 p += CELL_ID_LEN;
                 if tfs {
-                    let freq_len = broadcast_common::len::fit_u8(
+                    let freq_len = broadcast_core::len::fit_u8(
                         cell.centre_frequencies.len() * CENTRE_FREQUENCY_LEN,
                         "frequency_loop_length",
                     )?;
@@ -668,7 +668,7 @@ impl Serialize for T2DeliverySystem {
                     buf[p..p + CENTRE_FREQUENCY_LEN].copy_from_slice(&freq.to_be_bytes());
                     p += CENTRE_FREQUENCY_LEN;
                 }
-                let subcell_len = broadcast_common::len::fit_u8(
+                let subcell_len = broadcast_core::len::fit_u8(
                     cell.subcells.len() * SUBCELL_LEN,
                     "subcell_info_loop_length",
                 )?;

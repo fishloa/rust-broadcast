@@ -2,7 +2,7 @@
 //!
 //! One module per `splice_descriptor_tag` (§10.1, Table 16), each mirroring the
 //! dvb-si descriptor shape: spec-cited doc → `TAG` const → struct → symmetric
-//! [`Parse`](broadcast_common::Parse)/[`Serialize`](broadcast_common::Serialize) →
+//! [`Parse`](broadcast_core::Parse)/[`Serialize`](broadcast_core::Serialize) →
 //! in-module round-trip tests. All splice descriptors share the 6-byte
 //! `splice_descriptor()` header (tag + length + 4-byte `identifier`, §10.2)
 //! handled by [`header`]. [`AnySpliceDescriptor`] unifies them with a raw

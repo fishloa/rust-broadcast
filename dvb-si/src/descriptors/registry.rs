@@ -29,7 +29,7 @@
 //! ```rust,no_run
 //! use dvb_si::descriptors::{DescriptorRegistry, AnyDescriptor};
 //! use dvb_si::traits::DescriptorDef;
-//! use broadcast_common::Parse;
+//! use broadcast_core::Parse;
 //!
 //! // A registered type must be `serde::Serialize` only when the `serde`
 //! // feature is on (that is what `DescriptorObject` requires there).
@@ -41,7 +41,7 @@
 //!     type Error = dvb_si::Error;
 //!     fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
 //!         if bytes.len() < 3 {
-//!             return Err(dvb_si::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+//!             return Err(dvb_si::Error::BufferTooShort(broadcast_core::error::BufferTooShort {
 //!                 need: 3, have: bytes.len(), what: "MyPrivate",
 //!             }));
 //!         }
@@ -162,8 +162,7 @@ impl DescriptorRegistry {
         self.custom.insert(
             (None, tag),
             Box::new(|b| {
-                Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?)
-                    as Box<dyn DescriptorObject>)
+                Ok(Box::new(<T as broadcast_core::Parse>::parse(b)?) as Box<dyn DescriptorObject>)
             }),
         );
         self
@@ -188,8 +187,7 @@ impl DescriptorRegistry {
         self.custom.insert(
             (Some(pds), tag),
             Box::new(|b| {
-                Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?)
-                    as Box<dyn DescriptorObject>)
+                Ok(Box::new(<T as broadcast_core::Parse>::parse(b)?) as Box<dyn DescriptorObject>)
             }),
         );
         self
@@ -387,12 +385,12 @@ pub(crate) fn dispatch_entry<'a>(
         && tag == crate::descriptors::logical_channel::TAG
         && registry.logical_channel_pds.contains(&pds)
     {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         return crate::descriptors::logical_channel::LogicalChannelDescriptor::parse(full)
             .map(AnyDescriptor::LogicalChannel);
     }
     if registry.logical_channel && tag == crate::descriptors::logical_channel::TAG {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         return crate::descriptors::logical_channel::LogicalChannelDescriptor::parse(full)
             .map(AnyDescriptor::LogicalChannel);
     }
@@ -412,7 +410,7 @@ fn update_pds(current: &mut Option<u32>, tag: u8, full: &[u8]) {
     // so such a registration opens the same scope. Any other registration
     // leaves the context untouched.
     if tag == crate::descriptors::registration::TAG {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         if let Ok(reg) = crate::descriptors::registration::RegistrationDescriptor::parse(full) {
             let id = u32::from_be_bytes(reg.format_identifier);
             if id == crate::descriptors::PDS_AVSA || id == crate::descriptors::PDS_AVSV {
@@ -421,7 +419,7 @@ fn update_pds(current: &mut Option<u32>, tag: u8, full: &[u8]) {
         }
     }
     if tag == crate::descriptors::private_data_specifier::TAG {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         if let Ok(pds) =
             crate::descriptors::private_data_specifier::PrivateDataSpecifierDescriptor::parse(full)
         {
@@ -623,12 +621,12 @@ mod tests {
         v: u8,
     }
 
-    impl<'a> broadcast_common::Parse<'a> for PdsEacem {
+    impl<'a> broadcast_core::Parse<'a> for PdsEacem {
         type Error = crate::error::Error;
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.len() < 3 {
                 return Err(crate::error::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: 3,
                         have: bytes.len(),
                         what: "PdsEacem",
@@ -650,12 +648,12 @@ mod tests {
         w: u8,
     }
 
-    impl<'a> broadcast_common::Parse<'a> for PdsNordig {
+    impl<'a> broadcast_core::Parse<'a> for PdsNordig {
         type Error = crate::error::Error;
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.len() < 3 {
                 return Err(crate::error::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: 3,
                         have: bytes.len(),
                         what: "PdsNordig",
@@ -677,12 +675,12 @@ mod tests {
         z: u8,
     }
 
-    impl<'a> broadcast_common::Parse<'a> for PdsAgnostic {
+    impl<'a> broadcast_core::Parse<'a> for PdsAgnostic {
         type Error = crate::error::Error;
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.len() < 3 {
                 return Err(crate::error::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: 3,
                         have: bytes.len(),
                         what: "PdsAgnostic",
@@ -1028,12 +1026,12 @@ mod tests {
             a: u8,
         }
 
-        impl<'a> broadcast_common::Parse<'a> for Agnostic83 {
+        impl<'a> broadcast_core::Parse<'a> for Agnostic83 {
             type Error = crate::error::Error;
             fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
                 if bytes.len() < 3 {
                     return Err(crate::error::Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: 3,
                             have: bytes.len(),
                             what: "Agnostic83",
@@ -1217,7 +1215,7 @@ mod tests {
             payload: Vec<u8>,
         }
 
-        impl<'a> broadcast_common::Parse<'a> for MyCustomExt {
+        impl<'a> broadcast_core::Parse<'a> for MyCustomExt {
             type Error = crate::error::Error;
             fn parse(sel: &'a [u8]) -> crate::Result<Self> {
                 Ok(Self {

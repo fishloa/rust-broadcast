@@ -16,14 +16,14 @@ struct MyPrivate {
     x: u8,
 }
 
-impl<'a> broadcast_common::Parse<'a> for MyPrivate {
+impl<'a> broadcast_core::Parse<'a> for MyPrivate {
     type Error = dvb_si::Error;
 
     fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
         // Full descriptor: [tag, len, x_byte]
         if bytes.len() < 3 {
             return Err(dvb_si::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 3,
                     have: bytes.len(),
                     what: "MyPrivate",
@@ -55,13 +55,13 @@ struct MyPrivate2 {
     y: u8,
 }
 
-impl<'a> broadcast_common::Parse<'a> for MyPrivate2 {
+impl<'a> broadcast_core::Parse<'a> for MyPrivate2 {
     type Error = dvb_si::Error;
 
     fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
         if bytes.len() < 3 {
             return Err(dvb_si::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 3,
                     have: bytes.len(),
                     what: "MyPrivate2",
@@ -152,12 +152,12 @@ fn custom_registration_overrides_builtin() {
         _raw_len: u8,
     }
 
-    impl<'a> broadcast_common::Parse<'a> for MyShortEventOverride {
+    impl<'a> broadcast_core::Parse<'a> for MyShortEventOverride {
         type Error = dvb_si::Error;
         fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
             if bytes.len() < 2 {
                 return Err(dvb_si::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: 2,
                         have: bytes.len(),
                         what: "MyShortEventOverride",
@@ -265,7 +265,7 @@ fn registry_truncation_semantics_match() {
     assert_eq!(
         it.next().and_then(Result::err),
         Some(dvb_si::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 257,
                 have: 3,
                 what: "descriptor body in loop"

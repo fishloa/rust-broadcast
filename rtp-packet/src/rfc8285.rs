@@ -13,9 +13,9 @@
 //! interpretation is opt-in and profile-scoped).
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::header::HeaderExtension;
@@ -232,7 +232,7 @@ impl Serialize for OneByteElements<'_> {
         // `buf` untouched rather than half-serialized (r14-RTP-O1).
         for e in &self.0 {
             if !(ELEMENT_DATA_MIN..=ELEMENT_DATA_MAX).contains(&e.data.len()) {
-                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "OneByteElement::data.len()",
                     value: e.data.len() as u64,
                     reason: "must be 1..=16 bytes (RFC 8285 §4.2: len nibble = data.len() - 1)",
@@ -313,7 +313,7 @@ impl<'a> Parse<'a> for TwoByteElements<'a> {
             let len_pos = pos + 1;
             if bytes.len() <= len_pos {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: len_pos + 1,
                         have: bytes.len(),
                         what: "RFC 8285 two-byte extension element length byte",
@@ -356,7 +356,7 @@ impl Serialize for TwoByteElements<'_> {
         // Validate first (see `OneByteElements::serialize_into`).
         for e in &self.0 {
             if e.data.len() > EXT_FORM_DATA_MAX {
-                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "TwoByteElement::data.len()",
                     value: e.data.len() as u64,
                     reason: "exceeds the 8-bit length field maximum (255)",
@@ -683,7 +683,7 @@ mod tests {
         let mut out = vec![0u8; 4];
         assert!(matches!(
             elements.serialize_into(&mut out),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "OneByteElement::data.len()",
                 ..
             }))

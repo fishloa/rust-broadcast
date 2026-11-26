@@ -8,9 +8,9 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{be_u16, be_u32, i16_at};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// FourCC of the Opus config box.
 pub const DOPS_FOURCC: [u8; 4] = *b"dOps";

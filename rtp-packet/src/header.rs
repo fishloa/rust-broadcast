@@ -3,9 +3,9 @@
 //! transcription this module implements field-for-field.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::ids::{SeqNo, Ssrc};
@@ -184,7 +184,7 @@ impl<'a> Parse<'a> for RtpPacket<'a> {
         let version = byte0 >> VERSION_SHIFT;
         if version != RTP_VERSION {
             return Err(Error::UnsupportedVersion(
-                broadcast_common::error::UnsupportedVersion {
+                broadcast_core::error::UnsupportedVersion {
                     what: "RTP",
                     found: version,
                 },
@@ -297,14 +297,14 @@ impl Serialize for RtpPacket<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         if self.csrc.len() > MAX_CSRC_COUNT {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "csrc.len()",
                 value: self.csrc.len() as u64,
                 reason: "exceeds the 4-bit CC field maximum (15)",
             }));
         }
         if self.payload_type > MAX_PAYLOAD_TYPE {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "payload_type",
                 value: u64::from(self.payload_type),
                 reason: "exceeds the 7-bit PT field maximum (127)",
@@ -318,7 +318,7 @@ impl Serialize for RtpPacket<'_> {
             }
             let words = ext.length_words();
             if words > MAX_EXTENSION_WORDS {
-                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "extension.data.len()/4",
                     value: words as u64,
                     reason: "exceeds the 16-bit length field maximum",
@@ -333,7 +333,7 @@ impl Serialize for RtpPacket<'_> {
                 });
             }
             if pad.len() > MAX_PADDING_COUNT {
-                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "padding.len()",
                     value: pad.len() as u64,
                     reason: "exceeds the 8-bit padding-count field maximum (255)",
@@ -426,7 +426,7 @@ mod tests {
         assert_eq!(
             p.serialize_into(&mut out),
             Err(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need,
                     have: need - 1
                 }
@@ -453,7 +453,7 @@ mod tests {
         assert!(matches!(
             RtpPacket::parse(&out),
             Err(Error::UnsupportedVersion(
-                broadcast_common::error::UnsupportedVersion {
+                broadcast_core::error::UnsupportedVersion {
                     what: "RTP",
                     found: 1
                 }
@@ -479,7 +479,7 @@ mod tests {
         let mut out = vec![0u8; p.serialized_len()];
         assert!(matches!(
             p.serialize_into(&mut out),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "csrc.len()",
                 ..
             }))

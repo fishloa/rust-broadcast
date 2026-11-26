@@ -5,7 +5,7 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use isobmff::{ByteRange, Reader, ReaderConfig, SampleOrder, Step};
 
 #[global_allocator]

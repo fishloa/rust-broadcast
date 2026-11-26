@@ -3,7 +3,7 @@
 //! newtypes must be interchangeable without changing what a golden hash or a
 //! manifest renders.
 
-use broadcast_common::error::{
+use broadcast_core::error::{
     BufferTooShort, FieldOverflow, InvalidField, InvalidValue, OutputBufferTooSmall,
     UnsupportedVersion,
 };

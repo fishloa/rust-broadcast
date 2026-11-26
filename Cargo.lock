@@ -233,6 +233,7 @@ name = "atsc3"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "flate2",
  "roxmltree",
  "serde",
@@ -245,6 +246,7 @@ name = "atsc3-route"
 version = "0.7.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "rmt-flute",
  "serde",
  "test-fixtures",
@@ -399,6 +401,7 @@ version = "0.8.0"
 dependencies = [
  "broadcast-auth",
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "buffering-runtime",
  "dash-runtime",
@@ -439,6 +442,7 @@ name = "broadcast-common"
 version = "14.0.0"
 dependencies = [
  "base64 0.23.1",
+ "broadcast-core",
  "criterion",
  "erased-serde",
  "headers",
@@ -454,10 +458,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "broadcast-dash"
 version = "0.3.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "jiff",
  "quick-xml",
  "test-fixtures",
@@ -469,6 +481,7 @@ name = "broadcast-hls"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "jiff",
  "serde",
  "serde_json",
@@ -480,7 +493,7 @@ dependencies = [
 name = "broadcast-loudness"
 version = "0.10.0"
 dependencies = [
- "broadcast-common",
+ "broadcast-core",
  "hound",
  "libm",
  "test-alloc",
@@ -493,6 +506,7 @@ name = "broadcast-matroska"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-alloc",
  "test-fixtures",
@@ -504,6 +518,7 @@ name = "broadcast-smooth"
 version = "0.3.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -522,6 +537,7 @@ name = "buffering-runtime"
 version = "0.5.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "serde_json",
  "test-fixtures",
@@ -577,6 +593,7 @@ name = "caption-convert"
 version = "0.8.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "cc-data",
  "dvb-vbi",
  "hex",
@@ -620,6 +637,7 @@ name = "cc-data"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -775,6 +793,7 @@ name = "compliance-probe"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "dvb-conformance",
  "dvb-si",
@@ -815,7 +834,7 @@ checksum = "be95d4a884358a21a199689323c29e9256b4a1b315e22f183d155422041d3a9a"
 name = "container-probe"
 version = "0.6.0"
 dependencies = [
- "broadcast-common",
+ "broadcast-core",
  "isobmff",
  "mpeg-ps",
  "mpeg-ts",
@@ -1046,6 +1065,7 @@ name = "dash-runtime"
 version = "0.7.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-dash",
  "container-probe",
  "headers",
@@ -1153,6 +1173,7 @@ name = "dvb-bbframe"
 version = "16.0.1"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "criterion",
  "serde",
  "serde_json",
@@ -1166,6 +1187,7 @@ name = "dvb-ci"
 version = "0.14.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "dvb-si",
  "mpeg-ts",
  "serde",
@@ -1179,6 +1201,7 @@ name = "dvb-ci-runtime"
 version = "0.22.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "clap",
  "dvb-ci",
  "dvb-si",
@@ -1193,6 +1216,7 @@ name = "dvb-conformance"
 version = "16.0.1"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "dvb-si",
  "mpeg-ts",
  "serde",
@@ -1203,6 +1227,7 @@ dependencies = [
 name = "dvb-csa"
 version = "0.9.0"
 dependencies = [
+ "broadcast-core",
  "criterion",
  "mpeg-ts",
  "subtle",
@@ -1216,6 +1241,7 @@ name = "dvb-mabr"
 version = "0.7.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "quick-xml",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -1226,6 +1252,7 @@ name = "dvb-si"
 version = "16.0.1"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "criterion",
  "encoding_rs",
@@ -1246,6 +1273,7 @@ name = "dvb-simulcrypt"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "serde_json",
  "test-fixtures",
@@ -1257,6 +1285,7 @@ name = "dvb-stream"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "dvb-si",
  "dvb-t2mi",
@@ -1275,7 +1304,7 @@ dependencies = [
 name = "dvb-subtitle"
 version = "0.10.0"
 dependencies = [
- "broadcast-common",
+ "broadcast-core",
  "mpeg-pes",
  "serde",
  "test-fixtures",
@@ -1287,6 +1316,7 @@ name = "dvb-t2mi"
 version = "16.0.1"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "criterion",
  "dvb-bbframe",
@@ -1320,6 +1350,7 @@ name = "dvb-vbi"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "serde_json",
  "test-fixtures",
@@ -1331,6 +1362,7 @@ name = "dvr-runtime"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "bytes",
  "dvb-si",
@@ -1699,6 +1731,7 @@ name = "hls-runtime"
 version = "0.16.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "bytes",
  "container-probe",
@@ -2027,6 +2060,7 @@ name = "isobmff"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-alloc",
  "test-fixtures",
@@ -2039,7 +2073,7 @@ dependencies = [
 name = "isobmff-private-format"
 version = "0.1.0"
 dependencies = [
- "broadcast-common",
+ "broadcast-core",
  "isobmff",
 ]
 
@@ -2303,6 +2337,7 @@ name = "media-doctor"
 version = "0.18.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-dash",
  "broadcast-hls",
  "clap",
@@ -2337,6 +2372,7 @@ name = "media-plane"
 version = "0.14.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "bytes",
  "caption-convert",
@@ -2455,10 +2491,9 @@ checksum = "d696c0de8f9fcdaa3545b02749fa617c2e756e8e812e2d57c0b68d334aaf6367"
 [[package]]
 name = "motion-imagery-metadata"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07389d4be0d68d7a36a7701bb40114d39a0620cac64b219751788e82e94c68ea"
+source = "git+https://github.com/fishloa/motion-imagery-metadata?rev=9696ebfb1b25cb818565ede5ddf8dd4e7eb8d786#9696ebfb1b25cb818565ede5ddf8dd4e7eb8d786"
 dependencies = [
- "broadcast-common",
+ "broadcast-core",
  "jiff",
  "misb",
 ]
@@ -2468,6 +2503,7 @@ name = "mpeg-pes"
 version = "0.10.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -2478,6 +2514,7 @@ name = "mpeg-ps"
 version = "0.10.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "mpeg-pes",
  "serde",
  "test-fixtures",
@@ -2489,6 +2526,7 @@ name = "mpeg-ts"
 version = "0.10.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "isobmff",
  "serde",
@@ -2507,6 +2545,7 @@ dependencies = [
  "broadcast-auth",
  "broadcast-client",
  "broadcast-common",
+ "broadcast-core",
  "broadcast-dash",
  "broadcast-hls",
  "broadcast-smooth",
@@ -2796,6 +2835,7 @@ name = "playout-runtime"
 version = "0.8.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "isobmff",
  "scte35-splice",
  "serde",
@@ -3096,6 +3136,7 @@ name = "rdd29"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "serde_json",
  "test-fixtures",
@@ -3209,6 +3250,7 @@ name = "rist-runtime"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "rtp-packet",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -3249,6 +3291,7 @@ name = "rmt-flute"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -3410,6 +3453,7 @@ name = "rtmp-runtime"
 version = "0.12.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "futures-util",
  "percent-encoding",
@@ -3429,6 +3473,7 @@ name = "rtp-packet"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-alloc",
  "test-fixtures",
@@ -3630,7 +3675,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "scte104"
 version = "0.10.0"
 dependencies = [
- "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -3641,6 +3686,7 @@ name = "scte35-splice"
 version = "8.0.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "dvb-t2mi",
  "mpeg-ts",
  "serde",
@@ -3870,6 +3916,7 @@ name = "smooth-runtime"
 version = "0.4.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-smooth",
  "bytes",
  "http",
@@ -3901,6 +3948,7 @@ dependencies = [
  "aes 0.9.4",
  "aes-kw",
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "ctr 0.10.1",
  "getrandom 0.4.3",
@@ -3924,6 +3972,7 @@ name = "ssai-runtime"
 version = "0.8.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "isobmff",
  "scte35-splice",
@@ -3938,6 +3987,7 @@ name = "st12-1"
 version = "0.8.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror 2.0.21",
 ]
@@ -3947,6 +3997,7 @@ name = "st2022"
 version = "0.6.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -3957,6 +4008,7 @@ name = "st291"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "mpeg-pes",
  "rtp-packet",
  "serde",
@@ -3969,6 +4021,7 @@ name = "st337"
 version = "0.8.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -3979,6 +4032,7 @@ name = "st377-1"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -4085,6 +4139,7 @@ name = "test-harness"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "dash-runtime",
  "headers",
  "isobmff",
@@ -4182,6 +4237,7 @@ name = "timed-metadata"
 version = "0.12.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "cc-data",
  "dvb-vbi",
@@ -4407,6 +4463,7 @@ version = "0.33.0"
 dependencies = [
  "aes 0.9.4",
  "broadcast-common",
+ "broadcast-core",
  "broadcast-dash",
  "broadcast-hls",
  "broadcast-matroska",
@@ -4458,6 +4515,7 @@ name = "ts-fix"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "clap",
  "dvb-conformance",
  "dvb-si",
@@ -4475,6 +4533,7 @@ name = "ttml-subtitle"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "quick-xml",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -4497,6 +4556,7 @@ name = "ule"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -4709,6 +4769,7 @@ dependencies = [
  "axum",
  "broadcast-auth",
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "cipher 0.5.2",
  "ctr 0.10.1",
@@ -4930,6 +4991,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 name = "workspace-guards"
 version = "0.1.0"
 dependencies = [
+ "broadcast-core",
  "serde_json",
 ]
 

@@ -50,8 +50,8 @@
 use crate::error::{Error, Result};
 use crate::text::LANG_CODE_LEN;
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_bits, fit_u8};
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::len::{fit_bits, fit_u8};
+use broadcast_core::reserved::ReservedOnes;
 
 /// Bit width of a 1-bit field.
 pub const WIDTH_1: u32 = 1;
@@ -139,7 +139,7 @@ impl<'a> Reader<'a> {
     }
     fn u8(&mut self) -> Result<u8> {
         let b = *self.body.get(self.pos).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: self.pos + 1,
                 have: self.body.len(),
                 what: self.what,
@@ -151,7 +151,7 @@ impl<'a> Reader<'a> {
     fn take(&mut self, len: usize) -> Result<&'a [u8]> {
         let end = self.pos + len;
         let s = self.body.get(self.pos..end).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: end,
                 have: self.body.len(),
                 what: self.what,
@@ -1323,7 +1323,7 @@ impl DrcScope {
         }
     }
 }
-broadcast_common::impl_spec_display!(DrcScope);
+broadcast_core::impl_spec_display!(DrcScope);
 
 /// One `drcInstructionsUniDrc` entry of the DRC and loudness descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2121,7 +2121,7 @@ mod tests {
     #[test]
     fn text_label_truncation_reports_the_next_byte_needed() {
         use crate::descriptors::mpeg2_extension::Mpeg2ExtensionDescriptor;
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         // scene_info_id 5, one language, "eng", then the group-count byte is
         // missing: the reader stops at pos 5 of a 5-byte body.
@@ -2140,7 +2140,7 @@ mod tests {
     #[test]
     fn text_label_group_reserved_wider_than_one_bit_is_rejected() {
         use crate::descriptors::mpeg2_extension::{Mpeg2ExtensionBody, Mpeg2ExtensionDescriptor};
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
 
         let mut group = TextLabelEntry::group(1, Vec::new());
         group.reserved = 2;
@@ -2203,7 +2203,7 @@ mod tests {
     #[test]
     fn drc_target_loudness_packs_depends_on_drc_set() {
         use crate::descriptors::mpeg2_extension::{Mpeg2ExtensionBody, Mpeg2ExtensionDescriptor};
-        use broadcast_common::{Parse, Serialize};
+        use broadcast_core::{Parse, Serialize};
 
         let mut drc = DrcInstructions::new(DrcScope::Plain(0), 1, 2, 0);
         drc.target_loudness = Some(DrcTargetLoudness::new(10, 0x2A, 0));

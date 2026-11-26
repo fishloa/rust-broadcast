@@ -1,6 +1,6 @@
 //! Dummy codec configs and track specs shared by the transmux segmenter tests.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, DecoderConfigDescriptor,
     DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,

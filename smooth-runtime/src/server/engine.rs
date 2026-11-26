@@ -1052,7 +1052,7 @@ mod tests {
         Timescale::try_new(value).expect("a non-zero timescale")
     }
 
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use std::num::NonZeroUsize;
     use std::time::Duration;
 
@@ -1079,7 +1079,7 @@ mod tests {
     /// The SPS's coded height.
     const SPROP_HEIGHT: u32 = 480;
     /// Video timescale: the H.264 clock.
-    const VIDEO_TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
+    const VIDEO_TIMESCALE: Timescale = broadcast_core::timescale!(90_000);
     /// A 30 fps frame duration in `VIDEO_TIMESCALE` ticks.
     const FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
     /// Frames per segment: two seconds of video.
@@ -1089,7 +1089,7 @@ mod tests {
     /// Segments published per test route.
     const SEGMENTS: u32 = 2;
     /// The AAC media timescale, in ticks per second.
-    const AUDIO_TIMESCALE: Timescale = broadcast_common::timescale!(48_000);
+    const AUDIO_TIMESCALE: Timescale = broadcast_core::timescale!(48_000);
     /// AAC-LC frame duration, in `AUDIO_TIMESCALE` ticks (1024 samples).
     const AAC_FRAME_DUR: u32 = 1024;
     /// Sample rate the AAC config reports.
@@ -1896,7 +1896,7 @@ mod tests {
         assert_eq!(level.sampling_rate, Some(SAMPLE_RATE));
         assert_eq!(level.channels, Some(CHANNELS));
         assert_eq!(level.audio_tag, Some(AUDIO_TAG_AAC));
-        let asc = <AudioSpecificConfig as broadcast_common::Parse>::parse(&ASC_48K_STEREO)
+        let asc = <AudioSpecificConfig as broadcast_core::Parse>::parse(&ASC_48K_STEREO)
             .expect("asc parses");
         assert_eq!(asc.effective_sampling_frequency(), Some(SAMPLE_RATE));
         assert_eq!(level.codec_private_data, ASC_48K_STEREO.to_vec());

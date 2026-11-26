@@ -121,7 +121,7 @@
 //!
 //! ```rust
 //! use isobmff::{parse_box, BoxHeader, BoxType};
-//! use broadcast_common::Parse;
+//! use broadcast_core::Parse;
 //!
 //! // Parse a simple ftyp box header.
 //! let bytes = [0, 0, 0, 12, b'f', b't', b'y', b'p', 0, 0, 0, 0];
@@ -285,8 +285,8 @@ pub use annexb::{
     iter_length_prefixed_nals_with, length_prefixed_to_annexb, normalise_nal_length_size,
 };
 pub use au::{AccessUnitSplitter, split_access_units};
-pub use broadcast_common::CencScheme;
 pub use broadcast_common::klv::KlvItem;
+pub use broadcast_core::CencScheme;
 #[cfg(feature = "captions")]
 pub use caption_detect::{CaptionDetector, DetectedCaption, declared_caption_services};
 #[cfg(feature = "cenc")]

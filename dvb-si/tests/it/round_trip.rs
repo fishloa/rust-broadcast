@@ -1,7 +1,7 @@
 //! Round-trip tests: parse → serialize → parse must produce identical bytes
 //! and an identical struct for every parser type in the crate.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::section::Section;
 
 #[test]

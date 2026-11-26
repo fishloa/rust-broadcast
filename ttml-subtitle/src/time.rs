@@ -106,7 +106,7 @@ impl TimeBase {
     }
 }
 
-broadcast_common::impl_spec_display!(TimeBase);
+broadcast_core::impl_spec_display!(TimeBase);
 
 /// `ttp:dropMode` values — TTML2 §7.2.4.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,7 +131,7 @@ impl DropMode {
     }
 }
 
-broadcast_common::impl_spec_display!(DropMode);
+broadcast_core::impl_spec_display!(DropMode);
 
 /// `ttp:markerMode` values — TTML2 §7.2.6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,7 +153,7 @@ impl MarkerMode {
     }
 }
 
-broadcast_common::impl_spec_display!(MarkerMode);
+broadcast_core::impl_spec_display!(MarkerMode);
 
 /// `ttp:clockMode` values — TTML2 §7.2.2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,7 +178,7 @@ impl ClockMode {
     }
 }
 
-broadcast_common::impl_spec_display!(ClockMode);
+broadcast_core::impl_spec_display!(ClockMode);
 
 /// A parsed time expression.
 ///
@@ -250,7 +250,7 @@ impl TimeMetric {
     }
 }
 
-broadcast_common::impl_spec_display!(TimeMetric);
+broadcast_core::impl_spec_display!(TimeMetric);
 
 /// Wallclock-time forms — TTML2 §12.3.1.
 #[derive(Debug, Clone, PartialEq)]

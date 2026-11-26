@@ -14,8 +14,8 @@
 //! The checked readers return [`BufferTooShort`] so a caller converts it into
 //! its own error type through the `#[from]` wrapper every wire crate declares.
 
-use crate::error::BufferTooShort;
 use alloc::vec::Vec;
+use broadcast_core::error::BufferTooShort;
 
 /// Byte width of the 24-bit fields (ISO/IEC 14496-12:2026 `size` prefixes,
 /// `esds` lengths).

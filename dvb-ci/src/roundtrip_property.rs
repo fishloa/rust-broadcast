@@ -6,7 +6,7 @@
 //! fails the build for it (no `#[ignore]`, no allowlist).
 
 use alloc::vec::Vec;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::Result;
 use crate::tag::ApduTag;

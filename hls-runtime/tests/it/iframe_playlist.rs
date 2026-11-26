@@ -5,7 +5,8 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use broadcast_common::{Parse, Timestamp};
+use broadcast_common::Timestamp;
+use broadcast_core::Parse;
 use broadcast_hls::MediaPlaylist;
 use bytes::Bytes;
 use hls_runtime::server::{

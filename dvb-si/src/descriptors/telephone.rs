@@ -19,9 +19,9 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for telephone_descriptor.
 pub const TAG: u8 = 0x57;
@@ -242,27 +242,27 @@ impl Serialize for TelephoneDescriptor<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
-        let country_prefix_len = broadcast_common::len::fit_bits(
+        let country_prefix_len = broadcast_core::len::fit_bits(
             self.country_prefix.raw().len() as u64,
             COUNTRY_PREFIX_LENGTH_BITS,
             "country_prefix",
         )? as u8;
-        let intl_area_len = broadcast_common::len::fit_bits(
+        let intl_area_len = broadcast_core::len::fit_bits(
             self.international_area_code.raw().len() as u64,
             INTL_AREA_CODE_LENGTH_BITS,
             "international_area_code",
         )? as u8;
-        let operator_code_len = broadcast_common::len::fit_bits(
+        let operator_code_len = broadcast_core::len::fit_bits(
             self.operator_code.raw().len() as u64,
             OPERATOR_CODE_LENGTH_BITS,
             "operator_code",
         )? as u8;
-        let national_area_len = broadcast_common::len::fit_bits(
+        let national_area_len = broadcast_core::len::fit_bits(
             self.national_area_code.raw().len() as u64,
             NATIONAL_AREA_CODE_LENGTH_BITS,
             "national_area_code",
         )? as u8;
-        let core_number_len = broadcast_common::len::fit_bits(
+        let core_number_len = broadcast_core::len::fit_bits(
             self.core_number.raw().len() as u64,
             CORE_NUMBER_LENGTH_BITS,
             "core_number",
@@ -274,7 +274,7 @@ impl Serialize for TelephoneDescriptor<'_> {
             } else {
                 0
             }
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.connection_type,
                 CONNECTION_TYPE_MASK,
                 "connection_type",

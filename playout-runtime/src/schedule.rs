@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 
 /// A media position: ticks on the schedule's own timescale.
 ///
@@ -64,7 +64,7 @@ impl EntryKind {
         }
     }
 }
-broadcast_common::impl_spec_display!(EntryKind);
+broadcast_core::impl_spec_display!(EntryKind);
 
 /// Caller-supplied opaque identity for a source's codec configuration (its
 /// `avcC`/`hvcC`/`esds`, etc.), used only for equality comparison.

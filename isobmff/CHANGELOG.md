@@ -33,6 +33,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- The wire-format contract types now come from `broadcast-core`.
+
 - `registry::BoxDef` and `registry::RegisteredBox` require `Send + Sync`, so a `Reader` holding registered values can cross threads (a tokio task) and one registry can serve many readers.
 - `writer::FragmentOptions` gains `layout` and `position`, `writer::FragmentTrack` gains `trex`, and `writer::Fragment` gains `moof_offset`.
 - `writer::FragmentedWriter::trailer` appends the regenerated `mfra` when the index layout asks for one.

@@ -6,7 +6,7 @@
 //! instead of comparing; a run with `CI` set refuses to write.
 #![cfg(feature = "std")]
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use broadcast_smooth::SmoothManifest;
 use std::fs;
 use std::path::{Path, PathBuf};

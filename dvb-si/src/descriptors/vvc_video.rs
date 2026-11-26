@@ -15,7 +15,7 @@ use super::hdr_wcg_idc::HdrWcgIdc;
 use crate::error::Result;
 use crate::h222_bits::{BITS_PER_BYTE, BitReader, BitWriter, impl_h222_descriptor};
 use alloc::vec::Vec;
-use broadcast_common::reserved::{ReservedOnes, ReservedZero};
+use broadcast_core::reserved::{ReservedOnes, ReservedZero};
 
 /// Descriptor tag of `VVC_video_descriptor` (Table 2-45: 57).
 pub const TAG: u8 = 0x39;
@@ -313,7 +313,7 @@ impl_h222_descriptor!(VvcVideoDescriptor, TAG, "VvcVideoDescriptor", "VVC_VIDEO"
 mod tests {
     use super::*;
     use alloc::vec;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     #[test]
     fn spec_vector_with_subprofile_and_temporal_subset() {

@@ -79,7 +79,7 @@ impl TypeField {
     }
 }
 
-broadcast_common::impl_spec_display!(TypeField);
+broadcast_core::impl_spec_display!(TypeField);
 
 #[cfg(test)]
 mod tests {

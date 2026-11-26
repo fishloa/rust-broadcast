@@ -6,7 +6,7 @@ use core::time::Duration;
 
 use broadcast_common::clock33::{PCR_TIMESCALE, pcr_signed_distance};
 use broadcast_common::stage::Timestamp;
-use broadcast_common::timescale::{Rounding, Timescale, rescale};
+use broadcast_core::timescale::{Rounding, Timescale, rescale};
 use buffering_runtime::input_log::Input;
 use buffering_runtime::{
     BufferController, Clock27, ControllerConfig, Event as RtEvent, Hint, StallMemorySnapshot,

@@ -25,7 +25,7 @@
 //! decode SCTE-35 or emsg (that's `scte35-splice` / `isobmff`'s job).
 
 use broadcast_common::clock33::{Clock33, WRAP_33BIT};
-use broadcast_common::timescale::{self, Rounding, Timescale};
+use broadcast_core::timescale::{self, Rounding, Timescale};
 use core::time::Duration;
 
 use crate::error::{Error, Result};
@@ -58,7 +58,7 @@ impl SnapDirection {
         }
     }
 }
-broadcast_common::impl_spec_display!(SnapDirection);
+broadcast_core::impl_spec_display!(SnapDirection);
 
 /// The result of conditioning one splice point against a set of candidate
 /// boundaries (segment starts, or sync-sample/IDR timestamps).

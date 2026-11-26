@@ -32,7 +32,7 @@
 //! `tests/it/das_nibble_order.rs`; the evidence search is recorded in
 //! `private/specs-verified/scte/scte35-splice/dvb_ta/compact-scte35.md`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::dvb_ta::EquivalentSegmentationType;
 use scte35_splice::dvb_ta::{CompactDas, CompactScte35, CompactSpliceInsert, CompactTimeSignal};
 

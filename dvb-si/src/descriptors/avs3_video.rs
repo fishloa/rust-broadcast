@@ -34,9 +34,9 @@
 
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use broadcast_common::len::{fit_bits, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{fit_bits, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for AVS3_video_descriptor (T/AI 109.6 Table 8: 209).
 pub const TAG: u8 = 0xD1;
@@ -183,7 +183,7 @@ impl Avs3FrameRateCode {
         }
     }
 }
-broadcast_common::impl_spec_display!(Avs3FrameRateCode, Reserved);
+broadcast_core::impl_spec_display!(Avs3FrameRateCode, Reserved);
 
 /// AVS3_video_descriptor (T/AI 109.6 Table 9 / GY/T 420 Table 6).
 ///

@@ -17,9 +17,9 @@
 //! use std::sync::Arc;
 //! use dvb_si::owned::Owned;
 //! use dvb_si::tables::pmt::PmtSection;
-//! use broadcast_common::Parse;
+//! use broadcast_core::Parse;
 //!
-//! # use broadcast_common::Serialize;
+//! # use broadcast_core::Serialize;
 //! # use dvb_si::descriptors::DescriptorLoop;
 //! # use dvb_si::tables::pmt::{StreamType, PmtStream};
 //! # use mpeg_ts::pid::Pid;

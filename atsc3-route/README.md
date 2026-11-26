@@ -42,7 +42,7 @@ It does **not**:
 
 ```rust
 use atsc3_route::{Codepoint, RoutePacket};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 let cci = [0u8; 4];
 let tsi = rmt_flute::Tsi::new(3000, 4).unwrap();

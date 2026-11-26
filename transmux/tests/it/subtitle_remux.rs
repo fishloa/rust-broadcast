@@ -6,8 +6,8 @@
 //! AVC + `stpp`/TTML; see PROVENANCE.md there). `wvtt` has no real producer
 //! available (ffmpeg cannot write it), so it is a spec-vector round trip.
 
-use broadcast_common::Serialize;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Serialize;
+use broadcast_core::timescale::Timescale;
 use isobmff::{VttCueBox, WvttSampleEntry};
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};

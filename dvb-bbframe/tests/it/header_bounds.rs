@@ -3,7 +3,7 @@
 //! DFL's accepted ceiling is the DVB-S2 normal-FECFRAME bound (EN 302 307-1
 //! §5.1.4); the NM per-UP stride comes from UPL/ISSYI/NPD (EN 302 755 §5.1.8).
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_bbframe::crc::crc8;
 use dvb_bbframe::error::Error;
 use dvb_bbframe::header::{BBHEADER_LEN, Bbheader, DFL_MAX_BITS, Matype, Mode, TsGs};

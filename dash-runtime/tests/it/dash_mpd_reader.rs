@@ -2,7 +2,7 @@
 //! the SegmentTemplate each level merges in, and how an empty BaseURL drops
 //! out of the chain. Ported from transmux's second reader (issue #2340).
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

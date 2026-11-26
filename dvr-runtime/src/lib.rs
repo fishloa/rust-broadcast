@@ -188,7 +188,7 @@ impl ArchiveContainer {
     }
 }
 
-broadcast_common::impl_spec_display!(ArchiveContainer);
+broadcast_core::impl_spec_display!(ArchiveContainer);
 
 /// A period's own number: the `N` in `pN.m4s`/`pN.m3u8`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]

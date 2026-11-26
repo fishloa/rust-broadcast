@@ -44,7 +44,7 @@ impl StarveKind {
     }
 }
 
-broadcast_common::impl_spec_display!(StarveKind);
+broadcast_core::impl_spec_display!(StarveKind);
 
 /// Session event (T2-T15).
 ///

@@ -13,7 +13,7 @@
 //! Revert-verified: with the `crc2` check in `Ec3SyncframeInfo::
 //! from_ac3_independent` disabled, both tests fail (the false headers parse
 //! and the demuxed track loses its eighth frame).
-use broadcast_common::error::InvalidValue;
+use broadcast_core::error::InvalidValue;
 use transmux::Error;
 use transmux::ac3_syncframe::{Ac3SyncframeInfo, Ec3SyncframeInfo};
 use transmux::pipeline::CodecConfig;

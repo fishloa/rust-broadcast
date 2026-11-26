@@ -703,14 +703,14 @@ mod tests {
         let packets = transport.packetise(&payload).expect("packetise");
         assert_eq!(packets.len(), 2, "a full row, then the one leftover packet");
         let first =
-            <rtp_packet::RtpPacket as broadcast_common::Parse>::parse(&packets[0]).expect("parse");
+            <rtp_packet::RtpPacket as broadcast_core::Parse>::parse(&packets[0]).expect("parse");
         assert_eq!(first.payload_type, MP2T_PT, "static MP2T payload type");
         assert_eq!(first.sequence_number.get(), 0x1234);
         assert_eq!(first.timestamp, 7_500);
         assert_eq!(first.ssrc.get(), 0xdead_beef);
         let mut reassembled = first.payload.to_vec();
         reassembled.extend_from_slice(
-            <rtp_packet::RtpPacket as broadcast_common::Parse>::parse(&packets[1])
+            <rtp_packet::RtpPacket as broadcast_core::Parse>::parse(&packets[1])
                 .expect("parse")
                 .payload,
         );

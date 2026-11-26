@@ -13,7 +13,7 @@
 //! `line_number`(11) + `horizontal_offset`(12) + `DID`(10) + `SDID`(10) +
 //! `data_count`(10) + (`data_count & 0xFF`)×`user_data_word`(10) +
 //! `checksum_word`(10), then `'1'` bits padding up to the next byte boundary
-//! (§4.2, Table 2). [`broadcast_common::bits`] provides the MSB-first reader/writer.
+//! (§4.2, Table 2). [`broadcast_core::bits`] provides the MSB-first reader/writer.
 //!
 //! ## `data_count` loop counter (§4.2.1) — the easy-to-misimplement point
 //! `DID`, `SDID`, `data_count`, every `user_data_word` and `checksum_word` are
@@ -34,9 +34,9 @@
 //! field layout is unchanged by this — see `anc_content`'s module doc for why.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_u16, need_out};
+use broadcast_core::len::{fit_u16, need_out};
 
-use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_core::bits::{BitReader, BitWriter};
 
 use crate::anc_content::{AncContent, check_field_width};
 use crate::error::{Error, Result};
@@ -164,7 +164,7 @@ impl AncPacket {
     /// # Errors
     /// [`Error::FieldOverflow`] if there are more than 255 user data words.
     pub fn data_count(&self) -> Result<u16> {
-        let count = broadcast_common::len::fit_u8(self.user_data_words.len(), "Data_Count")?;
+        let count = broadcast_core::len::fit_u8(self.user_data_words.len(), "Data_Count")?;
         Ok(AncContent::with_parity(count))
     }
 
@@ -271,7 +271,7 @@ impl AncPacket {
         // pattern this crate validates.
         let leading = r.read_bits(W_LEADING_ZEROS)?;
         if leading != 0 {
-            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "ANC record leading '000000' bits",
                 expected: 0,
                 found: leading,
@@ -304,7 +304,7 @@ impl AncPacket {
             let pad_value = r.read_bits(pad as u32)?;
             let all_ones = (1u64 << pad) - 1;
             if pad_value != all_ones {
-                return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                     field: "ANC record byte-alignment '1' padding",
                     expected: all_ones,
                     found: pad_value,
@@ -365,7 +365,7 @@ impl AncDataPacket {
     /// `data_alignment_indicator` `'1'`, PTS-only, no other optional fields).
     fn pes_header(&self) -> Result<mpeg_pes::PesHeader<'static>> {
         let pts = mpeg_pes::Pts::try_new(self.pts).map_err(|c| {
-            Error::FieldOverflow(broadcast_common::error::FieldOverflow {
+            Error::FieldOverflow(broadcast_core::error::FieldOverflow {
                 field: "PTS",
                 value: c.value,
                 max: broadcast_common::clock33::WRAP_33BIT - 1,
@@ -396,14 +396,14 @@ impl AncDataPacket {
     /// [`Error::ReservedBits`] naming the field that differed.
     fn check_pinned_header(h: &mpeg_pes::PesHeader<'_>) -> Result<()> {
         if h.scrambling_control != mpeg_pes::ScramblingControl::NotScrambled {
-            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "PES_scrambling_control",
                 expected: 0,
                 found: u64::from(h.scrambling_control.to_bits()),
             }));
         }
         if !h.data_alignment_indicator {
-            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "data_alignment_indicator",
                 expected: u64::from(DATA_ALIGNMENT_INDICATOR_VALUE),
                 found: 0,
@@ -418,7 +418,7 @@ impl AncDataPacket {
             || h.pes_extension.is_some()
             || !h.header_stuffing.is_empty()
         {
-            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "ST 2038 optional PES header fields beyond the PTS",
                 expected: 0,
                 found: 1,
@@ -446,7 +446,7 @@ impl AncDataPacket {
         let header =
             packet
                 .header
-                .ok_or(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                .ok_or(Error::ReservedBits(broadcast_core::error::ReservedBits {
                     field: "ANC PES optional header",
                     expected: 1,
                     found: 0,
@@ -454,7 +454,7 @@ impl AncDataPacket {
         Self::check_pinned_header(&header)?;
         let pts = header
             .pts
-            .ok_or(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            .ok_or(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "ANC PES PTS",
                 expected: 1,
                 found: 0,
@@ -481,7 +481,7 @@ impl AncDataPacket {
         let stuffing_bytes = payload.len() - pos;
         for &byte in &payload[pos..] {
             if byte != STUFFING_BYTE {
-                return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                     field: "stuffing_byte",
                     expected: u64::from(STUFFING_BYTE),
                     found: u64::from(byte),

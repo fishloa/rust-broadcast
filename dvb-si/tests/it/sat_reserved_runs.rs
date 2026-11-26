@@ -11,8 +11,8 @@
 //! 11d, 11e, 11g, 11h) and the byte check below is derived by hand from
 //! Table 11e, not from this crate's serializer.
 
-use broadcast_common::reserved::ReservedZero;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::reserved::ReservedZero;
+use broadcast_core::{Parse, Serialize};
 use dvb_si::tables::sat::*;
 
 fn section(stid: u8, body: SatBody) -> Vec<u8> {

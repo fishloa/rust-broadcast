@@ -43,7 +43,7 @@ fn manifest_declares_protection_matches_tag_boundary_not_substring() {
 /// Serialize one ISOBMFF box (`type` + `body`) using the crate's own
 /// header writer, so the fixtures below are real, parseable boxes.
 fn box_bytes(box_type: [u8; 4], body: &[u8]) -> Vec<u8> {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     let header = isobmff::box_types::BoxHeader::new(
         (isobmff::box_types::BOX_HEADER_MIN_SIZE + body.len()) as u64,
         isobmff::box_types::BoxType::from_bytes(box_type),
@@ -110,7 +110,7 @@ fn fragment_looks_encrypted_walks_the_moof_tree() {
     let mut uuid_body = PIFF_SAMPLE_ENCRYPTION_UUID.to_vec();
     uuid_body.extend_from_slice(&[0u8; 4]); // FullBox header
     // Build the uuid box with the extended type.
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     let hdr = isobmff::box_types::BoxHeader::new(
         (isobmff::box_types::BOX_HEADER_MIN_SIZE + 16 + uuid_body.len()) as u64,
         isobmff::box_types::BoxType::from_bytes(*b"uuid"),

@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 
 use isobmff::box_support::OpaqueBox;
 use isobmff::plan::{MovieShell, OwnedPlan, PlanBuilder, PlanSample};
@@ -140,7 +140,7 @@ fn udta_payload(bytes: &[u8]) -> Vec<u8> {
 
 /// The registered parse of one hand-built box, as the writer takes it.
 fn registered<T: isobmff::registry::BoxDef>(value: &T) -> isobmff::registry::RegisteredEntry {
-    let bytes = broadcast_common::Serialize::try_to_bytes(value).expect("box bytes");
+    let bytes = broadcast_core::Serialize::try_to_bytes(value).expect("box bytes");
     acme_registry()
         .parse(T::PARENT, &bytes)
         .expect("parse")
@@ -150,7 +150,7 @@ fn registered<T: isobmff::registry::BoxDef>(value: &T) -> isobmff::registry::Reg
 /// The source movie shell with the calibration atom appended to its `udta`.
 fn shell_with_calibration(shell: &MovieShell) -> MovieShell {
     let mut shell = shell.clone();
-    let calibration = broadcast_common::Serialize::try_to_bytes(&calibration()).expect("acal");
+    let calibration = broadcast_core::Serialize::try_to_bytes(&calibration()).expect("acal");
     for boxed in &mut shell.opaque {
         if boxed.box_type == *b"udta" {
             boxed.data.extend_from_slice(&calibration);

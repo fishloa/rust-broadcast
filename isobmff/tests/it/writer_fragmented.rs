@@ -8,7 +8,7 @@
 //! `MovieFragmentBox` + `frag_offsets` so every sample's bytes, duration, sync
 //! flag and composition offset is compared with the source.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::box_types::{BoxIter, find_box};
 use isobmff::init_segment::MovieBox;
 use isobmff::limits::Limits;
@@ -111,7 +111,7 @@ fn parse_source(file: &[u8], limits: &Limits) -> Vec<SourceTrack> {
 }
 
 fn write_fragmented(tracks: &[SourceTrack]) -> Vec<u8> {
-    let movie_timescale = broadcast_common::timescale::Timescale::try_new(1000).expect("timescale");
+    let movie_timescale = broadcast_core::timescale::Timescale::try_new(1000).expect("timescale");
     let setups: Vec<TrackSetup> = tracks.iter().map(|t| t.setup.clone()).collect();
     let mut writer: FragmentedWriter =
         Writer::fragmented(setups, movie_timescale, Limits::default()).expect("writer");
@@ -317,7 +317,7 @@ fn raw_video_setup() -> TrackSetup {
         TrackId::new(1),
         *b"vide",
         b"VideoHandler\0".to_vec(),
-        broadcast_common::timescale::Timescale::try_new(1000).expect("timescale"),
+        broadcast_core::timescale::Timescale::try_new(1000).expect("timescale"),
         SampleEntry::Raw {
             fourcc: *b"avc1",
             body: vec![0, 0, 0, 8, b'a', b'v', b'c', b'1'],
@@ -330,7 +330,7 @@ fn a_fragment_over_the_cap_is_rejected_before_it_grows() {
     let limits = Limits::default().with_max_fragment_bytes(64);
     let mut writer = Writer::fragmented(
         vec![raw_video_setup()],
-        broadcast_common::timescale::Timescale::try_new(1000).expect("timescale"),
+        broadcast_core::timescale::Timescale::try_new(1000).expect("timescale"),
         limits,
     )
     .expect("writer");
@@ -362,7 +362,7 @@ fn a_fragment_over_the_cap_is_rejected_before_it_grows() {
 fn init_and_one_fragment_parse_back() {
     let mut writer = Writer::fragmented(
         vec![raw_video_setup()],
-        broadcast_common::timescale::Timescale::try_new(1000).expect("timescale"),
+        broadcast_core::timescale::Timescale::try_new(1000).expect("timescale"),
         Limits::default(),
     )
     .expect("writer");
@@ -421,7 +421,7 @@ fn a_second_description_entry_is_stated_in_the_tfhd() {
     setup.entry = entry;
     let mut writer = Writer::fragmented(
         vec![setup],
-        broadcast_common::timescale::Timescale::try_new(1000).expect("timescale"),
+        broadcast_core::timescale::Timescale::try_new(1000).expect("timescale"),
         Limits::default(),
     )
     .expect("writer");
@@ -967,7 +967,7 @@ fn moof_offsets(bytes: &[u8]) -> Vec<u64> {
 fn sample_file(fragments: u32, per: usize, compact: bool, mfra: bool, sidx: bool) -> Vec<u8> {
     let mut writer = Writer::fragmented(
         vec![raw_video_setup()],
-        broadcast_common::timescale::Timescale::try_new(1_000).expect("timescale"),
+        broadcast_core::timescale::Timescale::try_new(1_000).expect("timescale"),
         Limits::default(),
     )
     .expect("fragmented writer");
@@ -1122,7 +1122,7 @@ fn the_regenerated_sidx_indexes_the_written_fragments() {
         .filter_map(|step| step.ok())
         .find(|step| step.header.box_type.is(b"sidx"))
         .expect("the writer emitted a sidx");
-    let index = <isobmff::timing::SegmentIndexBox as broadcast_common::Parse>::parse(sidx.bytes)
+    let index = <isobmff::timing::SegmentIndexBox as broadcast_core::Parse>::parse(sidx.bytes)
         .expect("sidx parses");
     assert_eq!(index.references.len(), offsets.len());
     assert_eq!(index.reference_id, 1, "the first track's id");

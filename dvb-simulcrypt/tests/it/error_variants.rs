@@ -1,5 +1,5 @@
-use broadcast_common::Serialize;
-use broadcast_common::error::{BufferTooShort, FieldOverflow};
+use broadcast_core::Serialize;
+use broadcast_core::error::{BufferTooShort, FieldOverflow};
 use dvb_simulcrypt::{Error, Interface, Parameter, SimulcryptMessage};
 
 fn fixture() -> Vec<u8> {

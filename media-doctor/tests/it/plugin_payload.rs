@@ -12,7 +12,7 @@ use std::process::Command;
 use std::time::Duration;
 
 use broadcast_common::Timestamp;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use test_harness::collect::drive;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::TsMuxStage;

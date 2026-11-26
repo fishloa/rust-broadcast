@@ -9,7 +9,7 @@ use crate::aac_asc::AudioSpecificConfig;
 use crate::error::Result;
 use crate::sps::rfc6381_vvc1;
 use alloc::string::String;
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
 use isobmff::mp4esds::EsdsBox;
 use isobmff::vvc_config::VvcDecoderConfigurationRecord;

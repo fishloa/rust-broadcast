@@ -4,7 +4,7 @@
 //!   cargo run --example parse_hbrmt -- <header.bin>
 
 use broadcast_common::bounded::{Limit, read_file_bounded};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use std::env;
 use std::path::Path;
 use std::process;

@@ -6,9 +6,9 @@
 use crate::descriptors::{AitDescriptorLoop, DescriptorLoop};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// AIT table_id (ETSI TS 102 809 §5.3.4).
 pub const TABLE_ID: u8 = 0x74;
@@ -129,7 +129,7 @@ impl ControlCode {
         }
     }
 }
-broadcast_common::impl_spec_display!(ControlCode, Unallocated);
+broadcast_core::impl_spec_display!(ControlCode, Unallocated);
 
 /// Application type — ETSI TS 102 809 §5.2.4.2 Tables 2-3 (application_type).
 ///
@@ -196,7 +196,7 @@ impl ApplicationType {
         }
     }
 }
-broadcast_common::impl_spec_display!(ApplicationType, Reserved);
+broadcast_core::impl_spec_display!(ApplicationType, Reserved);
 
 /// 48-bit application identifier: organisation_id + application_id.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -394,7 +394,7 @@ impl<'a> Parse<'a> for AitSection<'a> {
         // byte-identical).
         if app_loop_actual_end != app_loop_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: app_loop_end - app_loop_actual_end,
                     have: 0,
                     what: "AitSection trailing bytes after application loop",
@@ -436,7 +436,7 @@ impl<'a> Parse<'a> for AitSection<'a> {
 
         if pos != app_loop_actual_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: app_loop_actual_end - pos,
                     have: 0,
                     what: "AitSection trailing application bytes",
@@ -488,7 +488,7 @@ impl Serialize for AitSection<'_> {
         // 15-bit field: reject rather than silently drop bit 15 of a
         // constructed `ApplicationType::Reserved(v)` with `v >= 0x8000`
         // (r02-W20).
-        let app_type_raw = broadcast_common::len::fit_bits(
+        let app_type_raw = broadcast_core::len::fit_bits(
             self.application_type.to_u16() as u64,
             APPLICATION_TYPE_BITS,
             "application_type",
@@ -506,7 +506,7 @@ impl Serialize for AitSection<'_> {
         buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
         buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
-        let cdl = broadcast_common::len::fit_bits(
+        let cdl = broadcast_core::len::fit_bits(
             self.common_descriptors.len() as u64,
             super::DESC_LOOP_LEN_BITS,
             "common_descriptors_length",
@@ -527,7 +527,7 @@ impl Serialize for AitSection<'_> {
             .iter()
             .map(|a| APP_HEADER_LEN + a.descriptors.len())
             .sum();
-        let apl = broadcast_common::len::fit_bits(
+        let apl = broadcast_core::len::fit_bits(
             app_bytes as u64,
             super::DESC_LOOP_LEN_BITS,
             "application_loop_length",
@@ -545,7 +545,7 @@ impl Serialize for AitSection<'_> {
             buf[pos + APP_ID_OFFSET..pos + APP_ID_OFFSET + APPLICATION_ID_LEN]
                 .copy_from_slice(&app.identifier.application_id.to_be_bytes());
             buf[pos + APP_CONTROL_CODE_OFFSET] = app.control_code.to_u8();
-            let adl = broadcast_common::len::fit_bits(
+            let adl = broadcast_core::len::fit_bits(
                 app.descriptors.len() as u64,
                 super::DESC_LOOP_LEN_BITS,
                 "application_descriptors_loop_length",
@@ -924,7 +924,7 @@ mod tests {
         let err = AitSection::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "AitSection trailing bytes after application loop",
                 ..
             })
@@ -955,7 +955,7 @@ mod tests {
         let err = AitSection::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "AitSection trailing application bytes",
                 ..
             })

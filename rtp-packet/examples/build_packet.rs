@@ -3,7 +3,7 @@
 //!
 //! Run with `cargo run -p rtp-packet --example build_packet`.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use rtp_packet::{HeaderExtension, RtpPacket, SeqNo, Ssrc};
 
 fn main() {

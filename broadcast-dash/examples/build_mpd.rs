@@ -3,7 +3,7 @@
 //!
 //! Run with `cargo run -p broadcast-dash --example build_mpd`.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use broadcast_dash::{
     AdaptationSet, CommonAttributes, Mpd, Period, PresentationType, Representation, SegmentTemplate,
 };

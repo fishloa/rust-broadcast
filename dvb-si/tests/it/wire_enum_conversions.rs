@@ -2,7 +2,7 @@
 //! `try_from` and back through `From<Self> for u8`, and rejects an
 //! unallocated value with the crate's own typed error carrying that value.
 
-use broadcast_common::error::InvalidValue;
+use broadcast_core::error::InvalidValue;
 use dvb_si::Error;
 use dvb_si::descriptor_tag::DescriptorTag;
 use dvb_si::table_id::TableId;

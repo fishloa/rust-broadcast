@@ -17,7 +17,7 @@
 //!   EtherType); handled by [`TypeField`], never reaches this module.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 use crate::error::{Error, Result};
 use crate::type_field::TypeField;
@@ -114,7 +114,7 @@ impl MandatoryHType {
     }
 }
 
-broadcast_common::impl_spec_display!(MandatoryHType, Other);
+broadcast_core::impl_spec_display!(MandatoryHType, Other);
 
 /// Typed H-Type for an Optional extension header (`H-LEN = 1..=5`, RFC 4326 §5).
 ///
@@ -161,7 +161,7 @@ impl OptionalHType {
     }
 }
 
-broadcast_common::impl_spec_display!(OptionalHType, Other);
+broadcast_core::impl_spec_display!(OptionalHType, Other);
 
 /// A single ULE extension header in a chain (RFC 4326 §5).
 ///
@@ -293,7 +293,7 @@ impl ExtensionHeader {
     }
 }
 
-broadcast_common::impl_spec_display!(ExtensionHeader);
+broadcast_core::impl_spec_display!(ExtensionHeader);
 
 /// The decoded payload area of an SNDU (RFC 4326 §5): a chain of extension
 /// headers terminated by a final [`TypeField`] (an EtherType, or the
@@ -455,7 +455,7 @@ impl<'a> PayloadChain<'a> {
     }
 }
 
-impl broadcast_common::Serialize for PayloadChain<'_> {
+impl broadcast_core::Serialize for PayloadChain<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {

@@ -18,7 +18,7 @@
 //! default dispatcher would route to `DsmccSection`.
 //!
 //! ```
-//! use broadcast_common::Serialize;
+//! use broadcast_core::Serialize;
 //! use dvb_si::tables::AnyTableSection;
 //! use mpeg_ts::pid::Pid;
 //! use dvb_si::tables::pat::{PatSection, PatEntry};
@@ -38,7 +38,7 @@
 //!
 //! 1. Create the module with the wire layout, a `pub const TABLE_ID: u8` (or
 //!    `TABLE_ID_FIRST`/`TABLE_ID_LAST` for a range), and the symmetric
-//!    [`broadcast_common::Parse`]/[`broadcast_common::Serialize`] impls + round-trip tests
+//!    [`broadcast_core::Parse`]/[`broadcast_core::Serialize`] impls + round-trip tests
 //!    (copy an existing module).
 //! 2. `impl TableDef` for the type (`TABLE_ID_RANGES` covering the full
 //!    table_id range, `NAME` in SCREAMING_SNAKE without the `_section` or
@@ -170,7 +170,7 @@ macro_rules! declare_tables {
             /// - [`crate::Error::BufferTooShort`] — `bytes` is empty.
             /// - Any parse error from the dispatched type.
             pub fn parse(bytes: &$lt [u8]) -> crate::Result<Self> {
-                let table_id = *bytes.first().ok_or(crate::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                let table_id = *bytes.first().ok_or(crate::Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                     need: 1,
                     have: 0,
                     what: "section table_id",
@@ -178,7 +178,7 @@ macro_rules! declare_tables {
                 match table_id {
                     $(
                         $( $lo..=$hi )|+ => {
-                            <$($path)::+ as broadcast_common::Parse>::parse(bytes).map(Self::$variant)
+                            <$($path)::+ as broadcast_core::Parse>::parse(bytes).map(Self::$variant)
                         }
                     )+
                     _ => Ok(Self::Unknown { table_id, raw: bytes }),
@@ -198,7 +198,7 @@ macro_rules! declare_tables {
             /// let err = AnyTableSection::parse_as::<MpeDatagramSection>(&[0x3E, 0x00]);
             /// assert_eq!(
             ///     err.unwrap_err(),
-            ///     dvb_si::Error::BufferTooShort(broadcast_common::error::BufferTooShort { need: 16, have: 2, what: "MpeDatagramSection" })
+            ///     dvb_si::Error::BufferTooShort(broadcast_core::error::BufferTooShort { need: 16, have: 2, what: "MpeDatagramSection" })
             /// );
             /// ```
             ///
@@ -208,19 +208,19 @@ macro_rules! declare_tables {
             where
                 T: crate::traits::TableDef<$lt>,
             {
-                <T as broadcast_common::Parse>::parse(bytes)
+                <T as broadcast_core::Parse>::parse(bytes)
             }
         }
 
-        impl<$lt> broadcast_common::Serialize for AnyTableSection<$lt> {
+        impl<$lt> broadcast_core::Serialize for AnyTableSection<$lt> {
             type Error = crate::Error;
 
             /// Length of the contained section; an [`AnyTableSection::Other`]
             /// (type-erased custom section) has no serializer and reports 0.
             fn serialized_len(&self) -> usize {
                 match self {
-                    $( Self::$variant(t) => broadcast_common::Serialize::serialized_len(t), )+
-                    $($( Self::$nd_variant(t) => broadcast_common::Serialize::serialized_len(t), )+)?
+                    $( Self::$variant(t) => broadcast_core::Serialize::serialized_len(t), )+
+                    $($( Self::$nd_variant(t) => broadcast_core::Serialize::serialized_len(t), )+)?
                     Self::Other { .. } => 0,
                     Self::Unknown { raw, .. } => raw.len(),
                 }
@@ -235,8 +235,8 @@ macro_rules! declare_tables {
             /// - Any serialize error from the contained type.
             fn serialize_into(&self, buf: &mut [u8]) -> crate::Result<usize> {
                 match self {
-                    $( Self::$variant(t) => broadcast_common::Serialize::serialize_into(t, buf), )+
-                    $($( Self::$nd_variant(t) => broadcast_common::Serialize::serialize_into(t, buf), )+)?
+                    $( Self::$variant(t) => broadcast_core::Serialize::serialize_into(t, buf), )+
+                    $($( Self::$nd_variant(t) => broadcast_core::Serialize::serialize_into(t, buf), )+)?
                     Self::Other { .. } => Err(crate::Error::ValueOutOfRange {
                         field: "AnyTableSection::Other",
                         reason: "type-erased custom table section has no serializer",
@@ -244,7 +244,7 @@ macro_rules! declare_tables {
                     Self::Unknown { raw, .. } => {
                         let have = buf.len();
                         let dst = buf.get_mut(..raw.len()).ok_or(
-                            broadcast_common::error::OutputBufferTooSmall {
+                            broadcast_core::error::OutputBufferTooSmall {
                                 need: raw.len(),
                                 have,
                             },
@@ -362,7 +362,7 @@ impl<'a> AnyTableSection<'a> {
         bytes: &'a [u8],
     ) -> crate::Result<Self> {
         let table_id = *bytes.first().ok_or(crate::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "section table_id",

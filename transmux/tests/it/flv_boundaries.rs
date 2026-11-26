@@ -6,8 +6,8 @@
 //! never a value recomputed from the code under test.
 #![cfg(feature = "std")]
 
-use broadcast_common::Parse;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Parse;
+use broadcast_core::timescale::Timescale;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::{CodecConfig, FlvError, FlvMuxStage, Sample, TrackId, TrackSpec};
 
@@ -402,7 +402,7 @@ fn a_header_shorter_than_nine_bytes_is_a_header_short_read() {
         };
         assert_eq!(
             short,
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 9,
                 have: len,
                 what: "FLV header",

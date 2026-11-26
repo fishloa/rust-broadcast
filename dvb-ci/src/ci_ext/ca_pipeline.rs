@@ -11,7 +11,7 @@
 //! - `CAPipelineResponse` (`9F 80 01`, Table 85) — module → app.
 //! - `CAPipelineNotification` (`9F 80 02`, Table 86) — module → app, asynchronous.
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 /// Resource-scoped `apdu_tag`s for CA Pipeline (Tables 84-86).
 pub mod tag {
@@ -110,7 +110,7 @@ crate::dispatch::declare_resource_apdus! {
 mod tests {
     use super::*;
     use crate::error::Error;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     #[test]
     fn request_round_trips_and_bites() {

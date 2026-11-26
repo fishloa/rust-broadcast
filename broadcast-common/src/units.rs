@@ -2,7 +2,7 @@
 //! microseconds and nanoseconds uses, declared once.
 //!
 //! All are `u64`; a caller that works in another integer or float width casts at the use
-//! (`NANOS_PER_SEC as i128`). [`crate::timescale::MICROS_PER_SECOND`] is the `u32` spelling of
+//! (`NANOS_PER_SEC as i128`). [`broadcast_core::timescale::MICROS_PER_SECOND`] is the `u32` spelling of
 //! [`MICROS_PER_SEC`] the rate-conversion functions take.
 
 /// Milliseconds in a second.
@@ -29,7 +29,7 @@ mod tests {
         assert_eq!(NANOS_PER_SEC, 1_000_000_000);
         assert_eq!(
             MICROS_PER_SEC,
-            u64::from(crate::timescale::MICROS_PER_SECOND)
+            u64::from(broadcast_core::timescale::MICROS_PER_SECOND)
         );
     }
 }

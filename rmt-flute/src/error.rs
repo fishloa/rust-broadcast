@@ -10,19 +10,19 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input shorter than required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
     /// The output buffer passed to `serialize_into` was too small.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
     /// A value did not fit the wire field it is written to.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::error::FieldOverflow),
     /// A reserved / version field carried an unexpected value.
     #[error(transparent)]
-    InvalidField(#[from] broadcast_common::error::InvalidField),
+    InvalidField(#[from] broadcast_core::error::InvalidField),
     /// A format version this crate does not implement.
     #[error(transparent)]
-    UnsupportedVersion(#[from] broadcast_common::error::UnsupportedVersion),
+    UnsupportedVersion(#[from] broadcast_core::error::UnsupportedVersion),
     /// A header-extension was malformed (bad HET/HEL or truncated content).
     #[error("invalid header extension: {reason}")]
     InvalidExtension {

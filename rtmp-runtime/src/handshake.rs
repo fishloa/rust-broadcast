@@ -27,8 +27,8 @@
 //! they enable "unlikely to be useful"), and no `rand`-style dependency is
 //! pulled in to generate them.
 
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 use crate::RtmpError;
 use alloc::vec;
@@ -349,7 +349,7 @@ impl Handshake {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::BufferTooShort;
+    use broadcast_core::error::BufferTooShort;
 
     use super::*;
 

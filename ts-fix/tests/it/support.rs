@@ -1,6 +1,6 @@
 //! Test support helpers for `ts-fix` tests.
 
-use broadcast_common::traits::Serialize;
+use broadcast_core::traits::Serialize;
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{PmtSection, PmtStream, StreamType};

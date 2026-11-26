@@ -10,9 +10,9 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::wire::{U16_LEN, U32_LEN};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::{ReservedOnes, ReservedZero};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::{ReservedOnes, ReservedZero};
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for J2K_video_descriptor.
 pub const TAG: u8 = 0x32;
@@ -753,7 +753,7 @@ impl Serialize for J2kVideoDescriptor<'_> {
 
         // extended_capability_flag(1) | profile_and_level(15)
         // Derived from the Option, never the stored flag (r03-W5).
-        let mut b01 = broadcast_common::len::fit_mask(
+        let mut b01 = broadcast_core::len::fit_mask(
             self.profile_and_level,
             PROFILE_AND_LEVEL_MASK,
             "profile_and_level",

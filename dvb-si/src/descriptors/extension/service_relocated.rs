@@ -1,6 +1,6 @@
 //! Service Relocated Descriptor — ETSI EN 300 468 §6.4.10 (tag_extension 0x0B).
 use super::*;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 impl ExtensionBodyDef<'_> for ServiceRelocated {
     const TAG_EXTENSION: u8 = 0x0B;
@@ -32,7 +32,7 @@ impl<'a> Parse<'a> for ServiceRelocated {
         let (hdr, rest) =
             sel.split_first_chunk::<SERVICE_RELOCATED_LEN>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: SERVICE_RELOCATED_LEN,
                         have: sel.len(),
                         what: "service_relocated body",

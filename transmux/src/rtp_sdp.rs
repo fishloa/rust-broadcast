@@ -26,9 +26,9 @@ use crate::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use crate::pipeline::CodecConfig;
 use crate::rtp::{base64_decode, hex_decode};
 use alloc::vec::Vec;
-use broadcast_common::Parse;
-use broadcast_common::error::InvalidValue;
-use broadcast_common::len::need_in;
+use broadcast_core::Parse;
+use broadcast_core::error::InvalidValue;
+use broadcast_core::len::need_in;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG4_AUDIO,
@@ -327,11 +327,11 @@ pub use track::{
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::BufferTooShort;
+    use broadcast_core::error::BufferTooShort;
 
     use super::*;
-    use broadcast_common::Serialize;
     use broadcast_common::base64::base64_encode;
+    use broadcast_core::Serialize;
 
     /// The ffmpeg-produced SDP for `fixtures/ts/h264/high.ts` (PROVENANCE:
     /// `ffmpeg -i fixtures/ts/h264/high.ts -c copy -f rtp -sdp_file high.sdp

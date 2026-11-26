@@ -40,7 +40,7 @@
 
 use alloc::vec::Vec;
 
-use broadcast_common::error::InvalidField;
+use broadcast_core::error::InvalidField;
 
 use crate::error::Error;
 
@@ -74,7 +74,7 @@ impl KeyParity {
     }
 }
 
-broadcast_common::impl_spec_display!(KeyParity);
+broadcast_core::impl_spec_display!(KeyParity);
 
 /// KM Refresh packet-count thresholds (`draft-sharabayko-srt-01` §6.1.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -3,7 +3,7 @@
 //! Carries CI Plus ancillary data as an opaque byte run; its format is defined
 //! by the CI ecosystem, so it is preserved verbatim as a borrowed slice.
 use super::*;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 impl<'a> ExtensionBodyDef<'a> for CiAncillaryData<'a> {
     const TAG_EXTENSION: u8 = 0x14;

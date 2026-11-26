@@ -20,8 +20,8 @@
 //! always-present fields plus an [`EmiData`] enum selected by the EMI value.
 
 use crate::error::{Error, Result};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// `uri_message` fixed length — 64 bits (8 bytes).
 pub const URI_MESSAGE_LEN: usize = 8;

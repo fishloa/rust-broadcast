@@ -1,7 +1,7 @@
 //! CI Plus (TS 103 205) serialized-length contracts, parse offsets, ceilings,
 //! descriptor headers and enum labels (audit 23).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_ci::Error;
 use dvb_ci::ci_plus::cicam_player::{
     ComponentType, ControlCommand, InputStatus, PlayStatus, PlayerAssetEnd,
@@ -515,7 +515,7 @@ fn lsc_v4_descriptor_headers_and_ceilings() {
     assert!(matches!(
         HybridDescriptor::parse(&[0x05]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 2,
                 have: 1,
                 ..
@@ -525,7 +525,7 @@ fn lsc_v4_descriptor_headers_and_ceilings() {
     assert!(matches!(
         HybridDescriptor::parse(&[0x05, 0x00]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 2,
                 have: 0,
                 ..
@@ -535,7 +535,7 @@ fn lsc_v4_descriptor_headers_and_ceilings() {
     assert!(matches!(
         HybridDescriptor::parse(&[0x05, 0x03, 0xAA]),
         Err(Error::LengthMismatch(
-            broadcast_common::error::LengthMismatch {
+            broadcast_core::error::LengthMismatch {
                 declared: 3,
                 actual: 1,
                 ..
@@ -901,7 +901,7 @@ fn ci_plus_descriptor_tlv_ceiling() {
     assert!(matches!(
         CiplusInitializationVectorDescriptor::parse(&[IV_DESCRIPTOR_TAG]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 2,
                 have: 1,
                 ..
@@ -911,7 +911,7 @@ fn ci_plus_descriptor_tlv_ceiling() {
     assert!(matches!(
         CiplusInitializationVectorDescriptor::parse(&[IV_DESCRIPTOR_TAG, 0x02, 0xAA]),
         Err(Error::LengthMismatch(
-            broadcast_common::error::LengthMismatch {
+            broadcast_core::error::LengthMismatch {
                 declared: 2,
                 actual: 1,
                 ..

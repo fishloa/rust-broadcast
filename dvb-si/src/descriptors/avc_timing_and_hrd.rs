@@ -9,9 +9,9 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::wire::U32_LEN;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for AVC_timing_and_HRD_descriptor.
 pub const TAG: u8 = 0x2A;

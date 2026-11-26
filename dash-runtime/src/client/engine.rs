@@ -2483,7 +2483,7 @@ mod fault_label_tests {
     use broadcast_dash::inherit::InheritError;
 
     fn transmux_error() -> transmux::Error {
-        transmux::Error::InvalidValue(broadcast_common::error::InvalidValue {
+        transmux::Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "field",
             value: 0,
             reason: "reason",

@@ -11,7 +11,7 @@
 //! *behaviour of each explicit order* and that the defaults are each table's own
 //! order - they do not claim either reading is the true one.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::dvb_ta::{
     CompactDas, CompactSpliceInsert, DasNibbleOrder, DvbDasDescriptor, EquivalentSegmentationType,
     SI_RESERVED_DEFAULT,

@@ -4,7 +4,7 @@
 //! constructor, wraps them in an `Mpeg2ExtensionDescriptor`, serializes, and
 //! parses the bytes back to an equal value.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::descriptors::mpeg2_extension::{Mpeg2ExtensionBody, Mpeg2ExtensionDescriptor};
 use dvb_si::descriptors::mpegh_3d_audio::*;
 

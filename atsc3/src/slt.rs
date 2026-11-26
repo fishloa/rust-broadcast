@@ -150,7 +150,7 @@ impl ServiceCategory {
     }
 }
 
-broadcast_common::impl_spec_display!(ServiceCategory, Reserved);
+broadcast_core::impl_spec_display!(ServiceCategory, Reserved);
 
 /// `BroadcastSvcSignaling@slsProtocol` code values (Table 6.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -197,7 +197,7 @@ impl SlsProtocol {
     }
 }
 
-broadcast_common::impl_spec_display!(SlsProtocol, Reserved);
+broadcast_core::impl_spec_display!(SlsProtocol, Reserved);
 
 const EL_SLT: &str = "SLT";
 const EL_SERVICE: &str = "Service";

@@ -14,8 +14,8 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for xait_location_descriptor.
 pub const TAG: u8 = 0x7D;
@@ -109,12 +109,12 @@ impl Serialize for XaitLocationDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[2..4].copy_from_slice(&self.xait_original_network_id.to_be_bytes());
         buf[4..6].copy_from_slice(&self.xait_service_id.to_be_bytes());
-        buf[HEADER_LEN + VERSION_NUMBER_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + VERSION_NUMBER_OFFSET] = (broadcast_core::len::fit_mask(
             self.xait_version_number,
             VERSION_MAX,
             "xait_version_number",
         )? << VERSION_NUMBER_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.xait_update_policy,
                 UPDATE_POLICY_MAX,
                 "xait_update_policy",

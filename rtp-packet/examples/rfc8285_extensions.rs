@@ -4,7 +4,7 @@
 //!
 //! Run with `cargo run -p rtp-packet --example rfc8285_extensions --features rfc8285`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::rfc8285::{
     ExtensionElements, OneByteElement, OneByteElements, OneByteId, parse_extensions,
 };

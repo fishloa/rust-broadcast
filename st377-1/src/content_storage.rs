@@ -5,7 +5,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 use crate::error::{Error, Result};
 use crate::local_set::{LocalSet, StructuralSetKind};
@@ -136,7 +136,7 @@ crate::sets::declare_set_serialize!(ContentStorage, ContentStorage);
 mod tests {
     use super::*;
     use crate::types::UlBytes;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     fn sample() -> ContentStorage {
         ContentStorage {

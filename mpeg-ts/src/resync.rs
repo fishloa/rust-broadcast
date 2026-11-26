@@ -79,7 +79,7 @@ impl PacketStride {
     }
 }
 
-broadcast_common::impl_spec_display!(PacketStride);
+broadcast_core::impl_spec_display!(PacketStride);
 
 /// Counters accumulated during resynchronisation.
 #[non_exhaustive]

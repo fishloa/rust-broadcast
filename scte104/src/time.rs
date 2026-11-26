@@ -11,8 +11,8 @@
 
 use crate::error::{Error, Result};
 use crate::operations::{U16_LEN, U32_LEN, be};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// `time()` — §12.4.
 ///
@@ -182,7 +182,7 @@ impl TimeType {
     }
 }
 
-broadcast_common::impl_spec_display!(TimeType, Reserved);
+broadcast_core::impl_spec_display!(TimeType, Reserved);
 
 /// UTC payload of [`Timestamp`] when `time_type == 1` — §12.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -281,7 +281,7 @@ impl<'a> Parse<'a> for Timestamp {
                     gpi_edge: bytes[GPI_EDGE_OFFSET],
                 }))
             }
-            other => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            other => Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "timestamp time_type",
                 value: u64::from(other),
                 reason: "unknown time_type value",
@@ -349,7 +349,7 @@ mod tests {
     fn unknown_time_type_is_rejected_with_its_value() {
         assert_eq!(
             Timestamp::parse(&[0x09, 0, 0, 0, 0, 0, 0]),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "timestamp time_type",
                 value: 9,
                 reason: "unknown time_type value",

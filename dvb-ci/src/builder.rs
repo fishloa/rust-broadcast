@@ -20,7 +20,7 @@ use crate::objects::ca_pmt::{
     CA_DESCRIPTOR_TAG, CaPmt, CaPmtCmdId, CaPmtListManagement, CaPmtStream,
 };
 use alloc::vec::Vec;
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::pmt::PmtSection;
 use mpeg_ts::pid::Pid;
@@ -203,7 +203,7 @@ mod tests {
     use super::*;
     use crate::objects::ca_pmt::CaPmt;
     use alloc::vec;
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
 
     #[test]
     fn builds_from_real_pmt_fixture() {

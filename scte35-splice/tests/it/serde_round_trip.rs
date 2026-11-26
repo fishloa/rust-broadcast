@@ -4,8 +4,8 @@
 
 #![cfg(feature = "serde")]
 
-use broadcast_common::Parse;
 use broadcast_common::base64::base64_decode_strict;
+use broadcast_core::Parse;
 use scte35_splice::SpliceInfoSection;
 
 #[test]

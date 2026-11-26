@@ -10,7 +10,7 @@
 //!
 //! See <https://github.com/fishloa/rust-broadcast/issues/387>
 
-use broadcast_common::traits::Parse;
+use broadcast_core::traits::Parse;
 use mpeg_ts::pid::Pid;
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceMode};

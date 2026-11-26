@@ -20,7 +20,7 @@
 //! comparison, including the one genuine spec-family discrepancy it
 //! surfaced (`length_code` bits-vs-bytes between SMPTE ST 337 and IEC 61937).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st337::{Burst, DataMode};
 
 fn real_eac3_frame() -> Vec<u8> {

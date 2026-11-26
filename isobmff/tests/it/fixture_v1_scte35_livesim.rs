@@ -16,7 +16,7 @@ fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
 }
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
 fn fixture() -> Vec<u8> {

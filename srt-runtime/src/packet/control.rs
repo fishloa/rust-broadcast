@@ -26,8 +26,8 @@ use super::misc::{
 use super::nak::NakPacket;
 use super::number::{AckNumber, SocketId, SrtTimestamp};
 use super::{Error, Result, SRT_HEADER_LEN, be32, put_be32};
-use broadcast_common::error::ReservedBits;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::error::ReservedBits;
+use broadcast_core::len::{need_in, need_out};
 
 /// `Control Type` wire values (`draft-sharabayko-srt-01` §3.2, Table 1).
 /// Crate-private: they back [`ControlType::from_bits`]/[`ControlType::to_bits`],
@@ -137,7 +137,7 @@ impl ControlType {
     }
 }
 
-broadcast_common::impl_spec_display!(ControlType, Reserved);
+broadcast_core::impl_spec_display!(ControlType, Reserved);
 
 /// A Control Type = User-Defined (`0x7FFF`) packet, or a Control Type not
 /// defined by Table 1. The CIF is genuinely opaque here — the only defined
@@ -510,7 +510,7 @@ impl<'a> ControlPacket<'a> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         let control_type_bits = self.control_type().to_bits();
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(control_type_bits),
             CONTROL_TYPE_BITS,
             "Control Type",
@@ -555,7 +555,7 @@ impl<'a> ControlPacket<'a> {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for ControlPacket<'a> {
+impl<'a> broadcast_core::Parse<'a> for ControlPacket<'a> {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -563,7 +563,7 @@ impl<'a> broadcast_common::Parse<'a> for ControlPacket<'a> {
     }
 }
 
-impl broadcast_common::Serialize for ControlPacket<'_> {
+impl broadcast_core::Serialize for ControlPacket<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {

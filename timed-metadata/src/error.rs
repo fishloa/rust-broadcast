@@ -1,6 +1,6 @@
 //! Crate error type.
 use alloc::string::String;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 
 /// Errors produced by conversions and the [`crate::Timeline`] session.
 #[derive(Debug, thiserror::Error, Clone, PartialEq)]

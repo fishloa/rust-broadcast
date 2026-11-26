@@ -6,8 +6,8 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Well-known `private_data_specifier` for EACEM (European Association of
 /// Consumer Electronics Manufacturers) — ETSI TS 101 162 register.

@@ -26,9 +26,9 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for announcement_support_descriptor.
 pub const TAG: u8 = 0x6E;
@@ -139,7 +139,7 @@ impl AnnouncementType {
         }
     }
 }
-broadcast_common::impl_spec_display!(AnnouncementType, Reserved);
+broadcast_core::impl_spec_display!(AnnouncementType, Reserved);
 
 /// Reference type — ETSI EN 300 468 Table 20.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,7 +204,7 @@ impl ReferenceType {
         }
     }
 }
-broadcast_common::impl_spec_display!(ReferenceType, Reserved);
+broadcast_core::impl_spec_display!(ReferenceType, Reserved);
 
 /// Conditional reference block, present for reference_type 1, 2, 3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -400,13 +400,13 @@ impl Serialize for AnnouncementSupportDescriptor {
         let mut pos = HEADER_LEN + INDICATOR_LEN;
         for e in &self.entries {
             // reserved_future_use preserved from parse (default 1).
-            let flags = (broadcast_common::len::fit_mask(
+            let flags = (broadcast_core::len::fit_mask(
                 e.announcement_type.to_u8(),
                 ANNOUNCEMENT_TYPE_MASK >> ANNOUNCEMENT_TYPE_SHIFT,
                 "announcement_type",
             )? << ANNOUNCEMENT_TYPE_SHIFT)
                 | ((e.reserved_future_use.get() as u8) << RESERVED_BIT_SHIFT)
-                | broadcast_common::len::fit_mask(
+                | broadcast_core::len::fit_mask(
                     e.reference_type.to_u8(),
                     REFERENCE_TYPE_MASK,
                     "reference_type",

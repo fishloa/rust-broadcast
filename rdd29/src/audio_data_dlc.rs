@@ -5,9 +5,9 @@
 //! Golomb entropy-coded residual). This crate never decodes it — see
 //! `private/specs-verified/smpte/rdd29/rdd29.md` scope decision 3 for the exact boundary and why.
 
-use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::bits::{BitReader, BitWriter};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{BitResultExt, Error, Result};
 use crate::plex::{plex_bits, read_plex, write_plex};
@@ -50,7 +50,7 @@ impl<'a> AudioDataDlc<'a> {
     /// 16-bit field can address (§5.5.1: max 65535 bytes).
     pub fn new(audio_data_id: u32, payload: &'a [u8]) -> Result<Self> {
         if payload.len() > usize::from(u16::MAX) {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "AudioDataDLC.DLCSize",
                 value: payload.len() as u64,
                 reason: "DLCSize is a 16-bit field, max 65535 bytes",
@@ -75,7 +75,7 @@ impl<'a> Parse<'a> for AudioDataDlc<'a> {
         let payload_start = r.bits_read() / BITS_PER_BYTE;
         let payload_end = payload_start
             .checked_add(dlc_size)
-            .ok_or(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            .ok_or(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "AudioDataDLC.DLCSize",
                 value: dlc_size as u64,
                 reason: "DLCSize overflowed usize",
@@ -85,7 +85,7 @@ impl<'a> Parse<'a> for AudioDataDlc<'a> {
             // §5.5.1: "DLCSize shall indicate the size in bytes of the
             // remainder of the AudioDataDLC Element" — i.e. it must consume
             // exactly the rest of this element's ElementSize-bounded body.
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "AudioDataDLC.DLCSize",
                 value: dlc_size as u64,
                 reason: "must equal exactly the remainder of the element body (§5.5.1)",

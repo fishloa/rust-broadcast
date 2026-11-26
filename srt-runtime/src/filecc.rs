@@ -207,7 +207,7 @@ impl Phase {
     }
 }
 
-broadcast_common::impl_spec_display!(Phase);
+broadcast_core::impl_spec_display!(Phase);
 
 /// A minimal, seedable xorshift64* PRNG — see the module doc's third
 /// implementation-choice note (`DecRandom`'s source of randomness is

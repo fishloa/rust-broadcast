@@ -158,7 +158,7 @@ mod tests {
     use transmux::pipeline::{CodecConfig, TrackSpec};
     use transmux::{TrackId, track_spec_from_quality_level};
 
-    const SYNTHETIC_MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
+    const SYNTHETIC_MOVIE_TIMESCALE: broadcast_core::timescale::Timescale =
         transmux::VIDEO_CLOCK_TIMESCALE;
     use test_harness::collect::Collected as Media;
     use transmux::{SmoothOrigin, SmoothPackager, SmoothSegmenter};
@@ -444,7 +444,7 @@ mod tests {
         let quality = &si.qualities[0];
         let local_spec = track_spec_from_quality_level(
             track_id,
-            broadcast_common::timescale::Timescale::try_new(timescale).expect("timescale"),
+            broadcast_core::timescale::Timescale::try_new(timescale).expect("timescale"),
             stream_type,
             quality,
         )

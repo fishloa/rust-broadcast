@@ -2,7 +2,7 @@
 
 use libfuzzer_sys::fuzz_target;
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::descriptors::DescriptorRegistry;
 use dvb_si::descriptors::atsc_caption_service::AtscCaptionServiceDescriptor;

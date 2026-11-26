@@ -26,7 +26,7 @@ use crate::timing::availability::{
     init_available_from, segment_available_from_ticks, segment_available_until_ticks,
     ticks_to_micros,
 };
-use broadcast_common::timescale::{Rounding, Timescale, from_micros};
+use broadcast_core::timescale::{Rounding, Timescale, from_micros};
 use broadcast_dash::inherit::{ListInfo, ResolvedMulti, SegmentInfo, TemplateInfo};
 use broadcast_dash::{BaseInfo, ByteRange, UrlType};
 use core::time::Duration;

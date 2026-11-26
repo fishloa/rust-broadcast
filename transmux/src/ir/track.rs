@@ -17,7 +17,7 @@ pub struct TrackSpec {
     /// Track ID (1-based, unique within the movie).
     pub track_id: TrackId,
     /// Media timescale (ticks per second, e.g. 90000 for video).
-    pub timescale: broadcast_common::timescale::Timescale,
+    pub timescale: broadcast_core::timescale::Timescale,
     /// Codec configuration + dimensions.
     pub config: CodecConfig,
     /// Source elementary-stream PID for TS-demuxed tracks; `None` for non-TS
@@ -91,7 +91,7 @@ impl TrackSpec {
     /// descriptors) — the common case for every non-TS demuxer/transform.
     pub fn new(
         track_id: TrackId,
-        timescale: impl Into<broadcast_common::timescale::Timescale>,
+        timescale: impl Into<broadcast_core::timescale::Timescale>,
         config: CodecConfig,
     ) -> Self {
         let display = DisplayGeometry::from_codec_config(&config);
@@ -252,7 +252,7 @@ impl ConstantIvSenc {
     }
 }
 
-broadcast_common::impl_spec_display!(ConstantIvSenc);
+broadcast_core::impl_spec_display!(ConstantIvSenc);
 
 #[cfg(test)]
 mod constant_iv_senc_tests {

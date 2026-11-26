@@ -163,7 +163,7 @@ Spec notes and the pointer to the private transcriptions: [`docs/`](README.md).
 ```
 
 ```rust
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 // <the most common use, end to end, asserting on a real value>
 ```
 

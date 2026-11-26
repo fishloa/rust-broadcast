@@ -92,4 +92,7 @@ deny = [
 unknown-registry = "deny"
 unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-allow-git = []
+# Temporary: the `[patch.crates-io]` entry in the root `Cargo.toml` builds
+# `motion-imagery-metadata` from its `broadcast-core` branch until a release of it
+# built on `broadcast-core` is published. Empty this list when that patch goes.
+allow-git = ["https://github.com/fishloa/motion-imagery-metadata"]

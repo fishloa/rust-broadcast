@@ -25,7 +25,7 @@
 //!   `SAMPLE-AES-CTR`, RFC 8216bis §4.4.4.4). HLS playlist syntax lives in
 //!   the `broadcast-hls` crate
 //!   (issue #878), but both crates name the scheme with the *same*
-//!   [`broadcast_common::CencScheme`], so no conversion is needed.
+//!   [`broadcast_core::CencScheme`], so no conversion is needed.
 //!
 //! Run it with:
 //!

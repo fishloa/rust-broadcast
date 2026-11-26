@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
 ### Added
 - `BINARY_GROUPS`: the number of ST 12-1 binary groups ("user bits") carried by one frame (§8.1/Table 4).
 

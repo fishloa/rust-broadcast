@@ -8,7 +8,7 @@
 #![cfg(feature = "std")]
 
 use crate::ts_mux_stage;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::ChromaticityXy;
 use transmux::codec_config_ext::HevcRecordCodecInfo;
 use transmux::ir::{CodecConfig, TrackSpec};
@@ -254,9 +254,8 @@ fn demux_keeps_only_declarative_sei_messages_in_the_hvcc_array() {
         .position(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }))
         .unwrap();
     let hdr = media.tracks[idx].spec.hdr.expect("hdr");
-    let mdcv = broadcast_common::Serialize::try_to_bytes(&hdr.mastering_display.unwrap()).unwrap();
-    let clli =
-        broadcast_common::Serialize::try_to_bytes(&hdr.content_light_level.unwrap()).unwrap();
+    let mdcv = broadcast_core::Serialize::try_to_bytes(&hdr.mastering_display.unwrap()).unwrap();
+    let clli = broadcast_core::Serialize::try_to_bytes(&hdr.content_light_level.unwrap()).unwrap();
     let other = [0xB5u8, 0x00, 0x3C, 0x00, 0x01, 0x04];
 
     let mut rbsp = Vec::new();

@@ -2,7 +2,7 @@
 //! canonical SCTE 35 `splice_insert()` section (CRC-valid).
 
 use broadcast_common::base64::base64_decode_strict;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::error::Error;
 
@@ -16,7 +16,7 @@ fn splice_info_section_rejects_every_short_buffer() {
         section.serialized_len(),
         |buf| section.serialize_into(buf),
         |e| match e {
-            Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+            Error::OutputBufferTooSmall(broadcast_core::error::OutputBufferTooSmall {
                 need,
                 have,
             }) => Some((*need, *have)),

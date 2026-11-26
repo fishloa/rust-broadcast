@@ -502,7 +502,7 @@ fn known_es_info_survives_an_init_that_cannot_carry_it() {
     audio.es_info_descriptors = vec![0x0A, 4, b'f', b'r', b'a', 0x00];
     let video = first_video(&specs).expect("video spec");
     let specs = vec![audio, video];
-    let scale = broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale");
+    let scale = broadcast_core::timescale::Timescale::try_new(90_000).expect("timescale");
     let init = transmux::pipeline::build_init_segment(&specs, scale).expect("init segment");
 
     let (sibling_trunk, _sibling_writer) = new_trunk(8);
@@ -553,7 +553,7 @@ fn an_hdr10plus_flag_survives_the_init_re_derivation() {
     .expect("origin builds");
     o.set_track_specs(core::slice::from_ref(&video))
         .expect("known specs");
-    let scale = broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale");
+    let scale = broadcast_core::timescale::Timescale::try_new(90_000).expect("timescale");
     let init = transmux::pipeline::build_init_segment(core::slice::from_ref(&video), scale)
         .expect("init segment");
     o.set_init(init);

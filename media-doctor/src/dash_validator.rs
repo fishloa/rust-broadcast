@@ -17,7 +17,7 @@
 
 use crate::report::{Finding, Location, Report, Severity};
 use alloc::collections::BTreeMap;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use broadcast_dash::PresentationType;
 use broadcast_dash::inherit::{SegmentInfo, resolve_segment_info};
 
@@ -316,13 +316,13 @@ mod tests {
     /// other timescale prints the tick count and the seconds it represents.
     #[test]
     fn timescale_str_prints_seconds_only_for_a_non_unit_timescale() {
-        assert_eq!(timescale_str(5, broadcast_common::timescale!(1)), "5");
+        assert_eq!(timescale_str(5, broadcast_core::timescale!(1)), "5");
         assert_eq!(
-            timescale_str(90_000, broadcast_common::timescale!(90_000)),
+            timescale_str(90_000, broadcast_core::timescale!(90_000)),
             "90000 (1.000s)",
         );
         assert_eq!(
-            timescale_str(45_000, broadcast_common::timescale!(90_000)),
+            timescale_str(45_000, broadcast_core::timescale!(90_000)),
             "45000 (0.500s)",
         );
     }

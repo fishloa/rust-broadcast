@@ -10,7 +10,7 @@
 //! document was needed after all.
 use crate::error::{Error, Result};
 use alloc::{string::String, vec::Vec};
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::emsg::{EmsgBox, PresentationTime};
 
 /// The SCTE-35 binary carriage scheme for inband DASH `emsg`

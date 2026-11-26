@@ -34,8 +34,8 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_u8, fit_u16, need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{fit_u8, fit_u16, need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 pub(crate) const COMPAT_DESC_LEN_FIELD: usize = 2;
 const DESC_COUNT_FIELD: usize = 2;
@@ -111,7 +111,7 @@ impl DescriptorType {
         }
     }
 }
-broadcast_common::impl_spec_display!(DescriptorType, IsoReserved, DvbReserved, UserDefined);
+broadcast_core::impl_spec_display!(DescriptorType, IsoReserved, DvbReserved, UserDefined);
 
 /// Compatibility specifier type — TS 102 006 Table 15 / ISO/IEC 13818-6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -152,7 +152,7 @@ impl SpecifierType {
         }
     }
 }
-broadcast_common::impl_spec_display!(SpecifierType, Unallocated);
+broadcast_core::impl_spec_display!(SpecifierType, Unallocated);
 
 /// Compatibility sub-descriptor type — ISO/IEC 13818-6.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -186,7 +186,7 @@ impl SubDescriptorType {
         }
     }
 }
-broadcast_common::impl_spec_display!(SubDescriptorType, Unallocated);
+broadcast_core::impl_spec_display!(SubDescriptorType, Unallocated);
 
 /// Compatibility Descriptor — ETSI TS 102 006 §9.4.2.2 Table 15 / ISO/IEC
 /// 13818-6 `compatibilityDescriptor()`.
@@ -272,7 +272,7 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
             bytes
                 .split_first_chunk::<COMPAT_DESC_LEN_FIELD>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: COMPAT_DESC_LEN_FIELD,
                         have: bytes.len(),
                         what: "CompatibilityDescriptor length field",
@@ -294,7 +294,7 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
         }
         if compat_desc_len < DESC_COUNT_FIELD {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD,
                     have: bytes.len(),
                     what: "CompatibilityDescriptor descriptorCount",
@@ -310,7 +310,7 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
         for _ in 0..descriptor_count {
             if pos + DESC_HEADER_LEN > body.len() {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: COMPAT_DESC_LEN_FIELD + pos + DESC_HEADER_LEN,
                         have: COMPAT_DESC_LEN_FIELD + body.len(),
                         what: "CompatibilityDescriptor entry header",
@@ -352,7 +352,7 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
             for _ in 0..sub_descriptor_count {
                 if sub_pos + SUB_DESC_HEADER_LEN > sub_desc_end {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: COMPAT_DESC_LEN_FIELD + sub_pos + SUB_DESC_HEADER_LEN,
                             have: COMPAT_DESC_LEN_FIELD + sub_desc_end,
                             what: "CompatibilityDescriptor subDescriptor header",
@@ -583,7 +583,7 @@ mod tests {
         assert_eq!(
             CompatibilityDescriptor::parse(bytes),
             Err(crate::error::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 17,
                     have: 15,
                     what: "CompatibilityDescriptor subDescriptor header",
@@ -844,7 +844,7 @@ mod tests {
         assert_eq!(
             CompatibilityDescriptor::parse(&[0x00, 0x01, 0xAA]),
             Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 4,
                     have: 3,
                     what: "CompatibilityDescriptor descriptorCount",
@@ -864,7 +864,7 @@ mod tests {
         assert_eq!(
             CompatibilityDescriptor::parse(bytes),
             Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 17,
                     have: 16,
                     what: "CompatibilityDescriptor entry header",

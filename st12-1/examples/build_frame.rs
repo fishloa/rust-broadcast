@@ -3,7 +3,7 @@
 //!
 //! Run with `cargo run -p st12-1 --example build_frame`.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use st12_1::LtcFrame;
 
 fn main() {

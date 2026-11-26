@@ -1,18 +1,18 @@
 #![no_main]
 
-use url::Url;
 use std::collections::BTreeMap;
 use std::time::Duration;
+use url::Url;
 
-use broadcast_common::stage::Timestamp;
 use broadcast_client::{
     Action, Config, ConnId, Credentials, DashClockPolicy, Event, Session, Status, TransportError,
 };
+use broadcast_common::stage::Timestamp;
 use libfuzzer_sys::fuzz_target;
 use test_fixtures::fuzz::{
-    CAPS, DEFAULT_PUBLISH_US, DashWorld, GRACE_US, MAX_INPUT, MICROS, PIN_ORIGIN,
-    PREFER_HOST, RESYNC_US, STEPS_US, USE_ATO, flip_byte, http_date, pick_mpd, take_arbitrary,
-    truncate_tail, utc_body,
+    CAPS, DEFAULT_PUBLISH_US, DashWorld, GRACE_US, MAX_INPUT, MICROS, PIN_ORIGIN, PREFER_HOST,
+    RESYNC_US, STEPS_US, USE_ATO, flip_byte, http_date, pick_mpd, take_arbitrary, truncate_tail,
+    utc_body,
 };
 
 const HEADER: usize = 8;
@@ -87,7 +87,9 @@ impl Watch {
                     if !url.as_str().starts_with(ORIGIN_PREFIX) {
                         for (name, _) in &headers {
                             assert!(
-                                !AUDIT_HEADERS.iter().any(|h| name.as_str().eq_ignore_ascii_case(h)),
+                                !AUDIT_HEADERS
+                                    .iter()
+                                    .any(|h| name.as_str().eq_ignore_ascii_case(h)),
                                 "{name} sent to {url}"
                             );
                         }
@@ -240,25 +242,57 @@ fn answer(
             if req.method == "HEAD" {
                 session.on_response(conn, http::StatusCode::OK, &headers, at);
             } else {
-                deliver(session, conn, now, http::StatusCode::OK, &headers, &real, chunk);
+                deliver(
+                    session,
+                    conn,
+                    now,
+                    http::StatusCode::OK,
+                    &headers,
+                    &real,
+                    chunk,
+                );
             }
             session.on_closed(conn, None, at);
         }
         8 => {
             let mut body = real.clone();
             truncate_tail(&mut body, aux);
-            deliver(session, conn, now, http::StatusCode::OK, &headers, &body, chunk);
+            deliver(
+                session,
+                conn,
+                now,
+                http::StatusCode::OK,
+                &headers,
+                &body,
+                chunk,
+            );
             session.on_closed(conn, None, at);
         }
         9 => {
             let mut body = real.clone();
             flip_byte(&mut body, aux);
-            deliver(session, conn, now, http::StatusCode::OK, &headers, &body, chunk);
+            deliver(
+                session,
+                conn,
+                now,
+                http::StatusCode::OK,
+                &headers,
+                &body,
+                chunk,
+            );
             session.on_closed(conn, None, at);
         }
         10 => {
             let body = take_arbitrary(rest, aux);
-            deliver(session, conn, now, http::StatusCode::OK, &http::HeaderMap::new(), &body, chunk);
+            deliver(
+                session,
+                conn,
+                now,
+                http::StatusCode::OK,
+                &http::HeaderMap::new(),
+                &body,
+                chunk,
+            );
             session.on_closed(conn, None, at);
         }
         11..=14 => {
@@ -275,11 +309,31 @@ fn answer(
             deliver(session, conn, now, status, &h, b"nope", chunk);
             session.on_closed(conn, None, at);
         }
-        15 => session.on_closed(conn, Some(TransportError::Other { reason: "reset".to_string() }), at),
+        15 => session.on_closed(
+            conn,
+            Some(TransportError::Other {
+                reason: "reset".to_string(),
+            }),
+            at,
+        ),
         16 => {
             let half = real.len() / 2;
-            deliver(session, conn, now, http::StatusCode::OK, &headers, &real[..half], chunk);
-            session.on_closed(conn, Some(TransportError::Other { reason: "reset".to_string() }), at);
+            deliver(
+                session,
+                conn,
+                now,
+                http::StatusCode::OK,
+                &headers,
+                &real[..half],
+                chunk,
+            );
+            session.on_closed(
+                conn,
+                Some(TransportError::Other {
+                    reason: "reset".to_string(),
+                }),
+                at,
+            );
         }
         17 => {
             let status = if is_mpd { 304 } else { 200 };
@@ -287,14 +341,30 @@ fn answer(
             if status == 304 {
                 session.on_response(conn, http::StatusCode::NOT_MODIFIED, &header_map(&h), at);
             } else {
-                deliver(session, conn, now, http::StatusCode::OK, &headers, &real, chunk);
+                deliver(
+                    session,
+                    conn,
+                    now,
+                    http::StatusCode::OK,
+                    &headers,
+                    &real,
+                    chunk,
+                );
             }
             session.on_closed(conn, None, at);
         }
         18 => {
             let mpds = &DashWorld::loaded().mpds;
             let alt = &mpds[usize::from(aux) % mpds.len()];
-            deliver(session, conn, now, http::StatusCode::OK, &http::HeaderMap::new(), alt, chunk);
+            deliver(
+                session,
+                conn,
+                now,
+                http::StatusCode::OK,
+                &http::HeaderMap::new(),
+                alt,
+                chunk,
+            );
             session.on_closed(conn, None, at);
         }
         19 => {
@@ -310,7 +380,12 @@ fn answer(
             session.on_response(conn, status, &header_map(&h), at);
         }
         _ => {
-            session.on_response(conn, http::StatusCode::METHOD_NOT_ALLOWED, &http::HeaderMap::new(), at);
+            session.on_response(
+                conn,
+                http::StatusCode::METHOD_NOT_ALLOWED,
+                &http::HeaderMap::new(),
+                at,
+            );
             session.on_closed(conn, None, at);
         }
     }
@@ -347,7 +422,8 @@ fuzz_target!(|data: &[u8]| {
     config.dash.utc_resync = (RESYNC_US[usize::from(head[4] & 3)] != u64::MAX)
         .then(|| Duration::from_micros(RESYNC_US[usize::from(head[4] & 3)]));
     config.dash.early_grace = Duration::from_micros(GRACE_US[usize::from((head[4] >> 2) % 3)]);
-    config.dash.min_mpd_refresh = Duration::from_micros(REFRESH_US[usize::from((head[4] >> 4) & 3)]);
+    config.dash.min_mpd_refresh =
+        Duration::from_micros(REFRESH_US[usize::from((head[4] >> 4) & 3)]);
 
     let mpd = pick_mpd(&world.mpds, head[0], head[1], head[2], &mut rest);
     let publish = dash_runtime::mpd::Mpd::parse(&mpd)
@@ -356,14 +432,16 @@ fuzz_target!(|data: &[u8]| {
         .map(|t| t.as_microsecond())
         .unwrap_or(DEFAULT_PUBLISH_US);
 
-    let Ok(mut session) = Session::open(Url::parse(MPD_URL).unwrap(), config, Timestamp::from_micros(0)) else {
+    let Ok(mut session) = Session::open(
+        Url::parse(MPD_URL).unwrap(),
+        config,
+        Timestamp::from_micros(0),
+    ) else {
         return;
     };
     if head[7] & 1 != 0 {
-        let _ = session.set_credentials(
-            Timestamp::from_micros(0),
-            Credentials::new("user", "pass"),
-        );
+        let _ =
+            session.set_credentials(Timestamp::from_micros(0), Credentials::new("user", "pass"));
     }
     let give_clock = |session: &mut Session, now: u64, skew: i64| {
         let unix = publish
@@ -413,8 +491,7 @@ fuzz_target!(|data: &[u8]| {
         }
         match pick % 16 {
             0 => {
-                let _ =
-                    session.select_variant(Timestamp::from_micros(now), usize::from(aux % 4));
+                let _ = session.select_variant(Timestamp::from_micros(now), usize::from(aux % 4));
             }
             1 => {
                 let _ = session.select_audio_rendition(

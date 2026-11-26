@@ -3,7 +3,7 @@
 //! Each layout carries the BS.1770 channel-weighting coefficients G_i.
 //! The LFE channel is always excluded from measurement (weight = 0.0).
 
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 
 /// Channel layout defining the set of channels to measure and their
 /// BS.1770-5 per-channel weighting coefficients G_i.

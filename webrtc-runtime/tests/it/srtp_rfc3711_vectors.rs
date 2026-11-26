@@ -30,7 +30,7 @@
 #![cfg(feature = "media")]
 
 use aes::Aes128;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use cipher::{BlockCipherEncrypt, KeyInit, KeyIvInit, StreamCipher, array::Array};
 use ctr::Ctr128BE;
 use hmac::{Hmac, Mac};

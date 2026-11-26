@@ -115,7 +115,7 @@ fn scte35_unbalanced_fixture() {
 /// for the same event id once `auto_return` is cleared.
 #[test]
 fn real_canonical_splice_insert_parsed_and_not_unbalanced() {
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     use scte35_splice::commands::AnyCommand;
 
     /// The canonical vector's own event id.

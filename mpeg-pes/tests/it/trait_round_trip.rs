@@ -1,6 +1,6 @@
-//! `PesPacket` through `broadcast_common::{Parse, Serialize}`.
+//! `PesPacket` through `broadcast_core::{Parse, Serialize}`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use mpeg_pes::{Error, PesPacket};
 
 const VIDEO_PTS_ONLY: [u8; 16] = [
@@ -21,7 +21,7 @@ fn short_output_is_output_buffer_too_small() {
     assert_eq!(
         Serialize::serialize_into(&pkt, &mut [0u8; 15]),
         Err(Error::OutputBufferTooSmall(
-            broadcast_common::error::OutputBufferTooSmall { need: 16, have: 15 }
+            broadcast_core::error::OutputBufferTooSmall { need: 16, have: 15 }
         ))
     );
 }

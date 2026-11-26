@@ -11,7 +11,7 @@
 //! Fixtures: real ffmpeg output with real `uuid` children spliced in —
 //! see `../fixtures/mp4/uuid-boxes/PROVENANCE.md`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::MovieBox;
 
 const DIR: &str = "mp4/uuid-boxes";

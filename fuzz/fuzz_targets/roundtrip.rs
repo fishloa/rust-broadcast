@@ -1,6 +1,6 @@
 #![no_main]
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
@@ -9,7 +9,7 @@ fuzz_target!(|data: &[u8]| {
 });
 
 fn roundtrip_pat_section(data: &[u8]) {
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     use dvb_si::tables::pat::PatSection;
 
     let parsed = match PatSection::parse(data) {

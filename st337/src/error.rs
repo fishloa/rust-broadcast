@@ -15,20 +15,20 @@ pub enum Error {
     /// Input buffer shorter than
     /// required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// `Pa` or `Pb` did not equal the fixed 16-bit-mode sync-word constant
     /// (SMPTE ST 337 Table 6, §7.2.1).
     #[error(transparent)]
-    InvalidSync(#[from] broadcast_common::error::InvalidSync),
+    InvalidSync(#[from] broadcast_core::error::InvalidSync),
     /// A field value did not fit its wire bit-width, or a derived count
     /// (`length_code` vs. actual payload length) was inconsistent.
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
     /// `data_mode` (§7.2.4.3 Table 8) was not `Mode16`. This crate's
     /// byte-stream abstraction only supports the 16-bit data mode — see
     /// `private/specs-verified/smpte/st337/st337.md`'s "Scope decisions" §2 for why 20-/24-bit-wide

@@ -24,6 +24,10 @@ pub const DEHANDROLL: &[Dehandroll] = &[
         allow: &[],
     },
     Dehandroll {
+        name: "broadcast-core",
+        allow: &[],
+    },
+    Dehandroll {
         name: "scte35-splice",
         allow: &[],
     },

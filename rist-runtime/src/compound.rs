@@ -20,10 +20,10 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, UnsupportedVersion};
-use broadcast_common::len::need_out;
+use broadcast_core::error::{BufferTooShort, UnsupportedVersion};
+use broadcast_core::len::need_out;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::rtcp::{
     PT_RECEIVER_REPORT, PT_SENDER_REPORT, PT_SOURCE_DESCRIPTION, ReceiverReport, SdesChunk,
     SdesItem, SdesItemType, SenderReport, SourceDescription,
@@ -157,13 +157,13 @@ fn write_header(
 ) -> Result<usize> {
     need_out(buf, total)?;
     let length_words =
-        broadcast_common::len::fit_u16(total / WORD_LEN - 1, "rtcp common-header length field")?;
+        broadcast_core::len::fit_u16(total / WORD_LEN - 1, "rtcp common-header length field")?;
     let p_bit = if padding > 0 { RTCP_PADDING_MASK } else { 0 };
     buf[0] = (RTCP_VERSION << VERSION_SHIFT) | p_bit | byte0_low;
     buf[PT_OFFSET] = packet_type;
     buf[2..4].copy_from_slice(&length_words.to_be_bytes());
     if padding > 0 {
-        buf[total - 1] = broadcast_common::len::fit_u8(padding, "rtcp padding count")?;
+        buf[total - 1] = broadcast_core::len::fit_u8(padding, "rtcp padding count")?;
     }
     Ok(RTCP_HEADER_LEN)
 }
@@ -340,14 +340,14 @@ impl ReportPart {
             ReportPart::Sr(sr) => sr.report_blocks.len(),
             ReportPart::Rr(rr) => rr.report_blocks.len(),
         };
-        let byte0_low = broadcast_common::len::fit_u8(rc, "rtcp report count")?;
+        let byte0_low = broadcast_core::len::fit_u8(rc, "rtcp report count")?;
         write_header(buf, total, byte0_low, self.packet_type(), count)?;
         rist_padding.write_into(&mut buf[value_end..])?;
         Ok(total)
     }
 }
 
-broadcast_common::impl_spec_display!(ReportPart);
+broadcast_core::impl_spec_display!(ReportPart);
 
 // ---------------------------------------------------------------------------
 // RistPadding — the preserved padding region of one sub-packet

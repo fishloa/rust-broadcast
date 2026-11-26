@@ -45,7 +45,7 @@ It does **not**:
 ## Quick start
 
 ```rust
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st12_1::LtcFrame;
 
 let frame = LtcFrame {

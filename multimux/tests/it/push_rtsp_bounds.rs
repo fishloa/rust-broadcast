@@ -1,5 +1,5 @@
 //! RTSP push: every awaited IO is bounded (SP6.1, defect 4).
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;

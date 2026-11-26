@@ -21,9 +21,9 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for mosaic_descriptor.
 pub const TAG: u8 = 0x51;
@@ -437,13 +437,13 @@ impl Serialize for MosaicDescriptor {
             ENTRY_POINT_MASK
         } else {
             0
-        } | (broadcast_common::len::fit_mask(
+        } | (broadcast_core::len::fit_mask(
             self.num_horizontal_cells,
             NUM_CELLS_MASK,
             "num_horizontal_cells",
         )? << NUM_HORIZONTAL_CELLS_SHIFT)
             | ((self.reserved_future_use.get() as u8) << GRID_RESERVED_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.num_vertical_cells,
                 NUM_CELLS_MASK,
                 "num_vertical_cells",
@@ -451,7 +451,7 @@ impl Serialize for MosaicDescriptor {
         let mut pos = HEADER_LEN + GRID_HEADER_LEN;
         for cell in &self.logical_cells {
             // byte0: logical_cell_id(6) | high 2 bits of reserved_future_use(7).
-            buf[pos] = (broadcast_common::len::fit_mask(
+            buf[pos] = (broadcast_core::len::fit_mask(
                 cell.logical_cell_id,
                 LOGICAL_CELL_ID_MASK,
                 "logical_cell_id",
@@ -460,12 +460,12 @@ impl Serialize for MosaicDescriptor {
                     & CELL_RESERVED_HI_MASK);
             // byte1: low 5 bits of reserved_future_use(7) | presentation_info(3).
             buf[pos + 1] = ((cell.reserved_future_use.get() as u8) << CELL_RESERVED_LO_SHIFT)
-                | broadcast_common::len::fit_mask(
+                | broadcast_core::len::fit_mask(
                     cell.presentation_info,
                     CELL_PRESENTATION_MASK,
                     "presentation_info",
                 )?;
-            buf[pos + ELEMENTARY_CELL_FIELD_LENGTH_OFFSET] = broadcast_common::len::fit_u8(
+            buf[pos + ELEMENTARY_CELL_FIELD_LENGTH_OFFSET] = broadcast_core::len::fit_u8(
                 cell.elementary_cells.len(),
                 "elementary_cell_field_length",
             )?;
@@ -473,7 +473,7 @@ impl Serialize for MosaicDescriptor {
             for ec in &cell.elementary_cells {
                 // reserved_future_use(2) preserved | elementary_cell_id(6).
                 buf[pos] = ((ec.reserved_future_use.get() as u8) << ELEM_RESERVED_SHIFT)
-                    | broadcast_common::len::fit_mask(
+                    | broadcast_core::len::fit_mask(
                         ec.elementary_cell_id,
                         ELEM_CELL_ID_MASK,
                         "elementary_cell_id",

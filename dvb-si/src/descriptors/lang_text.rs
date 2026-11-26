@@ -10,7 +10,7 @@
 //! which the over-range check had drifted (some returned `InvalidDescriptor`,
 //! some `FieldOverflow`) — audit r03-O1, #1141. The reader and writer below
 //! are the one implementation; every serializer length goes through
-//! `broadcast_common::len::fit_u8`.
+//! `broadcast_core::len::fit_u8`.
 
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
@@ -107,7 +107,7 @@ pub(super) fn write_text(
     text: &DvbText<'_>,
     length_field: &'static str,
 ) -> Result<usize> {
-    buf[pos] = broadcast_common::len::fit_u8(text.len(), length_field)?;
+    buf[pos] = broadcast_core::len::fit_u8(text.len(), length_field)?;
     let start = pos + LEN_FIELD;
     buf[start..start + text.len()].copy_from_slice(text.raw());
     Ok(start + text.len())

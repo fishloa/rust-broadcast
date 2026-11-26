@@ -15,7 +15,7 @@
 //!    `EXT-X-MAP`-like prefix), never appears after it.
 
 use crate::hub_fixtures::dummy_avc_config;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment, mark_init_discontinuities};
 use core::time::Duration;
 use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord};

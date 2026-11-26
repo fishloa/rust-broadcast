@@ -4,7 +4,7 @@
 //! `(self.field & MASK) << n` silently drops the high bits of an over-range
 //! value (a 4-bit field given `0x13` is written as `3`), emitting a valid-
 //! looking but different descriptor. The fix is
-//! `broadcast_common::len::fit_mask(value, MASK, "field")?`, which returns
+//! `broadcast_core::len::fit_mask(value, MASK, "field")?`, which returns
 //! `Error::FieldOverflow` instead.
 //!
 //! This is the cheap lexical half of the guard (the behavioural half is each
@@ -268,7 +268,7 @@ fn no_unchecked_field_mask_in_serializers() {
     assert!(
         problems.is_empty(),
         "single-field `& MASK` in a serializer silently wraps an over-range \
-         value; use broadcast_common::len::fit_mask(value, MASK, \"field\")? \
+         value; use broadcast_core::len::fit_mask(value, MASK, \"field\")? \
          (or allow-list with a reason):\n{}",
         problems.join("\n")
     );

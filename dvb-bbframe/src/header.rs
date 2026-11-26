@@ -3,8 +3,8 @@
 //! Supports both Normal Mode (NM) and High Efficiency Mode (HEM)
 //! per EN 302 755 v1.4.1 §5.1.7.
 
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 use crate::crc::crc8;
 use crate::error::Error;
@@ -75,7 +75,7 @@ impl TsGs {
     }
 }
 
-broadcast_common::impl_spec_display!(TsGs);
+broadcast_core::impl_spec_display!(TsGs);
 
 wire_enum! {
     /// Operating mode: Normal or High Efficiency.
@@ -102,7 +102,7 @@ impl Mode {
     }
 }
 
-broadcast_common::impl_spec_display!(Mode);
+broadcast_core::impl_spec_display!(Mode);
 
 /// The pair of MATYPE bytes describing the input stream format and mode adaptation.
 ///
@@ -201,7 +201,7 @@ impl RollOff {
     }
 }
 
-broadcast_common::impl_spec_display!(RollOff);
+broadcast_core::impl_spec_display!(RollOff);
 
 impl Matype {
     /// Decode the roll-off factor from the EXT bits `[1:0]`.
@@ -297,7 +297,7 @@ impl<'a> Parse<'a> for Bbheader {
         let (hdr, _) = bytes
             .split_first_chunk::<BBHEADER_LEN>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: BBHEADER_LEN,
                     have: bytes.len(),
                     what: "BBHEADER",
@@ -1174,7 +1174,7 @@ mod tests {
         let err = hdr.serialize_into(&mut small).unwrap_err();
         assert_eq!(
             err,
-            Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+            Error::OutputBufferTooSmall(broadcast_core::error::OutputBufferTooSmall {
                 need: BBHEADER_LEN,
                 have: small.len(),
             })

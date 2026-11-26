@@ -6,7 +6,7 @@
 
 use crate::psm_vectors;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use mpeg_ps::program_stream::scan_packs;
 use mpeg_ps::{Error, ProgramStreamMap};
 

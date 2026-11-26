@@ -54,6 +54,10 @@ pub const TABLE: &[Crate] = &[
         allowlist: &[],
     },
     Crate {
+        name: "broadcast-core",
+        allowlist: &[],
+    },
+    Crate {
         name: "atsc3-route",
         allowlist: &[],
     },

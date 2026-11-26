@@ -7,8 +7,8 @@ use crate::segments::{
     PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
     be_u16,
 };
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// The alternative_CLUT_segment segment_type.
 pub const SEGMENT_TYPE: u8 = 0x16;
@@ -111,22 +111,22 @@ impl ClutParameters {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<()> {
-        buf[0] = (broadcast_common::len::fit_mask(
+        buf[0] = (broadcast_core::len::fit_mask(
             self.entry_max_number,
             ENTRY_MAX_NUMBER_MASK,
             "entry_max_number",
         )? << ENTRY_MAX_NUMBER_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.colour_component_type,
                 COLOUR_COMPONENT_TYPE_MASK,
                 "colour_component_type",
             )? << COLOUR_COMPONENT_TYPE_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.output_bit_depth,
                 OUTPUT_BIT_DEPTH_MASK,
                 "output_bit_depth",
             )? << OUTPUT_BIT_DEPTH_SHIFT)
-            | broadcast_common::len::fit_mask(self.reserved, PARAMETERS_RFU_MASK, "reserved")?;
+            | broadcast_core::len::fit_mask(self.reserved, PARAMETERS_RFU_MASK, "reserved")?;
         buf[1] = self.dynamic_range_and_colour_gamut;
         Ok(())
     }
@@ -158,7 +158,7 @@ impl OutputBitDepth {
     }
 }
 
-broadcast_common::impl_spec_display!(OutputBitDepth, Reserved);
+broadcast_core::impl_spec_display!(OutputBitDepth, Reserved);
 
 /// Dynamic range and colour gamut as defined in Table 34.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,7 +192,7 @@ impl DynamicRangeColourGamut {
     }
 }
 
-broadcast_common::impl_spec_display!(DynamicRangeColourGamut, Reserved);
+broadcast_core::impl_spec_display!(DynamicRangeColourGamut, Reserved);
 
 /// A single alternative CLUT entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -221,18 +221,18 @@ impl AlternativeClutEntry {
         if output_bit_depth == OUTPUT_BIT_DEPTH_10 {
             // 10-bit entry: each of the four values is 10 bits wide.
             let v0 =
-                broadcast_common::len::fit_mask(self.luma_value, ENTRY_10BIT_MASK, "luma_value")?;
-            let v1 = broadcast_common::len::fit_mask(
+                broadcast_core::len::fit_mask(self.luma_value, ENTRY_10BIT_MASK, "luma_value")?;
+            let v1 = broadcast_core::len::fit_mask(
                 self.chroma1_value,
                 ENTRY_10BIT_MASK,
                 "chroma1_value",
             )?;
-            let v2 = broadcast_common::len::fit_mask(
+            let v2 = broadcast_core::len::fit_mask(
                 self.chroma2_value,
                 ENTRY_10BIT_MASK,
                 "chroma2_value",
             )?;
-            let v3 = broadcast_common::len::fit_mask(self.t_value, ENTRY_10BIT_MASK, "t_value")?;
+            let v3 = broadcast_core::len::fit_mask(self.t_value, ENTRY_10BIT_MASK, "t_value")?;
             buf[ENTRY_10BIT_LUMA_OFFSET] = (v0 >> ENTRY_10BIT_SEGMENT_SHIFT) as u8;
             buf[ENTRY_10BIT_CHROMA1_OFFSET] = (((v0 & ENTRY_10BIT_SEGMENT_MASK)
                 << ENTRY_10BIT_PAIR_HIGH_SHIFT)
@@ -249,20 +249,20 @@ impl AlternativeClutEntry {
         } else {
             // 8-bit entry: each value is 8 bits wide.
             buf[ENTRY_10BIT_LUMA_OFFSET] =
-                broadcast_common::len::fit_mask(self.luma_value, ENTRY_8BIT_MASK, "luma_value")?
+                broadcast_core::len::fit_mask(self.luma_value, ENTRY_8BIT_MASK, "luma_value")?
                     as u8;
-            buf[ENTRY_8BIT_CHROMA1_OFFSET] = broadcast_common::len::fit_mask(
+            buf[ENTRY_8BIT_CHROMA1_OFFSET] = broadcast_core::len::fit_mask(
                 self.chroma1_value,
                 ENTRY_8BIT_MASK,
                 "chroma1_value",
             )? as u8;
-            buf[ENTRY_8BIT_CHROMA2_OFFSET] = broadcast_common::len::fit_mask(
+            buf[ENTRY_8BIT_CHROMA2_OFFSET] = broadcast_core::len::fit_mask(
                 self.chroma2_value,
                 ENTRY_8BIT_MASK,
                 "chroma2_value",
             )? as u8;
             buf[ENTRY_8BIT_T_OFFSET] =
-                broadcast_common::len::fit_mask(self.t_value, ENTRY_8BIT_MASK, "t_value")? as u8;
+                broadcast_core::len::fit_mask(self.t_value, ENTRY_8BIT_MASK, "t_value")? as u8;
         }
         Ok(())
     }
@@ -326,7 +326,7 @@ impl<'a> Parse<'a> for AlternativeClutSegment {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HEADER_LEN + FIXED_LEN, "alternative_CLUT_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "sync_byte",
                 expected: u32::from(crate::pes_data_field::SYNC_BYTE),
                 found: u32::from(bytes[0]),
@@ -403,12 +403,12 @@ impl Serialize for AlternativeClutSegment {
             .copy_from_slice(&seg_len.to_be_bytes());
 
         buf[HEADER_LEN + CLUT_ID_OFFSET] = self.clut_id;
-        buf[HEADER_LEN + CLUT_VERSION_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + CLUT_VERSION_OFFSET] = (broadcast_core::len::fit_mask(
             self.clut_version_number,
             CLUT_VERSION_RFU_MASK,
             "clut_version_number",
         )? << CLUT_VERSION_SHIFT)
-            | broadcast_common::len::fit_mask(self.reserved, CLUT_VERSION_RFU_MASK, "reserved")?;
+            | broadcast_core::len::fit_mask(self.reserved, CLUT_VERSION_RFU_MASK, "reserved")?;
         self.clut_parameters.serialize_into(
             &mut buf[HEADER_LEN + CLUT_PARAMETERS_OFFSET
                 ..HEADER_LEN + CLUT_PARAMETERS_OFFSET + CLUT_PARAMETERS_LEN],
@@ -429,7 +429,7 @@ impl Serialize for AlternativeClutSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     #[test]
     fn round_trip_8bit() {
@@ -481,7 +481,7 @@ mod tests {
         ];
         assert!(matches!(
             AlternativeClutSegment::parse(&bytes),
-            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 found: 0x00,
                 ..
             }))

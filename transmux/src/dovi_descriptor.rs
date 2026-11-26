@@ -6,9 +6,9 @@
 use crate::error::{Error, Result};
 use crate::ts_demux::DESCRIPTOR_HEADER_LEN;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::u16_at;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 use isobmff::dovi::{
     BL_FLAG, CCID_MASK, CCID_OFFSET, CCID_SHIFT, CONFIG_WORD_OFFSET, DOVI_RESERVED_ZERO,
     DoviDecoderConfigurationRecord, LEVEL_MASK, PROFILE_BITS, RESERVED_OFFSET, RESERVED_TAIL_LEN,
@@ -181,7 +181,7 @@ pub fn find_video_stream_descriptor(es_info: &[u8]) -> Option<DoviVideoStreamDes
 /// `descriptor_length`.
 pub fn video_stream_descriptor_bytes(d: &DoviVideoStreamDescriptor) -> Result<Vec<u8>> {
     let body = d.try_to_bytes()?;
-    let length = broadcast_common::len::fit_u8(body.len(), "descriptor_length")?;
+    let length = broadcast_core::len::fit_u8(body.len(), "descriptor_length")?;
     let mut out = Vec::with_capacity(DESCRIPTOR_HEADER_LEN + body.len());
     out.push(DOVI_VIDEO_STREAM_DESCRIPTOR_TAG);
     out.push(length);

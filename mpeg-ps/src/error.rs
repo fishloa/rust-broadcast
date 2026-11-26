@@ -9,11 +9,11 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input shorter than required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
     /// Output buffer passed to `serialize_into` was smaller than
     /// `serialized_len()`.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
     /// `pack_start_code` was not `0x000001BA`.
     #[error("invalid pack_start_code: {0:#010X} (expected 0x000001BA)")]
     BadPackStartCode(u32),
@@ -25,7 +25,7 @@ pub enum Error {
     BadMapStreamId(u8),
     /// Invalid PSM CRC_32.
     #[error(transparent)]
-    CrcMismatch(#[from] broadcast_common::error::CrcMismatch),
+    CrcMismatch(#[from] broadcast_core::error::CrcMismatch),
     /// A required `marker_bit` was not `1`.
     #[error("bad marker bit in {0}")]
     BadMarker(&'static str),
@@ -62,7 +62,7 @@ pub enum Error {
     /// header (serialize -> parse must be the identity, ISO/IEC 13818-1
     /// Table 2-40 `nextbits() == '1'` stream-loop condition).
     #[error(transparent)]
-    InvalidField(#[from] broadcast_common::error::InvalidField),
+    InvalidField(#[from] broadcast_core::error::InvalidField),
     /// `header_length` overflows the available buffer.
     #[error("header_length {header_length} exceeds available bytes ({available})")]
     HeaderLengthOverflow {
@@ -133,7 +133,7 @@ pub enum Error {
     },
 
     /// A length or count field's value does not fit its wire field
-    /// (see `broadcast_common::len`, #1129).
+    /// (see `broadcast_core::len`, #1129).
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::len::FieldOverflow),
 }

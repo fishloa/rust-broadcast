@@ -1,5 +1,5 @@
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::{Parse, Serialize};
 use rist_runtime::{Error, GenericNack, ReportPart, RistSenderCompound, RttEcho, RttEchoKind};
 use rtp_packet::Ssrc;
 use rtp_packet::rtcp::SenderReport;
@@ -95,7 +95,7 @@ fn an_oversized_cname_surfaces_the_rtcp_serializer_error() {
     match c.serialize_into(&mut out).unwrap_err() {
         Error::Rtcp(e) => assert_eq!(
             e,
-            rtp_packet::rtcp::Error::InvalidValue(broadcast_common::error::InvalidValue {
+            rtp_packet::rtcp::Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "sdes_item_len",
                 value: 300,
                 reason: "exceeds 8-bit SDES item length",

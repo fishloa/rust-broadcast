@@ -4,7 +4,7 @@
 //! associated service/bouquet — a loop of 16-bit identifiers.
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 impl ExtensionBodyDef<'_> for CpIdentifier {
     const TAG_EXTENSION: u8 = 0x03;

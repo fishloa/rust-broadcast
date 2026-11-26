@@ -4,6 +4,10 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
+
 ## [0.8.0] - 2026-11-22
 ### Breaking
 

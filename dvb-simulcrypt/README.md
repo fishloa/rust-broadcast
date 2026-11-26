@@ -63,7 +63,7 @@ use dvb_simulcrypt::{
     EcmgScsMessageType, EcmgScsParameterType, Interface, MessageType, Parameter,
     ParameterType, SimulcryptMessage,
 };
-use broadcast_common::traits::Serialize;
+use broadcast_core::traits::Serialize;
 
 let ecm_channel_id = [0x00, 0x2A]; // 0x002A
 let super_cas_id = [0x00, 0x01, 0x00, 0x02]; // CA_system_id | subsystem_id

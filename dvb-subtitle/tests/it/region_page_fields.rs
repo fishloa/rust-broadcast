@@ -2,7 +2,7 @@
 //! Definition (Table 16), Display Definition (Table 8) and PES data field
 //! (Table 3) field positions and boundaries.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_subtitle::{
     ClutDefinitionSegment, ClutEntry, DisplayDefinitionSegment, Error, ObjectProviderFlag,
     ObjectType, PageCompositionSegment, PageRegionEntry, PageState, PesDataField,

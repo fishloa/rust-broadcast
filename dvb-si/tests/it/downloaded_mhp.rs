@@ -11,7 +11,7 @@
 
 use std::fs;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_si::carousel::{DownloadDataBlock, UnMessage};
 use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::ait::AnyAitDescriptor;

@@ -7,9 +7,9 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for frequency_list_descriptor.
 pub const TAG: u8 = 0x62;
@@ -61,7 +61,7 @@ impl CodingType {
         }
     }
 }
-broadcast_common::impl_spec_display!(CodingType);
+broadcast_core::impl_spec_display!(CodingType);
 
 /// Frequency List Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -355,7 +355,7 @@ mod tests {
         let err = FrequencyListDescriptor::parse(raw).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort { need: 2, .. })
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort { need: 2, .. })
         ));
     }
 

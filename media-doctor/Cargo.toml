@@ -22,6 +22,7 @@ required-features = ["cli"]
 # all-features build in the same CI job sharing one target dir).
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 mpeg-pes         = { path = "../mpeg-pes", version = "0.10.0", default-features = false }
 dvb-stream       = { path = "../dvb-stream", version = "0.11.0", default-features = false, features = ["udp"], optional = true }
 mpeg-ts          = { path = "../mpeg-ts", version = "0.10.0", default-features = false }
@@ -62,7 +63,7 @@ socket2                     = { workspace = true, optional = true, features = ["
 
 [features]
 default = ["std"]
-std     = ["broadcast-common/std", "mpeg-ts/std", "transmux/std", "dvb-conformance/std", "broadcast-hls/std", "serde?/std", "serde_json?/std", "dash"]
+std     = ["broadcast-common/std", "broadcast-core/std", "mpeg-ts/std", "transmux/std", "dvb-conformance/std", "broadcast-hls/std", "serde?/std", "serde_json?/std", "dash"]
 # The DASH MPD validator: it reads the MPD with `broadcast-dash` (issue
 # #2340), which is `std`-only, so this feature implies `std`.
 dash    = ["dep:broadcast-dash", "std"]

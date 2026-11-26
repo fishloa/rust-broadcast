@@ -4,6 +4,8 @@
 
 ### Breaking
 
+- The wire-format contract types now come from `broadcast-core`.
+
 - `Diagnostic` now builds an incremental pass (`scan(&self, pmt: &PmtStreamIndex) -> Box<dyn DiagnosticScan>`) instead of requiring a whole-buffer `run`; `run(&self, ts: &[u8], report: &mut Report)` stays as a default method over that scan, so a caller holding a buffer is unchanged. A diagnostic whose scan reads the PMT-declared stream set overrides `needs_pmt_streams`.
 
 ### Added

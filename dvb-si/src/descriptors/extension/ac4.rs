@@ -1,7 +1,7 @@
 //! AC-4 Descriptor — ETSI EN 300 468 V1.20.1 Annex D §D.7 (tag_extension 0x15).
 use super::*;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedZero;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedZero;
 
 impl<'a> ExtensionBodyDef<'a> for Ac4<'a> {
     const TAG_EXTENSION: u8 = 0x15;
@@ -57,7 +57,7 @@ impl Ac4ChannelMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(Ac4ChannelMode, Reserved);
+broadcast_core::impl_spec_display!(Ac4ChannelMode, Reserved);
 
 /// Spec default of both `reserved_zero_future_use` fields of the AC-4
 /// descriptor: EN 300 468 V1.15.1 (`reserved_future_use` + NOTE "all bits 0")
@@ -153,7 +153,7 @@ impl<'a> Parse<'a> for Ac4<'a> {
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 1,
                     have: sel.len(),
                     what: "AC-4 body",
@@ -233,8 +233,7 @@ impl Serialize for Ac4<'_> {
                     reason: "required when ac4_config_flag is set",
                 })?
                 .to_u8();
-            let cm =
-                broadcast_common::len::fit_mask(cm, AC4_CHANNEL_MODE_MASK, "ac4_channel_mode")?;
+            let cm = broadcast_core::len::fit_mask(cm, AC4_CHANNEL_MODE_MASK, "ac4_channel_mode")?;
             let rz = self
                 .reserved_zero_future_use_5
                 .unwrap_or(AC4_RESERVED_FUTURE_USE_DEFAULT);
@@ -244,7 +243,7 @@ impl Serialize for Ac4<'_> {
             p += 1;
         }
         if let Some(t) = self.toc {
-            buf[p] = broadcast_common::len::fit_u8(t.len(), "ac4_toc_len")?;
+            buf[p] = broadcast_core::len::fit_u8(t.len(), "ac4_toc_len")?;
             p += 1;
             buf[p..p + t.len()].copy_from_slice(t);
             p += t.len();

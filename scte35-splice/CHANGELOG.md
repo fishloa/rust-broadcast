@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+
+### Breaking
+
+- The wire-format contract types now come from `broadcast-core`.
 ### Added
 - `ISO_CODE_LEN`: the byte width of an audio descriptor component's `ISO_code` field, now named in the public `AudioComponent::iso_code` type.
 

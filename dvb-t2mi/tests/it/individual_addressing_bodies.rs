@@ -4,8 +4,8 @@
 //! Byte strings are hand-written from the spec layout with distinct values in
 //! every sub-field, so a shifted or masked field cannot round-trip.
 
-use broadcast_common::len::FieldOverflow;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::FieldOverflow;
+use broadcast_core::{Parse, Serialize};
 use dvb_t2mi::Error;
 use dvb_t2mi::payload::{
     AddressingFunctionTag, BandwidthBody, CellIdBody, FrequencyBody, FunctionBody, FunctionEntry,
@@ -153,7 +153,7 @@ fn truncated_transmitter_header_reports_the_exact_need() {
     assert_eq!(
         IndividualAddressingPayload::parse(&bytes).err(),
         Some(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 6,
                 have: 4,
                 what: "transmitter entry header",
@@ -169,7 +169,7 @@ fn truncated_function_header_reports_the_exact_need() {
     assert_eq!(
         IndividualAddressingPayload::parse(&bytes).err(),
         Some(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 5,
                 have: 4,
                 what: "function entry header",

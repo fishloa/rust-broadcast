@@ -5,7 +5,7 @@
 /// ```sh
 /// cargo run -p dvb-simulcrypt --example build_channel_setup
 /// ```
-use broadcast_common::traits::Serialize;
+use broadcast_core::traits::Serialize;
 use dvb_simulcrypt::{
     EcmgScsMessageType, EcmgScsParameterType, Interface, MessageType, Parameter, ParameterType,
     SimulcryptMessage,

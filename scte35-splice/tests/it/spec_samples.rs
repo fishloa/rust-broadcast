@@ -9,7 +9,7 @@
 //! authoritative-vector coverage available: the spec's own messages.
 
 use broadcast_common::base64::base64_decode_strict;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 
 /// (label, base64) for all eight §14 sample messages.

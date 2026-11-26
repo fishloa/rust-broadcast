@@ -623,7 +623,7 @@ fn idr_wait_trips_at_its_bound_not_before() {
     assert!(!wait.tripped(), "a fresh wait has not tripped");
     let sample = transmux::Sample::new(vec![0u8; 4], Some(0), Some(0), Some(1000), true)
         .expect("valid timing");
-    let rate = broadcast_common::timescale!(1000);
+    let rate = broadcast_core::timescale!(1000);
     assert!(
         wait.observe_dropped(&sample, rate),
         "1000 ticks at 1 kHz reaches the 1 s bound"

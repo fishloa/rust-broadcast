@@ -16,7 +16,7 @@ use crate::support::segmenter_feed::{
     FRAME_DUR, PART_TARGET_MS, TARGET_DURATION, VIDEO_TIMESCALE,
     feed_via_segmenter as feed_segments, video_track_spec_sized,
 };
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1001,7 +1001,7 @@ fn config_smooth_deserializes_and_validates() {
 /// An AAC-LC `AudioSpecificConfig` for 48 kHz stereo.
 const ASC_48K_STEREO: [u8; 2] = [0x11, 0x90];
 /// The AAC media timescale.
-const AAC_TIMESCALE: broadcast_common::timescale::Timescale = broadcast_common::timescale!(48_000);
+const AAC_TIMESCALE: broadcast_core::timescale::Timescale = broadcast_core::timescale!(48_000);
 /// An AAC-LC frame duration, in [`AAC_TIMESCALE`] ticks.
 const AAC_FRAME_DUR: u32 = 1024;
 /// The channel count the AAC config reports.

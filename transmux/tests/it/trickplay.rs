@@ -15,7 +15,7 @@
 //! 3. **No-sync error**: a track with no sync samples returns
 //!    [`Error::InvalidInput`] rather than producing an empty track.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use std::fs;
 use test_harness::collect::CollectedTrack as Track;

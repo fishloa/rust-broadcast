@@ -2,7 +2,7 @@
 //! `try_from` and back through `From<Self> for repr`, and rejects an
 //! unallocated value with the crate's own typed error carrying that value.
 
-use broadcast_common::error::InvalidValue;
+use broadcast_core::error::InvalidValue;
 use dvb_t2mi::Error;
 use dvb_t2mi::packet::PacketType;
 use dvb_t2mi::payload::fef_null::S1Field;

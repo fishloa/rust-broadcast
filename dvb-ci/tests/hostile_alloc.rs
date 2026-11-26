@@ -4,7 +4,7 @@
 //! largest single allocation, so the bound is deterministic (no timing, no
 //! RSS sampling).
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_ci::ci_plus::cicam_player::PlayerCapabilitiesReply;
 
 #[global_allocator]

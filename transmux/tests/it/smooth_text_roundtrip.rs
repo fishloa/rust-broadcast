@@ -3,7 +3,7 @@
 //! parser must read back (real artifact: ffmpeg CMAF `av-subtitle-frag.mp4`,
 //! AVC + `stpp`/TTML).
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use broadcast_smooth::{SmoothManifest, StreamType};
 use transmux::SmoothPackager;
 use transmux::pipeline::CodecConfig;

@@ -24,10 +24,10 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::bits::{BitError, BitReader, BitWriter};
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::len::{fit_u16, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::bits::{BitError, BitReader, BitWriter};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::len::{fit_u16, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// Maps a shared [`BitError`] onto this crate's typed errors.
 fn bit_error(what: &'static str, e: BitError) -> Error {
@@ -38,20 +38,20 @@ fn bit_error(what: &'static str, e: BitError) -> Error {
             Error::BufferTooShort(short)
         }
         BitError::TooManyBits { requested } => {
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: what,
                 value: u64::from(requested),
                 reason: "field wider than 64 bits",
             })
         }
         BitError::ValueTooWide { value, .. } => {
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: what,
                 value,
                 reason: "value does not fit the field width",
             })
         }
-        _ => Error::InvalidValue(broadcast_common::error::InvalidValue {
+        _ => Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: what,
             value: 0,
             reason: "bit reader error",
@@ -61,7 +61,7 @@ fn bit_error(what: &'static str, e: BitError) -> Error {
 
 /// Writes the low `n` bits of `value` after a `fit_bits` range check.
 fn write_bits_checked(w: &mut BitWriter<'_>, value: u64, n: u32, what: &'static str) -> Result<()> {
-    let value = broadcast_common::len::fit_bits(value, n, what)?;
+    let value = broadcast_core::len::fit_bits(value, n, what)?;
     w.write_bits(value, n).map_err(|e| bit_error(what, e))
 }
 
@@ -174,7 +174,7 @@ impl Avs3AudioContent {
         }
     }
 }
-broadcast_common::impl_spec_display!(Avs3AudioContent, Reserved);
+broadcast_core::impl_spec_display!(Avs3AudioContent, Reserved);
 
 /// `Avs3AudioGASpecificConfig` (general-bit-rate coding, `audio_codec_id` 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,7 +302,7 @@ impl Ca3Config {
     }
 }
 
-broadcast_common::impl_spec_display!(Ca3Config);
+broadcast_core::impl_spec_display!(Ca3Config);
 
 fn parse_ga(r: &mut BitReader<'_>) -> Result<Avs3AudioGaConfig> {
     let w = "dca3 GA config";

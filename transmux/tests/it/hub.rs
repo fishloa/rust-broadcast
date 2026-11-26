@@ -13,11 +13,11 @@
 //! 3. `CmafMuxStage` bytes == `build_init_segment ++ build_media_segment`
 //!    for the equivalent input (the wrapper is byte-transparent).
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use std::fs;
 use transmux::TrackId;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use isobmff::init_segment::MovieBox;
 use isobmff::movie_fragment::MovieFragmentBox;
 use test_harness::collect::Collected as Media;

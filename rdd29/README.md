@@ -43,7 +43,7 @@ It does **not**:
 ## Quick start
 
 ```rust
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rdd29::{
     AtmosFrame, AudioDataDlc, BedChannel, BedDefinition1, BitDepth, ChannelId, FrameRate,
     SampleRate,

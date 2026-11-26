@@ -18,7 +18,7 @@
 //! box bytes (the PTO is unused in the arithmetic, only documented for
 //! higher-layer Period-level adjustment).
 use crate::error::{Error, Result};
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::emsg::{EmsgBox, PresentationTime};
 
 /// Segment-level timing parameters needed for emsg version conversion.

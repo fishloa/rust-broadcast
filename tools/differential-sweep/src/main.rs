@@ -13,9 +13,10 @@
 //! `cfg(feature = "baseline")` / `cfg(feature = "head")`; see README.md for the
 //! list of adapted call sites.
 
-
 #[cfg(not(any(feature = "head", feature = "baseline")))]
-compile_error!("build with exactly one of `--features head` or `--features baseline` (see README.md)");
+compile_error!(
+    "build with exactly one of `--features head` or `--features baseline` (see README.md)"
+);
 #[cfg(all(feature = "head", feature = "baseline"))]
 compile_error!("`head` and `baseline` are mutually exclusive: enable exactly one");
 

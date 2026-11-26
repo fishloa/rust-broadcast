@@ -13,7 +13,7 @@
 //! (e.g. a regression that passes `requested_pts` straight through).
 
 use broadcast_common::clock33::{self, Clock33};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::emsg::{EmsgBox, PresentationTime};
 use playout_runtime::schedule::{CodecConfigId, EntryKind, Schedule, ScheduleEntry};
 use playout_runtime::scte35::{BreakEdge, build_splice_insert, to_section};

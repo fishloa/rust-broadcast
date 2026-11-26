@@ -10,8 +10,8 @@ use crate::reserved::ReservedOnes;
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use crate::wire::be_u16;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
 /// `tune()` object (Table 27): retune to a different service. Parameters are the
@@ -213,7 +213,7 @@ impl<'a> Parse<'a> for ClearReplace {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::CLEAR_REPLACE, "clear_replace")?;
         let replacement_ref = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "clear_replace replacement_ref",

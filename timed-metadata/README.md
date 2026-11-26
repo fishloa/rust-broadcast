@@ -73,7 +73,7 @@ timed-metadata = { version = "0.12", features = ["serde"] }
 ## Quick start
 
 ```rust
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::emsg::PresentationTime;
 use timed_metadata::convert::{EmsgConfig, emsg_to_scte35};
 use timed_metadata::{TimeAnchor, Timeline};

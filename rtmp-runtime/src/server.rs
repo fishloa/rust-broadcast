@@ -60,8 +60,8 @@
 //! not a spec-mandated value: §5.3 leaves csid choice to the sender for
 //! anything other than protocol control/user control traffic.
 
-use broadcast_common::Parse;
-use broadcast_common::error::BufferTooShort;
+use broadcast_core::Parse;
+use broadcast_core::error::BufferTooShort;
 
 use crate::RtmpError;
 use crate::amf0::{Amf0Value, Command};
@@ -941,7 +941,7 @@ mod tests {
     use crate::handshake::{HANDSHAKE_PACKET_LEN, RTMP_VERSION};
     use crate::ids::MessageStreamId;
     use crate::message::CONTROL_CHUNK_STREAM_ID as CTRL_CSID;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     // ── Test-only wire builders (this crate's own encoders) ─────────────
 

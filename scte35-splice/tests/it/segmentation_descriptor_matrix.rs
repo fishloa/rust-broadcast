@@ -2,7 +2,7 @@
 //! Table 20): multi-byte fields whose byte order and width a mutant can swap,
 //! the optional sections' truncation boundaries, and the MID() walker.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::Error;
 use scte35_splice::descriptors::segmentation::{
     DeliveryRestrictions, MidUpid, SegmentationComponent, SegmentationDescriptor, SubSegments,
@@ -139,7 +139,7 @@ fn mid_with_one_trailing_byte_is_a_buffer_too_short() {
     assert_eq!(
         descriptor.mid(),
         Some(Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 5,
                 have: 4,
                 what: "MID() entry header",
@@ -211,7 +211,7 @@ fn the_40_bit_duration_maximum_round_trips_and_one_more_is_rejected() {
     };
     assert_eq!(
         over.try_to_bytes(),
-        Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "segmentation_descriptor.segmentation_duration",
             value: 0x0100_0000_0000,
             max: 0x00FF_FFFF_FFFF,
@@ -246,7 +246,7 @@ fn the_33_bit_pts_offset_maximum_round_trips_and_one_more_is_rejected() {
     };
     assert_eq!(
         over.try_to_bytes(),
-        Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "segmentation_descriptor.component.pts_offset",
             value: 0x2_0000_0000,
             max: 0x1_FFFF_FFFF,
@@ -270,7 +270,7 @@ fn the_descriptor_length_field_accepts_exactly_255() {
     };
     assert_eq!(
         over.try_to_bytes(),
-        Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "segmentation_descriptor.descriptor_length",
             value: 256,
             max: 255,
@@ -292,7 +292,7 @@ fn a_descriptor_cut_at_each_optional_section_is_a_typed_error() {
     assert_eq!(
         SegmentationDescriptor::parse(&truncated_to(&MATRIX_BYTES, 9)),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 11,
                 have: 9,
                 what: "segmentation_descriptor header",
@@ -302,7 +302,7 @@ fn a_descriptor_cut_at_each_optional_section_is_a_typed_error() {
     assert_eq!(
         SegmentationDescriptor::parse(&truncated_to(&MATRIX_BYTES, 11)),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 12,
                 have: 11,
                 what: "segmentation_descriptor flags",
@@ -312,7 +312,7 @@ fn a_descriptor_cut_at_each_optional_section_is_a_typed_error() {
     assert_eq!(
         SegmentationDescriptor::parse(&truncated_to(&MATRIX_BYTES, 28)),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 30,
                 have: 28,
                 what: "segmentation_descriptor segmentation_duration",
@@ -334,7 +334,7 @@ fn a_descriptor_cut_at_each_optional_section_is_a_typed_error() {
     assert_eq!(
         SegmentationDescriptor::parse(&component_cut),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 25,
                 have: 24,
                 what: "segmentation_descriptor component",
@@ -366,7 +366,7 @@ fn a_descriptor_cut_at_each_optional_section_is_a_typed_error() {
     assert_eq!(
         SegmentationDescriptor::parse(&cut),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 17,
                 have: 16,
                 what: "segmentation_descriptor type/segment",

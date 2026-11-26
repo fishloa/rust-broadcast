@@ -1,9 +1,9 @@
 //! T2-MI payload type 0x31: FEF part — I/Q data — §5.2.10.
 
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 use core::fmt;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use super::RFU_TOP_BIT_SHIFT;
 use super::fef_null::{
@@ -52,7 +52,7 @@ impl<'a> Parse<'a> for FefIqPayload<'a> {
         // rfu spans all of byte 1 plus the top bit of byte 2.
         if bytes[RFU_BYTE_OFFSET] != 0 || bytes[S1_S2_BYTE_OFFSET] & S1_S2_RFU_MASK != 0 {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "9-bit rfu",
                     expected: 0,
                     found: (u64::from(bytes[RFU_BYTE_OFFSET]) << 1)
@@ -88,7 +88,7 @@ impl Serialize for FefIqPayload<'_> {
 
         if self.s2_field > S2_MASK {
             return Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "s2_field",
                     value: u64::from(self.s2_field),
                     max: u64::from(S2_MASK),
@@ -148,7 +148,7 @@ mod tests {
         assert_eq!(
             FefIqPayload::parse(&buf).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "9-bit rfu",
                     expected: 0,
                     found: 62

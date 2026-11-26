@@ -69,15 +69,15 @@
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
+use broadcast_core::error::InvalidValue;
 use core::time::Duration;
 use mpeg_ts::pid::Pid;
 
-use broadcast_common::Serialize;
 #[cfg(test)]
 use broadcast_common::crc32_mpeg2;
 use broadcast_common::stage::{Stage, Timestamp};
-use broadcast_common::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
+use broadcast_core::Serialize;
+use broadcast_core::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
 use mpeg_pes::StreamId;
 use mpeg_ts::mux::SectionPacketiser;
 #[cfg(feature = "hls")]
@@ -199,7 +199,7 @@ fn mpegh_3daudio_descriptor(
     profile_level_indication: u8,
     reference_channel_layout: u8,
 ) -> Result<Vec<u8>> {
-    use broadcast_common::Serialize as _;
+    use broadcast_core::Serialize as _;
     use dvb_si::descriptors::mpeg2_extension::{Mpeg2ExtensionBody, Mpeg2ExtensionDescriptor};
     use dvb_si::descriptors::mpegh_3d_audio::MpegH3dAudio;
 
@@ -345,7 +345,7 @@ const PSI_SECTION_LENGTH_PREFIX: usize = 3;
 /// Media timescale of a Transport Stream / PES clock (90 kHz).
 /// The 90 kHz MPEG-2 Systems clock, both as a `Timescale` and as the `u64`
 /// scaling factor the rate arithmetic below uses.
-const TS_CLOCK: Timescale = broadcast_common::timescale!(90_000);
+const TS_CLOCK: Timescale = broadcast_core::timescale!(90_000);
 const TS_CLOCK_HZ: u64 = 90_000;
 
 /// A PAT/PMT repetition interval in 90 kHz clock ticks, rounded down; a span
@@ -1853,13 +1853,13 @@ fn write_pcr_only_packet(
 
 /// Rescale `ticks` from a track's `timescale` to the 90 kHz TS clock, rounding to
 /// nearest, and reduce modulo the 33-bit timestamp field.
-fn rescale(ticks: u64, timescale: broadcast_common::timescale::Timescale) -> u64 {
+fn rescale(ticks: u64, timescale: broadcast_core::timescale::Timescale) -> u64 {
     rescale_for_ordering(ticks, timescale) % TS_TIMESTAMP_MOD
 }
 
 /// Rescale a possibly-negative tick count (used for `pts = dts + composition`),
 /// clamping negatives to 0, then reduce modulo the 33-bit field.
-fn rescale_signed(ticks: i64, timescale: broadcast_common::timescale::Timescale) -> u64 {
+fn rescale_signed(ticks: i64, timescale: broadcast_core::timescale::Timescale) -> u64 {
     if ticks <= 0 {
         return 0;
     }
@@ -1877,7 +1877,7 @@ fn rescale_signed(ticks: i64, timescale: broadcast_common::timescale::Timescale)
 /// cumulative decode time would cross the 33-bit wrap point (issue #576: an
 /// opaque `CodecConfig::Data` track's recovered durations are untrusted
 /// input that can otherwise do exactly that).
-fn rescale_for_ordering(ticks: u64, timescale: broadcast_common::timescale::Timescale) -> u64 {
+fn rescale_for_ordering(ticks: u64, timescale: broadcast_core::timescale::Timescale) -> u64 {
     rescale_u64(ticks, timescale, TS_CLOCK, Rounding::Nearest)
 }
 

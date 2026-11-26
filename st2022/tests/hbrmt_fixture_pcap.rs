@@ -18,7 +18,7 @@
 //! from the surrounding fields rather than read verbatim off spec prose. See
 //! `reserve_field_width_is_confirmed_not_contradicted_by_real_capture` below.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st2022::{
     ClockFrequency, FecUsage, FrameStructure, MapStructure, PayloadHeader, SampleStructure,
     Scrambling, TimestampRef, VideoSourceFormat, VideoSourceId, VideoTimestamp,

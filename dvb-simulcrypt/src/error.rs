@@ -9,10 +9,10 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input shorter than required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
     /// The output buffer passed to `serialize_into` was too small.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
     /// The `message_length` header field is inconsistent with the bytes that
     /// follow it (TS 103 197 Table 1b: it counts the bytes immediately after
     /// the `message_length` field — i.e. the sum of all parameter TLVs).
@@ -36,5 +36,5 @@ pub enum Error {
     },
     /// A value did not fit the wire field it is written to.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::error::FieldOverflow),
 }

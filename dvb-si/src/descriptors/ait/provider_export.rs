@@ -14,8 +14,8 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for provider_export_descriptor (AIT namespace).
 pub const TAG: u8 = 0x12;
@@ -126,7 +126,7 @@ impl Serialize for ProviderExportDescriptor<'_> {
                 (p.provider_name, "provider_name_length"),
                 (p.provider_class_name, "provider_class_name_length"),
             ] {
-                buf[pos] = broadcast_common::len::fit_u8(field.len(), what)?;
+                buf[pos] = broadcast_core::len::fit_u8(field.len(), what)?;
                 pos += LEN_FIELD;
                 buf[pos..pos + field.len()].copy_from_slice(field);
                 pos += field.len();

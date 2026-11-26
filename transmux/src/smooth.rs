@@ -44,11 +44,12 @@ use crate::units::ROUNDING_DIVISOR;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::error::InvalidValue;
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
-use broadcast_common::{Demand, Parse, Serialize, Stage, Timestamp};
+use broadcast_common::{Demand, Stage, Timestamp};
+use broadcast_core::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
+use broadcast_core::{Parse, Serialize};
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::error::{Error, Result};
@@ -148,7 +149,7 @@ impl SmoothStreamType {
     }
 }
 
-broadcast_common::impl_spec_display!(SmoothStreamType);
+broadcast_core::impl_spec_display!(SmoothStreamType);
 
 // ---------------------------------------------------------------------------
 // tfxd uuid box — [MS-SSTR] §2.2.4.4
@@ -570,7 +571,7 @@ fn aac_codec_private_data(esds: &isobmff::mp4esds::EsdsBox) -> Result<Vec<u8>> {
 
 /// Convert a tick count in `media_timescale` to [`SMOOTH_TIMESCALE`] ticks with
 /// integer round-to-nearest.
-pub fn to_smooth_ticks(ticks: u64, media_timescale: broadcast_common::timescale::Timescale) -> u64 {
+pub fn to_smooth_ticks(ticks: u64, media_timescale: broadcast_core::timescale::Timescale) -> u64 {
     rescale_u64(
         ticks,
         media_timescale,
@@ -697,8 +698,7 @@ impl SmoothOrigin {
                 continue;
             };
             let earlier = best.is_none_or(|(ticks, best_timescale)| {
-                broadcast_common::timescale::cmp_ticks(dts, timescale, ticks, best_timescale)
-                    .is_lt()
+                broadcast_core::timescale::cmp_ticks(dts, timescale, ticks, best_timescale).is_lt()
             });
             if earlier {
                 best = Some((dts, timescale));
@@ -1166,7 +1166,7 @@ mod tests {
     use super::*;
     use crate::collect::CollectedTrack as Track;
     use crate::ir::DataIdentity;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
 
     #[test]
     fn tfxd_round_trip() {

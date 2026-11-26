@@ -5,7 +5,7 @@
 //! matching row fail.
 
 use alloc::vec::Vec;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::tag::ApduTag;

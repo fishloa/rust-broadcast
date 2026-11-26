@@ -2,7 +2,7 @@
 //! fixed lengths and message-size accounting (ANSI/SCTE 104 2023 §9.4/§9.5/
 //! §9.7/§9.8/§10.5, `private/specs-verified/scte/scte104/`).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte104::SingleOperationMessage;
 use scte104::operations::component_mode_dpi::{ComponentModeDpi, ComponentModeEntry};
 use scte104::operations::control_word::{
@@ -81,7 +81,7 @@ fn component_mode_dpi_entries_are_exactly_three_bytes_each() {
     assert_eq!(
         ComponentModeDpi::parse(&[0u8; 8]),
         Err(scte104::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 9,
                 have: 8,
                 what: "component_mode_DPI data",
@@ -119,7 +119,7 @@ fn schedule_component_mode_entries_are_exactly_five_bytes_each() {
     assert_eq!(
         ScheduleComponentMode::parse(&[0u8; 8]),
         Err(scte104::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 10,
                 have: 8,
                 what: "schedule_component_mode data",
@@ -215,7 +215,7 @@ fn truncated_audio_entry_loops_report_the_body_including_the_count_byte() {
     assert_eq!(
         InsertAudioDescriptor::parse(&[0x01]),
         Err(scte104::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 8,
                 have: 1,
                 what: "insert_audio_descriptor entries",
@@ -226,7 +226,7 @@ fn truncated_audio_entry_loops_report_the_body_including_the_count_byte() {
     assert_eq!(
         InsertAudioProvisioning::parse(&[0x01]),
         Err(scte104::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 3,
                 have: 1,
                 what: "insert_audio_provisioning entries",
@@ -249,7 +249,7 @@ fn a_component_list_truncated_before_its_data_count_is_rejected() {
     assert_eq!(
         ProvisioningRequest::parse(&body),
         Err(scte104::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 3,
                 have: 2,
                 what: "injector_component_list audio_component_tags",

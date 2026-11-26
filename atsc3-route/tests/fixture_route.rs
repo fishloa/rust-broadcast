@@ -14,7 +14,7 @@
 use atsc3_route::{
     Codepoint, ROUTE_TOI_LEN, ROUTE_TSI_LEN, RouteFecPayloadId, RoutePacket, SourceFecPayloadId,
 };
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rmt_flute::{Toi, Tsi};
 
 fn fixture_path(name: &str) -> std::path::PathBuf {

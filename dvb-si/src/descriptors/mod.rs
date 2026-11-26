@@ -195,7 +195,7 @@ pub(crate) fn write_descriptor_header(
     body_len: usize,
 ) -> crate::Result<()> {
     buf[0] = tag;
-    buf[1] = broadcast_common::len::fit_u8(body_len, "descriptor_length")?;
+    buf[1] = broadcast_core::len::fit_u8(body_len, "descriptor_length")?;
     Ok(())
 }
 
@@ -208,7 +208,7 @@ pub(crate) fn descriptor_body<'a>(
     const HEADER_LEN: usize = 2;
     if bytes.len() < HEADER_LEN {
         return Err(crate::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: HEADER_LEN,
                 have: bytes.len(),
                 what,
@@ -225,7 +225,7 @@ pub(crate) fn descriptor_body<'a>(
     let end = HEADER_LEN + length;
     if bytes.len() < end {
         return Err(crate::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: end,
                 have: bytes.len(),
                 what,

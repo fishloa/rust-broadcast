@@ -10,8 +10,8 @@
 //! through `dvb-si`'s serializer and the TS muxer.
 
 use crate::ts_mux_stage;
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse, Serialize};
 use dvb_si::descriptors::aac::{AacDescriptor, AacExtension};
 use isobmff::EsdsBox;
 use test_harness::collect::Collected as Media;
@@ -20,7 +20,7 @@ use transmux::{
     TrackSpec, build_init_segment, rfc6381_codec_string,
 };
 
-const MOVIE_TIMESCALE: Timescale = broadcast_common::timescale!(1000);
+const MOVIE_TIMESCALE: Timescale = broadcast_core::timescale!(1000);
 const CORE_HZ: u32 = 22_050;
 const OUTPUT_HZ: u32 = 44_100;
 const AAC_FRAME_SAMPLES: u32 = 1024;

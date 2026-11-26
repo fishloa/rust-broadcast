@@ -32,10 +32,10 @@ use crate::bitreader::{bit_error, write_bits_checked};
 use crate::error::{Error, Result};
 use crate::nal::HEVC_NAL_HEADER_LEN;
 use alloc::vec::Vec;
-use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::error::InvalidValue;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::bits::{BitReader, BitWriter};
+use broadcast_core::error::InvalidValue;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// SEI `payloadType` of `user_data_registered_itu_t_t35` (H.265 D.2.6).
 pub const SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35: u32 = 4;
@@ -145,7 +145,7 @@ impl OverlapProcessOption {
         }
     }
 }
-broadcast_common::impl_spec_display!(OverlapProcessOption);
+broadcast_core::impl_spec_display!(OverlapProcessOption);
 
 /// The extra pixel selector of a window with `WindowNumber` > 0: the bounding
 /// rectangle plus the concentric elliptical selector (ST 2094-40 clause 6;

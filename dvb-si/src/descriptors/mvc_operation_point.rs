@@ -12,7 +12,7 @@
 use crate::error::Result;
 use crate::h222_bits::{BITS_PER_BYTE, BitReader, BitWriter, impl_h222_descriptor};
 use alloc::vec::Vec;
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::reserved::ReservedOnes;
 
 /// Descriptor tag of `MVC_operation_point_descriptor` (Table 2-45: 51).
 pub const TAG: u8 = 0x33;
@@ -261,7 +261,7 @@ impl_h222_descriptor!(
 mod tests {
     use super::*;
     use alloc::vec;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     #[test]
     fn spec_vector_round_trip() {

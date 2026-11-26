@@ -30,7 +30,7 @@ impl Severity {
     }
 }
 
-broadcast_common::impl_spec_display!(Severity);
+broadcast_core::impl_spec_display!(Severity);
 
 /// The stream a [`Location`] names: a transport-stream PID, a container-level
 /// media track, or nothing at all.

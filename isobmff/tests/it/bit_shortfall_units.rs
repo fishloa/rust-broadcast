@@ -1,5 +1,5 @@
 //! A bit-level adapter reports a short input in **bytes**, the unit of
-//! `broadcast_common::error::BufferTooShort` (its `Display` says "bytes"),
+//! `broadcast_core::error::BufferTooShort` (its `Display` says "bytes"),
 //! never in bits (issue #2461).
 //!
 //! The VVC configuration record reader is the adapter here that is reachable
@@ -8,8 +8,8 @@
 //! `BitError -> BufferTooShort` conversion that every one of them uses is
 //! pinned in `broadcast-common`'s own unit tests.
 
-use broadcast_common::Parse;
-use broadcast_common::error::BufferTooShort;
+use broadcast_core::Parse;
+use broadcast_core::error::BufferTooShort;
 use isobmff::error::Error;
 use isobmff::vvc_config::VvcDecoderConfigurationRecord;
 

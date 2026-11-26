@@ -1,7 +1,7 @@
 //! What the engine hands back: [`Output`], drained with
 //! [`super::SmoothClient::next_output`].
 
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 use transmux::{Sample, TrackId, TrackSpec};
 
 use super::action::StreamId;

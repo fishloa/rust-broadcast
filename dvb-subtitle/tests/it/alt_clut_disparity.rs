@@ -4,7 +4,7 @@
 //! Bytes are hand-computed from the spec's bit layouts, so a shift/mask error
 //! that is self-consistent between parse and serialize still fails.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_subtitle::{
     AlternativeClutEntry, AlternativeClutSegment, ClutParameters, DisparityRegion,
     DisparityShiftInterval, DisparityShiftUpdateSequence, DisparitySignallingSegment,

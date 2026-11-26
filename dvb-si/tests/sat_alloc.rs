@@ -3,7 +3,8 @@
 //! per `serialize_into`. The spec-layout `PositionV2` section below is the
 //! hand-built vector from the table's own tests (EN 300 468 Table 11d).
 
-use broadcast_common::{Parse, Serialize, crc32_mpeg2};
+use broadcast_common::crc32_mpeg2;
+use broadcast_core::{Parse, Serialize};
 use dvb_si::tables::sat::SatSection;
 use test_alloc::ThreadCounting;
 

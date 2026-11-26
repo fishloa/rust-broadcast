@@ -10,7 +10,7 @@
 //! or parent. `tests/it/ids_drift.rs` pins the table to the private
 //! transcription at runtime.
 
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 
 /// An element's EBML type (RFC 8794 §7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

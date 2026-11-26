@@ -8,8 +8,8 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// FourCC of the AC-4 config box.
 pub const DAC4_FOURCC: [u8; 4] = *b"dac4";

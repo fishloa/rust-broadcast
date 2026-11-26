@@ -72,13 +72,13 @@ impl RealTimeParametersBits {
     /// (#1129).
     pub(crate) fn to_bytes(
         self,
-    ) -> core::result::Result<[u8; RTP_LEN], broadcast_common::len::FieldOverflow> {
-        let dt = broadcast_common::len::fit_bits(
+    ) -> core::result::Result<[u8; RTP_LEN], broadcast_core::len::FieldOverflow> {
+        let dt = broadcast_core::len::fit_bits(
             u64::from(self.delta_t),
             DELTA_T_BITS,
             "real_time_parameters.delta_t",
         )? as u16;
-        let tail = broadcast_common::len::fit_bits(
+        let tail = broadcast_core::len::fit_bits(
             u64::from(self.tail),
             TAIL_BITS,
             "real_time_parameters.address_or_prev_burst_size",

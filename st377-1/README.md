@@ -68,7 +68,7 @@ Objects, plus `Unknown([u8; 2])` for any Set not in Table 17.
 ## Quick start
 
 ```rust
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st377_1::{BerLength, PartitionKind, PartitionPack, PartitionStatus, UlBytes};
 
 let pack = PartitionPack {

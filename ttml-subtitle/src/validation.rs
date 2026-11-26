@@ -76,7 +76,7 @@ impl ImscVersion {
     }
 }
 
-broadcast_common::impl_spec_display!(ImscVersion);
+broadcast_core::impl_spec_display!(ImscVersion);
 
 /// Which IMSC profile to validate against.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,7 +98,7 @@ impl Profile {
     }
 }
 
-broadcast_common::impl_spec_display!(Profile);
+broadcast_core::impl_spec_display!(Profile);
 
 /// A single validation violation.
 #[derive(Debug, Clone, PartialEq)]

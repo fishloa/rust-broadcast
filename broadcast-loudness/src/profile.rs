@@ -170,7 +170,7 @@ impl MonitorUnit {
         }
     }
 }
-broadcast_common::impl_spec_display!(MonitorUnit);
+broadcast_core::impl_spec_display!(MonitorUnit);
 
 /// GY/T 379-2023 Table 1 verdict for a channel's monthly over-limit share.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,7 +195,7 @@ impl MonitorVerdict {
         }
     }
 }
-broadcast_common::impl_spec_display!(MonitorVerdict);
+broadcast_core::impl_spec_display!(MonitorVerdict);
 
 /// Classify an over-limit share (0.0..=1.0) per GY/T 379-2023 Table 1 (the same
 /// 20% / 40% thresholds apply to `M10` and `S3`). A NaN share is treated as

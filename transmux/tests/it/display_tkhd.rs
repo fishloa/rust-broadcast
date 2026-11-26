@@ -1,6 +1,6 @@
 //! tkhd presentation size (Phase 5): cropped output size rescaled by SAR.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use transmux::TrackSpec;
 use transmux::ir::{AspectRatioIdc, CodecConfig};
 use transmux::pipeline;

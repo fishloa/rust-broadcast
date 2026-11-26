@@ -22,7 +22,7 @@
 //! `src/packet.rs`, carried over unchanged from the pre-extraction
 //! `transmux::rtcp` implementation.)
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::rtcp::{
     App, Bye, CompoundPacket, Error, PT_APP, PT_BYE, PT_RECEIVER_REPORT, PT_SENDER_REPORT,
     PT_SOURCE_DESCRIPTION, ReceiverReport, ReportBlock, RtcpPacket, RtcpPacketType, SdesItemType,
@@ -224,7 +224,7 @@ fn compound_sdes_first_is_rejected() {
     let err = CompoundPacket::parse(&SDES_VECTOR);
     assert!(matches!(
         err,
-        Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "rtcp_compound",
             ..
         }))
@@ -256,7 +256,7 @@ fn rejects_wrong_packet_type_for_typed_parse() {
     // RR_VECTOR is PT 201; parsing it directly as a SenderReport must fail.
     assert!(matches!(
         SenderReport::parse(&RR_VECTOR),
-        Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "rtcp_pt",
             ..
         }))

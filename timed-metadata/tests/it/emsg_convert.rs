@@ -3,7 +3,7 @@
 //! Validates `emsg_to_v1`/`emsg_to_v0` against the committed real broadcast
 //! captures.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::emsg::{EmsgBox, EmsgVersion, PresentationTime};
 use timed_metadata::Error;
 use timed_metadata::convert::{SegmentTiming, emsg_to_v0, emsg_to_v1};

@@ -7,8 +7,8 @@ use super::{U16_LEN, U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::time::SpliceScheduleTime;
 use crate::traits::OperationDef;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for schedule_definition_data (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x010E;
@@ -82,7 +82,7 @@ impl SpliceScheduleCommand {
     }
 }
 
-broadcast_common::impl_spec_display!(SpliceScheduleCommand, Unknown);
+broadcast_core::impl_spec_display!(SpliceScheduleCommand, Unknown);
 
 /// schedule_definition_data() — §9.7.2, Table 9-19.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
