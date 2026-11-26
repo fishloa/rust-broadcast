@@ -9,10 +9,10 @@
 
 use crate::ts_mux_stage;
 use broadcast_bitstream::HdrStaticMetadata;
+use broadcast_bitstream::codec_config_ext::HevcRecordCodecInfo;
 use broadcast_core::timescale::Timescale;
 use isobmff::ChromaticityXy;
 use transmux::build_init_segment;
-use transmux::codec_config_ext::HevcRecordCodecInfo;
 use transmux::ir::{CodecConfig, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {

@@ -70,7 +70,7 @@ use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use transmux::{CodecConfig, DemuxEvent, Sample, TrackSpec};
 
 use crate::report::{Finding, Location, Report, Severity};
-use transmux::nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo};
+use broadcast_bitstream::nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo};
 
 /// H.265 `NAL_unit_type` for a sequence parameter set (ITU-T H.265 §7.3.1.2
 /// Table 7-1) — used to pick the SPS array out of `hvcC`'s `numOfArrays`

@@ -37,7 +37,7 @@ use broadcast_common::{Stage, Timestamp};
 use broadcast_core::Parse;
 use broadcast_core::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 
-use crate::codec_config_ext::VvcRecordCodecInfo;
+use broadcast_bitstream::codec_config_ext::VvcRecordCodecInfo;
 #[cfg(feature = "hls")]
 use broadcast_hls::{ByteRange, DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
 use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox};

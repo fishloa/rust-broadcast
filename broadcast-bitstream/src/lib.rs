@@ -11,6 +11,8 @@
 #![doc = include_str!("../examples/annexb_to_avcc.rs")]
 #![doc = "```\n\n### `decode_capture_sps`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/decode_capture_sps.rs")]
+#![doc = "```\n\n### `print_capture_slices`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/print_capture_slices.rs")]
 #![doc = "```"]
 
 extern crate alloc;
@@ -18,6 +20,8 @@ extern crate alloc;
 pub mod annexb;
 pub mod au;
 pub mod bitreader;
+#[cfg(feature = "isobmff")]
+pub mod codec_config_ext;
 mod error;
 pub mod facts;
 #[cfg(all(feature = "hevc", feature = "isobmff"))]
@@ -27,6 +31,8 @@ pub mod hdr10plus;
 #[cfg(any(feature = "h264", feature = "hevc"))]
 pub mod interlace;
 pub mod nal;
+#[cfg(feature = "isobmff")]
+pub mod nalu_ext;
 pub mod rbsp;
 pub mod rfc6381;
 #[cfg(feature = "h264")]
@@ -39,6 +45,8 @@ pub use annexb::{
     iter_length_prefixed_nals_with, length_prefixed_to_annexb, normalise_nal_length_size,
 };
 pub use au::{AccessUnitSplitter, split_access_units};
+#[cfg(feature = "isobmff")]
+pub use codec_config_ext::avc_config_from_sps_pps;
 pub use error::{Error, Result};
 #[cfg(all(feature = "hevc", feature = "isobmff"))]
 pub use hdr::HdrStaticMetadata;

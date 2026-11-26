@@ -55,6 +55,10 @@ required-features = ["std"]
 name = "decode_capture_sps"
 required-features = ["std", "h264"]
 
+[[example]]
+name = "print_capture_slices"
+required-features = ["std", "h264"]
+
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
 # The real-fixture SPS test walks a broadcast capture's transport layer itself
@@ -78,3 +82,7 @@ required-features = ["h264"]
 [[test]]
 name = "hdr10plus"
 required-features = ["hevc"]
+
+[[test]]
+name = "h264_capture_slices"
+required-features = ["h264"]

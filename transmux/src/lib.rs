@@ -107,7 +107,7 @@
 //! alongside it.
 //!
 //! Lower-level entry points remain: [`build_init_segment`]/[`build_media_segment`]
-//! (batch CMAF), [`nalu_ext::AvcSpsCodecInfo`] (codec metadata). See the
+//! (batch CMAF). See the
 //! crate README for the full **feature matrix** and the `examples/` directory for
 //! runnable end-to-end walkthroughs.
 //!
@@ -181,7 +181,6 @@ pub mod cenc_encrypt;
 pub mod cenc_segment;
 #[cfg(feature = "cli")]
 pub mod cli;
-pub mod codec_config_ext;
 pub mod container;
 #[cfg(feature = "std")]
 pub mod dash;
@@ -217,7 +216,6 @@ extern crate self as transmux;
 #[path = "../../test-harness/src/collect.rs"]
 pub mod collect;
 pub mod nal_params;
-pub mod nalu_ext;
 pub mod payload;
 pub mod pipeline;
 pub mod plan_pass;
@@ -368,7 +366,7 @@ pub use rtp_sdp::{
 };
 pub use rtp_sdp::{
     aac_config_from_asc_bytes, aac_config_from_asc_hex, aac_config_from_fmtp, avc_config_from_fmtp,
-    avc_config_from_sprop, avc_config_from_sps_pps, fmtp_param, rtpmap_clock_rate,
+    avc_config_from_sprop, fmtp_param, rtpmap_clock_rate,
 };
 #[cfg(feature = "rtp")]
 pub use rtp_stream::{

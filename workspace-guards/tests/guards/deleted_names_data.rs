@@ -358,6 +358,41 @@ pub const TABLE: &[Banned] = &[
         issue: "broadcast-bitstream bs1",
     },
     Banned {
+        name: "transmux::nalu_ext",
+        reason: "the ISOBMFF NAL-unit codec-info traits live in broadcast_bitstream::nalu_ext",
+        issue: "broadcast-bitstream bs2d",
+    },
+    Banned {
+        name: "transmux::codec_config_ext",
+        reason: "the ISOBMFF record codec-info traits live in broadcast_bitstream::codec_config_ext",
+        issue: "broadcast-bitstream bs2d",
+    },
+    Banned {
+        name: "transmux::AvcSpsCodecInfo",
+        reason: "AvcSpsCodecInfo lives in broadcast_bitstream::nalu_ext",
+        issue: "broadcast-bitstream bs2d",
+    },
+    Banned {
+        name: "transmux::HevcNalUnitCodecInfo",
+        reason: "HevcNalUnitCodecInfo lives in broadcast_bitstream::nalu_ext",
+        issue: "broadcast-bitstream bs2d",
+    },
+    Banned {
+        name: "transmux::HevcRecordCodecInfo",
+        reason: "HevcRecordCodecInfo lives in broadcast_bitstream::codec_config_ext",
+        issue: "broadcast-bitstream bs2d",
+    },
+    Banned {
+        name: "transmux::VvcRecordCodecInfo",
+        reason: "VvcRecordCodecInfo lives in broadcast_bitstream::codec_config_ext",
+        issue: "broadcast-bitstream bs2d",
+    },
+    Banned {
+        name: "transmux::avc_config_from_sps_pps",
+        reason: "avc_config_from_sps_pps lives in broadcast_bitstream::codec_config_ext",
+        issue: "broadcast-bitstream bs2d",
+    },
+    Banned {
         name: "transmux::hdr10plus",
         reason: "the HDR10+ ST 2094-40 model and its SEI codec live in broadcast_bitstream::hdr10plus",
         issue: "broadcast-bitstream bs2c",

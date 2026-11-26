@@ -97,8 +97,8 @@ use mpeg_ts::ts::{
 };
 
 use crate::TrackId;
+use crate::aac_asc::EsdsBoxCodecInfo;
 use crate::aac_asc::{ADTS_HEADER_SIZE, AudioSpecificConfig};
-use crate::codec_config_ext::EsdsBoxCodecInfo;
 #[cfg(test)]
 use crate::collect::Collected as Media;
 use crate::error::{Error, Result};
