@@ -237,7 +237,7 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
     }
 
     #[test]
-    fn avc_config_from_sps_pps_rejects_no_sps() {
+    fn a_sps_is_required() {
         assert!(matches!(
             avc_config_from_sps_pps(Vec::new(), Vec::new()),
             Err(Error::InvalidInput(..))

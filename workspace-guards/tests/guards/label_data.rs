@@ -1855,9 +1855,6 @@ pub const TABLE: &[Crate] = &[
             // `rtp_align::AlignOut` (#2380): a data-carrying ADT (`Sample(TrackId, Sample)`),
             // the result of placing one sample, not a spec code.
             "AlignOut",
-            // `slice_header::AvcPicture` (issue #1161): a data-carrying classification
-            // ADT (`Field(AvcFieldInfo)`), not a spec-token label.
-            "AvcPicture",
             // `display_track::ActivationOutcome` (display-geometry Phase 2): what one
             // access unit did to the tracker (a data-carrying ADT, `Changed { .. }`);
             // not a spec code and never rendered to a user.

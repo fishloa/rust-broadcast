@@ -63,7 +63,7 @@
 //! durations and exact PES-boundary timestamps survive into the IR.
 //! **Field-coded (PAFF) H.264 (issue #1161).** Broadcast PAFF carries one coded
 //! field per PES, but an ISO/IEC 14496-15:2017 sample is a whole access unit; the
-//! video path parses each access unit's slice header ([`crate::slice_header`])
+//! video path parses each access unit's slice header ([`broadcast_bitstream::slice_header`])
 //! and merges the second field of a complementary field pair (ITU-T H.264
 //! §3.35-3.37) into the first field's sample, which keeps the first field's
 //! PTS/DTS. Unpaired fields and fields across a timestamp jump are emitted

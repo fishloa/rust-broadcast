@@ -463,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn avc_config_from_sps_pps_matches_sprop_path() {
+    fn sprop_path_and_byte_path_build_the_same_box() {
         // The byte-level building block must produce the same box as the
         // base64/sprop entry point for the same underlying NAL bytes.
         let sps = alloc::vec![0x67u8, 0x42, 0xC0, 0x1E, 0xAB];

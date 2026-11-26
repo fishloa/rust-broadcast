@@ -98,7 +98,7 @@ broadcast_core::impl_spec_display!(VideoScan);
 
 /// `pic_struct` of a picture timing SEI: H.264 Table D-1 (values 0..=8) or
 /// H.265 Table D.2 (values 0..=12). Reserved values are not representable;
-/// [`video_picture_facts`] reports `None` for them.
+/// the access-unit decoders report `None` for them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -250,7 +250,7 @@ broadcast_core::impl_spec_display!(SourceScanType);
 
 /// The coded interlace structure of one video access unit.
 ///
-/// `#[non_exhaustive]`: obtain it from [`avc_facts`] / [`hevc_facts`].
+/// `#[non_exhaustive]`: obtain it from [`avc_facts`] or [`hevc_facts`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
