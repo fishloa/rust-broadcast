@@ -45,7 +45,6 @@ thiserror          = "2"
 serde              = { version = "1", default-features = false, optional = true, features = ["derive", "alloc", "std"] }
 
 [dev-dependencies]
-broadcast-dash     = { path = "../broadcast-dash", version = "0.3.0" }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rcgen = { version = "0.14", default-features = false, features = ["ring", "pem"] }
 srt-runtime = { path = "../srt-runtime", version = "0.12.0", features = ["tokio", "crypto"] }
