@@ -6,7 +6,7 @@
 //! Run with `cargo run -p rdd29 --example parse_atmos_frame`.
 
 use broadcast_common::bounded::{Limit, read_file_bounded};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rdd29::{
     AnyElement, AtmosFrame, AudioDataDlc, BedChannel, BedDefinition1, BitDepth, ChannelId,
     FrameRate, SampleRate,

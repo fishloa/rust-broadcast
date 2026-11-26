@@ -7,7 +7,7 @@
 //! `SrcFlow.Payload@codePoint`-matched element (out of scope of this binary
 //! crate — see `private/specs-verified/atsc/atsc3/a331-route.md` §5's `SrcFlow` table).
 
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 
 // ---------------------------------------------------------------------------
 // FormatId — Table A.3.2 (delivery object format)

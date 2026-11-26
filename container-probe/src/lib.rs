@@ -105,7 +105,7 @@ impl PartitionKind {
     }
 }
 
-broadcast_common::impl_spec_display!(PartitionKind, Other);
+broadcast_core::impl_spec_display!(PartitionKind, Other);
 
 /// The identified container/stream format.
 ///
@@ -174,7 +174,7 @@ impl Format {
     }
 }
 
-broadcast_common::impl_spec_display!(Format);
+broadcast_core::impl_spec_display!(Format);
 
 /// Evidence strength behind a match, in named tiers (see the `TIER_*`
 /// constants and the crate-root confidence model).
@@ -206,7 +206,7 @@ impl Confidence {
     }
 }
 
-broadcast_common::impl_spec_display!(Confidence);
+broadcast_core::impl_spec_display!(Confidence);
 
 /// How an ISOBMFF file carries its sample metadata — the discriminator a
 /// consumer needs to choose a demuxer.
@@ -242,7 +242,7 @@ impl IsobmffLayout {
     }
 }
 
-broadcast_common::impl_spec_display!(IsobmffLayout);
+broadcast_core::impl_spec_display!(IsobmffLayout);
 
 /// What a prober learned on the way to its conclusion — the difference between
 /// "it is TS" and "it is TS, 192-byte stride, first sync at offset 4".
@@ -413,7 +413,7 @@ impl DocType {
     }
 }
 
-broadcast_common::impl_spec_display!(DocType);
+broadcast_core::impl_spec_display!(DocType);
 
 /// One scored candidate: a format, the evidence strength behind it, and what
 /// the prober learned on the way.
@@ -474,7 +474,7 @@ impl Probe {
     }
 }
 
-broadcast_common::impl_spec_display!(Probe);
+broadcast_core::impl_spec_display!(Probe);
 
 impl Probe {
     /// The `Confidence` of the winning candidate, if any — a convenience for

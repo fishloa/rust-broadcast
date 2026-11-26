@@ -12,21 +12,21 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input buffer shorter than required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// The 2-bit `version` field was not `2` (RFC 3550 §5.1: "The version
     /// defined by this specification is two (2)").
     #[error(transparent)]
-    UnsupportedVersion(#[from] broadcast_common::error::UnsupportedVersion),
+    UnsupportedVersion(#[from] broadcast_core::error::UnsupportedVersion),
     /// A field value did not fit its wire bit-width, or a derived count (CSRC
     /// list length, extension word count, padding octet count) overflowed its
     /// field.
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
     /// The padding region (RFC 3550 §5.1) was malformed: either the trailing
     /// count byte was zero, exceeded the bytes actually available, or (on
     /// serialize) a supplied padding slice's last byte did not equal its own

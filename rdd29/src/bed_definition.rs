@@ -6,7 +6,7 @@
 //! points to.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 /// Minimum bits one channel description occupies: `Plex(4)` ChannelID +
 /// `Plex(8)` AudioDataID + 3 reserved bits (SMPTE RDD 29:2019 §4.3).
@@ -27,8 +27,8 @@ const RESERVED_TRAILER_1_BITS: u32 = 10;
 /// Width of each 8-bit trailer reserved field (`trailer2`/`trailer3`).
 const RESERVED_TRAILER_OCTET_BITS: u32 = 8;
 /// Bits per byte, for bit<->byte length conversions.
-use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::bits::{BitReader, BitWriter};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::plex::{plex_bits, read_plex, write_plex};
@@ -140,7 +140,7 @@ impl ChannelId {
     }
 }
 
-broadcast_common::impl_spec_display!(ChannelId, Reserved);
+broadcast_core::impl_spec_display!(ChannelId, Reserved);
 
 /// One bed channel: a [`ChannelId`] paired with the [`crate::AudioDataDlc`]
 /// `AudioDataID` it draws audio from (§4.3, the `for(n...)` loop body).
@@ -222,7 +222,7 @@ impl<'a> Parse<'a> for BedDefinition1 {
         let remaining_bits = r.bits_remaining() as u64;
         let provable_ceiling = remaining_bits / BITS_PER_CHANNEL_DESCRIPTION;
         if channel_count > provable_ceiling {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "BedDefinition1.ChannelCount",
                 value: channel_count,
                 reason: "exceeds the bits remaining in the element",
@@ -497,7 +497,7 @@ mod tests {
         bytes.push(0x00);
         assert!(matches!(
             BedDefinition1::parse(&bytes),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "BedDefinition1",
                 ..
             }))

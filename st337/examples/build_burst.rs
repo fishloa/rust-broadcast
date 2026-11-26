@@ -3,7 +3,7 @@
 //!
 //! Run with `cargo run -p st337 --example build_burst`.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use st337::{Burst, DataMode};
 
 fn main() {

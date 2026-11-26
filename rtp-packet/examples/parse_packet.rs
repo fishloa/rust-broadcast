@@ -5,7 +5,7 @@
 //! Run with `cargo run -p rtp-packet --example parse_packet`.
 
 use broadcast_common::bounded::{Limit, read_file_bounded};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::RtpPacket;
 
 /// One RTP packet: its 16-bit length field caps the datagram under 64 KiB.

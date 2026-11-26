@@ -6,7 +6,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 use crate::error::{Error, Result};
 use crate::local_set::{LocalSet, StructuralSetKind};
@@ -287,7 +287,7 @@ mod tests {
     use super::*;
     use crate::sets::{finish_owned_set, owned_set_serialized_len, serialize_owned_set};
     use crate::types::UlBytes;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     fn sample() -> Preface {
         Preface {

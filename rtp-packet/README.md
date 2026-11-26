@@ -43,7 +43,7 @@ rtp-packet = "0.9"
 Parse a real 324-byte packet (produced by `transmux`'s RTP packetiser over the committed `h264-aac.ts` capture) and write it back byte-for-byte:
 
 ```rust
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::{RtpPacket, SeqNo, Ssrc};
 
 let wire = std::fs::read("../fixtures/rtp/rtp-simple.bin").unwrap();
@@ -74,7 +74,7 @@ assert_eq!(RtpPacket::parse(&bytes).unwrap(), out);
 Parse the real Chromium compound (RR + PLI + REMB, 68 bytes), inspect each packet, and write it back unchanged:
 
 ```rust
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::rtcp::{CompoundPacket, RtcpPacket};
 
 let wire = std::fs::read("../fixtures/rtp/chrome-rr-pli-remb.bin").unwrap();

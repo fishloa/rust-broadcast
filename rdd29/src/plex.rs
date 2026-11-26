@@ -5,7 +5,7 @@
 //! its own current width" rather than the literally-printed (and internally
 //! inconsistent) `Plex(8)` pseudocode.
 
-use broadcast_common::bits::{BitReader, BitWriter};
+use broadcast_core::bits::{BitReader, BitWriter};
 
 use crate::error::{BitResultExt, Error, Result};
 
@@ -64,7 +64,7 @@ pub(crate) fn write_plex(
     field: &'static str,
 ) -> Result<()> {
     if value > PLEX_MAX_VALUE {
-        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field,
             value,
             reason: "exceeds the Plex-encodable maximum 0xFFFFFFFE",

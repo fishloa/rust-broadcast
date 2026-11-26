@@ -15,7 +15,7 @@ use crate::error::{Error, Result};
 use crate::lls_table_id::LlsTableId;
 #[cfg(feature = "std")]
 use broadcast_common::bounded::Limit;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// Length of the common `LLS_table()` header (`LLS_table_id` +
 /// `LLS_group_id` + `group_count_minus1` + `LLS_table_version`), in bytes.

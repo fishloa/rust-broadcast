@@ -250,7 +250,7 @@ pub fn finish_owned_set(
 /// `Vec<(u16, Vec<u8>)>`.
 macro_rules! declare_set_serialize {
     ($ty:ty, $kind:ident) => {
-        impl ::broadcast_common::Serialize for $ty {
+        impl ::broadcast_core::Serialize for $ty {
             type Error = $crate::error::Error;
 
             fn serialized_len(&self) -> usize {
@@ -282,7 +282,7 @@ pub fn serialize_owned_set(
     owned_items: &[LocalSetOwnedItem],
     buf: &mut [u8],
 ) -> Result<usize> {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     let items = owned_items
         .iter()
         .map(|i| LocalSetItem {
@@ -302,7 +302,7 @@ pub fn serialize_owned_set(
 /// Length [`serialize_owned_set`] will need.
 #[must_use]
 pub fn owned_set_serialized_len(key: UlBytes, owned_items: &[LocalSetOwnedItem]) -> usize {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     let items = owned_items
         .iter()
         .map(|i| LocalSetItem {

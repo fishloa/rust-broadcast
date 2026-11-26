@@ -17,7 +17,7 @@
 //! them as an opaque `burst_payload`), with the RDD 29 framing around them
 //! built directly through this crate's own typed API.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rdd29::{
     AnyElement, AtmosFrame, AudioDataDlc, BedChannel, BedDefinition1, BitDepth, ChannelId,
     FrameRate, SampleRate,

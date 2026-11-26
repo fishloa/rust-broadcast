@@ -21,7 +21,7 @@
 //! RTP pcap is reachable from this sandboxed environment, so those cases use
 //! spec-Table-derived vectors instead — see `tests/it/round_trip.rs`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::RtpPacket;
 
 fn fixture_bytes() -> Vec<u8> {

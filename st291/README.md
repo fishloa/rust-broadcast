@@ -90,7 +90,7 @@ Build an ANC-over-RTP payload from typed fields and round-trip it (feature `rtp`
 ```rust
 # #[cfg(feature = "rtp")]
 # fn main() {
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st291::{AncContent, AncRtpPayload, ExtendedSequenceNumber, FieldSense, RtpAncPacket};
 
 let payload = AncRtpPayload {
@@ -147,7 +147,7 @@ More runnable programs: `cargo run -p st291 --example build_anc`,
   with a byte-exact round-trip test, including a committed real-shape fixture
   per transport.
 - The content fields are a contiguous MSB-first 10-bit stream walked with
-  `broadcast_common::bits`; it is identical across both transports.
+  `broadcast_core::bits`; it is identical across both transports.
 - Reserved bits are validated on parse (`ReservedBits`) so
   a corrupt packet cannot parse `Ok` and re-serialize to different bytes.
 - Every length/count is written through the checked `fit_*` helpers; an

@@ -36,7 +36,7 @@ The crate is `#![no_std]` (it uses `alloc`) when default features are off.
 Parse the 12-byte payload header from the committed real-capture fixture and write it back:
 
 ```rust
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st2022::PayloadHeader;
 
 // First HBRMT payload header of the 1080i59.94 loopback capture.

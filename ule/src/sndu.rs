@@ -8,7 +8,7 @@
 //! [`broadcast_common::crc32_mpeg2`].
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::ext_header::PayloadChain;
@@ -182,7 +182,7 @@ impl<'a> Sndu<'a> {
         let computed = broadcast_common::crc32_mpeg2::compute(&data[..crc_start]);
         let found = read_u32_at(data, crc_start);
         if computed != found {
-            return Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
+            return Err(Error::CrcMismatch(broadcast_core::error::CrcMismatch {
                 what: "SNDU",
                 computed,
                 expected: found,
@@ -204,7 +204,7 @@ impl<'a> Sndu<'a> {
         need_out(out, total)?;
 
         let length = self.length_field();
-        broadcast_common::len::fit_bits(length as u64, LENGTH_BITS, "Length")?;
+        broadcast_core::len::fit_bits(length as u64, LENGTH_BITS, "Length")?;
         // D=1 with Length=0x7FFF is the reserved End Indicator (0xFFFF on the
         // wire, §6), not a real SNDU header — every receiver (including this
         // crate's own `ts::maybe_finish`) stops the packet there (ULE-W2,
@@ -246,7 +246,7 @@ impl<'a> Sndu<'a> {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for Sndu<'a> {
+impl<'a> broadcast_core::Parse<'a> for Sndu<'a> {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -254,7 +254,7 @@ impl<'a> broadcast_common::Parse<'a> for Sndu<'a> {
     }
 }
 
-impl broadcast_common::Serialize for Sndu<'_> {
+impl broadcast_core::Serialize for Sndu<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {

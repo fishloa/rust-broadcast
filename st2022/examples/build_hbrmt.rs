@@ -1,6 +1,6 @@
 //! Build an ST 2022-6 payload header, serialize, parse back, verify.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st2022::{
     ClockFrequency, FecUsage, FrameRate, FrameStructure, MapStructure, PayloadHeader,
     SampleStructure, Scrambling, TimestampRef, VideoSourceFormat, VideoSourceId, VideoTimestamp,

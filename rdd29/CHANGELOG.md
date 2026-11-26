@@ -30,13 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.0] - 2026-11-07
 ### Fixed
-- Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_common::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
+- Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_core::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
 ### Changed
-- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- Length pre-checks go through `broadcast_core::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
-- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidValue` now wrap `broadcast_common::error` types (tuple variants); `InvalidReserved` is renamed `ReservedBits` and wraps `broadcast_common::error::ReservedBits`. Hand-written `From` impls removed.
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidValue` now wrap `broadcast_core::error` types (tuple variants); `InvalidReserved` is renamed `ReservedBits` and wraps `broadcast_core::error::ReservedBits`. Hand-written `From` impls removed.
 ### Added
-- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+- `From<broadcast_core::len::BufferTooShort>` and `From<broadcast_core::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Dependencies
 - Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
@@ -166,7 +166,7 @@ Includes fixes for privately reported security issues; no public advisory is pub
   ASCII text, gated by a flag bit — the only field in the whole disclosure
   document with no `§5.4.x` prose description; see `private/specs-verified/smpte/rdd29/rdd29.md` scope
   decision 2 for how this crate handles the gap honestly). Cannot implement
-  `broadcast_common::Parse` (its pan-info loop length needs the enclosing
+  `broadcast_core::Parse` (its pan-info loop length needs the enclosing
   `ATMOSFrame`'s `FrameRate` as context) — exposes `parse_with_frame_rate`
   instead; still implements `Serialize`.
 - `AudioDataDlc` — one track's audio-essence pointer (§2.4/§4.5):

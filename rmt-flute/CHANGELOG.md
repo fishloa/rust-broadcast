@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - BREAKING: `LctHeader` gained the `reserved: u8` field and `NormCmd` the `reserved: [u8; 3]` field (struct literals need them; senders write 0); `ExtTime::to_content` returns `Result<Vec<u8>>` and `ExtTime::to_extension` returns `Result<HeaderExtension>`.
 
 ### Added
-- `broadcast_common::Parse` implemented for `LctHeader`, `HeaderExtension` and `ExtTime` (delegating to the existing inherent methods).
+- `broadcast_core::Parse` implemented for `LctHeader`, `HeaderExtension` and `ExtTime` (delegating to the existing inherent methods).
 
 ### Fixed
 - `LctHeader` keeps the two reserved `Res` bits (RFC 5651 §5.1) so parse then serialize is byte-exact; a value over 2 bits is rejected on serialize (#1937).
@@ -49,12 +49,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.8.0] - 2026-11-07
 ### Changed
-- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- Length pre-checks go through `broadcast_core::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
-- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidField` now wrap `broadcast_common::error` types (tuple variants; `InvalidField` field `what` is now `field`); `FieldTooWide { what, value, bits }` is replaced by `FieldOverflow(broadcast_common::error::FieldOverflow)`. Hand-written `From` impls removed.
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidField` now wrap `broadcast_core::error` types (tuple variants; `InvalidField` field `what` is now `field`); `FieldTooWide { what, value, bits }` is replaced by `FieldOverflow(broadcast_core::error::FieldOverflow)`. Hand-written `From` impls removed.
 ### Added
-- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
-- `broadcast_common::Parse` / `Serialize` implemented for the crate's wire types, delegating to the existing inherent methods (which stay); each type is round-trip tested through the traits (c6 C6-06).
+- `From<broadcast_core::len::BufferTooShort>` and `From<broadcast_core::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+- `broadcast_core::Parse` / `Serialize` implemented for the crate's wire types, delegating to the existing inherent methods (which stay); each type is round-trip tested through the traits (c6 C6-06).
 ### Dependencies
 - Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 

@@ -4,7 +4,7 @@
 //!
 //! Run with `cargo run -p st377-1 --example parse_partition`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st377_1::{BerLength, PartitionKind, PartitionPack, PartitionStatus, UlBytes};
 
 fn main() {

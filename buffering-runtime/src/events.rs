@@ -47,7 +47,7 @@ impl State {
         }
     }
 }
-broadcast_common::impl_spec_display!(State);
+broadcast_core::impl_spec_display!(State);
 
 /// Why the controller is not playing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,7 +90,7 @@ impl Reason {
         }
     }
 }
-broadcast_common::impl_spec_display!(Reason);
+broadcast_core::impl_spec_display!(Reason);
 
 /// Out-of-band input the caller reports. Non-authoritative except where
 /// stated: starvation is only ever declared from lead and the clock.
@@ -157,7 +157,7 @@ impl Hint {
         })
     }
 }
-broadcast_common::impl_spec_display!(Hint);
+broadcast_core::impl_spec_display!(Hint);
 
 /// A decision for the caller. Media positions are in the **playback (PTS)
 /// domain** as 27 MHz ticks (`PTS90k x 300`), i.e. the domain of `on_media`
@@ -367,7 +367,7 @@ impl Event {
         )
     }
 }
-broadcast_common::impl_spec_display!(Event);
+broadcast_core::impl_spec_display!(Event);
 
 /// Controller statistics.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

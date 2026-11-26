@@ -13,7 +13,7 @@
 //! caller retypes as bytes.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 
@@ -43,19 +43,17 @@ impl IdValue {
     fn new(field: &'static str, value: u64, len: u8) -> Result<Self> {
         let len = usize::from(len);
         if !len.is_multiple_of(ID_WIDTH_GRANULE) || len > ID_MAX_LEN {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field,
                 reason: "wire width must be a whole number of 16-bit half-words, 0..=14 bytes",
             }));
         }
         if len < U64_LEN && value > (1u64 << (OCTET_BITS * len)) - 1 {
-            return Err(Error::FieldOverflow(
-                broadcast_common::error::FieldOverflow {
-                    field,
-                    value,
-                    max: (1u64 << (OCTET_BITS * len)) - 1,
-                },
-            ));
+            return Err(Error::FieldOverflow(broadcast_core::error::FieldOverflow {
+                field,
+                value,
+                max: (1u64 << (OCTET_BITS * len)) - 1,
+            }));
         }
         Ok(IdValue {
             value,
@@ -259,7 +257,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::error::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::error::FieldOverflow {
                     field: "TSI",
                     value: 0x1_0000_0000,
                     max: 0xFFFF_FFFF
@@ -290,7 +288,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::InvalidField(broadcast_common::error::InvalidField { field: "TOI", .. })
+                Error::InvalidField(broadcast_core::error::InvalidField { field: "TOI", .. })
             ),
             "got {err:?}"
         );

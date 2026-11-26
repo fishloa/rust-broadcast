@@ -13,10 +13,10 @@
 //! `parse_anc_rtp` examples).
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::bits::{BitReader, BitWriter};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::RtpPacket;
 
 use crate::{U16_LEN, be};
@@ -165,7 +165,7 @@ impl FieldSense {
     }
 }
 
-broadcast_common::impl_spec_display!(FieldSense);
+broadcast_core::impl_spec_display!(FieldSense);
 
 // ---------------------------------------------------------------------------
 // RtpAncPacket — RFC 8331 §2.1 per-ANC-packet placement + shared content
@@ -282,7 +282,7 @@ impl RtpAncPacket {
         if pad > 0 {
             let pad_value = r.read_bits(pad)?;
             if pad_value != 0 {
-                return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                     field: "word_align",
                     expected: 0,
                     found: pad_value,
@@ -435,7 +435,7 @@ impl<'a> Parse<'a> for AncRtpPayload {
             << RESERVED_HIGH_SHIFT)
             | u32::from(reserved_low);
         if reserved != 0 {
-            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "reserved (RFC 8331 §2.1)",
                 expected: 0,
                 found: u64::from(reserved),
@@ -455,7 +455,7 @@ impl<'a> Parse<'a> for AncRtpPayload {
         let consumed_bytes = r.bits_read() / crate::BITS_PER_BYTE;
         if !r.is_byte_aligned() || consumed_bytes != body.len() {
             return Err(Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "ANC RTP payload",
                     declared: length,
                     actual: consumed_bytes,
@@ -491,9 +491,9 @@ impl Serialize for AncRtpPayload {
         let len = self.serialized_len();
         need_out(buf, len)?;
         let anc_count = self.anc_count();
-        broadcast_common::len::fit_bits(anc_count as u64, ANC_COUNT_BITS, "ANC_Count")?;
+        broadcast_core::len::fit_bits(anc_count as u64, ANC_COUNT_BITS, "ANC_Count")?;
         let body_len = self.body_len();
-        broadcast_common::len::fit_bits(body_len as u64, LENGTH_BITS, "Length")?;
+        broadcast_core::len::fit_bits(body_len as u64, LENGTH_BITS, "Length")?;
 
         buf[0..2].copy_from_slice(&self.extended_sequence_number.value().to_be_bytes());
         buf[2..4].copy_from_slice(&(body_len as u16).to_be_bytes());
@@ -552,7 +552,7 @@ mod tests {
         assert_eq!(
             p.serialize_into(&mut out),
             Err(crate::Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need,
                     have: need - 1
                 }
@@ -700,7 +700,7 @@ mod tests {
         out[last] |= 0x01;
         assert!(matches!(
             AncRtpPayload::parse(&out),
-            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "word_align",
                 ..
             }))
@@ -746,12 +746,10 @@ mod tests {
         let mut out = vec![0u8; p.serialized_len()];
         assert!(matches!(
             p.serialize_into(&mut out),
-            Err(Error::FieldOverflow(
-                broadcast_common::error::FieldOverflow {
-                    field: "StreamNum",
-                    ..
-                }
-            ))
+            Err(Error::FieldOverflow(broadcast_core::error::FieldOverflow {
+                field: "StreamNum",
+                ..
+            }))
         ));
     }
 
@@ -808,12 +806,10 @@ mod tests {
         let mut out = vec![0u8; p.serialized_len()];
         assert!(matches!(
             p.serialize_into(&mut out),
-            Err(Error::FieldOverflow(
-                broadcast_common::error::FieldOverflow {
-                    field: "ANC_Count",
-                    ..
-                }
-            ))
+            Err(Error::FieldOverflow(broadcast_core::error::FieldOverflow {
+                field: "ANC_Count",
+                ..
+            }))
         ));
     }
 

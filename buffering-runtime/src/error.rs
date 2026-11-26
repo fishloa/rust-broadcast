@@ -61,7 +61,7 @@ impl ConfigField {
         }
     }
 }
-broadcast_common::impl_spec_display!(ConfigField);
+broadcast_core::impl_spec_display!(ConfigField);
 
 /// Construction / validation failure.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]

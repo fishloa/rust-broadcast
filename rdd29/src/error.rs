@@ -3,7 +3,7 @@
 //! Field-by-field semantics are documented in the curated spec oracle,
 //! `private/specs-verified/smpte/rdd29/rdd29.md` (SMPTE RDD 29:2019).
 
-use broadcast_common::bits::BitError;
+use broadcast_core::bits::BitError;
 
 /// Result alias for `rdd29` parsing/serialization.
 pub type Result<T> = core::result::Result<T, Error>;
@@ -15,13 +15,13 @@ pub enum Error {
     /// Input buffer shorter than
     /// required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
-    /// A bit-level read/write (via [`broadcast_common::bits`]) failed while
+    /// A bit-level read/write (via [`broadcast_core::bits`]) failed while
     /// decoding or encoding `what`.
     #[error("bit-level error decoding/encoding {what}: {source}")]
     Bits {
@@ -58,12 +58,12 @@ pub enum Error {
     /// A field value did not fit its wire bit-width, or a derived count
     /// (e.g. `ElementSize` vs. actual body length) was inconsistent.
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
     /// A "Reserved (set to `X`)" field (RDD 29 gives an explicit literal
     /// value for every reserved field it defines) did not match its
     /// documented constant.
     #[error(transparent)]
-    ReservedBits(#[from] broadcast_common::error::ReservedBits),
+    ReservedBits(#[from] broadcast_core::error::ReservedBits),
     /// The outermost `ReadElement()` header's `ElementID` did not match the
     /// element type expected at this parse site (e.g. [`crate::AtmosFrame`]
     /// requires `ATMOS_FRAME`, Table 1).

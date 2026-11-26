@@ -13,19 +13,19 @@ pub enum Error {
     /// Input buffer shorter than the
     /// fixed 10-byte (80-bit) LTC codeword.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// The sync word is not the fixed `0xFCBF` (ST 12-1 §9.2.5).
     #[error(transparent)]
-    InvalidSync(#[from] broadcast_common::error::InvalidSync),
+    InvalidSync(#[from] broadcast_core::error::InvalidSync),
     /// A time-address field (`hours`/`minutes`/`seconds`/`frames`) exceeded
     /// its valid range (§5.2/§6.2/§7.2, §9.2.1 Table 2).
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
     /// One of the eight 4-bit binary groups ("user bits", §8.1/Table 4) held
     /// a value outside `0x0..=0xF`.
     #[error("binary group {index} value {value:#X} invalid: must be 0x0-0xF")]

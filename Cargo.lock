@@ -233,6 +233,7 @@ name = "atsc3"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "flate2",
  "roxmltree",
  "serde",
@@ -245,6 +246,7 @@ name = "atsc3-route"
 version = "0.7.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "rmt-flute",
  "serde",
  "test-fixtures",
@@ -488,7 +490,7 @@ dependencies = [
 name = "broadcast-loudness"
 version = "0.10.0"
 dependencies = [
- "broadcast-common",
+ "broadcast-core",
  "hound",
  "libm",
  "test-alloc",
@@ -530,6 +532,7 @@ name = "buffering-runtime"
 version = "0.5.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "serde_json",
  "test-fixtures",
@@ -824,7 +827,7 @@ checksum = "be95d4a884358a21a199689323c29e9256b4a1b315e22f183d155422041d3a9a"
 name = "container-probe"
 version = "0.6.0"
 dependencies = [
- "broadcast-common",
+ "broadcast-core",
  "isobmff",
  "mpeg-ps",
  "mpeg-ts",
@@ -1213,6 +1216,7 @@ dependencies = [
 name = "dvb-csa"
 version = "0.9.0"
 dependencies = [
+ "broadcast-core",
  "criterion",
  "mpeg-ts",
  "subtle",
@@ -1256,6 +1260,7 @@ name = "dvb-simulcrypt"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "serde_json",
  "test-fixtures",
@@ -3112,6 +3117,7 @@ name = "rdd29"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "serde_json",
  "test-fixtures",
@@ -3225,6 +3231,7 @@ name = "rist-runtime"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "rtp-packet",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -3265,6 +3272,7 @@ name = "rmt-flute"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -3445,6 +3453,7 @@ name = "rtp-packet"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-alloc",
  "test-fixtures",
@@ -3955,6 +3964,7 @@ name = "st12-1"
 version = "0.8.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror 2.0.21",
 ]
@@ -3964,6 +3974,7 @@ name = "st2022"
 version = "0.6.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -3974,6 +3985,7 @@ name = "st291"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "mpeg-pes",
  "rtp-packet",
  "serde",
@@ -3986,6 +3998,7 @@ name = "st337"
 version = "0.8.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -3996,6 +4009,7 @@ name = "st377-1"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -4514,6 +4528,7 @@ name = "ule"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",

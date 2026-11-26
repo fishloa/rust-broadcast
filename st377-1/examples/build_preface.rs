@@ -3,7 +3,7 @@
 //!
 //! Run with `cargo run -p st377-1 --example build_preface`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st377_1::{InterchangeObjectFields, MxfTimestamp, Preface, UlBytes, VERSION_1_3};
 
 fn main() {

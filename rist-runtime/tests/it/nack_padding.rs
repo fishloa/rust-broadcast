@@ -3,7 +3,7 @@
 //! ignored P bit made the padding words parse as FCI entries / RTT-echo
 //! padding and re-serialized with P cleared).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rist_runtime::{
     Error, GenericNack, NackFci, PacketRange, RangeNack, RistReceiverCompound, RttEcho,
 };

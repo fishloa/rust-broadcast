@@ -23,11 +23,11 @@ pub struct PaddingCountError {
 pub enum Error {
     /// Input (on parse) or output buffer (on serialize) shorter than required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
     /// Output buffer passed to `serialize_into` was smaller than
     /// `serialized_len()`.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
     /// A field value did not fit its wire bit-width, or the two's-complement
     /// version field was not `2` (RFC 3550 §6.4.1: "The version defined by
     /// this specification is two (2)"), or a derived count (report/source
@@ -35,7 +35,7 @@ pub enum Error {
     /// not valid UTF-8 (RFC 3550 §6.5: "encoded according to the UTF-8
     /// encoding").
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
     /// A caller-supplied argument violated a documented precondition (e.g. an
     /// empty [`CompoundPacket`](crate::rtcp::CompoundPacket) or one not starting
     /// with SR/RR per RFC 3550 §6.1).

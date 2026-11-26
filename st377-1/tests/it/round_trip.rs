@@ -5,7 +5,7 @@
 //! and verifies both structural equality AND byte-identical reserialize
 //! (the project's symmetric Parse/Serialize invariant).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st377_1::{
     EventTrack, FillerComponent, InterchangeObjectFields, LocalTagEntry, MaterialPackage,
     MxfTimestamp, PackageId, Rational, Sequence, SourceClip, SourcePackage, StaticTrack, StrongRef,

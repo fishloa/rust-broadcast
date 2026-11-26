@@ -25,7 +25,7 @@
 //! fail *without attempting the allocation first*. A test process that
 //! survives is the assertion.
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use rdd29::{AtmosFrame, BedDefinition1, Error};
 
 /// The exact shape the fuzzer found, reconstructed from the format rather than
@@ -59,7 +59,7 @@ fn a_huge_plex_sub_element_count_does_not_reserve() {
     // overcommit, so only AddressSanitizer would notice. Asserting the specific
     // error is what makes this guard able to fail.
     match AtmosFrame::parse(&data) {
-        Err(rdd29::Error::InvalidValue(broadcast_common::error::InvalidValue {
+        Err(rdd29::Error::InvalidValue(broadcast_core::error::InvalidValue {
             field,
             value,
             ..
@@ -114,7 +114,7 @@ fn arbitrary_short_inputs_do_not_reserve() {
             ),
             2..=11 => assert_eq!(
                 err,
-                Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                     need: 12,
                     have: n,
                     what: "ATMOSFrame body"
@@ -122,7 +122,7 @@ fn arbitrary_short_inputs_do_not_reserve() {
             ),
             _ => assert_eq!(
                 err,
-                Error::InvalidValue(broadcast_common::error::InvalidValue {
+                Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "ATMOSFrame.SubElementCount",
                     value: 0x7FFF_FFFF,
                     reason: "exceeds the bytes remaining in the frame body"
@@ -181,7 +181,7 @@ fn a_channel_count_over_the_provable_ceiling_is_rejected() {
         0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
     match BedDefinition1::parse(&data) {
-        Err(rdd29::Error::InvalidValue(broadcast_common::error::InvalidValue {
+        Err(rdd29::Error::InvalidValue(broadcast_core::error::InvalidValue {
             field,
             value,
             ..

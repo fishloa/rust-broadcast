@@ -38,7 +38,7 @@
 
 use std::time::Duration;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use rist_runtime::arq::{ArqConfig, Receiver};
 use rist_runtime::{RangeNack, RistReceiverCompound};
 

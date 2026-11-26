@@ -7,7 +7,7 @@
 //! Run with `cargo run -p atsc3-route --example build_route_media_fragment`.
 
 use atsc3_route::{RouteFecPayloadId, RoutePacket, SourceFecPayloadId};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rmt_flute::{HeaderExtension, LctHeader, Toi, Tsi};
 
 fn main() {

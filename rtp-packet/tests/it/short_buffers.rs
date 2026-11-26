@@ -1,15 +1,14 @@
 //! `OutputBufferTooSmall { need, have }` for every buffer shorter than a Sender
 //! Report, a Receiver Report and a compound packet (RFC 3550 §6).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::rtcp::{CompoundPacket, Error, ReceiverReport, SenderReport};
 
 fn too_small(e: &Error) -> Option<(usize, usize)> {
     match e {
-        Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
-            need,
-            have,
-        }) => Some((*need, *have)),
+        Error::OutputBufferTooSmall(broadcast_core::error::OutputBufferTooSmall { need, have }) => {
+            Some((*need, *have))
+        }
         _ => None,
     }
 }

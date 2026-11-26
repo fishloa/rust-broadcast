@@ -12,8 +12,8 @@
 
 use alloc::vec::Vec;
 
-use broadcast_common::Serialize;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::Serialize;
+use broadcast_core::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 
@@ -118,7 +118,7 @@ impl<'a> Descriptor<'a> {
     /// (an 8-bit `descriptor_length` caps the body at 255 octets).
     fn checked_length(&self) -> Result<u8> {
         let len = self.body().len();
-        broadcast_common::len::fit_bits(len as u64, DESCRIPTOR_LENGTH_BITS, "descriptor_length")?;
+        broadcast_core::len::fit_bits(len as u64, DESCRIPTOR_LENGTH_BITS, "descriptor_length")?;
         Ok(len as u8)
     }
 }
@@ -212,7 +212,7 @@ impl<'a> AncDataDescriptor<'a> {
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        let body_len = broadcast_common::len::fit_bits(
+        let body_len = broadcast_core::len::fit_bits(
             self.body_len() as u64,
             DESCRIPTOR_LENGTH_BITS,
             "anc_data_descriptor descriptor_length",
@@ -256,7 +256,7 @@ mod tests {
         assert_eq!(
             d.serialize_into(&mut out),
             Err(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need: b.len(),
                     have: b.len() - 1
                 }

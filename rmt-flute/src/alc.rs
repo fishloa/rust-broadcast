@@ -17,7 +17,7 @@
 use crate::error::Result;
 use crate::id::FecPayloadId;
 use crate::lct::LctHeader;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 /// HET for ALC's EXT_FTI (FEC Object Transmission Information) — RFC 5775 §4.2.
 /// Variable-length form (HET 0..=127). The HEC body is FEC-scheme dependent.
@@ -94,7 +94,7 @@ impl<'a> AlcPacket<'a> {
     }
 }
 
-impl broadcast_common::Serialize for AlcPacket<'_> {
+impl broadcast_core::Serialize for AlcPacket<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -176,7 +176,7 @@ impl FecPayloadId128 {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for FecPayloadId128 {
+impl<'a> broadcast_core::Parse<'a> for FecPayloadId128 {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -184,7 +184,7 @@ impl<'a> broadcast_common::Parse<'a> for FecPayloadId128 {
     }
 }
 
-impl broadcast_common::Serialize for FecPayloadId128 {
+impl broadcast_core::Serialize for FecPayloadId128 {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {

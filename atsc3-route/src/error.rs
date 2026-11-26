@@ -10,16 +10,16 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input shorter than required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
     /// The output buffer passed to `serialize_into` was too small.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
     /// A value did not fit the wire field it is written to.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::error::FieldOverflow),
     /// A field carried a value ROUTE (A/331 Annex A) does not permit.
     #[error(transparent)]
-    InvalidField(#[from] broadcast_common::error::InvalidField),
+    InvalidField(#[from] broadcast_core::error::InvalidField),
     /// The underlying LCT/ALC/FLUTE framing (`rmt-flute`) failed to parse or
     /// serialize.
     #[error("LCT/ALC framing error: {0}")]

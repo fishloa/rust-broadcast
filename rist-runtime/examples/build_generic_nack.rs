@@ -2,7 +2,7 @@
 //!
 //! Usage: cargo run -p rist-runtime --example build_generic_nack
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rist_runtime::{GenericNack, NackFci};
 
 fn main() {

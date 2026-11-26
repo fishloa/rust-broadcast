@@ -1,7 +1,7 @@
 //! `OutputBufferTooSmall { need, have }` for every buffer shorter than the
 //! CW_provision fixture.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_simulcrypt::{Interface, SimulcryptMessage};
 
 #[test]
@@ -13,7 +13,7 @@ fn cw_provision_rejects_every_short_buffer() {
         |buf| msg.serialize_into(buf),
         |e| match e {
             dvb_simulcrypt::Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall { need, have },
+                broadcast_core::error::OutputBufferTooSmall { need, have },
             ) => Some((*need, *have)),
             _ => None,
         },

@@ -9,10 +9,10 @@
 //! be appended for path-MTU probing.
 
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, UnsupportedVersion};
-use broadcast_common::len::need_out;
+use broadcast_core::error::{BufferTooShort, UnsupportedVersion};
+use broadcast_core::len::need_out;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::{
@@ -89,7 +89,7 @@ impl RttEchoKind {
     }
 }
 
-broadcast_common::impl_spec_display!(RttEchoKind);
+broadcast_core::impl_spec_display!(RttEchoKind);
 
 // ---------------------------------------------------------------------------
 // RttEcho — TR-06-1 §5.2.6
@@ -237,7 +237,7 @@ impl Serialize for RttEcho {
         }
 
         // Header: V=2, P=0, Subtype.
-        let length_field = broadcast_common::len::fit_u16(len / WORD_LEN - 1, "RTCP length")?;
+        let length_field = broadcast_core::len::fit_u16(len / WORD_LEN - 1, "RTCP length")?;
         buf[0] = (RTCP_VERSION << VERSION_SHIFT) | self.kind.subtype();
         buf[1] = PT_APP;
         buf[2..4].copy_from_slice(&length_field.to_be_bytes());
@@ -286,7 +286,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "RTCP length",
                     ..
                 })

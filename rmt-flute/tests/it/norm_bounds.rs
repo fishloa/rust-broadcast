@@ -3,7 +3,7 @@
 //! prefix is rejected without panicking, and an `hdr_len` smaller than the
 //! fixed header is an `InconsistentLength`.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use rmt_flute::{
     FecPayloadId, HeaderExtension, NORM_VERSION, NormAckType, NormCmd, NormCmdBody, NormCmdType,
     NormCommonHeader, NormData, NormFeedback, NormInfo, NormMessageType, SenderWord,

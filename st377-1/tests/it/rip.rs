@@ -1,7 +1,7 @@
 //! Random Index Pack key/trailing-length/pair-offset checks (ST 377-1:2019
 //! §12, `private/specs-verified/smpte/st377-1/st377-1.md` Table 29).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st377_1::{Error, PartitionLocation, RandomIndexPack, UlBytes};
 
 fn two_pair_pack() -> RandomIndexPack {

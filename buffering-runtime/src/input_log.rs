@@ -263,7 +263,7 @@ impl Input {
         }
     }
 }
-broadcast_common::impl_spec_display!(Input);
+broadcast_core::impl_spec_display!(Input);
 
 fn write_opt(out: &mut impl Write, v: Option<u64>) -> core::fmt::Result {
     match v {
@@ -384,7 +384,7 @@ impl Reason {
         }
     }
 }
-broadcast_common::impl_spec_display!(Reason);
+broadcast_core::impl_spec_display!(Reason);
 
 /// A log row that could not be read.
 #[non_exhaustive]
@@ -531,7 +531,7 @@ config_keys! {
     GranularityHold => "granularity_hold", granularity_hold: Duration, span_out, span_in, "granularity_hold_us";
     GranularityDecay => "granularity_decay", granularity_decay: Duration, span_out, span_in, "granularity_decay_us";
 }
-broadcast_common::impl_spec_display!(ConfigKey);
+broadcast_core::impl_spec_display!(ConfigKey);
 
 /// A complete, self-describing input log: the controller configuration, the optional stall-memory
 /// seed, and the inputs in call order.

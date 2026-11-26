@@ -3,7 +3,7 @@
 //!
 //! Run with `cargo run -p rdd29 --example build_atmos_frame`.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use rdd29::{
     AnyElement, AtmosFrame, AudioDataDlc, AudioDescription, BedChannel, BedDefinition1, BitDepth,
     ChannelId, DecorCoefPrefix, FrameRate, ObjectDefinition1, ObjectSpreadMode, PanInfo,

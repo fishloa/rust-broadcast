@@ -6,7 +6,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 use crate::error::{Error, Result};
 use crate::local_set::{LocalSet, StructuralSetKind};
@@ -236,7 +236,7 @@ crate::sets::declare_set_serialize!(Identification, Identification);
 mod tests {
     use super::*;
     use crate::types::ReleaseType;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     fn sample() -> Identification {
         Identification {

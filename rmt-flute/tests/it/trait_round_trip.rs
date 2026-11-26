@@ -1,7 +1,7 @@
 //! ALC/LCT/FLUTE wire types round-trip through `broadcast_common::{Parse, Serialize}`
 //! over the committed FLUTE FDT-packet fixture.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rmt_flute::{
     AlcPacket, CencAlgorithm, Error, ExtCenc, ExtFdt, FEC_PAYLOAD_ID_128_LEN, FecPayloadId128,
     NormCmd,
@@ -72,7 +72,7 @@ fn short_output_is_output_buffer_too_small() {
     assert_eq!(
         Serialize::serialize_into(&fdt, &mut [0u8; 2]),
         Err(Error::OutputBufferTooSmall(
-            broadcast_common::error::OutputBufferTooSmall { need: 3, have: 2 }
+            broadcast_core::error::OutputBufferTooSmall { need: 3, have: 2 }
         ))
     );
 }

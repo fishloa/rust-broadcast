@@ -2,7 +2,7 @@
 //! ATSC 3.0 ROUTE capture (`fixtures/atsc3/route-*.bin`).
 
 use atsc3_route::{Error, RoutePacket};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 const FIXTURES: [&str; 3] = [
     "route-fdt-instance-2020-11-05.bin",
@@ -19,7 +19,7 @@ fn real_route_packets_reject_every_short_buffer() {
             pkt.serialized_len(),
             |buf| pkt.serialize_into(buf),
             |e| match e {
-                Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
+                Error::OutputBufferTooSmall(broadcast_core::error::OutputBufferTooSmall {
                     need,
                     have,
                 }) => Some((*need, *have)),

@@ -29,8 +29,8 @@
 //! throughout this workspace (e.g. `st337::BurstPreamble`'s six-word-preamble
 //! detection) so caller state can never disagree with the wire.
 
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 
@@ -102,7 +102,7 @@ impl<'a> HeaderExtension<'a> {
     /// [`EXTENSION_UNIT_LEN`], or longer than [`MAX_EXTENSION_UNITS`] units.
     pub fn new(bytes: &'a [u8]) -> Result<Self> {
         if bytes.is_empty() || !bytes.len().is_multiple_of(EXTENSION_UNIT_LEN) {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "extension",
                 value: bytes.len() as u64,
                 reason: "must be a non-zero multiple of 4 octets",
@@ -110,7 +110,7 @@ impl<'a> HeaderExtension<'a> {
         }
         let units = bytes.len() / EXTENSION_UNIT_LEN;
         if units > MAX_EXTENSION_UNITS as usize {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "extension",
                 value: units as u64,
                 reason: "Ext is a 4-bit field: extension may be at most 15 * 4 = 60 octets",
@@ -163,7 +163,7 @@ impl<'a> Iterator for ExtensionItems<'a> {
         let Some((&len, after_len)) = after_tag.split_first() else {
             self.rest = &[];
             return Some(Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: EXTENSION_TLV_HEADER_LEN,
                     have: 1,
                     what: "header extension TLV length",
@@ -175,7 +175,7 @@ impl<'a> Iterator for ExtensionItems<'a> {
             let have = after_len.len();
             self.rest = &[];
             return Some(Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: len,
                     have,
                     what: "header extension TLV value",
@@ -229,7 +229,7 @@ fn be<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]> {
         .and_then(|s| s.first_chunk::<N>())
         .copied()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: offset + N,
                 have: bytes.len(),
                 what: "fixed-width big-endian field",
@@ -287,7 +287,7 @@ impl VideoSourceId {
     }
 }
 
-broadcast_common::impl_spec_display!(VideoSourceId, Reserved);
+broadcast_core::impl_spec_display!(VideoSourceId, Reserved);
 
 // ---------------------------------------------------------------------------
 // TimestampRef — R field, §6.4
@@ -340,7 +340,7 @@ impl TimestampRef {
     }
 }
 
-broadcast_common::impl_spec_display!(TimestampRef, Reserved);
+broadcast_core::impl_spec_display!(TimestampRef, Reserved);
 
 // ---------------------------------------------------------------------------
 // Scrambling — S field, §6.4
@@ -384,7 +384,7 @@ impl Scrambling {
     }
 }
 
-broadcast_common::impl_spec_display!(Scrambling, Reserved);
+broadcast_core::impl_spec_display!(Scrambling, Reserved);
 
 // ---------------------------------------------------------------------------
 // FecUsage — FEC field, §6.4
@@ -437,7 +437,7 @@ impl FecUsage {
     }
 }
 
-broadcast_common::impl_spec_display!(FecUsage, Reserved);
+broadcast_core::impl_spec_display!(FecUsage, Reserved);
 
 // ---------------------------------------------------------------------------
 // ClockFrequency — CF field, §6.4
@@ -507,7 +507,7 @@ impl ClockFrequency {
     }
 }
 
-broadcast_common::impl_spec_display!(ClockFrequency, Reserved);
+broadcast_core::impl_spec_display!(ClockFrequency, Reserved);
 
 // ---------------------------------------------------------------------------
 // VideoTimestamp — the Video Timestamp row, §6.4
@@ -602,7 +602,7 @@ impl MapStructure {
     }
 }
 
-broadcast_common::impl_spec_display!(MapStructure, Reserved);
+broadcast_core::impl_spec_display!(MapStructure, Reserved);
 
 // ---------------------------------------------------------------------------
 // FrameStructure — FRAME field, §6.4 (Video Source Format row)
@@ -688,7 +688,7 @@ impl FrameStructure {
     }
 }
 
-broadcast_common::impl_spec_display!(FrameStructure, Reserved);
+broadcast_core::impl_spec_display!(FrameStructure, Reserved);
 
 // ---------------------------------------------------------------------------
 // FrameRate — FRATE field, §6.4 (Video Source Format row)
@@ -802,7 +802,7 @@ impl FrameRate {
     }
 }
 
-broadcast_common::impl_spec_display!(FrameRate, Reserved);
+broadcast_core::impl_spec_display!(FrameRate, Reserved);
 
 // ---------------------------------------------------------------------------
 // SampleStructure — SAMPLE field, §6.4 (Video Source Format row)
@@ -881,7 +881,7 @@ impl SampleStructure {
     }
 }
 
-broadcast_common::impl_spec_display!(SampleStructure, Reserved);
+broadcast_core::impl_spec_display!(SampleStructure, Reserved);
 
 // ---------------------------------------------------------------------------
 // VideoSourceFormat — MAP/FRAME/FRATE/SAMPLE/FMT-RESERVE row, §6.4
@@ -1041,7 +1041,7 @@ impl<'a> PayloadHeader<'a> {
         if let VideoSourceId::Reserved(v) = self.vsid
             && v > VSID_MASK
         {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "vsid",
                 value: u64::from(v),
                 reason: "must be a 3-bit value (0..=7)",
@@ -1050,7 +1050,7 @@ impl<'a> PayloadHeader<'a> {
         if let TimestampRef::Reserved(v) = self.timestamp_ref
             && u16::from(v) > R_MASK
         {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "timestamp_ref",
                 value: u64::from(v),
                 reason: "must be a 2-bit value (0..=3)",
@@ -1059,7 +1059,7 @@ impl<'a> PayloadHeader<'a> {
         if let Scrambling::Reserved(v) = self.scrambling
             && u16::from(v) > S_MASK
         {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "scrambling",
                 value: u64::from(v),
                 reason: "must be a 2-bit value (0..=3)",
@@ -1068,7 +1068,7 @@ impl<'a> PayloadHeader<'a> {
         if let FecUsage::Reserved(v) = self.fec_usage
             && u16::from(v) > FEC_MASK
         {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "fec_usage",
                 value: u64::from(v),
                 reason: "must be a 3-bit value (0..=7)",
@@ -1077,14 +1077,14 @@ impl<'a> PayloadHeader<'a> {
         if let ClockFrequency::Reserved(v) = self.clock_frequency
             && u16::from(v) > CF_MASK
         {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "clock_frequency",
                 value: u64::from(v),
                 reason: "must be a 4-bit value (0..=15)",
             }));
         }
         if self.reserve > MAX_RESERVE {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "reserve",
                 value: u64::from(self.reserve),
                 reason: "must be a 5-bit value (0..=31)",
@@ -1094,7 +1094,7 @@ impl<'a> PayloadHeader<'a> {
             if let MapStructure::Reserved(v) = vsf.map
                 && u32::from(v) > MAP_MASK
             {
-                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "video_source_format.map",
                     value: u64::from(v),
                     reason: "must be a 4-bit value (0..=15)",
@@ -1107,7 +1107,7 @@ impl<'a> PayloadHeader<'a> {
             if let SampleStructure::Reserved(v) = vsf.sample
                 && u32::from(v) > SAMPLE_MASK
             {
-                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "video_source_format.sample",
                     value: u64::from(v),
                     reason: "must be a 4-bit value (0..=15)",
@@ -1121,7 +1121,7 @@ impl<'a> PayloadHeader<'a> {
         macro_rules! canonical {
             ($field:expr, $ty:ty, $name:literal) => {
                 if <$ty>::from_bits($field.to_bits()) != $field {
-                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                         field: $name,
                         value: u64::from($field.to_bits()),
                         reason: "Reserved(..) carries a defined code; use the named variant",
@@ -1303,7 +1303,7 @@ mod tests {
         assert_eq!(
             header.serialize_into(&mut out),
             Err(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need: FIXED_HEADER_LEN,
                     have: FIXED_HEADER_LEN - 1
                 }
@@ -1578,7 +1578,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "reserve",
                 ..
             })
@@ -1640,7 +1640,7 @@ mod tests {
         let err = HeaderExtension::new(&[0u8; 5]).unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "extension",
                 ..
             })
@@ -1656,7 +1656,7 @@ mod tests {
         let err = HeaderExtension::new(&[0u8; 64]).unwrap_err(); // 16 units > 15
         assert!(matches!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "extension",
                 ..
             })
@@ -1681,7 +1681,7 @@ mod tests {
         let err = PayloadHeader::parse(&[0u8; 3]).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: FIXED_HEADER_LEN,
                 have: 3,
                 ..
@@ -1696,7 +1696,7 @@ mod tests {
         let err = PayloadHeader::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "video source format row",
                 ..
             })
@@ -1710,7 +1710,7 @@ mod tests {
         let err = PayloadHeader::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "video timestamp",
                 ..
             })
@@ -1724,7 +1724,7 @@ mod tests {
         let err = PayloadHeader::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "header extension",
                 ..
             })
@@ -1871,7 +1871,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue { field: "vsid", .. })
+            Error::InvalidValue(broadcast_core::error::InvalidValue { field: "vsid", .. })
         ));
     }
 
@@ -1895,7 +1895,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue { field: "vsid", .. })
+            Error::InvalidValue(broadcast_core::error::InvalidValue { field: "vsid", .. })
         ));
         let err = PayloadHeader::new(
             VideoSourceId::Primary,
@@ -1912,7 +1912,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "fec_usage",
                 ..
             })
@@ -1936,7 +1936,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "timestamp_ref",
                 ..
             })
@@ -1960,7 +1960,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "scrambling",
                 ..
             })
@@ -1984,7 +1984,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "fec_usage",
                 ..
             })
@@ -2008,7 +2008,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "clock_frequency",
                 ..
             })
@@ -2083,7 +2083,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(
                 err,
-                Error::InvalidValue(broadcast_common::error::InvalidValue {
+                Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "video_source_format.map",
                     ..
                 })
@@ -2115,7 +2115,7 @@ mod tests {
             .unwrap_err();
             assert!(matches!(
                 err,
-                Error::InvalidValue(broadcast_common::error::InvalidValue {
+                Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "video_source_format.sample",
                     ..
                 })

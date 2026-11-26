@@ -16,7 +16,7 @@
 //! crate's own serializer — so a bug that made `serialize`/`parse` agree with
 //! each other but disagree with the spec would still be caught.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::{Error, RtpPacket, SeqNo, Ssrc};
 
 // ── Padding (P=1) — RFC 3550 §5.1 ───────────────────────────────────────────
@@ -193,7 +193,7 @@ fn rejects_truncated_csrc_list() {
     assert!(matches!(
         RtpPacket::parse(&bytes),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 what: "CSRC list",
                 ..
             }
@@ -215,7 +215,7 @@ fn rejects_truncated_extension_data() {
     assert!(matches!(
         RtpPacket::parse(&bytes),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 what: "header extension data",
                 ..
             }
@@ -287,7 +287,7 @@ fn rejects_extension_flag_without_the_four_byte_prefix() {
     assert_eq!(
         RtpPacket::parse(&bytes),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 16,
                 have: 12,
                 what: "header extension profile-id/length",

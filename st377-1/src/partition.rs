@@ -5,9 +5,9 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::ber::{BerLength, ber_length_size_for, decode_ber_length, encode_ber_length_as};
 use crate::error::{Error, Result};
@@ -87,7 +87,7 @@ impl PartitionKind {
     }
 }
 
-broadcast_common::impl_spec_display!(PartitionKind);
+broadcast_core::impl_spec_display!(PartitionKind);
 
 /// The Open/Closed × Complete/Incomplete status of a Partition (§6.2.3,
 /// Table 4 byte 15).
@@ -143,7 +143,7 @@ impl PartitionStatus {
     }
 }
 
-broadcast_common::impl_spec_display!(PartitionStatus);
+broadcast_core::impl_spec_display!(PartitionStatus);
 
 /// The Partition Pack — SMPTE ST 377-1:2019 §7.1, Table 4 (Key) + Table 5
 /// (Value). Covers the Header/Body/Footer variants (§7.2-7.4); which one a
@@ -310,14 +310,14 @@ impl<'a> Parse<'a> for PartitionPack {
         // truncates it on a 32-bit target instead of rejecting an
         // over-range value.
         let len = usize::try_from(len).map_err(|_| {
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: usize::MAX,
                 have: bytes.len(),
                 what: "Partition Pack value (length exceeds platform usize)",
             })
         })?;
         let value_end = value_start.checked_add(len).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: usize::MAX,
                 have: bytes.len(),
                 what: "Partition Pack value (length overflow)",

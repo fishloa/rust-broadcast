@@ -12,10 +12,10 @@
 //!   TR-06-1 §5.3.2.2 limits each packet to at most 16 range entries.
 
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, UnsupportedVersion};
-use broadcast_common::len::need_out;
+use broadcast_core::error::{BufferTooShort, UnsupportedVersion};
+use broadcast_core::len::need_out;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::{
@@ -95,7 +95,7 @@ fn serialize_padded(
     let pad = padding_total(padding, written - RTCP_HEADER_LEN)?;
     if pad > 0 {
         let total = written + pad;
-        let length_field = broadcast_common::len::fit_u16(total / WORD_LEN - 1, "RTCP length")?;
+        let length_field = broadcast_core::len::fit_u16(total / WORD_LEN - 1, "RTCP length")?;
         buf[0] |= RTCP_PADDING_MASK;
         buf[2..4].copy_from_slice(&length_field.to_be_bytes());
         buf[written..total - 1].copy_from_slice(padding);
@@ -326,7 +326,7 @@ impl GenericNack {
         need_out(buf, len)?;
 
         // Header: V=2, P=0, FMT=1.
-        let length_field = broadcast_common::len::fit_u16(len / WORD_LEN - 1, "RTCP length")?;
+        let length_field = broadcast_core::len::fit_u16(len / WORD_LEN - 1, "RTCP length")?;
         buf[0] = (RTCP_VERSION << VERSION_SHIFT) | FMT_GENERIC_NACK;
         buf[1] = PT_RTPFB;
         buf[2..4].copy_from_slice(&length_field.to_be_bytes());
@@ -532,7 +532,7 @@ impl RangeNack {
         // `MAX_RANGE_ENTRIES` check above, but checked via `fit_u16` anyway
         // (#1108/RIST-W4) rather than relying on that invariant never
         // changing out from under this cast.
-        let length_field = broadcast_common::len::fit_u16(len / WORD_LEN - 1, "RTCP length")?;
+        let length_field = broadcast_core::len::fit_u16(len / WORD_LEN - 1, "RTCP length")?;
         buf[0] = (RTCP_VERSION << VERSION_SHIFT) | SUBTYPE_RANGE_NACK;
         buf[1] = PT_APP;
         buf[2..4].copy_from_slice(&length_field.to_be_bytes());
@@ -576,7 +576,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "RTCP length",
                     ..
                 })

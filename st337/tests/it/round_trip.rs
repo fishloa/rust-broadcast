@@ -15,7 +15,7 @@
 //! crate's own serializer, so a bug that made `serialize`/`parse` agree with
 //! each other but disagree with the spec would still be caught.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st337::{
     Burst, DataMode, EXTENDED_DATA_TYPE_MARKER, Error, ExtendedPreamble, MAX_LENGTH_CODE_BITS,
     SYNC_WORD_PA, SYNC_WORD_PB,
@@ -164,7 +164,7 @@ fn six_word_preamble_underflow_length_code_is_rejected() {
     let err = Burst::parse(&bytes).unwrap_err();
     assert!(matches!(
         err,
-        Error::InvalidValue(broadcast_common::error::InvalidValue {
+        Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "length_code",
             ..
         })

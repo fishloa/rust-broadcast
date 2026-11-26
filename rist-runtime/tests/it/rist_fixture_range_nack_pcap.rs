@@ -20,7 +20,7 @@
 //! dependency, following `webrtc-runtime/tests/it/whip_smoke_pcap_stun.rs`'s
 //! existing precedent for this exact `DLT_NULL` capture shape.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rist_runtime::{PacketRange, RangeNack, RistReceiverCompound, RistSenderCompound};
 
 /// libpcap (classic, not pcapng) global header magic for little-endian,

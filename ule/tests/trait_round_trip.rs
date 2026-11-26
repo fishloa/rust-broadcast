@@ -1,6 +1,6 @@
 //! `Sndu` and `PayloadChain` through `broadcast_common::{Parse, Serialize}`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use ule::{Error, Sndu};
 
 fn fixture() -> Vec<u8> {
@@ -34,7 +34,7 @@ fn short_output_is_output_buffer_too_small() {
     assert_eq!(
         Serialize::serialize_into(&sndu, &mut out),
         Err(Error::OutputBufferTooSmall(
-            broadcast_common::error::OutputBufferTooSmall {
+            broadcast_core::error::OutputBufferTooSmall {
                 need: data.len(),
                 have
             }

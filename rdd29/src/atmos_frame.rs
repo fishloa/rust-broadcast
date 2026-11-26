@@ -5,10 +5,10 @@
 //! frame's bed/object metadata and audio essence.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::bits::{BitReader, BitWriter};
+use broadcast_core::{Parse, Serialize};
 
 use crate::AnyElement;
 use crate::element::{ELEMENT_ID_ATMOS_FRAME, element_header_len, write_element_header};
@@ -58,7 +58,7 @@ impl SampleRate {
     }
 }
 
-broadcast_common::impl_spec_display!(SampleRate, Reserved);
+broadcast_core::impl_spec_display!(SampleRate, Reserved);
 
 /// The 2-bit `BitDepth` field (§5.2.3 Table 3). "Only 24-bits per audio
 /// sample are currently supported" (spec's own emphasis).
@@ -97,7 +97,7 @@ impl BitDepth {
     }
 }
 
-broadcast_common::impl_spec_display!(BitDepth, Reserved);
+broadcast_core::impl_spec_display!(BitDepth, Reserved);
 
 /// The `ATMOSFrame` element (§2.1/§4.2/§5.2): the entire Dolby Atmos frame.
 #[derive(Debug, Clone, PartialEq)]
@@ -177,7 +177,7 @@ impl<'a> AtmosFrame<'a> {
             if let AnyElement::ObjectDefinition1(obj) = e
                 && obj.pan_sub_blocks.len() != usize::from(self.frame_rate.num_pan_sub_blocks()?)
             {
-                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "ATMOSFrame.elements[].pan_sub_blocks.len()",
                     value: obj.pan_sub_blocks.len() as u64,
                     reason: "pan_sub_blocks.len() must equal frame_rate.num_pan_sub_blocks()",
@@ -204,7 +204,7 @@ impl<'a> Parse<'a> for AtmosFrame<'a> {
         debug_assert!(r.is_byte_aligned());
         let header_len = r.bits_read() / BITS_PER_BYTE;
         let element_size = usize::try_from(element_size).map_err(|_| {
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "ElementSize",
                 value: element_size,
                 reason: "does not fit in this platform's usize",
@@ -212,7 +212,7 @@ impl<'a> Parse<'a> for AtmosFrame<'a> {
         })?;
         let body_end = header_len
             .checked_add(element_size)
-            .ok_or(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            .ok_or(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "ElementSize",
                 value: element_size as u64,
                 reason: "overflowed usize",
@@ -252,7 +252,7 @@ impl<'a> Parse<'a> for AtmosFrame<'a> {
         // observable, so it can carry a regression test.
         let remaining = body.len().saturating_sub(offset);
         if sub_element_count > remaining as u64 {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "ATMOSFrame.SubElementCount",
                 value: sub_element_count,
                 reason: "exceeds the bytes remaining in the frame body",
@@ -266,7 +266,7 @@ impl<'a> Parse<'a> for AtmosFrame<'a> {
             elements.push(element);
         }
         if offset != body.len() {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "ATMOSFrame",
                 value: (body.len() - offset) as u64,
                 reason: "trailing bytes remain after SubElementCount elements",
@@ -398,7 +398,7 @@ mod tests {
         assert_eq!(
             frame.serialize_into(&mut out),
             Err(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need,
                     have: need - 1
                 }
@@ -458,7 +458,7 @@ mod tests {
         // `value` is the offending count (8), not an element index.
         assert!(matches!(
             frame.serialize_into(&mut buf),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 value: 8,
                 ..
             }))

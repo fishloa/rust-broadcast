@@ -3,8 +3,8 @@
 
 use atsc3_route::rmt_flute::LctHeader;
 use atsc3_route::{Error, ROUTE_FEC_PAYLOAD_ID_LEN, RoutePacket};
-use broadcast_common::Parse;
-use broadcast_common::error::BufferTooShort;
+use broadcast_core::Parse;
+use broadcast_core::error::BufferTooShort;
 
 const FIXTURE: &str = "atsc3/route-media-video-fragment-2020-11-05.bin";
 

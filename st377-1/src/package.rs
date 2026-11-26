@@ -14,7 +14,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 use crate::error::{Error, Result};
 use crate::local_set::{LocalSet, StructuralSetKind};
@@ -366,7 +366,7 @@ fn encode_timestamp_item(out: &mut Vec<LocalSetOwnedItem>, tag: u16, ts: &MxfTim
 mod tests {
     use super::*;
     use crate::types::UlBytes;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     fn sample_timestamp() -> MxfTimestamp {
         MxfTimestamp {

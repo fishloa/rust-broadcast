@@ -1,6 +1,6 @@
 //! Build an RTT Echo Request, serialize, parse back, verify.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rist_runtime::{RttEcho, RttEchoKind};
 
 fn main() {

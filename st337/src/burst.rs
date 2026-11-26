@@ -17,8 +17,8 @@
 //! big-endian-per-word carriage (which this crate has not observed in
 //! practice) fails with [`Error::InvalidSync`].
 
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 
@@ -72,7 +72,7 @@ fn le<const N: usize>(bytes: &[u8], offset: usize) -> Result<[u8; N]> {
         .and_then(|s| s.first_chunk::<N>())
         .copied()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: offset + N,
                 have: bytes.len(),
                 what: "ST 337 preamble word",
@@ -167,7 +167,7 @@ impl DataMode {
     }
 }
 
-broadcast_common::impl_spec_display!(DataMode);
+broadcast_core::impl_spec_display!(DataMode);
 
 // ---------------------------------------------------------------------------
 // ExtendedPreamble — Pe/Pf (six-word preamble form)
@@ -303,21 +303,21 @@ impl BurstPreamble {
             return Err(Error::UnsupportedDataMode(self.data_mode));
         }
         if self.data_type > MAX_5_BIT_FIELD {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "data_type",
                 value: u64::from(self.data_type),
                 reason: "must be a 5-bit value (0..=31)",
             }));
         }
         if self.data_type_dependent > MAX_5_BIT_FIELD {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "data_type_dependent",
                 value: u64::from(self.data_type_dependent),
                 reason: "must be a 5-bit value (0..=31)",
             }));
         }
         if self.data_stream_number > MAX_DATA_STREAM_NUMBER {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "data_stream_number",
                 value: u64::from(self.data_stream_number),
                 reason: "must be a 3-bit value (0..=7)",
@@ -416,7 +416,7 @@ impl<'a> Parse<'a> for Burst<'a> {
         need_in(bytes, BASE_PREAMBLE_LEN, "burst_preamble (Pa-Pd)")?;
         let pa = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, 0)?);
         if pa != SYNC_WORD_PA {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "Pa",
                 expected: u32::from(SYNC_WORD_PA),
                 found: u32::from(pa),
@@ -424,7 +424,7 @@ impl<'a> Parse<'a> for Burst<'a> {
         }
         let pb = u16::from_le_bytes(le::<PREAMBLE_WORD_LEN>(bytes, PB_WORD_OFFSET)?);
         if pb != SYNC_WORD_PB {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "Pb",
                 expected: u32::from(SYNC_WORD_PB),
                 found: u32::from(pb),
@@ -465,7 +465,7 @@ impl<'a> Parse<'a> for Burst<'a> {
         };
         let payload_bits = u32::from(length_code)
             .checked_sub(extended_offset_bits)
-            .ok_or(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            .ok_or(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "length_code",
                 value: u64::from(length_code),
                 reason: "shorter than the six-word preamble's own 32 extended-preamble bits",
@@ -509,14 +509,14 @@ impl Serialize for Burst<'_> {
         };
         let payload_bits = u32::from(self.preamble.length_code)
             .checked_sub(extended_offset_bits)
-            .ok_or(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            .ok_or(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "length_code",
                 value: u64::from(self.preamble.length_code),
                 reason: "shorter than the six-word preamble's own 32 extended-preamble bits",
             }))?;
         let expected_payload_len = payload_bits.div_ceil(BITS_PER_OCTET) as usize;
         if self.payload.len() != expected_payload_len {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "length_code",
                 value: u64::from(self.preamble.length_code),
                 reason: "does not match payload.len() (see BurstPreamble::length_code docs)",
@@ -554,7 +554,7 @@ mod tests {
         assert_eq!(
             burst.serialize_into(&mut out),
             Err(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need,
                     have: need - 1
                 }
@@ -690,7 +690,7 @@ mod tests {
         let err = Burst::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidSync(broadcast_common::error::InvalidSync { what: "Pa", .. })
+            Error::InvalidSync(broadcast_core::error::InvalidSync { what: "Pa", .. })
         ));
     }
 
@@ -702,7 +702,7 @@ mod tests {
         let err = Burst::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::InvalidSync(broadcast_common::error::InvalidSync { what: "Pb", .. })
+            Error::InvalidSync(broadcast_core::error::InvalidSync { what: "Pb", .. })
         ));
     }
 
@@ -777,7 +777,7 @@ mod tests {
         let err = Burst::parse(&[0u8; 4]).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: 8,
                 have: 4,
                 ..
@@ -792,7 +792,7 @@ mod tests {
         let err = Burst::parse(&bytes[..bytes.len() - 1]).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "burst_payload",
                 ..
             })

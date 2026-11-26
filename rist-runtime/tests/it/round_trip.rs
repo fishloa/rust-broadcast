@@ -1,8 +1,8 @@
 //! Round-trip tests for RIST wire types: parse -> serialize -> byte-identical,
 //! and construct -> serialize -> parse -> equal.
 
-use broadcast_common::error::OutputBufferTooSmall;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::OutputBufferTooSmall;
+use broadcast_core::{Parse, Serialize};
 use rist_runtime::{
     Error, GenericNack, NackFci, PacketRange, RangeNack, ReportPart, RistReceiverCompound,
     RistSenderCompound, RttEcho, RttEchoKind,

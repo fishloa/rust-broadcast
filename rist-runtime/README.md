@@ -35,7 +35,7 @@ Typical users: a RIST sender/receiver built on `tokio` UDP, a RIST proxy or moni
 A loopback of the whole recovery path: a sender buffers four packets, the receiver misses two, asks for them with a Range NACK, and the sender answers.
 
 ```rust
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use core::time::Duration;
 use rist_runtime::arq::{ArqConfig, Receiver, Sender};
 use rist_runtime::RangeNack;

@@ -56,7 +56,7 @@
 //! confirmed *not* to be local-set keys at all before being skipped, and are
 //! out of scope for this crate regardless (never decoded).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use st377_1::op1a::{Op1aQualifier, is_op1a};
 use st377_1::{
     ContentStorage, Error, EssenceContainerData, EventTrack, FillerComponent, Identification,

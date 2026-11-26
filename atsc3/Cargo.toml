@@ -12,6 +12,7 @@ keywords     = ["atsc3", "nextgentv", "lls", "slt", "broadcast"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 roxmltree        = { version = "0.21", default-features = false }
 thiserror        = { version = "2", default-features = false }
 
@@ -23,8 +24,8 @@ optional = true
 default = ["std"]
 # `std` is REQUIRED for LLS payload decompression (`flate2`) and XML (`roxmltree/std`);
 # the binary envelope parsing itself is no_std+alloc.
-std     = ["broadcast-common/std", "thiserror/std", "roxmltree/std", "dep:flate2", "serde?/std"]
-serde   = ["dep:serde", "broadcast-common/serde"]
+std     = ["broadcast-common/std", "broadcast-core/std", "thiserror/std", "roxmltree/std", "dep:flate2", "serde?/std"]
+serde   = ["dep:serde", "broadcast-common/serde", "broadcast-core/serde"]
 
 [dependencies.serde]
 version          = "1"

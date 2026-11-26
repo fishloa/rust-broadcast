@@ -39,7 +39,7 @@ pub enum KeyParity {
 
 impl KeyParity {
     /// Static label (issue #204 convention). Hand-written rather than
-    /// `broadcast_common::impl_spec_display!`: this crate carries no
+    /// `broadcast_core::impl_spec_display!`: this crate carries no
     /// dependency on `broadcast-common` (nothing else in it needs one).
     pub fn name(&self) -> &'static str {
         match self {

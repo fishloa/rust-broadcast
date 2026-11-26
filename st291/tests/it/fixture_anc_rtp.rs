@@ -5,7 +5,7 @@
 //! RTP + payload-header framing), assert the decoded fields against
 //! independently-known expected values, and verify a byte-exact round-trip.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use st291::{AncContent, AncRtpPayload, ExtendedSequenceNumber, FieldSense, RtpAncPacket};
 
 fn fixture() -> Vec<u8> {

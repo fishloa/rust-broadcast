@@ -12,7 +12,7 @@
 //! bytes a real peer actually sends, since a spec-derived vector risks
 //! reproducing the same misunderstanding of the spec that caused the bug.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::rtcp::{CompoundPacket, RtcpPacket};
 
 static FIXTURE: std::sync::LazyLock<Vec<u8>> =

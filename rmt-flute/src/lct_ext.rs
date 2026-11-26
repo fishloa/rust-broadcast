@@ -2,7 +2,7 @@
 //! (RFC 5651 §5.2.1, §5.2.2, §9.2).
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::ext::{HeaderExtension, WORD};
@@ -65,7 +65,7 @@ impl LctExtType {
     }
 }
 
-broadcast_common::impl_spec_display!(LctExtType, Other);
+broadcast_core::impl_spec_display!(LctExtType, Other);
 
 // EXT_TIME Use-field bit masks (RFC 5651 §5.2.2, Figure 4). The Use field is
 // the low 16 bits of the first 32-bit word; SCT-High is the MSB.
@@ -177,7 +177,7 @@ impl ExtTime {
         // byte-exact round-trip) rather than an error.
         let use_reserved = use_field & USE_RESERVED_MASK;
         if (use_field & USE_SCT_LOW != 0) && (use_field & USE_SCT_HIGH == 0) {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "EXT_TIME Use",
                 reason: "SCT-Low set without SCT-High",
             }));
@@ -222,7 +222,7 @@ impl ExtTime {
     /// (RFC 5651 §5.2.2), the combination [`ExtTime::parse`] rejects.
     pub fn to_content(&self) -> Result<Vec<u8>> {
         if self.sct_low.is_some() && self.sct_high.is_none() {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "EXT_TIME Use",
                 reason: "SCT-Low set without SCT-High",
             }));
@@ -256,7 +256,7 @@ impl ExtTime {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for ExtTime {
+impl<'a> broadcast_core::Parse<'a> for ExtTime {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -264,7 +264,7 @@ impl<'a> broadcast_common::Parse<'a> for ExtTime {
     }
 }
 
-impl broadcast_common::Serialize for ExtTime {
+impl broadcast_core::Serialize for ExtTime {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -284,7 +284,7 @@ mod tests {
     use super::*;
     use alloc::string::ToString;
     use alloc::vec;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     #[test]
     fn ext_type_round_trip() {

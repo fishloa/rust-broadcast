@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use atsc3::LlsTableId;
 use atsc3::lls::LlsEnvelope;
 use atsc3::slt::{ServiceCategory, SlsProtocol, Slt};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 fn fixture_path(name: &str) -> PathBuf {
     test_fixtures::path(&format!("atsc3/{name}"))
