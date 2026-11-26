@@ -37,6 +37,24 @@ One rule for every wire crate; the authoritative statement is the `broadcast-com
 - **`#[non_exhaustive]`** on every public enum/struct that may gain variants/fields.
 - **Decode-completeness**: every coded spec field that maps to a name has a typed accessor — clients never re-implement a spec lookup table.
 
+### Recorded exception — `broadcast-bitstream` (facts-only in v1)
+
+`broadcast-bitstream` is a **recorded exception** to the symmetric-serializer and
+byte-exact-round-trip invariant. It reads codec facts (NAL classification, stream
+format conversion, access-unit boundaries) and has no writer for most of them yet,
+so a round trip cannot honestly exist. The exception is the one recorded in
+[`docs/superpowers/specs/2026-11-26-bitstream-and-codec-seam-design.md`](superpowers/specs/2026-11-26-bitstream-and-codec-seam-design.md)
+§5.3, and it is removed type by type on that design's §8 roadmap (lossless parse
+plus a writer for H.264 SPS/PPS, HEVC VPS/SPS/PPS, AC-3/E-AC-3, DTS core, AV1
+sequence headers and MPEG-2 sequence headers, each an additive release).
+
+**Not waived:** real-fixture parse tests, the fuzz targets, spec-drift tests, the
+private-field rule, `#[non_exhaustive]` and the label convention. The stream-format
+converters that return bytes (`annexb_to_length_prefixed`,
+`length_prefixed_to_annexb`, `normalise_nal_length_size`) are a second recorded
+exception to the no-raw-byte rule, stated in each function's documentation: they
+convert bytes to bytes, and their round trip is asserted byte-identically.
+
 ### API conventions
 
 The public API follows [`API-CONVENTIONS.md`](API-CONVENTIONS.md); a deviation needs a written reason in the PR.

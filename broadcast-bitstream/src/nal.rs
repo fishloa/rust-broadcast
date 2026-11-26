@@ -626,7 +626,11 @@ impl Iterator for EbspBytes<'_> {
                 self.zero_run = 0;
                 continue;
             }
-            self.zero_run = if b == 0 { self.zero_run + 1 } else { 0 };
+            self.zero_run = if b == 0 {
+                self.zero_run.saturating_add(1)
+            } else {
+                0
+            };
             return Some(b);
         }
         None
@@ -1033,7 +1037,7 @@ fn append_atsc_cc_data_from_sei_nal(codec: NalCodec, nal: &[u8], out: &mut Vec<u
 /// unit, concatenated in AU order (issue #599).
 ///
 /// `au` is one access unit — a 4-byte **length-prefixed** buffer when
-/// `length_prefixed` is `true` (the form [`crate::pipeline::Sample::data`]
+/// `length_prefixed` is `true` (the form a length-prefixed access unit
 /// uses for AVC/HEVC), otherwise an **Annex B** byte stream. Walks every NAL,
 /// finds each `user_data_registered_itu_t_t35` SEI message (H.264 type 6 /
 /// HEVC prefix/suffix types 39/40, `payloadType` 4) matching the ATSC A/53

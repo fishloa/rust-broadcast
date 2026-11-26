@@ -49,6 +49,7 @@ crates' manifests by [`tools/gen-crate-index.py`](tools/gen-crate-index.py);
 | Crate | What it does | Headline standards | Status |
 |---|---|---|---|
 | [`broadcast-auth`](broadcast-auth/) | Shared HTTP/RTSP auth: Basic/Digest/Bearer client credentials and a server-side challenge+verify Verifier. | RFC 7235, RFC 7616 / RFC 2617 (Digest), RFC 6750 (Bearer), RFC 2326 §14 | [![crates.io](https://img.shields.io/crates/v/broadcast-auth.svg)](https://crates.io/crates/broadcast-auth) |
+| [`broadcast-bitstream`](broadcast-bitstream/) | Codec bitstream parsers: exp-Golomb/RBSP reader, NAL classification, Annex B conversion and access-unit splitting below the muxing hub. | ITU-T H.264 §7.3/§7.4/§9.1, ITU-T H.265 §7.3/§7.4/§9.2.2 (NAL units, RBSP, exp-Golomb); ISO/IEC 14496-15 §4.3.3 (length-prefix conversion); ATSC A/53 Part 4 (caption SEI) | internal, `publish = false` |
 | [`broadcast-codec`](broadcast-codec/) | Codec seam: raw frame types and object-safe sans-IO Decoder/Encoder traits; holds no codec. | none (codec seam; no wire format of its own) | internal, `publish = false` |
 | [`broadcast-common`](broadcast-common/) | CRC-32/MPEG-2, BCD/time/hex codecs, 33-bit clock arithmetic, the incremental Stage contract and the bounded XML reader. | ISO/IEC 13818-1 CRC-32 (Annex A) | [![crates.io](https://img.shields.io/crates/v/broadcast-common.svg)](https://crates.io/crates/broadcast-common) |
 | [`broadcast-core`](broadcast-core/) | Frozen wire-format contract: Parse/Serialize, checked field widths, bit I/O, shared errors, big-endian wire field readers, timescale and the CENC scheme identity. | ISO/IEC 23001-7 scheme identity (`cenc`); no format of its own | internal, `publish = false` |
@@ -170,7 +171,7 @@ crates' manifests by [`tools/gen-crate-index.py`](tools/gen-crate-index.py);
 |---|---|---|---|
 | [`broadcast-loudness`](broadcast-loudness/) | EBU R 128 / ITU-R BS.1770-5 loudness: integrated, momentary, short-term, LRA, true peak. | ITU-R BS.1770-5 (11/2023); EBU R 128, Tech 3341, Tech 3342 (all November 2023); GY/T 282-2014, GY/T 377-2023, GY/T 379-2023 target profiles | [![crates.io](https://img.shields.io/crates/v/broadcast-loudness.svg)](https://crates.io/crates/broadcast-loudness) |
 
-Plus `broadcast-codec`, `broadcast-core`, `isobmff-private-format`, `test-alloc`, `test-fixtures`, `test-harness`, `workspace-guards`: `publish = false` test helpers, see [docs/CRATES.md](docs/CRATES.md).
+Plus `broadcast-bitstream`, `broadcast-codec`, `broadcast-core`, `isobmff-private-format`, `test-alloc`, `test-fixtures`, `test-harness`, `workspace-guards`: `publish = false` test helpers, see [docs/CRATES.md](docs/CRATES.md).
 <!-- END GENERATED: crate-table -->
 
 Outside the workspace: Python bindings [`dvb-si-py`](bindings/python/) and

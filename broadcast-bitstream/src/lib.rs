@@ -1,21 +1,15 @@
-//! Codec bitstream parsers and stream-format conversion for `rust-broadcast`.
-//!
-//! The crate reads codec **facts** only — it never decodes or encodes media.
-//! This first layer is what everything else stands on:
-//!
-//! - [`bitreader`] — the exp-Golomb (`ue(v)`/`se(v)`) reader over an RBSP byte
-//!   stream, built on [`broadcast_core::bits`].
-//! - [`rbsp`] — RBSP emulation-prevention byte removal and insertion
-//!   (H.264 §7.4.1 / H.265 §7.4.2).
-//!
-//! `no_std` + `alloc`. It depends on `broadcast-core` and `thiserror` only;
-//! later codec layers (parameter sets, slice headers, audio headers) arrive one
-//! feature at a time on top of it.
-
+#![doc = include_str!("../README.md")]
 #![no_std]
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 #![cfg_attr(docsrs, feature(doc_cfg))]
+#![doc = "\n## Runnable examples\n"]
+#![doc = "Run with `cargo run -p broadcast-bitstream --example <name>`.\n"]
+#![doc = "\n### `split_annexb`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/split_annexb.rs")]
+#![doc = "```\n\n### `annexb_to_avcc`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/annexb_to_avcc.rs")]
+#![doc = "```"]
 
 extern crate alloc;
 

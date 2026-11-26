@@ -16,7 +16,7 @@
 //!   proves IDR-based anchoring is unchanged.
 //!
 //! Test 1 re-derives the open-GOP RAP count with a NAL walker written
-//! independently of `transmux::nal` (own PES/AU reassembly, own start-code
+//! independently of `broadcast_bitstream::nal` (own PES/AU reassembly, own start-code
 //! scan, own `sei_message()` `payloadType` decode) so the "matches" assertion
 //! actually cross-checks the implementation rather than exercising the same
 //! code path twice.
@@ -36,7 +36,7 @@ const VIDEO_PID: u16 = 0x0100;
 
 // ── Independent (test-owned) TS → AU → NAL-type walk ────────────────────────
 //
-// Deliberately does NOT call anything in `transmux::nal` or `transmux::annexb`
+// Deliberately does NOT call anything in `broadcast_bitstream::nal` or `broadcast_bitstream::annexb`
 // — this is a from-scratch re-implementation so Test 1's "is_sync count
 // matches the independent count" assertion is a real cross-check.
 

@@ -14,8 +14,8 @@
 //! check: `TsDemux` cannot produce this fact at all — its per-track config
 //! probe only *emits a track once SPS+PPS are found*, so a `Media`-level
 //! inspection can never observe an ordering fault that happened before the
-//! probe resolved. NAL classification is `transmux::nal`/`transmux::annexb`
-//! throughout — no duplicated NAL/SPS parsing.
+//! probe resolved. NAL classification is `broadcast_bitstream::nal`/
+//! `broadcast_bitstream::annexb` throughout — no duplicated NAL/SPS parsing.
 
 use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;

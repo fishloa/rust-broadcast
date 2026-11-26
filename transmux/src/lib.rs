@@ -91,8 +91,9 @@
 //!   UAS Datalink Local Set under `motion-imagery-metadata`.
 //! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
-//! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /
-//!   [`nal_unit_type`]); I-frame trick-play track derivation as a sample stage ([`TrickPlayStage`]);
+//! - **Utilities:** NAL keyframe classification
+//!   ([`broadcast_bitstream::is_keyframe_nal`] /
+//!   [`broadcast_bitstream::nal_unit_type`]); I-frame trick-play track derivation as a sample stage ([`TrickPlayStage`]);
 //!   the single ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 fragment
 //!   sample-offset resolver shared by the demuxer, decryptor and validator
 //!   ([`isobmff::frag_offsets`]).

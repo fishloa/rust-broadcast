@@ -37,3 +37,18 @@ isobmff = ["dep:isobmff", "h264"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "split_annexb"
+required-features = ["std", "h264"]
+
+[[example]]
+name = "annexb_to_avcc"
+required-features = ["std"]
+
+[dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
+
+[[test]]
+name = "annexb_fixture"
+required-features = ["h264"]

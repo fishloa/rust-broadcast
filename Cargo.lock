@@ -402,6 +402,7 @@ dependencies = [
  "broadcast-core",
  "isobmff",
  "serde",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -3936,7 +3937,6 @@ checksum = "3244542535d5de959d90ec55d1b5ff0fd2bb7b1310223907d5f11932847f7b59"
 name = "smooth-runtime"
 version = "0.4.0"
 dependencies = [
- "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "broadcast-smooth",
@@ -4504,7 +4504,6 @@ dependencies = [
  "dvb-vbi",
  "isobmff",
  "jiff",
- "memchr",
  "motion-imagery-metadata",
  "mpeg-pes",
  "mpeg-ps",

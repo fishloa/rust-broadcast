@@ -68,6 +68,7 @@ pub const TABLE: &[Crate] = &[
     // `SrtCallerConfig`/`UdpConfig` etc. already carry the attribute.
     runtime("broadcast-client", &["TsHttpPolicy"], &["PlayoutConfig"]),
     plain("broadcast-core"),
+    plain("broadcast-bitstream"),
     plain("broadcast-codec"),
     Crate {
         name: "broadcast-common",

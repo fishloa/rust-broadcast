@@ -50,9 +50,6 @@ cc-data    = { path = "../cc-data", version = "0.11.0", default-features = false
 # parsers instead of re-parsing. dvb-si does not depend on transmux (no cycle);
 # `no_std`+`alloc` with default features off.
 dvb-si     = { path = "../dvb-si", version = "16.0.0", default-features = false }
-# Start-code scan (`annexb::find_start_code_prefix`): find each `01` byte
-# instead of testing every offset. no_std without its `std` feature.
-memchr     = { version = "2", default-features = false }
 # XML codec for the DASH MPD / Smooth Streaming / PlayReady WRMHEADER paths: the
 # only XML dependency of the crates that read or write XML (transmux,
 # dvb-mabr, ttml-subtitle, multimux). std-only (quick-xml needs std).

@@ -25,7 +25,7 @@
 //! - **H.264** (RFC 6184): single-NAL packets (NAL type 1–23), STAP-A
 //!   (type 24) aggregation for the SPS+PPS parameter sets, and FU-A (type 28)
 //!   fragmentation of any NAL larger than the MTU. Video IR samples are 4-byte
-//!   length-prefixed NALs ([`crate::annexb`]); the length prefixes are stripped
+//!   length-prefixed NALs ([`broadcast_bitstream::annexb`]); the length prefixes are stripped
 //!   on packetise and re-added on depacketise.
 //! - **AAC** (RFC 3640, `AAC-hbr`): an AU-headers-length (16-bit, in bits)
 //!   prefix + one 2-byte AU-header (`sizeLength=13; indexLength=3`) + the raw

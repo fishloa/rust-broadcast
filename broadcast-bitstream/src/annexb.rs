@@ -94,7 +94,7 @@ pub fn find_start_code_prefix(data: &[u8], from: usize) -> Option<usize> {
 /// scanners in this crate (they differ only in what they do with a hit:
 /// `au` pulls back over `zero_byte`s / resumes incrementally, `mpeg_legacy`
 /// also matches the byte after the prefix).
-pub(crate) fn start_code_positions(data: &[u8]) -> Vec<usize> {
+pub fn start_code_positions(data: &[u8]) -> Vec<usize> {
     let mut positions = Vec::new();
     let mut p = 0usize;
     while let Some(at) = find_start_code_prefix(data, p) {
@@ -150,6 +150,9 @@ impl<'a> Iterator for AnnexBNalIter<'a> {
 
 /// Convert an Annex B access unit into length-prefixed form (4-byte big-endian
 /// length before each NAL), suitable for a CMAF `mdat`.
+///
+/// Recorded exception to the no-raw-byte rule: a stream-format converter
+/// produces bytes.
 pub fn annexb_to_length_prefixed(annexb: &[u8]) -> Vec<u8> {
     length_prefix(annexb.len(), iter_annexb_nals(annexb))
 }
@@ -244,6 +247,9 @@ pub fn iter_length_prefixed_nals_with(lp: &[u8], length_size: usize) -> Result<V
 ///
 /// `length_size` must be 1, 2 or 4 — 3 (a 3-byte length) is reserved by
 /// §5.3.3 and is rejected.
+///
+/// Recorded exception to the no-raw-byte rule: a stream-format converter
+/// produces bytes.
 pub fn normalise_nal_length_size(au: &[u8], length_size: usize) -> Result<Vec<u8>> {
     let nals = iter_length_prefixed_nals_with(au, length_size)?;
     if length_size == NAL_LENGTH_SIZE {
@@ -263,6 +269,9 @@ pub fn normalise_nal_length_size(au: &[u8], length_size: usize) -> Result<Vec<u8
 
 /// Convert a length-prefixed (4-byte) buffer back into an Annex B byte stream,
 /// emitting a 4-byte start code (`00 00 00 01`) before each NAL.
+///
+/// Recorded exception to the no-raw-byte rule: a stream-format converter
+/// produces bytes.
 pub fn length_prefixed_to_annexb(lp: &[u8]) -> Result<Vec<u8>> {
     let nals = iter_length_prefixed_nals(lp)?;
     let mut out = Vec::with_capacity(lp.len());

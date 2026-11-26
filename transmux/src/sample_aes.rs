@@ -66,7 +66,7 @@ pub const NAL_TYPE_NON_IDR_SLICE: u8 = 1;
 /// (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.1).
 pub const NAL_TYPE_IDR_SLICE: u8 = 5;
 /// Mask selecting the 5-bit `nal_unit_type` from the NAL header byte.
-pub use broadcast_bitstream::nal::NAL_TYPE_MASK;
+use broadcast_bitstream::nal::NAL_TYPE_MASK;
 /// Minimum NAL length (bytes, header included) for encryption to apply; NALs of
 /// this length or shorter are left entirely clear (`private/specs-verified/mpeg/transmux/drm/hls-sample-aes.md` §3.1).
 pub const H264_MIN_ENCRYPTED_NAL_LEN: usize = 48;

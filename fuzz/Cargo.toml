@@ -634,3 +634,9 @@ name = "matroska_reader"
 path = "fuzz_targets/matroska_reader.rs"
 test = false
 doc  = false
+
+[[bin]]
+name = "broadcast_bitstream_nal"
+path = "fuzz_targets/broadcast_bitstream_nal.rs"
+test = false
+doc  = false
