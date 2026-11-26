@@ -9,6 +9,8 @@
 #![doc = include_str!("../examples/split_annexb.rs")]
 #![doc = "```\n\n### `annexb_to_avcc`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/annexb_to_avcc.rs")]
+#![doc = "```\n\n### `decode_capture_sps`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/decode_capture_sps.rs")]
 #![doc = "```"]
 
 extern crate alloc;
@@ -17,8 +19,11 @@ pub mod annexb;
 pub mod au;
 pub mod bitreader;
 mod error;
+pub mod facts;
 pub mod nal;
 pub mod rbsp;
+pub mod rfc6381;
+pub mod sps;
 
 pub use annexb::{
     AnnexBNalIter, NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, VALID_NAL_LENGTH_SIZES,
@@ -36,3 +41,18 @@ pub use nal::{
     access_unit_is_keyframe, access_unit_is_rap, avc_access_unit_parameter_sets, caption_cc_data,
     is_idr_nal, is_keyframe_nal, nal_unit_type, recovery_point_sei,
 };
+#[cfg(any(feature = "h264", feature = "hevc"))]
+pub use sps::SpsDisplayFacts;
+#[cfg(feature = "h264")]
+pub use sps::{
+    AvcPicTimingLayout, AvcReorderDepth, AvcSliceSps, AvcSpsInfo, AvcVuiTiming,
+    decode_avc_display_facts, decode_avc_reorder_depth, decode_avc_slice_sps, decode_avc_sps,
+    decode_avc_vui_timing, is_high_profile,
+};
+#[cfg(feature = "hevc")]
+pub use sps::{
+    HevcInterlaceSps, HevcSpsInfo, HevcVpsTiming, HevcVuiTiming, decode_hevc_display_facts,
+    decode_hevc_sps, decode_hevc_vps_timing, decode_hevc_vui_timing, decode_ptl,
+};
+#[cfg(feature = "vvc")]
+pub use sps::{VvcSpsInfo, decode_vvc_sps};

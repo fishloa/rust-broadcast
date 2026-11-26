@@ -198,10 +198,12 @@ fn an_hdr10plus_brand_needs_the_flag_and_a_pq_base() {
     let origin = origin(&trunk, 8);
     let mut spec = hevc_spec();
     let mut display = transmux::ir::DisplayGeometry::new(1920, 1080, None);
-    display.video_signal = Some(transmux::ir::VideoSignalType::new(
-        transmux::ir::VideoFormat::Component,
+    display.video_signal = Some(broadcast_bitstream::facts::VideoSignalType::new(
+        broadcast_bitstream::facts::VideoFormat::Component,
         false,
-        Some(transmux::ir::ColourDescription::from_wire(9, 16, 9)),
+        Some(broadcast_bitstream::facts::ColourDescription::from_wire(
+            9, 16, 9,
+        )),
     ));
     spec = spec.with_display(Some(display));
     spec.hdr10plus = false;

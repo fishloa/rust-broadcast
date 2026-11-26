@@ -10,7 +10,7 @@
 //!
 //! No NAL/SPS parsing lives here — that stays below in `broadcast-bitstream`
 //! (`broadcast_bitstream::nal`, `broadcast_bitstream::annexb`) and `transmux`
-//! (`transmux::decode_avc_sps`, `transmux::decode_hevc_sps`); this module only locates the elementary
+//! (`broadcast_bitstream::sps::decode_avc_sps`, `broadcast_bitstream::sps::decode_hevc_sps`); this module only locates the elementary
 //! streams, their PMT-declared type, and hands each check the PES-stripped
 //! elementary-stream bytes for a completed access unit.
 

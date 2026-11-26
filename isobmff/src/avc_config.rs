@@ -140,7 +140,7 @@ impl AVCDecoderConfigurationRecord {
     /// *record's* condition is `AVCProfileIndication ∈ {100, 110, 122, 244}`
     /// (144 was the draft's placeholder for High 4:4:4 Predictive, finalized as
     /// 244; #563), so this is deliberately narrower than
-    /// `transmux::sps::is_high_profile`, which is the wider H.264 Table A-1 list
+    /// `broadcast_bitstream::sps::is_high_profile`, which is the wider H.264 Table A-1 list
     /// that governs *parsing* an SPS's syntax.
     ///
     /// The one place both an `avcC`-building caller and the SPS decoder can

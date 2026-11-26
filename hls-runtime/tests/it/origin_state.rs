@@ -537,10 +537,12 @@ fn an_hdr10plus_flag_survives_the_init_re_derivation() {
     assert!(matches!(video.config, transmux::CodecConfig::Hevc { .. }));
     video.hdr10plus = true;
     let mut display = transmux::ir::DisplayGeometry::new(1920, 1080, None);
-    display.video_signal = Some(transmux::ir::VideoSignalType::new(
-        transmux::ir::VideoFormat::Component,
+    display.video_signal = Some(broadcast_bitstream::facts::VideoSignalType::new(
+        broadcast_bitstream::facts::VideoFormat::Component,
         false,
-        Some(transmux::ir::ColourDescription::from_wire(9, 16, 9)),
+        Some(broadcast_bitstream::facts::ColourDescription::from_wire(
+            9, 16, 9,
+        )),
     ));
     let video = video.with_display(Some(display));
 

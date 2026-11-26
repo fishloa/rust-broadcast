@@ -24,7 +24,7 @@ use serde::Serialize;
 use transmux::codec_config_ext::{HevcRecordCodecInfo, VvcRecordCodecInfo};
 use transmux::ir::{AbandonReason, CodecConfig, SkippedTrack, TrackSpec};
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
-use transmux::sps::rfc6381_avc1;
+use broadcast_bitstream::rfc6381::rfc6381_avc1;
 use transmux::{
     AudioSpecificConfig, DemuxEvent,
 };

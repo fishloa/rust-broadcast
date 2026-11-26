@@ -48,10 +48,10 @@
 //! raised at the first access unit that references them.
 
 use crate::ir::{
-    ActiveFormat, ActiveFormatDescription, AfdPersistence, BarData, DisplayChangeSet,
-    DisplayGeometry, DisplayInfo, UserDataCarriage,
+    ActiveFormat, AfdPersistence, DisplayChangeSet, DisplayGeometry, DisplayInfo, UserDataCarriage,
 };
-use crate::sps::decode_avc_slice_sps;
+use broadcast_bitstream::facts::{ActiveFormatDescription, BarData};
+
 use crate::user_data;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
@@ -59,6 +59,7 @@ use alloc::vec::Vec;
 use broadcast_bitstream::annexb::iter_annexb_nals;
 use broadcast_bitstream::bitreader::BitReader;
 use broadcast_bitstream::nal::{HEVC_NAL_HEADER_LEN, NAL_TYPE_MASK, NalCodec};
+use broadcast_bitstream::sps::decode_avc_slice_sps;
 use isobmff::nalu_types::HEVC_SPS_NUT;
 
 /// `nal_unit_type` of a non-IDR coded slice (H.264 Table 7-1).
@@ -161,7 +162,7 @@ pub enum ActivationOutcome {
 
 /// `seq_parameter_set_id` of an H.264 SPS; `None` if it does not decode.
 fn avc_sps_id(nal: &[u8]) -> Option<u8> {
-    decode_avc_slice_sps(nal).ok().map(|s| s.sps_id)
+    decode_avc_slice_sps(nal).ok().map(|s| s.sps_id())
 }
 
 /// `(pps_id, sps_id)` of an H.264 PPS; `None` if it does not decode.
@@ -183,7 +184,7 @@ fn hevc_sps_id(nal: &[u8]) -> Option<u8> {
         .read_bits(SPS_MAX_SUB_LAYERS_MINUS1_BITS, "sps_max_sub_layers_minus1")
         .ok()? as u8;
     r.read_flag("sps_temporal_id_nesting_flag").ok()?;
-    let _ = crate::sps::decode_ptl(&mut r, true, max_sub).ok()?;
+    let _ = broadcast_bitstream::sps::decode_ptl(&mut r, true, max_sub).ok()?;
     u8::try_from(r.read_ue("sps_seq_parameter_set_id").ok()?).ok()
 }
 
@@ -550,9 +551,9 @@ impl SpsTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ir::AspectRatioIdc;
-    use crate::test_bits::BitWriter;
     use alloc::vec;
+    use broadcast_bitstream::facts::AspectRatioIdc;
+    use test_fixtures::bits::BitWriter;
 
     /// An H.264 SPS NAL: `mb` x `mb` macroblock picture (16 luma samples per
     /// MB), no crop, with a VUI carrying `aspect_ratio_idc` (and, for

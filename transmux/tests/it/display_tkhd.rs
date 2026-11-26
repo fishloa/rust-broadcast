@@ -1,8 +1,9 @@
 //! tkhd presentation size (Phase 5): cropped output size rescaled by SAR.
 
+use broadcast_bitstream::facts::AspectRatioIdc;
 use broadcast_core::timescale::Timescale;
 use transmux::TrackSpec;
-use transmux::ir::{AspectRatioIdc, CodecConfig};
+use transmux::ir::CodecConfig;
 use transmux::pipeline;
 
 fn timescale(value: u32) -> Timescale {
@@ -104,7 +105,7 @@ fn tkhd_rounds_to_nearest() {
         return;
     };
     let mut g = spec.display.clone().expect("display");
-    g.output_rect = transmux::ir::PictureRect::new(0, 0, 721, 576);
+    g.output_rect = broadcast_bitstream::facts::PictureRect::new(0, 0, 721, 576);
     g.aspect_ratio = Some(AspectRatioIdc::Sar16x11);
     spec = spec.with_display(Some(g));
     let data = build(spec);

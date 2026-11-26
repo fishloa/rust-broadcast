@@ -8,11 +8,11 @@ fn timescale(value: u32) -> Timescale {
 use broadcast_core::timescale::Timescale;
 use std::num::NonZeroUsize;
 
+use broadcast_bitstream::facts::AspectRatioIdc;
 use broadcast_hls::MasterPlaylist;
 use hls_runtime::server::{HlsOrigin, HlsOriginConfig};
 use media_plane::trunk::{Trunk, TrunkConfig};
 use transmux::Container;
-use transmux::ir::AspectRatioIdc;
 use transmux::{CodecConfig, TrackSpec};
 
 fn nz(n: usize) -> NonZeroUsize {

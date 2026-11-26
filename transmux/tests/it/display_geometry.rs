@@ -14,7 +14,8 @@
 //! `test_fixtures`; the
 //! private submodule is skipped, not failed, when it is not checked out.
 
-use transmux::ir::{AspectRatioIdc, CodecConfig};
+use broadcast_bitstream::facts::AspectRatioIdc;
+use transmux::ir::CodecConfig;
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 /// 720x576: the SD frame size of both zenith-tv captures (no frame cropping:

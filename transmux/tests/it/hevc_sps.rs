@@ -2,16 +2,17 @@
 //!
 //! Extracts the SPS NAL from the `hvcC` box of the committed `hevc-frag.mp4`
 //! fixture (moov → trak → mdia → minf → stbl → stsd → hvc1 → hvcC), then
-//! calls `transmux::decode_hevc_sps` directly and asserts the exact coded
+//! calls `broadcast_bitstream::sps::decode_hevc_sps` directly and asserts the exact coded
 //! dimensions / profile / chroma / bit-depth reported by `ffprobe`.
 //!
 //! ffprobe ground truth for `fixtures/mp4/hevc-frag.mp4`:
 //!   codec_name=hevc  profile=Main  width=320  height=240
 //!   pix_fmt=yuv420p  level=60
 
+use broadcast_bitstream::rfc6381::rfc6381_hvc1;
+use broadcast_bitstream::sps::decode_hevc_sps;
 use broadcast_core::Parse;
 use isobmff::HEVCDecoderConfigurationRecord;
-use transmux::{decode_hevc_sps, rfc6381_hvc1};
 
 /// SPS `nal_unit_type` for H.265 (ITU-T H.265 Table 7-1).
 const HEVC_SPS_NUT: u8 = 33;
@@ -113,22 +114,22 @@ fn hevc_sps_decode_from_hvcc_fixture() {
     // pix_fmt=yuv420p, level=60) ---
 
     // Main profile has general_profile_idc == 1.
-    assert_eq!(info.general_profile_idc, 1, "Main profile (idc=1)");
+    assert_eq!(info.general_profile_idc(), 1, "Main profile (idc=1)");
     // Main tier: general_tier_flag == false.
-    assert!(!info.general_tier_flag, "main tier");
+    assert!(!info.general_tier_flag(), "main tier");
     // ffprobe reports level=60 → general_level_idc == 60.
-    assert_eq!(info.general_level_idc, 60, "level_idc 60");
+    assert_eq!(info.general_level_idc(), 60, "level_idc 60");
 
     // yuv420p → chroma_format_idc == 1 (4:2:0, ITU-T H.265 Table 6-1).
-    assert_eq!(info.chroma_format_idc, 1, "4:2:0 chroma");
+    assert_eq!(info.chroma_format_idc(), 1, "4:2:0 chroma");
 
     // 8-bit luma and chroma.
-    assert_eq!(info.bit_depth_luma, 8, "8-bit luma");
-    assert_eq!(info.bit_depth_chroma, 8, "8-bit chroma");
+    assert_eq!(info.bit_depth_luma(), 8, "8-bit luma");
+    assert_eq!(info.bit_depth_chroma(), 8, "8-bit chroma");
 
     // Coded dimensions after conformance-window crop must match ffprobe.
-    assert_eq!(info.width, 320, "coded width 320");
-    assert_eq!(info.height, 240, "coded height 240");
+    assert_eq!(info.width(), 320, "coded width 320");
+    assert_eq!(info.height(), 240, "coded height 240");
 
     // RFC 6381 codec string must be well-formed.
     let rfc = rfc6381_hvc1(&info);
@@ -164,13 +165,14 @@ fn hevc_sps_wrong_dimension_is_caught() {
     // value other than (320, 240), the oracle test above would already catch
     // it.  Here we verify the decoded values are exactly the ffprobe values
     // and NOT accidentally zero or swapped.
-    assert_ne!(info.width, 0, "width must not be zero");
-    assert_ne!(info.height, 0, "height must not be zero");
+    assert_ne!(info.width(), 0, "width must not be zero");
+    assert_ne!(info.height(), 0, "height must not be zero");
     assert_ne!(
-        info.width, info.height,
+        info.width(),
+        info.height(),
         "width != height (not a square, not swapped)"
     );
-    assert_eq!((info.width, info.height), (320, 240), "exact oracle");
+    assert_eq!((info.width(), info.height()), (320, 240), "exact oracle");
 }
 
 /// Truncated SPS NAL (first 3 bytes only) must return Err, not a bogus decode.
@@ -181,7 +183,7 @@ fn hevc_sps_truncated_returns_error() {
     let truncated: &[u8] = &[0x42, 0x01, 0x00];
     let result = decode_hevc_sps(truncated);
     assert!(
-        matches!(result, Err(transmux::error::Error::BufferTooShort(..))),
+        matches!(result, Err(broadcast_bitstream::Error::BufferTooShort(..))),
         "decode_hevc_sps on a truncated NAL must return Err, got: {result:?}"
     );
 }
@@ -191,7 +193,7 @@ fn hevc_sps_truncated_returns_error() {
 fn hevc_sps_too_short_returns_error() {
     let result = decode_hevc_sps(&[0x42]);
     assert!(
-        matches!(result, Err(transmux::error::Error::BufferTooShort(..))),
+        matches!(result, Err(broadcast_bitstream::Error::BufferTooShort(..))),
         "one-byte input must return Err (need at least 2 bytes for HEVC NAL header)"
     );
 }
@@ -201,7 +203,7 @@ fn hevc_sps_too_short_returns_error() {
 // ---------------------------------------------------------------------------
 
 use crate::sps_builder::{HevcHrd, HevcHrdLayer, HevcRps, HevcSps, HevcVui, hevc_sps};
-use transmux::sps::decode_hevc_interlace_sps;
+use broadcast_bitstream::sps::decode_hevc_interlace_sps;
 
 const PROGRESSIVE_SOURCE: u64 = 1 << 47;
 const INTERLACED_SOURCE: u64 = 1 << 46;
@@ -220,7 +222,8 @@ fn hevc_frame_field_info_inferred_only_when_both_source_flags_set() {
         });
         let interlace = decode_hevc_interlace_sps(&nal).expect("decode interlace facts");
         assert_eq!(
-            interlace.frame_field_info_present, expected,
+            interlace.frame_field_info_present(),
+            expected,
             "constraint flags {flags:#x}: inference requires both source flags"
         );
     }
@@ -242,10 +245,10 @@ fn hevc_vui_timing_frame_rate_and_zero_num_units() {
         vui: Some(timing_vui(1001, 60000)),
         ..HevcSps::default()
     });
-    let info = transmux::decode_hevc_sps(&nal).expect("decode SPS");
-    assert_eq!(info.num_units_in_tick, Some(1001));
-    assert_eq!(info.time_scale, Some(60000));
-    let fps = info.fps.expect("frame rate");
+    let info = broadcast_bitstream::sps::decode_hevc_sps(&nal).expect("decode SPS");
+    assert_eq!(info.num_units_in_tick(), Some(1001));
+    assert_eq!(info.time_scale(), Some(60000));
+    let fps = info.fps().expect("frame rate");
     assert!(
         (fps - 59.94).abs() < 1e-3,
         "HEVC fps = time_scale / num_units_in_tick, got {fps}"
@@ -255,10 +258,10 @@ fn hevc_vui_timing_frame_rate_and_zero_num_units() {
         vui: Some(timing_vui(0, 60000)),
         ..HevcSps::default()
     });
-    let info = transmux::decode_hevc_sps(&nal).expect("decode SPS");
-    assert_eq!(info.num_units_in_tick, Some(0));
-    assert_eq!(info.time_scale, Some(60000));
-    assert_eq!(info.fps, None, "num_units_in_tick 0 yields no frame rate");
+    let info = broadcast_bitstream::sps::decode_hevc_sps(&nal).expect("decode SPS");
+    assert_eq!(info.num_units_in_tick(), Some(0));
+    assert_eq!(info.time_scale(), Some(60000));
+    assert_eq!(info.fps(), None, "num_units_in_tick 0 yields no frame rate");
 }
 
 #[test]
@@ -303,12 +306,12 @@ fn hevc_hrd_walk_reads_sub_layer_hrd_and_reports_last_fixed_rate() {
         }),
         ..HevcSps::default()
     });
-    let timing = transmux::decode_hevc_vui_timing(&nal)
+    let timing = broadcast_bitstream::sps::decode_hevc_vui_timing(&nal)
         .expect("decode")
         .expect("timing present");
-    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+    assert_eq!((timing.num_units_in_tick(), timing.time_scale()), (1, 50));
     assert_eq!(
-        timing.hrd_fixed_pic_rate,
+        timing.hrd_fixed_pic_rate(),
         Some(5),
         "HighestTid elemental_duration_in_tc_minus1 + 1"
     );
@@ -340,13 +343,13 @@ fn hrd_cpb_sps(cpb_minus1: u64) -> Vec<u8> {
 
 #[test]
 fn hevc_hrd_cpb_cnt_bound() {
-    let timing = transmux::decode_hevc_vui_timing(&hrd_cpb_sps(31))
+    let timing = broadcast_bitstream::sps::decode_hevc_vui_timing(&hrd_cpb_sps(31))
         .expect("decode")
         .expect("31 is the legal maximum");
-    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+    assert_eq!((timing.num_units_in_tick(), timing.time_scale()), (1, 50));
 
     assert!(
-        transmux::decode_hevc_vui_timing(&hrd_cpb_sps(32))
+        broadcast_bitstream::sps::decode_hevc_vui_timing(&hrd_cpb_sps(32))
             .expect("decode")
             .is_none(),
         "cpb_cnt_minus1 32 is outside 0..=31, so the walk stops before timing"
@@ -367,10 +370,10 @@ fn hevc_scaling_list_data_walk_reaches_vui_timing() {
         vui: Some(timing_vui(1, 50)),
         ..HevcSps::default()
     });
-    let timing = transmux::decode_hevc_vui_timing(&nal)
+    let timing = broadcast_bitstream::sps::decode_hevc_vui_timing(&nal)
         .expect("decode")
         .expect("timing after scaling_list_data");
-    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+    assert_eq!((timing.num_units_in_tick(), timing.time_scale()), (1, 50));
 }
 
 fn explicit_zero_pairs(count: usize) -> Vec<HevcRps> {
@@ -387,9 +390,9 @@ fn hevc_num_short_term_ref_pic_sets_bound() {
         ..HevcSps::default()
     });
     assert_eq!(
-        transmux::decode_hevc_vui_timing(&nal)
+        broadcast_bitstream::sps::decode_hevc_vui_timing(&nal)
             .expect("decode")
-            .map(|t| (t.num_units_in_tick, t.time_scale)),
+            .map(|t| (t.num_units_in_tick(), t.time_scale())),
         Some((1, 50)),
         "64 short-term RPS is the legal maximum"
     );
@@ -400,7 +403,7 @@ fn hevc_num_short_term_ref_pic_sets_bound() {
         ..HevcSps::default()
     });
     assert!(
-        transmux::decode_hevc_vui_timing(&nal)
+        broadcast_bitstream::sps::decode_hevc_vui_timing(&nal)
             .expect("decode")
             .is_none(),
         "65 short-term RPS is outside 0..=64"
@@ -443,10 +446,10 @@ fn hevc_inter_rps_derivation_reaches_vui_timing() {
         vui: Some(timing_vui(1, 50)),
         ..HevcSps::default()
     });
-    let timing = transmux::decode_hevc_vui_timing(&nal)
+    let timing = broadcast_bitstream::sps::decode_hevc_vui_timing(&nal)
         .expect("decode")
         .expect("timing after inter-RPS derivation");
-    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+    assert_eq!((timing.num_units_in_tick(), timing.time_scale()), (1, 50));
 }
 
 #[test]
@@ -459,9 +462,9 @@ fn hevc_explicit_rps_picture_count_bound() {
         })
     };
     let decodes = |nal: &[u8]| {
-        transmux::decode_hevc_vui_timing(nal)
+        broadcast_bitstream::sps::decode_hevc_vui_timing(nal)
             .expect("decode")
-            .map(|t| (t.num_units_in_tick, t.time_scale))
+            .map(|t| (t.num_units_in_tick(), t.time_scale()))
     };
 
     assert_eq!(
@@ -497,7 +500,7 @@ fn hevc_derived_rps_growing_past_sixteen_is_rejected() {
         ..HevcSps::default()
     });
     assert!(
-        transmux::decode_hevc_vui_timing(&nal)
+        broadcast_bitstream::sps::decode_hevc_vui_timing(&nal)
             .expect("decode")
             .is_none(),
         "a derived set with 17 entries stops the walk before timing"
@@ -516,10 +519,10 @@ fn hevc_explicit_rps_delta_accumulation_feeds_prediction() {
         vui: Some(timing_vui(1, 50)),
         ..HevcSps::default()
     });
-    let timing = transmux::decode_hevc_vui_timing(&nal)
+    let timing = broadcast_bitstream::sps::decode_hevc_vui_timing(&nal)
         .expect("decode")
         .expect("timing after prediction from the accumulated positive POCs");
-    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+    assert_eq!((timing.num_units_in_tick(), timing.time_scale()), (1, 50));
 }
 
 #[test]
@@ -530,10 +533,10 @@ fn hevc_long_term_ref_poc_width_follows_log2_max_poc_lsb() {
         vui: Some(timing_vui(1, 50)),
         ..HevcSps::default()
     });
-    let timing = transmux::decode_hevc_vui_timing(&nal)
+    let timing = broadcast_bitstream::sps::decode_hevc_vui_timing(&nal)
         .expect("decode")
         .expect("timing after long-term ref entries");
-    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+    assert_eq!((timing.num_units_in_tick(), timing.time_scale()), (1, 50));
 }
 
 #[test]
@@ -542,8 +545,11 @@ fn rfc6381_hvc1_emits_each_constraint_byte() {
         constraint_flags: 0x91_A2_B3_C4_D5_E6,
         ..HevcSps::default()
     });
-    let info = transmux::decode_hevc_sps(&nal).expect("decode SPS");
-    assert_eq!(info.general_constraint_indicator_flags, 0x91_A2_B3_C4_D5_E6);
+    let info = broadcast_bitstream::sps::decode_hevc_sps(&nal).expect("decode SPS");
+    assert_eq!(
+        info.general_constraint_indicator_flags(),
+        0x91_A2_B3_C4_D5_E6
+    );
     assert_eq!(
         rfc6381_hvc1(&info),
         "hvc1.1.0.L93.91.A2.B3.C4.D5.E6",
@@ -561,11 +567,11 @@ fn hevc_multi_sub_layer_ptl_reserved_padding_is_skipped() {
         height: 360,
         ..HevcSps::default()
     });
-    let info = transmux::decode_hevc_sps(&nal).expect("decode SPS");
-    assert_eq!(info.width, 640);
-    assert_eq!(info.height, 360);
-    assert_eq!(info.general_profile_idc, 1);
-    assert_eq!(info.general_level_idc, 93);
+    let info = broadcast_bitstream::sps::decode_hevc_sps(&nal).expect("decode SPS");
+    assert_eq!(info.width(), 640);
+    assert_eq!(info.height(), 360);
+    assert_eq!(info.general_profile_idc(), 1);
+    assert_eq!(info.general_level_idc(), 93);
 }
 
 #[test]
@@ -578,8 +584,8 @@ fn hevc_inter_rps_negative_offsets_from_an_empty_negative_set() {
         vui: Some(timing_vui(1, 50)),
         ..HevcSps::default()
     });
-    let timing = transmux::decode_hevc_vui_timing(&nal)
+    let timing = broadcast_bitstream::sps::decode_hevc_vui_timing(&nal)
         .expect("decode")
         .expect("timing after (7-61) over a non-empty positive set");
-    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1, 50));
+    assert_eq!((timing.num_units_in_tick(), timing.time_scale()), (1, 50));
 }

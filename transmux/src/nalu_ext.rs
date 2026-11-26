@@ -2,14 +2,13 @@
 //!
 //! The newtypes (`AvcSps`, `HevcNalUnit`) are pure box syntax; decoding their
 //! payloads and formatting the RFC 6381 codec string need the SPS bitstream
-//! parsers, which stay in transmux. These traits keep the call sites unchanged.
+//! parsers in `broadcast-bitstream`. These traits keep the call sites unchanged.
 
 use crate::error::Result;
-use crate::sps::{
-    AvcSpsInfo, HevcSpsInfo, decode_avc_sps, decode_hevc_sps, rfc6381_avc1, rfc6381_hvc1,
-};
 use alloc::string::String;
 use broadcast_bitstream::nal::{HEVC_NAL_HEADER_LEN, HEVC_NAL_TYPE_MASK};
+use broadcast_bitstream::rfc6381::{rfc6381_avc1, rfc6381_hvc1};
+use broadcast_bitstream::sps::{AvcSpsInfo, HevcSpsInfo, decode_avc_sps, decode_hevc_sps};
 use isobmff::nalu_types::{AvcSps, HEVC_SPS_NUT, HevcNalUnit};
 
 /// Decode an AVC SPS NAL unit and format its RFC 6381 codec string.
@@ -23,15 +22,15 @@ pub trait AvcSpsCodecInfo {
 
 impl AvcSpsCodecInfo for AvcSps {
     fn decode(&self) -> Result<AvcSpsInfo> {
-        decode_avc_sps(&self.0)
+        decode_avc_sps(&self.0).map_err(Into::into)
     }
 
     fn rfc6381(&self) -> Result<String> {
         let info = self.decode()?;
         Ok(rfc6381_avc1(
-            info.profile_idc,
-            info.constraint_flags,
-            info.level_idc,
+            info.profile_idc(),
+            info.constraint_flags(),
+            info.level_idc(),
         ))
     }
 }
@@ -54,7 +53,7 @@ impl HevcNalUnitCodecInfo for HevcNalUnit {
         if nal_type != HEVC_SPS_NUT {
             return Ok(None);
         }
-        decode_hevc_sps(&self.0).map(Some)
+        decode_hevc_sps(&self.0).map(Some).map_err(Into::into)
     }
 
     fn rfc6381(&self) -> Result<Option<String>> {

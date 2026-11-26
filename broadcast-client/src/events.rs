@@ -1719,12 +1719,10 @@ mod tests {
     fn event_eq_compares_every_field() {
         use super::{AuthScheme, BufferEvent, Event, Status};
         use crate::tshttp::StarveKind;
+        use broadcast_bitstream::facts::ActiveFormatDescription;
         use core::time::Duration;
         use http::StatusCode;
-        use transmux::{
-            ActiveFormat, ActiveFormatDescription, DisplayInfo, JoinDecision, Sample,
-            UserDataCarriage,
-        };
+        use transmux::{ActiveFormat, DisplayInfo, JoinDecision, Sample, UserDataCarriage};
         use url::Url;
 
         let sample = Sample::timed(vec![0u8], 10, 20, None);

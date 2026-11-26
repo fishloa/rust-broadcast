@@ -598,7 +598,7 @@ pub fn resolve_codec(config: &CodecConfig) -> Result<SmoothCodec> {
                 .sps
                 .first()
                 .and_then(|sps| sps.decode().ok())
-                .map(|info| (info.width, info.height))
+                .map(|info| (info.width(), info.height()))
                 .ok_or(Error::InvalidInput(
                     "AVC track has no decodable SPS for Smooth geometry",
                 ))?;

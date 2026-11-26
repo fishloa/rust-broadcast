@@ -172,11 +172,22 @@ pub const TABLE: &[Crate] = &[
         name: "broadcast-bitstream",
         scope: Scope::Crate,
         matcher: Matcher::Strict,
-        // `Error` is a structured error. The NAL unit-type enums and
-        // `NalCodec` are the spec labels, pinned.
+        // `Error` is a structured error. The NAL unit-type enums, `NalCodec`
+        // and the coded-fact tables moved from `transmux`'s display module are
+        // the spec labels, pinned.
         skip: &["Error"],
-        expected: Some(&["AvcNalUnitType", "HevcNalUnitType", "NalCodec"]),
-        min_enums: Some(3),
+        expected: Some(&[
+            "ActiveFormatDescription",
+            "AspectRatioIdc",
+            "AvcNalUnitType",
+            "ColourPrimaries",
+            "HevcNalUnitType",
+            "MatrixCoefficients",
+            "NalCodec",
+            "TransferCharacteristics",
+            "VideoFormat",
+        ]),
+        min_enums: Some(9),
     },
     Crate {
         name: "broadcast-codec",

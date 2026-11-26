@@ -317,13 +317,13 @@ fn push_display_boxes(
 
     // colr (nclx) — only when a colour description was actually signalled.
     if let Some(vs) = display.video_signal
-        && let Some(colour) = vs.colour
+        && let Some(colour) = vs.colour()
     {
         let nclx = NclxColourInfo::new(
-            u16::from(colour.primaries.code()),
-            u16::from(colour.transfer.code()),
-            u16::from(colour.matrix.code()),
-            vs.full_range,
+            u16::from(colour.primaries().code()),
+            u16::from(colour.transfer().code()),
+            u16::from(colour.matrix().code()),
+            vs.full_range(),
         );
         let colr = ColourInformationBox {
             colour_type: *b"nclx",
@@ -463,23 +463,27 @@ fn frame_rate_millihertz_hevc_normative(
 ///   and `frame_field_info_present_flag = 0`: `vui_time_scale / vui_num_units_in_tick`.
 /// * Otherwise `None`.
 fn hevc_frame_rate_from_timing(
-    timing: &crate::sps::HevcVuiTiming,
+    timing: &broadcast_bitstream::sps::HevcVuiTiming,
 ) -> Option<(u32, FrameRateBasis)> {
-    let (num_units, time_scale) = (timing.num_units_in_tick, timing.time_scale);
+    let (num_units, time_scale) = (timing.num_units_in_tick(), timing.time_scale());
     if num_units == 0 {
         return None;
     }
-    match timing.hrd_fixed_pic_rate {
+    match timing.hrd_fixed_pic_rate() {
         Some(ed) => {
-            if !timing.field_seq && timing.frame_field_info_present {
+            if !timing.field_seq() && timing.frame_field_info_present() {
                 return None;
             }
-            let value =
-                frame_rate_millihertz_hevc_normative(time_scale, num_units, ed, timing.field_seq)?;
+            let value = frame_rate_millihertz_hevc_normative(
+                time_scale,
+                num_units,
+                ed,
+                timing.field_seq(),
+            )?;
             Some((value, FrameRateBasis::Normative))
         }
         None => {
-            if timing.field_seq || timing.frame_field_info_present {
+            if timing.field_seq() || timing.frame_field_info_present() {
                 return None;
             }
             let value = frame_rate_millihertz_hevc_convention(time_scale, num_units)?;
@@ -502,24 +506,24 @@ fn hevc_frame_rate_from_timing(
 /// this derivation (doc §4), since §3 phrases the inference in terms of "when
 /// not present" inside the VUI.
 fn hevc_timing_with_vps_fallback(
-    sps: Option<crate::sps::HevcVuiTiming>,
-    interlace: crate::sps::HevcInterlaceSps,
-    vps: Option<crate::sps::HevcVpsTiming>,
-) -> Option<crate::sps::HevcVuiTiming> {
+    sps: Option<broadcast_bitstream::sps::HevcVuiTiming>,
+    interlace: broadcast_bitstream::sps::HevcInterlaceSps,
+    vps: Option<broadcast_bitstream::sps::HevcVpsTiming>,
+) -> Option<broadcast_bitstream::sps::HevcVuiTiming> {
     if let Some(t) = sps {
         return Some(t);
     }
     let v = vps?;
-    if v.num_units_in_tick == 0 || v.time_scale == 0 {
+    if v.num_units_in_tick() == 0 || v.time_scale() == 0 {
         return None;
     }
-    Some(crate::sps::HevcVuiTiming {
-        num_units_in_tick: v.num_units_in_tick,
-        time_scale: v.time_scale,
-        field_seq: interlace.field_seq,
-        frame_field_info_present: interlace.frame_field_info_present,
-        hrd_fixed_pic_rate: None,
-    })
+    Some(broadcast_bitstream::sps::HevcVuiTiming::new(
+        v.num_units_in_tick(),
+        v.time_scale(),
+        interlace.field_seq(),
+        interlace.frame_field_info_present(),
+        None,
+    ))
 }
 
 /// Nominal frame rate of a video track, in millihertz (1/1000 Hz), plus the
@@ -536,14 +540,14 @@ pub fn nominal_frame_rate(config: &CodecConfig) -> Option<(u32, FrameRateBasis)>
     match config {
         CodecConfig::Avc { config, .. } => {
             let sps = config.config.sps.first()?;
-            let timing = crate::sps::decode_avc_vui_timing(&sps.0).ok()??;
-            let num_units = timing.num_units_in_tick;
-            let time_scale = timing.time_scale;
+            let timing = broadcast_bitstream::sps::decode_avc_vui_timing(&sps.0).ok()??;
+            let num_units = timing.num_units_in_tick();
+            let time_scale = timing.time_scale();
             if num_units == 0 {
                 return None;
             }
             let value = frame_rate_millihertz_from_timing(time_scale, num_units)?;
-            let basis = if timing.fixed_frame_rate {
+            let basis = if timing.fixed_frame_rate() {
                 FrameRateBasis::Normative
             } else {
                 FrameRateBasis::Convention
@@ -560,8 +564,10 @@ pub fn nominal_frame_rate(config: &CodecConfig) -> Option<(u32, FrameRateBasis)>
                 .first()?
                 .0
                 .as_slice();
-            let sps_timing = crate::sps::decode_hevc_vui_timing(sps_nal).ok().flatten();
-            let interlace = crate::sps::decode_hevc_interlace_sps(sps_nal)
+            let sps_timing = broadcast_bitstream::sps::decode_hevc_vui_timing(sps_nal)
+                .ok()
+                .flatten();
+            let interlace = broadcast_bitstream::sps::decode_hevc_interlace_sps(sps_nal)
                 .ok()
                 .unwrap_or_default();
             // VPS fallback: only when the SPS carries no VUI timing. A missing
@@ -573,7 +579,7 @@ pub fn nominal_frame_rate(config: &CodecConfig) -> Option<(u32, FrameRateBasis)>
                 .find(|a| a.nal_unit_type == HEVC_VPS_NUT)
                 .and_then(|a| a.nalus.first())
                 .and_then(|n| {
-                    crate::sps::decode_hevc_vps_timing(n.0.as_slice())
+                    broadcast_bitstream::sps::decode_hevc_vps_timing(n.0.as_slice())
                         .ok()
                         .flatten()
                 });
@@ -607,21 +613,21 @@ fn presentation_size_fixed(
         );
     };
     let out = display.output_rect;
-    let height = (u64::from(out.height)) << FIXED_16_16_FRACTION_BITS;
+    let height = (u64::from(out.height())) << FIXED_16_16_FRACTION_BITS;
     let width = match display.typed_sample_aspect_ratio() {
         Some(sar) => {
             let sar_w = u64::from(sar.width());
             let sar_h = u64::from(sar.height());
             if sar_h == 0 {
-                (u64::from(out.width)) << FIXED_16_16_FRACTION_BITS
+                (u64::from(out.width())) << FIXED_16_16_FRACTION_BITS
             } else {
-                let num = u64::from(out.width) * sar_w * (1 << FIXED_16_16_FRACTION_BITS);
+                let num = u64::from(out.width()) * sar_w * (1 << FIXED_16_16_FRACTION_BITS);
                 (num + sar_h / ROUNDING_DIVISOR)
                     .checked_div(sar_h)
-                    .unwrap_or((u64::from(out.width)) << FIXED_16_16_FRACTION_BITS)
+                    .unwrap_or((u64::from(out.width())) << FIXED_16_16_FRACTION_BITS)
             }
         }
-        None => (u64::from(out.width)) << FIXED_16_16_FRACTION_BITS,
+        None => (u64::from(out.width())) << FIXED_16_16_FRACTION_BITS,
     };
     (width, height)
 }
@@ -791,7 +797,7 @@ mod frame_rate_tests {
 #[cfg(test)]
 mod hevc_rate_rules_tests {
     use super::{FrameRateBasis, hevc_frame_rate_from_timing, hevc_timing_with_vps_fallback};
-    use crate::sps::{HevcInterlaceSps, HevcVpsTiming, HevcVuiTiming};
+    use broadcast_bitstream::sps::{HevcInterlaceSps, HevcVpsTiming, HevcVuiTiming};
 
     fn t(
         num: u32,
@@ -800,13 +806,7 @@ mod hevc_rate_rules_tests {
         ffip: bool,
         ed: Option<u32>,
     ) -> Option<(u32, FrameRateBasis)> {
-        hevc_frame_rate_from_timing(&HevcVuiTiming {
-            num_units_in_tick: num,
-            time_scale: scale,
-            field_seq,
-            frame_field_info_present: ffip,
-            hrd_fixed_pic_rate: ed,
-        })
+        hevc_frame_rate_from_timing(&HevcVuiTiming::new(num, scale, field_seq, ffip, ed))
     }
 
     const N: FrameRateBasis = FrameRateBasis::Normative;
@@ -853,21 +853,12 @@ mod hevc_rate_rules_tests {
     }
 
     fn vps(num: u32, scale: u32) -> Option<HevcVpsTiming> {
-        Some(HevcVpsTiming {
-            num_units_in_tick: num,
-            time_scale: scale,
-        })
+        Some(HevcVpsTiming::new(num, scale))
     }
 
     #[test]
     fn vps_fallback_sps_wins() {
-        let sps = Some(HevcVuiTiming {
-            num_units_in_tick: 1,
-            time_scale: 25,
-            field_seq: false,
-            frame_field_info_present: false,
-            hrd_fixed_pic_rate: None,
-        });
+        let sps = Some(HevcVuiTiming::new(1, 25, false, false, None));
         let inter = HevcInterlaceSps::default();
         let vps = vps(1001, 30000);
         let t = hevc_timing_with_vps_fallback(sps, inter, vps).unwrap();
@@ -892,10 +883,7 @@ mod hevc_rate_rules_tests {
 
     #[test]
     fn vps_fallback_field_seq_none_rate() {
-        let inter = HevcInterlaceSps {
-            field_seq: true,
-            frame_field_info_present: false,
-        };
+        let inter = HevcInterlaceSps::new(true, false);
         let vps = vps(1001, 30000);
         let t = hevc_timing_with_vps_fallback(None, inter, vps).unwrap();
         assert!(hevc_frame_rate_from_timing(&t).is_none());
@@ -903,10 +891,7 @@ mod hevc_rate_rules_tests {
 
     #[test]
     fn vps_fallback_frame_field_info_none_rate() {
-        let inter = HevcInterlaceSps {
-            field_seq: false,
-            frame_field_info_present: true,
-        };
+        let inter = HevcInterlaceSps::new(false, true);
         let vps = vps(1001, 30000);
         let t = hevc_timing_with_vps_fallback(None, inter, vps).unwrap();
         assert!(hevc_frame_rate_from_timing(&t).is_none());
@@ -915,15 +900,9 @@ mod hevc_rate_rules_tests {
     #[test]
     fn vps_fallback_zero_units_none() {
         let inter = HevcInterlaceSps::default();
-        let v0 = Some(HevcVpsTiming {
-            num_units_in_tick: 0,
-            time_scale: 30000,
-        });
+        let v0 = Some(HevcVpsTiming::new(0, 30000));
         assert!(hevc_timing_with_vps_fallback(None, inter, v0).is_none());
-        let v1 = Some(HevcVpsTiming {
-            num_units_in_tick: 1001,
-            time_scale: 0,
-        });
+        let v1 = Some(HevcVpsTiming::new(1001, 0));
         assert!(hevc_timing_with_vps_fallback(None, inter, v1).is_none());
     }
 }

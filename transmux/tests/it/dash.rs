@@ -15,11 +15,11 @@ use broadcast_core::timescale::Timescale;
 use std::path::PathBuf;
 use transmux::TrackId;
 
+use broadcast_bitstream::rfc6381::rfc6381_avc1;
 use broadcast_core::Parse;
 use transmux::aac_asc::AudioSpecificConfig;
 use transmux::dash::{DashPackager, MPD_NAMESPACE};
 use transmux::pipeline::CodecConfig;
-use transmux::sps::rfc6381_avc1;
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -78,7 +78,7 @@ fn expected_video(media: &test_harness::collect::Collected) -> (String, u32, u32
             );
             let sps = config.config.sps.first().expect("SPS");
             let info = sps.decode().expect("decode SPS");
-            (codecs, info.width, info.height)
+            (codecs, info.width(), info.height())
         }
         _ => unreachable!(),
     }

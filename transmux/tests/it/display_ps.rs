@@ -86,7 +86,10 @@ fn test108_mpeg2_ps_sar_and_afd() {
         .unwrap()
         .afd
         .unwrap();
-    assert_eq!(af, transmux::ActiveFormatDescription::SameAsCodedFrame);
+    assert_eq!(
+        af,
+        broadcast_bitstream::facts::ActiveFormatDescription::SameAsCodedFrame
+    );
 }
 
 #[test]

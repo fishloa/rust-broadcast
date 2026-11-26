@@ -61,6 +61,9 @@ std = ["broadcast-common/std", "broadcast-core/std", "broadcast-common/lang", "t
 serde = ["dep:serde", "broadcast-common/serde", "broadcast-core/serde", "broadcast-hls/serde", "url/serde"]
 
 [dev-dependencies]
+# The display-geometry facts the resolution / VIDEO-RANGE suites build, which
+# live in `broadcast-bitstream` (transmux re-exports none of them).
+broadcast-bitstream = { path = "../broadcast-bitstream", default-features = false, features = ["h264", "hevc", "vvc"] }
 test-fixtures     = { path = "../test-fixtures" }
 test-harness     = { path = "../test-harness" }
 # The one audited counting allocator: the per-segment concatenation bound in

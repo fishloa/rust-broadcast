@@ -842,13 +842,15 @@ fn declared_au_duration(
     let ticks = match (kind, config) {
         (RtpMediaKind::H264, CodecConfig::Avc { config, .. }) => {
             let sps = config.config.sps.first()?;
-            let timing = crate::sps::decode_avc_vui_timing(&sps.0).ok().flatten()?;
-            if timing.num_units_in_tick == 0 || timing.time_scale == 0 {
+            let timing = broadcast_bitstream::sps::decode_avc_vui_timing(&sps.0)
+                .ok()
+                .flatten()?;
+            if timing.num_units_in_tick() == 0 || timing.time_scale() == 0 {
                 return None;
             }
             let num =
-                u64::from(clock_rate) * VUI_UNITS_PER_FRAME * u64::from(timing.num_units_in_tick);
-            let den = u64::from(timing.time_scale);
+                u64::from(clock_rate) * VUI_UNITS_PER_FRAME * u64::from(timing.num_units_in_tick());
+            let den = u64::from(timing.time_scale());
             (num + (den >> 1)) / den
         }
         (RtpMediaKind::Aac, CodecConfig::Aac { esds, .. }) => {
@@ -874,7 +876,9 @@ fn declared_reorder_depth(kind: RtpMediaKind, config: &CodecConfig) -> Option<us
     match (kind, config) {
         (RtpMediaKind::H264, CodecConfig::Avc { config, .. }) => {
             let sps = config.config.sps.first()?;
-            let depth = crate::sps::decode_avc_reorder_depth(&sps.0).ok()?.depth()?;
+            let depth = broadcast_bitstream::sps::decode_avc_reorder_depth(&sps.0)
+                .ok()?
+                .depth()?;
             usize::try_from(depth).ok()
         }
         _ => None,
@@ -2008,12 +2012,12 @@ mod tests {
 
     #[test]
     fn test_sps_fixtures_declare_what_the_tests_assume() {
-        let t = crate::sps::decode_avc_vui_timing(SPS_25FPS_FIXED)
+        let t = broadcast_bitstream::sps::decode_avc_vui_timing(SPS_25FPS_FIXED)
             .unwrap()
             .unwrap();
-        assert!(t.num_units_in_tick == 1 && t.time_scale == 50);
+        assert!(t.num_units_in_tick() == 1 && t.time_scale() == 50);
         assert!(
-            crate::sps::decode_avc_vui_timing(SPS_NO_TIMING)
+            broadcast_bitstream::sps::decode_avc_vui_timing(SPS_NO_TIMING)
                 .unwrap()
                 .is_none()
         );

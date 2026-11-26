@@ -2,8 +2,8 @@
 //! (`private/specs-verified/mpeg/transmux/codec/mpeg2-video-display.md`), never from production code.
 
 use super::*;
-use crate::test_bits::BitWriter;
 use alloc::vec::Vec;
+use test_fixtures::bits::BitWriter;
 
 fn sequence_header(width: u64, height: u64, aspect: u64) -> Vec<u8> {
     let mut w = BitWriter::new();
@@ -126,7 +126,7 @@ fn sequence_extension_extends_the_coded_size() {
         (g.coded_width, g.coded_height),
         (1 << 12 | 111, 2 << 12 | 222)
     );
-    assert_eq!(g.output_rect.width, 1 << 12 | 111);
+    assert_eq!(g.output_rect.width(), 1 << 12 | 111);
 }
 
 /// The extension walk steps past each section by its own length, so a
@@ -208,7 +208,7 @@ fn display_extension_size_feeds_the_spec_relation() {
         sequence_display_extension(5, None, 704, 576),
     ]);
     assert_eq!(g.coded_width, 720);
-    assert_eq!(g.output_rect.width, 720, "no crop syntax in H.262");
+    assert_eq!(g.output_rect.width(), 720, "no crop syntax in H.262");
     // (16/9) * 576 / 704 = 16/11.
     assert_eq!(g.sample_aspect_ratio(), Some((16, 11)));
 }

@@ -711,11 +711,11 @@ pub(crate) fn avc_dimensions(
         .config
         .sps
         .first()
-        .and_then(|sps| crate::sps::decode_avc_sps(&sps.0).ok())
+        .and_then(|sps| broadcast_bitstream::sps::decode_avc_sps(&sps.0).ok())
     else {
         return Ok((0, 0));
     };
-    for (value, field) in [(info.width, "width"), (info.height, "height")] {
+    for (value, field) in [(info.width(), "width"), (info.height(), "height")] {
         if value > u16::MAX as u32 {
             return Err(FlvError::Codec(Error::InvalidInput(match field {
                 "height" => "FLV avcC height does not fit 16 bits",
@@ -723,7 +723,7 @@ pub(crate) fn avc_dimensions(
             })));
         }
     }
-    Ok((info.width as u16, info.height as u16))
+    Ok((info.width() as u16, info.height() as u16))
 }
 
 // ---------------------------------------------------------------------------
@@ -1764,7 +1764,7 @@ mod tests {
         crop_left: u64,
         crop_bottom: u64,
     ) -> Vec<u8> {
-        let mut w = crate::test_bits::BitWriter::new();
+        let mut w = test_fixtures::bits::BitWriter::new();
         w.ue(0); // seq_parameter_set_id
         if high_profile {
             w.ue(chroma_format_idc);
