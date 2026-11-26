@@ -1501,7 +1501,7 @@ fn rtp_placeholder_avc_config() -> transmux::CodecConfig {
 mod tests {
     use super::*;
     use broadcast_common::stage::Timestamp;
-    use transmux::ir::{CodecConfig, DataCarriage, DataIdentity, SampleFlags, SampleTiming};
+    use transmux::ir::{CodecConfig, DataCarriage, DataIdentity, SampleFlags};
     use transmux::mux_stage::{MuxInput, MuxOutput};
     use transmux::{TrackId, TrackSpec};
 
@@ -1641,11 +1641,6 @@ mod tests {
             video < timed_audio,
             "the first timed audio sample still follows the video it plays after"
         );
-    }
-
-    #[test]
-    fn sample_timing_is_available_for_construction() {
-        let _ = SampleTiming::timed(0, 0);
     }
 }
 
