@@ -1,7 +1,7 @@
 //! `RtpStreamDepacketiser` durations on the real B-frame stream
 //! `fixtures/ts/h264-aac.ts`, packetised in decode order with RTP timestamps
 //! equal to the presentation time (RFC 6184 §5.1).
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use transmux::pipeline::CodecConfig;
 use transmux::{RtpMediaKind, RtpStreamDepacketiser, RtpStreamTrack, TrackId, VIDEO_CLOCK_RATE};
 

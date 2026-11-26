@@ -1,7 +1,7 @@
 #![cfg(feature = "std")]
 //! `nominal_frame_rate_millihertz` — H.264 SPS VUI timing only.
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use isobmff::nalu_types::{HevcNalArray, HevcNalUnit};
 use isobmff::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use transmux::CodecConfig;

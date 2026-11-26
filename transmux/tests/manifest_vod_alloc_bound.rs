@@ -9,7 +9,7 @@
 //! 10 000 entries) and the rendered MPD measures 879 bytes (asserted under
 //! 2048); the cap is a constant, never scaled by `SEGMENTS`.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use bytes::Bytes;
 use test_alloc::ThreadCapped;
 use transmux::dash::DashPackager;

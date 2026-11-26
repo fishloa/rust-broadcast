@@ -32,7 +32,7 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use broadcast_common::timescale::{Rounding, Timescale, rescale_i64, to_micros};
+use broadcast_core::timescale::{Rounding, Timescale, rescale_i64, to_micros};
 
 use crate::TrackId;
 use crate::pipeline::Sample;
@@ -69,7 +69,7 @@ impl AvSync {
         }
     }
 }
-broadcast_common::impl_spec_display!(AvSync);
+broadcast_core::impl_spec_display!(AvSync);
 
 /// Largest offset change applied without a [`AlignOut::Discontinuity`]. The provisional offset is
 /// wrong by the arrival skew between the first audio and first video sample, which on a healthy
@@ -416,7 +416,7 @@ mod tests {
     use crate::pipeline::CodecConfig;
     use crate::rtp::RtpMediaKind;
     use crate::rtp_stream::RtpStreamTrack;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 
     const VIDEO: TrackId = TrackId::new(1);
@@ -618,7 +618,7 @@ mod tests {
         }
     }
 
-    use broadcast_common::timescale::{Rounding, to_micros};
+    use broadcast_core::timescale::{Rounding, to_micros};
 
     #[test]
     fn sender_reports_align_tracks_whatever_the_clock_rate_or_rtp_wrap() {

@@ -34,7 +34,7 @@ impl SegmentCutPolicy {
     }
 }
 
-broadcast_common::impl_spec_display!(SegmentCutPolicy);
+broadcast_core::impl_spec_display!(SegmentCutPolicy);
 
 /// Media-time bound on how long [`SegmentCutPolicy::IdrOnly`] waits for the
 /// first IDR before the caller falls back to any random-access point.
@@ -68,7 +68,7 @@ impl IdrWait {
     pub fn observe_dropped(
         &mut self,
         sample: &crate::Sample,
-        timescale: broadcast_common::timescale::Timescale,
+        timescale: broadcast_core::timescale::Timescale,
     ) -> bool {
         self.waited_ticks = self.waited_ticks.saturating_add(self.clock.tick(sample));
         if self.tripped {

@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::Stage;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use std::time::Duration;
 use test_harness::collect::Collected as Media;
 use transmux::Sample;

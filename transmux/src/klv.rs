@@ -37,14 +37,14 @@
 //! `no_std` + `alloc`.
 
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::klv::{
     KlvItem, UNIVERSAL_LABEL_LEN, UniversalLabel, ber_length_size, decode_ber_length,
     encode_ber_length as encode_ber_length_into,
 };
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use broadcast_common::wire::u16_at;

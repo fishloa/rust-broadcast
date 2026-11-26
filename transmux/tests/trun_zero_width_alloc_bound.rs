@@ -105,7 +105,7 @@ fn a_duration_only_trun_is_bounded_by_the_payload_not_the_zero_width_cap() {
         .expect_err("the declared samples do not fit the payload");
     assert_eq!(
         err,
-        isobmff::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        isobmff::Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: 8,
             have: 4,
             what: "trun.dur",

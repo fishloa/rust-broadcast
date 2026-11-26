@@ -29,7 +29,7 @@
 use crate::ts_hls_stage;
 use crate::ts_mux_stage;
 use crate::ts_psi::{first_section, parse_pat, parse_pmt, split_lp};
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::{Ac3SpecificBox, HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use std::path::PathBuf;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};

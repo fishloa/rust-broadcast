@@ -26,7 +26,7 @@
 //! 10-hour offset), a controlled composition-offset pattern, a 4-deep splice
 //! chain with non-exact-dividing rescales, or an untimed section-carried
 //! track — each needs values chosen to make the property observable.
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use core::time::Duration;
 use isobmff::box_types::parse_box;
 use isobmff::movie_fragment::MovieFragmentBox;
@@ -42,7 +42,7 @@ fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
 }
 
-const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
+const TIMESCALE: Timescale = broadcast_core::timescale!(90_000);
 
 fn avc_spec(track_id: u32) -> TrackSpec {
     let record = AVCDecoderConfigurationRecord {

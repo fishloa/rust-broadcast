@@ -15,7 +15,7 @@ use crate::hub_fixtures;
 use crate::hub_fixtures::dummy_avc_config;
 use crate::ts_hls_stage;
 use broadcast_common::stage::{Stage, Timestamp};
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use test_harness::collect::Collected as Media;
 use transmux::TrackId;
 use transmux::mux_stage::SegmentOut;

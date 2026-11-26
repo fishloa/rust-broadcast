@@ -7,9 +7,9 @@
 //! `build_init_segment` / `build_media_segment`.
 
 use crate::box_walk::find_box_range;
-use broadcast_common::Parse;
-use broadcast_common::Serialize;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Parse;
+use broadcast_core::Serialize;
+use broadcast_core::timescale::Timescale;
 use isobmff::EsdsBox;
 use isobmff::movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,

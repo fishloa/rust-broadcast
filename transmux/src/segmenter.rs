@@ -304,7 +304,7 @@ struct TrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::try_new(90_000).expect("non-zero timescale"), CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_core::timescale::Timescale::try_new(90_000).expect("non-zero timescale"), CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -317,7 +317,7 @@ struct TrackState {
 /// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
 /// #         .expect("valid timing")
 /// # }
-/// let mut seg = Segmenter::new(vec![spec()], broadcast_common::timescale::Timescale::try_new(1000).expect("non-zero timescale"), core::time::Duration::from_secs(2)).unwrap();
+/// let mut seg = Segmenter::new(vec![spec()], broadcast_core::timescale::Timescale::try_new(1000).expect("non-zero timescale"), core::time::Duration::from_secs(2)).unwrap();
 /// let init = seg.init_segment().unwrap();      // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
 /// # use broadcast_common::{Stage, Timestamp};
@@ -331,7 +331,7 @@ struct TrackState {
 /// ```
 pub struct Segmenter {
     tracks: Vec<TrackState>,
-    movie_timescale: broadcast_common::timescale::Timescale,
+    movie_timescale: broadcast_core::timescale::Timescale,
     /// Index into `tracks` of the segmentation anchor (keyframe cut boundary).
     anchor: usize,
     /// Target segment duration in the *anchor track's* media timescale.
@@ -367,10 +367,10 @@ impl Segmenter {
     /// [`choose_anchor`]).
     pub fn new(
         tracks: Vec<TrackSpec>,
-        movie_timescale: impl Into<broadcast_common::timescale::Timescale>,
+        movie_timescale: impl Into<broadcast_core::timescale::Timescale>,
         target_duration: core::time::Duration,
     ) -> Result<Self> {
-        let movie_timescale: broadcast_common::timescale::Timescale = movie_timescale.into();
+        let movie_timescale: broadcast_core::timescale::Timescale = movie_timescale.into();
         if tracks.is_empty() {
             return Err(Error::InvalidInput("segmenter needs at least one track"));
         }

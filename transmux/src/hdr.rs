@@ -13,7 +13,7 @@
 use crate::error::Result;
 use crate::nal::HEVC_NAL_HEADER_LEN;
 use alloc::vec::Vec;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::hdr_boxes::{
     BOX_TYPE_LEN, CLLI_FOURCC, ContentLightLevel, MDCV_FOURCC, MasteringDisplayColourVolume,
 };

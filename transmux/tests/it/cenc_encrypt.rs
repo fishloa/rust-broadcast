@@ -34,11 +34,12 @@
 
 #![cfg(feature = "cenc")]
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use test_harness::collect::CollectedSelectExt;
 use transmux::TrackId;
 
-use broadcast_common::{Serialize, Stage};
+use broadcast_common::Stage;
+use broadcast_core::Serialize;
 use bytes::Bytes;
 use test_harness::collect::Collected as Media;
 use test_harness::collect::CollectedTrack as Track;

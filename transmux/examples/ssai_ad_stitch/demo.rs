@@ -67,9 +67,9 @@ use std::io::Read;
 use std::path::PathBuf;
 use transmux::{SpliceIndexBuilder, SplicePlan, SpliceSample, SpliceStage, TrackId, TrackSpec};
 
-use broadcast_common::Serialize;
 use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp as StageTimestamp;
+use broadcast_core::Serialize;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 use isobmff::emsg::{EmsgBox, PresentationTime};
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};

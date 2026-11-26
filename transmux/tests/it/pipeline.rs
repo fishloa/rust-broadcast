@@ -7,8 +7,8 @@
 //! byte-exact sample survival. A raw-passthrough or wrong-offset implementation
 //! cannot pass this.
 
-use broadcast_common::Parse;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Parse;
+use broadcast_core::timescale::Timescale;
 use isobmff::EsdsBox;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::segments::MediaDataBox;

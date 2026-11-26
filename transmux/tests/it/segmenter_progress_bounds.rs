@@ -33,7 +33,7 @@ use core::time::Duration;
 use transmux::TrackId;
 
 use broadcast_common::Stage;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::HEVCConfigurationBox;
 use isobmff::movie_fragment::MovieFragmentBox;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
@@ -51,7 +51,7 @@ use transmux::{CodecConfig, Sample, Segmenter, TrackSpec};
 /// 90 kHz — the MPEG-2 TS system clock (ISO/IEC 13818-1 §2.4.3.7) and the
 /// timescale `TsDemux` gives every track, so segment maths here matches the
 /// shipped demux path.
-const TS_TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
+const TS_TIMESCALE: Timescale = broadcast_core::timescale!(90_000);
 /// 30 fps at 90 kHz.
 const FRAME_TICKS: i64 = 3_000;
 /// One second of frames at `FRAME_TICKS`.

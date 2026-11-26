@@ -125,7 +125,7 @@ impl Severity {
     }
 }
 
-broadcast_common::impl_spec_display!(Severity);
+broadcast_core::impl_spec_display!(Severity);
 
 /// A single conformance finding: a severity, a stable machine-readable `code`,
 /// and a human-readable `message`.
@@ -895,7 +895,7 @@ const SAMPLE_FLAGS_IS_NON_SYNC: u32 = 1 << 16;
 /// Re-slice a direct child of `parent_body` as its whole box (header + body).
 ///
 /// `child_body` yields only the body, which is right for the `*Box::parse_body`
-/// parsers but not for a type whose [`Parse`](broadcast_common::Parse) impl
+/// parsers but not for a type whose [`Parse`](broadcast_core::Parse) impl
 /// takes the whole box (e.g. [`TrackHeaderBox`]).
 fn child_whole<'a>(
     owner: &'a [u8],
@@ -920,7 +920,7 @@ fn child_whole<'a>(
 /// `moov > trak > tkhd` whose `mdia > hdlr` handler is `vide`
 /// (ISO/IEC 14496-12:2026 §8.4.3). Empty when the init segment cannot be walked.
 fn init_video_track_ids(init: &[u8]) -> Vec<TrackId> {
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     use isobmff::init_segment::{HandlerBox, TrackHeaderBox};
 
     let Some(moov) = child_body(init, &MOOV) else {
@@ -951,7 +951,7 @@ fn init_video_track_ids(init: &[u8]) -> Vec<TrackId> {
 /// The `track_id`s an init segment declares, from every `moov > trak > tkhd`
 /// (ISO/IEC 14496-12:2026 §8.3.2). Empty when no `moov`/`tkhd` can be parsed.
 fn init_track_ids(init: &[u8]) -> Vec<TrackId> {
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     use isobmff::init_segment::TrackHeaderBox;
 
     let Some(moov) = child_body(init, &MOOV) else {

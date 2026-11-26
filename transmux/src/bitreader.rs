@@ -10,8 +10,8 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::bits::{BitError, BitWriter};
-use broadcast_common::error::{BufferTooShort, InvalidValue};
+use broadcast_core::bits::{BitError, BitWriter};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
 
 /// Widest field [`read_bits_at`] and [`BitReader::read_bits`] accept.
 const MAX_READ_BITS: usize = u64::BITS as usize;
@@ -20,14 +20,14 @@ const MAX_READ_BITS: usize = u64::BITS as usize;
 ///
 /// The one cursor-style reader shared by the per-module header decoders
 /// (`aac_asc`, `ac3`, `dts`), which previously each carried a copy that built a
-/// fresh `broadcast_common::bits::BitReader` and re-skipped to `*bit_pos` after
+/// fresh `broadcast_core::bits::BitReader` and re-skipped to `*bit_pos` after
 /// duplicating the bounds check (audit r04-O1). Extraction delegates to
-/// `broadcast_common::bits::BitReader` (shared with `dvb-t2mi`/`rdd29`/`st291`)
+/// `broadcast_core::bits::BitReader` (shared with `dvb-t2mi`/`rdd29`/`st291`)
 /// so a bit-order/overrun fix there reaches every reader. `None` when `n > 64`
 /// or fewer than `n` bits remain; `*bit_pos` is then left unchanged.
 pub(crate) fn read_bits_at(data: &[u8], bit_pos: &mut usize, n: usize) -> Option<u64> {
     let n_u32 = u32::try_from(n).ok().filter(|&n| n <= u64::BITS)?;
-    let mut br = broadcast_common::bits::BitReader::starting_at(data, *bit_pos).ok()?;
+    let mut br = broadcast_core::bits::BitReader::starting_at(data, *bit_pos).ok()?;
     let val = br.read_bits(n_u32).ok()?;
     *bit_pos += n;
     Some(val)
@@ -100,7 +100,7 @@ pub(crate) fn write_bits_checked(
     n: u32,
     what: &'static str,
 ) -> Result<()> {
-    let value = broadcast_common::len::fit_bits(value, n, what)?;
+    let value = broadcast_core::len::fit_bits(value, n, what)?;
     w.write_bits(value, n).map_err(|e| bit_error(what, e))
 }
 
@@ -155,7 +155,7 @@ impl BitReader {
 
     /// Read `n` bits as an unsigned integer (`u(n)` / `f(n)`).
     ///
-    /// Extraction is [`broadcast_common::bits::BitReader`] resumed at this
+    /// Extraction is [`broadcast_core::bits::BitReader`] resumed at this
     /// reader's position. This type stays an owning wrapper (it owns the
     /// unescaped RBSP `Vec<u8>`; a borrowing reader cannot live in the same
     /// struct without a self-referential lifetime).
@@ -177,7 +177,7 @@ impl BitReader {
         if n == 0 {
             return Ok(0);
         }
-        let mut reader = broadcast_common::bits::BitReader::starting_at(&self.data, self.bit_pos)
+        let mut reader = broadcast_core::bits::BitReader::starting_at(&self.data, self.bit_pos)
             .map_err(|_| self.short(n, what))?;
         let val = reader
             .read_bits(u32::try_from(n).map_err(|_| self.short(n, what))?)

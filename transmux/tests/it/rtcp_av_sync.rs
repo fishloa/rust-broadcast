@@ -16,7 +16,7 @@
 //! changes the recovered alignment rather than being inert.
 #![cfg(feature = "std")]
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::TrackId;
 use transmux::pipeline::{CodecConfig, Sample};

@@ -1,5 +1,5 @@
-use broadcast_common::error::FieldOverflow;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::error::FieldOverflow;
+use broadcast_core::timescale::Timescale;
 use rtmp_runtime::RtmpError;
 use test_harness::collect::Collected as Media;
 use transmux::{Error, FlvError, MkvMuxStage, RtmpFlvError, RtmpMuxStage};

@@ -36,7 +36,7 @@
 //!
 //! let spec = TrackSpec::new(
 //!     TrackId::new(1),
-//!     broadcast_common::timescale::Timescale::try_new(90000).expect("non-zero timescale"),
+//!     broadcast_core::timescale::Timescale::try_new(90000).expect("non-zero timescale"),
 //!     CodecConfig::Avc {
 //!         config: AVCConfigurationBox {
 //!             config: AVCDecoderConfigurationRecord {

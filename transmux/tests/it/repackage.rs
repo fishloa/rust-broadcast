@@ -6,7 +6,7 @@
 //! crate's own [`Mp4Demux`] and compares coded sample bytes against that oracle
 //! — no hardcoded offsets, no raw-passthrough shortcuts.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use bytes::Bytes;
 use core::time::Duration;
 use isobmff::box_types::parse_box;
@@ -583,9 +583,9 @@ fn trim_window_follows_real_dts_not_duration_sum() {
 /// track onto that LCM (`a / gcd * b`), which panics in debug and wraps in
 /// release; comparing cross-multiplied in `u128` is exact for any pair.
 const BIG_TIMESCALES: [Timescale; 3] = [
-    broadcast_common::timescale!(4_294_967_291),
-    broadcast_common::timescale!(4_294_967_279),
-    broadcast_common::timescale!(4_294_967_231),
+    broadcast_core::timescale!(4_294_967_291),
+    broadcast_core::timescale!(4_294_967_279),
+    broadcast_core::timescale!(4_294_967_231),
 ];
 
 /// Every `track_id` a `trun` sample belongs to, in output order — the interleave

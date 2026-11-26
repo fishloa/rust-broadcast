@@ -2,7 +2,7 @@
 //! MPD, and a live `Window(n)` log that keeps exactly its window and moves the
 //! rendered MPD as new segments slide it.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use core::num::NonZeroUsize;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::dash::DashPackager;

@@ -8,8 +8,8 @@
 //! MP4 identity and muxed to CMAF: the sample bytes and the raw sample entry
 //! are unchanged.
 
-use broadcast_common::Serialize;
 use broadcast_common::stage::{Stage, Timestamp};
+use broadcast_core::Serialize;
 use bytes::Bytes;
 use dvb_si::descriptors::registration::RegistrationDescriptor;
 use dvb_si::tables::pmt::StreamType;
@@ -106,8 +106,8 @@ fn gpmd_ts_identity() -> DataIdentity {
     }
 }
 
-fn timescale() -> broadcast_common::timescale::Timescale {
-    broadcast_common::timescale::Timescale::try_new(1_000).expect("non-zero timescale")
+fn timescale() -> broadcast_core::timescale::Timescale {
+    broadcast_core::timescale::Timescale::try_new(1_000).expect("non-zero timescale")
 }
 
 fn sample(dts: i64) -> Sample {
@@ -354,7 +354,7 @@ fn matroska_data_identity_round_trips_through_mkv_mux() {
             spec,
             samples.clone(),
         )],
-        broadcast_common::timescale::Timescale::try_new(1_000).expect("non-zero timescale"),
+        broadcast_core::timescale::Timescale::try_new(1_000).expect("non-zero timescale"),
     );
     let mkv = crate::mux_bytes::mux_bytes(
         &mut MkvMuxStage::new(core::time::Duration::from_millis(1_000)),

@@ -14,10 +14,10 @@
 //! (below) — no hardcoded offsets — so the tables must be internally consistent
 //! with the real mdat layout for the assertions to hold.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use transmux::TrackId;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;
 
@@ -509,7 +509,7 @@ fn faststart_false_same_samples_different_order() {
 /// `mp4/cenc-boxes/v1-mvhd.mp4`) that a few minutes of media
 /// overflows `u32::MAX` ticks — the real-world trigger for the version-1
 /// `mvhd`/`tkhd`/`mdhd` layouts.
-const HUGE_TIMESCALE: Timescale = broadcast_common::timescale!(2_000_000_000);
+const HUGE_TIMESCALE: Timescale = broadcast_core::timescale!(2_000_000_000);
 
 fn huge_timescale_media() -> Media {
     let mut media = demux_media();

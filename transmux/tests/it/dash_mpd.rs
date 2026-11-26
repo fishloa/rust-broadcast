@@ -475,7 +475,7 @@ fn dynamic_mpd_without_publish_time_is_rejected() {
     assert!(
         matches!(
             err,
-            transmux::Error::InvalidField(broadcast_common::error::InvalidField {
+            transmux::Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "MPD@publishTime",
                 ..
             })
@@ -509,7 +509,7 @@ fn ll_dash_without_publish_time_is_rejected() {
     assert!(
         matches!(
             err,
-            transmux::Error::InvalidField(broadcast_common::error::InvalidField {
+            transmux::Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "MPD@publishTime",
                 ..
             })

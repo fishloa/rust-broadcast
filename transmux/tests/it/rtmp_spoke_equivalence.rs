@@ -11,7 +11,7 @@
 //! back to its messages and compared against the FLV tags the FLV path
 //! writes, which is the only thing that would notice.
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use rtmp_runtime::chunk::ChunkAssembler;
 use rtmp_runtime::message::{ChunkSize, MessageTypeId, ProtocolControl};
 use test_harness::collect::Collected as Media;

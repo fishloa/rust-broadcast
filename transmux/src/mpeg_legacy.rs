@@ -24,8 +24,8 @@
 use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use crate::error::{Error, Result};
 use crate::units::BITS_PER_KILOBIT;
-use broadcast_common::len::need_in;
 use broadcast_common::wire::be_u32;
+use broadcast_core::len::need_in;
 
 // ── MPEG-2 video sequence header — ISO/IEC 13818-2 §6.2.2.1 ─────────────────
 
@@ -138,7 +138,7 @@ impl MpegAudioLayer {
     }
 }
 
-broadcast_common::impl_spec_display!(MpegAudioLayer);
+broadcast_core::impl_spec_display!(MpegAudioLayer);
 
 /// MPEG audio version (the `ID` / `ID` + `MPEG-2.5 extension` bits) — selects
 /// the sampling-rate row and the coefficient tables (ISO/IEC 11172-3 §2.4.2.3;
@@ -438,7 +438,7 @@ mod tests {
     /// `BufferTooShort { need: 7 }`, never a slice panic.
     #[test]
     fn seq_header_truncated_size_fields_report_the_need() {
-        use broadcast_common::error::BufferTooShort;
+        use broadcast_core::error::BufferTooShort;
         let base = [0x00, 0x00, 0x01, 0xB3];
         let size = [0x28, 0x01, 0xE0];
         for extra in 0..3usize {

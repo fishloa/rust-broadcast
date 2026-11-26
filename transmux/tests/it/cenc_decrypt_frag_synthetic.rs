@@ -238,8 +238,8 @@ fn per_sample_iv_track_without_senc_errors_instead_of_empty_iv_entries() {
 // track's tfdt
 // ---------------------------------------------------------------------------
 
-fn timescale(value: u32) -> broadcast_common::timescale::Timescale {
-    broadcast_common::timescale::Timescale::try_new(value).expect("non-zero timescale")
+fn timescale(value: u32) -> broadcast_core::timescale::Timescale {
+    broadcast_core::timescale::Timescale::try_new(value).expect("non-zero timescale")
 }
 
 fn retimed_track(base: &Track, track_id: u32, first_dts: i64) -> Track {

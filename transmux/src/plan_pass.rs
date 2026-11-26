@@ -28,9 +28,9 @@
 
 use alloc::vec::Vec;
 
-use broadcast_common::len::fit_u32;
 use broadcast_common::stage::{Stage, Timestamp};
-use broadcast_common::timescale::{Rounding, Timescale, rescale, rescale_u64};
+use broadcast_core::len::fit_u32;
+use broadcast_core::timescale::{Rounding, Timescale, rescale, rescale_u64};
 
 use crate::error::{Error, Result};
 use crate::ir::{Sample, TrackId, TrackSpec};

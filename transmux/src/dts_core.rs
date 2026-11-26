@@ -9,7 +9,7 @@
 use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
+use broadcast_core::error::InvalidValue;
 use isobmff::dts::DtsSpecificBox;
 
 pub(crate) const DTS_CORE_SYNC_WORD: u32 = 0x7FFE_8001;
@@ -380,7 +380,7 @@ pub fn split_dts_core_frames(payload: &[u8]) -> Vec<DtsCoreFrame<'_>> {
 mod tests {
     use super::*;
     use crate::test_bits::BitWriter;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
     use isobmff::dts::*;
 
     /// Spec-derived test vector: hand-computed from §E.2.2.3.1 field layout.

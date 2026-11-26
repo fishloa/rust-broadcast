@@ -34,8 +34,8 @@
 
 use crate::TrackId;
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::error::InvalidValue;
+use broadcast_core::timescale::Timescale;
 
 use broadcast_smooth::{QualityLevel, StreamType};
 
@@ -523,7 +523,7 @@ mod tests {
         );
         // And the crate's own parser agrees about what those bytes mean.
         let asc =
-            <crate::aac_asc::AudioSpecificConfig as broadcast_common::Parse>::parse(&[0x12, 0x10])
+            <crate::aac_asc::AudioSpecificConfig as broadcast_core::Parse>::parse(&[0x12, 0x10])
                 .unwrap();
         assert_eq!(asc.sampling_frequency_index.raw(), 4);
         assert_eq!(asc.channel_configuration.raw(), 2);
@@ -597,9 +597,8 @@ mod tests {
             [0x12u8, 0x10],
             "the esds DecoderSpecificInfo must be the core AAC-LC ASC"
         );
-        let asc =
-            <crate::aac_asc::AudioSpecificConfig as broadcast_common::Parse>::parse(&dsi.data)
-                .unwrap();
+        let asc = <crate::aac_asc::AudioSpecificConfig as broadcast_core::Parse>::parse(&dsi.data)
+            .unwrap();
         assert_eq!(asc.audio_object_type.raw(), AOT_AAC_LC);
         let he = asc.heaac_signaling();
         assert!(!he.sbr_present, "SBR is implicit, not explicitly signalled");
@@ -631,7 +630,7 @@ mod tests {
             );
             // The crate's own parser agrees about the channel count.
             let asc =
-                <crate::aac_asc::AudioSpecificConfig as broadcast_common::Parse>::parse(&expected)
+                <crate::aac_asc::AudioSpecificConfig as broadcast_core::Parse>::parse(&expected)
                     .unwrap();
             assert_eq!(asc.channel_configuration.channel_count(), Some(channels));
         }

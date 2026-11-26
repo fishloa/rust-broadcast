@@ -63,7 +63,7 @@ impl FragmentState {
     }
 }
 
-broadcast_common::impl_spec_display!(FragmentState);
+broadcast_core::impl_spec_display!(FragmentState);
 
 /// Whether the manifest carries a `<Protection>` element (PlayReady/PIFF sample encryption)
 /// anywhere, matched on a namespace-aware `quick-xml` pull loop under the same bounds as

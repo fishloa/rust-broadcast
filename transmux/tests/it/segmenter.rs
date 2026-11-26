@@ -10,8 +10,8 @@
 //!     segmenter and checks every emitted segment parses and preserves the stream.
 
 use crate::hub_fixtures::{audio_track, video_track};
-use broadcast_common::Serialize;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Serialize;
+use broadcast_core::timescale::Timescale;
 use core::time::Duration;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::{

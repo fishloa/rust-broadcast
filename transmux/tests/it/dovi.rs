@@ -7,8 +7,8 @@
 //! Spec inputs: `private/specs-verified/dolby/vision/` (DV-NOTES.md).
 #![cfg(feature = "std")]
 
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse, Serialize};
 use isobmff::dovi::{DVCC_FOURCC, DVH1_FOURCC, DVVC_FOURCC};
 use std::time::Duration;
 use transmux::ir::{CodecConfig, TrackSpec};

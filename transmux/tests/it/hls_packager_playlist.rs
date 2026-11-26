@@ -10,7 +10,7 @@
 //! adds the offset instead of subtracting it, or a duration scaled by the
 //! wrong arithmetic, cannot pass.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use core::num::NonZeroU32;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::nalu_types::{AvcPps, AvcSps};

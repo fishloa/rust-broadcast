@@ -19,7 +19,7 @@
 
 use crate::ts_mux_stage;
 use crate::ts_psi::{first_section, parse_pat, payload_offset, pid_of, pusi_of};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::MHADecoderConfigurationRecord;
 use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;

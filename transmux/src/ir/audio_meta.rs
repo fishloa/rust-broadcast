@@ -85,7 +85,7 @@ impl AudioType {
         }
     }
 }
-broadcast_common::impl_spec_display!(AudioType, Other);
+broadcast_core::impl_spec_display!(AudioType, Other);
 
 /// `mix_type` — ETSI EN 300 468 Table 154.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,7 +108,7 @@ impl MixType {
         }
     }
 }
-broadcast_common::impl_spec_display!(MixType);
+broadcast_core::impl_spec_display!(MixType);
 
 /// `editorial_classification` — ETSI EN 300 468 Table 155 (value `0x00` is
 /// "main audio" per Annex J.4's audio-purpose table).
@@ -162,7 +162,7 @@ impl EditorialClassification {
         }
     }
 }
-broadcast_common::impl_spec_display!(EditorialClassification, UserDefined, Reserved);
+broadcast_core::impl_spec_display!(EditorialClassification, UserDefined, Reserved);
 
 /// What an audio track is for, derived from its PMT descriptors.
 ///
@@ -218,7 +218,7 @@ impl AudioRole {
         }
     }
 }
-broadcast_common::impl_spec_display!(AudioRole);
+broadcast_core::impl_spec_display!(AudioRole);
 
 /// One `ISO_639_language_descriptor` entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -363,7 +363,7 @@ impl TrackSpec {
     pub fn with_explicit_he_aac(mut self, profile: HeAacProfile) -> crate::error::Result<Self> {
         self.config = self.config.with_explicit_he_aac(profile)?;
         if let Some(output_hz) = self.config.audio_sample_rate() {
-            self.timescale = broadcast_common::timescale::Timescale::try_new(output_hz)?;
+            self.timescale = broadcast_core::timescale::Timescale::try_new(output_hz)?;
         }
         Ok(self)
     }

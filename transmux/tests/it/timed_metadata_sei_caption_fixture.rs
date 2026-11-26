@@ -34,7 +34,7 @@
 //!   `ffmpeg -f lavfi -i "movie=<slice>[out+subcc]" -c:s srt` (ffmpeg's own
 //!   EIA-608 decoder, `cc_dec`) against the exact same slice — an external
 //!   oracle, not a value invented for this test.
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use cc_data::CcData;
 use cc_data::decode::Cea608Channel;
 use timed_metadata::event::MediaTime;

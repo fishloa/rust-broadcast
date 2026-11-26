@@ -8,7 +8,7 @@
 //! ceiling rescale, and compared against the emitted `mdat` bytes.
 
 #![cfg(feature = "std")]
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use core::time::Duration;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::TrackId;
@@ -21,7 +21,7 @@ use transmux::{
 };
 
 const LEADER_TS: u32 = 90_000;
-const LEADER_SCALE: Timescale = broadcast_common::timescale!(LEADER_TS);
+const LEADER_SCALE: Timescale = broadcast_core::timescale!(LEADER_TS);
 const AAC_FRAME_TICKS: i64 = 1024;
 const AAC_RATE: u32 = 48_000;
 const LEADER_TICKS_PER_8_FOLLOWER_TICKS: i64 = 15;
@@ -88,7 +88,7 @@ fn opens_next(
     dts: i64,
     track_ts: u32,
     start: i64,
-    start_ts: broadcast_common::timescale::Timescale,
+    start_ts: broadcast_core::timescale::Timescale,
 ) -> bool {
     i128::from(dts) * i128::from(start_ts.get()) >= i128::from(start) * i128::from(track_ts)
 }
@@ -357,7 +357,7 @@ fn audio_template() -> (Track, Timescale) {
         .into_iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
         .unwrap();
-    track.spec.timescale = broadcast_common::timescale!(AAC_RATE);
+    track.spec.timescale = broadcast_core::timescale!(AAC_RATE);
     (track, movie_ts)
 }
 

@@ -23,7 +23,7 @@
 #[cfg(feature = "std")]
 use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
+use broadcast_core::error::InvalidValue;
 
 use crate::error::{Error, Result};
 use crate::rtp::base64_decode;
@@ -229,7 +229,7 @@ pub fn playready_pro(kids: &[[u8; KEY_ID_LEN]], la_url: Option<&str>) -> Result<
     let total_len = core::mem::size_of::<u32>()
         + PRO_HEADER_U16_FIELDS * core::mem::size_of::<u16>()
         + value.len();
-    let value_len = broadcast_common::len::fit_u16(value.len(), "PRO record value length")?;
+    let value_len = broadcast_core::len::fit_u16(value.len(), "PRO record value length")?;
     let mut out = Vec::with_capacity(total_len);
     out.extend_from_slice(&(total_len as u32).to_le_bytes());
     out.extend_from_slice(&record_count.to_le_bytes());

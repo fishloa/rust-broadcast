@@ -6,7 +6,7 @@
 //! PMT section parsing, or an adaptation-field scan) — never against the
 //! `TsDemux` internals under test.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use mpeg_pes::PesAssembler;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
@@ -169,7 +169,7 @@ fn cumulative_starts(lens: &[usize]) -> Vec<usize> {
 /// are in the **track** timescale (an audio track's is its sample rate), while
 /// the PES clock is always 90 kHz (ISO/IEC 13818-1 §2.4.3.7). For a 90 kHz
 /// (video / opaque `Data`) track this is the identity.
-fn pes_ts_in_track_ticks(pes_ts: u64, timescale: broadcast_common::timescale::Timescale) -> u64 {
+fn pes_ts_in_track_ticks(pes_ts: u64, timescale: broadcast_core::timescale::Timescale) -> u64 {
     let timescale = timescale.get();
     if timescale == 90_000 {
         return pes_ts;
@@ -187,7 +187,7 @@ fn pes_ts_in_track_ticks(pes_ts: u64, timescale: broadcast_common::timescale::Ti
 fn assert_pes_boundary_timing(
     samples: &[Sample],
     pes: &[PesAu],
-    timescale: broadcast_common::timescale::Timescale,
+    timescale: broadcast_core::timescale::Timescale,
 ) {
     let sample_lens: Vec<usize> = samples.iter().map(|s| s.data.len()).collect();
     let sample_starts = cumulative_starts(&sample_lens);

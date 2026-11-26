@@ -18,7 +18,7 @@
 
 use std::collections::BTreeSet;
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use isobmff::box_support::OpaqueBox;
 use isobmff::{WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, parse_wvtt_sample};
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};

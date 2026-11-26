@@ -40,13 +40,13 @@
 use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::Parse;
 use broadcast_common::Stage;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::need_in;
 use broadcast_common::stage::{Demand, Timestamp};
-use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use broadcast_common::wire::be_u64;
+use broadcast_core::Parse;
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::need_in;
+use broadcast_core::timescale::{Rounding, Timescale, rescale_u64};
 use broadcast_matroska::Limits;
 use broadcast_matroska::reader::{
     BlockStep, ByteRange, Mode, Reader, SegmentInfo, Source, Step, TrackInfo, Warning,
@@ -67,10 +67,10 @@ use isobmff::opus::{ChannelMappingTable, OpusSpecificBox};
 use isobmff::vp9::Vp9ConfigurationBox;
 
 /// The IR timescale (ticks per second) this demuxer emits: milliseconds.
-pub const IR_TIMESCALE: Timescale = broadcast_common::timescale!(1000);
+pub const IR_TIMESCALE: Timescale = broadcast_core::timescale!(1000);
 
 /// Nanoseconds as a [`Timescale`] (a `DefaultDuration` is a count of ns).
-const NS_TIMESCALE: Timescale = broadcast_common::timescale!(1_000_000_000);
+const NS_TIMESCALE: Timescale = broadcast_core::timescale!(1_000_000_000);
 
 /// Nanoseconds in one IR tick.
 const IR_TICK_NS: i128 = 1_000_000;

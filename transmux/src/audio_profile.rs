@@ -47,7 +47,7 @@ impl AudioTrackSelector {
     }
 }
 
-broadcast_common::impl_spec_display!(AudioTrackSelector);
+broadcast_core::impl_spec_display!(AudioTrackSelector);
 
 /// HE-AAC flavour an operator declares for one audio track of an ADTS source.
 /// The ADTS header states only the AAC-LC core, so this crate cannot tell
@@ -84,7 +84,7 @@ impl AudioProfile {
     }
 }
 
-broadcast_common::impl_spec_display!(AudioProfile);
+broadcast_core::impl_spec_display!(AudioProfile);
 
 /// One per-track [`AudioProfile`] declaration: `track` picks the audio track
 /// exactly as an audio-rendition source does. An override beats whatever the
@@ -154,7 +154,7 @@ mod tests {
     use crate::codec_config_ext::EsdsBoxCodecInfo;
     use crate::ir::{CodecConfig, DataCarriage, DataIdentity};
     use crate::mpeg_legacy::MpegAudioLayer;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use isobmff::{
         DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
     };

@@ -397,7 +397,7 @@ fn insert_growing_ancestors(data: &[u8], at: usize, extra: &[u8]) -> Vec<u8> {
 /// Real `cenc.mp4` fixture, but with a `seig`-typed `sgpd` box appended as
 /// the last child of the protected track's `stbl`.
 fn cenc_mp4_with_seig_sgpd() -> Vec<u8> {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use isobmff::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox, SgpdEntry};
 
     let file = read(CENC_MP4);

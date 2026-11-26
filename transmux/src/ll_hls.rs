@@ -42,8 +42,8 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Demand, Stage, Timestamp};
+use broadcast_core::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_hls::MediaSequence;
 
 use crate::error::{Error, Result};
@@ -298,7 +298,7 @@ struct TrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::try_new(90_000).expect("non-zero timescale"), CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_core::timescale::Timescale::try_new(90_000).expect("non-zero timescale"), CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -312,7 +312,7 @@ struct TrackState {
 /// #         .expect("valid timing")
 /// # }
 /// // 1 s target segments, ~334 ms parts.
-/// let mut seg = LlHlsSegmenter::with_part_target(vec![spec()], broadcast_common::timescale::Timescale::try_new(1000).expect("non-zero timescale"), core::time::Duration::from_secs(1), core::time::Duration::from_millis(334)).unwrap();
+/// let mut seg = LlHlsSegmenter::with_part_target(vec![spec()], broadcast_core::timescale::Timescale::try_new(1000).expect("non-zero timescale"), core::time::Duration::from_secs(1), core::time::Duration::from_millis(334)).unwrap();
 /// let init = seg.init_segment().unwrap();      // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
 /// seg.push(transmux::TrackId::new(1), au(true)).unwrap();              // keyframe

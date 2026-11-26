@@ -48,8 +48,8 @@ use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use broadcast_common::Serialize;
 use broadcast_common::stage::{Stage, Timestamp};
+use broadcast_core::Serialize;
 use broadcast_matroska::writer::{
     BlockFlags, InfoSpec, Layout, TrackSpec, Write, Writer, info_element, tracks_element,
 };
@@ -103,7 +103,7 @@ const OPUS_HEAD_HEADER_LEN: usize = 19;
 struct OwnedTrack {
     track_id: TrackId,
     number: u64,
-    timescale: broadcast_common::timescale::Timescale,
+    timescale: broadcast_core::timescale::Timescale,
     track_type: u64,
     codec_id: String,
     codec_private: Option<Vec<u8>>,
@@ -112,7 +112,7 @@ struct OwnedTrack {
 }
 
 /// Convert a tick value in `timescale` units to Matroska ticks.
-fn to_matroska_ticks(ticks: i64, timescale: broadcast_common::timescale::Timescale) -> i64 {
+fn to_matroska_ticks(ticks: i64, timescale: broadcast_core::timescale::Timescale) -> i64 {
     let ns = (ticks as i128) * i128::from(broadcast_common::units::NANOS_PER_SEC)
         / i128::from(timescale.get());
     (ns / i128::from(TIMESTAMP_SCALE_NS)) as i64
@@ -489,7 +489,7 @@ pub(crate) fn mux_for_test(media: &crate::collect::Collected) -> Vec<u8> {
 mod tests {
     use super::*;
     use crate::collect::Collected as Media;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
 
     /// The `Cluster` span the tests give the stage.
     const TEST_CLUSTER_SPAN_MS: u64 = 5_000;

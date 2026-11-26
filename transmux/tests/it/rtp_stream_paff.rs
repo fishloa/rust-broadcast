@@ -6,7 +6,7 @@
 #![cfg(feature = "std")]
 
 use crate::bit_writer::BitWriter;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;

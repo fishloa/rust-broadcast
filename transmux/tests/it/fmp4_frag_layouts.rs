@@ -179,7 +179,7 @@ fn truncated_final_box_is_tolerated() {
 /// `moof`, so it cannot share an `mdat` this way).
 #[test]
 fn two_moofs_before_one_mdat_keeps_both_fragments() {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use isobmff::movie_fragment::TFHD_BASE_DATA_OFFSET_PRESENT;
     use isobmff::movie_fragment::{
         MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,

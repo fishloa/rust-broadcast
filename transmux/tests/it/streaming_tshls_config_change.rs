@@ -5,7 +5,7 @@
 
 use crate::hub_fixtures::video_track;
 use crate::ts_hls_stage;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use broadcast_hls::MediaPlaylist;
 use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;

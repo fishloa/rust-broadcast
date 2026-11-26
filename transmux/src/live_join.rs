@@ -136,7 +136,7 @@ impl RapKind {
     }
 }
 
-broadcast_common::impl_spec_display!(RapKind);
+broadcast_core::impl_spec_display!(RapKind);
 
 /// Which random-access points [`LiveJoin`] accepts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -159,7 +159,7 @@ impl JoinPolicy {
     }
 }
 
-broadcast_common::impl_spec_display!(JoinPolicy);
+broadcast_core::impl_spec_display!(JoinPolicy);
 
 /// Why [`LiveJoin`] dropped a sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,7 +185,7 @@ impl DropReason {
     }
 }
 
-broadcast_common::impl_spec_display!(DropReason);
+broadcast_core::impl_spec_display!(DropReason);
 
 /// What to do with one sample.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

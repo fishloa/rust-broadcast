@@ -4,7 +4,7 @@
 //! framing + the §6.1 leading-report rule, mutation-bites (field decode, not
 //! passthrough), and the RC boundary case.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtp_packet::{ExtendedSeqNo, Ssrc};
 use transmux::rtcp::{
     App, Bye, CompoundPacket, PT_SENDER_REPORT, REPORT_BLOCK_LEN, ReceiverReport, ReportBlock,

@@ -9,7 +9,7 @@
 //!   codec_name=hevc  profile=Main  width=320  height=240
 //!   pix_fmt=yuv420p  level=60
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use isobmff::HEVCDecoderConfigurationRecord;
 use transmux::{decode_hevc_sps, rfc6381_hvc1};
 

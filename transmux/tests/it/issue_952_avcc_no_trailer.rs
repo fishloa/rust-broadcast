@@ -14,8 +14,8 @@
 //!
 //! This test must FAIL on pre-fix code with `tracks=0, skipped=1`.
 
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse, Serialize};
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::nalu_types::{AvcPps, AvcSps};
 use isobmff::{MovieBox, StblChild};

@@ -27,7 +27,7 @@ use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use broadcast_common::stage::{Demand, Stage, Timestamp};
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use bytes::{Buf, Bytes, BytesMut};
 use core::num::NonZeroUsize;
 use isobmff::Limits;

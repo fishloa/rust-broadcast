@@ -33,7 +33,7 @@
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
+use broadcast_core::error::InvalidValue;
 
 use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use crate::error::{Error, Result as AuResult};
@@ -461,7 +461,7 @@ pub fn split_access_units(codec: NalCodec, annexb: &[u8]) -> Vec<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::InvalidValue;
+    use broadcast_core::error::InvalidValue;
 
     use super::*;
     use alloc::vec;

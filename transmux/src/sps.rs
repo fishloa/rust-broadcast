@@ -28,8 +28,8 @@ use crate::ir::{
 use crate::nal::HEVC_NAL_HEADER_LEN;
 use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
-use broadcast_common::len::need_in;
+use broadcast_core::error::InvalidValue;
+use broadcast_core::len::need_in;
 
 // ---------------------------------------------------------------------------
 // Shared bit widths and field limits
@@ -2223,7 +2223,7 @@ pub(crate) fn decode_ptl(
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::InvalidValue;
+    use broadcast_core::error::InvalidValue;
 
     use super::*;
 

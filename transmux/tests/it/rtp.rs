@@ -10,10 +10,10 @@ fn timescale(value: u32) -> Timescale {
 
 #[cfg(feature = "std")]
 use crate::sdp_session;
-use broadcast_common::Serialize;
 #[cfg(feature = "std")]
 use broadcast_common::base64::base64_decode_lenient as base64_decode;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Serialize;
+use broadcast_core::timescale::Timescale;
 use test_harness::collect::Collected as Media;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;

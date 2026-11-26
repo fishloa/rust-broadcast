@@ -11,7 +11,7 @@
 //! `fixtures/ts/`) in this checkout — `transmux/tests/it/ir_timing.rs`
 //! already reads it from that path.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::Pcr;
 use std::collections::BTreeMap;

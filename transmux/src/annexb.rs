@@ -13,8 +13,8 @@
 //! canonical and the length→Annex B→length round-trip byte-identical.
 
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::need_in;
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::need_in;
 
 use crate::error::{Error, Result};
 
@@ -275,7 +275,7 @@ pub fn length_prefixed_to_annexb(lp: &[u8]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::InvalidValue;
+    use broadcast_core::error::InvalidValue;
 
     use super::*;
 

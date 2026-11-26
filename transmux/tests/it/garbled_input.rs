@@ -15,7 +15,7 @@
 //! emitted config serializes via both `to_bytes()` and `try_to_bytes()`, and
 //! the full event sequence is chunk-size invariant.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use transmux::{CodecConfig, DemuxEvent, StreamingTsDemux};
 
 const TS_PACKET_SIZE: usize = 188;

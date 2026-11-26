@@ -44,7 +44,7 @@
 //!    covers `LlHlsSegmenter` too (previously zero `Stage` coverage at all).
 
 use crate::hub_fixtures::dummy_esds;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use core::time::Duration;
 use std::path::PathBuf;
 use transmux::TrackId;

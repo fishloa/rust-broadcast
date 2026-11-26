@@ -99,7 +99,7 @@ pub enum RtmpFlvError {
     Rtmp(rtmp_runtime::RtmpError),
     /// A length did not fit the wire field it is written to (#1129).
     #[error("RTMP {0}")]
-    FieldOverflow(broadcast_common::len::FieldOverflow),
+    FieldOverflow(broadcast_core::len::FieldOverflow),
 }
 
 impl From<FlvError> for RtmpFlvError {
@@ -108,8 +108,8 @@ impl From<FlvError> for RtmpFlvError {
     }
 }
 
-impl From<broadcast_common::len::FieldOverflow> for RtmpFlvError {
-    fn from(e: broadcast_common::len::FieldOverflow) -> Self {
+impl From<broadcast_core::len::FieldOverflow> for RtmpFlvError {
+    fn from(e: broadcast_core::len::FieldOverflow) -> Self {
         RtmpFlvError::FieldOverflow(e)
     }
 }
@@ -335,7 +335,7 @@ mod tests {
     /// (§E.4.1): the shared FLV tag codec refuses it.
     #[test]
     fn a_tag_body_past_the_ui24_data_size_is_refused() {
-        use broadcast_common::Serialize as _;
+        use broadcast_core::Serialize as _;
         let body = alloc::vec![0u8; 1 << 24];
         let err = rtmp_runtime::flv::FlvTag::new(rtmp_runtime::flv::TagType::Video, 0, &body)
             .try_to_bytes()
@@ -343,7 +343,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                rtmp_runtime::RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                rtmp_runtime::RtmpError::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "DataSize",
                     ..
                 })

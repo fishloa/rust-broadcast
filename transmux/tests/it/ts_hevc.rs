@@ -13,7 +13,7 @@
 
 use std::path::PathBuf;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
 use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;
@@ -119,7 +119,7 @@ fn demuxes_hevc_track_with_ffprobe_dims_and_wellformed_hvcc() {
     // Byte-serialize the record and re-parse it: proves the built hvcC is
     // well-formed (parseable), not an arbitrary blob.
     let bytes = {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         let mut buf = vec![0u8; record.serialized_len()];
         record.serialize_into(&mut buf).expect("serialize hvcC");
         buf

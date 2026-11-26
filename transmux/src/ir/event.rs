@@ -87,7 +87,7 @@ impl DiscontinuityKind {
     }
 }
 
-broadcast_common::impl_spec_display!(DiscontinuityKind);
+broadcast_core::impl_spec_display!(DiscontinuityKind);
 
 /// Why a [`DemuxEvent::TrackAbandoned`] was raised. `#[non_exhaustive]`: a
 /// future abandonment cause adds a variant, not a breaking change.
@@ -139,7 +139,7 @@ impl AbandonReason {
     }
 }
 
-broadcast_common::impl_spec_display!(AbandonReason);
+broadcast_core::impl_spec_display!(AbandonReason);
 
 /// What degraded the input signal — a condition the source container reported
 /// that the demuxer cannot repair (issue #778). `#[non_exhaustive]`: a future
@@ -253,7 +253,7 @@ impl InputDegradation {
     }
 }
 
-broadcast_common::impl_spec_display!(InputDegradation);
+broadcast_core::impl_spec_display!(InputDegradation);
 
 /// One [`DemuxEvent::InputDegraded`] as kept on the collected form's `degraded_at`:
 /// the [`InputDegradation`] plus *where* it was observed, so a consumer can
@@ -434,7 +434,7 @@ pub enum DemuxEvent {
         pcr: Option<mpeg_ts::Pcr>,
         /// The rate, in Hz, `ticks` is expressed in (27 MHz for an MPEG-2 TS
         /// PCR).
-        clock_hz: broadcast_common::timescale::Timescale,
+        clock_hz: broadcast_core::timescale::Timescale,
         /// `true` when this observation follows a signalled discontinuity in
         /// the source clock (e.g. the same TS packet's adaptation-field
         /// `discontinuity_indicator`, §2.4.3.5).
@@ -590,7 +590,7 @@ impl DemuxEvent {
     pub fn clock_reference(
         ticks: u64,
         pcr: Option<mpeg_ts::Pcr>,
-        clock_hz: broadcast_common::timescale::Timescale,
+        clock_hz: broadcast_core::timescale::Timescale,
         discontinuous: bool,
         provenance: EventProvenance,
     ) -> Self {

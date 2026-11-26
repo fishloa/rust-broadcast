@@ -22,7 +22,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::{MHAC_CONFIGURATION_VERSION, MHAC_FOURCC, MHADecoderConfigurationRecord};
 use isobmff::{SampleDescriptionBox, SampleEntryVariant};
 use transmux::CodecConfig;

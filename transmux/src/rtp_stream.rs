@@ -188,8 +188,9 @@ use crate::rtp_dts::DtsDeriver;
 use crate::slice_header::{AvcParamSets, AvcPicture};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Demand, Parse, Stage, Timestamp};
+use broadcast_common::{Demand, Stage, Timestamp};
+use broadcast_core::Parse;
+use broadcast_core::timescale::Timescale;
 use rtp_packet::{MIN_SEQUENTIAL, RTP_SEQ_MOD_PLUS_ONE, SeqValidity, SeqVerdict};
 
 /// Number of fractional-second units in the 32.32 fixed-point NTP timestamp

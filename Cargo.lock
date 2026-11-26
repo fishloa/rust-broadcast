@@ -4452,6 +4452,7 @@ version = "0.33.0"
 dependencies = [
  "aes 0.9.4",
  "broadcast-common",
+ "broadcast-core",
  "broadcast-dash",
  "broadcast-hls",
  "broadcast-matroska",

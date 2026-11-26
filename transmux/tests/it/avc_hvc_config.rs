@@ -5,7 +5,7 @@
 //! and verify that parsing an existing record and serializing it back produces
 //! byte-identical output.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, AvcSpsExt,
     HEVCDecoderConfigurationRecord,

@@ -54,7 +54,7 @@ impl LogCapacity {
     }
 }
 
-broadcast_common::impl_spec_display!(LogCapacity);
+broadcast_core::impl_spec_display!(LogCapacity);
 
 /// A run of contiguous segments that share a duration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -125,14 +125,14 @@ fn reads_caption_service_descriptor_from_real_pmt() {
             (
                 "eng".to_string(),
                 AtscCaptionKind::Cea608 {
-                    reserved: broadcast_common::reserved::ReservedOnes::from_bits(0b11111),
+                    reserved: broadcast_core::reserved::ReservedOnes::from_bits(0b11111),
                     line21_field: false
                 }
             ),
             (
                 "eng".to_string(),
                 AtscCaptionKind::Cea608 {
-                    reserved: broadcast_common::reserved::ReservedOnes::from_bits(0b11111),
+                    reserved: broadcast_core::reserved::ReservedOnes::from_bits(0b11111),
                     line21_field: true
                 }
             ),

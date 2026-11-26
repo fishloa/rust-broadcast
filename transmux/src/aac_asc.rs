@@ -23,9 +23,9 @@
 use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::InvalidValue;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// ADTS fixed + variable header length without CRC (ISO/IEC 13818-7 §6.2, Tables 8/9: 28 + 28 bits).
 pub(crate) const ADTS_HEADER_SIZE: usize = 7;
@@ -219,7 +219,7 @@ impl From<u8> for AudioObjectType {
         }
     }
 }
-broadcast_common::impl_spec_display!(AudioObjectType, Reserved);
+broadcast_core::impl_spec_display!(AudioObjectType, Reserved);
 
 // --- SamplingFrequencyIndex §1.6.3.3 ---
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -331,7 +331,7 @@ impl From<u8> for SamplingFrequencyIndex {
         }
     }
 }
-broadcast_common::impl_spec_display!(SamplingFrequencyIndex, Reserved);
+broadcast_core::impl_spec_display!(SamplingFrequencyIndex, Reserved);
 
 // --- ChannelConfiguration §1.6.3.4 ---
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -408,7 +408,7 @@ impl From<u8> for ChannelConfiguration {
         }
     }
 }
-broadcast_common::impl_spec_display!(ChannelConfiguration, Reserved);
+broadcast_core::impl_spec_display!(ChannelConfiguration, Reserved);
 
 /// `CodecConfig::Aac.channel_count` for an [`AudioSpecificConfig`] whose
 /// `channelConfiguration` does not determine a channel count.
@@ -1075,7 +1075,7 @@ impl HeAacProfile {
     }
 }
 
-broadcast_common::impl_spec_display!(HeAacProfile);
+broadcast_core::impl_spec_display!(HeAacProfile);
 
 /// Extension rate is the core rate times this (SBR doubles the output rate,
 /// ISO/IEC 14496-3 §4.6.18).
@@ -1238,7 +1238,7 @@ fn extension_index_for(hz: u32) -> Option<SamplingFrequencyIndex> {
 mod tests {
     use super::*;
     use crate::test_bits::BitWriter;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     const KNOWN: [u8; 5] = [0x12, 0x08, 0x56, 0xe5, 0x00];
 
     fn asc_bits(f: impl FnOnce(&mut BitWriter)) -> Vec<u8> {

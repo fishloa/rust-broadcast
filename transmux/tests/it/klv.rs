@@ -4,9 +4,9 @@
 //! UAS Datalink Local Set, RFC 6597 KLV-over-RTP. See
 //! `private/specs-verified/mpeg/transmux/klv/klv-misb0601.md`.
 
-use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::klv::{KlvItem, UNIVERSAL_LABEL_LEN};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::{Parse, Serialize};
 use transmux::Error;
 use transmux::klv::{
     CHECKSUM_LEN, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM, TAG_PRECISION_TIMESTAMP,

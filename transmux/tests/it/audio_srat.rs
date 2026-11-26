@@ -17,13 +17,13 @@
 //! external tool parsing our builder's bytes, not our parser agreeing with our
 //! writer.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use test_fixtures::process::tool_available;
 use transmux::TrackId;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::FlacSpecificBox;
 use isobmff::init_segment::{
     AudioSampleEntryV1, FlacSampleEntry, Mp4aSampleEntry, SampleDescriptionBox, SampleEntryVariant,

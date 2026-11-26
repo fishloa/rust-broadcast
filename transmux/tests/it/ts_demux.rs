@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use test_fixtures::ffprobe;
 use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;

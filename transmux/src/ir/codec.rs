@@ -8,7 +8,7 @@ use alloc::vec::Vec;
 
 use bytes::Bytes;
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 
 use crate::aac_asc::HeAacProfile;
 use crate::codec_config_ext::EsdsBoxCodecInfo;
@@ -59,7 +59,7 @@ impl DataCarriage {
     }
 }
 
-broadcast_common::impl_spec_display!(DataCarriage);
+broadcast_core::impl_spec_display!(DataCarriage);
 
 /// The wire format of a [`CodecConfig::Subtitle`] track (media plane step 2d).
 ///
@@ -96,7 +96,7 @@ impl SubtitleFormat {
     }
 }
 
-broadcast_common::impl_spec_display!(SubtitleFormat);
+broadcast_core::impl_spec_display!(SubtitleFormat);
 
 /// The ISOBMFF subtitle sample entry a [`CodecConfig::Subtitle`] track was
 /// demuxed from (ISO/IEC 14496-30), carried whole so the track can be re-muxed
@@ -420,7 +420,7 @@ impl DataIdentity {
     }
 }
 
-broadcast_common::impl_spec_display!(DataIdentity);
+broadcast_core::impl_spec_display!(DataIdentity);
 
 /// `sample_size` of the audio sample entries the IR builds: the 16-bit samples
 /// AAC, MPEG audio, AC-3/E-AC-3 and FLV audio all carry (ISO/IEC 14496-12:2026

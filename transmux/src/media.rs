@@ -33,8 +33,9 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 
-use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
-use broadcast_common::{Parse, Stage, Timestamp};
+use broadcast_common::{Stage, Timestamp};
+use broadcast_core::Parse;
+use broadcast_core::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 
 use crate::codec_config_ext::VvcRecordCodecInfo;
 #[cfg(feature = "hls")]
@@ -1542,7 +1543,7 @@ mod tests {
     /// desyncs A/V. `tfdt` is per-fragment and authoritative (§8.8.12).
     #[test]
     fn gapped_fmp4_reseeds_absolute_dts_from_each_fragments_own_tfdt() {
-        const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
+        const TIMESCALE: Timescale = broadcast_core::timescale!(90_000);
         const FRAME_DUR: u32 = 3_000;
         const FRAMES_PER_FRAGMENT: u32 = 4;
         /// Decode time the second fragment declares — one whole extra frame
@@ -1645,7 +1646,7 @@ mod tests {
     /// re-seeding per fragment must be a no-op when there is no gap.
     #[test]
     fn contiguous_fmp4_dts_is_unchanged_by_the_per_fragment_tfdt_reseed() {
-        const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
+        const TIMESCALE: Timescale = broadcast_core::timescale!(90_000);
         const FRAME_DUR: u32 = 3_000;
         const FRAMES: u32 = 3;
 
@@ -1708,7 +1709,7 @@ mod tests {
     #[cfg(feature = "hls")]
     #[test]
     fn hls_packager_omits_a_timestampless_track_instead_of_emitting_extinf_zero() {
-        const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
+        const TIMESCALE: Timescale = broadcast_core::timescale!(90_000);
         const FRAME_DUR: u32 = 3_000;
 
         let timed = Track::new(
@@ -1820,7 +1821,7 @@ mod tests {
     #[test]
     fn fmp4_demux_normalises_two_byte_nal_lengths() {
         use crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
-        const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
+        const TIMESCALE: Timescale = broadcast_core::timescale!(90_000);
         use crate::ir::{FragmentTrackData, Sample, SampleFlags};
         use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
 
@@ -1899,7 +1900,7 @@ mod tests {
         use crate::ir::{FragmentTrackData, Sample, SampleFlags};
         use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
         use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
-        const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
+        const TIMESCALE: Timescale = broadcast_core::timescale!(90_000);
 
         let record = HEVCDecoderConfigurationRecord {
             configuration_version: 1,

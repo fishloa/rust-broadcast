@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::ts_mux_stage;
-use broadcast_common::Parse;
 use broadcast_common::Stage;
+use broadcast_core::Parse;
 use dvb_si::tables::pmt::PmtSection;
 use isobmff::ObjectTypeIndication;
 use isobmff::mpegh::MHADecoderConfigurationRecord;
@@ -45,8 +45,8 @@ fn demux(bytes: &[u8]) -> Media {
     test_harness::collect::media_from_ts(bytes).expect("demux fixture")
 }
 
-fn timescale(v: u32) -> broadcast_common::timescale::Timescale {
-    broadcast_common::timescale::Timescale::try_new(v).expect("non-zero timescale")
+fn timescale(v: u32) -> broadcast_core::timescale::Timescale {
+    broadcast_core::timescale::Timescale::try_new(v).expect("non-zero timescale")
 }
 
 fn track(id: u32, config: CodecConfig, samples: Vec<Sample>) -> Track {

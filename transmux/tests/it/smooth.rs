@@ -10,10 +10,10 @@
 //! strongest bite: round-tripping the real writer's output.
 #![cfg(feature = "std")]
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use std::path::PathBuf;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use broadcast_smooth::{SmoothManifest, StreamType};
 use isobmff::box_types::parse_box;
 use test_harness::collect::Collected as Media;
@@ -396,7 +396,7 @@ fn lossless_round_trip_video() {
     // the manifest `TimeScale` (10 MHz), so the fragments' `trun` values are
     // read in that timescale (issue #1022).
     let mut spec = vid.spec.clone();
-    spec.timescale = broadcast_common::timescale!(10_000_000);
+    spec.timescale = broadcast_core::timescale!(10_000_000);
     let specs = vec![spec];
     let mut file = build_init_segment(&specs, media.movie_timescale).expect("init segment");
 

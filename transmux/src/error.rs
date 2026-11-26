@@ -19,7 +19,7 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Box size was declared as 1 (triggers largesize) but fewer than 8 bytes available.
     #[error("largesize indicated but buffer too short: need {need}, have {have}")]
@@ -50,11 +50,11 @@ pub enum Error {
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// A field had an invalid or reserved value.
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
 
     /// The XML writer refused an event while building a PlayReady
     /// WRMHEADER; the string is the writer's message.
@@ -76,7 +76,7 @@ pub enum Error {
 
     /// A field was missing or structurally invalid.
     #[error(transparent)]
-    InvalidField(#[from] broadcast_common::error::InvalidField),
+    InvalidField(#[from] broadcast_core::error::InvalidField),
 
     /// A box did not carry the four-CC the parser expected.
     #[error("unexpected box: expected {expected}")]
@@ -292,7 +292,7 @@ pub enum Error {
         max: u8,
     },
 
-    /// A CENC protection scheme ([`CencScheme`](broadcast_common::CencScheme))
+    /// A CENC protection scheme ([`CencScheme`](broadcast_core::CencScheme))
     /// this crate has no cipher implementation for was handed to the encrypt
     /// or decrypt path.
     ///
@@ -306,7 +306,7 @@ pub enum Error {
     #[error("CENC scheme '{scheme}' has no cipher implementation in this crate")]
     UnsupportedCencScheme {
         /// The scheme that could not be applied.
-        scheme: broadcast_common::CencScheme,
+        scheme: broadcast_core::CencScheme,
     },
 
     /// A [`CencEncryptStage`](crate::cenc_encrypt::CencEncryptStage) or
@@ -461,7 +461,7 @@ pub enum Error {
     /// masked it) would have silently wrapped and emitted a misframed box or
     /// section; this is returned instead.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::error::FieldOverflow),
 
     /// The input needs a feature this crate does not implement yet.
     ///

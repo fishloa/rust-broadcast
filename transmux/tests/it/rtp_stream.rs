@@ -23,9 +23,9 @@ fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
 }
 
-#[cfg(feature = "std")]
-use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Stage};
+#[cfg(feature = "std")]
+use broadcast_core::timescale::Timescale;
 use std::collections::HashSet;
 use test_harness::collect::Collected as Media;
 use transmux::TrackId;

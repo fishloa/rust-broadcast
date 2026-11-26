@@ -438,7 +438,7 @@ enum MdatForm {
 
 /// A fragmented init segment with one closed-GOP video track and no samples.
 fn synthetic_init() -> Vec<u8> {
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use isobmff::writer::{SampleEntry, TrackSetup, Writer};
     // A raw entry this crate has no typed form for: the test addresses
     // fragment samples, not sample-entry parsing.

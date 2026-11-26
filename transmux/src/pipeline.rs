@@ -20,7 +20,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use isobmff::box_types::BOX_TYPE_SIZE;
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 
 use crate::error::Result;
 use isobmff::ac4::DAC4_FOURCC;
@@ -75,7 +75,7 @@ pub use crate::ir::{
 /// function only maps the IR onto [`isobmff::writer::TrackSetup`].
 pub fn build_init_segment(
     tracks: &[TrackSpec],
-    movie_timescale: impl Into<broadcast_common::timescale::Timescale>,
+    movie_timescale: impl Into<broadcast_core::timescale::Timescale>,
 ) -> Result<Vec<u8>> {
     let movie_timescale = movie_timescale.into();
     let setups = track_setups(tracks)?;
@@ -385,7 +385,7 @@ impl FrameRateBasis {
     }
 }
 
-broadcast_common::impl_spec_display!(FrameRateBasis);
+broadcast_core::impl_spec_display!(FrameRateBasis);
 
 /// Exact integer frame rate in millihertz from VUI timing fields (H.264):
 /// `round_half_up(1000 * time_scale / (2 * num_units_in_tick))`.

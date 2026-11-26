@@ -87,7 +87,8 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::num::NonZeroU32;
 
-use broadcast_common::{Demand, Parse, Stage, Timestamp};
+use broadcast_common::{Demand, Stage, Timestamp};
+use broadcast_core::Parse;
 use rtmp_runtime::RtmpError;
 
 use crate::aac_asc::AudioSpecificConfig;
@@ -627,7 +628,7 @@ impl StreamingFlvDemux {
                 && usize::try_from(declared).is_ok_and(|declared| have < declared)
             {
                 return Err(FlvError::Codec(crate::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: usize::try_from(declared).unwrap_or(have),
                         have,
                         what: "FLV tag body",
@@ -640,7 +641,7 @@ impl StreamingFlvDemux {
                 FLV_HEADER_LEN.saturating_add(PREV_TAG_SIZE_LEN)
             };
             return Err(FlvError::Codec(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need,
                     have,
                     what: "FLV header",
@@ -657,7 +658,7 @@ impl StreamingFlvDemux {
             // it is an error.
             if !self.tags_seen && !self.damaged {
                 return Err(FlvError::Codec(crate::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: TAG_HEADER_LEN,
                         have,
                         what: "FLV tag header",
@@ -678,7 +679,7 @@ impl StreamingFlvDemux {
         if have < body_end {
             if !self.tags_seen && !self.damaged {
                 return Err(FlvError::Codec(crate::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: header.total_len(),
                         have,
                         what: "FLV tag body",
@@ -1129,7 +1130,7 @@ impl Stage for StreamingFlvDemux {
 mod tests {
     use super::*;
     use alloc::vec;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use bytes::Bytes;
 
     // --- Synthetic FLV fixture builder (small + deterministic) --------------

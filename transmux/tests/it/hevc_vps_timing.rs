@@ -1,7 +1,7 @@
 #![cfg(feature = "std")]
 //! HEVC VPS timing extraction (private/specs-verified/mpeg/transmux/codec/hevc-vps-timing.md).
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use isobmff::nalu_types::{HevcNalArray, HevcNalUnit};
 use isobmff::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use transmux::CodecConfig;

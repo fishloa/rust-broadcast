@@ -30,8 +30,8 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use broadcast_common::timescale::{Timescale, cmp_ticks};
 use broadcast_common::{Stage, Timestamp};
+use broadcast_core::timescale::{Timescale, cmp_ticks};
 
 use crate::dash::DashPackager;
 use crate::data_identity::{DataIdentityMap, DataIdentityStage};
@@ -242,7 +242,7 @@ impl Container {
     }
 }
 
-broadcast_common::impl_spec_display!(Container);
+broadcast_core::impl_spec_display!(Container);
 
 /// The output packaging format selected by `-f/--format` (or inferred from the
 /// output path extension).
@@ -295,7 +295,7 @@ impl OutputFormat {
     }
 }
 
-broadcast_common::impl_spec_display!(OutputFormat);
+broadcast_core::impl_spec_display!(OutputFormat);
 
 // ---------------------------------------------------------------------------
 // clap Args (derive)
@@ -1611,7 +1611,7 @@ fn plan_consume(state: &mut DashTrack, end: u64, last: bool, final_input: bool) 
 // ---------------------------------------------------------------------------
 
 /// The movie timescale used when a container declares none.
-const DEFAULT_MOVIE_TIMESCALE_TS: Timescale = broadcast_common::timescale!(DEFAULT_MOVIE_TIMESCALE);
+const DEFAULT_MOVIE_TIMESCALE_TS: Timescale = broadcast_core::timescale!(DEFAULT_MOVIE_TIMESCALE);
 /// Bytes read from an input to answer one container probe step.
 const PROBE_STEP_BYTES: usize = 4096;
 

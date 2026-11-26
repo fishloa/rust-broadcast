@@ -7,7 +7,7 @@
 #![cfg(feature = "std")]
 
 use crate::ts_mux_stage;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use core::time::Duration;
 use test_harness::collect::CollectedSelectExt;
 use transmux::TrackId;

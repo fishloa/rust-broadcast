@@ -186,7 +186,7 @@ fn sample_counts_and_oracle_timing() {
 /// `dac3`.
 #[test]
 fn config_byte_oracle() {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     let ps = load_ps();
     let media: Media = test_harness::collect::media_from_ps(&ps, 4096).expect("demux");

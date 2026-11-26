@@ -293,7 +293,7 @@ fn round_trip_progressive_to_fmp4_preserves_samples_and_codec() {
 
 #[test]
 fn sidx_byte_exact_round_trip_and_mutation_bites() {
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     let data = sidx_fixture();
     // The fixture is ftyp (28 bytes) + sidx (54 bytes) — locate sidx by
