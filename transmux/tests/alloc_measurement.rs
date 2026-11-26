@@ -44,9 +44,10 @@
 
 use broadcast_common::stage::{Stage, Timestamp};
 use test_alloc::ThreadCounting;
-use test_harness::collect::MediaSelectExt;
+use test_harness::collect::Collected as Media;
+use test_harness::collect::CollectedSelectExt;
 use transmux::{
-    CencEncryptStage, CencScheme, CodecConfig, EncryptConfig, Media, RtpPacketiserStage, Sample,
+    CencEncryptStage, CencScheme, CodecConfig, EncryptConfig, RtpPacketiserStage, Sample,
     SubsamplePolicy,
 };
 
@@ -295,7 +296,10 @@ fn cbcs_encrypt_allocation_count_over_real_fixture() {
 const RTP_PER_PACKET_SLACK: usize = 512;
 
 /// Feed one track through `stage` and count the packets it emits.
-fn feed_track(stage: &mut RtpPacketiserStage, track: &transmux::media::Track) -> usize {
+fn feed_track(
+    stage: &mut RtpPacketiserStage,
+    track: &test_harness::collect::CollectedTrack,
+) -> usize {
     stage
         .feed(
             transmux::mux_stage::MuxInput::Track(Box::new(track.spec.clone())),
@@ -367,7 +371,7 @@ fn rtp_packetiser_allocates_one_buffer_per_packet() {
 fn rtp_packetiser_cost_scales_with_payload_size() {
     let media = clear_video_media();
 
-    use transmux::media::Track;
+    use test_harness::collect::CollectedTrack as Track;
 
     let orig_track = &media.tracks[0];
     let spec = orig_track.spec.clone();

@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use broadcast_common::Parse;
 use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
-use transmux::media::Media;
+use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;
 use transmux::validate::{SegmentOrigin, Severity, validate_init_segment, validate_media_segment};
 
@@ -37,8 +37,8 @@ fn load_ts(name: &str) -> Vec<u8> {
 }
 
 /// The single HEVC video track from a demuxed Media (there is exactly one).
-fn hevc_track(media: &Media) -> &transmux::media::Track {
-    let hevc: Vec<&transmux::media::Track> = media
+fn hevc_track(media: &Media) -> &test_harness::collect::CollectedTrack {
+    let hevc: Vec<&test_harness::collect::CollectedTrack> = media
         .tracks
         .iter()
         .filter(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }))

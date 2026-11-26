@@ -111,7 +111,7 @@ fn zeroing_the_scale_of_a_real_file_keeps_its_timeline() {
         got.degraded[0],
         InputDegradation::MalformedUnit { .. }
     ));
-    let times = |media: &transmux::Media| -> Vec<Vec<Option<i64>>> {
+    let times = |media: &test_harness::collect::Collected| -> Vec<Vec<Option<i64>>> {
         media
             .tracks
             .iter()

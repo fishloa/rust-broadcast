@@ -36,6 +36,7 @@ use broadcast_common::Stage;
 use broadcast_common::timescale::Timescale;
 use isobmff::HEVCConfigurationBox;
 use isobmff::movie_fragment::MovieFragmentBox;
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::ir::DataIdentity;
 use transmux::ll_dash::LlSegmenter;
 use transmux::ll_hls::LlHlsSegmenter;
@@ -43,7 +44,7 @@ use transmux::mux_stage::SegmentOut;
 use transmux::pipeline::DataCarriage;
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use transmux::ts_hls::StreamingTsHlsSegmenter;
-use transmux::{CodecConfig, Media, Sample, Segmenter, Track, TrackSpec};
+use transmux::{CodecConfig, Sample, Segmenter, TrackSpec};
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 

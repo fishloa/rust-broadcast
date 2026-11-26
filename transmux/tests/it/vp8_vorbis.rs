@@ -20,8 +20,8 @@
 //! (Vorbis I §4.2.2) — never hardcoded into the parse.
 
 use test_fixtures::ffprobe;
+use test_harness::collect::Collected as Media;
 use test_harness::collect::{CollectMode, media_from_matroska};
-use transmux::Media;
 use transmux::error::Error;
 use transmux::pipeline::CodecConfig;
 

@@ -4093,6 +4093,7 @@ dependencies = [
  "isobmff",
  "jiff",
  "mpeg-ps",
+ "mpeg-ts",
  "rtmp-runtime",
  "test-alloc",
  "test-fixtures",

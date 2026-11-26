@@ -160,7 +160,8 @@ mod tests {
 
     const SYNTHETIC_MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
         transmux::VIDEO_CLOCK_TIMESCALE;
-    use transmux::{Media, SmoothOrigin, SmoothPackager, SmoothSegmenter};
+    use test_harness::collect::Collected as Media;
+    use transmux::{SmoothOrigin, SmoothPackager, SmoothSegmenter};
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
@@ -188,18 +189,20 @@ mod tests {
         let ts = std::fs::read(fixture_ts_path()).expect("h264-aac.ts fixture must exist");
         let media = test_harness::collect::media_from_ts(ts.as_slice()).expect("demux h264-aac.ts");
         let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-        let origin = SmoothOrigin::from_tracks(&media.tracks);
+        let origin = SmoothOrigin::from_tracks(
+            media
+                .tracks
+                .iter()
+                .map(|t| (t.spec.timescale, t.samples.as_slice())),
+        );
         let mut segmenter =
             SmoothSegmenter::new(specs.clone(), origin, std::time::Duration::from_secs(2))
                 .expect("segmenter");
         let mut fragments = Vec::new();
         let mut log = transmux::segment_log::SegmentSummaryLog::new();
-        for output in transmux::mux_stage::drive_media(
-            &mut segmenter,
-            &media,
-            broadcast_common::Timestamp::ZERO,
-        )
-        .expect("drive smooth")
+        for output in
+            test_harness::collect::drive(&mut segmenter, &media, broadcast_common::Timestamp::ZERO)
+                .expect("drive smooth")
         {
             if let MuxOutput::Segment(segment) = output {
                 log.push(&segment).expect("summary");

@@ -1,8 +1,8 @@
 //! RTSP push transport — client ANNOUNCE/RECORD to a remote RTSP server.
 //!
 //! RFC 2326 §10.3 (ANNOUNCE), §10.4 (SETUP), §10.11 (RECORD). The MPEG-2 TS
-//! bytes produced by the default `PushTransport::encode_media` are sent as
-//! RTP (RFC 2250 §2: MPEG2-TS, static payload type 33, clock rate 90000),
+//! bytes the connection's `TsPushMux` produces are sent as RTP (RFC 2250 §2:
+//! MPEG2-TS, static payload type 33, clock rate 90000),
 //! framed as interleaved TCP data (§10.12) — one SETUP/one interleaved
 //! channel for the whole muxed stream, matching the single m= line the SDP
 //! below advertises.

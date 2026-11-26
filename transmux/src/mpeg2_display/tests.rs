@@ -3,7 +3,7 @@
 //! production code.
 
 use super::*;
-use crate::ir::TrackId;
+use crate::TrackId;
 use alloc::vec::Vec;
 
 fn bits(value: u64, width: usize) -> Vec<bool> {
@@ -110,7 +110,7 @@ fn mid_gop_stream() -> (Vec<u8>, TrackId) {
         cc = cc.wrapping_add((packets.len() / mpeg_ts::ts::TS_PACKET_SIZE) as u8);
         input.extend_from_slice(&packets);
     }
-    let media = crate::test_media::media_from_ts(&input).expect("hand-built TS demuxes");
+    let media = crate::collect::media_from_ts(&input).expect("hand-built TS demuxes");
     let track_id = media
         .tracks
         .iter()
@@ -364,7 +364,7 @@ fn mid_gop_afd_change_through_the_demuxer() {
     use crate::ts_demux::{DemuxEvent, StreamingTsDemux};
 
     let (ts, track_id) = mid_gop_stream();
-    let media = crate::test_media::media_from_ts(&ts).expect("batch");
+    let media = crate::collect::media_from_ts(&ts).expect("batch");
     let track = media
         .tracks
         .iter()

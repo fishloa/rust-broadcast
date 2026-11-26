@@ -13,8 +13,8 @@
 //!
 //! The fixture (`fixtures/flv/av.flv`, real H.264 + AAC, shared with
 //! `transmux/tests/it/flv.rs`) is demuxed to get real `TrackSpec`s + samples,
-//! pushed through `RtmpTransport::setup` (metadata + sequence headers) and
-//! `send_media` (per-frame payloads), received by `ServerSession` (which
+//! pushed through `RtmpTransport::setup` (metadata + sequence headers) and its
+//! per-connection muxer (per-frame payloads), received by `ServerSession` (which
 //! reconstructs FLV.as_slice() tags from the RTMP messages it decodes), and the
 //! reconstructed FLV.as_slice() byte stream is re-demuxed with `transmux::FlvDemux` —
 //! asserting the round-tripped samples are byte-identical to the source.
@@ -29,7 +29,7 @@ use rtmp_runtime::server::{ServerEvent, ServerSession};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use transmux::ir::TrackSpec;
+use transmux::TrackSpec;
 
 static FLV: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));
@@ -101,30 +101,21 @@ async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
         .expect("setup must not hang")
         .expect("setup (onMetaData + sequence headers)");
 
-    // One `send_media` call carrying every sample — `drive_push` normally
-    // splits this into several smaller batches, but each batch goes through
-    // this exact call, so one larger batch exercises the same path.
-    let encoded = transport.encode_media(&media.tracks).expect("encode_media");
-    let expected_total: u64 = encoded.iter().map(|m| m.len() as u64).sum();
-    let total = tokio::time::timeout(GUARD, transport.send_media(&media.tracks))
-        .await
-        .expect("send_media must not hang")
-        .expect("send_media");
-    assert!(total > 0, "send_media must report the bytes it wrote");
-    assert_eq!(
-        total, expected_total,
-        "the returned total is the sum of the written messages"
-    );
+    // Drive the connection's muxer over every sample — `drive_push` normally
+    // feeds it one drained item at a time, so this exercises the same path.
+    let total =
+        crate::support::shared_it::push_tracks_through_muxer(&mut transport, &media.tracks).await;
+    assert!(total > 0, "the muxer must report the bytes it wrote");
 
     // Close the client side so the server's `read` sees EOF and returns.
     transport.close();
     let err = transport
-        .send_media(&media.tracks)
+        .write_message(b"x")
         .await
-        .expect_err("a closed transport must refuse a send");
+        .expect_err("a closed transport must refuse a write");
     assert!(
         err.to_string().contains("not connected"),
-        "closed send must be the not-connected error: {err}"
+        "closed write must be the not-connected error: {err}"
     );
     drop(transport);
 

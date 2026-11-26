@@ -25,8 +25,8 @@ use broadcast_common::stage::Timestamp;
 use broadcast_common::timescale::Timescale;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::nalu_types::{AvcPps, AvcSps};
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::TrackId;
-use transmux::media::{Media, Track};
 use transmux::mux_stage::MuxInput;
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, Sample, TrackSpec, build_init_segment, build_media_segment,

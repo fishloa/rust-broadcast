@@ -36,7 +36,7 @@ fn fixtures_dir() -> PathBuf {
     test_fixtures::root()
 }
 
-fn demux_media() -> transmux::media::Media {
+fn demux_media() -> test_harness::collect::Collected {
     let ts = std::fs::read(fixtures_dir().join("ts/h264-aac.ts"))
         .expect("h264-aac.ts fixture must exist");
 
@@ -63,7 +63,7 @@ fn ref_mpd() -> String {
 // ---------------------------------------------------------------------------
 
 /// The expected RFC 6381 codec string + SPS dimensions for the video track.
-fn expected_video(media: &transmux::media::Media) -> (String, u32, u32) {
+fn expected_video(media: &test_harness::collect::Collected) -> (String, u32, u32) {
     let vid = media
         .tracks
         .iter()
@@ -85,7 +85,7 @@ fn expected_video(media: &transmux::media::Media) -> (String, u32, u32) {
 }
 
 /// The expected audio RFC 6381 codec + sampling rate.
-fn expected_audio(media: &transmux::media::Media) -> (String, u32) {
+fn expected_audio(media: &test_harness::collect::Collected) -> (String, u32) {
     let aud = media
         .tracks
         .iter()
@@ -357,7 +357,7 @@ fn bandwidth_present_and_positive() {
 
 #[test]
 fn empty_media_rejected() {
-    let media = transmux::media::Media::new(vec![], timescale(90_000));
+    let media = test_harness::collect::Collected::new(vec![], timescale(90_000));
     let pkg = DashPackager::default();
     assert!(
         matches!(
@@ -403,7 +403,7 @@ fn adaptation_sets_split_by_language_and_codec() {
     fra.spec.track_id = TrackId::new(3);
     fra.spec.es_info_descriptors = lang_es_info(b"fra");
 
-    let media = transmux::media::Media::new(vec![video, eng, fra], timescale(90_000));
+    let media = test_harness::collect::Collected::new(vec![video, eng, fra], timescale(90_000));
     let pkg = DashPackager::default();
     let xml = crate::packagers::dash(&pkg, &media).expect("MPD");
 
@@ -470,7 +470,7 @@ fn bibliographic_and_terminology_codes_share_one_adaptation_set() {
     a2.spec.track_id = TrackId::new(3);
     a2.spec.es_info_descriptors = lang_es_info(b"fra");
 
-    let media = transmux::media::Media::new(vec![video, a1, a2], timescale(90_000));
+    let media = test_harness::collect::Collected::new(vec![video, a1, a2], timescale(90_000));
     let pkg = DashPackager::default();
     let xml = crate::packagers::dash(&pkg, &media).expect("MPD");
 
@@ -509,7 +509,7 @@ fn adaptation_sets_merge_same_language_and_codec() {
     a2.spec.track_id = TrackId::new(3);
     a2.spec.es_info_descriptors = lang_es_info(b"eng");
 
-    let media = transmux::media::Media::new(vec![video, a1, a2], timescale(90_000));
+    let media = test_harness::collect::Collected::new(vec![video, a1, a2], timescale(90_000));
     let pkg = DashPackager::default();
     let xml = crate::packagers::dash(&pkg, &media).expect("MPD");
 
@@ -563,7 +563,7 @@ fn adaptation_sets_have_unique_ids_and_split_by_codec_family() {
     ac3.spec.track_id = TrackId::new(3);
     ac3.spec.es_info_descriptors = lang_es_info(b"eng");
 
-    let media = transmux::media::Media::new(vec![video, aac, ac3], timescale(90_000));
+    let media = test_harness::collect::Collected::new(vec![video, aac, ac3], timescale(90_000));
     let pkg = DashPackager::default();
     let xml = crate::packagers::dash(&pkg, &media).expect("MPD");
 

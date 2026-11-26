@@ -42,7 +42,7 @@ fn pmt_version(section: &[u8]) -> u8 {
 }
 
 /// Decode-ordered `(track index, sample)` feed of `media`.
-fn interleaved(media: &transmux::Media) -> Vec<(usize, transmux::Sample)> {
+fn interleaved(media: &test_harness::collect::Collected) -> Vec<(usize, transmux::Sample)> {
     let mut items: Vec<(i128, usize, transmux::Sample)> = Vec::new();
     for (index, track) in media.tracks.iter().enumerate() {
         for sample in &track.samples {

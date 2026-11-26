@@ -288,7 +288,7 @@ fn shift_pes_timestamps(ts: &[u8], offset: u64) -> Vec<u8> {
     out
 }
 
-fn avc_track_dts(media: &transmux::Media) -> (u32, Vec<i64>) {
+fn avc_track_dts(media: &test_harness::collect::Collected) -> (u32, Vec<i64>) {
     let track = media
         .tracks
         .iter()
@@ -312,7 +312,10 @@ fn avc_track_dts(media: &transmux::Media) -> (u32, Vec<i64>) {
 type Timing = (Option<i64>, Option<i64>, Option<u32>);
 
 /// `(dts, pts, duration)` of every sample of the track whose config matches.
-fn timing_of(media: &transmux::Media, pick: impl Fn(&CodecConfig) -> bool) -> (u32, Vec<Timing>) {
+fn timing_of(
+    media: &test_harness::collect::Collected,
+    pick: impl Fn(&CodecConfig) -> bool,
+) -> (u32, Vec<Timing>) {
     let track = media
         .tracks
         .iter()

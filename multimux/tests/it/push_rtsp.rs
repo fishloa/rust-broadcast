@@ -257,7 +257,7 @@ fn ffprobe_read(url: &str) -> (bool, String, String) {
 /// come back. Runs the push and the read concurrently: `mediamtx` only
 /// serves a path once a publisher has completed RECORD, and (being a live
 /// source, not a file) only from the moment a reader joins — so `ffprobe`
-/// must already be connected and reading before `send_media` ships the
+/// must already be connected and reading before the muxer ships the
 /// (effectively instantaneous, no real-time pacing) fixture bytes.
 async fn push_and_read_back(
     server: &MediaMtx,
@@ -295,7 +295,7 @@ async fn push_and_read_back(
 
     // `mediamtx` now has an active publisher for this path. Start the
     // reader concurrently with the push so it is mid-`PLAY` by the time
-    // `send_media` ships the fixture.
+    // the muxer ships the fixture.
     let reader_url = read_url.clone();
     let reader = tokio::task::spawn_blocking(move || ffprobe_read(&reader_url));
     server.wait_for_reader(GUARD).await;
@@ -350,7 +350,7 @@ async fn rtsp_push_survives_basic_auth_against_mediamtx() {
 /// Feed the whole `Media` through the transport one sample at a time, in
 /// decode order, writing every message the TS muxer emits — the live push
 /// egress path without a `Trunk`.
-async fn push_per_sample(transport: &mut RtspTransport, media: &transmux::Media) {
+async fn push_per_sample(transport: &mut RtspTransport, media: &test_harness::collect::Collected) {
     let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     transport
         .media_muxer()

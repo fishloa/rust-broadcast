@@ -1,7 +1,8 @@
 //! Per-AU display tagging for in-band-parameter-set fMP4 (avc3/hev1), Phase 2b.
-use transmux::{CodecConfig, Media};
+use test_harness::collect::Collected as Media;
+use transmux::CodecConfig;
 
-fn inband_track(media: &Media) -> &transmux::Track {
+fn inband_track(media: &Media) -> &test_harness::collect::CollectedTrack {
     media
         .tracks
         .iter()
@@ -208,7 +209,7 @@ fn hostile_overrun_length_prefix_does_not_panic() {
 
 const HEVC_FRAGMENTED: &str = "mp4/frag/hevc-main.frag.mp4";
 
-fn hevc_track(media: &Media) -> &transmux::Track {
+fn hevc_track(media: &Media) -> &test_harness::collect::CollectedTrack {
     media
         .tracks
         .iter()

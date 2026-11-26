@@ -14,9 +14,10 @@ use broadcast_common::timescale::Timescale;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::frag_offsets::FragmentSampleRange;
 use isobmff::nalu_types::{AvcPps, AvcSps};
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::TrackId;
 use transmux::ir::SampleTiming;
-use transmux::media::{HlsPackager, Media, Track};
+use transmux::media::HlsPackager;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {

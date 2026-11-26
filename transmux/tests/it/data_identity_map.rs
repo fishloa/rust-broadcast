@@ -14,10 +14,11 @@ use bytes::Bytes;
 use dvb_si::descriptors::registration::RegistrationDescriptor;
 use dvb_si::tables::pmt::StreamType;
 use test_harness::collect::CollectMode;
+use test_harness::collect::Collected as Media;
 use transmux::ir::{CodecConfig, DataCarriage, DataIdentity, Sample, TrackSpec};
 use transmux::mux_stage::{MuxInput, MuxOutput};
 use transmux::{
-    CmafMuxStage, DEFAULT_PSI_INTERVAL, DataIdentityMap, DataIdentityStage, FragmentCut, Media,
+    CmafMuxStage, DEFAULT_PSI_INTERVAL, DataIdentityMap, DataIdentityStage, FragmentCut,
     MkvMuxStage, StreamingTsDemux, TrackId, TsMuxStage,
 };
 
@@ -349,7 +350,10 @@ fn matroska_data_identity_round_trips_through_mkv_mux() {
     );
     let samples: Vec<Sample> = (0..3).map(sample).collect();
     let media = Media::new(
-        vec![transmux::Track::new(spec, samples.clone())],
+        vec![test_harness::collect::CollectedTrack::new(
+            spec,
+            samples.clone(),
+        )],
         broadcast_common::timescale::Timescale::try_new(1_000).expect("non-zero timescale"),
     );
     let mkv = crate::mux_bytes::mux_bytes(

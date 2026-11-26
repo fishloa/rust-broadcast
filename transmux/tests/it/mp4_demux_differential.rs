@@ -15,8 +15,9 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use test_harness::collect::Collected as Media;
 use test_harness::collect::{CollectMode, media_from_mp4};
-use transmux::{InputDegradation, Media, TrackId};
+use transmux::{InputDegradation, TrackId};
 
 /// Fixtures the walk must compare (a checkout with no usable files fails
 /// rather than passing vacuously).
@@ -139,7 +140,7 @@ struct Dump {
     degraded: Vec<InputDegradation>,
 }
 
-fn track_dump(track: &transmux::Track) -> TrackDump {
+fn track_dump(track: &test_harness::collect::CollectedTrack) -> TrackDump {
     let samples = track
         .samples
         .iter()

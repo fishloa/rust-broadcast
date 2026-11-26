@@ -14,7 +14,7 @@
 //! - **Period** (§5.3.2) — a single period covering the presentation.
 //! - **`AdaptationSet`** (§5.3.3) — one per media kind (video / audio), carrying
 //!   the common `mimeType` (`video/mp4` / `audio/mp4`).
-//! - **`Representation`** (§5.3.5) — one per [`Track`](crate::media::Track), with
+//! - **`Representation`** (§5.3.5) — one per track, with
 //!   `@id`, `@bandwidth`, RFC 6381 `@codecs`, and per-kind geometry / audio
 //!   parameters.
 //! - **`SegmentTemplate`** (§5.3.9.4) — two mutually-exclusive addressing modes
@@ -69,12 +69,12 @@
 //!
 //! # CENC/CBCS signalling (issue #564)
 //!
-//! When any [`TrackProtection`](crate::ir::TrackProtection) in an
+//! When any [`TrackProtection`](crate::TrackProtection) in an
 //! `AdaptationSet` is `Some`, `package` automatically emits the "common"
 //! generic-CENC identification element —
 //! `<ContentProtection schemeIdUri="urn:mpeg:dash:mp4protection:2011"
 //! value="cenc"|"cbcs" cenc:default_KID="...">` — derived from that track's
-//! [`crate::ir::TrackProtection::scheme`] and
+//! [`crate::TrackProtection::scheme`] and
 //! [`isobmff::cenc::TrackEncryptionBox::default_kid`]; no caller wiring is
 //! needed for this element. (Real-world packaging protects every
 //! `Representation` in a set with the same scheme/KID; a set is assumed
@@ -204,7 +204,7 @@ const START_WITH_SAP: u8 = 1;
 
 /// `schemeIdUri` for the generic CENC/CBCS "common" protection identification
 /// element (ISO/IEC 23009-1 §5.8.4.2, ISO/IEC 23001-7) — the element
-/// auto-derived from [`crate::ir::TrackSpec::protection`] (issue #564).
+/// auto-derived from [`crate::TrackSpec::protection`] (issue #564).
 pub const MP4_PROTECTION_SCHEME_URI: &str = "urn:mpeg:dash:mp4protection:2011";
 
 /// Segment addressing mode for `SegmentTemplate` (ISO/IEC 23009-1 §5.3.9.4.4
@@ -261,7 +261,7 @@ pub struct TrackSegments {
 /// and supplies them verbatim. The "common" generic-CENC element
 /// (`schemeIdUri="urn:mpeg:dash:mp4protection:2011"`) does **not** need an
 /// entry here — it is auto-derived from
-/// [`crate::ir::TrackSpec::protection`] (issue #564); see the module docs.
+/// [`crate::TrackSpec::protection`] (issue #564); see the module docs.
 #[derive(Debug, Clone)]
 pub struct ContentProtectionSystem {
     /// `ContentProtection@schemeIdUri` (ISO/IEC 23009-1 §5.8.4.1) — e.g. a DRM
@@ -533,7 +533,7 @@ struct ReprInfo<'a> {
     /// `@lang` resolved from the track's `ISO_639_language_descriptor`
     /// (audio only — see [`lang_from_es_info`]).
     lang: Option<String>,
-    /// The track's [`crate::ir::TrackProtection::scheme`], if protected
+    /// The track's [`crate::TrackProtection::scheme`], if protected
     /// (issue #564) — drives the auto-derived "common" `ContentProtection`.
     encryption_scheme: Option<isobmff::cenc::CencScheme>,
     /// The track's [`isobmff::cenc::TrackEncryptionBox::default_kid`], if

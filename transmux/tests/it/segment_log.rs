@@ -4,8 +4,9 @@
 
 use broadcast_common::timescale::Timescale;
 use core::num::NonZeroUsize;
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::dash::DashPackager;
-use transmux::ir::{CodecConfig, Media, Sample, Track, TrackId, TrackSpec};
+use transmux::ir::{CodecConfig, Sample, TrackId, TrackSpec};
 use transmux::mux_stage::TrackPart;
 use transmux::segment_log::{LogCapacity, SegmentSummaryLog};
 

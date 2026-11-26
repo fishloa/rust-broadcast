@@ -140,7 +140,7 @@ const SEGMENT_TARGET_SECS: u32 = 1;
 const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 fn ts_origin_fed_with(
-    tracks: Vec<transmux::Track>,
+    tracks: Vec<test_harness::collect::CollectedTrack>,
     shape: impl Fn(usize, i64, &mut transmux::Sample) -> bool,
 ) -> (HlsOrigin, Vec<(Vec<u8>, Duration)>) {
     let specs: Vec<TrackSpec> = tracks.iter().map(|t| t.spec.clone()).collect();
@@ -211,7 +211,10 @@ fn ts_origin_fed_with(
     (origin, published)
 }
 
-fn ts_fixture_tracks(fixture: &str, video_only: bool) -> Option<Vec<transmux::Track>> {
+fn ts_fixture_tracks(
+    fixture: &str,
+    video_only: bool,
+) -> Option<Vec<test_harness::collect::CollectedTrack>> {
     let data = test_fixtures::require_bytes(fixture, "frame_rate")?;
     let media = test_harness::collect::media_from_ts(&data).ok()?;
     Some(
@@ -367,7 +370,7 @@ const GLITCH_TICKS: u32 = 60;
 const SINGLE_SAMPLE_TICKS: u32 = 6000;
 
 fn video_piece(
-    tracks: &[transmux::Track],
+    tracks: &[test_harness::collect::CollectedTrack],
     samples: usize,
     ticks: u32,
 ) -> (Vec<TrackSpec>, Vec<(Vec<u8>, Duration)>) {

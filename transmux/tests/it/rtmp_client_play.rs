@@ -5,7 +5,8 @@ use rtmp_runtime::amf0::{Amf0Value, Command};
 use rtmp_runtime::chunk::Message;
 use rtmp_runtime::client::{ClientEvent, ClientMode, ClientSession, RtmpClientConfig};
 use rtmp_runtime::message::{MessageTypeId, UserControl};
-use transmux::{Media, StreamingFlvDemux};
+use test_harness::collect::Collected as Media;
+use transmux::StreamingFlvDemux;
 
 use super::rtmp_play_peer::{PLAY_STREAM_ID, PeerConfig, PlayPeer, Seen};
 

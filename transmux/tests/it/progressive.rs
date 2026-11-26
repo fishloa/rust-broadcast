@@ -18,7 +18,7 @@ use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 
 use broadcast_common::{Parse, Serialize};
-use transmux::media::Media;
+use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;
 
 fn timescale(value: u32) -> Timescale {
@@ -1106,7 +1106,13 @@ fn duration(ticks: u32) -> Option<core::num::NonZeroU32> {
 }
 
 fn timed_media(samples: Vec<transmux::pipeline::Sample>, ts: Timescale) -> Media {
-    Media::new(vec![transmux::Track::new(avc_spec(ts), samples)], ts)
+    Media::new(
+        vec![test_harness::collect::CollectedTrack::new(
+            avc_spec(ts),
+            samples,
+        )],
+        ts,
+    )
 }
 
 fn progressive_out(media: &Media) -> Vec<u8> {

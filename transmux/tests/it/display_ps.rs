@@ -1,10 +1,10 @@
 //! Per-AU display tagging for Program Stream (PS) video samples.
 
 use std::sync::Arc;
-use transmux::media::Media;
+use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;
 
-fn video_track(media: &Media, is_mpeg2: bool) -> &transmux::Track {
+fn video_track(media: &Media, is_mpeg2: bool) -> &test_harness::collect::CollectedTrack {
     media
         .tracks
         .iter()

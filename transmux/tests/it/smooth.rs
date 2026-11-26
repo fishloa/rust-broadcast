@@ -16,8 +16,8 @@ use std::path::PathBuf;
 use broadcast_common::Parse;
 use broadcast_smooth::{SmoothManifest, StreamType};
 use isobmff::box_types::parse_box;
+use test_harness::collect::Collected as Media;
 use transmux::aac_asc::AudioSpecificConfig;
-use transmux::media::Media;
 use transmux::pipeline::{CodecConfig, build_init_segment};
 use transmux::smooth::{FOURCC_AACL, FOURCC_H264, SmoothPackager, TFXD_UUID};
 use transmux::track_spec_from_quality_level;
@@ -65,7 +65,7 @@ fn build_smooth() -> SmoothFixture {
 // Oracle helpers — pull expected values from the demuxed IR.
 // ---------------------------------------------------------------------------
 
-fn video_track(media: &Media) -> &transmux::media::Track {
+fn video_track(media: &Media) -> &test_harness::collect::CollectedTrack {
     media
         .tracks
         .iter()
@@ -73,7 +73,7 @@ fn video_track(media: &Media) -> &transmux::media::Track {
         .expect("video track")
 }
 
-fn audio_track(media: &Media) -> &transmux::media::Track {
+fn audio_track(media: &Media) -> &test_harness::collect::CollectedTrack {
     media
         .tracks
         .iter()

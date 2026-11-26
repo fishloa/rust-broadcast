@@ -50,7 +50,9 @@ pub struct MediaFixture {
 
 /// Packetise every track of `media` with the RTP packetiser stage, one track at
 /// a time, rebuilding each track's packet list and SDP media section.
-fn packetise(media: &transmux::Media) -> (Vec<RtpRunStream>, Vec<sdp_types::Media>) {
+fn packetise(
+    media: &test_harness::collect::Collected,
+) -> (Vec<RtpRunStream>, Vec<sdp_types::Media>) {
     use broadcast_common::stage::{Stage, Timestamp};
     use transmux::mux_stage::{MuxInput, MuxOutput};
     let mut streams: Vec<RtpRunStream> = Vec::new();
@@ -113,12 +115,12 @@ impl MediaFixture {
         Self::from_media(&Self::demux())
     }
 
-    pub fn demux() -> transmux::Media {
+    pub fn demux() -> test_harness::collect::Collected {
         let data = test_fixtures::read(FIXTURE);
         test_harness::collect::media_from_ts(&data[..]).expect("demux fixture")
     }
 
-    pub fn from_media(media: &transmux::Media) -> Self {
+    pub fn from_media(media: &test_harness::collect::Collected) -> Self {
         let (streams, medias) = packetise(media);
         let mut session = sdp_types::Session::new(
             sdp_types::Origin::with_ip_addr(0, 0, std::net::Ipv4Addr::LOCALHOST),

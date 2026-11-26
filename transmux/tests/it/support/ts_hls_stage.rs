@@ -3,8 +3,9 @@
 
 use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
+use test_harness::collect::Collected as Media;
 use transmux::mux_stage::{MuxInput, MuxOutput, SegmentOut};
-use transmux::{Media, Sample, StreamingTsHlsSegmenter, TrackId};
+use transmux::{Sample, StreamingTsHlsSegmenter, TrackId};
 
 /// Feed one coded sample to `seg`.
 pub fn feed(seg: &mut StreamingTsHlsSegmenter, track: TrackId, sample: Sample) {
@@ -49,7 +50,7 @@ pub fn hls(media: &Media, target_secs: u32) -> HlsOutput {
     let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let mut seg = StreamingTsHlsSegmenter::new(specs, target_secs, usize::MAX).expect("segmenter");
     let outputs =
-        transmux::mux_stage::drive_media(&mut seg, media, Timestamp::ZERO).expect("segment media");
+        test_harness::collect::drive(&mut seg, media, Timestamp::ZERO).expect("segment media");
     let mut segments = Vec::new();
     for output in outputs {
         if let MuxOutput::Segment(segment) = output {

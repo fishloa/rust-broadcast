@@ -41,10 +41,10 @@ use alloc::vec::Vec;
 use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Demand, Stage, Timestamp};
 
+#[cfg(test)]
+use crate::collect::{Collected as Media, CollectedTrack as Track};
 use crate::error::{Error, Result};
 use crate::ir::{DemuxEvent, Sample, TrackId, TrackSpec};
-#[cfg(test)]
-use crate::ir::{Media, Track};
 use crate::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::segmenter::{Segmenter, choose_anchor};

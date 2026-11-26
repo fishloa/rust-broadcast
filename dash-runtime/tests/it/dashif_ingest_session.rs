@@ -5,7 +5,7 @@ use transmux::FragmentTrackData;
 use transmux::dash::DashPackager;
 use transmux::pipeline::{build_init_segment, build_media_segment};
 
-fn demux_media() -> transmux::media::Media {
+fn demux_media() -> test_harness::collect::Collected {
     let ts = test_fixtures::read("ts/h264-aac.ts");
 
     test_harness::collect::media_from_ts(&ts[..]).expect("demux")

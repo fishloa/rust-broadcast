@@ -13,11 +13,12 @@ use isobmff::box_types::parse_box;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use std::path::PathBuf;
-use test_harness::collect::{MediaSelectExt, cmaf_from_media};
+use test_harness::collect::Collected as Media;
+use test_harness::collect::CollectedTrack as Track;
+use test_harness::collect::{CollectedSelectExt, cmaf_from_media};
 use transmux::TrackId;
-use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
-use transmux::{Repackage, Sample, Track, TrackSpec};
+use transmux::{Repackage, Sample, TrackSpec};
 
 // ── Fixtures / oracle ───────────────────────────────────────────────────────
 
@@ -803,7 +804,7 @@ fn run_with_a_window_over_empty_input_errors() {
 /// track has produced its first sample (the shared origin) and the window's
 /// lower edge has snapped back to the anchor's preceding keyframe, then applies
 /// the one `trim` rule. On `trim_selects_window_and_snaps_to_keyframe`'s input
-/// and window the bytes equal `run_media`'s, and the window keeps 67 video
+/// and window the bytes equal the whole-input path's, and the window keeps 67 video
 /// samples.
 #[test]
 fn run_and_run_media_with_a_window_are_byte_identical() {
@@ -855,7 +856,7 @@ fn run_and_run_media_with_a_window_are_byte_identical() {
     );
 }
 
-/// Without a window the streaming `run` and the whole-input `run_media` are the
+/// Without a window the streaming `run` and the whole-input path are the
 /// same repackaging: both drive the same segmenter over the same demuxed
 /// samples, so the CMAF they emit is byte-identical.
 #[test]
@@ -878,6 +879,6 @@ fn run_and_run_media_without_a_window_are_byte_identical() {
     assert_eq!(
         streaming.to_contiguous(),
         from_media.to_contiguous(),
-        "run (streaming) and run_media (whole input) agree byte for byte"
+        "run (streaming) and the whole-input path agree byte for byte"
     );
 }

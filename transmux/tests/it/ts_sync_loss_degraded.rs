@@ -6,8 +6,8 @@
 //! because `TsResync` silently skipped the 188 bytes and the batch wrapper
 //! also threw every `InputDegraded` event away. Fixtures load only through
 //! `test_fixtures`.
+use test_harness::collect::Collected as Media;
 use transmux::ir::{DemuxEvent, InputDegradation};
-use transmux::media::Media;
 use transmux::ts_demux::StreamingTsDemux;
 
 const PKT: usize = 188;

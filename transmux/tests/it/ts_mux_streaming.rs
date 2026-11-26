@@ -8,8 +8,9 @@ use std::collections::BTreeMap;
 
 use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
+use test_harness::collect::Collected as Media;
 use transmux::mux_stage::{MuxInput, MuxOutput};
-use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, TsMuxStage};
+use transmux::{DEFAULT_PSI_INTERVAL, Sample, TsMuxStage};
 
 use crate::ts_mux_stage;
 

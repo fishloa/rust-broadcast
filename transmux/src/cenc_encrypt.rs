@@ -3,7 +3,7 @@
 //! Applies AES-128 sample protection (`cenc` CTR / `cbcs` CBC-pattern,
 //! ISO/IEC 23001-7 §10) to a stream of [`MuxInput`] one sample at a time — the
 //! inverse of [`crate::cenc_decrypt::CencDecryptStage`]. A `Track` announcement
-//! passes through with [`crate::ir::TrackProtection`] set; every `Sample` is
+//! passes through with [`crate::TrackProtection`] set; every `Sample` is
 //! ciphered and carries its own [`crate::ir::SampleProtection`]. The cipher
 //! core is shared with the decrypt stage.
 //!
@@ -739,7 +739,7 @@ fn tenc_iv_fields(
 mod tests {
     use super::*;
 
-    use crate::media::Media;
+    use crate::collect::Collected as Media;
 
     const KID: [u8; 16] = [
         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
@@ -753,7 +753,7 @@ mod tests {
     fn clear_media() -> Media {
         let bytes = test_fixtures::read("ts/h264/main.ts");
 
-        let media = crate::test_media::media_from_ts(bytes.as_slice()).expect("demux main.ts");
+        let media = crate::collect::media_from_ts(bytes.as_slice()).expect("demux main.ts");
         crate::repackage::select_tracks_by(&media, |t| {
             matches!(t.spec.config, CodecConfig::Avc { .. })
         })
@@ -763,7 +763,7 @@ mod tests {
     fn multi_track_media() -> Media {
         let bytes = test_fixtures::read("ts/h264-aac.ts");
 
-        let media = crate::test_media::media_from_ts(bytes.as_slice()).expect("demux h264-aac.ts");
+        let media = crate::collect::media_from_ts(bytes.as_slice()).expect("demux h264-aac.ts");
         assert!(media.tracks.len() > 1, "a multi-track fixture");
         media
     }
@@ -807,13 +807,13 @@ mod tests {
                 )?;
             }
         }
-        let mut tracks: Vec<crate::ir::Track> = Vec::new();
+        let mut tracks: Vec<crate::collect::CollectedTrack> = Vec::new();
         let mut index: BTreeMap<TrackId, usize> = BTreeMap::new();
         while let Some(item) = stage.poll() {
             match item {
                 MuxInput::Track(spec) => {
                     index.insert(spec.track_id, tracks.len());
-                    tracks.push(crate::ir::Track::new(*spec, Vec::new()));
+                    tracks.push(crate::collect::CollectedTrack::new(*spec, Vec::new()));
                 }
                 MuxInput::Sample { track, sample } => {
                     if let Some(&at) = index.get(&track) {

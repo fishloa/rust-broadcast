@@ -8,7 +8,7 @@
 const VIDEO_TIMESCALE_TICKS_PER_FRAME: i64 = 512;
 const FRAGMENT_TICKS: i64 = 25_600;
 
-fn demux(init: &str, segments: &[&str]) -> transmux::Track {
+fn demux(init: &str, segments: &[&str]) -> test_harness::collect::CollectedTrack {
     let mut whole = test_fixtures::read(&format!("dash/multiperiod-restart/{init}"));
     for segment in segments {
         whole.extend(test_fixtures::read(&format!(
@@ -169,7 +169,7 @@ fn moof_and_mdat(per_sample_size: bool) -> (Vec<u8>, Vec<u8>) {
     (moof, mdat)
 }
 
-fn demux_assembled(trex_size: u32, per_sample_size: bool) -> transmux::Media {
+fn demux_assembled(trex_size: u32, per_sample_size: bool) -> test_harness::collect::Collected {
     let mut file = init_with_trex_sample_size(trex_size);
     let (moof, mdat) = moof_and_mdat(per_sample_size);
     file.extend_from_slice(&moof);

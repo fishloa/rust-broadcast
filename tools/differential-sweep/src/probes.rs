@@ -222,7 +222,7 @@ pub fn transmux_batch(fx: &Fixture, _: &Cfg) -> Option<Value> {
     if let Err(e) = demux.feed(&flat).and_then(|()| demux.finish()) {
         return Some(json!({ "err": format!("{e}") }));
     }
-    let mut tracks: Vec<transmux::Track> = Vec::new();
+    let mut tracks: Vec<(transmux::TrackSpec, TrackAgg)> = Vec::new();
     let mut index: std::collections::BTreeMap<transmux::TrackId, usize> =
         std::collections::BTreeMap::new();
     let mut pcr = 0usize;
@@ -230,18 +230,21 @@ pub fn transmux_batch(fx: &Fixture, _: &Cfg) -> Option<Value> {
         match event {
             transmux::DemuxEvent::TrackAdded(spec) => {
                 index.insert(spec.track_id, tracks.len());
-                tracks.push(transmux::Track::new(spec, Vec::new()));
+                tracks.push((spec, TrackAgg::default()));
             }
             transmux::DemuxEvent::TrackUpdated(spec) => {
                 if let Some(&i) = index.get(&spec.track_id) {
-                    tracks[i].spec = spec;
+                    tracks[i].0 = spec;
                 }
             }
             transmux::DemuxEvent::Sample {
                 track_id, sample, ..
             } => {
                 if let Some(&i) = index.get(&track_id) {
-                    tracks[i].samples.push(sample);
+                    let agg = &mut tracks[i].1;
+                    agg.samples += 1;
+                    agg.bytes += sample.data.len() as u64;
+                    agg.hasher.extend_from_slice(&sample.data);
                 }
             }
             transmux::DemuxEvent::ClockReference { pcr: wire, .. } => {
@@ -254,19 +257,13 @@ pub fn transmux_batch(fx: &Fixture, _: &Cfg) -> Option<Value> {
     }
     let tracks: Vec<Value> = tracks
         .iter()
-        .map(|t| {
-            let mut all = Vec::new();
-            let mut bytes = 0u64;
-            for s in &t.samples {
-                bytes += s.data.len() as u64;
-                all.extend_from_slice(&s.data);
-            }
+        .map(|(spec, agg)| {
             json!({
-                "track_id": format!("{:?}", t.spec.track_id),
-                "pid": hx_opt(t.spec.source_pid),
-                "program": format!("{:?}", t.spec.program_number),
-                "codec": codec_identity(&t.spec.config),
-                "samples": t.samples.len(), "bytes": bytes, "sha256": sha(&all),
+                "track_id": format!("{:?}", spec.track_id),
+                "pid": hx_opt(spec.source_pid),
+                "program": format!("{:?}", spec.program_number),
+                "codec": codec_identity(&spec.config),
+                "samples": agg.samples, "bytes": agg.bytes, "sha256": sha(&agg.hasher),
             })
         })
         .collect();

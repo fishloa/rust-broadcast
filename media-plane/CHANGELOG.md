@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `FileReaderError::FileTooLarge` is deleted: no container is read whole, so
   nothing raised it. `FileReaderConfig::max_file_bytes` is gone from
   `multimux`.
+- `file_source` owns its collected track shape: `ParsedFile::tracks` is now
+  `Vec<ParsedTrack>` (`spec` + `samples`) instead of `Vec<transmux::Track>`;
+  `transmux` no longer has a whole-track type.
 
 - `ts_session::test_support::mux_ts`, which took a whole `transmux::Media`, is
   now test-only (`#[cfg(test)]`); `build_ts_bytes` feeds the TS muxer stage one

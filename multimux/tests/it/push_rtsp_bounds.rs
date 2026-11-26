@@ -239,8 +239,8 @@ async fn a_stalled_interleaved_write_fails_send_at_the_write_bound() {
     );
 }
 
-fn avc_spec(track_id: TrackId) -> transmux::ir::TrackSpec {
-    transmux::ir::TrackSpec::new(
+fn avc_spec(track_id: TrackId) -> transmux::TrackSpec {
+    transmux::TrackSpec::new(
         track_id,
         timescale(90_000),
         transmux::CodecConfig::Avc {
@@ -520,7 +520,7 @@ async fn the_transport_muxes_through_its_own_streaming_mux() {
 
 /// One pass of `media` through the transport's per-connection TS muxer,
 /// samples fed in decode order.
-fn encode_pass(transport: &mut RtspTransport, media: &transmux::Media) -> Vec<u8> {
+fn encode_pass(transport: &mut RtspTransport, media: &test_harness::collect::Collected) -> Vec<u8> {
     let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     transport
         .media_muxer()

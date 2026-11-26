@@ -8,7 +8,7 @@
 //! which is what the goldens pin, is byte-identical.
 
 use broadcast_common::stage::{Stage, Timestamp};
-use transmux::Media;
+use test_harness::collect::Collected as Media;
 use transmux::MkvMuxStage;
 use transmux::mux_stage::{MuxInput, MuxOutput};
 
@@ -76,7 +76,7 @@ fn minimal_vint(value: u64) -> Vec<u8> {
 /// tracks — the order the pre-refactor whole-file writer placed `SimpleBlock`s
 /// in — and collect the byte stream.
 ///
-/// [`drive_media`](transmux::mux_stage::drive_media) merges by decode time; a
+/// [`drive`](test_harness::collect::drive) merges by decode time; a
 /// B-frame track's presentation order is not its decode order, so the two
 /// orders interleave tracks differently and the resulting files are not
 /// byte-comparable to the pre-refactor goldens. The merge here is the old

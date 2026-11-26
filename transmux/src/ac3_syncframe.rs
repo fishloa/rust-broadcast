@@ -1462,7 +1462,7 @@ pub(crate) mod tests {
     fn first_real_eac3_frame() -> Vec<u8> {
         use crate::pipeline::CodecConfig;
         let ts = test_fixtures::read("ts/dolby/eac3.ts");
-        let media = crate::test_media::media_from_ts(&ts).unwrap();
+        let media = crate::collect::media_from_ts(&ts).unwrap();
         let track = media
             .tracks
             .iter()

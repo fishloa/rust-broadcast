@@ -69,7 +69,7 @@ impl VideoJoin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transmux::Track;
+    use test_harness::collect::CollectedTrack as Track;
 
     fn video_track(fixture: &str) -> Track {
         let data = test_fixtures::read(fixture);

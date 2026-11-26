@@ -1,9 +1,9 @@
 //! Collect a streaming demux stage's [`DemuxEvent`]s into the per-track vectors
-//! a [`Media`] carries.
+//! a [`Collected`] carries.
 //!
-//! A test that asserts on a whole `Media` drives the one streaming MP4 stage
+//! A test that asserts on a whole `Collected` drives the one streaming MP4 stage
 //! over a fixture and folds its event vocabulary into one here; the other
-//! whole-`Media` bridges in this module do the same for the mux, splice and
+//! whole-`Collected` bridges in this module do the same for the mux, splice and
 //! trick-play stages. The fold keeps the init's track order and its
 //! sample-owned summaries (`start_decode_time`, skipped and degraded
 //! records), so a test can compare what the demuxer reported on those terms.
@@ -12,11 +12,141 @@ use std::collections::BTreeMap;
 
 use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
+use broadcast_common::timescale::Timescale;
 use transmux::{
-    AbandonReason, AfdPersistence, DegradationRecord, DemuxEvent, InputDegradation, Media,
-    PcrSample, Sample, SkippedTrack, SplicePlan, SplicePoint, SpliceStage, StreamingFlvDemux,
-    StreamingTsDemux, Track, TrackId, TrickPlayStage,
+    AbandonReason, AfdPersistence, DegradationRecord, DemuxEvent, InputDegradation, PcrSample,
+    Sample, SkippedTrack, SplicePlan, SplicePoint, SpliceStage, StreamingFlvDemux,
+    StreamingTsDemux, TrackId, TrackSpec, TrickPlayStage,
 };
+
+/// One elementary track in a [`Collected`] capture: its identity/config plus
+/// its decode-ordered samples. The test-only form of transmux's removed
+/// whole-input `CollectedTrack`.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct CollectedTrack {
+    /// CollectedTrack identity + codec configuration.
+    pub spec: TrackSpec,
+    /// The track's coded access units, in decode order.
+    pub samples: Vec<Sample>,
+    /// Absolute decode time of the track's first sample, in its media
+    /// timescale.
+    pub start_decode_time: u64,
+}
+
+impl CollectedTrack {
+    /// Create a track from its spec and samples, anchored at decode time `0`.
+    pub fn new(spec: TrackSpec, samples: Vec<Sample>) -> Self {
+        Self {
+            spec,
+            samples,
+            start_decode_time: 0,
+        }
+    }
+
+    /// Create a track from its spec and samples, anchored at an absolute
+    /// `start_decode_time` (in the track's media timescale).
+    pub fn new_at(spec: TrackSpec, samples: Vec<Sample>, start_decode_time: u64) -> Self {
+        Self {
+            spec,
+            samples,
+            start_decode_time,
+        }
+    }
+
+    /// Set the absolute [`start_decode_time`](Self::start_decode_time) anchor,
+    /// returning `self` (builder style).
+    pub fn with_start_decode_time(mut self, start_decode_time: u64) -> Self {
+        self.start_decode_time = start_decode_time;
+        self
+    }
+
+    /// CollectedTrack ID.
+    pub fn track_id(&self) -> TrackId {
+        self.spec.track_id
+    }
+
+    /// Collected timescale (ticks per second); non-zero by construction.
+    pub fn timescale(&self) -> Timescale {
+        self.spec.timescale
+    }
+
+    /// Codec configuration.
+    pub fn config(&self) -> &transmux::CodecConfig {
+        &self.spec.config
+    }
+
+    /// Apply an explicit HE-AAC profile to the track's spec, re-expressing
+    /// every sample's `dts`/`pts`/`duration` and its `start_decode_time` in
+    /// the new media timescale so no presentation time moves.
+    ///
+    /// # Errors
+    /// The spec's own error when the profile cannot be applied.
+    pub fn with_explicit_he_aac(
+        mut self,
+        profile: transmux::HeAacProfile,
+    ) -> Result<Self, transmux::Error> {
+        use broadcast_common::timescale::{Rounding, rescale_i64};
+        let from = self.spec.timescale;
+        self.spec = self.spec.with_explicit_he_aac(profile)?;
+        let to = self.spec.timescale;
+        if from != to {
+            self.samples = self
+                .samples
+                .into_iter()
+                .map(|s| s.rescale_timescale(from, to))
+                .collect::<Result<Vec<_>, _>>()?;
+            self.start_decode_time = u64::try_from(rescale_i64(
+                i64::try_from(self.start_decode_time).unwrap_or(i64::MAX),
+                from,
+                to,
+                Rounding::Floor,
+            ))
+            .unwrap_or(u64::MAX);
+        }
+        Ok(self)
+    }
+}
+
+/// A whole capture's tracks plus the movie timescale and the demuxer's
+/// skipped/damaged records: the test-only collected form transmux's removed
+/// whole-input `Collected` used to be.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct Collected {
+    /// Elementary tracks, in source order.
+    pub tracks: Vec<CollectedTrack>,
+    /// Movie timescale.
+    pub movie_timescale: Timescale,
+    /// PCR observations recovered from a TS source, in wire order.
+    pub pcr: Vec<PcrSample>,
+    /// Tracks the demuxer could not model.
+    pub skipped: Vec<SkippedTrack>,
+    /// Damage the demuxer skipped over.
+    pub degraded: Vec<InputDegradation>,
+    /// Where each `degraded` entry was observed.
+    pub degraded_at: Vec<DegradationRecord>,
+}
+
+impl Collected {
+    /// Create a collection from tracks and a movie timescale.
+    pub fn new(tracks: Vec<CollectedTrack>, movie_timescale: impl Into<Timescale>) -> Self {
+        Self {
+            tracks,
+            movie_timescale: movie_timescale.into(),
+            pcr: Vec::new(),
+            skipped: Vec::new(),
+            degraded: Vec::new(),
+            degraded_at: Vec::new(),
+        }
+    }
+
+    /// Attach a PCR timeline, returning `self` (builder style).
+    pub fn with_pcr(mut self, pcr: Vec<PcrSample>) -> Self {
+        self.pcr = pcr;
+        self
+    }
+}
 
 /// Feed a whole buffer to a stage in one piece (`[u8]::chunks` of this size
 /// yields exactly one chunk).
@@ -58,14 +188,139 @@ where
     Ok(events)
 }
 
-/// Fold a demux event stream into a [`Media`].
+/// Feed a whole [`Collected`] to a muxer stage and collect what it produces.
+///
+/// Every track is announced first, then samples go in decode-time order
+/// across tracks (ties to the earlier track), then the stage is finished.
+/// This is the test-only bridge for a caller that still holds a whole
+/// [`Collected`] capture.
+///
+/// # Errors
+/// Whatever the stage returns from `feed` or `finish`.
+pub fn drive<S>(
+    stage: &mut S,
+    media: &Collected,
+    now: Timestamp,
+) -> Result<Vec<transmux::mux_stage::MuxOutput>, S::Error>
+where
+    S: for<'a> Stage<In<'a> = transmux::mux_stage::MuxInput, Out = transmux::mux_stage::MuxOutput>,
+{
+    let mut out = Vec::new();
+    for track in &media.tracks {
+        stage.feed(
+            transmux::mux_stage::MuxInput::Track(Box::new(track.spec.clone())),
+            now,
+        )?;
+        drain(stage, &mut out);
+    }
+    let mut cursors: Vec<DecodeCursor> = media.tracks.iter().map(DecodeCursor::new).collect();
+    while let Some(index) = earliest(&cursors) {
+        let cursor = &mut cursors[index];
+        let track = &media.tracks[index];
+        let sample = track.samples[cursor.next].clone();
+        cursor.advance(&sample);
+        stage.feed(
+            transmux::mux_stage::MuxInput::Sample {
+                track: track.spec.track_id,
+                sample,
+            },
+            now,
+        )?;
+        drain(stage, &mut out);
+    }
+    stage.finish()?;
+    drain(stage, &mut out);
+    Ok(out)
+}
+
+fn drain<S>(stage: &mut S, out: &mut Vec<transmux::mux_stage::MuxOutput>)
+where
+    S: for<'a> Stage<In<'a> = transmux::mux_stage::MuxInput, Out = transmux::mux_stage::MuxOutput>,
+{
+    while let Some(item) = stage.poll() {
+        out.push(item);
+    }
+}
+
+struct DecodeCursor<'m> {
+    samples: &'m [Sample],
+    timescale: i128,
+    next: usize,
+    decode: i64,
+}
+
+impl<'m> DecodeCursor<'m> {
+    fn new(track: &'m CollectedTrack) -> Self {
+        let mut decode = i64::try_from(track.start_decode_time).unwrap_or(i64::MAX);
+        let mut head_ticks: u64 = 0;
+        let mut has_timed = false;
+        for sample in &track.samples {
+            let Some(timing) = sample.timing else {
+                continue;
+            };
+            if timing.dts().is_some() {
+                has_timed = true;
+                break;
+            }
+            head_ticks = head_ticks.saturating_add(u64::from(timing.duration().unwrap_or(0)));
+        }
+        if has_timed {
+            decode = decode.saturating_sub(i64::try_from(head_ticks).unwrap_or(i64::MAX));
+        }
+        Self {
+            samples: &track.samples,
+            timescale: i128::from(track.spec.timescale),
+            next: 0,
+            decode,
+        }
+    }
+
+    fn decode_time(&self) -> Option<i64> {
+        let sample = self.samples.get(self.next)?;
+        Some(
+            sample
+                .timing
+                .and_then(|timing| timing.dts())
+                .unwrap_or(self.decode),
+        )
+    }
+
+    fn advance(&mut self, sample: &Sample) {
+        let start = self.decode_time().unwrap_or(self.decode);
+        let duration = sample
+            .timing
+            .and_then(|timing| timing.duration())
+            .map_or(0, i64::from);
+        self.decode = start.saturating_add(duration);
+        self.next += 1;
+    }
+}
+
+fn earliest(cursors: &[DecodeCursor<'_>]) -> Option<usize> {
+    let mut best: Option<(usize, i128, i128)> = None;
+    for (index, cursor) in cursors.iter().enumerate() {
+        let Some(time) = cursor.decode_time() else {
+            continue;
+        };
+        let time = i128::from(time);
+        let earlier = best.is_none_or(|(_, best_time, best_scale)| {
+            time * best_scale < best_time * cursor.timescale
+        });
+        if earlier {
+            best = Some((index, time, cursor.timescale));
+        }
+    }
+    best.map(|(index, ..)| index)
+}
+
+/// Fold a demux event stream into a [`Collected`].
 ///
 /// `start_decode_time` is the track's first sample's `dts` (an MP4 decode
 /// timeline starts at the anchor its first sample names, which is `0` for a
 /// progressive file). `skipped` is filled from `TrackAbandoned`, `degraded`
 /// from `InputDegraded`.
-pub fn media_from_events(events: Vec<DemuxEvent>) -> Media {
-    let mut tracks: Vec<Track> = Vec::new();
+pub fn media_from_events(events: Vec<DemuxEvent>) -> Collected {
+    let mut tracks: Vec<CollectedTrack> = Vec::new();
     let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
     let mut skipped = Vec::new();
     let mut degraded = Vec::new();
@@ -73,7 +328,7 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Media {
         match event {
             DemuxEvent::TrackAdded(spec) => {
                 index_by_id.insert(spec.track_id, tracks.len());
-                tracks.push(Track::new(spec, Vec::new()));
+                tracks.push(CollectedTrack::new(spec, Vec::new()));
             }
             DemuxEvent::TrackUpdated(spec) => {
                 if let Some(&index) = index_by_id.get(&spec.track_id) {
@@ -103,7 +358,7 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Media {
             _ => {}
         }
     }
-    let mut media = Media::new(
+    let mut media = Collected::new(
         tracks,
         broadcast_common::timescale::Timescale::from_nonzero(DEFAULT_MOVIE_TIMESCALE),
     );
@@ -140,11 +395,11 @@ fn skipped_from_reason(reason: AbandonReason, track_id: Option<TrackId>) -> Skip
 }
 
 /// Drive [`Mp4Demux`](transmux::mp4_demux::Mp4Demux) over a whole in-memory
-/// MP4 image and fold its events into a [`Media`].
+/// MP4 image and fold its events into a [`Collected`].
 ///
 /// A whole small fixture in memory is fine **here only**: this crate is a test
 /// harness. The stage itself never holds more than the reader asks for.
-pub fn media_from_mp4(bytes: &[u8], mode: CollectMode) -> Result<Media, transmux::Error> {
+pub fn media_from_mp4(bytes: &[u8], mode: CollectMode) -> Result<Collected, transmux::Error> {
     let total_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     let config = transmux::mp4_demux::Mp4DemuxConfig::default().with_total_len(Some(total_len));
     match mode {
@@ -206,7 +461,9 @@ fn drive_sequential(
     demux.finish()
 }
 
-fn media_from_stage(mut demux: transmux::mp4_demux::Mp4Demux) -> Result<Media, transmux::Error> {
+fn media_from_stage(
+    mut demux: transmux::mp4_demux::Mp4Demux,
+) -> Result<Collected, transmux::Error> {
     let fragmented = demux.is_fragmented();
     let movie_timescale = demux.movie_timescale();
     let init_order: Vec<TrackId> = demux.init_tracks().map(|spec| spec.track_id).collect();
@@ -234,11 +491,11 @@ fn media_from_stage(mut demux: transmux::mp4_demux::Mp4Demux) -> Result<Media, t
 
 /// Drive [`StreamingPsDemux`](transmux::StreamingPsDemux) over a whole
 /// in-memory Program Stream image, feeding it in `chunk`-sized pieces, and fold
-/// its events into a [`Media`].
+/// its events into a [`Collected`].
 ///
 /// A whole small fixture in memory is fine **here only**: this crate is a test
 /// harness. The stage itself never holds the input.
-pub fn media_from_ps(bytes: &[u8], chunk: usize) -> Result<Media, transmux::Error> {
+pub fn media_from_ps(bytes: &[u8], chunk: usize) -> Result<Collected, transmux::Error> {
     let chunk = chunk.max(1);
     let mut demux = transmux::StreamingPsDemux::new();
     for piece in bytes.chunks(chunk) {
@@ -255,19 +512,19 @@ pub fn media_from_ps(bytes: &[u8], chunk: usize) -> Result<Media, transmux::Erro
 }
 
 /// Drive [`StreamingTsDemux`] over a whole in-memory MPEG-2 TS image in one
-/// feed and fold its events into a [`Media`], exactly as the deleted
+/// feed and fold its events into a [`Collected`], exactly as the deleted
 /// whole-input `TsDemux::demux` did: strict PMT track order, the program
 /// `ClockReference`s as [`PcrSample`]s, and every damage record resolved
 /// against the final track set by source PID.
 ///
 /// A whole small fixture in memory is fine **here only**: this crate is a test
 /// harness. The stage itself never holds the input.
-pub fn media_from_ts(bytes: &[u8]) -> Result<Media, transmux::Error> {
+pub fn media_from_ts(bytes: &[u8]) -> Result<Collected, transmux::Error> {
     media_from_ts_chunked(bytes, WHOLE_INPUT)
 }
 
 /// [`media_from_ts`] fed in `chunk`-sized pieces (the streaming-gate form).
-pub fn media_from_ts_chunked(bytes: &[u8], chunk: usize) -> Result<Media, transmux::Error> {
+pub fn media_from_ts_chunked(bytes: &[u8], chunk: usize) -> Result<Collected, transmux::Error> {
     media_from_ts_with_afd(bytes, chunk, AfdPersistence::UntilReplaced)
 }
 
@@ -276,7 +533,7 @@ pub fn media_from_ts_with_afd(
     bytes: &[u8],
     chunk: usize,
     afd: AfdPersistence,
-) -> Result<Media, transmux::Error> {
+) -> Result<Collected, transmux::Error> {
     let mut demux = StreamingTsDemux::new()
         .with_afd_persistence(afd)
         .with_strict_pmt_order();
@@ -285,7 +542,7 @@ pub fn media_from_ts_with_afd(
     }
     demux.finish()?;
 
-    let mut tracks: Vec<Track> = Vec::new();
+    let mut tracks: Vec<CollectedTrack> = Vec::new();
     let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
     let mut pcr: Vec<PcrSample> = Vec::new();
     let mut degraded: Vec<InputDegradation> = Vec::new();
@@ -294,7 +551,7 @@ pub fn media_from_ts_with_afd(
         match event {
             DemuxEvent::TrackAdded(spec) => {
                 index_by_id.insert(spec.track_id, tracks.len());
-                tracks.push(Track::new(spec, Vec::new()));
+                tracks.push(CollectedTrack::new(spec, Vec::new()));
             }
             DemuxEvent::TrackUpdated(spec) => {
                 if let Some(&index) = index_by_id.get(&spec.track_id) {
@@ -351,14 +608,14 @@ pub fn media_from_ts_with_afd(
             record.track = Some(t.spec.track_id);
         }
     }
-    let mut media = Media::new(tracks, transmux::rtp::VIDEO_CLOCK_TIMESCALE).with_pcr(pcr);
+    let mut media = Collected::new(tracks, transmux::rtp::VIDEO_CLOCK_TIMESCALE).with_pcr(pcr);
     media.degraded = degraded;
     media.degraded_at = degraded_at;
     Ok(media)
 }
 
 /// Drive [`StreamingFlvDemux`] over a whole in-memory FLV image and fold its
-/// events into a [`Media`] on FLV's 1 kHz clock.
+/// events into a [`Collected`] on FLV's 1 kHz clock.
 ///
 /// A whole small fixture in memory is fine **here only**: this crate is a test
 /// harness. The stage itself never holds the input.
@@ -367,7 +624,7 @@ pub fn media_from_ts_with_afd(
 ///
 /// The first structural error the stage reports (bad signature, implausible
 /// header, corrupt codec config).
-pub fn media_from_flv(bytes: &[u8]) -> Result<Media, transmux::flv::FlvError> {
+pub fn media_from_flv(bytes: &[u8]) -> Result<Collected, transmux::flv::FlvError> {
     media_from_flv_chunked(bytes, WHOLE_INPUT)
 }
 
@@ -379,7 +636,7 @@ pub fn media_from_flv(bytes: &[u8]) -> Result<Media, transmux::flv::FlvError> {
 pub fn media_from_flv_chunked(
     bytes: &[u8],
     chunk: usize,
-) -> Result<Media, transmux::flv::FlvError> {
+) -> Result<Collected, transmux::flv::FlvError> {
     let mut demux = StreamingFlvDemux::new();
     for piece in bytes.chunks(chunk.max(1)) {
         demux.feed(piece)?;
@@ -397,7 +654,7 @@ pub fn media_from_flv_chunked(
 }
 
 /// Drive the RTMP chunk reassembly and the streaming FLV demux over a whole
-/// post-handshake RTMP chunk stream, folding the result into a [`Media`].
+/// post-handshake RTMP chunk stream, folding the result into a [`Collected`].
 ///
 /// The reassembly half is exactly what the deleted whole-input `RtmpDemux` did:
 /// collect the Audio (type 8), Video (type 9) and `onMetaData` (type 18)
@@ -407,7 +664,7 @@ pub fn media_from_flv_chunked(
 ///
 /// An RTMP wire error, a rebuilt tag body too large for FLV's UI24
 /// `DataSize`, or the FLV stage's own error.
-pub fn media_from_rtmp(bytes: &[u8]) -> Result<Media, transmux::RtmpFlvError> {
+pub fn media_from_rtmp(bytes: &[u8]) -> Result<Collected, transmux::RtmpFlvError> {
     media_from_rtmp_chunked(bytes, WHOLE_INPUT)
 }
 
@@ -420,7 +677,7 @@ pub fn media_from_rtmp(bytes: &[u8]) -> Result<Media, transmux::RtmpFlvError> {
 pub fn media_from_rtmp_chunked(
     bytes: &[u8],
     chunk: usize,
-) -> Result<Media, transmux::RtmpFlvError> {
+) -> Result<Collected, transmux::RtmpFlvError> {
     use broadcast_common::Serialize as _;
     use rtmp_runtime::chunk::ChunkAssembler;
     use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
@@ -465,21 +722,38 @@ pub fn media_from_rtmp_chunked(
 }
 
 /// The result of driving a [`SplicePlan`] over whole medias: the joined media
-/// and the joins to signal. Field-compatible with the former whole-`Media`
+/// and the joins to signal. Field-compatible with the former whole-`Collected`
 /// splice result, now produced by [`SpliceStage`].
 pub struct SpliceOutput {
     /// The joined media on a single monotonic timeline.
-    pub media: Media,
+    pub media: Collected,
     /// The join points to signal as `#EXT-X-DISCONTINUITY`.
     pub discontinuity_points: Vec<SplicePoint>,
+}
+
+/// Build the per-track splice index [`SplicePlan`] reads: identity plus each
+/// sample's timing and sync flag, never its coded bytes.
+pub fn splice_index(tracks: &[CollectedTrack]) -> transmux::SpliceIndex {
+    let mut builder = transmux::SpliceIndexBuilder::new();
+    for track in tracks {
+        let index = builder.add_track(track.spec.clone(), track.start_decode_time);
+        for sample in &track.samples {
+            builder.push_sample(index, sample.timing, sample.flags.is_sync);
+        }
+    }
+    builder.build()
 }
 
 /// Append `b` after `a` through [`SpliceStage`].
 ///
 /// # Errors
 /// Whatever [`SplicePlan::concat`] or the stage returns.
-pub fn concat(a: &Media, b: &Media) -> Result<SpliceOutput, transmux::Error> {
-    let plan = SplicePlan::concat(&a.tracks, &b.tracks, a.movie_timescale)?;
+pub fn concat(a: &Collected, b: &Collected) -> Result<SpliceOutput, transmux::Error> {
+    let plan = SplicePlan::concat(
+        &splice_index(&a.tracks),
+        &splice_index(&b.tracks),
+        a.movie_timescale,
+    )?;
     drive_splice(&plan, a, Some(b))
 }
 
@@ -488,18 +762,23 @@ pub fn concat(a: &Media, b: &Media) -> Result<SpliceOutput, transmux::Error> {
 /// # Errors
 /// Whatever [`SplicePlan::insert`] or the stage returns.
 pub fn splice_insert(
-    base: &Media,
-    ad: &Media,
+    base: &Collected,
+    ad: &Collected,
     at_ticks: u64,
 ) -> Result<SpliceOutput, transmux::Error> {
-    let plan = SplicePlan::insert(&base.tracks, &ad.tracks, base.movie_timescale, at_ticks)?;
+    let plan = SplicePlan::insert(
+        &splice_index(&base.tracks),
+        &splice_index(&ad.tracks),
+        base.movie_timescale,
+        at_ticks,
+    )?;
     drive_splice(&plan, base, Some(ad))
 }
 
 fn drive_splice(
     plan: &SplicePlan,
-    base: &Media,
-    inserted: Option<&Media>,
+    base: &Collected,
+    inserted: Option<&Collected>,
 ) -> Result<SpliceOutput, transmux::Error> {
     let mut per_track: Vec<Vec<Sample>> = vec![Vec::new(); plan.tracks().len()];
     for (index, slice) in plan.tracks().iter().enumerate() {
@@ -537,10 +816,10 @@ fn drive_splice(
             .find_map(|s| s.timing.and_then(|t| t.dts()))
             .map(|dts| dts.max(0) as u64)
             .unwrap_or(track.start_decode_time);
-        tracks.push(Track::new_at(track.spec.clone(), samples, start));
+        tracks.push(CollectedTrack::new_at(track.spec.clone(), samples, start));
     }
     Ok(SpliceOutput {
-        media: Media::new(tracks, plan.movie_timescale()),
+        media: Collected::new(tracks, plan.movie_timescale()),
         discontinuity_points: plan.discontinuity_points().to_vec(),
     })
 }
@@ -549,7 +828,7 @@ fn drive_splice(
 ///
 /// # Errors
 /// [`transmux::Error::InvalidInput`] when `src` has no sync samples.
-pub fn derive_iframe_track(src: &Track) -> Result<Track, transmux::Error> {
+pub fn derive_iframe_track(src: &CollectedTrack) -> Result<CollectedTrack, transmux::Error> {
     let mut stage = TrickPlayStage::new(src.spec.track_id, src.spec.clone());
     for sample in &src.samples {
         stage.feed((src.spec.track_id, sample.clone()), Timestamp::ZERO)?;
@@ -572,7 +851,7 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track, transmux::Error> {
         .find_map(|s| s.timing.and_then(|t| t.dts()))
         .map(|dts| dts.max(0) as u64)
         .unwrap_or(src.start_decode_time);
-    Ok(Track::new_at(spec, samples, start))
+    Ok(CollectedTrack::new_at(spec, samples, start))
 }
 
 /// Append a track derived by [`derive_iframe_track`] at `index`.
@@ -580,7 +859,7 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track, transmux::Error> {
 /// # Errors
 /// [`transmux::Error::InvalidInput`] when `index` is out of range or the
 /// source has no sync samples.
-pub fn append_iframe_track(media: &mut Media, index: usize) -> Result<(), transmux::Error> {
+pub fn append_iframe_track(media: &mut Collected, index: usize) -> Result<(), transmux::Error> {
     let source = media
         .tracks
         .get(index)
@@ -592,9 +871,9 @@ pub fn append_iframe_track(media: &mut Media, index: usize) -> Result<(), transm
     Ok(())
 }
 
-/// A summary log for a whole [`Media`] as one segment per track: the bridge
+/// A summary log for a whole [`Collected`] as one segment per track: the bridge
 /// for a caller that still holds the samples.
-pub fn segment_log(media: &transmux::Media) -> transmux::segment_log::SegmentSummaryLog {
+pub fn segment_log(media: &Collected) -> transmux::segment_log::SegmentSummaryLog {
     let mut log = transmux::segment_log::SegmentSummaryLog::new();
     for track in &media.tracks {
         let duration: u64 = track
@@ -622,30 +901,30 @@ pub fn segment_log(media: &transmux::Media) -> transmux::segment_log::SegmentSum
     log
 }
 
-/// The whole-input helper methods tests use on a collected [`Media`]: track
+/// The whole-input helper methods tests use on a collected [`Collected`]: track
 /// selection, a presentation-time window, and the anchor duration. These were
 /// `transmux` production functions until Phase 6 slice 3a; they live here (a
 /// `publish = false` test harness) so production code cannot hold a whole
 /// input.
-pub trait MediaSelectExt {
+pub trait CollectedSelectExt {
     /// Select tracks by index, preserving the given order.
-    fn select_tracks(&self, indices: &[usize]) -> Result<Media, transmux::Error>;
+    fn select_tracks(&self, indices: &[usize]) -> Result<Collected, transmux::Error>;
 
     /// Select tracks by predicate, preserving source order.
-    fn select_tracks_by<F>(&self, keep: F) -> Result<Media, transmux::Error>
+    fn select_tracks_by<F>(&self, keep: F) -> Result<Collected, transmux::Error>
     where
-        F: FnMut(&Track) -> bool;
+        F: FnMut(&CollectedTrack) -> bool;
 
     /// Trim to the half-open presentation-time window `[start, end)` in the
     /// movie timescale, snapping the anchor back to its preceding sync sample.
-    fn trim(&self, start: u64, end: u64) -> Result<Media, transmux::Error>;
+    fn trim(&self, start: u64, end: u64) -> Result<Collected, transmux::Error>;
 
     /// Total duration of the segmentation anchor track, in its timescale.
     fn anchor_duration(&self) -> Option<(u64, u32)>;
 }
 
-impl MediaSelectExt for Media {
-    fn select_tracks(&self, indices: &[usize]) -> Result<Media, transmux::Error> {
+impl CollectedSelectExt for Collected {
+    fn select_tracks(&self, indices: &[usize]) -> Result<Collected, transmux::Error> {
         if indices.is_empty() {
             return Err(transmux::Error::InvalidInput(
                 "select_tracks: empty track selection",
@@ -658,23 +937,23 @@ impl MediaSelectExt for Media {
             ))?;
             tracks.push(t.clone());
         }
-        Ok(Media::new(tracks, self.movie_timescale))
+        Ok(Collected::new(tracks, self.movie_timescale))
     }
 
-    fn select_tracks_by<F>(&self, mut keep: F) -> Result<Media, transmux::Error>
+    fn select_tracks_by<F>(&self, mut keep: F) -> Result<Collected, transmux::Error>
     where
-        F: FnMut(&Track) -> bool,
+        F: FnMut(&CollectedTrack) -> bool,
     {
-        let tracks: Vec<Track> = self.tracks.iter().filter(|t| keep(t)).cloned().collect();
+        let tracks: Vec<CollectedTrack> = self.tracks.iter().filter(|t| keep(t)).cloned().collect();
         if tracks.is_empty() {
             return Err(transmux::Error::InvalidInput(
                 "select_tracks_by: predicate kept no track",
             ));
         }
-        Ok(Media::new(tracks, self.movie_timescale))
+        Ok(Collected::new(tracks, self.movie_timescale))
     }
 
-    fn trim(&self, start: u64, end: u64) -> Result<Media, transmux::Error> {
+    fn trim(&self, start: u64, end: u64) -> Result<Collected, transmux::Error> {
         use broadcast_common::timescale::{Rounding, rescale_i64};
         if start >= end {
             return Err(transmux::Error::InvalidInput("trim: start must be < end"));
@@ -731,14 +1010,14 @@ impl MediaSelectExt for Media {
                 .find_map(|s| s.timing.and_then(|t| t.dts()))
                 .unwrap_or(0)
                 .max(0) as u64;
-            out_tracks.push(Track::new_at(track.spec.clone(), kept, first_dts));
+            out_tracks.push(CollectedTrack::new_at(track.spec.clone(), kept, first_dts));
         }
         if !kept_any {
             return Err(transmux::Error::InvalidInput(
                 "trim: window selected no samples on any track",
             ));
         }
-        Ok(Media::new(out_tracks, self.movie_timescale))
+        Ok(Collected::new(out_tracks, self.movie_timescale))
     }
 
     fn anchor_duration(&self) -> Option<(u64, u32)> {
@@ -755,7 +1034,7 @@ impl MediaSelectExt for Media {
 }
 
 /// The earliest first-sample decode time across `tracks`, with its timescale.
-fn origin_of(tracks: &[Track]) -> (i64, broadcast_common::timescale::Timescale) {
+fn origin_of(tracks: &[CollectedTrack]) -> (i64, broadcast_common::timescale::Timescale) {
     use broadcast_common::timescale::{Timescale, cmp_ticks};
     let mut best: Option<(i64, Timescale)> = None;
     for t in tracks {
@@ -780,7 +1059,7 @@ fn origin_of(tracks: &[Track]) -> (i64, broadcast_common::timescale::Timescale) 
 
 /// A track's presentation times relative to `origin`, in its own timescale.
 fn presentation_times(
-    track: &Track,
+    track: &CollectedTrack,
     origin: (i64, broadcast_common::timescale::Timescale),
 ) -> Vec<i64> {
     use broadcast_common::timescale::{Rounding, rescale_i64};
@@ -818,11 +1097,11 @@ fn in_window(presentation: i64, lo: i64, hi: i64) -> bool {
     presentation >= lo && presentation < hi
 }
 
-/// Build a whole CMAF output (init + media segments) from a collected [`Media`]
+/// Build a whole CMAF output (init + media segments) from a collected [`Collected`]
 /// by driving the one [`Segmenter`](transmux::Segmenter) stage — the test-only
-/// replacement for the deleted `Repackage::run_media`.
+/// replacement for the deleted whole-input repackager.
 pub fn cmaf_from_media(
-    media: &Media,
+    media: &Collected,
     target: core::time::Duration,
 ) -> Result<transmux::RepackageOutput, transmux::Error> {
     let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
@@ -846,7 +1125,7 @@ pub fn cmaf_from_media(
     let init_segment = segmenter.init_segment()?;
     let mut adapter = SegmenterAdapter(segmenter);
     let mut media_segments = Vec::new();
-    for output in transmux::mux_stage::drive_media(&mut adapter, media, Timestamp::ZERO)? {
+    for output in drive(&mut adapter, media, Timestamp::ZERO)? {
         if let transmux::mux_stage::MuxOutput::Segment(segment) = output {
             media_segments.push(segment.bytes.to_vec());
         }
@@ -857,8 +1136,8 @@ pub fn cmaf_from_media(
     })
 }
 
-/// Drops the `Track` announcements [`drive_media`](transmux::mux_stage::drive_media)
-/// sends, since a [`Segmenter`](transmux::Segmenter) is built with its track set.
+/// Drops the track announcements [`drive`] sends, since a
+/// [`Segmenter`](transmux::Segmenter) is built with its track set.
 struct SegmenterAdapter(transmux::Segmenter);
 
 impl broadcast_common::Stage for SegmenterAdapter {
@@ -882,9 +1161,9 @@ impl broadcast_common::Stage for SegmenterAdapter {
     }
 }
 
-/// Record a progressive sample plan from a collected [`Media`] — the test-only
+/// Record a progressive sample plan from a collected [`Collected`] — the test-only
 /// replacement for the deleted `PlanPass::for_media`.
-pub fn plan_from_media(media: &Media) -> Result<isobmff::plan::OwnedPlan, transmux::Error> {
+pub fn plan_from_media(media: &Collected) -> Result<isobmff::plan::OwnedPlan, transmux::Error> {
     let mut pass = transmux::PlanPass::new(media.movie_timescale);
     for track in &media.tracks {
         pass.feed(
@@ -910,11 +1189,11 @@ pub fn plan_from_media(media: &Media) -> Result<isobmff::plan::OwnedPlan, transm
 }
 
 /// Drive [`MatroskaDemux`](transmux::matroska_demux::MatroskaDemux) over a
-/// whole in-memory Matroska/WebM image and fold its events into a [`Media`].
+/// whole in-memory Matroska/WebM image and fold its events into a [`Collected`].
 ///
 /// A whole small fixture in memory is fine **here only**: this crate is a test
 /// harness. The stage itself never holds the input.
-pub fn media_from_matroska(bytes: &[u8], mode: CollectMode) -> Result<Media, transmux::Error> {
+pub fn media_from_matroska(bytes: &[u8], mode: CollectMode) -> Result<Collected, transmux::Error> {
     use transmux::matroska_demux::{MatroskaDemux, MatroskaDemuxConfig, MatroskaInput};
     let total_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     let config = MatroskaDemuxConfig::default().with_total_len(Some(total_len));
@@ -1078,13 +1357,13 @@ pub struct RtpTestInput {
 }
 
 /// Drive [`RtpStreamDepacketiser`](transmux::rtp_stream::RtpStreamDepacketiser)
-/// over one whole packet flow per stream and fold the samples into a [`Media`].
+/// over one whole packet flow per stream and fold the samples into a [`Collected`].
 ///
 /// # Errors
 ///
 /// An AAC stream without its `AudioSpecificConfig`, an invalid clock rate, or
 /// whatever the depacketiser reports.
-pub fn media_from_rtp(input: RtpTestInput) -> Result<Media, transmux::Error> {
+pub fn media_from_rtp(input: RtpTestInput) -> Result<Collected, transmux::Error> {
     media_from_rtp_with_events(input).map(|(media, _)| media)
 }
 
@@ -1096,22 +1375,24 @@ pub fn media_from_rtp(input: RtpTestInput) -> Result<Media, transmux::Error> {
 /// As [`media_from_rtp`].
 pub fn media_from_rtp_with_events(
     input: RtpTestInput,
-) -> Result<(Media, Vec<transmux::RtpLossEvent>), transmux::Error> {
+) -> Result<(Collected, Vec<transmux::RtpLossEvent>), transmux::Error> {
     let streams = input.streams;
     use transmux::rtp_stream::{RtpStreamDepacketiser, RtpStreamTrack};
     let mut tracks = Vec::with_capacity(streams.len());
     for (index, stream) in streams.iter().enumerate() {
         let track_id = TrackId::new(u32::try_from(index).unwrap_or(u32::MAX).saturating_add(1));
         let clock = stream.validated_clock_rate()?;
-        let config = match (&stream.config, stream.kind) {
-            (Some(config), _) => config.clone(),
-            (None, transmux::RtpMediaKind::H264) => rtp_placeholder_avc_config(),
-            (None, transmux::RtpMediaKind::Aac) => {
+        let config = match &stream.config {
+            Some(config) => config.clone(),
+            None if matches!(stream.kind, transmux::RtpMediaKind::H264) => {
+                rtp_placeholder_avc_config()
+            }
+            None if matches!(stream.kind, transmux::RtpMediaKind::Aac) => {
                 return Err(transmux::Error::InvalidInput(
                     "an AAC RTP stream needs its AudioSpecificConfig",
                 ));
             }
-            (None, _) => {
+            None => {
                 return Err(transmux::Error::InvalidInput(
                     "an RTP stream needs its codec config",
                 ));
@@ -1135,7 +1416,7 @@ pub fn media_from_rtp_with_events(
     // The streaming depacketiser emits each track's timestamps relative to its
     // first unwrapped presentation time, so a reordered video track's derived
     // `dts` can start below zero. The whole-input fold zero-based the whole
-    // `Media` at its lowest decode instant (the IR's `start_decode_time` is a
+    // `Collected` at its lowest decode instant (the IR's `start_decode_time` is a
     // `u64` that must equal the first sample's `dts`), so translate every
     // sample by that one constant, exactly as the deleted batch path did.
     let origin = per_track
@@ -1185,11 +1466,11 @@ pub fn media_from_rtp_with_events(
                 .and_then(|sample| sample.timing.and_then(|timing| timing.dts()))
                 .map(|dts| u64::try_from(dts.max(0)).unwrap_or(0))
                 .unwrap_or(0);
-            Track::new_at(spec, samples, anchor)
+            CollectedTrack::new_at(spec, samples, anchor)
         })
         .collect();
     Ok((
-        Media::new(built, transmux::rtp::VIDEO_CLOCK_TIMESCALE),
+        Collected::new(built, transmux::rtp::VIDEO_CLOCK_TIMESCALE),
         events,
     ))
 }
@@ -1213,5 +1494,343 @@ fn rtp_placeholder_avc_config() -> transmux::CodecConfig {
         }),
         width: 0,
         height: 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use broadcast_common::stage::Timestamp;
+    use transmux::ir::{CodecConfig, DataCarriage, DataIdentity, SampleFlags};
+    use transmux::mux_stage::{MuxInput, MuxOutput};
+    use transmux::{TrackId, TrackSpec};
+
+    #[derive(Default)]
+    struct Recorder {
+        fed: Vec<(TrackId, Option<i64>)>,
+        announced: usize,
+        finished: bool,
+        out: Vec<MuxOutput>,
+    }
+
+    impl Stage for Recorder {
+        type In<'a> = MuxInput;
+        type Out = MuxOutput;
+        type Error = core::convert::Infallible;
+
+        fn feed(&mut self, input: MuxInput, _now: Timestamp) -> Result<(), Self::Error> {
+            match input {
+                MuxInput::Track(_) => self.announced += 1,
+                MuxInput::Sample { track, sample } => {
+                    self.fed
+                        .push((track, sample.timing.and_then(|timing| timing.dts())));
+                    self.out.push(MuxOutput::Bytes(sample.data));
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<MuxOutput> {
+            self.out.pop()
+        }
+
+        fn finish(&mut self) -> Result<(), Self::Error> {
+            self.finished = true;
+            Ok(())
+        }
+    }
+
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("non-zero")
+    }
+
+    fn data_spec(id: u32, scale: u32) -> TrackSpec {
+        TrackSpec::new(
+            TrackId::new(id),
+            timescale(scale),
+            CodecConfig::Data {
+                identity: DataIdentity::Ts {
+                    stream_type: 6,
+                    descriptors: Vec::new(),
+                    carriage: DataCarriage::Pes,
+                },
+            },
+        )
+    }
+
+    fn track(id: u32, scale: u32, dts: &[i64]) -> CollectedTrack {
+        let samples = dts
+            .iter()
+            .map(|&d| {
+                let mut sample = Sample::timed(vec![0u8; 1], d, d, None);
+                sample.flags = SampleFlags::SYNC;
+                sample
+            })
+            .collect();
+        CollectedTrack::new(data_spec(id, scale), samples)
+    }
+
+    #[test]
+    fn drive_interleaves_by_decode_time_across_timescales() {
+        let video = track(1, 90_000, &[0, 3_000, 6_000]);
+        let audio = track(2, 48_000, &[0, 1_024, 2_048, 3_072]);
+        let media = Collected::new(vec![video, audio], timescale(1_000));
+        let mut stage = Recorder::default();
+        let out = drive(&mut stage, &media, Timestamp::default()).expect("infallible");
+        let v = TrackId::new(1);
+        let a = TrackId::new(2);
+        assert_eq!(stage.announced, 2);
+        assert!(stage.finished);
+        assert_eq!(out.len(), 7);
+        assert_eq!(
+            stage.fed,
+            vec![
+                (v, Some(0)),
+                (a, Some(0)),
+                (a, Some(1_024)),
+                (v, Some(3_000)),
+                (a, Some(2_048)),
+                (a, Some(3_072)),
+                (v, Some(6_000))
+            ]
+        );
+    }
+
+    /// A track's untimed head plays *before* its first timestamped sample, so
+    /// it must sort there too. Sixteen 1024-tick head frames at 44.1 kHz span
+    /// ~371 ms before the first timed sample at 64 243 ticks (~1.457 s), i.e.
+    /// from ~1.086 s, which precedes the video's first sample at 1.4 s.
+    #[test]
+    fn an_untimed_head_sorts_before_the_first_timed_sample() {
+        const HEAD: u32 = 16;
+        const HEAD_DURATION: u32 = 1_024;
+        const FIRST_TIMED: i64 = 64_243;
+        let video = track(1, 90_000, &[126_000, 129_600]);
+        let duration = std::num::NonZeroU32::new(HEAD_DURATION).expect("positive");
+        let mut samples: Vec<Sample> = (0..HEAD)
+            .map(|_| Sample::from_duration(vec![0u8; 1], duration, true).expect("valid sample"))
+            .collect();
+        let mut timed = Sample::timed(vec![0u8; 1], FIRST_TIMED, FIRST_TIMED, None);
+        timed.flags = SampleFlags::SYNC;
+        samples.push(timed);
+        let audio = CollectedTrack::new_at(
+            data_spec(2, 44_100),
+            samples,
+            u64::try_from(FIRST_TIMED).expect("non-negative"),
+        );
+        let media = Collected::new(vec![video, audio], timescale(1_000));
+        let mut stage = Recorder::default();
+        drive(&mut stage, &media, Timestamp::default()).expect("infallible");
+        assert_eq!(
+            stage.fed.first().copied(),
+            Some((TrackId::new(2), None)),
+            "the untimed audio head precedes the video that starts after it"
+        );
+        let video = stage
+            .fed
+            .iter()
+            .position(|entry| *entry == (TrackId::new(1), Some(126_000)))
+            .expect("video sample fed");
+        let timed_audio = stage
+            .fed
+            .iter()
+            .position(|entry| *entry == (TrackId::new(2), Some(FIRST_TIMED)))
+            .expect("first timed audio sample fed");
+        assert!(
+            video < timed_audio,
+            "the first timed audio sample still follows the video it plays after"
+        );
+    }
+}
+
+/// The collector equality test (Review Focus): `same` destructures every field
+/// with no `..`, so adding a field to [`Collected`] / [`CollectedTrack`]
+/// without extending it does not compile, and each field of a differing pair
+/// must make the comparison unequal.
+#[cfg(test)]
+mod equality_tests {
+    use super::*;
+    use broadcast_common::timescale::Timescale;
+    use mpeg_ts::pid::Pid;
+    use mpeg_ts::ts::Pcr;
+    use std::sync::Arc;
+    use transmux::ir::{
+        CodecConfig, DataCarriage, DataIdentity, DegradationRecord, DisplayInfo, EventProvenance,
+        InputDegradation, Provenance, SampleFlags, SampleProtection, SampleTiming,
+    };
+    use transmux::{PcrSample, SkippedTrack, TrackId, TrackSpec};
+
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("non-zero")
+    }
+
+    fn spec(id: u32) -> TrackSpec {
+        TrackSpec::new(
+            TrackId::new(id),
+            timescale(1_000),
+            CodecConfig::Data {
+                identity: DataIdentity::Ts {
+                    stream_type: 6,
+                    descriptors: Vec::new(),
+                    carriage: DataCarriage::Pes,
+                },
+            },
+        )
+    }
+
+    fn sample() -> Sample {
+        Sample::new(vec![1u8, 2, 3], Some(0), Some(0), Some(1), true).expect("valid timing")
+    }
+
+    fn base() -> Collected {
+        let mut track = CollectedTrack::new(spec(1), vec![sample()]);
+        track.start_decode_time = 90;
+        let mut collected = Collected::new(vec![track], timescale(1_000));
+        collected.pcr = vec![PcrSample::new(
+            Pcr::from_parts(10_000, 0).expect("in range"),
+            Pid::from_const(256),
+            7,
+            false,
+        )];
+        collected.skipped = vec![SkippedTrack::new(String::from("avc1"), String::from("why"))];
+        collected.degraded = vec![InputDegradation::TransportError];
+        collected.degraded_at = vec![DegradationRecord::new(
+            InputDegradation::TransportError,
+            Some(TrackId::new(1)),
+            EventProvenance::default(),
+        )];
+        collected
+    }
+
+    fn same_sample(a: &Sample, b: &Sample) -> bool {
+        a.data == b.data
+            && a.timing == b.timing
+            && a.flags == b.flags
+            && a.provenance == b.provenance
+            && a.display == b.display
+            && a.protection == b.protection
+    }
+
+    fn same_track(a: &CollectedTrack, b: &CollectedTrack) -> bool {
+        let CollectedTrack {
+            spec: a_spec,
+            samples: a_samples,
+            start_decode_time: a_start,
+        } = a;
+        let CollectedTrack {
+            spec: b_spec,
+            samples: b_samples,
+            start_decode_time: b_start,
+        } = b;
+        a_spec == b_spec
+            && a_start == b_start
+            && a_samples.len() == b_samples.len()
+            && a_samples
+                .iter()
+                .zip(b_samples)
+                .all(|(x, y)| same_sample(x, y))
+    }
+
+    fn same(a: &Collected, b: &Collected) -> bool {
+        let Collected {
+            tracks: a_tracks,
+            movie_timescale: a_movie,
+            pcr: a_pcr,
+            skipped: a_skipped,
+            degraded: a_degraded,
+            degraded_at: a_degraded_at,
+        } = a;
+        let Collected {
+            tracks: b_tracks,
+            movie_timescale: b_movie,
+            pcr: b_pcr,
+            skipped: b_skipped,
+            degraded: b_degraded,
+            degraded_at: b_degraded_at,
+        } = b;
+        a_tracks.len() == b_tracks.len()
+            && a_tracks.iter().zip(b_tracks).all(|(x, y)| same_track(x, y))
+            && a_movie == b_movie
+            && a_pcr == b_pcr
+            && a_skipped == b_skipped
+            && a_degraded == b_degraded
+            && a_degraded_at == b_degraded_at
+    }
+
+    #[test]
+    fn equal_values_compare_equal() {
+        let base = base();
+        assert!(same(&base, &base.clone()));
+    }
+
+    #[test]
+    fn every_collected_field_changes_the_comparison() {
+        let base = base();
+        let mut m = base.clone();
+        m.movie_timescale = timescale(1_001);
+        assert!(!same(&base, &m), "movie_timescale");
+
+        let mut m = base.clone();
+        m.pcr[0].packet_index += 1;
+        assert!(!same(&base, &m), "pcr");
+
+        let mut m = base.clone();
+        m.skipped[0].reason.push('!');
+        assert!(!same(&base, &m), "skipped");
+
+        let mut m = base.clone();
+        m.degraded.clear();
+        assert!(!same(&base, &m), "degraded");
+
+        let mut m = base.clone();
+        m.degraded_at[0].track = None;
+        assert!(!same(&base, &m), "degraded_at");
+    }
+
+    #[test]
+    fn every_track_and_sample_field_changes_the_comparison() {
+        let base = base();
+        let mut m = base.clone();
+        m.tracks[0].start_decode_time += 1;
+        assert!(!same(&base, &m), "start_decode_time");
+
+        let mut m = base.clone();
+        m.tracks[0].spec = spec(2);
+        assert!(!same(&base, &m), "spec");
+
+        let mut m = base.clone();
+        m.tracks[0].samples.push(sample());
+        assert!(!same(&base, &m), "sample count");
+
+        let mut m = base.clone();
+        m.tracks[0].samples[0].data = Sample::new(vec![9u8], Some(0), Some(0), Some(1), true)
+            .expect("valid timing")
+            .data;
+        assert!(!same(&base, &m), "sample data");
+
+        let mut m = base.clone();
+        m.tracks[0].samples[0].timing = Some(SampleTiming::timed(1, 1));
+        assert!(!same(&base, &m), "sample timing");
+
+        let mut m = base.clone();
+        m.tracks[0].samples[0].flags = SampleFlags::new(false);
+        assert!(!same(&base, &m), "sample flags");
+
+        let mut m = base.clone();
+        m.tracks[0].samples[0].provenance = Some(Provenance::new(Some(1), None));
+        assert!(!same(&base, &m), "sample provenance");
+
+        let mut m = base.clone();
+        m.tracks[0].samples[0].display = Some(Arc::new(DisplayInfo::new(None)));
+        assert!(!same(&base, &m), "sample display");
+
+        let mut m = base.clone();
+        let iv = m.tracks[0].samples[0].data.clone();
+        m.tracks[0].samples[0].protection = Some(Arc::new(SampleProtection {
+            iv,
+            subsamples: Vec::new(),
+        }));
+        assert!(!same(&base, &m), "sample protection");
     }
 }

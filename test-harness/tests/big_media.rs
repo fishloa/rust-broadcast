@@ -110,7 +110,12 @@ fn written_big_files_demux_back_to_every_sample() {
 
 const DRIFT_TARGET: u64 = 32 << 20;
 
-fn av_pair(media: &transmux::Media) -> (&transmux::Track, &transmux::Track) {
+fn av_pair(
+    media: &test_harness::collect::Collected,
+) -> (
+    &test_harness::collect::CollectedTrack,
+    &test_harness::collect::CollectedTrack,
+) {
     let video = media
         .tracks
         .iter()
@@ -124,7 +129,7 @@ fn av_pair(media: &transmux::Media) -> (&transmux::Track, &transmux::Track) {
     (video, audio)
 }
 
-fn pts_seconds(track: &transmux::Track, index: usize) -> f64 {
+fn pts_seconds(track: &test_harness::collect::CollectedTrack, index: usize) -> f64 {
     let pts = track.samples[index]
         .timing
         .as_ref()
@@ -134,8 +139,8 @@ fn pts_seconds(track: &transmux::Track, index: usize) -> f64 {
 }
 
 fn assert_no_drift(
-    written: &transmux::Media,
-    source: &transmux::Media,
+    written: &test_harness::collect::Collected,
+    source: &test_harness::collect::Collected,
     made: &test_harness::big_media::BigMedia,
     label: &str,
 ) {

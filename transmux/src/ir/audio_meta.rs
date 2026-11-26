@@ -21,14 +21,13 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::timescale::{Rounding, rescale_i64};
 
 use dvb_si::descriptors::aac::AacComponentType;
 use dvb_si::descriptors::any::{AnyDescriptor, parse_loop};
 use dvb_si::descriptors::extension::ExtensionBody;
 use dvb_si::descriptors::iso_639_language::AudioType as DvbAudioType;
 
-use super::{Track, TrackSpec};
+use super::TrackSpec;
 use crate::aac_asc::HeAacProfile;
 
 /// Language code France 2 / TF1 use for their audio-description track.
@@ -358,7 +357,7 @@ impl TrackSpec {
     /// signalling ([`CodecConfig::with_explicit_he_aac`](super::CodecConfig::with_explicit_he_aac)).
     /// The media timescale becomes the SBR output rate (twice the core rate),
     /// as Apple's encoder writes it in `mdhd` and `mp4a`; samples already cut
-    /// against this spec must follow with [`Track::with_explicit_he_aac`] or
+    /// against this spec must follow with the same call on the whole track, or
     /// [`Sample::rescale_timescale`](super::Sample::rescale_timescale). The
     /// track id, PID and descriptor loop are unchanged.
     pub fn with_explicit_he_aac(mut self, profile: HeAacProfile) -> crate::error::Result<Self> {
@@ -375,31 +374,5 @@ impl TrackSpec {
     /// or a loop carrying none of those descriptors.
     pub fn audio_metadata(&self) -> AudioMetadata {
         AudioMetadata::from_es_info(&self.es_info_descriptors)
-    }
-}
-
-impl Track {
-    /// [`TrackSpec::with_explicit_he_aac`] applied to the track, with every
-    /// sample's `dts`/`pts`/`duration` and `start_decode_time` re-expressed
-    /// in the new media timescale so no presentation time moves.
-    pub fn with_explicit_he_aac(mut self, profile: HeAacProfile) -> crate::error::Result<Self> {
-        let from = self.spec.timescale;
-        self.spec = self.spec.with_explicit_he_aac(profile)?;
-        let to = self.spec.timescale;
-        if from != to {
-            self.samples = self
-                .samples
-                .into_iter()
-                .map(|s| s.rescale_timescale(from, to))
-                .collect::<crate::error::Result<Vec<_>>>()?;
-            self.start_decode_time = u64::try_from(rescale_i64(
-                i64::try_from(self.start_decode_time).unwrap_or(i64::MAX),
-                from,
-                to,
-                Rounding::Floor,
-            ))
-            .unwrap_or(u64::MAX);
-        }
-        Ok(self)
     }
 }

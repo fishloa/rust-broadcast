@@ -38,14 +38,11 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 /// Seconds to wait after RECORD, so its response is read before the first
 /// media packet and every frame lands under the right request.
 /// Mux a whole `Media` through one TS muxer stage.
-fn mux_ts(media: &transmux::Media) -> Vec<u8> {
+fn mux_ts(media: &test_harness::collect::Collected) -> Vec<u8> {
     let mut stage = transmux::TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
-    let out = transmux::mux_stage::drive_media(
-        &mut stage,
-        media,
-        broadcast_common::stage::Timestamp::ZERO,
-    )
-    .expect("mux to TS");
+    let out =
+        test_harness::collect::drive(&mut stage, media, broadcast_common::stage::Timestamp::ZERO)
+            .expect("mux to TS");
     let mut bytes = Vec::new();
     for output in out {
         if let transmux::mux_stage::MuxOutput::Bytes(chunk) = output {

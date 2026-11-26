@@ -33,7 +33,7 @@ use mpeg_ts::pid::Pid;
 use std::collections::BTreeSet;
 
 use crate::ts_mux_stage;
-use transmux::{Media, Track};
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 
 const DESC_TAG_ISO_639_LANGUAGE: u8 = 0x0A;
 const DESC_TAG_DVB_SUBTITLING: u8 = 0x59;

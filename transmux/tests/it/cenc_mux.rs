@@ -17,7 +17,7 @@
 #![cfg(feature = "cenc")]
 
 use std::path::PathBuf;
-use test_harness::collect::MediaSelectExt;
+use test_harness::collect::CollectedSelectExt;
 use transmux::TrackId;
 
 use broadcast_common::{Parse, Serialize};
@@ -28,8 +28,9 @@ use isobmff::cenc::{
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::writer::fragmented::{FragmentProtection, protect_media_segment};
+use test_harness::collect::Collected as Media;
 use transmux::cenc_segment::protect_init_segment;
-use transmux::{CencEncryptStage, CencScheme, CodecConfig, EncryptConfig, Media, SubsamplePolicy};
+use transmux::{CencEncryptStage, CencScheme, CodecConfig, EncryptConfig, SubsamplePolicy};
 
 const KID: [u8; 16] = [
     0xa7, 0xe6, 0x1c, 0x37, 0x3e, 0x21, 0x90, 0x33, 0xc2, 0x10, 0x91, 0xfa, 0x60, 0x7b, 0xf3, 0xb8,
@@ -154,7 +155,7 @@ fn cenc_cfg(subsample: SubsamplePolicy) -> EncryptConfig {
 }
 
 /// The per-sample `senc` entries a track's samples carry, in decode order.
-fn sample_entries(track: &transmux::Track) -> Vec<SampleEncryptionEntry> {
+fn sample_entries(track: &test_harness::collect::CollectedTrack) -> Vec<SampleEncryptionEntry> {
     track
         .samples
         .iter()

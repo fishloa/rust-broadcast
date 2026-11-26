@@ -14,9 +14,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use broadcast_common::stage::{Stage, Timestamp};
+use test_harness::collect::Collected as Media;
 use transmux::ir::SampleTiming;
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
-use transmux::{InputDegradation, Media, TrackSpec};
+use transmux::{InputDegradation, TrackSpec};
 
 /// Groups the walk must compare (a checkout with no usable files fails rather
 /// than passing vacuously).

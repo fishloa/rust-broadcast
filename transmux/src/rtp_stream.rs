@@ -34,8 +34,8 @@
 //!   reported — a wire timestamp earlier than a previous one raises
 //!   [`RtpLossEvent::NonMonotonicTimestamp`] (audit r04-W29).
 //! - Each track independently rebases its first unwrapped timestamp to
-//!   `start_decode_time = 0` (via the caller building [`crate::media::Track`]
-//!   from `track_specs` + emitted samples) **unless** an RTCP Sender Report
+//!   `start_decode_time = 0` (via the caller assembling each track from its
+//!   spec plus the emitted samples) **unless** an RTCP Sender Report
 //!   has been fed for at least two tracks (issue #722): RTP timestamps alone
 //!   carry no cross-stream relationship (RFC 3550 §5.1 — each SSRC's clock
 //!   has an arbitrary random offset), so recovering true A/V sync needs the

@@ -10,7 +10,7 @@
 //! summary line pins the movie timescale and the PCR, degraded and skipped
 //! reports.
 
-use transmux::Media;
+use test_harness::collect::Collected as Media;
 
 /// The FNV-1a 64 offset basis.
 const FNV_OFFSET: u64 = 0xCBF2_9CE4_8422_2325;

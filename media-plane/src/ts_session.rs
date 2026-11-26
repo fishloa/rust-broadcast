@@ -537,9 +537,9 @@ pub mod test_support {
 
     /// Mux a whole `Media` through one TS muxer stage, collecting its bytes.
     #[cfg(test)]
-    pub fn mux_ts(media: &transmux::Media) -> Vec<u8> {
+    pub fn mux_ts(media: &test_harness::collect::Collected) -> Vec<u8> {
         let mut stage = TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
-        let outputs = transmux::mux_stage::drive_media(
+        let outputs = test_harness::collect::drive(
             &mut stage,
             media,
             broadcast_common::stage::Timestamp::ZERO,
@@ -1046,7 +1046,7 @@ mod tests {
 
     /// [`stalled_head_ts_bytes`] with `head_aus` access units on the stalled head.
     fn stalled_head_ts_bytes_n(head_aus: u32) -> Vec<u8> {
-        use transmux::media::{Media, Track};
+        use test_harness::collect::{Collected as Media, CollectedTrack as Track};
         use transmux::pipeline::{CodecConfig, DataCarriage, DataIdentity};
         let dur = 3000u32;
         let samples = |n: u32, len: usize, sync: bool| -> Vec<Sample> {

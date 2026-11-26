@@ -5,9 +5,9 @@
 //! [`TrackProtection`] and rewrites the `moov`
 //! tree through its typed `Serialize` impl.
 
+use crate::TrackId;
+use crate::TrackProtection;
 use crate::error::{Error, Result};
-use crate::ir::TrackId;
-use crate::ir::TrackProtection;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 use isobmff::BoxIter;
@@ -25,7 +25,7 @@ use isobmff::init_segment::{MOOV, MovieBox, StblChild, protect_sample_entry};
 /// Operates as a *post-processing* pass over an already-muxed init segment
 /// rather than being wired into `pipeline::build_init_segment` itself, so it
 /// composes with any caller that already has a
-/// [`crate::ir::TrackProtection`] in hand (e.g. the one a `CencEncryptStage`
+/// [`crate::TrackProtection`] in hand (e.g. the one a `CencEncryptStage`
 /// announces on `TrackSpec::protection`) without that crypto
 /// metadata needing to flow through the lower-level `TrackSpec`/pipeline
 /// plumbing. `init_segment` may be the bare `ftyp`+`moov` pair or a larger

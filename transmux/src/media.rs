@@ -1,9 +1,10 @@
 //! The any-to-any hub impls over the [`crate::ir`] media IR.
 //!
-//! The [`Media`] IR itself ([`Media`]/[`Track`]/[`TrackProtection`]/[`PcrSample`],
-//! re-exported here from [`crate::ir`]) is elementary [`Track`]s of coded
-//! [`Sample`]s; this module holds the CMAF mux stage and the HLS manifest
-//! renderer, the two `broadcast-common` container-mux roles this file owns:
+//! The IR this module works on is elementary tracks — a [`TrackSpec`] plus
+//! coded [`Sample`]s — alongside [`TrackProtection`] and [`PcrSample`]
+//! (re-exported here from [`crate::ir`]); this module holds the CMAF mux stage
+//! and the HLS manifest renderer, the two `broadcast-common` container-mux
+//! roles this file owns:
 //!
 //! - [`CmafMuxStage`] : [`Stage`] `<In = MuxInput, Out = MuxOutput>` — mux
 //!   samples into a CMAF init segment plus one media segment per fragment,
@@ -14,16 +15,15 @@
 //!   list and a [`SegmentSummaryLog`];
 //!   it never sees a sample.
 //!
-//! The [`Track`] IR is a thin wrapper over the existing public
 //! [`TrackSpec`] (codec config + timescale + track_id) and [`Sample`] (coded
-//! access units); those types stay public and unchanged. `no_std` + `alloc`.
+//! access units) stay public and unchanged. `no_std` + `alloc`.
 //!
 //! CENC/CBCS (ISO/IEC 23001-7 AES-CTR / AES-CBC-pattern) protection is
 //! applied and removed per sample by
 //! [`CencEncryptStage`](crate::cenc_encrypt::CencEncryptStage) and
 //! [`CencDecryptStage`](crate::cenc_decrypt::CencDecryptStage) — both behind
 //! the `cenc` feature (issues #465/#564). Either direction records its per-track
-//! crypto metadata onto [`TrackSpec::protection`](crate::ir::TrackSpec::protection) and per-sample [`SampleProtection`](crate::ir::SampleProtection).
+//! crypto metadata onto [`TrackSpec::protection`](crate::TrackSpec::protection) and per-sample [`SampleProtection`](crate::ir::SampleProtection).
 
 use alloc::boxed::Box;
 use alloc::format;
@@ -64,10 +64,10 @@ use isobmff::opus::OpusSpecificBox;
 use isobmff::reader::TrackInfo;
 use isobmff::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 
-/// [`Media`], [`Track`], [`TrackProtection`], [`PcrSample`] moved to
+/// [`TrackProtection`], [`PcrSample`] and [`SkippedTrack`] moved to
 /// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
 /// `crate::media::`/`transmux::media::` path keeps resolving unchanged.
-pub use crate::ir::{Media, PcrSample, SkippedTrack, Track, TrackProtection};
+pub use crate::ir::{PcrSample, SkippedTrack, TrackProtection};
 
 /// `#EXT-X-VERSION` for the fMP4 playlists [`HlsPackager`] writes (RFC 8216 §7).
 const DEFAULT_HLS_VERSION: u8 = 7;
@@ -1420,6 +1420,7 @@ fn config_box_body<'b>(boxes: &'b [OpaqueBox], fourcc: &[u8; BOX_TYPE_SIZE]) -> 
 mod tests {
     use super::*;
     use crate::TrackId;
+    use crate::collect::{Collected as Media, CollectedTrack as Track};
     use crate::ir::DataIdentity;
     use crate::pipeline::{FragmentTrackData, build_media_segment};
     use isobmff::subtitle_entries::WvttSampleEntry;
@@ -1589,7 +1590,8 @@ mod tests {
         file.extend_from_slice(&seg1);
         file.extend_from_slice(&seg2);
 
-        let media = crate::mp4_collect::media_from_mp4(&file).expect("demux gapped fMP4");
+        let media = crate::collect::media_from_mp4(&file, crate::collect::CollectMode::Seekable)
+            .expect("demux gapped fMP4");
         let track = &media.tracks[0];
         assert_eq!(
             track.samples.len(),
@@ -1673,7 +1675,8 @@ mod tests {
             .unwrap(),
         );
 
-        let media = crate::mp4_collect::media_from_mp4(&file).unwrap();
+        let media =
+            crate::collect::media_from_mp4(&file, crate::collect::CollectMode::Seekable).unwrap();
         let got: Vec<i64> = media.tracks[0]
             .samples
             .iter()
@@ -1854,7 +1857,8 @@ mod tests {
         let mut file = init;
         file.extend_from_slice(&frag);
 
-        let media = crate::mp4_collect::media_from_mp4(&file).expect("demux the 2-byte fMP4");
+        let media = crate::collect::media_from_mp4(&file, crate::collect::CollectMode::Seekable)
+            .expect("demux the 2-byte fMP4");
         let track = &media.tracks[0];
         assert_eq!(
             track.samples[0].data.as_ref(),
@@ -1951,7 +1955,8 @@ mod tests {
         let mut file = init;
         file.extend_from_slice(&frag);
 
-        let media = crate::mp4_collect::media_from_mp4(&file).expect("demux the 2-byte HEVC fMP4");
+        let media = crate::collect::media_from_mp4(&file, crate::collect::CollectMode::Seekable)
+            .expect("demux the 2-byte HEVC fMP4");
         let track = &media.tracks[0];
         assert_eq!(
             track.samples[0].data.as_ref(),

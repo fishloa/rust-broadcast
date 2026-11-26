@@ -1,12 +1,13 @@
 //! Drive a per-sample CENC stage over a whole `Media` in tests.
 //!
-//! The library's own bridge (`drive_media`) is for muxer stages whose output
+//! The test harness's bridge (`drive`) is for muxer stages whose output
 //! is `MuxOutput`; a CENC stage's output is another `MuxInput` stream, so this
 //! is the test-side twin that rebuilds the transformed `Media`.
 
 use broadcast_common::stage::{Stage, Timestamp};
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
+use transmux::TrackId;
 use transmux::mux_stage::MuxInput;
-use transmux::{Media, Track, TrackId};
 
 /// Feed every track then every sample of `media` through `stage`, rebuilding
 /// the resulting `Media` from its output.

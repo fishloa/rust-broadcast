@@ -2,8 +2,9 @@
 //! track-spec list plus a [`SegmentSummaryLog`], exactly what the renderers
 //! take ([`crate::segment_log`]).
 
+use test_harness::collect::Collected as Media;
 use transmux::dash::DashPackager;
-use transmux::ir::{Media, TrackSpec};
+use transmux::ir::TrackSpec;
 use transmux::ll_dash::LlDashPackager;
 use transmux::segment_log::SegmentSummaryLog;
 use transmux::{HlsPackager, SmoothPackager};
@@ -129,10 +130,16 @@ pub fn smooth_parts(
     media: &Media,
     target: core::time::Duration,
 ) -> transmux::Result<(SegmentSummaryLog, Vec<transmux::mux_stage::SegmentOut>)> {
-    use transmux::mux_stage::{MuxOutput, drive_media};
-    let origin = transmux::SmoothOrigin::from_tracks(&media.tracks);
+    use test_harness::collect::drive;
+    use transmux::mux_stage::MuxOutput;
+    let origin = transmux::SmoothOrigin::from_tracks(
+        media
+            .tracks
+            .iter()
+            .map(|t| (t.spec.timescale, t.samples.as_slice())),
+    );
     let mut segmenter = transmux::SmoothSegmenter::new(specs(media), origin, target)?;
-    let outputs = drive_media(&mut segmenter, media, broadcast_common::Timestamp::ZERO)?;
+    let outputs = drive(&mut segmenter, media, broadcast_common::Timestamp::ZERO)?;
     let mut log = SegmentSummaryLog::new();
     let mut segments = Vec::new();
     for output in outputs {

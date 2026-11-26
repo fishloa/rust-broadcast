@@ -4,9 +4,10 @@
 //! `origin/main`, for every committed Matroska/WebM fixture, seekable and
 //! forward-only, and from one-byte, 4 KiB and whole-file feeds.
 
+use test_harness::collect::Collected as Media;
 use test_harness::collect::{CollectMode, media_from_matroska};
+use transmux::MkvMuxStage;
 use transmux::pipeline::CodecConfig;
-use transmux::{Media, MkvMuxStage};
 
 const FIXTURES: &[&str] = &[
     "mkv/h264-aac.mkv",
@@ -62,7 +63,7 @@ fn codec_id(config: &CodecConfig) -> &'static str {
     }
 }
 
-fn track_line(track: &transmux::Track) -> String {
+fn track_line(track: &test_harness::collect::CollectedTrack) -> String {
     let mut all = Vec::new();
     for sample in &track.samples {
         all.extend_from_slice(&sample.data);

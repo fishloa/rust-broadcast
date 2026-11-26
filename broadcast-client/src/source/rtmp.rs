@@ -527,7 +527,8 @@ impl RtmpSource {
 mod tests {
     use super::*;
     use crate::tshttp::Event as TsEvent;
-    use transmux::{EventProvenance, Media};
+    use test_harness::collect::Collected as Media;
+    use transmux::EventProvenance;
 
     fn rtmp_source() -> RtmpSource {
         let url = Url::parse("rtmp://origin.test/live/cam1").expect("url");

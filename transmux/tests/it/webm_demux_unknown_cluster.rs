@@ -27,8 +27,8 @@
 
 use isobmff::box_types::parse_box;
 use test_fixtures::ffprobe;
+use test_harness::collect::Collected as Media;
 use test_harness::collect::{CollectMode, media_from_matroska};
-use transmux::Media;
 
 fn demux_webm(bytes: &[u8]) -> Result<Media, transmux::Error> {
     media_from_matroska(bytes, CollectMode::Seekable)

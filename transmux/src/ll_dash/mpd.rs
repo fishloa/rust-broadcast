@@ -10,9 +10,9 @@ use core::time::Duration;
 use broadcast_dash::utc_timing::UtcScheme;
 use broadcast_dash::{Latency, Mpd, PlaybackRate, ServiceDescription, UtcTiming};
 
+use crate::TrackSpec;
 use crate::dash::DashPackager;
 use crate::error::{Error, Result};
-use crate::ir::TrackSpec;
 use crate::segment_log::SegmentSummaryLog;
 use broadcast_common::units::MILLIS_PER_SEC;
 

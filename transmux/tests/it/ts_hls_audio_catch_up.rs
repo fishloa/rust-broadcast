@@ -7,8 +7,8 @@
 use crate::ts_hls_stage;
 use broadcast_common::timescale::Timescale;
 use std::collections::HashMap;
+use test_harness::collect::Collected as Media;
 use transmux::ir::DataIdentity;
-use transmux::media::Media;
 use transmux::pipeline::{CodecConfig, DataCarriage};
 use transmux::{
     DemuxEvent, Sample, SegmentCutPolicy, StreamingTsDemux, StreamingTsHlsSegmenter, TrackId,

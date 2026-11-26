@@ -15,7 +15,7 @@ const SPECIALS: &str = "a&b<c>d\"e'f";
 /// `SPECIALS` as quick-xml writes it into an attribute value.
 const SPECIALS_ATTR: &str = "a&amp;b&lt;c&gt;d&quot;e&apos;f";
 
-fn demux_media() -> transmux::media::Media {
+fn demux_media() -> test_harness::collect::Collected {
     let path = test_fixtures::path("ts/h264-aac.ts");
     let ts = std::fs::read(path).expect("h264-aac.ts fixture must exist");
     test_harness::collect::media_from_ts(&ts[..]).expect("demux h264-aac.ts")

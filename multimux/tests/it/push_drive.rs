@@ -50,6 +50,36 @@ struct ScriptedConfig {
 
 struct ScriptedTransport {
     state: Arc<ScriptedState>,
+    muxer: ScriptedMuxer,
+}
+
+/// The scripted transport's per-connection muxer: one fixed 188-byte message
+/// per sample, and a poisoned sample is a mux failure.
+struct ScriptedMuxer {
+    state: Arc<ScriptedState>,
+}
+
+impl multimux::push::MediaMuxer for ScriptedMuxer {
+    fn set_tracks(&mut self, _tracks: &[transmux::TrackSpec]) -> Result<(), SendMediaError> {
+        Ok(())
+    }
+
+    fn encode_sample(
+        &mut self,
+        _track: TrackId,
+        sample: &Sample,
+    ) -> Result<Vec<Bytes>, SendMediaError> {
+        if sample.data.as_ref() == POISON {
+            self.state.mux_failures.fetch_add(1, Ordering::Relaxed);
+            self.state.announce();
+            return Err(SendMediaError::Mux(MuxError::NoCarriableTrack));
+        }
+        Ok(vec![Bytes::from_static(&MESSAGE)])
+    }
+
+    fn flush(&mut self) -> Result<Vec<Bytes>, SendMediaError> {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -66,6 +96,9 @@ impl PushTransport for ScriptedTransport {
         config.state.announce();
         Ok(ScriptedTransport {
             state: Arc::clone(&config.state),
+            muxer: ScriptedMuxer {
+                state: Arc::clone(&config.state),
+            },
         })
     }
 
@@ -82,17 +115,8 @@ impl PushTransport for ScriptedTransport {
         Ok(())
     }
 
-    fn encode_media(&mut self, tracks: &[transmux::Track]) -> Result<Vec<Bytes>, SendMediaError> {
-        let poisoned = tracks
-            .iter()
-            .flat_map(|track| track.samples.iter())
-            .any(|sample| sample.data.as_ref() == POISON);
-        if poisoned {
-            self.state.mux_failures.fetch_add(1, Ordering::Relaxed);
-            self.state.announce();
-            return Err(SendMediaError::Mux(MuxError::NoCarriableTrack));
-        }
-        Ok(vec![Bytes::from_static(&MESSAGE)])
+    fn media_muxer(&mut self) -> Option<&mut dyn multimux::push::MediaMuxer> {
+        Some(&mut self.muxer)
     }
 
     fn close(&mut self) {}

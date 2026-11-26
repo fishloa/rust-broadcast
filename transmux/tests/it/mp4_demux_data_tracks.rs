@@ -6,7 +6,7 @@
 //! complete sample entry as a [`DataIdentity::Mp4`] identity, samples
 //! included, so a camera telemetry/timecode track is no longer dropped.
 
-use transmux::Media;
+use test_harness::collect::Collected as Media;
 use transmux::ir::{CodecConfig, DataIdentity};
 use transmux::pipeline::{FragmentTrackData, build_media_segment};
 
@@ -16,7 +16,7 @@ fn demux(bytes: &[u8]) -> Media {
 }
 
 /// The raw sample entry and handler of an ISOBMFF data track, or `None`.
-fn mp4_identity(track: &transmux::Track) -> Option<([u8; 4], &[u8])> {
+fn mp4_identity(track: &test_harness::collect::CollectedTrack) -> Option<([u8; 4], &[u8])> {
     match &track.spec.config {
         CodecConfig::Data {
             identity:

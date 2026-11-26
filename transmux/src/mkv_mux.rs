@@ -461,10 +461,9 @@ impl Stage for MkvMuxStage {
 /// Mux `media` through the stage and collect its byte stream — the
 /// whole-media bridge the crate's own tests use.
 #[cfg(test)]
-pub(crate) fn mux_for_test(media: &crate::media::Media) -> Vec<u8> {
+pub(crate) fn mux_for_test(media: &crate::collect::Collected) -> Vec<u8> {
     let mut stage = MkvMuxStage::new(core::time::Duration::from_millis(5_000));
-    let outputs =
-        crate::mux_stage::drive_media(&mut stage, media, Timestamp::ZERO).expect("mux stage");
+    let outputs = crate::collect::drive(&mut stage, media, Timestamp::ZERO).expect("mux stage");
     let mut bytes = Vec::new();
     for output in outputs {
         match output {
@@ -489,7 +488,7 @@ pub(crate) fn mux_for_test(media: &crate::media::Media) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::Media;
+    use crate::collect::Collected as Media;
     use broadcast_common::timescale::Timescale;
 
     /// The `Cluster` span the tests give the stage.
@@ -578,11 +577,11 @@ mod tests {
                 .expect("feed");
         }
         demux.finish().expect("finish");
-        let mut tracks: Vec<crate::ir::Track> = Vec::new();
+        let mut tracks: Vec<crate::collect::CollectedTrack> = Vec::new();
         while let Some(event) = demux.poll() {
             match event {
                 crate::ir::DemuxEvent::TrackAdded(spec) => {
-                    tracks.push(crate::ir::Track::new(spec, Vec::new()));
+                    tracks.push(crate::collect::CollectedTrack::new(spec, Vec::new()));
                 }
                 crate::ir::DemuxEvent::Sample { track_id, sample } => {
                     if let Some(track) = tracks.iter_mut().find(|t| t.spec.track_id == track_id) {
@@ -649,7 +648,7 @@ mod tests {
         for (label, mutate) in [
             (
                 "negative timeline",
-                &(|m: &mut crate::media::Media| {
+                &(|m: &mut crate::collect::Collected| {
                     for track in &mut m.tracks {
                         for s in &mut track.samples {
                             if let Some(t) = s.timing.as_mut() {
@@ -657,11 +656,11 @@ mod tests {
                             }
                         }
                     }
-                }) as &dyn Fn(&mut crate::media::Media),
+                }) as &dyn Fn(&mut crate::collect::Collected),
             ),
             (
                 "backward jump",
-                &(|m: &mut crate::media::Media| {
+                &(|m: &mut crate::collect::Collected| {
                     // A real splice: the second half of the video track steps
                     // back 10 s. That is well inside the i16 range *per
                     // Cluster* while still being a backwards step the old
@@ -672,7 +671,7 @@ mod tests {
                             t.shift(-10_000);
                         }
                     }
-                }) as &dyn Fn(&mut crate::media::Media),
+                }) as &dyn Fn(&mut crate::collect::Collected),
             ),
         ] {
             let mut media = base.clone();
@@ -897,7 +896,8 @@ mod tests {
     /// index sorted rather than dropped.
     #[test]
     fn cues_stay_monotonic_across_a_backward_jump() {
-        use crate::ir::{Sample, SampleFlags, SampleTiming, Track};
+        use crate::collect::CollectedTrack as Track;
+        use crate::ir::{Sample, SampleFlags, SampleTiming};
         use bytes::Bytes;
 
         let spec = IrTrackSpec::new(
@@ -960,7 +960,7 @@ mod tests {
         let media = Media::new(Vec::new(), timescale(1_000));
         let mut stage = MkvMuxStage::new(core::time::Duration::from_millis(TEST_CLUSTER_SPAN_MS));
         assert!(matches!(
-            crate::mux_stage::drive_media(&mut stage, &media, Timestamp::ZERO),
+            crate::collect::drive(&mut stage, &media, Timestamp::ZERO),
             Err(Error::InvalidInput(..))
         ));
     }

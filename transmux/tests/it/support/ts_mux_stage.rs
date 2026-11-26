@@ -2,13 +2,15 @@
 //! already holds the IR needs.
 //!
 //! Every call announces the media's tracks, feeds its samples in decode-time
-//! order and finishes the stage ([`drive_media`]), then concatenates the
+//! order and finishes the stage ([`drive`](test_harness::collect::drive)), then concatenates the
 //! [`MuxOutput::Bytes`] chunks into the stream a caller would write.
 
 use broadcast_common::stage::Timestamp;
 use core::time::Duration;
-use transmux::mux_stage::{MuxOutput, drive_media};
-use transmux::{DEFAULT_PSI_INTERVAL, Media, TsMuxStage};
+use test_harness::collect::Collected as Media;
+use test_harness::collect::drive;
+use transmux::mux_stage::MuxOutput;
+use transmux::{DEFAULT_PSI_INTERVAL, TsMuxStage};
 
 /// Mux `media` with the usual PAT/PMT repetition ([`DEFAULT_PSI_INTERVAL`]).
 pub fn mux(media: &Media) -> Vec<u8> {
@@ -32,7 +34,7 @@ pub fn try_mux_with(
 
 /// [`drive`], returning the muxer's own error instead of panicking.
 pub fn try_drive(stage: &mut TsMuxStage, media: &Media) -> Result<Vec<u8>, transmux::Error> {
-    let outputs = drive_media(stage, media, Timestamp::ZERO)?;
+    let outputs = drive(stage, media, Timestamp::ZERO)?;
     Ok(bytes_of(outputs))
 }
 

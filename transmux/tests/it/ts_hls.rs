@@ -15,7 +15,7 @@
 use crate::ts_hls_stage;
 use crate::ts_psi::{first_section, parse_pmt, pid_of, pusi_of, split_lp};
 use broadcast_common::Serialize;
-use transmux::media::{Media, Track};
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::pipeline::CodecConfig;
 
 // ── Fixture + pipeline ───────────────────────────────────────────────────────
@@ -532,7 +532,7 @@ fn configured_media_sequence_is_rendered() {
     let mut seg = transmux::StreamingTsHlsSegmenter::with_start_sequence(specs, 6, usize::MAX, 42)
         .expect("segmenter");
     let outputs =
-        transmux::mux_stage::drive_media(&mut seg, &ir, broadcast_common::stage::Timestamp::ZERO)
+        test_harness::collect::drive(&mut seg, &ir, broadcast_common::stage::Timestamp::ZERO)
             .expect("segment media");
     let mut count = 0;
     for output in outputs {

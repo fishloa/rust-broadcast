@@ -14,7 +14,8 @@ use std::time::Duration;
 use transmux::ir::{CodecConfig, TrackSpec};
 
 use isobmff::{DoviBlSignalCompatibilityId, DoviDecoderConfigurationRecord};
-use transmux::{Media, build_init_segment};
+use test_harness::collect::Collected as Media;
+use transmux::build_init_segment;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -42,7 +43,7 @@ fn ts_media(fixture: &str) -> Option<Media> {
     Some(test_harness::collect::media_from_ts(&bytes).expect("demux ts"))
 }
 
-fn video(media: &Media) -> &transmux::Track {
+fn video(media: &Media) -> &test_harness::collect::CollectedTrack {
     media
         .tracks
         .iter()

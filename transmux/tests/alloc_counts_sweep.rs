@@ -29,11 +29,12 @@ fn mux_bytes(
         Out = transmux::mux_stage::MuxOutput,
         Error = transmux::Error,
     >,
-    media: &transmux::Media,
+    media: &test_harness::collect::Collected,
 ) -> Vec<u8> {
-    use transmux::mux_stage::{MuxOutput, drive_media};
-    let outputs = drive_media(stage, media, broadcast_common::stage::Timestamp::ZERO)
-        .expect("mux stage drive");
+    use test_harness::collect::drive;
+    use transmux::mux_stage::MuxOutput;
+    let outputs =
+        drive(stage, media, broadcast_common::stage::Timestamp::ZERO).expect("mux stage drive");
     let mut bytes: Vec<u8> = Vec::new();
     for output in outputs {
         match output {
@@ -60,7 +61,7 @@ fn mux_bytes(
 /// the per-track packet byte streams in track order.
 fn packetise(
     stage: &mut transmux::RtpPacketiserStage,
-    media: &transmux::Media,
+    media: &test_harness::collect::Collected,
 ) -> Vec<Vec<Vec<u8>>> {
     use broadcast_common::stage::{Stage, Timestamp};
     use transmux::mux_stage::{MuxInput, MuxOutput};
@@ -180,7 +181,7 @@ mod ts_demux_copies {
 
 mod rtp_stream_copies {
     use super::bytes_allocated;
-    use test_harness::collect::MediaSelectExt;
+    use test_harness::collect::CollectedSelectExt;
     use transmux::TrackId;
     use transmux::pipeline::CodecConfig;
     use transmux::rtp::RtpMediaKind;
@@ -308,14 +309,15 @@ mod progressive_support;
 
 mod muxer_buffering {
     use super::bytes_allocated;
-    use transmux::mux_stage::{MuxOutput, drive_media};
+    use test_harness::collect::drive;
+    use transmux::mux_stage::MuxOutput;
     use transmux::{DEFAULT_PSI_INTERVAL, MkvMuxStage, TsMuxStage};
 
     /// Mux a whole `Media` through a fresh TS stage and collect its bytes.
-    fn mux_ts(media: &transmux::Media) -> Vec<u8> {
+    fn mux_ts(media: &test_harness::collect::Collected) -> Vec<u8> {
         let mut stage = TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL));
-        let outputs = drive_media(&mut stage, media, broadcast_common::stage::Timestamp::ZERO)
-            .expect("mux to TS");
+        let outputs =
+            drive(&mut stage, media, broadcast_common::stage::Timestamp::ZERO).expect("mux to TS");
         let total: usize = outputs
             .iter()
             .map(|output| match output {

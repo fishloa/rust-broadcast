@@ -18,11 +18,11 @@ use transmux::dash::{
 };
 
 use isobmff::WvttSampleEntry;
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
 use transmux::{
-    AspectRatioIdc, Media, MediaKind, Sample, SmoothPackager, Track, TrackId, TrackSpec,
-    playready_wrmheader,
+    AspectRatioIdc, MediaKind, Sample, SmoothPackager, TrackId, TrackSpec, playready_wrmheader,
 };
 
 fn timescale(value: u32) -> Timescale {
@@ -51,7 +51,7 @@ fn fixtures() -> PathBuf {
     test_fixtures::root()
 }
 
-fn media() -> transmux::media::Media {
+fn media() -> test_harness::collect::Collected {
     let ts = fs::read(fixtures().join("ts/h264-aac.ts")).expect("ts fixture");
     test_harness::collect::media_from_ts(&ts[..]).expect("demux")
 }
@@ -182,7 +182,7 @@ fn encrypted_media(scheme: transmux::CencScheme, kid: [u8; 16]) -> Media {
 }
 
 /// Run-length-encodable segment durations for every track.
-fn timeline_segments(media: &transmux::media::Media) -> Vec<TrackSegments> {
+fn timeline_segments(media: &test_harness::collect::Collected) -> Vec<TrackSegments> {
     media
         .tracks
         .iter()

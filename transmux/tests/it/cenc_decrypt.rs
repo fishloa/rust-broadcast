@@ -11,9 +11,10 @@
 #![cfg(feature = "cenc")]
 
 use crate::box_walk::{SAMPLE_TABLE_CONTAINERS, find_box_range};
+use test_harness::collect::Collected as Media;
+use transmux::CodecConfig;
 use transmux::annexb::iter_length_prefixed_nals;
 use transmux::cenc_decrypt::{CencDecryptStage, CencScheme, KeyMap};
-use transmux::{CodecConfig, Media};
 
 const CENC_MP4: &str = "mp4/cenc.mp4";
 const CLEAR_TS: &str = "ts/h264/main.ts";

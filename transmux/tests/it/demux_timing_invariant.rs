@@ -47,9 +47,10 @@
 
 use test_fixtures::ffprobe;
 
+use test_harness::collect::Collected as Media;
+use transmux::RtmpMuxStage;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
-use transmux::{Media, RtmpMuxStage};
 
 fn workspace_fixture(rel: &str) -> Vec<u8> {
     let path = test_fixtures::root().join(rel);

@@ -47,7 +47,7 @@
 //! (`record.sps[0]`), which is unaffected by that gap.
 
 use crate::bit_writer::BitWriter;
-use transmux::media::{Media, Track};
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::pipeline::CodecConfig;
 use transmux::validate::{Severity, validate_init_segment};
 use transmux::{decode_avc_reorder_depth, decode_avc_sps, decode_avc_vui_timing};

@@ -153,3 +153,62 @@ pub async fn observe_extinf(client: &reqwest::Client, playlist_url: &str) -> Opt
     }
     None
 }
+
+/// Drive `transport`'s per-connection muxer over every sample in `tracks`, in
+/// decode order across tracks, flushing at the end (what `drive_push` does one
+/// drained item at a time). Returns the payload bytes written.
+///
+/// The live push path frames sample by sample; this is the test bridge for a
+/// caller that still holds a collected capture.
+pub async fn push_tracks_through_muxer<T: multimux::push::PushTransport>(
+    transport: &mut T,
+    tracks: &[test_harness::collect::CollectedTrack],
+) -> u64 {
+    let messages = {
+        let muxer = transport
+            .media_muxer()
+            .expect("a live push transport carries its own muxer");
+        let mut items = Vec::new();
+        for track in tracks {
+            let mut ticks = 0i64;
+            for sample in &track.samples {
+                let at = sample
+                    .timing
+                    .and_then(|t| t.dts())
+                    .or(sample.timing.and_then(|t| t.pts()))
+                    .unwrap_or(ticks);
+                ticks = at;
+                items.push((
+                    i128::from(at),
+                    track.spec.timescale.get(),
+                    track.spec.track_id,
+                    sample,
+                ));
+            }
+        }
+        items.sort_by(|a, b| {
+            (a.0 * i128::from(b.1))
+                .cmp(&(b.0 * i128::from(a.1)))
+                .then(a.2.value().cmp(&b.2.value()))
+        });
+        let mut messages = Vec::new();
+        for (_, _, track_id, sample) in items {
+            messages.extend(
+                muxer
+                    .encode_sample(track_id, sample)
+                    .unwrap_or_else(|e| panic!("encode sample: {e}")),
+            );
+        }
+        messages.extend(muxer.flush().unwrap_or_else(|e| panic!("flush muxer: {e}")));
+        messages
+    };
+    let mut total = 0u64;
+    for message in &messages {
+        transport
+            .write_message(message)
+            .await
+            .unwrap_or_else(|e| panic!("write message: {e}"));
+        total += message.len() as u64;
+    }
+    total
+}

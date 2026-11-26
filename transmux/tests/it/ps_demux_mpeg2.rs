@@ -5,7 +5,7 @@
 //! Fixture: `fixtures/ps/ffmpeg-mpeg2video-mp2.ps` — see `fixtures/ps/PROVENANCE.md`
 //! for the exact ffmpeg command. Oracle: ffprobe on that same file.
 
-use transmux::media::Media;
+use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;
 
 fn load_ps() -> Vec<u8> {

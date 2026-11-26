@@ -191,7 +191,7 @@ fn cmaf_with_track_ids(first_id: u32) -> (Vec<u8>, Vec<u8>) {
     let init = build_init_segment(&specs, MOVIE_TIMESCALE).expect("init");
     let mut stage = CmafMuxStage::new(MOVIE_TIMESCALE, FragmentCut::OnFlush, 1);
     let outputs =
-        transmux::mux_stage::drive_media(&mut stage, &media, broadcast_common::Timestamp::ZERO)
+        test_harness::collect::drive(&mut stage, &media, broadcast_common::Timestamp::ZERO)
             .expect("cmaf");
     let mut combined = Vec::new();
     for output in outputs {

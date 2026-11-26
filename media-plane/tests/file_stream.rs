@@ -15,9 +15,11 @@ use media_plane::file_stream::{
     FileDemand, FileInput, FileStreamLimits, StreamContainer, StreamingFileSession,
 };
 use media_plane::ingress::{ProgramId, SessionEvent};
-use transmux::ir::{Track, TrackId, TrackSpec};
+use test_harness::collect::CollectedTrack as Track;
+use test_harness::collect::{Collected as Media, CollectedTrack as IrTrack};
+use transmux::Sample;
+use transmux::ir::{TrackId, TrackSpec};
 use transmux::pipeline::{CodecConfig, DataCarriage, DataIdentity};
-use transmux::{Media, Sample, Track as IrTrack};
 
 const CHUNK: usize = 64 << 10;
 const PASSES: u32 = 3;
@@ -38,12 +40,9 @@ struct Emitted {
 /// Mux a whole `Media` through one TS muxer stage.
 fn mux_ts(media: &Media) -> Vec<u8> {
     let mut stage = transmux::TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
-    let out = transmux::mux_stage::drive_media(
-        &mut stage,
-        media,
-        broadcast_common::stage::Timestamp::ZERO,
-    )
-    .expect("mux to TS");
+    let out =
+        test_harness::collect::drive(&mut stage, media, broadcast_common::stage::Timestamp::ZERO)
+            .expect("mux to TS");
     let mut bytes = Vec::new();
     for output in out {
         if let transmux::mux_stage::MuxOutput::Bytes(chunk) = output {

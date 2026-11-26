@@ -17,10 +17,11 @@
 use crate::ts_psi::{payload_offset, pid_of, pusi_of};
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
+use test_harness::collect::Collected as Media;
 use transmux::TrackId;
 use transmux::ir::DataIdentity;
 use transmux::pipeline::CodecConfig;
-use transmux::{DemuxEvent, Media, StreamingTsDemux};
+use transmux::{DemuxEvent, StreamingTsDemux};
 
 const TS_PACKET_LEN: usize = 188;
 const SYNC_BYTE: u8 = 0x47;
@@ -40,7 +41,7 @@ fn fixture_bytes() -> Vec<u8> {
 /// A TS-demuxed track's PMT ES_info descriptor-loop bytes. A `Data` track's
 /// one home for them is its `DataIdentity::Ts` identity; every recognised
 /// codec's track keeps them on `TrackSpec::es_info_descriptors`.
-fn track_es_info(track: &transmux::Track) -> &[u8] {
+fn track_es_info(track: &test_harness::collect::CollectedTrack) -> &[u8] {
     match &track.spec.config {
         CodecConfig::Data {
             identity: DataIdentity::Ts { descriptors, .. },

@@ -1633,7 +1633,7 @@ mod tests {
         nalu.extend_from_slice(&[0x00, 0x01, 0x41]);
         write_flv_tag(&mut flv, tag_type::VIDEO, &nalu);
 
-        let media = crate::test_media::media_from_flv(&flv).expect("FLV -> IR");
+        let media = crate::collect::media_from_flv(&flv).expect("FLV -> IR");
         let track = &media.tracks[0];
         assert_eq!(
             track.samples[0].data.as_ref(),

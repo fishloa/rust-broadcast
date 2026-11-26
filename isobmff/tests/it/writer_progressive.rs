@@ -249,8 +249,9 @@ fn write_all(
 }
 
 /// The workspace progressive muxer, two-pass: a plan pass, then the stage.
-fn transmux_progressive(media: &transmux::Media, faststart: bool) -> Vec<u8> {
-    use transmux::mux_stage::{MuxOutput, drive_media};
+fn transmux_progressive(media: &test_harness::collect::Collected, faststart: bool) -> Vec<u8> {
+    use test_harness::collect::drive;
+    use transmux::mux_stage::MuxOutput;
     let plan = test_harness::collect::plan_from_media(media).expect("plan progressive");
     let layout = Layout::new(
         faststart,
@@ -259,8 +260,8 @@ fn transmux_progressive(media: &transmux::Media, faststart: bool) -> Vec<u8> {
     );
     let movie = MovieHeader::new(media.movie_timescale);
     let mut stage = transmux::progressive::ProgressiveMuxStage::new(plan, layout, movie);
-    let out = drive_media(&mut stage, media, broadcast_common::Timestamp::ZERO)
-        .expect("package progressive");
+    let out =
+        drive(&mut stage, media, broadcast_common::Timestamp::ZERO).expect("package progressive");
     let mut bytes = Vec::new();
     for item in out {
         match item {

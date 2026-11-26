@@ -28,13 +28,14 @@
 use broadcast_common::timescale::Timescale;
 use std::fs;
 use test_fixtures::vectors::DAC4_ORACLE;
-use test_harness::collect::MediaSelectExt;
+use test_harness::collect::CollectedSelectExt;
 use transmux::TrackId;
 
 use broadcast_common::{Parse, Serialize};
 use isobmff::Ac4SpecificBox;
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, build_init_segment};
-use transmux::{Media, Sample, Track, TrackSpec};
+use transmux::{Sample, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

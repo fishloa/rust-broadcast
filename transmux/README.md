@@ -105,79 +105,108 @@ transmux = { version = "0.33", features = ["serde"] }
 Demux a real H.264 plus AAC broadcast capture once, then mux the same IR to CMAF, a DASH manifest and back to TS:
 
 ```rust
+use broadcast_common::{Stage, Timestamp};
+use transmux::mux_stage::{MuxInput, MuxOutput};
 use transmux::{
-    CmafMuxStage, DashPackager, DemuxEvent, FragmentCut, Media, StreamingTsDemux, Track,
-    TsMuxStage,
+    CmafMuxStage, DashPackager, DemuxEvent, FragmentCut, StreamingTsDemux, TrackSpec, TsMuxStage,
 };
 
-/// Fold a whole TS buffer through the one streaming demuxer.
-fn media_from_ts(bytes: &[u8]) -> Media {
+/// Drain the one streaming demuxer into its event vocabulary.
+fn demux(bytes: &[u8]) -> Vec<DemuxEvent> {
     let mut demux = StreamingTsDemux::new().with_strict_pmt_order();
     demux.feed(bytes).unwrap();
     demux.finish().unwrap();
-    let mut tracks: Vec<Track> = Vec::new();
-    let mut index = std::collections::BTreeMap::new();
+    let mut events = Vec::new();
     while let Some(event) = demux.poll_event() {
-        match event {
-            DemuxEvent::TrackAdded(spec) => {
-                index.insert(spec.track_id, tracks.len());
-                tracks.push(Track::new(spec, Vec::new()));
+        events.push(event);
+    }
+    events
+}
+
+/// Feed an event stream to one muxer stage: every track first, then samples.
+fn mux<S>(stage: &mut S, events: &[DemuxEvent], specs: &mut Vec<TrackSpec>) -> Vec<MuxOutput>
+where
+    S: for<'a> Stage<In<'a> = MuxInput, Out = MuxOutput, Error = transmux::Error>,
+{
+    for event in events {
+        if let DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) = event {
+            if let Some(existing) = specs.iter_mut().find(|s| s.track_id == spec.track_id) {
+                *existing = spec.clone();
+            } else {
+                specs.push(spec.clone());
             }
-            DemuxEvent::Sample { track_id, sample, .. } => {
-                if let Some(&i) = index.get(&track_id) {
-                    tracks[i].samples.push(sample);
-                }
-            }
-            _ => {}
         }
     }
-    Media::new(tracks, transmux::rtp::VIDEO_CLOCK_TIMESCALE)
+    let mut out = Vec::new();
+    for spec in specs.iter() {
+        stage
+            .feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)
+            .unwrap();
+    }
+    while let Some(output) = stage.poll() {
+        out.push(output);
+    }
+    for event in events {
+        if let DemuxEvent::Sample { track_id, sample, .. } = event {
+            stage
+                .feed(
+                    MuxInput::Sample { track: *track_id, sample: sample.clone() },
+                    Timestamp::ZERO,
+                )
+                .unwrap();
+            while let Some(output) = stage.poll() {
+                out.push(output);
+            }
+        }
+    }
+    stage.finish().unwrap();
+    while let Some(output) = stage.poll() {
+        out.push(output);
+    }
+    out
 }
 
 let ts = std::fs::read("../fixtures/ts/h264-aac.ts").unwrap();
-let media: Media = media_from_ts(&ts);
-assert!(media.tracks.len() >= 2, "an H.264 video and an AAC audio track");
+let events = demux(&ts);
 
-let mut stage = CmafMuxStage::new(media.movie_timescale, FragmentCut::OnFlush, 1);
-let outputs =
-    transmux::mux_stage::drive_media(&mut stage, &media, broadcast_common::Timestamp::ZERO)
-        .unwrap();
-let cmaf: usize = outputs
+let mut specs = Vec::new();
+let mut stage = CmafMuxStage::new(transmux::rtp::VIDEO_CLOCK_TIMESCALE, FragmentCut::OnFlush, 1);
+let cmaf = mux(&mut stage, &events, &mut specs);
+assert!(specs.len() >= 2, "an H.264 video and an AAC audio track");
+let bytes: usize = cmaf
     .iter()
     .map(|output| match output {
-        transmux::mux_stage::MuxOutput::Init(b) | transmux::mux_stage::MuxOutput::Bytes(b) => b.len(),
-        transmux::mux_stage::MuxOutput::Segment(s) => s.bytes.len(),
+        MuxOutput::Init(b) | MuxOutput::Bytes(b) => b.len(),
+        MuxOutput::Segment(s) => s.bytes.len(),
         _ => 0,
     })
     .sum();
-assert!(cmaf > 1000);
+assert!(bytes > 1000);
 
 let mut log = transmux::segment_log::SegmentSummaryLog::new();
-for output in &outputs {
-    if let transmux::mux_stage::MuxOutput::Segment(segment) = output {
+for output in &cmaf {
+    if let MuxOutput::Segment(segment) = output {
         log.push(segment).unwrap();
     }
 }
-let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-let mpd: String = DashPackager::default().render(&specs, &log).unwrap();
+let mpd = DashPackager::default().render(&specs, &log).unwrap();
 assert!(mpd.contains("<MPD"));
 
 // And back: the TS muxer stage is the byte-level inverse of the demuxer.
-let mut stage = transmux::TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
-let out = transmux::mux_stage::drive_media(
-    &mut stage,
-    &media,
-    broadcast_common::stage::Timestamp::ZERO,
-)
-.unwrap();
+let mut ts_specs = Vec::new();
+let mut stage = TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
+let out = mux(&mut stage, &events, &mut ts_specs);
 let mut ts_again = Vec::new();
 for item in out {
-    if let transmux::mux_stage::MuxOutput::Bytes(chunk) = item {
+    if let MuxOutput::Bytes(chunk) = item {
         ts_again.extend_from_slice(&chunk);
     }
 }
-let again = media_from_ts(&ts_again);
-assert_eq!(again.tracks.len(), media.tracks.len());
+let added = demux(&ts_again)
+    .iter()
+    .filter(|event| matches!(event, DemuxEvent::TrackAdded(_)))
+    .count();
+assert_eq!(added, specs.len());
 ```
 
 For a live source `Segmenter` owns the segment-cutting state machine (a `Stage` over `MuxInput`: feed samples, `poll` segments, `MuxInput::Flush` at end of stream); `StreamingTsDemux` is the incremental demux (`feed`, `poll_event`, `finish`) and `Mp4Demux` is its MP4 counterpart (a `Stage` over `Mp4Input::{At, Next, Eof}`) - drain `poll` after every `feed`: the event queue is unbounded and only `poll_event` empties it (opt-in `with_max_degraded_events` caps the `InputDegraded` diagnostics). Runnable programs: `transmux_any_to_any` and `ssai_ad_stitch` (`cargo run -p transmux --example <name>`).

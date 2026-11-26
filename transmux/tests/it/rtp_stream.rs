@@ -27,12 +27,13 @@ fn timescale(value: u32) -> Timescale {
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Stage};
 use std::collections::HashSet;
+use test_harness::collect::Collected as Media;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::{aac_config_from_asc_hex, avc_config_from_sprop};
 use transmux::{
-    FragmentTrackData, Media, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, Severity,
+    FragmentTrackData, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, Severity,
     WallSkewExceeded, build_init_segment, build_media_segment, validate::SegmentOrigin,
     validate_init_segment, validate_media_segment,
 };

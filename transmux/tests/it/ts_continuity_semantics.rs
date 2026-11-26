@@ -233,7 +233,7 @@ fn media_degraded_at_carries_the_pid_parallel_to_degraded() {
 
 // ── real captures ──────────────────────────────────────────────────────────
 
-fn per_pid(media: &transmux::Media) -> BTreeMap<u16, usize> {
+fn per_pid(media: &test_harness::collect::Collected) -> BTreeMap<u16, usize> {
     let mut m = BTreeMap::new();
     for r in &media.degraded_at {
         if let InputDegradation::ContinuityGap { .. } = r.kind {

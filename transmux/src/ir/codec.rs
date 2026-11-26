@@ -440,7 +440,7 @@ impl CodecConfig {
     /// explicitly signalled HE-AAC track states it) and a v2 track reports
     /// two output channels. The track timescale is not touched here: use
     /// [`TrackSpec::with_explicit_he_aac`](super::TrackSpec::with_explicit_he_aac)
-    /// (or the [`Track`](super::Track) form) to carry it to the output rate.
+    /// (or the whole-track form) to carry it to the output rate.
     pub fn with_explicit_he_aac(self, profile: HeAacProfile) -> Result<Self> {
         let CodecConfig::Aac {
             mut esds,

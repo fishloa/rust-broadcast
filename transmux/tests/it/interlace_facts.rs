@@ -5,7 +5,8 @@
 //! (`field_pic_flag`/`bottom_field_flag`) and SEI `pic_struct` those streams
 //! actually carry; the synthetic HEVC/HRD layouts live in `sps.rs`'s tests.
 use std::path::PathBuf;
-use transmux::{Media, PicStruct, PictureFacts, VideoScan, video_picture_facts};
+use test_harness::collect::Collected as Media;
+use transmux::{PicStruct, PictureFacts, VideoScan, video_picture_facts};
 
 fn fixture(rel: &str) -> PathBuf {
     test_fixtures::root().join("..").join(rel)

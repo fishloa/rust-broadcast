@@ -14,11 +14,10 @@ use broadcast_common::Serialize;
 #[cfg(feature = "std")]
 use broadcast_common::base64::base64_decode_lenient as base64_decode;
 use broadcast_common::timescale::Timescale;
+use test_harness::collect::Collected as Media;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
-use transmux::{
-    Media, NAL_TYPE_IDR, RtpMediaKind, RtpPacket, RtpPacketiserStage, VIDEO_CLOCK_RATE,
-};
+use transmux::{NAL_TYPE_IDR, RtpMediaKind, RtpPacket, RtpPacketiserStage, VIDEO_CLOCK_RATE};
 
 const MTU: usize = 1400;
 const SSRC: u32 = 0x1234_5678;
@@ -1166,7 +1165,7 @@ fn every_stream_gets_a_unique_dynamic_payload_type() {
     // Three video + two audio tracks: the shape that used to collide. Track
     // ids are unique in the IR, so each clone gets its own.
     let mut ids = 1u32;
-    let mut unique = |mut track: transmux::Track| {
+    let mut unique = |mut track: test_harness::collect::CollectedTrack| {
         track.spec.track_id = TrackId::new(ids);
         ids += 1;
         track

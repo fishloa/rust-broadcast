@@ -61,12 +61,11 @@ use alloc::collections::BTreeMap;
 
 use broadcast_common::{Parse, Stage, Timestamp};
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
+#[cfg(all(test, feature = "std"))]
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::TrackId;
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use transmux::{CodecConfig, DemuxEvent, Sample, TrackSpec, iter_length_prefixed_nals_with};
-#[cfg(all(test, feature = "std"))]
-#[cfg(all(test, feature = "std"))]
-use transmux::{Media, Track};
 
 use crate::report::{Finding, Location, Report, Severity};
 use transmux::nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo};

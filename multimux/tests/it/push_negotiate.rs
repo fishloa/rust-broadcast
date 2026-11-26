@@ -2,7 +2,7 @@
 //! track set through a real RTMP server, carrying only what FLV.as_slice() can
 //! actually hold.
 //!
-//! `multimux/tests/it/push_rtmp.rs` already proves `RtmpTransport::send_media`
+//! `multimux/tests/it/push_rtmp.rs` already proves the RTMP transport's muxer
 //! produces byte-identical FLV.as_slice() over a real, independent RTMP server; that
 //! test drives the transport directly, never through `drive_push`. This
 //! file closes the gap issue #942 asked about: does the *production*
@@ -28,7 +28,7 @@ use rtmp_runtime::server::{ServerEvent, ServerSession};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
-use transmux::ir::TrackSpec;
+use transmux::TrackSpec;
 
 static FLV: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));

@@ -28,8 +28,8 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use core::num::NonZeroUsize;
 
+use crate::TrackId;
 use crate::error::{Error, Result};
-use crate::ir::TrackId;
 use crate::mux_stage::{SegmentOut, TrackPart};
 
 /// How many segments a [`SegmentSummaryLog`] keeps.

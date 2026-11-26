@@ -14,7 +14,7 @@ use std::path::PathBuf;
 
 use broadcast_common::Serialize;
 use test_fixtures::ffprobe;
-use transmux::media::Media;
+use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;
 
 // ── Fixture loading ─────────────────────────────────────────────────────────

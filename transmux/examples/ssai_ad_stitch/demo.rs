@@ -63,22 +63,26 @@ use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
-use transmux::TrackId;
+use transmux::{SpliceIndexBuilder, SplicePlan, SpliceSample, SpliceStage, TrackId, TrackSpec};
 
 use broadcast_common::Serialize;
+use broadcast_common::Stage;
+use broadcast_common::stage::Timestamp as StageTimestamp;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 use isobmff::emsg::{EmsgBox, PresentationTime};
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceInsert, SpliceMode};
 use scte35_splice::time::{BreakDuration, SpliceTime};
-use test_harness::collect::splice_insert;
 use timed_metadata::convert::{EmsgConfig, SCTE35_SCHEME};
 use timed_metadata::{DateRange, TimeAnchor, Timeline};
+use transmux::ir::SampleTiming;
 use transmux::{
-    Addressing, CodecConfig, DashPackager, FragmentTrackData, InbandEventStream, Media, Sample,
-    SplicePoint, Track, build_init_segment, build_media_segment, build_media_segment_with_events,
+    Addressing, CodecConfig, DashPackager, DemuxEvent, FragmentTrackData, InbandEventStream,
+    Sample, SpliceIndex, SplicePoint, build_init_segment, build_media_segment,
+    build_media_segment_with_events,
 };
 
 /// This example's base fixture is H.264/AVC video; used to tell the video
@@ -103,6 +107,9 @@ const DEMO_EPOCH_MS: i64 = 1_705_320_000_000;
 /// carries no segmentation descriptor of its own). Matches the convention
 /// already used by `timed-metadata/examples/scte35_to_dash.rs`.
 const EMSG_VALUE_PROVIDER_AD_START: &str = "34";
+/// Chunk size for every pass that reads the capture from disk, so neither pass
+/// holds the whole file.
+const INPUT_CHUNK: usize = 64 * 1024;
 
 /// The full set of rendered outputs, returned so both `main` (which writes
 /// them to disk and prints a summary) and the integration test
@@ -131,35 +138,12 @@ fn fixture_path(rel: &str) -> PathBuf {
     test_fixtures::path(rel)
 }
 
-/// Sum of `samples[..upto]`'s durations, in the track's own timescale ticks.
-fn cumulative(samples: &[Sample], upto: usize) -> u64 {
-    samples[..upto]
-        .iter()
-        .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
-        .sum()
-}
-
 /// Sum of `samples[lo..hi]`'s durations.
 fn range_duration(samples: &[Sample], lo: usize, hi: usize) -> u64 {
     samples[lo..hi]
         .iter()
         .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
         .sum()
-}
-
-/// First sample index whose cumulative duration (from the track start) is at
-/// or beyond `offset_ticks`. Mirrors `transmux::splice`'s own (private)
-/// `sample_index_at_offset` — used here to align the audio cut to the same
-/// wall-clock offset as a video-track keyframe boundary.
-fn index_at_offset(samples: &[Sample], offset_ticks: u64) -> usize {
-    let mut acc = 0u64;
-    for (i, s) in samples.iter().enumerate() {
-        if acc >= offset_ticks {
-            return i;
-        }
-        acc += s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64;
-    }
-    samples.len()
 }
 
 /// Build one 188-byte TS packet carrying `section` on `pid` (PUSI=1,
@@ -211,25 +195,171 @@ fn extract_scte35_raw(ts: &[u8], pid: u16) -> Vec<u8> {
 /// Run the full pipeline: fixture -> hand-built cue -> extract -> splice ->
 /// HLS + DASH. Writes every manifest/segment file to a temp directory and
 /// returns the rendered outputs for inspection.
-pub fn run() -> Result<Demo, Box<dyn Error>> {
-    // ------------------------------------------------------------------
-    // 1. Read the real base fixture and demux it once.
-    // ------------------------------------------------------------------
-    let base_ts_bytes = fs::read(fixture_path("ts/h264-aac.ts"))?;
-    let source: Media = test_harness::collect::media_from_ts(&base_ts_bytes[..])?;
+/// Drive the TS demux over `path` in [`INPUT_CHUNK`] pieces, handing every
+/// event to `on_event`, so neither pass collects the capture in one buffer.
+fn drive_stream<F>(path: &std::path::Path, mut on_event: F) -> Result<(), Box<dyn Error>>
+where
+    F: FnMut(&DemuxEvent) -> Result<(), Box<dyn Error>>,
+{
+    let mut demux = transmux::StreamingTsDemux::new().with_strict_pmt_order();
+    let mut file = fs::File::open(path)?;
+    let mut buf = vec![0u8; INPUT_CHUNK];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        demux.feed(&buf[..n])?;
+        while let Some(event) = demux.poll_event() {
+            on_event(&event)?;
+        }
+    }
+    demux.finish()?;
+    while let Some(event) = demux.poll_event() {
+        on_event(&event)?;
+    }
+    Ok(())
+}
 
-    let video_idx = source
-        .tracks
+/// Rebuild a [`SampleTiming`] from an index sample's planner fields.
+fn timing_of(sample: &SpliceSample) -> Option<SampleTiming> {
+    match sample.dts {
+        Some(dts) => Some(SampleTiming::Timed {
+            dts,
+            pts: sample.pts.unwrap_or(dts),
+            duration: sample.duration,
+        }),
+        None => sample
+            .duration
+            .map(|duration| SampleTiming::DurationOnly { duration }),
+    }
+}
+
+/// Sum of `samples[..upto]`'s durations, in the track's own timescale ticks.
+fn cumulative_index(samples: &[SpliceSample], upto: usize) -> u64 {
+    samples[..upto]
+        .iter()
+        .map(|s| s.duration.map_or(0, |d| u64::from(d.get())))
+        .sum()
+}
+
+/// First index sample whose cumulative duration (from the track start) is at
+/// or beyond `offset_ticks`.
+fn index_at_offset_index(samples: &[SpliceSample], offset_ticks: u64) -> usize {
+    let mut acc = 0u64;
+    for (i, s) in samples.iter().enumerate() {
+        if acc >= offset_ticks {
+            return i;
+        }
+        acc += s.duration.map_or(0, |d| u64::from(d.get()));
+    }
+    samples.len()
+}
+
+/// Split the source index into the base and insert indexes the planner needs,
+/// carrying only timing (never sample bytes), in `order`.
+fn split_index(
+    index: &SpliceIndex,
+    order: &[usize],
+    content_split: &BTreeMap<TrackId, usize>,
+) -> (SpliceIndex, SpliceIndex) {
+    let mut base = SpliceIndexBuilder::new();
+    let mut ad = SpliceIndexBuilder::new();
+    for &source in order {
+        let track = &index.tracks()[source];
+        let split = content_split
+            .get(&track.spec.track_id)
+            .copied()
+            .unwrap_or(track.samples.len());
+        let bi = base.add_track(track.spec.clone(), track.start_decode_time);
+        for sample in &track.samples[..split] {
+            base.push_sample(bi, timing_of(sample), sample.is_sync);
+        }
+        let ai = ad.add_track(track.spec.clone(), 0);
+        for sample in &track.samples[split..] {
+            ad.push_sample(ai, timing_of(sample), sample.is_sync);
+        }
+    }
+    (base.build(), ad.build())
+}
+
+/// One track's streaming splice state: the stage, the buffered tail (fed only
+/// after the inserted run), and the output segments being filled.
+struct TrackStream {
+    track_id: TrackId,
+    split: usize,
+    content_split: usize,
+    stage: SpliceStage,
+    source_index: usize,
+    tail: Vec<Sample>,
+    current: Vec<Sample>,
+    targets: [usize; 3],
+    segment: usize,
+    segments: Vec<Vec<Sample>>,
+}
+
+impl TrackStream {
+    fn drain(&mut self) {
+        while let Some((_, sample)) = self.stage.poll() {
+            self.current.push(sample);
+            if self.segment < self.targets.len() && self.current.len() == self.targets[self.segment]
+            {
+                self.segments.push(std::mem::take(&mut self.current));
+                self.segment += 1;
+            }
+        }
+    }
+
+    fn feed(&mut self, sample: &Sample) -> Result<(), Box<dyn Error>> {
+        self.stage
+            .feed((self.track_id, sample.clone()), StageTimestamp::ZERO)?;
+        self.drain();
+        Ok(())
+    }
+}
+
+/// The per-track output of the splice: its spec, first decode time, and one
+/// segment's samples per resulting range.
+struct SplicedTrack {
+    spec: TrackSpec,
+    start: u64,
+    segments: Vec<Vec<Sample>>,
+}
+
+/// Run the full pipeline: fixture -> hand-built cue -> extract -> splice ->
+/// HLS + DASH. Writes every manifest/segment file to a temp directory and
+/// returns the rendered outputs for inspection.
+///
+/// Two bounded passes over the capture: the first builds the payload-free
+/// splice index, the second streams samples through [`SpliceStage`] and
+/// builds each segment as its range fills.
+pub fn run() -> Result<Demo, Box<dyn Error>> {
+    let fixture = fixture_path("ts/h264-aac.ts");
+    let movie_timescale = transmux::rtp::VIDEO_CLOCK_TIMESCALE;
+
+    // ------------------------------------------------------------------
+    // 1. Pass 1: build the source splice index in bounded chunks.
+    // ------------------------------------------------------------------
+    let mut builder = SpliceIndexBuilder::new();
+    drive_stream(&fixture, |event| {
+        builder.push_event(event);
+        Ok(())
+    })?;
+    let index = builder.build();
+
+    let video_idx = index
+        .tracks()
         .iter()
         .position(|t| is_avc(&t.spec.config))
         .expect("h264-aac.ts must have an H.264/AVC video track");
-    let audio_idx = source
-        .tracks
+    let audio_idx = index
+        .tracks()
         .iter()
         .position(|t| !is_avc(&t.spec.config))
         .expect("h264-aac.ts must have an audio track");
-    let video = &source.tracks[video_idx];
-    let audio = &source.tracks[audio_idx];
+    let order = [video_idx, audio_idx];
+    let video = &index.tracks()[video_idx];
+    let audio = &index.tracks()[audio_idx];
 
     // ------------------------------------------------------------------
     // 2. Split the real capture, at its own real keyframes, into a `base`
@@ -239,7 +369,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         .samples
         .iter()
         .enumerate()
-        .filter(|(_, s)| s.flags.is_sync)
+        .filter(|(_, s)| s.is_sync)
         .map(|(i, _)| i)
         .collect();
     assert!(
@@ -247,51 +377,27 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         "fixture must carry >= 3 real keyframes for a meaningful splice demo, found {}",
         keyframe_indices.len()
     );
-    // Splice point: the capture's own 2nd keyframe (inside the `base` clip).
     let splice_sample_index = keyframe_indices[1];
-    // Base/ad content boundary: the capture's own 3rd keyframe.
     let content_split = keyframe_indices[2];
 
-    let splice_dts = video.start_decode_time + cumulative(&video.samples, splice_sample_index);
+    let splice_dts =
+        video.start_decode_time + cumulative_index(&video.samples, splice_sample_index);
 
-    let content_split_ticks = cumulative(&video.samples, content_split);
+    let content_split_ticks = cumulative_index(&video.samples, content_split);
     let content_split_secs = content_split_ticks as f64 / video.spec.timescale.get() as f64;
-    let audio_content_split = index_at_offset(
+    let audio_content_split = index_at_offset_index(
         &audio.samples,
         (content_split_secs * audio.spec.timescale.get() as f64).round() as u64,
     );
 
-    let base_video_samples = video.samples[..content_split].to_vec();
-    let ad_video_samples = video.samples[content_split..].to_vec();
-    let ad_duration_ticks_90k = ad_video_samples
-        .iter()
-        .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
+    let ad_duration_ticks_90k = (content_split..video.samples.len())
+        .map(|i| video.samples[i].duration.map_or(0, |d| u64::from(d.get())))
         .sum::<u64>();
-    let base_audio_samples = audio.samples[..audio_content_split].to_vec();
-    let ad_audio_samples = audio.samples[audio_content_split..].to_vec();
 
-    let base_media = Media::new(
-        vec![
-            Track::new_at(
-                video.spec.clone(),
-                base_video_samples,
-                video.start_decode_time,
-            ),
-            Track::new_at(
-                audio.spec.clone(),
-                base_audio_samples,
-                audio.start_decode_time,
-            ),
-        ],
-        source.movie_timescale,
-    );
-    let ad_media = Media::new(
-        vec![
-            Track::new_at(video.spec.clone(), ad_video_samples, 0),
-            Track::new_at(audio.spec.clone(), ad_audio_samples, 0),
-        ],
-        source.movie_timescale,
-    );
+    let mut content_split_by_track = BTreeMap::new();
+    content_split_by_track.insert(video.spec.track_id, content_split);
+    content_split_by_track.insert(audio.spec.track_id, audio_content_split);
+    let (base_index, ad_index) = split_index(&index, &order, &content_split_by_track);
 
     // ------------------------------------------------------------------
     // 3. Hand-build a spec-correct splice_insert() cue at `splice_dts` and
@@ -319,14 +425,12 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     );
     let cue_bytes = section.try_to_bytes().unwrap();
 
-    let mut combined_ts = base_ts_bytes;
-    combined_ts.extend_from_slice(&scte35_ts_packet(&cue_bytes, SCTE35_PID));
-
     // ------------------------------------------------------------------
-    // 4. Extract the cue back out of the TS bytes (not threaded through in
+    // 4. Extract the cue back out of the TS packet (not threaded through in
     //    memory) and convert it via `timed-metadata`.
     // ------------------------------------------------------------------
-    let raw_cue = extract_scte35_raw(&combined_ts, SCTE35_PID);
+    let cue_packet = scte35_ts_packet(&cue_bytes, SCTE35_PID);
+    let raw_cue = extract_scte35_raw(&cue_packet, SCTE35_PID);
     assert_eq!(
         raw_cue, cue_bytes,
         "extracted cue must match the one embedded"
@@ -343,47 +447,88 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         .expect("program splice_insert with an explicit pts_time")
         .0;
 
-    // Convert the cue's 90 kHz PTS into the base video track's OWN timescale
-    // ticks. For this capture the two happen to coincide (TS video is always
-    // carried on the 90 kHz PES clock), so this is a no-op multiply here —
-    // written generically so it holds for a base with a different timescale.
     let at_ticks = (at_pts_90k as u128 * video.spec.timescale.get() as u128
         / timed_metadata::PTS_HZ as u128) as u64;
 
     // ------------------------------------------------------------------
-    // 5. The actual splice.
+    // 5. The actual splice plan, then pass 2 streams the samples through it.
     // ------------------------------------------------------------------
-    let result = splice_insert(&base_media, &ad_media, at_ticks)?;
+    let plan = SplicePlan::insert(&base_index, &ad_index, movie_timescale, at_ticks)?;
+    let discontinuity_points = plan.discontinuity_points().to_vec();
 
-    let mut points_by_track: BTreeMap<TrackId, Vec<usize>> = BTreeMap::new();
-    for p in &result.discontinuity_points {
-        points_by_track
-            .entry(p.track_id)
-            .or_default()
-            .push(p.sample_index);
+    let mut streams: Vec<TrackStream> = plan
+        .tracks()
+        .iter()
+        .enumerate()
+        .map(|(slice_index, slice)| {
+            let content_split = content_split_by_track[&slice.track_id];
+            TrackStream {
+                track_id: slice.track_id,
+                split: slice.split_index,
+                content_split,
+                stage: SpliceStage::new(
+                    plan.only(slice_index)
+                        .expect("the plan names this track slice"),
+                ),
+                source_index: 0,
+                tail: Vec::new(),
+                current: Vec::new(),
+                targets: [
+                    slice.split_index,
+                    slice.insert_count,
+                    content_split.saturating_sub(slice.split_index),
+                ],
+                segment: 0,
+                segments: Vec::new(),
+            }
+        })
+        .collect();
+    let by_id: BTreeMap<TrackId, usize> = streams
+        .iter()
+        .enumerate()
+        .map(|(i, s)| (s.track_id, i))
+        .collect();
+
+    drive_stream(&fixture, |event| {
+        if let DemuxEvent::Sample {
+            track_id, sample, ..
+        } = event
+            && let Some(&si) = by_id.get(track_id)
+        {
+            let stream = &mut streams[si];
+            let i = stream.source_index;
+            stream.source_index += 1;
+            if i < stream.split || i >= stream.content_split {
+                stream.feed(sample)?;
+            } else {
+                stream.tail.push(sample.clone());
+            }
+        }
+        Ok(())
+    })?;
+    // The base tail plays after the inserted run, so it is buffered until last.
+    for stream in &mut streams {
+        for sample in std::mem::take(&mut stream.tail) {
+            stream.feed(&sample)?;
+        }
+        stream.stage.finish()?;
+        stream.drain();
+        if !stream.current.is_empty() {
+            stream.segments.push(std::mem::take(&mut stream.current));
+        }
     }
 
-    let spliced_video = &result.media.tracks[0];
-    let spliced_audio = &result.media.tracks[1];
-    let video_indices = points_by_track
-        .get(&spliced_video.spec.track_id)
-        .cloned()
-        .unwrap_or_default();
-    let audio_indices = points_by_track
-        .get(&spliced_audio.spec.track_id)
-        .cloned()
-        .unwrap_or_default();
-
-    let video_ranges = [
-        (0, video_indices[0]),
-        (video_indices[0], video_indices[1]),
-        (video_indices[1], spliced_video.samples.len()),
-    ];
-    let audio_ranges = [
-        (0, audio_indices[0]),
-        (audio_indices[0], audio_indices[1]),
-        (audio_indices[1], spliced_audio.samples.len()),
-    ];
+    let spliced: Vec<SplicedTrack> = streams
+        .into_iter()
+        .enumerate()
+        .map(|(slice_index, stream)| SplicedTrack {
+            spec: index.tracks()[order[slice_index]].spec.clone(),
+            start: index.tracks()[order[slice_index]].start_decode_time,
+            segments: stream.segments,
+        })
+        .collect();
+    let spliced_video = &spliced[0];
+    let spliced_audio = &spliced[1];
 
     // ------------------------------------------------------------------
     // 6. Build the DASH `emsg` for the ad-in point via `timed-metadata`.
@@ -404,57 +549,24 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     //    start of the video track's ad segment only (DASH-IF IOP Part 10 §6.1: it
     //    precedes that segment's `moof`).
     // ------------------------------------------------------------------
-    let video_init = build_init_segment(
-        std::slice::from_ref(&spliced_video.spec),
-        result.media.movie_timescale,
-    )?;
-    let audio_init = build_init_segment(
-        std::slice::from_ref(&spliced_audio.spec),
-        result.media.movie_timescale,
-    )?;
+    let video_init =
+        build_init_segment(std::slice::from_ref(&spliced_video.spec), movie_timescale)?;
+    let audio_init =
+        build_init_segment(std::slice::from_ref(&spliced_audio.spec), movie_timescale)?;
 
-    let mut video_segments = Vec::with_capacity(3);
-    for (i, &(lo, hi)) in video_ranges.iter().enumerate() {
-        let base_media_decode_time =
-            spliced_video.start_decode_time + cumulative(&spliced_video.samples, lo);
-        let frag = FragmentTrackData::new(
-            spliced_video.spec.track_id,
-            base_media_decode_time,
-            &spliced_video.samples[lo..hi],
-        );
-        let seg = if i == 1 {
-            build_media_segment_with_events(
-                (i + 1) as u32,
-                &[frag],
-                std::slice::from_ref(&emsg_box),
-            )?
-        } else {
-            build_media_segment((i + 1) as u32, &[frag])?
-        };
-        video_segments.push(seg);
-    }
-
-    let mut audio_segments = Vec::with_capacity(3);
-    for (i, &(lo, hi)) in audio_ranges.iter().enumerate() {
-        let base_media_decode_time =
-            spliced_audio.start_decode_time + cumulative(&spliced_audio.samples, lo);
-        let frag = FragmentTrackData::new(
-            spliced_audio.spec.track_id,
-            base_media_decode_time,
-            &spliced_audio.samples[lo..hi],
-        );
-        audio_segments.push(build_media_segment((i + 1) as u32, &[frag])?);
-    }
+    let video_segments = build_segments(spliced_video, Some(&emsg_box))?;
+    let audio_segments = build_segments(spliced_audio, None)?;
 
     // ------------------------------------------------------------------
     // 8. HLS: a video media playlist with EXT-X-DISCONTINUITY at both splice
     //    points, plus an EXT-X-DATERANGE built from the cue.
     // ------------------------------------------------------------------
     let daterange = timeline.to_daterange(&event)?;
-    let video_seg_secs: Vec<f64> = video_ranges
+    let video_seg_secs: Vec<f64> = spliced_video
+        .segments
         .iter()
-        .map(|&(lo, hi)| {
-            range_duration(&spliced_video.samples, lo, hi) as f64
+        .map(|samples| {
+            range_duration(samples, 0, samples.len()) as f64
                 / spliced_video.spec.timescale.get() as f64
         })
         .collect();
@@ -471,7 +583,6 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         segments: vec![
             MediaSegment {
                 uri: "seg-1-1.m4s".to_string(),
-                // `range_duration(..) / timescale` (issue #1140): finite, >= 0.
                 duration: DecimalSeconds::new(video_seg_secs[0])
                     .expect("segment duration is finite, >= 0"),
                 discontinuous: false,
@@ -480,7 +591,6 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
             },
             MediaSegment {
                 uri: "seg-1-2.m4s".to_string(),
-                // `range_duration(..) / timescale` (issue #1140): finite, >= 0.
                 duration: DecimalSeconds::new(video_seg_secs[1])
                     .expect("segment duration is finite, >= 0"),
                 discontinuous: true,
@@ -489,7 +599,6 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
             },
             MediaSegment {
                 uri: "seg-1-3.m4s".to_string(),
-                // `range_duration(..) / timescale` (issue #1140): finite, >= 0.
                 duration: DecimalSeconds::new(video_seg_secs[2])
                     .expect("segment duration is finite, >= 0"),
                 discontinuous: true,
@@ -514,26 +623,32 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     //    InbandEventStream declaration on the video set, and per-segment
     //    SegmentTemplate durations matching the files written below.
     // ------------------------------------------------------------------
-    let video_seg_ticks: Vec<u64> = video_ranges
+    let video_seg_ticks: Vec<u64> = spliced_video
+        .segments
         .iter()
-        .map(|&(lo, hi)| range_duration(&spliced_video.samples, lo, hi))
+        .map(|samples| range_duration(samples, 0, samples.len()))
         .collect();
-    let audio_seg_ticks: Vec<u64> = audio_ranges
+    let audio_seg_ticks: Vec<u64> = spliced_audio
+        .segments
         .iter()
-        .map(|&(lo, hi)| range_duration(&spliced_audio.samples, lo, hi))
+        .map(|samples| range_duration(samples, 0, samples.len()))
         .collect();
 
-    // One summary per track (the whole presentation) plus the caller's own
-    // per-segment duration list for the `SegmentTemplate`, exactly as `main`'s
-    // example declared them.
     let mut log = transmux::segment_log::SegmentSummaryLog::new();
-    for track in &result.media.tracks {
+    for track in &spliced {
         let duration: u64 = track
-            .samples
+            .segments
             .iter()
+            .flatten()
             .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
             .sum();
-        let bytes: u64 = track.samples.iter().map(|s| s.data.len() as u64).sum();
+        let bytes: u64 = track
+            .segments
+            .iter()
+            .flatten()
+            .map(|s| s.data.len() as u64)
+            .sum();
+        let samples: usize = track.segments.iter().map(Vec::len).sum();
         log.push_part(
             &transmux::mux_stage::TrackPart {
                 track: track.spec.track_id,
@@ -541,9 +656,13 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
                 duration,
                 timescale: track.spec.timescale.get(),
                 bytes,
-                samples: u32::try_from(track.samples.len()).unwrap_or(u32::MAX),
+                samples: u32::try_from(samples).unwrap_or(u32::MAX),
             },
-            track.samples.first().is_some_and(|s| s.flags.is_sync),
+            track
+                .segments
+                .first()
+                .and_then(|s| s.first())
+                .is_some_and(|s| s.flags.is_sync),
         )?;
     }
     let dash = DashPackager {
@@ -566,18 +685,72 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         }],
         ..DashPackager::default()
     };
-    let specs: Vec<transmux::TrackSpec> =
-        result.media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let specs: Vec<transmux::TrackSpec> = spliced.iter().map(|t| t.spec.clone()).collect();
     let mpd = dash.render(&specs, &log)?;
 
     // ------------------------------------------------------------------
     // 10. Write everything to disk.
     // ------------------------------------------------------------------
-    // Unique output dir per `run()` call: the integration test in
-    // `tests/it/ssai_ad_stitch.rs` invokes `run()` from several tests that
-    // execute in parallel, so a single fixed directory would race (one call
-    // truncating a file mid-write while another reads it). Keying the dir on
-    // the process id + a per-call counter isolates every invocation.
+    write_outputs(&OutputBatch {
+        video_init: &video_init,
+        audio_init: &audio_init,
+        video_segments: &video_segments,
+        audio_segments: &audio_segments,
+        m3u8: &m3u8,
+        mpd: &mpd,
+        raw_cue: &raw_cue,
+        emsg_bytes: &emsg_bytes,
+    })
+    .map(|out_dir| Demo {
+        m3u8,
+        mpd,
+        emsg_bytes,
+        raw_cue,
+        daterange,
+        discontinuity_points,
+        out_dir,
+    })
+}
+
+/// Build one track's CMAF media segments, one per splice range, embedding
+/// `emsg` at the start of its middle (inserted) segment when given.
+fn build_segments(
+    track: &SplicedTrack,
+    emsg: Option<&EmsgBox>,
+) -> Result<Vec<Vec<u8>>, Box<dyn Error>> {
+    let mut segments = Vec::with_capacity(track.segments.len());
+    let mut elapsed = 0u64;
+    for (i, samples) in track.segments.iter().enumerate() {
+        let base_media_decode_time = track.start + elapsed;
+        let frag = FragmentTrackData::new(track.spec.track_id, base_media_decode_time, samples);
+        let bytes = match emsg {
+            Some(emsg) if i == 1 => build_media_segment_with_events(
+                (i + 1) as u32,
+                &[frag],
+                std::slice::from_ref(emsg),
+            )?,
+            _ => build_media_segment((i + 1) as u32, &[frag])?,
+        };
+        segments.push(bytes);
+        elapsed += range_duration(samples, 0, samples.len());
+    }
+    Ok(segments)
+}
+
+/// The bytes [`write_outputs`] writes.
+struct OutputBatch<'a> {
+    video_init: &'a [u8],
+    audio_init: &'a [u8],
+    video_segments: &'a [Vec<u8>],
+    audio_segments: &'a [Vec<u8>],
+    m3u8: &'a str,
+    mpd: &'a str,
+    raw_cue: &'a [u8],
+    emsg_bytes: &'a [u8],
+}
+
+/// Write every manifest and segment to a fresh per-call temp directory.
+fn write_outputs(batch: &OutputBatch<'_>) -> Result<PathBuf, Box<dyn Error>> {
     static RUN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let out_dir = std::env::temp_dir().join(format!(
         "transmux-ssai-ad-stitch-demo-{}-{}",
@@ -585,26 +758,17 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         RUN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     fs::create_dir_all(&out_dir)?;
-    fs::write(out_dir.join("init-1.mp4"), &video_init)?;
-    fs::write(out_dir.join("init-2.mp4"), &audio_init)?;
-    for (i, seg) in video_segments.iter().enumerate() {
+    fs::write(out_dir.join("init-1.mp4"), batch.video_init)?;
+    fs::write(out_dir.join("init-2.mp4"), batch.audio_init)?;
+    for (i, seg) in batch.video_segments.iter().enumerate() {
         fs::write(out_dir.join(format!("seg-1-{}.m4s", i + 1)), seg)?;
     }
-    for (i, seg) in audio_segments.iter().enumerate() {
+    for (i, seg) in batch.audio_segments.iter().enumerate() {
         fs::write(out_dir.join(format!("seg-2-{}.m4s", i + 1)), seg)?;
     }
-    fs::write(out_dir.join("playlist.m3u8"), &m3u8)?;
-    fs::write(out_dir.join("manifest.mpd"), &mpd)?;
-    fs::write(out_dir.join("cue.bin"), &raw_cue)?;
-    fs::write(out_dir.join("emsg.bin"), &emsg_bytes)?;
-
-    Ok(Demo {
-        m3u8,
-        mpd,
-        emsg_bytes,
-        raw_cue,
-        daterange,
-        discontinuity_points: result.discontinuity_points,
-        out_dir,
-    })
+    fs::write(out_dir.join("playlist.m3u8"), batch.m3u8)?;
+    fs::write(out_dir.join("manifest.mpd"), batch.mpd)?;
+    fs::write(out_dir.join("cue.bin"), batch.raw_cue)?;
+    fs::write(out_dir.join("emsg.bin"), batch.emsg_bytes)?;
+    Ok(out_dir)
 }

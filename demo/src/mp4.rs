@@ -2,9 +2,8 @@
 //! #928.
 //!
 //! Unlike the TS path (`lib.rs`'s `analyze_impl`), `transmux` demuxes the
-//! container itself ([`transmux::mp4_demux::Mp4Demux`]): this module only
-//! *walks* the
-//! resulting [`transmux::Media`]/[`transmux::Track`] IR to report, per track,
+//! container itself ([`transmux::mp4_demux::Mp4Demux`]): this module folds its
+//! `DemuxEvent`s into per-track counters as they arrive to report, per track,
 //! the codec identity transmux already recovered from the init segment's
 //! decoder-config boxes (`avcC`/`hvcC`/`vvcC`/`av1C`/`vpcC`/`esds`/`dOps`/
 //! `dfLa`/`dac3`/`dec3`/`dac4`/`mhaC`/`ddts`) — an RFC 6381 codec string plus
@@ -22,7 +21,7 @@
 use broadcast_common::{Parse, Stage, Timestamp};
 use serde::Serialize;
 use transmux::codec_config_ext::{HevcRecordCodecInfo, VvcRecordCodecInfo};
-use transmux::ir::{AbandonReason, CodecConfig, Media, SkippedTrack, Track};
+use transmux::ir::{AbandonReason, CodecConfig, SkippedTrack, TrackSpec};
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use transmux::sps::rfc6381_avc1;
 use transmux::{AudioSpecificConfig, DemuxEvent};
@@ -65,6 +64,15 @@ pub struct Mp4Track {
 pub struct SkippedTrackEntry {
     fourcc: String,
     reason: String,
+}
+
+impl From<SkippedTrack> for SkippedTrackEntry {
+    fn from(skipped: SkippedTrack) -> Self {
+        Self {
+            fourcc: skipped.fourcc,
+            reason: skipped.reason,
+        }
+    }
 }
 
 /// Top-level JSON object returned for an MP4/CMAF input.
@@ -251,34 +259,36 @@ fn audio_params(config: &CodecConfig) -> (Option<u16>, Option<u32>) {
     }
 }
 
-fn describe_track(track: &Track) -> Mp4Track {
-    let config = &track.spec.config;
+/// One track's running totals, accumulated from its `DemuxEvent`s as they
+/// arrive, so the report never needs the collected samples.
+struct TrackStats {
+    spec: TrackSpec,
+    sample_count: u64,
+    total_bytes: u64,
+    total_ticks: u64,
+}
+
+fn describe_track(stats: &TrackStats) -> Mp4Track {
+    let config = &stats.spec.config;
     let (width, height) = dims(config);
     let (channel_count, sample_rate) = audio_params(config);
 
-    let sample_count = track.samples.len() as u64;
-    let total_bytes: u64 = track.samples.iter().map(|s| s.data.len() as u64).sum();
-    let total_ticks: u64 = track
-        .samples
-        .iter()
-        .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
-        .sum();
-    let timescale = track.spec.timescale.get();
-    let duration_seconds = total_ticks as f64 / f64::from(timescale);
+    let timescale = stats.spec.timescale.get();
+    let duration_seconds = stats.total_ticks as f64 / f64::from(timescale);
     let bitrate_bps = if duration_seconds > 0.0 {
-        (total_bytes as f64 * 8.0) / duration_seconds
+        (stats.total_bytes as f64 * 8.0) / duration_seconds
     } else {
         0.0
     };
 
-    let (encrypted, encryption_scheme) = match &track.spec.protection {
+    let (encrypted, encryption_scheme) = match &stats.spec.protection {
         Some(enc) => (true, Some(enc.scheme.name())),
         None => (false, None),
     };
 
     Mp4Track {
-        track_id: track.track_id().value(),
-        timescale: track.spec.timescale.get(),
+        track_id: stats.spec.track_id.value(),
+        timescale,
         kind: track_kind(config),
         codec: codec_label(config),
         codec_string: codec_string(config),
@@ -286,8 +296,8 @@ fn describe_track(track: &Track) -> Mp4Track {
         height,
         channel_count,
         sample_rate,
-        sample_count,
-        total_bytes,
+        sample_count: stats.sample_count,
+        total_bytes: stats.total_bytes,
         duration_seconds,
         bitrate_bps,
         encrypted,
@@ -295,30 +305,10 @@ fn describe_track(track: &Track) -> Mp4Track {
     }
 }
 
-fn build_report(media: Media) -> Mp4Report {
-    let tracks = media.tracks.iter().map(describe_track).collect();
-    let skipped_tracks = media
-        .skipped
-        .into_iter()
-        .map(|s| SkippedTrackEntry {
-            fourcc: s.fourcc,
-            reason: s.reason,
-        })
-        .collect();
-    Mp4Report {
-        container: "mp4",
-        parse_error: None,
-        movie_timescale: media.movie_timescale.get(),
-        tracks,
-        skipped_tracks,
-    }
-}
-
-/// Demux an in-memory MP4 image through the streaming stage.
-///
-/// The demo is handed the whole file in browser memory, so it drives the
-/// seekable stage over that image; no second copy of the file is made.
-fn demux_mp4(bytes: &[u8]) -> Result<Media, transmux::Error> {
+/// Demux an in-memory MP4 image through the streaming stage, building the
+/// report from `DemuxEvent`s as they arrive (per-track counters, no collected
+/// media).
+fn demux_mp4(bytes: &[u8]) -> Result<Mp4Report, transmux::Error> {
     let total_len = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
     let config = Mp4DemuxConfig::default().with_total_len(Some(total_len));
     let mut demux = Mp4Demux::seekable(config);
@@ -345,40 +335,55 @@ fn demux_mp4(bytes: &[u8]) -> Result<Media, transmux::Error> {
     let movie_timescale = demux
         .movie_timescale()
         .unwrap_or(transmux::VIDEO_CLOCK_TIMESCALE);
-    let mut tracks: Vec<Track> = Vec::new();
+    let mut stats: Vec<TrackStats> = Vec::new();
     let mut index: std::collections::BTreeMap<transmux::TrackId, usize> =
         std::collections::BTreeMap::new();
-    let mut skipped = Vec::new();
-    let mut degraded = Vec::new();
+    let mut skipped_tracks = Vec::new();
     while let Some(event) = demux.poll() {
         match event {
             DemuxEvent::TrackAdded(spec) => {
-                index.insert(spec.track_id, tracks.len());
-                tracks.push(Track::new(spec, Vec::new()));
+                index.insert(spec.track_id, stats.len());
+                stats.push(TrackStats {
+                    spec,
+                    sample_count: 0,
+                    total_bytes: 0,
+                    total_ticks: 0,
+                });
             }
             DemuxEvent::TrackUpdated(spec) => {
                 if let Some(&at) = index.get(&spec.track_id) {
-                    tracks[at].spec = spec;
+                    stats[at].spec = spec;
                 }
             }
             DemuxEvent::Sample {
                 track_id, sample, ..
             } => {
                 if let Some(&at) = index.get(&track_id) {
-                    tracks[at].samples.push(sample);
+                    let entry = &mut stats[at];
+                    entry.sample_count = entry.sample_count.saturating_add(1);
+                    entry.total_bytes = entry
+                        .total_bytes
+                        .saturating_add(sample.data.len() as u64);
+                    entry.total_ticks = entry.total_ticks.saturating_add(u64::from(
+                        sample.timing.and_then(|t| t.duration()).unwrap_or(0),
+                    ));
                 }
             }
             DemuxEvent::TrackAbandoned {
                 track_id, reason, ..
-            } => skipped.push(skipped_from_reason(reason, track_id)),
-            DemuxEvent::InputDegraded { kind, .. } => degraded.push(kind),
+            } => skipped_tracks.push(SkippedTrackEntry::from(skipped_from_reason(
+                reason, track_id,
+            ))),
             _ => {}
         }
     }
-    let mut media = Media::new(tracks, movie_timescale);
-    media.skipped = skipped;
-    media.degraded = degraded;
-    Ok(media)
+    Ok(Mp4Report {
+        container: "mp4",
+        parse_error: None,
+        movie_timescale: movie_timescale.get(),
+        tracks: stats.iter().map(describe_track).collect(),
+        skipped_tracks,
+    })
 }
 
 fn skipped_from_reason(reason: AbandonReason, track_id: Option<transmux::TrackId>) -> SkippedTrack {
@@ -415,19 +420,16 @@ fn skipped_from_reason(reason: AbandonReason, track_id: Option<transmux::TrackId
 /// demuxed as its real codec with `TrackSpec::protection` set, so it is
 /// reported encrypted with its scheme rather than skipped.
 pub fn analyze_mp4_impl(bytes: &[u8]) -> Mp4Report {
-    let media = match demux_mp4(bytes) {
-        Ok(media) => media,
-        Err(e) => {
-            return Mp4Report {
-                container: "mp4",
-                parse_error: Some(e.to_string()),
-                movie_timescale: 0,
-                tracks: Vec::new(),
-                skipped_tracks: Vec::new(),
-            };
-        }
-    };
-    build_report(media)
+    match demux_mp4(bytes) {
+        Ok(report) => report,
+        Err(e) => Mp4Report {
+            container: "mp4",
+            parse_error: Some(e.to_string()),
+            movie_timescale: 0,
+            tracks: Vec::new(),
+            skipped_tracks: Vec::new(),
+        },
+    }
 }
 
 

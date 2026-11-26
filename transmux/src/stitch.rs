@@ -121,11 +121,12 @@ mod tests {
 
     fn spec(id: u32, timescale: u32) -> TrackSpec {
         let init = std::fs::read(test_fixtures::path("dash/init-stream1.m4s")).expect("init");
-        let mut spec = crate::mp4_collect::media_from_mp4(init.as_slice())
-            .expect("demux init")
-            .tracks
-            .remove(0)
-            .spec;
+        let mut spec =
+            crate::collect::media_from_mp4(init.as_slice(), crate::collect::CollectMode::Seekable)
+                .expect("demux init")
+                .tracks
+                .remove(0)
+                .spec;
         spec.track_id = TrackId::new(id);
         spec.timescale = Timescale::try_new(timescale).expect("test timescale is non-zero");
         spec

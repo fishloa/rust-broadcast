@@ -87,7 +87,6 @@ use broadcast_common::{Demand, Stage, Timestamp};
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 
 use crate::error::{Error, Result};
-use crate::media::Track;
 use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary, TrackPart};
 use crate::nal::{NalCodec, access_unit_is_idr};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -1026,14 +1025,9 @@ impl StreamingTsHlsSegmenter {
             })
             .collect();
 
-        // Ephemeral `Track`s carrying only the spec (the mux reads
-        // `track.spec` for PID/stream_type planning; samples are passed
-        // separately as borrowed slices below).
-        let mux_tracks: Vec<Track> = self
-            .tracks
-            .iter()
-            .map(|t| Track::new(t.spec.clone(), Vec::new()))
-            .collect();
+        // The mux reads each track's spec for PID/stream_type planning; the
+        // samples are passed separately as borrowed slices below.
+        let mux_specs: Vec<TrackSpec> = self.tracks.iter().map(|t| t.spec.clone()).collect();
         let sample_slices: Vec<&[Sample]> = self
             .tracks
             .iter()
@@ -1042,7 +1036,7 @@ impl StreamingTsHlsSegmenter {
             .collect();
         let base_dts: Vec<u64> = self.tracks.iter().map(|t| t.base_decode).collect();
         let bytes =
-            mux_tracks_at_continuing(&mux_tracks, &sample_slices, &base_dts, &mut self.continuity)?;
+            mux_tracks_at_continuing(&mux_specs, &sample_slices, &base_dts, &mut self.continuity)?;
 
         let (duration, ceil_secs) =
             segment_duration(closed_anchor_dur, self.tracks[anchor].spec.timescale);
@@ -1345,7 +1339,7 @@ mod tests {
 
         // Every emitted segment is a byte-oracle-verifiable real TS mux —
         // decode the first one and confirm it actually carries the AAC PES.
-        let demuxed = crate::test_media::media_from_ts(&cuts[0].bytes)
+        let demuxed = crate::collect::media_from_ts(&cuts[0].bytes)
             .expect("cut segment must be a valid TS stream");
         assert!(
             demuxed

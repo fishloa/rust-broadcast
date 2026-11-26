@@ -46,14 +46,14 @@ use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
-use test_harness::collect::MediaSelectExt;
+use test_harness::collect::CollectedSelectExt;
 use transmux::TrackId;
 
 use crate::ts_hls_stage;
 use crate::ts_mux_stage;
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::ir::DataIdentity;
 use transmux::pipeline::{CodecConfig, DataCarriage};
-use transmux::{Media, Track};
 
 const TS: usize = 188;
 

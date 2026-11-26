@@ -25,12 +25,13 @@
 use isobmff::cenc::TrackEncryptionBox;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use test_harness::collect::MediaSelectExt;
+use test_harness::collect::Collected as Media;
+use test_harness::collect::CollectedSelectExt;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::{
     Addressing, CencScheme, ConstantIvSenc, ContentProtectionSystem, DashPackager,
-    InbandEventStream, MP4_PROTECTION_SCHEME_URI, Media, Sample, Segmenter, TrackProtection,
+    InbandEventStream, MP4_PROTECTION_SCHEME_URI, Sample, Segmenter, TrackProtection,
     TrackSegments, TrackSpec,
 };
 

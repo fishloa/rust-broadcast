@@ -300,26 +300,28 @@ fn ts_seed(source: usize, offset: usize, packets: usize) -> &'static [u8] {
     &ts[first * TS_PACKET..last * TS_PACKET]
 }
 
+type SeedTrack = (transmux::TrackSpec, Vec<transmux::Sample>);
+
 struct RtpSeed {
     sdp: String,
     packets: Vec<Vec<Vec<u8>>>,
 }
 
-/// Packetise every track of `media` with the RTP packetiser stage, one track at
+/// Packetise every track of `tracks` with the RTP packetiser stage, one track at
 /// a time: each track's whole packet list, plus its SDP media section.
-fn packetise(media: &transmux::Media) -> (Vec<sdp_types::Media>, Vec<Vec<Vec<u8>>>) {
+fn packetise(tracks: &[SeedTrack]) -> (Vec<sdp_types::Media>, Vec<Vec<Vec<u8>>>) {
     use broadcast_common::stage::Stage as _;
     use transmux::mux_stage::{MuxInput, MuxOutput};
     let mut medias: Vec<sdp_types::Media> = Vec::new();
     let mut streams: Vec<Vec<Vec<u8>>> = Vec::new();
-    for track in &media.tracks {
+    for (spec, samples) in tracks {
         let mut stage = transmux::RtpPacketiserStage::new()
             .with_mtu(MTU)
             .with_ssrc(RTP_SSRC)
             .with_stap_a_parameter_sets(false);
         stage
             .feed(
-                MuxInput::Track(Box::new(track.spec.clone())),
+                MuxInput::Track(Box::new(spec.clone())),
                 Timestamp::ZERO,
             )
             .expect("announce track");
@@ -330,11 +332,11 @@ fn packetise(media: &transmux::Media) -> (Vec<sdp_types::Media>, Vec<Vec<Vec<u8>
             }
         };
         drain(&mut stage, &mut packets);
-        for sample in &track.samples {
+        for sample in samples {
             stage
                 .feed(
                     MuxInput::Sample {
-                        track: track.spec.track_id,
+                        track: spec.track_id,
                         sample: sample.clone(),
                     },
                     Timestamp::ZERO,
@@ -347,7 +349,7 @@ fn packetise(media: &transmux::Media) -> (Vec<sdp_types::Media>, Vec<Vec<Vec<u8>
             .and_then(|p| p.get(1))
             .map(|byte| byte & 0x7F)
             .unwrap_or(transmux::DEFAULT_VIDEO_PT);
-        if let Ok(media) = transmux::sdp_media(&track.spec, pt) {
+        if let Ok(media) = transmux::sdp_media(spec, pt) {
             medias.push(media);
         }
         streams.push(packets);
@@ -357,37 +359,37 @@ fn packetise(media: &transmux::Media) -> (Vec<sdp_types::Media>, Vec<Vec<Vec<u8>
 
 /// Fold a whole TS fixture through the streaming demux into the tracks
 /// `packetise` needs (this fuzz crate is outside the workspace test harness).
-fn seed_media(bytes: &[u8]) -> transmux::Media {
+fn seed_tracks(bytes: &[u8]) -> Vec<SeedTrack> {
     let mut demux = transmux::StreamingTsDemux::new().with_strict_pmt_order();
     demux.feed(bytes).expect("feed the TS seed");
     demux.finish().expect("finish the TS seed");
-    let mut tracks: Vec<transmux::Track> = Vec::new();
+    let mut tracks: Vec<SeedTrack> = Vec::new();
     let mut index: std::collections::BTreeMap<transmux::TrackId, usize> =
         std::collections::BTreeMap::new();
     while let Some(event) = demux.poll_event() {
         match event {
             transmux::DemuxEvent::TrackAdded(spec) => {
                 index.insert(spec.track_id, tracks.len());
-                tracks.push(transmux::Track::new(spec, Vec::new()));
+                tracks.push((spec, Vec::new()));
             }
             transmux::DemuxEvent::Sample {
                 track_id, sample, ..
             } => {
                 if let Some(&i) = index.get(&track_id) {
-                    tracks[i].samples.push(sample);
+                    tracks[i].1.push(sample);
                 }
             }
             _ => {}
         }
     }
-    transmux::Media::new(tracks, transmux::rtp::VIDEO_CLOCK_TIMESCALE)
+    tracks
 }
 
 fn rtp_seed() -> &'static RtpSeed {
     static SEED: OnceLock<RtpSeed> = OnceLock::new();
     SEED.get_or_init(|| {
-        let media = seed_media(TS_SOURCES[0]);
-        let (mut medias, packets) = packetise(&media);
+        let tracks = seed_tracks(TS_SOURCES[0]);
+        let (mut medias, packets) = packetise(&tracks);
         for (n, media) in medias.iter_mut().enumerate() {
             media.add_attribute_with_value("control", format!("trackID={}", n + 1));
         }

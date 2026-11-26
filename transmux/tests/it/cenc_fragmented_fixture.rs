@@ -54,12 +54,12 @@ fn keys() -> KeyMap {
     KeyMap::new().with_key(KID, KEY)
 }
 
-fn demux(bytes: &[u8]) -> transmux::Media {
+fn demux(bytes: &[u8]) -> test_harness::collect::Collected {
     test_harness::collect::media_from_mp4(bytes, test_harness::collect::CollectMode::Seekable)
         .expect("demux protected fMP4")
 }
 
-fn decrypt(media: &transmux::Media) -> transmux::Media {
+fn decrypt(media: &test_harness::collect::Collected) -> test_harness::collect::Collected {
     let mut stage = CencDecryptStage::new(keys());
     crate::cenc_support::run(&mut stage, media).expect("decrypt")
 }

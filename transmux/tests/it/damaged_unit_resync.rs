@@ -8,8 +8,8 @@
 //! later packet decodable, so the RTP cases drive it one packet at a time.
 
 use std::collections::BTreeSet;
+use test_harness::collect::Collected as Media;
 use transmux::ir::InputDegradation;
-use transmux::media::Media;
 
 use transmux::{RtpMediaKind, Sample, TrackId};
 
@@ -107,7 +107,7 @@ fn packetised() -> (Media, crate::rtp_run::RtpOutput) {
 /// returned: a damaged packet is reported as `InputDegradation::MalformedUnit`
 /// at its packet index, and every other packet still decodes.
 fn depacketise(kind: RtpMediaKind, packets: Vec<Vec<u8>>, media: &Media) -> Media {
-    use transmux::media::{Media as IrMedia, Track};
+    use test_harness::collect::{Collected as IrMedia, CollectedTrack as Track};
     use transmux::pipeline::TrackSpec;
     use transmux::rtp_stream::{RtpStreamDepacketiser, RtpStreamTrack};
     let spec = media
