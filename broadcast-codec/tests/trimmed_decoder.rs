@@ -218,3 +218,29 @@ fn a_descriptor_states_whether_it_trims() {
     assert!(!descriptor.applies_trim());
     assert!(descriptor.with_trims(true).applies_trim());
 }
+
+#[test]
+fn packet_and_frame_trim_default_to_zero_and_keep_their_values() {
+    let packet = Packet::borrowed(&[]);
+    assert_eq!(packet.trim_start(), 0);
+    assert_eq!(packet.trim_end(), 0);
+    let packet = Packet::owned(Vec::new())
+        .with_trim_start(2)
+        .with_trim_end(3)
+        .into_owned();
+    assert_eq!(packet.trim_start(), 2);
+    assert_eq!(packet.trim_end(), 3);
+
+    let frame = AudioFrame::new(
+        rate(),
+        ChannelLayout::Mono,
+        SampleLayout::Interleaved,
+        AudioSamples::S16(vec![1, 2]),
+    )
+    .expect("whole frames");
+    assert_eq!(frame.trim_start(), 0);
+    assert_eq!(frame.trim_end(), 0);
+    let frame = frame.with_trim_start(2).with_trim_end(3);
+    assert_eq!(frame.trim_start(), 2);
+    assert_eq!(frame.trim_end(), 3);
+}
