@@ -23,6 +23,8 @@ pub mod facts;
 pub mod nal;
 pub mod rbsp;
 pub mod rfc6381;
+#[cfg(feature = "h264")]
+pub mod slice_header;
 pub mod sps;
 
 pub use annexb::{
@@ -40,6 +42,11 @@ pub use nal::{
     AvcPictureParameterSet, AvcSequenceParameterSet, NalCodec, access_unit_is_idr,
     access_unit_is_keyframe, access_unit_is_rap, avc_access_unit_parameter_sets, caption_cc_data,
     is_idr_nal, is_keyframe_nal, nal_unit_type, recovery_point_sei,
+};
+#[cfg(feature = "h264")]
+pub use slice_header::{
+    AvcFieldInfo, AvcParamSets, AvcPicture, AvcSliceHeader, AvcSlicePps, decode_avc_slice_pps,
+    parse_avc_slice_header,
 };
 #[cfg(any(feature = "h264", feature = "hevc"))]
 pub use sps::SpsDisplayFacts;

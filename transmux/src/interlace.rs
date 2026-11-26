@@ -25,13 +25,13 @@
 //! H.265 §7.3.7, §D.2.3/D.3.3 + Table D.2, §E.2.1-E.3.1.
 
 use crate::ir::CodecConfig;
-use crate::slice_header::{AvcParamSets, AvcSliceHeader};
 use broadcast_bitstream::annexb::iter_length_prefixed_nals_with;
 use broadcast_bitstream::bitreader::BitReader;
 use broadcast_bitstream::nal::{
     AVC_NAL_IDR, AVC_NAL_PPS, AVC_NAL_SEI, AVC_NAL_SPS, HEVC_NAL_HEADER_LEN, HEVC_NAL_TYPE_MASK,
     NAL_TYPE_MASK, sei_messages,
 };
+use broadcast_bitstream::slice_header::{AvcParamSets, AvcSliceHeader};
 use broadcast_bitstream::sps::{
     AvcPicTimingLayout, AvcSliceSps, decode_avc_slice_sps, decode_hevc_interlace_sps,
 };
@@ -427,9 +427,9 @@ pub(crate) fn avc_facts(ps: &AvcParamSets, nals: &[&[u8]]) -> Option<PictureFact
         match &first {
             None => first = Some((h, sps)),
             Some((f, _)) => {
-                if f.field_pic_flag
-                    && h.field_pic_flag
-                    && f.bottom_field_flag != h.bottom_field_flag
+                if f.field_pic_flag()
+                    && h.field_pic_flag()
+                    && f.bottom_field_flag() != h.bottom_field_flag()
                 {
                     second_field = true;
                 }
@@ -444,14 +444,14 @@ pub(crate) fn avc_facts(ps: &AvcParamSets, nals: &[&[u8]]) -> Option<PictureFact
             .find(|(t, _)| *t == SEI_PAYLOAD_PIC_TIMING)
             .and_then(|(_, p)| avc_pic_struct(&p, layout))
     });
-    let bottom_field_first = if head.field_pic_flag {
-        Some(head.bottom_field_flag)
+    let bottom_field_first = if head.field_pic_flag() {
+        Some(head.bottom_field_flag())
     } else {
         pic_struct.and_then(|p| p.bottom_first())
     };
     Some(PictureFacts {
-        field_pic: head.field_pic_flag,
-        fields: match (head.field_pic_flag, second_field) {
+        field_pic: head.field_pic_flag(),
+        fields: match (head.field_pic_flag(), second_field) {
             (false, _) => 0,
             (true, false) => 1,
             (true, true) => 2,
@@ -738,9 +738,9 @@ mod tests {
 #[cfg(test)]
 mod access_unit_facts {
     use super::*;
-    use crate::slice_header::AvcParamSets;
     use alloc::vec;
     use alloc::vec::Vec;
+    use broadcast_bitstream::slice_header::AvcParamSets;
     use broadcast_bitstream::sps::decode_avc_slice_sps;
     use test_fixtures::bits::BitWriter;
 

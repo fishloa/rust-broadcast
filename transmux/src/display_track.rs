@@ -167,9 +167,9 @@ fn avc_sps_id(nal: &[u8]) -> Option<u8> {
 
 /// `(pps_id, sps_id)` of an H.264 PPS; `None` if it does not decode.
 fn avc_pps_ids(nal: &[u8]) -> Option<(u8, u8)> {
-    crate::slice_header::decode_avc_slice_pps(nal)
+    broadcast_bitstream::slice_header::decode_avc_slice_pps(nal)
         .ok()
-        .map(|p| (p.pps_id, p.sps_id))
+        .map(|p| (p.pps_id(), p.sps_id()))
 }
 
 /// `sps_seq_parameter_set_id` (H.265 §7.3.2.2) of a base-layer SPS.

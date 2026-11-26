@@ -15,11 +15,13 @@
 mod paff_gen;
 
 use crate::ts_mux_stage;
+use broadcast_bitstream::slice_header::{
+    AvcSliceHeader, decode_avc_slice_pps, parse_avc_slice_header,
+};
 use broadcast_bitstream::sps::decode_avc_slice_sps;
 use broadcast_bitstream::{iter_annexb_nals, iter_length_prefixed_nals};
 use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;
-use transmux::slice_header::{AvcSliceHeader, decode_avc_slice_pps, parse_avc_slice_header};
 use transmux::{DemuxEvent, StreamingTsDemux};
 
 const FRAMES: usize = 12;
@@ -143,12 +145,20 @@ fn assert_paired_from(g: &paff_gen::Generated, samples: &[S], what: &str, base: 
             2,
             "{what}: sample {k} holds exactly two slice NALs"
         );
-        assert!(hs.iter().all(|h| h.field_pic_flag), "{what}: field slices");
+        assert!(
+            hs.iter().all(|h| h.field_pic_flag()),
+            "{what}: field slices"
+        );
         assert_ne!(
-            hs[0].bottom_field_flag, hs[1].bottom_field_flag,
+            hs[0].bottom_field_flag(),
+            hs[1].bottom_field_flag(),
             "{what}: sample {k} fields have opposite parity"
         );
-        assert_eq!(hs[0].frame_num, hs[1].frame_num, "{what}: same frame_num");
+        assert_eq!(
+            hs[0].frame_num(),
+            hs[1].frame_num(),
+            "{what}: same frame_num"
+        );
         assert_eq!(aud_count(&s.data), 1, "{what}: one AUD per access unit");
         let want = base + FRAME_PERIOD * k as i64;
         assert_eq!(s.pts, Some(want), "{what}: PTS is the first field's");
@@ -181,7 +191,7 @@ fn tff_and_bff_pair_into_one_sample_per_frame() {
         // The first field in decode order is the first slice of each sample.
         assert!(
             s.iter()
-                .all(|x| slices(&g.es, &x.data)[0].bottom_field_flag == first_bottom),
+                .all(|x| slices(&g.es, &x.data)[0].bottom_field_flag() == first_bottom),
             "{name}: first slice is the first field"
         );
         // Byte-level: the sample is exactly field1 ++ field2 (AUD of the second dropped),
@@ -414,7 +424,7 @@ fn ffmpeg_decodes_the_generated_and_demuxed_streams_to_the_expected_frames() {
 fn progressive_and_non_field_streams_are_unaffected() {
     // Every committed H.264 TS fixture that is not PAFF must keep one sample per
     // access unit: classification never reports a field for them.
-    use transmux::slice_header::{AvcParamSets, AvcPicture};
+    use broadcast_bitstream::slice_header::{AvcParamSets, AvcPicture};
     let root = test_fixtures::path("ts/h264");
     let Ok(rd) = std::fs::read_dir(&root) else {
         eprintln!("{root:?} absent: SKIPPED");
@@ -469,7 +479,7 @@ fn progressive_and_non_field_streams_are_unaffected() {
 /// the odd tail field), each pair two slice NALs of opposite parity.
 #[test]
 fn real_broadcast_paff_capture_pairs() {
-    use transmux::slice_header::{AvcParamSets, AvcPicture};
+    use broadcast_bitstream::slice_header::{AvcParamSets, AvcPicture};
     let path = test_fixtures::path("ts/gulli-opengop.ts");
     let ts = std::fs::read(path).expect("gulli-opengop.ts fixture");
     let samples = batch(&ts);

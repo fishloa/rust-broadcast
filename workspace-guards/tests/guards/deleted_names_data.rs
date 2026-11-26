@@ -358,13 +358,48 @@ pub const TABLE: &[Banned] = &[
         issue: "broadcast-bitstream bs1",
     },
     Banned {
-        name: "transmux::sps",
-        reason: "the SPS decoders live in broadcast_bitstream::sps",
-        issue: "broadcast-bitstream bs2a",
+        name: "transmux::slice_header",
+        reason: "the H.264 slice-header and PPS parsers live in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
     },
     Banned {
-        name: "crate::sps",
-        reason: "transmux has no sps module; the decoders are broadcast_bitstream::sps",
+        name: "transmux::AvcSliceHeader",
+        reason: "AvcSliceHeader lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::AvcSlicePps",
+        reason: "AvcSlicePps lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::AvcParamSets",
+        reason: "AvcParamSets lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::AvcPicture",
+        reason: "AvcPicture lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::AvcFieldInfo",
+        reason: "AvcFieldInfo lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::parse_avc_slice_header",
+        reason: "parse_avc_slice_header lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::decode_avc_slice_pps",
+        reason: "decode_avc_slice_pps lives in broadcast_bitstream::slice_header",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::sps",
+        reason: "the SPS decoders live in broadcast_bitstream::sps",
         issue: "broadcast-bitstream bs2a",
     },
     Banned {

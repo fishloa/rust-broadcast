@@ -1534,9 +1534,9 @@ struct PendingDisplayEvents {
 #[derive(Default)]
 struct PaffPairing {
     /// In-band SPS/PPS, for parsing slice headers.
-    params: crate::slice_header::AvcParamSets,
+    params: broadcast_bitstream::slice_header::AvcParamSets,
     /// The pending sample is a first field still awaiting its second field.
-    first_field: Option<crate::slice_header::AvcFieldInfo>,
+    first_field: Option<broadcast_bitstream::slice_header::AvcFieldInfo>,
 }
 
 /// Largest first-field to second-field DTS distance accepted as one frame: a
@@ -2311,8 +2311,9 @@ fn flush_one_behind(
 fn annexb_to_length_prefixed_no_aud(annexb: &[u8]) -> Vec<u8> {
     broadcast_bitstream::annexb::length_prefix(
         annexb.len(),
-        iter_annexb_nals(annexb)
-            .filter(|nal| nal_unit_type(NalCodec::Avc, nal) != Some(crate::slice_header::NAL_AUD)),
+        iter_annexb_nals(annexb).filter(|nal| {
+            nal_unit_type(NalCodec::Avc, nal) != Some(broadcast_bitstream::nal::AVC_NAL_AUD)
+        }),
     )
 }
 
@@ -2858,7 +2859,7 @@ fn push_live_au(
                 codec,
                 paff,
             } => {
-                use crate::slice_header::AvcPicture;
+                use broadcast_bitstream::slice_header::AvcPicture;
                 // The events this access unit raises travel with its own slot and
                 // are pushed immediately before its Sample (design §6.5). A PAFF
                 // second field merges into the first field's slot below, so its

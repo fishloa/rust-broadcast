@@ -249,7 +249,6 @@ pub mod rtp_stream;
 pub mod sample_aes;
 pub mod segment_cut;
 pub mod segmenter;
-pub mod slice_header;
 #[cfg(feature = "std")]
 pub mod smooth;
 #[cfg(feature = "std")]

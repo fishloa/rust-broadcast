@@ -174,8 +174,9 @@ pub const TABLE: &[Crate] = &[
         matcher: Matcher::Strict,
         // `Error` is a structured error. The NAL unit-type enums, `NalCodec`
         // and the coded-fact tables moved from `transmux`'s display module are
-        // the spec labels, pinned.
-        skip: &["Error"],
+        // the spec labels, pinned. `AvcPicture` is a data-carrying
+        // classification ADT (`Field(AvcFieldInfo)`), not a spec-token label.
+        skip: &["Error", "AvcPicture"],
         expected: Some(&[
             "ActiveFormatDescription",
             "AspectRatioIdc",
