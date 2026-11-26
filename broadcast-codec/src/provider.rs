@@ -3,10 +3,13 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-use crate::codec::CodecParameters;
+use crate::availability::Probe;
+use crate::codec::{CodecId, CodecParameters};
 use crate::descriptor::CodecDescriptor;
+use crate::direction::Direction;
 use crate::encoder_config::EncoderConfig;
 use crate::error::CodecError;
+use crate::provider_info::ProviderInfo;
 use crate::traits::{Decoder, Encoder};
 
 /// One adapter, offering any number of implementations.
@@ -24,11 +27,28 @@ pub trait CodecProvider {
     /// name breaks that rule, and refuses two providers with the same name.
     fn name(&self) -> &str;
 
+    /// Who provides these implementations, and under what terms.
+    ///
+    /// The registry's inventory reports this, so the adapter states its own
+    /// version, the underlying library when there is one, and that library's
+    /// licence only when it can know it (never a guess).
+    fn info(&self) -> ProviderInfo;
+
     /// Every implementation this provider offers, in the order the registry
     /// should try them. Providers are asked on every lookup, so the list may
     /// depend on the machine (a hardware encoder absent on this host is absent
     /// here too).
     fn descriptors(&self) -> Vec<CodecDescriptor>;
+
+    /// Whether `implementation` opens here.
+    ///
+    /// The default answer is [`Probe::unknown()`]: a provider that does not
+    /// probe says so rather than claiming availability. Probes are only asked
+    /// for by [`Registry::inventory`](crate::Registry::inventory) with its
+    /// `probe` argument set, because opening a hardware codec has a cost.
+    fn probe(&self, _implementation: &str, _direction: Direction, _codec: CodecId) -> Probe {
+        Probe::unknown()
+    }
 
     /// Build a decoder for `parameters`.
     ///

@@ -290,6 +290,11 @@ const NON_STATIC_NAME_ALLOWED: &[(&str, &str, &str)] = &[
         "Scheme/BearerError: Other(String) carries the scheme/code as written",
     ),
     (
+        "broadcast-codec",
+        "src/provider_info.rs",
+        "ProviderInfo::name is the provider's configured name, not an enum label",
+    ),
+    (
         "multimux",
         "src/output/mod.rs",
         "OutputKind::Custom labels itself by its own type_tag",

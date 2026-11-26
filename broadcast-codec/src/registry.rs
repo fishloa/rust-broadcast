@@ -6,14 +6,17 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
 
+use crate::availability::Probe;
 use crate::codec::{CodecId, CodecParameters};
 use crate::descriptor::CodecDescriptor;
 use crate::direction::Direction;
 use crate::encoder_config::EncoderConfig;
 use crate::error::CodecError;
 use crate::fallback::Fallback;
+use crate::inventory::InventoryEntry;
 use crate::preference::Preference;
 use crate::provider::{CodecProvider, offending_character};
+use crate::provider_info::ProviderInfo;
 use crate::registry_error::RegistryError;
 use crate::traits::{Decoder, Encoder};
 
@@ -126,6 +129,44 @@ impl Registry {
             .iter()
             .flat_map(|provider| provider.descriptors())
             .collect()
+    }
+
+    /// Every registered provider, described by its own
+    /// [`CodecProvider::info`], in registration order.
+    #[must_use]
+    pub fn providers(&self) -> Vec<ProviderInfo> {
+        self.providers
+            .iter()
+            .map(|provider| provider.info())
+            .collect()
+    }
+
+    /// One [`InventoryEntry`] per descriptor, in registration order and, within
+    /// a provider, in the order it lists them.
+    ///
+    /// When `probe` is false no provider is asked to open anything and every
+    /// entry is [`Availability::Unknown`](crate::Availability::Unknown), because
+    /// opening a hardware codec has a cost. When it is true each descriptor is
+    /// probed exactly once.
+    #[must_use]
+    pub fn inventory(&self, probe: bool) -> Vec<InventoryEntry> {
+        let mut entries = Vec::new();
+        for provider in &self.providers {
+            let info = provider.info();
+            for descriptor in provider.descriptors() {
+                let result = if probe {
+                    provider.probe(
+                        descriptor.implementation(),
+                        descriptor.direction(),
+                        descriptor.codec(),
+                    )
+                } else {
+                    Probe::unknown()
+                };
+                entries.push(InventoryEntry::new(descriptor, info.clone(), result));
+            }
+        }
+        entries
     }
 
     /// Every candidate for `codec` in `direction`, in the order they will be

@@ -1,15 +1,30 @@
 //! Codec identity and the parameters a decoder needs before its first packet.
 
+use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_core::timescale::Timescale;
 use core::num::NonZeroU32;
 
 use crate::audio::ChannelLayout;
 
+/// The token that introduces an [`CodecId::Other`] tag in the text form.
+pub(crate) const OTHER_TOKEN: &str = "other";
+/// Separates [`OTHER_TOKEN`] from the tag's digits.
+const OTHER_SEPARATOR: char = ':';
+/// An [`CodecId::Other`] tag is written as this many hexadecimal digits.
+const OTHER_TAG_DIGITS: usize = 8;
+/// Base of those digits.
+const OTHER_TAG_RADIX: u32 = 16;
+
 /// A coded format.
 ///
-/// [`CodecId::Other`] carries an opaque caller-chosen tag for a format this
-/// enum does not name; the seam never interprets it.
+/// [`CodecId::Other`] carries a caller-chosen tag for a format this enum does
+/// not name; the seam never interprets it. Its text form is `other:` followed
+/// by the tag as eight lower-case hexadecimal digits (`other:00000007`), which
+/// both [`CodecId::from_name`] and a preference accept. The tag should be the
+/// format's registered four-character code where it has one; two providers
+/// that give the same tag to different formats must avoid that collision
+/// themselves.
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CodecId {
@@ -77,12 +92,17 @@ impl CodecId {
     /// The codec a token names: [`Self::name`] read back.
     ///
     /// Case, spaces, `.`, `-` and `_` are ignored, so `h264`, `H.264` and
-    /// `H264` all name [`Self::H264`]. [`Self::Other`] carries a caller-chosen
-    /// tag that has no textual form, so a token that normalises to `other`
-    /// names no codec and this returns `None`.
+    /// `H264` all name [`Self::H264`]. [`Self::Other`] is named by
+    /// `other:<8 hex digits>`; `other` alone names no codec and this returns
+    /// `None`.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {
-        if same_token(name, "other") {
+        if let Some((token, digits)) = name.trim().split_once(OTHER_SEPARATOR)
+            && same_token(token, OTHER_TOKEN)
+        {
+            return other_from_digits(digits);
+        }
+        if same_token(name, OTHER_TOKEN) {
             return None;
         }
         [
@@ -108,8 +128,33 @@ impl CodecId {
     }
 }
 
+/// The codec an [`CodecId::Other`] tag's digits name, when they are exactly
+/// eight hexadecimal digits.
+fn other_from_digits(digits: &str) -> Option<CodecId> {
+    if digits.len() != OTHER_TAG_DIGITS || !digits.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(digits, OTHER_TAG_RADIX)
+        .ok()
+        .map(CodecId::Other)
+}
+
+/// The compact text form a preference and the inventory use: [`CodecId::name`]
+/// lower-cased with punctuation removed, or `other:<8 hex digits>`.
+pub(crate) fn token(codec: CodecId) -> String {
+    match codec {
+        CodecId::Other(tag) => alloc::format!("{OTHER_TOKEN}{OTHER_SEPARATOR}{tag:08x}"),
+        named => named
+            .name()
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .map(|c| c.to_ascii_lowercase())
+            .collect(),
+    }
+}
+
 /// Whether `input` names `label` once case and punctuation are ignored.
-fn same_token(input: &str, label: &str) -> bool {
+pub(crate) fn same_token(input: &str, label: &str) -> bool {
     fn token(text: &str) -> impl Iterator<Item = char> + '_ {
         text.chars()
             .filter(char::is_ascii_alphanumeric)

@@ -15,7 +15,11 @@ use crate::video::PixelFormat;
 /// `h264_videotoolbox`); the two are equal when a provider offers exactly one.
 /// The format lists are what the implementation accepts for
 /// [`Direction::Encode`] or produces for [`Direction::Decode`]; an empty list
-/// means the provider does not state them.
+/// means the provider does not state them. `profiles` names the codec's
+/// variants this implementation handles, in the provider's own spelling
+/// (`LC`, `HE-AAC`, `High`, `Main 10`); empty means "not stated", not "all".
+/// Profiles inform a selector and the inventory, and the registry never reads
+/// them when choosing.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CodecDescriptor {
@@ -27,6 +31,7 @@ pub struct CodecDescriptor {
     lossless: bool,
     sample_formats: Vec<SampleFormat>,
     pixel_formats: Vec<PixelFormat>,
+    profiles: Vec<String>,
 }
 
 impl CodecDescriptor {
@@ -47,6 +52,7 @@ impl CodecDescriptor {
             lossless: false,
             sample_formats: Vec::new(),
             pixel_formats: Vec::new(),
+            profiles: Vec::new(),
         }
     }
 
@@ -75,6 +81,14 @@ impl CodecDescriptor {
     #[must_use]
     pub fn with_pixel_formats(mut self, pixel_formats: Vec<PixelFormat>) -> Self {
         self.pixel_formats = pixel_formats;
+        self
+    }
+
+    /// State the codec variants the implementation handles, in the provider's
+    /// own spelling.
+    #[must_use]
+    pub fn with_profiles(mut self, profiles: Vec<String>) -> Self {
+        self.profiles = profiles;
         self
     }
 
@@ -126,5 +140,12 @@ impl CodecDescriptor {
     #[must_use]
     pub fn pixel_formats(&self) -> &[PixelFormat] {
         &self.pixel_formats
+    }
+
+    /// Codec variants the implementation handles, in the provider's own
+    /// spelling; empty means "not stated".
+    #[must_use]
+    pub fn profiles(&self) -> &[String] {
+        &self.profiles
     }
 }

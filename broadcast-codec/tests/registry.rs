@@ -6,8 +6,8 @@ use std::rc::Rc;
 
 use broadcast_codec::{
     CodecDescriptor, CodecError, CodecId, CodecParameters, CodecProvider, Decoder, Direction,
-    Encoder, EncoderConfig, Fallback, Frame, Packet, Preference, Registry, RegistryError,
-    SampleFormat, Timescale,
+    Encoder, EncoderConfig, Fallback, Frame, Packet, Preference, ProviderInfo, Registry,
+    RegistryError, SampleFormat, Timescale,
 };
 
 /// Sample rate the fake requests use.
@@ -77,6 +77,10 @@ impl Fake {
 impl CodecProvider for Fake {
     fn name(&self) -> &str {
         self.name
+    }
+
+    fn info(&self) -> ProviderInfo {
+        ProviderInfo::new(self.name, "1.0.0")
     }
 
     fn descriptors(&self) -> Vec<CodecDescriptor> {

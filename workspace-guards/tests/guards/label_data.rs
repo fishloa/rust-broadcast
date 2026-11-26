@@ -184,6 +184,7 @@ pub const TABLE: &[Crate] = &[
             "VideoStorage",
         ],
         expected: Some(&[
+            "Availability",
             "ChannelLayout",
             "CodecId",
             "Direction",
@@ -192,7 +193,7 @@ pub const TABLE: &[Crate] = &[
             "SampleFormat",
             "SampleLayout",
         ]),
-        min_enums: Some(7),
+        min_enums: Some(8),
     },
     Crate {
         name: "broadcast-common",

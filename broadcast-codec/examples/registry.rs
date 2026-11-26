@@ -15,7 +15,8 @@ use std::rc::Rc;
 
 use broadcast_codec::{
     CodecDescriptor, CodecError, CodecId, CodecParameters, CodecProvider, Decoder, Direction,
-    Encoder, EncoderConfig, Frame, Packet, Registry, Timescale, parse_preferences,
+    Encoder, EncoderConfig, Frame, Packet, ProviderInfo, Registry, Timescale, parse_preferences,
+    render_inventory,
 };
 
 /// The preference used when no argument is given.
@@ -73,6 +74,10 @@ impl Fake {
 impl CodecProvider for Fake {
     fn name(&self) -> &str {
         self.name
+    }
+
+    fn info(&self) -> ProviderInfo {
+        ProviderInfo::new(self.name, "0.1.0")
     }
 
     fn descriptors(&self) -> Vec<CodecDescriptor> {
@@ -198,5 +203,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     for line in log.borrow().iter() {
         println!("  {line}");
     }
+
+    println!("inventory:");
+    print!("{}", render_inventory(&registry.inventory(false)));
     Ok(())
 }

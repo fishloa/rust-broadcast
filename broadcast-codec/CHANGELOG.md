@@ -32,9 +32,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
   and pinned by one test per clause.
 - `CodecId::from_name`, the textual inverse of `CodecId::name`: `h264` and
   `H.264` name the same codec.
+- A run-time inventory: `ProviderInfo` (the adapter's name and version, the
+  underlying library and its version, the library's licence as the library or
+  its manifest states it, and free-text notes) returned by
+  `CodecProvider::info`, and `Registry::providers` for every provider in
+  registration order; `CodecDescriptor::profiles` for the codec variants an
+  implementation handles; `Availability` and `Probe` for whether an
+  implementation opens here, `CodecProvider::probe` (defaulting to unknown)
+  and `Registry::inventory`, which never probes unless asked; `InventoryEntry`
+  with its one-line `Display`; and `render_inventory`, which renders a whole
+  inventory as a plain table. The `registry` example prints it.
+- `CodecId::Other` now has a text form, `other:<8 hex digits>` (lower case),
+  accepted by `CodecId::from_name` and written by the preference text form, so
+  a format the enum does not name can be preferred and listed. `other` alone is
+  still an unknown codec.
 
 ### Breaking
 
+- `CodecProvider` gained a required `info` method: every adapter must say who
+  it is and under what terms. `CodecProvider::probe` has a default answer of
+  `Availability::Unknown`, so probing is opt-in.
 - `CodecError`'s message-bearing payloads are `Cow<'static, str>` rather than
   `&'static str`, so the registry can name the provider, implementation or
   codec it refused at run time. `CodecError` is no longer `Copy`; the

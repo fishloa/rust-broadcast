@@ -42,19 +42,19 @@ unpublished.
 
 ## Providers and the registry
 
-A [`CodecProvider`] is one adapter: a name, the [`CodecDescriptor`]s it offers,
-and a way to build a [`Decoder`] or [`Encoder`] for one of them. A [`Registry`]
-is a value the application builds from those providers. There is no static
-registry, no link-time self-registration and no initialisation-time
-registration hook: the application decides what it links and passes the
-registry where it is needed.
+A [`CodecProvider`] is one adapter: a name, a [`ProviderInfo`] saying who it
+is and under what terms, the [`CodecDescriptor`]s it offers, and a way to build
+a [`Decoder`] or [`Encoder`] for one of them. A [`Registry`] is a value the
+application builds from those providers. There is no static registry, no
+link-time self-registration and no initialisation-time registration hook: the
+application decides what it links and passes the registry where it is needed.
 
 ```rust
 use std::num::NonZeroU32;
 
 use broadcast_codec::{
     CodecDescriptor, CodecError, CodecId, CodecParameters, CodecProvider, Decoder, Direction,
-    Encoder, EncoderConfig, Preference, Registry, Timescale,
+    Encoder, EncoderConfig, Preference, ProviderInfo, Registry, Timescale,
 };
 
 struct Alpha;
@@ -62,6 +62,10 @@ struct Alpha;
 impl CodecProvider for Alpha {
     fn name(&self) -> &str {
         "alpha"
+    }
+
+    fn info(&self) -> ProviderInfo {
+        ProviderInfo::new("alpha", "0.1.0")
     }
 
     fn descriptors(&self) -> Vec<CodecDescriptor> {
@@ -98,7 +102,9 @@ fn build() -> Result<Registry, Box<dyn std::error::Error>> {
 
 1. Candidates for a codec and a direction are all matching descriptors, in
    provider registration order and, within a provider, in the order it lists
-   them.
+   them. A descriptor's [`profiles`](CodecDescriptor::profiles) are information
+   for a selector and for the inventory; the library never reads them when it
+   chooses, so they neither reorder nor exclude a candidate.
 2. If a selector ([`Registry::select_with`]) is set, it is given that list and
    its answer is the first candidate; the rest follow in order. A selector that
    returns `None` or an out-of-range index means "no choice", and rule 3 then
@@ -137,14 +143,46 @@ comma-separated list:
 | `h264=libav:h264_videotoolbox` | H.264, either direction, provider `libav`, implementation `h264_videotoolbox` |
 | `dec:aac=oxideav` | AAC, decode only |
 | `enc:aac=libav` | AAC, encode only |
+| `other:00000007=alpha` | the `CodecId::Other(7)` format, either direction |
 
 The codec token is [`CodecId::name`] read back by [`CodecId::from_name`]; case,
 spaces, `.`, `-` and `_` are ignored, so `h264` and `H.264` name the same codec.
+A codec this enum does not name uses `other:<8 hex digits>`
+(`other:00000007`), the tag being a caller-chosen format identifier.
 [`Display`](core::fmt::Display) writes the compact lower-case spelling
 (`h264=libav`), so a printed preference parses back to the preference it came
 from. A token that names no codec, an empty provider or implementation, a
 character a name may not contain and an unknown direction prefix are each a
 [`PreferenceError`] naming the token it refused.
+
+## The inventory
+
+[`Registry::providers`] reports each registered provider's [`ProviderInfo`] in
+registration order: its name, the adapter's own version, the underlying library
+and version when there is one, and that library's licence when the adapter can
+know it. `licence` is information for whoever distributes the binary, not legal
+advice: an adapter reports what the library itself reports or what its manifest
+states, and never guesses, so `None` means "not known".
+
+[`Registry::inventory`] adds one [`InventoryEntry`] per descriptor, carrying the
+descriptor, its provider's information and a [`Probe`]. Listed means compiled
+in; available means it opens on this machine, which a hardware codec may not.
+The registry never probes unless asked (`inventory(true)`), because opening a
+hardware codec has a cost; `inventory(false)` reports [`Availability::Unknown`]
+for every entry. [`Probe::reason`] carries the provider's own words when it is
+unavailable.
+
+[`Display`](core::fmt::Display) for [`InventoryEntry`] writes one line: codec
+token, direction, provider, implementation, `hw`/`sw`, `lossless` when true, the
+profiles joined by `/`, availability and licence. [`render_inventory`] renders a
+whole slice as a plain table whose column widths come from the entries, with no
+terminal assumptions and no colour:
+
+```text
+codec  direction  provider  implementation  kind  lossless  profiles   availability  licence
+h264   decode     alpha     h264            sw    -         High/Main  available     MIT
+aac    encode     beta      aac_hw          hw    -         -          unavailable   -
+```
 
 ## Encoder options
 

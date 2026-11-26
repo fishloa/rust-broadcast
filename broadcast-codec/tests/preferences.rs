@@ -204,13 +204,68 @@ fn the_first_bad_entry_in_a_list_is_the_one_reported() {
 }
 
 #[test]
-fn other_has_no_text_form() {
+fn other_carries_its_tag_in_the_text_form() {
+    assert_eq!(
+        CodecId::from_name("other:00000007"),
+        Some(CodecId::Other(7))
+    );
+    assert_eq!(
+        CodecId::from_name("other:DEADBEEF"),
+        Some(CodecId::Other(0xDEAD_BEEF))
+    );
+
     let preference = Preference::new(CodecId::Other(7), "alpha");
-    assert_eq!(preference.to_string(), "other=alpha");
+    assert_eq!(preference.to_string(), "other:00000007=alpha");
+    assert_eq!(
+        "other:00000007=alpha"
+            .parse::<Preference>()
+            .expect("a tagged preference"),
+        preference
+    );
+
+    let preference = Preference::new(CodecId::Other(0xDEAD_BEEF), "beta")
+        .with_direction(Direction::Encode)
+        .with_implementation("impl1");
+    let text = preference.to_string();
+    assert_eq!(text, "enc:other:deadbeef=beta:impl1");
+    assert_eq!(text.parse::<Preference>().expect(&text), preference);
+
+    assert_eq!(
+        parse_preferences("other:00000007=alpha,enc:h264=beta").expect("a tagged list"),
+        [
+            Preference::new(CodecId::Other(7), "alpha"),
+            Preference::new(CodecId::H264, "beta").with_direction(Direction::Encode),
+        ]
+    );
+}
+
+#[test]
+fn other_alone_stays_an_unknown_codec() {
+    assert_eq!(CodecId::from_name("other"), None);
     assert_eq!(
         "other=alpha".parse::<Preference>(),
         Err(PreferenceError::UnknownCodec {
             token: "other".into()
         })
     );
+}
+
+#[test]
+fn other_malformed_digits_are_an_unknown_codec() {
+    for text in [
+        "other:",
+        "other:7",
+        "other:0000007",
+        "other:000000007",
+        "other:0000000g",
+        "other:0x000007",
+    ] {
+        assert_eq!(CodecId::from_name(text), None, "{text}");
+        let preference = format!("{text}=alpha");
+        assert_eq!(
+            preference.parse::<Preference>(),
+            Err(PreferenceError::UnknownCodec { token: text.into() }),
+            "{preference}"
+        );
+    }
 }

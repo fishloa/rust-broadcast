@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::str::FromStr;
 
-use crate::codec::CodecId;
+use crate::codec::{CodecId, OTHER_TOKEN, same_token, token};
 use crate::direction::Direction;
 use crate::preference_error::PreferenceError;
 use crate::provider::offending_character;
@@ -25,10 +25,8 @@ const ASSIGNMENT: char = '=';
 /// what the `dec:`/`enc:` text prefix produces. See
 /// [`Registry::prefer`](crate::Registry::prefer) for how a registry uses it.
 ///
-/// A preference for [`CodecId::Other`] has no text form: its label is `other`
-/// and the tag it carries cannot be spelled, so [`Display`](fmt::Display)
-/// writes `other=…` and parsing that back is
-/// [`PreferenceError::UnknownCodec`]. Build such a preference in code.
+/// A preference for [`CodecId::Other`] spells its tag: `other:00000007=alpha`.
+/// `other` alone names no codec and is [`PreferenceError::UnknownCodec`].
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preference {
@@ -94,23 +92,12 @@ impl fmt::Display for Preference {
         if let Some(direction) = self.direction {
             write!(f, "{}:", direction.prefix())?;
         }
-        write!(f, "{}={}", codec_token(self.codec), self.provider)?;
+        write!(f, "{}={}", token(self.codec), self.provider)?;
         if let Some(implementation) = &self.implementation {
             write!(f, ":{implementation}")?;
         }
         Ok(())
     }
-}
-
-/// A codec's spelling in the text form: its label, lower-cased, with
-/// everything but letters and digits removed.
-fn codec_token(codec: CodecId) -> String {
-    codec
-        .name()
-        .chars()
-        .filter(char::is_ascii_alphanumeric)
-        .map(|c| c.to_ascii_lowercase())
-        .collect()
 }
 
 impl FromStr for Preference {
@@ -121,13 +108,11 @@ impl FromStr for Preference {
             .split_once(ASSIGNMENT)
             .ok_or_else(|| PreferenceError::missing_equals(text))?;
         let (direction, codec_token) = match codec_side.split_once(SCOPE) {
-            Some((prefix, token)) => (
-                Some(
-                    Direction::from_prefix(prefix)
-                        .ok_or_else(|| PreferenceError::unknown_direction(prefix))?,
-                ),
-                token,
-            ),
+            Some((prefix, rest)) => match Direction::from_prefix(prefix) {
+                Some(direction) => (Some(direction), rest),
+                None if same_token(prefix, OTHER_TOKEN) => (None, codec_side),
+                None => return Err(PreferenceError::unknown_direction(prefix)),
+            },
             None => (None, codec_side),
         };
         let codec = parse_codec(codec_token)?;
@@ -182,7 +167,10 @@ fn codec_token_character(c: char) -> bool {
 /// The codec a token names, refusing a stray character first so the error says
 /// which character is wrong rather than "unknown codec".
 fn parse_codec(token: &str) -> Result<CodecId, PreferenceError> {
-    if let Some(character) = token.chars().find(|c| !codec_token_character(*c)) {
+    let other = token
+        .split_once(SCOPE)
+        .is_some_and(|(head, _)| same_token(head, OTHER_TOKEN));
+    if !other && let Some(character) = token.chars().find(|c| !codec_token_character(*c)) {
         return Err(PreferenceError::invalid_character(token, character));
     }
     CodecId::from_name(token).ok_or_else(|| PreferenceError::unknown_codec(token))
