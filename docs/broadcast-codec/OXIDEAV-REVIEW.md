@@ -213,6 +213,11 @@ completeness are that registry description, not a code read (marked
 | `oxideav-mod` | 0.0.11 | codec (direction not stated in the description) | "Amiga ProTracker / SoundTracker module (MOD) codec" (registry description only) |
 | `oxideav-s3m` | 0.0.9 | codec (direction not stated in the description) | "Scream Tracker 3 Module (S3M) container + codec" (registry description only) |
 | `oxideav-audiotoolbox` | 0.0.4 | hardware decode/encode bridge | "macOS AudioToolbox ... runtime-loaded" (registry description only) |
+| `oxideav-adpcm` | 0.0.8 | decoder + encoder | "ADPCM audio decoders + encoders (Microsoft, IMA WAV/QuickTime, Yamaha A/B, OKI/Dialogic VO..." (registry description only) |
+| `oxideav-wma` | 0.0.5 | decoder | "Windows Media Audio (WMA v1 + v2 baseline; later Pro + Lossless) decoder" (registry description only) |
+| `oxideav-musepack` | 0.0.4 | decoder | "Musepack (SV7 + SV8) audio decoder" (registry description only) |
+| `oxideav-shorten` | 0.0.4 | decoder + DIFFn encoder | "Shorten (.shn) lossless audio codec" (registry description only) |
+| `oxideav-celt` | 0.1.16 | codec (direction not stated in the description) | "orphan-rebuild scaffold pending clean-room re-implementation"; the CELT layer of Opus (registry description only) |
 
 The workspace has committed fixtures for AAC, MP3, Opus and linear PCM
 only (`fixtures/audio/aac.adts`, `fixtures/audio/audio.mp3`,
