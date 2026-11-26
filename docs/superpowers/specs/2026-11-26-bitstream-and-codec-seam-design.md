@@ -55,8 +55,10 @@ This design closes both, before the next release, so the workspace breaks once.
 - Neither depends on the other, on `transmux`, or on `broadcast-common`.
 - Every existing golden and fixture round trip stays byte-identical. This is a move plus an API tidy; no
   parser's behaviour changes.
-- No release and no version change in this work. Both crates start at `0.1.0`, `publish = false` until the
-  owner calls the release.
+- No release and no version change in this work: breaking changes are recorded under each crate's
+  `[Unreleased]` and versions move at the release. Both new crates start at `0.1.0`, `publish = false`.
+  At the release they are published before any crate that depends on them (`broadcast-core`, then
+  `broadcast-bitstream` and `broadcast-codec`, then the rest).
 - New crates clear `docs/CRATE-ACCEPTANCE.md`, with one recorded exception (§5.3).
 - Project rules apply unchanged: no magic numbers, no `#[allow]`, spec cited by private path, no spec text
   in public files, one function per job, deleted not deprecated.
@@ -99,7 +101,21 @@ Moved out of `transmux/src/`, one feature per codec family, all on by default:
 | `mpeg2` | `mpeg2_display.rs`, `user_data.rs`, `h262` | MPEG-2 video sequence/display, picture user data |
 | `mpeg-audio` | (from `container-probe`'s `mp3.rs`) | MPEG audio frame header |
 
-The exact file list is the builder's to establish: a module that mixes bitstream parsing with `transmux`
+**Which types move.** A type moves if a codec specification defines it: a parameter set and what it
+states (picture size and cropping rectangle, VUI colour description, timing information, profile and
+level, HDR metadata as coded). A type stays in `transmux` if it is a presentation or container concept
+built from those (`DisplayGeometry`, anything in `ir` that a muxer or manifest consumes). The staying type
+gets a constructor that takes the bitstream type (`DisplayGeometry::from_avc_sps` keeps its name and takes
+the moved `Sps`). Where `ir` today defines a type that is purely a coded fact, that type moves and `ir`
+uses it from the new crate; its public path changes, which is a breaking change recorded under
+`[Unreleased]`.
+
+The bit reader: the exp-Golomb and RBSP layer is built on `broadcast_core::bits::BitReader`, with the
+conversion from `BitError` inside the bitstream crate. `transmux`'s `bitreader.rs` is deleted. If the core
+reader lacks something the layer needs, the addition goes into `broadcast-core` as a reviewed edit of its
+API pin (additions are allowed there); a second reader is not.
+
+The exact file list is the builder's to establish, starting with a written inventory (§9 step 0): a module that mixes bitstream parsing with `transmux`
 IR types is split at that line, and the IR half stays in `transmux`. `nalu_ext.rs`, `codec_config_ext.rs`,
 `audio_profile.rs` and `smooth_codec.rs` are the likely seams. `rtp-packet`'s `av3a` is an RTP payload
 format and stays where it is.
@@ -130,9 +146,17 @@ the waiver type by type. Real-fixture parse tests, fuzz targets and the spec-dri
 ### 5.4 Relationship to `isobmff`
 
 `isobmff` keeps its parameter sets as opaque typed wrappers and gains no dependency. The glue that needs
-both (build an `avcC`/`hvcC` from parameter sets, `avc_config_from_sps_pps`, `avc_config_from_sprop`, an
-RFC 6381 string from a configuration record) moves to `broadcast-bitstream` behind an optional `isobmff`
-feature. `transmux` keeps re-exporting nothing: callers import from the new home.
+both crates and nothing else (build an `avcC`/`hvcC` from parameter-set bytes: `avc_config_from_sps_pps`
+and its HEVC counterpart) moves to `broadcast-bitstream` behind an optional `isobmff` feature.
+
+What does not move:
+- `avc_config_from_sprop` and `avc_config_from_fmtp` stay in `transmux` (`rtp_sdp.rs`). They are SDP
+  interpretation and need base64; they call the moved bytes-in function.
+- `rfc6381_codec_string(&CodecConfig)` stays in `transmux`: it takes an IR type. The per-codec helpers under
+  it that work from a parameter set or a configuration record (`rfc6381_avc1`, `rfc6381_hvc1`,
+  `rfc6381_vvc1`, `rfc6381_mp4a`) move, and it calls them.
+
+`transmux` re-exports nothing that moved: callers import from the new home.
 
 ### 5.5 Who changes
 
@@ -140,7 +164,8 @@ feature. `transmux` keeps re-exporting nothing: callers import from the new home
   moved items are deleted, not kept.
 - `media-plane`, `multimux`, `broadcast-client`, `smooth-runtime`, `media-doctor` import the items they use
   today (`annexb_to_length_prefixed`, `iter_annexb_nals`, `iter_length_prefixed_nals`,
-  `avc_config_from_sps_pps`, `avc_config_from_sprop`, `NalCodec`) from the new crate.
+  `avc_config_from_sps_pps`, `NalCodec`) from the new crate; `avc_config_from_sprop` stays a `transmux`
+  import. `NalCodec` is the bitstream crate's own enum and needs no feature.
 - `container-probe` depends on `broadcast-bitstream` (features `aac`, `mpeg-audio`) and deletes `adts.rs`
   and `mp3.rs`. Its scoring logic and frame-chain walk stay; only the header parse moves.
   This changes a standing rule: `container-probe` was kept to one runtime dependency and pinned to its
@@ -195,9 +220,21 @@ stage plumbing. Where a consumer assumes "codec never changes" or "one sample in
 maps samples to `Packet`s and back, and rewrites the track's `TrackSpec` from the encoder's
 `CodecParameters`. `multimux` and `transmux` stay thin: the stage holds no codec knowledge.
 
+A codec change is a property of the whole track, not an event inside it. The stage holds its input until
+the encoder has reported its parameters, then announces the track once with the new `TrackSpec`, before
+its first sample. Downstream stages never see a codec change inside a segment, so segment-boundary and
+init-segment logic is not rewritten. A source `TrackUpdated` is passed to the decoder; whether it leads to
+a new announcement downstream is the encoder's parameters changing, which is the existing `TrackUpdated`
+path. "Nothing lost at flush" means: every sample the fake decoder was given is accounted for in the fake
+encoder's output count at `finish`.
+
+An insertion point added to the CLI, `Repackage` or `media-plane` is a public API addition, recorded under
+`[Unreleased]`; no version changes in this work (§3).
+
 It is tested with a **fake codec pair** defined in the test: a decoder and encoder that hold three inputs
 before emitting, emit two outputs for some inputs, and report different parameters. The test drives real
-fixtures through demux → transcode stage → mux for at least TS, CMAF and one HLS segmenter, and asserts the
+fixtures through demux → transcode stage → mux for TS, CMAF and `LlHlsSegmenter`, and once through
+`media-plane`'s `ProgramSegmenter` into a real `Trunk`, and asserts the
 output's track describes the new parameters, timestamps are monotonic and nothing is lost at flush.
 
 ### 7.3 The spike adapter
@@ -206,6 +243,13 @@ One real adapter, to hit the traits with a real library before anyone depends on
 `symphonia` into `AudioFrame`s, fed to `broadcast-loudness`, measuring a real fixture's integrated loudness
 and comparing it with the value an independent tool reports for the same file.
 
+- The reference is ffmpeg's `ebur128` filter on the same file; the two integrated-loudness values agree
+  within 0.1 LU. The fixture is a committed, permissively licensed AAC file already in `fixtures/`; the
+  fixture licence rule applies to the spike as to any test.
+- `AudioFrame`'s sample formats include whatever `broadcast-loudness` takes today, so the spike needs no
+  conversion that is not also a real adapter's job.
+- `symphonia` gets a `dep_policy` purpose entry naming it as the spike's audio decoder, scoped to the side
+  workspace; `deny.toml` covers the main workspace only and is unchanged.
 - It lives in its own side workspace (like `demo/`), with its own lockfile, `publish = false`, outside the
   main workspace and outside `deny.toml`'s graph.
 - It is allowed to drive changes to `broadcast-codec`'s types. Each change it forces is listed in the PR.
@@ -223,9 +267,16 @@ MPEG-2 sequence headers. Slice headers and SEI stay read-only. Each lands as an 
 
 ## 9. Order of work
 
-1. **Extract `broadcast-bitstream`.** Untangle from `transmux` IR, merge the bit reader, apply the §5.2
-   rules, move tests and fuzz targets, migrate consumers, remove `container-probe`'s and `media-doctor`'s
-   duplicates. Crate-cluster by crate-cluster, goldens byte-identical throughout.
+0. **Inventory.** No code. For every candidate module: what it imports from `transmux`, which of its
+   types move and which stay under the §5.1 rule, which tests construct IR types and so stay in
+   `transmux`. The owner sees the size before step 1 starts. A reviewer found the coupling deeper than a
+   move: `sps.rs` (4 376 lines) builds IR geometry in its tests, and every candidate uses `transmux`'s
+   error type.
+1. **Extract `broadcast-bitstream`**, one PR per codec family, in this order: the bit reader and NAL/Annex
+   B layer; H.264 and HEVC; AAC; AC-3 and DTS; MPEG-2 and MPEG audio with the `container-probe` change.
+   Each PR applies the §5.2 rules, moves its tests and fuzz targets, migrates its consumers, and keeps
+   goldens byte-identical. Guard allowlist entries that are pinned to a moved line (`magic_numbers`,
+   `panic_idioms`, `truncation`, `serialize_mask`) move with the code, re-pinned, each keeping its reason.
 2. **`broadcast-codec` and the spike**, together. Independent of step 1.
 3. **Pipeline property and the transcode stage** in `transmux`. After step 2.
 
