@@ -7,9 +7,9 @@
 //! architecture from the crate-root docs, exercised with genuine samples
 //! rather than the one-byte synthetic samples the unit tests use.
 //!
-//! Reads `fixtures/ts/h264-aac.ts` (a real broadcast capture shared across
-//! this workspace's crates -- see `fixtures/ts/PROVENANCE.md`) via
-//! [`std::fs::read`].
+//! Streams `fixtures/ts/h264-aac.ts` (a real broadcast capture shared across
+//! this workspace's crates -- see `fixtures/ts/PROVENANCE.md`) from disk in
+//! bounded chunks.
 //!
 //! ```text
 //! cargo run -p media-plane --example ingest_trunk_playback --features std
@@ -17,6 +17,8 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::convert::Infallible;
+use std::fs::File;
+use std::io::{self, BufReader, Read};
 use std::num::NonZeroUsize;
 
 use broadcast_common::{Demand, Stage, Timestamp};
@@ -112,12 +114,14 @@ fn nz(n: usize) -> NonZeroUsize {
 }
 
 fn main() {
-    let ts_bytes = std::fs::read(test_fixtures::path(FIXTURE))
-        .expect("read the committed real-capture TS fixture");
-    println!(
-        "ingest_trunk_playback: read {} bytes from {FIXTURE}",
-        ts_bytes.len()
-    );
+    let path = test_fixtures::path(FIXTURE);
+    let file = File::open(&path).unwrap_or_else(|e| {
+        panic!(
+            "committed fixture {} could not be read: {e}",
+            path.display()
+        )
+    });
+    let mut reader = BufReader::new(file);
 
     let session = TsIngestSession {
         demux: StreamingTsDemux::new(),
@@ -149,6 +153,7 @@ fn main() {
     // handing the whole file to one `feed` call.
     const CHUNK_PACKETS: usize = 64;
     const CHUNK_SIZE: usize = TS_PACKET_SIZE * CHUNK_PACKETS;
+    let mut chunk = vec![0u8; CHUNK_SIZE];
     let mut cursor = None;
     let mut per_track: BTreeMap<u32, usize> = BTreeMap::new();
     let mut lagged = 0u64;
@@ -169,18 +174,32 @@ fn main() {
         }
     };
 
-    for (i, chunk) in ts_bytes.chunks(CHUNK_SIZE).enumerate() {
-        driver.feed(chunk, Timestamp::from_nanos(i as u64));
+    let mut total_bytes = 0usize;
+    let mut chunk_index = 0u64;
+    loop {
+        let read = read_chunk(&mut reader, &mut chunk).unwrap_or_else(|e| {
+            panic!(
+                "committed fixture {} could not be read: {e}",
+                path.display()
+            )
+        });
+        if read == 0 {
+            break;
+        }
+        total_bytes += read;
+        driver.feed(&chunk[..read], Timestamp::from_nanos(chunk_index));
         if cursor.is_none()
             && let Some(trunk) = driver.trunk(ProgramId(0))
         {
             cursor = Some(trunk.subscribe());
         }
         drain_cursor(&mut cursor, &mut per_track, &mut lagged);
+        chunk_index += 1;
     }
     driver.finish();
     drain_cursor(&mut cursor, &mut per_track, &mut lagged);
     cursor.expect("a real TS capture with elementary streams announces a program and a Trunk");
+    println!("ingest_trunk_playback: read {total_bytes} bytes from {FIXTURE}");
 
     println!("ingest_trunk_playback: real samples landed in the Trunk, by track_id:");
     for (track_id, count) in &per_track {
@@ -195,4 +214,18 @@ fn main() {
             "ingest_trunk_playback: {lagged} sample(s) evicted before the cursor read them (ring bound hit)"
         );
     }
+}
+
+/// Fill `buf` from `reader`; short only at end of stream.
+fn read_chunk(reader: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(filled)
 }
