@@ -78,7 +78,7 @@ fn main() {
         // packets -- a real conformance monitor that briefly falls behind
         // live ingest, not a producer that ever blocks (`record` never
         // does).
-        if i % CONSUMER_POLL_STRIDE == 0 {
+        if i.is_multiple_of(CONSUMER_POLL_STRIDE) {
             while let Some(item) = tap.poll() {
                 match item {
                     TapItem::Data(_, _) => delivered += 1,
