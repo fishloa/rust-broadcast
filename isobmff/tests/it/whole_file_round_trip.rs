@@ -170,11 +170,9 @@ fn has_tfhd_run_layout(bytes: &[u8]) -> bool {
 const EXCEPTIONS: &[Exception] = &[Exception {
     name: "mp4/frag/mpegh-stereo.frag.mp4",
     reason: "its `sidx` states 183 references while the excerpt carries 6 \
-             fragments, so the 177 references to absent segments cannot be \
-             regenerated from the written positions; its init segment's empty \
-             `stsz` also declares a sample_size of 1, which the `moov` rebuild \
-             writes as 0",
-    verify: sidx_indexes_absent_segments_and_stsz_states_a_size,
+             fragments, and the rewrite places no `sidx` before the fragments, \
+             so the references to absent segments are not reproduced",
+    verify: sidx_indexes_absent_segments,
 }];
 
 /// The first `stsz` in `moov` that declares a per-sample size while carrying
@@ -226,10 +224,6 @@ fn sidx_indexes_absent_segments(bytes: &[u8]) -> bool {
     };
     let fragments = boxes.iter().filter(|span| &span.fourcc == b"moof").count();
     index.references.len() > fragments
-}
-
-fn sidx_indexes_absent_segments_and_stsz_states_a_size(bytes: &[u8]) -> bool {
-    sidx_indexes_absent_segments(bytes) && empty_stsz_states_a_size(bytes)
 }
 
 /// A fixture's bytes, or `None` (with a loud skip) when a private one is not
@@ -438,7 +432,7 @@ fn typed_plan(run: &Run) -> OwnedPlan {
     plan
 }
 
-fn rebuild_fragmented(bytes: &[u8], run: &Run) -> Vec<u8> {
+fn fragmented_writer(bytes: &[u8], run: &Run) -> isobmff::writer::FragmentedWriter {
     let shell = run.plan.shell().expect("a plan read from a file").clone();
     let setups: Vec<TrackSetup> = run
         .plan
@@ -451,6 +445,26 @@ fn rebuild_fragmented(bytes: &[u8], run: &Run) -> Vec<u8> {
     writer.set_file_type(file_type(bytes));
     writer.set_movie_shell(shell);
     writer.set_index_layout(run.index.clone());
+    writer
+}
+
+/// Rebuild just the initialization segment (`ftyp` + `moov`).
+fn rebuild_init_segment(bytes: &[u8], run: &Run) -> Vec<u8> {
+    fragmented_writer(bytes, run).init().expect("init segment")
+}
+
+/// A source file's initialization segment: everything up to and including its
+/// `moov`.
+fn source_init_segment(bytes: &[u8]) -> &[u8] {
+    let moov = top_boxes(bytes)
+        .into_iter()
+        .find(|span| &span.fourcc == b"moov")
+        .expect("a moov");
+    &bytes[..moov.start + moov.size]
+}
+
+fn rebuild_fragmented(bytes: &[u8], run: &Run) -> Vec<u8> {
+    let mut writer = fragmented_writer(bytes, run);
     let mut out = writer.init().expect("init segment");
     writer.set_position(u64::try_from(out.len()).expect("init length"));
     for fragment in &run.fragments {
@@ -786,6 +800,27 @@ fn every_exception_names_an_exact_reason() {
             exception.name
         );
     }
+}
+
+/// `fixtures/mp4/frag/mpegh-stereo.frag.mp4` carries an empty `stsz`
+/// (`sample_count == 0`) with a constant `sample_size` of 1. Rebuilding its
+/// initialization segment through the fragmented writer must reproduce it
+/// byte for byte, so the rebuild keeps the declared constant size (#4148).
+#[test]
+fn an_empty_stsz_keeps_its_constant_sample_size() {
+    let name = "mp4/frag/mpegh-stereo.frag.mp4";
+    let source = load(name).expect("committed fixture");
+    assert!(
+        empty_stsz_states_a_size(&source),
+        "{name}: the fixture no longer carries an empty stsz with a size"
+    );
+    let run = drive(&source);
+    let written = rebuild_init_segment(&source, &run);
+    assert_eq!(
+        written,
+        source_init_segment(&source),
+        "{name}: the init segment does not round-trip byte identically"
+    );
 }
 
 /// The reader must never ask for a byte inside an `mdat` payload.
