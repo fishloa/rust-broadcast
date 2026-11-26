@@ -7,7 +7,7 @@
 //! wraps a raw AAC access unit in the ADTS header libav's decoder accepts.
 //!
 //! Both transforms are this crate's own, written from the container record
-//! layouts (ISO/IEC 14496-15 for `avcC`, ISO/IEC 14496-3 for the
+//! layouts (ISO/IEC 14496-15:2017 for `avcC`, ISO/IEC 14496-3 for the
 //! `AudioSpecificConfig` and ISO/IEC 13818-7 for the ADTS header). No FFmpeg
 //! source is copied.
 
