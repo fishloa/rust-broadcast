@@ -31,11 +31,12 @@ use core::time::Duration;
 use isobmff::box_types::parse_box;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use test_harness::collect::{concat, splice_index, splice_insert};
 use transmux::TrackId;
 use transmux::ir::DataIdentity;
 use transmux::pipeline::DataCarriage;
-use transmux::{CodecConfig, Media, Sample, Segmenter, Track, TrackSpec, snap_to_preceding_sync};
+use transmux::{CodecConfig, Sample, Segmenter, TrackSpec, snap_to_preceding_sync};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

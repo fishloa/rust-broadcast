@@ -60,7 +60,7 @@ struct ScriptedMuxer {
 }
 
 impl multimux::push::MediaMuxer for ScriptedMuxer {
-    fn set_tracks(&mut self, _tracks: &[transmux::ir::TrackSpec]) -> Result<(), SendMediaError> {
+    fn set_tracks(&mut self, _tracks: &[transmux::TrackSpec]) -> Result<(), SendMediaError> {
         Ok(())
     }
 

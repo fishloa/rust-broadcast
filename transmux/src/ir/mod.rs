@@ -3,13 +3,9 @@
 //! This is the neutral hub form every demuxer produces and every mux stage or
 //! manifest renderer consumes:
 //!
-//! - [`Media`] — a set of elementary [`Track`]s, plus the movie timescale and
-//!   an optional recovered PCR timeline ([`PcrSample`]).
-//! - [`Track`] — one elementary track: its identity/codec config
-//!   ([`TrackSpec`] wrapping [`CodecConfig`]) plus its decode-ordered
-//!   [`Sample`]s, an absolute decode-time anchor, and optional CENC/CBCS
-//!   track crypto defaults ([`TrackProtection`]); per-sample IVs live on
-//!   [`Sample::protection`].
+//! - [`TrackSpec`] — one elementary track's identity/codec config
+//!   ([`CodecConfig`]), with optional CENC/CBCS track crypto defaults
+//!   ([`TrackProtection`]); per-sample IVs live on [`Sample::protection`].
 //! - [`Sample`] — one coded access unit: data bytes, absolute optional
 //!   `dts`/`pts` (media plane step 2c), optional duration, [`SampleFlags`],
 //!   and optional debug-only [`Provenance`].
@@ -32,14 +28,13 @@
 //! - `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`) are stored *absolutely*, in the track's
 //!   media timescale (media plane step 2c) — `None` only for section-carried
 //!   tracks (SCTE-35/DSM-CC/private sections), which have no timestamp at
-//!   all, never fabricated. [`Track::start_decode_time`] is kept in lockstep
-//!   as the track's anchor (equal to its first sample's `dts` when the track
-//!   is timed) — the DTS the track's first sample sits at on the
-//!   presentation timeline (maps onto the fragment `tfdt`
-//!   `baseMediaDecodeTime`, ISO/IEC 14496-12:2026 §8.8.12).
+//!   all, never fabricated. A track's start decode time is its first sample's
+//!   `dts` when the track is timed — the DTS it sits at on the presentation
+//!   timeline (maps onto the fragment `tfdt` `baseMediaDecodeTime`,
+//!   ISO/IEC 14496-12:2026 §8.8.12).
 //! - 33-bit (TS) / 32-bit (RTP) rollover is unwrapped once, at the demux edge
 //!   (`crate::ts_demux`, `crate::rtp`) — never re-derived downstream.
-//! - Samples within a [`Track`] are always in decode order.
+//! - Samples within a track are always in decode order.
 //! - A sample's [`SampleProtection`] carries its own IV and subsample map;
 //!   [`TrackSpec::protection`], when present, must state the scheme and `tenc`
 //!   those samples were protected under.
@@ -78,8 +73,8 @@ pub use event::{
     InputDegradation,
 };
 pub use ids::{ProgramNumber, TrackId};
-pub use media::{Media, PcrSample, SkippedTrack};
+pub use media::{PcrSample, SkippedTrack};
 pub use sample::{
     FragmentTrackData, Provenance, Sample, SampleFlags, SampleProtection, SampleTiming,
 };
-pub use track::{ConstantIvSenc, Track, TrackProtection, TrackSpec};
+pub use track::{ConstantIvSenc, TrackProtection, TrackSpec};

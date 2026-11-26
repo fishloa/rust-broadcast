@@ -8,8 +8,9 @@
 //! coded sample bytes themselves. A muxer that dropped a sample, mis-scaled a
 //! timestamp, or corrupted `CodecPrivate` fails one of these comparisons.
 
+use test_harness::collect::Collected as Media;
+use transmux::MkvMuxStage;
 use transmux::pipeline::CodecConfig;
-use transmux::{Media, MkvMuxStage};
 
 /// H.264 (`fixtures/ts/h264-aac.ts`, `-c copy`'d to Matroska) + AAC.
 const H264_AAC: &str = "mkv/h264-aac.mkv";

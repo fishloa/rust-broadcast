@@ -316,7 +316,7 @@ mod tests {
         );
     }
 
-    fn fixture_media() -> transmux::ir::Media {
+    fn fixture_media() -> test_harness::collect::Collected {
         let ts = test_fixtures::read("ts/h264-aac.ts");
         let mut media = test_harness::collect::media_from_ts(&ts).expect("demux fixture");
         for track in &mut media.tracks {
@@ -348,7 +348,10 @@ mod tests {
 
     /// One pass of `media` through the transport's per-connection TS muxer,
     /// samples fed in decode order.
-    fn encode_pass<T: PushTransport>(transport: &mut T, media: &transmux::Media) -> Vec<u8> {
+    fn encode_pass<T: PushTransport>(
+        transport: &mut T,
+        media: &test_harness::collect::Collected,
+    ) -> Vec<u8> {
         let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
         transport
             .media_muxer()

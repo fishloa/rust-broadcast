@@ -2,7 +2,7 @@
 //!
 //! Exercises both hub paths as implemented by transmux: [`Mp4Demux`] (the
 //! streaming MP4 demuxer) and the [`CmafMuxStage`] mux stage, driven
-//! by `mux_stage::drive_media`.
+//! by `test_harness::collect::drive`.
 //!
 //! EXIT CRITERIA (all bite):
 //! 1. `Mp4Demux` over `av-frag.mp4` → `Media` with exactly 2 tracks
@@ -20,7 +20,7 @@ use transmux::TrackId;
 use broadcast_common::Parse;
 use isobmff::init_segment::MovieBox;
 use isobmff::movie_fragment::MovieFragmentBox;
-use transmux::media::Media;
+use test_harness::collect::Collected as Media;
 use transmux::pipeline::{
     CodecConfig, FragmentTrackData, TrackSpec, build_init_segment, build_media_segment,
 };

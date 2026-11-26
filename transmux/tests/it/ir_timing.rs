@@ -12,12 +12,13 @@ use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use test_harness::collect::MediaSelectExt;
+use test_harness::collect::CollectedSelectExt;
 use transmux::TrackId;
 
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::ir::DataIdentity;
 use transmux::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
-use transmux::{Ec3SyncframeInfo, Error, Media, PcrSample, Track};
+use transmux::{Ec3SyncframeInfo, Error, PcrSample};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

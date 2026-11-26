@@ -31,9 +31,9 @@ use broadcast_hls::{
     DecimalSeconds, IFrameVariant, MasterPlaylist, MediaPlaylist, MediaSegment, Variant,
 };
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use test_harness::collect::CollectedTrack as Track;
 use test_harness::collect::derive_iframe_track;
 use transmux::dash::{DashPackager, TRICKMODE_SCHEME, TrickModeAdaptationSet, TrickModeRepr};
-use transmux::media::Track;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
@@ -434,10 +434,10 @@ fn ir_trick_track_wired_to_signalling() {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Build a minimal single-track AVC video [`transmux::media::Media`] for use
+/// Build a minimal single-track AVC video [`test_harness::collect::Collected`] for use
 /// in DASH packaging tests.  8 samples, sync only at index 0.
-fn minimal_video_media() -> transmux::media::Media {
-    use transmux::media::Media;
+fn minimal_video_media() -> test_harness::collect::Collected {
+    use test_harness::collect::Collected as Media;
     let spec = TrackSpec::new(
         TrackId::new(1),
         timescale(90000),

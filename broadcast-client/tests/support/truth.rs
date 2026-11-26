@@ -1,4 +1,5 @@
-use transmux::{CodecConfig, Media};
+use test_harness::collect::Collected as Media;
+use transmux::CodecConfig;
 
 const NAL_LENGTH_BYTES: usize = 4;
 const NAL_TYPE_MASK: u8 = 0x1f;

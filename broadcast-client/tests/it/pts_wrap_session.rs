@@ -3,7 +3,8 @@ use crate::support::ts_shift::{PTS_WRAP, Shift, shift_pes};
 use broadcast_client::{Action, BufferEvent, Config, Event, Session};
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
 use broadcast_common::stage::Timestamp;
-use transmux::{DEFAULT_PSI_INTERVAL, Media, TsMuxStage};
+use test_harness::collect::Collected as Media;
+use transmux::{DEFAULT_PSI_INTERVAL, TsMuxStage};
 use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -234,12 +235,9 @@ fn pts_wrap_between_first_audio_and_first_video_keeps_the_join_contract() {
 /// Mux a whole `Media` through one TS muxer stage.
 fn mux_ts(media: &Media) -> Vec<u8> {
     let mut stage = TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL));
-    let out = transmux::mux_stage::drive_media(
-        &mut stage,
-        media,
-        broadcast_common::stage::Timestamp::ZERO,
-    )
-    .expect("mux to TS");
+    let out =
+        test_harness::collect::drive(&mut stage, media, broadcast_common::stage::Timestamp::ZERO)
+            .expect("mux to TS");
     let mut bytes = Vec::new();
     for output in out {
         if let transmux::mux_stage::MuxOutput::Bytes(chunk) = output {

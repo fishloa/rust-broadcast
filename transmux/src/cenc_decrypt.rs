@@ -1,7 +1,7 @@
 //! CENC decrypt — [`CencDecryptStage`], one sample at a time (ISO/IEC 23001-7).
 //!
 //! The demuxer already surfaces each protected track's `tenc` defaults
-//! ([`TrackSpec::protection`](crate::ir::TrackSpec::protection)) and each
+//! ([`TrackSpec::protection`](crate::TrackSpec::protection)) and each
 //! sample's IV and subsample map
 //! ([`Sample::protection`](crate::ir::Sample::protection)), so decryption needs
 //! no second file walk: a `Track` announcement passes through with its
@@ -375,7 +375,8 @@ mod tests {
     use super::*;
     use bytes::Bytes;
 
-    use crate::ir::{Track, TrackSpec};
+    use crate::collect::CollectedTrack as Track;
+    use crate::ir::TrackSpec;
 
     const KID: [u8; 16] = [
         0xa7, 0xe6, 0x1c, 0x37, 0x3e, 0x21, 0x90, 0x33, 0xc2, 0x10, 0x91, 0xfa, 0x60, 0x7b, 0xf3,
@@ -424,7 +425,7 @@ mod tests {
     fn encrypted_cenc_sample() -> crate::ir::Sample {
         let bytes = test_fixtures::read("ts/h264/main.ts");
 
-        let media = crate::test_media::media_from_ts(bytes.as_slice()).expect("demux");
+        let media = crate::collect::media_from_ts(bytes.as_slice()).expect("demux");
         let clear = crate::repackage::select_tracks_by(&media, |t| {
             matches!(t.spec.config, CodecConfig::Avc { .. })
         })

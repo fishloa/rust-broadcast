@@ -5,8 +5,9 @@
 
 use broadcast_common::stage::Timestamp;
 use isobmff::writer::{Interleave, Layout, MovieHeader, Sink};
-use transmux::media::Media;
-use transmux::mux_stage::{MuxOutput, drive_media};
+use test_harness::collect::Collected as Media;
+use test_harness::collect::drive;
+use transmux::mux_stage::MuxOutput;
 use transmux::progressive::ProgressiveMuxStage;
 
 /// The wall-clock length of one interleaved chunk, as the CLI chooses it.
@@ -29,7 +30,7 @@ pub fn package_with_sink(media: &Media, faststart: bool, sink: Sink) -> Vec<u8> 
     );
     let movie = MovieHeader::new(media.movie_timescale);
     let mut stage = ProgressiveMuxStage::new(plan, layout, movie);
-    let out = drive_media(&mut stage, media, Timestamp::ZERO).expect("package progressive");
+    let out = drive(&mut stage, media, Timestamp::ZERO).expect("package progressive");
     place(&out)
 }
 

@@ -424,8 +424,11 @@ fn avc_ts(spec: TrackSpec, access_units: &[Vec<u8>]) -> Vec<u8> {
                 .expect("valid timing")
         })
         .collect();
-    let track = transmux::Track::new(spec, samples);
-    ts_mux_stage::mux(&transmux::Media::new(vec![track], timescale(90000)))
+    let track = test_harness::collect::CollectedTrack::new(spec, samples);
+    ts_mux_stage::mux(&test_harness::collect::Collected::new(
+        vec![track],
+        timescale(90000),
+    ))
 }
 
 /// Every video `DisplayChanged`, as `(initial, coded width)`.

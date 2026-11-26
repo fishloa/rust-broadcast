@@ -6,7 +6,7 @@ use dash_runtime::ingest::{
 };
 use transmux::dash::DashPackager;
 
-fn demux_media() -> transmux::media::Media {
+fn demux_media() -> test_harness::collect::Collected {
     let ts = test_fixtures::read("ts/h264-aac.ts");
 
     test_harness::collect::media_from_ts(&ts[..]).expect("demux")

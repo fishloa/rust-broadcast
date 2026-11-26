@@ -1,13 +1,14 @@
 //! Drive a muxer stage over a whole [`Media`] and collect its byte stream.
 //!
-//! [`drive_media`] is the bridge from a whole `Media` to a muxer stage, whose
+//! [`drive`](test_harness::collect::drive) is the bridge from a whole `Media` to a muxer stage, whose
 //! output is a stream of [`MuxOutput`] units, some of them `BytesAt` patches. These tests compare
 //! bytes, so they apply the units to a buffer the way a seekable output file
 //! would.
 
 use broadcast_common::stage::Timestamp;
-use transmux::Media;
-use transmux::mux_stage::{MuxInput, MuxOutput, drive_media};
+use test_harness::collect::Collected as Media;
+use test_harness::collect::drive;
+use transmux::mux_stage::{MuxInput, MuxOutput};
 
 /// The byte stream `stage` produces for `media`, with every `BytesAt` patch
 /// applied in place.
@@ -24,7 +25,7 @@ pub fn mux_result<S>(stage: &mut S, media: &Media) -> Result<Vec<u8>, S::Error>
 where
     S: for<'a> broadcast_common::stage::Stage<In<'a> = MuxInput, Out = MuxOutput>,
 {
-    drive_media(stage, media, Timestamp::ZERO).map(apply)
+    drive(stage, media, Timestamp::ZERO).map(apply)
 }
 
 /// Apply `outputs` to a byte buffer, in order, as a seekable sink would.

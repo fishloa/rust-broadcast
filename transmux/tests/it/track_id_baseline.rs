@@ -41,7 +41,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use transmux::Media;
+use test_harness::collect::Collected as Media;
 
 /// Largest capture demuxed in a PR run. It keeps the `test-013` (9.4 MB) and
 /// `test-089` captures that pin #1255/#1579; the full 40 MB corpus runs when

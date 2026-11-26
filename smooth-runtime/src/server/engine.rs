@@ -10,10 +10,10 @@ use media_plane::Trunk;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
 use media_plane::ids::SegmentSeq;
 use transmux::{
-    SmoothCodec, SmoothPackager, SmoothStreamType, Track, TrackSpec, resolve_codec, to_smooth_ticks,
+    SmoothCodec, SmoothPackager, SmoothStreamType, TrackSpec, resolve_codec, to_smooth_ticks,
 };
 
-use crate::demux::SegmentDemux;
+use crate::demux::{SegmentDemux, Track};
 
 /// The prefix of this origin's fragment-URL template and of every fragment
 /// request path: the `QualityLevels(N)` segment of MS-SSTR §2.2.3.
@@ -788,7 +788,9 @@ fn chunk_timeline(
         // The chunk's duration is exactly the fragment's own `trun` sum, so
         // `Σtrun == c@d` holds by construction; a track the packager refuses
         // contributes no chunk rather than an empty entry with `d="0"`.
-        let Ok(fragment) = packager.package_track_fragment(track, sequence_number, start) else {
+        let Ok(fragment) =
+            packager.package_track_fragment(&track.spec, &track.samples, sequence_number, start)
+        else {
             continue;
         };
         let duration = fragment.summary.duration;
@@ -984,7 +986,12 @@ fn package_fragment(
         reason: "the segment does not carry the requested stream".to_string(),
     })?;
     let fragment = SmoothPackager
-        .package_track_fragment(track, chunk.sequence.value(), chunk.start)
+        .package_track_fragment(
+            &track.spec,
+            &track.samples,
+            chunk.sequence.value(),
+            chunk.start,
+        )
         .map_err(|error| SmoothOriginError::Codec {
             track: stream.interleaved_ordinal,
             reason: error.to_string(),

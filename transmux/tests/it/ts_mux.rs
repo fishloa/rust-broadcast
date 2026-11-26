@@ -18,9 +18,9 @@ use broadcast_common::Serialize;
 use broadcast_common::timescale::Timescale;
 use mpeg_ts::ts::TsPacket;
 use test_fixtures::process::tool_available;
+use test_harness::collect::Collected as Media;
 use transmux::TrackId;
 use transmux::ir::DataIdentity;
-use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
 fn timescale(value: u32) -> Timescale {
@@ -49,7 +49,7 @@ fn pipeline() -> (Media, Vec<u8>, Media) {
 const TS: usize = 188;
 
 /// Extract the demuxed avcC record body bytes for a track (serialized).
-fn avcc_body(track: &transmux::media::Track) -> Vec<u8> {
+fn avcc_body(track: &test_harness::collect::CollectedTrack) -> Vec<u8> {
     match &track.spec.config {
         CodecConfig::Avc { config, .. } => {
             let r = &config.config;
@@ -443,7 +443,7 @@ fn oversized_audio_sample_is_rejected_not_clamped() {
     );
     let sample =
         Sample::new(vec![0u8; 70_000], Some(0), Some(0), Some(1536), true).expect("valid timing");
-    let track = transmux::media::Track::new(spec, vec![sample]);
+    let track = test_harness::collect::CollectedTrack::new(spec, vec![sample]);
     let media = Media::new(vec![track], timescale(48_000));
 
     let err = ts_mux_stage::try_mux_with(&media, Some(transmux::DEFAULT_PSI_INTERVAL)).unwrap_err();
@@ -506,7 +506,7 @@ fn pcr_pid_is_audio_not_a_sparse_data_pid() {
     // A PES-carried Data track listed *before* the audio track.
     media.tracks.insert(
         0,
-        transmux::media::Track::new(
+        test_harness::collect::CollectedTrack::new(
             TrackSpec::new(
                 TrackId::new(99),
                 timescale(90_000),
@@ -609,7 +609,7 @@ fn pcr_only_packets_do_not_advance_cc() {
 /// mislabel the stream.
 #[test]
 fn too_many_elementary_streams_is_refused() {
-    use transmux::media::Track;
+    use test_harness::collect::CollectedTrack as Track;
 
     let fixture = std::fs::read(test_fixtures::path("ts/h264-aac.ts"))
         .expect("h264-aac.ts fixture must exist");

@@ -14,7 +14,8 @@ use std::time::Duration;
 use crate::ts_mux_stage;
 use dvb_conformance::{ConformanceMonitor, Indicator};
 use mpeg_ts::ts::TsPacket;
-use transmux::{DEFAULT_PSI_INTERVAL, Media, TsMuxStage};
+use test_harness::collect::Collected as Media;
+use transmux::{DEFAULT_PSI_INTERVAL, TsMuxStage};
 
 const PKT: usize = 188;
 const PAT_PID: u16 = 0x0000;

@@ -246,7 +246,7 @@ pub struct LaidOut {
 
 impl LaidOut {
     /// The frames merged across tracks by decode time, ties by track order —
-    /// what `transmux::mux_stage::drive_media` feeds a muxer.
+    /// what `test_harness::collect::drive` feeds a muxer.
     pub fn merged(&self) -> Vec<(i64, RawFrame)> {
         let mut cursors = vec![0usize; self.per_track.len()];
         let mut out = Vec::new();

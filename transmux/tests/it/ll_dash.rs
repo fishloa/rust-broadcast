@@ -14,9 +14,9 @@ use transmux::TrackId;
 use broadcast_common::Stage;
 use broadcast_common::timescale::Timescale;
 use std::time::Duration;
+use test_harness::collect::Collected as Media;
 use transmux::Sample;
 use transmux::ll_dash::LlSegmenter;
-use transmux::media::Media;
 use transmux::pipeline::{FragmentTrackData, TrackSpec};
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 
@@ -35,7 +35,7 @@ fn demux_media() -> Media {
     test_harness::collect::media_from_ts(&ts[..]).expect("demux h264-aac.ts")
 }
 
-fn video_track(media: &Media) -> &transmux::media::Track {
+fn video_track(media: &Media) -> &test_harness::collect::CollectedTrack {
     media
         .tracks
         .iter()

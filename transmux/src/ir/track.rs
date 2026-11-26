@@ -1,13 +1,12 @@
-//! Elementary track identity + crypto — [`Track`], [`TrackSpec`], [`TrackProtection`].
+//! Elementary track identity + crypto — [`TrackSpec`], [`TrackProtection`].
 //!
-//! Moved out of `media.rs` ([`Track`]) and `pipeline.rs`
-//! ([`TrackSpec`]) (media plane step 2a, no-op): same types, same fields,
-//! same impls.
+//! Moved out of `media.rs` and `pipeline.rs` (media plane step 2a, no-op):
+//! same types, same fields, same impls.
 
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
-use super::{CodecConfig, DisplayGeometry, ProgramNumber, Sample, TrackId};
+use super::{CodecConfig, DisplayGeometry, ProgramNumber, TrackId};
 use crate::hdr::HdrStaticMetadata;
 use isobmff::dovi::DoviDecoderConfigurationRecord;
 
@@ -163,90 +162,6 @@ impl TrackSpec {
     pub fn with_protection(mut self, protection: TrackProtection) -> Self {
         self.protection = Some(protection);
         self
-    }
-}
-
-/// One elementary track: its identity/codec config plus its coded samples.
-///
-/// A thin wrapper pairing the existing [`TrackSpec`] (track_id + timescale +
-/// [`CodecConfig`]) with the track's decode-ordered [`Sample`]s.
-///
-/// `#[non_exhaustive]`: matches [`TrackSpec`], [`Sample`] and
-/// the collected media, and
-/// leaves room for per-track state the pipeline has already wanted twice
-/// (`start_decode_time`); construct with [`Track::new`] or
-/// [`Track::new_at`]; destructuring or matching from another crate needs a
-/// trailing `..`.
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-pub struct Track {
-    /// Track identity + codec configuration (used to build the init segment).
-    pub spec: TrackSpec,
-    /// The track's coded access units, in decode order.
-    pub samples: Vec<Sample>,
-    /// Absolute decode time of the track's **first** sample, in this track's
-    /// media timescale ([`TrackSpec::timescale`]) ticks.
-    ///
-    /// Since media plane step 2c, `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`) are
-    /// themselves absolute (in the same timescale), so this field is
-    /// redundant with (and must be kept equal to) `samples.first().timing.map(|t| t.dts)` for a
-    /// timed track — it survives as the anchor consumers reach for without
-    /// touching the sample slice (e.g. building the fragment `tfdt`
-    /// `baseMediaDecodeTime`, ISO/IEC 14496-12:2026 §8.8.12), and as the
-    /// track-level anchor for tracks with no samples at all.
-    ///
-    /// Demuxers that recover an absolute timeline populate it
-    /// ([`crate::mp4_demux::Mp4Demux`] from the first movie fragment's `tfdt`;
-    /// [`StreamingTsDemux`](crate::ts_demux::StreamingTsDemux) from the first sample's
-    /// unwrapped DTS; WebM, MPEG Program Stream, FLV, RTMP and RTP likewise
-    /// anchor on their first sample's absolute timestamp or their own source
-    /// clock, media plane step 2c). A source that carries no absolute anchor
-    /// leaves it `0`. It is the input to the timeline transforms in
-    /// [`crate::rebase`] (rebase-to-zero, offset), which shift every sample's
-    /// `dts`/`pts` in lockstep.
-    pub start_decode_time: u64,
-}
-
-impl Track {
-    /// Create a track from its spec and samples, anchored at decode time `0`.
-    pub fn new(spec: TrackSpec, samples: Vec<Sample>) -> Self {
-        Self {
-            spec,
-            samples,
-            start_decode_time: 0,
-        }
-    }
-
-    /// Create a track from its spec and samples, anchored at an absolute
-    /// `start_decode_time` (in the track's media timescale).
-    pub fn new_at(spec: TrackSpec, samples: Vec<Sample>, start_decode_time: u64) -> Self {
-        Self {
-            spec,
-            samples,
-            start_decode_time,
-        }
-    }
-
-    /// Set the absolute [`start_decode_time`](Self::start_decode_time) anchor,
-    /// returning `self` (builder style).
-    pub fn with_start_decode_time(mut self, start_decode_time: u64) -> Self {
-        self.start_decode_time = start_decode_time;
-        self
-    }
-
-    /// Track ID (1-based, unique within the movie).
-    pub fn track_id(&self) -> TrackId {
-        self.spec.track_id
-    }
-
-    /// Media timescale (ticks per second); non-zero by construction.
-    pub fn timescale(&self) -> broadcast_common::timescale::Timescale {
-        self.spec.timescale
-    }
-
-    /// Codec configuration.
-    pub fn config(&self) -> &CodecConfig {
-        &self.spec.config
     }
 }
 

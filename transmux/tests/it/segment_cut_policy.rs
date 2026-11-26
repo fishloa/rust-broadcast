@@ -6,7 +6,7 @@
 //! bytes only where a fixture cannot supply the type (CRA, IDR_N_LP/W_RADL).
 
 use crate::ts_hls_stage;
-use transmux::media::Media;
+use test_harness::collect::Collected as Media;
 use transmux::mux_stage::SegmentOut;
 use transmux::{
     CodecConfig, NalCodec, Sample, SegmentCutPolicy, StreamingTsHlsSegmenter, TrackSpec,

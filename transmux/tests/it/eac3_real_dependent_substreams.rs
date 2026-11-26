@@ -17,11 +17,12 @@
 
 use broadcast_common::Serialize;
 use isobmff::Ec3SpecificBox;
+use test_harness::collect::Collected as Media;
 use transmux::ac3_syncframe::{
     Ec3SyncframeInfo, ec3_specific_box_from_syncframes, split_eac3_syncframes,
 };
 use transmux::pipeline::CodecConfig;
-use transmux::{DemuxEvent, Media, StreamingTsDemux};
+use transmux::{DemuxEvent, StreamingTsDemux};
 
 const AU_COUNT: usize = 157;
 const AC3_CORE_LEN: usize = 2304;
@@ -61,7 +62,7 @@ fn dec3_body(mp4: &[u8]) -> Vec<u8> {
     mp4[at + 4..at - 4 + size].to_vec()
 }
 
-fn eac3_track(m: &Media) -> &transmux::Track {
+fn eac3_track(m: &Media) -> &test_harness::collect::CollectedTrack {
     let mut it = m
         .tracks
         .iter()
@@ -71,7 +72,7 @@ fn eac3_track(m: &Media) -> &transmux::Track {
     t
 }
 
-fn dec3_of(t: &transmux::Track) -> &Ec3SpecificBox {
+fn dec3_of(t: &test_harness::collect::CollectedTrack) -> &Ec3SpecificBox {
     match &t.spec.config {
         CodecConfig::Eac3 { config, .. } => config,
         _ => unreachable!(),

@@ -16,8 +16,8 @@ use test_fixtures::process::tool_available;
 use transmux::TrackId;
 
 use crate::ts_mux_stage;
+use test_harness::collect::Collected as Media;
 use transmux::SmoothPackager;
-use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 
 // ── ffprobe readings of the input fixture (90 kHz ticks) ────────────────────
@@ -324,7 +324,8 @@ fn trim_keeps_audio_aligned_with_snapped_video() {
     let media = input_media();
     let start = movie_ticks(&media, 2.5);
     let end = movie_ticks(&media, 3.5);
-    let trimmed = test_harness::collect::MediaSelectExt::trim(&media, start, end).expect("trim");
+    let trimmed =
+        test_harness::collect::CollectedSelectExt::trim(&media, start, end).expect("trim");
     let out = test_harness::collect::cmaf_from_media(&trimmed, Duration::from_secs(1))
         .expect("repackage");
     let bytes = out.to_contiguous();

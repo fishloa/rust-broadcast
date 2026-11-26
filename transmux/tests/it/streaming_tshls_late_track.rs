@@ -17,7 +17,7 @@
 //! declare the audio track in the PMT and actually carry its PES data.
 
 use crate::ts_hls_stage;
-use transmux::media::Media;
+use test_harness::collect::Collected as Media;
 use transmux::mux_stage::SegmentOut;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::{StreamingTsHlsSegmenter, TrackId};

@@ -32,9 +32,10 @@ use crate::ts_psi::{first_section, parse_pat, parse_pmt, split_lp};
 use broadcast_common::timescale::Timescale;
 use isobmff::{Ac3SpecificBox, HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use std::path::PathBuf;
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
-use transmux::{Media, Sample, StreamingTsHlsSegmenter, Track, TrackSpec};
+use transmux::{Sample, StreamingTsHlsSegmenter, TrackSpec};
 
 // ── Fixture loading (mirrors tests/it/ts_hevc.rs) ──────────────────────────────
 

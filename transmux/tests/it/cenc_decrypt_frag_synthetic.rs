@@ -9,13 +9,13 @@
 #![cfg(feature = "cenc")]
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::movie_fragment::TrackFragmentRunBox;
-use test_harness::collect::MediaSelectExt;
+use test_harness::collect::CollectedSelectExt;
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::cenc_decrypt::CencDecryptStage;
 use transmux::cenc_encrypt::CencEncryptStage;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
-    CencScheme, CodecConfig, EncryptConfig, KeyMap, Media, Sample, SubsamplePolicy, Track, TrackId,
-    TrackSpec,
+    CencScheme, CodecConfig, EncryptConfig, KeyMap, Sample, SubsamplePolicy, TrackId, TrackSpec,
 };
 
 const KID: [u8; 16] = [

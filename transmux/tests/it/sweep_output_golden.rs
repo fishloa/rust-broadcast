@@ -9,7 +9,7 @@
 use crate::ts_mux_stage;
 use broadcast_common::timescale::Timescale;
 use core::time::Duration;
-use test_harness::collect::MediaSelectExt;
+use test_harness::collect::CollectedSelectExt;
 use transmux::TrackId;
 
 fn timescale(value: u32) -> Timescale {
@@ -117,10 +117,16 @@ fn sample_timing_debug(s: &str) -> String {
 /// itself is unchanged. `degraded` is the last field; the TS demux now fills
 /// it (continuity gaps on `m6-single.ts`), which is pinned by
 /// `ts_sync_loss_degraded.rs` instead.
-fn media_debug(media: &transmux::Media) -> String {
+fn media_debug(media: &test_harness::collect::Collected) -> String {
+    // The collected form moved out of the library and was renamed; the goldens
+    // were captured with the old type names in `Debug`, so normalise them back
+    // rather than re-blessing every hash for a test-only rename.
+    let rendered = format!("{media:?}")
+        .replace("CollectedTrack", "Track")
+        .replace("Collected", "Media");
     let s = legacy_pcr_debug(&legacy_pid_debug(&no_track_encryption_debug(
         &no_protection_debug(&no_display_debug(&sample_timing_debug(
-            &legacy_data_config_debug(&format!("{media:?}")),
+            &legacy_data_config_debug(&rendered),
         ))),
     )));
     match s.rfind(", degraded: [") {
@@ -501,7 +507,7 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
     assert!(bad.is_empty(), "output changed: {bad:?}");
 }
 
-fn h264_aac_media() -> Option<transmux::Media> {
+fn h264_aac_media() -> Option<test_harness::collect::Collected> {
     let data = fixture("ts/h264-aac.ts")?;
     Some(test_harness::collect::media_from_ts(data.as_slice()).unwrap())
 }

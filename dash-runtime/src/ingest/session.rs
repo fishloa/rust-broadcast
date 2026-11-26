@@ -659,7 +659,7 @@ mod tests {
         assert_ne!(d, Demand::default());
     }
 
-    fn media_and_mpd() -> (Vec<u8>, transmux::media::Media) {
+    fn media_and_mpd() -> (Vec<u8>, test_harness::collect::Collected) {
         let ts = test_fixtures::read("ts/h264-aac.ts");
 
         let media = test_harness::collect::media_from_ts(&ts[..]).expect("demux");
@@ -670,7 +670,7 @@ mod tests {
         (mpd.into_bytes(), media)
     }
 
-    fn init_of(media: &transmux::media::Media, track: usize) -> Vec<u8> {
+    fn init_of(media: &test_harness::collect::Collected, track: usize) -> Vec<u8> {
         build_init_segment(
             std::slice::from_ref(&media.tracks[track].spec),
             media.movie_timescale,
@@ -678,7 +678,7 @@ mod tests {
         .expect("init")
     }
 
-    fn segment_of(media: &transmux::media::Media, track: usize, count: usize) -> Vec<u8> {
+    fn segment_of(media: &test_harness::collect::Collected, track: usize, count: usize) -> Vec<u8> {
         let t = &media.tracks[track];
         let mut many = Vec::new();
         for i in 0..count {
@@ -688,7 +688,7 @@ mod tests {
         build_media_segment(1, &[ftd]).expect("seg")
     }
 
-    fn session_with_one_header() -> (DashifIngestSession, transmux::media::Media) {
+    fn session_with_one_header() -> (DashifIngestSession, test_harness::collect::Collected) {
         let (mpd, media) = media_and_mpd();
         let mut s = DashifIngestSession::new(DashifIngestConfig::default());
         let now = Timestamp::from_nanos(0);

@@ -52,7 +52,7 @@ use broadcast_common::{Demand, Parse, Serialize, Stage, Timestamp};
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::error::{Error, Result};
-use crate::ir::{Sample, Track, TrackSpec};
+use crate::ir::{Sample, TrackSpec};
 use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary};
 use crate::pipeline::CodecConfig;
 use crate::segment_log::{SegmentSummaryLog, TrackSummary};
@@ -288,11 +288,12 @@ impl SmoothPackager {
     /// field.
     pub fn package_track_fragment(
         &self,
-        track: &Track,
+        spec: &TrackSpec,
+        samples: &[Sample],
         sequence_number: u32,
         start_smooth: u64,
     ) -> Result<SegmentOut> {
-        if track.samples.is_empty() {
+        if samples.is_empty() {
             return Err(Error::InvalidInput(
                 "cannot package a Smooth fragment from a track with no samples",
             ));
@@ -300,36 +301,36 @@ impl SmoothPackager {
         // Times relative to the track's own first sample: only the *durations*
         // and composition offsets are used from here (the fragment's absolute
         // start is the caller's `start_smooth`, not the derived one).
-        let origin = SmoothOrigin::from_tracks(core::slice::from_ref(track));
-        let times = smooth_times(&track.samples, origin, track.spec.timescale, None)?;
+        let origin = SmoothOrigin::from_tracks([(spec.timescale, samples)]);
+        let times = smooth_times(samples, origin, spec.timescale, None)?;
         let duration: u64 = times.iter().map(|t| u64::from(t.duration)).sum();
         let data = build_smooth_fragment(
-            track.spec.track_id,
+            spec.track_id,
             sequence_number,
             start_smooth,
             duration,
-            &track.samples,
+            samples,
             &times,
         )?;
         Ok(SegmentOut {
             summary: SegmentSummary {
-                track: track.spec.track_id,
+                track: spec.track_id,
                 sequence: u64::from(sequence_number),
                 start: start_smooth,
                 duration,
                 timescale: SMOOTH_DEFAULT_TIMESCALE.get(),
-                bytes: track.samples.iter().map(|s| s.data.len() as u64).sum(),
-                independent: track.samples.first().is_some_and(|s| s.flags.is_sync),
+                bytes: samples.iter().map(|s| s.data.len() as u64).sum(),
+                independent: samples.first().is_some_and(|s| s.flags.is_sync),
                 discontinuous: false,
             },
             bytes: bytes::Bytes::from(data),
             tracks: alloc::vec![crate::mux_stage::TrackPart {
-                track: track.spec.track_id,
+                track: spec.track_id,
                 start: start_smooth,
                 duration,
                 timescale: SMOOTH_DEFAULT_TIMESCALE.get(),
-                bytes: track.samples.iter().map(|s| s.data.len() as u64).sum(),
-                samples: u32::try_from(track.samples.len()).unwrap_or(u32::MAX),
+                bytes: samples.iter().map(|s| s.data.len() as u64).sum(),
+                samples: u32::try_from(samples.len()).unwrap_or(u32::MAX),
             }],
         })
     }
@@ -689,22 +690,18 @@ impl SmoothOrigin {
     /// sample carries one. The bridge for a caller that still holds the
     /// samples; a live source whose stream starts at zero uses
     /// [`SmoothOrigin::default`].
-    pub fn from_tracks(tracks: &[Track]) -> Self {
+    pub fn from_tracks<'a>(tracks: impl IntoIterator<Item = (Timescale, &'a [Sample])>) -> Self {
         let mut best: Option<(i64, Timescale)> = None;
-        for track in tracks {
-            let Some(dts) = track
-                .samples
-                .iter()
-                .find_map(|s| s.timing.and_then(|t| t.dts()))
-            else {
+        for (timescale, samples) in tracks {
+            let Some(dts) = samples.iter().find_map(|s| s.timing.and_then(|t| t.dts())) else {
                 continue;
             };
-            let earlier = best.is_none_or(|(ticks, timescale)| {
-                broadcast_common::timescale::cmp_ticks(dts, track.spec.timescale, ticks, timescale)
+            let earlier = best.is_none_or(|(ticks, best_timescale)| {
+                broadcast_common::timescale::cmp_ticks(dts, timescale, ticks, best_timescale)
                     .is_lt()
             });
             if earlier {
-                best = Some((dts, track.spec.timescale));
+                best = Some((dts, timescale));
             }
         }
         match best {
@@ -1167,6 +1164,7 @@ mod tests {
     }
 
     use super::*;
+    use crate::collect::CollectedTrack as Track;
     use crate::ir::DataIdentity;
     use broadcast_common::timescale::Timescale;
 
@@ -1273,7 +1271,7 @@ mod tests {
         // 90 kHz, dts steps 3003 but declared durations 3000: a plain
         // duration sum would drift from the timeline the manifest describes.
         let track = timed_track(1, 90_000, &[(0, 3000), (3003, 3000), (6006, 3000)]);
-        let origin = SmoothOrigin::from_tracks(core::slice::from_ref(&track));
+        let origin = SmoothOrigin::from_tracks([(track.spec.timescale, track.samples.as_slice())]);
         let times =
             smooth_times(&track.samples, origin, timescale(90_000), None).expect("timeline");
         let durations: Vec<u32> = times.iter().map(|t| t.duration).collect();
@@ -1286,7 +1284,10 @@ mod tests {
     fn smooth_timeline_falls_back_to_own_duration_when_dts_goes_backwards() {
         let origin_track = timed_track(2, 1000, &[(0, 1000)]);
         let track = timed_track(1, 1000, &[(1000, 1000), (500, 1000)]);
-        let origin = SmoothOrigin::from_tracks(&[origin_track, track.clone()]);
+        let origin = SmoothOrigin::from_tracks([
+            (origin_track.spec.timescale, origin_track.samples.as_slice()),
+            (track.spec.timescale, track.samples.as_slice()),
+        ]);
         let times = smooth_times(&track.samples, origin, timescale(1000), None).expect("timeline");
         let durations: Vec<u32> = times.iter().map(|t| t.duration).collect();
         assert_eq!(durations, alloc::vec![10_000_000, 10_000_000]);
@@ -1297,7 +1298,10 @@ mod tests {
         let origin_track = timed_track(2, 1000, &[(0, 1000)]);
         // 500 s at 1 kHz = 5e9 ticks in the 10 MHz Smooth timescale (> u32::MAX).
         let track = timed_track(1, 1000, &[(1000, 500_000)]);
-        let origin = SmoothOrigin::from_tracks(&[origin_track, track.clone()]);
+        let origin = SmoothOrigin::from_tracks([
+            (origin_track.spec.timescale, origin_track.samples.as_slice()),
+            (track.spec.timescale, track.samples.as_slice()),
+        ]);
         match smooth_times(&track.samples, origin, timescale(1000), None) {
             Err(Error::InvalidValue(v)) => {
                 assert_eq!(v.field, "trun sample_duration");

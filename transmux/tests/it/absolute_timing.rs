@@ -28,9 +28,10 @@ use crate::ts_mux_stage;
 use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 
+use test_harness::collect::Collected as Media;
+use transmux::RtmpMuxStage;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
-use transmux::{Media, RtmpMuxStage};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -865,7 +866,7 @@ fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
 fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
     use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
     use isobmff::nalu_types::{AvcPps, AvcSps};
-    use transmux::media::Track;
+    use test_harness::collect::CollectedTrack as Track;
     use transmux::pipeline::{Sample, TrackSpec};
 
     const ANCHOR: u64 = 1_234_567;

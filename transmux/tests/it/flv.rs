@@ -22,7 +22,7 @@ use transmux::TrackId;
 use transmux::{CodecConfig, FlvError, FlvMuxStage, StreamingFlvDemux};
 
 /// The track specs of `media`, the shape the per-spec FLV helpers take.
-fn specs(media: &transmux::Media) -> Vec<transmux::TrackSpec> {
+fn specs(media: &test_harness::collect::Collected) -> Vec<transmux::TrackSpec> {
     media.tracks.iter().map(|t| t.spec.clone()).collect()
 }
 
@@ -458,7 +458,7 @@ fn alloc_body(len: usize) -> Vec<u8> {
 }
 
 /// Every sample's FLV frame-tag payload, track by track.
-fn frame_payloads(media: &transmux::Media) -> Vec<transmux::FlvPayload> {
+fn frame_payloads(media: &test_harness::collect::Collected) -> Vec<transmux::FlvPayload> {
     let mut payloads = Vec::new();
     for track in &media.tracks {
         for sample in &track.samples {
@@ -474,7 +474,7 @@ fn frame_payloads(media: &transmux::Media) -> Vec<transmux::FlvPayload> {
 
 /// The first sample's FLV frame-tag payload.
 fn first_frame(
-    media: &transmux::Media,
+    media: &test_harness::collect::Collected,
 ) -> Result<Option<transmux::FlvPayload>, transmux::FlvError> {
     transmux::flv_frame_payload(&media.tracks[0].spec, &media.tracks[0].samples[0])
 }
@@ -521,7 +521,7 @@ fn package_rescales_non_ms_timescales() {
         })
         .collect::<std::result::Result<Vec<_>, _>>()
         .expect("valid timing");
-    let track = transmux::Track::new(
+    let track = test_harness::collect::CollectedTrack::new(
         transmux::TrackSpec::new(
             TrackId::new(1),
             VIDEO_TIMESCALE,
@@ -533,7 +533,7 @@ fn package_rescales_non_ms_timescales() {
         ),
         samples,
     );
-    let media = transmux::Media::new(vec![track], VIDEO_TIMESCALE);
+    let media = test_harness::collect::Collected::new(vec![track], VIDEO_TIMESCALE);
 
     let flv = crate::mux_bytes::mux_bytes(&mut FlvMuxStage::new(), &media);
 
@@ -596,7 +596,7 @@ fn package_rejects_oversized_composition_time() {
     // 9 000 000 ms (2.5 h) at timescale 1000 is far past SI24's 8 388 607 ms.
     let sample = transmux::Sample::new(alloc_body(4), Some(0), Some(9_000_000), Some(1_000), true)
         .expect("valid timing");
-    let track = transmux::Track::new(
+    let track = test_harness::collect::CollectedTrack::new(
         transmux::TrackSpec::new(
             TrackId::new(1),
             broadcast_common::timescale!(1000),
@@ -608,7 +608,8 @@ fn package_rejects_oversized_composition_time() {
         ),
         vec![sample],
     );
-    let media = transmux::Media::new(vec![track], broadcast_common::timescale!(1000));
+    let media =
+        test_harness::collect::Collected::new(vec![track], broadcast_common::timescale!(1000));
 
     let err = crate::mux_bytes::mux_result(&mut FlvMuxStage::new(), &media)
         .expect_err("oversized CompositionTime must be rejected");
@@ -639,7 +640,7 @@ fn frame_payloads_reject_out_of_range_timestamps() {
     let media_with = |dts: i64, cts: i64| {
         let sample = transmux::Sample::new(alloc_body(4), Some(dts), Some(cts), Some(1_000), true)
             .expect("valid timing");
-        let track = transmux::Track::new(
+        let track = test_harness::collect::CollectedTrack::new(
             transmux::TrackSpec::new(
                 TrackId::new(1),
                 broadcast_common::timescale!(1000),
@@ -651,7 +652,7 @@ fn frame_payloads_reject_out_of_range_timestamps() {
             ),
             vec![sample],
         );
-        transmux::Media::new(vec![track], broadcast_common::timescale!(1000))
+        test_harness::collect::Collected::new(vec![track], broadcast_common::timescale!(1000))
     };
     // Sanity: in-range input is accepted (so the Errs below are the guards).
     assert!(first_frame(&media_with(0, 0)).is_ok());
@@ -1072,7 +1073,7 @@ fn on_metadata_body_is_the_tag_flv_mux_writes_minus_the_live_duration() {
 
 /// The fixture's longest track duration as `FlvMuxStage` writes it: the summed
 /// sample durations over the track's own timescale, in seconds.
-fn script_duration_seconds(media: &transmux::Media) -> f64 {
+fn script_duration_seconds(media: &test_harness::collect::Collected) -> f64 {
     let mut max = 0.0f64;
     for track in &media.tracks {
         let ticks: u64 = track

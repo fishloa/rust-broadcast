@@ -18,7 +18,7 @@
 //! counter the demuxer maintains for itself.
 
 use std::path::PathBuf;
-use transmux::media::Media;
+use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;
 
 fn load_ps() -> Vec<u8> {

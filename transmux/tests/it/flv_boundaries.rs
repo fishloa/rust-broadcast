@@ -8,7 +8,8 @@
 
 use broadcast_common::Parse;
 use broadcast_common::timescale::Timescale;
-use transmux::{CodecConfig, FlvError, FlvMuxStage, Media, Sample, Track, TrackId, TrackSpec};
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
+use transmux::{CodecConfig, FlvError, FlvMuxStage, Sample, TrackId, TrackSpec};
 
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType, tags};
 use transmux::ir::DataIdentity;

@@ -14,8 +14,9 @@ use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 use dvb_si::descriptors::aac::{AacDescriptor, AacExtension};
 use isobmff::EsdsBox;
+use test_harness::collect::Collected as Media;
 use transmux::{
-    AudioObjectType, AudioSpecificConfig, CodecConfig, HeAacProfile, Media, SamplingFrequencyIndex,
+    AudioObjectType, AudioSpecificConfig, CodecConfig, HeAacProfile, SamplingFrequencyIndex,
     TrackSpec, build_init_segment, rfc6381_codec_string,
 };
 
@@ -125,7 +126,7 @@ fn heaac_override_keeps_presentation_time_unchanged() {
         .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
         .expect("AAC track");
     assert_eq!(track.spec.timescale.get(), CORE_HZ);
-    let seconds = |t: &transmux::Track| -> Vec<f64> {
+    let seconds = |t: &test_harness::collect::CollectedTrack| -> Vec<f64> {
         t.samples
             .iter()
             .map(|s| {
@@ -134,7 +135,7 @@ fn heaac_override_keeps_presentation_time_unchanged() {
             })
             .collect()
     };
-    let total = |t: &transmux::Track| -> f64 {
+    let total = |t: &test_harness::collect::CollectedTrack| -> f64 {
         t.samples
             .iter()
             .map(|s| f64::from(s.timing.and_then(|t| t.duration()).expect("audio duration")))

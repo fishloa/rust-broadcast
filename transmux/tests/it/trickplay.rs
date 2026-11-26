@@ -18,10 +18,10 @@
 use broadcast_common::timescale::Timescale;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use std::fs;
+use test_harness::collect::CollectedTrack as Track;
 use test_harness::collect::derive_iframe_track;
 use transmux::TrackId;
 use transmux::error::Error;
-use transmux::media::Track;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
@@ -286,7 +286,7 @@ fn no_sync_samples_returns_error() {
 
 #[test]
 fn append_iframe_track_appends_a_second_track_keeping_absolute_timing() {
-    let mut media = transmux::Media::new(vec![synthetic_track()], timescale(1000));
+    let mut media = test_harness::collect::Collected::new(vec![synthetic_track()], timescale(1000));
     let source_dts: Vec<i64> = media.tracks[0]
         .samples
         .iter()
@@ -330,7 +330,7 @@ fn append_iframe_track_appends_a_second_track_keeping_absolute_timing() {
 
 #[test]
 fn append_iframe_track_rejects_an_out_of_range_index() {
-    let mut media = transmux::Media::new(vec![synthetic_track()], timescale(1000));
+    let mut media = test_harness::collect::Collected::new(vec![synthetic_track()], timescale(1000));
     let out_of_range = media.tracks.len();
     let err = test_harness::collect::append_iframe_track(&mut media, out_of_range)
         .expect_err("out-of-range index");

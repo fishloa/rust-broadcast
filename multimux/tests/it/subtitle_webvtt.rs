@@ -83,14 +83,14 @@ use crate::support::shared_it::nz;
 
 struct Rig {
     app: Router,
-    media: transmux::Media,
+    media: test_harness::collect::Collected,
 }
 
-fn demux(bytes: &[u8]) -> transmux::Media {
+fn demux(bytes: &[u8]) -> test_harness::collect::Collected {
     test_harness::collect::media_from_ts(bytes).expect("demux fixture")
 }
 
-fn compose(video: &[u8], teletext: &[u8]) -> transmux::Media {
+fn compose(video: &[u8], teletext: &[u8]) -> test_harness::collect::Collected {
     let mut media = demux(video);
     media
         .tracks
@@ -140,11 +140,15 @@ fn fresh_route(subtitles: bool) -> Arc<RouteHandle> {
     )
 }
 
-fn start_rig(media: transmux::Media, subtitles: bool) -> Driver {
+fn start_rig(media: test_harness::collect::Collected, subtitles: bool) -> Driver {
     start_rig_on(media, fresh_route(subtitles), false)
 }
 
-fn start_rig_on(media: transmux::Media, route: Arc<RouteHandle>, reconnect: bool) -> Driver {
+fn start_rig_on(
+    media: test_harness::collect::Collected,
+    route: Arc<RouteHandle>,
+    reconnect: bool,
+) -> Driver {
     let trunk = Trunk::new(
         TrunkConfig::default()
             .with_timed_capacity(nz(RING))
@@ -255,7 +259,7 @@ impl Driver {
     }
 }
 
-fn build_from(media: transmux::Media, subtitles: bool) -> Rig {
+fn build_from(media: test_harness::collect::Collected, subtitles: bool) -> Rig {
     let mut driver = start_rig(media, subtitles);
     driver.feed(usize::MAX);
     driver.finish()
@@ -694,7 +698,7 @@ async fn every_segment_has_webvtt_header_and_timestamp_map() {
     assert!(cues > 0, "the subtitle page carries cues");
 }
 
-fn first_video_sync_dts(media: &transmux::Media) -> i64 {
+fn first_video_sync_dts(media: &test_harness::collect::Collected) -> i64 {
     let video = media
         .tracks
         .iter()
@@ -712,7 +716,7 @@ fn first_video_sync_dts(media: &transmux::Media) -> i64 {
         .expect("video sync sample")
 }
 
-fn teletext_pts(media: &transmux::Media) -> Vec<i64> {
+fn teletext_pts(media: &test_harness::collect::Collected) -> Vec<i64> {
     media
         .tracks
         .iter()

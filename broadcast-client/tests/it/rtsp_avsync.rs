@@ -486,7 +486,7 @@ fn the_final_offset_is_the_true_offset_whenever_the_first_sender_report_arrives(
 const GENERATED_SECONDS: &str = "12";
 const GENERATED_LOOPS: &str = "6";
 
-fn three_b_frame_fixture() -> Option<(MediaFixture, transmux::Media)> {
+fn three_b_frame_fixture() -> Option<(MediaFixture, test_harness::collect::Collected)> {
     let dir = std::env::temp_dir().join(format!("rtsp-avsync-3b-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("scratch dir");
     let out: PathBuf = dir.join("source.ts");

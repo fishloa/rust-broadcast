@@ -15,7 +15,7 @@ use multimux::registry::SchemeRegistry;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use transmux::media::{Media, Track};
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::pipeline::{CodecConfig, Sample};
 use transmux::{NalCodec, access_unit_is_idr};
 
@@ -23,14 +23,11 @@ use crate::support::listener;
 use listener::bind_tcp;
 
 /// Mux a whole `Media` through one TS muxer stage.
-fn mux_ts(media: &transmux::Media) -> Vec<u8> {
+fn mux_ts(media: &test_harness::collect::Collected) -> Vec<u8> {
     let mut stage = transmux::TsMuxStage::new(Some(transmux::DEFAULT_PSI_INTERVAL));
-    let out = transmux::mux_stage::drive_media(
-        &mut stage,
-        media,
-        broadcast_common::stage::Timestamp::ZERO,
-    )
-    .expect("mux to TS");
+    let out =
+        test_harness::collect::drive(&mut stage, media, broadcast_common::stage::Timestamp::ZERO)
+            .expect("mux to TS");
     let mut bytes = Vec::new();
     for output in out {
         if let transmux::mux_stage::MuxOutput::Bytes(chunk) = output {

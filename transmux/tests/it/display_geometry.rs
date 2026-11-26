@@ -29,7 +29,7 @@ fn read(fixture: &str) -> Option<Vec<u8>> {
 
 /// The `(coded size, aspect_ratio, SAR)` of every AVC `TrackSpec` the streaming
 /// demuxer announces (each `TrackAdded` / `TrackUpdated`).
-fn streaming_video_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
+fn streaming_video_specs(data: &[u8]) -> Vec<transmux::TrackSpec> {
     let mut demux = StreamingTsDemux::new();
     let mut specs = Vec::new();
     for chunk in data.chunks(188 * 512) {
@@ -56,7 +56,7 @@ fn streaming_video_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
     specs
 }
 
-fn batch_video_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
+fn batch_video_specs(data: &[u8]) -> Vec<transmux::TrackSpec> {
     let media = test_harness::collect::media_from_ts(data).expect("batch demux");
     media
         .tracks
@@ -122,16 +122,16 @@ fn krone_table_sar_16_11() {
 #[derive(Debug)]
 enum Obs {
     Sample {
-        track_id: transmux::ir::TrackId,
+        track_id: transmux::TrackId,
         width: u16,
         dts: Option<i64>,
     },
-    Spec(Box<transmux::ir::TrackSpec>),
+    Spec(Box<transmux::TrackSpec>),
 }
 
 /// Width of the AVC config last announced for `track_id` (the fixture's first
 /// clip is 320x240, the second 640x480).
-fn demux_config(sequence: &[Obs], track_id: transmux::ir::TrackId) -> CodecConfig {
+fn demux_config(sequence: &[Obs], track_id: transmux::TrackId) -> CodecConfig {
     sequence
         .iter()
         .rev()

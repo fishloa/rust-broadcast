@@ -145,7 +145,7 @@ fn read(fixture: &str) -> Option<Vec<u8>> {
     Some(std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display())))
 }
 
-fn streaming_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
+fn streaming_specs(data: &[u8]) -> Vec<transmux::TrackSpec> {
     use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
     let mut demux = StreamingTsDemux::new();
     let mut specs = Vec::new();
@@ -170,7 +170,7 @@ fn streaming_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
     specs
 }
 
-fn batch_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
+fn batch_specs(data: &[u8]) -> Vec<transmux::TrackSpec> {
     let media = test_harness::collect::media_from_ts(data).expect("batch");
     media
         .tracks

@@ -15,10 +15,11 @@
 mod paff_gen;
 
 use crate::ts_mux_stage;
+use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;
 use transmux::slice_header::{AvcSliceHeader, decode_avc_slice_pps, parse_avc_slice_header};
 use transmux::sps::decode_avc_slice_sps;
-use transmux::{DemuxEvent, Media, StreamingTsDemux, iter_annexb_nals, iter_length_prefixed_nals};
+use transmux::{DemuxEvent, StreamingTsDemux, iter_annexb_nals, iter_length_prefixed_nals};
 
 const FRAMES: usize = 12;
 const FRAME_PERIOD: i64 = 3600;

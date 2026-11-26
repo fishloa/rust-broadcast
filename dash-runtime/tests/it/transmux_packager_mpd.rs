@@ -9,7 +9,7 @@ use dash_runtime::mpd::inherit::TemplateInfo;
 use dash_runtime::mpd::inherit::resolve_segment_info;
 use transmux::dash::{Addressing, DashPackager, TrackSegments};
 
-fn media() -> transmux::media::Media {
+fn media() -> test_harness::collect::Collected {
     let ts = std::fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("ts fixture");
     test_harness::collect::media_from_ts(&ts[..]).expect("demux")
 }

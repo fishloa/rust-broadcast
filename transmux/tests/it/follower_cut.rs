@@ -10,9 +10,9 @@
 #![cfg(feature = "std")]
 use broadcast_common::timescale::Timescale;
 use core::time::Duration;
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::TrackId;
 use transmux::ll_hls::{CutPlan, LlHlsSegmenter, PartCut, PartInfo, SegmentInfo};
-use transmux::media::{Media, Track};
 use transmux::pipeline::TrackSpec;
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use transmux::{

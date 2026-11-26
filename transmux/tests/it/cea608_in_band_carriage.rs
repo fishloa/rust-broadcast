@@ -10,7 +10,7 @@
 //! extractor's frame count (`private/fixtures/captions/*/*.cc_data.txt` line count).
 
 use crate::ts_mux_stage;
-use transmux::Media;
+use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;
 
 /// The captures live in the private submodule (their media licence is unclear,

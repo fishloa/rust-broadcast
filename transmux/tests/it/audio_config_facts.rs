@@ -15,7 +15,8 @@
 //! | `legacy/mpeg2-mp2.ts` | mp2, 44100 Hz, 1 ch, 384000 b/s |
 //! | `dts/dts-core.ts` | dts, 48000 Hz, 2 ch, 768000 b/s |
 //! | `dolby/ac3.ts` | ac3, 44100 Hz, 1 ch, 192000 b/s |
-use transmux::{CodecConfig, Media};
+use test_harness::collect::Collected as Media;
+use transmux::CodecConfig;
 
 fn demux(rel: &str) -> Media {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);

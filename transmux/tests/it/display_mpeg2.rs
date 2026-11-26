@@ -38,7 +38,7 @@ fn read(fixture: &str) -> Option<Vec<u8>> {
 }
 
 /// Track id of the MPEG-2 video track whose config names `width`x`height`.
-fn mpeg2_track(media: &transmux::Media, width: u16, height: u16) -> TrackId {
+fn mpeg2_track(media: &test_harness::collect::Collected, width: u16, height: u16) -> TrackId {
     media
         .tracks
         .iter()

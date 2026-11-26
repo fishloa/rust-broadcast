@@ -21,8 +21,9 @@ use std::collections::BTreeSet;
 use broadcast_common::Serialize;
 use isobmff::box_support::OpaqueBox;
 use isobmff::{WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, parse_wvtt_sample};
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::pipeline::{CodecConfig, SubtitleSampleEntry};
-use transmux::{DashPackager, Media, SmoothPackager, Track};
+use transmux::{DashPackager, SmoothPackager};
 
 const DIR: &str = "subtitles";
 

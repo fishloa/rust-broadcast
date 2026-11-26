@@ -16,8 +16,9 @@
 
 use broadcast_common::timescale::Timescale;
 use isobmff::{WvttSampleEntry, XmlSubtitleSampleEntry};
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
-use transmux::{DashPackager, Media, Sample, SmoothPackager, Track, TrackId, TrackSpec};
+use transmux::{DashPackager, Sample, SmoothPackager, TrackId, TrackSpec};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

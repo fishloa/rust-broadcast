@@ -10,8 +10,9 @@
 
 use broadcast_common::stage::{Stage, Timestamp};
 use bytes::Bytes;
+use test_harness::collect::Collected as Media;
 use transmux::mux_stage::{MuxInput, MuxOutput};
-use transmux::{CodecConfig, Media, RtpMediaKind, RtpPacket, RtpPacketiserStage, TrackSpec};
+use transmux::{CodecConfig, RtpMediaKind, RtpPacket, RtpPacketiserStage, TrackSpec};
 
 /// One track's packetised RTP stream.
 #[derive(Debug)]

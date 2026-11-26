@@ -4,7 +4,7 @@
 
 use crate::ts_hls_stage;
 use std::time::Duration;
-use transmux::media::Media;
+use test_harness::collect::Collected as Media;
 use transmux::{
     CodecConfig, NalCodec, Sample, SegmentCutPolicy, StreamingTsHlsSegmenter, TrackSpec,
     access_unit_is_idr,

@@ -11,8 +11,9 @@
 use broadcast_common::stage::{Stage, Timestamp};
 use bytes::Bytes;
 use isobmff::writer::{Interleave, Layout, MovieHeader, Sink};
-use transmux::media::Media;
-use transmux::mux_stage::{MuxInput, drive_media};
+use test_harness::collect::Collected as Media;
+use test_harness::collect::drive;
+use transmux::mux_stage::MuxInput;
 use transmux::progressive::ProgressiveMuxStage;
 use transmux::{Error, TrackId};
 
@@ -163,7 +164,7 @@ fn a_larger_sample_is_refused_naming_track_and_index() {
     longer.push(0);
     sample.data = Bytes::from(longer);
     let mut stage = stage(plan, &media, true, Sink::Seekable);
-    let error = drive_media(&mut stage, &mutated, Timestamp::ZERO).expect_err("a size mismatch");
+    let error = drive(&mut stage, &mutated, Timestamp::ZERO).expect_err("a size mismatch");
     match error {
         Error::PlanMismatch {
             track: mismatch,
@@ -192,7 +193,7 @@ fn a_caller_side_short_sample_is_refused_naming_track_and_index() {
     let shorter = sample.data.slice(0..sample.data.len().saturating_sub(1));
     sample.data = shorter;
     let mut stage = stage(plan, &media, true, Sink::Seekable);
-    let error = drive_media(&mut stage, &mutated, Timestamp::ZERO).expect_err("a size mismatch");
+    let error = drive(&mut stage, &mutated, Timestamp::ZERO).expect_err("a size mismatch");
     match error {
         Error::PlanMismatch {
             track: mismatch,

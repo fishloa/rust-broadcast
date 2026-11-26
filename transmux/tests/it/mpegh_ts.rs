@@ -21,7 +21,7 @@ use crate::ts_mux_stage;
 use crate::ts_psi::{first_section, parse_pat, payload_offset, pid_of, pusi_of};
 use broadcast_common::{Parse, Serialize};
 use isobmff::MHADecoderConfigurationRecord;
-use transmux::media::Media;
+use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;
 
 const TS: usize = 188;
@@ -47,7 +47,7 @@ fn demux_fixture(data: &[u8]) -> Media {
         .expect("demux mpegh-cicp-01-baseline-32kbps-single.ts")
 }
 
-fn mpegh_track(media: &Media) -> &transmux::media::Track {
+fn mpegh_track(media: &Media) -> &test_harness::collect::CollectedTrack {
     media
         .tracks
         .iter()

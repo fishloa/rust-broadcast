@@ -5,8 +5,8 @@
 
 use broadcast_common::Serialize;
 use broadcast_common::error::BufferTooShort;
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::Error;
-use transmux::media::{Media, Track};
 use transmux::smooth::{SmoothPackager, TfxdBox};
 use transmux::smooth_fragment::{
     FragmentState, PIFF_SAMPLE_ENCRYPTION_UUID, fragment_state, fragment_tfxd, fragment_track_id,
@@ -35,7 +35,7 @@ fn a_packaged_fragment_reports_its_track_id_tfxd_and_clear_state() {
     for track in &media.tracks {
         let start = 12_345_678_000;
         let fragment = SmoothPackager
-            .package_track_fragment(track, 7, start)
+            .package_track_fragment(&track.spec, &track.samples, 7, start)
             .expect("package one fragment");
         assert_eq!(fragment.summary.track, track.spec.track_id);
         assert_eq!(fragment.summary.sequence as u32, 7);
@@ -63,15 +63,19 @@ fn package_track_fragment_duration_is_the_sum_of_the_sample_durations() {
     let media = media();
     let packager = SmoothPackager;
     let track: &Track = &media.tracks[0];
-    let whole = packager.package_track_fragment(track, 1, 0).unwrap();
+    let whole = packager
+        .package_track_fragment(&track.spec, &track.samples, 1, 0)
+        .unwrap();
     let mut half = track.clone();
     half.samples.truncate(track.samples.len() / 2);
-    let half = packager.package_track_fragment(&half, 1, 0).unwrap();
+    let half = packager
+        .package_track_fragment(&half.spec, &half.samples, 1, 0)
+        .unwrap();
     assert!(half.summary.duration > 0 && half.summary.duration < whole.summary.duration);
     let mut empty = track.clone();
     empty.samples.clear();
     assert!(matches!(
-        packager.package_track_fragment(&empty, 1, 0),
+        packager.package_track_fragment(&empty.spec, &empty.samples, 1, 0),
         Err(Error::InvalidInput(_))
     ));
 }

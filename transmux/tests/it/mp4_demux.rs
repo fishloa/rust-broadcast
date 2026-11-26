@@ -4,7 +4,7 @@
 use test_harness::collect::{CollectMode, media_from_mp4};
 use transmux::mp4_demux::Mp4DemuxConfig;
 
-fn seekable(bytes: &[u8]) -> transmux::Media {
+fn seekable(bytes: &[u8]) -> test_harness::collect::Collected {
     media_from_mp4(bytes, CollectMode::Seekable).expect("seekable demux")
 }
 

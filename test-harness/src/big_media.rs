@@ -14,12 +14,13 @@ use std::io::{BufWriter, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::Duration;
 
+use crate::collect::{Collected, drive};
 use broadcast_common::{Parse, Serialize, Stage as _};
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
-use transmux::mux_stage::{MuxOutput, drive_media};
+use transmux::mux_stage::MuxOutput;
 use transmux::{
-    CodecConfig, DEFAULT_PSI_INTERVAL, FlvPayloadKind, Media, Sample, TsMuxStage,
-    flv_frame_payload, flv_sequence_header_payloads, on_metadata_body,
+    CodecConfig, DEFAULT_PSI_INTERVAL, FlvPayloadKind, Sample, TsMuxStage, flv_frame_payload,
+    flv_sequence_header_payloads, on_metadata_body,
 };
 
 /// Nanoseconds in one second: turns a timescale-tick span into a [`Duration`]
@@ -39,7 +40,7 @@ pub struct BigMedia {
     pub bytes: u64,
     /// `(track id, samples written)` in source track order.
     pub samples_per_track: Vec<(u32, u64)>,
-    /// Media timeline the written samples span.
+    /// Collected timeline the written samples span.
     pub duration: Duration,
 }
 
@@ -119,7 +120,7 @@ pub fn write_big_flv(path: &Path, source_fixture: &Path, target_bytes: u64) -> B
 /// continue one another, so a demuxer fed them in order sees exactly the stream
 /// [`write_big_ts`] would have written, only cut up.
 pub struct TsSegmentStream {
-    media: Media,
+    media: Collected,
     step: PassStep,
     mux: TsMuxStage,
     segments: u64,
@@ -181,10 +182,10 @@ impl TsSegmentStream {
 
 /// Mux one pass of a generated TS through `stage`, collecting the bytes it
 /// emits.
-fn mux_pass(stage: &mut TsMuxStage, media: &Media) -> Vec<u8> {
+fn mux_pass(stage: &mut TsMuxStage, media: &Collected) -> Vec<u8> {
     let outputs = expect(
         "mux TS pass",
-        drive_media(stage, media, broadcast_common::stage::Timestamp::ZERO),
+        drive(stage, media, broadcast_common::stage::Timestamp::ZERO),
     );
     let mut bytes = Vec::new();
     for output in outputs {
@@ -200,7 +201,7 @@ fn mux_pass(stage: &mut TsMuxStage, media: &Media) -> Vec<u8> {
 /// `onMetaData`'s `duration` is omitted: the file's final length is not known
 /// until the target is reached, and FLV makes that field optional (see
 /// [`on_metadata_body`]).
-fn write_flv_preamble(out: &mut impl Write, media: &Media) -> u64 {
+fn write_flv_preamble(out: &mut impl Write, media: &Collected) -> u64 {
     let has_video = media
         .tracks
         .iter()
@@ -303,7 +304,7 @@ impl PassStep {
 }
 
 /// Each track's own span in ticks (`last end - first dts`).
-fn track_spans(media: &Media) -> Vec<u64> {
+fn track_spans(media: &Collected) -> Vec<u64> {
     media
         .tracks
         .iter()
@@ -331,7 +332,7 @@ fn track_spans(media: &Media) -> Vec<u64> {
 
 /// The longest track span as a [`PassStep`], comparing spans as seconds
 /// cross-multiplied so tracks with different timescales compare exactly.
-fn pass_step(media: &Media) -> PassStep {
+fn pass_step(media: &Collected) -> PassStep {
     let spans = track_spans(media);
     let timescales: Vec<u32> = media
         .tracks
@@ -358,7 +359,7 @@ fn pass_step(media: &Media) -> PassStep {
 }
 
 /// `media` shifted so pass `pass` continues the timeline `step` starts.
-fn media_at_pass(media: &Media, step: &PassStep, pass: u64) -> Media {
+fn media_at_pass(media: &Collected, step: &PassStep, pass: u64) -> Collected {
     let mut shifted = media.clone();
     for track in &mut shifted.tracks {
         let offset = step.offset_for(pass, track.spec.timescale.get());
@@ -374,7 +375,7 @@ fn media_at_pass(media: &Media, step: &PassStep, pass: u64) -> Media {
     shifted
 }
 
-fn counts(media: &Media, passes: u64) -> Vec<(u32, u64)> {
+fn counts(media: &Collected, passes: u64) -> Vec<(u32, u64)> {
     media
         .tracks
         .iter()

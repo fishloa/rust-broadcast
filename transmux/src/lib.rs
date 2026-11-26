@@ -60,7 +60,7 @@
 //!   ([`DataIdentityStage`] over a caller-built [`DataIdentityMap`]).
 //! - **Crypto:** CENC/CBCS (`cenc`, AES-CTR/AES-CBC-pattern) decrypt
 //!   ([`CencDecryptStage`]) + encrypt ([`CencEncryptStage`], which populates
-//!   [`TrackSpec::protection`](crate::ir::TrackSpec::protection) for the muxer's `sinf`/`senc`/`saio`/`saiz` box
+//!   [`TrackSpec::protection`](crate::TrackSpec::protection) for the muxer's `sinf`/`senc`/`saio`/`saiz` box
 //!   emission — [`cenc_segment::protect_init_segment`] /
 //!   [`isobmff::writer::fragmented::protect_media_segment`]); DRM signalling driven off
 //!   that same `TrackSpec::protection` — [`DashPackager`] auto-derives the
@@ -202,12 +202,15 @@ pub mod ll_hls;
 pub mod media;
 pub mod mhas;
 pub mod mkv_mux;
-#[cfg(test)]
-pub(crate) mod mp4_collect;
 pub mod mp4_demux;
 pub mod mpeg2_display;
 pub mod mpeg_legacy;
 pub mod mux_stage;
+#[cfg(test)]
+extern crate self as transmux;
+#[cfg(test)]
+#[path = "../../test-harness/src/collect.rs"]
+pub mod collect;
 pub mod nal;
 pub mod nalu_ext;
 pub mod payload;
@@ -222,8 +225,6 @@ pub mod segment_log;
 pub mod stitch;
 #[cfg(test)]
 pub(crate) mod test_bits;
-#[cfg(test)]
-mod test_media;
 pub mod timeline;
 pub use rtp_packet::rtcp;
 pub mod matroska_demux;
@@ -315,9 +316,7 @@ pub use live_join::{DropReason, JoinDecision, JoinPolicy, JoinState, LiveJoin, R
 pub use ll_dash::LlDashPackager;
 pub use ll_dash::LlSegmenter;
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
-pub use media::{
-    CmafMuxStage, FragmentCut, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackProtection,
-};
+pub use media::{CmafMuxStage, FragmentCut, HlsPackager, PcrSample, SkippedTrack, TrackProtection};
 pub use mkv_mux::MkvMuxStage;
 pub use mpeg_legacy::{
     MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,

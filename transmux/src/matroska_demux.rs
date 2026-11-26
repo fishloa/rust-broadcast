@@ -1283,7 +1283,7 @@ fn opus_config(info: &TrackInfo) -> Result<CodecConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::media::Media;
+    use crate::collect::Collected as Media;
     use alloc::vec;
 
     /// webm_demux's `nominal_duration_skips_a_zero_frame_pair`: a same-timestamp
@@ -1388,12 +1388,12 @@ mod tests {
         while let Some(event) = demux.poll() {
             events.push(event);
         }
-        let mut tracks: Vec<crate::ir::Track> = Vec::new();
+        let mut tracks: Vec<crate::collect::CollectedTrack> = Vec::new();
         let mut degraded: Vec<InputDegradation> = Vec::new();
         for event in events {
             match event {
                 DemuxEvent::TrackAdded(spec) => {
-                    tracks.push(crate::ir::Track::new(spec, Vec::new()));
+                    tracks.push(crate::collect::CollectedTrack::new(spec, Vec::new()));
                 }
                 DemuxEvent::Sample { track_id, sample } => {
                     if let Some(track) = tracks.iter_mut().find(|t| t.spec.track_id == track_id) {
@@ -1525,7 +1525,7 @@ mod tests {
             protection: None,
         };
         Media::new(
-            vec![crate::ir::Track::new_at(
+            vec![crate::collect::CollectedTrack::new_at(
                 TrackSpec::new(TrackId::new(1), IR_TIMESCALE, config),
                 vec![sample],
                 0,
@@ -1572,7 +1572,8 @@ mod tests {
         .expect("media segment");
         let mut both = init;
         both.extend_from_slice(&frag);
-        let reparsed = crate::mp4_collect::media_from_mp4(&both).expect("re-demux");
+        let reparsed = crate::collect::media_from_mp4(&both, crate::collect::CollectMode::Seekable)
+            .expect("re-demux");
         assert_eq!(
             reparsed.tracks[0].samples[0].data.as_ref(),
             EXPECTED,
@@ -1620,7 +1621,8 @@ mod tests {
         .expect("media segment");
         let mut both = init;
         both.extend_from_slice(&frag);
-        let reparsed = crate::mp4_collect::media_from_mp4(&both).expect("re-demux");
+        let reparsed = crate::collect::media_from_mp4(&both, crate::collect::CollectMode::Seekable)
+            .expect("re-demux");
         assert_eq!(
             reparsed.tracks[0].samples[0].data.as_ref(),
             expected,

@@ -17,9 +17,7 @@ use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Stage, Timestamp};
 use container_probe::{Format, IsobmffLayout, Probe};
 use thiserror::Error;
-use transmux::{
-    DemuxEvent, Sample, StreamingFlvDemux, StreamingTsDemux, Track, TrackId, TrackSpec,
-};
+use transmux::{DemuxEvent, Sample, StreamingFlvDemux, StreamingTsDemux, TrackId, TrackSpec};
 
 use crate::ingress::{IngestSession, ProgramId, SessionEvent};
 use crate::trunk::RetentionClass;
@@ -231,12 +229,27 @@ pub struct PublishItem {
     pub decode_seconds: f64,
 }
 
+/// One parsed track: its identity/config plus the samples to replay.
+#[derive(Debug, Clone)]
+pub struct ParsedTrack {
+    /// Track identity + codec configuration.
+    pub spec: TrackSpec,
+    /// The track's samples, in decode order.
+    pub samples: Vec<Sample>,
+}
+
+impl ParsedTrack {
+    fn new(spec: TrackSpec, samples: Vec<Sample>) -> Self {
+        Self { spec, samples }
+    }
+}
+
 /// A parsed file: the per-track samples plus their specs, prepared for
 /// replay. The tracks' samples are in decode order and the IR already has
 /// absolute per-sample times.
 pub struct ParsedFile {
-    /// One [`Track`] per elementary stream to publish.
-    pub tracks: Vec<Track>,
+    /// One [`ParsedTrack`] per elementary stream to publish.
+    pub tracks: Vec<ParsedTrack>,
 }
 
 impl ParsedFile {
@@ -678,9 +691,9 @@ where
         }
     }
 
-    let tracks: Vec<Track> = tracks
+    let tracks: Vec<ParsedTrack> = tracks
         .into_iter()
-        .map(|(spec, samples)| Track::new(spec, samples))
+        .map(|(spec, samples)| ParsedTrack::new(spec, samples))
         .collect();
     Ok(ParsedFile { tracks })
 }
@@ -998,6 +1011,7 @@ pub const FILE_TIMED_RING: usize = MAX_SAMPLES_PER_DRAIN * 4;
 
 #[cfg(test)]
 mod tests {
+    use super::ParsedTrack as Track;
     fn timescale(value: u32) -> Timescale {
         Timescale::try_new(value).expect("a non-zero timescale")
     }

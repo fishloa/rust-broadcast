@@ -2,8 +2,8 @@
 //! committed capture (`fixtures/flv/av.flv`), damage in the middle, valid tags
 //! after it decoded byte-identically.
 
+use test_harness::collect::Collected as Media;
 use transmux::ir::InputDegradation;
-use transmux::media::Media;
 
 const FLV_HEADER_PLUS_PREV: usize = 13;
 const TAG_HEADER: usize = 11;

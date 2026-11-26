@@ -13,7 +13,7 @@
 //! traf, ffmpeg fails the audio) — see the README's "could not be proven".
 #![cfg(feature = "cenc")]
 
-use transmux::Media;
+use test_harness::collect::Collected as Media;
 use transmux::cenc_decrypt::{CencDecryptStage, KeyMap};
 
 /// The fixture's KID/KEY (`fixtures/mp4/cenc-layouts/PROVENANCE.md`).

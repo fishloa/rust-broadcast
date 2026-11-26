@@ -1,7 +1,8 @@
 use broadcast_common::error::FieldOverflow;
 use broadcast_common::timescale::Timescale;
 use rtmp_runtime::RtmpError;
-use transmux::{Error, FlvError, Media, MkvMuxStage, RtmpFlvError, RtmpMuxStage};
+use test_harness::collect::Collected as Media;
+use transmux::{Error, FlvError, MkvMuxStage, RtmpFlvError, RtmpMuxStage};
 
 #[test]
 fn rtmp_flv_error_display_names_the_failure_and_its_numbers() {

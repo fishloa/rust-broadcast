@@ -19,8 +19,8 @@ use broadcast_common::xml_chars::{XmlBudget, namespace_of};
 use quick_xml::NsReader;
 use quick_xml::events::Event;
 
+use crate::TrackId;
 use crate::error::{Error, Result};
-use crate::ir::TrackId;
 use crate::smooth::{TFXD_UUID, TfxdBox};
 use broadcast_smooth::default_limits;
 use isobmff::BoxIter;

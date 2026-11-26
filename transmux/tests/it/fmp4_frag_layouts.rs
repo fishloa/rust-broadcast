@@ -11,8 +11,9 @@
 //! `Mp4Demux` shares its §8.8.7/§8.8.8 resolver with `CencDecryptStage`
 //! (`frag_offsets`), so this proves the demuxer's side of the same rule set.
 #![cfg(feature = "std")]
+use test_harness::collect::Collected as Media;
+use transmux::CodecConfig;
 use transmux::TrackId;
-use transmux::{CodecConfig, Media};
 
 const DIR: &str = "mp4/cenc-layouts";
 

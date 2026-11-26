@@ -13,9 +13,11 @@ use std::time::Duration;
 
 use broadcast_common::Timestamp;
 use broadcast_common::timescale::Timescale;
+use test_harness::collect::drive;
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
+use transmux::TsMuxStage;
 use transmux::ir::{CodecConfig, DataCarriage, DataIdentity, Sample, TrackId, TrackSpec};
-use transmux::mux_stage::{MuxOutput, drive_media};
-use transmux::{Media, Track, TsMuxStage};
+use transmux::mux_stage::MuxOutput;
 
 const WHO: &str = "media_doctor::plugin_payload";
 const RUN_DEADLINE: Duration = Duration::from_secs(60);
@@ -50,7 +52,7 @@ fn build_ts(packets: &[Vec<u8>]) -> Vec<u8> {
         .collect();
     let media = Media::new(vec![Track::new(spec, samples)], timescale());
     let mut stage = TsMuxStage::new(None);
-    let outputs = drive_media(&mut stage, &media, Timestamp::ZERO).expect("mux the data track");
+    let outputs = drive(&mut stage, &media, Timestamp::ZERO).expect("mux the data track");
     let mut ts = Vec::new();
     for output in outputs {
         if let MuxOutput::Bytes(bytes) = output {

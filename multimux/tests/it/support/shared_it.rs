@@ -162,7 +162,7 @@ pub async fn observe_extinf(client: &reqwest::Client, playlist_url: &str) -> Opt
 /// caller that still holds a collected capture.
 pub async fn push_tracks_through_muxer<T: multimux::push::PushTransport>(
     transport: &mut T,
-    tracks: &[transmux::Track],
+    tracks: &[test_harness::collect::CollectedTrack],
 ) -> u64 {
     let messages = {
         let muxer = transport

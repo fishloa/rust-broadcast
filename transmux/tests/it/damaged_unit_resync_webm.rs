@@ -2,8 +2,8 @@
 //! fail the whole file. Real committed fixture, damage injected in the middle,
 //! valid data after it must still be decoded byte-identically.
 
+use test_harness::collect::Collected as Media;
 use test_harness::collect::{CollectMode, media_from_matroska};
-use transmux::Media;
 use transmux::ir::InputDegradation;
 
 use crate::webm_build::{encode_size_width, read_id, read_size};

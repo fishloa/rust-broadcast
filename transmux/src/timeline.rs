@@ -299,7 +299,7 @@ mod tests {
 
     fn fixture() -> Fixture {
         let data = test_fixtures::read("ts/h264-aac.ts");
-        let media = crate::test_media::media_from_ts(&data[..]).unwrap();
+        let media = crate::collect::media_from_ts(&data[..]).unwrap();
         let mut video = None;
         let mut audio = None;
         for t in media.tracks {

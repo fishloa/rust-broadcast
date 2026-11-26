@@ -50,7 +50,7 @@ use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::{Stage, Timestamp};
-use transmux::media::Media;
+use test_harness::collect::Collected as Media;
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use transmux::mux_stage::{MuxInput, MuxOutput, SegmentOut};
 use transmux::{
@@ -121,8 +121,8 @@ fn collect_tracks_from_events(events: &[DemuxEvent]) -> Vec<(TrackSpec, Vec<Samp
 /// regardless of `track_id` numbering differences between the two paths.
 fn find_matching_oracle_track<'a>(
     spec: &TrackSpec,
-    oracle_tracks: &'a [transmux::media::Track],
-) -> &'a transmux::media::Track {
+    oracle_tracks: &'a [test_harness::collect::CollectedTrack],
+) -> &'a test_harness::collect::CollectedTrack {
     let mut matches = oracle_tracks.iter().filter(|t| {
         core::mem::discriminant(&t.spec.config) == core::mem::discriminant(&spec.config)
     });

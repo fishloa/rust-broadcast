@@ -13,7 +13,7 @@ use crate::ts_mux_stage;
 use crate::ts_psi::{first_section, parse_pat, parse_pmt, payload_offset, pid_of, pusi_of};
 use broadcast_common::{Parse, Serialize};
 use isobmff::DtsSpecificBox;
-use transmux::media::Media;
+use test_harness::collect::Collected as Media;
 use transmux::pipeline::CodecConfig;
 
 const TS: usize = 188;
@@ -27,7 +27,7 @@ fn demux_fixture() -> Media {
     test_harness::collect::media_from_ts(&data).expect("demux dts-core.ts")
 }
 
-fn dts_track(media: &Media) -> &transmux::media::Track {
+fn dts_track(media: &Media) -> &test_harness::collect::CollectedTrack {
     media
         .tracks
         .iter()

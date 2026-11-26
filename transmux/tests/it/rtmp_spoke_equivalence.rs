@@ -14,7 +14,8 @@
 use broadcast_common::Parse;
 use rtmp_runtime::chunk::ChunkAssembler;
 use rtmp_runtime::message::{ChunkSize, MessageTypeId, ProtocolControl};
-use transmux::{FlvMuxStage, Media, RtmpMuxStage};
+use test_harness::collect::Collected as Media;
+use transmux::{FlvMuxStage, RtmpMuxStage};
 
 const FIXTURES: &[&str] = &["flv/av.flv", "flv/aac-7-1.flv"];
 
@@ -300,7 +301,7 @@ fn media_with_video_sample(sample_len: usize) -> Media {
     let spec = video.spec.clone();
     let sample = transmux::Sample::new(vec![0u8; sample_len], Some(0), Some(0), None, true)
         .expect("valid timing");
-    let track = transmux::Track::new(spec.clone(), vec![sample]);
+    let track = test_harness::collect::CollectedTrack::new(spec.clone(), vec![sample]);
     Media::new(vec![track], spec.timescale)
 }
 

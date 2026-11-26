@@ -16,8 +16,9 @@ use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::Pcr;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::TrackId;
-use transmux::media::{Media, PcrSample, Track};
+use transmux::media::PcrSample;
 use transmux::pipeline::{CodecConfig, TrackSpec};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 

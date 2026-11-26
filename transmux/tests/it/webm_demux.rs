@@ -24,15 +24,15 @@
 use crate::webm_build::synth_mkv;
 use isobmff::box_types::parse_box;
 use test_fixtures::ffprobe;
+use test_harness::collect::Collected as Media;
 use test_harness::collect::{CollectMode, media_from_matroska};
-use transmux::Media;
 use transmux::TrackId;
 use transmux::error::Error;
 use transmux::ir::DataIdentity;
 use transmux::pipeline::CodecConfig;
 
 /// Drive the streaming Matroska demux over a whole in-memory file.
-fn demux_webm(bytes: &[u8]) -> Result<transmux::Media, transmux::Error> {
+fn demux_webm(bytes: &[u8]) -> Result<test_harness::collect::Collected, transmux::Error> {
     media_from_matroska(bytes, CollectMode::Seekable)
 }
 
@@ -845,7 +845,7 @@ fn laced_audio(
     data: &[u8],
     default_duration_ns: u64,
     blocks: &[(i16, Vec<Vec<u8>>)],
-) -> transmux::ir::Track {
+) -> test_harness::collect::CollectedTrack {
     let tracks = laced_mkv::set_default_duration(data, 2, default_duration_ns);
     let cluster: Vec<(u64, i16, u8, Vec<Vec<u8>>)> = blocks
         .iter()

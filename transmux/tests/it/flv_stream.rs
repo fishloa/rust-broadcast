@@ -677,7 +677,7 @@ fn every_flv_fixture_fed_one_byte_at_a_time_matches_the_whole_buffer_demux() {
 
 /// The samples of each track, minus as many as the media's degradations declare
 /// (one per degraded unit, oldest first).
-fn undegraded_samples(media: &transmux::Media) -> Vec<Vec<u8>> {
+fn undegraded_samples(media: &test_harness::collect::Collected) -> Vec<Vec<u8>> {
     let dropped: usize = media
         .degraded
         .iter()

@@ -19,10 +19,12 @@ use dvb_si::tables::pmt::PmtSection;
 use isobmff::ObjectTypeIndication;
 use isobmff::mpegh::MHADecoderConfigurationRecord;
 use mpeg_ts::ts::SectionReassembler;
+use test_harness::collect::Collected as Media;
+use test_harness::collect::CollectedTrack as Track;
 use transmux::ir::DataIdentity;
-use transmux::ir::{Track, TrackId, TrackSpec};
+use transmux::ir::{TrackId, TrackSpec};
 use transmux::pipeline::{CodecConfig, DataCarriage};
-use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, TsMuxStage};
+use transmux::{DEFAULT_PSI_INTERVAL, Sample, TsMuxStage};
 
 const PKT: usize = 188;
 const PAT_PID: u16 = 0x0000;

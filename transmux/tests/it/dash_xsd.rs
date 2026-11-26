@@ -4,13 +4,13 @@ use broadcast_common::timescale::Timescale;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use test_harness::collect::Collected as Media;
 use transmux::TrackId;
 use transmux::dash::{
     Addressing, ContentProtectionSystem, DashPackager, TrackSegments, TrickModeAdaptationSet,
     TrickModeRepr,
 };
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
-use transmux::media::Media;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

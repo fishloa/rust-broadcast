@@ -98,7 +98,7 @@ fn source_mhac_body(mp4: &[u8]) -> &[u8] {
 }
 
 /// Demux the fixture to the IR and return the single MPEG-H track.
-fn demux_fixture() -> transmux::Media {
+fn demux_fixture() -> test_harness::collect::Collected {
     test_harness::collect::media_from_mp4(
         FIXTURE.as_slice(),
         test_harness::collect::CollectMode::Seekable,
@@ -106,7 +106,7 @@ fn demux_fixture() -> transmux::Media {
     .expect("demux fixture")
 }
 
-fn mpegh_track(media: &transmux::Media) -> &transmux::Track {
+fn mpegh_track(media: &test_harness::collect::Collected) -> &test_harness::collect::CollectedTrack {
     media
         .tracks
         .iter()

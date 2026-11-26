@@ -22,6 +22,8 @@ mpeg-ps = { path = "../mpeg-ps", version = "0.10.0" }
 
 [dev-dependencies]
 test-alloc = { path = "../test-alloc" }
+# `Pcr`/`Pid` for the collector equality test's PCR field.
+mpeg-ts = { path = "../mpeg-ts", version = "0.10.0", default-features = false }
 
 [lints]
 workspace = true

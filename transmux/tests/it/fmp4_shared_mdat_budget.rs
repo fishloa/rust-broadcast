@@ -8,7 +8,7 @@
 //! bound that holds is the run's own total, so a fragment past it is refused
 //! (reported as a degradation, with the samples before it kept).
 #![cfg(feature = "std")]
-use transmux::Media;
+use test_harness::collect::Collected as Media;
 
 const MOOFS: usize = 1000;
 const TRACK_ID: u32 = 1;

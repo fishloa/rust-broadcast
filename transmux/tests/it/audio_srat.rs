@@ -69,7 +69,7 @@ fn real_flac_config() -> FlacSpecificBox {
 
 /// Mux `rate`-Hz FLAC to fragmented MP4 bytes (init + one media segment).
 fn mux_one(rate: u32) -> Vec<u8> {
-    let track = transmux::Track::new(
+    let track = test_harness::collect::CollectedTrack::new(
         TrackSpec::new(
             TrackId::new(1),
             Timescale::try_new(rate).unwrap(),
@@ -85,7 +85,11 @@ fn mux_one(rate: u32) -> Vec<u8> {
                 .expect("valid timing"),
         ],
     );
-    crate::cmaf::package(&transmux::Media::new(vec![track], timescale(1000))).expect("mux flac")
+    crate::cmaf::package(&test_harness::collect::Collected::new(
+        vec![track],
+        timescale(1000),
+    ))
+    .expect("mux flac")
 }
 
 /// Demux a real ffmpeg-written FLAC fixture and retarget the IR to the
@@ -96,7 +100,7 @@ fn mux_one(rate: u32) -> Vec<u8> {
 /// The fixture's `fLaC` STREAMINFO carries the true rate — which the
 /// external-tool test confirms with ffprobe — so the mux tests set it here;
 /// the samples are the fixture's real coded bytes.
-fn retargeted_flac_source(name: &str, rate: u32) -> transmux::Media {
+fn retargeted_flac_source(name: &str, rate: u32) -> test_harness::collect::Collected {
     let mut media = test_harness::collect::media_from_mp4(
         &fixture(name),
         test_harness::collect::CollectMode::Seekable,

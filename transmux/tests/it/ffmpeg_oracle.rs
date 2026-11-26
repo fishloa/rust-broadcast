@@ -10,10 +10,11 @@
 #![cfg(feature = "cenc")]
 use std::path::PathBuf;
 use std::process::Command;
-use test_harness::collect::MediaSelectExt;
+use test_harness::collect::Collected as Media;
+use test_harness::collect::CollectedSelectExt;
 use transmux::cenc_segment::protect_init_segment;
 use transmux::{
-    CencEncryptStage, CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,
+    CencEncryptStage, CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen,
     SubsamplePolicy, TrackProtection,
 };
 

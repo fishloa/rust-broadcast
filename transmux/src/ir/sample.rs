@@ -4,8 +4,8 @@
 //! Media plane step 2c
 //! (`docs/superpowers/specs/2026-07-26-media-plane-architecture.md` §4): a
 //! sample's decode/presentation time is now an **absolute, optional** tick
-//! pair in the track's media timescale, not a running sum anchored on
-//! [`crate::ir::Track::start_decode_time`]. `None` is the honest
+//! pair in the track's media timescale, not a running sum anchored on the
+//! track's start decode time. `None` is the honest
 //! representation for section-carried tracks (SCTE-35/DSM-CC/private
 //! sections), which genuinely have no per-sample timestamp — it must never be
 //! fabricated. Rollover (33-bit TS/PES, 32-bit RTP) is unwrapped **once, at
@@ -612,7 +612,7 @@ fn rescale_ticks(
 /// `#[non_exhaustive]`: construct with [`FragmentTrackData::new`].
 #[non_exhaustive]
 pub struct FragmentTrackData<'a> {
-    /// Track ID matching a [`crate::ir::TrackSpec`] from the init segment.
+    /// Track ID matching a [`crate::TrackSpec`] from the init segment.
     pub track_id: TrackId,
     /// The decode time of the first sample, in media-timescale ticks.
     pub base_media_decode_time: u64,

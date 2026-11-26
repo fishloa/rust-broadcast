@@ -9,7 +9,20 @@
 
 use broadcast_common::stage::{Stage, Timestamp};
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
-use transmux::{DemuxEvent, InputDegradation, Sample, Track, TrackId, TrackSpec};
+use transmux::{DemuxEvent, InputDegradation, Sample, TrackId, TrackSpec};
+
+/// One demuxed track: its identity/config plus the segment's samples. Smooth
+/// owns this per-segment shape; `transmux` has no whole-track type.
+pub(crate) struct Track {
+    pub(crate) spec: TrackSpec,
+    pub(crate) samples: Vec<Sample>,
+}
+
+impl Track {
+    fn new(spec: TrackSpec, samples: Vec<Sample>) -> Self {
+        Self { spec, samples }
+    }
+}
 
 /// A stream's demux stage, with the track set it has resolved so far.
 pub(crate) struct SegmentDemux {

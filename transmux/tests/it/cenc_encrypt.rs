@@ -35,15 +35,14 @@
 #![cfg(feature = "cenc")]
 
 use broadcast_common::timescale::Timescale;
-use test_harness::collect::MediaSelectExt;
+use test_harness::collect::CollectedSelectExt;
 use transmux::TrackId;
 
 use broadcast_common::{Serialize, Stage};
 use bytes::Bytes;
-use transmux::Media;
-use transmux::{
-    CencEncryptStage, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy, Track,
-};
+use test_harness::collect::Collected as Media;
+use test_harness::collect::CollectedTrack as Track;
+use transmux::{CencEncryptStage, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

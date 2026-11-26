@@ -4,10 +4,10 @@
 
 use crate::ts_mux_stage;
 use std::sync::Arc;
+use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::annexb::iter_length_prefixed_nals;
 use transmux::ir::{ActiveFormatDescription, AfdPersistence, BarData, CodecConfig, DisplayInfo};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
-use transmux::{Media, Track};
 
 fn avc_track_mut(media: &mut Media) -> &mut Track {
     media

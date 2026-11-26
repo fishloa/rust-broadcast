@@ -6839,7 +6839,7 @@ pub(crate) mod tests {
     /// afterward (resync proof) rather than being wedged or OOMing.
     #[test]
     fn runaway_pes_without_payload_unit_start_is_bounded_not_unbounded() {
-        use crate::media::{Media, Track};
+        use crate::collect::{Collected as Media, CollectedTrack as Track};
         use crate::pipeline::{CodecConfig, Sample, TrackSpec};
         use crate::rtp_sdp::avc_config_from_sprop;
 
@@ -6966,7 +6966,7 @@ pub(crate) mod tests {
     /// or being unblocked once the other is abandoned) it actually takes.
     #[test]
     fn probe_backlog_is_bounded_for_both_the_never_resolving_pid_and_its_collateral_pid() {
-        use crate::media::{Media, Track};
+        use crate::collect::{Collected as Media, CollectedTrack as Track};
         use crate::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
         use crate::rtp_sdp::avc_config_from_sprop;
 
@@ -7107,7 +7107,7 @@ pub(crate) mod tests {
     /// never fired), so `track_id` must be `None`.
     #[test]
     fn track_abandoned_config_unrecoverable_fires_at_finish() {
-        use crate::media::{Media, Track};
+        use crate::collect::{Collected as Media, CollectedTrack as Track};
         use crate::pipeline::{CodecConfig, Sample, TrackSpec};
         use crate::rtp_sdp::avc_config_from_sprop;
 
@@ -7511,7 +7511,7 @@ pub(crate) mod tests {
         audio_head: bool,
         resolve_last: bool,
     ) -> Vec<u8> {
-        use crate::media::{Media, Track};
+        use crate::collect::{Collected as Media, CollectedTrack as Track};
         use crate::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
         use crate::rtp_sdp::avc_config_from_sprop;
 
@@ -8340,7 +8340,7 @@ pub(crate) mod tests {
         let real = {
             let path = test_fixtures::path("ts/dolby/eac3.ts");
             let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
-            let media = crate::test_media::media_from_ts(&ts).expect("demux real E-AC-3");
+            let media = crate::collect::media_from_ts(&ts).expect("demux real E-AC-3");
             media.tracks[0].samples[0].data.to_vec()
         };
         let run = |es: &[u8]| {
@@ -8389,7 +8389,7 @@ pub(crate) mod tests {
         let real = {
             let path = test_fixtures::path("ts/dolby/eac3.ts");
             let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
-            let media = crate::test_media::media_from_ts(&ts).expect("demux real E-AC-3");
+            let media = crate::collect::media_from_ts(&ts).expect("demux real E-AC-3");
             media.tracks[0].samples[0].data.to_vec()
         };
         let mut es = real;
@@ -8469,7 +8469,7 @@ pub(crate) mod tests {
         // The fixture's own config, read from its recovered ASC rather than
         // assumed.
 
-        let media = crate::test_media::media_from_ts(&source).expect("demux aac fixture");
+        let media = crate::collect::media_from_ts(&source).expect("demux aac fixture");
         let audio = media
             .tracks
             .iter()
@@ -9103,7 +9103,7 @@ pub(crate) mod tests {
         path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = crate::test_media::media_from_ts(&source).expect("demux h264-aac.ts");
+        let media = crate::collect::media_from_ts(&source).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .iter()
@@ -9583,7 +9583,7 @@ pub(crate) mod tests {
         path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = crate::test_media::media_from_ts(&source).expect("demux h264-aac.ts");
+        let media = crate::collect::media_from_ts(&source).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .iter()
@@ -9692,7 +9692,7 @@ pub(crate) mod tests {
         let path = test_fixtures::path("ts/h264-two-resolutions.ts");
         let other =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = crate::test_media::media_from_ts(&other).expect("demux two-resolution fixture");
+        let media = crate::collect::media_from_ts(&other).expect("demux two-resolution fixture");
         let second_sps = media
             .tracks
             .iter()
@@ -10056,7 +10056,7 @@ pub(crate) mod tests {
             .count();
         assert_eq!(rejected, 2, "the huge and the stub SPS: {base:?}");
         // Every config the demuxer emitted serializes.
-        let media = crate::test_media::media_from_ts(&bytes).expect("demux");
+        let media = crate::collect::media_from_ts(&bytes).expect("demux");
         for t in &media.tracks {
             let CodecConfig::Avc { config, .. } = t.config() else {
                 continue;
@@ -10374,7 +10374,7 @@ pub(crate) mod tests {
         path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = crate::test_media::media_from_ts(&source).expect("demux h264-aac.ts");
+        let media = crate::collect::media_from_ts(&source).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .iter()
@@ -10535,7 +10535,7 @@ pub(crate) mod tests {
         path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = crate::test_media::media_from_ts(&source).expect("demux h264-aac.ts");
+        let media = crate::collect::media_from_ts(&source).expect("demux h264-aac.ts");
         let video = media
             .tracks
             .iter()
@@ -10824,7 +10824,7 @@ pub(crate) mod tests {
     /// of both. A counter restart at a `payload_unit_start` is not truncation.
     #[test]
     fn concatenated_segments_seam_keeps_every_access_unit() {
-        use crate::media::{Media, Track};
+        use crate::collect::{Collected as Media, CollectedTrack as Track};
         use crate::pipeline::{CodecConfig, Sample, TrackSpec};
         use crate::rtp_sdp::avc_config_from_sprop;
 
@@ -11080,7 +11080,7 @@ pub(crate) mod tests {
         path.push("h264-aac.ts");
         let source =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
-        let media = crate::test_media::media_from_ts(&source).expect("demux h264-aac.ts");
+        let media = crate::collect::media_from_ts(&source).expect("demux h264-aac.ts");
 
         /// Frame period of the fixture's video track, in 90 kHz ticks — the
         /// real cadence `TsMuxStage` stamps its PES headers from.
@@ -11359,7 +11359,7 @@ pub(crate) mod tests {
         let ts_bytes =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
 
-        let media = crate::test_media::media_from_ts(&ts_bytes).expect("demux h264-aac.ts");
+        let media = crate::collect::media_from_ts(&ts_bytes).expect("demux h264-aac.ts");
         let audio = media
             .tracks
             .iter()
@@ -11432,7 +11432,7 @@ pub(crate) mod tests {
         let ts_bytes =
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
 
-        let media = crate::test_media::media_from_ts(&ts_bytes).expect("demux h264-aac.ts");
+        let media = crate::collect::media_from_ts(&ts_bytes).expect("demux h264-aac.ts");
         let audio = media
             .tracks
             .into_iter()
@@ -13047,7 +13047,7 @@ pub(crate) mod tests {
         }
 
         // Batch entry point.
-        let media = crate::test_media::media_from_ts(&ts).expect("batch demux");
+        let media = crate::collect::media_from_ts(&ts).expect("batch demux");
         let batch: Vec<_> = media.tracks[0]
             .samples
             .iter()
@@ -13503,7 +13503,7 @@ pub(crate) mod tests {
     fn real_eac3_independent_frames() -> Vec<Vec<u8>> {
         let path = test_fixtures::path("ts/dolby/eac3.ts");
         let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
-        let media = crate::test_media::media_from_ts(&ts).expect("demux real E-AC-3");
+        let media = crate::collect::media_from_ts(&ts).expect("demux real E-AC-3");
         media.tracks[0]
             .samples
             .iter()
@@ -13521,7 +13521,7 @@ pub(crate) mod tests {
 
     /// Config of the first track of `ts`.
     fn first_track_config(ts: &[u8]) -> CodecConfig {
-        let media = crate::test_media::media_from_ts(ts).expect("demux");
+        let media = crate::collect::media_from_ts(ts).expect("demux");
         media.tracks[0].spec.config.clone()
     }
 
@@ -13665,7 +13665,7 @@ pub(crate) mod tests {
             &boundary_sizes(128, au_len),
             1536 * 90_000 / CARRY_SAMPLE_RATE,
         );
-        let media = crate::test_media::media_from_ts(&ts).expect("demux");
+        let media = crate::collect::media_from_ts(&ts).expect("demux");
         let CodecConfig::Eac3 { config, .. } = &media.tracks[0].spec.config else {
             panic!("E-AC-3 track expected");
         };
@@ -14025,8 +14025,7 @@ pub(crate) mod tests {
             "every observation reaches the consumer with its own wire parts"
         );
 
-        let media =
-            crate::test_media::media_from_ts(&input).expect("a PMT-declared PCR PID demuxes");
+        let media = crate::collect::media_from_ts(&input).expect("a PMT-declared PCR PID demuxes");
         assert_eq!(
             media
                 .pcr
@@ -14971,7 +14970,7 @@ pub(crate) mod tests {
     }
 
     fn video_pid_and_track(bytes: &[u8]) -> (u16, TrackId) {
-        let media = crate::test_media::media_from_ts(bytes).expect("demux");
+        let media = crate::collect::media_from_ts(bytes).expect("demux");
         let track = media
             .tracks
             .iter()
@@ -15065,7 +15064,7 @@ pub(crate) mod tests {
 
     #[test]
     fn the_pes_cap_is_exclusive_and_names_the_live_track() {
-        use crate::media::{Media as IrMedia, Track as IrTrack};
+        use crate::collect::{Collected as IrMedia, CollectedTrack as IrTrack};
         use crate::pipeline::{CodecConfig, Sample, TrackSpec};
         use crate::rtp_sdp::avc_config_from_sprop;
 
@@ -15250,7 +15249,7 @@ pub(crate) mod tests {
 
     fn real_hevc_parameter_sets() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
         let bytes = std::fs::read(test_fixtures::path("ts/hevc/main.ts")).expect("hevc fixture");
-        let media = crate::test_media::media_from_ts(&bytes).expect("demux");
+        let media = crate::collect::media_from_ts(&bytes).expect("demux");
         let track = media
             .tracks
             .iter()
@@ -15283,7 +15282,7 @@ pub(crate) mod tests {
 
     fn hevc_sps_from(fixture: &str) -> Vec<u8> {
         let bytes = std::fs::read(test_fixtures::path(fixture)).expect("hevc fixture");
-        let media = crate::test_media::media_from_ts(&bytes).expect("demux");
+        let media = crate::collect::media_from_ts(&bytes).expect("demux");
         let track = media
             .tracks
             .iter()

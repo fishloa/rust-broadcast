@@ -3,7 +3,7 @@ use url::Url;
 
 use broadcast_client::{Action, Config, ConnId, Event, Session, SourceKind, TransportError};
 use broadcast_common::stage::Timestamp;
-use transmux::Media;
+use test_harness::collect::Collected as Media;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {

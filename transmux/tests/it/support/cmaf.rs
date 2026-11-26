@@ -1,10 +1,12 @@
 //! Whole-`Media` CMAF packaging for tests: drives [`CmafMuxStage`] through
-//! [`drive_media`] and concatenates what it emits — the test-side bridge for a
+//! [`drive`](test_harness::collect::drive) and concatenates what it emits — the test-side bridge for a
 //! caller that still holds a whole `Media`.
 
 use broadcast_common::Timestamp;
-use transmux::media::{CmafMuxStage, FragmentCut, Media};
-use transmux::mux_stage::{MuxOutput, drive_media};
+use test_harness::collect::Collected as Media;
+use test_harness::collect::drive;
+use transmux::media::{CmafMuxStage, FragmentCut};
+use transmux::mux_stage::MuxOutput;
 
 /// One CMAF init segment followed by one media segment.
 pub fn package(media: &Media) -> transmux::Result<Vec<u8>> {
@@ -15,7 +17,7 @@ pub fn package(media: &Media) -> transmux::Result<Vec<u8>> {
 /// `sequence_number`.
 pub fn package_seq(media: &Media, sequence_number: u32) -> transmux::Result<Vec<u8>> {
     let mut stage = CmafMuxStage::new(media.movie_timescale, FragmentCut::OnFlush, sequence_number);
-    let outputs = drive_media(&mut stage, media, Timestamp::ZERO)?;
+    let outputs = drive(&mut stage, media, Timestamp::ZERO)?;
     let mut bytes = Vec::new();
     for output in outputs {
         match output {

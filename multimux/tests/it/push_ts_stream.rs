@@ -28,8 +28,9 @@ use mpeg_ts::ts::TsPacket;
 use multimux::push::{PushTransport, SrtTransport, SrtTransportConfig};
 use srt_runtime::HandshakeConfig;
 use srt_runtime::io::{SocketStats, SrtListener, SrtSocketConfig};
+use test_harness::collect::Collected as Media;
 use transmux::mux_stage::{MuxInput, MuxOutput};
-use transmux::{DEFAULT_PSI_INTERVAL, Media, Sample, TsMuxStage};
+use transmux::{DEFAULT_PSI_INTERVAL, Sample, TsMuxStage};
 
 const PKT: usize = 188;
 const PAT_PID: u16 = 0x0000;
@@ -419,12 +420,9 @@ fn streaming_mux_sample_by_sample_equals_whole_media() {
 /// Mux a whole `Media` through one TS muxer stage.
 fn mux_ts(media: &Media) -> Vec<u8> {
     let mut stage = TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL));
-    let out = transmux::mux_stage::drive_media(
-        &mut stage,
-        media,
-        broadcast_common::stage::Timestamp::ZERO,
-    )
-    .expect("mux to TS");
+    let out =
+        test_harness::collect::drive(&mut stage, media, broadcast_common::stage::Timestamp::ZERO)
+            .expect("mux to TS");
     let mut bytes = Vec::new();
     for output in out {
         if let MuxOutput::Bytes(chunk) = output {

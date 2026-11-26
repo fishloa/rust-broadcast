@@ -29,7 +29,7 @@ use rtmp_runtime::server::{ServerEvent, ServerSession};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use transmux::ir::TrackSpec;
+use transmux::TrackSpec;
 
 static FLV: std::sync::LazyLock<Vec<u8>> =
     std::sync::LazyLock::new(|| test_fixtures::read("flv/av.flv"));

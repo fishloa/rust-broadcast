@@ -85,14 +85,13 @@ use mpeg_ts::ts::{
     TS_PACKET_SIZE, TsHeader,
 };
 
+use crate::TrackId;
 use crate::aac_asc::{ADTS_HEADER_SIZE, AudioSpecificConfig};
 use crate::annexb::{NAL_LENGTH_SIZE, iter_length_prefixed_nals, length_prefixed_to_annexb};
 use crate::codec_config_ext::EsdsBoxCodecInfo;
-use crate::error::{Error, Result};
-use crate::ir::TrackId;
 #[cfg(test)]
-use crate::media::Media;
-use crate::media::Track;
+use crate::collect::Collected as Media;
+use crate::error::{Error, Result};
 use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::nal::{AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, nal_unit_type};
 use crate::pipeline::{CodecConfig, DataCarriage, DataIdentity, Sample, TrackSpec};
@@ -1056,7 +1055,7 @@ impl Stage for TsMuxStage {
 #[cfg(test)]
 pub(crate) fn mux_media_with(media: &Media, psi_interval: Option<Duration>) -> Result<Vec<u8>> {
     let mut stage = TsMuxStage::new(psi_interval);
-    let outputs = crate::mux_stage::drive_media(&mut stage, media, Timestamp::ZERO)?;
+    let outputs = crate::collect::drive(&mut stage, media, Timestamp::ZERO)?;
     let mut bytes = Vec::new();
     for output in outputs {
         if let MuxOutput::Bytes(chunk) = output {
@@ -1401,12 +1400,12 @@ fn hevc_parameter_sets(
 /// on every PID at each boundary otherwise (TR 101 290 indicator 1.4), and this
 /// crate's own [`StreamingTsDemux`](crate::StreamingTsDemux) reports `InputDegraded` on it.
 pub(crate) fn mux_tracks_at_continuing(
-    tracks: &[Track],
+    specs: &[TrackSpec],
     samples: &[&[Sample]],
     base_dts_ticks: &[u64],
     cc: &mut TsContinuity,
 ) -> Result<Vec<u8>> {
-    debug_assert_eq!(tracks.len(), base_dts_ticks.len());
+    debug_assert_eq!(specs.len(), base_dts_ticks.len());
     let times: Vec<Vec<i64>> = samples
         .iter()
         .zip(base_dts_ticks)
@@ -1424,7 +1423,7 @@ pub(crate) fn mux_tracks_at_continuing(
         })
         .collect();
     let times: Vec<&[i64]> = times.iter().map(Vec::as_slice).collect();
-    mux_tracks_timed_with_cc(tracks, samples, &times, cc, &mut PsiState::new(None))
+    mux_tracks_timed_with_cc(specs, samples, &times, cc, &mut PsiState::new(None))
 }
 
 /// PAT/PMT scheduling state threaded through [`mux_tracks_timed_with_cc`]
@@ -1524,19 +1523,18 @@ impl TsContinuity {
 /// `samples[i][j]` in `tracks[i]`'s timescale, relative to the stream's origin
 /// (negative values clamp to the origin).
 fn mux_tracks_timed_with_cc(
-    tracks: &[Track],
+    specs: &[TrackSpec],
     samples: &[&[Sample]],
     dts_ticks: &[&[i64]],
     continuity: &mut TsContinuity,
     psi: &mut PsiState,
 ) -> Result<Vec<u8>> {
     let psi_interval_ticks = psi.interval_ticks;
-    debug_assert_eq!(tracks.len(), samples.len());
-    debug_assert_eq!(tracks.len(), dts_ticks.len());
+    debug_assert_eq!(specs.len(), samples.len());
+    debug_assert_eq!(specs.len(), dts_ticks.len());
 
     // ── 1. Plan the elementary streams (PID + stream_type + framing) ──
-    let specs: Vec<TrackSpec> = tracks.iter().map(|t| t.spec.clone()).collect();
-    let (plans, planned_idx) = plan_elementary_streams(&specs)?;
+    let (plans, planned_idx) = plan_elementary_streams(specs)?;
 
     // PCR PID (§2.4.3.4 / §2.4.2.2): the first video ES; else the first
     // *continuous* audio ES (its PES packets arrive at the codec frame rate —
@@ -1604,8 +1602,7 @@ fn mux_tracks_timed_with_cc(
     let mut pcr_stamps: Vec<u64> = Vec::new();
     let mut pes: Vec<u8> = Vec::new();
     for (plan, &track_idx) in plans.iter().zip(&planned_idx) {
-        let track = &tracks[track_idx];
-        let ts_scale = track.spec.timescale;
+        let ts_scale = specs[track_idx].timescale;
         // Interleave keys only ever grow within one track, so the global sort
         // never reorders a track's own packets (issue #576).
         let mut last_key: u64 = 0;

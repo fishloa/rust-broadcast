@@ -350,7 +350,7 @@ async fn rtsp_push_survives_basic_auth_against_mediamtx() {
 /// Feed the whole `Media` through the transport one sample at a time, in
 /// decode order, writing every message the TS muxer emits — the live push
 /// egress path without a `Trunk`.
-async fn push_per_sample(transport: &mut RtspTransport, media: &transmux::Media) {
+async fn push_per_sample(transport: &mut RtspTransport, media: &test_harness::collect::Collected) {
     let specs: Vec<transmux::TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     transport
         .media_muxer()

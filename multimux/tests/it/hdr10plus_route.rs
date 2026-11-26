@@ -90,7 +90,7 @@ async fn routes_without_hdr10plus_carry_no_supplemental_codecs() {
     }
 }
 
-fn hdr10plus_seis_by_pts(media: &transmux::Media) -> Vec<Vec<u8>> {
+fn hdr10plus_seis_by_pts(media: &test_harness::collect::Collected) -> Vec<Vec<u8>> {
     let track = media
         .tracks
         .iter()

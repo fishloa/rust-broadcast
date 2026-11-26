@@ -1248,7 +1248,7 @@ mod tests {
     fn sample_aes_stage_passes_an_undefined_codec_through() {
         use crate::ir::DataCarriage;
         let mut stage = SampleAesStage::new(NIST_KEY, NIST_IV, SampleAesOp::Encrypt);
-        let spec = crate::ir::TrackSpec::new(
+        let spec = crate::TrackSpec::new(
             TrackId::new(1),
             broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
             CodecConfig::Data {

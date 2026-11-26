@@ -15,7 +15,7 @@ use broadcast_smooth::SmoothManifest;
 use smooth_runtime::{Action, SmoothClient, SmoothClientConfig};
 use transmux::pipeline::build_init_segment;
 use transmux::smooth_fragment::fragment_track_id;
-use transmux::{Sample, SmoothPackager, Track, track_spec_from_quality_level};
+use transmux::{Sample, SmoothPackager, track_spec_from_quality_level};
 use url::Url;
 
 #[global_allocator]
@@ -94,7 +94,7 @@ fn large_fragment(manifest: &SmoothManifest) -> (Vec<u8>, Vec<u8>) {
         core::num::NonZeroU32::new(CHUNK_DURATION),
     );
     let fragment = SmoothPackager
-        .package_track_fragment(&Track::new(spec, vec![sample]), 1, CHUNK_START)
+        .package_track_fragment(&spec, &[sample], 1, CHUNK_START)
         .expect("the large fragment packages");
     (init, fragment.bytes.to_vec())
 }
