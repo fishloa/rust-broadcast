@@ -9,6 +9,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 
 ### Added
 
+- `EncoderConfig::pixel_format`/`with_pixel_format` and
+  `sample_format`/`sample_layout`/`with_sample_format`: the storage a caller
+  asks an encoder to produce (a picture's pixel format, or an audio frame's
+  sample format and layout). `None` leaves the choice to the provider, which
+  states the format it produces.
 - Initial contents: `CodecId`, `CodecParameters`, `AudioParameters`,
   `VideoParameters`, `Packet`, `AudioFrame`, `AudioSamples`, `ChannelLayout`,
   `SampleLayout`, `Frame`, `VideoFrame`, `VideoPlane`, `VideoStorage`,

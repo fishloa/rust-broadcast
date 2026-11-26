@@ -6,16 +6,24 @@ use core::num::{NonZeroU32, NonZeroU64};
 
 use broadcast_core::timescale::Timescale;
 
+use crate::audio::SampleLayout;
 use crate::codec::{AudioParameters, CodecId, VideoParameters};
 use crate::profile::CodecProfile;
 use crate::profile_error::ProfileError;
+use crate::sample_format::SampleFormat;
+use crate::video::PixelFormat;
 
 /// The settings an encoder is built with.
 ///
 /// The typed settings are the ones every encoder needs: the coded format, the
 /// tick rate its output timestamps use, the profile to produce, the source
-/// parameters it is asked to produce, an optional target bit rate and an
-/// optional picture group length.
+/// parameters it is asked to produce, the storage it is asked to produce, an
+/// optional target bit rate and an optional picture group length.
+///
+/// The target storage is optional: a pixel format for a video encoder, a
+/// sample format and layout for an audio encoder. `None` leaves the choice to
+/// the provider, which then says which format it produces in its
+/// documentation.
 ///
 /// [`options`](Self::options) carries everything that is provider-specific, in
 /// the order it was added. A provider that does not recognise a key MUST return
@@ -30,6 +38,9 @@ pub struct EncoderConfig {
     profile: Option<CodecProfile>,
     audio: Option<AudioParameters>,
     video: Option<VideoParameters>,
+    pixel_format: Option<PixelFormat>,
+    sample_format: Option<SampleFormat>,
+    sample_layout: Option<SampleLayout>,
     bit_rate: Option<NonZeroU64>,
     gop: Option<NonZeroU32>,
     options: Vec<(String, String)>,
@@ -46,6 +57,9 @@ impl EncoderConfig {
             profile: None,
             audio: None,
             video: None,
+            pixel_format: None,
+            sample_format: None,
+            sample_layout: None,
             bit_rate: None,
             gop: None,
             options: Vec::new(),
@@ -75,6 +89,21 @@ impl EncoderConfig {
     #[must_use]
     pub const fn with_video(mut self, video: VideoParameters) -> Self {
         self.video = Some(video);
+        self
+    }
+
+    /// Ask the encoder to produce pictures in `format`.
+    #[must_use]
+    pub const fn with_pixel_format(mut self, format: PixelFormat) -> Self {
+        self.pixel_format = Some(format);
+        self
+    }
+
+    /// Ask the encoder to produce samples in `format`, laid out as `layout`.
+    #[must_use]
+    pub const fn with_sample_format(mut self, format: SampleFormat, layout: SampleLayout) -> Self {
+        self.sample_format = Some(format);
+        self.sample_layout = Some(layout);
         self
     }
 
@@ -128,6 +157,27 @@ impl EncoderConfig {
     #[must_use]
     pub const fn video(&self) -> Option<VideoParameters> {
         self.video
+    }
+
+    /// The pixel format the encoder is asked to produce, when one was asked
+    /// for.
+    #[must_use]
+    pub const fn pixel_format(&self) -> Option<PixelFormat> {
+        self.pixel_format
+    }
+
+    /// The sample format the encoder is asked to produce, when one was asked
+    /// for.
+    #[must_use]
+    pub const fn sample_format(&self) -> Option<SampleFormat> {
+        self.sample_format
+    }
+
+    /// The sample layout the encoder is asked to produce, when one was asked
+    /// for.
+    #[must_use]
+    pub const fn sample_layout(&self) -> Option<SampleLayout> {
+        self.sample_layout
     }
 
     /// Target bit rate in bits per second, when one was asked for.

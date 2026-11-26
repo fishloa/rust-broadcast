@@ -6,8 +6,8 @@ use std::num::{NonZeroU16, NonZeroU32, NonZeroUsize};
 
 use broadcast_codec::{
     AudioFrame, AudioParameters, AudioSamples, ChannelLayout, CodecError, CodecId, CodecParameters,
-    ContentLightLevel, Decoder, Encoder, Frame, ItuT35, MasteringDisplay, Packet, PixelFormat,
-    SampleLayout, VideoFrame, VideoPlane, VideoStorage,
+    ContentLightLevel, Decoder, Encoder, EncoderConfig, Frame, ItuT35, MasteringDisplay, Packet,
+    PixelFormat, SampleFormat, SampleLayout, VideoFrame, VideoPlane, VideoStorage,
 };
 use broadcast_core::timescale::Timescale;
 
@@ -397,4 +397,19 @@ fn high_bit_depth_and_hdr_metadata_are_carried() {
     assert_eq!(frame.mastering_display().unwrap().max_luminance(), 1_000);
     assert_eq!(frame.itu_t35().len(), 1);
     assert_eq!(frame.itu_t35()[0].payload(), &[1, 2, 3]);
+}
+
+#[test]
+fn encoder_target_storage_is_carried() {
+    let video = EncoderConfig::new(CodecId::H264, Timescale::new(25).unwrap())
+        .with_pixel_format(PixelFormat::Yuv420p10);
+    assert_eq!(video.pixel_format(), Some(PixelFormat::Yuv420p10));
+    assert_eq!(video.sample_format(), None);
+    assert_eq!(video.sample_layout(), None);
+
+    let audio = EncoderConfig::new(CodecId::Flac, Timescale::new(48_000).unwrap())
+        .with_sample_format(SampleFormat::S16, SampleLayout::Interleaved);
+    assert_eq!(audio.sample_format(), Some(SampleFormat::S16));
+    assert_eq!(audio.sample_layout(), Some(SampleLayout::Interleaved));
+    assert_eq!(audio.pixel_format(), None);
 }
