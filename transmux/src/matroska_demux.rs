@@ -42,11 +42,11 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::Stage;
 use broadcast_common::stage::{Demand, Timestamp};
-use broadcast_common::wire::be_u64;
 use broadcast_core::Parse;
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::need_in;
 use broadcast_core::timescale::{Rounding, Timescale, rescale_u64};
+use broadcast_core::wire::be_u64;
 use broadcast_matroska::Limits;
 use broadcast_matroska::reader::{
     BlockStep, ByteRange, Mode, Reader, SegmentInfo, Source, Step, TrackInfo, Warning,

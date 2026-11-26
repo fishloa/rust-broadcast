@@ -37,9 +37,9 @@
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, FULLBOX_EXTRA_SIZE};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::wire::{U24_LEN, read_u16, read_u32, take};
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::{need_in, need_out};
+use broadcast_core::wire::{U24_LEN, read_u16, read_u32, take};
 use broadcast_core::{Parse, Serialize};
 use core::fmt;
 

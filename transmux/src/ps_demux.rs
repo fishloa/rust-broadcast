@@ -61,8 +61,8 @@ use core::num::NonZeroU32;
 
 use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::wire::u16_at;
 use broadcast_core::timescale::Timescale;
+use broadcast_core::wire::u16_at;
 use mpeg_ps::{PsEvent, PsLimits, PsScanner};
 
 use crate::TrackId;

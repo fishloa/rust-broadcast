@@ -298,7 +298,7 @@ pub(crate) fn parse_sequence_header_record(
         }));
     }
     let mut cursor = 1;
-    let len = usize::from(broadcast_common::wire::read_u16(bytes, &mut cursor, what)?);
+    let len = usize::from(broadcast_core::wire::read_u16(bytes, &mut cursor, what)?);
     let need = CONFIG_HEADER_LEN + len + trailing;
     if bytes.len() < need {
         return Err(Error::BufferTooShort(BufferTooShort {
@@ -437,7 +437,7 @@ impl<'a> Parse<'a> for LAvsConfigurationBox {
             .chunks_exact(LAYER_LEN)
             .map(|c| {
                 let mut cursor = LAYER_TAIL_OFFSET;
-                let tail = broadcast_common::wire::read_u32(c, &mut cursor, "temporal layer tail")?;
+                let tail = broadcast_core::wire::read_u32(c, &mut cursor, "temporal layer tail")?;
                 Ok(TemporalLayerInfo {
                     temporal_layer_id: c[0] >> TEMPORAL_LAYER_ID_SHIFT,
                     frame_rate_code: AvsFrameRateCode::from_u8(
@@ -610,7 +610,7 @@ impl<'a> Parse<'a> for VisualLrapEntry {
             .chunks_exact(LIBRARY_SAMPLE_LEN)
             .map(|c| {
                 let mut cursor = 0;
-                let v = broadcast_common::wire::read_u16(c, &mut cursor, "lrap library sample")?;
+                let v = broadcast_core::wire::read_u16(c, &mut cursor, "lrap library sample")?;
                 Ok(LibrarySampleRef {
                     library_sample_number: v >> LIBRARY_SAMPLE_NUMBER_SHIFT,
                     reserved: (v & LIBRARY_SAMPLE_RESERVED_MASK) as u8,
@@ -1024,7 +1024,7 @@ impl AvsVideoSampleEntry {
     pub fn parse_entry(bytes: &[u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "AVS sample entry")?;
         let mut cursor = crate::box_types::BOX_TYPE_SIZE;
-        let fourcc = broadcast_common::wire::read_u32(bytes, &mut cursor, "AVS sample entry type")?
+        let fourcc = broadcast_core::wire::read_u32(bytes, &mut cursor, "AVS sample entry type")?
             .to_be_bytes();
         let kind = AvsVideoEntryKind::from_entry_fourcc(fourcc).ok_or(Error::UnexpectedBox {
             expected: "avs3/lav3/avst/lav2",

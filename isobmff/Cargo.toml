@@ -17,7 +17,6 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
 broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 thiserror = { version = "2", default-features = false }
 serde     = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
@@ -30,6 +29,9 @@ serde     = { version = "1", optional = true, default-features = false, features
 transmux      = { path = "../transmux", default-features = false }
 test-fixtures = { path = "../test-fixtures" }
 test-harness  = { path = "../test-harness" }
+# Tests and two examples read a whole small document under a named limit
+# (`bounded`) and name the stage `Timestamp`; neither is part of the box layer.
+broadcast-common = { path = "../broadcast-common", version = "14.0.0" }
 # Counting/capping test allocator (path-only, publish = false; never published).
 test-alloc    = { path = "../test-alloc" }
 
@@ -37,10 +39,10 @@ test-alloc    = { path = "../test-alloc" }
 default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`.
-std = ["broadcast-common/std", "broadcast-core/std", "thiserror/std", "serde?/std"]
+std = ["broadcast-core/std", "thiserror/std", "serde?/std"]
 # `serde::Serialize` derives on the moved box types (and the golden-hashed
 # `TrackId` transparent form). Off by default; transmux's `serde` forwards here.
-serde = ["dep:serde", "broadcast-common/serde", "broadcast-core/serde"]
+serde = ["dep:serde", "broadcast-core/serde"]
 # Test instrumentation only, not part of the API: a per-thread counter of
 # `frag_offsets::mdat_ranges` calls so a demuxer above this crate can assert it
 # scans the file's `mdat`s once. Off by default, so a normal build has no

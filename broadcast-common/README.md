@@ -16,7 +16,8 @@ PCR, SCTE-35 and SRT all need, the range-checking helpers serializers use
 instead of silent masking, and the vocabulary traits of the muxing hub
 and the incremental `Stage` driver.
 Use it directly when you implement a new wire type in the workspace's style or
-need one of those primitives.
+need one of those primitives. The big-endian field readers live with the rest
+of the frozen wire contract, in `broadcast-core`'s `wire` module.
 
 It deliberately has no shared error enum (each crate owns a domain `Error`,
 reached through `type Error` on the traits), no CRC-8 (only `dvb-bbframe` needs

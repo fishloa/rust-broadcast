@@ -18,10 +18,10 @@ use crate::box_types::{
 use crate::error::{Error, Result};
 use crate::init_segment::TrackExtendsBox;
 use alloc::vec::Vec;
-use broadcast_common::wire::{be_u32, be_u64, read_u32};
 use broadcast_core::Serialize;
 use broadcast_core::error::BufferTooShort;
 use broadcast_core::len::{need_in, need_out};
+use broadcast_core::wire::{be_u32, be_u64, read_u32};
 
 const TRUN_SAMPLE_FIELD_COUNT: usize = 4;
 const CENC_AUX_INFO_TYPE_COUNT: usize = 4;

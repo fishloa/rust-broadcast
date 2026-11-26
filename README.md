@@ -51,7 +51,7 @@ crates' manifests by [`tools/gen-crate-index.py`](tools/gen-crate-index.py);
 | [`broadcast-auth`](broadcast-auth/) | Shared HTTP/RTSP auth: Basic/Digest/Bearer client credentials and a server-side challenge+verify Verifier. | RFC 7235, RFC 7616 / RFC 2617 (Digest), RFC 6750 (Bearer), RFC 2326 §14 | [![crates.io](https://img.shields.io/crates/v/broadcast-auth.svg)](https://crates.io/crates/broadcast-auth) |
 | [`broadcast-codec`](broadcast-codec/) | Codec seam: raw frame types, object-safe sans-IO Decoder/Encoder traits, and the registry that chooses among providers; holds no codec. | none (codec seam; no wire format of its own) | internal, `publish = false` |
 | [`broadcast-common`](broadcast-common/) | CRC-32/MPEG-2, BCD/time/hex codecs, 33-bit clock arithmetic, the incremental Stage contract and the bounded XML reader. | ISO/IEC 13818-1 CRC-32 (Annex A) | [![crates.io](https://img.shields.io/crates/v/broadcast-common.svg)](https://crates.io/crates/broadcast-common) |
-| [`broadcast-core`](broadcast-core/) | Frozen wire-format contract: Parse/Serialize, checked field widths, bit I/O, shared errors, timescale and the CENC scheme identity. | ISO/IEC 23001-7 scheme identity (`cenc`); no format of its own | internal, `publish = false` |
+| [`broadcast-core`](broadcast-core/) | Frozen wire-format contract: Parse/Serialize, checked field widths, bit I/O, shared errors, big-endian wire field readers, timescale and the CENC scheme identity. | ISO/IEC 23001-7 scheme identity (`cenc`); no format of its own | internal, `publish = false` |
 
 **MPEG-2 TS / PES / PS framing**
 

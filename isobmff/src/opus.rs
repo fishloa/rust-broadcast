@@ -8,8 +8,8 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::wire::{be_u16, be_u32, i16_at};
 use broadcast_core::len::{need_in, need_out};
+use broadcast_core::wire::{be_u16, be_u32, i16_at};
 use broadcast_core::{Parse, Serialize};
 
 /// FourCC of the Opus config box.

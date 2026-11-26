@@ -3,7 +3,7 @@
 //! `user_data()` (ETSI TS 101 154 Annex B, SMPTE ST 2016-1).
 
 use crate::ir::{ActiveFormatDescription, BarData};
-use broadcast_common::wire::{be_u16, be_u32};
+use broadcast_core::wire::{be_u16, be_u32};
 
 /// `user_identifier` of `afd_data()` (TS 101 154 Table B.1).
 pub const DTG1_USER_IDENTIFIER: u32 = 0x4454_4731;

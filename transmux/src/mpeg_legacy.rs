@@ -24,8 +24,8 @@
 use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use crate::error::{Error, Result};
 use crate::units::BITS_PER_KILOBIT;
-use broadcast_common::wire::be_u32;
 use broadcast_core::len::need_in;
+use broadcast_core::wire::be_u32;
 
 // ── MPEG-2 video sequence header — ISO/IEC 13818-2 §6.2.2.1 ─────────────────
 

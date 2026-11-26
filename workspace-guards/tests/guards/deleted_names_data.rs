@@ -73,6 +73,11 @@ pub const TABLE: &[Banned] = &[
         issue: "streaming-first P6 S8",
     },
     Banned {
+        name: "broadcast_common::wire",
+        reason: "the big-endian field readers live in broadcast_core::wire",
+        issue: "streaming-first wr1",
+    },
+    Banned {
         name: "broadcast_common::impl_spec_display",
         reason: "the Display-from-name macro is broadcast_core::impl_spec_display",
         issue: "streaming-first P6 S8",

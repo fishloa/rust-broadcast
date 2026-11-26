@@ -5,10 +5,10 @@
 //! dimensions atom ('clef')", "Track production aperture dimensions atom
 //! ('prof')" and "Track encoded pixels dimensions atom ('enof')".
 
-use broadcast_common::wire::{u24_at, u32_at};
 use broadcast_core::Parse;
 use broadcast_core::Serialize;
 use broadcast_core::len::{need_in, need_out};
+use broadcast_core::wire::{u24_at, u32_at};
 
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxIter, FULLBOX_EXTRA_SIZE};
 use crate::error::{Error, Result};

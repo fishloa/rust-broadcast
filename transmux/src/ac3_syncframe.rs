@@ -20,9 +20,9 @@ use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
 use crate::units::BITS_PER_KILOBIT;
 use alloc::vec::Vec;
-use broadcast_common::wire::u16_at;
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::need_in;
+use broadcast_core::wire::u16_at;
 use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox, Ec3Substream, acmod_channels};
 
 // AC-3 syncword (big-endian).

@@ -21,7 +21,7 @@ use broadcast_core::{Parse, Serialize};
 
 use crate::box_types::BOX_TYPE_SIZE;
 use crate::error::{Error, Result};
-use broadcast_common::wire::{be_u16, be_u32};
+use broadcast_core::wire::{be_u16, be_u32};
 
 /// Divisor that halves a denominator so `(num + den / ROUNDING_DIVISOR) / den`
 /// rounds a quotient to nearest.

@@ -1,7 +1,7 @@
 # isobmff
 
 ISO/IEC 14496-12:2026 (ISO Base Media File Format) **box syntax**, no_std +
-`alloc`, depending only on `broadcast-common`.
+`alloc`, depending only on `broadcast-core`.
 
 This crate is the box layer below the `transmux` muxing hub: it parses and
 writes the `size`/`type` box headers (including the 64-bit `largesize` and the

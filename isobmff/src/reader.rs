@@ -1231,13 +1231,13 @@ fn opaque_stsd_has_body(stsd: &[u8]) -> bool {
     if body.len() < FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>() {
         return false;
     }
-    let count = broadcast_common::wire::u32_at(body, FULLBOX_EXTRA_SIZE);
+    let count = broadcast_core::wire::u32_at(body, FULLBOX_EXTRA_SIZE);
     let mut at = FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
     for _ in 0..count {
         let Some(header) = body.get(at..at + BOX_HEADER_MIN_SIZE) else {
             return false;
         };
-        let size = usize::try_from(broadcast_common::wire::u32_at(header, 0)).unwrap_or(0);
+        let size = usize::try_from(broadcast_core::wire::u32_at(header, 0)).unwrap_or(0);
         if size > BOX_HEADER_MIN_SIZE {
             return true;
         }
@@ -1433,7 +1433,7 @@ impl Reader {
                 },
             ));
         }
-        let raw_size = broadcast_common::wire::u32_at(bytes, 0);
+        let raw_size = broadcast_core::wire::u32_at(bytes, 0);
         let uuid = &bytes[4..8] == b"uuid";
         let largesize = raw_size == crate::box_types::SIZE_INDICATES_LARGESIZE;
         let required = MIN_BOX_HEADER_BYTES
@@ -2216,7 +2216,7 @@ fn fragment_aux(
         ));
     }
     let version = data[0];
-    let flags = broadcast_common::wire::u32_at(data, 0) & crate::box_types::FULLBOX_FLAGS_MASK;
+    let flags = broadcast_core::wire::u32_at(data, 0) & crate::box_types::FULLBOX_FLAGS_MASK;
     let parsed = SampleEncryptionBox::parse_body(
         &data[FULLBOX_EXTRA_SIZE..],
         version,
@@ -2348,7 +2348,7 @@ fn raw_stsd_entries(
     let stsd = child(stbl_body, b"stsd", STSD_DEPTH, limits)?
         .ok_or(Error::UnexpectedBox { expected: "stsd" })?;
     let stsd_body = parse_box(stsd)?.0.body;
-    let count = usize::try_from(broadcast_common::wire::be_u32(
+    let count = usize::try_from(broadcast_core::wire::be_u32(
         stsd_body,
         STSD_ENTRY_COUNT_OFFSET,
         "stsd entry_count",
@@ -2534,7 +2534,7 @@ fn clamp_children(
     }
     let mut at = start;
     while at + BOX_HEADER_MIN_SIZE <= end {
-        let size = broadcast_common::wire::u32_at(data, at);
+        let size = broadcast_core::wire::u32_at(data, at);
         if size == 0 {
             return;
         }
@@ -2575,7 +2575,7 @@ fn patch_zero_mvhd(data: &mut [u8], start: usize, base: u64, warnings: &mut Vec<
     let mut found = None;
     let mut at = start;
     while at + BOX_HEADER_MIN_SIZE <= data.len() {
-        let size = usize::try_from(broadcast_common::wire::u32_at(data, at)).unwrap_or(usize::MAX);
+        let size = usize::try_from(broadcast_core::wire::u32_at(data, at)).unwrap_or(usize::MAX);
         if size < BOX_HEADER_MIN_SIZE {
             return;
         }
@@ -2605,7 +2605,7 @@ fn patch_zero_mvhd(data: &mut [u8], start: usize, base: u64, warnings: &mut Vec<
     if timescale_at + core::mem::size_of::<u32>() > data.len() {
         return;
     }
-    if broadcast_common::wire::u32_at(data, timescale_at) != 0 {
+    if broadcast_core::wire::u32_at(data, timescale_at) != 0 {
         return;
     }
     data[timescale_at..timescale_at + core::mem::size_of::<u32>()]

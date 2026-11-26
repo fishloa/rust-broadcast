@@ -118,7 +118,7 @@ impl Keys {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         need_in(body, MIN_BODY_LEN, "keys body")?;
         let version = body[0];
-        let flags = broadcast_common::wire::u24_at(body, FULLBOX_FLAGS_OFFSET);
+        let flags = broadcast_core::wire::u24_at(body, FULLBOX_FLAGS_OFFSET);
         let count = super::u32_at(body, FULLBOX_EXTRA_SIZE) as usize;
         let remaining = &body[MIN_BODY_LEN..];
         if count > remaining.len() / MIN_ENTRY_LEN {
