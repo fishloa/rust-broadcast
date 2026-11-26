@@ -438,6 +438,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-codec"
+version = "0.1.0"
+dependencies = [
+ "broadcast-core",
+]
+
+[[package]]
 name = "broadcast-common"
 version = "14.0.0"
 dependencies = [
