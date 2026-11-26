@@ -1259,4 +1259,63 @@ mod tests {
             CLOSES.load(Ordering::Relaxed)
         );
     }
+    /// A partial selection is reported once, with the carried and proposed
+    /// counts — the structured successor to the deleted per-transport
+    /// refused-track warning.
+    #[test]
+    fn a_partial_selection_is_logged_once_with_the_excluded_count() {
+        #[derive(Clone, Default)]
+        struct Capture(std::sync::Arc<std::sync::Mutex<String>>);
+
+        impl tracing::Subscriber for Capture {
+            fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+                true
+            }
+            fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+                tracing::span::Id::from_u64(1)
+            }
+            fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+            fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+            fn enter(&self, _: &tracing::span::Id) {}
+            fn exit(&self, _: &tracing::span::Id) {}
+            fn event(&self, event: &tracing::Event<'_>) {
+                struct Fields<'a>(&'a mut String);
+                impl tracing::field::Visit for Fields<'_> {
+                    fn record_debug(
+                        &mut self,
+                        field: &tracing::field::Field,
+                        value: &dyn std::fmt::Debug,
+                    ) {
+                        use std::fmt::Write as _;
+                        let _ = write!(self.0, "{}={value:?} ", field.name());
+                    }
+                }
+                let mut line = String::new();
+                event.record(&mut Fields(&mut line));
+                let mut buffer = self
+                    .0
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                buffer.push_str(&line);
+            }
+        }
+
+        let capture = Capture::default();
+        let buffer = capture.0.clone();
+        tracing::subscriber::with_default(capture, || {
+            log_partial_selection("push://x", 1, 4);
+            log_partial_selection("push://x", 4, 4);
+        });
+        let logs = buffer
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        assert_eq!(
+            logs.matches("cannot carry every track").count(),
+            1,
+            "the exclusion is reported once: {logs}"
+        );
+        assert!(logs.contains("carried=1 "), "{logs}");
+        assert!(logs.contains("proposed=4 "), "{logs}");
+    }
 }
