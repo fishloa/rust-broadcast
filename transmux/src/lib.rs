@@ -304,9 +304,7 @@ pub use flv::{
 #[cfg(feature = "flv")]
 pub use flv_stream::StreamingFlvDemux;
 pub use h262::{SequenceDisplayExtension, SequenceHeaderGeometry};
-pub use interlace::{
-    PicStruct, PictureFacts, SourceScanType, VideoScan, video_picture_facts, video_scan,
-};
+pub use interlace::{video_picture_facts, video_scan};
 pub use ir::{
     ActiveFormat, AfdPersistence, AudioLanguage, AudioMetadata, AudioRole, AudioType,
     DisplayChangeSet, DisplayGeometry, DisplayInfo, EditorialClassification, INFERRED_COLOUR_CODE,

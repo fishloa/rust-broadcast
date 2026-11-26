@@ -358,6 +358,26 @@ pub const TABLE: &[Banned] = &[
         issue: "broadcast-bitstream bs1",
     },
     Banned {
+        name: "transmux::VideoScan",
+        reason: "the coded interlace facts live in broadcast_bitstream::interlace",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::PicStruct",
+        reason: "the coded interlace facts live in broadcast_bitstream::interlace",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::SourceScanType",
+        reason: "the coded interlace facts live in broadcast_bitstream::interlace",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
+        name: "transmux::PictureFacts",
+        reason: "the coded interlace facts live in broadcast_bitstream::interlace",
+        issue: "broadcast-bitstream bs2b",
+    },
+    Banned {
         name: "transmux::slice_header",
         reason: "the H.264 slice-header and PPS parsers live in broadcast_bitstream::slice_header",
         issue: "broadcast-bitstream bs2b",

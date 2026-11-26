@@ -6,8 +6,8 @@
 //! so a blanked or changed label must fail here, not ship silently.
 
 use broadcast_bitstream::facts::{ActiveFormatDescription, TransferCharacteristics};
+use broadcast_bitstream::interlace::{PicStruct, SourceScanType, VideoScan};
 use transmux::hdr10plus::OverlapProcessOption;
-use transmux::interlace::{PicStruct, SourceScanType, VideoScan};
 use transmux::ir::{
     AbandonReason, AfdPersistence, AudioRole, AudioType, DataCarriage, DiscontinuityKind,
     EditorialClassification, InputDegradation, MixType, SubtitleFormat, UserDataCarriage,

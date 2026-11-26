@@ -49,6 +49,8 @@ use broadcast_core::wire::{be_u16, be_u32};
 /// Mask for the H.264 5-bit `nal_unit_type` in header byte 0 (bits `[4:0]`)
 /// — ITU-T H.264 §7.3.1.
 pub const NAL_TYPE_MASK: u8 = 0x1F;
+/// Byte width of every H.264 NAL header (ITU-T H.264 §7.3.1).
+pub const AVC_NAL_HEADER_LEN: usize = 1;
 /// H.264 `nal_unit_type` for a coded slice of a non-IDR picture (Table 7-1).
 pub const AVC_NAL_SLICE: u8 = 1;
 /// H.264 `nal_unit_type` for a coded slice of an **IDR** picture (Table 7-1).

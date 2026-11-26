@@ -70,3 +70,7 @@ required-features = ["h264"]
 [[test]]
 name = "h264_capture_sps"
 required-features = ["h264"]
+
+[[test]]
+name = "slice_header_pps"
+required-features = ["h264"]

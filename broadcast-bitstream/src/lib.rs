@@ -20,6 +20,8 @@ pub mod au;
 pub mod bitreader;
 mod error;
 pub mod facts;
+#[cfg(any(feature = "h264", feature = "hevc"))]
+pub mod interlace;
 pub mod nal;
 pub mod rbsp;
 pub mod rfc6381;
@@ -34,6 +36,12 @@ pub use annexb::{
 };
 pub use au::{AccessUnitSplitter, split_access_units};
 pub use error::{Error, Result};
+#[cfg(feature = "h264")]
+pub use interlace::avc_facts;
+#[cfg(feature = "hevc")]
+pub use interlace::hevc_facts;
+#[cfg(any(feature = "h264", feature = "hevc"))]
+pub use interlace::{PicStruct, PictureFacts, SourceScanType, VideoScan};
 #[cfg(feature = "h264")]
 pub use nal::AvcNalUnitType;
 #[cfg(feature = "hevc")]
