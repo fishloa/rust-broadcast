@@ -11,6 +11,11 @@
 //! ADTS framing is the spike's own small parser ([`adts`]) rather than
 //! symphonia's reader: the seam's `Decoder` takes exactly one access unit per
 //! `send`, so the file is split before it reaches the adapter.
+//!
+//! The adapter is also a [`CodecProvider`] ([`SymphoniaProvider`]): a
+//! [`Registry`](broadcast_codec::Registry) built with it hands the decoder back
+//! as a `Box<dyn Decoder>`, so the test that measures loudness reaches symphonia
+//! without naming it.
 
 pub mod adts;
 
@@ -18,8 +23,9 @@ use std::collections::VecDeque;
 use std::num::NonZeroU32;
 
 use broadcast_codec::{
-    AudioFrame, AudioSamples, ChannelLayout, CodecError, CodecId, CodecParameters, Decoder, Frame,
-    Packet, SampleLayout,
+    AudioFrame, AudioSamples, ChannelLayout, CodecDescriptor, CodecError, CodecId,
+    CodecParameters, CodecProvider, Decoder, Direction, Encoder, EncoderConfig, Frame, Packet,
+    SampleFormat, SampleLayout,
 };
 use symphonia::core::audio::{Channels, Position};
 use symphonia::core::codecs::audio::well_known::CODEC_ID_AAC;
@@ -39,6 +45,10 @@ const AAC_FRAME_SAMPLES: u64 = 1024;
 const SURROUND_5_1_CHANNELS: u16 = 6;
 /// The 7.1 channel count.
 const SURROUND_7_1_CHANNELS: u16 = 8;
+/// The provider's name.
+const PROVIDER: &str = "symphonia";
+/// The one implementation the provider offers.
+const IMPLEMENTATION: &str = "aac";
 
 /// An AAC-LC decoder implementing the seam's [`Decoder`].
 pub struct SymphoniaAacDecoder {
@@ -162,5 +172,44 @@ fn symphonia_channels(channels: ChannelLayout) -> Channels {
         ChannelLayout::Surround7_1 => Channels::Discrete(SURROUND_7_1_CHANNELS),
         ChannelLayout::Discrete(count) => Channels::Discrete(count.get()),
         _ => Channels::Discrete(channels.count() as u16),
+    }
+}
+
+/// The spike's [`CodecProvider`]: one AAC-LC decoder.
+pub struct SymphoniaProvider;
+
+impl CodecProvider for SymphoniaProvider {
+    fn name(&self) -> &str {
+        PROVIDER
+    }
+
+    fn descriptors(&self) -> Vec<CodecDescriptor> {
+        vec![
+            CodecDescriptor::new(PROVIDER, IMPLEMENTATION, CodecId::Aac, Direction::Decode)
+                .with_sample_formats(vec![SampleFormat::F32]),
+        ]
+    }
+
+    fn make_decoder(
+        &self,
+        implementation: &str,
+        parameters: &CodecParameters,
+    ) -> Result<Box<dyn Decoder>, CodecError> {
+        if implementation != IMPLEMENTATION {
+            return Err(CodecError::unsupported(format!(
+                "{PROVIDER} implementation `{implementation}`"
+            )));
+        }
+        Ok(Box::new(SymphoniaAacDecoder::new(parameters.clone())?))
+    }
+
+    fn make_encoder(
+        &self,
+        implementation: &str,
+        _config: &EncoderConfig,
+    ) -> Result<Box<dyn Encoder>, CodecError> {
+        Err(CodecError::unsupported(format!(
+            "{PROVIDER} implementation `{implementation}`"
+        )))
     }
 }

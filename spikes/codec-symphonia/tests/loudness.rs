@@ -6,10 +6,10 @@ use std::time::Duration;
 
 use broadcast_codec::{
     AudioParameters, AudioSamples, ChannelLayout, CodecId, CodecParameters, Decoder, Frame, Packet,
-    Timescale,
+    Registry, Timescale,
 };
 use broadcast_loudness::LoudnessMeter;
-use codec_symphonia::SymphoniaAacDecoder;
+use codec_symphonia::SymphoniaProvider;
 use codec_symphonia::adts::AdtsFrames;
 use test_fixtures::process::{output_bounded, tool_available};
 
@@ -61,7 +61,10 @@ fn measure() -> (f64, u64) {
 
     let params = CodecParameters::new(CodecId::Aac, Timescale::from_nonzero(sample_rate))
         .with_audio(AudioParameters::new(sample_rate, channels));
-    let mut decoder: Box<dyn Decoder> = Box::new(SymphoniaAacDecoder::new(params).unwrap());
+    let registry = Registry::new()
+        .with(Box::new(SymphoniaProvider))
+        .expect("the symphonia provider registers");
+    let mut decoder = registry.decoder(&params).expect("an AAC decoder");
     let mut meter = LoudnessMeter::new(sample_rate.get(), layout).unwrap();
     let mut decoded_samples = 0u64;
 
