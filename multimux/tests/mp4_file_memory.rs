@@ -43,13 +43,26 @@ const FRAGMENT_COUNT: u32 = 16_384;
 const FRAGMENT_SAMPLE_BYTES: u32 = 512 << 10;
 /// Timed samples the trunk retains: a few drains' worth.
 const RING: usize = 64;
+/// Timed samples the digest playout's trunk retains: above the whole looping
+/// fixture's sample set, so a lossless comparison is not a memory test.
+const COLLECT_RING: usize = 1 << 12;
 /// How much a second loop pass may raise the peak above the first.
 const LOOP_PEAK_SLACK: usize = 1 << 20;
 
 type Digest = (u32, i64, i64, Option<u32>, bool, Vec<u8>);
 
-fn trunk() -> Arc<Trunk> {
-    let nz = std::num::NonZeroUsize::new(RING).unwrap_or(std::num::NonZeroUsize::MIN);
+/// What one unpaced playout of `path` delivered and cost.
+struct Playout {
+    /// Peak live bytes above the entry baseline.
+    peak: usize,
+    /// Timed samples the cursor drained.
+    delivered: u64,
+    /// Timed samples the trunk evicted before the cursor read them.
+    missed: u64,
+}
+
+fn trunk_with(capacity: usize) -> Arc<Trunk> {
+    let nz = std::num::NonZeroUsize::new(capacity).unwrap_or(std::num::NonZeroUsize::MIN);
     Trunk::new(
         TrunkConfig::default()
             .with_timed_capacity(nz)
@@ -60,6 +73,10 @@ fn trunk() -> Arc<Trunk> {
     )
 }
 
+fn trunk() -> Arc<Trunk> {
+    trunk_with(RING)
+}
+
 fn scratch() -> PathBuf {
     let dir = std::env::temp_dir().join(format!("multimux-mp4-memory-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create scratch dir");
@@ -67,8 +84,8 @@ fn scratch() -> PathBuf {
 }
 
 /// Play `path` through the real reader, draining the trunk concurrently, and
-/// return the peak bytes above the entry baseline.
-async fn play(path: &Path, max_loops: Option<u32>) -> usize {
+/// report the peak bytes above the entry baseline and what the cursor saw.
+async fn play(path: &Path, max_loops: Option<u32>) -> Playout {
     let trunk = trunk();
     let mut cursor = trunk.subscribe_from_backlog();
     let config = FileReaderConfig::new(path.to_path_buf(), max_loops.is_some(), trunk.clone())
@@ -78,27 +95,61 @@ async fn play(path: &Path, max_loops: Option<u32>) -> usize {
     A.reset();
     let baseline = A.live();
     let handle = tokio::spawn(FileReader::new(config).run());
+    let mut delivered = 0u64;
+    let mut missed = 0u64;
+    let mut finished = false;
     loop {
         while let Some(item) = cursor.poll() {
-            if let SampleCursorItem::Lagged { .. } = item {
-                panic!("the drain loop must keep up with the trunk ring");
+            match item {
+                SampleCursorItem::Timed { .. } => delivered += 1,
+                // A live trunk never backpressures its writer, so an unpaced
+                // reader may lawfully outrun this cursor: the ring tells the
+                // cursor what it evicted, and the caller accounts for it.
+                SampleCursorItem::Lagged { skipped } => missed += skipped,
+                _ => {}
             }
         }
-        if handle.is_finished() {
+        if finished {
             break;
         }
-        tokio::task::yield_now().await;
+        finished = handle.is_finished();
+        if !finished {
+            tokio::task::yield_now().await;
+        }
     }
     handle
         .await
         .expect("the reader task must not panic")
         .expect("the generated MP4 must play cleanly");
-    A.peak().saturating_sub(baseline)
+    Playout {
+        peak: A.peak().saturating_sub(baseline),
+        delivered,
+        missed,
+    }
 }
 
-/// Play `path` once, returning every sample's digest.
+/// Play `path` and assert the trunk received every sample the generator wrote:
+/// a live ring may tell the cursor it fell behind, but nothing may go missing
+/// unaccounted. Returns the peak for the caller's own bound.
+async fn play_counting(path: &Path, max_loops: Option<u32>, expected: u64, what: &str) -> usize {
+    let playout = play(path, max_loops).await;
+    eprintln!(
+        "{what}: peak {} bytes above baseline, {} samples drained and {} reported missed",
+        playout.peak, playout.delivered, playout.missed
+    );
+    assert_eq!(
+        playout.delivered + playout.missed,
+        expected,
+        "{what}: every generated sample must reach the trunk"
+    );
+    playout.peak
+}
+
+/// Play `path` once, returning every sample's digest. The trunk here is the
+/// whole stream's size so the comparison below sees every sample: a digest
+/// comparison that lags is not comparing the file.
 async fn collect(path: &Path, max_loops: Option<u32>) -> Vec<Digest> {
-    let trunk = trunk();
+    let trunk = trunk_with(COLLECT_RING);
     let mut cursor = trunk.subscribe_from_backlog();
     let config = FileReaderConfig::new(path.to_path_buf(), max_loops.is_some(), trunk.clone())
         .with_pace(false)
@@ -106,27 +157,38 @@ async fn collect(path: &Path, max_loops: Option<u32>) -> Vec<Digest> {
         .with_max_loops(max_loops);
     let handle = tokio::spawn(FileReader::new(config).run());
     let mut out = Vec::new();
+    let mut finished = false;
     loop {
         while let Some(item) = cursor.poll() {
-            if let SampleCursorItem::Timed {
-                track_id, sample, ..
-            } = item
-                && let Some(timing) = sample.timing
-            {
-                out.push((
-                    track_id.value(),
-                    timing.pts().unwrap_or(0),
-                    timing.dts().unwrap_or(0),
-                    timing.duration(),
-                    sample.flags.is_sync,
-                    sample.data.to_vec(),
-                ));
+            match item {
+                SampleCursorItem::Timed {
+                    track_id, sample, ..
+                } => {
+                    if let Some(timing) = sample.timing {
+                        out.push((
+                            track_id.value(),
+                            timing.pts().unwrap_or(0),
+                            timing.dts().unwrap_or(0),
+                            timing.duration(),
+                            sample.flags.is_sync,
+                            sample.data.to_vec(),
+                        ));
+                    }
+                }
+                SampleCursorItem::Lagged { skipped } => panic!(
+                    "the digest playout must see every sample, but the {COLLECT_RING}-sample ring \
+                     evicted {skipped} of them"
+                ),
+                _ => {}
             }
         }
-        if handle.is_finished() {
+        if finished {
             break;
         }
-        tokio::task::yield_now().await;
+        finished = handle.is_finished();
+        if !finished {
+            tokio::task::yield_now().await;
+        }
     }
     handle
         .await
@@ -203,8 +265,8 @@ async fn mp4_file_playout_holds_less_than_the_budget() {
             .all(|(_, n)| *n == u64::from(SAMPLE_COUNT)),
         "each generated track carries every sample"
     );
-    let held = play(&progressive, Some(1)).await;
-    eprintln!("progressive moov-first: peak {held} bytes above baseline");
+    let expected: u64 = made.samples_per_track.iter().map(|(_, n)| *n).sum();
+    let held = play_counting(&progressive, Some(1), expected, "progressive moov-first").await;
     assert!(
         held < BUDGET,
         "an 8 GiB progressive MP4 held {held} live bytes, over the {BUDGET} budget"
@@ -221,8 +283,8 @@ async fn mp4_file_playout_holds_less_than_the_budget() {
         },
     );
     assert!(made.bytes >= FILE_BYTES, "the generated file is 8 GiB");
-    let held = play(&moov_last, Some(1)).await;
-    eprintln!("progressive moov-last: peak {held} bytes above baseline");
+    let expected: u64 = made.samples_per_track.iter().map(|(_, n)| *n).sum();
+    let held = play_counting(&moov_last, Some(1), expected, "progressive moov-last").await;
     assert!(
         held < BUDGET,
         "an 8 GiB moov-last MP4 held {held} live bytes, over the {BUDGET} budget"
@@ -240,8 +302,8 @@ async fn mp4_file_playout_holds_less_than_the_budget() {
         },
     );
     assert!(made.bytes >= FILE_BYTES, "the generated file is 8 GiB");
-    let held = play(&fragmented, Some(1)).await;
-    eprintln!("fragmented: peak {held} bytes above baseline");
+    let expected: u64 = made.samples_per_track.iter().map(|(_, n)| *n).sum();
+    let held = play_counting(&fragmented, Some(1), expected, "fragmented").await;
     assert!(
         held < BUDGET,
         "an 8 GiB fragmented MP4 held {held} live bytes, over the {BUDGET} budget"
@@ -281,6 +343,12 @@ async fn mp4_file_playout_holds_less_than_the_budget() {
     let looping = test_fixtures::path("mp4/progressive/av-prog.mp4");
     let single = collect(&looping, Some(1)).await;
     let twice = collect(&looping, Some(2)).await;
+    assert!(
+        COLLECT_RING >= twice.len(),
+        "the digest playout's {COLLECT_RING}-sample ring must hold the whole two-pass stream of \
+         {} samples",
+        twice.len()
+    );
     let mut first_per_track: BTreeMap<u32, Vec<&Digest>> = BTreeMap::new();
     for digest in &single {
         first_per_track.entry(digest.0).or_default().push(digest);
@@ -304,9 +372,10 @@ async fn mp4_file_playout_holds_less_than_the_budget() {
             assert_eq!(actual.2 - expected.2, offset, "track {track} dts step");
         }
     }
-    let pass1_peak = play(&looping, Some(1)).await;
-    let pass2_peak = play(&looping, Some(2)).await;
-    eprintln!("looping pass 1 peak {pass1_peak} bytes, pass 2 peak {pass2_peak} bytes");
+    let one_pass = u64::try_from(single.len()).unwrap_or(u64::MAX);
+    let two_passes = u64::try_from(twice.len()).unwrap_or(u64::MAX);
+    let pass1_peak = play_counting(&looping, Some(1), one_pass, "looping pass 1").await;
+    let pass2_peak = play_counting(&looping, Some(2), two_passes, "looping pass 2").await;
     assert!(
         pass2_peak <= pass1_peak.saturating_add(LOOP_PEAK_SLACK),
         "pass 2 peaked at {pass2_peak}, pass 1 at {pass1_peak} (slack {LOOP_PEAK_SLACK})"
