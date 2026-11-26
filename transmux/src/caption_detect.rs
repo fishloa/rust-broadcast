@@ -26,10 +26,10 @@
 //! advertised.
 
 use crate::ir::CodecConfig;
-use crate::nal::{NalCodec, caption_cc_data};
 use alloc::collections::BTreeSet;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use broadcast_bitstream::nal::{NalCodec, caption_cc_data};
 use broadcast_common::parity::has_odd_parity;
 use broadcast_core::Parse;
 use cc_data::decode::{Cea608Channel, Cea608Decoder, Cea708Decoder};

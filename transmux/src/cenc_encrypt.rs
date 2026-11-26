@@ -65,9 +65,9 @@ use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::ir::{SampleProtection, TrackId, TrackProtection};
 use crate::mux_stage::MuxInput;
-use crate::nal::NalCodec;
 use crate::pipeline::CodecConfig;
 use broadcast_bitstream::annexb::{NAL_LENGTH_SIZE, iter_length_prefixed_nals};
+use broadcast_bitstream::nal::NalCodec;
 use bytes::Bytes;
 use isobmff::cenc::{
     CencScheme, KEY_LEN, SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox,
@@ -650,6 +650,7 @@ pub(crate) fn nal_subsamples(codec: NalCodec, data: &[u8]) -> Result<Vec<SubSamp
     let header_len: usize = match codec {
         NalCodec::Avc => 1,
         NalCodec::Hevc | NalCodec::Vvc => 2,
+        _ => 2,
     };
     let nals = iter_length_prefixed_nals(data)?;
     let mut out = Vec::with_capacity(nals.len());

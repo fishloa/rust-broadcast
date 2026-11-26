@@ -23,9 +23,9 @@ use alloc::format;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
+use broadcast_bitstream::annexb::iter_annexb_nals;
+use broadcast_bitstream::nal::{NalCodec, is_keyframe_nal};
 use dvb_si::tables::pmt::StreamType;
-use transmux::annexb::iter_annexb_nals;
-use transmux::nal::{NalCodec, is_keyframe_nal};
 
 use crate::diagnostics::codec_common::{AccessUnitScanner, pids_with_stream_type};
 use crate::report::{Finding, Location, Severity};
@@ -179,7 +179,7 @@ fn walk_hevc(
         if nal.is_empty() || state.reported {
             continue;
         }
-        match transmux::nal::nal_unit_type(NalCodec::Hevc, nal) {
+        match broadcast_bitstream::nal::nal_unit_type(NalCodec::Hevc, nal) {
             Some(HEVC_NAL_SPS) => state.seen_sps = true,
             Some(HEVC_NAL_PPS) => state.seen_pps = true,
             _ => {

@@ -55,12 +55,12 @@
 //! `no_std` + `alloc`.
 
 #[cfg(feature = "rtp")]
-use crate::nal::NAL_TYPE_MASK;
-#[cfg(feature = "rtp")]
 use alloc::collections::VecDeque;
 #[cfg(feature = "std")]
 use alloc::format;
 use alloc::vec::Vec;
+#[cfg(feature = "rtp")]
+use broadcast_bitstream::nal::NAL_TYPE_MASK;
 #[cfg(feature = "rtp")]
 use broadcast_core::error::BufferTooShort;
 use broadcast_core::error::InvalidValue;

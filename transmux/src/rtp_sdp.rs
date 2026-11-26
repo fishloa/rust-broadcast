@@ -22,10 +22,10 @@
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::error::{Error, Result};
-use crate::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use crate::pipeline::CodecConfig;
 use crate::rtp::{base64_decode, hex_decode};
 use alloc::vec::Vec;
+use broadcast_bitstream::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use broadcast_core::Parse;
 use broadcast_core::error::InvalidValue;
 use broadcast_core::len::need_in;

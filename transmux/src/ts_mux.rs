@@ -103,12 +103,12 @@ use crate::codec_config_ext::EsdsBoxCodecInfo;
 use crate::collect::Collected as Media;
 use crate::error::{Error, Result};
 use crate::mux_stage::{MuxInput, MuxOutput};
-use crate::nal::{AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, nal_unit_type};
 use crate::pipeline::{CodecConfig, DataCarriage, DataIdentity, Sample, TrackSpec};
 use crate::ts_demux::DESCRIPTOR_HEADER_LEN;
 use broadcast_bitstream::annexb::{
     NAL_LENGTH_SIZE, iter_length_prefixed_nals, length_prefixed_to_annexb,
 };
+use broadcast_bitstream::nal::{AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, nal_unit_type};
 use isobmff::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
 use isobmff::nalu_types::HEVC_SPS_NUT;
 

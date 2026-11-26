@@ -70,10 +70,13 @@ pub enum Error {
     #[error(transparent)]
     ManifestWrite(#[from] broadcast_smooth::ManifestWriteError),
 
-    /// A codec bitstream parser or stream-format converter rejected the input
-    /// (the `broadcast-bitstream` layer below this crate).
+    /// A codec bitstream parser or stream-format converter error this crate
+    /// has no direct equivalent for (the `broadcast-bitstream` layer below
+    /// this crate). The variants with an exact counterpart are mapped onto
+    /// them by `From`, so a caller's existing `BufferTooShort`/`InvalidValue`
+    /// match keeps its meaning.
     #[error(transparent)]
-    Bitstream(#[from] broadcast_bitstream::Error),
+    Bitstream(broadcast_bitstream::Error),
 
     /// A KLV triplet or BER length token failure (SMPTE ST 336 framing).
     #[error(transparent)]
@@ -507,6 +510,23 @@ pub enum Error {
         /// The `main_adaptation_set_id` supplied by the caller.
         main_adaptation_set_id: u32,
     },
+}
+
+// The codec bitstream layer below this crate has its own error type. Its
+// variants with a direct counterpart are mapped onto this crate's existing
+// ones, so a caller that matches `BufferTooShort`/`InvalidValue` keeps its
+// meaning; an error this crate has no counterpart for stays wrapped.
+impl From<broadcast_bitstream::Error> for Error {
+    fn from(e: broadcast_bitstream::Error) -> Self {
+        use broadcast_bitstream::Error as B;
+        match e {
+            B::BufferTooShort(v) => Error::BufferTooShort(v),
+            B::InvalidValue(v) => Error::InvalidValue(v),
+            B::FieldOverflow(v) => Error::FieldOverflow(v),
+            B::InvalidInput(s) => Error::InvalidInput(s),
+            other => Error::Bitstream(other),
+        }
+    }
 }
 
 // The ISO BMFF box layer below this crate has its own error type. Map it

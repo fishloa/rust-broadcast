@@ -6,12 +6,10 @@
 //! bytes only where a fixture cannot supply the type (CRA, IDR_N_LP/W_RADL).
 
 use crate::ts_hls_stage;
+use broadcast_bitstream::{NalCodec, access_unit_is_idr};
 use test_harness::collect::Collected as Media;
 use transmux::mux_stage::SegmentOut;
-use transmux::{
-    CodecConfig, NalCodec, Sample, SegmentCutPolicy, StreamingTsHlsSegmenter, TrackSpec,
-    access_unit_is_idr,
-};
+use transmux::{CodecConfig, Sample, SegmentCutPolicy, StreamingTsHlsSegmenter, TrackSpec};
 
 const TARGET_SECS: u32 = 1;
 const LOOP_SECONDS: i64 = 12;

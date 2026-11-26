@@ -4,9 +4,8 @@
 //! (`iter_length_prefixed_nals`, NAL type 5 = IDR, type 7 = SPS) that does not
 //! go through `LiveJoin`/`access_unit_is_rap`, so the assertions cross-check
 //! the implementation instead of re-running it.
-use transmux::{
-    DropReason, JoinDecision, JoinPolicy, LiveJoin, RapKind, Sample, iter_length_prefixed_nals,
-};
+use broadcast_bitstream::iter_length_prefixed_nals;
+use transmux::{DropReason, JoinDecision, JoinPolicy, LiveJoin, RapKind, Sample};
 
 fn video_samples(rel: &str) -> (transmux::TrackSpec, Vec<Sample>) {
     let rel = rel.strip_prefix("fixtures/").unwrap_or(rel);

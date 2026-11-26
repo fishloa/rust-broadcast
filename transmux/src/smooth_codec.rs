@@ -41,12 +41,12 @@ use broadcast_smooth::{QualityLevel, StreamType};
 
 use crate::aac_asc::{ChannelConfiguration, SamplingFrequencyIndex};
 use crate::error::{Error as CrateError, Result as CrateResult};
-use crate::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use crate::nalu_ext::AvcSpsCodecInfo;
 use crate::pipeline::{CodecConfig, SubtitleFormat, TrackSpec};
 use crate::rtp_sdp::{aac_config_from_asc_bytes, avc_config_from_sps_pps};
 use crate::smooth::{FOURCC_AACH, FOURCC_AACL, FOURCC_AVC1, FOURCC_H264};
 use broadcast_bitstream::annexb::iter_annexb_nals;
+use broadcast_bitstream::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use isobmff::nalu_types::{AvcPps, AvcSps};
 use isobmff::subtitle_entries::{WvttSampleEntry, XmlSubtitleSampleEntry};
 

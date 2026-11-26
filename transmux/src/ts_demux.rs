@@ -256,13 +256,14 @@ use crate::error::{Error, Result};
 use crate::hdr::{HEVC_PREFIX_SEI_NUT, HdrStaticMetadata};
 use crate::mhas::find_mpegh3da_config;
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
-use crate::nal::{
-    AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, ParamKind, access_unit_is_rap,
-    is_keyframe_nal, nal_unit_type, parameter_set_is_valid,
-};
+use crate::nal_params::{ParamKind, parameter_set_is_valid};
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
 use broadcast_bitstream::annexb::{
     NAL_LENGTH_SIZE_MINUS_ONE, annexb_to_length_prefixed, iter_annexb_nals,
+};
+use broadcast_bitstream::nal::{
+    AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, access_unit_is_rap, is_keyframe_nal,
+    nal_unit_type,
 };
 use broadcast_core::wire::{be_u16, u16_at};
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
@@ -15439,7 +15440,9 @@ pub(crate) mod tests {
             .find(|t| matches!(t.config(), CodecConfig::Hevc { .. }))
             .expect("HEVC track");
         let (mut vps, mut sps, mut pps) = (None, None, None);
-        for nal in crate::iter_length_prefixed_nals(&track.samples[0].data).expect("lp") {
+        for nal in
+            broadcast_bitstream::iter_length_prefixed_nals(&track.samples[0].data).expect("lp")
+        {
             match nal_unit_type(NalCodec::Hevc, nal) {
                 Some(H265_NAL_VPS) => vps = Some(nal.to_vec()),
                 Some(H265_NAL_SPS) => sps = Some(nal.to_vec()),
@@ -15471,7 +15474,7 @@ pub(crate) mod tests {
             .iter()
             .find(|t| matches!(t.config(), CodecConfig::Hevc { .. }))
             .expect("HEVC track");
-        crate::iter_length_prefixed_nals(&track.samples[0].data)
+        broadcast_bitstream::iter_length_prefixed_nals(&track.samples[0].data)
             .expect("lp")
             .into_iter()
             .find(|n| nal_unit_type(NalCodec::Hevc, n) == Some(H265_NAL_SPS))

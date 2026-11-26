@@ -845,7 +845,7 @@ fn real_avc_sps_pps() -> (Vec<u8>, Vec<u8>) {
         .iter()
         .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
         .expect("AVC track");
-    let nals = transmux::annexb::iter_length_prefixed_nals(&video.samples[0].data)
+    let nals = broadcast_bitstream::annexb::iter_length_prefixed_nals(&video.samples[0].data)
         .expect("length-prefixed NALs");
     let pick = |ty: u8| {
         nals.iter()

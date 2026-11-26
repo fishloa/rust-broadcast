@@ -3,7 +3,7 @@
 //! Apple HLS Authoring Specification (docs/hls-apple-conformance, audit A,
 //! requirement 7.4): every segment must begin with an IDR picture.
 //! [`SegmentCutPolicy::IdrOnly`] enforces that; [`SegmentCutPolicy::AnyRap`] keeps
-//! the broader random-access-point rule of [`crate::access_unit_is_rap`]
+//! the broader random-access-point rule of [`broadcast_bitstream::access_unit_is_rap`]
 //! (recovery-point SEI, SPS + I-slice, CRA/BLA), which DASH and CMAF accept.
 
 use broadcast_common::units::NANOS_PER_SEC;

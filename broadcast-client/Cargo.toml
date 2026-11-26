@@ -17,6 +17,7 @@ features = ["serde"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
+broadcast-bitstream = { path = "../broadcast-bitstream", version = "0.1.0", default-features = false, features = ["h264", "hevc", "isobmff"] }
 broadcast-common  = { path = "../broadcast-common", version = "14.0.0", default-features = false, features = ["std", "jiff", "http-date", "lang", "url"] }
 broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 broadcast-auth     = { path = "../broadcast-auth", version = "0.9.0" }

@@ -32,7 +32,7 @@
 //!   reason as the TS-side check: `HevcSpsInfo` carries no comparable field.
 //! - **`length-prefix-violation`** (Error): a sample's coded bytes do not
 //!   parse as a well-formed 4-byte length-prefixed NAL sequence
-//!   ([`transmux::iter_length_prefixed_nals`]) — the structural signature of
+//!   ([`broadcast_bitstream::iter_length_prefixed_nals`]) — the structural signature of
 //!   an Annex B start code smuggled into an MP4 sample in place of a length
 //!   prefix (ISO/IEC 14496-15:2017 §4.3.2 "no start codes", §4.3.3).
 //!
@@ -59,6 +59,7 @@
 
 use alloc::collections::BTreeMap;
 
+use broadcast_bitstream::iter_length_prefixed_nals_with;
 use broadcast_common::{Stage, Timestamp};
 use broadcast_core::Parse;
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
@@ -66,7 +67,7 @@ use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::TrackId;
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
-use transmux::{CodecConfig, DemuxEvent, Sample, TrackSpec, iter_length_prefixed_nals_with};
+use transmux::{CodecConfig, DemuxEvent, Sample, TrackSpec};
 
 use crate::report::{Finding, Location, Report, Severity};
 use transmux::nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo};

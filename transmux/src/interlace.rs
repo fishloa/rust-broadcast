@@ -25,16 +25,16 @@
 //! H.265 §7.3.7, §D.2.3/D.3.3 + Table D.2, §E.2.1-E.3.1.
 
 use crate::ir::CodecConfig;
-use crate::nal::{
-    AVC_NAL_IDR, AVC_NAL_PPS, AVC_NAL_SEI, AVC_NAL_SPS, HEVC_NAL_HEADER_LEN, HEVC_NAL_TYPE_MASK,
-    NAL_TYPE_MASK, sei_messages,
-};
 use crate::slice_header::{AvcParamSets, AvcSliceHeader};
 use crate::sps::{
     AvcPicTimingLayout, AvcSliceSps, decode_avc_slice_sps, decode_hevc_interlace_sps,
 };
 use broadcast_bitstream::annexb::iter_length_prefixed_nals_with;
 use broadcast_bitstream::bitreader::BitReader;
+use broadcast_bitstream::nal::{
+    AVC_NAL_IDR, AVC_NAL_PPS, AVC_NAL_SEI, AVC_NAL_SPS, HEVC_NAL_HEADER_LEN, HEVC_NAL_TYPE_MASK,
+    NAL_TYPE_MASK, sei_messages,
+};
 use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
 use isobmff::nalu_types::HEVC_SPS_NUT;
 

@@ -28,7 +28,8 @@
 //! an access-unit boundary), so the demuxer's first *complete* sample begins
 //! later in the file. Confirmed by locating this test's expected bytes at
 //! their own distinct raw file offset (~133918) during development.
-use transmux::{CodecConfig, NalCodec, caption_cc_data};
+use broadcast_bitstream::{NalCodec, caption_cc_data};
+use transmux::CodecConfig;
 
 const CAPTURE: &str = "transformers-eia608-h264";
 

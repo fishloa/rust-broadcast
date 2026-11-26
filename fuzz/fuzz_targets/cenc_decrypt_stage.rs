@@ -8,7 +8,9 @@ use libfuzzer_sys::fuzz_target;
 use transmux::cenc_decrypt::{CencDecryptStage, KeyMap};
 use transmux::ir::{ConstantIvSenc, SampleProtection, TrackProtection};
 use transmux::mux_stage::MuxInput;
-use transmux::{CencScheme, CodecConfig, Sample, TrackId, TrackSpec};
+use transmux::{
+    CencScheme, CodecConfig, Sample, TrackId, TrackSpec,
+};
 
 extern crate alloc;
 

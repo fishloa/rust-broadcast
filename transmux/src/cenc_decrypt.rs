@@ -432,8 +432,11 @@ mod tests {
         .expect("AVC");
         let mut sample = clear.tracks[0].samples[0].clone();
         let iv = Bytes::from(alloc::vec![0u8; 8]);
-        let subs = crate::cenc_encrypt::nal_subsamples(crate::nal::NalCodec::Avc, &sample.data)
-            .expect("subsamples");
+        let subs = crate::cenc_encrypt::nal_subsamples(
+            broadcast_bitstream::nal::NalCodec::Avc,
+            &sample.data,
+        )
+        .expect("subsamples");
         cenc_crypto::rewrite_in_place(&mut sample.data, |buf| {
             cenc_crypto::apply_ctr(&iv, &KEY, &subs, buf)
         })

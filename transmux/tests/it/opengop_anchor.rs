@@ -91,7 +91,7 @@ fn unescape_ebsp(nal: &[u8]) -> Vec<u8> {
 
 /// Whether a type-6 SEI NAL carries a `recovery_point` message (payloadType
 /// 6) — ITU-T H.264 §7.3.2.3.1 `sei_payload()` varint coding, walked
-/// independently of `transmux::nal::recovery_point_sei`.
+/// independently of `broadcast_bitstream::nal::recovery_point_sei`.
 fn independent_sei_has_recovery_point(nal: &[u8]) -> bool {
     if nal.is_empty() || nal[0] & 0x1F != 6 {
         return false;

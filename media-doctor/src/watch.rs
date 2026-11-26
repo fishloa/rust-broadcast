@@ -80,6 +80,7 @@ use core::time::Duration;
 use mpeg_ts::pid::Pid;
 
 use crate::diagnostics::codec_common::has_adts_sync;
+use broadcast_bitstream::iter_annexb_nals;
 use dvb_conformance::ConformanceMonitor;
 use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::tables::AnyTableSection;
@@ -88,7 +89,6 @@ use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 use scte35_splice::SpliceTracker;
-use transmux::iter_annexb_nals;
 
 /// Half of the 33-bit PTS/DTS range: the threshold distinguishing a genuine
 /// backward jump from a legal wrap (ISO/IEC 13818-1 §2.4.3.7). The modulus

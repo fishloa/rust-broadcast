@@ -410,6 +410,7 @@ name = "broadcast-client"
 version = "0.8.0"
 dependencies = [
  "broadcast-auth",
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "broadcast-hls",
@@ -2353,6 +2354,7 @@ dependencies = [
 name = "media-doctor"
 version = "0.18.0"
 dependencies = [
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "broadcast-dash",
@@ -2388,6 +2390,7 @@ dependencies = [
 name = "media-plane"
 version = "0.14.0"
 dependencies = [
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "broadcast-hls",
@@ -2560,6 +2563,7 @@ dependencies = [
  "async-trait",
  "axum",
  "broadcast-auth",
+ "broadcast-bitstream",
  "broadcast-client",
  "broadcast-common",
  "broadcast-core",
@@ -3932,6 +3936,7 @@ checksum = "3244542535d5de959d90ec55d1b5ff0fd2bb7b1310223907d5f11932847f7b59"
 name = "smooth-runtime"
 version = "0.4.0"
 dependencies = [
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "broadcast-smooth",
@@ -4155,6 +4160,7 @@ dependencies = [
 name = "test-harness"
 version = "0.1.0"
 dependencies = [
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "dash-runtime",

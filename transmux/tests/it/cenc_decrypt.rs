@@ -11,9 +11,9 @@
 #![cfg(feature = "cenc")]
 
 use crate::box_walk::{SAMPLE_TABLE_CONTAINERS, find_box_range};
+use broadcast_bitstream::annexb::iter_length_prefixed_nals;
 use test_harness::collect::Collected as Media;
 use transmux::CodecConfig;
-use transmux::annexb::iter_length_prefixed_nals;
 use transmux::cenc_decrypt::{CencDecryptStage, CencScheme, KeyMap};
 
 const CENC_MP4: &str = "mp4/cenc.mp4";

@@ -57,11 +57,11 @@
 use alloc::vec::Vec;
 
 use crate::ir::{CodecConfig, Sample};
-use crate::nal::{
-    AVC_NAL_IDR, AVC_NAL_SEI, NalCodec, access_unit_is_rap, nal_unit_type, sei_messages,
-};
 use broadcast_bitstream::annexb::{iter_length_prefixed_nals_with, normalise_nal_length_size};
 use broadcast_bitstream::bitreader::BitReader;
+use broadcast_bitstream::nal::{
+    AVC_NAL_IDR, AVC_NAL_SEI, NalCodec, access_unit_is_rap, nal_unit_type, sei_messages,
+};
 
 /// `payloadType` of the `recovery_point` SEI (H.264 Table D-1, §D.1.8).
 const AVC_SEI_RECOVERY_POINT: u32 = 6;
@@ -375,6 +375,7 @@ fn rap_kind(codec: NalCodec, au: &[u8]) -> Option<RapKind> {
                 VVC_CRA => Some(RapKind::Cra),
                 _ => None,
             }),
+        _ => None,
     }
 }
 
@@ -417,6 +418,7 @@ fn is_leading(codec: NalCodec, au: &[u8], pts: Option<i64>, rap_pts: Option<i64>
             (Some(p), Some(r)) => p < r,
             _ => false,
         },
+        _ => false,
     }
 }
 

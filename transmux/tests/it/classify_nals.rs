@@ -2,7 +2,7 @@
 //! over the real field-coded broadcast capture `ts/gulli-opengop.ts`: it must
 //! agree with `classify_au` on every sample, reproduce the capture's known
 //! 146 frame-pairs + 1 lone field split, and report `Unknown` for no slice.
-use transmux::iter_length_prefixed_nals;
+use broadcast_bitstream::iter_length_prefixed_nals;
 use transmux::pipeline::CodecConfig;
 use transmux::slice_header::{AvcParamSets, AvcPicture};
 
