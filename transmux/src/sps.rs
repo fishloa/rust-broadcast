@@ -20,7 +20,6 @@
 //! - **Emulation prevention**: H.264 §7.3 bullet 1 (leading zero_byte),
 //!   §7.4.1 NAL semantics (emulation_prevention_three_byte); H.265 §7.4.2.1.
 
-use crate::bitreader::BitReader;
 use crate::error::{Error, Result};
 use crate::ir::{
     AspectRatioIdc, ColourDescription, EXTENDED_SAR_IDC, VideoFormat, VideoSignalType,
@@ -28,6 +27,7 @@ use crate::ir::{
 use crate::nal::HEVC_NAL_HEADER_LEN;
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_bitstream::bitreader::BitReader;
 use broadcast_core::error::InvalidValue;
 use broadcast_core::len::need_in;
 

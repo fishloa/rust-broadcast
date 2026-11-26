@@ -396,6 +396,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-bitstream"
+version = "0.1.0"
+dependencies = [
+ "broadcast-core",
+ "isobmff",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "broadcast-client"
 version = "0.8.0"
 dependencies = [
@@ -4469,6 +4479,7 @@ name = "transmux"
 version = "0.33.0"
 dependencies = [
  "aes 0.9.4",
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "broadcast-dash",

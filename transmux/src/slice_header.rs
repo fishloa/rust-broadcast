@@ -11,11 +11,11 @@
 //! are *frames* (`field_pic_flag == 0`) and classify as [`AvcPicture::Frame`].
 
 use crate::annexb::iter_annexb_nals;
-use crate::bitreader::BitReader;
 use crate::error::{Error, Result};
 use crate::nal::NAL_TYPE_MASK;
 use crate::sps::{AvcSliceSps, decode_avc_slice_sps};
 use alloc::collections::BTreeMap;
+use broadcast_bitstream::bitreader::BitReader;
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 
 /// `nal_unit_type` of a non-IDR coded slice (Table 7-1).

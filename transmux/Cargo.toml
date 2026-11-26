@@ -14,6 +14,9 @@ readme       = "README.md"
 # Floored at 9.2: `cenc::CencScheme` and `hex::hex_encode` (the definitions this
 # crate re-exports, shared with `broadcast-hls` — issue #878) landed there.
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false, features = ["base64"] }
+# The bitstream parsers that used to be private modules here (the bit reader,
+# NAL classification, Annex B conversion, access-unit splitting).
+broadcast-bitstream = { path = "../broadcast-bitstream", version = "0.1.0", default-features = false, features = ["h264", "hevc", "isobmff"] }
 broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 thiserror  = { version = "2", default-features = false }
 # Calendar and duration handling (SP5): CLI availabilityStartTime, xs:duration parse/build. `std`-only, so the no_std core is unaffected.
@@ -95,8 +98,8 @@ required-features = ["std", "matroska"]
 
 [features]
 default = ["std", "cenc", "flv", "rtp", "ps", "matroska", "hls", "captions"]
-std    = ["cc-data?/std", "dvb-si/std", "broadcast-common/std", "broadcast-core/std", "broadcast-common/xml", "broadcast-common/lang", "thiserror/std", "serde?/std", "broadcast-hls?/std", "isobmff/std", "broadcast-matroska?/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps?/std", "rtp-packet?/std", "dep:quick-xml", "dep:jiff", "dep:sdp-types", "dep:broadcast-smooth", "broadcast-smooth/manifest", "dep:broadcast-dash"]
-serde  = ["dep:serde", "broadcast-common/serde", "broadcast-core/serde", "broadcast-hls?/serde", "isobmff/serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps?/serde", "rtp-packet?/serde"]
+std    = ["broadcast-bitstream/std", "cc-data?/std", "dvb-si/std", "broadcast-common/std", "broadcast-core/std", "broadcast-common/xml", "broadcast-common/lang", "thiserror/std", "serde?/std", "broadcast-hls?/std", "isobmff/std", "broadcast-matroska?/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps?/std", "rtp-packet?/std", "dep:quick-xml", "dep:jiff", "dep:sdp-types", "dep:broadcast-smooth", "broadcast-smooth/manifest", "dep:broadcast-dash"]
+serde  = ["dep:serde", "broadcast-bitstream/serde", "broadcast-common/serde", "broadcast-core/serde", "broadcast-hls?/serde", "isobmff/serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps?/serde", "rtp-packet?/serde"]
 cenc   = ["dep:aes", "dep:ctr", "dep:cbc", "dep:zeroize", "dep:subtle"]
 # `flv` enables the Adobe FLV container spoke: the FLV muxer ([`FlvMuxStage`]), the
 # streaming FLV demuxer ([`StreamingFlvDemux`]), and the RTMP signalling that

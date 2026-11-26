@@ -40,8 +40,8 @@
 use alloc::vec::Vec;
 
 use crate::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
-use crate::bitreader::BitReader;
-use crate::rbsp::{EMULATION_BYTE_RUN_LEN, EMULATION_PREVENTION_BYTE};
+use broadcast_bitstream::bitreader::BitReader;
+use broadcast_bitstream::rbsp::{EMULATION_BYTE_RUN_LEN, EMULATION_PREVENTION_BYTE};
 use broadcast_core::wire::{be_u16, be_u32};
 use isobmff::nalu_types::{HEVC_PPS_NUT, HEVC_SPS_NUT, HEVC_SUFFIX_SEI_NUT, HEVC_VPS_NUT};
 
@@ -389,7 +389,7 @@ pub(crate) fn hevc_prefix_sei_nal(messages: &[(u32, &[u8])]) -> Vec<u8> {
         rbsp.extend_from_slice(payload);
     }
     rbsp.push(SEI_RBSP_TRAILING_BYTE);
-    let escaped = crate::rbsp::escape(&rbsp);
+    let escaped = broadcast_bitstream::rbsp::escape(&rbsp);
     let mut nal = Vec::with_capacity(escaped.len() + HEVC_NAL_HEADER_LEN);
     nal.push(crate::hdr::HEVC_PREFIX_SEI_NUT << HEVC_NAL_TYPE_SHIFT);
     nal.push(HEVC_PREFIX_SEI_DEFAULT_TID_PLUS1);
@@ -416,7 +416,7 @@ fn sei_varint(rbsp: &[u8], pos: &mut usize) -> Option<u32> {
 /// first truncated message or at `rbsp_trailing_bits`, keeping what was read,
 /// so a malformed SEI yields fewer messages rather than an error.
 pub(crate) fn sei_messages(nal_body: &[u8]) -> Vec<(u32, Vec<u8>)> {
-    let rbsp = crate::rbsp::unescape(nal_body);
+    let rbsp = broadcast_bitstream::rbsp::unescape(nal_body);
     let mut out = Vec::new();
     let mut pos = 0usize;
     // `more_rbsp_data()`: anything left other than the single trailing byte.
@@ -983,7 +983,7 @@ mod tests {
         s.ue(bottom);
         s.bit(false); // vui_parameters_present_flag
         s.bit(true); // rbsp_stop_one_bit
-        nal.extend_from_slice(&crate::rbsp::escape(&s.finish()));
+        nal.extend_from_slice(&broadcast_bitstream::rbsp::escape(&s.finish()));
         nal
     }
 
@@ -1034,7 +1034,7 @@ mod tests {
         s.bit(false); // strong_intra_smoothing_enabled_flag
         s.bit(false); // vui_parameters_present_flag
         s.bit(true); // rbsp_stop_one_bit
-        nal.extend_from_slice(&crate::rbsp::escape(&s.finish()));
+        nal.extend_from_slice(&broadcast_bitstream::rbsp::escape(&s.finish()));
         nal
     }
 
@@ -1650,6 +1650,9 @@ mod tests {
             "the EPB after 00 00 is dropped, so the payload stays 4 bytes"
         );
         let followed = [0x00u8, 0x00, 0x03, 0x04];
-        assert_eq!(crate::rbsp::unescape(&followed), &[0x00, 0x00, 0x04]);
+        assert_eq!(
+            broadcast_bitstream::rbsp::unescape(&followed),
+            &[0x00, 0x00, 0x04]
+        );
     }
 }

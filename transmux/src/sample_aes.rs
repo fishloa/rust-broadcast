@@ -280,12 +280,12 @@ fn h264_transform_pattern(
 /// unescaping) are returned unchanged. The CBC chain is reset to `iv` at the
 /// start of each NAL, then carried across that NAL's encrypted blocks.
 pub fn h264_encrypt_nal(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], nal: &[u8]) -> Vec<u8> {
-    let mut raw = crate::rbsp::unescape(nal);
+    let mut raw = broadcast_bitstream::rbsp::unescape(nal);
     if !h264_nal_is_encrypted(&raw) {
         return nal.to_vec();
     }
     h264_transform_pattern(key, iv, &mut raw, true);
-    crate::rbsp::escape(&raw)
+    broadcast_bitstream::rbsp::escape(&raw)
 }
 
 /// Sample-AES-decrypt one H.264 NAL unit produced by [`h264_encrypt_nal`],
@@ -294,12 +294,12 @@ pub fn h264_encrypt_nal(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], nal: &[u8]) -
 /// The CBC chain is reset to `iv` at the start of each NAL, then carried across
 /// that NAL's encrypted blocks (see [`h264_encrypt_nal`] for the chaining rule).
 pub fn h264_decrypt_nal(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], nal: &[u8]) -> Vec<u8> {
-    let mut raw = crate::rbsp::unescape(nal);
+    let mut raw = broadcast_bitstream::rbsp::unescape(nal);
     if !h264_nal_is_encrypted(&raw) {
         return nal.to_vec();
     }
     h264_transform_pattern(key, iv, &mut raw, false);
-    crate::rbsp::escape(&raw)
+    broadcast_bitstream::rbsp::escape(&raw)
 }
 
 // --------------------------------------------------------------------------
@@ -868,8 +868,8 @@ mod tests {
         // remain (<16) so block2 is NOT encrypted (trailing partial clear).
         // Encrypted region [32,48) must differ; [48,192) and [192,200) clear.
         // Because escaping could shift bytes, compare on the unescaped form:
-        let raw = crate::rbsp::unescape(&nal);
-        let enc_raw = crate::rbsp::unescape(&enc);
+        let raw = broadcast_bitstream::rbsp::unescape(&nal);
+        let enc_raw = broadcast_bitstream::rbsp::unescape(&enc);
         assert_eq!(raw.len(), enc_raw.len());
         assert_ne!(&enc_raw[32..48], &raw[32..48], "block1 must be encrypted");
         assert_eq!(
@@ -910,8 +910,8 @@ mod tests {
         assert!(h264_nal_is_encrypted(&nal));
 
         let enc = h264_encrypt_nal(&NIST_KEY, &NIST_IV, &nal);
-        let raw = crate::rbsp::unescape(&nal);
-        let enc_raw = crate::rbsp::unescape(&enc);
+        let raw = broadcast_bitstream::rbsp::unescape(&nal);
+        let enc_raw = broadcast_bitstream::rbsp::unescape(&enc);
         assert_eq!(raw.len(), enc_raw.len());
         assert_ne!(&enc_raw[32..48], &raw[32..48], "block1 must be encrypted");
         assert_eq!(
@@ -940,7 +940,7 @@ mod tests {
         }
         assert!(nal.len() > H264_MIN_ENCRYPTED_NAL_LEN);
         // Sanity: unescape then re-escape is identity for a valid stream.
-        let round = crate::rbsp::escape(&crate::rbsp::unescape(&nal));
+        let round = broadcast_bitstream::rbsp::escape(&broadcast_bitstream::rbsp::unescape(&nal));
         assert_eq!(round, nal, "escape/unescape not identity on valid NAL");
 
         let enc = h264_encrypt_nal(&NIST_KEY, &NIST_IV, &nal);
@@ -1171,8 +1171,14 @@ mod tests {
         // bitreader/SEI path dropped it.
         let trailing = [0x01u8, 0x00, 0x00, 0x03];
         let followed = [0x00u8, 0x00, 0x03, 0x04];
-        assert_eq!(crate::rbsp::unescape(&trailing), &[0x01, 0x00, 0x00]);
-        assert_eq!(crate::rbsp::unescape(&followed), &[0x00, 0x00, 0x04]);
+        assert_eq!(
+            broadcast_bitstream::rbsp::unescape(&trailing),
+            &[0x01, 0x00, 0x00]
+        );
+        assert_eq!(
+            broadcast_bitstream::rbsp::unescape(&followed),
+            &[0x00, 0x00, 0x04]
+        );
         // `h264_encrypt_nal` unescapes with the Sample-AES rule; on a NAL it
         // cannot encrypt it returns the input untouched, so the two escaping
         // choices are observable through the public entry point only on an
@@ -1189,14 +1195,16 @@ mod tests {
         // The SPS/SEI parse path unescapes through `BitReader::with_unescape`
         // and must reach the same RBSP: a `3`-byte read yields the first three
         // bytes of exactly these values.
-        let mut reader = crate::bitreader::BitReader::with_unescape(&trailing, "test")
-            .expect("a non-empty NAL always unescapes");
+        let mut reader =
+            broadcast_bitstream::bitreader::BitReader::with_unescape(&trailing, "test")
+                .expect("a non-empty NAL always unescapes");
         assert_eq!(
             reader.read_bits(24, "test").expect("3 bytes"),
             u64::from_be_bytes([0, 0, 0, 0, 0, 0x01, 0x00, 0x00])
         );
-        let mut reader = crate::bitreader::BitReader::with_unescape(&followed, "test")
-            .expect("a non-empty NAL always unescapes");
+        let mut reader =
+            broadcast_bitstream::bitreader::BitReader::with_unescape(&followed, "test")
+                .expect("a non-empty NAL always unescapes");
         assert_eq!(
             reader.read_bits(24, "test").expect("3 bytes"),
             u64::from_be_bytes([0, 0, 0, 0, 0, 0x00, 0x00, 0x04])
@@ -1214,10 +1222,10 @@ mod tests {
         }
         nal.extend_from_slice(&[0x00, 0x00, 0x03]);
         assert!(h264_nal_is_encrypted(&nal));
-        let unescaped = crate::rbsp::unescape(&nal);
+        let unescaped = broadcast_bitstream::rbsp::unescape(&nal);
         assert!(unescaped.ends_with(&[0x00, 0x00]));
         assert_eq!(
-            crate::rbsp::escape(&unescaped),
+            broadcast_bitstream::rbsp::escape(&unescaped),
             nal,
             "escape(unescape(x)) must be byte-identical"
         );

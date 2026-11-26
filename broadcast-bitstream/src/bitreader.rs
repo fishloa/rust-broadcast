@@ -1,31 +1,29 @@
 //! Exp-Golomb bit reader over an RBSP byte stream.
 //!
 //! RBSP (Raw Byte Sequence Payload) requires **emulation prevention byte removal**
-//! before parsing: every `00 00 03` triplet in the NAL unit byte stream is replaced
-//! by `00 00` (the `03` is discarded).  This is done once when constructing the
-//! reader via [`BitReader::with_unescape`].
+//! before parsing: every `00 00 03` triplet in the NAL unit byte stream is
+//! replaced by `00 00` (the `03` is discarded).  This is done once when
+//! constructing the reader via [`BitReader::with_unescape`].
 //!
 //! Supports `ue(v)` (unsigned) and `se(v)` (signed) Exp-Golomb coding per
-//! ITU-T H.264 §9.1 and H.265 §9.2.2.
+//! ITU-T H.264 §9.1 and H.265 §9.2.2. The bit extraction itself is
+//! [`broadcast_core::bits::BitReader`]; this type adds the owning RBSP buffer
+//! and the typed errors.
 
-use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_core::bits::{BitError, BitWriter};
 use broadcast_core::error::{BufferTooShort, InvalidValue};
+
+use crate::error::{Error, Result};
 
 /// Widest field [`read_bits_at`] and [`BitReader::read_bits`] accept.
 const MAX_READ_BITS: usize = u64::BITS as usize;
 
 /// Read `n` (<= 64) bits MSB-first from `data` at `*bit_pos`, advancing it.
 ///
-/// The one cursor-style reader shared by the per-module header decoders
-/// (`aac_asc`, `ac3`, `dts`), which previously each carried a copy that built a
-/// fresh `broadcast_core::bits::BitReader` and re-skipped to `*bit_pos` after
-/// duplicating the bounds check (audit r04-O1). Extraction delegates to
-/// `broadcast_core::bits::BitReader` (shared with `dvb-t2mi`/`rdd29`/`st291`)
-/// so a bit-order/overrun fix there reaches every reader. `None` when `n > 64`
-/// or fewer than `n` bits remain; `*bit_pos` is then left unchanged.
-pub(crate) fn read_bits_at(data: &[u8], bit_pos: &mut usize, n: usize) -> Option<u64> {
+/// `None` when `n > 64` or fewer than `n` bits remain; `*bit_pos` is then left
+/// unchanged.
+pub fn read_bits_at(data: &[u8], bit_pos: &mut usize, n: usize) -> Option<u64> {
     let n_u32 = u32::try_from(n).ok().filter(|&n| n <= u64::BITS)?;
     let mut br = broadcast_core::bits::BitReader::starting_at(data, *bit_pos).ok()?;
     let val = br.read_bits(n_u32).ok()?;
@@ -35,9 +33,7 @@ pub(crate) fn read_bits_at(data: &[u8], bit_pos: &mut usize, n: usize) -> Option
 
 /// [`read_bits_at`] with this crate's typed errors: `n > 64` is
 /// [`Error::InvalidValue`], running out of data is [`Error::BufferTooShort`].
-/// The one `&[u8]`-cursor reader the AC-3 and DTS header parsers share (the
-/// DTS copy lacked the `n > 64` check — audit r04-O1 / #1141).
-pub(crate) fn read_bits_checked(
+pub fn read_bits_checked(
     data: &[u8],
     bit_pos: &mut usize,
     n: usize,
@@ -59,14 +55,14 @@ pub(crate) fn read_bits_checked(
 
 /// Bytes needed to hold `n` more bits starting at `bit_pos` (saturating, for
 /// the `need` field of a `BufferTooShort`).
-pub(crate) fn bytes_needed(bit_pos: usize, n: usize) -> usize {
+pub fn bytes_needed(bit_pos: usize, n: usize) -> usize {
     bit_pos.saturating_add(n).div_ceil(u8::BITS as usize)
 }
 
 /// Maps a shared [`BitError`] onto this crate's typed errors: a short buffer
 /// goes through the workspace's one `BitError` -> `BufferTooShort` conversion
 /// (whole bytes), anything else is an `InvalidValue`.
-pub(crate) fn bit_error(what: &'static str, e: BitError) -> Error {
+pub fn bit_error(what: &'static str, e: BitError) -> Error {
     match e {
         BitError::OutOfBounds { .. } => {
             let mut short: BufferTooShort = e.into();
@@ -92,9 +88,8 @@ pub(crate) fn bit_error(what: &'static str, e: BitError) -> Error {
 }
 
 /// Writes the low `n` bits of `value` after a `fit_bits` range check, with
-/// this crate's typed errors: the one writer shim the AVS3-audio, HDR10+ and
-/// VVC record serializers share.
-pub(crate) fn write_bits_checked(
+/// this crate's typed errors.
+pub fn write_bits_checked(
     w: &mut BitWriter<'_>,
     value: u64,
     n: u32,
@@ -110,6 +105,7 @@ pub(crate) fn write_bits_checked(
 /// bit numbering — ITU-T H.264 §7.2).
 ///
 /// The struct owns the RBSP `Vec<u8>` and tracks the current bit position.
+#[non_exhaustive]
 pub struct BitReader {
     data: Vec<u8>,
     bit_pos: usize,
@@ -154,11 +150,6 @@ impl BitReader {
     }
 
     /// Read `n` bits as an unsigned integer (`u(n)` / `f(n)`).
-    ///
-    /// Extraction is [`broadcast_core::bits::BitReader`] resumed at this
-    /// reader's position. This type stays an owning wrapper (it owns the
-    /// unescaped RBSP `Vec<u8>`; a borrowing reader cannot live in the same
-    /// struct without a self-referential lifetime).
     ///
     /// An over-wide field (`n > 64`) is [`Error::InvalidValue`], the same
     /// class the crate's `BitError` conversion gives `BitError::TooManyBits`;
@@ -219,10 +210,9 @@ impl BitReader {
     pub fn read_ue(&mut self, what: &'static str) -> Result<u64> {
         // H.264 §9.1 / H.265 §9.2.2: a `ue(v)` is a leadingZeroBits run
         // terminated by a 1-bit — with no bits left there is no codeNum to
-        // decode, so EOF must be an error. Returning `Ok(0)` here (the
-        // pre-fix behaviour) does not consume anything, so every caller that
-        // loops on the decoded value (`sps.rs`'s SPS walk) never terminates:
-        // a ~20-byte hostile SPS hung the demuxer.
+        // decode, so EOF must be an error. Returning `Ok(0)` here does not
+        // consume anything, so every caller that loops on the decoded value
+        // never terminates.
         if !self.has_bits(1) {
             return Err(self.short(1, what));
         }
@@ -230,8 +220,7 @@ impl BitReader {
         while self.read_bits(1, what)? == 0 {
             leading_zero_bits += 1;
             // H.264 §9.1 / H.265 §9.2.2 bound codeNum (leadingZeroBits ≤ 32);
-            // a longer run is not a valid `ue(v)` and must never reach a
-            // caller's loop count or shift.
+            // a longer run is not a valid `ue(v)`.
             if leading_zero_bits > u32::BITS {
                 return Err(Error::InvalidValue(InvalidValue {
                     field: what,
@@ -244,9 +233,7 @@ impl BitReader {
             }
         }
         // The loop exits just past the terminating 1-bit; the
-        // `leading_zero_bits` info bits must still be present. (With a
-        // leading run of zero this check is trivially true and the result is
-        // codeNum 0, matching §9.1.)
+        // `leading_zero_bits` info bits must still be present.
         if !self.has_bits(leading_zero_bits as usize) {
             return Err(self.short(leading_zero_bits as usize, what));
         }
@@ -269,6 +256,9 @@ impl BitReader {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use alloc::vec;
+
     /// Drift pin (#1141): the shared checked reader rejects `n > 64` as
     /// `InvalidValue` (DTS used to report it as a short buffer) and reports a
     /// short buffer as `BufferTooShort`.
@@ -340,9 +330,6 @@ mod tests {
             assert_eq!(invalid.reason, reason);
         }
     }
-
-    use super::*;
-    use alloc::vec;
 
     /// Every short-buffer path here reports `need`/`have` in whole bytes,
     /// through the workspace's one `BitError` -> `BufferTooShort` conversion.
@@ -437,9 +424,7 @@ mod tests {
     /// H.264 §9.1: `ue(v)` is a leadingZeroBits run terminated by a 1-bit —
     /// with no bits left there is no codeNum to decode, so EOF must be `Err`.
     /// Pre-fix it returned `Ok(0)` **without consuming anything**, and every
-    /// caller that loops on a decoded count (`sps.rs`'s
-    /// `num_ref_frames_in_pic_order_cnt_cycle`) spun forever — the ~20-byte
-    /// SPS demux hang.
+    /// caller that loops on a decoded count spun forever.
     #[test]
     fn read_ue_at_eof_is_error() {
         // Eight 1-bits: eight `ue(v) == 0`, then the reader is empty.
@@ -454,9 +439,7 @@ mod tests {
     }
 
     /// H.264 §9.1 / H.265 §9.2.2 bound `leadingZeroBits` (codeNum < 2^33):
-    /// more than 32 leading zeros cannot be a valid `ue(v)`. Pre-fix this
-    /// decoded "fine" to ~2^41, handing callers like an SPS cycle-count loop
-    /// an absurd iteration budget.
+    /// more than 32 leading zeros cannot be a valid `ue(v)`.
     #[test]
     fn read_ue_beyond_32_leading_zeros_is_error() {
         // 40 leading zero bits, then a 1-bit and 40 info bits — enough tail

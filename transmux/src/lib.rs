@@ -173,7 +173,6 @@ pub mod ac3_syncframe;
 pub mod annexb;
 pub mod au;
 pub mod audio_profile;
-pub mod bitreader;
 #[cfg(feature = "captions")]
 pub mod caption_detect;
 #[cfg(feature = "cenc")]
@@ -230,7 +229,6 @@ pub mod plan_pass;
 pub mod progressive;
 #[cfg(feature = "ps")]
 pub mod ps_demux;
-pub mod rbsp;
 pub mod rebase;
 pub mod repackage;
 pub mod segment_log;

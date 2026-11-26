@@ -28,10 +28,10 @@
 //! symmetric: every parsed value, including the alignment padding bits, is
 //! re-emitted unchanged.
 
-use crate::bitreader::{bit_error, write_bits_checked};
 use crate::error::{Error, Result};
 use crate::nal::HEVC_NAL_HEADER_LEN;
 use alloc::vec::Vec;
+use broadcast_bitstream::bitreader::{bit_error, write_bits_checked};
 use broadcast_core::bits::{BitReader, BitWriter};
 use broadcast_core::error::InvalidValue;
 use broadcast_core::len::{need_in, need_out};
@@ -106,7 +106,9 @@ const BEZIER_ANCHOR_BITS: u32 = 10;
 const COLOR_SATURATION_WEIGHT_BITS: u32 = 6;
 
 fn read(r: &mut BitReader<'_>, bits: u32, what: &'static str) -> Result<u64> {
-    r.read_bits(bits).map_err(|e| bit_error(what, e))
+    r.read_bits(bits)
+        .map_err(|e| bit_error(what, e))
+        .map_err(Into::into)
 }
 
 /// `overlap_process_option` (ST 2094-40 clause 6.7): how the rendered pixels
@@ -395,6 +397,7 @@ fn write_color_volume(w: &mut BitWriter<'_>, c: &ColorVolumeTransform) -> Result
         FRACTION_BRIGHT_PIXELS_BITS,
         "fraction_bright_pixels",
     )
+    .map_err(Into::into)
 }
 
 fn read_transform_tail(r: &mut BitReader<'_>, c: &mut ColorVolumeTransform) -> Result<()> {
@@ -582,6 +585,7 @@ fn write_region(w: &mut BitWriter<'_>, g: &WindowRegion) -> Result<()> {
         OVERLAP_PROCESS_OPTION_BITS,
         "overlap_process_option",
     )
+    .map_err(Into::into)
 }
 
 impl Hdr10PlusMetadata {

@@ -1,0 +1,39 @@
+[package]
+name         = "broadcast-bitstream"
+version      = "0.1.0"
+edition      = "2024"
+description  = "Codec bitstream parsers for rust-broadcast: the exp-Golomb/RBSP bit reader, NAL unit classification, Annex B and length-prefixed stream conversion, and access-unit splitting. Parses facts only; holds no decoder. no_std + alloc."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["h264", "hevc", "nal", "bitstream", "no-std"]
+categories   = ["multimedia::video", "parser-implementations", "no-std"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version.workspace = true
+publish      = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
+thiserror  = { version = "2", default-features = false }
+serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+# The ISOBMFF decoder-configuration-record wrappers (`avcC` parameter sets) live
+# behind this optional feature, so a consumer that only splits Annex B never
+# pulls the box layer in.
+isobmff    = { path = "../isobmff", version = "0.1.0", default-features = false, optional = true }
+
+[features]
+default = ["std", "h264", "hevc"]
+std    = ["broadcast-core/std", "thiserror/std", "serde?/std", "isobmff?/std"]
+# H.264 / AVC NAL unit types.
+h264   = []
+# H.265 / HEVC NAL unit types.
+hevc   = []
+serde  = ["dep:serde", "broadcast-core/serde", "isobmff?/serde"]
+isobmff = ["dep:isobmff", "h264"]
+
+[lints]
+workspace = true

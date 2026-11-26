@@ -57,11 +57,11 @@
 use alloc::vec::Vec;
 
 use crate::annexb::{iter_length_prefixed_nals_with, normalise_nal_length_size};
-use crate::bitreader::BitReader;
 use crate::ir::{CodecConfig, Sample};
 use crate::nal::{
     AVC_NAL_IDR, AVC_NAL_SEI, NalCodec, access_unit_is_rap, nal_unit_type, sei_messages,
 };
+use broadcast_bitstream::bitreader::BitReader;
 
 /// `payloadType` of the `recovery_point` SEI (H.264 Table D-1, §D.1.8).
 const AVC_SEI_RECOVERY_POINT: u32 = 6;

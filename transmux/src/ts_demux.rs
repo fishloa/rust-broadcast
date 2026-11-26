@@ -3155,7 +3155,9 @@ fn pps_id(codec: Codec, nal: &[u8]) -> u64 {
         _ => 1,
     };
     nal.get(header_len..)
-        .and_then(|body| crate::bitreader::BitReader::with_unescape(body, "pps id").ok())
+        .and_then(|body| {
+            broadcast_bitstream::bitreader::BitReader::with_unescape(body, "pps id").ok()
+        })
         .and_then(|mut r| r.read_ue("pic_parameter_set_id").ok())
         .unwrap_or(u64::MAX)
 }
@@ -9985,7 +9987,7 @@ pub(crate) mod tests {
     /// bit-for-bit: unescape, swap the leading `ue(v)`, drop the old
     /// alignment, re-pad after the stop bit, re-escape (§7.4.1.1).
     fn pps_with_id(pps: &[u8], id: u64) -> Vec<u8> {
-        let rbsp = crate::rbsp::unescape(&pps[1..]);
+        let rbsp = broadcast_bitstream::rbsp::unescape(&pps[1..]);
         let bits: Vec<bool> = rbsp
             .iter()
             .flat_map(|b| (0..8).rev().map(move |i| (b >> i) & 1 == 1))

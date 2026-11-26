@@ -1,7 +1,8 @@
 //! RBSP emulation-prevention byte (EPB) handling.
 //!
 //! One implementation of the H.264 §7.4.1 / H.265 §7.4.2
-//! `emulation_prevention_three_byte` rule, shared by every caller in this crate:
+//! `emulation_prevention_three_byte` rule, shared by every caller in the
+//! workspace:
 //!
 //! - **decode** (`unescape`): drop every `03` that follows a `00 00` pair,
 //!   including a trailing `00 00 03` at the end of the NAL.
@@ -11,12 +12,12 @@
 use alloc::vec::Vec;
 
 /// `emulation_prevention_three_byte` (H.264 §7.4.1).
-pub(crate) const EMULATION_PREVENTION_BYTE: u8 = 0x03;
+pub const EMULATION_PREVENTION_BYTE: u8 = 0x03;
 /// Zero bytes that must precede an emulation prevention byte.
-pub(crate) const EMULATION_BYTE_RUN_LEN: usize = 2;
+pub const EMULATION_BYTE_RUN_LEN: usize = 2;
 
 /// Unescape an EBSP NAL into RBSP: remove every `00 00 03` → `00 00`.
-pub(crate) fn unescape(escaped: &[u8]) -> Vec<u8> {
+pub fn unescape(escaped: &[u8]) -> Vec<u8> {
     let n = escaped.len();
     let mut out = Vec::with_capacity(n);
     let mut i = 0;
@@ -34,13 +35,12 @@ pub(crate) fn unescape(escaped: &[u8]) -> Vec<u8> {
             i += 1;
         }
     }
-    // trailing triplet where i+2 == n-1: handled above? i+2 < n for i=n-3 gives n-1 < n true.
     out
 }
 
 /// Escape RBSP into EBSP: insert `03` before `00..=03` after `00 00`, and after
 /// a trailing `00 00`.
-pub(crate) fn escape(unescaped: &[u8]) -> Vec<u8> {
+pub fn escape(unescaped: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(unescaped.len());
     let mut zero_run = 0usize;
     for &b in unescaped {
@@ -60,6 +60,7 @@ pub(crate) fn escape(unescaped: &[u8]) -> Vec<u8> {
     }
     out
 }
+
 #[cfg(test)]
 mod tests {
     use super::unescape;

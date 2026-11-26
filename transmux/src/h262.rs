@@ -29,13 +29,13 @@
 //! [`DisplayGeometry`]: crate::ir::DisplayGeometry
 
 use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
-use crate::bitreader::BitReader;
 use crate::error::{Error, Result};
 use crate::ir::{
     AspectRatioIdc, ColourDescription, ColourPrimaries, DisplayGeometry, MatrixCoefficients,
     PictureRect, TransferCharacteristics, VideoFormat, VideoSignalType,
 };
 use crate::mpeg_legacy::SEQUENCE_HEADER_CODE;
+use broadcast_bitstream::bitreader::BitReader;
 
 /// `sequence_header_code` `0x000001B3` (H.262 §6.2.2.1, Table 6-1).
 pub const SEQUENCE_HEADER_CODE_BYTE: u8 = SEQUENCE_HEADER_CODE[3];

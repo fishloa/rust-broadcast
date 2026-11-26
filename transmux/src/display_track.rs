@@ -48,7 +48,6 @@
 //! raised at the first access unit that references them.
 
 use crate::annexb::iter_annexb_nals;
-use crate::bitreader::BitReader;
 use crate::ir::{
     ActiveFormat, ActiveFormatDescription, AfdPersistence, BarData, DisplayChangeSet,
     DisplayGeometry, DisplayInfo, UserDataCarriage,
@@ -59,6 +58,7 @@ use crate::user_data;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use broadcast_bitstream::bitreader::BitReader;
 use isobmff::nalu_types::HEVC_SPS_NUT;
 
 /// `nal_unit_type` of a non-IDR coded slice (H.264 Table 7-1).

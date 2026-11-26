@@ -6,9 +6,9 @@
 //! concatenated PES payload into core frames. The `ddts` box itself lives in
 //! [`isobmff::dts`].
 
-use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_bitstream::bitreader::read_bits_checked as read_bits;
 use broadcast_core::error::InvalidValue;
 use isobmff::dts::DtsSpecificBox;
 

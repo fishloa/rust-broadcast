@@ -70,6 +70,11 @@ pub enum Error {
     #[error(transparent)]
     ManifestWrite(#[from] broadcast_smooth::ManifestWriteError),
 
+    /// A codec bitstream parser or stream-format converter rejected the input
+    /// (the `broadcast-bitstream` layer below this crate).
+    #[error(transparent)]
+    Bitstream(#[from] broadcast_bitstream::Error),
+
     /// A KLV triplet or BER length token failure (SMPTE ST 336 framing).
     #[error(transparent)]
     Klv(#[from] broadcast_common::klv::KlvError),
