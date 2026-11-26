@@ -138,9 +138,7 @@ impl Registry {
     pub fn candidates(&self, codec: CodecId, direction: Direction) -> Vec<CodecDescriptor> {
         self.arranged(self.registered(codec, direction), codec, direction)
     }
-}
 
-impl Registry {
     /// Build a decoder for `parameters` from the first candidate that serves
     /// it.
     ///
