@@ -69,6 +69,7 @@ impl DetectedCaption {
     }
 
     /// The HLS `INSTREAM-ID` this stream is advertised under.
+    #[cfg(feature = "hls")]
     pub fn instream_id(&self) -> broadcast_hls::InstreamId {
         match self {
             DetectedCaption::Cea608(channel) => broadcast_hls::InstreamId::Cc(channel.number()),

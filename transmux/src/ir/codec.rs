@@ -462,8 +462,8 @@ impl CodecConfig {
             dc.decoder_specific_info = Some(DecoderSpecificInfo::new(bytes));
         }
         let channel_count = match profile {
-            HeAacProfile::V1 => match crate::flv::aac_channel_count(&asc) {
-                crate::flv::AAC_CHANNEL_COUNT_UNKNOWN => channel_count,
+            HeAacProfile::V1 => match crate::aac_asc::aac_channel_count(&asc) {
+                crate::aac_asc::AAC_CHANNEL_COUNT_UNKNOWN => channel_count,
                 n => n,
             },
             HeAacProfile::V2 => HE_AAC_V2_OUTPUT_CHANNELS,
@@ -514,6 +514,7 @@ impl CodecConfig {
         }
     }
 
+    #[cfg(feature = "hls")]
     pub(crate) fn audio_channel_field(&self) -> Option<u16> {
         match self {
             CodecConfig::Aac { channel_count, .. }
@@ -695,6 +696,7 @@ mod tests {
 
     /// Vorbis stores its `audio_channels` directly (no separate LFE flag), so
     /// both accessors must report it; an unspecified count (0) is no count.
+    #[cfg(feature = "hls")]
     #[test]
     fn vorbis_reports_its_channel_count() {
         let stereo = CodecConfig::Vorbis {

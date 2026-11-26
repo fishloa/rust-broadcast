@@ -410,6 +410,28 @@ impl From<u8> for ChannelConfiguration {
 }
 broadcast_common::impl_spec_display!(ChannelConfiguration, Reserved);
 
+/// `CodecConfig::Aac.channel_count` for an [`AudioSpecificConfig`] whose
+/// `channelConfiguration` does not determine a channel count.
+///
+/// ISO/IEC 14496-3 Table 1.19 gives a count for configurations 1..=7
+/// (configuration 7 is **8** channels, 7.1). Configuration 0 means the mapping
+/// is carried in-band by a `program_config_element` in the raw data stream —
+/// this crate decodes no PCE — and 8..=15 are reserved. `0` marks "not
+/// derived", matching this crate's existing placeholder convention
+/// (`ts_demux`'s `MPEGH_CHANNEL_COUNT_UNSPECIFIED`), and is never a channel
+/// count a real stream has.
+pub(crate) const AAC_CHANNEL_COUNT_UNKNOWN: u16 = 0;
+
+/// The channel count a decoded track should carry for `config`.
+///
+/// [`AAC_CHANNEL_COUNT_UNKNOWN`] when Table 1.19 does not determine one.
+pub(crate) fn aac_channel_count(config: &AudioSpecificConfig) -> u16 {
+    config
+        .channel_configuration
+        .channel_count()
+        .unwrap_or(AAC_CHANNEL_COUNT_UNKNOWN)
+}
+
 // --- AudioSpecificConfig §1.6.2.1 ---
 ///
 /// Build it by parsing a decoder-specific config (`Parse::parse`): the parser

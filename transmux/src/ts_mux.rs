@@ -80,9 +80,11 @@ use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
 use mpeg_pes::StreamId;
 use mpeg_ts::mux::SectionPacketiser;
+#[cfg(feature = "hls")]
+use mpeg_ts::ts::PID_MASK_HI;
 use mpeg_ts::ts::{
-    AdaptationFieldControl, CC_MASK, ContinuityCounter, PID_MASK_HI, Pcr, ScramblingControl,
-    TS_PACKET_SIZE, TsHeader,
+    AdaptationFieldControl, CC_MASK, ContinuityCounter, Pcr, ScramblingControl, TS_PACKET_SIZE,
+    TsHeader,
 };
 
 use crate::TrackId;
@@ -330,8 +332,10 @@ const PES_TIMESTAMP_LEN: usize = 5;
 /// Bytes of a PTS+DTS pair in the optional header (§2.4.3.7).
 const PES_TIMESTAMP_PAIR_LEN: usize = PES_TIMESTAMP_LEN * 2;
 /// Offset of the PID's low byte in the TS header (§2.4.3.2).
+#[cfg(feature = "hls")]
 const PID_LO_OFFSET: usize = 2;
 /// Stamps per gap when scanning consecutive PCR stamps (`windows(2)`).
+#[cfg(feature = "hls")]
 const PCR_STAMP_PAIR_LEN: usize = 2;
 
 /// Bytes a PSI `section_length` does not count: `table_id` and the 2-byte
@@ -1399,6 +1403,7 @@ fn hevc_parameter_sets(
 /// continuous transport stream, so a client concatenating them sees a CC jump
 /// on every PID at each boundary otherwise (TR 101 290 indicator 1.4), and this
 /// crate's own [`StreamingTsDemux`](crate::StreamingTsDemux) reports `InputDegraded` on it.
+#[cfg(feature = "hls")]
 pub(crate) fn mux_tracks_at_continuing(
     specs: &[TrackSpec],
     samples: &[&[Sample]],
@@ -1429,6 +1434,7 @@ pub(crate) fn mux_tracks_at_continuing(
 /// PAT/PMT scheduling state threaded through [`mux_tracks_timed_with_cc`]
 /// calls: the repetition interval, whether the leading PSI was already
 /// written, and the media time (interleave key) the next repeat is due.
+#[cfg(feature = "hls")]
 #[derive(Debug, Clone)]
 struct PsiState {
     interval_ticks: Option<u64>,
@@ -1436,6 +1442,7 @@ struct PsiState {
     due: Option<u64>,
 }
 
+#[cfg(feature = "hls")]
 impl PsiState {
     fn new(interval_ticks: Option<u64>) -> Self {
         Self {
@@ -1491,6 +1498,7 @@ impl TsContinuity {
 
     /// Record that a payload-bearing packet with counter `cc` was written on
     /// `pid`; the next one takes `cc + 1` modulo 16 (§2.4.3.3).
+    #[cfg(feature = "hls")]
     fn advance(&mut self, pid: Pid, cc: u8) {
         self.set_next_for(pid, (cc + 1) & CC_MASK);
     }
@@ -1522,6 +1530,7 @@ impl TsContinuity {
 /// [`TsContinuity`] across calls. `dts_ticks[i][j]` is the decode time of
 /// `samples[i][j]` in `tracks[i]`'s timescale, relative to the stream's origin
 /// (negative values clamp to the origin).
+#[cfg(feature = "hls")]
 fn mux_tracks_timed_with_cc(
     specs: &[TrackSpec],
     samples: &[&[Sample]],
@@ -1753,6 +1762,7 @@ const PCR_INTERVAL_MS: u64 = 40;
 /// field carrying the PCR and `payload_flag = 0` (§2.4.3.3: such a packet does
 /// **not** increment the continuity counter, so the CC state of `pcr_pid` is
 /// unchanged), placed at the gap's midpoint key so it interleaves in order.
+#[cfg(feature = "hls")]
 fn emit_pcr_only_packets(pcr_pid: Pid, pcr_stamps: &mut [u64], tagged: &mut Vec<TaggedPacket>) {
     if pcr_stamps.is_empty() {
         return;
@@ -1814,6 +1824,7 @@ fn emit_pcr_only_packets(pcr_pid: Pid, pcr_stamps: &mut [u64], tagged: &mut Vec<
 }
 
 /// Read the 13-bit PID from a TS packet's header.
+#[cfg(feature = "hls")]
 fn pid_of_packet(pkt: &[u8; TS_PACKET_SIZE]) -> u16 {
     (((pkt[1] & PID_MASK_HI) as u16) << u8::BITS) | pkt[PID_LO_OFFSET] as u16
 }

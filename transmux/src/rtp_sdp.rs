@@ -91,7 +91,7 @@ pub fn aac_config_from_asc_hex(config_hex: &str) -> Result<CodecConfig> {
 pub fn aac_config_from_asc_bytes(asc_bytes: Vec<u8>) -> Result<CodecConfig> {
     let asc = AudioSpecificConfig::parse(&asc_bytes)?;
     let sample_rate = asc_sample_rate(&asc)?;
-    let channel_count = crate::flv::aac_channel_count(&asc);
+    let channel_count = crate::aac_asc::aac_channel_count(&asc);
 
     let esds = EsdsBox::new(ESDescriptor::new(
         0,
@@ -427,7 +427,7 @@ mod tests {
             match cfg {
                 CodecConfig::Aac { channel_count, .. } => assert_eq!(
                     channel_count,
-                    crate::flv::AAC_CHANNEL_COUNT_UNKNOWN,
+                    crate::aac_asc::AAC_CHANNEL_COUNT_UNKNOWN,
                     "ASC {asc_hex}: an undetermined channel count is marked, not fabricated"
                 ),
                 other => panic!("expected AAC, got {other:?}"),

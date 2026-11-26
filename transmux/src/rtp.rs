@@ -54,24 +54,39 @@
 //!
 //! `no_std` + `alloc`.
 
+#[cfg(feature = "rtp")]
 use crate::nal::NAL_TYPE_MASK;
+#[cfg(feature = "rtp")]
 use alloc::collections::VecDeque;
 #[cfg(feature = "std")]
 use alloc::format;
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
+#[cfg(feature = "rtp")]
+use broadcast_common::error::BufferTooShort;
+use broadcast_common::error::InvalidValue;
+#[cfg(feature = "rtp")]
 use broadcast_common::wire::u16_at;
 
+#[cfg(feature = "rtp")]
 use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
+#[cfg(feature = "rtp")]
 use broadcast_common::{Parse, Serialize};
+#[cfg(feature = "rtp")]
 use bytes::Bytes;
+#[cfg(feature = "rtp")]
 use rtp_packet::RtpPacket as RtpPacketWire;
 
+#[cfg(feature = "rtp")]
 use crate::annexb::NAL_LENGTH_SIZE;
 use crate::error::{Error, Result};
-use crate::ir::{Sample, TrackSpec};
+#[cfg(feature = "rtp")]
+use crate::ir::Sample;
+#[cfg(any(feature = "std", feature = "rtp"))]
+use crate::ir::TrackSpec;
+#[cfg(feature = "rtp")]
 use crate::mux_stage::{MuxInput, MuxOutput};
+#[cfg(any(feature = "std", feature = "rtp"))]
 use crate::pipeline::CodecConfig;
 
 // ---------------------------------------------------------------------------
@@ -84,11 +99,13 @@ use crate::pipeline::CodecConfig;
 /// lives in the spec-complete `rtp-packet` crate (padding/CSRC/header
 /// extension); transmux only ever emits/expects the simple `P=0 X=0 CC=0`
 /// case, so this migration is internal-only (issue #646).
+#[cfg(feature = "rtp")]
 const RTP_HEADER_LEN: usize = rtp_packet::FIXED_HEADER_LEN;
 /// Payload-type mask applied before handing a payload type to `rtp_packet`
 /// (RFC 3550 §5.1, low 7 bits) — matches the masking this crate has always
 /// applied here; transmux's dynamic payload types never legitimately exceed
 /// 127, so this is defensive parity with the prior implementation.
+#[cfg(feature = "rtp")]
 const RTP_PT_MASK: u8 = 0x7F;
 
 /// Default dynamic payload type for the H.264 video stream.
@@ -98,8 +115,10 @@ pub const DEFAULT_AUDIO_PT: u8 = 97;
 /// Default network MTU (payload budget) forcing FU-A on larger NALs.
 pub const DEFAULT_MTU: usize = 1400;
 /// First payload type of the dynamic range (RFC 3551 §6).
+#[cfg(feature = "rtp")]
 const DYNAMIC_PT_MIN: u8 = 96;
 /// Last payload type of the dynamic range (RFC 3551 §6).
+#[cfg(feature = "rtp")]
 const DYNAMIC_PT_MAX: u8 = 127;
 /// Default video RTP clock rate (RFC 6184 — H.264 is carried at 90 kHz).
 pub const VIDEO_CLOCK_RATE: u32 = 90_000;
@@ -119,21 +138,31 @@ pub const KLV_ENCODING_NAME: &str = "smpte336m";
 // --- H.264 NAL / packetisation (RFC 6184 §5.2, §5.6, §5.7, §5.8) -----------
 
 /// NAL unit `F|NRI` field mask (top 3 bits of the NAL octet).
+#[cfg(feature = "rtp")]
 const NAL_FNRI_MASK: u8 = 0xE0;
+#[cfg(feature = "rtp")]
 const NAL_NRI_MASK: u8 = 0x60;
+#[cfg(feature = "rtp")]
 const NAL_FORBIDDEN_MASK: u8 = 0x80;
+#[cfg(feature = "rtp")]
 const FU_HEADER_PAIR_LEN: usize = 2;
 const PAIR_WINDOW_LEN: usize = 2;
+#[cfg(feature = "rtp")]
 const DEFAULT_SSRC: u32 = 0x1234_5678;
 /// STAP-A aggregation NAL type (RFC 6184 §5.7.1).
+#[cfg(feature = "rtp")]
 const NAL_TYPE_STAP_A: u8 = 24;
 /// FU-A fragmentation NAL type (RFC 6184 §5.8).
+#[cfg(feature = "rtp")]
 const NAL_TYPE_FU_A: u8 = 28;
 /// FU header `S` (start) bit (RFC 6184 §5.8).
+#[cfg(feature = "rtp")]
 const FU_START_MASK: u8 = 0x80;
 /// FU header `E` (end) bit (RFC 6184 §5.8).
+#[cfg(feature = "rtp")]
 const FU_END_MASK: u8 = 0x40;
 /// STAP-A per-NAL size-prefix width (16-bit, RFC 6184 §5.7.1).
+#[cfg(feature = "rtp")]
 const STAP_A_SIZE_LEN: usize = 2;
 
 /// H.264 NAL type: coded slice of an IDR picture (a keyframe VCL NAL).
@@ -152,8 +181,10 @@ pub const AAC_INDEX_LENGTH: u32 = 3;
 #[cfg(feature = "std")]
 pub const AAC_INDEX_DELTA_LENGTH: u32 = 3;
 /// One AAC-hbr AU-header is `sizeLength + indexLength = 16` bits = 2 bytes.
+#[cfg(feature = "rtp")]
 const AAC_AU_HEADER_LEN: usize = 2;
 /// Width of the AU-headers-length prefix (16-bit, RFC 3640 §3.2.1).
+#[cfg(feature = "rtp")]
 const AAC_AU_HEADERS_LENGTH_LEN: usize = 2;
 
 // ---------------------------------------------------------------------------
@@ -195,6 +226,7 @@ broadcast_common::impl_spec_display!(RtpMediaKind);
 ///
 /// Callers that need a single contiguous `&[u8]` (e.g. the depacketise
 /// path) can call [`RtpPacket::as_contiguous`].
+#[cfg(feature = "rtp")]
 #[derive(Debug, Clone)]
 pub struct RtpPacket {
     /// The RTP fixed header (12 bytes) plus any payload-format headers
@@ -206,6 +238,7 @@ pub struct RtpPacket {
     pub payload: Bytes,
 }
 
+#[cfg(feature = "rtp")]
 impl RtpPacket {
     /// Split a whole RTP datagram into its fixed header (the first 12 bytes,
     /// RFC 3550 §5.1) and the payload that follows, borrowing the buffer.
@@ -247,6 +280,7 @@ impl RtpPacket {
 /// track been seen" was tracked, so tracks 2 and 3 collided, and `96 + 2 = 98`
 /// additionally collided with [`DEFAULT_KLV_PT`].
 #[derive(Debug, Clone)]
+#[cfg(feature = "rtp")]
 struct PtAllocator {
     /// The next candidate type. Advanced past every allocation, so no value is
     /// ever handed out twice.
@@ -255,6 +289,7 @@ struct PtAllocator {
 
 /// The per-track packetising state.
 #[derive(Debug, Clone)]
+#[cfg(feature = "rtp")]
 struct RtpTrackState {
     spec: TrackSpec,
     kind: RtpMediaKind,
@@ -269,6 +304,7 @@ struct RtpTrackState {
     ticks: u64,
 }
 
+#[cfg(feature = "rtp")]
 impl RtpTrackState {
     /// This sample's RTP timestamp, in `clock`.
     ///
@@ -309,6 +345,7 @@ impl RtpTrackState {
 /// [`sdp_media`], rendered per track because the stage's packet output carries
 /// the payload type, not the track.
 #[derive(Debug, Clone)]
+#[cfg(feature = "rtp")]
 pub struct RtpPacketiserStage {
     /// MTU (payload budget): NALs larger than this are fragmented as FU-A.
     pub mtu: usize,
@@ -327,6 +364,7 @@ pub struct RtpPacketiserStage {
     out: VecDeque<MuxOutput>,
 }
 
+#[cfg(feature = "rtp")]
 impl Default for RtpPacketiserStage {
     fn default() -> Self {
         Self {
@@ -344,6 +382,7 @@ impl Default for RtpPacketiserStage {
     }
 }
 
+#[cfg(feature = "rtp")]
 impl RtpPacketiserStage {
     /// Create a packetiser with default MTU / payload types / SSRC.
     pub fn new() -> Self {
@@ -543,6 +582,7 @@ impl RtpPacketiserStage {
     }
 }
 
+#[cfg(feature = "rtp")]
 impl Stage for RtpPacketiserStage {
     type In<'a> = MuxInput;
     type Out = MuxOutput;
@@ -587,6 +627,7 @@ impl Stage for RtpPacketiserStage {
 /// Append one AVC access unit's packets to `packets`: a single-NAL packet
 /// (zero-copy `Bytes::slice` of the sample) or an FU-A fragmentation (RFC
 /// 6184 §5.8) of a NAL larger than `mtu`.
+#[cfg(feature = "rtp")]
 fn push_video_nals(
     sample_data: &Bytes,
     pt: u8,
@@ -627,6 +668,7 @@ fn push_video_nals(
 
 /// The optional leading STAP-A packet aggregating an AVC track's SPS+PPS
 /// parameter sets (RFC 6184 §5.7.1), or `None` when the record carries none.
+#[cfg(feature = "rtp")]
 fn stap_a_packet(
     config: &isobmff::avc_config::AVCConfigurationBox,
     pt: u8,
@@ -661,6 +703,7 @@ fn stap_a_packet(
 ///
 /// [`Error::InvalidInput`] for a non-AVC track, and whatever the NAL split
 /// reports for damaged sample data.
+#[cfg(feature = "rtp")]
 pub fn packetise_video_sample(
     spec: &TrackSpec,
     sample: &Sample,
@@ -683,6 +726,7 @@ pub fn packetise_video_sample(
     Ok(packets)
 }
 
+#[cfg(feature = "rtp")]
 impl PtAllocator {
     /// Start allocating at `base`. A base outside the dynamic range (as an
     /// explicit dynamic value, not a static one) yields types in the dynamic
@@ -724,6 +768,7 @@ impl PtAllocator {
 /// Delegates the wire encoding to [`rtp_packet::RtpPacket`] (RFC 3550 §5.1);
 /// transmux only ever emits the simple `P=0 X=0 CC=0` case (no CSRC list, no
 /// header extension, no padding) — see issue #646.
+#[cfg(feature = "rtp")]
 fn rtp_header(pt: u8, marker: bool, seq: u16, timestamp: u32, ssrc: u32) -> Bytes {
     let pkt = RtpPacketWire {
         marker,
@@ -746,8 +791,10 @@ fn rtp_header(pt: u8, marker: bool, seq: u16, timestamp: u32, ssrc: u32) -> Byte
 
 /// Per-stream monotonic sequence-number counter (wraps at 16 bits).
 #[derive(Debug, Clone)]
+#[cfg(feature = "rtp")]
 struct SeqCounter(u16);
 
+#[cfg(feature = "rtp")]
 impl SeqCounter {
     fn new(start: u16) -> Self {
         Self(start)
@@ -774,6 +821,7 @@ pub fn rescale_ts(
 }
 
 /// Split a 4-byte length-prefixed IR video sample into its NAL slices.
+#[cfg(feature = "rtp")]
 fn split_length_prefixed(data: &[u8]) -> Result<Vec<&[u8]>> {
     crate::annexb::iter_length_prefixed_nals(data)
 }
@@ -783,6 +831,7 @@ fn split_length_prefixed(data: &[u8]) -> Result<Vec<&[u8]>> {
 /// prefixes) with the parameter-set NAL payloads, so the whole packet is
 /// built in a `BytesMut` (which copies). The parameter-set NALs are small
 /// (SPS+PPS typically <1 kB), so this is negligible.
+#[cfg(feature = "rtp")]
 fn build_stap_a(
     pt: u8,
     nals: &[Vec<u8>],
@@ -830,6 +879,7 @@ fn build_stap_a(
 /// original sample data (the NAL body bytes after the first octet) —
 /// the common case where this crate's move to `Sample.data: Bytes` pays
 /// off on the RTP egress path.
+#[cfg(feature = "rtp")]
 fn fragment_fu_a(
     nal: &[u8],
     sample_data: &Bytes,
@@ -1011,10 +1061,12 @@ fn sdp_audio(pt: u8, clock: u32, channels: u16, asc: &[u8]) -> sdp_types::Media 
 /// the media clock wraps every `2^32` ticks (at the 90 kHz video clock, ≈ 13.3
 /// hours).
 #[cfg(test)]
+#[cfg(feature = "rtp")]
 const RTP_TS_WRAP: i64 = 1 << 32;
 /// Half the 32-bit range — the classic wrap-detection threshold: a step of
 /// more than half the range is read as a wrap, not a real jump.
 #[cfg(test)]
+#[cfg(feature = "rtp")]
 const RTP_TS_WRAP_MIDPOINT: i64 = RTP_TS_WRAP / 2;
 
 /// Incremental 32-bit RTP-timestamp wrap-unroll (RFC 3550 §5.1), one access
@@ -1027,6 +1079,7 @@ const RTP_TS_WRAP_MIDPOINT: i64 = RTP_TS_WRAP / 2;
 /// and only a near-full-range jump is treated as a wrap.
 #[derive(Default)]
 #[cfg(test)]
+#[cfg(feature = "rtp")]
 struct RtpWrapState {
     initialized: bool,
     prev_raw: u32,
@@ -1034,6 +1087,7 @@ struct RtpWrapState {
 }
 
 #[cfg(test)]
+#[cfg(feature = "rtp")]
 impl RtpWrapState {
     /// Feed the next AU's raw 32-bit RTP timestamp, returning the unwrapped
     /// absolute value.
@@ -1092,6 +1146,7 @@ impl RtpWrapState {
 ///
 /// Returns `(dts, pts)` per sample, in wire order.
 #[cfg(test)]
+#[cfg(feature = "rtp")]
 fn decode_timeline(pts: &[i64]) -> (Vec<i64>, Vec<i64>) {
     if pts.windows(PAIR_WINDOW_LEN).all(|w| w[1] >= w[0]) {
         return (pts.to_vec(), pts.to_vec());
@@ -1140,6 +1195,7 @@ fn decode_timeline(pts: &[i64]) -> (Vec<i64>, Vec<i64>) {
 
 /// A reassembled access unit with its RTP presentation timestamp and a
 /// random-access (sync) flag. RFC 6184 §5.7 (video) / RFC 3640 §3.2 (audio).
+#[cfg(feature = "rtp")]
 pub(crate) struct ReassembledAu {
     /// The AU's raw 32-bit RTP timestamp (RFC 3550 §5.1). Read by the
     /// streaming depayloader (rtp_stream, #700 Task 4) and, since media plane
@@ -1153,10 +1209,12 @@ pub(crate) struct ReassembledAu {
 
 /// H.264 FU-A/STAP-A/single-NAL reassembly (RFC 6184 §5.7/§5.8), preserving
 /// the RTP timestamp and marking IDR access units as sync points.
+#[cfg(feature = "rtp")]
 pub(crate) fn reassemble_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
     reassemble_video_impl(packets)
 }
 
+#[cfg(feature = "rtp")]
 fn reassemble_video_impl(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
     let mut aus: Vec<ReassembledAu> = Vec::new();
     let mut cur_nals: Vec<Vec<u8>> = Vec::new();
@@ -1340,10 +1398,12 @@ fn reassemble_video_impl(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
 /// size (duplicated fragments) is discarded too — the header states the size,
 /// so a mismatch means the run is not the AU it claims to be. Either way
 /// reassembly resumes at the next access unit.
+#[cfg(feature = "rtp")]
 pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
     reassemble_audio_impl(packets)
 }
 
+#[cfg(feature = "rtp")]
 fn reassemble_audio_impl(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
     let mut aus = Vec::new();
     /// One AU under reassembly from fragments (RFC 3640 §3.2.3.1).
@@ -1500,6 +1560,7 @@ fn reassemble_audio_impl(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
 }
 
 /// 4-byte length-prefix a list of NALs into an IR video sample.
+#[cfg(feature = "rtp")]
 fn length_prefix_nals(nals: &[Vec<u8>]) -> Vec<u8> {
     let total: usize = nals.iter().map(|n| NAL_LENGTH_SIZE + n.len()).sum();
     crate::annexb::length_prefix(total, nals.iter().map(Vec::as_slice))
@@ -1513,6 +1574,7 @@ fn length_prefix_nals(nals: &[Vec<u8>]) -> Vec<u8> {
 /// [`crate::rtp_stream::RtpStreamDepacketiser`] a reason to read them (loss
 /// and reorder detection).
 #[derive(Debug, Clone, Copy)]
+#[cfg(feature = "rtp")]
 pub(crate) struct RtpHeader<'a> {
     pub(crate) marker: bool,
     /// 16-bit sequence number (RFC 3550 §5.1), incrementing by one per
@@ -1534,6 +1596,7 @@ pub(crate) struct RtpHeader<'a> {
 }
 
 /// Parse and validate the RTP fixed header, rejecting bad versions.
+#[cfg(feature = "rtp")]
 pub(crate) fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader<'_>> {
     let parsed = RtpPacketWire::parse(pkt).map_err(map_rtp_error)?;
     Ok(RtpHeader {
@@ -1546,6 +1609,7 @@ pub(crate) fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader<'_>> {
 }
 
 /// Map an [`rtp_packet::Error`] onto this crate's [`Error`].
+#[cfg(feature = "rtp")]
 fn map_rtp_error(e: rtp_packet::Error) -> Error {
     match e {
         rtp_packet::Error::BufferTooShort(e) => Error::BufferTooShort(e),
@@ -1585,6 +1649,7 @@ fn map_rtp_error(e: rtp_packet::Error) -> Error {
 ///
 /// Returns at least one packet; `klv_unit` must be non-empty. Each fragment's
 /// payload is a zero-copy [`Bytes::slice`] of the input.
+#[cfg(feature = "rtp")]
 pub fn packetise_klv(
     klv_unit: &Bytes,
     pt: u8,
@@ -1623,6 +1688,7 @@ pub fn packetise_klv(
 /// Fragments are concatenated in arrival order; a KLV unit is complete at the
 /// packet whose marker bit is set (or, defensively, at a timestamp change).
 /// Returns one `Vec<u8>` per reassembled KLV unit.
+#[cfg(feature = "rtp")]
 pub fn depacketise_klv(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
     let mut units: Vec<Vec<u8>> = Vec::new();
     let mut cur: Vec<u8> = Vec::new();
@@ -1683,11 +1749,13 @@ pub const MP2T_MAX_PAYLOAD: usize = mpeg_ts::ts::TS_PACKET_SIZE * MP2T_TS_PACKET
 /// rather than being split across packets: RFC 2250 §2 permits only whole TS
 /// packets as the payload, so a split one would be undecodable.
 #[derive(Debug, Clone)]
+#[cfg(feature = "rtp")]
 pub struct Mp2tPacketiser {
     ssrc: u32,
     seq: u16,
 }
 
+#[cfg(feature = "rtp")]
 impl Mp2tPacketiser {
     /// Start sending from `initial_seq` under `ssrc` (RFC 3550 §5.1).
     #[must_use]
@@ -1799,6 +1867,7 @@ pub(crate) fn hex_decode(s: &str) -> Result<Vec<u8>> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "rtp")]
 fn test_placeholder_avc_config() -> CodecConfig {
     use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
     CodecConfig::Avc {
@@ -1821,6 +1890,7 @@ fn test_placeholder_avc_config() -> CodecConfig {
 }
 
 #[cfg(test)]
+#[cfg(feature = "rtp")]
 mod tests {
     #[test]
     fn hex_decode_reports_each_failure_class_as_before() {

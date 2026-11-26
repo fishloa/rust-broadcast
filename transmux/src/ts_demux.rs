@@ -3668,7 +3668,7 @@ fn finalize_probe(
             // derivable from the header at all. Using the raw field as the
             // count reported 7.1 as 7 channels and a PCE-signalled stream as
             // zero (r04-W51, extending W16).
-            let channel_count = crate::flv::aac_channel_count(&asc);
+            let channel_count = crate::aac_asc::aac_channel_count(&asc);
             let esds = EsdsBox::new(ESDescriptor::new(
                 ESDS_ES_ID,
                 0,

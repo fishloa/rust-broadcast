@@ -26,8 +26,10 @@
 //! crypto metadata onto [`TrackSpec::protection`](crate::TrackSpec::protection) and per-sample [`SampleProtection`](crate::ir::SampleProtection).
 
 use alloc::boxed::Box;
+#[cfg(feature = "hls")]
 use alloc::format;
 use alloc::string::String;
+#[cfg(feature = "hls")]
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -35,6 +37,7 @@ use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Parse, Stage, Timestamp};
 
 use crate::codec_config_ext::VvcRecordCodecInfo;
+#[cfg(feature = "hls")]
 use broadcast_hls::{ByteRange, DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
 use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 
@@ -48,6 +51,7 @@ use crate::ir::{
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary};
 use crate::pipeline::build_init_segment;
+#[cfg(feature = "hls")]
 use crate::segment_log::{SegmentSummaryLog, TrackSummary};
 use crate::segmenter::{MediaClock, choose_anchor};
 use alloc::sync::Arc;
@@ -70,6 +74,7 @@ use isobmff::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRat
 pub use crate::ir::{PcrSample, SkippedTrack, TrackProtection};
 
 /// `#EXT-X-VERSION` for the fMP4 playlists [`HlsPackager`] writes (RFC 8216 §7).
+#[cfg(feature = "hls")]
 const DEFAULT_HLS_VERSION: u8 = 7;
 
 // ---------------------------------------------------------------------------
@@ -520,6 +525,7 @@ impl TimelineOrigin {
 /// and `u64` ticks over a non-zero timescale are always a finite number of
 /// seconds, so the only unrepresentable value is one the
 /// [`DecimalSeconds`] constructor refuses.
+#[cfg(feature = "hls")]
 pub(crate) fn presentation_span_secs_from_log(
     kept: &[(&TrackSpec, TrackSummary<'_>)],
 ) -> Result<f64> {
@@ -554,6 +560,7 @@ pub(crate) fn presentation_span_secs_from_log(
 }
 
 /// `secs` rounded up to whole seconds, without the std-only `f64::ceil`.
+#[cfg(feature = "hls")]
 fn ceil_secs(secs: f64) -> u32 {
     let whole = secs as u32; // truncates toward zero; `secs` is non-negative
     if (whole as f64) < secs {
@@ -576,6 +583,7 @@ fn ceil_secs(secs: f64) -> u32 {
 /// pointing at `{uri_prefix}{track_id}.m4s` named after the first timed track.
 /// Segments in a media playlist play one after another (RFC 8216 §3), so one
 /// entry per track would play the content once per track.
+#[cfg(feature = "hls")]
 #[derive(Debug, Clone)]
 pub struct HlsPackager {
     /// `#EXT-X-VERSION`.
@@ -586,6 +594,7 @@ pub struct HlsPackager {
     pub uri_prefix: String,
 }
 
+#[cfg(feature = "hls")]
 impl Default for HlsPackager {
     fn default() -> Self {
         Self {
@@ -596,6 +605,7 @@ impl Default for HlsPackager {
     }
 }
 
+#[cfg(feature = "hls")]
 impl HlsPackager {
     /// Render the media playlist for `tracks` from the segments `log` recorded.
     ///
@@ -1432,6 +1442,7 @@ mod tests {
     /// `subtitle_entries::tests::wvtt_sample_entry_round_trip`) and feed it
     /// through the same reconstruction path the `stpp` fixture exercises.
     /// A summary log for a whole [`Media`] as one segment per track.
+    #[cfg(feature = "hls")]
     fn one_segment_log(media: &Media) -> crate::segment_log::SegmentSummaryLog {
         let mut log = crate::segment_log::SegmentSummaryLog::new();
         for track in &media.tracks {
@@ -1694,6 +1705,7 @@ mod tests {
     /// sample and therefore no truthful `EXTINF` — it is omitted from the
     /// playlist rather than rendered as `#EXTINF:0.000`, which RFC 8216
     /// §4.3.2.1 defines as a real playback duration a player would honour.
+    #[cfg(feature = "hls")]
     #[test]
     fn hls_packager_omits_a_timestampless_track_instead_of_emitting_extinf_zero() {
         const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
@@ -1789,6 +1801,7 @@ mod tests {
     /// §4.3.3.1: `#EXT-X-TARGETDURATION` must be at least the rounded
     /// `#EXTINF`, which the ceiling always satisfies — and a whole number of
     /// seconds is its own ceiling, not one second more.
+    #[cfg(feature = "hls")]
     #[test]
     fn ceil_secs_rounds_up_only_a_fractional_span() {
         assert_eq!(ceil_secs(0.0), 0);

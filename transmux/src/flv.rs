@@ -227,34 +227,6 @@ const SI24_SIGN_EXTEND_MASK: u32 = 0xFF00_0000;
 /// `ES_ID` assigned to the single audio elementary stream.
 const ESDS_AUDIO_ES_ID: u16 = 1;
 
-/// `CodecConfig::Aac.channel_count` for an `AudioSpecificConfig` whose
-/// `channelConfiguration` does not determine a channel count.
-///
-/// ISO/IEC 14496-3 Table 1.19 gives a count for configurations 1..=7
-/// (configuration 7 is **8** channels, 7.1). Configuration 0 means the mapping
-/// is carried in-band by a `program_config_element` in the raw data stream —
-/// this crate decodes no PCE, and FLV's AAC sequence header cannot contain one
-/// (a PCE is a raw_data_block element, not part of the ASC) — and 8..=15 are
-/// reserved. `0` marks "not derived", matching this crate's existing
-/// placeholder convention (`ts_demux`'s `MPEGH_CHANNEL_COUNT_UNSPECIFIED`), and
-/// is never a channel count a real stream has. It is *not* fabricated: writing
-/// the raw configuration index as a count was the bug (7.1 reported as 7, a
-/// PCE-signalled stream as 0 channels), and writing some other number would be
-/// a second fabrication.
-///
-/// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
-pub(crate) const AAC_CHANNEL_COUNT_UNKNOWN: u16 = 0;
-
-/// The channel count [`CodecConfig::Aac`] should carry for `config`.
-///
-/// [`AAC_CHANNEL_COUNT_UNKNOWN`] when Table 1.19 does not determine one.
-pub(crate) fn aac_channel_count(config: &AudioSpecificConfig) -> u16 {
-    config
-        .channel_configuration
-        .channel_count()
-        .unwrap_or(AAC_CHANNEL_COUNT_UNKNOWN)
-}
-
 // ---------------------------------------------------------------------------
 // Error
 // ---------------------------------------------------------------------------

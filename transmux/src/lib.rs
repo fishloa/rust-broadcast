@@ -143,8 +143,14 @@
 //! | `std`   | yes     | `std::error::Error` impls, plus every XML path (DASH/LL-DASH MPD, Smooth Streaming, PlayReady WRMHEADER) via `quick-xml` |
 //! | `serde` | no      | `serde::Serialize` for box types |
 //! | `cenc`  | yes     | CENC/CBCS (ISO/IEC 23001-7) AES-CTR/AES-CBC sample decrypt ([`CencDecryptStage`]) + encrypt ([`CencEncryptStage`]) via the RustCrypto `aes`/`ctr`/`cbc` crates. DASH/HLS DRM signalling ([`DashPackager::content_protection`], [`broadcast_hls::cenc_ext_x_key`]) reads the always-available `TrackSpec::protection`/`cenc` box types and needs no feature |
-//! | `sample-aes` | no | HLS Sample-AES + full-segment AES-128 (AES-128-CBC) content protection ([`sample_aes`]); implies `cenc`, adds the RustCrypto `cbc` crate |
-//! | `cli`   | no      | the `transmux` command-line packager binary (`clap`; implies `std`) — see [`cli`] and `docs/CLI-STANDARD.md` |
+//! | `flv`   | yes     | the FLV container spoke — [`FlvMuxStage`], [`StreamingFlvDemux`], and the RTMP signalling that carries FLV, over `rtmp-runtime` |
+//! | `rtp`   | yes     | the RTP/RTCP spoke — [`RtpPacketiserStage`], [`RtpStreamDepacketiser`], the RTCP packet types, the A/V alignment helper, over `rtp-packet` |
+//! | `ps`    | yes     | the MPEG-2 Program Stream demux stage ([`StreamingPsDemux`]), over `mpeg-ps` |
+//! | `matroska` | yes  | the EBML/Matroska/WebM spoke — [`MatroskaDemux`] and [`MkvMuxStage`], over `broadcast-matroska` |
+//! | `hls`   | yes     | the HLS segmenters ([`StreamingTsHlsSegmenter`], [`LlHlsSegmenter`]), the [`HlsPackager`] playlist renderer, and the HLS `INSTREAM-ID` half of caption detection, over `broadcast-hls` |
+//! | `captions` | yes  | caption presence detection ([`caption_detect`]) over `cc-data` |
+//! | `sample-aes` | no | HLS Sample-AES + full-segment AES-128 (AES-128-CBC) content protection ([`sample_aes`]); implies `cenc` and `hls`, adds the RustCrypto `cbc` crate |
+//! | `cli`   | no      | the `transmux` command-line packager binary (`clap`; implies `std` and every container spoke) — see [`cli`] and `docs/CLI-STANDARD.md` |
 
 // The crate is `no_std` without the `std` feature, but its in-crate test modules
 // use the std prelude (`Vec`, `String`, `vec!`, `eprintln!`, `thread_local!`)
@@ -168,6 +174,7 @@ pub mod annexb;
 pub mod au;
 pub mod audio_profile;
 pub mod bitreader;
+#[cfg(feature = "captions")]
 pub mod caption_detect;
 #[cfg(feature = "cenc")]
 pub(crate) mod cenc_crypto;
@@ -188,7 +195,9 @@ pub mod dovi_descriptor;
 pub mod drm;
 pub mod dts_core;
 pub mod error;
+#[cfg(feature = "flv")]
 pub mod flv;
+#[cfg(feature = "flv")]
 pub mod flv_stream;
 pub mod h262;
 pub mod hdr;
@@ -198,9 +207,11 @@ pub mod ir;
 pub mod klv;
 pub mod live_join;
 pub mod ll_dash;
+#[cfg(feature = "hls")]
 pub mod ll_hls;
 pub mod media;
 pub mod mhas;
+#[cfg(feature = "matroska")]
 pub mod mkv_mux;
 pub mod mp4_demux;
 pub mod mpeg2_display;
@@ -217,6 +228,7 @@ pub mod payload;
 pub mod pipeline;
 pub mod plan_pass;
 pub mod progressive;
+#[cfg(feature = "ps")]
 pub mod ps_demux;
 pub mod rbsp;
 pub mod rebase;
@@ -226,13 +238,19 @@ pub mod stitch;
 #[cfg(test)]
 pub(crate) mod test_bits;
 pub mod timeline;
+#[cfg(feature = "rtp")]
 pub use rtp_packet::rtcp;
+#[cfg(feature = "matroska")]
 pub mod matroska_demux;
+#[cfg(feature = "flv")]
 pub mod rtmp;
 pub mod rtp;
+#[cfg(feature = "rtp")]
 pub mod rtp_align;
+#[cfg(feature = "rtp")]
 pub mod rtp_dts;
 pub mod rtp_sdp;
+#[cfg(feature = "rtp")]
 pub mod rtp_stream;
 #[cfg(feature = "sample-aes")]
 pub mod sample_aes;
@@ -250,6 +268,7 @@ pub mod splice;
 pub mod sps;
 pub mod trickplay;
 pub mod ts_demux;
+#[cfg(feature = "hls")]
 pub mod ts_hls;
 pub mod ts_mux;
 pub(crate) mod units;
@@ -268,6 +287,7 @@ pub use annexb::{
 pub use au::{AccessUnitSplitter, split_access_units};
 pub use broadcast_common::CencScheme;
 pub use broadcast_common::klv::KlvItem;
+#[cfg(feature = "captions")]
 pub use caption_detect::{CaptionDetector, DetectedCaption, declared_caption_services};
 #[cfg(feature = "cenc")]
 pub use cenc_decrypt::{CencDecryptStage, KeyMap};
@@ -290,10 +310,12 @@ pub use drm::{
 #[cfg(feature = "std")]
 pub use drm::{playready_pro, playready_pssh, playready_wrmheader};
 pub use error::{Error, Result};
+#[cfg(feature = "flv")]
 pub use flv::{
     FlvError, FlvMuxStage, FlvPayload, FlvPayloadKind, flv_frame_payload,
     flv_sequence_header_payloads, flv_track_kind, on_metadata_body,
 };
+#[cfg(feature = "flv")]
 pub use flv_stream::StreamingFlvDemux;
 pub use h262::{SequenceDisplayExtension, SequenceHeaderGeometry};
 pub use interlace::{
@@ -315,8 +337,12 @@ pub use live_join::{DropReason, JoinDecision, JoinPolicy, JoinState, LiveJoin, R
 #[cfg(feature = "std")]
 pub use ll_dash::LlDashPackager;
 pub use ll_dash::LlSegmenter;
+#[cfg(feature = "hls")]
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
-pub use media::{CmafMuxStage, FragmentCut, HlsPackager, PcrSample, SkippedTrack, TrackProtection};
+#[cfg(feature = "hls")]
+pub use media::HlsPackager;
+pub use media::{CmafMuxStage, FragmentCut, PcrSample, SkippedTrack, TrackProtection};
+#[cfg(feature = "matroska")]
 pub use mkv_mux::MkvMuxStage;
 pub use mpeg_legacy::{
     MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,
@@ -334,23 +360,30 @@ pub use pipeline::{
 };
 pub use plan_pass::PlanPass;
 pub use progressive::ProgressiveMuxStage;
+#[cfg(feature = "ps")]
 pub use ps_demux::{PsDemuxLimits, StreamingPsDemux};
 pub use rebase::{GapStage, OffsetStage, RebaseOrigin, RebaseStage};
 pub use repackage::{Repackage, RepackageOutput};
+#[cfg(feature = "rtp")]
 pub use rtcp::{
     APP_NAME_LEN, App, Bye, CompoundPacket, PT_APP, PT_BYE, PT_RECEIVER_REPORT, PT_SENDER_REPORT,
     PT_SOURCE_DESCRIPTION, REPORT_BLOCK_LEN, ReceiverReport, ReportBlock, RtcpPacket,
     RtcpPacketType, SDES_CNAME, SDES_EMAIL, SDES_LOC, SDES_NAME, SDES_NOTE, SDES_PHONE, SDES_PRIV,
     SDES_TOOL, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
 };
+#[cfg(feature = "flv")]
 pub use rtmp::{RtmpFlvError, RtmpMuxStage};
 #[cfg(feature = "std")]
 pub use rtp::sdp_media;
 pub use rtp::{
     DEFAULT_AAC_CLOCK_RATE, DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT,
-    KLV_ENCODING_NAME, NAL_TYPE_IDR, RtpMediaKind, RtpPacket, RtpPacketiserStage, VIDEO_CLOCK_RATE,
-    VIDEO_CLOCK_TIMESCALE, depacketise_klv, packetise_klv, packetise_video_sample,
+    KLV_ENCODING_NAME, NAL_TYPE_IDR, RtpMediaKind, VIDEO_CLOCK_RATE, VIDEO_CLOCK_TIMESCALE,
 };
+#[cfg(feature = "rtp")]
+pub use rtp::{
+    RtpPacket, RtpPacketiserStage, depacketise_klv, packetise_klv, packetise_video_sample,
+};
+#[cfg(feature = "rtp")]
 pub use rtp_align::{AlignOut, AvSync, SR_SWITCH_TOLERANCE_US, TrackAligner};
 #[cfg(feature = "std")]
 pub use rtp_sdp::{
@@ -361,6 +394,7 @@ pub use rtp_sdp::{
     aac_config_from_asc_bytes, aac_config_from_asc_hex, aac_config_from_fmtp, avc_config_from_fmtp,
     avc_config_from_sprop, avc_config_from_sps_pps, fmtp_param, rtpmap_clock_rate,
 };
+#[cfg(feature = "rtp")]
 pub use rtp_stream::{
     DEFAULT_REORDER_DEPTH, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, WallSkewExceeded,
 };
@@ -391,6 +425,7 @@ pub use hdr10plus::{
     AdditionalWindow, BezierToneMapping, ColorVolumeTransform, DistributionPoint,
     Hdr10PlusMetadata, OverlapProcessOption, PeakLuminanceTable, WindowRegion,
 };
+#[cfg(feature = "matroska")]
 pub use matroska_demux::{IR_TIMESCALE, MatroskaDemux, MatroskaDemuxConfig, MatroskaInput};
 #[cfg(feature = "std")]
 pub use smooth_codec::track_spec_from_quality_level;
@@ -408,6 +443,7 @@ pub use ts_demux::{
     AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,
     InputDegradation, StreamingTsDemux,
 };
+#[cfg(feature = "hls")]
 pub use ts_hls::{StreamingTsHlsSegmenter, UpdateTrackOutcome};
 pub use ts_mux::{DEFAULT_PSI_INTERVAL, TsContinuity, TsMuxStage};
 pub use validate::{
