@@ -124,9 +124,11 @@ const RTP_SSRC: u32 = 0xCAFE_BABE;
 
 /// One RFC 3550 §5.1 RTP packet from the publish's single SSRC, serialized
 /// through `rtp-packet`, so the wire bytes are the library's, not a test's.
-fn rtp(sequence: u16, timestamp: u32, payload: &[u8]) -> rtp_packet::RtpPacket<'_> {
+/// `marker` is set only on the packet carrying an access unit's last NAL
+/// unit (RFC 3550 §5.1, RFC 6184 §5.1).
+fn rtp(sequence: u16, timestamp: u32, marker: bool, payload: &[u8]) -> rtp_packet::RtpPacket<'_> {
     rtp_packet::RtpPacket {
-        marker: true,
+        marker,
         payload_type: WHIP_PAYLOAD_TYPE,
         sequence_number: sequence.into(),
         timestamp,
@@ -138,16 +140,19 @@ fn rtp(sequence: u16, timestamp: u32, payload: &[u8]) -> rtp_packet::RtpPacket<'
     }
 }
 
+/// The recording listener's driver over one WHIP publish.
+type WhipDriver = ListenDriver<RecordingListener<WhipIngestSession>>;
+
 /// One WHIP publish: the session the drive loop admits, fed the capture's own
 /// access units one RFC 6184 single-NAL RTP packet per NAL unit, in wire
-/// order — the shape a browser publisher sends. The session announces its
-/// program and establishes only once it has captured a real SPS/PPS pair from
-/// the keyframe, and every sample before that point is buffered and replayed
-/// in arrival order.
-#[tokio::test]
-async fn whip_publish_event_sequence_matches_the_golden() {
+/// order — the shape a browser publisher sends, with the marker set only on
+/// the packet carrying the access unit's last NAL unit. The session announces
+/// its program and establishes only once it has captured a real SPS/PPS pair
+/// from the keyframe, and every sample before that point is buffered and
+/// replayed in arrival order.
+async fn whip_publish() -> (Vec<transmux::Sample>, WhipDriver, Recorder, SessionId) {
     let (spec, samples) = whip_source();
-    let session = WhipIngestSession::from_spec(spec.clone(), WHIP_PAYLOAD_TYPE);
+    let session = WhipIngestSession::from_spec(spec, WHIP_PAYLOAD_TYPE);
     let (mut driver, recorder) =
         recording_driver(vec![session], 1, trunk_config(), handshake(), nz(64));
     let media_plane::ingress::AcceptOutcome::Admitted(id) = driver.poll_accept() else {
@@ -165,10 +170,19 @@ async fn whip_publish_event_sequence_matches_the_golden() {
         )
         .expect("a 90 kHz timestamp fits 32 bits");
         let base = *first_timestamp.get_or_insert(timestamp);
-        for unit in
-            transmux::iter_length_prefixed_nals(sample.data.as_ref()).expect("length-prefixed NALs")
-        {
-            let packet = rtp(sequence, timestamp.wrapping_sub(base), unit);
+        let units = transmux::iter_length_prefixed_nals(sample.data.as_ref())
+            .expect("length-prefixed NALs");
+        let last = units
+            .len()
+            .checked_sub(1)
+            .expect("an access unit carries at least one NAL unit");
+        for (unit_index, unit) in units.into_iter().enumerate() {
+            let packet = rtp(
+                sequence,
+                timestamp.wrapping_sub(base),
+                unit_index == last,
+                unit,
+            );
             sequence = sequence.wrapping_add(1);
             let mut sized = vec![0u8; packet.serialized_len()];
             packet
@@ -181,8 +195,132 @@ async fn whip_publish_event_sequence_matches_the_golden() {
         d.finish();
     }
 
+    (samples, driver, recorder, id)
+}
+
+#[tokio::test]
+async fn whip_publish_event_sequence_matches_the_golden() {
+    let (_, driver, recorder, id) = whip_publish().await;
     let document = render_session(&driver, &recorder, id);
     assert_golden("whip-publish.txt", &document);
+}
+
+/// One sample as the recorder recorded it, parsed from the session's own
+/// rendered event line so the assertion reads the events, never the golden.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct RecordedSample {
+    data: usize,
+    dts: i64,
+    pts: i64,
+    sync: bool,
+}
+
+fn recorded_samples(lines: &[String]) -> Vec<RecordedSample> {
+    lines
+        .iter()
+        .filter_map(|line| line.strip_prefix("Sample "))
+        .map(|line| RecordedSample {
+            data: field(line, "data=")
+                .parse()
+                .expect("a recorded byte count is an integer"),
+            dts: some_timing(field(line, "dts=")),
+            pts: some_timing(field(line, "pts=")),
+            sync: field(line, "sync=") == "true",
+        })
+        .collect()
+}
+
+/// The value of the whitespace-separated `key` token in one recorded line.
+fn field<'a>(line: &'a str, key: &str) -> &'a str {
+    line.split_whitespace()
+        .find_map(|token| token.strip_prefix(key))
+        .expect("a recorded sample line carries every field")
+}
+
+/// The integer inside a rendered `Some(_)` timing.
+fn some_timing(raw: &str) -> i64 {
+    raw.strip_prefix("Some(")
+        .and_then(|value| value.strip_suffix(')'))
+        .expect("a recorded sample carries a Some timing")
+        .parse()
+        .expect("a recorded timing is an integer")
+}
+
+/// The capture's frame period, read from the source access units' own decode
+/// times: the smallest positive step, which ignores the single reorder hold
+/// the capture opens with.
+fn frame_period(samples: &[transmux::Sample]) -> i64 {
+    samples
+        .iter()
+        .zip(samples.iter().skip(1))
+        .filter_map(|(earlier, later)| {
+            let earlier = earlier.timing?.dts()?;
+            let later = later.timing?.dts()?;
+            let step = later.checked_sub(earlier)?;
+            (step > 0).then_some(step)
+        })
+        .min()
+        .expect("the capture spans more than one decode time")
+}
+
+/// The marker bit must close an access unit only after its last NAL unit
+/// (RFC 3550 §5.1, RFC 6184 §5.1): setting it on every single-NAL packet
+/// yields one sample per NAL unit, sharing presentation timestamps and
+/// stepping decode time by a tick instead of the frame period.
+#[tokio::test]
+async fn whip_publish_yields_one_sample_per_access_unit() {
+    let (source, _driver, recorder, _id) = whip_publish().await;
+    let recorded = recorded_samples(&recorder.lines());
+    assert_eq!(
+        recorded.len(),
+        source.len(),
+        "one sample per source access unit"
+    );
+
+    let smallest = source
+        .iter()
+        .map(|sample| sample.data.len())
+        .min()
+        .expect("the capture carries access units");
+    for sample in &recorded {
+        assert!(
+            sample.data >= smallest,
+            "a sample is shorter than the smallest source access unit: {} < {smallest}",
+            sample.data
+        );
+    }
+
+    let mut pts: Vec<i64> = recorded.iter().map(|sample| sample.pts).collect();
+    pts.sort_unstable();
+    let present = pts.len();
+    pts.dedup();
+    assert_eq!(
+        pts.len(),
+        present,
+        "no two samples share a presentation timestamp"
+    );
+
+    for (earlier, later) in recorded.iter().zip(recorded.iter().skip(1)) {
+        assert!(
+            later.dts > earlier.dts,
+            "decode timestamps strictly increase: {} then {}",
+            earlier.dts,
+            later.dts
+        );
+    }
+
+    let period = frame_period(&source);
+    let steady = recorded
+        .iter()
+        .position(|sample| sample.sync)
+        .expect("the capture opens on an IDR");
+    for (earlier, later) in recorded.iter().zip(recorded.iter().skip(1)).skip(steady) {
+        assert_eq!(
+            later.dts - earlier.dts,
+            period,
+            "steady-state decode step differs from the capture's frame period"
+        );
+    }
 }
 
 // ---- RTMP ---------------------------------------------------------------
