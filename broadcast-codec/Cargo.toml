@@ -1,0 +1,35 @@
+[package]
+name         = "broadcast-codec"
+version      = "0.1.0"
+edition      = "2024"
+description  = "Codec seam for rust-broadcast: raw audio/video frame types and the sans-IO Decoder/Encoder traits an outside codec plugs into. Holds no codec itself. no_std + alloc."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["codec", "decoder", "encoder", "frame", "no-std"]
+categories   = ["multimedia", "no-std"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version.workspace = true
+publish       = false
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
+
+[features]
+default = ["std"]
+std = ["broadcast-core/std"]
+
+[lints]
+workspace = true
+
+[[example]]
+name = "pcm_passthrough"
+required-features = ["std"]
+
+[[example]]
+name = "drain_contract"
+required-features = ["std"]
