@@ -478,7 +478,7 @@ fn named_const_blocks_ascending() {
     enum_doc_rows(&r, "rtmp-runtime/src/message.rs", "MessageTypeId");
     consts_ascending(
         &r,
-        "transmux/src/au.rs",
+        "broadcast-bitstream/src/au.rs",
         "const VVC_VCL_MAX",
         "const VVC_FD",
     );

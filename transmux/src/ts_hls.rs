@@ -88,13 +88,13 @@ use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 
 use crate::error::{Error, Result};
 use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary, TrackPart};
-use crate::nal::{NalCodec, access_unit_is_idr};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::segment_cut::SegmentCutPolicy;
 use crate::segmenter::{
     MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor, no_sync_sample_error,
 };
 use crate::ts_mux::{TsContinuity, mux_tracks_at_continuing};
+use broadcast_bitstream::nal::{NalCodec, access_unit_is_idr};
 
 /// Outcome of [`StreamingTsHlsSegmenter::update_track`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

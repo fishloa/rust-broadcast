@@ -396,10 +396,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-bitstream"
+version = "0.1.0"
+dependencies = [
+ "broadcast-core",
+ "isobmff",
+ "memchr",
+ "serde",
+ "test-fixtures",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "broadcast-client"
 version = "0.8.0"
 dependencies = [
  "broadcast-auth",
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "broadcast-hls",
@@ -2343,6 +2356,7 @@ dependencies = [
 name = "media-doctor"
 version = "0.18.0"
 dependencies = [
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "broadcast-dash",
@@ -2378,6 +2392,7 @@ dependencies = [
 name = "media-plane"
 version = "0.14.0"
 dependencies = [
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "broadcast-hls",
@@ -2550,6 +2565,7 @@ dependencies = [
  "async-trait",
  "axum",
  "broadcast-auth",
+ "broadcast-bitstream",
  "broadcast-client",
  "broadcast-common",
  "broadcast-core",
@@ -4145,6 +4161,7 @@ dependencies = [
 name = "test-harness"
 version = "0.1.0"
 dependencies = [
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "dash-runtime",
@@ -4469,6 +4486,7 @@ name = "transmux"
 version = "0.33.0"
 dependencies = [
  "aes 0.9.4",
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "broadcast-dash",
@@ -4487,7 +4505,6 @@ dependencies = [
  "dvb-vbi",
  "isobmff",
  "jiff",
- "memchr",
  "motion-imagery-metadata",
  "mpeg-pes",
  "mpeg-ps",

@@ -47,18 +47,18 @@
 //! parameter sets travel ahead of their use (the normal case) the change is
 //! raised at the first access unit that references them.
 
-use crate::annexb::iter_annexb_nals;
-use crate::bitreader::BitReader;
 use crate::ir::{
     ActiveFormat, ActiveFormatDescription, AfdPersistence, BarData, DisplayChangeSet,
     DisplayGeometry, DisplayInfo, UserDataCarriage,
 };
-use crate::nal::{HEVC_NAL_HEADER_LEN, NAL_TYPE_MASK, NalCodec};
 use crate::sps::decode_avc_slice_sps;
 use crate::user_data;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use broadcast_bitstream::annexb::iter_annexb_nals;
+use broadcast_bitstream::bitreader::BitReader;
+use broadcast_bitstream::nal::{HEVC_NAL_HEADER_LEN, NAL_TYPE_MASK, NalCodec};
 use isobmff::nalu_types::HEVC_SPS_NUT;
 
 /// `nal_unit_type` of a non-IDR coded slice (H.264 Table 7-1).
@@ -199,7 +199,7 @@ fn hevc_pps_ids(nal: &[u8]) -> Option<(u8, u8)> {
 /// `slice_pic_parameter_set_id` (H.265 §7.3.6.1) of a base-layer,
 /// independent slice segment; `None` for anything else.
 fn hevc_slice_pps_id(nal: &[u8]) -> Option<u8> {
-    let t = crate::nal::nal_unit_type(NalCodec::Hevc, nal)?;
+    let t = broadcast_bitstream::nal::nal_unit_type(NalCodec::Hevc, nal)?;
     if t > HEVC_LAST_VCL || (nal[0] & HEVC_NAL_LAYER_ID_BIT_MASK) != BASE_LAYER {
         return None;
     }
@@ -374,7 +374,7 @@ impl SpsTracker {
         slice_pps: &mut Vec<Option<u8>>,
         activation: &mut Activation,
     ) {
-        let Some(t) = crate::nal::nal_unit_type(NalCodec::Hevc, nal) else {
+        let Some(t) = broadcast_bitstream::nal::nal_unit_type(NalCodec::Hevc, nal) else {
             return;
         };
         if (nal[0] & HEVC_NAL_LAYER_ID_BIT_MASK) != BASE_LAYER {
@@ -444,7 +444,7 @@ impl SpsTracker {
             NalCodec::Hevc => &nal[2..],
             _ => return,
         };
-        let msgs = crate::nal::sei_messages(body);
+        let msgs = broadcast_bitstream::nal::sei_messages(body);
         for (payload_type, payload) in msgs {
             if payload_type != user_data::SEI_PAYLOAD_TYPE_USER_DATA_REGISTERED_ITU_T_T35 {
                 continue;

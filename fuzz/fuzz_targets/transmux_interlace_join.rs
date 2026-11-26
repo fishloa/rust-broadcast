@@ -2,7 +2,12 @@
 
 use libfuzzer_sys::fuzz_target;
 use transmux::sps::{decode_avc_slice_sps, decode_hevc_interlace_sps};
-use transmux::{LiveJoin, NalCodec, Sample};
+use broadcast_bitstream::{
+    NalCodec,
+};
+use transmux::{
+    LiveJoin, Sample,
+};
 
 // Fuzz the interlace-facts SPS walkers (H.264 VUI/HRD, H.265 inter-RPS + VUI,
 // #1162 R3) and the live-join state machine (R4, SEI/NAL scanning) on

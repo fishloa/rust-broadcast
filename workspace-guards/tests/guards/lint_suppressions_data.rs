@@ -10,6 +10,7 @@ pub const TABLE: &[Crate] = &[
     plain("broadcast-common"),
     plain("broadcast-core"),
     plain("broadcast-codec"),
+    plain("broadcast-bitstream"),
     plain("broadcast-matroska"),
     plain("broadcast-auth"),
     plain("dvb-si"),

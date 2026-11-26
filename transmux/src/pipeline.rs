@@ -7,7 +7,7 @@
 //! ISO/IEC 14496-12:2026 §8.8 (movie fragments) and the CMAF structure.
 //!
 //! Video access units are carried length-prefixed in `mdat`
-//! ([`crate::annexb`]); the `moof` `trun` carries per-sample size / duration /
+//! ([`broadcast_bitstream::annexb`]); the `moof` `trun` carries per-sample size / duration /
 //! flags / composition offset, `tfdt` the base media decode time, and each
 //! `trun.data_offset` is computed from the finished `moof` size so the samples
 //! resolve against the `default-base-is-moof` base.

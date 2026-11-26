@@ -100,17 +100,6 @@ const VVC_FD: u8 = 25;
 /// Top bit of the first RBSP byte, carrying the first-slice-of-picture flag.
 const RBSP_TOP_BIT_MASK: u8 = 0x80;
 
-/// Upper bound on bytes buffered for a single still-open NAL, and on the size
-/// of one assembled access unit.
-///
-/// A NAL only completes when the *next* start code arrives, so a stream that
-/// never emits one — or one whose declared picture runs to gigabytes — would
-/// otherwise grow `buf`/`au` until the process runs out of memory. The bound is
-/// far above any real coded picture (the largest H.264 level allows ~139 MiB
-/// per frame at the top level, and broadcast pictures are orders of magnitude
-/// smaller), so a conformant stream never reaches it.
-const MAX_OPEN_NAL_BYTES: usize = 64 * 1024 * 1024;
-
 /// NAL-header length in bytes: AVC 1, HEVC/VVC 2.
 fn header_len(codec: NalCodec) -> usize {
     match codec {
@@ -192,7 +181,7 @@ fn first_slice_of_picture(codec: NalCodec, nal_body: &[u8]) -> bool {
 /// First-byte offset of the first NAL in `data`: the position of a `00 00 01`
 /// code pulled back over any immediately-preceding `zero_byte`s (which belong to
 /// that NAL). `None` when `data` holds no start code.
-pub(crate) fn first_nal_start(data: &[u8]) -> Option<usize> {
+pub fn first_nal_start(data: &[u8]) -> Option<usize> {
     let p = find_start_code_prefix(data, 0)?;
     let mut s = p;
     while s > 0 && data[s - 1] == 0 {
@@ -208,8 +197,12 @@ pub(crate) fn first_nal_start(data: &[u8]) -> Option<usize> {
 /// Push bytes with [`push`](Self::push); drain completed access units with
 /// [`pop`](Self::pop). Call [`finish`](Self::finish) at end of stream to complete
 /// the trailing NAL and flush the final access unit.
+#[non_exhaustive]
 pub struct AccessUnitSplitter {
     codec: NalCodec,
+    /// Caller-supplied bound on one still-open NAL and one assembled access
+    /// unit; `None` is unlimited.
+    max_open_nal_bytes: Option<usize>,
     /// Unconsumed Annex B bytes; begins at a start code once primed.
     buf: Vec<u8>,
     /// Whether the first start code has been located (leading junk dropped).
@@ -237,6 +230,7 @@ impl AccessUnitSplitter {
     pub fn new(codec: NalCodec) -> Self {
         Self {
             codec,
+            max_open_nal_bytes: None,
             buf: Vec::new(),
             primed: false,
             scanned: 0,
@@ -246,6 +240,20 @@ impl AccessUnitSplitter {
             #[cfg(test)]
             scanned_bytes: 0,
         }
+    }
+
+    /// Create a splitter that rejects a still-open NAL, or an assembled access
+    /// unit, larger than `max_open_nal_bytes`.
+    ///
+    /// A NAL only completes when the *next* start code arrives, so a stream
+    /// that never emits one — or one whose declared picture runs to gigabytes
+    /// — would otherwise grow without bound. The bound is the caller's; a
+    /// conformant stream never reaches one chosen above the largest real coded
+    /// picture.
+    pub fn with_max_open_nal_bytes(codec: NalCodec, max_open_nal_bytes: usize) -> Self {
+        let mut splitter = Self::new(codec);
+        splitter.max_open_nal_bytes = Some(max_open_nal_bytes);
+        splitter
     }
 
     /// Append `bytes` of the Annex B stream and split off any access units that
@@ -317,13 +325,16 @@ impl AccessUnitSplitter {
     }
 
     /// Reject a stream whose open NAL or assembled access unit has grown past
-    /// [`MAX_OPEN_NAL_BYTES`] without completing.
+    /// the caller's bound without completing.
     fn check_open_nal_cap(&self) -> AuResult<()> {
+        let Some(max) = self.max_open_nal_bytes else {
+            return Ok(());
+        };
         for (len, what) in [
             (self.buf.len(), "Annex B NAL"),
             (self.au.len(), "access unit"),
         ] {
-            if len > MAX_OPEN_NAL_BYTES {
+            if len > max {
                 return Err(Error::InvalidValue(InvalidValue {
                     field: what,
                     value: len as u64,
@@ -446,8 +457,8 @@ fn start_code_len(nal_with_code: &[u8]) -> usize {
 pub fn split_access_units(codec: NalCodec, annexb: &[u8]) -> Vec<Vec<u8>> {
     let mut s = AccessUnitSplitter::new(codec);
     // The one-shot convenience wrapper has no way to surface a mid-stream
-    // error, and its buffer is the caller's whole stream — cap by simply
-    // stopping the feed; `finish` still flushes what was assembled.
+    // error, and its buffer is the caller's whole stream; stop the feed on an
+    // error and still flush what was assembled.
     if s.push(annexb).is_err() {
         return Vec::new();
     }
@@ -465,6 +476,9 @@ mod tests {
 
     use super::*;
     use alloc::vec;
+
+    /// The cap `transmux`'s program-stream demuxer passes today.
+    const TEST_CAP: usize = 64 * 1024 * 1024;
 
     // Realistic-ish NAL headers. AVC: [type], first RBSP byte encodes
     // first_mb_in_slice (0x80 → ==0). HEVC: [type<<1, layer/tid], then RBSP.
@@ -836,12 +850,12 @@ mod tests {
     /// runs past the cap) must be rejected, not buffered without limit.
     #[test]
     fn an_unterminated_nal_is_rejected_at_the_cap() {
-        let mut s = AccessUnitSplitter::new(NalCodec::Avc);
+        let mut s = AccessUnitSplitter::with_max_open_nal_bytes(NalCodec::Avc, TEST_CAP);
         s.push(&avc_aud()).unwrap();
         // Feed well past the cap in modest chunks: the open NAL never closes.
         let chunk = vec![0x55u8; 1 << 20];
         let mut err = None;
-        for _ in 0..(MAX_OPEN_NAL_BYTES / chunk.len() + 4) {
+        for _ in 0..(TEST_CAP / chunk.len() + 4) {
             if let Err(e) = s.push(&chunk) {
                 err = Some(e);
                 break;
@@ -893,18 +907,12 @@ mod tests {
         assert!(aus[0].len() > 4 * 1024 * 1024);
     }
 
-    /// The bound is a literal 64 MiB, not an accidental ~1 MiB.
-    #[test]
-    fn max_open_nal_bytes_is_sixty_four_mib() {
-        assert_eq!(MAX_OPEN_NAL_BYTES, 64 * 1024 * 1024);
-    }
-
     /// Exactly the cap is accepted; one byte more is rejected.
     #[test]
     fn the_open_nal_cap_is_exclusive() {
-        let mut s = AccessUnitSplitter::new(NalCodec::Avc);
+        let mut s = AccessUnitSplitter::with_max_open_nal_bytes(NalCodec::Avc, TEST_CAP);
         s.push(&[0x00, 0x00, 0x00, 0x01]).unwrap();
-        let at_cap = vec![0x55u8; MAX_OPEN_NAL_BYTES.saturating_sub(4)];
+        let at_cap = vec![0x55u8; TEST_CAP.saturating_sub(4)];
         s.push(&at_cap)
             .expect("a NAL exactly at the cap must be accepted");
         let err = s

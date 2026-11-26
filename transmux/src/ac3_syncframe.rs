@@ -16,10 +16,10 @@
 //!
 //! The `dac3`/`dec3` boxes themselves live in [`isobmff::ac3`].
 
-use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
 use crate::units::BITS_PER_KILOBIT;
 use alloc::vec::Vec;
+use broadcast_bitstream::bitreader::read_bits_checked as read_bits;
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::need_in;
 use broadcast_core::wire::u16_at;

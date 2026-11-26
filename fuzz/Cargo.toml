@@ -19,6 +19,7 @@ broadcast-common = { path = "../broadcast-common" }
 dvb-si     = { path = "../dvb-si" }
 
 [dependencies]
+broadcast-bitstream = { path = "../broadcast-bitstream", version = "0.1.0", default-features = false, features = ["h264", "hevc"] }
 broadcast-common   = { path = "../broadcast-common" }
 broadcast-core = { path = "../broadcast-core" }
 broadcast-matroska = { path = "../broadcast-matroska" }
@@ -631,5 +632,11 @@ doc  = false
 [[bin]]
 name = "matroska_reader"
 path = "fuzz_targets/matroska_reader.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "broadcast_bitstream_nal"
+path = "fuzz_targets/broadcast_bitstream_nal.rs"
 test = false
 doc  = false

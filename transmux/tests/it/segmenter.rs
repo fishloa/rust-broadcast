@@ -366,7 +366,7 @@ fn real_fixture_remux_is_lossless_and_parseable() {
     let mut idr = Vec::with_capacity(vid.len());
     for (payload, _, _) in &vid {
         let mut has_idr = false;
-        for nal in transmux::iter_annexb_nals(payload) {
+        for nal in broadcast_bitstream::iter_annexb_nals(payload) {
             match nal[0] & 0x1F {
                 7 if sps.is_none() => sps = Some(nal.to_vec()),
                 8 if pps.is_none() => pps = Some(nal.to_vec()),

@@ -249,9 +249,11 @@ fn rtsp_no_sprop_announces_video_with_inband_avcc() {
 fn without_param_sets(sample: &transmux::Sample) -> transmux::Sample {
     let mut out = sample.clone();
     let mut data = Vec::new();
-    for nal in transmux::iter_length_prefixed_nals(&sample.data).expect("length-prefixed au") {
+    for nal in
+        broadcast_bitstream::iter_length_prefixed_nals(&sample.data).expect("length-prefixed au")
+    {
         if matches!(
-            transmux::nal_unit_type(transmux::NalCodec::Avc, nal),
+            broadcast_bitstream::nal_unit_type(broadcast_bitstream::NalCodec::Avc, nal),
             Some(AVC_NAL_SPS | AVC_NAL_PPS)
         ) {
             continue;

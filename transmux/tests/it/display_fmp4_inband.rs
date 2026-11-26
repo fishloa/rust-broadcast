@@ -76,7 +76,7 @@ fn sarswitch_avc3_switch_at_sps_change() {
 
     // Independent oracle: scan each sample's length-prefixed NALs for an SPS
     // (type 7) whose bytes differ from the previous one.
-    use transmux::annexb::iter_length_prefixed_nals;
+    use broadcast_bitstream::annexb::iter_length_prefixed_nals;
     let mut prev_sps: Option<Vec<u8>> = None;
     let mut switch_idx: Option<usize> = None;
     for (i, s) in track.samples.iter().enumerate() {

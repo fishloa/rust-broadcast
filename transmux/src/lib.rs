@@ -91,8 +91,9 @@
 //!   UAS Datalink Local Set under `motion-imagery-metadata`.
 //! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
-//! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /
-//!   [`nal_unit_type`]); I-frame trick-play track derivation as a sample stage ([`TrickPlayStage`]);
+//! - **Utilities:** NAL keyframe classification
+//!   ([`broadcast_bitstream::is_keyframe_nal`] /
+//!   [`broadcast_bitstream::nal_unit_type`]); I-frame trick-play track derivation as a sample stage ([`TrickPlayStage`]);
 //!   the single ISO/IEC 14496-12:2026 §8.8.7/§8.8.8 fragment
 //!   sample-offset resolver shared by the demuxer, decryptor and validator
 //!   ([`isobmff::frag_offsets`]).
@@ -170,10 +171,7 @@ struct ReadmeDoctests;
 
 pub mod aac_asc;
 pub mod ac3_syncframe;
-pub mod annexb;
-pub mod au;
 pub mod audio_profile;
-pub mod bitreader;
 #[cfg(feature = "captions")]
 pub mod caption_detect;
 #[cfg(feature = "cenc")]
@@ -222,7 +220,7 @@ extern crate self as transmux;
 #[cfg(test)]
 #[path = "../../test-harness/src/collect.rs"]
 pub mod collect;
-pub mod nal;
+pub mod nal_params;
 pub mod nalu_ext;
 pub mod payload;
 pub mod pipeline;
@@ -230,7 +228,6 @@ pub mod plan_pass;
 pub mod progressive;
 #[cfg(feature = "ps")]
 pub mod ps_demux;
-pub mod rbsp;
 pub mod rebase;
 pub mod repackage;
 pub mod segment_log;
@@ -280,11 +277,6 @@ pub use aac_asc::{
     HeAacSignaling, SamplingFrequencyIndex, build_adts_header, parse_adts_header,
 };
 pub use ac3_syncframe::{Ac3SyncframeInfo, Ec3SyncframeInfo};
-pub use annexb::{
-    NAL_LENGTH_SIZE, annexb_to_length_prefixed, iter_annexb_nals, iter_length_prefixed_nals,
-    iter_length_prefixed_nals_with, length_prefixed_to_annexb, normalise_nal_length_size,
-};
-pub use au::{AccessUnitSplitter, split_access_units};
 pub use broadcast_common::klv::KlvItem;
 pub use broadcast_core::CencScheme;
 #[cfg(feature = "captions")]
@@ -348,11 +340,7 @@ pub use mpeg_legacy::{
     MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,
 };
 pub use mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
-pub use nal::{
-    NalCodec, access_unit_is_idr, access_unit_is_keyframe, access_unit_is_rap,
-    avc_access_unit_dimensions, avc_access_unit_parameter_sets, avc_sps_dimensions,
-    caption_cc_data, is_idr_nal, is_keyframe_nal, nal_unit_type, recovery_point_sei,
-};
+pub use nal_params::{avc_access_unit_dimensions, avc_sps_dimensions};
 pub use pipeline::{
     CodecConfig, FragmentTrackData, FrameRateBasis, Provenance, Sample, SampleFlags, TrackSpec,
     build_init_segment, build_media_segment, build_media_segment_with_events, nominal_frame_rate,

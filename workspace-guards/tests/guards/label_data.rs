@@ -169,6 +169,16 @@ pub const TABLE: &[Crate] = &[
         min_enums: Some(2),
     },
     Crate {
+        name: "broadcast-bitstream",
+        scope: Scope::Crate,
+        matcher: Matcher::Strict,
+        // `Error` is a structured error. The NAL unit-type enums and
+        // `NalCodec` are the spec labels, pinned.
+        skip: &["Error"],
+        expected: Some(&["AvcNalUnitType", "HevcNalUnitType", "NalCodec"]),
+        min_enums: Some(3),
+    },
+    Crate {
         name: "broadcast-codec",
         scope: Scope::Crate,
         matcher: Matcher::Loose,

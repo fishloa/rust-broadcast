@@ -282,7 +282,7 @@ fn demux_keeps_only_declarative_sei_messages_in_the_hvcc_array() {
         if i == 0 {
             push(&bundled);
         }
-        for nal in transmux::annexb::iter_length_prefixed_nals(&s.data).unwrap() {
+        for nal in broadcast_bitstream::annexb::iter_length_prefixed_nals(&s.data).unwrap() {
             if nal_type(nal) != SEI_PREFIX_NUT {
                 push(nal);
             }

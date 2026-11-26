@@ -19,7 +19,7 @@ use broadcast_core::len::need_in;
 use crate::error::{Error, Result};
 
 /// Bytes in the `00 00 01` Annex B start-code prefix (ITU-T H.264 Annex B).
-pub(crate) const START_CODE_PREFIX_LEN: usize = 3;
+pub const START_CODE_PREFIX_LEN: usize = 3;
 /// Offset of the `01` marker inside the start-code prefix.
 const START_CODE_MARKER_OFFSET: usize = 2;
 /// Offset of the second byte of the prefix, counted from its first byte.
@@ -56,7 +56,7 @@ pub fn iter_annexb_nals(annexb: &[u8]) -> AnnexBNalIter<'_> {
 }
 
 /// Offset of the first `00 00 01` start-code prefix at or after `from`, or
-/// `None`. The single scan primitive for the crate: [`start_code_positions`],
+/// `None`. The single scan primitive for the crate: `start_code_positions`,
 /// `au::first_nal_start`, the streaming splitter's resumable scan,
 /// `au::start_code_len` and `mpeg_legacy::find_start_code` all go through it
 /// (audit r04-O1 / #1141), so a fix here reaches every scanner.
@@ -68,7 +68,7 @@ pub fn iter_annexb_nals(annexb: &[u8]) -> AnnexBNalIter<'_> {
 /// a `01` are not `00 00`, no prefix can start at or before that `01`, so the
 /// next search begins just past it. The result is the same as the
 /// byte-by-byte scan's (`find_start_code_prefix_matches_byte_by_byte_scan`).
-pub(crate) fn find_start_code_prefix(data: &[u8], from: usize) -> Option<usize> {
+pub fn find_start_code_prefix(data: &[u8], from: usize) -> Option<usize> {
     let n = data.len();
     let mut p = from;
     while p + START_CODE_PREFIX_LEN <= n {
@@ -103,6 +103,7 @@ pub(crate) fn start_code_positions(data: &[u8]) -> Vec<usize> {
 }
 
 /// Iterator over Annex B NAL units (see [`iter_annexb_nals`]).
+#[non_exhaustive]
 pub struct AnnexBNalIter<'a> {
     data: &'a [u8],
     code_positions: Vec<usize>,
@@ -147,6 +148,9 @@ impl<'a> Iterator for AnnexBNalIter<'a> {
 
 /// Convert an Annex B access unit into length-prefixed form (4-byte big-endian
 /// length before each NAL), suitable for a CMAF `mdat`.
+///
+/// Recorded exception to the no-raw-byte rule: a stream-format converter
+/// produces bytes.
 pub fn annexb_to_length_prefixed(annexb: &[u8]) -> Vec<u8> {
     length_prefix(annexb.len(), iter_annexb_nals(annexb))
 }
@@ -155,10 +159,7 @@ pub fn annexb_to_length_prefixed(annexb: &[u8]) -> Vec<u8> {
 /// §5.3.3.1.3, `lengthSizeMinusOne = 3`), the one length-prefix writer the
 /// Annex B, RTP and TS paths share. `capacity` is the caller's size bound, so
 /// the output is allocated once.
-pub(crate) fn length_prefix<'a>(
-    capacity: usize,
-    nals: impl IntoIterator<Item = &'a [u8]>,
-) -> Vec<u8> {
+pub fn length_prefix<'a>(capacity: usize, nals: impl IntoIterator<Item = &'a [u8]>) -> Vec<u8> {
     let mut out = Vec::with_capacity(capacity);
     for nal in nals {
         out.extend_from_slice(&(nal.len() as u32).to_be_bytes());
@@ -244,6 +245,9 @@ pub fn iter_length_prefixed_nals_with(lp: &[u8], length_size: usize) -> Result<V
 ///
 /// `length_size` must be 1, 2 or 4 — 3 (a 3-byte length) is reserved by
 /// §5.3.3 and is rejected.
+///
+/// Recorded exception to the no-raw-byte rule: a stream-format converter
+/// produces bytes.
 pub fn normalise_nal_length_size(au: &[u8], length_size: usize) -> Result<Vec<u8>> {
     let nals = iter_length_prefixed_nals_with(au, length_size)?;
     if length_size == NAL_LENGTH_SIZE {
@@ -263,6 +267,9 @@ pub fn normalise_nal_length_size(au: &[u8], length_size: usize) -> Result<Vec<u8
 
 /// Convert a length-prefixed (4-byte) buffer back into an Annex B byte stream,
 /// emitting a 4-byte start code (`00 00 00 01`) before each NAL.
+///
+/// Recorded exception to the no-raw-byte rule: a stream-format converter
+/// produces bytes.
 pub fn length_prefixed_to_annexb(lp: &[u8]) -> Result<Vec<u8>> {
     let nals = iter_length_prefixed_nals(lp)?;
     let mut out = Vec::with_capacity(lp.len());
@@ -275,6 +282,7 @@ pub fn length_prefixed_to_annexb(lp: &[u8]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
     use broadcast_core::error::InvalidValue;
 
     use super::*;
@@ -351,6 +359,23 @@ mod tests {
                 .collect();
             assert_same_as_byte_by_byte(&d);
         }
+    }
+
+    /// A 4 MiB buffer of non-zero bytes with one start code at its very end:
+    /// the scan must walk the whole buffer and return that position. The
+    /// per-byte search this replaced and the `memchr` search must agree here,
+    /// so correctness at size does not depend on which one is compiled.
+    #[test]
+    fn finds_start_code_at_end_of_four_mib_buffer() {
+        let size = 4 * 1024 * 1024;
+        let mut data = vec![0xFFu8; size];
+        data[size - 3..].copy_from_slice(&[0, 0, 1]);
+        assert_eq!(find_start_code_prefix(&data, 0), Some(size - 3));
+        assert_eq!(start_code_positions(&data), vec![size - 3]);
+        assert_eq!(
+            find_start_code_prefix_byte_by_byte(&data, 0),
+            Some(size - 3)
+        );
     }
 
     #[test]

@@ -92,7 +92,6 @@ use broadcast_core::Parse;
 use rtmp_runtime::RtmpError;
 
 use crate::aac_asc::AudioSpecificConfig;
-use crate::annexb::{NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
 use crate::flv::{
     CODEC_ID_AVC, FLV_HEADER_LEN, FLV_TIMESCALE, FRAME_TYPE_KEYFRAME, FlvError, MAX_FLV_HEADER_LEN,
     PREV_TAG_SIZE_LEN, TAG_HEADER_LEN, aac_packet_type, asc_rate_hz, avc_dimensions,
@@ -100,6 +99,9 @@ use crate::flv::{
 };
 use crate::ir::{AUDIO_SAMPLE_SIZE_BITS, DemuxEvent, SampleTiming};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use broadcast_bitstream::annexb::{
+    NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size,
+};
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 
 /// One track (video or audio)'s still-in-flight sample: buffered until the
@@ -191,7 +193,7 @@ struct TrackState {
     config_bytes: Vec<u8>,
     /// The NAL length-prefix size (`lengthSizeMinusOne + 1`) of the track's
     /// current `avcC`, so an in-band sample's NAL prefixes can be normalised to
-    /// the crate's 4-byte form ([`crate::annexb::NAL_LENGTH_SIZE`]) before the
+    /// the crate's 4-byte form ([`broadcast_bitstream::annexb::NAL_LENGTH_SIZE`]) before the
     /// sample reaches the pipeline (r04-W43). `None` until a sequence header
     /// resolves the track.
     nal_length_size: Option<usize>,

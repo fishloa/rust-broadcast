@@ -896,7 +896,7 @@ fn seed_param_sets(param_sets: &mut AvcParamSets, config: &CodecConfig) {
 }
 
 fn sample_is_field_picture(param_sets: &mut AvcParamSets, sample: &Sample) -> bool {
-    crate::annexb::iter_length_prefixed_nals(&sample.data)
+    broadcast_bitstream::annexb::iter_length_prefixed_nals(&sample.data)
         .map(|nals| matches!(param_sets.classify_nals(nals), AvcPicture::Field(_)))
         .unwrap_or(false)
 }

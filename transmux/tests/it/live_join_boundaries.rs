@@ -1,9 +1,8 @@
 //! `LiveJoin` decision, policy, VVC and leading-picture boundary gates
 //! (issue #1162 R4; H.264 §7.4.1.2.4, H.265 Table 7-1, H.266 Table 5).
 #![cfg(feature = "std")]
-use transmux::{
-    CodecConfig, DropReason, JoinDecision, JoinPolicy, LiveJoin, NalCodec, RapKind, Sample,
-};
+use broadcast_bitstream::NalCodec;
+use transmux::{CodecConfig, DropReason, JoinDecision, JoinPolicy, LiveJoin, RapKind, Sample};
 
 fn timed_au(nals: &[&[u8]], pts: i64) -> Sample {
     let mut data = Vec::new();

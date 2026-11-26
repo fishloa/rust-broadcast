@@ -1,5 +1,9 @@
 # Inventory for the `broadcast-bitstream` extraction
 
+> A measurement of `origin/main` on 2026-11-26, before the extraction began. The paths and line numbers
+> below are as they were then; files it names under `transmux/src/` move as the extraction proceeds.
+
+
 Status: measurement only. This document changes no source file. It measures the
 code that the approved design (`docs/broadcast-bitstream` extraction, lane bs0)
 would move out of `transmux` into a new `broadcast-bitstream` crate.

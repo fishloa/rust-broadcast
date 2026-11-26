@@ -25,7 +25,7 @@
 //! - **H.264** (RFC 6184): single-NAL packets (NAL type 1–23), STAP-A
 //!   (type 24) aggregation for the SPS+PPS parameter sets, and FU-A (type 28)
 //!   fragmentation of any NAL larger than the MTU. Video IR samples are 4-byte
-//!   length-prefixed NALs ([`crate::annexb`]); the length prefixes are stripped
+//!   length-prefixed NALs ([`broadcast_bitstream::annexb`]); the length prefixes are stripped
 //!   on packetise and re-added on depacketise.
 //! - **AAC** (RFC 3640, `AAC-hbr`): an AU-headers-length (16-bit, in bits)
 //!   prefix + one 2-byte AU-header (`sizeLength=13; indexLength=3`) + the raw
@@ -55,12 +55,12 @@
 //! `no_std` + `alloc`.
 
 #[cfg(feature = "rtp")]
-use crate::nal::NAL_TYPE_MASK;
-#[cfg(feature = "rtp")]
 use alloc::collections::VecDeque;
 #[cfg(feature = "std")]
 use alloc::format;
 use alloc::vec::Vec;
+#[cfg(feature = "rtp")]
+use broadcast_bitstream::nal::NAL_TYPE_MASK;
 #[cfg(feature = "rtp")]
 use broadcast_core::error::BufferTooShort;
 use broadcast_core::error::InvalidValue;
@@ -77,8 +77,6 @@ use bytes::Bytes;
 #[cfg(feature = "rtp")]
 use rtp_packet::RtpPacket as RtpPacketWire;
 
-#[cfg(feature = "rtp")]
-use crate::annexb::NAL_LENGTH_SIZE;
 use crate::error::{Error, Result};
 #[cfg(feature = "rtp")]
 use crate::ir::Sample;
@@ -88,6 +86,8 @@ use crate::ir::TrackSpec;
 use crate::mux_stage::{MuxInput, MuxOutput};
 #[cfg(any(feature = "std", feature = "rtp"))]
 use crate::pipeline::CodecConfig;
+#[cfg(feature = "rtp")]
+use broadcast_bitstream::annexb::NAL_LENGTH_SIZE;
 
 // ---------------------------------------------------------------------------
 // Named constants (no magic numbers — RFC 3550 §5.1 / RFC 6184 / RFC 3640)
@@ -823,7 +823,9 @@ pub fn rescale_ts(
 /// Split a 4-byte length-prefixed IR video sample into its NAL slices.
 #[cfg(feature = "rtp")]
 fn split_length_prefixed(data: &[u8]) -> Result<Vec<&[u8]>> {
-    crate::annexb::iter_length_prefixed_nals(data)
+    Ok(broadcast_bitstream::annexb::iter_length_prefixed_nals(
+        data,
+    )?)
 }
 
 /// Build a STAP-A packet aggregating several (small) NALs (RFC 6184 §5.7.1).
@@ -1563,7 +1565,7 @@ fn reassemble_audio_impl(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
 #[cfg(feature = "rtp")]
 fn length_prefix_nals(nals: &[Vec<u8>]) -> Vec<u8> {
     let total: usize = nals.iter().map(|n| NAL_LENGTH_SIZE + n.len()).sum();
-    crate::annexb::length_prefix(total, nals.iter().map(Vec::as_slice))
+    broadcast_bitstream::annexb::length_prefix(total, nals.iter().map(Vec::as_slice))
 }
 
 /// A parsed RTP fixed header (RFC 3550 §5.1) — the fields the spoke needs.

@@ -22,10 +22,10 @@
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::error::{Error, Result};
-use crate::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use crate::pipeline::CodecConfig;
 use crate::rtp::{base64_decode, hex_decode};
 use alloc::vec::Vec;
+use broadcast_bitstream::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use broadcast_core::Parse;
 use broadcast_core::error::InvalidValue;
 use broadcast_core::len::need_in;
@@ -198,7 +198,7 @@ pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVC
         profile_indication,
         profile_compatibility: first_sps.0[SPS_PROFILE_COMPATIBILITY_OFFSET],
         level_indication: first_sps.0[SPS_LEVEL_IDC_OFFSET],
-        length_size_minus_one: crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
+        length_size_minus_one: broadcast_bitstream::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
         sps,
         pps,
         chroma_format: ext.as_ref().map(|i| i.chroma_format_idc),

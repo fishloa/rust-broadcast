@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- `avc_access_unit_parameter_sets` now comes from `broadcast-bitstream` and returns that crate's typed parameter-set wrappers; the RTSP path converts them into the `isobmff` newtypes. The NAL/Annex B helpers move there too, and the crate gains the `broadcast-bitstream` dependency.
 - The wire-format contract types now come from `broadcast-core`.
 ### Added
 

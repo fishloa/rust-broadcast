@@ -3,7 +3,7 @@
 //! #568 wired the **PES-carried** `cc_data()` path to
 //! [`Cea608CueExtractor`]/[`Cea708CueExtractor`]. #599 adds the **in-band SEI**
 //! carriage path (ATSC A/53 `user_data_registered_itu_t_t35` in an H.264/HEVC
-//! SEI NAL — `transmux::nal::caption_cc_data`). This test proves the two
+//! SEI NAL — `broadcast_bitstream::nal::caption_cc_data`). This test proves the two
 //! carriage sources converge on the *same* extractor API: `caption_cc_data`
 //! unwraps the SEI, `cc_data::CcData::parse` decodes the resulting bytes
 //! exactly like the PES path, and `Cea608CueExtractor::push_frame` doesn't
@@ -34,12 +34,13 @@
 //!   `ffmpeg -f lavfi -i "movie=<slice>[out+subcc]" -c:s srt` (ffmpeg's own
 //!   EIA-608 decoder, `cc_dec`) against the exact same slice — an external
 //!   oracle, not a value invented for this test.
+use broadcast_bitstream::{NalCodec, caption_cc_data};
 use broadcast_core::Parse;
 use cc_data::CcData;
 use cc_data::decode::Cea608Channel;
 use timed_metadata::event::MediaTime;
 use timed_metadata::webvtt::{Cea608CueExtractor, write_document};
-use transmux::{CodecConfig, NalCodec, caption_cc_data};
+use transmux::CodecConfig;
 
 // ---------------------------------------------------------------------------
 // Shared: SEI wrap + WebVTT structural validity (mirrors webvtt_cc_fixture.rs)
@@ -59,7 +60,7 @@ fn sei_varint(mut v: u32) -> Vec<u8> {
 
 /// Wrap one frame's `cc_data()` bytes in a complete Annex B H.264 SEI NAL
 /// carrying an ATSC A/53 `user_data_registered_itu_t_t35` message (the exact
-/// wire form `transmux::nal::caption_cc_data` recognises).
+/// wire form `broadcast_bitstream::nal::caption_cc_data` recognises).
 fn wrap_a53_sei(cc_data: &[u8]) -> Vec<u8> {
     const ITU_T_T35_COUNTRY_CODE_USA: u8 = 0xB5;
     const ATSC_T35_PROVIDER_CODE: [u8; 2] = [0x00, 0x31];
@@ -206,7 +207,7 @@ const REAL_CAPTURE: &str = "transformers-eia608-h264";
 
 /// Demux `data` (a whole/partial MPEG-2 TS byte stream), extract every A/53
 /// caption SEI from the H.264 video track's access units via
-/// `transmux::caption_cc_data`, and return `(pts_90k, cc_data_bytes)` in
+/// `broadcast_bitstream::caption_cc_data`, and return `(pts_90k, cc_data_bytes)` in
 /// decode order for every access unit that carried one.
 fn extract_sei_frames_from_ts(data: &[u8]) -> Vec<(u64, Vec<u8>)> {
     let media = test_harness::collect::media_from_ts(data).expect("demux the real capture slice");

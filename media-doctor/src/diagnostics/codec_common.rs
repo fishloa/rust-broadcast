@@ -8,9 +8,9 @@
 //! `mpeg-pes`), reusing `mpeg-ts`'s `SectionReassembler` the same way
 //! `PatPmtVersionCheck` does.
 //!
-//! No NAL/SPS parsing lives here — that stays in `transmux`
-//! (`transmux::nal`, `transmux::annexb`, `transmux::decode_avc_sps`,
-//! `transmux::decode_hevc_sps`); this module only locates the elementary
+//! No NAL/SPS parsing lives here — that stays below in `broadcast-bitstream`
+//! (`broadcast_bitstream::nal`, `broadcast_bitstream::annexb`) and `transmux`
+//! (`transmux::decode_avc_sps`, `transmux::decode_hevc_sps`); this module only locates the elementary
 //! streams, their PMT-declared type, and hands each check the PES-stripped
 //! elementary-stream bytes for a completed access unit.
 

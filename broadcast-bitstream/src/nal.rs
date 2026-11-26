@@ -43,7 +43,6 @@ use crate::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
 use crate::bitreader::BitReader;
 use crate::rbsp::{EMULATION_BYTE_RUN_LEN, EMULATION_PREVENTION_BYTE};
 use broadcast_core::wire::{be_u16, be_u32};
-use isobmff::nalu_types::{HEVC_PPS_NUT, HEVC_SPS_NUT, HEVC_SUFFIX_SEI_NUT, HEVC_VPS_NUT};
 
 // ── AVC (ITU-T H.264 §7.3.1, Table 7-1) ─────────────────────────────────────
 
@@ -51,24 +50,18 @@ use isobmff::nalu_types::{HEVC_PPS_NUT, HEVC_SPS_NUT, HEVC_SUFFIX_SEI_NUT, HEVC_
 /// — ITU-T H.264 §7.3.1.
 pub const NAL_TYPE_MASK: u8 = 0x1F;
 /// H.264 `nal_unit_type` for a coded slice of an **IDR** picture (Table 7-1).
-pub(crate) const AVC_NAL_IDR: u8 = 5;
+pub const AVC_NAL_IDR: u8 = 5;
 /// H.264 `nal_unit_type` for a supplemental enhancement information (SEI)
 /// message (Table 7-1).
-pub(crate) const AVC_NAL_SEI: u8 = 6;
+pub const AVC_NAL_SEI: u8 = 6;
 /// H.264 `nal_unit_type` for a sequence parameter set (SPS) (Table 7-1).
-pub(crate) const AVC_NAL_SPS: u8 = 7;
+pub const AVC_NAL_SPS: u8 = 7;
 /// H.264 `nal_unit_type` for a picture parameter set (PPS) (Table 7-1).
-pub(crate) const AVC_NAL_PPS: u8 = 8;
-/// Shortest AVC NAL that can carry a body: the 1-byte NAL header plus at
-/// least one body byte.
-const AVC_NAL_MIN_LEN: usize = 2;
+pub const AVC_NAL_PPS: u8 = 8;
 
 /// Byte width of every HEVC/VVC NAL header (ITU-T H.265 §7.3.1.2 /
 /// ITU-T H.266 §7.3.1.2).
-pub(crate) const HEVC_NAL_HEADER_LEN: usize = 2;
-/// Shortest HEVC NAL that can carry a parameter set: the 2-byte NAL header
-/// plus at least one body byte.
-const HEVC_NAL_MIN_LEN: usize = HEVC_NAL_HEADER_LEN + 1;
+pub const HEVC_NAL_HEADER_LEN: usize = 2;
 
 /// `payloadType` for the `recovery_point` SEI message — ITU-T H.264 Annex D
 /// Table D-1 (syntax D.1.7, semantics D.2.7). Broadcast open-GOP H.264 sends
@@ -80,7 +73,7 @@ const AVC_SEI_PAYLOAD_TYPE_RECOVERY_POINT: u32 = 6;
 /// Right shift to reach the HEVC 6-bit `nal_unit_type` in header byte 0.
 const HEVC_NAL_TYPE_SHIFT: u8 = 1;
 /// Mask for the HEVC 6-bit `nal_unit_type` after the shift.
-pub(crate) const HEVC_NAL_TYPE_MASK: u8 = 0x3F;
+pub const HEVC_NAL_TYPE_MASK: u8 = 0x3F;
 /// First HEVC IRAP `nal_unit_type` (`BLA_W_LP`) — Table 7-1.
 const HEVC_IRAP_FIRST: u8 = 16;
 /// Last HEVC IRAP `nal_unit_type` (`RSV_IRAP_VCL23`) — Table 7-1.
@@ -89,8 +82,10 @@ const HEVC_IRAP_LAST: u8 = 23;
 const HEVC_NAL_IDR_W_RADL: u8 = 19;
 /// HEVC `IDR_N_LP` `nal_unit_type` — Table 7-1.
 const HEVC_NAL_IDR_N_LP: u8 = 20;
-/// HEVC `nal_unit_type` for a prefix SEI NAL unit (`PREFIX_SEI_NUT`) — Table 7-1.
-const HEVC_NAL_SEI_PREFIX: u8 = 39;
+/// HEVC `PREFIX_SEI_NUT` `nal_unit_type` — ITU-T H.265 Table 7-1 (type 39).
+pub const HEVC_PREFIX_SEI_NUT: u8 = 39;
+/// HEVC `SUFFIX_SEI_NUT` `nal_unit_type` — ITU-T H.265 Table 7-1 (type 40).
+pub const HEVC_SUFFIX_SEI_NUT: u8 = 40;
 
 // ── VVC (ITU-T H.266 §7.3.1.2, Table 5) ─────────────────────────────────────
 
@@ -141,6 +136,301 @@ impl NalCodec {
 
 broadcast_core::impl_spec_display!(NalCodec);
 
+/// H.264 `nal_unit_type` — ITU-T H.264 Table 7-1.
+///
+/// The reserved and unspecified values keep their wire number in
+/// [`AvcNalUnitType::Reserved`].
+#[cfg(feature = "h264")]
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub enum AvcNalUnitType {
+    /// Type 0, unspecified.
+    Unspecified,
+    /// Type 1, coded slice of a non-IDR picture.
+    CodedSliceNonIdr,
+    /// Type 2, coded slice data partition A.
+    CodedSliceDataPartitionA,
+    /// Type 3, coded slice data partition B.
+    CodedSliceDataPartitionB,
+    /// Type 4, coded slice data partition C.
+    CodedSliceDataPartitionC,
+    /// Type 5, coded slice of an IDR picture.
+    CodedSliceIdr,
+    /// Type 6, supplemental enhancement information.
+    Sei,
+    /// Type 7, sequence parameter set.
+    Sps,
+    /// Type 8, picture parameter set.
+    Pps,
+    /// Type 9, access unit delimiter.
+    AccessUnitDelimiter,
+    /// Type 10, end of sequence.
+    EndOfSequence,
+    /// Type 11, end of stream.
+    EndOfStream,
+    /// Type 12, filler data.
+    FillerData,
+    /// Type 13, sequence parameter set extension.
+    SpsExtension,
+    /// Type 14, prefix NAL unit.
+    PrefixNalUnit,
+    /// Type 15, subset sequence parameter set.
+    SubsetSps,
+    /// Type 20, coded slice extension.
+    SliceExtension,
+    /// Type 21, coded slice extension for a depth view.
+    SliceExtensionDepth,
+    /// A reserved or unspecified `nal_unit_type` (its wire value).
+    Reserved(u8),
+}
+
+#[cfg(feature = "h264")]
+impl AvcNalUnitType {
+    /// Classify a wire `nal_unit_type`.
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            0 => Self::Unspecified,
+            1 => Self::CodedSliceNonIdr,
+            2 => Self::CodedSliceDataPartitionA,
+            3 => Self::CodedSliceDataPartitionB,
+            4 => Self::CodedSliceDataPartitionC,
+            5 => Self::CodedSliceIdr,
+            6 => Self::Sei,
+            7 => Self::Sps,
+            8 => Self::Pps,
+            9 => Self::AccessUnitDelimiter,
+            10 => Self::EndOfSequence,
+            11 => Self::EndOfStream,
+            12 => Self::FillerData,
+            13 => Self::SpsExtension,
+            14 => Self::PrefixNalUnit,
+            15 => Self::SubsetSps,
+            20 => Self::SliceExtension,
+            21 => Self::SliceExtensionDepth,
+            other => Self::Reserved(other),
+        }
+    }
+
+    /// The wire `nal_unit_type`.
+    pub fn code(&self) -> u8 {
+        match self {
+            Self::Unspecified => 0,
+            Self::CodedSliceNonIdr => 1,
+            Self::CodedSliceDataPartitionA => 2,
+            Self::CodedSliceDataPartitionB => 3,
+            Self::CodedSliceDataPartitionC => 4,
+            Self::CodedSliceIdr => 5,
+            Self::Sei => 6,
+            Self::Sps => 7,
+            Self::Pps => 8,
+            Self::AccessUnitDelimiter => 9,
+            Self::EndOfSequence => 10,
+            Self::EndOfStream => 11,
+            Self::FillerData => 12,
+            Self::SpsExtension => 13,
+            Self::PrefixNalUnit => 14,
+            Self::SubsetSps => 15,
+            Self::SliceExtension => 20,
+            Self::SliceExtensionDepth => 21,
+            Self::Reserved(value) => *value,
+        }
+    }
+
+    /// The spec token for this type.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "Unspecified",
+            Self::CodedSliceNonIdr => "CodedSliceNonIdr",
+            Self::CodedSliceDataPartitionA => "CodedSliceDataPartitionA",
+            Self::CodedSliceDataPartitionB => "CodedSliceDataPartitionB",
+            Self::CodedSliceDataPartitionC => "CodedSliceDataPartitionC",
+            Self::CodedSliceIdr => "CodedSliceIdr",
+            Self::Sei => "SEI",
+            Self::Sps => "SPS",
+            Self::Pps => "PPS",
+            Self::AccessUnitDelimiter => "AUD",
+            Self::EndOfSequence => "EndOfSequence",
+            Self::EndOfStream => "EndOfStream",
+            Self::FillerData => "FillerData",
+            Self::SpsExtension => "SPSExt",
+            Self::PrefixNalUnit => "PrefixNalUnit",
+            Self::SubsetSps => "SubsetSPS",
+            Self::SliceExtension => "SliceExtension",
+            Self::SliceExtensionDepth => "SliceExtensionDepth",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
+#[cfg(feature = "h264")]
+broadcast_core::impl_spec_display!(AvcNalUnitType, Reserved);
+
+/// H.265 `nal_unit_type` — ITU-T H.265 Table 7-1.
+///
+/// The reserved and unspecified values keep their wire number in
+/// [`HevcNalUnitType::Reserved`].
+#[cfg(feature = "hevc")]
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub enum HevcNalUnitType {
+    /// Type 0, trailing picture, sub-layer non-reference.
+    TrailingN,
+    /// Type 1, trailing picture, sub-layer reference.
+    TrailingR,
+    /// Type 2, temporal sub-layer access, non-reference.
+    TsaN,
+    /// Type 3, temporal sub-layer access, reference.
+    TsaR,
+    /// Type 4, step-wise temporal sub-layer access, non-reference.
+    StsaN,
+    /// Type 5, step-wise temporal sub-layer access, reference.
+    StsaR,
+    /// Type 6, random access decodable leading picture, non-reference.
+    RadlN,
+    /// Type 7, random access decodable leading picture, reference.
+    RadlR,
+    /// Type 8, random access skipped leading picture, non-reference.
+    RaslN,
+    /// Type 9, random access skipped leading picture, reference.
+    RaslR,
+    /// Type 16, broken link access with leading pictures.
+    BlaWLp,
+    /// Type 17, broken link access with RADL pictures.
+    BlaWRadl,
+    /// Type 18, broken link access with no leading pictures.
+    BlaNLp,
+    /// Type 19, IDR with RADL pictures.
+    IdrWRadl,
+    /// Type 20, IDR with no leading pictures.
+    IdrNLp,
+    /// Type 21, clean random access.
+    CraNut,
+    /// Type 32, video parameter set.
+    VpsNut,
+    /// Type 33, sequence parameter set.
+    SpsNut,
+    /// Type 34, picture parameter set.
+    PpsNut,
+    /// Type 35, access unit delimiter.
+    AudNut,
+    /// Type 36, end of sequence.
+    EosNut,
+    /// Type 37, end of bitstream.
+    EobNut,
+    /// Type 38, filler data.
+    FdNut,
+    /// Type 39, prefix supplemental enhancement information.
+    PrefixSeiNut,
+    /// Type 40, suffix supplemental enhancement information.
+    SuffixSeiNut,
+    /// A reserved or unspecified `nal_unit_type` (its wire value).
+    Reserved(u8),
+}
+
+#[cfg(feature = "hevc")]
+impl HevcNalUnitType {
+    /// Classify a wire `nal_unit_type`.
+    pub fn from_u8(value: u8) -> Self {
+        match value {
+            0 => Self::TrailingN,
+            1 => Self::TrailingR,
+            2 => Self::TsaN,
+            3 => Self::TsaR,
+            4 => Self::StsaN,
+            5 => Self::StsaR,
+            6 => Self::RadlN,
+            7 => Self::RadlR,
+            8 => Self::RaslN,
+            9 => Self::RaslR,
+            16 => Self::BlaWLp,
+            17 => Self::BlaWRadl,
+            18 => Self::BlaNLp,
+            19 => Self::IdrWRadl,
+            20 => Self::IdrNLp,
+            21 => Self::CraNut,
+            32 => Self::VpsNut,
+            33 => Self::SpsNut,
+            34 => Self::PpsNut,
+            35 => Self::AudNut,
+            36 => Self::EosNut,
+            37 => Self::EobNut,
+            38 => Self::FdNut,
+            39 => Self::PrefixSeiNut,
+            40 => Self::SuffixSeiNut,
+            other => Self::Reserved(other),
+        }
+    }
+
+    /// The wire `nal_unit_type`.
+    pub fn code(&self) -> u8 {
+        match self {
+            Self::TrailingN => 0,
+            Self::TrailingR => 1,
+            Self::TsaN => 2,
+            Self::TsaR => 3,
+            Self::StsaN => 4,
+            Self::StsaR => 5,
+            Self::RadlN => 6,
+            Self::RadlR => 7,
+            Self::RaslN => 8,
+            Self::RaslR => 9,
+            Self::BlaWLp => 16,
+            Self::BlaWRadl => 17,
+            Self::BlaNLp => 18,
+            Self::IdrWRadl => 19,
+            Self::IdrNLp => 20,
+            Self::CraNut => 21,
+            Self::VpsNut => 32,
+            Self::SpsNut => 33,
+            Self::PpsNut => 34,
+            Self::AudNut => 35,
+            Self::EosNut => 36,
+            Self::EobNut => 37,
+            Self::FdNut => 38,
+            Self::PrefixSeiNut => 39,
+            Self::SuffixSeiNut => 40,
+            Self::Reserved(value) => *value,
+        }
+    }
+
+    /// The spec token for this type.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::TrailingN => "TRAIL_N",
+            Self::TrailingR => "TRAIL_R",
+            Self::TsaN => "TSA_N",
+            Self::TsaR => "TSA_R",
+            Self::StsaN => "STSA_N",
+            Self::StsaR => "STSA_R",
+            Self::RadlN => "RADL_N",
+            Self::RadlR => "RADL_R",
+            Self::RaslN => "RASL_N",
+            Self::RaslR => "RASL_R",
+            Self::BlaWLp => "BLA_W_LP",
+            Self::BlaWRadl => "BLA_W_RADL",
+            Self::BlaNLp => "BLA_N_LP",
+            Self::IdrWRadl => "IDR_W_RADL",
+            Self::IdrNLp => "IDR_N_LP",
+            Self::CraNut => "CRA_NUT",
+            Self::VpsNut => "VPS_NUT",
+            Self::SpsNut => "SPS_NUT",
+            Self::PpsNut => "PPS_NUT",
+            Self::AudNut => "AUD_NUT",
+            Self::EosNut => "EOS_NUT",
+            Self::EobNut => "EOB_NUT",
+            Self::FdNut => "FD_NUT",
+            Self::PrefixSeiNut => "PREFIX_SEI_NUT",
+            Self::SuffixSeiNut => "SUFFIX_SEI_NUT",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
+#[cfg(feature = "hevc")]
+broadcast_core::impl_spec_display!(HevcNalUnitType, Reserved);
+
 /// The raw `nal_unit_type` from a single NAL unit's header, or `None` if the
 /// slice is shorter than that codec's NAL header.
 ///
@@ -159,40 +449,80 @@ pub fn nal_unit_type(codec: NalCodec, nal: &[u8]) -> Option<u8> {
     })
 }
 
-/// Output-rectangle `(width, height)` of an H.264 SPS NAL, clamped to `u16`.
-///
-/// This is the rule the TS demuxer applies to `TrackSpec` dimensions: the
-/// luma size after frame cropping (`decode_avc_sps`), `None` if the SPS does
-/// not decode.
-pub fn avc_sps_dimensions(sps: &[u8]) -> Option<(u16, u16)> {
-    let info = crate::sps::decode_avc_sps(sps).ok()?;
-    Some((
-        info.width.min(u32::from(u16::MAX)) as u16,
-        info.height.min(u32::from(u16::MAX)) as u16,
-    ))
+/// One H.264 sequence parameter set NAL unit (type 7), NAL header included.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AvcSequenceParameterSet {
+    bytes: Vec<u8>,
 }
 
-/// Dimensions from the first decodable SPS (type 7) in a 4-byte length-prefixed
-/// H.264 access unit, per [`avc_sps_dimensions`]. `None` if the buffer is
-/// malformed or carries no decodable SPS.
-pub fn avc_access_unit_dimensions(au: &[u8]) -> Option<(u16, u16)> {
-    iter_length_prefixed_nals(au)
-        .ok()?
-        .into_iter()
-        .filter(|nal| nal_unit_type(NalCodec::Avc, nal) == Some(AVC_NAL_SPS))
-        .find_map(avc_sps_dimensions)
+impl AvcSequenceParameterSet {
+    /// Wrap a whole SPS NAL unit (header included).
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+
+    /// The NAL unit's bytes, header included.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Consume the wrapper and return the NAL unit's bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
+/// One H.264 picture parameter set NAL unit (type 8), NAL header included.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AvcPictureParameterSet {
+    bytes: Vec<u8>,
+}
+
+impl AvcPictureParameterSet {
+    /// Wrap a whole PPS NAL unit (header included).
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self { bytes }
+    }
+
+    /// The NAL unit's bytes, header included.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// Consume the wrapper and return the NAL unit's bytes.
+    pub fn into_bytes(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
+#[cfg(feature = "isobmff")]
+impl From<AvcSequenceParameterSet> for isobmff::AvcSps {
+    fn from(v: AvcSequenceParameterSet) -> Self {
+        isobmff::AvcSps(v.bytes)
+    }
+}
+
+#[cfg(feature = "isobmff")]
+impl From<AvcPictureParameterSet> for isobmff::AvcPps {
+    fn from(v: AvcPictureParameterSet) -> Self {
+        isobmff::AvcPps(v.bytes)
+    }
 }
 
 /// The in-band SPS (type 7) and PPS (type 8) NAL units of a 4-byte
 /// length-prefixed H.264 access unit, in order. Empty lists if the buffer is
 /// malformed or carries none.
-pub fn avc_access_unit_parameter_sets(au: &[u8]) -> (Vec<isobmff::AvcSps>, Vec<isobmff::AvcPps>) {
+pub fn avc_access_unit_parameter_sets(
+    au: &[u8],
+) -> (Vec<AvcSequenceParameterSet>, Vec<AvcPictureParameterSet>) {
     let mut sps = Vec::new();
     let mut pps = Vec::new();
     for nal in iter_length_prefixed_nals(au).unwrap_or_default() {
         match nal_unit_type(NalCodec::Avc, nal) {
-            Some(AVC_NAL_SPS) => sps.push(isobmff::AvcSps(nal.to_vec())),
-            Some(AVC_NAL_PPS) => pps.push(isobmff::AvcPps(nal.to_vec())),
+            Some(AVC_NAL_SPS) => sps.push(AvcSequenceParameterSet::new(nal.to_vec())),
+            Some(AVC_NAL_PPS) => pps.push(AvcPictureParameterSet::new(nal.to_vec())),
             _ => {}
         }
     }
@@ -296,7 +626,11 @@ impl Iterator for EbspBytes<'_> {
                 self.zero_run = 0;
                 continue;
             }
-            self.zero_run = if b == 0 { self.zero_run + 1 } else { 0 };
+            self.zero_run = if b == 0 {
+                self.zero_run.saturating_add(1)
+            } else {
+                0
+            };
             return Some(b);
         }
         None
@@ -371,7 +705,7 @@ const HEVC_PREFIX_SEI_DEFAULT_TID_PLUS1: u8 = 1;
 /// An HEVC prefix SEI NAL unit (2-byte header, the given `(payloadType,
 /// payload)` messages, `rbsp_trailing_bits`, emulation prevention applied) —
 /// ITU-T H.265 §7.3.5 / §7.4.2.
-pub(crate) fn hevc_prefix_sei_nal(messages: &[(u32, &[u8])]) -> Vec<u8> {
+pub fn hevc_prefix_sei_nal(messages: &[(u32, &[u8])]) -> Vec<u8> {
     let mut rbsp = Vec::new();
     for (payload_type, payload) in messages {
         let mut remaining = *payload_type as usize;
@@ -391,7 +725,7 @@ pub(crate) fn hevc_prefix_sei_nal(messages: &[(u32, &[u8])]) -> Vec<u8> {
     rbsp.push(SEI_RBSP_TRAILING_BYTE);
     let escaped = crate::rbsp::escape(&rbsp);
     let mut nal = Vec::with_capacity(escaped.len() + HEVC_NAL_HEADER_LEN);
-    nal.push(crate::hdr::HEVC_PREFIX_SEI_NUT << HEVC_NAL_TYPE_SHIFT);
+    nal.push(HEVC_PREFIX_SEI_NUT << HEVC_NAL_TYPE_SHIFT);
     nal.push(HEVC_PREFIX_SEI_DEFAULT_TID_PLUS1);
     nal.extend_from_slice(&escaped);
     nal
@@ -415,7 +749,7 @@ fn sei_varint(rbsp: &[u8], pos: &mut usize) -> Option<u32> {
 /// H.265 §7.3.5 (identical `payloadType`/`payloadSize` coding). Stops at the
 /// first truncated message or at `rbsp_trailing_bits`, keeping what was read,
 /// so a malformed SEI yields fewer messages rather than an error.
-pub(crate) fn sei_messages(nal_body: &[u8]) -> Vec<(u32, Vec<u8>)> {
+pub fn sei_messages(nal_body: &[u8]) -> Vec<(u32, Vec<u8>)> {
     let rbsp = crate::rbsp::unescape(nal_body);
     let mut out = Vec::new();
     let mut pos = 0usize;
@@ -596,7 +930,7 @@ pub(crate) fn is_sei_nal(codec: NalCodec, nal: &[u8]) -> bool {
         NalCodec::Avc => nal_unit_type(codec, nal) == Some(AVC_NAL_SEI),
         NalCodec::Hevc => matches!(
             nal_unit_type(codec, nal),
-            Some(HEVC_NAL_SEI_PREFIX) | Some(HEVC_SUFFIX_SEI_NUT)
+            Some(HEVC_PREFIX_SEI_NUT) | Some(HEVC_SUFFIX_SEI_NUT)
         ),
         NalCodec::Vvc => false,
     }
@@ -703,7 +1037,7 @@ fn append_atsc_cc_data_from_sei_nal(codec: NalCodec, nal: &[u8], out: &mut Vec<u
 /// unit, concatenated in AU order (issue #599).
 ///
 /// `au` is one access unit — a 4-byte **length-prefixed** buffer when
-/// `length_prefixed` is `true` (the form [`crate::pipeline::Sample::data`]
+/// `length_prefixed` is `true` (the form a length-prefixed access unit
 /// uses for AVC/HEVC), otherwise an **Annex B** byte stream. Walks every NAL,
 /// finds each `user_data_registered_itu_t_t35` SEI message (H.264 type 6 /
 /// HEVC prefix/suffix types 39/40, `payloadType` 4) matching the ATSC A/53
@@ -735,327 +1069,11 @@ pub fn caption_cc_data(codec: NalCodec, au: &[u8], length_prefixed: bool) -> Vec
     out
 }
 
-// ── Parameter-set validation (issue #1171) ───────────────────────────────────
-
-/// Largest parameter-set NAL a decoder configuration record can carry: the
-/// per-NAL length field is `unsigned int(16)` in both
-/// `AVCDecoderConfigurationRecord` (`sequenceParameterSetLength` /
-/// `pictureParameterSetLength`, ISO/IEC 14496-15:2017 §5.3.3.1.2) and
-/// `HEVCDecoderConfigurationRecord` (`nalUnitLength`, §8.3.3.1.2). A longer
-/// "parameter set" cannot be serialized into an `avcC`/`hvcC`.
-pub(crate) const MAX_PARAMETER_SET_LEN: usize = u16::MAX as usize;
-/// `forbidden_zero_bit` of the first NAL-header byte, H.264 §7.3.1 and H.265
-/// §7.3.1.2 — must be 0 in a conforming NAL unit.
-const NAL_FORBIDDEN_BIT_MASK: u8 = 0x80;
-/// H.265 NAL header byte 1 low 3 bits: `nuh_temporal_id_plus1`, which shall
-/// not be 0 (ITU-T H.265 §7.4.2.2).
-const HEVC_TEMPORAL_ID_PLUS1_MASK: u8 = 0x07;
-
-/// Which parameter-set role a NAL plays, for [`parameter_set_is_valid`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ParamKind {
-    /// Video parameter set (HEVC only).
-    Vps,
-    /// Sequence parameter set.
-    Sps,
-    /// Picture parameter set.
-    Pps,
-}
-
-/// Whether `nal` (a whole NAL unit including its header, as yielded by
-/// [`iter_annexb_nals`]) is a parameter set of role `kind` that a decoder
-/// configuration may be built from (issue #1171).
-///
-/// Damaged input regularly yields a NAL whose first byte *looks like* an
-/// SPS/PPS header but whose body is garbage that runs to the end of the access
-/// unit (an 85 704-byte "SPS" was observed). Such a set must not become a
-/// track's config: it can overflow the record's `u16` length field, so the
-/// resulting `avcC`/`hvcC` could not be serialized at all. A valid set is
-///
-/// * non-empty and no longer than [`MAX_PARAMETER_SET_LEN`];
-/// * of the right `nal_unit_type` with a clear `forbidden_zero_bit` (and, for
-///   HEVC, a non-zero `nuh_temporal_id_plus1`);
-/// * terminated by an RBSP stop bit — the last byte of any NAL is non-zero
-///   (H.264 §7.4.1.1 / H.265 §7.4.2: `trailing_zero_8bits` are not part of
-///   the NAL unit); and
-/// * for an SPS, one the SPS decoder parses to non-zero geometry.
-///
-/// Only [`NalCodec::Avc`] and [`NalCodec::Hevc`] have parameter-set records
-/// here; any other codec yields `false`.
-pub(crate) fn parameter_set_is_valid(codec: NalCodec, kind: ParamKind, nal: &[u8]) -> bool {
-    let (Some(&first), Some(&last)) = (nal.first(), nal.last()) else {
-        return false;
-    };
-    if nal.len() > MAX_PARAMETER_SET_LEN || last == 0 || first & NAL_FORBIDDEN_BIT_MASK != 0 {
-        return false;
-    }
-    match codec {
-        NalCodec::Avc => {
-            let want = match kind {
-                ParamKind::Sps => AVC_NAL_SPS,
-                ParamKind::Pps => AVC_NAL_PPS,
-                ParamKind::Vps => return false,
-            };
-            if first & NAL_TYPE_MASK != want || nal.len() < AVC_NAL_MIN_LEN {
-                return false;
-            }
-            kind != ParamKind::Sps
-                || crate::sps::decode_avc_sps(nal).is_ok_and(|i| i.width > 0 && i.height > 0)
-        }
-        NalCodec::Hevc => {
-            let want = match kind {
-                ParamKind::Vps => HEVC_VPS_NUT,
-                ParamKind::Sps => HEVC_SPS_NUT,
-                ParamKind::Pps => HEVC_PPS_NUT,
-            };
-            if nal_unit_type(NalCodec::Hevc, nal) != Some(want)
-                || nal.len() < HEVC_NAL_MIN_LEN
-                || nal[1] & HEVC_TEMPORAL_ID_PLUS1_MASK == 0
-            {
-                return false;
-            }
-            kind != ParamKind::Sps
-                || crate::sps::decode_hevc_sps(nal).is_ok_and(|i| i.width > 0 && i.height > 0)
-        }
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Verbatim H.264 High SPS NAL from a real stream (see `sps.rs` tests).
-    const REAL_AVC_SPS: &[u8] = &[
-        0x67, 0x64, 0x00, 0x0D, 0xAC, 0xD9, 0x41, 0x41, 0xFB, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00,
-        0x10, 0x00, 0x00, 0x03, 0x03, 0x20, 0xF1, 0x42, 0x99, 0x60,
-    ];
-    const REAL_HEVC_SPS: &[u8] = &test_fixtures::vectors::HEVC_MAIN_SPS_320X240;
-
-    #[test]
-    fn real_parameter_sets_are_valid() {
-        use ParamKind::*;
-        assert!(parameter_set_is_valid(NalCodec::Avc, Sps, REAL_AVC_SPS));
-        assert!(parameter_set_is_valid(
-            NalCodec::Avc,
-            Pps,
-            &[0x68, 0xCE, 0x3C, 0x80]
-        ));
-        assert!(parameter_set_is_valid(NalCodec::Hevc, Sps, REAL_HEVC_SPS));
-        assert!(parameter_set_is_valid(
-            NalCodec::Hevc,
-            Vps,
-            &[0x40, 0x01, 0x0C]
-        ));
-        assert!(parameter_set_is_valid(
-            NalCodec::Hevc,
-            Pps,
-            &[0x44, 0x01, 0xC1]
-        ));
-    }
-
-    /// The #1171 shape: a plausible SPS header followed by a body longer than
-    /// the `u16` record length field. Rejected even if it parsed.
-    #[test]
-    fn oversized_parameter_set_is_invalid() {
-        for (codec, kind, good) in [
-            (NalCodec::Avc, ParamKind::Sps, REAL_AVC_SPS),
-            (NalCodec::Hevc, ParamKind::Sps, REAL_HEVC_SPS),
-        ] {
-            let mut big = good.to_vec();
-            big.resize(MAX_PARAMETER_SET_LEN + 1, 0x55);
-            assert!(!parameter_set_is_valid(codec, kind, &big));
-            assert!(!parameter_set_is_valid(
-                NalCodec::Avc,
-                ParamKind::Pps,
-                &[&[0x68u8][..], &[0x55; MAX_PARAMETER_SET_LEN][..]].concat()
-            ));
-        }
-        // 85 704 bytes, the length observed in the report.
-        let mut garbage = alloc::vec![0x67u8];
-        garbage.resize(85_704, 0xA5);
-        assert!(!parameter_set_is_valid(
-            NalCodec::Avc,
-            ParamKind::Sps,
-            &garbage
-        ));
-    }
-
-    #[test]
-    fn empty_wrong_type_and_bad_header_are_invalid() {
-        use ParamKind::*;
-        for codec in [NalCodec::Avc, NalCodec::Hevc] {
-            assert!(!parameter_set_is_valid(codec, Sps, &[]));
-        }
-        // wrong type for the requested role
-        assert!(!parameter_set_is_valid(
-            NalCodec::Avc,
-            Sps,
-            &[0x68, 0xCE, 0x3C, 0x80]
-        ));
-        assert!(!parameter_set_is_valid(NalCodec::Avc, Pps, REAL_AVC_SPS));
-        assert!(!parameter_set_is_valid(
-            NalCodec::Avc,
-            Vps,
-            &[0x40, 0x01, 0x0C]
-        ));
-        assert!(!parameter_set_is_valid(NalCodec::Hevc, Pps, REAL_HEVC_SPS));
-        // forbidden_zero_bit set
-        let mut bad = REAL_AVC_SPS.to_vec();
-        bad[0] |= 0x80;
-        assert!(!parameter_set_is_valid(NalCodec::Avc, Sps, &bad));
-        // nuh_temporal_id_plus1 == 0
-        let mut bad = REAL_HEVC_SPS.to_vec();
-        bad[1] &= !0x07;
-        assert!(!parameter_set_is_valid(NalCodec::Hevc, Sps, &bad));
-        // trailing zero byte: no RBSP stop bit
-        let mut bad = REAL_AVC_SPS.to_vec();
-        *bad.last_mut().unwrap() = 0;
-        assert!(!parameter_set_is_valid(NalCodec::Avc, Sps, &bad));
-        // VVC has no parameter-set record here
-        assert!(!parameter_set_is_valid(NalCodec::Vvc, Sps, REAL_AVC_SPS));
-    }
-
-    /// Right header, but the body is not a decodable SPS.
-    #[test]
-    fn unparseable_sps_is_invalid() {
-        assert!(!parameter_set_is_valid(
-            NalCodec::Avc,
-            ParamKind::Sps,
-            &[0x67, 0x42, 0x00, 0x1E, 0xAB, 0x40]
-        ));
-        let truncated = &REAL_HEVC_SPS[..8];
-        assert!(!parameter_set_is_valid(
-            NalCodec::Hevc,
-            ParamKind::Sps,
-            truncated
-        ));
-    }
-
-    #[test]
-    fn parameter_set_length_boundaries_are_inclusive_and_reject_a_bare_header() {
-        // Exactly the maximum record length, non-zero stop bit: accepted.
-        let max_pps = [&[0x68u8][..], &[0x55; MAX_PARAMETER_SET_LEN - 1][..]].concat();
-        assert_eq!(max_pps.len(), MAX_PARAMETER_SET_LEN);
-        assert!(parameter_set_is_valid(
-            NalCodec::Avc,
-            ParamKind::Pps,
-            &max_pps
-        ));
-        // A 1-byte "PPS" has no body: rejected.
-        assert!(!parameter_set_is_valid(
-            NalCodec::Avc,
-            ParamKind::Pps,
-            &[0x68]
-        ));
-        // The smallest real PPS (2 bytes) is accepted; a zero trailing byte is not.
-        assert!(parameter_set_is_valid(
-            NalCodec::Avc,
-            ParamKind::Pps,
-            &[0x68, 0x01]
-        ));
-        assert!(!parameter_set_is_valid(
-            NalCodec::Avc,
-            ParamKind::Pps,
-            &[0x68, 0x00]
-        ));
-    }
-
-    /// A Baseline-profile H.264 SPS whose 16x16 picture is cropped by
-    /// `(left, right, top, bottom)` chroma-sample offsets.
-    fn avc_sps_with_crop(crop: (u64, u64, u64, u64)) -> Vec<u8> {
-        let (left, right, top, bottom) = crop;
-        let mut nal = alloc::vec![0x67u8, 66, 0x00, 30];
-        let mut s = crate::test_bits::BitWriter::new();
-        s.ue(0); // seq_parameter_set_id
-        s.ue(0); // log2_max_frame_num_minus4
-        s.ue(2); // pic_order_cnt_type
-        s.ue(1); // max_num_ref_frames
-        s.bit(false); // gaps_in_frame_num_value_allowed_flag
-        s.ue(0); // pic_width_in_mbs_minus1 -> 16
-        s.ue(0); // pic_height_in_map_units_minus1 -> 16
-        s.bit(true); // frame_mbs_only_flag
-        s.bit(true); // direct_8x8_inference_flag
-        s.bit(true); // frame_cropping_flag
-        s.ue(left);
-        s.ue(right);
-        s.ue(top);
-        s.ue(bottom);
-        s.bit(false); // vui_parameters_present_flag
-        s.bit(true); // rbsp_stop_one_bit
-        nal.extend_from_slice(&crate::rbsp::escape(&s.finish()));
-        nal
-    }
-
-    /// A 4:2:0 HEVC SPS whose 16x16 picture is cropped by
-    /// `(left, right, top, bottom)` chroma-sample offsets.
-    fn hevc_sps_with_conformance_window(window: (u64, u64, u64, u64)) -> Vec<u8> {
-        let (left, right, top, bottom) = window;
-        let mut nal = alloc::vec![0x42u8, 0x01];
-        let mut s = crate::test_bits::BitWriter::new();
-        s.u(4, 0); // sps_video_parameter_set_id
-        s.u(3, 0); // sps_max_sub_layers_minus1
-        s.bit(true); // sps_temporal_id_nesting_flag
-        s.u(2, 0); // general_profile_space
-        s.bit(false); // general_tier_flag
-        s.u(5, 1); // general_profile_idc
-        s.u(32, 0); // general_profile_compatibility_flags
-        s.u(48, 0); // general_constraint_indicator_flags
-        s.u(8, 93); // general_level_idc
-        s.ue(0); // sps_seq_parameter_set_id
-        s.ue(1); // chroma_format_idc
-        s.ue(16); // pic_width_in_luma_samples
-        s.ue(16); // pic_height_in_luma_samples
-        s.bit(true); // conformance_window_flag
-        s.ue(left);
-        s.ue(right);
-        s.ue(top);
-        s.ue(bottom);
-        s.ue(0); // bit_depth_luma_minus8
-        s.ue(0); // bit_depth_chroma_minus8
-        s.ue(3); // log2_max_pic_order_cnt_lsb_minus4
-        s.bit(false); // sps_sub_layer_ordering_info_present_flag
-        s.ue(0); // sps_max_dec_pic_buffering_minus1
-        s.ue(0); // sps_max_num_reorder_pics
-        s.ue(0); // sps_max_latency_increase_plus1
-        s.ue(0); // log2_min_luma_coding_block_size_minus3
-        s.ue(3); // log2_diff_max_min_luma_coding_block_size
-        s.ue(0); // log2_min_luma_transform_block_size_minus2
-        s.ue(3); // log2_diff_max_min_luma_transform_block_size
-        s.ue(1); // max_transform_hierarchy_depth_inter
-        s.ue(1); // max_transform_hierarchy_depth_intra
-        s.bit(false); // scaling_list_enabled_flag
-        s.bit(false); // amp_enabled_flag
-        s.bit(false); // sample_adaptive_offset_enabled_flag
-        s.bit(false); // pcm_enabled_flag
-        s.ue(0); // num_short_term_ref_pic_sets
-        s.bit(false); // long_term_ref_pics_present_flag
-        s.bit(false); // sps_temporal_mvp_enabled_flag
-        s.bit(false); // strong_intra_smoothing_enabled_flag
-        s.bit(false); // vui_parameters_present_flag
-        s.bit(true); // rbsp_stop_one_bit
-        nal.extend_from_slice(&crate::rbsp::escape(&s.finish()));
-        nal
-    }
-
-    #[test]
-    fn parameter_set_that_decodes_to_zero_geometry_is_invalid() {
-        for (crop, geometry) in [((8, 0, 0, 0), (0, 16)), ((0, 0, 8, 0), (16, 0))] {
-            let avc = avc_sps_with_crop(crop);
-            let info = crate::sps::decode_avc_sps(&avc).expect("AVC SPS decodes");
-            assert_eq!((info.width, info.height), geometry);
-            assert!(!parameter_set_is_valid(NalCodec::Avc, ParamKind::Sps, &avc));
-
-            let hevc = hevc_sps_with_conformance_window(crop);
-            let info = crate::sps::decode_hevc_sps(&hevc).expect("HEVC SPS decodes");
-            assert_eq!((info.width, info.height), geometry);
-            assert!(!parameter_set_is_valid(
-                NalCodec::Hevc,
-                ParamKind::Sps,
-                &hevc
-            ));
-        }
-    }
+    use alloc::string::ToString;
+    use alloc::vec;
 
     #[test]
     fn sei_varint_overflow_is_none_not_a_panic() {
@@ -1474,7 +1492,7 @@ mod tests {
         // header — proves the codec dispatch, not just the AVC path.
         let t35_and_cc_data = &REAL_A53_SEI_NAL[6..]; // payload bytes only (after payloadSize)
         for (label, nal_type) in [
-            ("prefix", HEVC_NAL_SEI_PREFIX),
+            ("prefix", HEVC_PREFIX_SEI_NUT),
             ("suffix", HEVC_SUFFIX_SEI_NUT),
         ] {
             let mut au = alloc::vec::Vec::new();
@@ -1519,60 +1537,6 @@ mod tests {
             let bad_lp = [0x00, 0x00, 0x00, 0x63, 0x06, 0x04];
             let _ = caption_cc_data(codec, &bad_lp, true);
         }
-    }
-
-    /// Concatenate NAL units into the 4-byte big-endian length-prefixed form
-    /// an access unit uses in `mdat`.
-    fn length_prefixed_au(nals: &[&[u8]]) -> Vec<u8> {
-        let mut au = Vec::new();
-        for nal in nals {
-            au.extend_from_slice(&(nal.len() as u32).to_be_bytes());
-            au.extend_from_slice(nal);
-        }
-        au
-    }
-
-    #[test]
-    fn avc_access_unit_scan_reports_the_sps_dimensions_and_parameter_sets() {
-        let pps = [0x68u8, 0xCE, 0x3C, 0x80];
-        let sei = [0x06u8, 0x05, 0x01, 0xAA, 0x80];
-        let idr = [0x65u8, 0x88];
-        let au = length_prefixed_au(&[&sei, REAL_AVC_SPS, &pps, &idr]);
-
-        assert_eq!(
-            avc_access_unit_dimensions(&au),
-            Some((320, 240)),
-            "the in-band SPS's real geometry"
-        );
-        assert_eq!(
-            avc_access_unit_dimensions(&au),
-            avc_sps_dimensions(REAL_AVC_SPS)
-        );
-
-        let (sps, pps_out) = avc_access_unit_parameter_sets(&au);
-        assert_eq!(sps, alloc::vec![isobmff::AvcSps(REAL_AVC_SPS.to_vec())]);
-        assert_eq!(pps_out, alloc::vec![isobmff::AvcPps(pps.to_vec())]);
-    }
-
-    #[test]
-    fn avc_access_unit_without_an_sps_has_no_dimensions() {
-        let pps = [0x68u8, 0xCE, 0x3C, 0x80];
-        let idr = [0x65u8, 0x88];
-        let au = length_prefixed_au(&[&pps, &idr]);
-        assert_eq!(avc_access_unit_dimensions(&au), None);
-        let (sps, pps_out) = avc_access_unit_parameter_sets(&au);
-        assert!(sps.is_empty());
-        assert_eq!(pps_out, alloc::vec![isobmff::AvcPps(pps.to_vec())]);
-    }
-
-    #[test]
-    fn malformed_avc_access_unit_yields_none_and_no_parameter_sets() {
-        // Declares a 99-byte NAL in a 5-byte buffer.
-        let malformed = [0x00u8, 0x00, 0x00, 0x63, 0x67];
-        assert_eq!(avc_access_unit_dimensions(&malformed), None);
-        let (sps, pps) = avc_access_unit_parameter_sets(&malformed);
-        assert!(sps.is_empty());
-        assert!(pps.is_empty());
     }
 
     #[test]
@@ -1651,5 +1615,39 @@ mod tests {
         );
         let followed = [0x00u8, 0x00, 0x03, 0x04];
         assert_eq!(crate::rbsp::unescape(&followed), &[0x00, 0x00, 0x04]);
+    }
+
+    /// The HEVC NAL unit-type constants shared with `isobmff` cannot drift:
+    /// both crates name the same wire values.
+    #[cfg(all(feature = "isobmff", feature = "hevc"))]
+    #[test]
+    fn hevc_nal_unit_type_values_match_isobmff() {
+        use isobmff::nalu_types::{
+            HEVC_PPS_NUT, HEVC_PREFIX_SEI_NUT, HEVC_SPS_NUT, HEVC_SUFFIX_SEI_NUT, HEVC_VPS_NUT,
+        };
+        for (ty, value) in [
+            (HevcNalUnitType::VpsNut, HEVC_VPS_NUT),
+            (HevcNalUnitType::SpsNut, HEVC_SPS_NUT),
+            (HevcNalUnitType::PpsNut, HEVC_PPS_NUT),
+            (HevcNalUnitType::PrefixSeiNut, HEVC_PREFIX_SEI_NUT),
+            (HevcNalUnitType::SuffixSeiNut, HEVC_SUFFIX_SEI_NUT),
+        ] {
+            assert_eq!(ty.code(), value);
+            assert_eq!(HevcNalUnitType::from_u8(value), ty);
+            assert_eq!(ty.to_string(), ty.name());
+        }
+    }
+
+    /// Each named AVC type round-trips through its wire value; anything else
+    /// keeps its number in the reserved arm.
+    #[cfg(feature = "h264")]
+    #[test]
+    fn avc_nal_unit_type_round_trips_its_wire_value() {
+        for value in (0u8..=15).chain([20, 21]) {
+            let ty = AvcNalUnitType::from_u8(value);
+            assert_eq!(ty.code(), value);
+            assert_eq!(ty.to_string(), ty.name());
+        }
+        assert_eq!(AvcNalUnitType::from_u8(31), AvcNalUnitType::Reserved(31));
     }
 }

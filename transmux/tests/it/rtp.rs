@@ -63,7 +63,7 @@ fn original_video_nals(media: &Media) -> Vec<Vec<Vec<u8>>> {
     vt.samples
         .iter()
         .map(|s| {
-            transmux::annexb::iter_length_prefixed_nals(&s.data)
+            broadcast_bitstream::annexb::iter_length_prefixed_nals(&s.data)
                 .unwrap()
                 .into_iter()
                 .map(|n| n.to_vec())
@@ -309,7 +309,7 @@ fn video_round_trip_byte_identical() {
         .samples
         .iter()
         .map(|s| {
-            transmux::annexb::iter_length_prefixed_nals(&s.data)
+            broadcast_bitstream::annexb::iter_length_prefixed_nals(&s.data)
                 .unwrap()
                 .into_iter()
                 .map(|n| n.to_vec())
@@ -880,7 +880,7 @@ fn fua_continuation_without_start_does_not_fail_the_stream() {
         .samples
         .iter()
         .map(|s| {
-            transmux::annexb::iter_length_prefixed_nals(&s.data)
+            broadcast_bitstream::annexb::iter_length_prefixed_nals(&s.data)
                 .unwrap()
                 .into_iter()
                 .map(|n| n.to_vec())
@@ -1721,7 +1721,7 @@ fn lost_middle_fu_a_fragment_never_emits_a_truncated_nal() {
         .samples
         .iter()
         .flat_map(|s| {
-            transmux::annexb::iter_length_prefixed_nals(&s.data)
+            broadcast_bitstream::annexb::iter_length_prefixed_nals(&s.data)
                 .unwrap()
                 .into_iter()
                 .map(|n| n.to_vec())
@@ -2171,7 +2171,7 @@ fn lost_last_packet_of_an_au_costs_only_that_au() {
         .samples
         .iter()
         .flat_map(|s| {
-            transmux::annexb::iter_length_prefixed_nals(&s.data)
+            broadcast_bitstream::annexb::iter_length_prefixed_nals(&s.data)
                 .unwrap()
                 .into_iter()
                 .map(|n| n.to_vec())
@@ -2278,7 +2278,7 @@ fn gap_inside_an_fu_a_run_stops_that_run() {
         .samples
         .iter()
         .flat_map(|s| {
-            transmux::annexb::iter_length_prefixed_nals(&s.data)
+            broadcast_bitstream::annexb::iter_length_prefixed_nals(&s.data)
                 .unwrap()
                 .into_iter()
                 .map(|n| n.to_vec())
@@ -2363,7 +2363,7 @@ fn gap_before_an_fu_a_start_loses_only_the_runs_au() {
         .samples
         .iter()
         .flat_map(|s| {
-            transmux::annexb::iter_length_prefixed_nals(&s.data)
+            broadcast_bitstream::annexb::iter_length_prefixed_nals(&s.data)
                 .unwrap()
                 .into_iter()
                 .map(|n| n.to_vec())

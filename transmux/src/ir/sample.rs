@@ -25,7 +25,7 @@ use core::num::NonZeroU32;
 
 use super::DisplayInfo;
 
-use crate::annexb::annexb_to_length_prefixed;
+use broadcast_bitstream::annexb::annexb_to_length_prefixed;
 
 /// Per-sample flags (ISO/IEC 14496-12:2026 §8.8.3.1 `sample_flags`, reduced to
 /// the one bit this crate's IR tracks today).

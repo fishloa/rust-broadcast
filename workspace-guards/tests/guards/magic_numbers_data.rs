@@ -40,6 +40,14 @@ pub const TABLE: &[Crate] = &[
         allow: &[],
     },
     Crate {
+        name: "broadcast-bitstream",
+        allow: &[(
+            "src/annexb.rs",
+            "pub const NAL_LENGTH_SIZE_MINUS_ONE: u8 = (NAL_LENGTH_SIZE - 1) as u8;",
+            "public API naming the ISO/IEC 14496-15:2017 §5.3.3.1.3 field lengthSizeMinusOne; renaming it is a breaking API change; spec field name, value derived",
+        )],
+    },
+    Crate {
         name: "broadcast-common",
         allow: &[
             (
@@ -735,11 +743,7 @@ pub const TABLE: &[Crate] = &[
     },
     Crate {
         name: "transmux",
-        allow: &[(
-            "src/annexb.rs",
-            "pub const NAL_LENGTH_SIZE_MINUS_ONE: u8 = (NAL_LENGTH_SIZE - 1) as u8;",
-            "public API naming the ISO/IEC 14496-15:2017 §5.3.3.1.3 field lengthSizeMinusOne; renaming it is a breaking API change; spec field name, value derived",
-        )],
+        allow: &[],
     },
     Crate {
         name: "isobmff",

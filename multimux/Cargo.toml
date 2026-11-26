@@ -15,6 +15,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
+broadcast-bitstream = { path = "../broadcast-bitstream", version = "0.1.0", default-features = false, features = ["h264", "hevc", "isobmff"] }
 # Floor is 0.23.1, not 0.23: `push::rtmp` uses
 # `flv_sequence_header_payloads` / `flv_frame_payloads`, which do not
 # exist in 0.23.0 (verified at the tag). Published multimux 0.8.0 shipped

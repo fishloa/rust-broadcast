@@ -44,6 +44,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-bitstream"
+version = "0.1.0"
+dependencies = [
+ "broadcast-core",
+ "isobmff",
+ "memchr",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "broadcast-common"
 version = "14.0.0"
 dependencies = [
@@ -246,6 +257,7 @@ dependencies = [
 name = "dvb-demo"
 version = "0.1.0"
 dependencies = [
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "dvb-conformance",
@@ -759,6 +771,7 @@ name = "transmux"
 version = "0.33.0"
 dependencies = [
  "aes",
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "broadcast-dash",
@@ -772,7 +785,6 @@ dependencies = [
  "dvb-si",
  "isobmff",
  "jiff",
- "memchr",
  "mpeg-pes",
  "mpeg-ps",
  "mpeg-ts",

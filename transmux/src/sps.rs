@@ -20,14 +20,14 @@
 //! - **Emulation prevention**: H.264 §7.3 bullet 1 (leading zero_byte),
 //!   §7.4.1 NAL semantics (emulation_prevention_three_byte); H.265 §7.4.2.1.
 
-use crate::bitreader::BitReader;
 use crate::error::{Error, Result};
 use crate::ir::{
     AspectRatioIdc, ColourDescription, EXTENDED_SAR_IDC, VideoFormat, VideoSignalType,
 };
-use crate::nal::HEVC_NAL_HEADER_LEN;
 use alloc::string::String;
 use alloc::vec::Vec;
+use broadcast_bitstream::bitreader::BitReader;
+use broadcast_bitstream::nal::HEVC_NAL_HEADER_LEN;
 use broadcast_core::error::InvalidValue;
 use broadcast_core::len::need_in;
 
@@ -274,7 +274,7 @@ pub struct AvcSpsInfo {
 /// Decode an H.264 SPS RBSP.
 ///
 /// `sps_bytes` is the raw NAL unit including the 1-byte NAL header
-/// (as returned by [`iter_annexb_nals`](crate::iter_annexb_nals)).
+/// (as returned by [`iter_annexb_nals`](broadcast_bitstream::iter_annexb_nals)).
 /// The NAL header byte is skipped; decoding starts at the next byte.
 pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
     decode_avc_sps_inner(sps_bytes).map(|(info, _, _, _, _)| info)

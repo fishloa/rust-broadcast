@@ -251,17 +251,20 @@ use crate::ac3_syncframe::{
     AC3_SAMPLES_PER_SYNCFRAME, AC3_SYNCWORD, Ac3SyncframeInfo, EAC3_STRMTYP_DEPENDENT,
     Ec3SyncframeInfo, ec3_specific_box_from_syncframes,
 };
-use crate::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, annexb_to_length_prefixed, iter_annexb_nals};
 use crate::dts_core::{DTS_CORE_SYNC_WORD, DtsCoreFrameInfo};
 use crate::error::{Error, Result};
 use crate::hdr::{HEVC_PREFIX_SEI_NUT, HdrStaticMetadata};
 use crate::mhas::find_mpegh3da_config;
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
-use crate::nal::{
-    AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, ParamKind, access_unit_is_rap,
-    is_keyframe_nal, nal_unit_type, parameter_set_is_valid,
-};
+use crate::nal_params::{ParamKind, parameter_set_is_valid};
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
+use broadcast_bitstream::annexb::{
+    NAL_LENGTH_SIZE_MINUS_ONE, annexb_to_length_prefixed, iter_annexb_nals,
+};
+use broadcast_bitstream::nal::{
+    AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, access_unit_is_rap, is_keyframe_nal,
+    nal_unit_type,
+};
 use broadcast_core::wire::{be_u16, u16_at};
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
@@ -2306,7 +2309,7 @@ fn flush_one_behind(
 /// a second field merged into the first field's sample must not introduce a
 /// second AUD into the access unit.
 fn annexb_to_length_prefixed_no_aud(annexb: &[u8]) -> Vec<u8> {
-    crate::annexb::length_prefix(
+    broadcast_bitstream::annexb::length_prefix(
         annexb.len(),
         iter_annexb_nals(annexb)
             .filter(|nal| nal_unit_type(NalCodec::Avc, nal) != Some(crate::slice_header::NAL_AUD)),
@@ -3155,7 +3158,9 @@ fn pps_id(codec: Codec, nal: &[u8]) -> u64 {
         _ => 1,
     };
     nal.get(header_len..)
-        .and_then(|body| crate::bitreader::BitReader::with_unescape(body, "pps id").ok())
+        .and_then(|body| {
+            broadcast_bitstream::bitreader::BitReader::with_unescape(body, "pps id").ok()
+        })
         .and_then(|mut r| r.read_ue("pic_parameter_set_id").ok())
         .unwrap_or(u64::MAX)
 }
@@ -9290,7 +9295,7 @@ pub(crate) mod tests {
             .iter()
             .map(|sample| {
                 let mut au = Vec::new();
-                for nal in crate::annexb::iter_length_prefixed_nals(&sample.data)
+                for nal in broadcast_bitstream::annexb::iter_length_prefixed_nals(&sample.data)
                     .expect("TsMuxStage writes valid NAL prefixes")
                 {
                     au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
@@ -9770,7 +9775,7 @@ pub(crate) mod tests {
             _ => unreachable!(),
         };
         let first = &video.samples[0].data;
-        let nals = crate::annexb::iter_length_prefixed_nals(first)
+        let nals = broadcast_bitstream::annexb::iter_length_prefixed_nals(first)
             .expect("TsMuxStage writes valid NAL prefixes");
         let sps = nals
             .iter()
@@ -9875,7 +9880,7 @@ pub(crate) mod tests {
             .filter(|t| matches!(t.config(), CodecConfig::Avc { .. }))
             .flat_map(|t| t.samples.iter())
             .flat_map(|s| {
-                crate::annexb::iter_length_prefixed_nals(&s.data)
+                broadcast_bitstream::annexb::iter_length_prefixed_nals(&s.data)
                     .unwrap_or_default()
                     .into_iter()
                     .filter(|n| (n[0] & NAL_TYPE_MASK) == AVC_NAL_SPS)
@@ -9985,7 +9990,7 @@ pub(crate) mod tests {
     /// bit-for-bit: unescape, swap the leading `ue(v)`, drop the old
     /// alignment, re-pad after the stop bit, re-escape (§7.4.1.1).
     fn pps_with_id(pps: &[u8], id: u64) -> Vec<u8> {
-        let rbsp = crate::rbsp::unescape(&pps[1..]);
+        let rbsp = broadcast_bitstream::rbsp::unescape(&pps[1..]);
         let bits: Vec<bool> = rbsp
             .iter()
             .flat_map(|b| (0..8).rev().map(move |i| (b >> i) & 1 == 1))
@@ -10568,7 +10573,7 @@ pub(crate) mod tests {
             .iter()
             .map(|sample| {
                 let mut au = Vec::new();
-                for nal in crate::annexb::iter_length_prefixed_nals(&sample.data)
+                for nal in broadcast_bitstream::annexb::iter_length_prefixed_nals(&sample.data)
                     .expect("TsMuxStage writes valid NAL prefixes")
                 {
                     au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
@@ -10722,7 +10727,7 @@ pub(crate) mod tests {
             .iter()
             .map(|sample| {
                 let mut au = Vec::new();
-                for nal in crate::annexb::iter_length_prefixed_nals(&sample.data)
+                for nal in broadcast_bitstream::annexb::iter_length_prefixed_nals(&sample.data)
                     .expect("TsMuxStage writes valid NAL prefixes")
                 {
                     au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
@@ -11296,7 +11301,7 @@ pub(crate) mod tests {
             // length-prefixed samples, so rebuild the Annex B form from the
             // sample's own NALs.
             let mut au = Vec::new();
-            let nals = crate::annexb::iter_length_prefixed_nals(&sample.data)
+            let nals = broadcast_bitstream::annexb::iter_length_prefixed_nals(&sample.data)
                 .expect("TsMuxStage writes valid 4-byte-length NAL prefixes");
             for nal in nals {
                 au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
@@ -15435,7 +15440,9 @@ pub(crate) mod tests {
             .find(|t| matches!(t.config(), CodecConfig::Hevc { .. }))
             .expect("HEVC track");
         let (mut vps, mut sps, mut pps) = (None, None, None);
-        for nal in crate::iter_length_prefixed_nals(&track.samples[0].data).expect("lp") {
+        for nal in
+            broadcast_bitstream::iter_length_prefixed_nals(&track.samples[0].data).expect("lp")
+        {
             match nal_unit_type(NalCodec::Hevc, nal) {
                 Some(H265_NAL_VPS) => vps = Some(nal.to_vec()),
                 Some(H265_NAL_SPS) => sps = Some(nal.to_vec()),
@@ -15467,7 +15474,7 @@ pub(crate) mod tests {
             .iter()
             .find(|t| matches!(t.config(), CodecConfig::Hevc { .. }))
             .expect("HEVC track");
-        crate::iter_length_prefixed_nals(&track.samples[0].data)
+        broadcast_bitstream::iter_length_prefixed_nals(&track.samples[0].data)
             .expect("lp")
             .into_iter()
             .find(|n| nal_unit_type(NalCodec::Hevc, n) == Some(H265_NAL_SPS))
