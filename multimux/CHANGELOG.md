@@ -17,6 +17,11 @@
 
 ### Changed
 
+- Every network TS ingest route supplies its own PES unit ceiling
+  (`MAX_INGEST_PES_UNIT_BYTES`, 4 MiB) to the streaming TS demux, which now
+  defaults to unlimited: TS-over-UDP, TS-over-HTTP, SRT (both modes) and
+  HLS-pull are unchanged in memory bound, while file playout keeps the demux's
+  unlimited default.
 - A Program Stream file source streams through `media_plane`'s
   `StreamContainer::MpegPs` / `transmux::StreamingPsDemux`, and a Matroska/WebM
   source through `StreamContainer::Matroska` /

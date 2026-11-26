@@ -100,6 +100,18 @@ pub const MAX_INFLIGHT_FETCHES: usize = 8;
 /// chunked response with no length (or a lying one) is bounded too.
 pub const MAX_HTTP_BODY_BYTES: usize = 64 * 1024 * 1024;
 
+/// The PES unit ceiling every network TS ingest supplies to its demux. The
+/// demux itself defaults to unlimited; a source whose bytes arrive over a
+/// network keeps the former 4 MiB bound so a stream that never completes a PES
+/// (a wedged encoder or a hostile peer) cannot grow one PID's buffer without
+/// limit.
+pub(crate) const MAX_INGEST_PES_UNIT_BYTES: usize = 4 * 1024 * 1024;
+
+/// [`MAX_INGEST_PES_UNIT_BYTES`] in the demux's limit representation.
+pub(crate) fn max_ingest_pes_unit_bytes() -> Option<core::num::NonZeroUsize> {
+    core::num::NonZeroUsize::new(MAX_INGEST_PES_UNIT_BYTES)
+}
+
 /// Sample bytes a live (continuous) pull input's session may hold queued for the host: the host
 /// drains after every read, so this only bounds a stalled drain.
 pub(crate) const LIVE_EVENT_QUEUE_BYTES: usize = 32 * 1024 * 1024;

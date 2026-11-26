@@ -114,6 +114,7 @@ impl TsUdpRoute {
         let mut config = Config::relay();
         config.kind = SourceKind::Udp;
         config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
+        config.ts_http.max_pes_unit_bytes = crate::source::max_ingest_pes_unit_bytes();
         crate::source::udp::apply_socket_options(&mut config, &self.socket)?;
         Ok(config)
     }

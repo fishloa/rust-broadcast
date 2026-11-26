@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The wire-format contract types now come from `broadcast-core`.
 ### Added
 
+- `TsHttpConfig::max_pes_unit_bytes` (with `with_max_pes_unit_bytes`) is the
+  caller-supplied ceiling on one PID's in-progress PES buffer for every
+  TS-carrying source (TS-over-HTTP, SRT, UDP) and for HLS's classic-TS
+  segments, passed through to `transmux`'s streaming TS demux. `None`, the
+  default, is unlimited; a caller whose input is a network stream supplies the
+  bound it wants and receives the demux's `DiscontinuityKind::BudgetExceeded`
+  event for an access unit above it.
+
 - `mp4_range::RangeReader` yields `DriverStep::Metadata` with the movie's and
   each track's typed metadata (`Metadata` is owned by the driver and borrowed
   by the step), instead of dropping the reader's metadata step.

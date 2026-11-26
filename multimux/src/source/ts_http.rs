@@ -67,6 +67,7 @@ pub async fn run_ts_http(
     let mut config = Config::relay();
     config.kind = SourceKind::TsHttp;
     config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
+    config.ts_http.max_pes_unit_bytes = crate::source::max_ingest_pes_unit_bytes();
     let config = config.with_timeouts(timeouts);
     let mut step = SessionStep::open(
         &route.target.url,

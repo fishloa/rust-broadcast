@@ -195,6 +195,7 @@ impl Dialer for SrtDialer {
 
     fn dial(&mut self) -> core::result::Result<TsIngestSession, Infallible> {
         Ok(TsIngestSession::new()
+            .with_max_pes_unit_bytes(crate::source::max_ingest_pes_unit_bytes())
             .with_backlog_drop_observer(crate::source::count_ts_backlog_dropped))
     }
 }
@@ -368,6 +369,7 @@ pub async fn run_srt_caller(
     let mut config = broadcast_client::Config::relay();
     config.kind = broadcast_client::SourceKind::Srt;
     config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
+    config.ts_http.max_pes_unit_bytes = crate::source::max_ingest_pes_unit_bytes();
     config.srt.stream_id.clone_from(&route.stream_id);
     if let Some(latency) = route.latency {
         config.srt.latency = latency;

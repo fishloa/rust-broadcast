@@ -145,7 +145,8 @@ impl HlsSource {
         let client = HlsClient::new(
             HlsClientConfig::new(url.clone())
                 .with_variant_policy(config.variant_policy.clone())
-                .with_limits(config.hls_limits),
+                .with_limits(config.hls_limits)
+                .with_max_pes_unit_bytes(config.ts_http.max_pes_unit_bytes),
         );
         let backoff = Backoff::new(&config.backoff, seed)
             .map_err(|_| Error::InvalidConfig(crate::error::ConfigField::Backoff))?;
