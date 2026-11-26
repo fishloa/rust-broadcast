@@ -97,13 +97,13 @@ build script.
 
 ## 4. Traits as published
 
-`oxideav-codec` 0.1.3 is a re-export shim: its `src/lib.rs` re-exports
+`oxideav-codec` 0.1.3 is a re-export shim: its `lib.rs` re-exports
 `Decoder`, `Encoder`, `CodecRegistry`, `CodecInfo`,
 `CodecImplementation`, `DecoderFactory`, `EncoderFactory` from
 `oxideav_core`. The real definitions are in `oxideav-core` 0.1.43
-`src/registry/codec.rs` (traits), `src/packet.rs` (`Packet`),
-`src/frame.rs` (`Frame`, `AudioFrame`, `VideoFrame`), `src/time.rs`
-(`TimeBase`, `Timestamp`), `src/error.rs` (`Error`), `src/stream.rs`
+`registry/codec.rs` (traits), `packet.rs` (`Packet`),
+`frame.rs` (`Frame`, `AudioFrame`, `VideoFrame`), `time.rs`
+(`TimeBase`, `Timestamp`), `error.rs` (`Error`), `stream.rs`
 (`CodecParameters`).
 
 ### Decoder
@@ -122,16 +122,16 @@ pub trait Decoder: Send {
 }
 ```
 
-(`oxideav-core` 0.1.43 `src/registry/codec.rs:47-158`, 160-320.)
+(`oxideav-core` 0.1.43 `registry/codec.rs:47-158`, 160-320.)
 
 End of stream: after `flush`, `receive_frame` drains queued frames and
 then returns `Error::Eof`. "Need more input" is `Error::NeedMore`
-(`src/error.rs`, module docs and `Error::is_need_more`).
+(`error.rs`, module docs and `Error::is_need_more`).
 
 Audio shape lives on the stream, not the frame: `AudioFrame` carries
 `samples: u32`, `pts: Option<i64>` and `data: Vec<Vec<u8>>`; sample
 format, sample rate and channel layout come from
-`Decoder::output_params()` (`src/frame.rs`, `src/stream.rs`).
+`Decoder::output_params()` (`frame.rs`, `stream.rs`).
 
 ### Encoder
 
@@ -146,7 +146,7 @@ pub trait Encoder: Send {
 }
 ```
 
-(`src/registry/codec.rs:415-443`.)
+(`registry/codec.rs:415-443`.)
 
 ### The mapping
 
@@ -185,10 +185,10 @@ no auto-trait bound, so object safety is unaffected.
 | `oxideav-basic` | 0.0.12 | linear PCM (`pcm_u8`, `pcm_s8`, `pcm_{s,u}{16,24,32}{le,be}`, `pcm_f{32,64}{le,be}`, `slin*` aliases), WAV/RF64/BW64 demux | the same PCM ids, WAV/RF64/BW64 mux | `README.md`: "Bit-exact both ways against black-box `ffmpeg -f <fmt>` conversions"; 64-bit integer PCM not registered; G.711 lives in `oxideav-g711` |
 
 Each row's direction was confirmed in source, not only prose: `impl
-Decoder` / `impl Encoder` exist in `oxideav-aac/src/codec_decoder.rs` and
-`codec_encoder.rs`, `oxideav-mp3/src/codec_decoder.rs` and
-`codec_encoder.rs`, `oxideav-opus/src/registry.rs`, and
-`oxideav-basic/src/pcm.rs`.
+Decoder` / `impl Encoder` exist in `oxideav-aac`'s `codec_decoder.rs` and
+`codec_encoder.rs`, `oxideav-mp3`'s `codec_decoder.rs` and
+`codec_encoder.rs`, `oxideav-opus`'s `registry.rs`, and
+`oxideav-basic`'s `pcm.rs`.
 
 ### Other published audio codecs (not wrapped: no committed workspace fixture)
 
@@ -223,17 +223,17 @@ decoder without a fixture would be an unverified claim.
 ## 6. Registry and profiles
 
 **Registry: yes.** `oxideav-core` 0.1.43 has `CodecRegistry`
-(`src/registry/codec.rs`): `register(CodecInfo)`, `has_decoder`,
+(`registry/codec.rs`): `register(CodecInfo)`, `has_decoder`,
 `has_encoder`, `first_decoder`, `first_encoder`, `decoder_by_impl`,
 `decoder_ids` (an iterator over registered ids), tag and payload-magic
 resolution. Each codec crate exposes a `register` / `register_codecs`
-function that populates it (`oxideav-aac/src/codec_decoder.rs:478`,
-`oxideav-mp3/src/codec_decoder.rs:691`,
-`oxideav-opus/src/lib.rs:1156`, `oxideav-basic/src/lib.rs:16`).
+function that populates it (`oxideav-aac`'s `codec_decoder.rs:478`,
+`oxideav-mp3`'s `codec_decoder.rs:691`,
+`oxideav-opus`'s `lib.rs:1156`, `oxideav-basic`'s `lib.rs:16`).
 `oxideav-codec` re-exports the same registry.
 
-**Profiles: no.** `CodecInfo` (`src/registry/codec.rs:536-599`) and
-`CodecCapabilities` (`src/capabilities.rs`) carry no profile field, and
+**Profiles: no.** `CodecInfo` (`registry/codec.rs:536-599`) and
+`CodecCapabilities` (`capabilities.rs`) carry no profile field, and
 `grep -rn profile` over `registry/codec.rs`, `capabilities.rs` and
 `stream.rs` finds only the unrelated ICC-profile metadata field. A
 codec cannot state which profile of its format it handles; the only
@@ -247,3 +247,46 @@ Every runtime dependency is MIT (or MIT-compatible) and every licence is
 in `deny.toml`'s allow list. No `-sys`, `cc`, `bindgen`, `cmake` or
 `links` in the adapter's graph. The top-level crates declare MIT. Step 0
 passes; the adapter spike is allowed to proceed.
+
+## Spike results
+
+Measured on 2026-11-26 with `cargo test --locked` in
+`spikes/codec-oxideav`, all four decoders obtained through a
+`broadcast_codec::Registry` as `Box<dyn Decoder>`.
+
+| test | result |
+| --- | --- |
+| T1 AAC loudness | **-21.087 LUFS over 49 152 samples**, against the pinned -21.1 +/- 0.1 LU; passes |
+| T2 cross-check | both decoders 49 152 samples, priming offset **0** (equal lengths compared at offset 0), largest absolute difference 9.353e-4, RMS 3.125e-5; each run served by the named provider (factory-call counters) |
+| T3 MP3 | 50 688 samples decoded vs 48 000 from ffmpeg; aligned offset **2 257** samples, overlap 48 000, largest 1.524e-5, RMS **8.633e-6** |
+| T3 Opus | 48 648 samples decoded vs 48 000 from ffmpeg; aligned offset **0**, overlap 48 000, largest 1.527e-5, RMS **8.844e-6** |
+| T3 PCM | 48 000 samples, offset 0, largest 0, RMS **0** (bit-exact) |
+| T4 inventory | four rows, all `available`, licence `MIT`; AAC states `lc/he/hev2` |
+| T5 mutation | dropping every tenth input packet reduced AAC to 45 056 samples and failed the sample-count assertion; reverted |
+
+Two findings come out of the adapter work:
+
+1. **The AAC and Opus decoders do not override `Decoder::output_params`.**
+   `oxideav-aac` has an inherent `AacDecoder::output_params`
+   (`codec_decoder.rs:224`) but its `impl Decoder` does not forward it;
+   `oxideav-opus`'s stream decoder has neither. Through
+   `Box<dyn Decoder>` the trait answer is therefore `None`. The adapter
+   falls back to the construction-time sample rate and channel count and
+   to `S16`, which is correct for this fixture. It cannot follow an
+   HE-AAC or Parametric Stereo output-shape change, because the frame
+   carries no rate or channel count. MP3 and PCM do implement the trait
+   method.
+2. **MP3 and Opus sample counts include the container's lead-in/tail.**
+   ffmpeg applies the LAME gapless trim to the MP3 fixture and the Ogg
+   granule end trim to the Opus fixture; the registry path does not
+   (`oxideav-mp3`'s README lists "gapless figures on the registry path"
+   as not yet supported). The decoded audio matches ffmpeg over the whole
+   trimmed span (RMS 8.6e-6 and 8.8e-6), so this is metadata handling,
+   not a decode error. The strict sample-count tests are `#[ignore]`d
+   with these measurements; the aligned-content tests stay green. An
+   adapter cannot fix this from a bare packet: the end position is
+   container state the seam does not carry.
+
+The AAC decoder is the strongest result: its output is within 0.013 LU
+of the pinned ffmpeg measurement and differs from symphonia's independent
+decode by about one 16-bit LSB RMS.
