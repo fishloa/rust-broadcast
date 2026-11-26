@@ -1,7 +1,15 @@
 //! Print the run-time inventory the symphonia adapter reports.
 
-use broadcast_codec::{Availability, Registry, render_inventory};
+use std::num::NonZeroU32;
+
+use broadcast_codec::{
+    AudioParameters, Availability, ChannelLayout, CodecId, CodecParameters, CodecProfile, Registry,
+    Timescale, render_inventory,
+};
 use codec_symphonia::SymphoniaProvider;
+
+/// The sample rate the refusal test asks for.
+const SAMPLE_RATE: u32 = 48_000;
 
 #[test]
 fn prints_the_symphonia_inventory() {
@@ -48,4 +56,37 @@ fn symphonia_version(lock: &str) -> Option<String> {
         }
     }
     None
+}
+
+#[test]
+fn the_descriptor_states_low_complexity_only() {
+    let registry = Registry::new()
+        .with(Box::new(SymphoniaProvider))
+        .expect("the provider registers");
+    let entries = registry.inventory(false);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].descriptor().profiles(), [CodecProfile::AacLc]);
+    assert_eq!(
+        registry.profiles(CodecId::Aac, broadcast_codec::Direction::Decode),
+        [(CodecProfile::AacLc, vec!["symphonia".to_string()])]
+    );
+    assert!(render_inventory(&entries).contains("lc"));
+}
+
+#[test]
+fn aac_he_is_refused_before_the_decoder_is_built() {
+    let registry = Registry::new()
+        .with(Box::new(SymphoniaProvider))
+        .expect("the provider registers");
+    let rate = NonZeroU32::new(SAMPLE_RATE).expect("a non-zero sample rate");
+    let parameters = CodecParameters::new(CodecId::Aac, Timescale::from_nonzero(rate))
+        .with_audio(AudioParameters::new(rate, ChannelLayout::Mono))
+        .with_profile(CodecProfile::AacHe)
+        .expect("an AAC profile");
+    let Err(error) = registry.decoder(&parameters) else {
+        panic!("High Efficiency is not a profile symphonia states");
+    };
+    let message = error.to_string();
+    assert!(message.contains("aac/he"), "{message}");
+    assert!(message.contains("symphonia:aac"), "{message}");
 }

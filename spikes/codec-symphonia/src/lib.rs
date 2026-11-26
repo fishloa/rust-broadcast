@@ -16,6 +16,14 @@
 //! [`Registry`](broadcast_codec::Registry) built with it hands the decoder back
 //! as a `Box<dyn Decoder>`, so the test that measures loudness reaches symphonia
 //! without naming it.
+//!
+//! Its descriptor states one profile, Low Complexity. The codec table in the
+//! `README.md` of the `symphonia` release its `Cargo.lock` pins (0.6.1) lists
+//! "AAC-LC" under "Codecs (Decoders)" for `symphonia-codec-aac` and no other
+//! AAC entry; High Efficiency and High Efficiency v2 exist only through the
+//! separate `symphonia-adapter-fdk-aac` package, which this spike does not
+//! link. A stream in any other AAC profile is therefore refused by the seam
+//! before the decoder is built.
 
 pub mod adts;
 
@@ -24,8 +32,8 @@ use std::num::NonZeroU32;
 
 use broadcast_codec::{
     AudioFrame, AudioSamples, ChannelLayout, CodecDescriptor, CodecError, CodecId, CodecParameters,
-    CodecProvider, Decoder, Direction, Encoder, EncoderConfig, Frame, Packet, Probe, ProviderInfo,
-    SampleFormat, SampleLayout,
+    CodecProfile, CodecProvider, Decoder, Direction, Encoder, EncoderConfig, Frame, Packet, Probe,
+    ProviderInfo, SampleFormat, SampleLayout,
 };
 use symphonia::core::audio::{Channels, Position};
 use symphonia::core::codecs::audio::well_known::CODEC_ID_AAC;
@@ -56,6 +64,8 @@ const LIBRARY: &str = "symphonia";
 const LIBRARY_VERSION: &str = "0.6.1";
 /// The licence symphonia's manifest states.
 const LIBRARY_LICENCE: &str = "MPL-2.0";
+/// The one AAC profile this decoder handles.
+const AAC_PROFILE: CodecProfile = CodecProfile::AacLc;
 
 /// An AAC-LC decoder implementing the seam's [`Decoder`].
 pub struct SymphoniaAacDecoder {
@@ -197,10 +207,11 @@ impl CodecProvider for SymphoniaProvider {
     }
 
     fn descriptors(&self) -> Vec<CodecDescriptor> {
-        vec![
-            CodecDescriptor::new(PROVIDER, IMPLEMENTATION, CodecId::Aac, Direction::Decode)
-                .with_sample_formats(vec![SampleFormat::F32]),
-        ]
+        CodecDescriptor::new(PROVIDER, IMPLEMENTATION, CodecId::Aac, Direction::Decode)
+            .with_sample_formats(vec![SampleFormat::F32])
+            .with_profiles([AAC_PROFILE])
+            .into_iter()
+            .collect()
     }
 
     fn probe(&self, _implementation: &str, _direction: Direction, _codec: CodecId) -> Probe {
