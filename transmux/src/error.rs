@@ -484,6 +484,7 @@ pub enum Error {
     /// LF) — issue #1140 / audit r05-W10: a key-server URL assembled from
     /// request data previously went straight into the tag unvalidated, an
     /// attribute-list-injection vector.
+    #[cfg(feature = "hls")]
     #[error(transparent)]
     HlsAttrValue(#[from] broadcast_hls::Error),
 

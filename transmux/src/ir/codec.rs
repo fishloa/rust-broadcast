@@ -514,6 +514,7 @@ impl CodecConfig {
         }
     }
 
+    #[cfg(feature = "hls")]
     pub(crate) fn audio_channel_field(&self) -> Option<u16> {
         match self {
             CodecConfig::Aac { channel_count, .. }

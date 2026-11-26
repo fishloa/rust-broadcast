@@ -168,6 +168,7 @@ pub mod annexb;
 pub mod au;
 pub mod audio_profile;
 pub mod bitreader;
+#[cfg(feature = "captions")]
 pub mod caption_detect;
 #[cfg(feature = "cenc")]
 pub(crate) mod cenc_crypto;
@@ -200,6 +201,7 @@ pub mod ir;
 pub mod klv;
 pub mod live_join;
 pub mod ll_dash;
+#[cfg(feature = "hls")]
 pub mod ll_hls;
 pub mod media;
 pub mod mhas;
@@ -260,6 +262,7 @@ pub mod splice;
 pub mod sps;
 pub mod trickplay;
 pub mod ts_demux;
+#[cfg(feature = "hls")]
 pub mod ts_hls;
 pub mod ts_mux;
 pub(crate) mod units;
@@ -278,6 +281,7 @@ pub use annexb::{
 pub use au::{AccessUnitSplitter, split_access_units};
 pub use broadcast_common::CencScheme;
 pub use broadcast_common::klv::KlvItem;
+#[cfg(feature = "captions")]
 pub use caption_detect::{CaptionDetector, DetectedCaption, declared_caption_services};
 #[cfg(feature = "cenc")]
 pub use cenc_decrypt::{CencDecryptStage, KeyMap};
@@ -327,8 +331,11 @@ pub use live_join::{DropReason, JoinDecision, JoinPolicy, JoinState, LiveJoin, R
 #[cfg(feature = "std")]
 pub use ll_dash::LlDashPackager;
 pub use ll_dash::LlSegmenter;
+#[cfg(feature = "hls")]
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
-pub use media::{CmafMuxStage, FragmentCut, HlsPackager, PcrSample, SkippedTrack, TrackProtection};
+pub use media::{CmafMuxStage, FragmentCut, PcrSample, SkippedTrack, TrackProtection};
+#[cfg(feature = "hls")]
+pub use media::HlsPackager;
 #[cfg(feature = "matroska")]
 pub use mkv_mux::MkvMuxStage;
 pub use mpeg_legacy::{
@@ -430,6 +437,7 @@ pub use ts_demux::{
     AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,
     InputDegradation, StreamingTsDemux,
 };
+#[cfg(feature = "hls")]
 pub use ts_hls::{StreamingTsHlsSegmenter, UpdateTrackOutcome};
 pub use ts_mux::{DEFAULT_PSI_INTERVAL, TsContinuity, TsMuxStage};
 pub use validate::{
