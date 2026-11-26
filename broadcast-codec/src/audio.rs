@@ -120,6 +120,12 @@ impl AudioSamples {
 ///
 /// The checked constructor refuses a sample count that is not a whole number of
 /// frames for the given channel count, so [`Self::frames`] never truncates.
+///
+/// `trim_start` and `trim_end` copy the per-packet trim of the [`Packet`] this
+/// frame came from; a decoder sets them and [`TrimStage`](crate::TrimStage)
+/// applies and clears them.
+///
+/// [`Packet`]: crate::Packet
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioFrame {
@@ -128,6 +134,8 @@ pub struct AudioFrame {
     layout: SampleLayout,
     samples: AudioSamples,
     pts: Option<i64>,
+    trim_start: u32,
+    trim_end: u32,
 }
 
 impl AudioFrame {
@@ -152,6 +160,8 @@ impl AudioFrame {
             layout,
             samples,
             pts: None,
+            trim_start: 0,
+            trim_end: 0,
         })
     }
 
@@ -159,6 +169,20 @@ impl AudioFrame {
     #[must_use]
     pub const fn with_pts(mut self, pts: i64) -> Self {
         self.pts = Some(pts);
+        self
+    }
+
+    /// Discard `samples` per channel from the start of this frame.
+    #[must_use]
+    pub const fn with_trim_start(mut self, samples: u32) -> Self {
+        self.trim_start = samples;
+        self
+    }
+
+    /// Discard `samples` per channel from the end of this frame.
+    #[must_use]
+    pub const fn with_trim_end(mut self, samples: u32) -> Self {
+        self.trim_end = samples;
         self
     }
 
@@ -190,6 +214,18 @@ impl AudioFrame {
     #[must_use]
     pub const fn pts(&self) -> Option<i64> {
         self.pts
+    }
+
+    /// Samples per channel to discard from the start of this frame.
+    #[must_use]
+    pub const fn trim_start(&self) -> u32 {
+        self.trim_start
+    }
+
+    /// Samples per channel to discard from the end of this frame.
+    #[must_use]
+    pub const fn trim_end(&self) -> u32 {
+        self.trim_end
     }
 
     /// Samples per channel.

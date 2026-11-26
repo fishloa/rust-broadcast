@@ -26,6 +26,7 @@ mod fallback;
 mod frame;
 mod inventory;
 mod packet;
+mod padding_error;
 mod preference;
 mod preference_error;
 mod profile;
@@ -37,6 +38,7 @@ mod registry_error;
 mod rejection;
 mod sample_format;
 mod traits;
+mod trim;
 mod video;
 
 pub use audio::{AudioFrame, AudioSamples, ChannelLayout, SampleLayout};
@@ -53,6 +55,7 @@ pub use fallback::Fallback;
 pub use frame::Frame;
 pub use inventory::{InventoryEntry, render_inventory};
 pub use packet::Packet;
+pub use padding_error::PaddingError;
 pub use preference::{Preference, parse_preferences};
 pub use preference_error::PreferenceError;
 pub use profile::CodecProfile;
@@ -64,6 +67,7 @@ pub use registry_error::RegistryError;
 pub use rejection::ProfileRejection;
 pub use sample_format::SampleFormat;
 pub use traits::{Decoder, Encoder};
+pub use trim::TrimStage;
 pub use video::{
     ColourDescription, ContentLightLevel, ItuT35, MasteringDisplay, PixelFormat, VideoFrame,
     VideoPlane, VideoStorage,

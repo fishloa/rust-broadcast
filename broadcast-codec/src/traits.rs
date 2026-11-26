@@ -31,6 +31,15 @@ pub trait Decoder {
 
     /// Take the next decoded frame, or `Ok(None)` when more input is needed.
     ///
+    /// The returned frame holds every sample the decoder produced. It is
+    /// untrimmed: the container's [`CodecParameters::initial_padding`] and
+    /// [`CodecParameters::trailing_padding`], and the per-packet
+    /// [`Packet::trim_start`]/[`Packet::trim_end`] it copies onto the frame,
+    /// are left for a [`TrimStage`](crate::TrimStage) to apply, **unless** the
+    /// implementation's descriptor says
+    /// [`applies_trim`](crate::CodecDescriptor::applies_trim) is true, in which
+    /// case it has already applied them itself.
+    ///
     /// # Errors
     /// [`CodecError::Failed`] when the decoder is unusable;
     /// [`CodecError::Unsupported`] when decoding this stream is not supported.

@@ -6,6 +6,7 @@ use broadcast_core::timescale::Timescale;
 use core::num::NonZeroU32;
 
 use crate::audio::ChannelLayout;
+use crate::padding_error::PaddingError;
 use crate::profile::CodecProfile;
 use crate::profile_error::ProfileError;
 
@@ -237,6 +238,12 @@ impl VideoParameters {
 /// payload); the seam treats it as opaque bytes. `profile` is the codec variant
 /// the stream is in, when the caller knows it; the registry never offers the
 /// stream to an implementation that states it cannot handle that profile.
+///
+/// `initial_padding` and `trailing_padding` are the container's gapless trim:
+/// samples per channel a lossy encoder added before the first real sample and
+/// after the last. `initial_padding` is 0 when there is none or the container
+/// does not say; `trailing_padding` is `None` when the container does not say,
+/// which is distinct from `Some(0)`. Both are audio-only.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodecParameters {
@@ -246,6 +253,8 @@ pub struct CodecParameters {
     time_base: Timescale,
     audio: Option<AudioParameters>,
     video: Option<VideoParameters>,
+    initial_padding: u32,
+    trailing_padding: Option<u32>,
 }
 
 impl CodecParameters {
@@ -260,6 +269,8 @@ impl CodecParameters {
             time_base,
             audio: None,
             video: None,
+            initial_padding: 0,
+            trailing_padding: None,
         }
     }
 
@@ -296,6 +307,30 @@ impl CodecParameters {
         self
     }
 
+    /// Discard `samples` per channel from the start of the decoded stream.
+    ///
+    /// # Errors
+    /// [`PaddingError::Video`] when these parameters describe video.
+    pub fn with_initial_padding(mut self, samples: u32) -> Result<Self, PaddingError> {
+        if self.video.is_some() {
+            return Err(PaddingError::Video);
+        }
+        self.initial_padding = samples;
+        Ok(self)
+    }
+
+    /// Discard `samples` per channel from the end of the decoded stream.
+    ///
+    /// # Errors
+    /// [`PaddingError::Video`] when these parameters describe video.
+    pub fn with_trailing_padding(mut self, samples: u32) -> Result<Self, PaddingError> {
+        if self.video.is_some() {
+            return Err(PaddingError::Video);
+        }
+        self.trailing_padding = Some(samples);
+        Ok(self)
+    }
+
     /// Coded format.
     #[must_use]
     pub const fn codec(&self) -> CodecId {
@@ -330,5 +365,18 @@ impl CodecParameters {
     #[must_use]
     pub const fn video(&self) -> Option<VideoParameters> {
         self.video
+    }
+
+    /// Samples per channel to discard from the start of the decoded stream.
+    #[must_use]
+    pub const fn initial_padding(&self) -> u32 {
+        self.initial_padding
+    }
+
+    /// Samples per channel to discard from the end of the decoded stream, when
+    /// the container says.
+    #[must_use]
+    pub const fn trailing_padding(&self) -> Option<u32> {
+        self.trailing_padding
     }
 }
