@@ -401,6 +401,7 @@ version = "0.1.0"
 dependencies = [
  "broadcast-core",
  "isobmff",
+ "memchr",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",

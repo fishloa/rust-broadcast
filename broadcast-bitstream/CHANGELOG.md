@@ -7,6 +7,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 
 ## [Unreleased]
 
+### Breaking
+
+- `annexb::start_code_positions` is crate-private: nothing outside the crate
+  needs the allocation. `annexb::find_start_code_prefix` stays the one public
+  scan primitive, so external callers lose no capability.
+
+### Changed
+
+- The Annex B start-code scan (`annexb::find_start_code_prefix`) finds each `01`
+  byte with `memchr` again, so a scan over a multi-megabyte access unit stays
+  vectorised. The crate now depends on `memchr` (`default-features = false`).
+
 ### Added
 
 - Initial contents: the exp-Golomb/RBSP bit reader (`bitreader`), RBSP

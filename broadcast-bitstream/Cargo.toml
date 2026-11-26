@@ -19,6 +19,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 thiserror  = { version = "2", default-features = false }
+# Start-code scan (`annexb::find_start_code_prefix`): find each `01` byte
+# instead of testing every offset. no_std without its `std` feature.
+memchr     = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 # The ISOBMFF decoder-configuration-record wrappers (`avcC` parameter sets) live
 # behind this optional feature, so a consumer that only splits Annex B never

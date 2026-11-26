@@ -56,13 +56,13 @@ pub fn iter_annexb_nals(annexb: &[u8]) -> AnnexBNalIter<'_> {
 }
 
 /// Offset of the first `00 00 01` start-code prefix at or after `from`, or
-/// `None`. The single scan primitive for the crate: [`start_code_positions`],
+/// `None`. The single scan primitive for the crate: `start_code_positions`,
 /// `au::first_nal_start`, the streaming splitter's resumable scan,
 /// `au::start_code_len` and `mpeg_legacy::find_start_code` all go through it
 /// (audit r04-O1 / #1141), so a fix here reaches every scanner.
 ///
 /// A prefix at `q` has its `01` at `q + 2`, so this looks for each `01` byte
-/// with a byte search and checks the two bytes before it, rather than testing every
+/// with `memchr` and checks the two bytes before it, rather than testing every
 /// offset: coded video carries few `01` bytes, and every H.264/HEVC access unit
 /// is scanned more than once on the TS → CMAF path. When the two bytes before
 /// a `01` are not `00 00`, no prefix can start at or before that `01`, so the
@@ -74,9 +74,7 @@ pub fn find_start_code_prefix(data: &[u8], from: usize) -> Option<usize> {
     while p + START_CODE_PREFIX_LEN <= n {
         let i = p
             + START_CODE_MARKER_OFFSET
-            + data[p + START_CODE_MARKER_OFFSET..]
-                .iter()
-                .position(|&b| b == START_CODE_MARKER)?;
+            + memchr::memchr(START_CODE_MARKER, &data[p + START_CODE_MARKER_OFFSET..])?;
         if data[i - START_CODE_MARKER_OFFSET] == 0
             && data[i - START_CODE_MARKER_OFFSET + START_CODE_SECOND_BYTE_OFFSET] == 0
         {
@@ -94,7 +92,7 @@ pub fn find_start_code_prefix(data: &[u8], from: usize) -> Option<usize> {
 /// scanners in this crate (they differ only in what they do with a hit:
 /// `au` pulls back over `zero_byte`s / resumes incrementally, `mpeg_legacy`
 /// also matches the byte after the prefix).
-pub fn start_code_positions(data: &[u8]) -> Vec<usize> {
+pub(crate) fn start_code_positions(data: &[u8]) -> Vec<usize> {
     let mut positions = Vec::new();
     let mut p = 0usize;
     while let Some(at) = find_start_code_prefix(data, p) {
@@ -361,6 +359,23 @@ mod tests {
                 .collect();
             assert_same_as_byte_by_byte(&d);
         }
+    }
+
+    /// A 4 MiB buffer of non-zero bytes with one start code at its very end:
+    /// the scan must walk the whole buffer and return that position. The
+    /// per-byte search this replaced and the `memchr` search must agree here,
+    /// so correctness at size does not depend on which one is compiled.
+    #[test]
+    fn finds_start_code_at_end_of_four_mib_buffer() {
+        let size = 4 * 1024 * 1024;
+        let mut data = vec![0xFFu8; size];
+        data[size - 3..].copy_from_slice(&[0, 0, 1]);
+        assert_eq!(find_start_code_prefix(&data, 0), Some(size - 3));
+        assert_eq!(start_code_positions(&data), vec![size - 3]);
+        assert_eq!(
+            find_start_code_prefix_byte_by_byte(&data, 0),
+            Some(size - 3)
+        );
     }
 
     #[test]

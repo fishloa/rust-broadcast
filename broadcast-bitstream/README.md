@@ -45,7 +45,7 @@ MPEG-2 sequence headers, each landing as an additive release.
   `isobmff`'s decoder-configuration-record newtypes, for a caller that builds an
   `avcC`/`hvcC`.
 
-It depends on `broadcast-core` and `thiserror` only.
+It depends on `broadcast-core`, `thiserror` and `memchr` only.
 
 ## Runnable examples
 
