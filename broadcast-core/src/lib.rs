@@ -4,9 +4,9 @@
 //! DVB/MPEG format crates grow: the symmetric [`Parse`] / [`Serialize`]
 //! traits, checked field-width helpers ([`len`]), MSB-first bit I/O
 //! ([`bits`]), the shared error kinds ([`error`]), typed reserved-bit fields
-//! ([`reserved`]), the media [`timescale`] codec and the container-independent
-//! CENC scheme identity ([`cenc`]). Everything here is `#![no_std]` + `alloc`
-//! and depends on nothing but an optional `serde` derive.
+//! ([`reserved`]), the media [`timescale`](mod@timescale) codec and the
+//! container-independent CENC scheme identity ([`cenc`]). Everything here is
+//! `#![no_std]` + `alloc` and depends on nothing but an optional `serde` derive.
 //!
 //! The API of this crate is **meant to be frozen**: it is the stable floor
 //! that the wire-format crates build on, so they can add formats without a
