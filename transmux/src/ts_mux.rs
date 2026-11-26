@@ -31,6 +31,15 @@
 //!   ([`broadcast_common::crc32_mpeg2`]).
 //! - **stream_type → codec**: ISO/IEC 13818-1 Table 2-34 + ETSI TS 101 154 §G
 //!   (AC-3 / E-AC-3 / DTS user-private assignments) — mirrors [`StreamingTsDemux`](crate::StreamingTsDemux).
+//! - **Timeline discontinuity** ([`MuxInput::Discontinuity`]): the adaptation
+//!   field's `discontinuity_indicator` (§2.4.3.5, flags-byte bit 7 read on the
+//!   rendered page in
+//!   `private/specs-verified/dvb/dvb-si/tables/iso_13818_1/adaptation-field-semantics.md`)
+//!   rides the next packet of each affected elementary PID — the packet
+//!   carrying the new time base's first `PCR` on the PCR PID — and is added by
+//!   giving that packet an adaptation field when it has none. PSI packets are
+//!   never marked, and the continuity counters keep counting (§2.4.3.3): the
+//!   indicator is what tells a decoder the break is intended.
 //!
 //! # ES_info descriptor passthrough policy (issue #775)
 //!
@@ -83,8 +92,8 @@ use mpeg_ts::mux::SectionPacketiser;
 #[cfg(feature = "hls")]
 use mpeg_ts::ts::PID_MASK_HI;
 use mpeg_ts::ts::{
-    AdaptationFieldControl, CC_MASK, ContinuityCounter, Pcr, ScramblingControl, TS_PACKET_SIZE,
-    TsHeader,
+    AdaptationField, AdaptationFieldControl, CC_MASK, ContinuityCounter, Pcr, ScramblingControl,
+    TS_PACKET_SIZE, TsHeader,
 };
 
 use crate::TrackId;
@@ -309,8 +318,6 @@ const HEVC_AUD_NAL: [u8; 3] = [HEVC_AUD_FIRST_BYTE, HEVC_AUD_SECOND_BYTE, HEVC_A
 const AF_CTRL_ADAPTATION: u8 = 0x20;
 /// `adaptation_field_control` bit: payload present.
 const AF_CTRL_PAYLOAD: u8 = 0x10;
-/// Adaptation-field flag: `PCR_flag`.
-const AF_PCR_FLAG: u8 = 0x10;
 /// Encoded PCR occupies 6 bytes (§2.4.3.5).
 const PCR_FIELD_LEN: usize = 6;
 /// Stuffing byte for unused TS/PES payload bytes (§2.4.4).
@@ -641,6 +648,10 @@ pub struct TsMuxStage {
     /// the packet emitted last (a repetition lands only on a key change).
     psi_due: Option<u64>,
     prev_at: Option<u64>,
+    /// Elementary PIDs whose next packet must carry the adaptation-field
+    /// `discontinuity_indicator` (§2.4.3.5): one entry per PID awaiting its
+    /// mark, removed as that PID's packet is built.
+    discontinuity_marks: Vec<Pid>,
     out: VecDeque<MuxOutput>,
 }
 
@@ -704,6 +715,7 @@ impl TsMuxStage {
             started: false,
             psi_due: None,
             prev_at: None,
+            discontinuity_marks: Vec::new(),
             out: VecDeque::new(),
         }
     }
@@ -799,6 +811,48 @@ impl TsMuxStage {
             .map(|p| p.pid)
     }
 
+    /// Arm the adaptation-field `discontinuity_indicator` (§2.4.3.5) on the
+    /// next packet of each elementary PID `track` names — every announced one
+    /// when it is `None`. A track the caller filtered out, or whose codec the
+    /// TS layer cannot carry, has no packet to mark and arms nothing; a PID
+    /// already waiting for its mark keeps the one it has, since two breaks
+    /// before its next packet are one mark.
+    fn mark_discontinuity(&mut self, track: Option<TrackId>) {
+        let pids: Vec<Pid> = match track {
+            None => self
+                .tracks
+                .iter()
+                .filter_map(|t| t.plan.as_ref().map(|p| p.pid))
+                .collect(),
+            Some(track_id) => self
+                .tracks
+                .iter()
+                .filter(|t| t.spec.track_id == track_id)
+                .filter_map(|t| t.plan.as_ref().map(|p| p.pid))
+                .collect(),
+        };
+        for pid in pids {
+            if !self.discontinuity_marks.contains(&pid) {
+                self.discontinuity_marks.push(pid);
+            }
+        }
+    }
+
+    /// Take `pid`'s pending discontinuity mark, if it has one.
+    fn take_discontinuity_mark(&mut self, pid: Pid) -> bool {
+        match self
+            .discontinuity_marks
+            .iter()
+            .position(|&held| held == pid)
+        {
+            Some(index) => {
+                self.discontinuity_marks.remove(index);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Feed one coded sample.
     fn push_sample(&mut self, track_id: TrackId, sample: Sample) -> Result<()> {
         let index = self
@@ -843,15 +897,20 @@ impl TsMuxStage {
             .as_ref()
             .is_some_and(|p| p.kind.is_section_carried())
         {
+            let pid = self.tracks[index].plan.as_ref().expect("checked above").pid;
+            let marked = self.take_discontinuity_mark(pid);
             let track = &mut self.tracks[index];
-            let pid = track.plan.as_ref().expect("checked above").pid;
             let cc = track
                 .sections_cc
                 .ok_or(Error::InvalidInput("section-carried ES has no packetiser"))?;
             let mut packetiser =
                 SectionPacketiser::with_continuity(pid, ContinuityCounter::from_wire_masked(cc));
             let track_index = index as u32;
-            for packet in packetiser.packetise(&[&sample.data[..]]) {
+            let mut packets = packetiser.packetise(&[&sample.data[..]]);
+            if marked {
+                mark_section_packets(&mut packets, pid, cc, sample.data.len());
+            }
+            for packet in packets {
                 insert_packet(&mut self.pending, sort_key, track_index, packet);
             }
             track.sections_cc = Some(packetiser.continuity_counter().value());
@@ -862,10 +921,9 @@ impl TsMuxStage {
 
         let pts_local = local.max(0) + i64::from(sample.composition_offset()?.unwrap_or(0));
         let pts90 = rescale_signed(pts_local, timescale) + PCR_LEAD_TICKS;
-        let mut cc = self.tracks[index]
-            .plan
-            .as_ref()
-            .map_or(0, |p| self.continuity.next_for(p.pid));
+        let pid = self.tracks[index].plan.as_ref().expect("checked above").pid;
+        let marked = self.take_discontinuity_mark(pid);
+        let mut cc = self.continuity.next_for(pid);
         let mut tagged = core::mem::take(&mut self.scratch);
         tagged.clear();
         {
@@ -883,15 +941,20 @@ impl TsMuxStage {
                 pes_buf,
                 dts90,
                 carry_pcr,
+                marked,
                 &mut cc,
                 sort_key,
                 &mut tagged,
             )?;
         }
-        let pid = self.tracks[index].plan.as_ref().expect("checked above").pid;
         self.continuity.set_next_for(pid, cc);
         if self.pcr_pid == Some(pid) {
-            if let Some(previous) = self.last_pcr_at {
+            // A mark's sample starts a new time base, so no PCR-only packet
+            // fills the gap into it: the marked packet itself carries the new
+            // time base's first PCR (§2.4.3.5).
+            if let Some(previous) = self.last_pcr_at
+                && !marked
+            {
                 for key in pcr_gap_at(previous, sort_key) {
                     let mut packet = [STUFFING_BYTE; TS_PACKET_SIZE];
                     write_pcr_only_packet(
@@ -899,6 +962,7 @@ impl TsMuxStage {
                         pid,
                         ContinuityCounter::from_wire_masked(self.pcr_cc),
                         pcr_for(key + PCR_LEAD_TICKS),
+                        false,
                     );
                     insert_packet(&mut self.pending, key, TIELESS, packet);
                 }
@@ -1024,13 +1088,10 @@ impl Stage for TsMuxStage {
         match input {
             MuxInput::Track(spec) => self.announce(*spec),
             MuxInput::Sample { track, sample } => self.push_sample(track, sample),
-            // The muxer neither rebases the PES timeline nor sets an
-            // adaptation-field `discontinuity_indicator` (ISO/IEC 13818-1
-            // §2.4.3.5), so a source break would reach the output unmarked:
-            // refuse it rather than emit a stream that hides the jump.
-            MuxInput::Discontinuity { .. } => Err(Error::UnsupportedFeature(
-                "the TS muxer cannot signal a timeline discontinuity",
-            )),
+            MuxInput::Discontinuity { track } => {
+                self.mark_discontinuity(track);
+                Ok(())
+            }
             MuxInput::Flush => self.release_all(),
         }
     }
@@ -1657,7 +1718,16 @@ fn mux_tracks_timed_with_cc(
                 let es_payload = build_es_payload(plan, sample)?;
                 let carry_pcr = plan.pid == pcr_pid;
                 build_pes_bytes(plan, &es_payload, pts90, dts90, &mut pes)?;
-                packetise_pes(plan, &pes, dts90, carry_pcr, &mut cc, sort_key, &mut tagged)?;
+                packetise_pes(
+                    plan,
+                    &pes,
+                    dts90,
+                    carry_pcr,
+                    false,
+                    &mut cc,
+                    sort_key,
+                    &mut tagged,
+                )?;
                 if carry_pcr {
                     pcr_stamps.push(sort_key);
                 }
@@ -1818,6 +1888,7 @@ fn emit_pcr_only_packets(pcr_pid: Pid, pcr_stamps: &mut [u64], tagged: &mut Vec<
             pcr_pid,
             ContinuityCounter::from_wire_masked(cc),
             pcr_for(t + PCR_LEAD_TICKS),
+            false,
         );
         tagged.push(TaggedPacket {
             order: t,
@@ -1834,12 +1905,14 @@ fn pid_of_packet(pkt: &[u8; TS_PACKET_SIZE]) -> u16 {
 }
 
 /// Write a PCR-only TS packet: an adaptation field with the PCR and no payload
-/// (`adaptation_field_control` `10`). §2.4.3.4 / §2.4.3.5.
+/// (`adaptation_field_control` `10`), optionally marking a time-base
+/// discontinuity. §2.4.3.3 / §2.4.3.4 / §2.4.3.5.
 fn write_pcr_only_packet(
     pkt: &mut [u8; TS_PACKET_SIZE],
     pid: Pid,
     cc: ContinuityCounter,
     pcr: Pcr,
+    discontinuity: bool,
 ) {
     let hdr = TsHeader {
         tei: false,
@@ -1851,8 +1924,37 @@ fn write_pcr_only_packet(
     };
     hdr.serialize_into(&mut pkt[..4]).expect("4-byte TS header");
     pkt[AF_LENGTH_OFFSET] = PCR_ONLY_AF_LEN as u8;
-    pkt[AF_FLAGS_OFFSET] = AF_PCR_FLAG;
-    pkt[6..6 + PCR_FIELD_LEN].copy_from_slice(&pcr.to_field_bytes());
+    let mut field = AdaptationField::new();
+    field.pcr = Some(pcr);
+    field.discontinuity_indicator = discontinuity;
+    field
+        .serialize_into(&mut pkt[AF_FLAGS_OFFSET..])
+        .expect("adaptation field fits the packet");
+}
+
+/// The `adaptation_field_length` of a packet whose whole remaining bytes are
+/// its adaptation field (§2.4.3.4).
+const AF_ONLY_LEN: usize = TS_PACKET_SIZE - TS_HEADER_LEN - 1;
+
+/// Write an adaptation-field-only TS packet (`adaptation_field_control` `10`)
+/// carrying the `discontinuity_indicator` and nothing else, for a packet that
+/// cannot gain an adaptation field of its own. §2.4.3.3 / §2.4.3.5.
+fn write_discontinuity_only_packet(pkt: &mut [u8; TS_PACKET_SIZE], pid: Pid, cc: u8) {
+    let hdr = TsHeader {
+        tei: false,
+        pusi: false,
+        pid,
+        scrambling: ScramblingControl::NotScrambled,
+        adaptation_field_control: AdaptationFieldControl::AdaptationOnly,
+        continuity_counter: ContinuityCounter::from_wire_masked(cc),
+    };
+    hdr.serialize_into(&mut pkt[..4]).expect("4-byte TS header");
+    pkt[AF_LENGTH_OFFSET] = AF_ONLY_LEN as u8;
+    let mut field = AdaptationField::new();
+    field.discontinuity_indicator = true;
+    field
+        .serialize_into(&mut pkt[AF_FLAGS_OFFSET..])
+        .expect("adaptation field fits the packet");
 }
 
 /// Rescale `ticks` from a track's `timescale` to the 90 kHz TS clock, rounding to
@@ -2171,18 +2273,61 @@ fn packetise_section(pid: Pid, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACK
     packets
 }
 
+/// Give the first packet of a section-carried elementary stream's batch the
+/// adaptation-field `discontinuity_indicator` (§2.4.3.5).
+///
+/// The section packetiser emits payload-only packets, so the mark gains an
+/// adaptation field of its flags byte, moving the payload back by the two bytes
+/// that costs — possible while the first packet's `pointer_field` plus
+/// `section_len` bytes leave that much trailing stuffing. A section that fills
+/// the packet leaves no room, and the flag then rides an adaptation-field-only
+/// packet written ahead of the batch instead (§2.4.3.3: a packet with no
+/// payload does not advance the continuity counter).
+fn mark_section_packets(
+    packets: &mut Vec<[u8; TS_PACKET_SIZE]>,
+    pid: Pid,
+    cc: u8,
+    section_len: usize,
+) {
+    let Some(first) = packets.first_mut() else {
+        return;
+    };
+    // `pointer_field` (1) + the section bytes this packet carries.
+    let used = TS_HEADER_LEN + 1 + section_len.min(TS_PAYLOAD_CAPACITY - 1);
+    // The flags byte and the AF's own length byte, both of which a payload-only
+    // packet does without.
+    let af_overhead = 1 + 1;
+    if used + af_overhead > TS_PACKET_SIZE {
+        let mut marker = [STUFFING_BYTE; TS_PACKET_SIZE];
+        write_discontinuity_only_packet(&mut marker, pid, cc);
+        packets.insert(0, marker);
+        return;
+    }
+    first.copy_within(TS_HEADER_LEN..used, AF_FLAGS_OFFSET + 1);
+    first[CC_OFFSET] |= AF_CTRL_ADAPTATION;
+    first[AF_LENGTH_OFFSET] = 1;
+    let mut field = AdaptationField::new();
+    field.discontinuity_indicator = true;
+    field
+        .serialize_into(&mut first[AF_FLAGS_OFFSET..])
+        .expect("adaptation field fits the packet");
+}
+
 /// Packetise one PES payload (already framed as its `stream_id` payload) into
 /// 188-byte TS packets on `plan.pid`, appended to `tagged` (each tagged with
 /// `sort_key`, the interleave-order key — see [`rescale_for_ordering`], NOT
 /// the on-wire `dts90`). The first packet sets PUSI and — when `carry_pcr` —
 /// an adaptation field with the PCR; the final packet is stuffed via an
-/// adaptation field so the PES ends exactly on a packet boundary.
+/// adaptation field so the PES ends exactly on a packet boundary. When
+/// `discontinuity` is set the first packet's adaptation field also carries the
+/// `discontinuity_indicator`, gaining one if it has none (§2.4.3.5).
 /// ISO/IEC 13818-1 §2.4.3.
 fn packetise_pes(
     plan: &EsPlan,
     pes: &[u8],
     dts90: u64,
     carry_pcr: bool,
+    discontinuity: bool,
     cc: &mut u8,
     sort_key: u64,
     tagged: &mut Vec<TaggedPacket>,
@@ -2193,15 +2338,24 @@ fn packetise_pes(
         let mut pkt = [STUFFING_BYTE; TS_PACKET_SIZE];
         let remaining = pes.len() - pos;
 
-        // PCR rides the first packet (if this PID owns the PCR). When present the
-        // adaptation field carries flags(1) + PCR(6) = 7 content bytes, so the
+        // PCR rides the first packet (if this PID owns the PCR), as does the
+        // discontinuity indicator (if the PID has one pending). When present
+        // the adaptation field carries flags(1) + PCR(6) content bytes, so the
         // payload capacity of this packet is reduced accordingly.
         let want_pcr = first && carry_pcr;
-        // Minimum AF content bytes forced by the PCR (flags + PCR), else 0.
-        let pcr_af_content = if want_pcr { 1 + PCR_FIELD_LEN } else { 0 };
+        let want_mark = first && discontinuity;
+        // Minimum AF content bytes forced by the PCR (flags + PCR) or, without
+        // a PCR, by the flags byte the indicator needs, else 0.
+        let af_content = if want_pcr {
+            1 + PCR_FIELD_LEN
+        } else if want_mark {
+            1
+        } else {
+            0
+        };
         // Header bytes before the payload when only the forced AF (if any) is
-        // present: 4 header + (1 af_len byte + pcr_af_content) when an AF exists.
-        let forced_header = TS_HEADER_LEN + if want_pcr { 1 + pcr_af_content } else { 0 };
+        // present: 4 header + (1 af_len byte + af_content) when an AF exists.
+        let forced_header = TS_HEADER_LEN + if af_content > 0 { 1 + af_content } else { 0 };
         let cap = TS_PACKET_SIZE - forced_header;
 
         let is_last = remaining <= cap;
@@ -2210,18 +2364,18 @@ fn packetise_pes(
         // ends exactly at byte 188 (only ever > 0 on the last packet).
         let stuff = cap - to_copy;
 
-        if want_pcr {
-            // AF carries the PCR (+ any stuffing on the last packet).
-            // af_len = flags(1) + PCR(6) + stuffing.
-            let af_len = pcr_af_content + stuff;
+        if af_content > 0 {
+            // AF carries the PCR and/or the indicator (+ any stuffing on the
+            // last packet): af_len = af_content + stuffing.
+            let af_len = af_content + stuff;
             write_af_packet(
                 &mut pkt,
                 plan.pid,
                 first,
                 *cc,
                 af_len,
-                true,
-                Some(pcr_for(dts90)),
+                want_pcr.then(|| pcr_for(dts90)),
+                want_mark,
                 &pes[pos..pos + to_copy],
             );
             pos += to_copy;
@@ -2237,8 +2391,8 @@ fn packetise_pes(
                 first,
                 *cc,
                 af_len,
-                false,
                 None,
+                false,
                 &pes[pos..pos + to_copy],
             );
             pos += to_copy;
@@ -2281,8 +2435,9 @@ fn pcr_for(dts90: u64) -> Pcr {
 /// Write a TS packet with an adaptation field into `pkt` (initialised to
 /// stuffing), then copy `payload` at the byte following the adaptation field.
 /// `af_len` is the `adaptation_field_length` value (bytes after the length
-/// byte). When `has_pcr` the flags byte sets `PCR_flag` and `pcr` is encoded;
-/// any bytes between the encoded content and `4 + 1 + af_len` stay 0xFF stuffing.
+/// byte). A `pcr` sets `PCR_flag` and is encoded, `discontinuity` sets
+/// `discontinuity_indicator`; any bytes between the encoded content and
+/// `4 + 1 + af_len` stay 0xFF stuffing.
 /// ISO/IEC 13818-1 §2.4.3.4 / §2.4.3.5.
 fn write_af_packet(
     pkt: &mut [u8; TS_PACKET_SIZE],
@@ -2290,8 +2445,8 @@ fn write_af_packet(
     pusi: bool,
     cc: u8,
     af_len: usize,
-    has_pcr: bool,
     pcr: Option<Pcr>,
+    discontinuity: bool,
     payload: &[u8],
 ) {
     let hdr = TsHeader {
@@ -2312,13 +2467,14 @@ fn write_af_packet(
     );
     pkt[AF_LENGTH_OFFSET] = af_len as u8;
     // An af_len of 0 is a valid single-stuffing-byte adaptation field with no
-    // flags byte (§2.4.3.4); anything larger carries the 1-byte flags field.
+    // flags byte (§2.4.3.4); anything larger carries the flags byte.
     if af_len >= 1 {
-        // Flags byte (byte 5); the rest of the AF stays 0xFF stuffing from init.
-        pkt[AF_FLAGS_OFFSET] = if has_pcr { AF_PCR_FLAG } else { 0 };
-        if has_pcr && let Some(p) = pcr {
-            pkt[6..6 + PCR_FIELD_LEN].copy_from_slice(&p.to_field_bytes());
-        }
+        let mut field = AdaptationField::new();
+        field.pcr = pcr;
+        field.discontinuity_indicator = discontinuity;
+        field
+            .serialize_into(&mut pkt[AF_FLAGS_OFFSET..])
+            .expect("adaptation field fits the packet");
     }
     // Remaining AF bytes (up to 5 + af_len) stay 0xFF stuffing (already set).
     let payload_start = TS_HEADER_LEN + 1 + af_len;
@@ -2968,5 +3124,209 @@ mod tests {
             0,
             "video PES_packet_length is the unbounded 0 form"
         );
+    }
+
+    /// A timeline break reaches the wire as the adaptation-field
+    /// `discontinuity_indicator` (§2.4.3.5) on the first packet of each
+    /// elementary PID after it — exactly one packet per marked PID, never a
+    /// PSI packet, with the continuity counters still counting (§2.4.3.3).
+    #[test]
+    fn discontinuity_marks_the_next_packet_of_each_elementary_pid() {
+        use crate::collect::{CollectedTrack, media_from_ts};
+        use mpeg_ts::ts::TsPacket;
+
+        const SAMPLES_BEFORE_BREAK: usize = 2;
+        const SAMPLES_AFTER_BREAK: usize = 2;
+        const SAMPLES: usize = SAMPLES_BEFORE_BREAK + SAMPLES_AFTER_BREAK;
+
+        /// The facts one emitted packet carries for this test.
+        struct Seen {
+            pid: u16,
+            pusi: bool,
+            cc: u8,
+            discontinuity: bool,
+        }
+
+        /// The video and audio tracks of one real capture, and their ids.
+        fn pair() -> (Vec<CollectedTrack>, Vec<TrackId>) {
+            let media = media_from_ts(&test_fixtures::read("ts/h264-aac.ts")).expect("demux");
+            let wanted: Vec<CollectedTrack> = [true, false]
+                .into_iter()
+                .map(|video| {
+                    media
+                        .tracks
+                        .iter()
+                        .find(|t| t.spec.config.is_video() == video)
+                        .cloned()
+                        .unwrap_or_else(|| panic!("the capture must carry a {video} video track"))
+                })
+                .collect();
+            for track in &wanted {
+                assert!(
+                    track.samples.len() >= SAMPLES,
+                    "the capture must carry at least {SAMPLES} samples per track"
+                );
+            }
+            let ids = wanted.iter().map(|t| t.spec.track_id).collect();
+            (wanted, ids)
+        }
+
+        /// Two samples of each track, a break on `break_on`, then two more;
+        /// the packets of the resulting stream.
+        fn play(break_on: Option<TrackId>) -> Vec<Seen> {
+            let (tracks, _) = pair();
+            let mut stage = TsMuxStage::new(None);
+            for track in &tracks {
+                stage
+                    .feed(
+                        MuxInput::Track(Box::new(track.spec.clone())),
+                        Timestamp::ZERO,
+                    )
+                    .expect("announce");
+            }
+            let mut bytes = Vec::new();
+            for index in 0..SAMPLES {
+                if index == SAMPLES_BEFORE_BREAK {
+                    stage
+                        .feed(MuxInput::Discontinuity { track: break_on }, Timestamp::ZERO)
+                        .expect("mark the break");
+                }
+                for track in &tracks {
+                    stage
+                        .feed(
+                            MuxInput::Sample {
+                                track: track.spec.track_id,
+                                sample: track.samples[index].clone(),
+                            },
+                            Timestamp::ZERO,
+                        )
+                        .expect("sample");
+                }
+                while let Some(output) = stage.poll() {
+                    if let MuxOutput::Bytes(chunk) = output {
+                        bytes.extend_from_slice(&chunk);
+                    }
+                }
+            }
+            stage.finish().expect("finish");
+            while let Some(output) = stage.poll() {
+                if let MuxOutput::Bytes(chunk) = output {
+                    bytes.extend_from_slice(&chunk);
+                }
+            }
+            bytes
+                .chunks_exact(TS_PACKET_SIZE)
+                .map(|raw| {
+                    let packet = TsPacket::parse(raw).expect("a whole TS packet");
+                    let field = packet
+                        .adaptation_field()
+                        .map(|field| field.expect("the adaptation field parses"));
+                    Seen {
+                        pid: packet.header.pid.value(),
+                        pusi: packet.header.pusi,
+                        cc: packet.header.continuity_counter.value(),
+                        discontinuity: field.is_some_and(|field| field.discontinuity_indicator),
+                    }
+                })
+                .collect()
+        }
+
+        fn packets_on(seen: &[Seen], pid: u16) -> Vec<&Seen> {
+            seen.iter().filter(|packet| packet.pid == pid).collect()
+        }
+
+        fn flagged_pids(seen: &[Seen]) -> Vec<u16> {
+            let mut pids: Vec<u16> = seen
+                .iter()
+                .filter(|packet| packet.discontinuity)
+                .map(|packet| packet.pid)
+                .collect();
+            pids.sort_unstable();
+            pids.dedup();
+            pids
+        }
+
+        /// The PID's third sample packet is its first after the break: it and
+        /// only it carries the indicator, and its continuity counter carries on
+        /// from the packet before it rather than restarting.
+        fn assert_first_after_break(seen: &[Seen], pid: u16) {
+            let run = packets_on(seen, pid);
+            let starts: Vec<usize> = run
+                .iter()
+                .enumerate()
+                .filter(|(_, packet)| packet.pusi)
+                .map(|(index, _)| index)
+                .collect();
+            assert!(
+                starts.len() >= SAMPLES,
+                "{pid:#06x}: one PUSI packet per sample, got {starts:?}"
+            );
+            let marked = starts[SAMPLES_BEFORE_BREAK];
+            let flagged: Vec<usize> = run
+                .iter()
+                .enumerate()
+                .filter(|(_, packet)| packet.discontinuity)
+                .map(|(index, _)| index)
+                .collect();
+            assert_eq!(
+                flagged,
+                alloc::vec![marked],
+                "{pid:#06x}: only the first post-break packet is marked"
+            );
+            assert_eq!(
+                run[marked].cc,
+                (run[marked - 1].cc + 1) & CC_MASK,
+                "{pid:#06x}: the continuity counter keeps counting across the break"
+            );
+        }
+
+        let (_, ids) = pair();
+        let seen = play(None);
+        let es: Vec<u16> = {
+            let mut pids: Vec<u16> = seen
+                .iter()
+                .map(|packet| packet.pid)
+                .filter(|&pid| pid != PAT_PID.value() && pid != PMT_PID.value())
+                .collect();
+            pids.sort_unstable();
+            pids.dedup();
+            pids
+        };
+        assert_eq!(
+            es.len(),
+            2,
+            "one video and one audio elementary PID: {es:?}"
+        );
+        for &pid in &es {
+            assert_first_after_break(&seen, pid);
+        }
+        for pid in [PAT_PID.value(), PMT_PID.value()] {
+            assert!(
+                packets_on(&seen, pid)
+                    .iter()
+                    .all(|packet| !packet.discontinuity),
+                "{pid:#06x}: a PSI packet is never marked"
+            );
+        }
+        assert_eq!(flagged_pids(&seen), es, "the break marks every track");
+
+        let video_only = play(Some(ids[0]));
+        let audio_only = play(Some(ids[1]));
+        let video_pid = flagged_pids(&video_only);
+        let audio_pid = flagged_pids(&audio_only);
+        assert_eq!(video_pid.len(), 1, "the video break marks one PID");
+        assert_eq!(audio_pid.len(), 1, "the audio break marks one PID");
+        assert_ne!(video_pid[0], audio_pid[0], "each break marks its own PID");
+        for (pid, seen) in [(video_pid[0], &video_only), (audio_pid[0], &audio_only)] {
+            assert_first_after_break(seen, pid);
+            for &other in es.iter().filter(|&&other| other != pid) {
+                assert!(
+                    packets_on(seen, other)
+                        .iter()
+                        .all(|packet| !packet.discontinuity),
+                    "{other:#06x}: a per-track break leaves the other PID unmarked"
+                );
+            }
+        }
     }
 }

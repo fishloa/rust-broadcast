@@ -8,14 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Breaking
 
-- `TsMuxStage` refuses `MuxInput::Discontinuity` with `Error::UnsupportedFeature`
-  instead of returning `Ok(())`: the muxer neither rebases the PES timeline nor
-  sets an adaptation-field `discontinuity_indicator`, so it had no way to carry
-  the mark and dropped it. The `transmux` CLI's `-f ts` output now refuses a
-  capture whose timeline breaks for the same reason, as does `-f dash` (a
-  single-period MPD cannot signal a break either), instead of writing an output
-  that hides the jump.
-
 - The wire-format contract types now come from `broadcast-core`.
 
 - `rtmp-runtime`, `rtp-packet`, `mpeg-ps`, `broadcast-matroska`, `broadcast-hls` and `cc-data` are no longer unconditional dependencies: each now backs one feature (`flv`, `rtp`, `ps`, `matroska`, `hls`, `captions`) that gates the modules using it, and all six are on by default, so the default build is unchanged. A `default-features = false` build keeps the IR and the MP4/TS paths only:
@@ -78,6 +70,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tag once the mark reached it. `tests/it/cli_discontinuity.rs` pins both
   against two plays of `fixtures/ts/h264-aac.ts` back to back, whose seam is a
   real backward jump of the 90 kHz timeline.
+- `TsMuxStage` signals `MuxInput::Discontinuity` instead of refusing it
+  (issue #4147): the next packet of each affected elementary PID — on the PCR
+  PID, the packet carrying the new time base's first PCR — carries the
+  adaptation-field `discontinuity_indicator` (ISO/IEC 13818-1 §2.4.3.5),
+  gaining an adaptation field where it had none. `track: None` marks every
+  announced PID, `track: Some(id)` only that track's; PSI packets stay
+  unmarked and the continuity counters keep counting (§2.4.3.3). The CLI's
+  `-f ts` output therefore remuxes a capture whose timeline breaks, where it
+  used to fail, and `-f dash` keeps refusing one (a single-period MPD cannot
+  signal a break).
 
 ### Breaking
 - `TsDemux`, `FlvDemux`, `RtmpDemux` and `RtpDepacketiser` (and their

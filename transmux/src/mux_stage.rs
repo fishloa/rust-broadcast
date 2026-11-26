@@ -30,9 +30,11 @@ pub enum MuxInput {
     /// The media timeline is discontinuous before the next sample of
     /// `track`, or of every track when `None`.
     ///
-    /// A stage that can express the break records it (an HLS
+    /// A stage that can express the break records it: an HLS
     /// `#EXT-X-DISCONTINUITY` on the next cut, the next fragment's
-    /// `SegmentSummary`); one that cannot refuses it with
+    /// `SegmentSummary`, or the MPEG-2 TS adaptation-field
+    /// `discontinuity_indicator` on the next packet of each affected
+    /// elementary PID. One that cannot refuses it with
     /// [`Error::UnsupportedFeature`](crate::Error::UnsupportedFeature) rather
     /// than returning `Ok(())` and dropping the mark.
     Discontinuity {

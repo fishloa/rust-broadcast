@@ -1178,8 +1178,9 @@ impl CliStream {
     }
 
     /// Forward a timeline break to the output stage, so an output that can
-    /// express it (an HLS playlist's `#EXT-X-DISCONTINUITY`) does, and one that
-    /// cannot refuses with a typed error instead of dropping the mark.
+    /// express it (an HLS playlist's `#EXT-X-DISCONTINUITY`, a TS packet's
+    /// `discontinuity_indicator`) does, and one that cannot refuses with a
+    /// typed error instead of dropping the mark.
     ///
     /// Everything held for decode-order interleaving is released first: the
     /// break lies after every sample the demux already produced, so those must
