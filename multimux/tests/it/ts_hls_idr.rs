@@ -9,6 +9,7 @@
 //! `GET` and demuxed to check which picture it starts on.
 #![cfg(feature = "test-seams")]
 
+use broadcast_bitstream::{NalCodec, access_unit_is_idr};
 use multimux::config::{AdminSpec, Config, InputSpec, OutputAuthSpec, Route, TsHlsCutPolicy};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
@@ -18,7 +19,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
-use transmux::{NalCodec, access_unit_is_idr};
 
 use crate::support::listener;
 use listener::bind_tcp;

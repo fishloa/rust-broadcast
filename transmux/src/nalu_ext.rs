@@ -5,11 +5,11 @@
 //! parsers, which stay in transmux. These traits keep the call sites unchanged.
 
 use crate::error::Result;
-use crate::nal::{HEVC_NAL_HEADER_LEN, HEVC_NAL_TYPE_MASK};
 use crate::sps::{
     AvcSpsInfo, HevcSpsInfo, decode_avc_sps, decode_hevc_sps, rfc6381_avc1, rfc6381_hvc1,
 };
 use alloc::string::String;
+use broadcast_bitstream::nal::{HEVC_NAL_HEADER_LEN, HEVC_NAL_TYPE_MASK};
 use isobmff::nalu_types::{AvcSps, HEVC_SPS_NUT, HevcNalUnit};
 
 /// Decode an AVC SPS NAL unit and format its RFC 6381 codec string.

@@ -2,7 +2,9 @@
 
 use broadcast_core::Serialize;
 use libfuzzer_sys::fuzz_target;
-use transmux::{CodecConfig, DemuxEvent};
+use transmux::{
+    CodecConfig, DemuxEvent,
+};
 
 const TS_PACKET_SIZE: usize = 188;
 const SYNC_BYTE: u8 = 0x47;

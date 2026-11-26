@@ -998,11 +998,14 @@ impl RtspSource {
         if ready {
             return true;
         }
-        let (sps, pps) = transmux::avc_access_unit_parameter_sets(&sample.data);
+        let (sps, pps) = broadcast_bitstream::avc_access_unit_parameter_sets(&sample.data);
         if sps.is_empty() || pps.is_empty() {
             return false;
         }
-        let Ok(avc) = transmux::avc_config_from_sps_pps(sps, pps) else {
+        let Ok(avc) = transmux::avc_config_from_sps_pps(
+            sps.into_iter().map(Into::into).collect(),
+            pps.into_iter().map(Into::into).collect(),
+        ) else {
             return false;
         };
         let (width, height) = avc

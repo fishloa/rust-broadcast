@@ -4,7 +4,9 @@ use broadcast_common::stage::{Stage, Timestamp};
 use libfuzzer_sys::fuzz_target;
 use transmux::cenc_encrypt::{CencEncryptStage, EncryptConfig, IvGen, SubsamplePolicy};
 use transmux::mux_stage::MuxInput;
-use transmux::{CencScheme, CodecConfig, Sample, TrackId, TrackSpec};
+use transmux::{
+    CencScheme, CodecConfig, Sample, TrackId, TrackSpec,
+};
 
 // Fuzz the per-sample CENC encrypt stage: arbitrary track configuration,
 // sample bytes and IV list must never panic, and a rejected sample must not

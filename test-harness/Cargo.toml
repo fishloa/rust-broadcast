@@ -9,6 +9,7 @@ publish = false
 description = "Shared test harnesses for workspace integration tests (unpublished)."
 
 [dependencies]
+broadcast-bitstream = { path = "../broadcast-bitstream", version = "0.1.0", default-features = false, features = ["h264", "hevc"] }
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false, features = ["std"] }
 broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 dash-runtime = { path = "../dash-runtime", version = "0.7.0" }

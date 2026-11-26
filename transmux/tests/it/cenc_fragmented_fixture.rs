@@ -27,7 +27,7 @@
 
 use std::process::Command;
 
-use transmux::annexb::iter_length_prefixed_nals;
+use broadcast_bitstream::annexb::iter_length_prefixed_nals;
 use transmux::cenc_decrypt::{CencDecryptStage, CencScheme, KeyMap};
 use transmux::{CodecConfig, Sample};
 

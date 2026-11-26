@@ -4,7 +4,7 @@
 //! ISO/IEC 13818-1 Table 2-34 lets a PMT declare a `stream_type` for each
 //! elementary PID (e.g. `0x1B` = H.264, `0x24` = HEVC, `0x0F` = AAC ADTS).
 //! This check walks the raw elementary-stream bytes of every PMT-declared
-//! `0x1B`/`0x24`/`0x0F` PID (via [`transmux::iter_annexb_nals`] for video,
+//! `0x1B`/`0x24`/`0x0F` PID (via [`broadcast_bitstream::iter_annexb_nals`] for video,
 //! [`transmux::parse_adts_header`] for audio — reused, not duplicated) and
 //! flags a PID whose bytes never once look like the declared codec's framing
 //! at all: zero Annex B NAL units anywhere on a declared H.264/HEVC PID, or
@@ -50,8 +50,8 @@ use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
+use broadcast_bitstream::iter_annexb_nals;
 use dvb_si::tables::pmt::StreamType;
-use transmux::iter_annexb_nals;
 
 use crate::diagnostics::codec_common::{AccessUnitScanner, has_adts_sync, pids_with_stream_type};
 use crate::report::{Finding, Location, Severity};

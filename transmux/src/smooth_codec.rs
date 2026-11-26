@@ -15,7 +15,7 @@
 //! builds the `TrackSpec` so [`crate::mp4_demux::Mp4Demux`] (which hard-requires a
 //! `moov`) can then absorb the Smooth fragment stream:
 //! - `FourCC="H264"`: the Annex-B-framed `CodecPrivateData` (start-code
-//!   delimited SPS+PPS) is split with [`crate::annexb::iter_annexb_nals`] and
+//!   delimited SPS+PPS) is split with [`broadcast_bitstream::annexb::iter_annexb_nals`] and
 //!   classified/assembled into an `avcC` via
 //!   [`crate::rtp_sdp::avc_config_from_sps_pps`].
 //! - `FourCC="AACL"`/`"AACH"`: the `CodecPrivateData` bytes ARE the
@@ -40,13 +40,13 @@ use broadcast_core::timescale::Timescale;
 use broadcast_smooth::{QualityLevel, StreamType};
 
 use crate::aac_asc::{ChannelConfiguration, SamplingFrequencyIndex};
-use crate::annexb::iter_annexb_nals;
 use crate::error::{Error as CrateError, Result as CrateResult};
-use crate::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use crate::nalu_ext::AvcSpsCodecInfo;
 use crate::pipeline::{CodecConfig, SubtitleFormat, TrackSpec};
 use crate::rtp_sdp::{aac_config_from_asc_bytes, avc_config_from_sps_pps};
 use crate::smooth::{FOURCC_AACH, FOURCC_AACL, FOURCC_AVC1, FOURCC_H264};
+use broadcast_bitstream::annexb::iter_annexb_nals;
+use broadcast_bitstream::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use isobmff::nalu_types::{AvcPps, AvcSps};
 use isobmff::subtitle_entries::{WvttSampleEntry, XmlSubtitleSampleEntry};
 

@@ -11,8 +11,8 @@
 //!   both and the box header is added by the sample-entry writer.
 
 use crate::error::Result;
-use crate::nal::HEVC_NAL_HEADER_LEN;
 use alloc::vec::Vec;
+use broadcast_bitstream::nal::HEVC_NAL_HEADER_LEN;
 use broadcast_core::{Parse, Serialize};
 use isobmff::hdr_boxes::{
     BOX_TYPE_LEN, CLLI_FOURCC, ContentLightLevel, MDCV_FOURCC, MasteringDisplayColourVolume,
@@ -45,12 +45,16 @@ impl HdrStaticMetadata {
     /// included) into `self`, keeping any value already present.
     pub fn absorb_hevc_sei_nal(&mut self, nal: &[u8]) {
         if nal.len() <= HEVC_NAL_HEADER_LEN
-            || crate::nal::nal_unit_type(crate::nal::NalCodec::Hevc, nal)
-                != Some(HEVC_PREFIX_SEI_NUT)
+            || broadcast_bitstream::nal::nal_unit_type(
+                broadcast_bitstream::nal::NalCodec::Hevc,
+                nal,
+            ) != Some(HEVC_PREFIX_SEI_NUT)
         {
             return;
         }
-        for (payload_type, payload) in crate::nal::sei_messages(&nal[HEVC_NAL_HEADER_LEN..]) {
+        for (payload_type, payload) in
+            broadcast_bitstream::nal::sei_messages(&nal[HEVC_NAL_HEADER_LEN..])
+        {
             match payload_type {
                 SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME if self.mastering_display.is_none() => {
                     self.mastering_display = MasteringDisplayColourVolume::parse(&payload).ok();
@@ -82,7 +86,9 @@ impl HdrStaticMetadata {
         }
         let messages: Vec<(u32, &[u8])> =
             payloads.iter().map(|(t, p)| (*t, p.as_slice())).collect();
-        Ok(Some(crate::nal::hevc_prefix_sei_nal(&messages)))
+        Ok(Some(broadcast_bitstream::nal::hevc_prefix_sei_nal(
+            &messages,
+        )))
     }
 
     /// Whether a prefix SEI NAL unit carries either HDR static message.
@@ -241,7 +247,7 @@ mod tests {
         let mdcv = [0x11u8; MDCV_PAYLOAD_LEN];
         let clli = [0x03, 0xE8, 0x01, 0x90];
         let other = [0xA5u8; 6];
-        let bundled = crate::nal::hevc_prefix_sei_nal(&[
+        let bundled = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[
             (SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME, &mdcv),
             (4, &other),
             (SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO, &clli),
@@ -250,10 +256,11 @@ mod tests {
         m.absorb_hevc_sei_nal(&bundled);
         assert!(m.mastering_display.is_some() && m.content_light_level.is_some());
         let rebuilt = m.to_hevc_declarative_sei_nal().unwrap().unwrap();
-        let types: Vec<u32> = crate::nal::sei_messages(&rebuilt[HEVC_NAL_HEADER_LEN..])
-            .into_iter()
-            .map(|(t, _)| t)
-            .collect();
+        let types: Vec<u32> =
+            broadcast_bitstream::nal::sei_messages(&rebuilt[HEVC_NAL_HEADER_LEN..])
+                .into_iter()
+                .map(|(t, _)| t)
+                .collect();
         assert_eq!(
             types,
             [
@@ -307,7 +314,7 @@ mod tests {
         // H.265 Table 7-1: `SUFFIX_SEI_NUT`.
         const HEVC_SUFFIX_SEI_NUT: u8 = 40;
         let mdcv = [0x11u8; MDCV_PAYLOAD_LEN];
-        let mut suffix = crate::nal::hevc_prefix_sei_nal(&[(
+        let mut suffix = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[(
             SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME,
             &mdcv,
         )]);
@@ -325,11 +332,11 @@ mod tests {
     fn the_first_message_of_each_kind_is_kept() {
         const MDCV_OTHER: [u8; 24] = [0x22; 24];
         const CLLI_OTHER: [u8; 4] = [0x00, 0x64, 0x00, 0x32];
-        let first = crate::nal::hevc_prefix_sei_nal(&[
+        let first = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[
             (SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME, &MDCV_BODY),
             (SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO, &CLLI_BODY),
         ]);
-        let second = crate::nal::hevc_prefix_sei_nal(&[
+        let second = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[
             (SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME, &MDCV_OTHER),
             (SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO, &CLLI_OTHER),
         ]);

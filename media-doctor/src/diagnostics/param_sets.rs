@@ -14,8 +14,8 @@
 //! check: `TsDemux` cannot produce this fact at all — its per-track config
 //! probe only *emits a track once SPS+PPS are found*, so a `Media`-level
 //! inspection can never observe an ordering fault that happened before the
-//! probe resolved. NAL classification is `transmux::nal`/`transmux::annexb`
-//! throughout — no duplicated NAL/SPS parsing.
+//! probe resolved. NAL classification is `broadcast_bitstream::nal`/
+//! `broadcast_bitstream::annexb` throughout — no duplicated NAL/SPS parsing.
 
 use alloc::boxed::Box;
 use alloc::collections::btree_map::BTreeMap;
@@ -23,9 +23,9 @@ use alloc::format;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
+use broadcast_bitstream::annexb::iter_annexb_nals;
+use broadcast_bitstream::nal::{NalCodec, is_keyframe_nal};
 use dvb_si::tables::pmt::StreamType;
-use transmux::annexb::iter_annexb_nals;
-use transmux::nal::{NalCodec, is_keyframe_nal};
 
 use crate::diagnostics::codec_common::{AccessUnitScanner, pids_with_stream_type};
 use crate::report::{Finding, Location, Severity};
@@ -179,7 +179,7 @@ fn walk_hevc(
         if nal.is_empty() || state.reported {
             continue;
         }
-        match transmux::nal::nal_unit_type(NalCodec::Hevc, nal) {
+        match broadcast_bitstream::nal::nal_unit_type(NalCodec::Hevc, nal) {
             Some(HEVC_NAL_SPS) => state.seen_sps = true,
             Some(HEVC_NAL_PPS) => state.seen_pps = true,
             _ => {

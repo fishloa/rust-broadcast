@@ -28,10 +28,10 @@
 //! symmetric: every parsed value, including the alignment padding bits, is
 //! re-emitted unchanged.
 
-use crate::bitreader::{bit_error, write_bits_checked};
 use crate::error::{Error, Result};
-use crate::nal::HEVC_NAL_HEADER_LEN;
 use alloc::vec::Vec;
+use broadcast_bitstream::bitreader::{bit_error, write_bits_checked};
+use broadcast_bitstream::nal::HEVC_NAL_HEADER_LEN;
 use broadcast_core::bits::{BitReader, BitWriter};
 use broadcast_core::error::InvalidValue;
 use broadcast_core::len::{need_in, need_out};
@@ -106,7 +106,9 @@ const BEZIER_ANCHOR_BITS: u32 = 10;
 const COLOR_SATURATION_WEIGHT_BITS: u32 = 6;
 
 fn read(r: &mut BitReader<'_>, bits: u32, what: &'static str) -> Result<u64> {
-    r.read_bits(bits).map_err(|e| bit_error(what, e))
+    r.read_bits(bits)
+        .map_err(|e| bit_error(what, e))
+        .map_err(Into::into)
 }
 
 /// `overlap_process_option` (ST 2094-40 clause 6.7): how the rendered pixels
@@ -395,6 +397,7 @@ fn write_color_volume(w: &mut BitWriter<'_>, c: &ColorVolumeTransform) -> Result
         FRACTION_BRIGHT_PIXELS_BITS,
         "fraction_bright_pixels",
     )
+    .map_err(Into::into)
 }
 
 fn read_transform_tail(r: &mut BitReader<'_>, c: &mut ColorVolumeTransform) -> Result<()> {
@@ -582,6 +585,7 @@ fn write_region(w: &mut BitWriter<'_>, g: &WindowRegion) -> Result<()> {
         OVERLAP_PROCESS_OPTION_BITS,
         "overlap_process_option",
     )
+    .map_err(Into::into)
 }
 
 impl Hdr10PlusMetadata {
@@ -626,12 +630,14 @@ impl Hdr10PlusMetadata {
     /// T.35 header.
     pub fn hevc_sei_nal_payloads(nal: &[u8]) -> Vec<Vec<u8>> {
         if nal.len() <= HEVC_NAL_HEADER_LEN
-            || crate::nal::nal_unit_type(crate::nal::NalCodec::Hevc, nal)
-                != Some(crate::hdr::HEVC_PREFIX_SEI_NUT)
+            || broadcast_bitstream::nal::nal_unit_type(
+                broadcast_bitstream::nal::NalCodec::Hevc,
+                nal,
+            ) != Some(crate::hdr::HEVC_PREFIX_SEI_NUT)
         {
             return Vec::new();
         }
-        crate::nal::sei_messages(&nal[HEVC_NAL_HEADER_LEN..])
+        broadcast_bitstream::nal::sei_messages(&nal[HEVC_NAL_HEADER_LEN..])
             .into_iter()
             .filter(|(t, p)| {
                 *t == SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35 && Self::has_t35_header(p)
@@ -656,7 +662,8 @@ impl Hdr10PlusMetadata {
 
     /// Whether an Annex B access unit holds an HDR10+ prefix SEI NAL unit.
     pub fn annexb_access_unit_carries_hdr10plus(access_unit: &[u8]) -> bool {
-        crate::annexb::iter_annexb_nals(access_unit).any(Self::hevc_sei_nal_carries_hdr10plus)
+        broadcast_bitstream::annexb::iter_annexb_nals(access_unit)
+            .any(Self::hevc_sei_nal_carries_hdr10plus)
     }
 
     /// Whether a 4-byte length-prefixed (ISO/IEC 14496-15:2017) sample holds an
@@ -688,7 +695,7 @@ impl Hdr10PlusMetadata {
     /// this metadata.
     pub fn to_hevc_prefix_sei_nal(&self) -> Result<Vec<u8>> {
         let payload = self.try_to_bytes()?;
-        Ok(crate::nal::hevc_prefix_sei_nal(&[(
+        Ok(broadcast_bitstream::nal::hevc_prefix_sei_nal(&[(
             SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35,
             &payload,
         )]))
@@ -923,7 +930,7 @@ mod tests {
 
     #[test]
     fn hevc_sei_nal_payloads_keeps_only_prefixed_t35_messages() {
-        let prefix = crate::nal::hevc_prefix_sei_nal(&[(
+        let prefix = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[(
             SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35,
             &T35_HEADER_V1,
         )]);
@@ -938,13 +945,13 @@ mod tests {
             "a suffix SEI NAL is not a prefix SEI"
         );
 
-        let other_type = crate::nal::hevc_prefix_sei_nal(&[(6, &[0u8; 4])]);
+        let other_type = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[(6, &[0u8; 4])]);
         assert!(
             Hdr10PlusMetadata::hevc_sei_nal_payloads(&other_type).is_empty(),
             "a non-T.35 payloadType is not HDR10+"
         );
 
-        let t35_without_header = crate::nal::hevc_prefix_sei_nal(&[(
+        let t35_without_header = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[(
             SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35,
             &[0u8; 4],
         )]);

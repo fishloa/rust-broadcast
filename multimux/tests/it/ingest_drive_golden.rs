@@ -170,7 +170,7 @@ async fn whip_publish() -> (Vec<transmux::Sample>, WhipDriver, Recorder, Session
         )
         .expect("a 90 kHz timestamp fits 32 bits");
         let base = *first_timestamp.get_or_insert(timestamp);
-        let units = transmux::iter_length_prefixed_nals(sample.data.as_ref())
+        let units = broadcast_bitstream::iter_length_prefixed_nals(sample.data.as_ref())
             .expect("length-prefixed NALs");
         let last = units
             .len()

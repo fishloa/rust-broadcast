@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use transmux::nal::{NalCodec, access_unit_is_keyframe, is_keyframe_nal, nal_unit_type};
+use broadcast_bitstream::nal::{NalCodec, access_unit_is_keyframe, is_keyframe_nal, nal_unit_type};
 use transmux::pipeline::CodecConfig;
 
 fn fixtures_dir() -> PathBuf {
@@ -119,7 +119,7 @@ fn hevc_first_au_is_irap_rest_are_not() {
     // (type 33) and an IRAP VCL NAL (16..=23) — real values, not hand bytes.
     let mut saw_sps = false;
     let mut saw_irap = false;
-    for nal in transmux::annexb::iter_annexb_nals(first) {
+    for nal in broadcast_bitstream::annexb::iter_annexb_nals(first) {
         match nal_unit_type(NalCodec::Hevc, nal) {
             Some(33) => saw_sps = true,
             Some(t) if (16..=23).contains(&t) => saw_irap = true,
@@ -164,7 +164,8 @@ fn vvc_classifies_real_mdat_nals() {
     // The `mdat` holds the coded VVC access unit(s) as 4-byte length-prefixed NALs.
     let mdat = find_box_body(&mp4, b"mdat").expect("mdat box present");
 
-    let nals = transmux::annexb::iter_length_prefixed_nals(mdat).expect("length-prefixed mdat");
+    let nals =
+        broadcast_bitstream::annexb::iter_length_prefixed_nals(mdat).expect("length-prefixed mdat");
     assert!(!nals.is_empty(), "mdat must carry NAL units");
 
     // Every NAL classifies (2-byte header present) and we must see a real IRAP
@@ -198,7 +199,7 @@ fn annexb_and_length_prefixed_agree_on_real_hevc_au() {
 
     for au in [&aus[0], &aus[1]] {
         let annexb = crate::ts_psi::pes_es_payload(au);
-        let lp = transmux::annexb::annexb_to_length_prefixed(annexb);
+        let lp = broadcast_bitstream::annexb::annexb_to_length_prefixed(annexb);
         let via_annexb = access_unit_is_keyframe(NalCodec::Hevc, annexb, false);
         let via_lp = access_unit_is_keyframe(NalCodec::Hevc, &lp, true);
         assert_eq!(

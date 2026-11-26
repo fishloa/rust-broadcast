@@ -637,10 +637,10 @@ const STACK_ASC_MAX: usize = 64;
 /// Read `n` MSB-first bits from `bytes` at `*bit`, advancing it. Returns `None`
 /// if the buffer is exhausted.
 ///
-/// Delegates to the shared [`crate::bitreader::read_bits_at`] cursor (`n` is
+/// Delegates to the shared [`broadcast_bitstream::bitreader::read_bits_at`] cursor (`n` is
 /// always <= 24 for every ASC field this module reads).
 fn asc_read_bits(bytes: &[u8], bit: &mut usize, n: usize) -> Option<u32> {
-    u32::try_from(crate::bitreader::read_bits_at(bytes, bit, n)?).ok()
+    u32::try_from(broadcast_bitstream::bitreader::read_bits_at(bytes, bit, n)?).ok()
 }
 
 /// `GetAudioObjectType()` — 5 bits, or `31 + 6` bits (ISO/IEC 14496-3 §1.5.1.1).

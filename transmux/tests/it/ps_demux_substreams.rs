@@ -856,13 +856,17 @@ fn h264_leading_junk_is_absorbed_not_dropped() {
 /// way at any input size a test could construct.
 #[test]
 fn a_splitter_cap_rejection_is_not_a_silent_drop() {
-    use transmux::au::AccessUnitSplitter;
-    use transmux::nal::NalCodec;
+    use broadcast_bitstream::au::AccessUnitSplitter;
+    use broadcast_bitstream::nal::NalCodec;
+
+    /// The cap `StreamingPsDemux` passes to the splitter.
+    const MAX_OPEN_NAL_BYTES: usize = 64 * 1024 * 1024;
 
     // The cap exists and rejects an over-long open NAL. The buffer is grown
     // with `resize` on a `Vec` of zeros, so no per-byte work is done beyond the
     // allocation itself.
-    let mut splitter = AccessUnitSplitter::new(NalCodec::Avc);
+    let mut splitter =
+        AccessUnitSplitter::with_max_open_nal_bytes(NalCodec::Avc, MAX_OPEN_NAL_BYTES);
     let mut oversized = vec![0u8; 64 * 1024 * 1024 + 8];
     oversized[..4].copy_from_slice(&[0x00, 0x00, 0x01, 0x65]);
     assert!(

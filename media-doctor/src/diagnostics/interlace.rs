@@ -27,8 +27,8 @@ use alloc::format;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
+use broadcast_bitstream::annexb::iter_annexb_nals;
 use dvb_si::tables::pmt::StreamType;
-use transmux::annexb::iter_annexb_nals;
 use transmux::sps::decode_avc_sps;
 
 use crate::diagnostics::codec_common::{AccessUnitScanner, pids_with_stream_type};

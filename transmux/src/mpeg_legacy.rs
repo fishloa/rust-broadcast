@@ -21,9 +21,9 @@
 //!   §7.2.6.6 Table 5 — 0x60–0x65 (MPEG-2 Visual profiles, 0x61 = Main),
 //!   0x6A (MPEG-1 Visual), 0x69 (MPEG-2 Audio), 0x6B (MPEG-1 Audio).
 
-use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use crate::error::{Error, Result};
 use crate::units::BITS_PER_KILOBIT;
+use broadcast_bitstream::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use broadcast_core::len::need_in;
 use broadcast_core::wire::be_u32;
 

@@ -1039,8 +1039,11 @@ impl InbandDisplayTagger {
         // Convert length-prefixed -> Annex B for observation only; sample bytes
         // stay unchanged. A malformed length prefix must not panic and leaves
         // the previous tag in place.
-        let length_size = nal_length_size(&self.config).unwrap_or(crate::annexb::NAL_LENGTH_SIZE);
-        if let Ok(nals) = crate::annexb::iter_length_prefixed_nals_with(&sample.data, length_size) {
+        let length_size =
+            nal_length_size(&self.config).unwrap_or(broadcast_bitstream::annexb::NAL_LENGTH_SIZE);
+        if let Ok(nals) =
+            broadcast_bitstream::annexb::iter_length_prefixed_nals_with(&sample.data, length_size)
+        {
             let mut annexb = Vec::with_capacity(sample.data.len());
             for nal in nals {
                 annexb.extend_from_slice(&[0, 0, 0, 1]);
@@ -1367,7 +1370,7 @@ pub(crate) fn nal_length_size(config: &CodecConfig) -> Option<usize> {
 /// canonical 4, when the source declared a different size
 /// (ISO/IEC 14496-15:2017 §4.3.3.1, §5.3.3.1.3: 1, 2 or 4 bytes).
 ///
-/// The rest of the pipeline — [`crate::annexb::iter_length_prefixed_nals`],
+/// The rest of the pipeline — [`broadcast_bitstream::annexb::iter_length_prefixed_nals`],
 /// keyframe detection, the TS/RTP writers — is fixed at 4 bytes, so a 1- or
 /// 2-byte-length fMP4 would otherwise parse every sample as garbage (r04-W43).
 /// A `length_size` of 3 is reserved by §5.3.3, so such a track is rejected
@@ -1375,13 +1378,13 @@ pub(crate) fn nal_length_size(config: &CodecConfig) -> Option<usize> {
 /// [`nal_length_size`] **before** [`normalise_spec_nal_length`] rewrites the
 /// config to canonical 4.
 pub(crate) fn normalise_nal_lengths(length_size: usize, sample: &mut Sample) -> Result<()> {
-    if length_size == crate::annexb::NAL_LENGTH_SIZE {
+    if length_size == broadcast_bitstream::annexb::NAL_LENGTH_SIZE {
         // Already canonical. Samples stay opaque here (this demuxer never
         // walks coded data for the common 4-byte case), so a container whose
         // sample bytes are not NAL-framed still demuxes as before.
         return Ok(());
     }
-    let data = crate::annexb::normalise_nal_length_size(&sample.data, length_size)?;
+    let data = broadcast_bitstream::annexb::normalise_nal_length_size(&sample.data, length_size)?;
     sample.data = data.into();
     Ok(())
 }
@@ -1392,15 +1395,17 @@ pub(crate) fn normalise_spec_nal_length(spec: &mut TrackSpec) {
     let Some(length_size) = nal_length_size(&spec.config) else {
         return;
     };
-    if length_size == crate::annexb::NAL_LENGTH_SIZE {
+    if length_size == broadcast_bitstream::annexb::NAL_LENGTH_SIZE {
         return;
     }
     match &mut spec.config {
         CodecConfig::Avc { config, .. } => {
-            config.config.length_size_minus_one = crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
+            config.config.length_size_minus_one =
+                broadcast_bitstream::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
         }
         CodecConfig::Hevc { config, .. } => {
-            config.config.length_size_minus_one = crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
+            config.config.length_size_minus_one =
+                broadcast_bitstream::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
         }
         _ => {}
     }
@@ -1820,7 +1825,7 @@ mod tests {
     /// segment whose samples really carry 2-byte prefixes.
     #[test]
     fn fmp4_demux_normalises_two_byte_nal_lengths() {
-        use crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
+        use broadcast_bitstream::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
         const TIMESCALE: Timescale = broadcast_core::timescale!(90_000);
         use crate::ir::{FragmentTrackData, Sample, SampleFlags};
         use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
@@ -1896,9 +1901,9 @@ mod tests {
     /// and its record updated to say so.
     #[test]
     fn fmp4_demux_normalises_two_byte_nal_lengths_hevc() {
-        use crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
         use crate::ir::{FragmentTrackData, Sample, SampleFlags};
         use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
+        use broadcast_bitstream::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
         use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
         const TIMESCALE: Timescale = broadcast_core::timescale!(90_000);
 

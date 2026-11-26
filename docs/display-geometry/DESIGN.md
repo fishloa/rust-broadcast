@@ -132,7 +132,7 @@ existing paths (`TrackSpec`, `DemuxEvent`, `Sample`), the same way
   `ColourInformationBox` exist (`isobmff/src/visual_ext.rs`) but no mux or
   demux path uses them; `pipeline::build_trak` writes `extra_boxes: vec![]`
   and `tkhd` width/height = coded width/height.
-- `transmux/src/nal.rs` already has an SEI message walker (`sei_messages`) and
+- `broadcast-bitstream/src/nal.rs` already has an SEI message walker (`sei_messages`) and
   a T.35 header matcher for GA94 captions (`append_if_atsc_cc_data`: country
   0xB5, provider 0x0031, user_identifier). AFD is the sibling `DTG1` payload
   (SN §5); no new SEI framing is needed.

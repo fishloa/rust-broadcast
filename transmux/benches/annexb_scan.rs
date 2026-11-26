@@ -9,8 +9,8 @@
 
 use std::hint::black_box;
 
+use broadcast_bitstream::annexb::{annexb_to_length_prefixed, length_prefixed_to_annexb};
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
-use transmux::annexb::{annexb_to_length_prefixed, length_prefixed_to_annexb};
 use transmux::{CodecConfig, StreamingTsDemux};
 
 // ── Fixtures (shared /fixtures/ts/) ─────────────────────────────────────────

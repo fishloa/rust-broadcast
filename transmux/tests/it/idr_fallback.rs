@@ -3,12 +3,10 @@
 //! pictures. `france2.ts` carries real IDRs.
 
 use crate::ts_hls_stage;
+use broadcast_bitstream::{NalCodec, access_unit_is_idr};
 use std::time::Duration;
 use test_harness::collect::Collected as Media;
-use transmux::{
-    CodecConfig, NalCodec, Sample, SegmentCutPolicy, StreamingTsHlsSegmenter, TrackSpec,
-    access_unit_is_idr,
-};
+use transmux::{CodecConfig, Sample, SegmentCutPolicy, StreamingTsHlsSegmenter, TrackSpec};
 
 const TARGET_SECS: u32 = 1;
 const LOOP_SECONDS: i64 = 24;

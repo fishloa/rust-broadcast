@@ -94,7 +94,7 @@ fn pending_avc_config() -> CodecConfig {
             profile_indication: 0,
             profile_compatibility: 0,
             level_indication: 0,
-            length_size_minus_one: crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
+            length_size_minus_one: broadcast_bitstream::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
             sps: Vec::new(),
             pps: Vec::new(),
             chroma_format: None,
@@ -135,7 +135,7 @@ fn track_of_payload(media: &sdp_types::Media, payload_type: &str) -> Option<SdpT
                             .config
                             .sps
                             .first()
-                            .and_then(|sps| crate::nal::avc_sps_dimensions(&sps.0))
+                            .and_then(|sps| crate::nal_params::avc_sps_dimensions(&sps.0))
                             .unwrap_or((UNKNOWN_DIMENSION, UNKNOWN_DIMENSION));
                         CodecConfig::Avc {
                             config: avc,

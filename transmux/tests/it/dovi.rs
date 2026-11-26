@@ -109,7 +109,7 @@ fn mp4_record(fixture: &str) -> Option<DoviDecoderConfigurationRecord> {
 }
 
 fn nal_types(sample: &[u8]) -> Vec<u8> {
-    transmux::annexb::iter_length_prefixed_nals(sample)
+    broadcast_bitstream::annexb::iter_length_prefixed_nals(sample)
         .expect("length-prefixed NALs")
         .iter()
         .map(|n| (n[0] >> 1) & 0x3F)
@@ -117,7 +117,7 @@ fn nal_types(sample: &[u8]) -> Vec<u8> {
 }
 
 fn rpu_nals(sample: &[u8]) -> Vec<Vec<u8>> {
-    transmux::annexb::iter_length_prefixed_nals(sample)
+    broadcast_bitstream::annexb::iter_length_prefixed_nals(sample)
         .expect("length-prefixed NALs")
         .into_iter()
         .filter(|n| (n[0] >> 1) & 0x3F == HEVC_RPU_NUT)

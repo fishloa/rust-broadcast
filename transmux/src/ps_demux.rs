@@ -33,7 +33,7 @@
 //! A PS also does not stamp every frame: one PES packet concatenates several
 //! access units and carries a PTS/DTS only for the first one. Video access units
 //! are therefore recovered incrementally by
-//! [`crate::au::AccessUnitSplitter`] (a boundary is a new picture, from
+//! [`broadcast_bitstream::au::AccessUnitSplitter`] (a boundary is a new picture, from
 //! `first_mb_in_slice` as well as from an access-unit delimiter - an AUD is
 //! *optional* in H.264 and absent from most PS captures), and MPEG-2 pictures by
 //! their `picture_start_code` (`0x00000100`, ISO/IEC 13818-2 §6.2.3). Audio is
@@ -67,8 +67,6 @@ use mpeg_ps::{PsEvent, PsLimits, PsScanner};
 
 use crate::TrackId;
 use crate::ac3_syncframe::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
-use crate::annexb::iter_annexb_nals;
-use crate::au::AccessUnitSplitter;
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
 use crate::ir::{
@@ -77,15 +75,15 @@ use crate::ir::{
 };
 use crate::mpeg_legacy::Mpeg2SeqHeader;
 use crate::mpeg2_display::Mpeg2DisplayTracker;
-use crate::nal::{
-    AVC_NAL_IDR, AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, ParamKind,
-    parameter_set_is_valid,
-};
+use crate::nal_params::{ParamKind, parameter_set_is_valid};
 use crate::pipeline::CodecConfig;
 use crate::ts_demux::{
     AVC_SPS_CONFIG_MIN_LEN, AVC_SPS_CONSTRAINT_FLAGS_OFFSET, AVC_SPS_LEVEL_IDC_OFFSET,
     MPEG2_PICTURE_START_CODE, mpeg2_is_sync,
 };
+use broadcast_bitstream::annexb::iter_annexb_nals;
+use broadcast_bitstream::au::{AccessUnitSplitter, first_nal_start};
+use broadcast_bitstream::nal::{AVC_NAL_IDR, AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec};
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::nalu_types::{AvcPps, AvcSps};
 
@@ -1064,7 +1062,7 @@ impl VideoTiming {
             profile_indication: sps[1],
             profile_compatibility: sps[AVC_SPS_CONSTRAINT_FLAGS_OFFSET],
             level_indication: sps[AVC_SPS_LEVEL_IDC_OFFSET],
-            length_size_minus_one: crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
+            length_size_minus_one: broadcast_bitstream::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
             sps: alloc::vec![AvcSps(sps.clone())],
             pps: alloc::vec![AvcPps(pps.clone())],
             chroma_format: None,
@@ -1242,6 +1240,11 @@ fn has_valid_avc_sps(data: &[u8]) -> bool {
     })
 }
 
+/// Upper bound `StreamingPsDemux` passes to the Annex B splitter: one still-open
+/// NAL or one assembled access unit may not exceed this before completing. Far
+/// above any real coded picture.
+const MAX_OPEN_NAL_BYTES: usize = 64 * 1024 * 1024;
+
 /// Incremental H.264 Annex B access-unit splitter plus the absolute elementary
 /// stream offset of the next unit.
 struct H264State {
@@ -1253,9 +1256,10 @@ struct H264State {
 
 impl H264State {
     fn new(probe: &[u8]) -> Result<Self> {
-        let mut splitter = AccessUnitSplitter::new(NalCodec::Avc);
+        let mut splitter =
+            AccessUnitSplitter::with_max_open_nal_bytes(NalCodec::Avc, MAX_OPEN_NAL_BYTES);
         splitter.push(probe)?;
-        let cursor = crate::au::first_nal_start(probe).map(|offset| offset as u64);
+        let cursor = first_nal_start(probe).map(|offset| offset as u64);
         let mut pre_scan = Vec::new();
         if cursor.is_none() {
             pre_scan.extend_from_slice(probe);
@@ -1271,7 +1275,7 @@ impl H264State {
         self.splitter.push(payload)?;
         if self.cursor.is_none() {
             self.pre_scan.extend_from_slice(payload);
-            if let Some(offset) = crate::au::first_nal_start(&self.pre_scan) {
+            if let Some(offset) = first_nal_start(&self.pre_scan) {
                 self.cursor = Some(offset as u64);
                 self.pre_scan.clear();
             }
@@ -2062,5 +2066,18 @@ mod private1_tests {
             second,
             "the sample is the second frame, not the prefix frame"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MAX_OPEN_NAL_BYTES;
+
+    /// The bound the demuxer passes to the splitter is a literal 64 MiB, not
+    /// an accidental ~1 MiB. It moved here from the splitter when the limit
+    /// became the caller's.
+    #[test]
+    fn max_open_nal_bytes_is_sixty_four_mib() {
+        assert_eq!(MAX_OPEN_NAL_BYTES, 64 * 1024 * 1024);
     }
 }

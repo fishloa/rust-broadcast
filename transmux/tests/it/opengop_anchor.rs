@@ -16,7 +16,7 @@
 //!   proves IDR-based anchoring is unchanged.
 //!
 //! Test 1 re-derives the open-GOP RAP count with a NAL walker written
-//! independently of `transmux::nal` (own PES/AU reassembly, own start-code
+//! independently of `broadcast_bitstream::nal` (own PES/AU reassembly, own start-code
 //! scan, own `sei_message()` `payloadType` decode) so the "matches" assertion
 //! actually cross-checks the implementation rather than exercising the same
 //! code path twice.
@@ -36,7 +36,7 @@ const VIDEO_PID: u16 = 0x0100;
 
 // ── Independent (test-owned) TS → AU → NAL-type walk ────────────────────────
 //
-// Deliberately does NOT call anything in `transmux::nal` or `transmux::annexb`
+// Deliberately does NOT call anything in `broadcast_bitstream::nal` or `broadcast_bitstream::annexb`
 // — this is a from-scratch re-implementation so Test 1's "is_sync count
 // matches the independent count" assertion is a real cross-check.
 
@@ -91,7 +91,7 @@ fn unescape_ebsp(nal: &[u8]) -> Vec<u8> {
 
 /// Whether a type-6 SEI NAL carries a `recovery_point` message (payloadType
 /// 6) — ITU-T H.264 §7.3.2.3.1 `sei_payload()` varint coding, walked
-/// independently of `transmux::nal::recovery_point_sei`.
+/// independently of `broadcast_bitstream::nal::recovery_point_sei`.
 fn independent_sei_has_recovery_point(nal: &[u8]) -> bool {
     if nal.is_empty() || nal[0] & 0x1F != 6 {
         return false;

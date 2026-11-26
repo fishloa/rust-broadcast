@@ -17,7 +17,9 @@ use media_plane::{
     TrunkConfig,
 };
 use transmux::pipeline::{DataCarriage, DataIdentity};
-use transmux::{CodecConfig, Sample, TrackId, TrackSpec};
+use transmux::{
+    CodecConfig, Sample, TrackId, TrackSpec,
+};
 
 /// A session whose entire event stream is fuzzer-controlled: `feed` decodes
 /// its input into zero or more [`SessionEvent`]s and never fails. This

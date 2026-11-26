@@ -6,6 +6,7 @@
 //! demuxed; status and metrics come from the admin API and `/metrics`.
 #![cfg(feature = "test-seams")]
 
+use broadcast_bitstream::{NalCodec, access_unit_is_idr};
 use multimux::config::{
     AdminSpec, Config, InputSpec, OutputAuthSpec, Route, TsHlsCutPolicy, TsHlsIdrFallback,
 };
@@ -17,7 +18,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::pipeline::{CodecConfig, Sample};
-use transmux::{NalCodec, access_unit_is_idr};
 
 use crate::support::listener;
 use listener::bind_tcp;

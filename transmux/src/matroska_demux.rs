@@ -54,13 +54,13 @@ use broadcast_matroska::reader::{
 use bytes::{Bytes, BytesMut};
 
 use crate::TrackId;
-use crate::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
 use crate::error::{Error, Result};
 use crate::ir::{
     CodecConfig, DataIdentity, DemuxEvent, EventProvenance, InputDegradation, Sample, SampleFlags,
     SampleTiming, TrackSpec,
 };
 use crate::rtp_sdp::aac_config_from_asc_bytes;
+use broadcast_bitstream::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use isobmff::opus::{ChannelMappingTable, OpusSpecificBox};

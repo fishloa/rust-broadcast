@@ -873,13 +873,13 @@ fn gate_opens_on(
         && config.ts_cut_policy == transmux::SegmentCutPolicy::IdrOnly
         && !idr_fallback_active;
     let codec = match codec_config {
-        Some(CodecConfig::Avc { .. }) => Some(transmux::NalCodec::Avc),
-        Some(CodecConfig::Hevc { .. }) => Some(transmux::NalCodec::Hevc),
-        Some(CodecConfig::Vvc { .. }) => Some(transmux::NalCodec::Vvc),
+        Some(CodecConfig::Avc { .. }) => Some(broadcast_bitstream::NalCodec::Avc),
+        Some(CodecConfig::Hevc { .. }) => Some(broadcast_bitstream::NalCodec::Hevc),
+        Some(CodecConfig::Vvc { .. }) => Some(broadcast_bitstream::NalCodec::Vvc),
         _ => None,
     };
     match (idr_only, codec) {
-        (true, Some(codec)) => transmux::access_unit_is_idr(codec, &sample.data),
+        (true, Some(codec)) => broadcast_bitstream::access_unit_is_idr(codec, &sample.data),
         _ => sample.flags.is_sync,
     }
 }
@@ -3804,8 +3804,8 @@ mod segmenter_tests {
         }
     }
 
-    fn gate_sample(codec: transmux::NalCodec, idr: bool, is_sync: bool) -> Sample {
-        use transmux::NalCodec;
+    fn gate_sample(codec: broadcast_bitstream::NalCodec, idr: bool, is_sync: bool) -> Sample {
+        use broadcast_bitstream::NalCodec;
         let nal: [u8; 4] = match (codec, idr) {
             (NalCodec::Avc, true) => [0x65, 0x01, 0x00, 0x00],
             (NalCodec::Avc, false) => [0x41, 0x01, 0x00, 0x00],
@@ -3828,7 +3828,7 @@ mod segmenter_tests {
 
     #[test]
     fn gate_opens_on_requires_an_idr_for_ts_idr_only_per_codec() {
-        use transmux::NalCodec;
+        use broadcast_bitstream::NalCodec;
         let config = gate_config(Container::MpegTs, transmux::SegmentCutPolicy::IdrOnly);
         let cases = [
             ("avc", NalCodec::Avc, track_spec(TrackId::new(1)).config),
@@ -4530,7 +4530,7 @@ mod segmenter_tests {
         payload.extend_from_slice(&cc);
         let mut nal = vec![0x00, 0x00, 0x01, 0x06, 0x04, payload.len() as u8];
         nal.extend_from_slice(&payload);
-        transmux::annexb_to_length_prefixed(&nal)
+        broadcast_bitstream::annexb_to_length_prefixed(&nal)
     }
 
     #[test]

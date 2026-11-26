@@ -33,7 +33,7 @@
 //! Requiring `sprop-parameter-sets` here would reject a real browser's offer
 //! outright. Instead, [`WhipIngestSession`] depayloads immediately (its
 //! `avcC` config starts empty and is installed only once real parameter sets
-//! arrive: [`transmux::avc_access_unit_parameter_sets`] walks a real IDR's
+//! arrive: [`broadcast_bitstream::avc_access_unit_parameter_sets`] walks a real IDR's
 //! length-prefixed NAL units for a genuine SPS (type 7) + PPS (type 8) pair,
 //! [`transmux::avc_config_from_sps_pps`] builds the real
 //! [`isobmff::AVCConfigurationBox`] from it, and
@@ -1325,18 +1325,21 @@ impl WhipIngestSession {
     /// Scans `sample`'s length-prefixed NAL data for a real SPS/PPS pair and,
     /// if found, captures the real `avcC` for `track_id` — see the module
     /// doc. The walk and the record are transmux's own
-    /// ([`transmux::avc_access_unit_parameter_sets`],
+    /// ([`broadcast_bitstream::avc_access_unit_parameter_sets`],
     /// [`transmux::avc_config_from_sps_pps`]), so a WebRTC keyframe is read by
     /// exactly the code that reads one out of a TS or fMP4 sample.
     fn try_capture_config(&mut self, track_id: TrackId, sample: &Sample) {
         if self.captured.get(&track_id).cloned().flatten().is_some() {
             return;
         }
-        let (sps, pps) = transmux::avc_access_unit_parameter_sets(sample.data.as_ref());
+        let (sps, pps) = broadcast_bitstream::avc_access_unit_parameter_sets(sample.data.as_ref());
         if sps.is_empty() || pps.is_empty() {
             return;
         }
-        let Ok(config) = avc_config_from_sps_pps(sps, pps) else {
+        let Ok(config) = avc_config_from_sps_pps(
+            sps.into_iter().map(Into::into).collect(),
+            pps.into_iter().map(Into::into).collect(),
+        ) else {
             return;
         };
         self.depacketiser.set_track_config(

@@ -4,6 +4,7 @@
 
 ### Breaking
 
+- The NAL and Annex B helpers (`NalCodec`, `nal_unit_type`, `is_keyframe_nal`, `iter_annexb_nals`, `iter_length_prefixed_nals_with`) now come from `broadcast-bitstream`, the new codec-bitstream layer below the muxing hub; the crate gains that dependency.
 - The wire-format contract types now come from `broadcast-core`.
 
 - `Diagnostic` now builds an incremental pass (`scan(&self, pmt: &PmtStreamIndex) -> Box<dyn DiagnosticScan>`) instead of requiring a whole-buffer `run`; `run(&self, ts: &[u8], report: &mut Report)` stays as a default method over that scan, so a caller holding a buffer is unchanged. A diagnostic whose scan reads the PMT-declared stream set overrides `needs_pmt_streams`.

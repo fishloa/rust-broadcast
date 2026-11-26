@@ -101,7 +101,7 @@ fn hdr10plus_seis_by_pts(media: &test_harness::collect::Collected) -> Vec<Vec<u8
     samples
         .iter()
         .flat_map(|s| {
-            transmux::annexb::iter_length_prefixed_nals(&s.data)
+            broadcast_bitstream::annexb::iter_length_prefixed_nals(&s.data)
                 .unwrap()
                 .into_iter()
                 .filter(|n| transmux::Hdr10PlusMetadata::hevc_sei_nal_carries_hdr10plus(n))

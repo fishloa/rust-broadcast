@@ -1390,7 +1390,7 @@ fn cenc_sample_template(samples: &[Sample], sample_bytes: u32) -> (Vec<u8>, usiz
     );
     let nals = expect(
         "split the keyframe into NAL units",
-        transmux::iter_length_prefixed_nals(&keyframe.data),
+        broadcast_bitstream::iter_length_prefixed_nals(&keyframe.data),
     );
     let mut before_vcl = Vec::new();
     let mut from_vcl = Vec::new();

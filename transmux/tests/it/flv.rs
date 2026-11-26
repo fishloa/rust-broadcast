@@ -263,7 +263,8 @@ fn flv_round_trip_preserves_samples_and_timing() {
     assert_eq!(vid.len(), 75);
     for s in vid {
         // Length-prefixed NALs must sum exactly to the sample length.
-        let nals = transmux::iter_length_prefixed_nals(&s.data).expect("length-prefixed NALs");
+        let nals =
+            broadcast_bitstream::iter_length_prefixed_nals(&s.data).expect("length-prefixed NALs");
         let total: usize = nals.iter().map(|n| n.len() + 4).sum();
         assert_eq!(
             total,

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- `NalCodec`, `access_unit_is_idr` and `annexb_to_length_prefixed` now come from `broadcast-bitstream`, the new codec-bitstream layer below the muxing hub; the crate gains that dependency.
 - The wire-format contract types now come from `broadcast-core`.
 
 - `FileReaderError::FileTooLarge` is deleted: no container is read whole, so

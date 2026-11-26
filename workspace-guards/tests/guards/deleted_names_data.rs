@@ -237,4 +237,124 @@ pub const TABLE: &[Banned] = &[
         reason: "a Smooth fragment is a SegmentOut from SmoothSegmenter",
         issue: "#4057",
     },
+    Banned {
+        name: "transmux::bitreader",
+        reason: "the exp-Golomb/RBSP reader lives in broadcast_bitstream::bitreader",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::rbsp",
+        reason: "RBSP emulation-prevention handling lives in broadcast_bitstream::rbsp",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::nal",
+        reason: "NAL classification lives in broadcast_bitstream::nal",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::annexb",
+        reason: "Annex B / length-prefix conversion lives in broadcast_bitstream::annexb",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::au",
+        reason: "access-unit splitting lives in broadcast_bitstream::au",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::NalCodec",
+        reason: "the NAL codec family enum lives in broadcast_bitstream::NalCodec",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::nal_unit_type",
+        reason: "nal_unit_type lives in broadcast_bitstream::nal",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::is_keyframe_nal",
+        reason: "is_keyframe_nal lives in broadcast_bitstream::nal",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::is_idr_nal",
+        reason: "is_idr_nal lives in broadcast_bitstream::nal",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::access_unit_is_idr",
+        reason: "access_unit_is_idr lives in broadcast_bitstream::nal",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::access_unit_is_keyframe",
+        reason: "access_unit_is_keyframe lives in broadcast_bitstream::nal",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::access_unit_is_rap",
+        reason: "access_unit_is_rap lives in broadcast_bitstream::nal",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::recovery_point_sei",
+        reason: "recovery_point_sei lives in broadcast_bitstream::nal",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::caption_cc_data",
+        reason: "caption_cc_data lives in broadcast_bitstream::nal",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::avc_access_unit_parameter_sets",
+        reason: "avc_access_unit_parameter_sets lives in broadcast_bitstream::nal (isobmff feature)",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::iter_annexb_nals",
+        reason: "iter_annexb_nals lives in broadcast_bitstream::annexb",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::iter_length_prefixed_nals",
+        reason: "iter_length_prefixed_nals lives in broadcast_bitstream::annexb",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::iter_length_prefixed_nals_with",
+        reason: "iter_length_prefixed_nals_with lives in broadcast_bitstream::annexb",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::annexb_to_length_prefixed",
+        reason: "annexb_to_length_prefixed lives in broadcast_bitstream::annexb",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::length_prefixed_to_annexb",
+        reason: "length_prefixed_to_annexb lives in broadcast_bitstream::annexb",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::normalise_nal_length_size",
+        reason: "normalise_nal_length_size lives in broadcast_bitstream::annexb",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::NAL_LENGTH_SIZE",
+        reason: "NAL_LENGTH_SIZE lives in broadcast_bitstream::annexb",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::AccessUnitSplitter",
+        reason: "AccessUnitSplitter lives in broadcast_bitstream::au",
+        issue: "broadcast-bitstream bs1",
+    },
+    Banned {
+        name: "transmux::split_access_units",
+        reason: "split_access_units lives in broadcast_bitstream::au",
+        issue: "broadcast-bitstream bs1",
+    },
 ];

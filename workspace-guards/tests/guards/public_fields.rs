@@ -13,7 +13,7 @@
 use workspace_guards::src_files;
 
 /// Crates whose public structs must have private fields.
-pub const CRATES: &[&str] = &["broadcast-codec"];
+pub const CRATES: &[&str] = &["broadcast-bitstream", "broadcast-codec"];
 
 /// Whether a struct-body line begins a field with an unrestricted `pub`.
 fn is_pub_field(trimmed: &str) -> bool {
