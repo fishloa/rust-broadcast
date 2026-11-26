@@ -1,4 +1,4 @@
-//! T2-MI–specific traits. `Parse` / `Serialize` are provided by `broadcast_common`
+//! T2-MI–specific traits. `Parse` / `Serialize` are provided by `broadcast_core`
 //! and imported directly at call sites.
 
 /// Implemented by every typed T2-MI payload; drives

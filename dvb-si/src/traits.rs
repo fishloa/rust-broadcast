@@ -1,4 +1,4 @@
-//! SI-specific traits. `Parse` is provided by `broadcast_common`
+//! SI-specific traits. `Parse` is provided by `broadcast_core`
 //! and imported directly at call sites.
 
 use broadcast_core::Parse;

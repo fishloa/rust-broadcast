@@ -1,5 +1,5 @@
 //! SCTE-35-specific dispatch traits. `Parse` / `Serialize` come from
-//! `broadcast_common` and are imported directly at call sites.
+//! `broadcast_core` and are imported directly at call sites.
 //!
 //! These mirror dvb-si's `DescriptorDef` / `TableDef`: each typed wire entity
 //! declares its discriminant byte and a SCREAMING_SNAKE diagnostic `NAME`, and

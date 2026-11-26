@@ -6,7 +6,8 @@
 //!
 //! This crate is deliberately below [`transmux`](https://docs.rs/transmux): it
 //! knows element syntax only, never a media IR or a codec bitstream. Its one
-//! workspace dependency is [`broadcast_common`], so a consumer that only needs
+//! workspace dependencies are [`broadcast_core`] and [`broadcast_common`], so a
+//! consumer that only needs
 //! to read a Matroska file does not pull in the whole container-muxing hub.
 //!
 //! Every wire structure implements the same symmetric pair as the rest of the

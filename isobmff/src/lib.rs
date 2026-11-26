@@ -7,7 +7,8 @@
 //!
 //! This crate is deliberately below [`transmux`](https://docs.rs/transmux):
 //! it knows box syntax only, never the media IR or a codec bitstream. Its one
-//! workspace dependency is [`broadcast_common`], so a parser that only needs
+//! workspace dependencies are [`broadcast_core`] and [`broadcast_common`], so a
+//! parser that only needs
 //! to walk MP4 boxes — a validator, a segmenter, a probe — no longer pulls in
 //! the whole container-muxing hub.
 //!

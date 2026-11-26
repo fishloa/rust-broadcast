@@ -1,4 +1,4 @@
-//! Subtitling-specific traits. `Parse` is provided by `broadcast_common`.
+//! Subtitling-specific traits. `Parse` is provided by `broadcast_core`.
 
 use broadcast_core::Parse;
 
