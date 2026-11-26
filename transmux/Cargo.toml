@@ -37,7 +37,7 @@ isobmff    = { path = "../isobmff", version = "0.1.0", default-features = false 
 mpeg-ts    = { path = "../mpeg-ts",  version = "0.10.0", default-features = false }
 mpeg-pes   = { path = "../mpeg-pes", version = "0.10.0", default-features = false }
 mpeg-ps    = { path = "../mpeg-ps",  version = "0.10.0", default-features = false, optional = true }
-rtp-packet = { path = "../rtp-packet", version = "0.9.0", default-features = false }
+rtp-packet = { path = "../rtp-packet", version = "0.9.0", default-features = false, optional = true }
 bytes      = { version = "1", default-features = false }
 # Caption presence detection (`caption_detect`): `cc_data()` triplets and the 708 service decoder.
 cc-data    = { path = "../cc-data", version = "0.11.0", default-features = false, features = ["decode"] }
@@ -70,7 +70,7 @@ clap       = { workspace = true, optional = true, features = ["derive"] }
 # handshake, chunk stream, protocol control messages and AMF0 commands live in
 # rtmp-runtime, whose core is no_std + alloc. rtmp-runtime does not depend on
 # transmux, so there is no cycle.
-rtmp-runtime = { path = "../rtmp-runtime", version = "0.12.0", default-features = false }
+rtmp-runtime = { path = "../rtmp-runtime", version = "0.12.0", default-features = false, optional = true }
 # `cli` container detection (issue #960 / audit r05-W29): the CLI's
 # `detect_container` used a fixed-offset TS check that missed M2TS (192-byte
 # stride) and mid-packet captures; `container-probe` is the crate built to
@@ -93,10 +93,20 @@ name = "transmux_any_to_any"
 required-features = ["std"]
 
 [features]
-default = ["std", "cenc", "ps", "matroska"]
-std    = ["cc-data/std", "dvb-si/std", "broadcast-common/std", "broadcast-common/xml", "broadcast-common/lang", "thiserror/std", "serde?/std", "broadcast-hls/std", "isobmff/std", "broadcast-matroska?/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps?/std", "rtp-packet/std", "dep:quick-xml", "dep:jiff", "dep:sdp-types", "dep:broadcast-smooth", "broadcast-smooth/manifest", "dep:broadcast-dash"]
-serde  = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "isobmff/serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps?/serde", "rtp-packet/serde"]
+default = ["std", "cenc", "flv", "ps", "matroska"]
+std    = ["cc-data/std", "dvb-si/std", "broadcast-common/std", "broadcast-common/xml", "broadcast-common/lang", "thiserror/std", "serde?/std", "broadcast-hls/std", "isobmff/std", "broadcast-matroska?/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps?/std", "rtp-packet?/std", "dep:quick-xml", "dep:jiff", "dep:sdp-types", "dep:broadcast-smooth", "broadcast-smooth/manifest", "dep:broadcast-dash"]
+serde  = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "isobmff/serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps?/serde", "rtp-packet?/serde"]
 cenc   = ["dep:aes", "dep:ctr", "dep:cbc", "dep:zeroize", "dep:subtle"]
+# `flv` enables the Adobe FLV container spoke: the FLV muxer ([`FlvMuxStage`]), the
+# streaming FLV demuxer ([`StreamingFlvDemux`]), and the RTMP signalling that
+# carries FLV, all over `rtmp-runtime`'s wire layer.
+flv    = ["dep:rtmp-runtime"]
+# `rtp` enables the RTP/RTCP spoke: the packetiser ([`RtpPacketiserStage`]),
+# streaming depayload ([`RtpStreamDepacketiser`]), the RTCP packet types and the
+# A/V alignment helper, all over `rtp-packet`'s wire layer. The payload-format
+# types and clock constants the IR and the SDP path share stay available without
+# it.
+rtp    = ["dep:rtp-packet"]
 # `ps` enables the MPEG-2 Program Stream demux stage ([`StreamingPsDemux`]): the
 # `mpeg-ps` framing layer and the `StreamingPsDemux` stage over its scanner.
 ps     = ["dep:mpeg-ps"]
@@ -113,8 +123,9 @@ sample-aes = ["cenc", "cbc/alloc", "cbc/block-padding"]
 # default, so a normal build never compiles the counter.
 scan-counters = ["isobmff/scan-counters"]
 # `cli` builds the `transmux` command-line packager (std + clap). The library
-# itself stays `no_std`; only this feature/binary pulls `clap` and `std`.
-cli    = ["dep:clap", "dep:container-probe", "std"]
+# itself stays `no_std`; only this feature/binary pulls `clap` and `std`. It
+# also turns on every container spoke the binary can read or write.
+cli    = ["dep:clap", "dep:container-probe", "std", "flv", "rtp", "ps", "matroska"]
 # `motion-imagery-metadata` adds `LocalSetItem::value_typed()`, the item value
 # decoded by the `motion-imagery-metadata` crate.
 motion-imagery-metadata = ["dep:motion-imagery-metadata"]

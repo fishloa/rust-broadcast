@@ -188,7 +188,9 @@ pub mod dovi_descriptor;
 pub mod drm;
 pub mod dts_core;
 pub mod error;
+#[cfg(feature = "flv")]
 pub mod flv;
+#[cfg(feature = "flv")]
 pub mod flv_stream;
 pub mod h262;
 pub mod hdr;
@@ -228,14 +230,19 @@ pub mod stitch;
 #[cfg(test)]
 pub(crate) mod test_bits;
 pub mod timeline;
+#[cfg(feature = "rtp")]
 pub use rtp_packet::rtcp;
 #[cfg(feature = "matroska")]
 pub mod matroska_demux;
+#[cfg(feature = "flv")]
 pub mod rtmp;
 pub mod rtp;
+#[cfg(feature = "rtp")]
 pub mod rtp_align;
+#[cfg(feature = "rtp")]
 pub mod rtp_dts;
 pub mod rtp_sdp;
+#[cfg(feature = "rtp")]
 pub mod rtp_stream;
 #[cfg(feature = "sample-aes")]
 pub mod sample_aes;
@@ -293,10 +300,12 @@ pub use drm::{
 #[cfg(feature = "std")]
 pub use drm::{playready_pro, playready_pssh, playready_wrmheader};
 pub use error::{Error, Result};
+#[cfg(feature = "flv")]
 pub use flv::{
     FlvError, FlvMuxStage, FlvPayload, FlvPayloadKind, flv_frame_payload,
     flv_sequence_header_payloads, flv_track_kind, on_metadata_body,
 };
+#[cfg(feature = "flv")]
 pub use flv_stream::StreamingFlvDemux;
 pub use h262::{SequenceDisplayExtension, SequenceHeaderGeometry};
 pub use interlace::{
@@ -342,20 +351,26 @@ pub use progressive::ProgressiveMuxStage;
 pub use ps_demux::{PsDemuxLimits, StreamingPsDemux};
 pub use rebase::{GapStage, OffsetStage, RebaseOrigin, RebaseStage};
 pub use repackage::{Repackage, RepackageOutput};
+#[cfg(feature = "rtp")]
 pub use rtcp::{
     APP_NAME_LEN, App, Bye, CompoundPacket, PT_APP, PT_BYE, PT_RECEIVER_REPORT, PT_SENDER_REPORT,
     PT_SOURCE_DESCRIPTION, REPORT_BLOCK_LEN, ReceiverReport, ReportBlock, RtcpPacket,
     RtcpPacketType, SDES_CNAME, SDES_EMAIL, SDES_LOC, SDES_NAME, SDES_NOTE, SDES_PHONE, SDES_PRIV,
     SDES_TOOL, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
 };
+#[cfg(feature = "flv")]
 pub use rtmp::{RtmpFlvError, RtmpMuxStage};
 #[cfg(feature = "std")]
 pub use rtp::sdp_media;
+#[cfg(feature = "rtp")]
+pub use rtp::{
+    RtpPacket, RtpPacketiserStage, depacketise_klv, packetise_klv, packetise_video_sample,
+};
 pub use rtp::{
     DEFAULT_AAC_CLOCK_RATE, DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT,
-    KLV_ENCODING_NAME, NAL_TYPE_IDR, RtpMediaKind, RtpPacket, RtpPacketiserStage, VIDEO_CLOCK_RATE,
-    VIDEO_CLOCK_TIMESCALE, depacketise_klv, packetise_klv, packetise_video_sample,
+    KLV_ENCODING_NAME, NAL_TYPE_IDR, RtpMediaKind, VIDEO_CLOCK_RATE, VIDEO_CLOCK_TIMESCALE,
 };
+#[cfg(feature = "rtp")]
 pub use rtp_align::{AlignOut, AvSync, SR_SWITCH_TOLERANCE_US, TrackAligner};
 #[cfg(feature = "std")]
 pub use rtp_sdp::{
@@ -366,6 +381,7 @@ pub use rtp_sdp::{
     aac_config_from_asc_bytes, aac_config_from_asc_hex, aac_config_from_fmtp, avc_config_from_fmtp,
     avc_config_from_sprop, avc_config_from_sps_pps, fmtp_param, rtpmap_clock_rate,
 };
+#[cfg(feature = "rtp")]
 pub use rtp_stream::{
     DEFAULT_REORDER_DEPTH, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, WallSkewExceeded,
 };
