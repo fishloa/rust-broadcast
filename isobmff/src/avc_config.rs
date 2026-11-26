@@ -44,7 +44,7 @@ use crate::nalu_types::{AvcPps, AvcSps, AvcSpsExt, VALID_LENGTH_SIZES};
 use alloc::vec::Vec;
 use broadcast_core::error::InvalidValue;
 use broadcast_core::len::need_out;
-use broadcast_core::wire::{read_nalu_16, read_u8};
+use broadcast_core::wire::{read_u8, read_u16, take};
 use broadcast_core::{Parse, Serialize};
 use core::fmt;
 
@@ -94,6 +94,13 @@ const BIT_DEPTH_SHIFT: u32 = 3;
 const BIT_DEPTH_RESERVED_MASK: u8 = 0x1F;
 const BIT_DEPTH_RESERVED_BITS: u8 = 0xF8;
 const BIT_DEPTH_MASK: u8 = 0x07;
+
+/// One `avcC` parameter-set entry: a `u16` `nalUnitLength` followed by that
+/// many bytes. The only user of this shape is this record's SPS/PPS arrays.
+fn read_nalu_16(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<Vec<u8>> {
+    let len = usize::from(read_u16(bytes, cursor, what)?);
+    Ok(take(bytes, cursor, len, what)?.to_vec())
+}
 
 // ---------------------------------------------------------------------------
 // AVCDecoderConfigurationRecord
@@ -891,5 +898,31 @@ mod tests {
         let bytes = rec.try_to_bytes().unwrap();
         let parsed = AVCDecoderConfigurationRecord::parse(&bytes).unwrap();
         assert_eq!(parsed.sps.len(), 31);
+    }
+
+    /// `read_nalu_16` reads the `u16` length, returns exactly that many bytes
+    /// and leaves the cursor after them; a length the buffer cannot hold is a
+    /// `BufferTooShort` carrying the byte count needed.
+    #[test]
+    fn read_nalu_16_takes_the_prefixed_run() {
+        let bytes = [0x00, 0x03, 0x67, 0x42, 0x00, 0xFF];
+        let mut cursor = 0usize;
+        let nalu = read_nalu_16(&bytes, &mut cursor, "SPS").unwrap();
+        assert_eq!(nalu, alloc::vec![0x67, 0x42, 0x00]);
+        assert_eq!(cursor, 5);
+
+        let mut cursor = 0usize;
+        let err = read_nalu_16(&[0x00, 0x09, 0x67], &mut cursor, "SPS").unwrap_err();
+        assert!(
+            matches!(err, Error::BufferTooShort(_)),
+            "expected BufferTooShort, got {err:?}"
+        );
+
+        let mut cursor = 0usize;
+        let err = read_nalu_16(&[0x00], &mut cursor, "SPS").unwrap_err();
+        assert!(
+            matches!(err, Error::BufferTooShort(_)),
+            "expected BufferTooShort for a truncated length, got {err:?}"
+        );
     }
 }

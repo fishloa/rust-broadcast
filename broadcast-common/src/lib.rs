@@ -84,6 +84,3 @@ pub mod xml_chars;
 #[cfg(feature = "lang")]
 pub use lang::bcp47_language;
 pub use stage::{Demand, Stage, Timestamp};
-
-// WR1-BRIDGE
-pub use broadcast_core::wire;
