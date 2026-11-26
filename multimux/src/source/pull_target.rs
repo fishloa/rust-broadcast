@@ -1,8 +1,10 @@
 //! The target every pull route shares: a name for logging/metrics, the source
-//! URL (which may carry `user:pass@` userinfo), the ingest timeouts and the
-//! config-supplied credentials (which take precedence over URL userinfo).
+//! URL (which may carry `user:pass@` userinfo), the ingest timeouts, the
+//! config-supplied credentials (which take precedence over URL userinfo) and
+//! the config-supplied PES unit ceiling.
 
 use std::future::Future;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use broadcast_auth::Credentials;
@@ -19,6 +21,7 @@ pub(crate) struct PullTarget {
     pub(crate) url: String,
     pub(crate) timeouts: Timeouts,
     pub(crate) auth: Option<Credentials>,
+    pub(crate) max_pes_unit_bytes: Option<NonZeroUsize>,
 }
 
 impl PullTarget {
@@ -28,6 +31,7 @@ impl PullTarget {
             url: url.into(),
             timeouts: Timeouts::default(),
             auth: None,
+            max_pes_unit_bytes: None,
         }
     }
 
@@ -38,6 +42,11 @@ impl PullTarget {
 
     pub(crate) fn with_auth(mut self, auth: Option<Credentials>) -> Self {
         self.auth = auth;
+        self
+    }
+
+    pub(crate) fn with_max_pes_unit_bytes(mut self, max: Option<NonZeroUsize>) -> Self {
+        self.max_pes_unit_bytes = max;
         self
     }
 
@@ -124,6 +133,13 @@ impl<K: PullKind> PullRoute<K> {
     #[must_use]
     pub fn with_auth(mut self, auth: Option<Credentials>) -> Self {
         self.target = self.target.with_auth(auth);
+        self
+    }
+
+    /// Sets the config-supplied PES unit ceiling; `None` is unlimited.
+    #[must_use]
+    pub fn with_max_pes_unit_bytes(mut self, max: Option<NonZeroUsize>) -> Self {
+        self.target = self.target.with_max_pes_unit_bytes(max);
         self
     }
 }

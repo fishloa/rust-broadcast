@@ -95,6 +95,9 @@ pub struct SrtRoute {
     stream_id: Option<String>,
     latency: Option<Duration>,
     timeouts: Timeouts,
+    /// Config-supplied ceiling on one PID's in-progress PES unit; `None` (the
+    /// demux default) is unlimited.
+    max_pes_unit_bytes: Option<std::num::NonZeroUsize>,
     /// Bind-once, reuse-forever (listener mode only) — see the module doc.
     /// [`SrtListener::accept`] takes `&mut self`, hence the `Mutex` (an
     /// `OnceCell` alone only gives shared access).
@@ -126,6 +129,7 @@ impl SrtRoute {
             stream_id: None,
             latency: None,
             timeouts: Timeouts::default(),
+            max_pes_unit_bytes: None,
             listener: OnceCell::new(),
         }
     }
@@ -139,6 +143,7 @@ impl SrtRoute {
             stream_id: None,
             latency: None,
             timeouts: Timeouts::default(),
+            max_pes_unit_bytes: None,
             listener: OnceCell::new(),
         }
     }
@@ -166,6 +171,13 @@ impl SrtRoute {
         self
     }
 
+    /// Sets the config-supplied PES unit ceiling; `None` is unlimited.
+    #[must_use]
+    pub fn with_max_pes_unit_bytes(mut self, max: Option<std::num::NonZeroUsize>) -> Self {
+        self.max_pes_unit_bytes = max;
+        self
+    }
+
     fn handshake_config(&self) -> HandshakeConfig {
         let mut cfg = HandshakeConfig::default().with_stream_id(self.stream_id.clone());
         if let Some(latency) = self.latency {
@@ -185,7 +197,18 @@ impl Source for SrtRoute {
 /// handshake lives in [`accept_listener`]; see the module
 /// doc for why it cannot move onto `poll_transmit`/`feed`.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct SrtDialer;
+pub struct SrtDialer {
+    /// The route's config-supplied PES unit ceiling; `None` is unlimited.
+    max_pes_unit_bytes: Option<core::num::NonZeroUsize>,
+}
+
+impl SrtDialer {
+    /// A dialer whose session bounds one PID's in-progress PES unit at `max`
+    /// bytes; `None` is the demux's unlimited default.
+    pub fn new(max_pes_unit_bytes: Option<core::num::NonZeroUsize>) -> Self {
+        SrtDialer { max_pes_unit_bytes }
+    }
+}
 
 impl Dialer for SrtDialer {
     type Session = TsIngestSession;
@@ -195,6 +218,7 @@ impl Dialer for SrtDialer {
 
     fn dial(&mut self) -> core::result::Result<TsIngestSession, Infallible> {
         Ok(TsIngestSession::new()
+            .with_max_pes_unit_bytes(self.max_pes_unit_bytes)
             .with_backlog_drop_observer(crate::source::count_ts_backlog_dropped))
     }
 }
@@ -301,15 +325,19 @@ impl<F: FnOnce(&IngestDriver<TsIngestSession>) + Send>
 /// see `crate::source::rtsp::run_rtsp`'s own doc for what
 /// `crate::source::report_driver_progress` does with it each iteration
 /// (called alongside, not instead of, `on_driver`).
+///
+/// `max_pes_unit_bytes` bounds one PID's in-progress PES unit (the route's
+/// config-supplied ceiling); `None` is the demux's unlimited default.
 pub async fn drive_socket(
     sock: SrtSocket,
     read_timeout: Duration,
+    max_pes_unit_bytes: Option<core::num::NonZeroUsize>,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
     on_driver: impl FnOnce(&IngestDriver<TsIngestSession>) + Send,
 ) -> Result<()> {
-    let mut dialer = SrtDialer;
+    let mut dialer = SrtDialer::new(max_pes_unit_bytes);
     let session = dialer
         .dial()
         .unwrap_or_else(|never: Infallible| match never {});
@@ -368,6 +396,7 @@ pub async fn run_srt_caller(
     let mut config = broadcast_client::Config::relay();
     config.kind = broadcast_client::SourceKind::Srt;
     config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
+    config.ts_http.max_pes_unit_bytes = route.max_pes_unit_bytes;
     config.srt.stream_id.clone_from(&route.stream_id);
     if let Some(latency) = route.latency {
         config.srt.latency = latency;
@@ -427,6 +456,7 @@ pub async fn run_srt_listener_once(
     drive_socket(
         sock,
         route.timeouts.read_idle,
+        route.max_pes_unit_bytes,
         trunk_config,
         handshake,
         route_handle,
@@ -525,6 +555,7 @@ mod tests {
             drive_socket(
                 sock,
                 Duration::from_secs(2),
+                None,
                 trunk_config(),
                 handshake(),
                 &route_handle,
@@ -874,6 +905,7 @@ mod tests {
             drive_socket(
                 sock,
                 Duration::from_secs(2),
+                None,
                 trunk_config(),
                 handshake(),
                 &route_handle,
@@ -896,6 +928,7 @@ mod tests {
             drive_socket(
                 sock,
                 Duration::from_millis(200),
+                None,
                 trunk_config(),
                 handshake(),
                 &route_handle,

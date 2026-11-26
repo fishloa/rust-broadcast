@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ts_session::TsIngestSession::with_max_pes_unit_bytes` carries a
+  caller-supplied ceiling on one PID's in-progress PES buffer into the streaming
+  TS demux. `None`, the default, is unlimited; a transport whose bytes arrive
+  over a network supplies the bound (multimux's network TS ingest does) and
+  still receives the demux's `BudgetExceeded` event for an access unit above it.
 - `file_stream::StreamContainer::Matroska` streams a Matroska/WebM file by
   absolute byte ranges through `transmux::matroska_demux::MatroskaDemux`, so a
   Matroska file is no longer read whole or bounded by

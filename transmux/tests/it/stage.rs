@@ -344,8 +344,8 @@ fn demand_saturated_flips_true_at_the_unattributed_bytes_bound() {
     let mut cc: u8 = 0;
     let mut saw_saturated = false;
     // 4 MiB / ~184 payload bytes per packet ~= 22808 packets to cross the
-    // cap; 30_000 comfortably clears it (matches the scale the crate's own
-    // MAX_PES_BUFFER_BYTES flood test already uses without being slow).
+    // cap; 30_000 comfortably clears it (the scale the crate's own
+    // capped-PES flood test already uses without being slow).
     for _ in 0..30_000u32 {
         let pkt = payload_only_packet(NEVER_CLAIMED_PID, cc);
         cc = cc.wrapping_add(1);

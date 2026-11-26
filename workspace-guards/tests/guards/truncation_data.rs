@@ -207,8 +207,9 @@ pub const TABLE: &[Crate] = &[
                 "src/annexb.rs",
                 "out.extend_from_slice(&(nal.len() as u32).to_be_bytes());",
                 "length_prefix, the one 4-byte NAL length writer: its NALs come from \
-                     TS demux (PES buffer capped at 4 MiB, ts_demux MAX_PES_BUFFER_BYTES) \
-                     and RTP depacketisation (FU-A / STAP-A reassembler caps), never near 4 GiB.",
+                     TS demux (whose PES unit bound is caller-supplied, 4 MiB for every \
+                     network ingest) and RTP depacketisation (FU-A / STAP-A reassembler \
+                     caps), never near 4 GiB.",
             ),
             (
                 "src/h262.rs",

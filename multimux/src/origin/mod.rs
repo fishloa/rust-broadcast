@@ -1923,6 +1923,7 @@ fn spawn_ingest(
 ) -> crate::Result<tokio::task::JoinHandle<()>> {
     let name = route.name.clone();
     let timeouts = crate::source::ingest_timeouts(config);
+    let max_pes_unit_bytes = config.max_ingest_pes_unit_bytes;
     let ctx = IngestSpawn {
         name: name.clone(),
         store,
@@ -1933,7 +1934,13 @@ fn spawn_ingest(
 
     Ok(match &route.input {
         crate::config::InputSpec::Rtsp { url, auth } => {
-            let route_cfg = pull_route::<crate::source::rtsp::RtspKind>(name, url, timeouts, auth);
+            let route_cfg = pull_route::<crate::source::rtsp::RtspKind>(
+                name,
+                url,
+                timeouts,
+                max_pes_unit_bytes,
+                auth,
+            );
             spawn_pull(route_cfg, ctx)
         }
         crate::config::InputSpec::Rtp {
@@ -1984,10 +1991,12 @@ fn spawn_ingest(
             let route_cfg = match config.prebound_udp(addr) {
                 Some(socket) => crate::source::ts_udp::TsUdpRoute::with_socket(name, socket)
                     .with_socket_options(bind)
-                    .with_timeouts(timeouts),
+                    .with_timeouts(timeouts)
+                    .with_max_pes_unit_bytes(max_pes_unit_bytes),
                 None => crate::source::ts_udp::TsUdpRoute::new(name, addr.clone())
                     .with_socket_options(bind)
-                    .with_timeouts(timeouts),
+                    .with_timeouts(timeouts)
+                    .with_max_pes_unit_bytes(max_pes_unit_bytes),
             };
             spawn_supervised(
                 route_cfg,
@@ -2005,8 +2014,13 @@ fn spawn_ingest(
             )
         }
         crate::config::InputSpec::TsHttp { url, auth } => {
-            let route_cfg =
-                pull_route::<crate::source::ts_http::TsHttpKind>(name, url, timeouts, auth);
+            let route_cfg = pull_route::<crate::source::ts_http::TsHttpKind>(
+                name,
+                url,
+                timeouts,
+                max_pes_unit_bytes,
+                auth,
+            );
             spawn_pull(route_cfg, ctx)
         }
         crate::config::InputSpec::Srt {
@@ -2038,7 +2052,8 @@ fn spawn_ingest(
             }
             .with_stream_id(stream_id.clone())
             .with_latency(*latency)
-            .with_timeouts(timeouts);
+            .with_timeouts(timeouts)
+            .with_max_pes_unit_bytes(max_pes_unit_bytes);
             spawn_supervised(
                 srt_route,
                 ctx,
@@ -2066,8 +2081,13 @@ fn spawn_ingest(
             )
         }
         crate::config::InputSpec::HlsPull { url, auth } => {
-            let route_cfg =
-                pull_route::<crate::source::hls_pull::HlsPullKind>(name, url, timeouts, auth);
+            let route_cfg = pull_route::<crate::source::hls_pull::HlsPullKind>(
+                name,
+                url,
+                timeouts,
+                max_pes_unit_bytes,
+                auth,
+            );
             spawn_pull(route_cfg, ctx)
         }
         crate::config::InputSpec::DashPull {
@@ -2075,14 +2095,24 @@ fn spawn_ingest(
             auth,
             allow_cross_origin,
         } => {
-            let route_cfg =
-                pull_route::<crate::source::dash_pull::DashPullKind>(name, url, timeouts, auth)
-                    .with_cross_origin_urls(*allow_cross_origin);
+            let route_cfg = pull_route::<crate::source::dash_pull::DashPullKind>(
+                name,
+                url,
+                timeouts,
+                max_pes_unit_bytes,
+                auth,
+            )
+            .with_cross_origin_urls(*allow_cross_origin);
             spawn_pull(route_cfg, ctx)
         }
         crate::config::InputSpec::SmoothPull { url, auth } => {
-            let route_cfg =
-                pull_route::<crate::source::smooth_pull::SmoothPullKind>(name, url, timeouts, auth);
+            let route_cfg = pull_route::<crate::source::smooth_pull::SmoothPullKind>(
+                name,
+                url,
+                timeouts,
+                max_pes_unit_bytes,
+                auth,
+            );
             spawn_pull(route_cfg, ctx)
         }
         crate::config::InputSpec::Rtmp {
@@ -2305,10 +2335,12 @@ fn pull_route<K: PullDrive>(
     name: String,
     url: &str,
     timeouts: broadcast_common::timeouts::Timeouts,
+    max_pes_unit_bytes: Option<std::num::NonZeroUsize>,
     auth: &Option<crate::config::AuthSpec>,
 ) -> PullRoute<K> {
     PullRoute::new(name, url)
         .with_timeouts(timeouts)
+        .with_max_pes_unit_bytes(max_pes_unit_bytes)
         .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials))
 }
 

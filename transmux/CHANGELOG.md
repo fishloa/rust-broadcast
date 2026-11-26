@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The wire-format contract types now come from `broadcast-core`.
 
+- `StreamingTsDemux` no longer caps one PID's in-progress PES at a library-chosen 4 MiB (`MAX_PES_BUFFER_BYTES` is gone). The cap is the caller's: `with_max_pes_unit_bytes(Option<NonZeroUsize>)` sets it, and the default is unlimited, so a legitimate access unit larger than 4 MiB (a high-bitrate intra frame) is delivered whole. A caller that treats its input as hostile (network ingest) sets the old bound explicitly and still gets the `DiscontinuityKind::BudgetExceeded` event for a unit above it.
+
 - `rtmp-runtime`, `rtp-packet`, `mpeg-ps`, `broadcast-matroska`, `broadcast-hls` and `cc-data` are no longer unconditional dependencies: each now backs one feature (`flv`, `rtp`, `ps`, `matroska`, `hls`, `captions`) that gates the modules using it, and all six are on by default, so the default build is unchanged. A `default-features = false` build keeps the IR and the MP4/TS paths only:
   - `flv`: `flv`, `flv_stream`, `rtmp` and their re-exports (`FlvMuxStage`, `StreamingFlvDemux`, `RtmpMuxStage`, the FLV payload helpers).
   - `rtp`: `rtp_align`, `rtp_stream`, `rtp_dts`, the `rtcp` re-export and the RTP wire items inside `rtp` (`RtpPacket`, `RtpPacketiserStage`, the packetise/depacketise functions, `Mp2tPacketiser`). `rtp` also keeps the payload-format types and clock constants the IR, the TS path and the SDP parsing use.
@@ -25,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Segmenter::set_start_decode_time` is public: a caller feeding a segmenter directly must anchor each track's first `tfdt` (the streaming `Repackage::run` already did).
 
 ### Added
+- `StreamingTsDemux::with_max_pes_unit_bytes` (with the `max_pes_unit_bytes` accessor) is the caller-supplied PES unit ceiling; `None`, the default, is unlimited. `PesAssembler` is created with that same ceiling (the unbounded form for `None`), so the demux's own overflow accounting and the assembler cannot disagree.
 - `matroska_demux::MatroskaDemux`, the streaming Matroska/WebM stage over
   `broadcast_matroska::reader::Reader`: it answers the reader's byte-range
   demands (`MatroskaInput::At`) or consumes a forward-only stream

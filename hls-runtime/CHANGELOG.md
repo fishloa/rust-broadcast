@@ -11,6 +11,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The wire-format contract types now come from `broadcast-core`.
 
+### Added
+
+- `HlsClientConfig::max_pes_unit_bytes` (with `with_max_pes_unit_bytes`), the
+  caller-supplied ceiling on one PID's in-progress PES buffer in the
+  classic-TS demuxer. `None`, the default, is unlimited; a caller pulling
+  segments over a network supplies the bound and still gets the demux's
+  `BudgetExceeded` event for an access unit above it.
+
 ### Changed
 
 - The playback client demuxes with one streaming `transmux::mp4_demux::Mp4Demux` per Media Initialization Section instead of building an `init + segment` buffer and running a whole-input demuxer over it for every fetched Part/Segment: the init is fed once and each body in bounded pieces, so a segment's samples no longer cost a second copy of the whole body, and a damaged segment costs only itself. Decoded output (`Output::Init`/`Tracks`/`Samples`/`TrackSkipped`/`FragmentDamaged`) is unchanged.

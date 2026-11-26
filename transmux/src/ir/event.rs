@@ -68,7 +68,7 @@ pub enum DiscontinuityKind {
     TimelineReanchored,
     /// A per-PID buffer cap was exceeded and the in-flight payload was
     /// dropped to keep memory bounded (e.g. [`crate::ts_demux::StreamingTsDemux`]'s
-    /// `MAX_PES_BUFFER_BYTES` — a stalled PES that never sees a fresh
+    /// caller-supplied PES unit cap, for a stalled PES that never sees a fresh
     /// `payload_unit_start`).
     BudgetExceeded {
         /// Bytes discarded when the cap tripped.

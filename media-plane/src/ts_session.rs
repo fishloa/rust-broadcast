@@ -50,6 +50,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
+use std::num::NonZeroUsize;
 use transmux::{ProgramNumber, TrackId};
 
 use crate::ingress::{IngestSession, ProgramId, SessionEvent};
@@ -404,6 +405,16 @@ impl TsIngestSession {
     #[must_use]
     pub fn with_backlog_drop_observer(mut self, observer: fn(u64)) -> Self {
         self.tracker = self.tracker.with_backlog_drop_observer(observer);
+        self
+    }
+
+    /// Bound one PID's in-progress PES buffer at `max` bytes; `None` (the
+    /// default) is unlimited. A transport whose bytes arrive over a network
+    /// supplies a ceiling here and gets the demux's `BudgetExceeded` event for
+    /// an access unit above it; the library chooses no number.
+    #[must_use]
+    pub fn with_max_pes_unit_bytes(mut self, max: Option<NonZeroUsize>) -> Self {
+        self.demux = StreamingTsDemux::new().with_max_pes_unit_bytes(max);
         self
     }
 
