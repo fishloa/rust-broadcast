@@ -35,6 +35,58 @@ pub fn sha(data: &[u8]) -> String {
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Chunk size for the streaming reads below.
+const READ_CHUNK_BYTES: usize = 64 * 1024;
+
+/// Read a file the caller has already bounded, in fixed chunks, so a file that
+/// grew past its ceiling is an error rather than an unbounded allocation.
+pub fn read_capped(path: &Path, max_bytes: u64) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut out = Vec::new();
+    let mut buf = [0u8; READ_CHUNK_BYTES];
+    loop {
+        let read = file.read(&mut buf)?;
+        if read == 0 {
+            break;
+        }
+        if (out.len() as u64).saturating_add(read as u64) > max_bytes {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "file grew past its configured ceiling",
+            ));
+        }
+        out.extend_from_slice(&buf[..read]);
+    }
+    Ok(out)
+}
+
+/// Stream a file through SHA-256, returning its byte count and hex digest
+/// without holding it whole.
+pub fn file_len_sha(path: &Path) -> std::io::Result<(u64, String)> {
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; READ_CHUNK_BYTES];
+    let mut len = 0u64;
+    loop {
+        let read = file.read(&mut buf)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+        len = len.saturating_add(read as u64);
+    }
+    Ok((
+        len,
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+    ))
+}
+
 /// The raw 13-bit value of a PID, whether the tree models it as a bare `u16`
 /// or as `mpeg_ts::pid::Pid` (and whichever formatting traits that type has),
 /// so the two trees print the same text for the same PID.
@@ -220,13 +272,14 @@ fn main() {
         if !EXTS.contains(&ext.as_str()) {
             continue;
         }
+        let cap = max_mb.saturating_mul(1_000_000);
         let Ok(meta) = std::fs::metadata(&path) else {
             continue;
         };
-        if meta.len() > max_mb * 1_000_000 {
+        if meta.len() > cap {
             continue;
         }
-        let Ok(data) = std::fs::read(&path) else {
+        let Ok(data) = read_capped(&path, cap) else {
             continue;
         };
         let rel = path

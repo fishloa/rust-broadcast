@@ -5,17 +5,20 @@
 //! bytes exactly as they arrived, before any demuxer gets a chance to reject
 //! or discard them.
 //!
-//! Reads `fixtures/ts/h264-aac.ts` (a real broadcast capture shared across
-//! this workspace's crates) via [`std::fs::read`], records every packet with
-//! an arrival timestamp derived from its position in the file, then drains
-//! the tap through a deliberately small ring so the run demonstrates both
-//! halves of the tap contract on real data: ordinary delivery, and a
-//! [`TapItem::Lagged`](media_plane::TapItem::Lagged) report when the
-//! (simulated) consumer falls behind a real packet stream.
+//! Streams `fixtures/ts/h264-aac.ts` (a real broadcast capture shared across
+//! this workspace's crates) one 188-byte packet at a time, records every
+//! packet with an arrival timestamp derived from its position in the file,
+//! then drains the tap through a deliberately small ring so the run
+//! demonstrates both halves of the tap contract on real data: ordinary
+//! delivery, and a [`TapItem::Lagged`](media_plane::TapItem::Lagged) report
+//! when the (simulated) consumer falls behind a real packet stream.
 //!
 //! ```text
 //! cargo run -p media-plane --example byte_tap_wire_observer
 //! ```
+
+use std::fs::File;
+use std::io::{self, BufReader, Read};
 
 use bytes::Bytes;
 use media_plane::{ByteTap, TapItem, TapPoint};
@@ -33,18 +36,15 @@ const CONSUMER_POLL_STRIDE: usize = 64;
 use broadcast_common::stage::Timestamp;
 
 fn main() {
-    let bytes = std::fs::read(test_fixtures::path(FIXTURE))
-        .expect("read the committed real-capture TS fixture");
-    assert_eq!(
-        bytes.len() % TS_PACKET_SIZE,
-        0,
-        "fixture must be a whole number of 188-byte TS packets"
-    );
-    let packet_count = bytes.len() / TS_PACKET_SIZE;
-    println!(
-        "byte_tap_wire_observer: read {} bytes ({packet_count} TS packets) from {FIXTURE}",
-        bytes.len()
-    );
+    let path = test_fixtures::path(FIXTURE);
+    let file = File::open(&path).unwrap_or_else(|e| {
+        panic!(
+            "committed fixture {} could not be read: {e}",
+            path.display()
+        )
+    });
+    let mut reader = BufReader::new(file);
+    let mut packet = [0u8; TS_PACKET_SIZE];
 
     let mut tap = ByteTap::new(TapPoint::Wire, TAP_CAPACITY)
         .unwrap_or_else(|e| panic!("a non-zero tap capacity is built: {e}"));
@@ -52,10 +52,25 @@ fn main() {
     let mut delivered = 0u64;
     let mut lagged_total = 0u64;
     let mut lagged_reports = 0u64;
+    let mut packet_count = 0usize;
 
-    for (i, packet) in bytes.chunks(TS_PACKET_SIZE).enumerate() {
+    loop {
+        let read = read_packet(&mut reader, &mut packet).unwrap_or_else(|e| {
+            panic!(
+                "committed fixture {} could not be read: {e}",
+                path.display()
+            )
+        });
+        if read == 0 {
+            break;
+        }
+        assert_eq!(
+            read, TS_PACKET_SIZE,
+            "fixture must be a whole number of 188-byte TS packets"
+        );
+        let i = packet_count;
         tap.record(
-            Bytes::copy_from_slice(packet),
+            Bytes::copy_from_slice(&packet),
             Timestamp::from_nanos(i as u64),
         );
 
@@ -63,7 +78,7 @@ fn main() {
         // packets -- a real conformance monitor that briefly falls behind
         // live ingest, not a producer that ever blocks (`record` never
         // does).
-        if i % CONSUMER_POLL_STRIDE == 0 {
+        if i.is_multiple_of(CONSUMER_POLL_STRIDE) {
             while let Some(item) = tap.poll() {
                 match item {
                     TapItem::Data(_, _) => delivered += 1,
@@ -79,7 +94,13 @@ fn main() {
                 }
             }
         }
+        packet_count += 1;
     }
+
+    println!(
+        "byte_tap_wire_observer: read {} bytes ({packet_count} TS packets) from {FIXTURE}",
+        packet_count * TS_PACKET_SIZE
+    );
     // Final drain.
     while let Some(item) = tap.poll() {
         match item {
@@ -104,4 +125,18 @@ fn main() {
         lagged_total > 0,
         "this run's ring/stride are chosen so a real capture this size must lag at least once"
     );
+}
+
+/// Fill `buf` from `reader`; short only at end of stream.
+fn read_packet(reader: &mut impl Read, buf: &mut [u8]) -> io::Result<usize> {
+    let mut filled = 0usize;
+    while filled < buf.len() {
+        match reader.read(&mut buf[filled..]) {
+            Ok(0) => break,
+            Ok(read) => filled += read,
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(filled)
 }
