@@ -48,7 +48,7 @@ use broadcast_core::{Parse, Serialize};
 // Wire-layout constants
 // ---------------------------------------------------------------------------
 
-const U32_PAIR_LEN: usize = core::mem::size_of::<u32>() * 2;
+const U32_PAIR_LEN: usize = core::mem::size_of::<u64>();
 const SGPD_ENTRY_PREFIX_LEN: usize = core::mem::size_of::<u32>();
 const SUBS_ENTRY_HEADER_LEN: usize = core::mem::size_of::<u32>() + core::mem::size_of::<u16>();
 const SUBS_V2_ENTRY_HEADER_LEN: usize = core::mem::size_of::<u32>() + core::mem::size_of::<u16>();
@@ -1537,6 +1537,478 @@ impl Serialize for SubSampleReferenceTableBox {
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Sample-group mapping — the one lookup both `sbgp` and `csgp` feed
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the compact sample-to-group box (`csgp`, ISO/IEC 14496-12:2026
+/// §8.9.5).
+pub const CSGP: [u8; 4] = *b"csgp";
+
+/// One run of samples mapped to the same group description index, produced by
+/// either an `sbgp` or a `csgp` box.
+///
+/// This is the one sample-group lookup: both the plain
+/// [`SampleToGroupBox::mapping`] and the compact
+/// [`CompactSampleToGroupBox::mapping`] return it, so a consumer never reads
+/// two different shapes for the same fact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SampleGroupMapping {
+    grouping_type: u32,
+    grouping_type_parameter: Option<u32>,
+    runs: Vec<SbgpEntry>,
+}
+
+impl SampleGroupMapping {
+    /// Build an empty mapping for one grouping type.
+    #[must_use]
+    pub fn new(grouping_type: u32, grouping_type_parameter: Option<u32>) -> Self {
+        Self {
+            grouping_type,
+            grouping_type_parameter,
+            runs: Vec::new(),
+        }
+    }
+
+    /// The grouping type this mapping describes.
+    #[must_use]
+    pub const fn grouping_type(&self) -> u32 {
+        self.grouping_type
+    }
+
+    /// The grouping type parameter, when the source box carried one.
+    #[must_use]
+    pub const fn grouping_type_parameter(&self) -> Option<u32> {
+        self.grouping_type_parameter
+    }
+
+    /// The runs of samples, in sample order.
+    #[must_use]
+    pub fn runs(&self) -> &[SbgpEntry] {
+        &self.runs
+    }
+
+    /// The group description index for the `sample_index`-th sample (zero
+    /// based), or `0` when the source box does not map that sample.
+    #[must_use]
+    pub fn description_index(&self, sample_index: usize) -> u32 {
+        let mut base = 0usize;
+        for run in &self.runs {
+            let next = base.saturating_add(run.sample_count as usize);
+            if sample_index >= base && sample_index < next {
+                return run.group_description_index;
+            }
+            base = next;
+        }
+        0
+    }
+
+    /// The total number of samples this mapping covers.
+    #[must_use]
+    pub fn sample_count(&self) -> usize {
+        self.runs.iter().map(|run| run.sample_count as usize).sum()
+    }
+
+    fn push_run(&mut self, sample_count: u32, index: u32) {
+        if sample_count == 0 {
+            return;
+        }
+        if let Some(last) = self.runs.last_mut()
+            && last.group_description_index == index
+        {
+            last.sample_count = last.sample_count.saturating_add(sample_count);
+            return;
+        }
+        self.runs.push(SbgpEntry {
+            sample_count,
+            group_description_index: index,
+        });
+    }
+}
+
+impl SampleToGroupBox {
+    /// This box as the shared [`SampleGroupMapping`] lookup.
+    #[must_use]
+    pub fn mapping(&self) -> SampleGroupMapping {
+        SampleGroupMapping {
+            grouping_type: self.grouping_type,
+            grouping_type_parameter: self.grouping_type_parameter,
+            runs: self.entries.clone(),
+        }
+    }
+}
+
+/// One pattern of a [`CompactSampleToGroupBox`] (§8.9.5.2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct CsgpPattern {
+    sample_count: u32,
+    indices: Vec<u32>,
+}
+
+impl CsgpPattern {
+    /// Build one pattern from its sample count and cycled index list.
+    #[must_use]
+    pub fn new(sample_count: u32, indices: Vec<u32>) -> Self {
+        Self {
+            sample_count,
+            indices,
+        }
+    }
+
+    /// The number of samples this pattern covers.
+    #[must_use]
+    pub const fn sample_count(&self) -> u32 {
+        self.sample_count
+    }
+
+    /// The pattern's group description indices, cycled across `sample_count`.
+    #[must_use]
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+}
+
+/// Bits of the reserved half of a `csgp` flag field.
+const CSGP_RESERVED_BITS: u32 = 16;
+/// Bit of `index_msb_indicates_fragment_local_description`.
+const CSGP_INDEX_MSB_BIT: u32 = CSGP_RESERVED_BITS;
+/// Bit of `grouping_type_parameter_present`.
+const CSGP_PARAMETER_BIT: u32 = CSGP_INDEX_MSB_BIT - 1;
+/// Lowest bit of `pattern_size_code`.
+const CSGP_PATTERN_CODE_SHIFT: u32 = CSGP_PARAMETER_BIT - 2;
+/// Lowest bit of `count_size_code`.
+const CSGP_COUNT_CODE_SHIFT: u32 = CSGP_PATTERN_CODE_SHIFT - 2;
+/// Lowest bit of `index_size_code`.
+const CSGP_INDEX_CODE_SHIFT: u32 = CSGP_COUNT_CODE_SHIFT - 2;
+/// Two-bit mask selecting one of the four field widths.
+const CSGP_CODE_MASK: u32 = 0b11;
+/// Code 0 selects a 4-bit field.
+const CSGP_CODE_4: u8 = 0;
+/// Code 1 selects an 8-bit field.
+const CSGP_CODE_8: u8 = 1;
+/// Code 2 selects a 16-bit field.
+const CSGP_CODE_16: u8 = 2;
+/// Largest up-front index allocation a single pattern may request.
+const CSGP_PATTERN_PREALLOC: usize = 1 << CSGP_RESERVED_BITS;
+
+fn csgp_width(code: u8) -> u32 {
+    match code {
+        CSGP_CODE_4 => 4,
+        CSGP_CODE_8 => 8,
+        CSGP_CODE_16 => 16,
+        _ => 32,
+    }
+}
+
+/// Compact Sample-to-Group Box (`csgp`) — ISO/IEC 14496-12:2026 §8.9.5.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct CompactSampleToGroupBox {
+    version: u8,
+    flags: u32,
+    grouping_type: u32,
+    grouping_type_parameter: Option<u32>,
+    patterns: Vec<CsgpPattern>,
+}
+
+impl CompactSampleToGroupBox {
+    /// Build one from its patterns with the four-bit field widths the standard
+    /// recommends for compact mappings.
+    #[must_use]
+    pub fn new(
+        grouping_type: u32,
+        grouping_type_parameter: Option<u32>,
+        patterns: Vec<CsgpPattern>,
+    ) -> Self {
+        let mut flags: u32 = u32::from(CSGP_CODE_4) << CSGP_PATTERN_CODE_SHIFT
+            | u32::from(CSGP_CODE_4) << CSGP_COUNT_CODE_SHIFT
+            | u32::from(CSGP_CODE_4) << CSGP_INDEX_CODE_SHIFT;
+        if grouping_type_parameter.is_some() {
+            flags |= 1 << CSGP_PARAMETER_BIT;
+        }
+        Self {
+            version: 0,
+            flags,
+            grouping_type,
+            grouping_type_parameter,
+            patterns,
+        }
+    }
+
+    /// The FullBox version.
+    #[must_use]
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+
+    /// The FullBox flags.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// The grouping type.
+    #[must_use]
+    pub const fn grouping_type(&self) -> u32 {
+        self.grouping_type
+    }
+
+    /// The grouping type parameter, when present.
+    #[must_use]
+    pub const fn grouping_type_parameter(&self) -> Option<u32> {
+        self.grouping_type_parameter
+    }
+
+    /// Whether the index's most significant bit selects the fragment-local
+    /// `sgpd` (`index_msb_indicates_fragment_local_description`).
+    #[must_use]
+    pub const fn index_msb_indicates_fragment_local_description(&self) -> bool {
+        self.flags & (1 << CSGP_INDEX_MSB_BIT) != 0
+    }
+
+    /// The patterns, in wire order.
+    #[must_use]
+    pub fn patterns(&self) -> &[CsgpPattern] {
+        &self.patterns
+    }
+
+    /// This box as the shared [`SampleGroupMapping`] lookup, expanding each
+    /// pattern's index list across its `sample_count` samples.
+    ///
+    /// The expansion is unbounded; use
+    /// [`Self::mapping_with_limit`] when the caller must cap it.
+    #[must_use]
+    pub fn mapping(&self) -> SampleGroupMapping {
+        self.mapping_with_limit(usize::MAX).unwrap_or_else(|_| {
+            SampleGroupMapping::new(self.grouping_type, self.grouping_type_parameter)
+        })
+    }
+
+    /// As [`Self::mapping`], refusing a mapping larger than `max_samples`.
+    pub fn mapping_with_limit(&self, max_samples: usize) -> Result<SampleGroupMapping> {
+        let mut mapping = SampleGroupMapping::new(self.grouping_type, self.grouping_type_parameter);
+        let mut total = 0usize;
+        for pattern in &self.patterns {
+            total = total.saturating_add(pattern.sample_count as usize);
+            if total > max_samples {
+                return Err(Error::InvalidInput("csgp mapping exceeds the caller's cap"));
+            }
+            if pattern.indices.is_empty() {
+                continue;
+            }
+            let mut remaining = pattern.sample_count as usize;
+            while remaining > 0 {
+                let take = remaining.min(pattern.indices.len());
+                for &index in &pattern.indices[..take] {
+                    mapping.push_run(1, index);
+                }
+                remaining -= take;
+            }
+        }
+        Ok(mapping)
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u64>(),
+            "csgp body",
+        )?;
+        let version = body[0];
+        let flags = be_u32(body, 0, "csgp flags")? & FULLBOX_FLAGS_MASK;
+        let mut c = FULLBOX_EXTRA_SIZE;
+        let grouping_type = be_u32(body, c, "csgp grouping_type")?;
+        c += core::mem::size_of::<u32>();
+        let grouping_type_parameter = if flags & (1 << CSGP_PARAMETER_BIT) != 0 {
+            let value = be_u32(body, c, "csgp grouping_type_parameter")?;
+            c += core::mem::size_of::<u32>();
+            Some(value)
+        } else {
+            None
+        };
+        let pattern_count = be_u32(body, c, "csgp pattern_count")? as usize;
+        c += core::mem::size_of::<u32>();
+        let pattern_code = ((flags >> CSGP_PATTERN_CODE_SHIFT) & CSGP_CODE_MASK) as u8;
+        let count_code = ((flags >> CSGP_COUNT_CODE_SHIFT) & CSGP_CODE_MASK) as u8;
+        let index_code = ((flags >> CSGP_INDEX_CODE_SHIFT) & CSGP_CODE_MASK) as u8;
+        let mut reader = broadcast_core::bits::BitReader::new(&body[c..]);
+        let pattern_bits = (csgp_width(pattern_code) + csgp_width(count_code)) as usize;
+        let mut lengths = Vec::with_capacity(bounded_entry_count(
+            body.len().saturating_sub(c),
+            pattern_bits.div_ceil(u8::BITS as usize),
+            pattern_count,
+        ));
+        let mut counts = lengths.clone();
+        for _ in 0..pattern_count {
+            let length =
+                read_csgp_bits(&mut reader, csgp_width(pattern_code), "csgp pattern_length")?;
+            let count = read_csgp_bits(&mut reader, csgp_width(count_code), "csgp sample_count")?;
+            lengths.push(length);
+            counts.push(count);
+        }
+        let mut patterns = Vec::with_capacity(lengths.len());
+        for (length, count) in lengths.into_iter().zip(counts) {
+            let mut indices = Vec::with_capacity(
+                usize::try_from(length)
+                    .unwrap_or(usize::MAX)
+                    .min(CSGP_PATTERN_PREALLOC),
+            );
+            for _ in 0..length {
+                indices.push(read_csgp_bits(
+                    &mut reader,
+                    csgp_width(index_code),
+                    "csgp index",
+                )?);
+            }
+            patterns.push(CsgpPattern {
+                sample_count: count,
+                indices,
+            });
+        }
+        Ok(Self {
+            version,
+            flags,
+            grouping_type,
+            grouping_type_parameter,
+            patterns,
+        })
+    }
+
+    fn size_codes(&self) -> (u8, u8, u8) {
+        (
+            ((self.flags >> CSGP_PATTERN_CODE_SHIFT) & CSGP_CODE_MASK) as u8,
+            ((self.flags >> CSGP_COUNT_CODE_SHIFT) & CSGP_CODE_MASK) as u8,
+            ((self.flags >> CSGP_INDEX_CODE_SHIFT) & CSGP_CODE_MASK) as u8,
+        )
+    }
+}
+
+fn read_csgp_bits(
+    reader: &mut broadcast_core::bits::BitReader<'_>,
+    width: u32,
+    what: &'static str,
+) -> Result<u32> {
+    reader
+        .read_bits(width)
+        .map(|value| value as u32)
+        .map_err(|_| Error::InvalidInput(what))
+}
+
+impl<'a> Parse<'a> for CompactSampleToGroupBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        need_in(
+            bytes,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u64>(),
+            "csgp box",
+        )?;
+        if be_u32(bytes, BOX_TYPE_OFFSET, "csgp box")? != u32::from_be_bytes(CSGP) {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: "box_type",
+                value: u32::from_be_bytes(CSGP) as u64,
+                reason: "expected csgp",
+            }));
+        }
+        Self::parse_body(crate::box_types::parse_box(bytes)?.0.body)
+    }
+}
+
+impl Serialize for CompactSampleToGroupBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        let (pattern_code, count_code, index_code) = self.size_codes();
+        let mut bits =
+            (csgp_width(pattern_code) + csgp_width(count_code)) as usize * self.patterns.len();
+        for pattern in &self.patterns {
+            bits += csgp_width(index_code) as usize * pattern.indices.len();
+        }
+        let parameter = if self.grouping_type_parameter.is_some() {
+            core::mem::size_of::<u32>()
+        } else {
+            0
+        };
+        crate::box_types::box_len(
+            BOX_HEADER_MIN_SIZE
+                + FULLBOX_EXTRA_SIZE
+                + core::mem::size_of::<u32>()
+                + parameter
+                + core::mem::size_of::<u32>()
+                + bits.div_ceil(u8::BITS as usize),
+        )
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_full_box_header(
+            buf,
+            &CSGP,
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.grouping_type.to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        if let Some(parameter) = self.grouping_type_parameter {
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&parameter.to_be_bytes());
+            c += core::mem::size_of::<u32>();
+        }
+        let pattern_count = broadcast_core::len::fit_u32(self.patterns.len(), "pattern_count")?;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&pattern_count.to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        let (pattern_code, count_code, index_code) = self.size_codes();
+        let mut writer = broadcast_core::bits::BitBuf::new();
+        for pattern in &self.patterns {
+            write_csgp_bits(
+                &mut writer,
+                pattern.indices.len() as u64,
+                csgp_width(pattern_code),
+                "csgp pattern_length",
+            )?;
+            write_csgp_bits(
+                &mut writer,
+                u64::from(pattern.sample_count),
+                csgp_width(count_code),
+                "csgp sample_count",
+            )?;
+        }
+        for pattern in &self.patterns {
+            for &index in &pattern.indices {
+                write_csgp_bits(
+                    &mut writer,
+                    u64::from(index),
+                    csgp_width(index_code),
+                    "csgp index",
+                )?;
+            }
+        }
+        writer.align_to_byte();
+        let body = writer.as_bytes();
+        buf[c..c + body.len()].copy_from_slice(body);
+        c += body.len();
+        Ok(c)
+    }
+}
+
+fn write_csgp_bits(
+    writer: &mut broadcast_core::bits::BitBuf,
+    value: u64,
+    width: u32,
+    what: &'static str,
+) -> Result<()> {
+    writer
+        .write_bits(value, width)
+        .map_err(|_| Error::InvalidInput(what))
+}
 
 #[cfg(test)]
 mod tests {

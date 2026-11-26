@@ -96,6 +96,7 @@ example_args() {
         isobmff/parse_boxes)  echo "fixtures/mp4/progressive/av-faststart.mp4" ;;
         isobmff/parse_emsg)   echo "fixtures/scte35/scte35-emsg-v0.bin" ;;
         isobmff/list_samples) echo "fixtures/mp4/progressive/av-prog.mp4" ;;
+        isobmff/print_audio_tracks) echo "fixtures/mp4/boxes/track-description.mp4" ;;
         isobmff-tokio/list_samples) echo "fixtures/mp4/progressive/av-prog.mp4" ;;
         isobmff-tokio/read_sample) echo "fixtures/mp4/progressive/av-prog.mp4" ;;
         isobmff/read_tags)    echo "fixtures/mp4/progressive/av-prog.mp4" ;;

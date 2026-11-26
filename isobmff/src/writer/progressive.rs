@@ -1156,6 +1156,9 @@ fn stbl_four_cc(child: &StblChild) -> [u8; crate::box_types::BOX_TYPE_SIZE] {
         StblChild::Stco(_) => *b"stco",
         StblChild::Co64(_) => *b"co64",
         StblChild::Stss(_) => *b"stss",
+        StblChild::Stdp(_) => *b"stdp",
+        StblChild::Padb(_) => *b"padb",
+        StblChild::Csgp(_) => *b"csgp",
         StblChild::Opaque(bytes) => bytes
             .get(BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE)
             .and_then(|slice| <[u8; BOX_TYPE_SIZE]>::try_from(slice).ok())

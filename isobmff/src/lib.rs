@@ -108,6 +108,7 @@ extern crate alloc;
 
 pub mod ac3;
 pub mod ac4;
+pub mod audio_boxes;
 pub mod av1;
 pub mod avc_config;
 pub mod avc_parameter_set;
@@ -117,6 +118,7 @@ pub mod avs3_audio;
 pub mod box_support;
 pub mod box_types;
 pub mod cenc;
+pub mod coverage;
 pub mod dovi;
 #[cfg(feature = "std")]
 pub mod driver;
@@ -128,6 +130,7 @@ pub mod frag_layout;
 pub mod frag_offsets;
 pub mod hdr_boxes;
 pub mod hevc_config;
+pub mod index_boxes;
 pub mod init_segment;
 pub mod limits;
 pub mod metadata;
@@ -143,9 +146,11 @@ pub mod registry;
 pub mod sample_entries;
 pub mod sample_groups;
 pub mod sample_table;
+pub mod sample_tables_extra;
 pub mod segments;
 pub mod subtitle_entries;
 pub mod timing;
+pub mod track_desc;
 pub mod track_id;
 pub mod track_reference;
 pub mod visual_ext;
@@ -155,6 +160,11 @@ pub mod writer;
 
 pub use ac3::{Ac3SpecificBox, Ec3SpecificBox, Ec3Substream, acmod_channels};
 pub use ac4::{AC4_FOURCC, Ac4SpecificBox, DAC4_FOURCC};
+pub use audio_boxes::{
+    ALOU, AlbumLoudnessInfo, CHNL, ChannelLayoutBox, DMIX, DownMixInstruction,
+    DownMixInstructionsBox, FormatOrdering, LABL, LUDT, LabelBox, LoudnessBaseBox, LoudnessBox,
+    LoudnessEntry, LoudnessKind, LoudnessMeasurement, SpeakerPosition, TLOU, TrackLoudnessInfo,
+};
 pub use av1::{AV01_FOURCC, AV1C_FOURCC, Av1ConfigurationBox, Av1SampleEntry};
 pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 pub use avc_parameter_set::{AVCP_SAMPLE_ENTRY, AVCParameterSample, AVCParameterSampleEntry};
@@ -185,6 +195,11 @@ pub use hdr_boxes::{
     CLLI_FOURCC, ChromaticityXy, ContentLightLevel, MDCV_FOURCC, MasteringDisplayColourVolume,
 };
 pub use hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
+pub use index_boxes::{
+    LEVA, LevelAssignmentBox, LevelAssignmentEntry, LevelAssignmentType, PDIN,
+    ProgressiveDownloadEntry, ProgressiveDownloadInfoBox, SSIX, SubsegmentIndexBox,
+    SubsegmentIndexEntry, SubsegmentRange, TREP, TrackExtensionPropertiesBox,
+};
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, AudioSampleEntryV1, ChunkLargeOffsetBox, ChunkOffsetBox,
     CompactSampleSizeBox, DataEntry, DataEntryImdaBox, DataEntrySeqNumImdaBox, DataEntryUrlBox,
@@ -225,10 +240,17 @@ pub use sample_entries::{
 pub use sample_table::{
     CursorState, SampleRef, TrackCursor, build_ctts, build_stsc, build_stss, build_stts,
 };
+pub use sample_tables_extra::{
+    DegradationPriorityBox, PADB, PaddingBitsBox, STDP, STSG, SubTrackSampleGroupBox,
+};
 pub use subtitle_entries::{
     CueIdBox, CuePayloadBox, CueSettingsBox, VttAdditionalTextBox, VttCueBox, VttEmptyCueBox,
     WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, XmlSubtitleSampleEntry,
     parse_wvtt_sample,
+};
+pub use track_desc::{
+    ELNG, ExtendedLanguageBox, KIND, KindBox, STVI, StereoVideoBox, TRACK_GROUP_MSRC,
+    TRACK_GROUP_STER, TRGR, TSEL, TrackGroupBox, TrackGroupTypeBox, TrackSelectionBox,
 };
 pub use track_id::TrackId;
 pub use track_reference::{AVCP_REFERENCE_TYPE, TrackReferenceBox, TrackReferenceTypeBox};

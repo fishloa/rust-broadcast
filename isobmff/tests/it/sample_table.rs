@@ -188,6 +188,11 @@ fn cursor_matches_the_pre_move_digest_table() {
 const DIGESTS: &[(&str, u32, u64)] = &[
     ("public/aac-sgpd.mp4", 131, 0x9f808b3f4836a623),
     ("public/av1.mp4", 12, 0xdabde3d714765d4d),
+    ("public/boxes/chnl-ipcm.mp4", 14400, 0x2b1ad55bb77541e5),
+    ("public/boxes/loudness.m4a", 89, 0xb1187d0cc35ef16a),
+    ("public/boxes/track-description.mp4", 138, 0xbed24d7368c988c),
+    ("public/boxes/track-group-ster.mp4", 138, 0x37f0734af6652de0),
+    ("public/boxes/tsel.mp4", 138, 0x7702e8e3710f394b),
     ("public/cenc-av-enca.mp4", 55, 0xe5ba35ce954f4cbe),
     ("public/cenc-boxes/aac-cenc.mp4", 88, 0xdae8edaddb88f40e),
     ("public/cenc-boxes/pcm-clear.mp4", 8000, 0xf572aac9e168761c),

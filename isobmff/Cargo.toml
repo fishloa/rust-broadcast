@@ -73,6 +73,10 @@ name = "list_samples"
 required-features = ["std"]
 
 [[example]]
+name = "print_audio_tracks"
+required-features = ["std"]
+
+[[example]]
 name = "read_tags"
 required-features = ["std"]
 
