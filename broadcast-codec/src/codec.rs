@@ -73,6 +73,49 @@ impl CodecId {
             Self::Other(_) => "other",
         }
     }
+
+    /// The codec a token names: [`Self::name`] read back.
+    ///
+    /// Case, spaces, `.`, `-` and `_` are ignored, so `h264`, `H.264` and
+    /// `H264` all name [`Self::H264`]. [`Self::Other`] carries a caller-chosen
+    /// tag that has no textual form, so a token that normalises to `other`
+    /// names no codec and this returns `None`.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        if same_token(name, "other") {
+            return None;
+        }
+        [
+            Self::H264,
+            Self::Hevc,
+            Self::Vvc,
+            Self::Av1,
+            Self::Vp9,
+            Self::Mpeg2Video,
+            Self::Aac,
+            Self::Ac3,
+            Self::Eac3,
+            Self::Ac4,
+            Self::Dts,
+            Self::Opus,
+            Self::Flac,
+            Self::MpegAudio,
+            Self::MpegH3dAudio,
+            Self::Pcm,
+        ]
+        .into_iter()
+        .find(|codec| same_token(name, codec.name()))
+    }
+}
+
+/// Whether `input` names `label` once case and punctuation are ignored.
+fn same_token(input: &str, label: &str) -> bool {
+    fn token(text: &str) -> impl Iterator<Item = char> + '_ {
+        text.chars()
+            .filter(char::is_ascii_alphanumeric)
+            .map(|c| c.to_ascii_lowercase())
+    }
+    token(input).eq(token(label))
 }
 
 broadcast_core::impl_spec_display!(CodecId, Other);

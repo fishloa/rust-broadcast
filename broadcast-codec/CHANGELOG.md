@@ -20,4 +20,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 - `ContentLightLevel`, `MasteringDisplay` and `ItuT35` metadata, carried by
   `VideoFrame` through `with_content_light`, `with_mastering_display` and
   `with_itu_t35`.
-- `pcm_passthrough` and `drain_contract` examples.
+- `pcm_passthrough`, `drain_contract` and `registry` examples.
+- Providers and the registry: `CodecProvider` (the object-safe trait one
+  adapter implements), `CodecDescriptor`, `CodecId`, `Direction`,
+  `SampleFormat`, `EncoderConfig` (typed settings plus ordered
+  provider-specific options), `Registry` (a value the application builds, with
+  `prefer`, `fallback` and `select_with`), `Preference` applied to one or both
+  directions, `Fallback::{Strict, NextCandidate}`, and the text form
+  `Preference: FromStr`/`Display` with `parse_preferences` for a
+  comma-separated list. The whole selection rule is stated at the crate root
+  and pinned by one test per clause.
+- `CodecId::from_name`, the textual inverse of `CodecId::name`: `h264` and
+  `H.264` name the same codec.
+
+### Breaking
+
+- `CodecError`'s message-bearing payloads are `Cow<'static, str>` rather than
+  `&'static str`, so the registry can name the provider, implementation or
+  codec it refused at run time. `CodecError` is no longer `Copy`; the
+  `refused`/`failed`/`unsupported` constructors take `impl Into<Cow<'static,
+  str>>` and are no longer `const`.

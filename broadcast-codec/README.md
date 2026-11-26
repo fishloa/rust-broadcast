@@ -1,7 +1,7 @@
 # broadcast-codec
 
-The codec seam for `rust-broadcast`: raw audio/video frame types and two
-sans-IO traits that an outside codec plugs into.
+The codec seam for `rust-broadcast`: raw audio/video frame types, two sans-IO
+traits an outside codec plugs into, and the registry that chooses between them.
 
 **This crate holds no codec.** It defines the vocabulary a decoder or encoder
 adapter exchanges with the rest of the workspace:
@@ -15,6 +15,9 @@ adapter exchanges with the rest of the workspace:
 - [`Decoder`] and [`Encoder`] are object-safe, sans-IO traits. A real codec
   library (`symphonia`, `rav1d`, `rav1e`, `openh264`, …) is wrapped in a type
   that implements one of them, without changing this crate or `transmux`.
+- [`CodecProvider`] is one adapter offering one or more implementations, and
+  [`Registry`] holds any number of providers and picks one per codec, so an
+  application links every adapter it likes and no call site names one.
 
 ## Contract
 
@@ -36,6 +39,118 @@ accessor methods. Every public struct and enum is `#[non_exhaustive]`.
 The API is **0.x and expected to change** while real codecs are brought through
 it. Nothing here participates in the workspace's DVB lockstep; the crate is
 unpublished.
+
+## Providers and the registry
+
+A [`CodecProvider`] is one adapter: a name, the [`CodecDescriptor`]s it offers,
+and a way to build a [`Decoder`] or [`Encoder`] for one of them. A [`Registry`]
+is a value the application builds from those providers. There is no static
+registry, no link-time self-registration and no initialisation-time
+registration hook: the application decides what it links and passes the
+registry where it is needed.
+
+```rust
+use std::num::NonZeroU32;
+
+use broadcast_codec::{
+    CodecDescriptor, CodecError, CodecId, CodecParameters, CodecProvider, Decoder, Direction,
+    Encoder, EncoderConfig, Preference, Registry, Timescale,
+};
+
+struct Alpha;
+
+impl CodecProvider for Alpha {
+    fn name(&self) -> &str {
+        "alpha"
+    }
+
+    fn descriptors(&self) -> Vec<CodecDescriptor> {
+        vec![CodecDescriptor::new(
+            "alpha",
+            "aac_alpha",
+            CodecId::Aac,
+            Direction::Decode,
+        )]
+    }
+
+    fn make_decoder(&self, _: &str, _: &CodecParameters) -> Result<Box<dyn Decoder>, CodecError> {
+        Err(CodecError::unsupported("this example builds no decoder"))
+    }
+
+    fn make_encoder(&self, _: &str, _: &EncoderConfig) -> Result<Box<dyn Encoder>, CodecError> {
+        Err(CodecError::unsupported("this example builds no encoder"))
+    }
+}
+
+fn build() -> Result<Registry, Box<dyn std::error::Error>> {
+    let registry = Registry::new()
+        .with(Box::new(Alpha))?
+        .prefer(Preference::new(CodecId::Aac, "alpha"));
+    let rate = NonZeroU32::new(48_000).ok_or("sample rate")?;
+    let parameters = CodecParameters::new(CodecId::Aac, Timescale::from_nonzero(rate));
+    assert_eq!(registry.candidates(CodecId::Aac, Direction::Decode).len(), 1);
+    assert!(registry.decoder(&parameters).is_err());
+    Ok(registry)
+}
+```
+
+## The selection rule
+
+1. Candidates for a codec and a direction are all matching descriptors, in
+   provider registration order and, within a provider, in the order it lists
+   them.
+2. If a selector ([`Registry::select_with`]) is set, it is given that list and
+   its answer is the first candidate; the rest follow in order. A selector that
+   returns `None` or an out-of-range index means "no choice", and rule 3 then
+   rule 4 decide.
+3. If a [`Preference`] matches the codec and direction, its candidate moves to
+   the front. A preference naming a provider without an implementation moves
+   all of that provider's candidates to the front, keeping their order. A later
+   [`Registry::prefer`] for the same codec and direction replaces an earlier
+   one. A preference naming a provider or implementation that is not registered
+   is an error from [`Registry::decoder`] and [`Registry::encoder`]
+   ([`CodecError::Unsupported`] naming it), never silently ignored. A
+   preference built with [`Preference::with_direction`] governs that direction
+   only and outranks a preference for the same codec that names both.
+4. With no selector and no preference, registration order decides. The library
+   ranks nothing.
+5. [`Fallback::Strict`] (the default) tries only the first candidate and
+   returns its error. [`Fallback::NextCandidate`] skips a candidate that answers
+   [`CodecError::Unsupported`] or [`CodecError::Refused`] and tries the next
+   one, while [`CodecError::Failed`] stops at once; when every candidate is
+   skipped, the error lists what was tried.
+6. No candidate at all is [`CodecError::Unsupported`] naming the codec and
+   direction.
+
+## Preferences as text
+
+A preference has a text form, so a command-line flag or a JSON string can carry
+it. [`Preference`] implements [`FromStr`](core::str::FromStr) and
+[`Display`](core::fmt::Display), and [`parse_preferences`] reads a
+comma-separated list:
+
+| Text | Preference |
+| --- | --- |
+| `aac=oxideav` | AAC, either direction, provider `oxideav` |
+| `h264=libav:h264_videotoolbox` | H.264, either direction, provider `libav`, implementation `h264_videotoolbox` |
+| `dec:aac=oxideav` | AAC, decode only |
+| `enc:aac=libav` | AAC, encode only |
+
+The codec token is [`CodecId::name`] read back by [`CodecId::from_name`]; case,
+spaces, `.`, `-` and `_` are ignored, so `h264` and `H.264` name the same codec.
+[`Display`](core::fmt::Display) writes the compact lower-case spelling
+(`h264=libav`), so a printed preference parses back to the preference it came
+from. A token that names no codec, an empty provider or implementation, a
+character a name may not contain and an unknown direction prefix are each a
+[`PreferenceError`] naming the token it refused.
+
+## Encoder options
+
+The typed fields of an [`EncoderConfig`] are what every encoder needs. Anything
+provider-specific goes in [`EncoderConfig::options`], in order, and a provider
+that does not recognise a key returns [`CodecError::Refused`] naming that key.
+A provider never ignores an unknown key: silently dropping a setting encodes
+something other than what the caller asked for.
 
 ## Features
 
