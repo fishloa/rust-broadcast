@@ -1204,7 +1204,7 @@ pub const TABLE: &[Crate] = &[
     // - `RtspPushError` (`push::rtsp`) — thiserror error for the RTSP push
     // transport's connect/protocol/IO failures; not a spec/field label.
     // - `SendMediaError` (`push`) — thiserror error for
-    // `PushTransport::send_media` (issue #934): mux failure vs. transport
+    // a push send (issue #934): mux failure vs. transport
     // send failure; not a spec/field label.
     // - `MuxError` (`push`) — the typed muxer failure `SendMediaError::Mux`
     // now carries (issue #2695): the muxer's own error or an uncarriable
