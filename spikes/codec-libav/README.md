@@ -36,6 +36,9 @@ This spike is not published and carries no release version.
 - **No extradata setter.** A H.264 decoder is opened in libav's own in-band
   mode and the `avcC` parameter sets are supplied in-band; a raw AAC access
   unit is wrapped in an ADTS header. The adapter's own framing code does this.
+  Only H.264 is re-framed: a length-prefixed HEVC stream (an `hvcC` record)
+  cannot be supplied its parameter sets, so the listed HEVC decoder serves
+  in-band (Annex B) HEVC only.
 - **No hardware-device API.** libav's hardware *acceleration modes* of an
   ordinary decoder are neither listed nor used. A dedicated hardware codec that
   libav registers under its own name (for example the `h264_videotoolbox`
