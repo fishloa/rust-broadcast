@@ -13,14 +13,11 @@ use workspace_guards::{crate_dir, rs_files, workspace_members};
 
 use crate::deleted_names_data::{Banned, EXEMPT, TABLE};
 
-/// `true` when `name` occurs in `text` as a whole identifier rather than as
-/// the prefix of a longer one (`CmafMux` must not match `CmafMuxStage`). A
-/// qualified name (one containing `::`) is matched as written.
-fn names_deleted(text: &str, name: &str) -> bool {
-    if name.contains("::") {
-        return text.contains(name);
-    }
-    let is_ident = |c: char| c.is_alphanumeric() || c == '_';
+fn is_ident(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+fn names_whole_identifier(text: &str, name: &str) -> bool {
     let mut from = 0;
     while let Some(offset) = text[from..].find(name) {
         let begin = from + offset;
@@ -38,18 +35,84 @@ fn names_deleted(text: &str, name: &str) -> bool {
     false
 }
 
-fn scan_file(path: &std::path::Path, text: &str, banned: &Banned, problems: &mut Vec<String>) {
-    for (line_no, line) in text.lines().enumerate() {
-        if names_deleted(line, banned.name) {
-            problems.push(format!(
-                "{}:{}: `{}` is gone ({}): {}",
-                path.display(),
-                line_no + 1,
-                banned.name,
-                banned.issue,
-                banned.reason
-            ));
+/// Byte offsets of every `prefix::{...}` group in `text` whose braces contain
+/// `leaf` as a whole identifier.
+fn group_offsets(text: &str, prefix: &str, leaf: &str) -> Vec<usize> {
+    let mut offsets = Vec::new();
+    let mut from = 0;
+    while let Some(found) = text[from..].find(prefix) {
+        let begin = from + found;
+        let after = begin + prefix.len();
+        if text[..begin]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !is_ident(c))
+        {
+            let rest = text[after..].trim_start();
+            if let Some(rest) = rest.strip_prefix("::") {
+                let rest = rest.trim_start();
+                if let Some(rest) = rest.strip_prefix('{')
+                    && let Some(end) = matching_brace(rest)
+                    && names_whole_identifier(&rest[..end], leaf)
+                {
+                    offsets.push(begin);
+                }
+            }
         }
+        from = after;
+    }
+    offsets
+}
+
+fn matching_brace(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (i, c) in text.char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' if depth == 0 => return Some(i),
+            '}' => depth -= 1,
+            _ => {}
+        }
+    }
+    None
+}
+
+/// `true` when `name` occurs in `text` as a whole identifier rather than as
+/// the prefix of a longer one (`CmafMux` must not match `CmafMuxStage`). A
+/// qualified name (one containing `::`) matches as written or as a member of
+/// a `prefix::{...}` group.
+fn names_deleted(text: &str, name: &str) -> bool {
+    if let Some((prefix, leaf)) = name.rsplit_once("::") {
+        return text.contains(name) || !group_offsets(text, prefix, leaf).is_empty();
+    }
+    names_whole_identifier(text, name)
+}
+
+fn scan_file(path: &std::path::Path, text: &str, banned: &Banned, problems: &mut Vec<String>) {
+    let mut hits: Vec<usize> = text
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| names_deleted(line, banned.name))
+        .map(|(line_no, _)| line_no + 1)
+        .collect();
+    if let Some((prefix, leaf)) = banned.name.rsplit_once("::") {
+        for offset in group_offsets(text, prefix, leaf) {
+            let line_no = text[..offset].matches('\n').count() + 1;
+            if !hits.contains(&line_no) {
+                hits.push(line_no);
+            }
+        }
+    }
+    hits.sort_unstable();
+    for line_no in hits {
+        problems.push(format!(
+            "{}:{}: `{}` is gone ({}): {}",
+            path.display(),
+            line_no,
+            banned.name,
+            banned.issue,
+            banned.reason
+        ));
     }
 }
 
@@ -98,4 +161,36 @@ fn a_replacement_name_does_not_count_as_the_deleted_one() {
     assert!(names_deleted("the CmafMux stage", "CmafMux"));
     assert!(names_deleted("`TsMux`", "TsMux"));
     assert!(names_deleted("crate::splice::concat", "splice::concat"));
+}
+
+#[test]
+fn a_grouped_import_names_every_member() {
+    assert!(names_deleted(
+        "use broadcast_common::{Parse, Serialize};",
+        "broadcast_common::Parse"
+    ));
+    assert!(names_deleted(
+        "use broadcast_common::{bcd, clock33, Serialize};",
+        "broadcast_common::Serialize"
+    ));
+    assert!(names_deleted(
+        "//! use broadcast_common::{Parse, Serialize};",
+        "broadcast_common::Parse"
+    ));
+    assert!(names_deleted(
+        "use broadcast_common::{len::{need_in}, Parse};",
+        "broadcast_common::len"
+    ));
+    assert!(names_deleted(
+        "use broadcast_common::{\n    Parse,\n    Serialize,\n};",
+        "broadcast_common::Serialize"
+    ));
+    assert!(!names_deleted(
+        "use broadcast_core::{Parse, Serialize};",
+        "broadcast_common::Parse"
+    ));
+    assert!(!names_deleted(
+        "use broadcast_common::{bcd, clock33, crc32_mpeg2};",
+        "broadcast_common::Parse"
+    ));
 }

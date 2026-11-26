@@ -352,6 +352,8 @@ jobs:
       # flavour (the baseline flavour needs a checkout of the last release).
       - name: differential-sweep builds
         run: cargo build --manifest-path tools/differential-sweep/Cargo.toml --features head --locked
+      - name: differential-sweep clippy
+        run: cargo clippy --manifest-path tools/differential-sweep/Cargo.toml --features head --all-targets --locked -- -D warnings
 
   docs:
     name: doc build
