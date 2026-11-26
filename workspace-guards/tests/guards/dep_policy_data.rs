@@ -30,6 +30,10 @@ pub const WORKSPACES_EXEMPT: &[(&str, &str)] = &[
         "spikes/codec-symphonia",
         "codec-seam spike with an MPL-2.0 dependency that must not enter the root Cargo.lock; never built by CI or published",
     ),
+    (
+        "spikes/codec-libav",
+        "codec-seam spike that links the system FFmpeg (LGPL/GPL) on purpose; the one sanctioned home for an FFmpeg binding, outside the root graph, never built by CI or published",
+    ),
 ];
 
 const fn one(name: &'static str, crates: &'static [&'static str]) -> Purpose {

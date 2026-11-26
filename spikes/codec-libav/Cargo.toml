@@ -1,0 +1,19 @@
+[workspace]
+
+[package]
+name = "codec-libav"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Codec-seam spike: libavcodec decoders and encoders behind broadcast-codec."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+broadcast-codec = { path = "../../broadcast-codec" }
+ffmpeg-next = { version = "8.1", default-features = false, features = ["codec", "format"] }
+
+[dev-dependencies]
+broadcast-loudness = { path = "../../broadcast-loudness" }
+codec-symphonia = { path = "../codec-symphonia" }
+test-fixtures = { path = "../../test-fixtures" }
+transmux = { path = "../../transmux", default-features = false, features = ["std"] }
