@@ -8,7 +8,7 @@ use core::str::FromStr;
 use crate::codec::{CodecId, OTHER_TOKEN, same_token, token};
 use crate::direction::Direction;
 use crate::preference_error::PreferenceError;
-use crate::profile::CodecProfile;
+use crate::profile::{CodecProfile, TOKEN_SEPARATOR};
 use crate::profile_error::ProfileError;
 use crate::provider::offending_character;
 
@@ -19,8 +19,6 @@ const SCOPE: char = ':';
 const LIST_SEPARATOR: char = ',';
 /// Separates the codec token from the provider.
 const ASSIGNMENT: char = '=';
-/// Separates the codec token from the profile token.
-const PROFILE_SEPARATOR: char = '/';
 
 /// A choice of provider for one codec and direction.
 ///
@@ -147,7 +145,7 @@ impl FromStr for Preference {
             },
             None => (None, codec_side),
         };
-        let (codec_token, profile_token) = match codec_token.split_once(PROFILE_SEPARATOR) {
+        let (codec_token, profile_token) = match codec_token.split_once(TOKEN_SEPARATOR) {
             Some((codec, profile)) => (codec, Some(profile)),
             None => (codec_token, None),
         };

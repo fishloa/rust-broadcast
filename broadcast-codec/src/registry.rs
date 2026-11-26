@@ -259,7 +259,9 @@ impl Registry {
     /// # Errors
     /// [`CodecError::Unsupported`] when the codec has no
     /// [`Direction::Decode`] candidate, when a matching preference names a
-    /// provider or implementation that is not registered, or when every
+    /// provider or implementation that is not registered, when the stream's
+    /// profile rules out every candidate, when a preference or selector picked
+    /// a candidate that does not state the stream's profile, or when every
     /// candidate was skipped under [`Fallback::NextCandidate`]; otherwise the
     /// candidate's own error.
     pub fn decoder(&self, parameters: &CodecParameters) -> Result<Box<dyn Decoder>, CodecError> {
@@ -274,7 +276,8 @@ impl Registry {
     /// Build an encoder from `config`.
     ///
     /// # Errors
-    /// As [`Self::decoder`], for [`Direction::Encode`].
+    /// As [`Self::decoder`], for [`Direction::Encode`], with the profile the
+    /// configuration asks for in place of the stream's.
     pub fn encoder(&self, config: &EncoderConfig) -> Result<Box<dyn Encoder>, CodecError> {
         let codec = config.codec();
         let direction = Direction::Encode;

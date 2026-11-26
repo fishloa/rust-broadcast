@@ -10,14 +10,10 @@
 use alloc::format;
 use alloc::string::String;
 
-use crate::codec::{CodecId, compact, same_token, token};
+use crate::codec::{CodecId, OTHER_TAG_DIGITS, OTHER_TAG_RADIX, compact, same_token, token};
 
 /// Separates the codec token from the profile token in the text form.
-const TOKEN_SEPARATOR: char = '/';
-/// An [`CodecProfile::Other`] tag is written as this many hexadecimal digits.
-const OTHER_TAG_DIGITS: usize = 8;
-/// Base of those digits.
-const OTHER_TAG_RADIX: u32 = 16;
+pub(crate) const TOKEN_SEPARATOR: char = '/';
 
 /// The H.264 profiles (ITU-T H.264 Annex A).
 const H264_PROFILES: &[CodecProfile] = &[

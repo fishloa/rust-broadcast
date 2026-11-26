@@ -13,10 +13,10 @@ use crate::profile_error::ProfileError;
 pub(crate) const OTHER_TOKEN: &str = "other";
 /// Separates [`OTHER_TOKEN`] from the tag's digits.
 const OTHER_SEPARATOR: char = ':';
-/// An [`CodecId::Other`] tag is written as this many hexadecimal digits.
-const OTHER_TAG_DIGITS: usize = 8;
+/// An `other:` tag is written as this many hexadecimal digits.
+pub(crate) const OTHER_TAG_DIGITS: usize = 8;
 /// Base of those digits.
-const OTHER_TAG_RADIX: u32 = 16;
+pub(crate) const OTHER_TAG_RADIX: u32 = 16;
 
 /// A coded format.
 ///
