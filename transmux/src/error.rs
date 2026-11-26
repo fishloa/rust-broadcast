@@ -368,11 +368,13 @@ pub enum Error {
 
     /// The MPEG-1/2 Program Stream framing could not be parsed
     /// ([`StreamingPsDemux`](crate::StreamingPsDemux) input — ISO/IEC 13818-1 §2.5, via `mpeg_ps`).
+    #[cfg(feature = "ps")]
     #[error("program stream: {0}")]
     Ps(#[from] mpeg_ps::Error),
 
     /// The EBML/Matroska layer below this crate rejected the input
     /// ([`broadcast_matroska`], RFC 8794 §4-§6 / RFC 9559 §5-§12).
+    #[cfg(feature = "matroska")]
     #[error("matroska: {0}")]
     Matroska(#[from] broadcast_matroska::Error),
 

@@ -201,6 +201,7 @@ pub mod ll_dash;
 pub mod ll_hls;
 pub mod media;
 pub mod mhas;
+#[cfg(feature = "matroska")]
 pub mod mkv_mux;
 pub mod mp4_demux;
 pub mod mpeg2_display;
@@ -217,6 +218,7 @@ pub mod payload;
 pub mod pipeline;
 pub mod plan_pass;
 pub mod progressive;
+#[cfg(feature = "ps")]
 pub mod ps_demux;
 pub mod rbsp;
 pub mod rebase;
@@ -227,6 +229,7 @@ pub mod stitch;
 pub(crate) mod test_bits;
 pub mod timeline;
 pub use rtp_packet::rtcp;
+#[cfg(feature = "matroska")]
 pub mod matroska_demux;
 pub mod rtmp;
 pub mod rtp;
@@ -317,6 +320,7 @@ pub use ll_dash::LlDashPackager;
 pub use ll_dash::LlSegmenter;
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
 pub use media::{CmafMuxStage, FragmentCut, HlsPackager, PcrSample, SkippedTrack, TrackProtection};
+#[cfg(feature = "matroska")]
 pub use mkv_mux::MkvMuxStage;
 pub use mpeg_legacy::{
     MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,
@@ -334,6 +338,7 @@ pub use pipeline::{
 };
 pub use plan_pass::PlanPass;
 pub use progressive::ProgressiveMuxStage;
+#[cfg(feature = "ps")]
 pub use ps_demux::{PsDemuxLimits, StreamingPsDemux};
 pub use rebase::{GapStage, OffsetStage, RebaseOrigin, RebaseStage};
 pub use repackage::{Repackage, RepackageOutput};
@@ -391,6 +396,7 @@ pub use hdr10plus::{
     AdditionalWindow, BezierToneMapping, ColorVolumeTransform, DistributionPoint,
     Hdr10PlusMetadata, OverlapProcessOption, PeakLuminanceTable, WindowRegion,
 };
+#[cfg(feature = "matroska")]
 pub use matroska_demux::{IR_TIMESCALE, MatroskaDemux, MatroskaDemuxConfig, MatroskaInput};
 #[cfg(feature = "std")]
 pub use smooth_codec::track_spec_from_quality_level;

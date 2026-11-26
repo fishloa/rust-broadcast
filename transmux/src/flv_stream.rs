@@ -1003,7 +1003,7 @@ impl StreamingFlvDemux {
                 // *index*, not the channel count. In-band (0) and the reserved
                 // values yield `AAC_CHANNEL_COUNT_UNKNOWN`, not a fabricated
                 // number.
-                let channels = crate::flv::aac_channel_count(&asc);
+                let channels = crate::aac_asc::aac_channel_count(&asc);
                 let rate = asc_rate_hz(&asc);
                 let esds = build_aac_esds(data.to_vec());
                 let codec = CodecConfig::Aac {
