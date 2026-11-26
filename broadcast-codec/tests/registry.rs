@@ -540,3 +540,17 @@ impl ErrorOf for Result<Registry, RegistryError> {
         }
     }
 }
+
+#[test]
+fn rule_1_registration_order_is_the_order_providers_were_added() {
+    let served: Served = Rc::new(RefCell::new(Vec::new()));
+    let registry = Registry::new()
+        .with(provider("beta", BETA_OFFERS, Answer::Serve, &served))
+        .expect("beta registers")
+        .with(provider("alpha", ALPHA_OFFERS, Answer::Serve, &served))
+        .expect("alpha registers");
+    assert_eq!(
+        names(&registry.candidates(CodecId::H264, Direction::Decode)),
+        ["beta:h264_hw", "beta:h264_sw", "alpha:h264"]
+    );
+}
