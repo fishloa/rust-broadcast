@@ -136,7 +136,7 @@
 //!
 //! # // Minimal PAT-in-a-TS-packet builder used by the doctest above.
 //! # fn build_pat_packet() -> [u8; 188] {
-//! #     use broadcast_common::Serialize;
+//! #     use broadcast_core::Serialize;
 //! #     use dvb_si::tables::pat::{PatSection, PatEntry};
 //! #     use mpeg_ts::pid::Pid;
 //! #     const PMT_PID: Pid = Pid::from_const(0x0100);
@@ -249,7 +249,7 @@
 //! - **Private / regional descriptors** →
 //!   [`descriptors::DescriptorLoop::iter_with`] a [`descriptors::DescriptorRegistry`].
 //! - **Emitting SI** → build the struct with `new(..)`, then
-//!   [`Serialize::serialize_into`](broadcast_common::Serialize::serialize_into);
+//!   [`Serialize::serialize_into`](broadcast_core::Serialize::serialize_into);
 //!   packetise with `mpeg-ts`.
 //! - **JSON** → the `serde` feature (serialize-only; re-parse from wire bytes).
 //!
@@ -289,8 +289,8 @@
 //! # Design notes
 //!
 //! - **Zero-copy, symmetric.** Every wire type implements
-//!   [`Parse`](broadcast_common::Parse) (borrowing from the input) and
-//!   [`Serialize`](broadcast_common::Serialize); every type has a round-trip
+//!   [`Parse`](broadcast_core::Parse) (borrowing from the input) and
+//!   [`Serialize`](broadcast_core::Serialize); every type has a round-trip
 //!   test. Over-wide values are `Error::FieldOverflow` on serialize, never
 //!   masked.
 //! - **One dispatch list per namespace.** [`tables::AnyTableSection`],
@@ -299,7 +299,7 @@
 //!   lists with drift tests, so dispatch (and the generated docs) cannot drift
 //!   from the implemented set.
 //! - **Labels.** Every spec/field enum has `name()` and a `Display` from
-//!   `broadcast_common::impl_spec_display!`.
+//!   `broadcast_core::impl_spec_display!`.
 //! - **`#[non_exhaustive]`** public types with `new(..)` constructors, so
 //!   additions are not breaking.
 //!

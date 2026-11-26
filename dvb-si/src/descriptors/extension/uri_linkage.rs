@@ -1,6 +1,6 @@
 //! URI Linkage Descriptor — ETSI EN 300 468 V1.20.1 §6.4.15 (tag_extension 0x13).
 use super::*;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for UriLinkage<'a> {
     const TAG_EXTENSION: u8 = 0x13;
@@ -69,7 +69,7 @@ impl UriLinkageType {
         }
     }
 }
-broadcast_common::impl_spec_display!(UriLinkageType, Other);
+broadcast_core::impl_spec_display!(UriLinkageType, Other);
 
 impl UriLinkageType {
     /// `true` when this type carries a `min_polling_interval` field per
@@ -110,7 +110,7 @@ impl<'a> Parse<'a> for UriLinkage<'a> {
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<{ POLLING_INTERVAL_LEN }>())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + POLLING_INTERVAL_LEN,
                         have: sel.len(),
                         what: "URI_linkage body",
@@ -147,7 +147,7 @@ impl Serialize for UriLinkage<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         buf[0] = self.uri_linkage_type.to_u8();
-        buf[1] = broadcast_common::len::fit_u8(self.uri.len(), "uri_length")?;
+        buf[1] = broadcast_core::len::fit_u8(self.uri.len(), "uri_length")?;
         let mut p = URI_LINKAGE_HEADER_LEN;
         buf[p..p + self.uri.len()].copy_from_slice(self.uri.raw());
         p += self.uri.len();

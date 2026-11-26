@@ -12,9 +12,9 @@
 use crate::error::{Error, Result};
 use crate::text::DvbText;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// `table_id` for Content Identifier Table.
 pub const TABLE_ID: u8 = 0x77;
@@ -211,7 +211,7 @@ impl<'a> Parse<'a> for CitSection<'a> {
         while pos < payload_end {
             if pos + CRID_ENTRY_FIXED_LEN > payload_end {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + CRID_ENTRY_FIXED_LEN,
                         have: payload_end,
                         what: "CitSection crid_entry",
@@ -222,7 +222,7 @@ impl<'a> Parse<'a> for CitSection<'a> {
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<CRID_REF_LEN>())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + CRID_ENTRY_FIXED_LEN,
                         have: payload_end,
                         what: "CitSection crid_entry",
@@ -234,7 +234,7 @@ impl<'a> Parse<'a> for CitSection<'a> {
             pos += CRID_ENTRY_FIXED_LEN;
             if pos + unique_string_length > payload_end {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + unique_string_length,
                         have: payload_end,
                         what: "CitSection unique_string",
@@ -289,7 +289,7 @@ impl Serialize for CitSection<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         let prepend_strings_len =
-            broadcast_common::len::fit_u8(self.prepend_strings.len(), "prepend_string_count")?;
+            broadcast_core::len::fit_u8(self.prepend_strings.len(), "prepend_string_count")?;
 
         buf[0] = TABLE_ID;
         buf[1] = super::b1_of(
@@ -318,7 +318,7 @@ impl Serialize for CitSection<'_> {
         let mut pos = ps_end;
         for entry in &self.crid_entries {
             let unique_string_len =
-                broadcast_common::len::fit_u8(entry.unique_string.len(), "unique_string_length")?;
+                broadcast_core::len::fit_u8(entry.unique_string.len(), "unique_string_length")?;
             buf[pos..pos + CRID_REF_LEN].copy_from_slice(&entry.crid_ref.to_be_bytes());
             buf[pos + PREPEND_STRING_INDEX_OFFSET] = entry.prepend_string_index;
             buf[pos + UNIQUE_STRING_LENGTH_OFFSET] = unique_string_len;

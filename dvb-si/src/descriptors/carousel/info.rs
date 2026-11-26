@@ -9,8 +9,8 @@ use crate::descriptors::lang_text::LANG_LEN;
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for info_descriptor (data-carousel namespace).
 pub const TAG: u8 = 0x03;

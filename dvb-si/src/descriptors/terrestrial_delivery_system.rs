@@ -6,9 +6,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for terrestrial\_delivery\_system\_descriptor.
 pub const TAG: u8 = 0x5A;
@@ -92,7 +92,7 @@ impl Bandwidth {
         }
     }
 }
-broadcast_common::impl_spec_display!(Bandwidth, Reserved);
+broadcast_core::impl_spec_display!(Bandwidth, Reserved);
 
 /// Constellation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,7 +121,7 @@ impl Constellation {
         }
     }
 }
-broadcast_common::impl_spec_display!(Constellation, Reserved);
+broadcast_core::impl_spec_display!(Constellation, Reserved);
 
 /// Hierarchy mode — combines native/in-depth interleaver and α.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,7 +165,7 @@ impl Hierarchy {
         }
     }
 }
-broadcast_common::impl_spec_display!(Hierarchy, Reserved);
+broadcast_core::impl_spec_display!(Hierarchy, Reserved);
 
 /// Convolutional code rate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,7 +200,7 @@ impl CodeRate {
         }
     }
 }
-broadcast_common::impl_spec_display!(CodeRate, Reserved);
+broadcast_core::impl_spec_display!(CodeRate, Reserved);
 
 /// Guard interval fraction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,7 +229,7 @@ impl GuardInterval {
         }
     }
 }
-broadcast_common::impl_spec_display!(GuardInterval);
+broadcast_core::impl_spec_display!(GuardInterval);
 
 /// Transmission mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -258,7 +258,7 @@ impl TransmissionMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(TransmissionMode, Reserved);
+broadcast_core::impl_spec_display!(TransmissionMode, Reserved);
 
 /// Terrestrial Delivery System Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -426,7 +426,7 @@ fn serialize_bandwidth(bw: Bandwidth) -> Result<u8> {
         Bandwidth::Mhz7 => 1,
         Bandwidth::Mhz6 => 2,
         Bandwidth::Mhz5 => 3,
-        Bandwidth::Reserved(v) => broadcast_common::len::fit_mask(v, FIELD3_MASK, "bandwidth")?,
+        Bandwidth::Reserved(v) => broadcast_core::len::fit_mask(v, FIELD3_MASK, "bandwidth")?,
     })
 }
 
@@ -436,7 +436,7 @@ fn serialize_constellation(c: Constellation) -> Result<u8> {
         Constellation::Qam16 => 1,
         Constellation::Qam64 => 2,
         Constellation::Reserved(v) => {
-            broadcast_common::len::fit_mask(v, FIELD2_MASK, "constellation")?
+            broadcast_core::len::fit_mask(v, FIELD2_MASK, "constellation")?
         }
     })
 }
@@ -451,7 +451,7 @@ fn serialize_hierarchy(h: Hierarchy) -> Result<u8> {
         Hierarchy::Alpha1InDepth => 5,
         Hierarchy::Alpha2InDepth => 6,
         Hierarchy::Alpha4InDepth => 7,
-        Hierarchy::Reserved(v) => broadcast_common::len::fit_mask(v, FIELD3_MASK, "hierarchy")?,
+        Hierarchy::Reserved(v) => broadcast_core::len::fit_mask(v, FIELD3_MASK, "hierarchy")?,
     })
 }
 
@@ -462,7 +462,7 @@ fn serialize_code_rate(cr: CodeRate) -> Result<u8> {
         CodeRate::Rate3_4 => 2,
         CodeRate::Rate5_6 => 3,
         CodeRate::Rate7_8 => 4,
-        CodeRate::Reserved(v) => broadcast_common::len::fit_mask(v, FIELD3_MASK, "code_rate")?,
+        CodeRate::Reserved(v) => broadcast_core::len::fit_mask(v, FIELD3_MASK, "code_rate")?,
     })
 }
 
@@ -481,7 +481,7 @@ fn serialize_transmission_mode(tm: TransmissionMode) -> Result<u8> {
         TransmissionMode::Mode8k => 1,
         TransmissionMode::Mode4k => 2,
         TransmissionMode::Reserved(v) => {
-            broadcast_common::len::fit_mask(v, FIELD2_MASK, "transmission_mode")?
+            broadcast_core::len::fit_mask(v, FIELD2_MASK, "transmission_mode")?
         }
     })
 }

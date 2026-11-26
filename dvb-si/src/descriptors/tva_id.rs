@@ -9,9 +9,9 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for TVA_id_descriptor.
 pub const TAG: u8 = 0x75;
@@ -98,7 +98,7 @@ impl TvaRunningStatus {
         }
     }
 }
-broadcast_common::impl_spec_display!(TvaRunningStatus, Unallocated);
+broadcast_core::impl_spec_display!(TvaRunningStatus, Unallocated);
 
 /// Default of the 5-bit `Reserved` ahead of `running_status` (TS 102 323
 /// Table 114): "All fields marked as being reserved shall have all bits set
@@ -213,7 +213,7 @@ impl Serialize for TvaIdDescriptor {
             buf[pos..pos + RUNNING_STATUS_OFFSET].copy_from_slice(&e.tva_id.to_be_bytes());
             // Reserved(5): preserved from parse, default 11111.
             buf[pos + RUNNING_STATUS_OFFSET] = ((e.reserved.get() as u8) << RESERVED_SHIFT)
-                | broadcast_common::len::fit_mask(
+                | broadcast_core::len::fit_mask(
                     e.running_status.to_u8(),
                     RUNNING_STATUS_MAX,
                     "running_status",

@@ -9,9 +9,9 @@ use super::descriptor_body;
 use crate::descriptors::metadata_format::MetadataFormat;
 use crate::descriptors::mpeg_carriage_flags::MpegCarriageFlags;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for metadata_pointer_descriptor.
 pub const TAG: u8 = 0x25;
@@ -330,7 +330,7 @@ impl Serialize for MetadataPointerDescriptor<'_> {
         // The record flag is derived from the Option, so it can never claim
         // a record that is not written (r03-W5).
         // `reserved(5)` (Table 2-86) is re-emitted as parsed.
-        let mut flags = (broadcast_common::len::fit_mask(
+        let mut flags = (broadcast_core::len::fit_mask(
             self.mpeg_carriage_flags.to_u8(),
             MPEG_CARRIAGE_FLAGS_MASK,
             "mpeg_carriage_flags",
@@ -343,7 +343,7 @@ impl Serialize for MetadataPointerDescriptor<'_> {
         pos += 1;
 
         if let Some(rec) = self.metadata_locator_record {
-            buf[pos] = broadcast_common::len::fit_u8(rec.len(), "metadata_locator_record_length")?;
+            buf[pos] = broadcast_core::len::fit_u8(rec.len(), "metadata_locator_record_length")?;
             pos += 1;
             buf[pos..pos + rec.len()].copy_from_slice(rec);
             pos += rec.len();

@@ -5,9 +5,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for Metadata_STD_descriptor.
 pub const TAG: u8 = 0x27;
@@ -134,17 +134,17 @@ impl Serialize for MetadataStdDescriptor {
         need_out(buf, len)?;
         // 22-bit fields: `write_u22` masks, so reject a wider value first
         // (audit r03-W3 class).
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.metadata_input_leak_rate),
             METADATA_RATE_BITS,
             "metadata_input_leak_rate",
         )?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.metadata_buffer_size),
             METADATA_RATE_BITS,
             "metadata_buffer_size",
         )?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.metadata_output_leak_rate),
             METADATA_RATE_BITS,
             "metadata_output_leak_rate",

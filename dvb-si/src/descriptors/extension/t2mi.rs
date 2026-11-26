@@ -3,8 +3,8 @@
 //! The `reserved_tail` field holds trailing `reserved_zero_future_use` bytes
 //! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedZero;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedZero;
 
 /// Spec default of every `reserved_zero_future_use` region of the T2-MI
 /// descriptor (Table 158; V1.16.1-V1.20.1 `reserved_zero_future_use`, and the
@@ -117,10 +117,10 @@ impl Serialize for T2mi<'_> {
         // Table 158 bytes 0-2:
         // reserved_zero_future_use(5) | t2mi_stream_id(3)
         buf[0] = ((self.reserved_zero_future_use_stream.get() as u8) << RZFU_STREAM_ID_SHIFT)
-            | broadcast_common::len::fit_mask(self.t2mi_stream_id, T2MI_ID_MASK, "t2mi_stream_id")?;
+            | broadcast_core::len::fit_mask(self.t2mi_stream_id, T2MI_ID_MASK, "t2mi_stream_id")?;
         // reserved_zero_future_use(5) | num_t2mi_streams_minus_one(3)
         buf[1] = ((self.reserved_zero_future_use_num.get() as u8) << RZFU_STREAM_ID_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.num_t2mi_streams_minus_one,
                 T2MI_ID_MASK,
                 "num_t2mi_streams_minus_one",

@@ -19,7 +19,7 @@ wire_enum! {
     #[non_exhaustive]
     #[rustfmt::skip] // deliberate column-aligned discriminants
     pub enum DescriptorTag: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
-        broadcast_common::error::InvalidValue {
+        broadcast_core::error::InvalidValue {
             field: "descriptor_tag",
             value: u64::from(value),
             reason: "not a DescriptorTag variant (EN 300 468 §6.1 Table 12)",
@@ -389,4 +389,4 @@ impl DescriptorTag {
     }
 }
 
-broadcast_common::impl_spec_display!(DescriptorTag);
+broadcast_core::impl_spec_display!(DescriptorTag);

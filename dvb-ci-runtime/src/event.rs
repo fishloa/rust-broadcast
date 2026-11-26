@@ -276,7 +276,7 @@ impl HotPlug {
     }
 }
 
-broadcast_common::impl_spec_display!(HotPlug);
+broadcast_core::impl_spec_display!(HotPlug);
 
 /// A decoded high-level MMI `menu()` / `list()` ready for display (§8.6.5,
 /// Tables 49/51). The three header lines and the choice list are kept separate

@@ -38,8 +38,8 @@ use crate::objects;
 use crate::reserved::ReservedZero;
 use crate::wire::be_u16;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
 /// New LSC v4 `apdu_tag`s (§10), in the `0x9F8Cxx` namespace.
@@ -104,7 +104,7 @@ impl ConnectionState {
         }
     }
 }
-broadcast_common::impl_spec_display!(ConnectionState, Reserved);
+broadcast_core::impl_spec_display!(ConnectionState, Reserved);
 
 // --- IP_protocol_version (Table 86) ---
 
@@ -149,7 +149,7 @@ impl IpProtocolVersion {
         }
     }
 }
-broadcast_common::impl_spec_display!(IpProtocolVersion, Reserved);
+broadcast_core::impl_spec_display!(IpProtocolVersion, Reserved);
 
 // ---------------------------------------------------------------------------
 // comms_info_req (Table 76)
@@ -630,7 +630,7 @@ impl IpConnectionType {
         }
     }
 }
-broadcast_common::impl_spec_display!(IpConnectionType, Reserved);
+broadcast_core::impl_spec_display!(IpConnectionType, Reserved);
 
 /// `hybrid_descriptor()` (Table 83). The inner `IP_descriptor()` /
 /// `hostname_descriptor()` / `multicast_descriptor()` body is carried verbatim as
@@ -756,7 +756,7 @@ impl Serialize for MulticastDescriptor {
         // reserved(7)='0000000' + include_sources(1).
         buf[pos + MULTICAST_FLAGS_OFFSET] = u8::from(self.include_sources);
         buf[pos + MULTICAST_COUNT_OFFSET] =
-            broadcast_common::len::fit_u8(self.source_addresses.len(), "num_source_addresses")
+            broadcast_core::len::fit_u8(self.source_addresses.len(), "num_source_addresses")
                 .map_err(|_| Error::InvalidObject {
                     what: "multicast_descriptor",
                     reason: "more than 255 source addresses",
@@ -782,7 +782,7 @@ fn parse_descriptor_header<'a>(
 ) -> Result<&'a [u8]> {
     if bytes.len() < DESCRIPTOR_HEADER {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: DESCRIPTOR_HEADER,
                 have: bytes.len(),
                 what,
@@ -799,7 +799,7 @@ fn parse_descriptor_header<'a>(
     let end = DESCRIPTOR_HEADER + len;
     if bytes.len() < end {
         return Err(Error::LengthMismatch(
-            broadcast_common::error::LengthMismatch {
+            broadcast_core::error::LengthMismatch {
                 what,
                 declared: len,
                 actual: bytes.len().saturating_sub(DESCRIPTOR_HEADER),

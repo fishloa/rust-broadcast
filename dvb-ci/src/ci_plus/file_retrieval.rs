@@ -22,8 +22,8 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Auxiliary File System resource (Table 75).
 pub mod tag {
@@ -81,7 +81,7 @@ impl AckCode {
         }
     }
 }
-broadcast_common::impl_spec_display!(AckCode, Reserved);
+broadcast_core::impl_spec_display!(AckCode, Reserved);
 
 // ---------------------------------------------------------------------------
 // FileSystemOffer (Table 72)
@@ -117,7 +117,7 @@ impl<'a> Parse<'a> for FileSystemOffer<'a> {
         let end = OFFER_PREFIX + len;
         if body.len() < end {
             return Err(Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "FileSystemOffer DomainIdentifier",
                     declared: len,
                     actual: body.len().saturating_sub(OFFER_PREFIX),

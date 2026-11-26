@@ -16,8 +16,8 @@
 
 use crate::error::{Error, Result};
 use broadcast_common::clock33::{self, pack_marked, unpack_marked};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// `table_id` of the green access unit section.
 pub const TABLE_ID: u8 = 0x09;
@@ -83,14 +83,14 @@ impl<'a> Parse<'a> for GreenAccessUnitSection<'a> {
         p.copy_from_slice(&bytes[MIN_HEADER_LEN..MIN_HEADER_LEN + PTS_FIELD_LEN]);
         let marked = unpack_marked(&p);
         if marked.prefix != PTS_PREFIX {
-            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "Display_in_PTS prefix",
                 expected: u64::from(PTS_PREFIX),
                 found: u64::from(marked.prefix),
             }));
         }
         if marked.markers != clock33::MARKERS_ALL_SET {
-            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "Display_in_PTS marker_bits",
                 expected: u64::from(clock33::MARKERS_ALL_SET),
                 found: u64::from(marked.markers),
@@ -112,7 +112,7 @@ impl Serialize for GreenAccessUnitSection<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pts = broadcast_common::len::fit_bits(self.display_in_pts, PTS_BITS, "Display_in_PTS")?;
+        let pts = broadcast_core::len::fit_bits(self.display_in_pts, PTS_BITS, "Display_in_PTS")?;
         let len = self.serialized_len();
         need_out(buf, len)?;
         buf[0] = TABLE_ID;
@@ -172,7 +172,7 @@ mod tests {
         bad[5] &= 0xFE;
         assert_eq!(
             GreenAccessUnitSection::parse(&bad),
-            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "Display_in_PTS marker_bits",
                 expected: 0b111,
                 found: 0b101,
@@ -182,7 +182,7 @@ mod tests {
         bad[3] = 0x31;
         assert_eq!(
             GreenAccessUnitSection::parse(&bad),
-            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "Display_in_PTS prefix",
                 expected: 0b0010,
                 found: 3,

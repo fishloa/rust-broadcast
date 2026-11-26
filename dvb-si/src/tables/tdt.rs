@@ -4,8 +4,8 @@
 //! 5 bytes of UTC time (16-bit MJD + 24-bit BCD HHMMSS). No CRC.
 
 use crate::error::{Error, Result};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// table_id for Time and Date Table.
 pub const TABLE_ID: u8 = 0x70;

@@ -1,7 +1,7 @@
 //! SH Delivery System Descriptor — ETSI EN 300 468 §6.4.6.2 (tag_extension 0x05).
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 impl ExtensionBodyDef<'_> for ShDeliverySystem {
     const TAG_EXTENSION: u8 = 0x05;
@@ -71,7 +71,7 @@ impl ShDiversityMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(ShDiversityMode, Reserved);
+broadcast_core::impl_spec_display!(ShDiversityMode, Reserved);
 
 /// Polarization for SH — ETSI EN 300 468 Table 123.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -127,7 +127,7 @@ impl ShPolarization {
         }
     }
 }
-broadcast_common::impl_spec_display!(ShPolarization, Reserved);
+broadcast_core::impl_spec_display!(ShPolarization, Reserved);
 
 /// Roll-off factor for SH — ETSI EN 300 468 Table 124.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,7 +178,7 @@ impl ShRollOff {
         }
     }
 }
-broadcast_common::impl_spec_display!(ShRollOff, Reserved);
+broadcast_core::impl_spec_display!(ShRollOff, Reserved);
 
 /// Modulation mode for TDM — ETSI EN 300 468 Table 125.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -229,7 +229,7 @@ impl ShModulationModeType {
         }
     }
 }
-broadcast_common::impl_spec_display!(ShModulationModeType, Reserved);
+broadcast_core::impl_spec_display!(ShModulationModeType, Reserved);
 
 /// Code rate for SH — ETSI EN 300 468 Table 126 (4 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -325,7 +325,7 @@ impl ShCodeRate {
         }
     }
 }
-broadcast_common::impl_spec_display!(ShCodeRate, Reserved);
+broadcast_core::impl_spec_display!(ShCodeRate, Reserved);
 
 /// Bandwidth for OFDM — ETSI EN 300 468 Table 128 (3 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -386,7 +386,7 @@ impl ShBandwidth {
         }
     }
 }
-broadcast_common::impl_spec_display!(ShBandwidth, Reserved);
+broadcast_core::impl_spec_display!(ShBandwidth, Reserved);
 
 /// Constellation and hierarchy — ETSI EN 300 468 Table 130 (3 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -447,7 +447,7 @@ impl ShConstellationAndHierarchy {
         }
     }
 }
-broadcast_common::impl_spec_display!(ShConstellationAndHierarchy, Reserved);
+broadcast_core::impl_spec_display!(ShConstellationAndHierarchy, Reserved);
 
 /// Guard interval for OFDM — ETSI EN 300 468 Table 131 (2 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -503,7 +503,7 @@ impl ShGuardInterval {
         }
     }
 }
-broadcast_common::impl_spec_display!(ShGuardInterval, Reserved);
+broadcast_core::impl_spec_display!(ShGuardInterval, Reserved);
 
 /// Transmission mode for OFDM — ETSI EN 300 468 Table 132 (2 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -559,7 +559,7 @@ impl ShTransmissionMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(ShTransmissionMode, Reserved);
+broadcast_core::impl_spec_display!(ShTransmissionMode, Reserved);
 
 // ---------------------------------------------------------------------------
 //  Sub-byte field masks (r03-W2)
@@ -859,7 +859,7 @@ impl<'a> Parse<'a> for ShDeliverySystem {
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 1,
                     have: sel.len(),
                     what: "SH_delivery_system body",
@@ -873,7 +873,7 @@ impl<'a> Parse<'a> for ShDeliverySystem {
         while pos < sel.len() {
             if sel.len() - pos < MODULATION_BLOCK_LEN {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + MODULATION_BLOCK_LEN,
                         have: sel.len(),
                         what: "SH_delivery_system body",
@@ -939,7 +939,7 @@ impl<'a> Parse<'a> for ShDeliverySystem {
                 if interleaver_type == 0 {
                     if sel.len() - pos < INTERLEAVER_TYPE0_LEN {
                         return Err(Error::BufferTooShort(
-                            broadcast_common::error::BufferTooShort {
+                            broadcast_core::error::BufferTooShort {
                                 need: pos + INTERLEAVER_TYPE0_LEN,
                                 have: sel.len(),
                                 what: "SH_delivery_system body",
@@ -970,7 +970,7 @@ impl<'a> Parse<'a> for ShDeliverySystem {
                 } else {
                     if sel.len() - pos < 1 {
                         return Err(Error::BufferTooShort(
-                            broadcast_common::error::BufferTooShort {
+                            broadcast_core::error::BufferTooShort {
                                 need: pos + 1,
                                 have: sel.len(),
                                 what: "SH_delivery_system body",
@@ -1023,12 +1023,12 @@ impl Serialize for ShDeliverySystem {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        buf[0] = (broadcast_common::len::fit_mask(
+        buf[0] = (broadcast_core::len::fit_mask(
             self.diversity_mode.to_u8(),
             DIVERSITY_MODE_VALUE_MASK,
             "diversity_mode",
         )? << DIVERSITY_MODE_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.reserved_future_use,
                 DIVERSITY_RESERVED_MASK,
                 "reserved_future_use",
@@ -1045,7 +1045,7 @@ impl Serialize for ShDeliverySystem {
             buf[p] = (modulation_type_bit << MODULATION_TYPE_SHIFT)
                 | (interleaver_presence_bit << INTERLEAVER_PRESENCE_SHIFT)
                 | (interleaver_type_bit << INTERLEAVER_TYPE_SHIFT)
-                | broadcast_common::len::fit_mask(
+                | broadcast_core::len::fit_mask(
                     m.reserved_future_use,
                     FLAGS_RESERVED_MASK,
                     "reserved_future_use",
@@ -1061,34 +1061,31 @@ impl Serialize for ShDeliverySystem {
                     symbol_rate,
                     reserved_future_use,
                 } => {
-                    let cr = broadcast_common::len::fit_mask(
-                        code_rate.to_u8(),
-                        NIBBLE_MASK,
-                        "code_rate",
-                    )?;
-                    buf[p] = (broadcast_common::len::fit_mask(
+                    let cr =
+                        broadcast_core::len::fit_mask(code_rate.to_u8(), NIBBLE_MASK, "code_rate")?;
+                    buf[p] = (broadcast_core::len::fit_mask(
                         polarization.to_u8(),
                         POLARIZATION_VALUE_MASK,
                         "polarization",
                     )? << TDM_POLARIZATION_SHIFT)
-                        | (broadcast_common::len::fit_mask(
+                        | (broadcast_core::len::fit_mask(
                             roll_off.to_u8(),
                             POLARIZATION_VALUE_MASK,
                             "roll_off",
                         )? << TDM_ROLL_OFF_SHIFT)
-                        | (broadcast_common::len::fit_mask(
+                        | (broadcast_core::len::fit_mask(
                             modulation_mode.to_u8(),
                             MODULATION_MODE_VALUE_MASK,
                             "modulation_mode",
                         )? << TDM_MODULATION_MODE_SHIFT)
                         | ((cr >> COMMON_MULTIPLIER_SHIFT) & CODE_RATE_LOW_MASK);
                     buf[p + 1] = ((cr & CODE_RATE_LOW_MASK) << CODE_RATE_HIGH_SHIFT)
-                        | (broadcast_common::len::fit_mask(
+                        | (broadcast_core::len::fit_mask(
                             *symbol_rate,
                             SYMBOL_RATE_VALUE_MASK,
                             "symbol_rate",
                         )? << TDM_SYMBOL_RATE_SHIFT)
-                        | broadcast_common::len::fit_mask(
+                        | broadcast_core::len::fit_mask(
                             *reserved_future_use,
                             TDM_RESERVED_MASK,
                             "reserved_future_use",
@@ -1103,30 +1100,27 @@ impl Serialize for ShDeliverySystem {
                     transmission_mode,
                     common_frequency,
                 } => {
-                    let cr = broadcast_common::len::fit_mask(
-                        code_rate.to_u8(),
-                        NIBBLE_MASK,
-                        "code_rate",
-                    )?;
-                    buf[p] = (broadcast_common::len::fit_mask(
+                    let cr =
+                        broadcast_core::len::fit_mask(code_rate.to_u8(), NIBBLE_MASK, "code_rate")?;
+                    buf[p] = (broadcast_core::len::fit_mask(
                         bandwidth.to_u8(),
                         BANDWIDTH_VALUE_MASK,
                         "bandwidth",
                     )? << OFDM_BANDWIDTH_SHIFT)
                         | (u8::from(*priority) << OFDM_PRIORITY_SHIFT)
-                        | (broadcast_common::len::fit_mask(
+                        | (broadcast_core::len::fit_mask(
                             constellation_and_hierarchy.to_u8(),
                             CONSTELLATION_HIERARCHY_VALUE_MASK,
                             "constellation_and_hierarchy",
                         )? << OFDM_CONSTELLATION_SHIFT)
                         | ((cr >> CODE_RATE_HIGH_BIT_SHIFT) & OFDM_CODE_RATE_HIGH_MASK);
                     buf[p + 1] = ((cr & CODE_RATE_SECOND_BYTE_MASK) << CODE_RATE_SECOND_BYTE_SHIFT)
-                        | (broadcast_common::len::fit_mask(
+                        | (broadcast_core::len::fit_mask(
                             guard_interval.to_u8(),
                             GUARD_TRANSMISSION_VALUE_MASK,
                             "guard_interval",
                         )? << OFDM_GUARD_SHIFT)
-                        | (broadcast_common::len::fit_mask(
+                        | (broadcast_core::len::fit_mask(
                             transmission_mode.to_u8(),
                             GUARD_TRANSMISSION_VALUE_MASK,
                             "transmission_mode",
@@ -1144,23 +1138,23 @@ impl Serialize for ShDeliverySystem {
                     slice_distance,
                     non_late_increments,
                 }) => {
-                    let cm = broadcast_common::len::fit_mask(
+                    let cm = broadcast_core::len::fit_mask(
                         *common_multiplier,
                         INTERLEAVER_FIELD_MASK,
                         "common_multiplier",
                     )?;
-                    let lt = broadcast_common::len::fit_mask(
+                    let lt = broadcast_core::len::fit_mask(
                         *nof_late_taps,
                         INTERLEAVER_FIELD_MASK,
                         "nof_late_taps",
                     )?;
-                    let ns = broadcast_common::len::fit_mask(
+                    let ns = broadcast_core::len::fit_mask(
                         *nof_slices,
                         INTERLEAVER_FIELD_MASK,
                         "nof_slices",
                     )?;
                     let sd = slice_distance;
-                    let nli = broadcast_common::len::fit_mask(
+                    let nli = broadcast_core::len::fit_mask(
                         *non_late_increments,
                         INTERLEAVER_FIELD_MASK,
                         "non_late_increments",
@@ -1178,12 +1172,12 @@ impl Serialize for ShDeliverySystem {
                     common_multiplier,
                     reserved_future_use,
                 }) => {
-                    buf[p] = (broadcast_common::len::fit_mask(
+                    buf[p] = (broadcast_core::len::fit_mask(
                         *common_multiplier,
                         INTERLEAVER_FIELD_MASK,
                         "common_multiplier",
                     )? << COMMON_MULTIPLIER_SHIFT)
-                        | broadcast_common::len::fit_mask(
+                        | broadcast_core::len::fit_mask(
                             *reserved_future_use,
                             INTERLEAVER_RESERVED_MASK,
                             "reserved_future_use",

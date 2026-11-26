@@ -18,7 +18,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 #[cfg(feature = "flate2")]
 use broadcast_common::bounded::Limit;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 use super::{
     BINDING_NCONTEXT, BINDING_NOBJECT, BIOP_MAGIC, BIOP_VERSION_MAJOR, BIOP_VERSION_MINOR,
@@ -28,7 +28,7 @@ use super::{
 pub use crate::descriptors::carousel::CompressedModuleDescriptor;
 use crate::descriptors::carousel::{AnyCarouselDescriptor, CarouselDescriptorLoop};
 use crate::error::{Error, Result};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// Binding type — TR 101 202 §4.7.4.1, Table 4.9
 /// (`private/specs-verified/dvb/dvb-si/text/iso_13818_6/4_9-biopdirectorymessage-syntax.md`).
@@ -79,7 +79,7 @@ impl BindingType {
         }
     }
 }
-broadcast_common::impl_spec_display!(BindingType, Reserved);
+broadcast_core::impl_spec_display!(BindingType, Reserved);
 
 // ── Message header constants ──────────────────────────────────────────────────
 
@@ -214,7 +214,7 @@ impl<'a> Binding<'a> {
         // nameComponents_count (1 byte)
         if pos + BINDING_NAME_COUNT_FIELD > end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + BINDING_NAME_COUNT_FIELD,
                     have: end,
                     what: "Binding nameComponents_count",
@@ -233,7 +233,7 @@ impl<'a> Binding<'a> {
         // bindingType (1 byte)
         if cur + BINDING_TYPE_FIELD > end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + BINDING_TYPE_FIELD,
                     have: end,
                     what: "Binding bindingType",
@@ -256,7 +256,7 @@ impl<'a> Binding<'a> {
         let (boi, _) = bytes[cur..end]
             .split_first_chunk::<{ BINDING_OBJ_INFO_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + BINDING_OBJ_INFO_LEN_FIELD,
                     have: end,
                     what: "Binding objectInfo_length",
@@ -303,7 +303,7 @@ impl<'a> Binding<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[0] = broadcast_common::len::fit_u8(self.name.len(), "self.name")?;
+        buf[0] = broadcast_core::len::fit_u8(self.name.len(), "self.name")?;
         let mut pos = BINDING_NAME_COUNT_FIELD;
         for nc in &self.name {
             let written = nc.serialize_8bit(&mut buf[pos..])?;
@@ -314,7 +314,7 @@ impl<'a> Binding<'a> {
         let written = self.ior.serialize_into(&mut buf[pos..])?;
         pos += written;
         buf[pos..pos + BINDING_OBJ_INFO_LEN_FIELD].copy_from_slice(
-            &broadcast_common::len::fit_u16(self.object_info.len(), "self.object_info")?
+            &broadcast_core::len::fit_u16(self.object_info.len(), "self.object_info")?
                 .to_be_bytes(),
         );
         pos += BINDING_OBJ_INFO_LEN_FIELD;
@@ -348,7 +348,7 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; OBJECT_KIND_DATA_LEN],
     let (bhdr, _) = bytes
         .split_first_chunk::<BIOP_HEADER_LEN>()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: BIOP_HEADER_LEN,
                 have: total,
                 what: "BIOP message header",
@@ -356,7 +356,7 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; OBJECT_KIND_DATA_LEN],
         ))?;
     let magic = crate::wire::be_u32(bhdr, BIOP_MAGIC_OFFSET, "BIOP magic")?;
     if magic != BIOP_MAGIC {
-        return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+        return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
             what: "BIOP magic",
             expected: BIOP_MAGIC,
             found: magic,
@@ -365,7 +365,7 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; OBJECT_KIND_DATA_LEN],
     if bhdr[BIOP_VERSION_MAJOR_OFFSET] != BIOP_VERSION_MAJOR
         || bhdr[BIOP_VERSION_MINOR_OFFSET] != BIOP_VERSION_MINOR
     {
-        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "biop_version",
             value: u64::from(crate::wire::be_u16(
                 bhdr,
@@ -376,7 +376,7 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; OBJECT_KIND_DATA_LEN],
         }));
     }
     if bhdr[BIOP_BYTE_ORDER_OFFSET] != BYTE_ORDER_BIG_ENDIAN {
-        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "byte_order",
             value: u64::from(bhdr[BIOP_BYTE_ORDER_OFFSET]),
             reason: "must be 0x00 (big-endian)",
@@ -391,7 +391,7 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; OBJECT_KIND_DATA_LEN],
     // objectKey_length (1 byte) + objectKey_data
     if pos + OBJECT_KEY_LEN_FIELD > end {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: pos + OBJECT_KEY_LEN_FIELD,
                 have: end,
                 what: "BIOP objectKey_length",
@@ -413,7 +413,7 @@ fn parse_biop_header(bytes: &[u8]) -> Result<(&[u8], [u8; OBJECT_KIND_DATA_LEN],
     let (bkl, _) = bytes[pos..end]
         .split_first_chunk::<{ OBJECT_KIND_LEN_FIELD }>()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: pos + OBJECT_KIND_LEN_FIELD,
                 have: end,
                 what: "BIOP objectKind_length",
@@ -449,7 +449,7 @@ fn parse_service_context_list(
 ) -> Result<(Vec<ServiceContext<'_>>, usize)> {
     if pos + SERVICE_CONTEXT_COUNT_FIELD > end {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: pos + SERVICE_CONTEXT_COUNT_FIELD,
                 have: end,
                 what: "serviceContextList_count",
@@ -463,7 +463,7 @@ fn parse_service_context_list(
         let (sch, _) = bytes[cur..end]
             .split_first_chunk::<SERVICE_CONTEXT_FIXED>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + SERVICE_CONTEXT_FIXED,
                     have: end,
                     what: "serviceContext entry",
@@ -504,7 +504,7 @@ fn write_service_context_list(buf: &mut [u8], list: &[ServiceContext]) -> Result
             available: u8::MAX as usize,
         });
     }
-    buf[0] = broadcast_common::len::fit_u8(list.len(), "list")?;
+    buf[0] = broadcast_core::len::fit_u8(list.len(), "list")?;
     let mut pos = SERVICE_CONTEXT_COUNT_FIELD;
     for entry in list {
         if entry.data.len() > u16::MAX as usize {
@@ -517,7 +517,7 @@ fn write_service_context_list(buf: &mut [u8], list: &[ServiceContext]) -> Result
         buf[pos + SERVICE_CONTEXT_DATA_LEN_OFFSET
             ..pos + SERVICE_CONTEXT_DATA_LEN_OFFSET + SERVICE_CONTEXT_DATA_LEN_LEN]
             .copy_from_slice(
-                &broadcast_common::len::fit_u16(entry.data.len(), "entry.data")?.to_be_bytes(),
+                &broadcast_core::len::fit_u16(entry.data.len(), "entry.data")?.to_be_bytes(),
             );
         pos += SERVICE_CONTEXT_FIXED;
         buf[pos..pos + entry.data.len()].copy_from_slice(entry.data);
@@ -577,7 +577,7 @@ impl<'a> DirectoryMessage<'a> {
         let (bdoi, _) = bytes[cur..end]
             .split_first_chunk::<{ OBJECT_INFO_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + OBJECT_INFO_LEN_FIELD,
                     have: end,
                     what: "DirectoryMessage objectInfo_length",
@@ -602,7 +602,7 @@ impl<'a> DirectoryMessage<'a> {
         let (bbl, _) = bytes[cur..end]
             .split_first_chunk::<{ MESSAGE_BODY_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + MESSAGE_BODY_LEN_FIELD,
                     have: end,
                     what: "DirectoryMessage messageBody_length",
@@ -616,7 +616,7 @@ impl<'a> DirectoryMessage<'a> {
         let (bbc, _) = bytes[cur..body_end]
             .split_first_chunk::<{ BINDINGS_COUNT_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + BINDINGS_COUNT_FIELD,
                     have: body_end,
                     what: "DirectoryMessage bindings_count",
@@ -667,14 +667,11 @@ impl<'a> DirectoryMessage<'a> {
         let inner_len = self.serialized_len_inner();
         let total = BIOP_HEADER_LEN + inner_len;
         need_out(buf, total)?;
-        write_biop_header(
-            buf,
-            broadcast_common::len::fit_u32(inner_len, "messageSize")?,
-        );
+        write_biop_header(buf, broadcast_core::len::fit_u32(inner_len, "messageSize")?);
         let mut pos = BIOP_HEADER_LEN;
 
         // objectKey
-        buf[pos] = broadcast_common::len::fit_u8(self.object_key.len(), "self.object_key")?;
+        buf[pos] = broadcast_core::len::fit_u8(self.object_key.len(), "self.object_key")?;
         pos += OBJECT_KEY_LEN_FIELD;
         buf[pos..pos + self.object_key.len()].copy_from_slice(self.object_key);
         pos += self.object_key.len();
@@ -694,7 +691,7 @@ impl<'a> DirectoryMessage<'a> {
             });
         }
         buf[pos..pos + OBJECT_INFO_LEN_FIELD].copy_from_slice(
-            &broadcast_common::len::fit_u16(self.object_info.len(), "self.object_info")?
+            &broadcast_core::len::fit_u16(self.object_info.len(), "self.object_info")?
                 .to_be_bytes(),
         );
         pos += OBJECT_INFO_LEN_FIELD;
@@ -706,13 +703,13 @@ impl<'a> DirectoryMessage<'a> {
 
         // messageBody
         let body_len = self.body_len();
-        let body_len = broadcast_common::len::fit_u32(body_len, "messageBody_length")?;
+        let body_len = broadcast_core::len::fit_u32(body_len, "messageBody_length")?;
         buf[pos..pos + MESSAGE_BODY_LEN_FIELD].copy_from_slice(&body_len.to_be_bytes());
         pos += MESSAGE_BODY_LEN_FIELD;
 
         // bindings_count
         buf[pos..pos + BINDINGS_COUNT_FIELD].copy_from_slice(
-            &broadcast_common::len::fit_u16(self.bindings.len(), "self.bindings")?.to_be_bytes(),
+            &broadcast_core::len::fit_u16(self.bindings.len(), "self.bindings")?.to_be_bytes(),
         );
         pos += BINDINGS_COUNT_FIELD;
 
@@ -758,7 +755,7 @@ impl<'a> FileMessage<'a> {
         let (bfoi, _) = bytes[cur..end]
             .split_first_chunk::<{ OBJECT_INFO_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + OBJECT_INFO_LEN_FIELD,
                     have: end,
                     what: "FileMessage objectInfo_length",
@@ -796,7 +793,7 @@ impl<'a> FileMessage<'a> {
         let (bfbl, _) = bytes[cur..end]
             .split_first_chunk::<{ MESSAGE_BODY_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + MESSAGE_BODY_LEN_FIELD,
                     have: end,
                     what: "FileMessage messageBody_length",
@@ -810,7 +807,7 @@ impl<'a> FileMessage<'a> {
         let (bfcl, _) = bytes[cur..body_end]
             .split_first_chunk::<{ FILE_CONTENT_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + FILE_CONTENT_LEN_FIELD,
                     have: body_end,
                     what: "FileMessage content_length",
@@ -853,13 +850,10 @@ impl<'a> FileMessage<'a> {
         let inner_len = self.serialized_len_inner();
         let total = BIOP_HEADER_LEN + inner_len;
         need_out(buf, total)?;
-        write_biop_header(
-            buf,
-            broadcast_common::len::fit_u32(inner_len, "messageSize")?,
-        );
+        write_biop_header(buf, broadcast_core::len::fit_u32(inner_len, "messageSize")?);
         let mut pos = BIOP_HEADER_LEN;
 
-        buf[pos] = broadcast_common::len::fit_u8(self.object_key.len(), "objectKey_length")?;
+        buf[pos] = broadcast_core::len::fit_u8(self.object_key.len(), "objectKey_length")?;
         pos += OBJECT_KEY_LEN_FIELD;
         buf[pos..pos + self.object_key.len()].copy_from_slice(self.object_key);
         pos += self.object_key.len();
@@ -873,7 +867,7 @@ impl<'a> FileMessage<'a> {
 
         // objectInfo: ContentSize(8) + extra
         let obj_info_total = FILE_CONTENT_SIZE_LEN + self.object_info_extra.len();
-        let obj_info_total = broadcast_common::len::fit_u16(obj_info_total, "objectInfo_length")?;
+        let obj_info_total = broadcast_core::len::fit_u16(obj_info_total, "objectInfo_length")?;
         buf[pos..pos + OBJECT_INFO_LEN_FIELD].copy_from_slice(&obj_info_total.to_be_bytes());
         pos += OBJECT_INFO_LEN_FIELD;
         buf[pos..pos + FILE_CONTENT_SIZE_LEN].copy_from_slice(&self.content_size.to_be_bytes());
@@ -886,11 +880,10 @@ impl<'a> FileMessage<'a> {
 
         // messageBody
         let body_len = FILE_CONTENT_LEN_FIELD + self.content.len();
-        let body_len = broadcast_common::len::fit_u32(body_len, "messageBody_length")?;
+        let body_len = broadcast_core::len::fit_u32(body_len, "messageBody_length")?;
         buf[pos..pos + MESSAGE_BODY_LEN_FIELD].copy_from_slice(&body_len.to_be_bytes());
         pos += MESSAGE_BODY_LEN_FIELD;
-        let content_len =
-            broadcast_common::len::fit_u32(self.content.len(), "File_content_length")?;
+        let content_len = broadcast_core::len::fit_u32(self.content.len(), "File_content_length")?;
         buf[pos..pos + FILE_CONTENT_LEN_FIELD].copy_from_slice(&content_len.to_be_bytes());
         pos += FILE_CONTENT_LEN_FIELD;
         buf[pos..pos + self.content.len()].copy_from_slice(self.content);
@@ -933,7 +926,7 @@ impl<'a> DsmStreamInfo<'a> {
         // aDescription_length (1 byte)
         if pos + STREAM_ADESC_LEN_FIELD > end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + STREAM_ADESC_LEN_FIELD,
                     have: end,
                     what: "DsmStreamInfo aDescription_length",
@@ -957,7 +950,7 @@ impl<'a> DsmStreamInfo<'a> {
         let (sif, _) = bytes[cur..end]
             .split_first_chunk::<STREAM_INFO_FIXED>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + STREAM_INFO_FIXED,
                     have: end,
                     what: "DsmStreamInfo fixed fields",
@@ -997,7 +990,7 @@ impl<'a> DsmStreamInfo<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[0] = broadcast_common::len::fit_u8(self.description.len(), "self.description")?;
+        buf[0] = broadcast_core::len::fit_u8(self.description.len(), "self.description")?;
         let mut pos = STREAM_ADESC_LEN_FIELD;
         buf[pos..pos + self.description.len()].copy_from_slice(self.description);
         pos += self.description.len();
@@ -1046,7 +1039,7 @@ impl<'a> StreamMessage<'a> {
         let (bsmoi, _) = bytes[cur..end]
             .split_first_chunk::<{ OBJECT_INFO_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + OBJECT_INFO_LEN_FIELD,
                     have: end,
                     what: "StreamMessage objectInfo_length",
@@ -1083,7 +1076,7 @@ impl<'a> StreamMessage<'a> {
         let (bsmbl, _) = bytes[cur..end]
             .split_first_chunk::<{ MESSAGE_BODY_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + MESSAGE_BODY_LEN_FIELD,
                     have: end,
                     what: "StreamMessage messageBody_length",
@@ -1096,7 +1089,7 @@ impl<'a> StreamMessage<'a> {
         // taps_count (1 byte)
         if cur + STREAM_TAPS_COUNT_FIELD > body_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + STREAM_TAPS_COUNT_FIELD,
                     have: body_end,
                     what: "StreamMessage taps_count",
@@ -1152,14 +1145,11 @@ impl<'a> StreamMessage<'a> {
         let inner_len = self.serialized_len_inner();
         let total = BIOP_HEADER_LEN + inner_len;
         need_out(buf, total)?;
-        write_biop_header(
-            buf,
-            broadcast_common::len::fit_u32(inner_len, "messageSize")?,
-        );
+        write_biop_header(buf, broadcast_core::len::fit_u32(inner_len, "messageSize")?);
         let mut pos = BIOP_HEADER_LEN;
 
         // objectKey
-        buf[pos] = broadcast_common::len::fit_u8(self.object_key.len(), "self.object_key")?;
+        buf[pos] = broadcast_core::len::fit_u8(self.object_key.len(), "self.object_key")?;
         pos += OBJECT_KEY_LEN_FIELD;
         buf[pos..pos + self.object_key.len()].copy_from_slice(self.object_key);
         pos += self.object_key.len();
@@ -1172,7 +1162,7 @@ impl<'a> StreamMessage<'a> {
         pos += OBJECT_KIND_DATA_LEN;
 
         // objectInfo_length
-        let oi_len = broadcast_common::len::fit_u16(self.obj_info_len(), "objectInfo_length")?;
+        let oi_len = broadcast_core::len::fit_u16(self.obj_info_len(), "objectInfo_length")?;
         buf[pos..pos + OBJECT_INFO_LEN_FIELD].copy_from_slice(&oi_len.to_be_bytes());
         pos += OBJECT_INFO_LEN_FIELD;
 
@@ -1188,7 +1178,7 @@ impl<'a> StreamMessage<'a> {
         pos += write_service_context_list(&mut buf[pos..], &self.service_context)?;
 
         // messageBody_length
-        let bl = broadcast_common::len::fit_u32(self.body_len(), "messageBody_length")?;
+        let bl = broadcast_core::len::fit_u32(self.body_len(), "messageBody_length")?;
         buf[pos..pos + MESSAGE_BODY_LEN_FIELD].copy_from_slice(&bl.to_be_bytes());
         pos += MESSAGE_BODY_LEN_FIELD;
 
@@ -1199,7 +1189,7 @@ impl<'a> StreamMessage<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[pos] = broadcast_common::len::fit_u8(self.taps.len(), "self.taps")?;
+        buf[pos] = broadcast_core::len::fit_u8(self.taps.len(), "self.taps")?;
         pos += STREAM_TAPS_COUNT_FIELD;
         for tap in &self.taps {
             let written = tap.serialize_into_buf(&mut buf[pos..])?;
@@ -1245,7 +1235,7 @@ impl<'a> StreamEventMessage<'a> {
         let (bseoi, _) = bytes[cur..end]
             .split_first_chunk::<{ OBJECT_INFO_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + OBJECT_INFO_LEN_FIELD,
                     have: end,
                     what: "StreamEventMessage objectInfo_length",
@@ -1269,7 +1259,7 @@ impl<'a> StreamEventMessage<'a> {
         let (benc, _) = bytes[cur..obj_info_end]
             .split_first_chunk::<{ STREAM_EVENT_NAMES_COUNT_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + STREAM_EVENT_NAMES_COUNT_FIELD,
                     have: obj_info_end,
                     what: "StreamEventMessage eventNames_count",
@@ -1282,7 +1272,7 @@ impl<'a> StreamEventMessage<'a> {
         for _ in 0..event_names_count {
             if cur + STREAM_EVENT_NAME_LEN_FIELD > obj_info_end {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: cur + STREAM_EVENT_NAME_LEN_FIELD,
                         have: obj_info_end,
                         what: "StreamEventMessage eventName_length",
@@ -1313,7 +1303,7 @@ impl<'a> StreamEventMessage<'a> {
         let (bsebl, _) = bytes[cur..end]
             .split_first_chunk::<{ MESSAGE_BODY_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + MESSAGE_BODY_LEN_FIELD,
                     have: end,
                     what: "StreamEventMessage messageBody_length",
@@ -1326,7 +1316,7 @@ impl<'a> StreamEventMessage<'a> {
         // taps_count (1 byte)
         if cur + STREAM_TAPS_COUNT_FIELD > body_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + STREAM_TAPS_COUNT_FIELD,
                     have: body_end,
                     what: "StreamEventMessage taps_count",
@@ -1346,7 +1336,7 @@ impl<'a> StreamEventMessage<'a> {
         // eventIds_count (1 byte) — must equal eventNames_count
         if cur + STREAM_EVENT_IDS_COUNT_FIELD > body_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: cur + STREAM_EVENT_IDS_COUNT_FIELD,
                     have: body_end,
                     what: "StreamEventMessage eventIds_count",
@@ -1367,7 +1357,7 @@ impl<'a> StreamEventMessage<'a> {
             let (bei, _) = bytes[cur..body_end]
                 .split_first_chunk::<{ STREAM_EVENT_ID_LEN }>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: cur + STREAM_EVENT_ID_LEN,
                         have: body_end,
                         what: "StreamEventMessage eventId",
@@ -1434,14 +1424,11 @@ impl<'a> StreamEventMessage<'a> {
         let inner_len = self.serialized_len_inner();
         let total = BIOP_HEADER_LEN + inner_len;
         need_out(buf, total)?;
-        write_biop_header(
-            buf,
-            broadcast_common::len::fit_u32(inner_len, "messageSize")?,
-        );
+        write_biop_header(buf, broadcast_core::len::fit_u32(inner_len, "messageSize")?);
         let mut pos = BIOP_HEADER_LEN;
 
         // objectKey
-        buf[pos] = broadcast_common::len::fit_u8(self.object_key.len(), "self.object_key")?;
+        buf[pos] = broadcast_core::len::fit_u8(self.object_key.len(), "self.object_key")?;
         pos += OBJECT_KEY_LEN_FIELD;
         buf[pos..pos + self.object_key.len()].copy_from_slice(self.object_key);
         pos += self.object_key.len();
@@ -1454,7 +1441,7 @@ impl<'a> StreamEventMessage<'a> {
         pos += OBJECT_KIND_DATA_LEN;
 
         // objectInfo_length
-        let oi_len = broadcast_common::len::fit_u16(self.obj_info_len(), "objectInfo_length")?;
+        let oi_len = broadcast_core::len::fit_u16(self.obj_info_len(), "objectInfo_length")?;
         buf[pos..pos + OBJECT_INFO_LEN_FIELD].copy_from_slice(&oi_len.to_be_bytes());
         pos += OBJECT_INFO_LEN_FIELD;
 
@@ -1470,7 +1457,7 @@ impl<'a> StreamEventMessage<'a> {
             });
         }
         buf[pos..pos + STREAM_EVENT_NAMES_COUNT_FIELD].copy_from_slice(
-            &broadcast_common::len::fit_u16(self.event_names.len(), "self.event_names")?
+            &broadcast_core::len::fit_u16(self.event_names.len(), "self.event_names")?
                 .to_be_bytes(),
         );
         pos += STREAM_EVENT_NAMES_COUNT_FIELD;
@@ -1481,7 +1468,7 @@ impl<'a> StreamEventMessage<'a> {
                     available: u8::MAX as usize,
                 });
             }
-            buf[pos] = broadcast_common::len::fit_u8(name.len(), "name")?;
+            buf[pos] = broadcast_core::len::fit_u8(name.len(), "name")?;
             pos += STREAM_EVENT_NAME_LEN_FIELD;
             buf[pos..pos + name.len()].copy_from_slice(name);
             pos += name.len();
@@ -1495,7 +1482,7 @@ impl<'a> StreamEventMessage<'a> {
         pos += write_service_context_list(&mut buf[pos..], &self.service_context)?;
 
         // messageBody_length
-        let bl = broadcast_common::len::fit_u32(self.body_len(), "messageBody_length")?;
+        let bl = broadcast_core::len::fit_u32(self.body_len(), "messageBody_length")?;
         buf[pos..pos + MESSAGE_BODY_LEN_FIELD].copy_from_slice(&bl.to_be_bytes());
         pos += MESSAGE_BODY_LEN_FIELD;
 
@@ -1506,7 +1493,7 @@ impl<'a> StreamEventMessage<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[pos] = broadcast_common::len::fit_u8(self.taps.len(), "self.taps")?;
+        buf[pos] = broadcast_core::len::fit_u8(self.taps.len(), "self.taps")?;
         pos += STREAM_TAPS_COUNT_FIELD;
         for tap in &self.taps {
             let written = tap.serialize_into_buf(&mut buf[pos..])?;
@@ -1520,7 +1507,7 @@ impl<'a> StreamEventMessage<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[pos] = broadcast_common::len::fit_u8(self.event_ids.len(), "self.event_ids")?;
+        buf[pos] = broadcast_core::len::fit_u8(self.event_ids.len(), "self.event_ids")?;
         pos += STREAM_EVENT_IDS_COUNT_FIELD;
         for &id in &self.event_ids {
             buf[pos..pos + STREAM_EVENT_ID_LEN].copy_from_slice(&id.to_be_bytes());
@@ -1689,7 +1676,7 @@ impl<'a> Parse<'a> for ModuleInfo<'a> {
         let (mi_hdr, _) = bytes
             .split_first_chunk::<{ MODULE_INFO_FIXED + MODULE_TAPS_COUNT_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: mi_fixed_len,
                     have: end,
                     what: "ModuleInfo fixed fields",
@@ -1712,7 +1699,7 @@ impl<'a> Parse<'a> for ModuleInfo<'a> {
 
         if pos + MODULE_USER_INFO_LEN_FIELD > end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + MODULE_USER_INFO_LEN_FIELD,
                     have: end,
                     what: "ModuleInfo UserInfoLength",
@@ -1763,14 +1750,13 @@ impl Serialize for ModuleInfo<'_> {
                 available: u8::MAX as usize,
             });
         }
-        buf[MODULE_TAPS_COUNT_OFFSET] =
-            broadcast_common::len::fit_u8(self.taps.len(), "self.taps")?;
+        buf[MODULE_TAPS_COUNT_OFFSET] = broadcast_core::len::fit_u8(self.taps.len(), "self.taps")?;
         let mut pos = MODULE_INFO_FIXED + MODULE_TAPS_COUNT_FIELD;
         for tap in &self.taps {
             let written = tap.serialize_into_buf(&mut buf[pos..])?;
             pos += written;
         }
-        let user_info_len = broadcast_common::len::fit_u8(self.user_info.len(), "UserInfoLength")?;
+        let user_info_len = broadcast_core::len::fit_u8(self.user_info.len(), "UserInfoLength")?;
         buf[pos] = user_info_len;
         pos += MODULE_USER_INFO_LEN_FIELD;
         buf[pos..pos + self.user_info.len()].copy_from_slice(self.user_info.raw());
@@ -1817,7 +1803,7 @@ pub fn decompress_zlib_bounded(data: &[u8], limit: Limit) -> Result<Vec<u8>> {
             limit_name,
             limit_bytes,
         },
-        BoundedReadError::Io(error) => Error::InvalidField(broadcast_common::error::InvalidField {
+        BoundedReadError::Io(error) => Error::InvalidField(broadcast_core::error::InvalidField {
             field: "compressed_module_descriptor body",
             reason: if error.kind() == std::io::ErrorKind::InvalidData {
                 "zlib decompression failed: invalid data"
@@ -1825,7 +1811,7 @@ pub fn decompress_zlib_bounded(data: &[u8], limit: Limit) -> Result<Vec<u8>> {
                 "zlib decompression failed"
             },
         }),
-        _ => Error::InvalidField(broadcast_common::error::InvalidField {
+        _ => Error::InvalidField(broadcast_core::error::InvalidField {
             field: "compressed_module_descriptor body",
             reason: "zlib decompression failed",
         }),
@@ -1883,7 +1869,7 @@ impl<'a> ServiceGatewayInfo<'a> {
         // We preserve the entire block raw: start at pos (count byte), walk past taps.
         if pos + SGI_DOWNLOAD_TAPS_COUNT_FIELD > end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + SGI_DOWNLOAD_TAPS_COUNT_FIELD,
                     have: end,
                     what: "ServiceGatewayInfo downloadTaps_count",
@@ -1907,7 +1893,7 @@ impl<'a> ServiceGatewayInfo<'a> {
         let (buil, _) = bytes[pos..end]
             .split_first_chunk::<{ SGI_USER_INFO_LEN_FIELD }>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + SGI_USER_INFO_LEN_FIELD,
                     have: end,
                     what: "ServiceGatewayInfo userInfoLength",
@@ -1966,13 +1952,13 @@ impl<'a> Serialize for ServiceGatewayInfo<'a> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         let mut pos = self.ior.serialize_into(buf)?;
-        buf[pos] = broadcast_common::len::fit_u8(self.download_taps.len(), "downloadTaps_count")?;
+        buf[pos] = broadcast_core::len::fit_u8(self.download_taps.len(), "downloadTaps_count")?;
         pos += SGI_DOWNLOAD_TAPS_COUNT_FIELD;
         for tap in &self.download_taps {
             pos += tap.serialize_into_buf(&mut buf[pos..])?;
         }
         pos += write_service_context_list(&mut buf[pos..], &self.service_context)?;
-        let user_info_len = broadcast_common::len::fit_u16(
+        let user_info_len = broadcast_core::len::fit_u16(
             self.user_info.len(),
             "ServiceGatewayInfo userInfo length",
         )?;
@@ -1989,7 +1975,7 @@ impl<'a> Serialize for ServiceGatewayInfo<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
 
     /// Build a simple FileMessage around a buffer of bytes.
     fn sample_file_message(key: &'static [u8], content: &'static [u8]) -> BiopMessage<'static> {

@@ -6,7 +6,7 @@
 use super::{CRC_LEN, SectionBits};
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
@@ -40,7 +40,7 @@ pub(super) fn parse<'a>(
 ) -> Result<Parsed<'a>> {
     if bytes.len() < MIN_SECTION_LEN {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: MIN_SECTION_LEN,
                 have: bytes.len(),
                 what,

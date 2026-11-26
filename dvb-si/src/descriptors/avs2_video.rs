@@ -26,9 +26,9 @@
 use super::avs3_video::Avs3FrameRateCode;
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use broadcast_common::len::{fit_bits, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{fit_bits, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for AVS2_video_descriptor (GY/T 420 Table 3: 64).
 pub const TAG: u8 = 0x40;

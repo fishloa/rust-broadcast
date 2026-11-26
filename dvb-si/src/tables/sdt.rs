@@ -9,9 +9,9 @@ use super::RunningStatus;
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// table_id value for SDT describing services on the actual TS.
 pub const TABLE_ID_ACTUAL: u8 = 0x42;
@@ -210,7 +210,7 @@ impl<'a> Parse<'a> for SdtSection<'a> {
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<SERVICE_ID_LEN>())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + SERVICE_ID_LEN,
                         have: services_end,
                         what: "SdtSection service_id",
@@ -250,7 +250,7 @@ impl<'a> Parse<'a> for SdtSection<'a> {
 
         if pos != services_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: services_end - pos,
                     have: 0,
                     what: "SdtSection trailing service bytes",
@@ -313,7 +313,7 @@ impl Serialize for SdtSection<'_> {
                 | (u8::from(svc.eit_schedule_flag) << 1)
                 | u8::from(svc.eit_present_following_flag);
             buf[pos + SERVICE_FLAGS_OFFSET] = flags;
-            let dll = broadcast_common::len::fit_bits(
+            let dll = broadcast_core::len::fit_bits(
                 svc.descriptors.len() as u64,
                 super::DESC_LOOP_LEN_BITS,
                 "descriptors_loop_length",
@@ -606,7 +606,7 @@ mod tests {
         let err = SdtSection::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "SdtSection trailing service bytes",
                 ..
             })

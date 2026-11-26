@@ -11,9 +11,9 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// table_id for Time Offset Table.
 pub const TABLE_ID: u8 = 0x73;
@@ -180,7 +180,7 @@ impl Serialize for TotSection<'_> {
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - HEADER_LEN)?;
         buf[HEADER_LEN..HEADER_LEN + UTC_TIME_LEN].copy_from_slice(&self.utc_time_raw);
-        let dl = broadcast_common::len::fit_bits(
+        let dl = broadcast_core::len::fit_bits(
             self.descriptors.len() as u64,
             super::DESC_LOOP_LEN_BITS,
             "descriptors_loop_length",

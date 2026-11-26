@@ -20,7 +20,7 @@
 //! or `Si` fails).
 #![cfg(feature = "ts")]
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::descriptors::int::AnyIntDescriptor;
 use dvb_si::descriptors::rnt::AnyRntDescriptor;
 use dvb_si::descriptors::unt::AnyUntDescriptor;

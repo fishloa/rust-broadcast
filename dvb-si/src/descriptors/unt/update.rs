@@ -7,8 +7,8 @@
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for update_descriptor (UNT namespace).
 pub const TAG: u8 = 0x02;
@@ -67,7 +67,7 @@ impl UpdateFlag {
         }
     }
 }
-broadcast_common::impl_spec_display!(UpdateFlag, Reserved);
+broadcast_core::impl_spec_display!(UpdateFlag, Reserved);
 
 /// `update_method` — ETSI TS 102 006 §9.5.2.6 Table 27 (4 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -123,7 +123,7 @@ impl UpdateMethod {
         }
     }
 }
-broadcast_common::impl_spec_display!(UpdateMethod, Reserved, PrivateUse);
+broadcast_core::impl_spec_display!(UpdateMethod, Reserved, PrivateUse);
 
 /// update_descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,17 +171,14 @@ impl Serialize for UpdateDescriptor<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         let flag =
-            broadcast_common::len::fit_mask(self.update_flag.to_u8(), FLAG_MASK, "update_flag")?;
-        let method = broadcast_common::len::fit_mask(
+            broadcast_core::len::fit_mask(self.update_flag.to_u8(), FLAG_MASK, "update_flag")?;
+        let method = broadcast_core::len::fit_mask(
             self.update_method.to_u8(),
             METHOD_MASK,
             "update_method",
         )?;
-        let prio = broadcast_common::len::fit_mask(
-            self.update_priority,
-            PRIORITY_MASK,
-            "update_priority",
-        )?;
+        let prio =
+            broadcast_core::len::fit_mask(self.update_priority, PRIORITY_MASK, "update_priority")?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[HEADER_LEN] = (flag << FLAG_SHIFT) | (method << METHOD_SHIFT) | prio;
         buf[3..len].copy_from_slice(self.private_data);

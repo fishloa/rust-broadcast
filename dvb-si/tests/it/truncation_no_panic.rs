@@ -2,7 +2,7 @@
 //! panic, for the parsers whose big-endian reads went through
 //! `wire::be_u16`/`be_u32` (replacing `first_chunk::<N>().unwrap()`).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::Error;
 use dvb_si::descriptors::ca_identifier::CaIdentifierDescriptor;
 use dvb_si::descriptors::local_time_offset::LocalTimeOffsetDescriptor;
@@ -22,7 +22,7 @@ fn all_prefixes_err<'a, T: Parse<'a, Error = Error>>(full: &'a [u8], what: &'sta
         assert_eq!(
             T::parse(&full[..n]).err(),
             Some(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need,
                     have: n,
                     what
@@ -76,7 +76,7 @@ fn pat_truncated_is_err() {
     let declared = buf.len() - 3;
     for n in 0..buf.len() {
         let expected = if n < 12 {
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: 12,
                 have: n,
                 what: "PatSection",

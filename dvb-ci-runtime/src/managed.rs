@@ -931,7 +931,7 @@ mod tests {
 
     #[test]
     fn service_of_captures_pcr_pid_and_required_pids_includes_dedicated_pcr() {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         use dvb_si::tables::pmt::PmtSection;
 
         // A PMT whose PCR is carried on its own dedicated PID (0x00FF),

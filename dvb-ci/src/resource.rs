@@ -9,8 +9,8 @@
 //! `u32` and expose typed views over it — no information is lost on round-trip.
 
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Octets in a `resource_identifier()` (§8.2.2).
 const RESOURCE_ID_LEN: usize = core::mem::size_of::<u32>();
@@ -88,7 +88,7 @@ impl<'a> Parse<'a> for ResourceId {
         let chunk = bytes
             .first_chunk::<RESOURCE_ID_LEN>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: RESOURCE_ID_LEN,
                     have: bytes.len(),
                     what: "resource_identifier",

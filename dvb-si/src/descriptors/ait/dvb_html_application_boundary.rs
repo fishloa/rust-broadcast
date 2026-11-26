@@ -9,8 +9,8 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::DvbText;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for dvb_html_application_boundary_descriptor (AIT namespace).
 pub const TAG: u8 = 0x0A;
@@ -65,7 +65,7 @@ impl Serialize for DvbHtmlApplicationBoundaryDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        let label_len = broadcast_common::len::fit_u8(self.label.len(), "label_length")?;
+        let label_len = broadcast_core::len::fit_u8(self.label.len(), "label_length")?;
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[HEADER_LEN] = label_len;

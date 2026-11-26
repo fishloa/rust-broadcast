@@ -12,7 +12,7 @@
 //! APDU back — so dispatch can route on the header and round-trip is symmetric.
 
 use crate::tag::ApduTag;
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 /// Implemented by every typed APDU object; drives [`crate::AnyApdu`] dispatch.
 pub trait ApduDef<'a>: Parse<'a, Error = crate::error::Error> {

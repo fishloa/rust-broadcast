@@ -20,8 +20,8 @@ use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use crate::wire::be_u16;
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 /// `display_control_cmd` values (Table 34, p. 37).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,7 +82,7 @@ impl DisplayControlCmd {
         }
     }
 }
-broadcast_common::impl_spec_display!(DisplayControlCmd, Reserved);
+broadcast_core::impl_spec_display!(DisplayControlCmd, Reserved);
 
 /// `mmi_mode` values (Table 34, p. 37).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,7 +131,7 @@ impl MmiMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(MmiMode, Reserved);
+broadcast_core::impl_spec_display!(MmiMode, Reserved);
 
 /// `display_control()` object (Table 34).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -155,7 +155,7 @@ impl<'a> Parse<'a> for DisplayControl {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::DISPLAY_CONTROL, "display_control")?;
         let cmd_byte = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "display_control cmd",
@@ -280,7 +280,7 @@ impl DisplayReplyId {
         }
     }
 }
-broadcast_common::impl_spec_display!(DisplayReplyId, Reserved);
+broadcast_core::impl_spec_display!(DisplayReplyId, Reserved);
 
 /// One pixel-depth entry in a graphics-characteristics display reply (Table 35).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -544,7 +544,7 @@ impl<'a> Parse<'a> for DisplayReply {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::DISPLAY_REPLY, "display_reply")?;
         let id_byte = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "display_reply id",
@@ -563,7 +563,7 @@ impl<'a> Parse<'a> for DisplayReply {
             }
             DisplayReplyId::MmiModeAck => {
                 let m = *rest.first().ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: 1,
                         have: 0,
                         what: "display_reply mmi_mode_ack",
@@ -683,7 +683,7 @@ impl KeypadControlCmd {
         )
     }
 }
-broadcast_common::impl_spec_display!(KeypadControlCmd, Reserved);
+broadcast_core::impl_spec_display!(KeypadControlCmd, Reserved);
 
 /// `keypad_control()` object (Table 36).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -708,7 +708,7 @@ impl<'a> Parse<'a> for KeypadControl {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::KEYPAD_CONTROL, "keypad_control")?;
         let cmd_byte = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "keypad_control cmd",
@@ -778,7 +778,7 @@ impl<'a> Parse<'a> for Keypress {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (length_form, body) = super::parse_apdu_header(bytes, tag::KEYPRESS, "keypress")?;
         let key_code = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "keypress key_code",
@@ -961,7 +961,7 @@ impl DisplayMessageId {
         }
     }
 }
-broadcast_common::impl_spec_display!(DisplayMessageId, Reserved);
+broadcast_core::impl_spec_display!(DisplayMessageId, Reserved);
 
 /// `display_message()` object (Table 39).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -983,7 +983,7 @@ impl<'a> Parse<'a> for DisplayMessage {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::DISPLAY_MESSAGE, "display_message")?;
         let message_id = DisplayMessageId::from_u8(*body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "display_message id",
@@ -1046,7 +1046,7 @@ impl<'a> Parse<'a> for SceneEndMark {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::SCENE_END_MARK, "scene_end_mark")?;
         let b = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "scene_end_mark",
@@ -1120,7 +1120,7 @@ impl<'a> Parse<'a> for SceneDoneMessage {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::SCENE_DONE, "scene_done_message")?;
         let b = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "scene_done_message",
@@ -1189,7 +1189,7 @@ impl<'a> Parse<'a> for SceneControl {
         let (length_form, body) =
             super::parse_apdu_header(bytes, tag::SCENE_CONTROL, "scene_control")?;
         let b = *body.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "scene_control",
@@ -1379,7 +1379,7 @@ impl DownloadReplyId {
         }
     }
 }
-broadcast_common::impl_spec_display!(DownloadReplyId, Reserved);
+broadcast_core::impl_spec_display!(DownloadReplyId, Reserved);
 
 /// `download_reply()` object (Table 45): object_id + download_reply_id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

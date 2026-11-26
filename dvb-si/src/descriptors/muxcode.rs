@@ -5,8 +5,8 @@
 
 use super::descriptor_body;
 use crate::error::Result;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for Muxcode_descriptor.
 pub const TAG: u8 = 0x21;

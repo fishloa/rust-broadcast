@@ -10,8 +10,8 @@ use crate::descriptors::lang_text::LANG_LEN;
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for SSU_event_name_descriptor.
 pub const TAG: u8 = 0x05;
@@ -82,8 +82,8 @@ impl Serialize for SsuEventNameDescriptor<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        let name_len = broadcast_common::len::fit_u8(self.name.len(), "name_length")?;
-        let text_len = broadcast_common::len::fit_u8(self.text.len(), "text_length")?;
+        let name_len = broadcast_core::len::fit_u8(self.name.len(), "name_length")?;
+        let text_len = broadcast_core::len::fit_u8(self.text.len(), "text_length")?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2..5].copy_from_slice(&self.language_code.0);
         buf[HEADER_LEN + NAME_LENGTH_OFFSET] = name_len;

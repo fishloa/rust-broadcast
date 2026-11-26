@@ -31,9 +31,9 @@ use super::avs3_video::Avs3FrameRateCode;
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_bits, need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{fit_bits, need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
 /// Descriptor tag of the T/UWA 012.2 AVS3 video descriptor (62).
@@ -136,7 +136,7 @@ impl TuwaLibraryRef {
         }
     }
 }
-broadcast_common::impl_spec_display!(TuwaLibraryRef);
+broadcast_core::impl_spec_display!(TuwaLibraryRef);
 
 /// The references of a main (non-library) stream. All entries share one form.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -212,7 +212,7 @@ impl<'a> Parse<'a> for TuwaAvs3VideoDescriptor {
             None
         } else {
             let head = *body.get(FIXED_BODY_LEN).ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: FIXED_BODY_LEN + 1,
                     have: body.len(),
                     what: "TuwaAvs3VideoDescriptor",

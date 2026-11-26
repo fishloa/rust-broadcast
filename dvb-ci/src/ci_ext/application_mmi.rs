@@ -15,8 +15,8 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for Application MMI (Tables 62-68).
 pub mod tag {
@@ -86,7 +86,7 @@ impl AckCode {
         }
     }
 }
-broadcast_common::impl_spec_display!(AckCode, DomainSpecificApiBusy, Reserved);
+broadcast_core::impl_spec_display!(AckCode, DomainSpecificApiBusy, Reserved);
 
 /// `RequestStart()` (Table 62): app → host.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

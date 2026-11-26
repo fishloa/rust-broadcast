@@ -30,7 +30,7 @@ impl<'a> CompleteBat<'a> {
     ) -> crate::Result<Self> {
         let sections: Vec<bat::BatSection<'a>> = set.parse_sections()?;
         let first = sections.first().ok_or(crate::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "CompleteBat sections",
@@ -76,7 +76,7 @@ mod tests {
         bouquet_desc: &[u8],
         ts_entries: &[(u16, u16, &[u8])],
     ) -> Vec<u8> {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         let bat = BatSection::new(
             bouquet_id,
             version,

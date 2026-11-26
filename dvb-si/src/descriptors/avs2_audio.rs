@@ -33,9 +33,9 @@ use crate::descriptors::lang_text::LANG_LEN;
 use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_bits, fit_u8, need_out};
-use broadcast_common::reserved::{ReservedOnes, ReservedZero};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{fit_bits, fit_u8, need_out};
+use broadcast_core::reserved::{ReservedOnes, ReservedZero};
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for AVS2_audio_descriptor (T/AI 109.7 Table 9: 211).
 pub const TAG: u8 = 0xD3;
@@ -192,7 +192,7 @@ impl Cursor<'_> {
     fn take(&mut self, n: usize) -> Result<&[u8]> {
         let end = self.pos + n;
         let s = self.body.get(self.pos..end).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: end,
                 have: self.body.len(),
                 what: "Avs2AudioDescriptor",

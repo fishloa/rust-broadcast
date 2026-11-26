@@ -15,8 +15,8 @@ use crate::error::{Error, Result};
 use crate::length::{self, LengthForm};
 use crate::resource::ResourceId;
 use crate::wire::be_u16;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// `spdu_tag` values — Table 14 (p. 23). One byte each.
 pub mod tags {
@@ -94,7 +94,7 @@ impl SessionStatus {
         }
     }
 }
-broadcast_common::impl_spec_display!(SessionStatus, Reserved);
+broadcast_core::impl_spec_display!(SessionStatus, Reserved);
 
 // --- shared SPDU header helpers ---
 
@@ -104,7 +104,7 @@ fn parse_spdu_header<'a>(
     what: &'static str,
 ) -> Result<(LengthForm, &'a [u8])> {
     let first = *bytes.first().ok_or(Error::BufferTooShort(
-        broadcast_common::error::BufferTooShort {
+        broadcast_core::error::BufferTooShort {
             need: 1,
             have: 0,
             what,
@@ -122,7 +122,7 @@ fn parse_spdu_header<'a>(
     let end = start + len;
     if bytes.len() < end {
         return Err(Error::LengthMismatch(
-            broadcast_common::error::LengthMismatch {
+            broadcast_core::error::LengthMismatch {
                 what,
                 declared: len,
                 actual: bytes.len().saturating_sub(start),

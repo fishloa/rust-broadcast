@@ -17,7 +17,7 @@
 //! ```rust,no_run
 //! use dvb_si::tables::{TableRegistry, AnyTableSection};
 //! use dvb_si::traits::TableDef;
-//! use broadcast_common::Parse;
+//! use broadcast_core::Parse;
 //!
 //! // A registered type must be `serde::Serialize` only when the `serde`
 //! // feature is on (that is what `TableObject` requires there).
@@ -29,7 +29,7 @@
 //!     type Error = dvb_si::Error;
 //!     fn parse(bytes: &'a [u8]) -> dvb_si::Result<Self> {
 //!         if bytes.len() < 2 {
-//!             return Err(dvb_si::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+//!             return Err(dvb_si::Error::BufferTooShort(broadcast_core::error::BufferTooShort {
 //!                 need: 2, have: bytes.len(), what: "MyPrivate",
 //!             }));
 //!         }
@@ -142,7 +142,7 @@ impl TableRegistry {
                 self.custom.insert(
                     id,
                     Box::new(|b| {
-                        Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?)
+                        Ok(Box::new(<T as broadcast_core::Parse>::parse(b)?)
                             as Box<dyn TableObject>)
                     }),
                 );
@@ -158,7 +158,7 @@ mod tests {
     use crate::tables::AnyTableSection;
     use crate::traits::TableDef;
     use alloc::{vec, vec::Vec};
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
 
     // -- A trivial custom table for a private table_id -------------------------
     const CUSTOM_TABLE_ID: u8 = 0x90;
@@ -175,7 +175,7 @@ mod tests {
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.is_empty() {
                 return Err(crate::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: 1,
                         have: 0,
                         what: "CustomTable",
@@ -210,7 +210,7 @@ mod tests {
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.is_empty() {
                 return Err(crate::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: 1,
                         have: 0,
                         what: "MultiRangeTable",
@@ -238,7 +238,7 @@ mod tests {
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.is_empty() {
                 return Err(crate::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: 1,
                         have: 0,
                         what: "OverridePat",
@@ -311,7 +311,7 @@ mod tests {
         let reg = TableRegistry::new();
         // Build a minimal PAT (table_id 0x00)
         use crate::tables::pat::{PatEntry, PatSection};
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use mpeg_ts::pid::Pid;
         let pat = PatSection::new(
             1,
@@ -359,7 +359,7 @@ mod tests {
         assert!(matches!(
             result,
             Err(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 1,
                     have: 0,
                     ..

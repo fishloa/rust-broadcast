@@ -11,7 +11,7 @@ use crate::descriptors::DescriptorLoop;
 use crate::descriptors::ca::CaDescriptor;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
 /// CAT table_id (ISO/IEC 13818-1 Table 2-30).
@@ -109,7 +109,7 @@ impl CatSection<'_> {
             let end = pos + DESC_HEADER_LEN + length;
             if end > self.descriptors.len() {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: end - pos,
                         have: self.descriptors.len() - pos,
                         what: "CatSection ca_descriptors truncated descriptor",
@@ -379,7 +379,7 @@ mod tests {
         let cat = CatSection::parse(&bytes).unwrap();
         assert!(matches!(
             cat.ca_descriptors().unwrap_err(),
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "CatSection ca_descriptors truncated descriptor",
                 ..
             })

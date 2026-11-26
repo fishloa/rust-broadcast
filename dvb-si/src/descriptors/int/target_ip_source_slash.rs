@@ -7,7 +7,7 @@
 use crate::descriptors::entry_list::{Entry, list_len, parse_list, write_list};
 use crate::error::Result;
 use alloc::vec::Vec;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use core::net::Ipv4Addr;
 
 /// Descriptor tag for target_IP_source_slash_descriptor.

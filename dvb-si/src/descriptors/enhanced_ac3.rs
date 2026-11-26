@@ -9,8 +9,8 @@
 use super::ac3::Ac3ComponentType;
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for Enhanced AC-3 (E-AC-3, Dolby Digital Plus).
 pub const TAG: u8 = 0x7A;

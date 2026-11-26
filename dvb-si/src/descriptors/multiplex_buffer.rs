@@ -4,8 +4,8 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for MultiplexBuffer_descriptor.
 pub const TAG: u8 = 0x23;
@@ -71,12 +71,12 @@ impl Serialize for MultiplexBufferDescriptor {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        let mb = broadcast_common::len::fit_bits(
+        let mb = broadcast_core::len::fit_bits(
             u64::from(self.mb_buffer_size),
             MB_BUFFER_BITS,
             "MB_buffer_size",
         )?;
-        let tb = broadcast_common::len::fit_bits(
+        let tb = broadcast_core::len::fit_bits(
             u64::from(self.tb_leak_rate),
             TB_LEAK_BITS,
             "TB_leak_rate",

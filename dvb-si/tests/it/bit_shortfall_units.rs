@@ -1,17 +1,17 @@
 //! Every bit-level adapter reports a short input in **bytes**, the unit of
-//! `broadcast_common::error::BufferTooShort` (its `Display` says "bytes"),
+//! `broadcast_core::error::BufferTooShort` (its `Display` says "bytes"),
 //! never in bits (issue #2461).
 //!
 //! `BufferTooShort { need, have }` used to mean bits in some adapters and
 //! bytes in others, sometimes within one file: the SAT table's bit reader
 //! reported absolute bits, the H.222.0 descriptor bit reader reported bytes.
 //! The bit shortfall now goes through the one
-//! `broadcast_common::bits::BitError -> BufferTooShort` conversion, which
+//! `broadcast_core::bits::BitError -> BufferTooShort` conversion, which
 //! counts whole bytes, and each test here pins that contract by asserting the
 //! two numbers are exactly what the truncated input implies in bytes.
 
-use broadcast_common::Parse;
-use broadcast_common::error::BufferTooShort;
+use broadcast_core::Parse;
+use broadcast_core::error::BufferTooShort;
 use dvb_si::error::Error;
 use dvb_si::tables::sat::{SatSection, SatTableId};
 

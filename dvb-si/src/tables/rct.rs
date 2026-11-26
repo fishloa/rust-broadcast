@@ -9,8 +9,8 @@
 //! [`DvbBinaryLocator`] (Table 31, §7.3.2.3.3).
 
 use crate::descriptors::DescriptorLoop;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
 
 /// Identifier type — ETSI TS 102 323 v1.4.1 §7.3.2.3.3 Table 32
 /// (`private/specs-verified/dvb/dvb-si/`, Table 32 — Identifier type).
@@ -66,11 +66,11 @@ impl IdentifierType {
         }
     }
 }
-broadcast_common::impl_spec_display!(IdentifierType);
+broadcast_core::impl_spec_display!(IdentifierType);
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `table_id` for Related Content Table.
 pub const TABLE_ID: u8 = 0x76;
@@ -232,7 +232,7 @@ impl LinkType {
         }
     }
 }
-broadcast_common::impl_spec_display!(LinkType, DvbReserved);
+broadcast_core::impl_spec_display!(LinkType, DvbReserved);
 
 /// How-related classification scheme ID — ETSI TS 102 323 §10.4.3 Table 112.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -287,7 +287,7 @@ impl HowRelated {
         }
     }
 }
-broadcast_common::impl_spec_display!(HowRelated, DvbReserved, UserPrivate);
+broadcast_core::impl_spec_display!(HowRelated, DvbReserved, UserPrivate);
 
 /// A promotional text item within a link_info entry (Table 110, §10.4.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -387,7 +387,7 @@ pub struct DvbBinaryLocator {
     pub identifier: DvbLocatorIdentifier,
     /// Time windows. Must be `Some` iff `identifier` is
     /// [`DvbLocatorIdentifier::None`] and `scheduled_time_reliability` is
-    /// `true` — [`serialize_into`](broadcast_common::Serialize::serialize_into)
+    /// `true` — [`serialize_into`](broadcast_core::Serialize::serialize_into)
     /// rejects any other combination rather than silently miswriting it.
     pub windows: Option<DvbLocatorWindows>,
     /// `reserved(1)` in the first locator byte (`1`); preserved from the wire.
@@ -674,7 +674,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
         .get(pos..)
         .and_then(|s| s.split_first_chunk::<WORD_LEN>())
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: pos + LOCATOR_TIME_FIELDS_LEN,
                 have: data.len(),
                 what: "RctSection dvb_binary_locator start_time/duration",
@@ -684,7 +684,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
     let (b2, _) = rest
         .split_first_chunk::<WORD_LEN>()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: pos + LOCATOR_TIME_FIELDS_LEN,
                 have: data.len(),
                 what: "RctSection dvb_binary_locator start_time/duration",
@@ -705,7 +705,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<WORD_LEN>())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + WORD_LEN,
                         have: data.len(),
                         what: "RctSection dvb_binary_locator event_id",
@@ -725,7 +725,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<WORD_LEN>())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + WORD_LEN,
                         have: data.len(),
                         what: "RctSection dvb_binary_locator TVA_id (EIT)",
@@ -745,7 +745,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<WORD_LEN>())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + LOCATOR_TVA_PES_LEN,
                         have: data.len(),
                         what: "RctSection dvb_binary_locator TVA_id (PES)",
@@ -761,7 +761,7 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
     let windows = if identifier_type == IdentifierType::None && scheduled_time_reliability {
         if pos >= data.len() {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + 1,
                     have: data.len(),
                     what: "RctSection dvb_binary_locator windows",
@@ -819,7 +819,7 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
         });
     }
 
-    broadcast_common::len::fit_mask(
+    broadcast_core::len::fit_mask(
         loc.start_date,
         (u16::from(LOCATOR_START_DATE_HI_MASK) << LOCATOR_START_DATE_HI_SHIFT)
             | u16::from(LOCATOR_START_DATE_LO_MASK),
@@ -837,7 +837,7 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
         DvbLocatorService::Triplet {
             dvb_service_triplet_id,
         } => {
-            broadcast_common::len::fit_bits(
+            broadcast_core::len::fit_bits(
                 u64::from(*dvb_service_triplet_id),
                 LOCATOR_TRIPLET_ID_BITS,
                 "dvb_service_triplet_id",
@@ -886,12 +886,12 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
         }
     }
     if let Some(w) = &loc.windows {
-        buf[pos] = (broadcast_common::len::fit_mask(
+        buf[pos] = (broadcast_core::len::fit_mask(
             w.early_start_window,
             EARLY_START_WINDOW_MASK,
             "early_start_window",
         )? << EARLY_START_WINDOW_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 w.late_end_window,
                 LATE_END_WINDOW_MASK,
                 "late_end_window",
@@ -918,7 +918,7 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
     let media_uri = if link_type == LinkType::UriString || link_type == LinkType::Both {
         if pos >= end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + 1,
                     have: end,
                     what: "RctSection media_uri_length",
@@ -929,7 +929,7 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
         pos += 1;
         if pos + uri_len > end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + uri_len,
                     have: end,
                     what: "RctSection media_uri",
@@ -947,7 +947,7 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
     {
         if pos >= end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + 1,
                     have: end,
                     what: "RctSection dvb_binary_locator",
@@ -963,7 +963,7 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
 
     if pos >= end {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: pos + 1,
                 have: end,
                 what: "RctSection number_items",
@@ -978,7 +978,7 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
     for _ in 0..number_items {
         if pos + LINK_ITEM_HEADER_LEN > end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + LINK_ITEM_HEADER_LEN,
                     have: end,
                     what: "RctSection link_item",
@@ -994,7 +994,7 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
         pos += LOCATOR_TIME_FIELDS_LEN;
         if pos + text_len > end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + text_len,
                     have: end,
                     what: "RctSection promotional_text",
@@ -1011,7 +1011,7 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
 
     if pos + WORD_LEN > end {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: pos + WORD_LEN,
                 have: end,
                 what: "RctSection icon/desc",
@@ -1037,7 +1037,7 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
     // equivalent trailing slack.
     if desc_end != end {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: end - desc_end,
                 have: 0,
                 what: "RctSection link_info trailing bytes",
@@ -1068,30 +1068,30 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
 
 fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> Result<usize> {
     let lt = li.link_type.to_u8();
-    let hr = broadcast_common::len::fit_mask(
+    let hr = broadcast_core::len::fit_mask(
         li.how_related.to_u8(),
         HOW_RELATED_VALUE_MASK,
         "how_related",
     )?;
-    broadcast_common::len::fit_mask(
+    broadcast_core::len::fit_mask(
         li.term_id,
         (u16::from(TERM_ID_HI_MASK) << TERM_ID_HI_SHIFT) | u16::from(u8::MAX),
         "term_id",
     )?;
-    buf[0] = (broadcast_common::len::fit_mask(lt, LINK_TYPE_VALUE_MASK, "lt")? << LINK_TYPE_SHIFT)
+    buf[0] = (broadcast_core::len::fit_mask(lt, LINK_TYPE_VALUE_MASK, "lt")? << LINK_TYPE_SHIFT)
         | ((li.reserved_link_type.get() as u8) << LINK_INFO_HEADER_RFU_SHIFT)
         | ((hr >> HOW_RELATED_SHIFT) & HOW_RELATED_HI_MASK);
     buf[1] = ((hr & HOW_RELATED_LO_MASK) << HOW_RELATED_SHIFT)
         | ((li.term_id >> TERM_ID_HI_SHIFT) as u8 & TERM_ID_HI_MASK);
     buf[TERM_ID_LO_OFFSET] = li.term_id as u8;
     buf[GROUP_ID_OFFSET] =
-        (broadcast_common::len::fit_mask(li.group_id, GROUP_ID_VALUE_MASK, "group_id")?
+        (broadcast_core::len::fit_mask(li.group_id, GROUP_ID_VALUE_MASK, "group_id")?
             << GROUP_ID_SHIFT)
-            | broadcast_common::len::fit_mask(li.precedence, PRECEDENCE_MASK, "precedence")?;
+            | broadcast_core::len::fit_mask(li.precedence, PRECEDENCE_MASK, "precedence")?;
 
     let mut pos = LINK_INFO_HEADER_LEN;
     if let Some(uri) = li.media_uri {
-        let uri_len = broadcast_common::len::fit_u8(uri.len(), "media_uri_length")?;
+        let uri_len = broadcast_core::len::fit_u8(uri.len(), "media_uri_length")?;
         buf[pos] = uri_len;
         pos += 1;
         buf[pos..pos + uri.len()].copy_from_slice(uri);
@@ -1102,25 +1102,25 @@ fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> Result<usize> {
         pos += n;
     }
     let item_count =
-        broadcast_common::len::fit_bits(li.items.len() as u64, ITEM_COUNT_BITS, "number_items")?;
+        broadcast_core::len::fit_bits(li.items.len() as u64, ITEM_COUNT_BITS, "number_items")?;
     buf[pos] = ((li.reserved_number_items.get() as u8) << ITEM_RFU_SHIFT) | item_count as u8;
     pos += 1;
     for item in &li.items {
         let text_len =
-            broadcast_common::len::fit_u8(item.promotional_text.len(), "promotional_text_length")?;
+            broadcast_core::len::fit_u8(item.promotional_text.len(), "promotional_text_length")?;
         buf[pos..pos + LINK_ITEM_TEXT_LEN_OFFSET].copy_from_slice(&item.language_code.0);
         buf[pos + LINK_ITEM_TEXT_LEN_OFFSET] = text_len;
         pos += LOCATOR_TIME_FIELDS_LEN;
         buf[pos..pos + item.promotional_text.len()].copy_from_slice(item.promotional_text.raw());
         pos += item.promotional_text.len();
     }
-    let dll = broadcast_common::len::fit_bits(
+    let dll = broadcast_core::len::fit_bits(
         li.descriptors.len() as u64,
         ICON_DESC_LEN_BITS,
         "icon_descriptors_length",
     )?;
     buf[pos] = u8::from(li.default_icon_flag) << ICON_FLAG_SHIFT
-        | (broadcast_common::len::fit_mask(li.icon_id, ICON_ID_VALUE_MASK, "icon_id")?
+        | (broadcast_core::len::fit_mask(li.icon_id, ICON_ID_VALUE_MASK, "icon_id")?
             << ICON_ID_SHIFT)
         | ((dll >> u8::BITS) as u8);
     buf[pos + 1] = dll as u8;
@@ -1167,7 +1167,7 @@ impl<'a> Parse<'a> for RctSection<'a> {
         for _ in 0..link_count {
             if pos + LINK_ENTRY_HEADER_LEN > payload_end {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + LINK_ENTRY_HEADER_LEN,
                         have: payload_end,
                         what: "RctSection link_entry header",
@@ -1193,7 +1193,7 @@ impl<'a> Parse<'a> for RctSection<'a> {
 
         if pos + DESC_LOOP_LEN_FIELD > payload_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + DESC_LOOP_LEN_FIELD,
                     have: payload_end,
                     what: "RctSection descriptor_loop_length field",
@@ -1215,7 +1215,7 @@ impl<'a> Parse<'a> for RctSection<'a> {
         // trailing slack.
         if desc_end != payload_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: payload_end - desc_end,
                     have: 0,
                     what: "RctSection trailing bytes after descriptor loop",
@@ -1285,12 +1285,12 @@ impl Serialize for RctSection<'_> {
         buf[super::SECTION_NUMBER_OFFSET] = self.section_number;
         buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
         buf[YEAR_OFFSET_OFFSET..LINK_COUNT_OFFSET].copy_from_slice(&self.year_offset.to_be_bytes());
-        let link_count = broadcast_common::len::fit_u8(self.links.len(), "number_of_links")?;
+        let link_count = broadcast_core::len::fit_u8(self.links.len(), "number_of_links")?;
         buf[LINK_COUNT_OFFSET] = link_count;
 
         let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN;
         for li in &self.links {
-            let li_body_len = broadcast_common::len::fit_bits(
+            let li_body_len = broadcast_core::len::fit_bits(
                 link_info_serialized_len(li) as u64,
                 super::DESC_LOOP_LEN_BITS,
                 "link_info_length",
@@ -1304,7 +1304,7 @@ impl Serialize for RctSection<'_> {
             pos += serialize_link_info(li, &mut buf[pos..])?;
         }
 
-        let dll = broadcast_common::len::fit_bits(
+        let dll = broadcast_core::len::fit_bits(
             self.descriptors.len() as u64,
             super::DESC_LOOP_LEN_BITS,
             "descriptors_length",
@@ -1384,7 +1384,7 @@ mod tests {
 
         let err = RctSection::parse(&spliced).unwrap_err();
         assert!(
-            matches!(&err, Error::BufferTooShort(broadcast_common::error::BufferTooShort { what, .. }) if what.contains("trailing bytes after descriptor loop")),
+            matches!(&err, Error::BufferTooShort(broadcast_core::error::BufferTooShort { what, .. }) if what.contains("trailing bytes after descriptor loop")),
             "expected a trailing-bytes error, got {err:?}"
         );
     }
@@ -1482,7 +1482,7 @@ mod tests {
 
         let err = RctSection::parse(&spliced).unwrap_err();
         assert!(
-            matches!(&err, Error::BufferTooShort(broadcast_common::error::BufferTooShort { what, .. }) if what.contains("link_info trailing bytes")),
+            matches!(&err, Error::BufferTooShort(broadcast_core::error::BufferTooShort { what, .. }) if what.contains("link_info trailing bytes")),
             "expected a link_info trailing-bytes error, got {err:?}"
         );
     }

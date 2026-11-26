@@ -6,8 +6,8 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for short_smoothing_buffer_descriptor.
 pub const TAG: u8 = 0x61;
@@ -78,13 +78,9 @@ impl Serialize for ShortSmoothingBufferDescriptor<'_> {
         }
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body)?;
-        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(self.sb_size, SB_SIZE_MASK, "sb_size")?
+        buf[HEADER_LEN] = (broadcast_core::len::fit_mask(self.sb_size, SB_SIZE_MASK, "sb_size")?
             << SB_SIZE_SHIFT)
-            | broadcast_common::len::fit_mask(
-                self.sb_leak_rate,
-                SB_LEAK_RATE_MASK,
-                "sb_leak_rate",
-            )?;
+            | broadcast_core::len::fit_mask(self.sb_leak_rate, SB_LEAK_RATE_MASK, "sb_leak_rate")?;
         let tail_start = HEADER_LEN + FIXED_LEN;
         buf[tail_start..tail_start + self.dvb_reserved.len()].copy_from_slice(self.dvb_reserved);
         Ok(len)

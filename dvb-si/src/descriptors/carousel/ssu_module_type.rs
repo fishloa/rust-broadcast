@@ -8,8 +8,8 @@
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for SSU_module_type_descriptor (data-carousel namespace).
 pub const TAG: u8 = 0x0A;
@@ -65,7 +65,7 @@ impl SsuModuleType {
         }
     }
 }
-broadcast_common::impl_spec_display!(SsuModuleType, Reserved);
+broadcast_core::impl_spec_display!(SsuModuleType, Reserved);
 
 /// SSU Module Type Descriptor (carousel tag 0x0A).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

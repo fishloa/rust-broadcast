@@ -4,7 +4,7 @@
 //! against hand-built wire bytes, so the mandatory `11` reserved fill cannot be
 //! written shifted the wrong way.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_si::tables::mpe::{MacAddress, MpeDatagramSection};
 
 #[test]

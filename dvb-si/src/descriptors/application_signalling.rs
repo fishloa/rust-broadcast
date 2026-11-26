@@ -11,9 +11,9 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::tables::ait::ApplicationType;
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for application_signalling_descriptor.
 pub const TAG: u8 = 0x6F;
@@ -167,7 +167,7 @@ impl Serialize for ApplicationSignallingDescriptor {
             // reserved_future_use(1): preserved from parse, default 1.
             let word = (u16::from(e.reserved_future_use_1.get() as u8)
                 << RESERVED_FUTURE_USE_1_SHIFT)
-                | broadcast_common::len::fit_mask(
+                | broadcast_core::len::fit_mask(
                     e.application_type.to_u16(),
                     APPLICATION_TYPE_MAX,
                     "application_type",
@@ -176,7 +176,7 @@ impl Serialize for ApplicationSignallingDescriptor {
             // reserved_future_use(3): preserved from parse, default 111.
             buf[pos + VERSION_OFFSET] = ((e.reserved_future_use_3.get() as u8)
                 << RESERVED_FUTURE_USE_3_SHIFT)
-                | broadcast_common::len::fit_mask(
+                | broadcast_core::len::fit_mask(
                     e.ait_version_number,
                     AIT_VERSION_MAX,
                     "ait_version_number",

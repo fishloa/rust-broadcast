@@ -14,9 +14,9 @@
 //! whose format is out of scope here: carried as one opaque byte run.
 
 use crate::error::{Error, Result};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// `table_id` of `Metadata_section()`.
 pub const TABLE_ID: u8 = 0x06;
@@ -91,7 +91,7 @@ impl SectionFragmentIndication {
         }
     }
 }
-broadcast_common::impl_spec_display!(SectionFragmentIndication);
+broadcast_core::impl_spec_display!(SectionFragmentIndication);
 
 /// `Metadata_section()` — Table 2-158.
 #[derive(Debug, Clone, PartialEq, Eq)]

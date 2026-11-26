@@ -5,9 +5,9 @@
 //! byte: `transition_flag(1) | reserved_future_use(7)`. No CRC.
 
 use crate::error::{Error, Result};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Width of the `reserved_future_use` body field.
 pub const DIT_RESERVED_BITS: u32 = 7;
@@ -108,7 +108,7 @@ impl Serialize for DitSection {
         super::write_section_length(buf, BODY_LEN)?;
         // transition_flag in bit 7; remaining 7 bits reserved (set to 1).
         buf[DIT_FLAGS_OFFSET] = (u8::from(self.transition_flag) * TRANSITION_FLAG)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.reserved_future_use.get() as u8,
                 RESERVED_FUTURE_USE_7,
                 "reserved_future_use",

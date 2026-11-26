@@ -1,6 +1,6 @@
 //! Application-layer APDU objects (resource APDUs) — ETSI EN 50221 §8.4-§8.6.
 //!
-//! Each object implements [`broadcast_common::Parse`] / [`broadcast_common::Serialize`] over
+//! Each object implements [`broadcast_core::Parse`] / [`broadcast_core::Serialize`] over
 //! the **whole** APDU including its `apdu_tag` (3 bytes) + `length_field`
 //! header, so dispatch routes on the header and round-trips are byte-symmetric.
 //! The shared header helpers here keep every object's length field computed from
@@ -9,7 +9,7 @@
 use crate::error::{Error, Result};
 use crate::length::{self, LengthForm};
 use crate::tag::ApduTag;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 pub mod application_info;
 pub mod ca_info;
@@ -51,7 +51,7 @@ pub(crate) fn parse_apdu_header<'a>(
 ) -> Result<(LengthForm, &'a [u8])> {
     if bytes.len() < APDU_TAG_LEN {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: APDU_TAG_LEN,
                 have: bytes.len(),
                 what,
@@ -71,7 +71,7 @@ pub(crate) fn parse_apdu_header<'a>(
     let body_end = body_start + len_value;
     if bytes.len() < body_end {
         return Err(Error::LengthMismatch(
-            broadcast_common::error::LengthMismatch {
+            broadcast_core::error::LengthMismatch {
                 what,
                 declared: len_value,
                 actual: bytes.len().saturating_sub(body_start),
@@ -133,13 +133,13 @@ pub(crate) fn serialize_empty_apdu(
 }
 
 /// Range-check `value` against a `bits`-wide wire field before it is narrowed
-/// and written, mapping the shared [`broadcast_common::len::FieldOverflow`]
+/// and written, mapping the shared [`broadcast_core::len::FieldOverflow`]
 /// (which compares before narrowing) into this crate's [`Error::InvalidObject`]
 /// so a length/count/PID that does not fit is rejected instead of silently
 /// wrapped. `what` names the object and field (e.g. `"ca_pmt ES elementary_PID"`)
 /// for both the `FieldOverflow` and the resulting error.
 pub(crate) fn fit_bits(value: u64, bits: u32, what: &'static str) -> Result<u64> {
-    broadcast_common::len::fit_bits(value, bits, what).map_err(|_| Error::InvalidObject {
+    broadcast_core::len::fit_bits(value, bits, what).map_err(|_| Error::InvalidObject {
         what,
         reason: overflow_reason(bits),
     })
@@ -214,7 +214,7 @@ mod tests {
             crate::tag::CA_INFO,
             "ca_info",
         ) {
-            Err(Error::LengthMismatch(broadcast_common::error::LengthMismatch {
+            Err(Error::LengthMismatch(broadcast_core::error::LengthMismatch {
                 declared,
                 actual,
                 ..

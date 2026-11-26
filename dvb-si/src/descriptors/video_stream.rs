@@ -6,9 +6,9 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for video_stream_descriptor.
 pub const TAG: u8 = 0x02;
@@ -141,7 +141,7 @@ impl FrameRateCode {
         }
     }
 }
-broadcast_common::impl_spec_display!(FrameRateCode, Reserved);
+broadcast_core::impl_spec_display!(FrameRateCode, Reserved);
 
 /// Video Stream Descriptor.
 ///
@@ -310,7 +310,7 @@ impl Serialize for VideoStreamDescriptor {
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let b0 = ((self.multiple_frame_rate_flag as u8) << MULTIPLE_FRAME_RATE_FLAG_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.frame_rate_code.to_u8(),
                 FRAME_RATE_CODE_MASK,
                 "frame_rate_code",
@@ -329,7 +329,7 @@ impl Serialize for VideoStreamDescriptor {
                     field: "profile_and_level_indication",
                     reason: "required when mpeg_1_only_flag is false",
                 })?;
-            let chroma = broadcast_common::len::fit_mask(
+            let chroma = broadcast_core::len::fit_mask(
                 self.chroma_format.ok_or(Error::ValueOutOfRange {
                     field: "chroma_format",
                     reason: "required when mpeg_1_only_flag is false",

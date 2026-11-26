@@ -40,9 +40,9 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedZero;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedZero;
+use broadcast_core::{Parse, Serialize};
 
 /// table_id for the DFIS — the crate registry value (see module docs re. spec 0x4C).
 pub const TABLE_ID: u8 = 0x7C;
@@ -391,12 +391,12 @@ impl Serialize for DownloadableFontInfoSection<'_> {
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - SECTION_LENGTH_PREFIX)?;
         // font_id_extension(9) | font_id(7); spec mandates extension all-zero.
-        let id_word = (broadcast_common::len::fit_mask(
+        let id_word = (broadcast_core::len::fit_mask(
             self.font_id_extension,
             FONT_ID_EXTENSION_MASK,
             "font_id_extension",
         )? << FONT_ID_EXTENSION_SHIFT)
-            | broadcast_common::len::fit_mask(self.font_id as u16, FONT_ID_MASK, "font_id")?;
+            | broadcast_core::len::fit_mask(self.font_id as u16, FONT_ID_MASK, "font_id")?;
         buf[ID_WORD_OFFSET..super::VERSION_FLAGS_OFFSET].copy_from_slice(&id_word.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).
         buf[super::VERSION_FLAGS_OFFSET] = self
@@ -427,9 +427,9 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                 } => {
                     buf[pos] = FONT_INFO_TYPE_STYLE_WEIGHT;
                     // style(3) | weight(4) | reserved_zero_future_use(1).
-                    buf[pos + 1] = (broadcast_common::len::fit_mask(*style, STYLE_MASK, "style")?
+                    buf[pos + 1] = (broadcast_core::len::fit_mask(*style, STYLE_MASK, "style")?
                         << STYLE_SHIFT)
-                        | (broadcast_common::len::fit_mask(*weight, WEIGHT_MASK, "weight")? << 1)
+                        | (broadcast_core::len::fit_mask(*weight, WEIGHT_MASK, "weight")? << 1)
                         | (*reserved_zero_future_use).get() as u8;
                     pos += STYLE_WEIGHT_ENTRY_LEN;
                 }
@@ -443,8 +443,8 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     // reserved_zero_future_use(4) | font_file_format(4).
                     buf[pos + 1] = (((*reserved_zero_future_use).get() as u8)
                         << FORMAT_RESERVED_SHIFT)
-                        | broadcast_common::len::fit_mask(*format, FORMAT_MASK, "format")?;
-                    buf[pos + FILE_URI_BODY_LEN] = broadcast_common::len::fit_u8(uri.len(), "uri")?;
+                        | broadcast_core::len::fit_mask(*format, FORMAT_MASK, "format")?;
+                    buf[pos + FILE_URI_BODY_LEN] = broadcast_core::len::fit_u8(uri.len(), "uri")?;
                     let s = pos + FILE_URI_ENTRY_LEN;
                     buf[s..s + uri.len()].copy_from_slice(uri);
                     pos = s + uri.len();
@@ -455,7 +455,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     buf[pos + FONT_INFO_TYPE_LEN..pos + FONT_INFO_TYPE_LEN + FONT_SIZE_FIELD_LEN]
                         .copy_from_slice(&size.to_be_bytes());
                     buf[pos + FONT_SIZE_BODY_LEN] =
-                        broadcast_common::len::fit_u8(info.len(), "info")?;
+                        broadcast_core::len::fit_u8(info.len(), "info")?;
                     let s = pos + FONT_SIZE_ENTRY_LEN;
                     buf[s..s + info.len()].copy_from_slice(info);
                     pos = s + info.len();
@@ -480,7 +480,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     }
                     guard_u8(info.len())?;
                     buf[pos] = *font_info_type;
-                    buf[pos + 1] = broadcast_common::len::fit_u8(info.len(), "info")?;
+                    buf[pos + 1] = broadcast_core::len::fit_u8(info.len(), "info")?;
                     let s = pos + LENGTH_DELIMITED_ENTRY_LEN;
                     buf[s..s + info.len()].copy_from_slice(info);
                     pos = s + info.len();
@@ -620,7 +620,7 @@ mod tests {
     fn rejects_short_buffer() {
         assert!(matches!(
             DownloadableFontInfoSection::parse(&[0x7C, 0xB0]).unwrap_err(),
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "DownloadableFontInfoSection",
                 ..
             })

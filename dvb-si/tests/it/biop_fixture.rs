@@ -8,7 +8,7 @@
 //! independently-derived ground truth, then verifies byte-exact round-trip.
 #![cfg(feature = "ts")]
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::carousel::UnMessage;
 use dvb_si::carousel::biop::message::BindingType;
 use dvb_si::carousel::biop::{
@@ -229,7 +229,7 @@ fn synthetic_carousel_fs_file_lookup() {
 
 #[test]
 fn ior_biop_round_trip() {
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     // Build an IOR, serialize, re-parse, re-serialize — must be byte-identical.
     let ior = Ior {
         type_id: b"dir\0",

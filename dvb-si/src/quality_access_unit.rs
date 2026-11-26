@@ -42,8 +42,8 @@
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::clock33::{self, pack_marked, unpack_marked};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// `field_size_bytes` + `metric_count`.
 const HEADER_LEN: usize = 2;
@@ -154,7 +154,7 @@ impl<'a> QualityAccessUnit<'a> {
 }
 
 fn short(need: usize, have: usize) -> Error {
-    Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+    Error::BufferTooShort(broadcast_core::error::BufferTooShort {
         need,
         have,
         what: WHAT,
@@ -190,14 +190,14 @@ impl<'a> Parse<'a> for QualityAccessUnit<'a> {
                 field.copy_from_slice(dts);
                 let marked = unpack_marked(&field);
                 if marked.prefix != DTS_PREFIX {
-                    return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                    return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                         field: "media_DTS prefix",
                         expected: u64::from(DTS_PREFIX),
                         found: u64::from(marked.prefix),
                     }));
                 }
                 if marked.markers != clock33::MARKERS_ALL_SET {
-                    return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                    return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                         field: "media_DTS marker_bits",
                         expected: u64::from(clock33::MARKERS_ALL_SET),
                         found: u64::from(marked.markers),
@@ -243,12 +243,12 @@ impl Serialize for QualityAccessUnit<'_> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         buf[0] = self.field_size_bytes;
-        buf[1] = broadcast_common::len::fit_u8(self.metrics.len(), "metric_count")?;
+        buf[1] = broadcast_core::len::fit_u8(self.metrics.len(), "metric_count")?;
         let mut pos = HEADER_LEN;
         for m in &self.metrics {
             buf[pos..pos + METRIC_CODE_LEN].copy_from_slice(&m.metric_code.to_be_bytes());
             buf[pos + SAMPLE_COUNT_OFFSET] =
-                broadcast_common::len::fit_u8(m.samples.len(), "sample_count")?;
+                broadcast_core::len::fit_u8(m.samples.len(), "sample_count")?;
             pos += METRIC_HEADER_LEN;
             for s in &m.samples {
                 if s.quality_metric_sample.len() != usize::from(self.field_size_bytes) {
@@ -257,7 +257,7 @@ impl Serialize for QualityAccessUnit<'_> {
                         reason: "length differs from field_size_bytes",
                     });
                 }
-                let dts = broadcast_common::len::fit_bits(s.media_dts, DTS_BITS, "media_DTS")?;
+                let dts = broadcast_core::len::fit_bits(s.media_dts, DTS_BITS, "media_DTS")?;
                 buf[pos..pos + DTS_FIELD_LEN].copy_from_slice(&pack_marked(dts, DTS_PREFIX));
                 pos += DTS_FIELD_LEN;
                 buf[pos..pos + s.quality_metric_sample.len()]
@@ -352,7 +352,7 @@ mod tests {
         ];
         assert_eq!(
             QualityAccessUnit::parse(&bad),
-            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "media_DTS prefix",
                 expected: 0b0010,
                 found: 3,
@@ -364,7 +364,7 @@ mod tests {
         ];
         assert_eq!(
             QualityAccessUnit::parse(&bad),
-            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "media_DTS marker_bits",
                 expected: 0b111,
                 found: 0b011,

@@ -23,8 +23,8 @@ use crate::error::{Error, Result};
 use crate::objects;
 use crate::wire::be_u16;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for Status Query (Tables 37-41).
 pub mod tag {
@@ -116,7 +116,7 @@ impl StatusItem {
         }
     }
 }
-broadcast_common::impl_spec_display!(StatusItem, Reserved);
+broadcast_core::impl_spec_display!(StatusItem, Reserved);
 
 // =================== APDU objects ===================
 
@@ -661,7 +661,7 @@ impl ActivationState {
         }
     }
 }
-broadcast_common::impl_spec_display!(ActivationState, Reserved);
+broadcast_core::impl_spec_display!(ActivationState, Reserved);
 
 /// `Activation status data` (Table 50) — status item 4: a single packed byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -705,7 +705,7 @@ impl Serialize for ActivationStatus {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if buf.is_empty() {
             return Err(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall { need: 1, have: 0 },
+                broadcast_core::error::OutputBufferTooSmall { need: 1, have: 0 },
             ));
         }
         let mut b = 0u8;

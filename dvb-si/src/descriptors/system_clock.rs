@@ -4,9 +4,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for system_clock_descriptor.
 pub const TAG: u8 = 0x0B;
@@ -128,12 +128,12 @@ impl Serialize for SystemClockDescriptor {
         buf[HEADER_LEN] = ((self.external_clock_reference_indicator as u8)
             << EXTERNAL_CLOCK_REFERENCE_INDICATOR_SHIFT)
             | ((self.reserved_1.get() as u8) << RESERVED_1_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.clock_accuracy_integer,
                 CLOCK_ACCURACY_INTEGER_MASK,
                 "clock_accuracy_integer",
             )?;
-        buf[HEADER_LEN + 1] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + 1] = (broadcast_core::len::fit_mask(
             self.clock_accuracy_exponent,
             CLOCK_ACCURACY_EXPONENT_MASK,
             "clock_accuracy_exponent",

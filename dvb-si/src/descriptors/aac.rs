@@ -14,9 +14,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedZero;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedZero;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for AAC_descriptor.
 pub const TAG: u8 = 0x7C;

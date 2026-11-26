@@ -9,9 +9,9 @@ use super::ts_loop_section::{self, Labels, MIN_SECTION_LEN, TransportStreamEntry
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Width of the `reserved` length fields.
 pub const NIT_RESERVED_BITS: u32 = 4;

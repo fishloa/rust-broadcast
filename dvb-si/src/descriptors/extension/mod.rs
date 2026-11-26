@@ -69,7 +69,7 @@
 
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 mod ac4;
 mod audio_preselection;
@@ -470,7 +470,7 @@ declare_extension_bodies! {'a;
 /// Per-body metadata for the extension-descriptor sub-dispatch — the
 /// `descriptor_tag_extension` value and a diagnostic name. Mirrors
 /// [`crate::traits::DescriptorDef`] for the second dispatch level (ADR-0001).
-pub trait ExtensionBodyDef<'a>: broadcast_common::Parse<'a, Error = crate::error::Error> {
+pub trait ExtensionBodyDef<'a>: broadcast_core::Parse<'a, Error = crate::error::Error> {
     /// The `descriptor_tag_extension` value this body is selected by.
     const TAG_EXTENSION: u8;
     /// SCREAMING_SNAKE diagnostic name, suffix-free.
@@ -509,7 +509,7 @@ pub(crate) fn invalid(reason: &'static str) -> Error {
 pub(crate) fn validate_and_split(bytes: &[u8]) -> Result<(u8, &[u8])> {
     if bytes.len() < HEADER_LEN {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: HEADER_LEN,
                 have: bytes.len(),
                 what: "ExtensionDescriptor header",
@@ -526,7 +526,7 @@ pub(crate) fn validate_and_split(bytes: &[u8]) -> Result<(u8, &[u8])> {
     let end = HEADER_LEN + length;
     if bytes.len() < end {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: end,
                 have: bytes.len(),
                 what: "ExtensionDescriptor body",
@@ -566,7 +566,7 @@ impl Serialize for ExtensionDescriptor<'_> {
         let len = self.serialized_len();
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need: len,
                     have: buf.len(),
                 },
@@ -867,4 +867,4 @@ mod tests {
     }
 }
 
-broadcast_common::impl_spec_display!(ExtensionTag);
+broadcast_core::impl_spec_display!(ExtensionTag);

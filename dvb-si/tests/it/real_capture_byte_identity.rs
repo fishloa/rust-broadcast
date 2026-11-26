@@ -21,7 +21,7 @@
 //! (`--nocapture`).
 #![cfg(feature = "ts")]
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::{AnyDescriptor, DescriptorLoop, parse_loop};
 use dvb_si::tables::AnyTableSection;

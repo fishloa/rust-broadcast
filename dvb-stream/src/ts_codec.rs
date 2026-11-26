@@ -27,7 +27,7 @@ use crate::resync::{
 /// is deliberately not constrained — it may be static (RFC 3551) or dynamic —
 /// the structural check on the payload is what decides.
 fn rtp_ts_payload(datagram: &[u8]) -> Option<(usize, usize)> {
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     // RTP version is the top two bits of byte 0 (RFC 3550 §5.1).
     const VERSION_SHIFT: u32 = 6;
     if datagram.first()? >> VERSION_SHIFT != rtp_packet::RTP_VERSION {

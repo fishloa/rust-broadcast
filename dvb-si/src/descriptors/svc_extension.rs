@@ -5,9 +5,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for SVC_extension_descriptor.
 pub const TAG: u8 = 0x30;
@@ -204,28 +204,28 @@ impl Serialize for SvcExtensionDescriptor {
         buf[HEADER_LEN + MAXIMUM_BITRATE_OFFSET
             ..HEADER_LEN + MAXIMUM_BITRATE_OFFSET + size_of::<u16>()]
             .copy_from_slice(&self.maximum_bitrate.to_be_bytes());
-        buf[HEADER_LEN + DEPENDENCY_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + DEPENDENCY_FLAGS_OFFSET] = (broadcast_core::len::fit_mask(
             self.dependency_id,
             DEPENDENCY_ID_MASK,
             "dependency_id",
         )? << DEPENDENCY_ID_SHIFT)
             | (self.reserved_5.get() as u8);
-        buf[HEADER_LEN + QUALITY_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + QUALITY_FLAGS_OFFSET] = (broadcast_core::len::fit_mask(
             self.quality_id_start,
             QUALITY_ID_MASK,
             "quality_id_start",
         )? << QUALITY_ID_START_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.quality_id_end,
                 QUALITY_ID_MASK,
                 "quality_id_end",
             )?;
-        buf[HEADER_LEN + TEMPORAL_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + TEMPORAL_FLAGS_OFFSET] = (broadcast_core::len::fit_mask(
             self.temporal_id_start,
             TEMPORAL_ID_MASK,
             "temporal_id_start",
         )? << TEMPORAL_ID_START_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.temporal_id_end,
                 TEMPORAL_ID_MASK,
                 "temporal_id_end",

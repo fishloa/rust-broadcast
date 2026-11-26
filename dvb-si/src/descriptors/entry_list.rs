@@ -14,7 +14,7 @@
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 use core::net::{Ipv4Addr, Ipv6Addr};
 
 /// Wire width of a descriptor's `descriptor_tag` + `descriptor_length`.

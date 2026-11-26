@@ -9,8 +9,8 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for DII_location_descriptor (AIT namespace).
 pub const TAG: u8 = 0x0D;
@@ -111,7 +111,7 @@ impl Serialize for DiiLocationDescriptor {
         buf[HEADER_LEN] = self.transport_protocol_label;
         let mut pos = HEADER_LEN + TRANSPORT_PROTOCOL_LABEL_LEN;
         for l in &self.locations {
-            let id = broadcast_common::len::fit_mask(
+            let id = broadcast_core::len::fit_mask(
                 l.dii_identification,
                 DII_IDENTIFICATION_MASK,
                 "DII_identification",

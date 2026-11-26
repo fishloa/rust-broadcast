@@ -15,8 +15,8 @@ use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use crate::wire::be_u16;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
 /// MPEG-2 `CA_descriptor` tag (ISO/IEC 13818-1 §2.6.16); the only descriptor a
@@ -85,7 +85,7 @@ impl CaPmtListManagement {
         }
     }
 }
-broadcast_common::impl_spec_display!(CaPmtListManagement, Reserved);
+broadcast_core::impl_spec_display!(CaPmtListManagement, Reserved);
 
 /// `ca_pmt_cmd_id` values (Table, p. 31).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,7 +139,7 @@ impl CaPmtCmdId {
         }
     }
 }
-broadcast_common::impl_spec_display!(CaPmtCmdId, Rfu);
+broadcast_core::impl_spec_display!(CaPmtCmdId, Rfu);
 
 /// One elementary-stream entry in a `ca_pmt`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -317,7 +317,7 @@ pub(crate) fn parse_cmd_and_descriptors<'a>(
     let end = *pos + info_length;
     if end > body.len() {
         return Err(Error::LengthMismatch(
-            broadcast_common::error::LengthMismatch {
+            broadcast_core::error::LengthMismatch {
                 what,
                 declared: info_length,
                 actual: body.len().saturating_sub(*pos),

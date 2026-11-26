@@ -17,6 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 broadcast-common  = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 mpeg-ts     = { path = "../mpeg-ts",    version = "0.10.0", default-features = false }
 thiserror = { version = "2", default-features = false }
 jiff        = { version = "1", default-features = false, optional = true }
@@ -46,7 +47,7 @@ default = ["std", "jiff", "ts", "legacy-charsets"]
 
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`. jiff's wall-clock and the std `Error` glue are std-only.
-std      = ["broadcast-common/std", "jiff?/std", "thiserror/std", "bytes?/std", "mpeg-ts/std", "serde?/std"]
+std      = ["broadcast-common/std", "broadcast-core/std", "jiff?/std", "thiserror/std", "bytes?/std", "mpeg-ts/std", "serde?/std"]
 
 # EN 300 468 Annex A KS X 1001 / GB-2312 / Big5 text (selectors 0x12-0x14),
 # decoded with `encoding_rs`'s codec tables. Off = those three selectors are
@@ -62,7 +63,7 @@ jiff     = ["dep:jiff", "broadcast-common/jiff"]
 ts       = ["dep:bytes"]
 
 # JSON / generic serialization on parsed + owned variants. Propagates to jiff.
-serde    = ["dep:serde", "broadcast-common/serde", "jiff?/serde", "mpeg-ts/serde"]
+serde    = ["dep:serde", "broadcast-common/serde", "broadcast-core/serde", "jiff?/serde", "mpeg-ts/serde"]
 
 # Yokeable impls on the zero-copy view types + the `Owned<T>` wrapper, so a
 # parsed table/descriptor can be retained past the input buffer's borrow

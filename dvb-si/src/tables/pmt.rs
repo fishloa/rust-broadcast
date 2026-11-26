@@ -7,9 +7,9 @@
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
 /// PMT table_id (ISO/IEC 13818-1 Table 2-30).
@@ -587,7 +587,7 @@ impl StreamType {
         }
     }
 }
-broadcast_common::impl_spec_display!(StreamType, ReservedRange, UserPrivate);
+broadcast_core::impl_spec_display!(StreamType, ReservedRange, UserPrivate);
 
 /// One elementary stream entry in the PMT's ES loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -774,7 +774,7 @@ impl<'a> Parse<'a> for PmtSection<'a> {
 
         if pos != stream_loop_end {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: stream_loop_end - pos,
                     have: 0,
                     what: "PmtSection trailing stream bytes",
@@ -838,7 +838,7 @@ impl Serialize for PmtSection<'_> {
             self.pcr_pid,
             self.reserved_pcr_pid.get() as u8,
         )?;
-        let pil = broadcast_common::len::fit_bits(
+        let pil = broadcast_core::len::fit_bits(
             self.program_info.len() as u64,
             super::DESC_LOOP_LEN_BITS,
             "program_info_length",
@@ -862,7 +862,7 @@ impl Serialize for PmtSection<'_> {
                 stream.elementary_pid,
                 stream.reserved_pid.get() as u8,
             )?;
-            let esl = broadcast_common::len::fit_bits(
+            let esl = broadcast_core::len::fit_bits(
                 stream.es_info.len() as u64,
                 super::DESC_LOOP_LEN_BITS,
                 "es_info_length",
@@ -1135,7 +1135,7 @@ mod tests {
         let err = PmtSection::parse(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 what: "PmtSection trailing stream bytes",
                 ..
             })

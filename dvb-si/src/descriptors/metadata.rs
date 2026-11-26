@@ -8,9 +8,9 @@ use super::descriptor_body;
 use crate::descriptors::decoder_config_flags::DecoderConfigFlags;
 use crate::descriptors::metadata_format::MetadataFormat;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for metadata_descriptor.
 pub const TAG: u8 = 0x26;
@@ -422,7 +422,7 @@ impl Serialize for MetadataDescriptor<'_> {
 
         // `DSM-CC_flag` is derived from the Option (never the stored
         // `dsmcc_flag`) so flag and record can never disagree (r03-W5).
-        let mut flags = (broadcast_common::len::fit_mask(
+        let mut flags = (broadcast_core::len::fit_mask(
             self.decoder_config_flags.to_u8(),
             DECODER_CONFIG_FLAGS_MASK,
             "decoder_config_flags",
@@ -435,7 +435,7 @@ impl Serialize for MetadataDescriptor<'_> {
         pos += 1;
 
         if let Some(si) = self.service_identification {
-            buf[pos] = broadcast_common::len::fit_u8(si.len(), "service_identification_length")?;
+            buf[pos] = broadcast_core::len::fit_u8(si.len(), "service_identification_length")?;
             pos += 1;
             buf[pos..pos + si.len()].copy_from_slice(si);
             pos += si.len();
@@ -444,13 +444,13 @@ impl Serialize for MetadataDescriptor<'_> {
         match &self.decoder_config {
             DecoderConfig::InDescriptor(d) => {
                 buf[pos] =
-                    broadcast_common::len::fit_u8(d.decoder_config.len(), "decoder_config_length")?;
+                    broadcast_core::len::fit_u8(d.decoder_config.len(), "decoder_config_length")?;
                 pos += 1;
                 buf[pos..pos + d.decoder_config.len()].copy_from_slice(d.decoder_config);
                 pos += d.decoder_config.len();
             }
             DecoderConfig::DsmccCarousel(d) => {
-                buf[pos] = broadcast_common::len::fit_u8(
+                buf[pos] = broadcast_core::len::fit_u8(
                     d.dec_config_identification.len(),
                     "dec_config_identification_length",
                 )?;
@@ -464,7 +464,7 @@ impl Serialize for MetadataDescriptor<'_> {
                 pos += 1;
             }
             DecoderConfig::ReservedData(d) => {
-                buf[pos] = broadcast_common::len::fit_u8(d.data.len(), "private_data_byte_length")?;
+                buf[pos] = broadcast_core::len::fit_u8(d.data.len(), "private_data_byte_length")?;
                 pos += 1;
                 buf[pos..pos + d.data.len()].copy_from_slice(d.data);
                 pos += d.data.len();

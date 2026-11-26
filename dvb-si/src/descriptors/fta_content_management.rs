@@ -8,9 +8,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for FTA_content_management_descriptor.
 pub const TAG: u8 = 0x7E;
@@ -96,7 +96,7 @@ impl ControlRemoteAccess {
         }
     }
 }
-broadcast_common::impl_spec_display!(ControlRemoteAccess, Reserved);
+broadcast_core::impl_spec_display!(ControlRemoteAccess, Reserved);
 
 /// FTA Content Management Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -190,7 +190,7 @@ impl Serialize for FtaContentManagementDescriptor {
         if self.do_not_scramble {
             flags |= DO_NOT_SCRAMBLE_MASK;
         }
-        flags |= broadcast_common::len::fit_mask(
+        flags |= broadcast_core::len::fit_mask(
             self.control_remote_access_over_internet.to_u8(),
             CONTROL_REMOTE_ACCESS_MASK >> CONTROL_REMOTE_ACCESS_SHIFT,
             "control_remote_access_over_internet",

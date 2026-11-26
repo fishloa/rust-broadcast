@@ -15,9 +15,9 @@ use crate::compatibility::CompatibilityDescriptor;
 use crate::descriptors::unt::UntDescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// `table_id` for the Update Notification Table.
 pub const TABLE_ID: u8 = 0x4B;
@@ -74,7 +74,7 @@ impl UntActionType {
         }
     }
 }
-broadcast_common::impl_spec_display!(UntActionType, DvbReserved, UserDefined);
+broadcast_core::impl_spec_display!(UntActionType, DvbReserved, UserDefined);
 
 const HEADER_LEN: usize = 3;
 const FIXED_BODY_LEN: usize = 9;
@@ -270,7 +270,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
         while pos < payload_end {
             if pos + crate::compatibility::COMPAT_DESC_LEN_FIELD > payload_end {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + crate::compatibility::COMPAT_DESC_LEN_FIELD,
                         have: payload_end,
                         what: "UntSection compatibilityDescriptorLength",
@@ -281,7 +281,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<PLATFORM_LOOP_LEN_FIELD>())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + crate::compatibility::COMPAT_DESC_LEN_FIELD,
                         have: payload_end,
                         what: "UntSection compatibilityDescriptorLength",
@@ -302,7 +302,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
 
             if pos + PLATFORM_LOOP_LEN_FIELD > payload_end {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + PLATFORM_LOOP_LEN_FIELD,
                         have: payload_end,
                         what: "UntSection platform_loop_length",
@@ -313,7 +313,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<PLATFORM_LOOP_LEN_FIELD>())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + PLATFORM_LOOP_LEN_FIELD,
                         have: payload_end,
                         what: "UntSection platform_loop_length",
@@ -333,7 +333,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
             while pos < platform_end {
                 if pos + DESC_LOOP_LEN_FIELD > platform_end {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + DESC_LOOP_LEN_FIELD,
                             have: platform_end,
                             what: "UntSection target_descriptor_loop length",
@@ -356,7 +356,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
 
                 if pos + DESC_LOOP_LEN_FIELD > platform_end {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + DESC_LOOP_LEN_FIELD,
                             have: platform_end,
                             what: "UntSection operational_descriptor_loop length",
@@ -438,7 +438,7 @@ impl Serialize for UntSection<'_> {
 
         // 24-bit OUI: the top byte of a wider value used to be dropped
         // silently (audit r03-W3 class).
-        broadcast_common::len::fit_bits(u64::from(self.oui), OUI_BITS, "oui")?;
+        broadcast_core::len::fit_bits(u64::from(self.oui), OUI_BITS, "oui")?;
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1()?;
         super::write_section_length(buf, len - HEADER_LEN)?;
@@ -455,7 +455,7 @@ impl Serialize for UntSection<'_> {
         buf[OFFSET_OUI_LAST] = (self.oui & u32::from(u8::MAX)) as u8;
         buf[OFFSET_PROCESSING_ORDER] = self.processing_order;
 
-        let cdl = broadcast_common::len::fit_bits(
+        let cdl = broadcast_core::len::fit_bits(
             self.common_descriptors.len() as u64,
             super::DESC_LOOP_LEN_BITS,
             "common_descriptors_length",
@@ -482,14 +482,14 @@ impl Serialize for UntSection<'_> {
                 .iter()
                 .map(|p| p.serialized_len())
                 .sum();
-            let inner_len = broadcast_common::len::fit_u16(inner_len, "platform_loop_length")?;
+            let inner_len = broadcast_core::len::fit_u16(inner_len, "platform_loop_length")?;
             buf[pos..pos + PLATFORM_LOOP_LEN_FIELD].copy_from_slice(&inner_len.to_be_bytes());
             pos += PLATFORM_LOOP_LEN_FIELD;
 
             for pair in &platform.target_operational_pairs {
                 let target_descriptors = &pair.target_descriptors;
                 let operational_descriptors = &pair.operational_descriptors;
-                let tl = broadcast_common::len::fit_bits(
+                let tl = broadcast_core::len::fit_bits(
                     target_descriptors.len() as u64,
                     super::DESC_LOOP_LEN_BITS,
                     "target_descriptors_length",
@@ -503,7 +503,7 @@ impl Serialize for UntSection<'_> {
                 buf[pos..pos + target_descriptors.len()].copy_from_slice(target_descriptors.raw());
                 pos += target_descriptors.len();
 
-                let ol = broadcast_common::len::fit_bits(
+                let ol = broadcast_core::len::fit_bits(
                     operational_descriptors.len() as u64,
                     super::DESC_LOOP_LEN_BITS,
                     "operational_descriptors_length",

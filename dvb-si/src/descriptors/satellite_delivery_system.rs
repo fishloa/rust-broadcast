@@ -6,8 +6,8 @@
 use super::cable_delivery_system::FecInner;
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for satellite_delivery_system_descriptor.
 pub const TAG: u8 = 0x43;
@@ -105,7 +105,7 @@ impl Polarization {
         }
     }
 }
-broadcast_common::impl_spec_display!(Polarization);
+broadcast_core::impl_spec_display!(Polarization);
 
 /// Modulation system (§6.2.13.2 Table 40: DVB-S or DVB-S2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,7 +128,7 @@ impl ModulationSystem {
         }
     }
 }
-broadcast_common::impl_spec_display!(ModulationSystem);
+broadcast_core::impl_spec_display!(ModulationSystem);
 
 /// Modulation type (§6.2.13.2 Table 41).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,7 +157,7 @@ impl ModulationType {
         }
     }
 }
-broadcast_common::impl_spec_display!(ModulationType);
+broadcast_core::impl_spec_display!(ModulationType);
 
 /// Roll-off factor (§6.2.13.2 Table 39, DVB-S2 only; also used by S2X
 /// with extended values per Table 144).
@@ -210,7 +210,7 @@ impl RollOff {
         }
     }
 }
-broadcast_common::impl_spec_display!(RollOff, Reserved);
+broadcast_core::impl_spec_display!(RollOff, Reserved);
 
 /// Satellite Delivery System Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -459,7 +459,7 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
             RollOff::Alpha025 => 0x08,
             RollOff::Alpha020 => 0x10,
             RollOff::Reserved(v) => {
-                broadcast_common::len::fit_mask(v, FIELD_PAIR_MASK, "v")? << ROLL_OFF_SHIFT
+                broadcast_core::len::fit_mask(v, FIELD_PAIR_MASK, "v")? << ROLL_OFF_SHIFT
             }
         };
         flags |= match self.modulation_system {
@@ -476,12 +476,12 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
 
         // Symbol rate + FEC_inner: 28-bit BCD shifted left 4 bits, then OR with FEC.
         // Mask to 28 bits so an over-range value can't spill past the field.
-        let sym_freq = (broadcast_common::len::fit_mask(
+        let sym_freq = (broadcast_core::len::fit_mask(
             self.symbol_rate_bcd,
             SYMBOL_RATE_MASK,
             "symbol_rate_bcd",
         )? << SYMBOL_RATE_SHIFT)
-            | u32::from(broadcast_common::len::fit_mask(
+            | u32::from(broadcast_core::len::fit_mask(
                 self.fec_inner.to_u8(),
                 FEC_INNER_MASK,
                 "fec_inner",

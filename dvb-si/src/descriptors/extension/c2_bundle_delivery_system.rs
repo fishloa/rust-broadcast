@@ -1,8 +1,8 @@
 //! C2 Bundle Delivery System Descriptor — ETSI EN 300 468 §6.4.6.4 (tag_extension 0x16).
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedZero;
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedZero;
 
 use super::c2_delivery_system::{ActiveOfdmSymbolDuration, C2GuardInterval, C2TuningFrequencyType};
 
@@ -152,17 +152,17 @@ impl Serialize for C2BundleDeliverySystem {
             buf[p + C2_BUNDLE_FREQUENCY_OFFSET
                 ..p + C2_BUNDLE_FREQUENCY_OFFSET + C2_BUNDLE_FREQUENCY_LEN]
                 .copy_from_slice(&e.c2_system_tuning_frequency.to_be_bytes());
-            buf[p + C2_BUNDLE_PACKED_OFFSET] = (broadcast_common::len::fit_mask(
+            buf[p + C2_BUNDLE_PACKED_OFFSET] = (broadcast_core::len::fit_mask(
                 e.c2_system_tuning_frequency_type.to_u8(),
                 C2_BUNDLE_FREQUENCY_TYPE_MASK,
                 "c2_system_tuning_frequency_type",
             )? << C2_BUNDLE_FREQUENCY_TYPE_SHIFT)
-                | (broadcast_common::len::fit_mask(
+                | (broadcast_core::len::fit_mask(
                     e.active_ofdm_symbol_duration.to_u8(),
                     C2_BUNDLE_OFDM_MASK,
                     "active_ofdm_symbol_duration",
                 )? << C2_BUNDLE_OFDM_SHIFT)
-                | broadcast_common::len::fit_mask(
+                | broadcast_core::len::fit_mask(
                     e.guard_interval.to_u8(),
                     C2_BUNDLE_GUARD_MASK,
                     "guard_interval",

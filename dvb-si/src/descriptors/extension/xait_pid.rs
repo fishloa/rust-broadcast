@@ -8,7 +8,7 @@
 //! rather than masking — the spec defines no reserved-bit split here, so this
 //! is byte-exact against any real stream.
 use super::*;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 /// Selector length: the 2-byte `xait_PID` field.
 const XAIT_PID_LEN: usize = 2;

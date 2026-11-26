@@ -12,8 +12,8 @@ use crate::descriptors::lang_text::{
 use crate::error::Result;
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for application_name_descriptor (AIT namespace).
 pub const TAG: u8 = 0x01;

@@ -7,8 +7,8 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::DvbText;
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for service_descriptor.
 pub const TAG: u8 = 0x48;
@@ -212,7 +212,7 @@ impl ServiceType {
         }
     }
 }
-broadcast_common::impl_spec_display!(ServiceType, Reserved);
+broadcast_core::impl_spec_display!(ServiceType, Reserved);
 
 /// Service Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -293,11 +293,11 @@ impl Serialize for ServiceDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[HEADER_LEN + SERVICE_TYPE_OFFSET] = self.service_type.to_u8();
         buf[HEADER_LEN + PROVIDER_NAME_LENGTH_OFFSET] =
-            broadcast_common::len::fit_u8(self.provider_name.len(), "provider_name_length")?;
+            broadcast_core::len::fit_u8(self.provider_name.len(), "provider_name_length")?;
         let p_start = HEADER_LEN + PROVIDER_NAME_START;
         let p_end = p_start + self.provider_name.len();
         buf[p_start..p_end].copy_from_slice(self.provider_name.raw());
-        buf[p_end] = broadcast_common::len::fit_u8(self.service_name.len(), "service_name_length")?;
+        buf[p_end] = broadcast_core::len::fit_u8(self.service_name.len(), "service_name_length")?;
         let s_start = p_end + 1;
         buf[s_start..s_start + self.service_name.len()].copy_from_slice(self.service_name.raw());
         let t_start = s_start + self.service_name.len();

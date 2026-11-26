@@ -8,8 +8,8 @@ use crate::descriptors::lang_text::LANG_LEN;
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for short_event_descriptor.
 pub const TAG: u8 = 0x4D;
@@ -102,11 +102,11 @@ impl Serialize for ShortEventDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[HEADER_LEN..HEADER_LEN + LANG_LEN].copy_from_slice(&self.language_code.0);
         buf[HEADER_LEN + NAME_LENGTH_OFFSET] =
-            broadcast_common::len::fit_u8(self.event_name.len(), "event_name_length")?;
+            broadcast_core::len::fit_u8(self.event_name.len(), "event_name_length")?;
         let n_start = HEADER_LEN + NAME_START;
         let n_end = n_start + self.event_name.len();
         buf[n_start..n_end].copy_from_slice(self.event_name.raw());
-        buf[n_end] = broadcast_common::len::fit_u8(self.text.len(), "text_length")?;
+        buf[n_end] = broadcast_core::len::fit_u8(self.text.len(), "text_length")?;
         let t_start = n_end + 1;
         buf[t_start..t_start + self.text.len()].copy_from_slice(self.text.raw());
         let tr_start = t_start + self.text.len();

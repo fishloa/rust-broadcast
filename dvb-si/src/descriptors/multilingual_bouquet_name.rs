@@ -8,8 +8,8 @@ use super::lang_text::{EntryReader, LANG_LEN, text_field_len, write_lang, write_
 use crate::error::Result;
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for multilingual_bouquet_name_descriptor.
 pub const TAG: u8 = 0x5C;

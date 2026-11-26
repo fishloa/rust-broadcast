@@ -7,7 +7,7 @@
 //! directly to a length/count with no prior range check) recurred across
 //! ~40 descriptor serializers.
 //!
-//! The fix is `broadcast_common::len::fit_u8`/`fit_u16`/`fit_bits`, which
+//! The fix is `broadcast_core::len::fit_u8`/`fit_u16`/`fit_bits`, which
 //! compare before narrowing and return `Err` instead of wrapping. This test
 //! is the cheap, ungameable half of the regression guard: it fails CI if the
 //! literal truncating pattern reappears anywhere under `src/descriptors/`,
@@ -91,7 +91,7 @@ fn no_unchecked_len_narrowing_in_descriptor_serializers() {
         for (i, line) in production.lines().enumerate() {
             if has_truncating_cast(line) {
                 problems.push(format!(
-                    "{rel}:{}: unchecked `.len() as uN` — use broadcast_common::len::fit_u8/fit_u16/fit_bits instead (#1129): {}",
+                    "{rel}:{}: unchecked `.len() as uN` — use broadcast_core::len::fit_u8/fit_u16/fit_bits instead (#1129): {}",
                     i + 1,
                     line.trim()
                 ));

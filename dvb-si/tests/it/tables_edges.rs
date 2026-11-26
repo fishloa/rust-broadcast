@@ -4,7 +4,7 @@
 //! Every section here is laid out from its syntax table with an independent
 //! CRC-32, never through the production serializer.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::error::Error;
 use test_fixtures::psi::crc32_mpeg2;
 
@@ -276,7 +276,7 @@ fn downloadable_font_info_accepts_entries_that_end_at_the_loop_end() {
 /// declared/available pair rather than a wrapped length byte.
 #[test]
 fn downloadable_font_info_serializer_rejects_a_256_byte_uri() {
-    use broadcast_common::reserved::ReservedZero;
+    use broadcast_core::reserved::ReservedZero;
     use dvb_si::tables::downloadable_font_info::{DownloadableFontInfoSection, FontInfo};
     let uri = [b'u'; 256];
     let section = DownloadableFontInfoSection::new(
@@ -365,7 +365,7 @@ fn eit_rejects_trailing_bytes_that_cannot_form_an_event() {
     let raw = section(TABLE_ID_PF_ACTUAL, &body);
     assert_eq!(
         EitSection::parse(&raw).unwrap_err(),
-        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: 5,
             have: 0,
             what: "EitSection trailing event bytes",
@@ -451,7 +451,7 @@ fn int_rejects_loop_lengths_that_run_past_the_payload() {
     target_field.extend_from_slice(&[0xF0, 0x00, 0x00]);
     assert_eq!(
         IntSection::parse(&section(0x4C, &target_field)).unwrap_err(),
-        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: 16,
             have: 15,
             what: "IntSection target_descriptor_loop length",
@@ -472,7 +472,7 @@ fn int_rejects_loop_lengths_that_run_past_the_payload() {
     op_field.extend_from_slice(&[0xF0, 0x00, 0xF0, 0x00, 0x00]);
     assert_eq!(
         IntSection::parse(&section(0x4C, &op_field)).unwrap_err(),
-        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: 18,
             have: 17,
             what: "IntSection operational_descriptor_loop length",
@@ -537,7 +537,7 @@ fn cit_minimum_section_and_a_crid_string_that_overruns() {
     body.extend_from_slice(&[0x00, 0x01, 0x00, 0x03, b'x']);
     assert_eq!(
         CitSection::parse(&section(0x77, &body)).unwrap_err(),
-        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: 20,
             have: 18,
             what: "CitSection unique_string",
@@ -557,7 +557,7 @@ fn dit_parses_its_single_body_byte() {
 
     assert_eq!(
         DitSection::parse(&[0x7E, 0x00]).unwrap_err(),
-        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: 4,
             have: 2,
             what: "DitSection",
@@ -565,7 +565,7 @@ fn dit_parses_its_single_body_byte() {
     );
     assert_eq!(
         DitSection::parse(&[0x7E, 0x00, 0x01]).unwrap_err(),
-        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: 4,
             have: 3,
             what: "DitSection",
@@ -647,7 +647,7 @@ fn dsmcc_minimum_and_maximal_sections() {
 /// compared only for an `SSI == 0` (checksum-trailered) section.
 #[test]
 fn dsmcc_section_equality_compares_every_field() {
-    use broadcast_common::reserved::ReservedOnes;
+    use broadcast_core::reserved::ReservedOnes;
     use dvb_si::tables::dsmcc::DsmccSection;
     let base = || DsmccSection::new(0x3B, 0x1234, 5, true, 1, 2, &[0xAA, 0xBB]);
     assert_eq!(base(), base());
@@ -744,7 +744,7 @@ fn int_action_type_labels_are_the_spec_tokens() {
 /// (`u8::MAX`, not `u8::MAX - 1`).
 #[test]
 fn downloadable_font_info_accepts_a_255_byte_uri() {
-    use broadcast_common::reserved::ReservedZero;
+    use broadcast_core::reserved::ReservedZero;
     use dvb_si::tables::downloadable_font_info::{DownloadableFontInfoSection, FontInfo};
     let uri = [b'v'; 255];
     let section = DownloadableFontInfoSection::new(
@@ -785,7 +785,7 @@ fn int_reads_a_two_byte_loop_length_field_at_the_payload_end() {
     body.extend_from_slice(&[0xF0, 0x00, 0x00, 0x00]);
     assert_eq!(
         IntSection::parse(&section(0x4C, &body)).unwrap_err(),
-        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: 18,
             have: 16,
             what: "IntSection operational_descriptor_loop length",

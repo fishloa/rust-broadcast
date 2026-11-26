@@ -12,7 +12,7 @@
 
 #![cfg(feature = "ts")]
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::parse_loop;
 use dvb_si::tables::RunningStatus;

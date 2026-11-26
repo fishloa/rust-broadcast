@@ -1,4 +1,4 @@
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_si::collect::{CollectError, CompletedEit, EitCollector, SectionSetCollector};
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::descriptors::DescriptorLoop;

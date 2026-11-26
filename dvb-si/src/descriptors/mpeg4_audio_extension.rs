@@ -13,7 +13,7 @@
 use crate::error::Result;
 use crate::h222_bits::{BITS_PER_BYTE, BitReader, BitWriter, impl_h222_descriptor};
 use alloc::vec::Vec;
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::reserved::ReservedOnes;
 
 /// Descriptor tag of `MPEG-4_audio_extension_descriptor` (Table 2-45: 46).
 pub const TAG: u8 = 0x2E;
@@ -113,7 +113,7 @@ impl_h222_descriptor!(
 mod tests {
     use super::*;
     use alloc::vec;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     fn rt(b: &[u8]) -> Mpeg4AudioExtensionDescriptor {
         let d = Mpeg4AudioExtensionDescriptor::parse(b).unwrap();

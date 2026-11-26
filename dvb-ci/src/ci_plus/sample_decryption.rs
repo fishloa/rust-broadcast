@@ -21,8 +21,8 @@ use crate::objects;
 use crate::reserved::ReservedZero;
 use crate::wire::be_u16;
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
 /// Resource-scoped `apdu_tag`s for the Sample decryption resource (Table 30).
@@ -520,7 +520,7 @@ impl TransmissionStatus {
         }
     }
 }
-broadcast_common::impl_spec_display!(TransmissionStatus, Reserved);
+broadcast_core::impl_spec_display!(TransmissionStatus, Reserved);
 
 /// `drm_status` values (Table 37).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -568,7 +568,7 @@ impl DrmStatus {
         }
     }
 }
-broadcast_common::impl_spec_display!(DrmStatus, Reserved);
+broadcast_core::impl_spec_display!(DrmStatus, Reserved);
 
 /// `sd_start_reply()` (Table 35): CICAM → Host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -794,7 +794,7 @@ impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
         if self.buf.len() < self.pos + n {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: n,
                     have: self.buf.len().saturating_sub(self.pos),
                     what: self.what,

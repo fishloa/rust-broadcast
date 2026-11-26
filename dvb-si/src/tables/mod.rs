@@ -132,7 +132,7 @@ impl RunningStatus {
         }
     }
 }
-broadcast_common::impl_spec_display!(RunningStatus, Reserved);
+broadcast_core::impl_spec_display!(RunningStatus, Reserved);
 
 #[cfg(test)]
 mod running_status_tests {
@@ -348,7 +348,7 @@ pub(crate) fn b1_of(
 ) -> crate::Result<u8> {
     Ok((u8::from(section_syntax_indicator) * SECTION_B1_SSI)
         | (u8::from(private_indicator) * B1_PRIVATE_INDICATOR)
-        | (broadcast_common::len::fit_mask(reserved_b1, RESERVED_2, "reserved")?
+        | (broadcast_core::len::fit_mask(reserved_b1, RESERVED_2, "reserved")?
             << B1_RESERVED_SHIFT))
 }
 
@@ -362,9 +362,8 @@ pub(crate) fn b5_of(
     current_next_indicator: bool,
 ) -> crate::Result<u8> {
     Ok(
-        (broadcast_common::len::fit_mask(reserved_b5, RESERVED_2, "reserved")?
-            << B5_RESERVED_SHIFT)
-            | (broadcast_common::len::fit_mask(version_number, B5_VERSION_MASK, "version_number")?
+        (broadcast_core::len::fit_mask(reserved_b5, RESERVED_2, "reserved")? << B5_RESERVED_SHIFT)
+            | (broadcast_core::len::fit_mask(version_number, B5_VERSION_MASK, "version_number")?
                 << 1)
             | u8::from(current_next_indicator),
     )
@@ -438,7 +437,7 @@ pub(crate) fn check_loop_reaches_crc(
 ) -> crate::Result<()> {
     if loop_end != crc_pos {
         return Err(crate::error::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: crc_pos.saturating_sub(loop_end),
                 have: 0,
                 what,
@@ -474,7 +473,7 @@ pub(crate) fn write_crc(buf: &mut [u8], crc_pos: usize) {
 /// this one helper so the guard cannot be forgotten again.
 pub(crate) fn write_section_length(buf: &mut [u8], body_len: usize) -> crate::Result<()> {
     let fitted =
-        broadcast_common::len::fit_bits(body_len as u64, SECTION_LENGTH_BITS, "section_length")?;
+        broadcast_core::len::fit_bits(body_len as u64, SECTION_LENGTH_BITS, "section_length")?;
     buf[1] = (buf[1] & !SECTION_LENGTH_HI_MASK) | ((fitted >> u8::BITS) as u8);
     buf[SECTION_LENGTH_LO_OFFSET] = fitted as u8;
     Ok(())
@@ -633,7 +632,7 @@ pub(crate) fn write_pid_r(
     reserved: u8,
 ) -> crate::Result<()> {
     let pid = pid.value();
-    buf[0] = (broadcast_common::len::fit_mask(reserved, RESERVED_3, "reserved")?
+    buf[0] = (broadcast_core::len::fit_mask(reserved, RESERVED_3, "reserved")?
         << PID_RESERVED_SHIFT)
         | ((pid >> u8::BITS) as u8 & PID_LO_MASK);
     buf[1] = (pid & u16::from(u8::MAX)) as u8;
@@ -649,8 +648,8 @@ pub(crate) fn len_reserved_of(hi: u8) -> u8 {
 /// Write a checked 12-bit length with a caller-supplied `reserved(4)`.
 pub(crate) fn write_desc_loop_len_r(buf: &mut [u8], len: usize, reserved: u8) -> crate::Result<()> {
     let fitted =
-        broadcast_common::len::fit_bits(len as u64, SECTION_LENGTH_BITS, "descriptors_length")?;
-    buf[0] = (broadcast_common::len::fit_mask(reserved, RESERVED_4, "reserved")?
+        broadcast_core::len::fit_bits(len as u64, SECTION_LENGTH_BITS, "descriptors_length")?;
+    buf[0] = (broadcast_core::len::fit_mask(reserved, RESERVED_4, "reserved")?
         << LEN_RESERVED_SHIFT)
         | ((fitted >> u8::BITS) as u8);
     buf[1] = fitted as u8;
@@ -672,7 +671,7 @@ pub(crate) const LOW_NIBBLE_MASK: u8 = 0x0F;
 /// section; test/fixture helper counterpart of [`write_section_length`].
 #[cfg(test)]
 use alloc::vec::Vec;
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::reserved::ReservedOnes;
 #[cfg(test)]
 pub(crate) fn push_section_header(v: &mut Vec<u8>, flags: u8, len: usize) {
     v.push(flags | ((len >> 8) as u8 & SECTION_LENGTH_HI_MASK));

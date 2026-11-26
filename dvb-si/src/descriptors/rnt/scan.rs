@@ -10,7 +10,7 @@
 use crate::descriptors::entry_list::{Entry, list_len, parse_list, write_list};
 use crate::error::Result;
 use alloc::vec::Vec;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for RNT_scan_descriptor (RNT namespace).
 pub const TAG: u8 = 0x42;

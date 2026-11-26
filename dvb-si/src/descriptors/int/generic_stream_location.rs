@@ -12,8 +12,8 @@
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for IP/MAC_generic_stream_location_descriptor.
 pub const TAG: u8 = 0x15;
@@ -90,7 +90,7 @@ impl ModulationSystemType {
         }
     }
 }
-broadcast_common::impl_spec_display!(ModulationSystemType, Reserved);
+broadcast_core::impl_spec_display!(ModulationSystemType, Reserved);
 
 /// Bit shift of the high sub-field of a two-sub-field `PHY_stream_id`.
 const PHY_HIGH_SHIFT: u32 = 8;
@@ -264,12 +264,12 @@ impl Serialize for IpMacGenericStreamLocationDescriptor<'_> {
         let (flag, value, sel): (u8, u8, &[u8]) = match self.selector {
             GenericStreamSelector::Flags(flags) => (
                 0,
-                broadcast_common::len::fit_mask(flags, SELECTOR_VALUE_MASK, "selector_flags")?,
+                broadcast_core::len::fit_mask(flags, SELECTOR_VALUE_MASK, "selector_flags")?,
                 &[],
             ),
             GenericStreamSelector::Bytes(b) => (
                 SELECTOR_LENGTH_FLAG,
-                u8::try_from(broadcast_common::len::fit_bits(
+                u8::try_from(broadcast_core::len::fit_bits(
                     b.len() as u64,
                     SELECTOR_VALUE_BITS,
                     "selector_length",

@@ -13,9 +13,9 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for VBI_data_descriptor.
 pub const TAG: u8 = 0x45;
@@ -213,7 +213,7 @@ impl Serialize for VbiDataDescriptor<'_> {
                     for line in lines {
                         buf[pos] = ((line.reserved_future_use.get() as u8) << LINE_RESERVED_SHIFT)
                             | (u8::from(line.field_parity) << LINE_PARITY_SHIFT)
-                            | broadcast_common::len::fit_mask(
+                            | broadcast_core::len::fit_mask(
                                 line.line_offset,
                                 LINE_OFFSET_MASK,
                                 "line_offset",

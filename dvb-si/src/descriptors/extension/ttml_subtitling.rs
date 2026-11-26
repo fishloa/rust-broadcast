@@ -4,8 +4,8 @@
 //! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedZero;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedZero;
 
 impl<'a> ExtensionBodyDef<'a> for TtmlSubtitling<'a> {
     const TAG_EXTENSION: u8 = 0x20;
@@ -162,7 +162,7 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<{ QUALIFIER_LEN }>())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + QUALIFIER_LEN,
                         have: sel.len(),
                         what: "TTML_subtitling body",
@@ -179,7 +179,7 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
         let font_ids = if essential_font_usage_flag != 0 {
             if sel.len() <= pos {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + 1,
                         have: sel.len(),
                         what: "TTML_subtitling body",
@@ -207,7 +207,7 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
         // text run
         if sel.len() <= pos {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: pos + 1,
                     have: sel.len(),
                     what: "TTML_subtitling body",
@@ -253,19 +253,19 @@ impl Serialize for TtmlSubtitling<'_> {
         need_out(buf, len)?;
         buf[..ISO_639_LEN].copy_from_slice(&self.iso_639_language_code.0);
         // byte 3: subtitle_purpose(6) | TTS_suitability(2)
-        buf[ISO_639_LEN] = (broadcast_common::len::fit_mask(
+        buf[ISO_639_LEN] = (broadcast_core::len::fit_mask(
             self.subtitle_purpose,
             SUBTITLE_PURPOSE_MASK,
             "subtitle_purpose",
         )? << SUBTITLE_PURPOSE_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.tts_suitability,
                 TTS_SUITABILITY_MASK,
                 "tts_suitability",
             )?;
         // byte 4: essential_font_usage_flag(1) | qualifier_present_flag(1)
         //         | reserved_zero_future_use(2) (preserved) | dvb_ttml_profile_count(4)
-        let dvb_ttml_profile_count = broadcast_common::len::fit_bits(
+        let dvb_ttml_profile_count = broadcast_core::len::fit_bits(
             self.dvb_ttml_profiles.len() as u64,
             PROFILE_COUNT_BITS,
             "dvb_ttml_profile_count",
@@ -296,18 +296,18 @@ impl Serialize for TtmlSubtitling<'_> {
 
         // conditional font-id loop
         if let Some(ids) = &self.font_ids {
-            buf[pos] = broadcast_common::len::fit_u8(ids.len(), "font_id_count")?;
+            buf[pos] = broadcast_core::len::fit_u8(ids.len(), "font_id_count")?;
             pos += 1;
             for id in ids {
                 buf[pos] = ((id.reserved_zero_future_use.get() as u8) << FONT_RESERVED_SHIFT)
-                    | broadcast_common::len::fit_mask(id.font_id, FONT_ID_MASK, "font_id")?;
+                    | broadcast_core::len::fit_mask(id.font_id, FONT_ID_MASK, "font_id")?;
                 pos += 1;
             }
         }
 
         // text run
         let raw = self.text.raw();
-        buf[pos] = broadcast_common::len::fit_u8(raw.len(), "text_length")?;
+        buf[pos] = broadcast_core::len::fit_u8(raw.len(), "text_length")?;
         pos += 1;
         buf[pos..pos + raw.len()].copy_from_slice(raw);
         pos += raw.len();

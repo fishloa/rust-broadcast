@@ -1,8 +1,8 @@
 //! Target Region Descriptor — ETSI EN 300 468 §6.4.12 (tag_extension 0x09).
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
 
 /// Shift of `reserved_future_use(5)` in the per-entry flags byte.
 const ENTRY_RESERVED_SHIFT: u8 = 3;
@@ -144,7 +144,7 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
             1 => {
                 if pos + REGION_DEPTH_1_CODES_LEN > sel.len() {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + 1,
                             have: sel.len(),
                             what: "target_region body",
@@ -160,7 +160,7 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
             2 => {
                 if pos + REGION_DEPTH_2_CODES_LEN > sel.len() {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + REGION_DEPTH_2_CODES_LEN,
                             have: sel.len(),
                             what: "target_region body",
@@ -178,7 +178,7 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
             3 => {
                 if pos + REGION_DEPTH_3_CODES_LEN > sel.len() {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + REGION_DEPTH_3_CODES_LEN,
                             have: sel.len(),
                             what: "target_region body",
@@ -190,7 +190,7 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
                 let (tert_bytes, _) = sel[pos + REGION_DEPTH_2_CODES_LEN..]
                     .split_first_chunk::<{ core::mem::size_of::<u16>() }>()
                     .ok_or(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + REGION_DEPTH_3_CODES_LEN,
                             have: sel.len(),
                             what: "target_region body",

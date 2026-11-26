@@ -134,7 +134,7 @@ impl CiPlusResource {
         }
     }
 }
-broadcast_common::impl_spec_display!(CiPlusResource);
+broadcast_core::impl_spec_display!(CiPlusResource);
 
 /// Map a [`ResourceId`] to the CI Plus resource it denotes, or `None` for any
 /// resource not dispatched by [`CiPlusApdu`].
@@ -220,7 +220,7 @@ impl<'a> CiPlusApdu<'a> {
     }
 }
 
-impl broadcast_common::Serialize for CiPlusApdu<'_> {
+impl broadcast_core::Serialize for CiPlusApdu<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         match self {
@@ -247,7 +247,7 @@ impl broadcast_common::Serialize for CiPlusApdu<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     #[test]
     fn classify_fixed_ids() {

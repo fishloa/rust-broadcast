@@ -66,7 +66,7 @@ impl TransportProfile {
         }
     }
 }
-broadcast_common::impl_spec_display!(TransportProfile, Reserved, UserPrivate);
+broadcast_core::impl_spec_display!(TransportProfile, Reserved, UserPrivate);
 
 /// `Transport_profile_descriptor()` — Table 2-111.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -93,7 +93,7 @@ impl TransportProfileDescriptor {
 
     fn parse_body(body: &[u8]) -> Result<Self> {
         let (&profile, rest) = body.split_first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "TransportProfileDescriptor",
@@ -125,7 +125,7 @@ mod tests {
     use super::*;
     use alloc::string::ToString;
     use alloc::vec;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     #[test]
     fn profiles_and_private_data() {

@@ -3,7 +3,7 @@
 //! (`dvb-tools` prints them), so each branch is pinned to the exact numbers
 //! derived by hand from the byte layout — not just "it failed".
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_si::Error;
 use dvb_si::carousel::messages::{MESSAGE_ID_DII, MESSAGE_ID_DSI};
 use dvb_si::carousel::{GroupInfoIndication, UnMessage};
@@ -35,7 +35,7 @@ fn seal(mut bytes: Vec<u8>) -> Vec<u8> {
 }
 
 fn too_short(need: usize, have: usize, what: &'static str) -> Error {
-    Error::BufferTooShort(broadcast_common::error::BufferTooShort { need, have, what })
+    Error::BufferTooShort(broadcast_core::error::BufferTooShort { need, have, what })
 }
 
 fn overflow(declared: usize, available: usize) -> Error {

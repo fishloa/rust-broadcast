@@ -14,9 +14,9 @@ use super::RunningStatus;
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// table_id for the Selection Information Table.
 pub const TABLE_ID: u8 = 0x7F;
@@ -32,7 +32,7 @@ use super::CRC_LEN;
 const SERVICE_HEADER_LEN: usize = 4;
 /// Maximum value of the 12-bit service_descriptors_length field. Only used
 /// by the boundary test below; production code routes the guard through
-/// `broadcast_common::len::fit_bits`.
+/// `broadcast_core::len::fit_bits`.
 #[cfg(test)]
 const MAX_SERVICE_DESC_LEN: usize = 0x0FFF;
 const MIN_SECTION_LEN: usize =
@@ -194,7 +194,7 @@ impl<'a> Parse<'a> for SitSection<'a> {
         while pos < crc_start {
             if pos + SERVICE_HEADER_LEN > crc_start {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + SERVICE_HEADER_LEN,
                         have: crc_start,
                         what: "SitService header",
@@ -205,7 +205,7 @@ impl<'a> Parse<'a> for SitSection<'a> {
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<SERVICE_ID_LEN>())
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + SERVICE_ID_LEN,
                         have: crc_start,
                         what: "SitService header",
@@ -286,7 +286,7 @@ impl Serialize for SitSection<'_> {
         buf[super::LAST_SECTION_NUMBER_OFFSET] = self.last_section_number;
 
         let dl_pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
-        let ti_len = broadcast_common::len::fit_bits(
+        let ti_len = broadcast_core::len::fit_bits(
             self.transmission_info_descriptors.len() as u64,
             super::DESC_LOOP_LEN_BITS,
             "transmission_info_loop_length",
@@ -305,7 +305,7 @@ impl Serialize for SitSection<'_> {
             buf[pos..pos + SERVICE_ID_LEN].copy_from_slice(&svc.service_id.to_be_bytes());
             // service_descriptors_length is a 12-bit field (max 0x0FFF, see
             // MAX_SERVICE_DESC_LEN below).
-            let dll = broadcast_common::len::fit_bits(
+            let dll = broadcast_core::len::fit_bits(
                 svc.descriptors.len() as u64,
                 super::DESC_LOOP_LEN_BITS,
                 "service_descriptors_length",

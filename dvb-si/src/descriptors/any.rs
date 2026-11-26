@@ -37,7 +37,7 @@
 //! # Adding a descriptor
 //!
 //! 1. Create the module with the wire layout, a `pub const TAG: u8`, and the
-//!    symmetric [`broadcast_common::Parse`]/[`broadcast_common::Serialize`] impls +
+//!    symmetric [`broadcast_core::Parse`]/[`broadcast_core::Serialize`] impls +
 //!    round-trip tests (copy an existing module).
 //! 2. `impl DescriptorDef` for the type (`TAG` from the module const, `NAME`
 //!    in SCREAMING_SNAKE without the `_descriptor` suffix).
@@ -159,7 +159,7 @@ macro_rules! declare_descriptors {
             /// real-capture byte-identity survey.
             #[doc(hidden)]
             pub fn reserialize(&self) -> Option<core::result::Result<alloc::vec::Vec<u8>, alloc::string::String>> {
-                use broadcast_common::Serialize;
+                use broadcast_core::Serialize;
                 fn go<S: Serialize>(d: &S) -> core::result::Result<alloc::vec::Vec<u8>, alloc::string::String>
                 where
                     S::Error: core::fmt::Debug,
@@ -174,7 +174,7 @@ macro_rules! declare_descriptors {
                     Self::Other { .. } => None,
                     Self::Unknown { tag, body } => {
                         Some(
-                            broadcast_common::len::fit_u8(body.len(), "descriptor_length")
+                            broadcast_core::len::fit_u8(body.len(), "descriptor_length")
                                 .map(|n| {
                                     let mut v = alloc::vec![*tag, n];
                                     v.extend_from_slice(body);
@@ -192,7 +192,7 @@ macro_rules! declare_descriptors {
             /// caller turns that into [`AnyDescriptor::Unknown`]). `Some(Err)`
             /// is a typed parse failure for a recognised tag.
             pub(crate) fn dispatch(tag: u8, full: &$lt [u8]) -> Option<crate::Result<Self>> {
-                use broadcast_common::Parse;
+                use broadcast_core::Parse;
                 match tag {
                     $(
                         $tag => Some(<$($path)::+>::parse(full).map(Self::$variant)),
@@ -399,7 +399,7 @@ pub(crate) fn next_loop_entry<'a>(
     if rem.len() < DESC_HEADER_LEN {
         *fused = true;
         return Some(Err(crate::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: DESC_HEADER_LEN,
                 have: rem.len(),
                 what: "descriptor header in loop",
@@ -412,7 +412,7 @@ pub(crate) fn next_loop_entry<'a>(
     if rem.len() < total {
         *fused = true;
         return Some(Err(crate::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: total,
                 have: rem.len(),
                 what: "descriptor body in loop",
@@ -774,12 +774,12 @@ mod tests {
             x: u8,
         }
 
-        impl<'a> broadcast_common::Parse<'a> for MyTag0xA7 {
+        impl<'a> broadcast_core::Parse<'a> for MyTag0xA7 {
             type Error = crate::error::Error;
             fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
                 if bytes.len() < 3 {
                     return Err(crate::error::Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: 3,
                             have: bytes.len(),
                             what: "MyTag0xA7",

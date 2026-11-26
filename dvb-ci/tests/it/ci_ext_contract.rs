@@ -2,8 +2,8 @@
 //! CI-extension resources (ETSI TS 101 699 Tables 22-30, 41-51, 55-60, 69-73,
 //! and the Resource Manager v2 module-id objects).
 
-use broadcast_common::error::LengthMismatch;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::LengthMismatch;
+use broadcast_core::{Parse, Serialize};
 use dvb_ci::Error;
 use dvb_ci::ci_ext::copy_protection::{CpCommand, CpQuery, CpReply, CpStatus};
 use dvb_ci::ci_ext::event_manager::{EventReply, EventRequestAck, EventType};
@@ -289,7 +289,7 @@ fn selection_information_truncated_prefixes_are_not_misparsed() {
         }
     }
     match SelectionInformation::parse(&buf[..8]) {
-        Err(Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Err(Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need, have, ..
         })) => assert_eq!((need, have), (7, 3)),
         other => panic!("expected BufferTooShort(7,3), got {other:?}"),
@@ -314,7 +314,7 @@ fn port_profile_truncated_prefixes_are_not_misparsed() {
         }
     }
     match PortProfile::parse(&buf[..7]) {
-        Err(Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Err(Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need, have, ..
         })) => assert_eq!((need, have), (9, 3)),
         other => panic!("expected BufferTooShort(9,3), got {other:?}"),

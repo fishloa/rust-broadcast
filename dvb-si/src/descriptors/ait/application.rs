@@ -8,9 +8,9 @@
 use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for application_descriptor (AIT namespace).
 pub const TAG: u8 = 0x00;
@@ -92,7 +92,7 @@ impl Visibility {
         }
     }
 }
-broadcast_common::impl_spec_display!(Visibility, Other);
+broadcast_core::impl_spec_display!(Visibility, Other);
 
 /// One application profile entry — Table 4.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -258,7 +258,7 @@ impl Serialize for ApplicationDescriptor {
             pos += PROFILE_ENTRY_LEN;
         }
         let flags_byte = (u8::from(self.service_bound_flag) << SERVICE_BOUND_FLAG_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.visibility.to_u8(),
                 VISIBILITY_MASK,
                 "visibility",

@@ -4,7 +4,7 @@
 //! independent implementation, so a field both decoders read differently fails.
 #![cfg(feature = "ts")]
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_si::descriptors::rnt::AnyRntDescriptor;
 use dvb_si::descriptors::unt::AnyUntDescriptor;
 use dvb_si::tables::rnt::RntSection;

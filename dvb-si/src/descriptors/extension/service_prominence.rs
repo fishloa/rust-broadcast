@@ -1,8 +1,8 @@
 //! Service Prominence Descriptor — ETSI EN 300 468 §6.4.18 (tag_extension 0x22).
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
 
 impl<'a> ExtensionBodyDef<'a> for ServiceProminence<'a> {
     const TAG_EXTENSION: u8 = 0x22;
@@ -100,7 +100,7 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 1,
                     have: sel.len(),
                     what: "service_prominence body",
@@ -115,7 +115,7 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
         while k < sogi_slice.len() {
             if sogi_slice.len() - k < SOGI_ENTRY_FIXED_LEN {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: 1 + k + SOGI_ENTRY_FIXED_LEN,
                         have: sel.len(),
                         what: "service_prominence body",
@@ -138,7 +138,7 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
                 let (b, _) = sogi_slice[k..]
                     .split_first_chunk::<{ SOGI_SERVICE_ID_LEN }>()
                     .ok_or(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: 1 + k + SOGI_ENTRY_FIXED_LEN,
                             have: sel.len(),
                             what: "service_prominence body",
@@ -153,7 +153,7 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
             let target_region_loop = if target_region_flag {
                 if sogi_slice.len() - k < 1 {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: 1 + k + 1,
                             have: sel.len(),
                             what: "service_prominence body",
@@ -164,7 +164,7 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
                 k += 1;
                 if sogi_slice.len() - k < region_len {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: 1 + k + region_len,
                             have: sel.len(),
                             what: "service_prominence body",
@@ -222,11 +222,11 @@ impl Serialize for ServiceProminence<'_> {
         need_out(buf, len)?;
         let sogi_len = len - 1 - self.private_data.len();
         let sogi_len =
-            broadcast_common::len::fit_bits(sogi_len as u64, LOOP_LENGTH_BITS, "sogi_list_length")?;
+            broadcast_core::len::fit_bits(sogi_len as u64, LOOP_LENGTH_BITS, "sogi_list_length")?;
         buf[0] = sogi_len as u8;
         let mut p = 1;
         for e in &self.sogi_list {
-            let priority = broadcast_common::len::fit_bits(
+            let priority = broadcast_core::len::fit_bits(
                 u64::from(e.sogi_priority),
                 SOGI_PRIORITY_BITS,
                 "sogi_priority",
@@ -244,7 +244,7 @@ impl Serialize for ServiceProminence<'_> {
             }
             if let Some(entries) = &e.target_region_loop {
                 let entries_len = super::target_region::region_entries_serialized_len(entries);
-                let entries_len = broadcast_common::len::fit_bits(
+                let entries_len = broadcast_core::len::fit_bits(
                     entries_len as u64,
                     LOOP_LENGTH_BITS,
                     "target_region_loop_length",

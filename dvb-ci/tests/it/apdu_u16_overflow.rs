@@ -6,7 +6,7 @@
 //! representable field must still round-trip its length byte-exactly, so a
 //! change to the header cap can never turn the casts into silent wraps.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_ci::ci_plus::cicam_player::{
     ComponentType, PlayerCapabilitiesReply, PlayerPlayReq, PlayerStartReq, PlayerUpdateReq,
     PlayerVerifyReq,

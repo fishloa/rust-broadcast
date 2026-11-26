@@ -2,7 +2,7 @@
 //!
 //! Run with: `cargo run -p dvb-ci --example parse_apdu`
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_ci::AnyApdu;
 use dvb_ci::objects::ca_info::CaInfo;
 

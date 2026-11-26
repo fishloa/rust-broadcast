@@ -9,7 +9,7 @@
 
 use std::time::Duration;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_ci::objects::application_info::{ApplicationInfo, ApplicationInfoEnq};
 use dvb_ci::objects::ca_info::{CaInfo, CaInfoEnq};
 use dvb_ci::objects::ca_pmt_reply::{CaEnable, CaPmtReply};

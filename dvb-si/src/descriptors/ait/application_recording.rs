@@ -12,9 +12,9 @@ use super::label_bytes::LabelBytes;
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for application_recording_descriptor (AIT namespace).
 pub const TAG: u8 = 0x06;
@@ -97,7 +97,7 @@ impl StorageProperties {
         }
     }
 }
-broadcast_common::impl_spec_display!(StorageProperties, Reserved);
+broadcast_core::impl_spec_display!(StorageProperties, Reserved);
 
 /// One labelled part of the application and its storage importance.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -272,10 +272,10 @@ impl Serialize for ApplicationRecordingDescriptor<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         let reserved = self.reserved.get() as u8;
-        let label_count = broadcast_common::len::fit_u8(self.labels.len(), "label_count")?;
+        let label_count = broadcast_core::len::fit_u8(self.labels.len(), "label_count")?;
         let tag_list_len =
-            broadcast_common::len::fit_u8(self.component_tags.len(), "component_tag_list_length")?;
-        let private_len = broadcast_common::len::fit_u8(self.private.len(), "private_length")?;
+            broadcast_core::len::fit_u8(self.component_tags.len(), "component_tag_list_length")?;
+        let private_len = broadcast_core::len::fit_u8(self.private.len(), "private_length")?;
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[HEADER_LEN] = reserved
@@ -288,11 +288,11 @@ impl Serialize for ApplicationRecordingDescriptor<'_> {
         buf[HEADER_LEN + LABEL_COUNT_OFFSET] = label_count;
         let mut pos = HEADER_LEN + FIRST_LABEL_OFFSET;
         for l in &self.labels {
-            buf[pos] = broadcast_common::len::fit_u8(l.label.len(), "label_length")?;
+            buf[pos] = broadcast_core::len::fit_u8(l.label.len(), "label_length")?;
             pos += 1;
             buf[pos..pos + l.label.len()].copy_from_slice(l.label.as_bytes());
             pos += l.label.len();
-            let props = broadcast_common::len::fit_mask(
+            let props = broadcast_core::len::fit_mask(
                 l.storage_properties.to_u8(),
                 RESERVED_MASK,
                 "storage_properties",

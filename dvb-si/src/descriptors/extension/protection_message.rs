@@ -1,7 +1,7 @@
 //! Protection Message Descriptor — ETSI TS 102 809 §9.3.3, Table 40 (tag_extension 0x18).
 use super::*;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
 
 impl<'a> ExtensionBodyDef<'a> for ProtectionMessage<'a> {
     const TAG_EXTENSION: u8 = 0x18;
@@ -58,7 +58,7 @@ impl<'a> Parse<'a> for ProtectionMessage<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         let first = *sel.first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "protection_message body",
@@ -70,7 +70,7 @@ impl<'a> Parse<'a> for ProtectionMessage<'a> {
         let component_tags = sel
             .get(1..1 + component_count)
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 1 + component_count,
                     have: sel.len(),
                     what: "protection_message component_tags",
@@ -97,7 +97,7 @@ impl Serialize for ProtectionMessage<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        let component_count = broadcast_common::len::fit_bits(
+        let component_count = broadcast_core::len::fit_bits(
             self.component_tags.len() as u64,
             COMPONENT_COUNT_BITS,
             "component_count",

@@ -7,8 +7,8 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// table_id for Stuffing Table.
 pub const TABLE_ID: u8 = 0x72;
@@ -238,7 +238,7 @@ mod tests {
         let bytes = [0x72, 0x70]; // only 2 bytes
         assert!(matches!(
             StSection::parse(&bytes).unwrap_err(),
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort { need: 3, .. })
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort { need: 3, .. })
         ));
     }
 

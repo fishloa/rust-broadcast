@@ -16,7 +16,7 @@
 //! `cargo run -p dvb-tools -- epg fixtures/ts/tnt-5w-12732v-isi6-10s.ts --json`.
 #![cfg(all(feature = "ts", feature = "jiff"))]
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::epg::{PRESENT_CHANGE_QUEUE_CAP, PresentEventChange, PresentEventTracker};
 use dvb_si::tables::RunningStatus;

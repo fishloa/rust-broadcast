@@ -2,8 +2,8 @@
 //! application objects (audit 23): every `serialize_into` return, the
 //! 12-bit length fields, the 255-byte ceilings and every `name()` label.
 
-use broadcast_common::error::{BufferTooShort, LengthMismatch};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::{BufferTooShort, LengthMismatch};
+use broadcast_core::{Parse, Serialize};
 use dvb_ci::Error;
 use dvb_ci::length::{LengthForm, decode_form, encode_into, encode_with};
 use dvb_ci::objects::application_info::{ApplicationInfo, ApplicationType};

@@ -6,7 +6,7 @@
 //! guard that rejects everything cannot pass. The lexical scan in
 //! `serializer_length_truncation.rs` covers the remaining sites.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::descriptors::announcement_support::{
     AnnouncementEntry, AnnouncementReference, AnnouncementSupportDescriptor, AnnouncementType,
     ReferenceType,

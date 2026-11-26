@@ -8,8 +8,8 @@
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for ISP_access_mode_descriptor.
 pub const TAG: u8 = 0x14;
@@ -60,7 +60,7 @@ impl IspAccessMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(IspAccessMode, Reserved);
+broadcast_core::impl_spec_display!(IspAccessMode, Reserved);
 
 /// ISP_access_mode_descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]

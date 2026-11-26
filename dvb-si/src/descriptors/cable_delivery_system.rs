@@ -5,9 +5,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for cable_delivery_system_descriptor.
 pub const TAG: u8 = 0x44;
@@ -79,7 +79,7 @@ impl FecOuter {
         }
     }
 }
-broadcast_common::impl_spec_display!(FecOuter, Reserved);
+broadcast_core::impl_spec_display!(FecOuter, Reserved);
 
 /// Modulation scheme — ETSI EN 300 468 Table 35.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +117,7 @@ impl Modulation {
         }
     }
 }
-broadcast_common::impl_spec_display!(Modulation, Reserved);
+broadcast_core::impl_spec_display!(Modulation, Reserved);
 
 /// FEC inner convolutional code rate — ETSI EN 300 468 Table 36.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,7 +208,7 @@ impl FecInner {
         }
     }
 }
-broadcast_common::impl_spec_display!(FecInner, Reserved);
+broadcast_core::impl_spec_display!(FecInner, Reserved);
 
 /// Cable Delivery System Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -353,7 +353,7 @@ fn serialize_fec_inner(fec: FecInner) -> Result<u8> {
     // `Reserved(v)` carries a raw byte; the wire field is 4 bits, so mask at
     // the shift — a value like 0x3F must not bleed into
     // `symbol_rate_bcd`'s low nibble (r03-W2).
-    Ok(broadcast_common::len::fit_mask(
+    Ok(broadcast_core::len::fit_mask(
         fec.to_u8(),
         FEC_INNER_MASK,
         "fec_inner",
@@ -436,7 +436,7 @@ impl Serialize for CableDeliverySystemDescriptor {
 
         let reserved_fu = (self.reserved_future_use.get() as u16) << RESERVED_FU_SHIFT;
         let fec_outer_byte = reserved_fu
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 serialize_fec_outer(self.fec_outer),
                 FEC_OUTER_MASK,
                 "fec_outer",
@@ -448,7 +448,7 @@ impl Serialize for CableDeliverySystemDescriptor {
         buf[HEADER_LEN + MODULATION_OFFSET] = serialize_modulation(self.modulation);
 
         let symbol_rate =
-            broadcast_common::len::fit_mask(self.symbol_rate_bcd, SYMBOL_RATE_MASK, "symbol_rate")?;
+            broadcast_core::len::fit_mask(self.symbol_rate_bcd, SYMBOL_RATE_MASK, "symbol_rate")?;
         let spec_value = symbol_rate >> SYMBOL_RATE_LOW_NIBBLE_SHIFT;
         let spec_bytes = spec_value.to_be_bytes();
         buf[HEADER_LEN + SYMBOL_RATE_BCD_OFFSET..HEADER_LEN + FEC_INNER_OFFSET]

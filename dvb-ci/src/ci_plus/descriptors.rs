@@ -14,8 +14,8 @@
 //! and the byte sequence are structural.
 
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// `descriptor_tag` of the `ciplus_initialization_vector_descriptor` (Table 46).
 pub const IV_DESCRIPTOR_TAG: u8 = 0xD0;
@@ -92,7 +92,7 @@ impl Serialize for CiplusKeyIdentifierDescriptor<'_> {
 fn parse_tlv<'a>(bytes: &'a [u8], expected_tag: u8, what: &'static str) -> Result<&'a [u8]> {
     if bytes.len() < DESC_HEADER {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: DESC_HEADER,
                 have: bytes.len(),
                 what,
@@ -109,7 +109,7 @@ fn parse_tlv<'a>(bytes: &'a [u8], expected_tag: u8, what: &'static str) -> Resul
     let end = DESC_HEADER + len;
     if bytes.len() < end {
         return Err(Error::LengthMismatch(
-            broadcast_common::error::LengthMismatch {
+            broadcast_core::error::LengthMismatch {
                 what,
                 declared: len,
                 actual: bytes.len().saturating_sub(DESC_HEADER),

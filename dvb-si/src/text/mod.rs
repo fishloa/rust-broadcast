@@ -124,7 +124,7 @@ impl LegacyCharset {
     }
 }
 
-broadcast_common::impl_spec_display!(LegacyCharset);
+broadcast_core::impl_spec_display!(LegacyCharset);
 
 /// Decode a DVB text payload (e.g. short_event_descriptor event_name_char)
 /// into an owned UTF-8 `String`. The first byte may be a charset indicator

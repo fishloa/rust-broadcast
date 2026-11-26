@@ -41,8 +41,8 @@ use crate::reserved::ReservedOnes;
 use crate::tag::{CA_PMT, CA_PMT_REPLY};
 use crate::wire::be_u16;
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
 // Re-export the shared value enums so callers needn't reach into `objects`.

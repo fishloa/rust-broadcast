@@ -105,7 +105,7 @@ macro_rules! declare_scoped_namespace {
             pub fn reserialize(
                 &self,
             ) -> Option<core::result::Result<alloc::vec::Vec<u8>, alloc::string::String>> {
-                use broadcast_common::Serialize;
+                use broadcast_core::Serialize;
                 fn go<S: Serialize>(
                     d: &S,
                 ) -> core::result::Result<alloc::vec::Vec<u8>, alloc::string::String>
@@ -121,7 +121,7 @@ macro_rules! declare_scoped_namespace {
                     $( Self::$variant(d) => Some(go(d)), )+
                     Self::Si(d) => d.reserialize(),
                     Self::Unknown { tag, body } => Some(
-                        broadcast_common::len::fit_u8(body.len(), "descriptor_length")
+                        broadcast_core::len::fit_u8(body.len(), "descriptor_length")
                             .map(|n| {
                                 let mut v = alloc::vec![*tag, n];
                                 v.extend_from_slice(body);
@@ -134,7 +134,7 @@ macro_rules! declare_scoped_namespace {
 
             /// Parse one full descriptor (2-byte header included) by its tag.
             pub(crate) fn dispatch(tag: u8, full: &$lt [u8]) -> crate::error::Result<Self> {
-                use broadcast_common::Parse;
+                use broadcast_core::Parse;
                 match tag {
                     $(
                         $tag => <$($path)::+>::parse(full).map(Self::$variant),

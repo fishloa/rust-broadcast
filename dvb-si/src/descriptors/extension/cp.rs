@@ -3,8 +3,8 @@
 //! Content protection signalling: a CP_system_id, the PID carrying the CP
 //! stream, and a private_data byte run.
 use super::*;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedOnes;
 use mpeg_ts::pid::Pid;
 
 impl<'a> ExtensionBodyDef<'a> for Cp<'a> {

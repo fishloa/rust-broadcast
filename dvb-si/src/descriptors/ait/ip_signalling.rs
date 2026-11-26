@@ -8,8 +8,8 @@
 
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for ip_signalling_descriptor (AIT namespace).
 pub const TAG: u8 = 0x11;
@@ -56,8 +56,7 @@ impl Serialize for IpSignallingDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        let id =
-            broadcast_common::len::fit_mask(self.platform_id, PLATFORM_ID_MASK, "platform_id")?;
+        let id = broadcast_core::len::fit_mask(self.platform_id, PLATFORM_ID_MASK, "platform_id")?;
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[HEADER_LEN..len].copy_from_slice(&id.to_be_bytes()[1..]);

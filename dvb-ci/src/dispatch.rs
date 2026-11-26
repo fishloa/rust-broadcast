@@ -52,7 +52,7 @@ macro_rules! declare_resource_apdus {
             /// Parse an APDU, dispatching on the leading `apdu_tag`.
             pub fn parse(body: & $($lt)? [u8]) -> $crate::error::Result<Self> {
                 if body.len() < $crate::objects::APDU_TAG_LEN {
-                    return Err($crate::error::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                    return Err($crate::error::Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                         need: $crate::objects::APDU_TAG_LEN,
                         have: body.len(),
                         what: concat!($what, " apdu_tag"),
@@ -74,7 +74,7 @@ macro_rules! declare_resource_apdus {
             }
         }
 
-        impl $(<$lt>)? ::broadcast_common::Serialize for $name $(<$lt>)? {
+        impl $(<$lt>)? ::broadcast_core::Serialize for $name $(<$lt>)? {
             type Error = $crate::error::Error;
             fn serialized_len(&self) -> usize {
                 match self {
@@ -114,14 +114,14 @@ pub(crate) use declare_resource_apdus;
 /// modules (audit r10-O-4).
 macro_rules! declare_empty_apdu {
     ($ty:ty, $tag:expr, $what:literal) => {
-        impl<'a> ::broadcast_common::Parse<'a> for $ty {
+        impl<'a> ::broadcast_core::Parse<'a> for $ty {
             type Error = $crate::error::Error;
             fn parse(bytes: &'a [u8]) -> $crate::error::Result<Self> {
                 let length_form = $crate::objects::parse_empty_apdu(bytes, $tag, $what)?;
                 Ok(Self { length_form })
             }
         }
-        impl ::broadcast_common::Serialize for $ty {
+        impl ::broadcast_core::Serialize for $ty {
             type Error = $crate::error::Error;
             fn serialized_len(&self) -> usize {
                 $crate::objects::empty_apdu_len(self.length_form)
@@ -139,7 +139,7 @@ pub(crate) use declare_empty_apdu;
 /// `opaque_dsmcc_object!`, the same macro under two names (audit r10-O-4).
 macro_rules! declare_opaque_apdu {
     ($ty:ident, $field:ident, $tag:expr, $what:literal) => {
-        impl<'a> ::broadcast_common::Parse<'a> for $ty<'a> {
+        impl<'a> ::broadcast_core::Parse<'a> for $ty<'a> {
             type Error = $crate::error::Error;
             fn parse(bytes: &'a [u8]) -> $crate::error::Result<Self> {
                 let (length_form, body) = $crate::objects::parse_apdu_header(bytes, $tag, $what)?;
@@ -149,7 +149,7 @@ macro_rules! declare_opaque_apdu {
                 })
             }
         }
-        impl ::broadcast_common::Serialize for $ty<'_> {
+        impl ::broadcast_core::Serialize for $ty<'_> {
             type Error = $crate::error::Error;
             fn serialized_len(&self) -> usize {
                 $crate::objects::apdu_len(self.$field.len(), self.length_form)

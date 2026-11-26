@@ -7,8 +7,8 @@ use super::descriptor_body;
 use super::service::ServiceType;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for service_list_descriptor.
 pub const TAG: u8 = 0x41;

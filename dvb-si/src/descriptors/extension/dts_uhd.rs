@@ -1,6 +1,6 @@
 //! DTS-UHD Descriptor — ETSI EN 300 468 V1.20.1 Annex G §G.5.1, Table G.15 (tag_extension 0x21).
 use super::*;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for DtsUhd<'a> {
     const TAG_EXTENSION: u8 = 0x21;
@@ -105,7 +105,7 @@ impl FrameDurationCode {
         }
     }
 }
-broadcast_common::impl_spec_display!(FrameDurationCode);
+broadcast_core::impl_spec_display!(FrameDurationCode);
 
 /// `MaxPayloadCode` — Table G.17.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,7 +176,7 @@ impl MaxPayloadCode {
         }
     }
 }
-broadcast_common::impl_spec_display!(MaxPayloadCode, Reserved);
+broadcast_core::impl_spec_display!(MaxPayloadCode, Reserved);
 
 /// Fixed length before the `codec_selector` bytes.
 const DTS_UHD_FIXED_LEN: usize = 2;
@@ -212,27 +212,27 @@ impl Serialize for DtsUhd<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        buf[0] = (broadcast_common::len::fit_mask(
+        buf[0] = (broadcast_core::len::fit_mask(
             self.decoder_profile_code,
             DTS_UHD_PROFILE_CODE_MASK,
             "decoder_profile_code",
         )? << DTS_UHD_PROFILE_CODE_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.frame_duration_code.to_u8(),
                 DTS_UHD_FRAME_DURATION_MASK,
                 "frame_duration_code",
             )?;
-        buf[1] = (broadcast_common::len::fit_mask(
+        buf[1] = (broadcast_core::len::fit_mask(
             self.max_payload_code.to_u8(),
             DTS_UHD_MAX_PAYLOAD_MASK,
             "max_payload_code",
         )? << DTS_UHD_MAX_PAYLOAD_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.dts_reserved,
                 DTS_UHD_RESERVED_MASK,
                 "dts_reserved",
             )? << DTS_UHD_RESERVED_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.stream_index,
                 DTS_UHD_STREAM_INDEX_MASK,
                 "stream_index",

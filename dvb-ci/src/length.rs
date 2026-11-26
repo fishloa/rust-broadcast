@@ -13,7 +13,7 @@
 //! The indefinite-length ASN.1 form is NOT used.
 
 use crate::error::{Error, Result};
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 /// The `size_indicator` bit (the MSB of the first `length_field` byte): set when
 /// the field is the multi-byte form.
@@ -82,7 +82,7 @@ impl LengthForm {
         }
     }
 }
-broadcast_common::impl_spec_display!(LengthForm);
+broadcast_core::impl_spec_display!(LengthForm);
 
 /// Decode a `length_field` from the front of `bytes`.
 ///
@@ -318,7 +318,7 @@ mod tests {
         assert_eq!(
             decode(&[0x82, 0x12]),
             Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 3,
                     have: 2,
                     what: "length_field (long form)"

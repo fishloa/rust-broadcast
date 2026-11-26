@@ -80,7 +80,7 @@ fn truncated_tail_yields_ok_then_err_then_fuses() {
     assert_eq!(
         it.next().and_then(Result::err),
         Some(dvb_si::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 257,
                 have: 3,
                 what: "descriptor body in loop"
@@ -208,7 +208,7 @@ fn ext_registry_iter_guards_empty_and_non_extension_bodies() {
         const TAG_EXTENSION: u8 = TEST_EXT;
         const NAME: &'static str = "TEST_EXT";
     }
-    impl<'a> broadcast_common::Parse<'a> for TestExt {
+    impl<'a> broadcast_core::Parse<'a> for TestExt {
         type Error = dvb_si::error::Error;
         fn parse(sel: &'a [u8]) -> Result<Self, Self::Error> {
             Ok(Self {

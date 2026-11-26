@@ -55,7 +55,7 @@ impl MpegCarriageFlags {
         }
     }
 }
-broadcast_common::impl_spec_display!(MpegCarriageFlags);
+broadcast_core::impl_spec_display!(MpegCarriageFlags);
 
 #[cfg(test)]
 mod tests {

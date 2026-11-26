@@ -12,8 +12,8 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::DvbText;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for dvb_html_application_location_descriptor (AIT namespace).
 pub const TAG: u8 = 0x09;
@@ -69,7 +69,7 @@ impl Serialize for DvbHtmlApplicationLocationDescriptor<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         let root_len =
-            broadcast_common::len::fit_u8(self.physical_root.len(), "physical_root_length")?;
+            broadcast_core::len::fit_u8(self.physical_root.len(), "physical_root_length")?;
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[HEADER_LEN] = root_len;

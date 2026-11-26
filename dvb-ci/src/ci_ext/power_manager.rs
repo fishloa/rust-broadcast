@@ -11,8 +11,8 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::reserved::ReservedZero;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Power Manager (Tables 52, 54).
 pub mod tag {
@@ -67,7 +67,7 @@ impl ActivationState {
         }
     }
 }
-broadcast_common::impl_spec_display!(ActivationState, Reserved);
+broadcast_core::impl_spec_display!(ActivationState, Reserved);
 
 /// `reply_code` — the module's response to a state-change request (Table 55).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,7 +111,7 @@ impl ReplyCode {
         }
     }
 }
-broadcast_common::impl_spec_display!(ReplyCode, Reserved);
+broadcast_core::impl_spec_display!(ReplyCode, Reserved);
 
 /// `activation_state_change_request()` (Table 52): host → module.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -300,7 +300,7 @@ mod tests {
         assert!(matches!(
             PowerManagerApdu::parse(&[0x9F, 0x80]),
             Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 3,
                     have: 2,
                     ..

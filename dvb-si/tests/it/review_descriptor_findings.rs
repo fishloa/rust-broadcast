@@ -4,8 +4,8 @@
 //! `main` (9fe7a022) and must pass once the defect is fixed. Inputs are real
 //! wire bytes built from the cited syntax tables.
 
-use broadcast_common::reserved::{ReservedOnes, ReservedZero};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::reserved::{ReservedOnes, ReservedZero};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::descriptors::extension::{
     Cp, ExtensionDescriptor, S2XSatelliteDeliverySystem, S2Xv2SatelliteDeliverySystem,
     SupplementaryAudio,
@@ -55,7 +55,7 @@ fn nordig_v1_reserved_over_range_is_unrepresentable_not_masked() {
     let bytes = [0x83, 4, 0x00, 0x01, 0xC0, 0x05];
     let mut d = NordigLogicalChannelV1::parse(&bytes).unwrap();
     assert_eq!(ser(&d).unwrap(), bytes);
-    d.entries[0].reserved = broadcast_common::reserved::ReservedOnes::from_bits(2);
+    d.entries[0].reserved = broadcast_core::reserved::ReservedOnes::from_bits(2);
     assert_eq!(d.entries[0].reserved.get(), 0);
     assert_eq!(ser(&d).unwrap(), [0x83, 4, 0x00, 0x01, 0x80, 0x05]);
 }

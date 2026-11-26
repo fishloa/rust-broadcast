@@ -9,8 +9,8 @@
 use core::time::Duration;
 use std::sync::OnceLock;
 
-use broadcast_common::Serialize;
 use broadcast_common::clock33::PCR_HZ;
+use broadcast_core::Serialize;
 use compliance_probe::Probe;
 use dvb_si::tables::SectionVersion;
 use dvb_si::tables::pat::{PatEntry, PatSection};

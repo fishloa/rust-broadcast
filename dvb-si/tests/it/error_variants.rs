@@ -1,4 +1,4 @@
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_si::Error;
 use dvb_si::collect::{CollectError, EitCollector, SectionSetCollector};
 use dvb_si::tables::eit::{EitKind, EitSection, TABLE_ID_SCHEDULE_ACTUAL_FIRST as EIT_50};
@@ -98,7 +98,7 @@ fn a_ts_packet_without_the_sync_byte_converts_to_invalid_sync() {
     let ts_err = mpeg_ts::ts::TsPacket::parse(&[0u8; 188]).unwrap_err();
     assert_eq!(
         Error::from(ts_err),
-        Error::InvalidSync(broadcast_common::error::InvalidSync {
+        Error::InvalidSync(broadcast_core::error::InvalidSync {
             what: "TS sync byte",
             expected: 0x47,
             found: 0,

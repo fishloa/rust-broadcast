@@ -27,7 +27,7 @@
 
 - Internal: the `epg::PresentEventTracker` docs cite the private EN 300 468 §5.2.4 and Table 6 transcription paths (#3997).
 - Internal: the `wire_enum!` macro now comes from `broadcast_common` (passing this crate's `Error` as its error type) instead of a crate-local copy; the generated enums and conversions are unchanged (#3989).
-- Internal: the H.222 descriptor bit writer is an adapter over `broadcast_common::bits::BitBuf` instead of its own bit cursor; output bytes and errors are unchanged (#3961).
+- Internal: the H.222 descriptor bit writer is an adapter over `broadcast_core::bits::BitBuf` instead of its own bit cursor; output bytes and errors are unchanged (#3961).
 - README names `epg::PresentEventTracker` in the task recipes and in the `jiff` feature row (#4014).
 
 ### Added
@@ -114,7 +114,7 @@
 
 ## [15.0.0] - 2026-11-15
 ### Changed
-- BREAKING: the remaining raw-`u8`/`u16` reserved fields of the descriptors whose module name starts `a`–`l` are the shared `broadcast_common::reserved` types too, one module per change: `audio_stream`, `avc_video`, `avs2_video`, `avs3_video`, `ca`, `country_availability`, `frequency_list`, `fta_content_management`, `hierarchy`, `j2k_video`, `local_time_offset`, `logical_channel`, `linkage`, `ac3`, `announcement_support`, `application_signalling`, `atsc_caption_service`, `avc_timing_and_hrd`, `avs2_audio`, `avs3_audio`, `cable_delivery_system`, `china_caption_service`, `content_labeling`, `data_broadcast_id`, `evc_video`, `h222_timing`, `hevc_video`, `ait::{application_recording, application_storage, graphics_constraints}` and `extension::{ac4, audio_preselection, c2_bundle_delivery_system, cp, dts_hd, image_icon, protection_message, s2x_satellite_delivery_system, s2xv2_satellite_delivery_system, service_prominence, supplementary_audio, t2mi, target_region, ttml_subtitling, vvc_subpictures}`. Each field is `ReservedOnes<BITS>` or `ReservedZero<BITS>` (the `*_DEFAULT` constants and any associated `RESERVED_*_DEFAULT` are the typed values), a value wider than the field is unrepresentable, and an `Option<u8>` conditional reserved run becomes `Option<ReservedOnes<BITS>>`. Migration: assign `ReservedOnes::from_bits(v)` / `ReservedZero::from_bits(v)` and read with `.get()` (#2738).
+- BREAKING: the remaining raw-`u8`/`u16` reserved fields of the descriptors whose module name starts `a`–`l` are the shared `broadcast_core::reserved` types too, one module per change: `audio_stream`, `avc_video`, `avs2_video`, `avs3_video`, `ca`, `country_availability`, `frequency_list`, `fta_content_management`, `hierarchy`, `j2k_video`, `local_time_offset`, `logical_channel`, `linkage`, `ac3`, `announcement_support`, `application_signalling`, `atsc_caption_service`, `avc_timing_and_hrd`, `avs2_audio`, `avs3_audio`, `cable_delivery_system`, `china_caption_service`, `content_labeling`, `data_broadcast_id`, `evc_video`, `h222_timing`, `hevc_video`, `ait::{application_recording, application_storage, graphics_constraints}` and `extension::{ac4, audio_preselection, c2_bundle_delivery_system, cp, dts_hd, image_icon, protection_message, s2x_satellite_delivery_system, s2xv2_satellite_delivery_system, service_prominence, supplementary_audio, t2mi, target_region, ttml_subtitling, vvc_subpictures}`. Each field is `ReservedOnes<BITS>` or `ReservedZero<BITS>` (the `*_DEFAULT` constants and any associated `RESERVED_*_DEFAULT` are the typed values), a value wider than the field is unrepresentable, and an `Option<u8>` conditional reserved run becomes `Option<ReservedOnes<BITS>>`. Migration: assign `ReservedOnes::from_bits(v)` / `ReservedZero::from_bits(v)` and read with `.get()` (#2738).
 - BREAKING: the descriptors whose module name starts `m`–`z`, every `tables/` section header (`reserved_b1`/`reserved_b5`) and reserved length/count run, and the carousel (none carried a reserved field) are `ReservedOnes<BITS>` / `ReservedZero<BITS>` instead of a raw `u8`: metadata, mosaic, the MPEG-2 extension bodies (incl. MPEG-H 3D audio, MVC, SVC, NorDig, partial transport stream, PDC, S2/telephone/terrestrial/timeslice/TUWA/TVA/VBI/video-stream/VVC/HEVC/VVC timing), `rnt::rar_over_ip`, `unt::enhanced_message`, every `tables/` reserved field (PAT/PMT/BAT/NIT/SDT/AIT/INT/UNT/RNT/RCT/SAT/TOT/SIT/CIT/container/DSMCC/MPE/MPE-FEC/MPE-iFEC/metadata/protection-message/downloadable-font-info) and `TransportStreamEntry::reserved_future_use`. Parse wraps the field and serialize writes the stored value with no re-mask; the `RESERVED_*`/`*_DEFAULT` constants are the typed values. Only the variable-width `TextLabelEntry::reserved` and the dual-meaning `DrcTargetLoudness::no_independent_use_or_reserved` stay `u8` (neither is a fixed-width reserved field). Migration: assign `ReservedOnes::from_bits(v)` / `ReservedZero::from_bits(v)` and read with `.get()` (#2738).
 - BREAKING: `demux::SiDemux::builder()` is gone; a demux is built from a non-exhaustive `demux::SiDemuxConfig` with `SiDemux::new(config)`: `SiDemuxConfig::default()` plus `with_follow_pat`, `with_dvb_si_pids`, `with_pid`, `with_emit_repeats` and `with_gate_capacity`, so a future setting is additive. The gate capacity is a `NonZeroUsize` (`GATE_CAPACITY_DEFAULT` is still 65 536), which makes a capacity of zero unrepresentable instead of silently behaving as one. Migration: `SiDemux::builder().build()` becomes `SiDemux::new(SiDemuxConfig::default())`, `.pid(p)` becomes `.with_pid(p)` (with setters chained on the config), and `.gate_capacity(n)` becomes `.with_gate_capacity(NonZeroUsize::new(n).ok_or(..)?)` (#2737).
 - BREAKING: the default `chrono` feature is replaced by `jiff` (no alias), and `chrono` is no longer a dependency. Every decoded instant that was `chrono::DateTime<Utc>` is now `jiff::Timestamp` (TDT/TOT `utc_time`/`set_utc_time`, `EitEvent::set_start_time`, `collect::eit` `start_time`, `MjdBcdTime::to_datetime`/`from_datetime`, `LocalTimeOffsetEntry::time_of_change`/`set_time_of_change`, network_change_notify `start_time_of_change_utc`, `epg::EpgEvent::start_time`, `EpgStore::now_and_next`/`schedule`), local time offsets are `jiff::SignedDuration` instead of `chrono::Duration`, and `EitEvent::start_time_chrono` is renamed `start_time_utc`. The MJD + BCD decoding is unchanged; `serde` now serializes those instants through jiff (RFC 3339, `Z`) (#2635).
@@ -130,10 +130,10 @@
 
 ### Added
 - `skills/dvb-si-basics/SKILL.md`: a Symposium agent skill shipped in the published package, so an AI coding agent working in a project that depends on `dvb-si` gets usage guidance covering the `SiDemux` loop, descriptor loops, the symmetric parse/serialize contract, carousel reassembly, features and the common pitfalls.
-- `TableId`, `DescriptorTag` and `ExtensionTag` implement the workspace label convention (`name()` + `Display` via `broadcast_common::impl_spec_display!`).
+- `TableId`, `DescriptorTag` and `ExtensionTag` implement the workspace label convention (`name()` + `Display` via `broadcast_core::impl_spec_display!`).
 
 ### Fixed
-- The Satellite Access Table's bit-packed body reader reports a short input in bytes, matching every other `BufferTooShort` in the workspace, instead of absolute bits; its serializer is now `broadcast_common::bits::BitWriter` rather than a second hand-rolled writer, keeping the field-width check the SAT relies on (issue #2461).
+- The Satellite Access Table's bit-packed body reader reports a short input in bytes, matching every other `BufferTooShort` in the workspace, instead of absolute bits; its serializer is now `broadcast_core::bits::BitWriter` rather than a second hand-rolled writer, keeping the field-width check the SAT relies on (issue #2461).
 - `ModuleReassembler`: the completed-module FIFO no longer grows by one entry per completed module version (it is now removed together with its record and never duplicated), so a long-lived carousel that cycles versions stays bounded and a stale entry cannot evict a live record.
 - `ModuleReassembler::note_dii`: a DII repeat that announces the same module version with a different `module_size` or `block_size` replaces the slot instead of leaving DDBs validated against stale geometry.
 - `SiDemux` discards a legally retransmitted (duplicate continuity_counter) continuation packet instead of appending it to the section being reassembled, which failed the CRC and dropped the whole section. Requires the `mpeg-ts` release that adds `SectionReassembler::feed_with_continuity`.
@@ -157,17 +157,17 @@
 - `declare_ait_descriptors!` and `declare_carousel_descriptors!` are one `declare_tag_namespace!` (internal; c7 G6).
 - BREAKING: `serde` is no longer a default feature; enable `features = ["serde"]` (owner decision 2026-11-07).
 - `CompleteNit` and `CompleteBat` flatten their transport-stream loops through one `CompleteTransportStream::collect` (c4 M6).
-- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- Length pre-checks go through `broadcast_core::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - `libm` dependency dropped: `set_orbital_position_deg` rounds with an exact fraction test (identical to `f64::round` over the allowed 0.0..=6553.5 range, pinned by a test over the boundary values) (c4 T6).
 - `tables::sat`: the 600-line SAT body parse and 300-line write matches are one function per satellite_table_id (internal, c3 t:S7).
 - `build.rs` generates the CA-system and private-data-specifier name functions from one writer (c3 d:D1).
 - NIT and BAT share one section parse/serialize core, CAT and TSDT another, and the three descriptor registries use `broadcast_common::declare_object_trait!`; the `serde` feature no longer names `erased-serde` itself (c2 H4, H1).
-- The H.222.0 descriptor bit reader and the SAT bit reader are error-mapping adapters over `broadcast_common::bits::BitReader`; the SAT reader no longer rebuilds and re-skips a reader on every read (dedupe D6). The two writers stay local: one grows a `Vec`, the other emits into a slice with this crate's own overflow errors.
+- The H.222.0 descriptor bit reader and the SAT bit reader are error-mapping adapters over `broadcast_core::bits::BitReader`; the SAT reader no longer rebuilds and re-skips a reader on every read (dedupe D6). The two writers stay local: one grows a `Vec`, the other emits into a slice with this crate's own overflow errors.
 - BREAKING: `Error::ReservedBitsViolation { field, reason }` is removed. Genuine fixed-bit checks (the `0010` prefix and marker bits of the Green/Quality access unit timestamps) return `Error::ReservedBits(ReservedBits { field, expected, found })`; forbidden values (BIOP/DSM-CC byte order, version, protocolDiscriminator, dsmccType, messageId, IOR component tags) return `Error::InvalidValue` carrying the value; the BIOP magic returns `Error::InvalidSync`; MPE scrambling-control over-range returns `Error::FieldOverflow`; zlib failure/size limit returns `Error::InvalidField`. New variants: `ReservedBits`, `InvalidValue`, `InvalidField`.
-- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `CrcMismatch` now wrap `broadcast_common::error` types (tuple variants; `CrcMismatch` gains `what`, message "<what> CRC-32 mismatch: ..."); `InvalidSyncByte { found }` is replaced by `InvalidSync(broadcast_common::error::InvalidSync)`. `From<mpeg_ts::Error>` forwards the shared kinds unchanged. `ReservedBitsViolation` stays crate-specific (free-text reason, not always a reserved field).
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `CrcMismatch` now wrap `broadcast_core::error` types (tuple variants; `CrcMismatch` gains `what`, message "<what> CRC-32 mismatch: ..."); `InvalidSyncByte { found }` is replaced by `InvalidSync(broadcast_core::error::InvalidSync)`. `From<mpeg_ts::Error>` forwards the shared kinds unchanged. `ReservedBitsViolation` stays crate-specific (free-text reason, not always a reserved field).
 ### Added
 - `impl Serialize for AnyTableSection`, generated by `declare_tables!`: dispatches to the contained table's serializer, copies `Unknown` raw bytes, and rejects `Other` (type-erased custom section) with `ValueOutOfRange`. The test copies of the 29-arm serializer matches are gone (c7 G1).
-- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+- `From<broadcast_core::len::BufferTooShort>` and `From<broadcast_core::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Dependencies
 - Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `mpeg-ts` 0.6 -> 0.7. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
@@ -308,7 +308,7 @@
 - Tests carrying the v1.20.1 Table 26 component types (AVS3-P3 audio `0x9/0x1/0x20-0x22`, T/UWA 005 DMI `0xB/0xF/0x0A`) byte-exact through `ComponentDescriptor`.
 
 ### Changed (BREAKING, #1197)
-- **BREAKING (behavioural):** every remaining single-field `(value & MASK)` in a serializer is a checked `broadcast_common::len::fit_mask(..)?` that returns `Error::FieldOverflow` instead of silently dropping the high bits of an over-range value (the #1129 class; ~220 sites across the descriptors and tables, including bare `(field << n)` shifts such as `satellite_table_id`, `reference_type`, `c2_system_tuning_frequency_type`). Hand-built values that were wider than their field (reserved runs, `Reserved(v)` enum payloads such as `Bandwidth::Reserved(0xFE)` / `FecInner::Reserved(0x3E)`, 5-bit `stream_content_ext`, ...) used to be masked and now fail; values produced by `parse` always fit. Guarded by `tests/serialize_mask_guard.rs` (lexical, reasoned allow-list) and `tests/serialize_mask_overflow.rs` (behavioural).
+- **BREAKING (behavioural):** every remaining single-field `(value & MASK)` in a serializer is a checked `broadcast_core::len::fit_mask(..)?` that returns `Error::FieldOverflow` instead of silently dropping the high bits of an over-range value (the #1129 class; ~220 sites across the descriptors and tables, including bare `(field << n)` shifts such as `satellite_table_id`, `reference_type`, `c2_system_tuning_frequency_type`). Hand-built values that were wider than their field (reserved runs, `Reserved(v)` enum payloads such as `Bandwidth::Reserved(0xFE)` / `FecInner::Reserved(0x3E)`, 5-bit `stream_content_ext`, ...) used to be masked and now fail; values produced by `parse` always fit. Guarded by `tests/serialize_mask_guard.rs` (lexical, reasoned allow-list) and `tests/serialize_mask_overflow.rs` (behavioural).
 - **BREAKING:** the SAT (`tables::sat`) body structs gain typed `reserved_zero_future_use*` fields for every reserved run of EN 300 468 Tables 11c/11d/11e/11g/11h (captured on parse, re-emitted verbatim, hand-built default `0`): `PositionV2Satellite`, `PositionSystem::Orbital`, `CellCenter`, `CellFragment`, `NewDeliverySystem`, `ObsolescentDeliverySystem`, `TimeAssociationBody`, `BeamhoppingPlan`, `BeamhoppingMode::{Mode0, Mode1, Mode2}`, `PositionV3Body`, `PositionV3Satellite`, `PositionV3Metadata`, `UsableTime`, `EphemerisData`, `CovarianceData`. The SAT bit writer no longer truncates: an over-range value (a count, a 9-bit `*_ext` above 0x1FF, a signed latitude out of range) is `Error::FieldOverflow`, and `first_occurence` without a `center` is `ValueOutOfRange`.
 - **BREAKING:** `StSection` gains `section_syntax_indicator` (EN 300 468 Table 11: the stuffing section's indicator "may take either the value 0b1 or 0b0"); captured on parse, re-emitted verbatim, `new()` keeps `false`.
 
@@ -358,7 +358,7 @@
 - **BREAKING (#1159):** `TsHeader::pid` (re-exported via `mpeg-ts`) is now `Pid`; `collect::*::pid` / `epg::EpgStore::feed_with_pid` take `Option<Pid>` instead of `Option<u16>`.
 ### Fixed
 
-- **`S2Xv2_satellite_delivery_system` `satellite_id` over 24 bits is rejected (#1129).** It was written as three bytes of `value >> 16 / >> 8 / as u8`, silently dropping the top byte; it now returns `Error::FieldOverflow`. `CompatibilityDescriptor` length/count narrowing now goes through `broadcast_common::len::fit_*`, and `tests/serializer_length_truncation.rs` scans all of `src/` (it covered only `descriptors/`, `tables/` and `carousel/`).
+- **`S2Xv2_satellite_delivery_system` `satellite_id` over 24 bits is rejected (#1129).** It was written as three bytes of `value >> 16 / >> 8 / as u8`, silently dropping the top byte; it now returns `Error::FieldOverflow`. `CompatibilityDescriptor` length/count narrowing now goes through `broadcast_core::len::fit_*`, and `tests/serializer_length_truncation.rs` scans all of `src/` (it covered only `descriptors/`, `tables/` and `carousel/`).
 - `hevc_video`: byte 12's `reserved(2)` (bits `[3:2]`) and the temporal sub-block's two `reserved(5)` fields are now all ones per H.222.0 Table 2-113. Real captures (9 HEVC_video_descriptors in the local TSDuck archive carry `0x9F` + `1F 1F`) contradicted the earlier r03-W7 reading that cleared bit 3 and the sub-block reserved bits, so they did not re-serialize byte-identically. Parse unaffected.
 
 ### Added
@@ -385,9 +385,9 @@
 - Table and carousel/BIOP serializers now return an error, instead of
   silently truncating, when a length or count value does not fit its wire
   field (#1129). `dvb_si::Error` gained a new `FieldOverflow` variant
-  (`#[error(transparent)]` over `broadcast_common::len::FieldOverflow`).
+  (`#[error(transparent)]` over `broadcast_core::len::FieldOverflow`).
 - `broadcast-common` requirement raised to `9.4` (same epoch) for the new
-  `broadcast_common::len` helpers.
+  `broadcast_core::len` helpers.
 - `tables::int::IntLoopEntry` is now a type alias for the new shared
   `tables::TargetOperationalLoop` (same fields), and
   `tables::unt::UntPlatform::target_operational_pairs` changed from
@@ -482,7 +482,7 @@
 - Remaining unchecked `.len() as u8/u16` length narrowings in the
   `tables/` and `carousel/` serializers (`downloadable_font_info`,
   `protection_message`, `carousel::{messages, biop::message, biop::ior}`) now
-  go through `broadcast_common::len::fit_*`; the regression scan in
+  go through `broadcast_core::len::fit_*`; the regression scan in
   `tests/serializer_length_truncation.rs` covers `src/tables` and
   `src/carousel` as well as `src/descriptors` (release audit).
 - 17 table serializers (pat, cat, tsdt, pmt, nit, bat, sdt, ait, int, sit,
@@ -771,7 +771,7 @@ Includes fixes for privately reported security issues; no public advisory is pub
 
 ### Changed
 - `tables::sat`'s private `BitReader::read_u` now delegates its bit
-  extraction to `broadcast_common::bits::BitReader` (a duplication-audit
+  extraction to `broadcast_core::bits::BitReader` (a duplication-audit
   finding: this crate already depends on `broadcast-common` and its
   `dvb-t2mi`/`rdd29`/`st291` siblings already reuse the shared reader). Same
   bounds-checking and error shape as before; no behaviour change. The

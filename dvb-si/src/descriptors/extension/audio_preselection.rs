@@ -12,8 +12,8 @@
 //! (`audio_rendering_indication`) matches EN 300 468 Table 111.
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::reserved::ReservedZero;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::reserved::ReservedZero;
 
 impl Preselection<'_> {
     /// Whether this entry stays inside the GY/T 422-2025 Table 1 subset: none of
@@ -150,7 +150,7 @@ impl AudioRenderingIndication {
         }
     }
 }
-broadcast_common::impl_spec_display!(AudioRenderingIndication, Reserved);
+broadcast_core::impl_spec_display!(AudioRenderingIndication, Reserved);
 
 /// audio_preselection body (Table 110, §6.4.1). The preselection loop is unfolded.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -216,7 +216,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
     fn parse(sel: &'a [u8]) -> Result<Self> {
         if sel.is_empty() {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 1,
                     have: sel.len(),
                     what: "audio_preselection body",
@@ -260,7 +260,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
             let message_id = if text_label_present {
                 if pos >= sel.len() {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + 1,
                             have: sel.len(),
                             what: "audio_preselection body",
@@ -279,7 +279,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
             let aux_component_tags = if multi_stream_info_present {
                 if pos >= sel.len() {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + 1,
                             have: sel.len(),
                             what: "audio_preselection body",
@@ -300,7 +300,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
             let future_ext = if future_extension {
                 if pos >= sel.len() {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + 1,
                             have: sel.len(),
                             what: "audio_preselection body",
@@ -362,7 +362,7 @@ impl Serialize for AudioPreselection<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        let num_preselections = broadcast_common::len::fit_bits(
+        let num_preselections = broadcast_core::len::fit_bits(
             self.preselections.len() as u64,
             NUM_PRESELECTIONS_BITS,
             "num_preselections",
@@ -371,12 +371,12 @@ impl Serialize for AudioPreselection<'_> {
             | self.reserved_zero_future_use_3.get() as u8;
         let mut p = 1;
         for s in &self.preselections {
-            buf[p] = (broadcast_common::len::fit_mask(
+            buf[p] = (broadcast_core::len::fit_mask(
                 s.preselection_id,
                 PRESELECTION_ID_MASK,
                 "preselection_id",
             )? << PRESELECTION_ID_SHIFT)
-                | broadcast_common::len::fit_mask(
+                | broadcast_core::len::fit_mask(
                     s.audio_rendering_indication.to_u8(),
                     AUDIO_RENDERING_MASK,
                     "audio_rendering_indication",
@@ -399,7 +399,7 @@ impl Serialize for AudioPreselection<'_> {
                 p += 1;
             }
             if let Some(tags) = s.aux_component_tags {
-                let num_aux_component_tags = broadcast_common::len::fit_bits(
+                let num_aux_component_tags = broadcast_core::len::fit_bits(
                     tags.len() as u64,
                     AUX_COUNT_BITS,
                     "num_aux_component_tags",
@@ -413,7 +413,7 @@ impl Serialize for AudioPreselection<'_> {
                 p += tags.len();
             }
             if let Some(ext) = s.future_extension {
-                buf[p] = (broadcast_common::len::fit_bits(
+                buf[p] = (broadcast_core::len::fit_bits(
                     ext.len() as u64,
                     EXTENSION_LENGTH_BITS,
                     "future_extension_length",

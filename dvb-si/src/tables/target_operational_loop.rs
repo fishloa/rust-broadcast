@@ -2,7 +2,7 @@
 //! Tables 17/18 (INT) and ETSI TS 102 006 §9.4 Table 11 (UNT) (r02-W22).
 
 use crate::descriptors::scoped::ScopedDescriptorLoop;
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_core::reserved::ReservedOnes;
 
 /// Width of the `reserved` length fields.
 pub const TARGET_LOOP_RESERVED_BITS: u32 = 4;

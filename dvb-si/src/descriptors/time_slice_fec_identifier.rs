@@ -12,9 +12,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for time_slice_fec_identifier_descriptor.
 pub const TAG: u8 = 0x77;
@@ -187,17 +187,17 @@ impl Serialize for TimeSliceFecIdentifierDescriptor<'_> {
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, FIXED_LEN + self.id_selector.len())?;
         buf[HEADER_LEN] = (u8::from(self.time_slicing) << TIME_SLICING_SHIFT)
-            | (broadcast_common::len::fit_mask(self.mpe_fec, MPE_FEC_MASK, "mpe_fec")?
+            | (broadcast_core::len::fit_mask(self.mpe_fec, MPE_FEC_MASK, "mpe_fec")?
                 << MPE_FEC_SHIFT)
             | ((self.reserved_for_future_use.get() as u8) << RESERVED_SHIFT)
-            | broadcast_common::len::fit_mask(self.frame_size, FRAME_SIZE_MAX, "frame_size")?;
+            | broadcast_core::len::fit_mask(self.frame_size, FRAME_SIZE_MAX, "frame_size")?;
         buf[HEADER_LEN + 1] = self.max_burst_duration;
-        buf[HEADER_LEN + MAX_AVERAGE_RATE_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + MAX_AVERAGE_RATE_OFFSET] = (broadcast_core::len::fit_mask(
             self.max_average_rate,
             MAX_AVERAGE_RATE_MAX,
             "max_average_rate",
         )? << MAX_AVERAGE_RATE_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.time_slice_fec_id,
                 TIME_SLICE_FEC_ID_MAX,
                 "time_slice_fec_id",

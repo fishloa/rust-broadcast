@@ -8,8 +8,8 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for content_identifier_descriptor.
 pub const TAG: u8 = 0x76;
@@ -91,7 +91,7 @@ impl CridType {
         }
     }
 }
-broadcast_common::impl_spec_display!(CridType, Reserved);
+broadcast_core::impl_spec_display!(CridType, Reserved);
 
 /// CRID location per TS 102 323 Table 10.
 ///
@@ -227,7 +227,7 @@ impl Serialize for ContentIdentifierDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut pos = HEADER_LEN;
         for entry in &self.entries {
-            let header = broadcast_common::len::fit_mask(
+            let header = broadcast_core::len::fit_mask(
                 entry.crid_type.to_u8(),
                 CRID_TYPE_VALUE_MASK,
                 "crid_type",
@@ -236,7 +236,7 @@ impl Serialize for ContentIdentifierDescriptor<'_> {
                 CridLocation::Inline(data) => {
                     buf[pos] = header;
                     buf[pos + CRID_LENGTH_OFFSET] =
-                        broadcast_common::len::fit_u8(data.len(), "crid_length")?;
+                        broadcast_core::len::fit_u8(data.len(), "crid_length")?;
                     buf[pos + CRID_DATA_OFFSET..pos + CRID_DATA_OFFSET + data.len()]
                         .copy_from_slice(data);
                     pos += CRID_DATA_OFFSET + data.len();

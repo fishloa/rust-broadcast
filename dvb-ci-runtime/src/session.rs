@@ -11,7 +11,7 @@
 use std::collections::BTreeMap;
 
 use crate::resource::ser;
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_ci::resource::ResourceId;
 use dvb_ci::spdu::{
     CloseSessionRequest, CloseSessionResponse, CreateSessionResponse, OpenSessionRequest,

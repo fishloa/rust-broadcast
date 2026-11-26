@@ -18,7 +18,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_ci::tpdu::{CommandTpdu, DataBlock, ResponseTpdu, SbValue, TcObject, create_t_c, tags};
 
 /// `length_field` value of a `T_SB` object (`t_c_id` + `SB_value`).

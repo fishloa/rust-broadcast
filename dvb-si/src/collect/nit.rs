@@ -32,7 +32,7 @@ impl<'a> CompleteNit<'a> {
     ) -> crate::Result<Self> {
         let sections: Vec<nit::NitSection<'a>> = set.parse_sections()?;
         let first = sections.first().ok_or(crate::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "CompleteNit sections",

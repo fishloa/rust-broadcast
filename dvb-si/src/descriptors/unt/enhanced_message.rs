@@ -16,9 +16,9 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LANG_CODE_LEN, LangCode};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for enhanced_message_descriptor (UNT namespace).
 pub const TAG: u8 = 0x0C;
@@ -123,22 +123,19 @@ impl Serialize for EnhancedMessageDescriptor<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        let number = broadcast_common::len::fit_mask(
+        let number = broadcast_core::len::fit_mask(
             self.descriptor_number,
             NIBBLE_MASK,
             "descriptor_number",
         )?;
-        let last = broadcast_common::len::fit_mask(
+        let last = broadcast_core::len::fit_mask(
             self.last_descriptor_number,
             NIBBLE_MASK,
             "last_descriptor_number",
         )?;
         let reserved = self.reserved_for_future_use.get() as u8;
-        let index = broadcast_common::len::fit_mask(
-            self.message_index,
-            MESSAGE_INDEX_MASK,
-            "message_index",
-        )?;
+        let index =
+            broadcast_core::len::fit_mask(self.message_index, MESSAGE_INDEX_MASK, "message_index")?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[HEADER_LEN] = (number << NUMBER_SHIFT) | last;
         buf[HEADER_LEN + LANGUAGE_CODE_OFFSET..HEADER_LEN + RESERVED_AND_INDEX_OFFSET]
@@ -199,7 +196,7 @@ mod tests {
         let d = EnhancedMessageDescriptor::new(0, 0, LangCode(*b"eng"), 32, DvbText::new(b""));
         assert!(matches!(
             d.serialize_into(&mut [0u8; 8]),
-            Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "message_index",
                 ..
             }))

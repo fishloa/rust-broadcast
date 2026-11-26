@@ -5,9 +5,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for MVC_extension_descriptor.
 pub const TAG: u8 = 0x31;
@@ -211,22 +211,22 @@ impl Serialize for MvcExtensionDescriptor {
             .copy_from_slice(&self.maximum_bitrate.to_be_bytes());
         // Over-wide values used to be masked down silently (audit r03-W3
         // class).
-        let vmin = broadcast_common::len::fit_bits(
+        let vmin = broadcast_core::len::fit_bits(
             u64::from(self.view_order_index_min),
             VIEW_ORDER_INDEX_BITS,
             "view_order_index_min",
         )? as u16;
-        let vmax = broadcast_common::len::fit_bits(
+        let vmax = broadcast_core::len::fit_bits(
             u64::from(self.view_order_index_max),
             VIEW_ORDER_INDEX_BITS,
             "view_order_index_max",
         )? as u16;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.temporal_id_start),
             TEMPORAL_ID_BITS,
             "temporal_id_start",
         )?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.temporal_id_end),
             TEMPORAL_ID_BITS,
             "temporal_id_end",
@@ -240,12 +240,12 @@ impl Serialize for MvcExtensionDescriptor {
             (((vmin & VIEW_ORDER_MIN_LO_SERIALIZE_MASK) << VIEW_ORDER_PACK_SHIFT) as u8)
                 | ((vmax >> VIEW_ORDER_MAX_HI_SHIFT) as u8 & VIEW_ORDER_MAX_HI_MASK);
         buf[HEADER_LEN + VIEW_ORDER_MAX_HI_OFFSET] = (vmax & VIEW_ORDER_LOW_BYTE_MASK) as u8;
-        buf[HEADER_LEN + TEMPORAL_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + TEMPORAL_FLAGS_OFFSET] = (broadcast_core::len::fit_mask(
             self.temporal_id_start,
             TEMPORAL_ID_MASK,
             "temporal_id_start",
         )? << TEMPORAL_ID_START_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.temporal_id_end,
                 TEMPORAL_ID_MASK,
                 "temporal_id_end",

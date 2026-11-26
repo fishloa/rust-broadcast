@@ -6,8 +6,8 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for content_descriptor.
 pub const TAG: u8 = 0x54;
@@ -136,7 +136,7 @@ impl ContentGenre {
         }
     }
 }
-broadcast_common::impl_spec_display!(ContentGenre, Reserved, UserDefined);
+broadcast_core::impl_spec_display!(ContentGenre, Reserved, UserDefined);
 
 /// Return the most specific content genre name from EN 300 468 Table 29.
 ///
@@ -370,9 +370,9 @@ impl Serialize for ContentDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut pos = HEADER_LEN;
         for entry in &self.entries {
-            buf[pos] = (broadcast_common::len::fit_mask(entry.nibble_1, NIBBLE_MASK, "nibble_1")?
+            buf[pos] = (broadcast_core::len::fit_mask(entry.nibble_1, NIBBLE_MASK, "nibble_1")?
                 << NIBBLE_SHIFT)
-                | broadcast_common::len::fit_mask(entry.nibble_2, NIBBLE_MASK, "nibble_2")?;
+                | broadcast_core::len::fit_mask(entry.nibble_2, NIBBLE_MASK, "nibble_2")?;
             buf[pos + 1] = entry.user_byte;
             pos += ENTRY_LEN;
         }

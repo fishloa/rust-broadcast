@@ -2,7 +2,7 @@
 //! (tag_extension 0x01); typed CPCM USI decode per ETSI TS 102 825-4 §5.4 Table 8.
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for CpcmDeliverySignalling<'a> {
     const TAG_EXTENSION: u8 = 0x01;
@@ -44,7 +44,7 @@ impl<'a> Parse<'a> for CpcmDeliverySignalling<'a> {
     type Error = crate::error::Error;
     fn parse(sel: &'a [u8]) -> Result<Self> {
         let (cpcm_version, selector_bytes) = sel.split_first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "cpcm_delivery_signalling body",
@@ -137,7 +137,7 @@ impl CopyControl {
         }
     }
 }
-broadcast_common::impl_spec_display!(CopyControl, Reserved);
+broadcast_core::impl_spec_display!(CopyControl, Reserved);
 
 /// `copy_control(3)` value mask (ETSI TS 102 825-4 Table 9) — masks the
 /// `Reserved(v)` payload at the shift so a wide value cannot bleed into the
@@ -235,7 +235,7 @@ impl MoveCopyPropagation {
         }
     }
 }
-broadcast_common::impl_spec_display!(MoveCopyPropagation);
+broadcast_core::impl_spec_display!(MoveCopyPropagation);
 
 /// `view_propagation_information` — ETSI TS 102 825-4 Table 11.
 ///
@@ -284,7 +284,7 @@ impl ViewPropagation {
         }
     }
 }
-broadcast_common::impl_spec_display!(ViewPropagation);
+broadcast_core::impl_spec_display!(ViewPropagation);
 
 /// One entry in the `export_controlled_cps` CPS vector (Table 8, §5.4).
 ///
@@ -631,11 +631,11 @@ impl Serialize for CpcmUsi {
         need_out(buf, total)?;
         self.check_conditional_presence()?;
         let body_len = self.body_len();
-        let body_len = broadcast_common::len::fit_u8(body_len, "usi_length")?;
+        let body_len = broadcast_core::len::fit_u8(body_len, "usi_length")?;
         buf[0] = body_len;
 
         // ── byte 1 ─────────────────────────────────────────────────────────
-        buf[1] = (broadcast_common::len::fit_mask(
+        buf[1] = (broadcast_core::len::fit_mask(
             self.copy_control.to_u8(),
             COPY_CONTROL_MASK,
             "copy_control",
@@ -649,12 +649,12 @@ impl Serialize for CpcmUsi {
         // ── byte 2 ─────────────────────────────────────────────────────────
         buf[USI_MOVE_VIEW_FLAGS_OFFSET] = ((u8::from(self.move_local)) << MOVE_LOCAL_SHIFT)
             | ((u8::from(self.view_local)) << VIEW_LOCAL_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.move_and_copy_propagation_information.to_u8(),
                 PROPAGATION_MASK,
                 "move_and_copy_propagation_information",
             )? << MOVE_COPY_PROPAGATION_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.view_propagation_information.to_u8(),
                 PROPAGATION_MASK,
                 "view_propagation_information",
@@ -706,12 +706,12 @@ impl Serialize for CpcmUsi {
             pos += CPCM_DATE_TIME_LEN;
         }
         if self.export_controlled_cps {
-            buf[pos] = broadcast_common::len::fit_u8(self.cps_vectors.len(), "cps_vector_count")?;
+            buf[pos] = broadcast_core::len::fit_u8(self.cps_vectors.len(), "cps_vector_count")?;
             pos += 1;
             for entry in &self.cps_vectors {
                 buf[pos] = entry.c_and_r_regime_mask;
                 let vlen =
-                    broadcast_common::len::fit_u16(entry.cps_vector.len(), "cps_vector_length")?;
+                    broadcast_core::len::fit_u16(entry.cps_vector.len(), "cps_vector_length")?;
                 buf[pos + CPS_VECTOR_LENGTH_OFFSET
                     ..pos + CPS_VECTOR_LENGTH_OFFSET + CPS_VECTOR_LENGTH_LEN]
                     .copy_from_slice(&vlen.to_be_bytes());
@@ -730,7 +730,7 @@ mod tests {
     use crate::descriptors::extension::test_support::*;
     use crate::descriptors::extension::{ExtensionBody, ExtensionDescriptor};
     use alloc::vec;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     // ── helper: construct a minimal USI (no conditional fields) ──────────────
     fn minimal_usi() -> CpcmUsi {

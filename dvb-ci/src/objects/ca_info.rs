@@ -8,7 +8,7 @@ use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use crate::wire::be_u16;
 use alloc::vec::Vec;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// Bytes of one `CA_system_id` (Table 24).
 const CA_SYSTEM_ID_LEN: usize = core::mem::size_of::<u16>();

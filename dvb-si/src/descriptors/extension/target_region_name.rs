@@ -1,7 +1,7 @@
 //! Target Region Name Descriptor — ETSI EN 300 468 §6.4.13 (tag_extension 0x0A).
 use super::*;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 impl<'a> ExtensionBodyDef<'a> for TargetRegionName<'a> {
     const TAG_EXTENSION: u8 = 0x0A;
@@ -80,7 +80,7 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
             pos += name_length;
             if pos >= sel.len() {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + 1,
                         have: sel.len(),
                         what: "target_region_name body",
@@ -92,7 +92,7 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
             let secondary_region_code = if region_depth >= SECONDARY_REGION_MIN_DEPTH {
                 if pos >= sel.len() {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + 1,
                             have: sel.len(),
                             what: "target_region_name body",
@@ -108,7 +108,7 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
             let tertiary_region_code = if region_depth == TERTIARY_REGION_DEPTH {
                 if pos + 1 >= sel.len() {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + TERTIARY_REGION_CODE_LEN,
                             have: sel.len(),
                             what: "target_region_name body",
@@ -119,7 +119,7 @@ impl<'a> Parse<'a> for TargetRegionName<'a> {
                     .get(pos..)
                     .and_then(|s| s.split_first_chunk::<{ TERTIARY_REGION_CODE_LEN }>())
                     .ok_or(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + TERTIARY_REGION_CODE_LEN,
                             have: sel.len(),
                             what: "target_region_name body",
@@ -173,12 +173,12 @@ impl Serialize for TargetRegionName<'_> {
         let mut pos = HEADER_LEN;
         for region in &self.regions {
             let raw = region.region_name.raw();
-            let region_name_length = broadcast_common::len::fit_bits(
+            let region_name_length = broadcast_core::len::fit_bits(
                 raw.len() as u64,
                 REGION_NAME_LENGTH_BITS,
                 "region_name_length",
             )? as u8;
-            buf[pos] = (broadcast_common::len::fit_mask(
+            buf[pos] = (broadcast_core::len::fit_mask(
                 region.region_depth,
                 REGION_DEPTH_MASK,
                 "region_depth",

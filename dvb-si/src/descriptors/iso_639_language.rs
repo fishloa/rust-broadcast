@@ -4,8 +4,8 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use crate::text::{LANG_CODE_LEN, LangCode};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for iso_639_language_descriptor.
 pub const TAG: u8 = 0x0A;
@@ -96,7 +96,7 @@ impl AudioType {
         }
     }
 }
-broadcast_common::impl_spec_display!(AudioType, UserPrivate, Reserved);
+broadcast_core::impl_spec_display!(AudioType, UserPrivate, Reserved);
 
 /// One (language code, audio type) pair.
 #[derive(Debug, Clone, PartialEq, Eq)]

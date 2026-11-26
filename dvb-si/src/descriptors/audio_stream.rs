@@ -4,9 +4,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for audio_stream_descriptor.
 pub const TAG: u8 = 0x03;
@@ -113,7 +113,7 @@ impl Serialize for AudioStreamDescriptor {
         buf[1] = BODY_LEN;
         buf[HEADER_LEN] = ((self.free_format_flag as u8) << FREE_FORMAT_FLAG_SHIFT)
             | ((self.id as u8) << ID_SHIFT)
-            | (broadcast_common::len::fit_mask(self.layer, LAYER_MASK, "layer")? << LAYER_SHIFT)
+            | (broadcast_core::len::fit_mask(self.layer, LAYER_MASK, "layer")? << LAYER_SHIFT)
             | ((self.variable_rate_audio_indicator as u8) << VARIABLE_RATE_AUDIO_INDICATOR_SHIFT)
             | self.reserved.get() as u8;
         Ok(len)

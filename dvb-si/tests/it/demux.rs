@@ -252,7 +252,7 @@ fn a_table_id_zero_section_on_another_pid_does_not_change_the_followed_pmt_pids(
 
 #[test]
 fn a_next_pat_does_not_unwatch_a_multi_section_current_pat() {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use dvb_si::tables::pat::{PatEntry, PatSection};
     fn pat_bytes(v: u8, cur: bool, sn: u8, last: u8, pid: u16) -> Vec<u8> {
         let pat = PatSection::new(

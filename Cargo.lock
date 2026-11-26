@@ -787,6 +787,7 @@ name = "compliance-probe"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "dvb-conformance",
  "dvb-si",
@@ -1179,6 +1180,7 @@ name = "dvb-ci"
 version = "0.14.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "dvb-si",
  "mpeg-ts",
  "serde",
@@ -1192,6 +1194,7 @@ name = "dvb-ci-runtime"
 version = "0.22.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "clap",
  "dvb-ci",
  "dvb-si",
@@ -1206,6 +1209,7 @@ name = "dvb-conformance"
 version = "16.0.1"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "dvb-si",
  "mpeg-ts",
  "serde",
@@ -1240,6 +1244,7 @@ name = "dvb-si"
 version = "16.0.1"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "criterion",
  "encoding_rs",
@@ -1272,6 +1277,7 @@ name = "dvb-stream"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "dvb-si",
  "dvb-t2mi",

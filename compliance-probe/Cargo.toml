@@ -17,6 +17,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0",     default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 dvb-conformance  = { path = "../dvb-conformance",  version = "16.0.0",     default-features = false }
 mpeg-ts          = { path = "../mpeg-ts",          version = "0.10.0", default-features = false }
 scte35-splice    = { path = "../scte35-splice",    version = "8.0.0",     default-features = false }
@@ -42,6 +43,7 @@ default = ["std"]
 std = [
     "dep:metrics",
     "broadcast-common/std",
+    "broadcast-core/std",
     "dvb-conformance/std",
     "mpeg-ts/std",
     "media-doctor/std",

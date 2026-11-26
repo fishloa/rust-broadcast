@@ -5,7 +5,7 @@
 
 use crate::descriptors::DescriptorLoop;
 use crate::error::Result;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// table_id for Transport Stream Description Table.
 pub const TABLE_ID: u8 = 0x03;

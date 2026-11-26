@@ -23,7 +23,7 @@
 //! (TSDuck parses TextConfig itself), `ODUpdate`, `timed_metadata_extension`,
 //! `JXS_video_descriptor`, and the three section types.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::descriptors::evc_video::EvcVideoDescriptor;
 use dvb_si::descriptors::hdr_wcg_idc::HdrWcgIdc;
 use dvb_si::descriptors::mpeg2_ext_codecs::{ConfigurationType, MediaTypeIdc};
@@ -134,7 +134,7 @@ fn top_level_descriptors_match_tsduck_values() {
     );
     assert_eq!(
         d.reserved,
-        broadcast_common::reserved::ReservedOnes::<5>::FILL
+        broadcast_core::reserved::ReservedOnes::<5>::FILL
     );
 
     let d: TransportProfileDescriptor = rt(&get(0x37, None));

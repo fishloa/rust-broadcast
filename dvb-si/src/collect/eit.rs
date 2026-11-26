@@ -7,7 +7,7 @@ use mpeg_ts::pid::Pid;
 use crate::descriptors::DescriptorRegistry;
 use crate::tables::RunningStatus;
 use crate::tables::eit;
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use mpeg_ts::section::Section;
 
 use super::{
@@ -745,7 +745,7 @@ impl<'a> CompleteEit<'a> {
     ) -> crate::Result<Self> {
         let sections: Vec<eit::EitSection<'a>> = set.parse_sections()?;
         let first = sections.first().ok_or(crate::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "CompleteEit sections",

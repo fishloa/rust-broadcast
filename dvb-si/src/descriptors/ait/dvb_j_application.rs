@@ -7,8 +7,8 @@
 use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for dvb_j_application_descriptor (AIT namespace).
 pub const TAG: u8 = 0x03;
@@ -77,7 +77,7 @@ impl Serialize for DvbJApplicationDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
         for p in &self.parameters {
-            buf[pos] = broadcast_common::len::fit_u8(p.len(), "parameter_length")?;
+            buf[pos] = broadcast_core::len::fit_u8(p.len(), "parameter_length")?;
             pos += 1;
             buf[pos..pos + p.len()].copy_from_slice(p);
             pos += p.len();

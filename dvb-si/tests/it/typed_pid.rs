@@ -2,7 +2,7 @@
 //! value above 13 bits is unrepresentable (`Pid::try_new` rejects it before a
 //! section/descriptor can be built), and the maximum PID `0x1FFF` serializes
 //! to exactly the 13 wire bits with the reserved bits untouched.
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::descriptors::ca::CaDescriptor;
 use dvb_si::descriptors::extension::Cp;

@@ -14,11 +14,11 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// CRC-32 validation failed for a table section.
     #[error(transparent)]
-    CrcMismatch(#[from] broadcast_common::error::CrcMismatch),
+    CrcMismatch(#[from] broadcast_core::error::CrcMismatch),
 
     /// `table_id` byte doesn't match any expected value for the parser invoked.
     #[error("unexpected table_id {table_id:#04x} for {what} (expected one of {expected:?})")]
@@ -81,29 +81,29 @@ pub enum Error {
     /// requires. Most parsers are permissive about reserved bits; this is only
     /// emitted when a clause specifically requires a value.
     #[error(transparent)]
-    ReservedBits(#[from] broadcast_common::error::ReservedBits),
+    ReservedBits(#[from] broadcast_core::error::ReservedBits),
 
     /// A field held a value its spec clause forbids.
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
 
     /// A field is structurally invalid with no single offending number.
     #[error(transparent)]
-    InvalidField(#[from] broadcast_common::error::InvalidField),
+    InvalidField(#[from] broadcast_core::error::InvalidField),
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// A fixed marker did not match (TS sync byte, expected `0x47`).
     #[error(transparent)]
-    InvalidSync(#[from] broadcast_common::error::InvalidSync),
+    InvalidSync(#[from] broadcast_core::error::InvalidSync),
 
     /// A serializer's length or count value did not fit its wire field.
     /// Returned instead of silently narrowing (`as u8`/`as u16`/masking),
     /// which would emit a misframed section (see #1129).
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::len::FieldOverflow),
 }
 
 impl From<mpeg_ts::Error> for Error {
@@ -121,7 +121,7 @@ impl From<mpeg_ts::Error> for Error {
                 available,
             },
             // mpeg_ts::Error is #[non_exhaustive]; catch future variants generically.
-            _ => Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            _ => Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: 0,
                 have: 0,
                 what: "mpeg_ts (unknown error)",

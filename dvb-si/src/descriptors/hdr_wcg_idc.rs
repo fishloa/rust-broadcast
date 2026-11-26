@@ -54,7 +54,7 @@ impl HdrWcgIdc {
         }
     }
 }
-broadcast_common::impl_spec_display!(HdrWcgIdc);
+broadcast_core::impl_spec_display!(HdrWcgIdc);
 
 #[cfg(test)]
 mod tests {

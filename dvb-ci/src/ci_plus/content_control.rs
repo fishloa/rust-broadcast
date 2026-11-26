@@ -25,8 +25,8 @@ use crate::objects;
 use crate::reserved::ReservedZero;
 use crate::wire::be_u16;
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s implemented for the Content Control resource
 /// (the printed-syntax subset of Table 6).
@@ -364,7 +364,7 @@ impl DatatypeId {
         }
     }
 }
-broadcast_common::impl_spec_display!(DatatypeId, Other);
+broadcast_core::impl_spec_display!(DatatypeId, Other);
 
 /// `operating_mode` (datatype 38) values (§6.4.3.3.2 prose): the CICAM treats
 /// the programme as unattended when this is `Timeshift` or `UnattendedRecording`.
@@ -409,7 +409,7 @@ impl OperatingMode {
         }
     }
 }
-broadcast_common::impl_spec_display!(OperatingMode, Other);
+broadcast_core::impl_spec_display!(OperatingMode, Other);
 
 /// A single SAC protocol datatype: `datatype_id` (8) + `datatype_length` (16,
 /// number of value bytes) + value. Value bytes are carried opaque so crypto /

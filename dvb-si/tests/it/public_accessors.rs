@@ -3,8 +3,8 @@
 //! always-true `is_empty` or a hard-coded eviction count would otherwise ship
 //! green.
 
-use broadcast_common::Serialize;
 use broadcast_common::time::MjdBcdDateTime;
+use broadcast_core::Serialize;
 use dvb_si::collect::{EitCollector, SectionSetCollector};
 use dvb_si::descriptors::{AnyAitDescriptor, DescriptorLoop};
 use dvb_si::tables::ait::{AitSection, ApplicationType};

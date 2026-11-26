@@ -22,8 +22,8 @@ use crate::reserved::ReservedZero;
 use crate::tag::ApduTag;
 use crate::wire::be_u16;
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Broadcast Service Gateway EIT extension
 /// (Tables 32-33). The generic-gateway tags live in [`super::service_gateway::tag`].
@@ -82,7 +82,7 @@ impl EitResponseCode {
         }
     }
 }
-broadcast_common::impl_spec_display!(EitResponseCode);
+broadcast_core::impl_spec_display!(EitResponseCode);
 
 /// `EITSectionReq()` (Table 32) — app → module: request an EIT section.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -281,7 +281,7 @@ impl<'a> Parse<'a> for EitSectionAck<'a> {
         let loop_end = loop_start + length;
         if body.len() < loop_end {
             return Err(Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "EITSectionAck event loop",
                     declared: length,
                     actual: body.len() - loop_start,
@@ -316,7 +316,7 @@ impl<'a> Parse<'a> for EitSectionAck<'a> {
             let desc_end = desc_start + dll;
             if desc_end > loop_end {
                 return Err(Error::LengthMismatch(
-                    broadcast_common::error::LengthMismatch {
+                    broadcast_core::error::LengthMismatch {
                         what: "EITSectionAck event descriptors",
                         declared: dll,
                         actual: loop_end - desc_start,

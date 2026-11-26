@@ -24,8 +24,8 @@ use crate::objects;
 use crate::reserved::{ReservedOnes, ReservedZero};
 use crate::wire::be_u16;
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Generic Service Gateway (Tables 22-30).
 pub mod tag {
@@ -343,7 +343,7 @@ impl<'a> Parse<'a> for ServiceListAck {
         let list = &body[SERVICE_LIST_ACK_PREFIX..];
         if list.len() < count * SERVICE_REF_LEN {
             return Err(Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "ServiceListAck services",
                     declared: count * SERVICE_REF_LEN,
                     actual: list.len(),
@@ -460,7 +460,7 @@ impl<'a> Parse<'a> for ServiceDescAck<'a> {
         let desc_end = desc_start + loop_len;
         if body.len() < desc_end {
             return Err(Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "ServiceDescAck descriptors",
                     declared: loop_len,
                     actual: body.len() - desc_start,

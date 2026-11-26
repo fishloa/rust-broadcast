@@ -6,7 +6,7 @@
 //! byte-for-byte. A fix may either reject the input or preserve the bytes;
 //! silently dropping or rewriting them is the defect.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_ci::ci_ext::{
     broadcast_service_gateway, copy_protection, resource_manager_v2, service_gateway,
 };

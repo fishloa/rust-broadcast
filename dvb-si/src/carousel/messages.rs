@@ -20,8 +20,8 @@ use crate::compatibility::CompatibilityDescriptor;
 use crate::descriptors::carousel::CarouselDescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// `protocolDiscriminator` — always 0x11 for MPEG-2 DSM-CC.
 pub const PROTOCOL_DISCRIMINATOR: u8 = 0x11;
@@ -190,7 +190,7 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
         let (b, _) = bytes
             .split_first_chunk::<GII_NUMBER_OF_GROUPS_LEN>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: GII_NUMBER_OF_GROUPS_LEN,
                     have: bytes.len(),
                     what: "GroupInfoIndication NumberOfGroups",
@@ -205,7 +205,7 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             let (hdr, _) = bytes[pos..end]
                 .split_first_chunk::<GII_GROUP_FIXED_LEN>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + GII_GROUP_FIXED_LEN,
                         have: end,
                         what: "GroupInfo GroupId/GroupSize",
@@ -222,7 +222,7 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             let (bc, _) = bytes[pos..end]
                 .split_first_chunk::<COMPAT_DESC_LEN_FIELD>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + COMPAT_DESC_LEN_FIELD,
                         have: end,
                         what: "GroupCompatibility length field",
@@ -244,7 +244,7 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             let (bgi, _) = bytes[pos..end]
                 .split_first_chunk::<GII_GROUP_INFO_LEN_FIELD>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + GII_GROUP_INFO_LEN_FIELD,
                         have: end,
                         what: "GroupInfo GroupInfoLength",
@@ -265,7 +265,7 @@ impl<'a> Parse<'a> for GroupInfoIndication<'a> {
             let (bpd, _) = bytes[pos..end]
                 .split_first_chunk::<GII_PRIVATE_DATA_LEN_FIELD>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + GII_PRIVATE_DATA_LEN_FIELD,
                         have: end,
                         what: "GroupInfo PrivateDataLength",
@@ -325,7 +325,7 @@ impl Serialize for GroupInfoIndication<'_> {
             });
         }
         buf[0..2].copy_from_slice(
-            &broadcast_common::len::fit_u16(self.groups.len(), "self.groups")?.to_be_bytes(),
+            &broadcast_core::len::fit_u16(self.groups.len(), "self.groups")?.to_be_bytes(),
         );
         let mut pos = GII_NUMBER_OF_GROUPS_LEN;
 
@@ -345,7 +345,7 @@ impl Serialize for GroupInfoIndication<'_> {
                 });
             }
             buf[pos..pos + GII_GROUP_INFO_LEN_FIELD].copy_from_slice(
-                &broadcast_common::len::fit_u16(g.group_info.len(), "g.group_info")?.to_be_bytes(),
+                &broadcast_core::len::fit_u16(g.group_info.len(), "g.group_info")?.to_be_bytes(),
             );
             pos += GII_GROUP_INFO_LEN_FIELD;
             buf[pos..pos + g.group_info.len()].copy_from_slice(g.group_info);
@@ -358,7 +358,7 @@ impl Serialize for GroupInfoIndication<'_> {
                 });
             }
             buf[pos..pos + GII_PRIVATE_DATA_LEN_FIELD].copy_from_slice(
-                &broadcast_common::len::fit_u16(g.private_data.len(), "g.private_data")?
+                &broadcast_core::len::fit_u16(g.private_data.len(), "g.private_data")?
                     .to_be_bytes(),
             );
             pos += GII_PRIVATE_DATA_LEN_FIELD;
@@ -483,21 +483,21 @@ fn parse_header<'a>(bytes: &'a [u8], what: &'static str) -> Result<(u16, u32, &'
     let (hdr, _) = bytes
         .split_first_chunk::<MESSAGE_HEADER_LEN>()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: MESSAGE_HEADER_LEN,
                 have: bytes.len(),
                 what,
             },
         ))?;
     if hdr[0] != PROTOCOL_DISCRIMINATOR {
-        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "protocolDiscriminator",
             value: u64::from(hdr[0]),
             reason: "must be 0x11",
         }));
     }
     if hdr[1] != DSMCC_TYPE_UN_DOWNLOAD {
-        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "dsmccType",
             value: u64::from(hdr[1]),
             reason: "must be 0x03 (U-N download)",
@@ -554,7 +554,7 @@ fn serialize_header(
     buf[TRANSACTION_ID_OFFSET..TRANSACTION_ID_OFFSET + TRANSACTION_ID_LEN]
         .copy_from_slice(&id.to_be_bytes());
     buf[RESERVED_OFFSET] = RESERVED_BYTE;
-    buf[ADAPTATION_LENGTH_OFFSET] = broadcast_common::len::fit_u8(adaptation.len(), "adaptation")?;
+    buf[ADAPTATION_LENGTH_OFFSET] = broadcast_core::len::fit_u8(adaptation.len(), "adaptation")?;
     buf[MESSAGE_LENGTH_OFFSET..MESSAGE_LENGTH_OFFSET + MESSAGE_LENGTH_LEN]
         .copy_from_slice(&(message_length as u16).to_be_bytes());
     buf[MESSAGE_HEADER_LEN..MESSAGE_HEADER_LEN + adaptation.len()].copy_from_slice(adaptation);
@@ -566,7 +566,7 @@ fn length_prefixed(bytes: &[u8], pos: usize, end: usize) -> Result<(&[u8], usize
     let (b, _) = bytes[pos..end]
         .split_first_chunk::<LENGTH_FIELD_LEN>()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: pos + LENGTH_FIELD_LEN,
                 have: end,
                 what: "DSM-CC 16-bit length field",
@@ -594,7 +594,7 @@ fn parse_compat_block(
     let (b, _) = payload[offset..]
         .split_first_chunk::<COMPAT_DESC_LEN_FIELD>()
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: offset + COMPAT_DESC_LEN_FIELD,
                 have: end,
                 what: "compatibilityDescriptor in DSM-CC message",
@@ -623,7 +623,7 @@ impl<'a> Parse<'a> for UnMessage<'a> {
             MESSAGE_ID_DSI => {
                 if end < SERVER_ID_LEN {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: SERVER_ID_LEN,
                             have: end,
                             what: "Dsi body",
@@ -648,7 +648,7 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                     payload
                         .split_first_chunk::<DII_FIXED_LEN>()
                         .ok_or(Error::BufferTooShort(
-                            broadcast_common::error::BufferTooShort {
+                            broadcast_core::error::BufferTooShort {
                                 need: DII_FIXED_LEN,
                                 have: end,
                                 what: "Dii body",
@@ -669,7 +669,7 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                     .get(pos..)
                     .and_then(|s| s.split_first_chunk::<LENGTH_FIELD_LEN>())
                     .ok_or(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + LENGTH_FIELD_LEN,
                             have: end,
                             what: "Dii numberOfModules",
@@ -683,7 +683,7 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                         .get(pos..)
                         .and_then(|s| s.split_first_chunk::<MODULE_HEADER_LEN>())
                         .ok_or(Error::BufferTooShort(
-                            broadcast_common::error::BufferTooShort {
+                            broadcast_core::error::BufferTooShort {
                                 need: pos + MODULE_HEADER_LEN,
                                 have: end,
                                 what: "Dii module entry",
@@ -723,7 +723,7 @@ impl<'a> Parse<'a> for UnMessage<'a> {
                     private_data,
                 }))
             }
-            _ => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            _ => Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "messageId",
                 value: u64::from(message_id),
                 reason: "expected 0x1002 (DII) or 0x1006 (DSI) on table_id 0x3B",
@@ -817,8 +817,7 @@ impl Serialize for UnMessage<'_> {
                     });
                 }
                 buf[pos..pos + LENGTH_FIELD_LEN].copy_from_slice(
-                    &broadcast_common::len::fit_u16(dii.modules.len(), "dii.modules")?
-                        .to_be_bytes(),
+                    &broadcast_core::len::fit_u16(dii.modules.len(), "dii.modules")?.to_be_bytes(),
                 );
                 pos += LENGTH_FIELD_LEN;
                 for m in &dii.modules {
@@ -834,7 +833,7 @@ impl Serialize for UnMessage<'_> {
                         .copy_from_slice(&m.module_size.to_be_bytes());
                     buf[pos + MODULE_VERSION_OFFSET] = m.module_version;
                     buf[pos + MODULE_INFO_LENGTH_OFFSET] =
-                        broadcast_common::len::fit_u8(m.module_info.len(), "m.module_info")?;
+                        broadcast_core::len::fit_u8(m.module_info.len(), "m.module_info")?;
                     pos += MODULE_HEADER_LEN;
                     buf[pos..pos + m.module_info.len()].copy_from_slice(m.module_info);
                     pos += m.module_info.len();
@@ -855,7 +854,7 @@ fn put_length_prefixed(buf: &mut [u8], pos: usize, data: &[u8]) -> Result<usize>
         });
     }
     buf[pos..pos + LENGTH_FIELD_LEN]
-        .copy_from_slice(&broadcast_common::len::fit_u16(data.len(), "data")?.to_be_bytes());
+        .copy_from_slice(&broadcast_core::len::fit_u16(data.len(), "data")?.to_be_bytes());
     buf[pos + LENGTH_FIELD_LEN..pos + LENGTH_FIELD_LEN + data.len()].copy_from_slice(data);
     Ok(pos + LENGTH_FIELD_LEN + data.len())
 }
@@ -867,7 +866,7 @@ impl<'a> Parse<'a> for DownloadDataBlock<'a> {
         let (message_id, download_id, adaptation, payload) =
             parse_header(bytes, "DownloadDataBlock header")?;
         if message_id != MESSAGE_ID_DDB {
-            return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "messageId",
                 value: u64::from(message_id),
                 reason: "expected 0x1003 (DDB) on table_id 0x3C",
@@ -877,7 +876,7 @@ impl<'a> Parse<'a> for DownloadDataBlock<'a> {
             payload
                 .split_first_chunk::<DDB_FIXED_LEN>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: DDB_FIXED_LEN,
                         have: payload.len(),
                         what: "DownloadDataBlock body",
@@ -1094,7 +1093,7 @@ mod tests {
         buf[0] = 0x12;
         assert_eq!(
             UnMessage::parse(&buf).unwrap_err(),
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "protocolDiscriminator",
                 value: 0x12,
                 reason: "must be 0x11",
@@ -1111,7 +1110,7 @@ mod tests {
         buf[3] = 0x01; // 0x1001 DownloadInfoRequest — not valid broadcast-side
         assert_eq!(
             UnMessage::parse(&buf).unwrap_err(),
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "messageId",
                 value: 0x1001,
                 reason: "expected 0x1002 (DII) or 0x1006 (DSI) on table_id 0x3B",
@@ -1161,7 +1160,7 @@ mod tests {
         msg.serialize_into(&mut buf).unwrap();
         assert_eq!(
             DownloadDataBlock::parse(&buf).unwrap_err(),
-            Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "messageId",
                 value: 0x1006,
                 reason: "expected 0x1003 (DDB) on table_id 0x3C",

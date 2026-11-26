@@ -14,9 +14,9 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// SSU `update_type` — ETSI TS 102 006 §7.1 Table 5
 /// (`private/specs-verified/dvb/dvb-si/`, Table 5 — Update_type coding).
@@ -81,7 +81,7 @@ impl UpdateType {
         }
     }
 }
-broadcast_common::impl_spec_display!(UpdateType, Reserved);
+broadcast_core::impl_spec_display!(UpdateType, Reserved);
 
 /// Descriptor tag for data_broadcast_id_descriptor.
 pub const TAG: u8 = 0x66;
@@ -355,13 +355,13 @@ impl Serialize for SsuIdSelector<'_> {
             .iter()
             .map(|e| SSU_OUI_FIXED_LEN + e.selector.len())
             .sum();
-        buf[0] = broadcast_common::len::fit_u8(oui_body, "OUI_data_length")?;
+        buf[0] = broadcast_core::len::fit_u8(oui_body, "OUI_data_length")?;
         let mut pos = SSU_OUI_DATA_LENGTH_LEN;
         for e in &self.oui_entries {
             buf[pos..pos + OUI_LEN].copy_from_slice(&e.oui);
             buf[pos + SSU_UPDATE_TYPE_OFFSET] = ((e.reserved_4.get() as u8)
                 << SSU_RESERVED_UPDATE_TYPE_SHIFT)
-                | broadcast_common::len::fit_mask(
+                | broadcast_core::len::fit_mask(
                     e.update_type.to_u8(),
                     SSU_UPDATE_TYPE_MASK,
                     "update_type",
@@ -374,13 +374,13 @@ impl Serialize for SsuIdSelector<'_> {
             buf[pos + SSU_UPDATE_VERSION_OFFSET] = ((e.reserved_2.get() as u8)
                 << SSU_RESERVED_UPDATE_VERSION_SHIFT)
                 | uvf_bit
-                | broadcast_common::len::fit_mask(
+                | broadcast_core::len::fit_mask(
                     e.update_version,
                     SSU_UPDATE_VERSION_MASK,
                     "update_version",
                 )?;
             buf[pos + SSU_SELECTOR_LENGTH_OFFSET] =
-                broadcast_common::len::fit_u8(e.selector.len(), "selector_length")?;
+                broadcast_core::len::fit_u8(e.selector.len(), "selector_length")?;
             pos += SSU_OUI_FIXED_LEN;
             buf[pos..pos + e.selector.len()].copy_from_slice(e.selector);
             pos += e.selector.len();

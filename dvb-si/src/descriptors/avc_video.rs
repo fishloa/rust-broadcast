@@ -5,9 +5,9 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
-use broadcast_common::len::need_out;
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for AVC_video_descriptor.
 pub const TAG: u8 = 0x28;
@@ -165,7 +165,7 @@ impl Serialize for AvcVideoDescriptor {
             | (u8::from(self.constraint_set3_flag) * CONSTRAINT_SET3_FLAG_MASK)
             | (u8::from(self.constraint_set4_flag) * CONSTRAINT_SET4_FLAG_MASK)
             | (u8::from(self.constraint_set5_flag) * CONSTRAINT_SET5_FLAG_MASK)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.avc_compatible_flags,
                 AVC_COMPATIBLE_FLAGS_MASK,
                 "avc_compatible_flags",

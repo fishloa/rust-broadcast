@@ -41,9 +41,9 @@
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_bits, need_out};
-use broadcast_common::reserved::ReservedOnes;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{fit_bits, need_out};
+use broadcast_core::reserved::ReservedOnes;
+use broadcast_core::{Parse, Serialize};
 
 /// Descriptor tag for AVS3_audio_descriptor (T/AI 109.7 Table 3: 210).
 pub const TAG: u8 = 0xD2;
@@ -189,7 +189,7 @@ impl Avs3AudioContent {
         }
     }
 }
-broadcast_common::impl_spec_display!(Avs3AudioContent, Reserved);
+broadcast_core::impl_spec_display!(Avs3AudioContent, Reserved);
 
 /// `audio_codec_id == 2` body (Table 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,7 +244,7 @@ impl Avs3AudioBody {
         }
     }
 }
-broadcast_common::impl_spec_display!(Avs3AudioBody, Other);
+broadcast_core::impl_spec_display!(Avs3AudioBody, Other);
 
 /// AVS3_audio_descriptor (T/AI 109.7 Table 4).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -276,7 +276,7 @@ struct Cursor<'a> {
 impl Cursor<'_> {
     fn u8(&mut self) -> Result<u8> {
         let b = *self.body.get(self.pos).ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: self.pos + 1,
                 have: self.body.len(),
                 what: "Avs3AudioDescriptor",
