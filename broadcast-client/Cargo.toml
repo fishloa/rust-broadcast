@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 broadcast-common  = { path = "../broadcast-common", version = "14.0.0", default-features = false, features = ["std", "jiff", "http-date", "lang", "url"] }
 broadcast-auth     = { path = "../broadcast-auth", version = "0.9.0" }
-transmux           = { path = "../transmux", version = "0.33.0", default-features = false, features = ["std"] }
+transmux           = { path = "../transmux", version = "0.33.0", default-features = false, features = ["std", "flv", "rtp"] }
 dvb-si             = { path = "../dvb-si", version = "16.0.0", default-features = false, features = ["ts", "std"] }
 mpeg-ts            = { path = "../mpeg-ts", version = "0.10.0", default-features = false, features = ["std"] }
 buffering-runtime  = { path = "../buffering-runtime", version = "0.5.0", default-features = false, features = ["std"] }

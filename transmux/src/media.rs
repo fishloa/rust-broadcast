@@ -1442,6 +1442,7 @@ mod tests {
     /// `subtitle_entries::tests::wvtt_sample_entry_round_trip`) and feed it
     /// through the same reconstruction path the `stpp` fixture exercises.
     /// A summary log for a whole [`Media`] as one segment per track.
+    #[cfg(feature = "hls")]
     fn one_segment_log(media: &Media) -> crate::segment_log::SegmentSummaryLog {
         let mut log = crate::segment_log::SegmentSummaryLog::new();
         for track in &media.tracks {
@@ -1704,6 +1705,7 @@ mod tests {
     /// sample and therefore no truthful `EXTINF` — it is omitted from the
     /// playlist rather than rendered as `#EXTINF:0.000`, which RFC 8216
     /// §4.3.2.1 defines as a real playback duration a player would honour.
+    #[cfg(feature = "hls")]
     #[test]
     fn hls_packager_omits_a_timestampless_track_instead_of_emitting_extinf_zero() {
         const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
@@ -1799,6 +1801,7 @@ mod tests {
     /// §4.3.3.1: `#EXT-X-TARGETDURATION` must be at least the rounded
     /// `#EXTINF`, which the ceiling always satisfies — and a whole number of
     /// seconds is its own ceiling, not one second more.
+    #[cfg(feature = "hls")]
     #[test]
     fn ceil_secs_rounds_up_only_a_fractional_span() {
         assert_eq!(ceil_secs(0.0), 0);

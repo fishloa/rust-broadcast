@@ -90,7 +90,7 @@ required-features = ["std"]
 
 [[example]]
 name = "transmux_any_to_any"
-required-features = ["std"]
+required-features = ["std", "matroska"]
 
 [features]
 default = ["std", "cenc", "flv", "rtp", "ps", "matroska", "hls", "captions"]

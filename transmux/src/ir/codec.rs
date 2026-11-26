@@ -696,6 +696,7 @@ mod tests {
 
     /// Vorbis stores its `audio_channels` directly (no separate LFE flag), so
     /// both accessors must report it; an unspecified count (0) is no count.
+    #[cfg(feature = "hls")]
     #[test]
     fn vorbis_reports_its_channel_count() {
         let stereo = CodecConfig::Vorbis {
