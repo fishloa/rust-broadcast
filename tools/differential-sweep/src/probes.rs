@@ -1,7 +1,10 @@
 //! The probes. Each returns `None` when it does not apply to the fixture, else
 //! a JSON object that is compared field-by-field between the two trees.
 
-use crate::{Cfg, Fixture, PidRaw, bump, hx, hx_opt, sha, ts_packets, variant_name};
+use crate::{
+    Cfg, Fixture, PidRaw, bump, file_len_sha, hx, hx_opt, read_capped, sha, ts_packets,
+    variant_name,
+};
 use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -955,6 +958,9 @@ pub fn dash(fx: &Fixture, _: &Cfg) -> Option<Value> {
 // CLI binaries (subprocess), only when --bin-dir is given
 // ---------------------------------------------------------------------------
 
+/// A child's captured stdout/stderr is diagnostics, never a media capture.
+const CHILD_OUTPUT_LIMIT: u64 = 4 * 1024 * 1024;
+
 /// Run `bin` with `cwd` as its working directory. Inputs/outputs are passed as
 /// bare relative names so the process id (different for the two sweeps) never
 /// leaks into the captured output.
@@ -992,8 +998,8 @@ fn run_bin(
             Err(_) => break None,
         }
     };
-    let stdout = std::fs::read(&so).unwrap_or_default();
-    let stderr = std::fs::read(&se).unwrap_or_default();
+    let stdout = read_capped(&so, CHILD_OUTPUT_LIMIT).unwrap_or_default();
+    let stderr = read_capped(&se, CHILD_OUTPUT_LIMIT).unwrap_or_default();
     match status {
         None => json!({ "timeout": true }),
         Some(s) => json!({
@@ -1070,11 +1076,11 @@ pub fn cli_ts_fix(fx: &Fixture, cfg: &Cfg) -> Option<Value> {
         ];
         args.extend(flags.iter().map(|s| (*s).to_string()));
         let mut v = run_bin(&bin, &cwd, &args, std::time::Duration::from_secs(120));
-        if let Ok(bytes) = std::fs::read(&output) {
+        if let Ok((len, digest)) = file_len_sha(&output) {
             if let Value::Object(m) = &mut v {
-                m.insert("output_len".into(), json!(bytes.len()));
-                m.insert("output_packets".into(), json!(bytes.len() / 188));
-                m.insert("output_sha256".into(), json!(sha(&bytes)));
+                m.insert("output_len".into(), json!(len));
+                m.insert("output_packets".into(), json!(len / 188));
+                m.insert("output_sha256".into(), json!(digest));
             }
         }
         out.insert(name.into(), v);
