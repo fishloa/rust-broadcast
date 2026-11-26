@@ -626,7 +626,7 @@ fn first_trun_data_offset(moof: &isobmff::BoxItem<'_>) -> Option<usize> {
             if trun.four_cc() != *b"trun" {
                 continue;
             }
-            let flags = broadcast_common::wire::u32_at(trun.body, 0) & 0x00ff_ffff;
+            let flags = broadcast_core::wire::u32_at(trun.body, 0) & 0x00ff_ffff;
             if flags & DATA_OFFSET_PRESENT == 0 {
                 return None;
             }

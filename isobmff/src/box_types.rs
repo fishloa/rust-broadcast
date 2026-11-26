@@ -429,7 +429,7 @@ pub fn write_full_box_header(
 /// it). Borrowed in the overwhelmingly common compact case (#1147).
 pub fn compact_form(bytes: &[u8]) -> Result<alloc::borrow::Cow<'_, [u8]>> {
     need_in(bytes, BOX_HEADER_MIN_SIZE, "box header")?;
-    if broadcast_common::wire::u32_at(bytes, BOX_SIZE_OFFSET) != SIZE_INDICATES_LARGESIZE {
+    if broadcast_core::wire::u32_at(bytes, BOX_SIZE_OFFSET) != SIZE_INDICATES_LARGESIZE {
         return Ok(alloc::borrow::Cow::Borrowed(bytes));
     }
     if bytes.len() < BOX_HEADER_LARGESIZE_SIZE {
@@ -477,9 +477,8 @@ impl<'a> Parse<'a> for BoxHeader {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "BoxHeader")?;
 
-        let raw_size = broadcast_common::wire::u32_at(bytes, BOX_SIZE_OFFSET);
-        let box_type =
-            BoxType::from_bytes(broadcast_common::wire::fourcc_at(bytes, BOX_TYPE_OFFSET));
+        let raw_size = broadcast_core::wire::u32_at(bytes, BOX_SIZE_OFFSET);
+        let box_type = BoxType::from_bytes(broadcast_core::wire::fourcc_at(bytes, BOX_TYPE_OFFSET));
 
         let mut cursor = BOX_HEADER_MIN_SIZE;
 
@@ -490,7 +489,7 @@ impl<'a> Parse<'a> for BoxHeader {
                     have: bytes.len(),
                 });
             }
-            let v = broadcast_common::wire::u64_at(bytes, cursor);
+            let v = broadcast_core::wire::u64_at(bytes, cursor);
             cursor += LARGESIZE_SIZE;
             v
         } else {

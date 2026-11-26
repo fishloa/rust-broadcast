@@ -70,10 +70,10 @@ use crate::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OF
 use crate::error::{Error, Result};
 use crate::nalu_types::VALID_LENGTH_SIZES;
 use alloc::vec::Vec;
-use broadcast_common::wire::u24_at;
 use broadcast_core::bits::{BitError, BitWriter};
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::{need_in, need_out};
+use broadcast_core::wire::u24_at;
 use broadcast_core::{Parse, Serialize};
 use core::fmt;
 

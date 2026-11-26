@@ -42,9 +42,9 @@
 use crate::error::{Error, Result};
 use crate::nalu_types::{AvcPps, AvcSps, AvcSpsExt, VALID_LENGTH_SIZES};
 use alloc::vec::Vec;
-use broadcast_common::wire::{read_nalu_16, read_u8};
 use broadcast_core::error::InvalidValue;
 use broadcast_core::len::need_out;
+use broadcast_core::wire::{read_nalu_16, read_u8};
 use broadcast_core::{Parse, Serialize};
 use core::fmt;
 

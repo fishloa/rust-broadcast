@@ -8,8 +8,8 @@
 //! on [`TrackInfo`](crate::reader::TrackInfo), and the caller hands each text
 //! sample to [`chapter_title`].
 
-use broadcast_common::wire::u16_at;
 use broadcast_core::len::need_in;
+use broadcast_core::wire::u16_at;
 
 use crate::error::{Error, Result};
 

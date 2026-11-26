@@ -199,7 +199,7 @@ impl Name {
 fn parse_string_body(body: &[u8], what: &'static str) -> Result<(u8, u32, String)> {
     need_in(body, STRING_MIN_BODY_LEN, what)?;
     let version = body[0];
-    let flags = broadcast_common::wire::u24_at(body, FULLBOX_FLAGS_OFFSET);
+    let flags = broadcast_core::wire::u24_at(body, FULLBOX_FLAGS_OFFSET);
     let value = core::str::from_utf8(&body[FULLBOX_EXTRA_SIZE..])
         .map_err(|_| Error::InvalidInput("freeform string is not UTF-8"))?
         .into();

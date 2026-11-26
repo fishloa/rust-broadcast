@@ -112,7 +112,7 @@ impl Chpl {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         need_in(body, MIN_BODY_LEN, "chpl body")?;
         let version = body[0];
-        let flags = broadcast_common::wire::u24_at(body, FULLBOX_FLAGS_OFFSET);
+        let flags = broadcast_core::wire::u24_at(body, FULLBOX_FLAGS_OFFSET);
         let reserved = super::u32_at(body, FULLBOX_LEN);
         let count = usize::from(body[FULLBOX_LEN + RESERVED_LEN]);
         let remaining = &body[MIN_BODY_LEN..];

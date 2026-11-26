@@ -249,10 +249,10 @@ fn an_iphone_live_photo_reads_every_track() {
 /// Parse the key table itself. Apple also stores per-key data-type boxes after
 /// the table inside the same `keys` box, which are not table entries.
 fn keys_table(payload: &[u8]) -> Option<isobmff::metadata::keys::Keys> {
-    let count = usize::try_from(broadcast_common::wire::u32_at(payload, 4)).ok()?;
+    let count = usize::try_from(broadcast_core::wire::u32_at(payload, 4)).ok()?;
     let mut end = 8usize;
     for _ in 0..count {
-        let size = usize::try_from(broadcast_common::wire::u32_at(payload, end)).ok()?;
+        let size = usize::try_from(broadcast_core::wire::u32_at(payload, end)).ok()?;
         end = end.checked_add(size)?;
     }
     isobmff::metadata::keys::Keys::parse_body(payload.get(..end)?).ok()

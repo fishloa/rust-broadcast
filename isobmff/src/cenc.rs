@@ -28,9 +28,9 @@ use crate::box_types::{
 };
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::wire::{u16_at, u32_at, u64_at};
 use broadcast_core::error::BufferTooShort;
 use broadcast_core::len::{need_in, need_out};
+use broadcast_core::wire::{u16_at, u32_at, u64_at};
 use broadcast_core::{Parse, Serialize};
 
 /// Width of an AES-128 content key in bytes (ISO/IEC 23001-7 AES-128 content

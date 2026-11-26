@@ -903,15 +903,15 @@ pub(crate) fn is_text_key(fourcc: &[u8; BOX_TYPE_SIZE]) -> bool {
 
 /// Parse a big-endian u16 at `off`, the caller having proved two bytes there.
 pub(crate) fn u16_at(bytes: &[u8], off: usize) -> u16 {
-    broadcast_common::wire::u16_at(bytes, off)
+    broadcast_core::wire::u16_at(bytes, off)
 }
 
 /// Parse a big-endian u32 at `off`, the caller having proved four bytes there.
 pub(crate) fn u32_at(bytes: &[u8], off: usize) -> u32 {
-    broadcast_common::wire::u32_at(bytes, off)
+    broadcast_core::wire::u32_at(bytes, off)
 }
 
 /// Parse a big-endian u64 at `off`, the caller having proved eight bytes there.
 pub(crate) fn u64_at(bytes: &[u8], off: usize) -> u64 {
-    broadcast_common::wire::u64_at(bytes, off)
+    broadcast_core::wire::u64_at(bytes, off)
 }

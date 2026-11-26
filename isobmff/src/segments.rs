@@ -55,7 +55,7 @@ impl BrandBox {
         let mut major_brand = [0u8; BOX_TYPE_SIZE];
         major_brand.copy_from_slice(&body[..BOX_TYPE_SIZE]);
         let minor_version =
-            broadcast_common::wire::be_u32(body, MINOR_VERSION_OFFSET, "ftyp/styp body")?;
+            broadcast_core::wire::be_u32(body, MINOR_VERSION_OFFSET, "ftyp/styp body")?;
         let mut compatible_brands = Vec::new();
         let mut off = BRANDS_START_OFFSET;
         while off + BOX_TYPE_SIZE <= body.len() {
@@ -207,14 +207,14 @@ impl MediaDataBox {
         if bytes[core::mem::size_of::<u32>()..BOX_HEADER_MIN_SIZE] != MDAT {
             return Err(Error::UnexpectedBox { expected: "mdat" });
         }
-        let size32 = broadcast_common::wire::be_u32(bytes, 0, "mdat")?;
+        let size32 = broadcast_core::wire::be_u32(bytes, 0, "mdat")?;
         let (size, hdr) = if size32 == 1 {
             let large_header = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
             need_in(bytes, large_header, "mdat largesize")?;
             (
                 // A `largesize` beyond `usize` can never fit `bytes`: saturate so
                 // the size check below rejects it instead of truncating.
-                usize::try_from(broadcast_common::wire::be_u64(
+                usize::try_from(broadcast_core::wire::be_u64(
                     bytes,
                     BOX_HEADER_MIN_SIZE,
                     "mdat largesize",
