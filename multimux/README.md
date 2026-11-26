@@ -492,6 +492,7 @@ rejects reload with a clear error — add/remove/list still work normally.
   "request_timeout_secs": 10.0,
   "max_concurrent_requests": 4096,
   "max_request_body_bytes": 16384,
+  "max_ingest_pes_unit_bytes": 4194304,
   "ingest_connect_timeout_secs": 10.0,
   "ingest_read_timeout_secs": 30.0,
   "playlist_name": "media.m3u8",
@@ -695,7 +696,9 @@ complete, runnable example.
   concurrency bound, and request-body cap on the listener
   (`request_timeout_secs`/`max_concurrent_requests`/
   `max_request_body_bytes`); connect/read timeouts on every ingest source
-  (`ingest_connect_timeout_secs`/`ingest_read_timeout_secs`).
+  (`ingest_connect_timeout_secs`/`ingest_read_timeout_secs`); and a PES unit
+  ceiling on every network TS source (`max_ingest_pes_unit_bytes`, default
+  4 MiB, `null` for unlimited).
 - **Structured errors + secret redaction + `tracing`** — no credential ever
   reaches a log line, error message, or `Debug` output.
 - **Prometheus metrics + health/readiness** — see the served-endpoints

@@ -5,6 +5,7 @@
 //! TS alignment checks, demux and the programme split are the session's and `EventIngest`'s.
 
 use std::convert::Infallible;
+use std::num::NonZeroUsize;
 
 use broadcast_client::{Config, SourceKind};
 use tokio::net::UdpSocket;
@@ -28,6 +29,9 @@ pub struct TsUdpRoute {
     /// buffer, which the bind only requests when set.
     socket: broadcast_common::net::UdpOptions,
     timeouts: Timeouts,
+    /// Config-supplied ceiling on one PID's in-progress PES unit; `None` (the
+    /// demux default) is unlimited.
+    max_pes_unit_bytes: Option<NonZeroUsize>,
     /// A socket bound by the caller (SP7.1): a test binds `127.0.0.1:0`, reads
     /// the live address, and hands the socket in, so `bind` uses it directly
     /// and never races reserve-then-rebind. `None` (the production shape)
@@ -41,6 +45,7 @@ impl std::fmt::Debug for TsUdpRoute {
             .field("name", &self.name)
             .field("addr", &self.addr)
             .field("socket", &self.socket)
+            .field("max_pes_unit_bytes", &self.max_pes_unit_bytes)
             .finish()
     }
 }
@@ -53,6 +58,7 @@ impl TsUdpRoute {
             addr: addr.into(),
             socket: broadcast_common::net::UdpOptions::default(),
             timeouts: Timeouts::default(),
+            max_pes_unit_bytes: None,
             prebound: std::sync::Arc::new(parking_lot::Mutex::new(None)),
         }
     }
@@ -76,6 +82,7 @@ impl TsUdpRoute {
             addr,
             socket: broadcast_common::net::UdpOptions::default(),
             timeouts: Timeouts::default(),
+            max_pes_unit_bytes: None,
             prebound: std::sync::Arc::new(parking_lot::Mutex::new(Some(socket))),
         }
     }
@@ -91,6 +98,13 @@ impl TsUdpRoute {
     #[must_use]
     pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
         self.timeouts = timeouts;
+        self
+    }
+
+    /// Sets the config-supplied PES unit ceiling; `None` is unlimited.
+    #[must_use]
+    pub fn with_max_pes_unit_bytes(mut self, max: Option<NonZeroUsize>) -> Self {
+        self.max_pes_unit_bytes = max;
         self
     }
 }
@@ -114,7 +128,7 @@ impl TsUdpRoute {
         let mut config = Config::relay();
         config.kind = SourceKind::Udp;
         config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
-        config.ts_http.max_pes_unit_bytes = crate::source::max_ingest_pes_unit_bytes();
+        config.ts_http.max_pes_unit_bytes = self.max_pes_unit_bytes;
         crate::source::udp::apply_socket_options(&mut config, &self.socket)?;
         Ok(config)
     }

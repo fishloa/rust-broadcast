@@ -89,7 +89,7 @@ fn session_config(route: &HlsPullRoute) -> Config {
     config.kind = SourceKind::Hls;
     let mut config = config.with_timeouts(route.target.timeouts);
     config.max_queued_bytes = crate::source::SEGMENTED_EVENT_QUEUE_BYTES;
-    config.ts_http.max_pes_unit_bytes = crate::source::max_ingest_pes_unit_bytes();
+    config.ts_http.max_pes_unit_bytes = route.target.max_pes_unit_bytes;
     config.max_manifest_bytes = crate::source::MAX_HTTP_BODY_BYTES;
     config.max_segment_bytes = crate::source::MAX_HTTP_BODY_BYTES;
     config.max_key_bytes = MAX_KEY_BODY_BYTES;

@@ -108,7 +108,7 @@ fn reserve_tcp_addr() -> SocketAddr {
 /// short segments/parts (0.5 s / 100 ms) so the ~3 s real fixture closes at
 /// least one real segment (two keyframes comfortably land inside the fed
 /// data) well within this file's polling hang guards.
-fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
+pub(crate) fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
     Config::default()
         .with_bind(bind.to_string())
         .with_target_duration(Duration::from_millis(500))
