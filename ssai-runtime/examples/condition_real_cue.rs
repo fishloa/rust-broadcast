@@ -14,9 +14,9 @@
 //! ```sh
 //! cargo run -p ssai-runtime --example condition_real_cue
 //! ```
-use broadcast_common::Parse;
 use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::clock33::Clock33;
+use broadcast_core::Parse;
 use isobmff::emsg::{EmsgBox, PresentationTime};
 use scte35_splice::SpliceInfoSection;
 

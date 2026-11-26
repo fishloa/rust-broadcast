@@ -80,8 +80,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use broadcast_common::clock33::PTS_TIMESCALE;
-use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use broadcast_common::units::MILLIS_PER_SEC;
+use broadcast_core::timescale::{Rounding, Timescale, rescale_u64};
 use transmux::TrackId;
 
 use crate::ingress::ProgramId;
@@ -274,7 +274,7 @@ impl TsHlsIdrFallback {
     }
 }
 
-broadcast_common::impl_spec_display!(TsHlsIdrFallback);
+broadcast_core::impl_spec_display!(TsHlsIdrFallback);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -292,7 +292,7 @@ impl TsHlsIdrStatus {
     }
 }
 
-broadcast_common::impl_spec_display!(TsHlsIdrStatus);
+broadcast_core::impl_spec_display!(TsHlsIdrStatus);
 
 /// Why a classic MPEG-TS HLS output could not be produced: the codec a track
 /// carries that Apple HLS Authoring Spec 1.5 (AVC-only video in TS) forbids.
@@ -332,7 +332,7 @@ impl TsHlsRejection {
     }
 }
 
-broadcast_common::impl_spec_display!(TsHlsRejection);
+broadcast_core::impl_spec_display!(TsHlsRejection);
 
 pub trait SiblingTrunks {
     /// Build audio follower renditions for `trunk`. The only registration
@@ -2108,7 +2108,7 @@ fn timescale_moves(
 /// Rescale a timestamp in `timescale` ticks to the trunk event ring's fixed
 /// 90 kHz clock (issue #1083, W9). Rounds down, saturating — a value that
 /// overflows `u64` is clamped, never wrapped.
-fn rescale_to_90k(pts: i64, timescale: broadcast_common::timescale::Timescale) -> u64 {
+fn rescale_to_90k(pts: i64, timescale: broadcast_core::timescale::Timescale) -> u64 {
     // A negative PTS (a pre-roll/PTS-base offset a demuxer may produce) is
     // clamped to 0: the event ring has no representation for a time before
     // zero, and a segment starting there simply begins the timeline.
@@ -2670,7 +2670,7 @@ mod segmenter_tests {
             );
         }
         let mut changed = track_spec(TrackId::new(1));
-        changed.timescale = broadcast_common::timescale!(45_000);
+        changed.timescale = broadcast_core::timescale!(45_000);
         writer.set_tracks(vec![changed.clone()]);
         assert_eq!(trunk.track_generation(), 2);
         let mut events = Vec::new();
@@ -2864,7 +2864,7 @@ mod segmenter_tests {
 
         // Changed spec: bump the timescale (a discontinuity trigger).
         let mut changed = track_spec(TrackId::new(1));
-        changed.timescale = broadcast_common::timescale!(45_000);
+        changed.timescale = broadcast_core::timescale!(45_000);
         writer.set_tracks(vec![changed.clone()]);
         segmenter.published_tracks = trunk.tracks();
         let mut events = Vec::new();

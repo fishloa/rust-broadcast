@@ -5,7 +5,7 @@
 //! sidx offsets are anchored at the first byte after the box (14496-12:2026
 //! 8.14.3), so each reference's byte range follows from the box alone.
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use isobmff::timing::SegmentIndexBox;
 
 use super::AddressError;

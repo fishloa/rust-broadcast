@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use broadcast_common::timescale::Timescale;
 use broadcast_common::{Stage, Timestamp};
+use broadcast_core::timescale::Timescale;
 use media_plane::file_source::{
     FileIngestSession, FileReaderError, PassRange, advance_offsets, probe_and_demux,
 };

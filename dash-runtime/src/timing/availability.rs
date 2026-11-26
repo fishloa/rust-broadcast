@@ -8,8 +8,8 @@
 //!   time-shift buffer; Annex A.3.4 prints the same quantity)
 //! * Initialization Segment: available from `AST + PeriodStart` (5.3.9.5.2).
 
-use broadcast_common::timescale::{Rounding, Timescale, to_micros};
 use broadcast_common::units::MICROS_PER_SEC;
+use broadcast_core::timescale::{Rounding, Timescale, to_micros};
 use jiff::SignedDuration;
 
 /// Factor extending a duration into its availability window.

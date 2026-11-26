@@ -21,7 +21,7 @@ use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidField;
+use broadcast_core::error::InvalidField;
 use core::time::Duration;
 #[cfg(feature = "crypto")]
 use subtle::ConstantTimeEq;
@@ -211,7 +211,7 @@ impl RejectionReason {
     }
 }
 
-broadcast_common::impl_spec_display!(RejectionReason, Reserved);
+broadcast_core::impl_spec_display!(RejectionReason, Reserved);
 
 /// Opt-in §6 payload-encryption config for one side of a Caller-Listener
 /// handshake (`draft-sharabayko-srt-01` §6.1.5, Key Material Exchange —

@@ -5,8 +5,8 @@
 //! cargo run -p playout-runtime --example schedule_and_transition
 //! ```
 
-use broadcast_common::timescale;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale;
+use broadcast_core::timescale::Timescale;
 use playout_runtime::schedule::{CodecConfigId, EntryKind, Playhead, Schedule, ScheduleEntry};
 use playout_runtime::transition::next_transition;
 

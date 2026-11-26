@@ -2,8 +2,8 @@
 //! core classifies it ([`FailureClass`]) and the errors the `on_*` calls
 //! return ([`Error`]).
 
-use broadcast_common::impl_spec_display;
 use broadcast_common::stage::Timestamp;
+use broadcast_core::impl_spec_display;
 use thiserror::Error;
 
 use super::action::{ResourceId, UtcId};

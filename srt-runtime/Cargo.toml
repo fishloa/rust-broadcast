@@ -18,6 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 thiserror = { version = "2", default-features = false }
 serde     = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 # §6 payload crypto (AES-CTR, RFC 3394 key wrap, PBKDF2/HMAC-SHA1 KEK
@@ -68,7 +69,7 @@ tokio = { version = "1", default-features = false, features = ["net", "io-util",
 default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`. The packet codecs themselves are fully no_std.
-std = ["broadcast-common/std", "thiserror/std", "serde?/std", "dep:url", "dep:percent-encoding"]
+std = ["broadcast-common/std", "broadcast-core/std", "thiserror/std", "serde?/std", "dep:url", "dep:percent-encoding"]
 # Derive serde on the public wire types.
 serde = ["dep:serde"]
 # `crypto` adds the §6 payload-encryption path: AES-CTR encrypt/decrypt, RFC

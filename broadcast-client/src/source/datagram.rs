@@ -10,8 +10,8 @@ use alloc::vec::Vec;
 use core::net::{IpAddr, SocketAddr};
 use core::time::Duration;
 
-use broadcast_common::Parse;
 use broadcast_common::stage::Timestamp;
+use broadcast_core::Parse;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 use rtp_packet::{RtpPacket, SeqValidity, SeqVerdict};
 
@@ -517,7 +517,7 @@ impl Datagram {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use rtp_packet::Ssrc;
 
     const SSRC_A: u32 = 0xA1A1_A1A1;

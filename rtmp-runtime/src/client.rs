@@ -8,9 +8,9 @@
 //! automatically emits `createStream`, and a successful `createStream`
 //! `_result` emits `publish`.
 
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 
 use crate::RtmpError;
 use crate::amf0::{Amf0Value, Command};
@@ -85,7 +85,7 @@ impl ClientMode {
     }
 }
 
-broadcast_common::impl_spec_display!(ClientMode);
+broadcast_core::impl_spec_display!(ClientMode);
 
 /// Configuration for a [`ClientSession`].
 #[non_exhaustive]

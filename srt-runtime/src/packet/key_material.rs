@@ -24,8 +24,8 @@
 //! (see the crate root docs).
 
 use super::{Error, Result, be32, put_be32};
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::len::{need_in, need_out};
 
 const S_FIXED: u8 = 0;
 const V_FIXED: u8 = 1;
@@ -146,7 +146,7 @@ impl KmKeyFlag {
     }
 }
 
-broadcast_common::impl_spec_display!(KmKeyFlag);
+broadcast_core::impl_spec_display!(KmKeyFlag);
 
 /// `Cipher` wire values (§3.2.2).
 pub const CIPHER_NONE: u8 = 0;
@@ -195,7 +195,7 @@ impl Cipher {
     }
 }
 
-broadcast_common::impl_spec_display!(Cipher, Reserved);
+broadcast_core::impl_spec_display!(Cipher, Reserved);
 
 /// `Authentication` wire values (§3.2.2).
 pub const KM_AUTH_NONE: u8 = 0;
@@ -238,7 +238,7 @@ impl KmAuth {
     }
 }
 
-broadcast_common::impl_spec_display!(KmAuth, Reserved);
+broadcast_core::impl_spec_display!(KmAuth, Reserved);
 
 /// `SE` (Stream Encapsulation) wire values (§3.2.2).
 pub const STREAM_ENCAP_UNSPECIFIED: u8 = 0;
@@ -294,7 +294,7 @@ impl StreamEncapsulation {
     }
 }
 
-broadcast_common::impl_spec_display!(StreamEncapsulation, Reserved);
+broadcast_core::impl_spec_display!(StreamEncapsulation, Reserved);
 
 /// Key Material message (`draft-sharabayko-srt-01` §3.2.2, Figures 10-11).
 ///
@@ -526,7 +526,7 @@ impl<'a> KeyMaterial<'a> {
         // would otherwise shift into the reserved `Resv3` bits, misframing
         // the message with `Ok` (#1129). Checked in `usize` before the
         // 8-bit field is packed below.
-        broadcast_common::len::fit_u8(self.salt.len() / KEY_BLOCK_LEN, "Salt length / 4 (SLen)")?;
+        broadcast_core::len::fit_u8(self.salt.len() / KEY_BLOCK_LEN, "Salt length / 4 (SLen)")?;
         if !crate::AES_KEY_LENS.contains(&self.x_sek.len()) {
             return Err(Error::InvalidKeyMaterial {
                 field: "xSEK",
@@ -585,7 +585,7 @@ impl<'a> KeyMaterial<'a> {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for KeyMaterial<'a> {
+impl<'a> broadcast_core::Parse<'a> for KeyMaterial<'a> {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -593,7 +593,7 @@ impl<'a> broadcast_common::Parse<'a> for KeyMaterial<'a> {
     }
 }
 
-impl broadcast_common::Serialize for KeyMaterial<'_> {
+impl broadcast_core::Serialize for KeyMaterial<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {

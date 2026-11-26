@@ -41,7 +41,7 @@ use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 use crate::tshttp::Action as TsAction;
 use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use core::time::Duration;
 
 const SCHEME_HTTP: &str = "http";

@@ -11,8 +11,8 @@ use transmux::TrackId;
 
 use ::url::Url;
 use broadcast_common::range::ByteSpan;
-use broadcast_common::timescale::Timescale;
 use broadcast_common::url_ref;
+use broadcast_core::timescale::Timescale;
 use broadcast_hls::limits::Limits;
 use broadcast_hls::{
     ByteRange, EncryptionMethod, MapTag, MasterPlaylist, MediaKey, MediaPlaylist, MediaSegment,

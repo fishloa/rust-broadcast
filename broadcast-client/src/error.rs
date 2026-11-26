@@ -185,7 +185,7 @@ impl ConfigField {
     }
 }
 
-broadcast_common::impl_spec_display!(ConfigField);
+broadcast_core::impl_spec_display!(ConfigField);
 
 /// Why a connection ended, as the host reports it to
 /// [`crate::Session::on_closed`].

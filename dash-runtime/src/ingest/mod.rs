@@ -13,7 +13,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::address::template::match_url;
 use crate::mpd::{Mpd, SegmentTemplate};
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 use http::StatusCode;
 
 /// HTTP method of an ingest request (§5.2.1).

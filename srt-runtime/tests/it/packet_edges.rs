@@ -2,7 +2,7 @@
 //! reserved control fields, Stream ID words and data-packet field decoding
 //! (audit 21 #2930).
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use core::time::Duration;
 use srt_runtime::Error;
 use srt_runtime::packet::handshake::{

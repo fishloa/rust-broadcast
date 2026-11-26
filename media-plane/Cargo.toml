@@ -12,6 +12,7 @@ readme       = "README.md"
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 bytes            = { version = "1", default-features = false }
 thiserror        = { version = "2", default-features = false }
 transmux         = { path = "../transmux", version = "0.33.0", default-features = false, optional = true }
@@ -54,7 +55,7 @@ default = ["std"]
 # The `ts_session::test_support` helpers (muxed TS bytes, configs) for a host's tests: a
 # `[dev-dependencies]` feature, not for production builds.
 test-support = ["std"]
-std     = ["broadcast-common/std", "thiserror/std", "dep:transmux", "transmux/std", "transmux/flv", "transmux/ps", "transmux/matroska", "transmux/hls", "transmux/captions", "dep:isobmff", "isobmff/std", "dep:timed-metadata", "dep:event-listener", "dep:parking_lot", "dep:container-probe", "dep:caption-convert", "dep:dvb-si", "dep:tracing", "dep:broadcast-hls"]
+std     = ["broadcast-common/std", "broadcast-core/std", "thiserror/std", "dep:transmux", "transmux/std", "transmux/flv", "transmux/ps", "transmux/matroska", "transmux/hls", "transmux/captions", "dep:isobmff", "isobmff/std", "dep:timed-metadata", "dep:event-listener", "dep:parking_lot", "dep:container-probe", "dep:caption-convert", "dep:dvb-si", "dep:tracing", "dep:broadcast-hls"]
 
 [package.metadata.docs.rs]
 # `all-features = true` alone is not enough here: this crate's `std` feature

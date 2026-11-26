@@ -77,7 +77,7 @@ impl Direction {
     }
 }
 
-broadcast_common::impl_spec_display!(Direction);
+broadcast_core::impl_spec_display!(Direction);
 
 /// One per-payload-type codec attribute of an answer, e.g. `a=rtpmap`'s
 /// `96 H264/90000`. The name is one of RFC 8866 §5.13's attribute names
@@ -123,7 +123,7 @@ impl CodecAttributeName {
     }
 }
 
-broadcast_common::impl_spec_display!(CodecAttributeName);
+broadcast_core::impl_spec_display!(CodecAttributeName);
 
 /// The `m=` line an answer carries: the offer's transport, with the ONE
 /// payload type this side accepts (`am=video 9 UDP/TLS/RTP/SAVPF 96`).

@@ -14,8 +14,8 @@
 
 use broadcast_common::bounded::{Limit, read_file_bounded};
 use broadcast_common::clock33::{self, Clock33};
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse, Serialize};
 use isobmff::emsg::{EmsgBox, PresentationTime};
 use playout_runtime::schedule::{CodecConfigId, EntryKind, Playhead, Schedule, ScheduleEntry};
 use playout_runtime::scte35::{BreakEdge, build_splice_insert, to_section};

@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use broadcast_smooth::{QualityLevel, SmoothManifest, StreamIndex};
 use transmux::smooth_fragment::fragment_tfxd;
 use transmux::{Sample, TrackId, TrackSpec};

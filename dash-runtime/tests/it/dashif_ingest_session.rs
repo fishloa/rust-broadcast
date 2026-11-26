@@ -1,4 +1,5 @@
-use broadcast_common::{Serialize, Stage, Timestamp};
+use broadcast_common::{Stage, Timestamp};
+use broadcast_core::Serialize;
 use dash_runtime::ingest::{DashifIngestSession, IngestObject, ObjectKind};
 use media_plane::ingress::SessionEvent;
 use transmux::FragmentTrackData;

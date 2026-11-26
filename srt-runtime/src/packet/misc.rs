@@ -9,7 +9,7 @@ use super::{Error, Result, be32, put_be32};
 /// Number (§3.2.5, Figure 15).
 const DROP_REQ_CIF_LEN: usize = 8;
 const DROP_REQ_LAST_SEQ_OFFSET: usize = 4;
-use broadcast_common::error::BufferTooShort;
+use broadcast_core::error::BufferTooShort;
 
 /// Peer error code for a file-system error — the only value
 /// `draft-sharabayko-srt-01` §3.2.10 currently defines.
@@ -107,7 +107,7 @@ impl DropReqPacket {
             }));
         }
         let message_number = MessageNumber::try_new(message_number).map_err(|_| {
-            Error::FieldOverflow(broadcast_common::error::FieldOverflow {
+            Error::FieldOverflow(broadcast_core::error::FieldOverflow {
                 field: "Message Number",
                 value: u64::from(message_number),
                 max: u64::from(MESSAGE_NUMBER_MASK),
@@ -239,7 +239,7 @@ mod tests {
             buf[4..8].copy_from_slice(&wide.to_be_bytes());
             assert_eq!(
                 ControlPacket::parse(&buf).unwrap_err(),
-                Error::FieldOverflow(broadcast_common::error::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::error::FieldOverflow {
                     field: "Message Number",
                     value: u64::from(wide),
                     max: u64::from(MESSAGE_NUMBER_MAX),

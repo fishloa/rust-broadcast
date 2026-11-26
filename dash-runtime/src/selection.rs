@@ -16,7 +16,7 @@
 //!    Role `main`; else the first. DASH has no DEFAULT flag, Role `main`
 //!    plays that part (5.8.5.5 Table 34).
 
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 
 use broadcast_dash::descriptors::{self, Role, essential_understood};
 use broadcast_dash::inherit::{SegmentInfo, effective_common, resolve_segment_info};

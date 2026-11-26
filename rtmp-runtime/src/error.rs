@@ -14,7 +14,7 @@ pub enum RtmpError {
     /// Not enough input bytes were available to parse a complete structure
     /// (handshake message, chunk header, or reassembled RTMP message).
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// The input did not conform to the expected wire layout (bad handshake
     /// version, invalid chunk `fmt`/CSID encoding, a length that overruns
@@ -188,12 +188,12 @@ pub enum RtmpError {
     /// packed it into a 24-bit field) would have silently wrapped and
     /// emitted a misframed chunk stream; this is returned instead.
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::error::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::error::FieldOverflow),
 
     /// The output buffer passed to `serialize_into` was smaller than
     /// `serialized_len()`.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 }
 
 /// Render one AMF0 value for an error message; the value's `Debug` form is

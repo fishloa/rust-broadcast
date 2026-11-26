@@ -1346,7 +1346,7 @@ mod tests {
             track_id: TrackId::new(1),
             kind: transmux::rtp::RtpMediaKind::H264,
             config: placeholder_avc(),
-            clock_rate: broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
+            clock_rate: broadcast_core::timescale::Timescale::try_new(90_000).expect("timescale"),
             setup_uri: "rtsp://cam.test/live/trackID=1".to_string(),
             channel: 0,
             rtcp_channel: 1,
@@ -1566,7 +1566,7 @@ mod tests {
             TrackId::new(1),
             transmux::rtp::RtpMediaKind::H264,
             placeholder_avc(),
-            broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
+            broadcast_core::timescale::Timescale::try_new(90_000).expect("timescale"),
         )]));
         source.cfg.stall_notice = Duration::from_secs(5);
         source.cfg.stall_reconnect = Duration::from_secs(1_000_000);
@@ -1604,7 +1604,7 @@ mod tests {
             TrackId::new(1),
             transmux::rtp::RtpMediaKind::H264,
             placeholder_avc(),
-            broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
+            broadcast_core::timescale::Timescale::try_new(90_000).expect("timescale"),
         )]));
         source.tracks_dirty = true;
         source.announce_tracks();

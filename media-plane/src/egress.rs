@@ -250,7 +250,7 @@ impl CachePolicy {
     }
 }
 
-broadcast_common::impl_spec_display!(CachePolicy);
+broadcast_core::impl_spec_display!(CachePolicy);
 
 /// Bounds how long [`ServedEgress::resolve`] may keep answering
 /// [`EgressResponse::Await`] for **one logical request** — the same
@@ -532,7 +532,7 @@ mod tests {
 
     use super::*;
     use crate::trunk::{ArchiveOverrun, SegmentEntry, Trunk, TrunkConfig};
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use std::num::NonZeroUsize;
     use std::sync::Mutex;
     use std::time::Duration;

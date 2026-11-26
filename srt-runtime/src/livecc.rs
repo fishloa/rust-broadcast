@@ -131,7 +131,7 @@ impl MaxBwConfig {
     }
 }
 
-broadcast_common::impl_spec_display!(MaxBwConfig);
+broadcast_core::impl_spec_display!(MaxBwConfig);
 
 /// Apply `'MAX_BW = bw * (1 + overhead / 100)'` (`private/specs-verified/rules/srt-livecc.md`
 /// L3143/L3154, verbatim).

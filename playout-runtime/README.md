@@ -55,7 +55,7 @@ orchestrator that owns the clock and the media.
 
 ```rust
 use broadcast_common::clock33::Clock33;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use playout_runtime::{
     BreakEdge, CodecConfigId, EntryKind, Playhead, Schedule, ScheduleEntry, build_splice_insert,
     next_transition,

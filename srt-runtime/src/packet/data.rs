@@ -11,7 +11,7 @@
 pub(crate) use super::number::{MESSAGE_NUMBER_BITS, MESSAGE_NUMBER_MASK};
 use super::number::{SocketId, SrtTimestamp};
 use super::{Error, Result, SEQ_NUMBER_MASK, SRT_HEADER_LEN, be32, put_be32};
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 /// The next Message Number after `n`, wrapping at the 26-bit boundary
 /// (`draft-sharabayko-srt-01` §3.1) back to `0` — analogous to
@@ -116,7 +116,7 @@ impl PacketPosition {
     }
 }
 
-broadcast_common::impl_spec_display!(PacketPosition);
+broadcast_core::impl_spec_display!(PacketPosition);
 
 /// `KK`: Key-based Encryption Flag — whether/how the `Data` field is
 /// encrypted (`draft-sharabayko-srt-01` §3.1, §6). `11b` is reserved for
@@ -168,7 +168,7 @@ impl EncryptionKeyField {
     }
 }
 
-broadcast_common::impl_spec_display!(EncryptionKeyField, Reserved);
+broadcast_core::impl_spec_display!(EncryptionKeyField, Reserved);
 
 /// An SRT data packet (`draft-sharabayko-srt-01` §3.1, Figure 3).
 #[derive(Debug, Clone, PartialEq)]
@@ -246,12 +246,12 @@ impl<'a> DataPacket<'a> {
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
         need_out(buf, len)?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.seq_number),
             SEQ_NUMBER_BITS,
             "Packet Sequence Number",
         )?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(self.message_number),
             MESSAGE_NUMBER_BITS,
             "Message Number",
@@ -275,7 +275,7 @@ impl<'a> DataPacket<'a> {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for DataPacket<'a> {
+impl<'a> broadcast_core::Parse<'a> for DataPacket<'a> {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -283,7 +283,7 @@ impl<'a> broadcast_common::Parse<'a> for DataPacket<'a> {
     }
 }
 
-impl broadcast_common::Serialize for DataPacket<'_> {
+impl broadcast_core::Serialize for DataPacket<'_> {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {

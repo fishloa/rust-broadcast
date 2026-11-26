@@ -6,7 +6,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use bytes::{Bytes, BytesMut};
 use rtc_dtls::config::{ClientAuthType, ConfigBuilder, HandshakeConfig, VerifyPeerCertificateFn};
 use rtc_dtls::crypto::Certificate;
@@ -303,7 +303,7 @@ impl SetupRole {
     }
 }
 
-broadcast_common::impl_spec_display!(SetupRole);
+broadcast_core::impl_spec_display!(SetupRole);
 
 /// Configuration for a [`MediaTransport`].
 ///
@@ -511,7 +511,7 @@ impl IceConnectionState {
     }
 }
 
-broadcast_common::impl_spec_display!(IceConnectionState);
+broadcast_core::impl_spec_display!(IceConnectionState);
 
 /// A gathered ICE candidate's marshalled attribute body.
 #[derive(Debug, Clone, PartialEq, Eq)]

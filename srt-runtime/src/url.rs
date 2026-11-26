@@ -80,8 +80,8 @@ impl SrtMode {
     }
 }
 
-broadcast_common::impl_spec_display!(SrtMode);
-broadcast_common::impl_spec_display!(UrlRejection);
+broadcast_core::impl_spec_display!(SrtMode);
+broadcast_core::impl_spec_display!(UrlRejection);
 
 /// A parsed `srt://` URL: the endpoint to dial and its Stream ID overrides.
 #[derive(Clone, PartialEq, Eq)]

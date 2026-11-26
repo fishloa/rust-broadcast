@@ -11,8 +11,8 @@ use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 use crate::buffer::{lowest_id_per_kind, negative_origin, pts_to_27mhz_from, raw_27mhz};
 use crate::events::{BufferEvent, Event, PauseReason};
 use broadcast_common::clock33::{Clock27, PCR_HZ, PCR_WRAP_27MHZ, pcr_forward_distance};
-use broadcast_common::timescale::Timescale;
 use broadcast_common::units::MICROS_PER_SEC;
+use broadcast_core::timescale::Timescale;
 
 /// Largest forward 27 MHz distance that is unambiguous: beyond half the wrap
 /// the nearer direction is backwards.

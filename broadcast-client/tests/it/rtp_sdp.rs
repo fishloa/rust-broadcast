@@ -1,7 +1,7 @@
 use crate::support::udp_host::UdpHost;
 use broadcast_client::{Config, Error, Event, Session, SourceKind};
-use broadcast_common::Serialize;
 use broadcast_common::stage::Timestamp;
+use broadcast_core::Serialize;
 use rtp_packet::{RtpPacket, Ssrc};
 use url::Url;
 

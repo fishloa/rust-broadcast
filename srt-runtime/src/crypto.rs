@@ -47,7 +47,7 @@ use aes::{Aes128, Aes192, Aes256};
 use aes_kw::{KeyInit, KwAes128, KwAes192, KwAes256};
 use alloc::vec;
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidField;
+use broadcast_core::error::InvalidField;
 use core::result::Result::{Err, Ok};
 use ctr::Ctr128BE;
 use hmac::Hmac;
@@ -450,7 +450,7 @@ pub fn select_sek<'a>(
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::InvalidField;
+    use broadcast_core::error::InvalidField;
 
     use super::*;
 

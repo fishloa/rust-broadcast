@@ -12,8 +12,8 @@
 
 use std::num::NonZeroU64;
 
-use broadcast_common::Parse;
 use broadcast_common::range::ByteSpan;
+use broadcast_core::Parse;
 use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, LARGESIZE_SIZE, SIZE_TO_EOF};
 use isobmff::emsg::EMSG_BOX_TYPE as EMSG;
 use isobmff::init_segment::MOOV;

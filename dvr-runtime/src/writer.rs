@@ -228,7 +228,7 @@ impl StoreOpKind {
     }
 }
 
-broadcast_common::impl_spec_display!(StoreOpKind);
+broadcast_core::impl_spec_display!(StoreOpKind);
 
 /// Why one storage operation failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -304,7 +304,7 @@ impl RollReason {
     }
 }
 
-broadcast_common::impl_spec_display!(RollReason);
+broadcast_core::impl_spec_display!(RollReason);
 
 /// Something the writer decided, for the host to log or count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

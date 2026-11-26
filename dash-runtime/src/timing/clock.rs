@@ -6,9 +6,9 @@
 
 use core::time::Duration;
 
-use broadcast_common::impl_spec_display;
 use broadcast_common::stage::Timestamp;
 use broadcast_common::time::MonoUtc;
+use broadcast_core::impl_spec_display;
 use jiff::Timestamp as WallTimestamp;
 
 use super::utc_timing::UtcSample;

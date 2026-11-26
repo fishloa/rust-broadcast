@@ -43,7 +43,7 @@ use std::time::{Duration, Instant};
 use broadcast_common::Timestamp;
 use broadcast_common::bcp47_language;
 use broadcast_common::clock33;
-use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
+use broadcast_core::timescale::{Rounding, Timescale, rescale_i64};
 use caption_convert::{Cue, MediaTime, TeletextToWebVtt, cue_block};
 use dvb_si::descriptors::teletext::{TeletextEntry, TeletextType};
 use dvb_si::descriptors::{AnyDescriptor, parse_loop};

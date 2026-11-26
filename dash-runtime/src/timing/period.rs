@@ -13,7 +13,7 @@
 
 use std::time::Duration;
 
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 
 use broadcast_common::units::{MICROS_PER_SEC, NANOS_PER_MICRO};
 use broadcast_dash::{Mpd, PresentationType};

@@ -17,6 +17,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 # Session playlist rendering (issue #929): the per-session Interstitial
 # `EXT-X-DATERANGE` tag is appended to `MediaPlaylist::extra_tags` — the
 # injection point `broadcast-hls` documents for exactly this purpose.
@@ -40,9 +41,9 @@ default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc` — the session store, decision trait, splice-point
 # conditioning, and playlist rendering never touch a socket or a clock.
-std = ["broadcast-common/std", "broadcast-hls/std", "thiserror/std", "serde?/std"]
+std = ["broadcast-common/std", "broadcast-core/std", "broadcast-hls/std", "thiserror/std", "serde?/std"]
 # Derive serde on the public wire/decision types.
-serde = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde"]
+serde = ["dep:serde", "broadcast-common/serde", "broadcast-core/serde", "broadcast-hls/serde"]
 
 [lints]
 workspace = true

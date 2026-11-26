@@ -69,7 +69,7 @@ impl SourceKind {
     }
 }
 
-broadcast_common::impl_spec_display!(SourceKind);
+broadcast_core::impl_spec_display!(SourceKind);
 
 /// The kind of a PMT-declared elementary stream a start gate waits for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -90,7 +90,7 @@ impl StreamKind {
         }
     }
 }
-broadcast_common::impl_spec_display!(StreamKind);
+broadcast_core::impl_spec_display!(StreamKind);
 
 /// Read-ahead limit for every pull source: how far media may run ahead of the
 /// player's reported position before the session stops pulling it.
@@ -189,7 +189,7 @@ impl ReadAhead {
     }
 }
 
-broadcast_common::impl_spec_display!(ReadAhead);
+broadcast_core::impl_spec_display!(ReadAhead);
 
 pub use transmux::AvSync;
 
@@ -259,7 +259,7 @@ impl Status {
     }
 }
 
-broadcast_common::impl_spec_display!(Status);
+broadcast_core::impl_spec_display!(Status);
 
 /// How a request closed for inactivity is asked for again, carried by
 /// [`Status::RequestStalled`].
@@ -285,7 +285,7 @@ impl ResumeMode {
     }
 }
 
-broadcast_common::impl_spec_display!(ResumeMode);
+broadcast_core::impl_spec_display!(ResumeMode);
 
 /// Why a [`BufferEvent::Pause`] was emitted.
 ///
@@ -318,7 +318,7 @@ impl PauseReason {
     }
 }
 
-broadcast_common::impl_spec_display!(PauseReason);
+broadcast_core::impl_spec_display!(PauseReason);
 
 /// Buffer event mapped from `buffering_runtime::Event`.
 ///
@@ -368,7 +368,7 @@ impl BufferEvent {
     }
 }
 
-broadcast_common::impl_spec_display!(BufferEvent);
+broadcast_core::impl_spec_display!(BufferEvent);
 
 /// Snapshot of buffering-controller statistics exposed by [`crate::Session::buffer_stats`].
 #[non_exhaustive]
@@ -682,7 +682,7 @@ impl ErrorKind {
     }
 }
 
-broadcast_common::impl_spec_display!(ErrorKind);
+broadcast_core::impl_spec_display!(ErrorKind);
 
 /// Host action produced by [`crate::Session`].
 ///

@@ -1,7 +1,7 @@
 //! What the client hands back: [`Output`], drained with
 //! [`super::DashClient::next_output`].
 
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 use core::time::Duration;
 use transmux::{Sample, TrackId, TrackSpec};
 

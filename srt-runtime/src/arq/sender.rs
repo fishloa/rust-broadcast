@@ -189,8 +189,8 @@ impl Sender {
         // The wire fields are 31 and 26 bits wide (§3.1): a wider value is a
         // caller bug, reported rather than silently wrapped into another
         // packet's number.
-        broadcast_common::len::fit_bits(u64::from(seq), SEQ_NUMBER_BITS, "Packet Sequence Number")?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(u64::from(seq), SEQ_NUMBER_BITS, "Packet Sequence Number")?;
+        broadcast_core::len::fit_bits(
             u64::from(message_number),
             MESSAGE_NUMBER_BITS,
             "Message Number",
@@ -236,8 +236,8 @@ impl Sender {
         key_flag: EncryptionKeyField,
         now: Timestamp,
     ) -> Result<Vec<u8>> {
-        broadcast_common::len::fit_bits(u64::from(seq), SEQ_NUMBER_BITS, "Packet Sequence Number")?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(u64::from(seq), SEQ_NUMBER_BITS, "Packet Sequence Number")?;
+        broadcast_core::len::fit_bits(
             u64::from(message_number),
             MESSAGE_NUMBER_BITS,
             "Message Number",

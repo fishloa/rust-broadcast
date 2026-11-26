@@ -201,7 +201,7 @@ impl ClientIdentityScope {
     }
 }
 
-broadcast_common::impl_spec_display!(ClientIdentityScope);
+broadcast_core::impl_spec_display!(ClientIdentityScope);
 
 #[cfg(test)]
 mod tests {

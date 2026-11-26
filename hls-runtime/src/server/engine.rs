@@ -93,8 +93,8 @@ use transmux::{Container, TrackId};
 
 use broadcast_common::bcp47_language;
 use broadcast_common::clock33::PTS_HZ;
-use broadcast_common::timescale::Timescale;
 use broadcast_common::units::{MILLIS_PER_SEC, NANOS_PER_SEC};
+use broadcast_core::timescale::Timescale;
 
 /// Whole nanoseconds in one [`timed_metadata::MediaTime`] tick (90 kHz).
 const NANOS_PER_PTS_TICK: u128 = (NANOS_PER_SEC / PTS_HZ) as u128;
@@ -260,7 +260,7 @@ impl SkipDirective {
     }
 }
 
-broadcast_common::impl_spec_display!(SkipDirective);
+broadcast_core::impl_spec_display!(SkipDirective);
 
 /// HTTP Priority signalling data for an LL-HLS response (RFC 8216bis §6.2.6
 /// / §6.3): the extensible priority scheme (RFC 9218) urgency the adapter
@@ -4270,9 +4270,9 @@ pub fn playlist_reload_timeout(origin: &HlsOrigin) -> Duration {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
 
-    const T90K: Timescale = broadcast_common::timescale!(90_000);
+    const T90K: Timescale = broadcast_core::timescale!(90_000);
 
     #[test]
     fn a_segment_with_fewer_than_two_samples_has_no_measurable_frame_rate() {

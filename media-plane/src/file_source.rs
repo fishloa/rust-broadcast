@@ -13,8 +13,8 @@ use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Stage, Timestamp};
+use broadcast_core::timescale::Timescale;
 use container_probe::{Format, IsobmffLayout, Probe};
 use thiserror::Error;
 use transmux::{DemuxEvent, Sample, StreamingFlvDemux, StreamingTsDemux, TrackId, TrackSpec};
@@ -206,7 +206,7 @@ impl DemuxerKind {
     }
 }
 
-broadcast_common::impl_spec_display!(DemuxerKind);
+broadcast_core::impl_spec_display!(DemuxerKind);
 
 /// One sample reference in a pass's merge-ordered publish list.
 pub struct PublishItem {
@@ -518,7 +518,7 @@ impl ProbeStep {
     }
 }
 
-broadcast_common::impl_spec_display!(ProbeStep);
+broadcast_core::impl_spec_display!(ProbeStep);
 
 /// Identify a file from a bounded leading prefix instead of the whole file.
 ///

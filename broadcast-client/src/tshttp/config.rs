@@ -188,7 +188,7 @@ impl ConfigError {
     }
 }
 
-broadcast_common::impl_spec_display!(ConfigError);
+broadcast_core::impl_spec_display!(ConfigError);
 
 impl core::error::Error for ConfigError {}
 

@@ -1820,7 +1820,7 @@ mod tests {
 
     use super::*;
     use broadcast_common::Demand;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use std::collections::VecDeque;
     use transmux::pipeline::{CodecConfig, DataCarriage, DataIdentity};
 

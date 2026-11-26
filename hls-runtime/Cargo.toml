@@ -16,6 +16,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false, features = ["url"] }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 transmux          = { path = "../transmux", version = "0.33.0", default-features = false, features = ["sample-aes"] }
 isobmff           = { path = "../isobmff", version = "0.1.0", default-features = false }
 # HLS (M3U8) playlist syntax (issue #878): the client/origin engines parse
@@ -55,9 +56,9 @@ default = ["std"]
 # feature exists only to match the workspace's `no_std`-capable-core convention
 # (verified by the `--no-default-features` gate) and to let `transmux/std`
 # follow along when a caller does want `std`.
-std = ["broadcast-common/std", "broadcast-common/lang", "thiserror/std", "transmux/std", "broadcast-hls/std", "media-plane/std", "mpeg-ts/std", "dep:bytes", "url/std", "jiff/std", "serde?/std"]
+std = ["broadcast-common/std", "broadcast-core/std", "broadcast-common/lang", "thiserror/std", "transmux/std", "broadcast-hls/std", "media-plane/std", "mpeg-ts/std", "dep:bytes", "url/std", "jiff/std", "serde?/std"]
 # Derive serde on the public wire/event types (`Action`, `Output`, `ResourceId`, ...).
-serde = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "url/serde"]
+serde = ["dep:serde", "broadcast-common/serde", "broadcast-core/serde", "broadcast-hls/serde", "url/serde"]
 
 [dev-dependencies]
 test-fixtures     = { path = "../test-fixtures" }

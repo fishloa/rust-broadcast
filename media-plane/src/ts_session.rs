@@ -526,7 +526,7 @@ pub mod test_support {
 
     use broadcast_common::Timestamp;
     #[cfg(test)]
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use std::num::NonZeroUsize;
     use transmux::TsMuxStage;
     use transmux::pipeline::{CodecConfig, Sample, TrackSpec};

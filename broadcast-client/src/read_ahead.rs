@@ -9,8 +9,8 @@ use alloc::collections::VecDeque;
 use core::time::Duration;
 
 use broadcast_common::clock33::{PCR_HZ, pcr_signed_distance};
-use broadcast_common::timescale::Timescale;
 use broadcast_common::units::MICROS_PER_SEC;
+use broadcast_core::timescale::Timescale;
 
 use crate::buffer::{negative_origin, pts_to_27mhz_from, raw_27mhz};
 use crate::events::ReadAhead;

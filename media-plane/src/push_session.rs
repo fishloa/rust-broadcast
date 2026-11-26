@@ -77,7 +77,7 @@ impl PushErrorClass {
     }
 }
 
-broadcast_common::impl_spec_display!(PushErrorClass);
+broadcast_core::impl_spec_display!(PushErrorClass);
 
 /// What a [`PushSession`] has counted since it was created: samples handed to
 /// a connected egress and accepted, samples dropped (disconnected items, loss
@@ -485,7 +485,7 @@ fn is_sample(item: &SampleCursorItem) -> bool {
 mod tests {
     use super::*;
     use crate::egress::TrackSelection;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use bytes::Bytes;
     use std::collections::VecDeque;
     use std::sync::Arc;

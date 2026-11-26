@@ -1,8 +1,8 @@
 //! What the caller must fetch ([`Action`]) and how it names a fetch
 //! ([`ResourceId`]).
 
-use broadcast_common::impl_spec_display;
 use broadcast_common::range::ByteSpan;
+use broadcast_core::impl_spec_display;
 use url::Url;
 
 use crate::timing::utc_timing::UtcScheme;

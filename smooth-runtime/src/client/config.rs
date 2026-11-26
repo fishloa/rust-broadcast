@@ -9,7 +9,7 @@ use url::Url;
 
 use super::output::QualityInfo;
 use broadcast_common::backoff::BackoffSteps;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 
 /// Fragments before the live edge a live join starts at.
 pub const DEFAULT_LIVE_JOIN_FRAGMENTS: usize = 2;

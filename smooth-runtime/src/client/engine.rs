@@ -14,8 +14,8 @@ use url::Url;
 
 use broadcast_common::backoff::{RetrySchedule, mix_seed};
 use broadcast_common::stage::Timestamp;
-use broadcast_common::timescale::Timescale;
 use broadcast_common::url_ref;
+use broadcast_core::timescale::Timescale;
 
 use super::action::{Action, FetchFailure, RequestId, StreamId};
 use super::config::{SYNTHETIC_MOVIE_TIMESCALE, SmoothClientConfig};

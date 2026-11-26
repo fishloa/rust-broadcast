@@ -1,7 +1,7 @@
 //! Byte-exact FLV header/tag codec round trips over the committed FLV fixtures
 //! (Adobe FLV v10.1 Annex E §E.2, §E.4.1).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use rtmp_runtime::flv::{
     FLV_FLAG_AUDIO, FLV_HEADER_LEN, FLV_PREV_TAG_SIZE_LEN, FLV_SIGNATURE, FLV_TAG_HEADER_LEN,
     FLV_VERSION, FlvHeader, FlvTag, TagType,

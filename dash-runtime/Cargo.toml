@@ -18,6 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false, features = ["std", "jiff", "xml", "http-date", "lang", "url"] }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 broadcast-dash   = { path = "../broadcast-dash", version = "0.3.0" }
 transmux         = { path = "../transmux", version = "0.33.0", default-features = false, features = ["std"] }
 isobmff          = { path = "../isobmff", version = "0.1.0", default-features = false }

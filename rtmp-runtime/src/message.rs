@@ -11,9 +11,9 @@
 //! ([`ProtocolControl`], §4/§5.4), and the streaming-layer user control events
 //! ([`UserControl`], §5.3/§6.2/§6.7).
 
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::len::need_in;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::len::need_in;
+use broadcast_core::{Parse, Serialize};
 use core::time::Duration;
 
 use crate::RtmpError;
@@ -143,7 +143,7 @@ impl From<MessageTypeId> for u8 {
     }
 }
 
-broadcast_common::impl_spec_display!(MessageTypeId, Other);
+broadcast_core::impl_spec_display!(MessageTypeId, Other);
 
 /// Chunk stream id protocol control messages and user control messages
 /// MUST/SHOULD be sent on (§4, §5.3).
@@ -238,7 +238,7 @@ impl LimitType {
     }
 }
 
-broadcast_common::impl_spec_display!(LimitType);
+broadcast_core::impl_spec_display!(LimitType);
 
 /// A validated RTMP chunk size (§5.4.1): `1..=0x7FFF_FFFF`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -470,7 +470,7 @@ impl ProtocolControl {
     }
 }
 
-broadcast_common::impl_spec_display!(ProtocolControl);
+broadcast_core::impl_spec_display!(ProtocolControl);
 
 impl Serialize for ProtocolControl {
     type Error = RtmpError;
@@ -622,7 +622,7 @@ impl UserControl {
             UserControl::SetBufferLength { stream_id, buffer } => {
                 data[0..CONTROL_FIELD_LEN].copy_from_slice(&stream_id.to_be_bytes());
                 let millis = u32::try_from(buffer.as_millis()).map_err(|_| {
-                    RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    RtmpError::FieldOverflow(broadcast_core::len::FieldOverflow {
                         field: "set_buffer_length.buffer",
                         value: buffer.as_millis() as u64,
                         max: u64::from(u32::MAX),
@@ -654,7 +654,7 @@ impl UserControl {
     }
 }
 
-broadcast_common::impl_spec_display!(UserControl);
+broadcast_core::impl_spec_display!(UserControl);
 
 impl<'a> Parse<'a> for UserControl {
     type Error = RtmpError;
@@ -729,7 +729,7 @@ impl Serialize for UserControl {
             }
             UserControl::SetBufferLength { stream_id, buffer } => {
                 let millis = u32::try_from(buffer.as_millis()).map_err(|_| {
-                    RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    RtmpError::FieldOverflow(broadcast_core::len::FieldOverflow {
                         field: "set_buffer_length.buffer",
                         value: buffer.as_millis() as u64,
                         max: u64::from(u32::MAX),

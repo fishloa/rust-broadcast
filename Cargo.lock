@@ -401,6 +401,7 @@ version = "0.8.0"
 dependencies = [
  "broadcast-auth",
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "buffering-runtime",
  "dash-runtime",
@@ -1064,6 +1065,7 @@ name = "dash-runtime"
 version = "0.7.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-dash",
  "container-probe",
  "headers",
@@ -1361,6 +1363,7 @@ name = "dvr-runtime"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "bytes",
  "dvb-si",
@@ -1729,6 +1732,7 @@ name = "hls-runtime"
 version = "0.16.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "bytes",
  "container-probe",
@@ -2368,6 +2372,7 @@ name = "media-plane"
 version = "0.14.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "bytes",
  "caption-convert",
@@ -2830,6 +2835,7 @@ name = "playout-runtime"
 version = "0.8.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "isobmff",
  "scte35-splice",
  "serde",
@@ -3447,6 +3453,7 @@ name = "rtmp-runtime"
 version = "0.12.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "futures-util",
  "percent-encoding",
@@ -3909,6 +3916,7 @@ name = "smooth-runtime"
 version = "0.4.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-smooth",
  "bytes",
  "http",
@@ -3940,6 +3948,7 @@ dependencies = [
  "aes 0.9.4",
  "aes-kw",
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "ctr 0.10.1",
  "getrandom 0.4.3",
@@ -3963,6 +3972,7 @@ name = "ssai-runtime"
 version = "0.8.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "isobmff",
  "scte35-splice",
@@ -4757,6 +4767,7 @@ dependencies = [
  "axum",
  "broadcast-auth",
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "cipher 0.5.2",
  "ctr 0.10.1",

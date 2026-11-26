@@ -25,9 +25,9 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidField;
-use broadcast_common::error::{BufferTooShort, OutputBufferTooSmall};
-use broadcast_common::len::need_in;
+use broadcast_core::error::InvalidField;
+use broadcast_core::error::{BufferTooShort, OutputBufferTooSmall};
+use broadcast_core::len::need_in;
 
 use super::key_material::KeyMaterial;
 use super::number::{SocketId, SrtTimestamp};
@@ -147,7 +147,7 @@ impl EncryptionField {
     }
 }
 
-broadcast_common::impl_spec_display!(EncryptionField, Reserved);
+broadcast_core::impl_spec_display!(EncryptionField, Reserved);
 
 /// `Handshake Type` wire values (§3.2.1, Table 4). Crate-private: they back
 /// [`HandshakeType`]'s conversions, which the enum exposes.
@@ -219,7 +219,7 @@ impl HandshakeType {
     }
 }
 
-broadcast_common::impl_spec_display!(HandshakeType, Reserved);
+broadcast_core::impl_spec_display!(HandshakeType, Reserved);
 
 /// `Extension Field` bitmask values (§3.2.1, Table 3). Only meaningful on a
 /// CONCLUSION handshake; on an INDUCTION response this 16-bit field is
@@ -342,7 +342,7 @@ impl ExtensionType {
     }
 }
 
-broadcast_common::impl_spec_display!(ExtensionType, Reserved);
+broadcast_core::impl_spec_display!(ExtensionType, Reserved);
 
 /// `SRT Flags` bitmask values of the Handshake Extension Message (§3.2.1.1.1,
 /// Table 6).
@@ -471,7 +471,7 @@ impl HsExtMessage {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for HsExtMessage {
+impl<'a> broadcast_core::Parse<'a> for HsExtMessage {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -479,7 +479,7 @@ impl<'a> broadcast_common::Parse<'a> for HsExtMessage {
     }
 }
 
-impl broadcast_common::Serialize for HsExtMessage {
+impl broadcast_core::Serialize for HsExtMessage {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -568,7 +568,7 @@ impl GroupType {
     }
 }
 
-broadcast_common::impl_spec_display!(GroupType, Reserved);
+broadcast_core::impl_spec_display!(GroupType, Reserved);
 
 /// Group Membership Extension `Flags` (§3.2.1.4, Figure 9): only the `M` bit
 /// is defined.
@@ -636,7 +636,7 @@ impl GroupMembershipExtension {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for GroupMembershipExtension {
+impl<'a> broadcast_core::Parse<'a> for GroupMembershipExtension {
     type Error = crate::Error;
 
     fn parse(bytes: &'a [u8]) -> core::result::Result<Self, Self::Error> {
@@ -644,7 +644,7 @@ impl<'a> broadcast_common::Parse<'a> for GroupMembershipExtension {
     }
 }
 
-impl broadcast_common::Serialize for GroupMembershipExtension {
+impl broadcast_core::Serialize for GroupMembershipExtension {
     type Error = crate::Error;
 
     fn serialized_len(&self) -> usize {
@@ -755,7 +755,7 @@ pub fn build_extension_block(ext_type: ExtensionType, contents: &[u8]) -> Result
         }));
     }
     let words = contents.len() / HANDSHAKE_EXT_WORD_LEN;
-    let words_u16 = broadcast_common::len::fit_u16(words, "Extension Length")?;
+    let words_u16 = broadcast_core::len::fit_u16(words, "Extension Length")?;
     let mut out = Vec::with_capacity(HANDSHAKE_EXT_BLOCK_HEADER_LEN + contents.len());
     out.extend_from_slice(&ext_type.to_bits().to_be_bytes());
     out.extend_from_slice(&words_u16.to_be_bytes());
@@ -918,7 +918,7 @@ impl<'a> HandshakePacket<'a> {
         }
         let mut off = HANDSHAKE_CIF_FIXED_LEN;
         for block in &self.extensions.0 {
-            let words = broadcast_common::len::fit_u16(
+            let words = broadcast_core::len::fit_u16(
                 block.contents.len() / HANDSHAKE_EXT_WORD_LEN,
                 "Extension Length",
             )?;
