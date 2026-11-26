@@ -129,7 +129,7 @@ impl ServiceComponentIdentifier {
     }
 }
 
-broadcast_common::impl_spec_display!(ServiceComponentIdentifier);
+broadcast_core::impl_spec_display!(ServiceComponentIdentifier);
 
 #[cfg(test)]
 mod tests {

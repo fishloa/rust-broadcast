@@ -32,8 +32,8 @@ use crate::segments::{MOOF, MediaDataBox, SegmentTypeBox};
 use crate::track_id::TrackId;
 use alloc::vec;
 use alloc::vec::Vec;
-use broadcast_common::Serialize;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Serialize;
+use broadcast_core::timescale::Timescale;
 
 /// The per-sample overhead a buffered fragment reserves for its `trun` record
 /// and bookkeeping, so the fragment cap bounds the whole buffer rather than
@@ -979,7 +979,7 @@ fn offset_from_base(cursor: usize, delta: i64) -> Result<i32> {
         .checked_sub(delta)
         .ok_or(Error::InvalidInput("trun data_offset overflows"))?;
     i32::try_from(value).map_err(|_| {
-        Error::InvalidValue(broadcast_common::error::InvalidValue {
+        Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "trun data_offset",
             value: u64::try_from(value).unwrap_or(u64::MAX),
             reason: "fragment too large for the signed 32-bit trun data_offset",
@@ -1247,7 +1247,7 @@ fn build_cenc_fragment_boxes(p: &FragmentProtection<'_>) -> Result<Option<CencFr
         .first()
         .copied()
         .filter(|first| sizes.iter().all(|s| s == first));
-    let sample_count = broadcast_common::len::fit_u32(sizes.len(), "saiz sample_count")?;
+    let sample_count = broadcast_core::len::fit_u32(sizes.len(), "saiz sample_count")?;
     let saiz = crate::cenc::SampleAuxInfoSizesBox {
         version: 0,
         flags: 0,
@@ -1424,7 +1424,7 @@ pub fn protect_media_segment(
     // field is back-patched to the final length once senc/saiz/saio have been
     // appended; every child keeps its parsed order.
     let mut moof_out = vec![0u8; new_moof_len];
-    let moof_size = broadcast_common::len::fit_u32(new_moof_len, "moof size")?;
+    let moof_size = broadcast_core::len::fit_u32(new_moof_len, "moof size")?;
     moof_out[0..4].copy_from_slice(&moof_size.to_be_bytes());
     moof_out[4..8].copy_from_slice(&MOOF);
     let mut c = BOX_HEADER_MIN_SIZE;
@@ -1441,7 +1441,7 @@ pub fn protect_media_segment(
                     c += b.senc.serialize_into(&mut moof_out[c..])?;
                     c += b.saiz.serialize_into(&mut moof_out[c..])?;
                     c += b.saio.serialize_into(&mut moof_out[c..])?;
-                    let final_len = broadcast_common::len::fit_u32(c - start, "traf size")?;
+                    let final_len = broadcast_core::len::fit_u32(c - start, "traf size")?;
                     moof_out[start..start + core::mem::size_of::<u32>()]
                         .copy_from_slice(&final_len.to_be_bytes());
                 }

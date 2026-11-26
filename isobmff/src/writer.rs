@@ -29,8 +29,8 @@ use crate::timing::TimeToSampleBox;
 use crate::track_id::TrackId;
 use alloc::vec;
 use alloc::vec::Vec;
-use broadcast_common::Serialize;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Serialize;
+use broadcast_core::timescale::Timescale;
 
 pub mod fragmented;
 mod index;

@@ -9,9 +9,9 @@
 use crate::box_types::FULLBOX_EXTRA_SIZE;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// FourCC of the FLAC config box.
 pub const DFLA_FOURCC: [u8; 4] = *b"dfLa";
@@ -158,7 +158,7 @@ impl Serialize for FlacSpecificBox {
         for b in &self.blocks {
             buf[off] = ((b.last as u8) << LAST_METADATA_BLOCK_SHIFT)
                 | (b.block_type & METADATA_BLOCK_TYPE_MASK);
-            let len = broadcast_common::len::fit_u24(b.data.len(), "METADATA_BLOCK_LENGTH")?;
+            let len = broadcast_core::len::fit_u24(b.data.len(), "METADATA_BLOCK_LENGTH")?;
             let lb = len.to_be_bytes();
             buf[off + METADATA_LENGTH_OFFSET..off + METADATA_BLOCK_HDR]
                 .copy_from_slice(&lb[FLAGS_OFFSET..]);
@@ -172,7 +172,7 @@ impl Serialize for FlacSpecificBox {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::{BufferTooShort, InvalidValue};
+    use broadcast_core::error::{BufferTooShort, InvalidValue};
 
     use super::*;
 
@@ -195,7 +195,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "METADATA_BLOCK_LENGTH",
                     ..
                 })

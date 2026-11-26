@@ -17,7 +17,7 @@
 //! there is no enclosing length to contradict — an init segment, by contrast,
 //! states its own size, so a short tail means the file is malformed.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::MovieBox;
 
 /// Fixtures that legitimately cannot round-trip byte-for-byte, with the reason.
@@ -204,7 +204,7 @@ fn alloc_pad(n: usize) -> Vec<u8> {
 /// wire positions, or a parse -> serialize reorders them (audit item 3).
 #[test]
 fn vp09_child_order_is_preserved_around_the_config_box() {
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     use isobmff::{SampleDescriptionBox, SampleEntryVariant};
 
     // A vpcC v1 record (the only version this crate accepts): 4 bytes of

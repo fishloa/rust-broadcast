@@ -6,7 +6,7 @@
 //! minimum-length guard assumed an 8-byte header indexed out of bounds on a
 //! short `largesize` body (hostile init segment).
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use isobmff::cenc::{ProtectionSchemeInfoBox, SchemeInformationBox};
 use isobmff::{SampleDescriptionBox, TrackExtendsBox};
 

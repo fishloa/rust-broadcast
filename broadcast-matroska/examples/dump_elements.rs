@@ -12,7 +12,7 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::process::ExitCode;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 use broadcast_matroska::Limits;
 use broadcast_matroska::ebml::ElementHeader;

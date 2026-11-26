@@ -16,8 +16,8 @@
 //! `../fixtures/mp4/cmaf-av-subtitle/PROVENANCE.md`.
 use isobmff::{Error, TrackId};
 
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::{Parse, Serialize};
 use isobmff::MovieBox;
 use isobmff::box_support::OpaqueBox;
 use isobmff::init_segment::{
@@ -324,7 +324,7 @@ fn moov_round_trip_is_mp4box_readable() {
 /// body that cannot hold it is malformed.
 #[test]
 fn truncated_sample_tables_are_rejected() {
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     use isobmff::{
         ChunkOffsetBox, SampleDescriptionBox, SampleSizeBox, SampleToChunkBox, SyncSampleBox,
     };
@@ -398,7 +398,7 @@ fn assert_label(err: &Error, expected: &str) {
 /// (count 0) is legal.
 #[test]
 fn complete_sample_tables_still_parse() {
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     use isobmff::ChunkOffsetBox;
 
     let mut stco = vec![0u8; 24];
@@ -591,7 +591,7 @@ fn moof_size_zero_last_child_round_trips_byte_exact() {
     moof.extend_from_slice(b"moof");
     moof.extend_from_slice(&body);
 
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use isobmff::movie_fragment::MovieFragmentBox;
     let parsed = MovieFragmentBox::parse_body(&moof[8..]).expect("parses");
     let last = parsed.order.last().expect("children recorded");
@@ -613,7 +613,7 @@ fn moof_size_zero_last_child_round_trips_byte_exact() {
 /// swallow everything after it — so the writer must state its length.
 #[test]
 fn moof_size_zero_child_written_explicitly_when_not_last() {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use isobmff::movie_fragment::{
         MoofChild, MovieFragmentBox, MovieFragmentHeaderBox, OpaqueChild, TrackFragmentBox,
         TrackFragmentHeaderBox,

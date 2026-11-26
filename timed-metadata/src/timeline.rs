@@ -6,7 +6,7 @@ use crate::daterange::DateRange;
 use crate::error::{Error, Result};
 use crate::event::{MediaTime, TimedEvent};
 use alloc::vec::Vec;
-use broadcast_common::traits::Parse;
+use broadcast_core::traits::Parse;
 use scte35_splice::SpliceInfoSection;
 
 /// The 33-bit PTS modulus.

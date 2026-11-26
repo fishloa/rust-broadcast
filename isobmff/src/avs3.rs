@@ -24,9 +24,9 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue, OutputBufferTooSmall};
-use broadcast_common::len::{fit_bits, fit_u16, need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::{BufferTooShort, InvalidValue, OutputBufferTooSmall};
+use broadcast_core::len::{fit_bits, fit_u16, need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// FourCC of the AVS3 configuration box.
 pub const AV3C_FOURCC: [u8; 4] = *b"av3c";
@@ -140,7 +140,7 @@ impl LibraryDependencyIdc {
         }
     }
 }
-broadcast_common::impl_spec_display!(LibraryDependencyIdc);
+broadcast_core::impl_spec_display!(LibraryDependencyIdc);
 
 /// `frame_rate_code` (4 bits) of the AVS2/AVS3 specifications (GY/T 420-2025
 /// Table 7 / Table 4: the frame rate the code stands for).
@@ -232,7 +232,7 @@ impl AvsFrameRateCode {
         }
     }
 }
-broadcast_common::impl_spec_display!(AvsFrameRateCode, Reserved);
+broadcast_core::impl_spec_display!(AvsFrameRateCode, Reserved);
 
 /// `Avs3DecoderConfigurationRecord` — the body of the `av3c` box (A.3.2.2).
 ///
@@ -467,7 +467,7 @@ impl Serialize for LAvsConfigurationBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         buf[0] = self.configuration_version;
-        buf[1] = broadcast_common::len::fit_u8(self.layers.len(), "num_temporal_layers")?;
+        buf[1] = broadcast_core::len::fit_u8(self.layers.len(), "num_temporal_layers")?;
         let mut i = LAYER_RECORD_HEADER_LEN;
         for l in &self.layers {
             let id = fit_bits(
@@ -971,7 +971,7 @@ impl AvsVideoEntryKind {
         }
     }
 }
-broadcast_common::impl_spec_display!(AvsVideoEntryKind);
+broadcast_core::impl_spec_display!(AvsVideoEntryKind);
 
 /// The typed primary configuration box of an [`AvsVideoSampleEntry`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -997,7 +997,7 @@ impl AvsVideoConfig {
         }
     }
 }
-broadcast_common::impl_spec_display!(AvsVideoConfig);
+broadcast_core::impl_spec_display!(AvsVideoConfig);
 
 /// An AVS2/AVS3 video sample entry (`avs3`, `lav3`, `avst`, `lav2`): a
 /// `VisualSampleEntry` carrying the primary configuration box
@@ -1111,7 +1111,7 @@ impl Serialize for AvsVideoSampleEntry {
         let cfg_fourcc = self.kind.config_fourcc();
         let write_config = |buf: &mut [u8], c: &mut usize| -> Result<()> {
             let len = BOX_HEADER_MIN_SIZE + self.config_body_len();
-            let len = broadcast_common::len::fit_u32(len, "config box size")?;
+            let len = broadcast_core::len::fit_u32(len, "config box size")?;
             buf[*c..*c + crate::box_types::BOX_TYPE_SIZE].copy_from_slice(&len.to_be_bytes());
             *c += crate::box_types::BOX_TYPE_SIZE;
             buf[*c..*c + crate::box_types::BOX_TYPE_SIZE].copy_from_slice(&cfg_fourcc);

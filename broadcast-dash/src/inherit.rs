@@ -11,7 +11,7 @@
 //! The `RepresentationBase` attributes (5.3.7.2) of a Representation fall back
 //! to its AdaptationSet's.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use thiserror::Error;
 
 use super::model::{
@@ -20,7 +20,7 @@ use super::model::{
 };
 
 /// `@timescale` default (5.3.9.2.2).
-pub const DEFAULT_TIMESCALE: Timescale = broadcast_common::timescale!(1);
+pub const DEFAULT_TIMESCALE: Timescale = broadcast_core::timescale!(1);
 /// `@startNumber` default (5.3.9.5.3).
 pub const DEFAULT_START_NUMBER: u64 = 1;
 /// `@presentationTimeOffset` default (5.3.9.2.2).

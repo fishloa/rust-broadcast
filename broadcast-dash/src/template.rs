@@ -7,7 +7,7 @@
 //! only. Substitution reads the same scanned parts the validator builds, so a
 //! width is clamped once (to [`MAX_FORMAT_WIDTH`]) and `$$` is read once.
 
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 
 const IDENT_RESERVED: &str = "RepresentationID";
 const IDENT_NUMBER: &str = "Number";

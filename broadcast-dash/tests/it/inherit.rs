@@ -2,7 +2,7 @@
 //! 5.3.9.1, 5.3.7.2): a lower level wins field by field, and the lowest level
 //! that lists SegmentURLs supplies them.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use broadcast_dash::Mpd;
 use broadcast_dash::inherit::{SegmentInfo, effective_common, resolve_segment_info};
 use broadcast_dash::limits::Limits;

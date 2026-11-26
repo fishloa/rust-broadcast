@@ -8,7 +8,7 @@
 //! Fixtures are resolved through `test_fixtures` at run time — a missing
 //! fixture is a hard failure, never a silent skip.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use broadcast_smooth::SmoothManifest;
 
 fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {

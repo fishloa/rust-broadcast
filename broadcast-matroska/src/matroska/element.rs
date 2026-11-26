@@ -8,7 +8,7 @@
 
 use alloc::vec::Vec;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::ebml::ElementHeader;
 use crate::ebml::document::EbmlHeader;
@@ -599,7 +599,7 @@ fn parse_children_until<'a>(
         }
         let (element, used) = Element::parse_at_depth(rest, limits, depth)?;
         if used == 0 {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "element",
                 reason: "zero-length advance",
             }));
@@ -896,7 +896,7 @@ fn dispatch<'a>(
                 Binary::parse(payload)?,
             ))),
             Some(ids::ElementKind::Master) => {
-                Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                Err(Error::InvalidField(broadcast_core::error::InvalidField {
                     field: "element",
                     reason: "master element with no typed variant",
                 }))
@@ -925,7 +925,7 @@ fn write_master(header: ElementHeader, children: &[Element<'_>], buf: &mut [u8])
     for child in children {
         let have = buf.len();
         let rest = buf.get_mut(used..).ok_or(Error::OutputBufferTooSmall(
-            broadcast_common::error::OutputBufferTooSmall {
+            broadcast_core::error::OutputBufferTooSmall {
                 need: used + child.serialized_len(),
                 have,
             },
@@ -1123,7 +1123,7 @@ impl Serialize for Document<'_> {
         let used = self.header.serialize_into(buf)?;
         let have = buf.len();
         let rest = buf.get_mut(used..).ok_or(Error::OutputBufferTooSmall(
-            broadcast_common::error::OutputBufferTooSmall {
+            broadcast_core::error::OutputBufferTooSmall {
                 need: used + self.segment.serialized_len(),
                 have,
             },

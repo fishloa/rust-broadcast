@@ -12,8 +12,8 @@
 //! the whole container-muxing hub.
 //!
 //! Every wire structure implements the same symmetric pair as the rest of the
-//! workspace: [`Parse`](broadcast_common::Parse) borrows from the input, and
-//! [`Serialize`](broadcast_common::Serialize) writes it back byte-identically.
+//! workspace: [`Parse`](broadcast_core::Parse) borrows from the input, and
+//! [`Serialize`](broadcast_core::Serialize) writes it back byte-identically.
 //!
 //! # Layout
 //!
@@ -237,12 +237,12 @@ pub use vvc_config::{
     VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalArray, VvcNalUnitType, VvcPtlRecord,
 };
 
-/// Serialize a [`Timescale`](broadcast_common::timescale::Timescale) as the
+/// Serialize a [`Timescale`](broadcast_core::timescale::Timescale) as the
 /// plain ticks-per-second integer it wraps, so a serde-JSON consumer sees the
 /// same number the wire box carries (not a `NonZeroU32` newtype object).
 #[cfg(feature = "serde")]
 pub fn ser_timescale<S: serde::Serializer>(
-    timescale: &broadcast_common::timescale::Timescale,
+    timescale: &broadcast_core::timescale::Timescale,
     serializer: S,
 ) -> core::result::Result<S::Ok, S::Error> {
     serializer.serialize_u32(timescale.get())

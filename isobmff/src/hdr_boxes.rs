@@ -6,9 +6,9 @@
 //! carrier that absorbs and emits them lives in `transmux::hdr`.
 
 use crate::error::{Error, Result};
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 use core::mem::size_of;
 
 /// FourCC of the mastering display colour volume box.

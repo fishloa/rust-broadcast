@@ -6,7 +6,7 @@
 /// ```sh
 /// cargo run -p isobmff --example build_emsg
 /// ```
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::emsg::{EmsgBox, PresentationTime};
 
 fn timescale(value: u32) -> Timescale {

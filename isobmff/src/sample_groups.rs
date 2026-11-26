@@ -38,11 +38,11 @@ use crate::box_types::{
 };
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{be_u16, be_u32, be_u64, i16_at};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 // ---------------------------------------------------------------------------
 // Wire-layout constants
@@ -226,7 +226,7 @@ impl Serialize for ProducerReferenceTimeBox {
         c += core::mem::size_of::<u64>();
         if self.version == 0 {
             buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(
-                &(broadcast_common::len::fit_bits(self.media_time, u32::BITS, "prft media_time")?
+                &(broadcast_core::len::fit_bits(self.media_time, u32::BITS, "prft media_time")?
                     as u32)
                     .to_be_bytes(),
             );
@@ -545,13 +545,13 @@ impl Serialize for SampleGroupDescriptionBox {
             buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&index.to_be_bytes());
             c += core::mem::size_of::<u32>();
         }
-        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        let entry_count = broadcast_core::len::fit_u32(self.entries.len(), "entry_count")?;
         buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&entry_count.to_be_bytes());
         c += core::mem::size_of::<u32>();
         for entry in &self.entries {
             if per_entry_prefix {
                 let description_length =
-                    broadcast_common::len::fit_u32(entry.wire_len(), "description_length")?;
+                    broadcast_core::len::fit_u32(entry.wire_len(), "description_length")?;
                 buf[c..c + core::mem::size_of::<u32>()]
                     .copy_from_slice(&description_length.to_be_bytes());
                 c += core::mem::size_of::<u32>();
@@ -743,7 +743,7 @@ impl Serialize for SampleToGroupBox {
             buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&gtp.to_be_bytes());
             c += core::mem::size_of::<u32>();
         }
-        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        let entry_count = broadcast_core::len::fit_u32(self.entries.len(), "entry_count")?;
         buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&entry_count.to_be_bytes());
         c += core::mem::size_of::<u32>();
         for entry in &self.entries {
@@ -959,7 +959,7 @@ impl Serialize for SubSampleInformationBox {
             self.flags,
             false,
         )?;
-        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        let entry_count = broadcast_core::len::fit_u32(self.entries.len(), "entry_count")?;
         buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&entry_count.to_be_bytes());
         c += core::mem::size_of::<u32>();
         for entry in &self.entries {
@@ -967,7 +967,7 @@ impl Serialize for SubSampleInformationBox {
                 .copy_from_slice(&entry.sample_delta.to_be_bytes());
             c += core::mem::size_of::<u32>();
             let subsample_count =
-                broadcast_common::len::fit_u16(entry.subsamples.len(), "subsample_count")?;
+                broadcast_core::len::fit_u16(entry.subsamples.len(), "subsample_count")?;
             buf[c..c + core::mem::size_of::<u16>()].copy_from_slice(&subsample_count.to_be_bytes());
             c += core::mem::size_of::<u16>();
             for ss in &entry.subsamples {
@@ -976,10 +976,8 @@ impl Serialize for SubSampleInformationBox {
                         .copy_from_slice(&ss.subsample_size.to_be_bytes());
                     c += core::mem::size_of::<u32>();
                 } else {
-                    let subsample_size = broadcast_common::len::fit_u16(
-                        ss.subsample_size as usize,
-                        "subsample_size",
-                    )?;
+                    let subsample_size =
+                        broadcast_core::len::fit_u16(ss.subsample_size as usize, "subsample_size")?;
                     buf[c..c + core::mem::size_of::<u16>()]
                         .copy_from_slice(&subsample_size.to_be_bytes());
                     c += core::mem::size_of::<u16>();
@@ -1075,7 +1073,7 @@ impl SubsampleProperties {
         }
         if let Some(csp) = self.codec_specific_parameters {
             let n = usize::from(csp.len);
-            broadcast_common::len::fit_bits(
+            broadcast_core::len::fit_bits(
                 u64::from(csp.value),
                 u8::BITS * n as u32,
                 "codec_specific_parameters",
@@ -1359,7 +1357,7 @@ impl Serialize for SubSampleInformationBoxV2 {
             self.flags,
             false,
         )?;
-        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        let entry_count = broadcast_core::len::fit_u32(self.entries.len(), "entry_count")?;
         buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&entry_count.to_be_bytes());
         c += core::mem::size_of::<u32>();
         let mut cfg = 0u8;
@@ -1378,16 +1376,14 @@ impl Serialize for SubSampleInformationBoxV2 {
         };
         for e in &self.entries {
             buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&e.sample_delta.to_be_bytes());
-            let count = broadcast_common::len::fit_u16(e.subsamples.len(), "subsample_count")?;
+            let count = broadcast_core::len::fit_u16(e.subsamples.len(), "subsample_count")?;
             buf[c + core::mem::size_of::<u32>()..c + SUBS_ENTRY_HEADER_LEN]
                 .copy_from_slice(&count.to_be_bytes());
             c += SUBS_ENTRY_HEADER_LEN;
             for s in &e.subsamples {
                 if self.is_size_16_bits {
-                    let v = broadcast_common::len::fit_u16(
-                        s.subsample_size as usize,
-                        "subsample_size",
-                    )?;
+                    let v =
+                        broadcast_core::len::fit_u16(s.subsample_size as usize, "subsample_size")?;
                     buf[c..c + core::mem::size_of::<u16>()].copy_from_slice(&v.to_be_bytes());
                 } else {
                     buf[c..c + core::mem::size_of::<u32>()]
@@ -1396,7 +1392,7 @@ impl Serialize for SubSampleInformationBoxV2 {
                 c += self.size_len();
                 match s.source {
                     SubsV2Source::Reference { reference_idx } => {
-                        let idx = broadcast_common::len::fit_bits(
+                        let idx = broadcast_core::len::fit_bits(
                             u64::from(reference_idx),
                             ref_bits,
                             "reference_idx",
@@ -1521,7 +1517,7 @@ impl Serialize for SubSampleReferenceTableBox {
             LONG_REF_BITS
         };
         let count =
-            broadcast_common::len::fit_bits(self.entries.len() as u64, bits, "entry_count")? as u16;
+            broadcast_core::len::fit_bits(self.entries.len() as u64, bits, "entry_count")? as u16;
         if self.is_short_ref {
             buf[c] = HAS_REFERENCE_BIT | count as u8;
             c += 1;
@@ -1545,7 +1541,7 @@ impl Serialize for SubSampleReferenceTableBox {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     // -----------------------------------------------------------------------
     // prft
@@ -2356,7 +2352,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "subsample_size",
                     ..
                 })
@@ -2397,7 +2393,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "subsample_count",
                     ..
                 })

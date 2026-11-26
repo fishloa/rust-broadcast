@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 use isobmff::frag_layout::{FragmentIndex, FragmentLayout};
 use isobmff::init_segment::MovieBox;

@@ -11,10 +11,10 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::bits::{BitError, BitReader};
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::bits::{BitError, BitReader};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// Width of the `fscod` field.
 const FSCOD_BITS: usize = 2;

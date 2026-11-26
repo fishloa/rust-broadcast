@@ -3,7 +3,7 @@
 //! The manifest states how a player may learn wall-clock time; acting on it is
 //! the client's business, so only the scheme vocabulary lives here.
 
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 
 /// 5.8.5.7: `urn:mpeg:dash:utc:ntp:2014`.
 pub const SCHEME_NTP: &str = "urn:mpeg:dash:utc:ntp:2014";

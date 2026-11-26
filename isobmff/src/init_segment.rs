@@ -18,11 +18,11 @@ use crate::error::{Error, Result};
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::timescale::Timescale;
 use broadcast_common::wire::{fourcc_at, i16_at, u16_at, u24_at, u32_at, u64_at};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse, Serialize};
 
 use crate::box_support::{
     ChildOrder, FLAT_TABLE_COUNT_OFFSET, FLAT_TABLE_FLAGS_OFFSET, FLAT_TABLE_HEADER_LEN,
@@ -203,7 +203,7 @@ impl Serialize for MovieHeaderBox {
         // never a silent wrap (#1129).
         let write_u64 = |buf: &mut [u8], off: usize, sz: usize, v: u64, field: &'static str| {
             if sz == u32_len {
-                let v32 = broadcast_common::len::fit_bits(v, u32::BITS, field)? as u32;
+                let v32 = broadcast_core::len::fit_bits(v, u32::BITS, field)? as u32;
                 buf[off..off + sz].copy_from_slice(&v32.to_be_bytes());
             } else {
                 buf[off..off + sz].copy_from_slice(&v.to_be_bytes());
@@ -418,7 +418,7 @@ impl Serialize for TrackHeaderBox {
         let i16_len = core::mem::size_of::<i16>();
         if self.version == 0 {
             buf[c..c + u32_len].copy_from_slice(
-                &(broadcast_common::len::fit_bits(
+                &(broadcast_core::len::fit_bits(
                     self.creation_time,
                     u32::BITS,
                     "tkhd creation_time",
@@ -427,7 +427,7 @@ impl Serialize for TrackHeaderBox {
             );
             c += u32_len;
             buf[c..c + u32_len].copy_from_slice(
-                &(broadcast_common::len::fit_bits(
+                &(broadcast_core::len::fit_bits(
                     self.modification_time,
                     u32::BITS,
                     "tkhd modification_time",
@@ -440,8 +440,7 @@ impl Serialize for TrackHeaderBox {
             buf[c..c + TKHD_RESERVED_LEN].fill(0);
             c += TKHD_RESERVED_LEN; // reserved
             buf[c..c + u32_len].copy_from_slice(
-                &(broadcast_common::len::fit_bits(self.duration, u32::BITS, "tkhd duration")?
-                    as u32)
+                &(broadcast_core::len::fit_bits(self.duration, u32::BITS, "tkhd duration")? as u32)
                     .to_be_bytes(),
             );
             c += u32_len;
@@ -607,7 +606,7 @@ impl Serialize for MediaHeaderBox {
         let u16_len = core::mem::size_of::<u16>();
         if self.version == 0 {
             buf[c..c + u32_len].copy_from_slice(
-                &(broadcast_common::len::fit_bits(
+                &(broadcast_core::len::fit_bits(
                     self.creation_time,
                     u32::BITS,
                     "mdhd creation_time",
@@ -616,7 +615,7 @@ impl Serialize for MediaHeaderBox {
             );
             c += u32_len;
             buf[c..c + u32_len].copy_from_slice(
-                &(broadcast_common::len::fit_bits(
+                &(broadcast_core::len::fit_bits(
                     self.modification_time,
                     u32::BITS,
                     "mdhd modification_time",
@@ -627,8 +626,7 @@ impl Serialize for MediaHeaderBox {
             buf[c..c + u32_len].copy_from_slice(&self.timescale.get().to_be_bytes());
             c += u32_len;
             buf[c..c + u32_len].copy_from_slice(
-                &(broadcast_common::len::fit_bits(self.duration, u32::BITS, "mdhd duration")?
-                    as u32)
+                &(broadcast_core::len::fit_bits(self.duration, u32::BITS, "mdhd duration")? as u32)
                     .to_be_bytes(),
             );
             c += u32_len;
@@ -1040,7 +1038,7 @@ impl Serialize for DataReferenceBox {
             self.flags,
             false,
         )?;
-        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        let entry_count = broadcast_core::len::fit_u32(self.entries.len(), "entry_count")?;
         let u32_len = core::mem::size_of::<u32>();
         buf[c..c + u32_len].copy_from_slice(&entry_count.to_be_bytes());
         c += u32_len;
@@ -1124,7 +1122,7 @@ fn parse_data_entry_header(
     let compact = crate::box_types::compact_form(bytes)?;
     need_in(&compact, FULLBOX_BODY_OFFSET, what)?;
     if compact[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != expected {
-        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "box_type",
             value: u64::from(u32_at(&compact, BOX_TYPE_OFFSET)),
             reason: what,
@@ -1382,7 +1380,7 @@ impl Serialize for SampleToChunkBox {
             self.flags,
             false,
         )?;
-        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        let entry_count = broadcast_core::len::fit_u32(self.entries.len(), "entry_count")?;
         let u32_len = core::mem::size_of::<u32>();
         buf[c..c + u32_len].copy_from_slice(&entry_count.to_be_bytes());
         c += u32_len;
@@ -1725,7 +1723,7 @@ impl CompactFieldSize {
             4 => Ok(Self::Bits4),
             8 => Ok(Self::Bits8),
             16 => Ok(Self::Bits16),
-            _ => Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            _ => Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "stz2.field_size",
                 value: u64::from(field_size),
                 reason: "field_size must be 4, 8 or 16 (ISO/IEC 14496-12:2026 §8.7.3.3.2)",
@@ -1851,13 +1849,13 @@ impl Serialize for CompactSampleSizeBox {
         match size {
             CompactFieldSize::Bits4 => {
                 for pair in self.entries.chunks(STZ2_ENTRIES_PER_NIBBLE_BYTE) {
-                    let high = broadcast_common::len::fit_bits(
+                    let high = broadcast_core::len::fit_bits(
                         u64::from(pair[0]),
                         size.bits(),
                         "stz2.entry_size",
                     )? as u8;
                     let low = match pair.get(1) {
-                        Some(&value) => broadcast_common::len::fit_bits(
+                        Some(&value) => broadcast_core::len::fit_bits(
                             u64::from(value),
                             size.bits(),
                             "stz2.entry_size",
@@ -1870,7 +1868,7 @@ impl Serialize for CompactSampleSizeBox {
             }
             CompactFieldSize::Bits8 => {
                 for &value in &self.entries {
-                    buf[c] = broadcast_common::len::fit_bits(
+                    buf[c] = broadcast_core::len::fit_bits(
                         u64::from(value),
                         size.bits(),
                         "stz2.entry_size",
@@ -1881,7 +1879,7 @@ impl Serialize for CompactSampleSizeBox {
             CompactFieldSize::Bits16 => {
                 let u16_len = core::mem::size_of::<u16>();
                 for &value in &self.entries {
-                    let wide = broadcast_common::len::fit_bits(
+                    let wide = broadcast_core::len::fit_bits(
                         u64::from(value),
                         size.bits(),
                         "stz2.entry_size",
@@ -3272,7 +3270,7 @@ impl Serialize for SampleDescriptionBox {
             self.flags,
             false,
         )?;
-        let entry_count = broadcast_common::len::fit_u32(self.entries.len(), "entry_count")?;
+        let entry_count = broadcast_core::len::fit_u32(self.entries.len(), "entry_count")?;
         let u32_len = core::mem::size_of::<u32>();
         buf[c..c + u32_len].copy_from_slice(&entry_count.to_be_bytes());
         c += u32_len;
@@ -4767,7 +4765,7 @@ mod tests {
     }
 
     use super::*;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     /// Build a small mvhd v0 for unit testing.
     fn sample_mvhd_v0() -> MovieHeaderBox {
@@ -4798,7 +4796,7 @@ mod tests {
         let m = sample_mvhd_v0();
         let orig = m.try_to_bytes().unwrap();
         let mut m2 = m.clone();
-        m2.timescale = broadcast_common::timescale!(30000);
+        m2.timescale = broadcast_core::timescale!(30000);
         let mutated = m2.try_to_bytes().unwrap();
         assert_ne!(orig, mutated);
         // Verify the right field changed
@@ -5524,7 +5522,7 @@ mod tests {
 #[cfg(test)]
 mod compact_size_and_dependency_tests {
     use super::*;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     fn stz2_box(field_size: u8, sample_count: u32, payload: &[u8]) -> Vec<u8> {
         let len = STZ2_PREFIX_LEN + payload.len();
@@ -5565,7 +5563,7 @@ mod compact_size_and_dependency_tests {
         let bytes = stz2_box(5, 1, &[0]);
         assert!(matches!(
             CompactSampleSizeBox::parse(&bytes),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "stz2.field_size",
                 ..
             }))

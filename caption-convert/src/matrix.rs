@@ -45,7 +45,7 @@ impl SourceFormat {
         }
     }
 }
-broadcast_common::impl_spec_display!(SourceFormat);
+broadcast_core::impl_spec_display!(SourceFormat);
 
 /// A caption/subtitle **target** this crate can emit.
 ///
@@ -80,7 +80,7 @@ impl TargetFormat {
         }
     }
 }
-broadcast_common::impl_spec_display!(TargetFormat);
+broadcast_core::impl_spec_display!(TargetFormat);
 
 /// How a `(source, target)` conversion is (or is not) supported.
 #[non_exhaustive]
@@ -117,7 +117,7 @@ impl Support {
         }
     }
 }
-broadcast_common::impl_spec_display!(Support);
+broadcast_core::impl_spec_display!(Support);
 
 /// One row of [`MATRIX`]: a `(from, to)` pair, its [`Support`] class, and a
 /// human-readable reason (always populated — even for `Lossless` rows, so

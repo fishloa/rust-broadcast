@@ -468,6 +468,7 @@ name = "broadcast-dash"
 version = "0.3.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "jiff",
  "quick-xml",
  "test-fixtures",
@@ -479,6 +480,7 @@ name = "broadcast-hls"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "jiff",
  "serde",
  "serde_json",
@@ -503,6 +505,7 @@ name = "broadcast-matroska"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-alloc",
  "test-fixtures",
@@ -514,6 +517,7 @@ name = "broadcast-smooth"
 version = "0.3.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "test-fixtures",
  "thiserror 2.0.21",
 ]
@@ -588,6 +592,7 @@ name = "caption-convert"
 version = "0.8.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "cc-data",
  "dvb-vbi",
  "hex",
@@ -1234,6 +1239,7 @@ name = "dvb-mabr"
 version = "0.7.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "quick-xml",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -2051,6 +2057,7 @@ name = "isobmff"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "test-alloc",
  "test-fixtures",
@@ -2063,7 +2070,7 @@ dependencies = [
 name = "isobmff-private-format"
 version = "0.1.0"
 dependencies = [
- "broadcast-common",
+ "broadcast-core",
  "isobmff",
 ]
 
@@ -4219,6 +4226,7 @@ name = "timed-metadata"
 version = "0.12.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-hls",
  "cc-data",
  "dvb-vbi",
@@ -4512,6 +4520,7 @@ name = "ttml-subtitle"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "quick-xml",
  "test-fixtures",
  "thiserror 2.0.21",

@@ -4,7 +4,7 @@
 //! reset: 5.3.2.4, 5.4.2. URL parameters: Annex I.2. The last-segment-number
 //! property is DASH-IF IOP v4.3.
 
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 
 use super::model::Descriptor;
 

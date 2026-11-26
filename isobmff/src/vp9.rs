@@ -12,10 +12,10 @@
 use crate::box_types::{FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OFFSET};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{be_u16, be_u32};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// FourCC of the VP9 config box.
 pub const VPCC_FOURCC: [u8; 4] = *b"vpcC";
@@ -183,12 +183,12 @@ impl Serialize for Vp9ConfigurationBox {
         // and `chromaSubsampling` outside 0..=7 would fold into
         // `videoFullRangeFlag` — either way the wire would describe a different
         // stream than the struct.
-        let bit_depth = broadcast_common::len::fit_bits(
+        let bit_depth = broadcast_core::len::fit_bits(
             u64::from(self.bit_depth),
             u32::from(BIT_DEPTH_SHIFT),
             "bitDepth",
         )?;
-        let chroma = broadcast_common::len::fit_bits(
+        let chroma = broadcast_core::len::fit_bits(
             u64::from(self.chroma_subsampling),
             CHROMA_SUBSAMPLING_BITS,
             "chromaSubsampling",
@@ -199,7 +199,7 @@ impl Serialize for Vp9ConfigurationBox {
         r[VPCC_COLOUR_PRIMARIES_OFFSET] = self.colour_primaries;
         r[VPCC_TRANSFER_CHARACTERISTICS_OFFSET] = self.transfer_characteristics;
         r[VPCC_MATRIX_COEFFICIENTS_OFFSET] = self.matrix_coefficients;
-        let size = broadcast_common::len::fit_u16(
+        let size = broadcast_core::len::fit_u16(
             self.codec_initialization_data.len(),
             "codecIntializationDataSize",
         )?;
@@ -213,7 +213,7 @@ impl Serialize for Vp9ConfigurationBox {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::{BufferTooShort, InvalidValue};
+    use broadcast_core::error::{BufferTooShort, InvalidValue};
 
     use super::*;
 
@@ -284,7 +284,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "codecIntializationDataSize",
                     ..
                 })
@@ -348,7 +348,7 @@ mod tests {
         assert!(
             matches!(
                 cfg.try_to_bytes(),
-                Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "bitDepth",
                     ..
                 }))
@@ -370,7 +370,7 @@ mod tests {
         assert!(
             matches!(
                 cfg.try_to_bytes(),
-                Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "chromaSubsampling",
                     ..
                 }))
@@ -469,7 +469,7 @@ impl Serialize for Vp9SampleEntry {
         // often carries `pasp` *before* it (audit item 3, round 3).
         let write_config = |buf: &mut [u8], c: &mut usize| -> Result<()> {
             let len = BOX_HEADER_MIN_SIZE + self.config.serialized_len();
-            let len = broadcast_common::len::fit_u32(len, "config box size")?;
+            let len = broadcast_core::len::fit_u32(len, "config box size")?;
             buf[*c..*c + core::mem::size_of::<u32>()].copy_from_slice(&len.to_be_bytes());
             *c += core::mem::size_of::<u32>();
             buf[*c..*c + VPCC_FOURCC.len()].copy_from_slice(&VPCC_FOURCC);

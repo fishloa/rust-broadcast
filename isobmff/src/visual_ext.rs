@@ -15,9 +15,9 @@
 //! `no_std` + `alloc`.
 
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::InvalidValue;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use crate::box_types::BOX_TYPE_SIZE;
 use crate::error::{Error, Result};
@@ -430,7 +430,7 @@ impl Serialize for ColourInformationBox {
                 .copy_from_slice(&nclx.matrix_coefficients.to_be_bytes());
             c += core::mem::size_of::<u16>();
             buf[c] = ((nclx.full_range_flag as u8) << NCLX_FULL_RANGE_SHIFT)
-                | broadcast_common::len::fit_mask(
+                | broadcast_core::len::fit_mask(
                     nclx.reserved,
                     NCLX_RESERVED_MASK,
                     "colr.nclx.reserved",
@@ -450,10 +450,10 @@ impl Serialize for ColourInformationBox {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::InvalidValue;
+    use broadcast_core::error::InvalidValue;
 
     use super::*;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     // ---- pasp ------------------------------------------------------------
 

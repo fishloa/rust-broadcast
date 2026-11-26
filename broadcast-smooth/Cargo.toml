@@ -18,6 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false, features = ["std", "xml"] }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 thiserror = { version = "2", default-features = false }
 
 [dev-dependencies]
@@ -27,7 +28,7 @@ test-fixtures = { path = "../test-fixtures" }
 default = ["std", "manifest"]
 # `std` links the standard library (the crate is plain `std`, like
 # `dash-runtime`: the XML module it reads through is std-only).
-std = ["broadcast-common/std", "broadcast-common/xml"]
+std = ["broadcast-common/std", "broadcast-core/std", "broadcast-common/xml"]
 # The client Manifest itself: parsing and serializing XML. On with `std`.
 manifest = ["std", "broadcast-common/xml"]
 

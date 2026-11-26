@@ -1,13 +1,13 @@
 //! Exact error variants (and fields) of the converters and the DATERANGE parser.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use isobmff::emsg::{EMSG_FLAGS, EmsgBox, PresentationTime};
 use timed_metadata::convert::{SegmentTiming, emsg_to_scte35, emsg_to_v0, emsg_to_v1};
 use timed_metadata::{DateRange, Error};
 
 const SCTE35_SCHEME: &str = "urn:scte:scte35:2013:bin";
-const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
-const MILLIS: Timescale = broadcast_common::timescale!(1_000);
+const TIMESCALE: Timescale = broadcast_core::timescale!(90_000);
+const MILLIS: Timescale = broadcast_core::timescale!(1_000);
 
 fn emsg(scheme: &'static str, presentation_time: PresentationTime) -> EmsgBox<'static> {
     EmsgBox {

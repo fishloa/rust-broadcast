@@ -17,8 +17,8 @@
 use crate::avs3::parse_sequence_header_record;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{fit_u16, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{fit_u16, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// FourCC of the AVS2 configuration box.
 pub const AV2C_FOURCC: [u8; 4] = *b"av2c";

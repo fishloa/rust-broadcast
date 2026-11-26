@@ -15,8 +15,8 @@
 //! change for either type to be typed. See `README.md` and
 //! `tests/round_trip.rs`.
 
-use broadcast_common::Parse;
-use broadcast_common::Serialize;
+use broadcast_core::Parse;
+use broadcast_core::Serialize;
 
 use isobmff::Error;
 use isobmff::box_types::{BOX_HEADER_MIN_SIZE, write_box_header, write_full_box_header};
@@ -110,7 +110,7 @@ impl Serialize for AcmeCalibrationBox {
         written += FIELD_LEN;
         buf[written..written + FIELD_LEN].copy_from_slice(&self.shift.to_be_bytes());
         written += FIELD_LEN;
-        buf[written] = broadcast_common::len::fit_u8(self.label.len(), "acal label")?;
+        buf[written] = broadcast_core::len::fit_u8(self.label.len(), "acal label")?;
         written += 1;
         buf[written..written + self.label.len()].copy_from_slice(&self.label);
         written += self.label.len();

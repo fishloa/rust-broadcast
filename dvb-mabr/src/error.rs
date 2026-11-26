@@ -136,7 +136,7 @@ impl StructureError {
 }
 
 #[cfg(feature = "std")]
-broadcast_common::impl_spec_display!(StructureError);
+broadcast_core::impl_spec_display!(StructureError);
 
 #[cfg(all(test, feature = "std"))]
 mod tests {

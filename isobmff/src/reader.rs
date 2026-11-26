@@ -33,8 +33,8 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 use core::cmp::Ordering;
 
-use broadcast_common::Parse;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Parse;
+use broadcast_core::timescale::Timescale;
 
 use crate::box_support::OpaqueBox;
 use crate::box_types::{
@@ -300,7 +300,7 @@ impl TrackInfo {
     /// the bytes the reader would have copied. `handler` is zero when the
     /// `trak` carries no `hdlr`, which the whole-input demuxers never read.
     pub fn from_trak(trak: &TrackBox) -> Result<Self> {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         let mdia = trak
             .mdia
             .as_ref()
@@ -472,7 +472,7 @@ impl Warning {
     }
 }
 
-broadcast_common::impl_spec_display!(Warning);
+broadcast_core::impl_spec_display!(Warning);
 
 impl Warning {
     /// The absolute file offset the fault starts at.
@@ -837,7 +837,7 @@ impl Reader {
                 None => (unit_end, unit_end),
             };
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: usize::try_from(end.saturating_sub(start)).unwrap_or(usize::MAX),
                     have: usize::try_from(unit_end.saturating_sub(start)).unwrap_or(usize::MAX),
                     what: "top-level box body",
@@ -1426,7 +1426,7 @@ impl Reader {
                 return Ok(());
             }
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: BOX_HEADER_MIN_SIZE,
                     have: bytes.len(),
                     what: "top-level box header",
@@ -1492,7 +1492,7 @@ impl Reader {
                 }
             } else {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: usize::try_from(size).unwrap_or(usize::MAX),
                         have: usize::try_from(total.saturating_sub(offset)).unwrap_or(usize::MAX),
                         what: "top-level box body",
@@ -2208,7 +2208,7 @@ fn fragment_aux(
     let data = &senc.data;
     if data.len() < FULLBOX_EXTRA_SIZE {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: FULLBOX_EXTRA_SIZE,
                 have: data.len(),
                 what: "senc header",

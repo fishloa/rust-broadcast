@@ -195,7 +195,7 @@ mod tests {
         assert_eq!(
             err.err(),
             Some(crate::Error::DvbVbi(dvb_vbi::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 44,
                     have: 1,
                     what: "txt_data_field"

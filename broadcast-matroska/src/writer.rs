@@ -25,7 +25,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 
 use crate::ebml::leaf::{BinaryElement, FloatElement, TextElement, UnsignedElement};
 use crate::ebml::scalar::{Binary, Float, IntegerWidth, Text, Unsigned};
@@ -369,7 +369,7 @@ impl Writer {
             metadata.push((entry.track_number().unwrap_or(0), is_video));
         }
         if metadata.iter().any(|(number, _)| *number == 0) {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "TrackNumber",
                 reason: "a TrackEntry must state a non-zero TrackNumber",
             }));
@@ -422,7 +422,7 @@ impl Writer {
         frame: &[u8],
     ) -> Result<Vec<Write>> {
         let Some(index) = self.tracks.iter().position(|(number, _)| *number == track) else {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "TrackNumber",
                 reason: "Block names a track the Tracks element does not carry",
             }));
@@ -544,7 +544,7 @@ impl Writer {
         for block in &self.cluster {
             let relative = block.pts - base;
             let rel = i16::try_from(relative).map_err(|_| {
-                Error::InvalidField(broadcast_common::error::InvalidField {
+                Error::InvalidField(broadcast_core::error::InvalidField {
                     field: "SimpleBlock relative timestamp",
                     reason: "exceeds the signed 16-bit range",
                 })
@@ -709,7 +709,7 @@ fn duration_payload_offset(info: &Info<'_>) -> Result<u64> {
         let child_header = child.header().resized(child_payload)?;
         if child.id() == ids::DURATION {
             if child_payload != u64::try_from(size_of::<f64>()).unwrap_or(0) {
-                return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                     field: "Duration",
                     reason: "must be an eight-octet float for the writer to patch it",
                 }));
@@ -719,7 +719,7 @@ fn duration_payload_offset(info: &Info<'_>) -> Result<u64> {
         }
         position = position.saturating_add(child.serialized_len());
     }
-    Err(Error::InvalidField(broadcast_common::error::InvalidField {
+    Err(Error::InvalidField(broadcast_core::error::InvalidField {
         field: "Duration",
         reason: "Info carries no Duration element",
     }))

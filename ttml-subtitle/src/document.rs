@@ -1461,7 +1461,7 @@ impl XmlSpace {
     }
 }
 
-broadcast_common::impl_spec_display!(XmlSpace);
+broadcast_core::impl_spec_display!(XmlSpace);
 
 // ─── Embedded content elements (TTML2 §9.1) ───────────────────────
 

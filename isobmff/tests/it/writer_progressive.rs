@@ -11,8 +11,8 @@
 use std::collections::BTreeMap;
 use std::io::{Seek, SeekFrom, Write as IoWrite};
 
-use broadcast_common::Parse;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Parse;
+use broadcast_core::timescale::Timescale;
 use isobmff::init_segment::MovieBox;
 use isobmff::plan::{OwnedPlan, PlanBuilder, PlanSample};
 use isobmff::sample_table::SampleRef;

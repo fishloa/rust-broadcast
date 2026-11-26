@@ -88,7 +88,7 @@ loop {
 A box builder still works the same way:
 
 ```rust,ignore
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use isobmff::segments::FileTypeBox;
 
 let ftyp = FileTypeBox {

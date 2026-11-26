@@ -63,7 +63,7 @@ impl ContentIngestMethod {
     }
 }
 
-broadcast_common::impl_spec_display!(ContentIngestMethod);
+broadcast_core::impl_spec_display!(ContentIngestMethod);
 
 /// `@transmissionMode` (clause 10.2.3.1) — see `private/specs-verified/dvb/dvb-mabr/mabr-transport.md` §1.
 /// XSD `transmissionModeType`.
@@ -99,7 +99,7 @@ impl TransmissionMode {
     }
 }
 
-broadcast_common::impl_spec_display!(TransmissionMode);
+broadcast_core::impl_spec_display!(TransmissionMode);
 
 /// `@transportSecurity` (clause 10.2.3.1) — see `private/specs-verified/dvb/dvb-mabr/mabr-transport.md` §4.
 /// XSD `transportSecurityType`.
@@ -142,7 +142,7 @@ impl TransportSecurity {
     }
 }
 
-broadcast_common::impl_spec_display!(TransportSecurity);
+broadcast_core::impl_spec_display!(TransportSecurity);
 
 /// `TransportProtocol` (clause 10.2.3.1) — identifies the multicast
 /// transport protocol carrying this session's objects.

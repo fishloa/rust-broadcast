@@ -38,11 +38,11 @@ use alloc::borrow::Cow;
 use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;
-use broadcast_common::Serialize;
-use broadcast_common::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
+use broadcast_core::Serialize;
+use broadcast_core::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
 
 /// Milliseconds per second, for a caller's chunk length in milliseconds.
-const MS_PER_SECOND: Timescale = broadcast_common::timescale!(1_000);
+const MS_PER_SECOND: Timescale = broadcast_core::timescale!(1_000);
 /// Position of `ctts` among the `stbl` children: after `stsd`/`stts` (§8.5.1).
 const STBL_CTTS_INDEX: usize = 2;
 /// Writes [`ProgressiveWriter::header`] can return: `ftyp`, `moov` and the

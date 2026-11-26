@@ -57,7 +57,7 @@ impl EmsgVersion {
     }
 }
 
-broadcast_common::impl_spec_display!(EmsgVersion);
+broadcast_core::impl_spec_display!(EmsgVersion);
 
 #[cfg(test)]
 mod tests {

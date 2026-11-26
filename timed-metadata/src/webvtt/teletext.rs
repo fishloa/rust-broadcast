@@ -281,7 +281,7 @@ impl NationalOption {
         }
     }
 }
-broadcast_common::impl_spec_display!(NationalOption, Reserved);
+broadcast_core::impl_spec_display!(NationalOption, Reserved);
 
 /// Decode one Latin G0 (Table 35) code position (`0x20`-`0x7F`) to its
 /// display character, applying the Table 36 national-option substitution of

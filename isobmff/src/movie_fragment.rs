@@ -18,10 +18,10 @@ use crate::box_types::{
 use crate::error::{Error, Result};
 use crate::init_segment::TrackExtendsBox;
 use alloc::vec::Vec;
-use broadcast_common::Serialize;
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{be_u32, be_u64, read_u32};
+use broadcast_core::Serialize;
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::len::{need_in, need_out};
 
 const TRUN_SAMPLE_FIELD_COUNT: usize = 4;
 const CENC_AUX_INFO_TYPE_COUNT: usize = 4;
@@ -663,7 +663,7 @@ impl Serialize for TrackFragmentRunBox {
         let version = if needs_v1 { 1 } else { self.version };
         let mut c =
             crate::box_types::write_full_box_header(buf, b"trun", need, version, flags, false)?;
-        let sample_count = broadcast_common::len::fit_u32(self.samples.len(), "sample_count")?;
+        let sample_count = broadcast_core::len::fit_u32(self.samples.len(), "sample_count")?;
         buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&sample_count.to_be_bytes());
         c += core::mem::size_of::<u32>();
         if let Some(v) = self.data_offset {
@@ -805,7 +805,7 @@ impl OpaqueChild {
             buf[c..c + core::mem::size_of::<u64>()].copy_from_slice(&(need as u64).to_be_bytes());
             c += core::mem::size_of::<u64>();
         } else {
-            let len = broadcast_common::len::fit_u32(need, "opaque child size")?;
+            let len = broadcast_core::len::fit_u32(need, "opaque child size")?;
             buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&len.to_be_bytes());
             c += core::mem::size_of::<u32>();
             buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.box_type);

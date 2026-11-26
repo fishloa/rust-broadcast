@@ -11,9 +11,9 @@ use crate::TrackId;
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BoxIter};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// `reference_type` of the track reference from a video track to its AVC
 /// parameter set stream (ISO/IEC 14496-15:2017 §5.4.3.3).

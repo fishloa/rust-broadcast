@@ -23,12 +23,12 @@ use crate::box_types::{
 use crate::error::{Error, Result};
 use crate::track_id::TrackId;
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue, UnsupportedVersion};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::timescale::Timescale;
+use broadcast_core::error::{BufferTooShort, InvalidValue, UnsupportedVersion};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::timescale::Timescale;
 
 use broadcast_common::wire::{be_u32, be_u64, read_u16, read_u32};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 const U32_PAIR_LEN: usize = core::mem::size_of::<u32>() * 2;
 const U64_PAIR_LEN: usize = core::mem::size_of::<u64>() * 2;
@@ -567,7 +567,7 @@ impl Serialize for EditListBox {
             |entry, out| {
                 let mut c = 0;
                 if version == 0 {
-                    let segment_duration = broadcast_common::len::fit_bits(
+                    let segment_duration = broadcast_core::len::fit_bits(
                         entry.segment_duration,
                         u32::BITS,
                         "segment_duration",
@@ -576,7 +576,7 @@ impl Serialize for EditListBox {
                     // stores it as i32, so the check is range membership, not an
                     // unsigned bit-width fit.
                     let media_time = i32::try_from(entry.media_time).map_err(|_| {
-                        Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                        Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                             field: "media_time",
                             value: entry.media_time as u64,
                             max: i64::from(i32::MAX) as u64,
@@ -773,7 +773,7 @@ impl Serialize for SegmentIndexBox {
             .copy_from_slice(&self.timescale.get().to_be_bytes());
         c += core::mem::size_of::<u32>();
         if self.version == 0 {
-            let ept = broadcast_common::len::fit_bits(
+            let ept = broadcast_core::len::fit_bits(
                 self.earliest_presentation_time,
                 u32::BITS,
                 "earliest_presentation_time",
@@ -781,8 +781,7 @@ impl Serialize for SegmentIndexBox {
             buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&ept.to_be_bytes());
             c += core::mem::size_of::<u32>();
             let first_offset =
-                broadcast_common::len::fit_bits(self.first_offset, u32::BITS, "first_offset")?
-                    as u32;
+                broadcast_core::len::fit_bits(self.first_offset, u32::BITS, "first_offset")? as u32;
             buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&first_offset.to_be_bytes());
             c += core::mem::size_of::<u32>();
         } else {
@@ -800,14 +799,14 @@ impl Serialize for SegmentIndexBox {
         buf[c..c + core::mem::size_of::<u16>()].copy_from_slice(&0u16.to_be_bytes());
         c += core::mem::size_of::<u16>();
         let reference_count =
-            broadcast_common::len::fit_u16(self.references.len(), "reference_count")?;
+            broadcast_core::len::fit_u16(self.references.len(), "reference_count")?;
         buf[c..c + core::mem::size_of::<u16>()].copy_from_slice(&reference_count.to_be_bytes());
         c += core::mem::size_of::<u16>();
         for r in &self.references {
             let reference_type =
-                broadcast_common::len::fit_bits(u64::from(r.reference_type), 1, "reference_type")?
+                broadcast_core::len::fit_bits(u64::from(r.reference_type), 1, "reference_type")?
                     as u32;
-            let referenced_size = broadcast_common::len::fit_bits(
+            let referenced_size = broadcast_core::len::fit_bits(
                 u64::from(r.referenced_size),
                 SIDX_REFERENCED_SIZE_BITS,
                 "referenced_size",
@@ -818,17 +817,15 @@ impl Serialize for SegmentIndexBox {
             buf[c..c + core::mem::size_of::<u32>()]
                 .copy_from_slice(&r.subsegment_duration.to_be_bytes());
             c += core::mem::size_of::<u32>();
-            let starts_with_sap = broadcast_common::len::fit_bits(
-                u64::from(r.starts_with_sap),
-                1,
-                "starts_with_sap",
-            )? as u32;
-            let sap_type = broadcast_common::len::fit_bits(
+            let starts_with_sap =
+                broadcast_core::len::fit_bits(u64::from(r.starts_with_sap), 1, "starts_with_sap")?
+                    as u32;
+            let sap_type = broadcast_core::len::fit_bits(
                 u64::from(r.sap_type),
                 SIDX_SAP_TYPE_BITS,
                 "sap_type",
             )? as u32;
-            let sap_delta_time = broadcast_common::len::fit_bits(
+            let sap_delta_time = broadcast_core::len::fit_bits(
                 u64::from(r.sap_delta_time),
                 SIDX_SAP_DELTA_TIME_BITS,
                 "sap_delta_time",
@@ -1034,17 +1031,17 @@ impl Serialize for TrackFragmentRandomAccessBox {
         buf[c..c + core::mem::size_of::<u32>()]
             .copy_from_slice(&self.track_id.value().to_be_bytes());
         c += core::mem::size_of::<u32>();
-        let traf = broadcast_common::len::fit_bits(
+        let traf = broadcast_core::len::fit_bits(
             u64::from(self.length_size_of_traf_num),
             TFRA_LENGTH_FIELD_BITS,
             "length_size_of_traf_num",
         )? as u32;
-        let trun = broadcast_common::len::fit_bits(
+        let trun = broadcast_core::len::fit_bits(
             u64::from(self.length_size_of_trun_num),
             TFRA_LENGTH_FIELD_BITS,
             "length_size_of_trun_num",
         )? as u32;
-        let sample = broadcast_common::len::fit_bits(
+        let sample = broadcast_core::len::fit_bits(
             u64::from(self.length_size_of_sample_num),
             TFRA_LENGTH_FIELD_BITS,
             "length_size_of_sample_num",
@@ -1052,7 +1049,7 @@ impl Serialize for TrackFragmentRandomAccessBox {
         let widths = (traf << TFRA_TRAF_NUM_SHIFT) | (trun << TFRA_TRUN_NUM_SHIFT) | sample;
         buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&widths.to_be_bytes());
         c += core::mem::size_of::<u32>();
-        let count = broadcast_common::len::fit_u32(self.entries.len(), "tfra number_of_entry")?;
+        let count = broadcast_core::len::fit_u32(self.entries.len(), "tfra number_of_entry")?;
         buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&count.to_be_bytes());
         c += core::mem::size_of::<u32>();
         let time_size = if self.version == 0 {
@@ -1062,8 +1059,8 @@ impl Serialize for TrackFragmentRandomAccessBox {
         };
         for entry in &self.entries {
             if self.version == 0 {
-                let time = broadcast_common::len::fit_bits(entry.time, u32::BITS, "tfra time")?;
-                let offset = broadcast_common::len::fit_bits(
+                let time = broadcast_core::len::fit_bits(entry.time, u32::BITS, "tfra time")?;
+                let offset = broadcast_core::len::fit_bits(
                     entry.moof_offset,
                     u32::BITS,
                     "tfra moof_offset",
@@ -1094,7 +1091,7 @@ fn write_uint(buf: &mut [u8], at: usize, value: u32, wire_value: u8) -> Result<u
     let bits = u32::try_from(width)
         .unwrap_or_default()
         .saturating_mul(u8::BITS);
-    broadcast_common::len::fit_bits(u64::from(value), bits, "tfra field")?;
+    broadcast_core::len::fit_bits(u64::from(value), bits, "tfra field")?;
     let bytes = value.to_be_bytes();
     buf[at..at + width].copy_from_slice(&bytes[bytes.len() - width..]);
     Ok(width)
@@ -1239,7 +1236,7 @@ impl Serialize for MovieFragmentRandomAccessBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let parent_size = broadcast_common::len::fit_u32(need, "mfro parent_size")?;
+        let parent_size = broadcast_core::len::fit_u32(need, "mfro parent_size")?;
         if self.mfro.parent_size != parent_size {
             return Err(Error::InvalidInput(
                 "mfro.parent_size does not match the enclosing mfra's length",
@@ -1265,7 +1262,7 @@ mod tests {
     }
 
     use super::*;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     // -----------------------------------------------------------------------
     // stts unit tests
@@ -1582,7 +1579,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "earliest_presentation_time",
                     ..
                 })
@@ -1633,7 +1630,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "referenced_size",
                     ..
                 })

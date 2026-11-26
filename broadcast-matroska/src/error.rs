@@ -1,9 +1,9 @@
 //! Error type returned by every EBML and Matroska parser in this crate.
 //!
-//! The shared failure kinds ([`BufferTooShort`](broadcast_common::error::BufferTooShort),
-//! [`OutputBufferTooSmall`](broadcast_common::error::OutputBufferTooSmall),
-//! [`InvalidValue`](broadcast_common::error::InvalidValue) and
-//! [`InvalidField`](broadcast_common::error::InvalidField)) are wrapped
+//! The shared failure kinds ([`BufferTooShort`](broadcast_core::error::BufferTooShort),
+//! [`OutputBufferTooSmall`](broadcast_core::error::OutputBufferTooSmall),
+//! [`InvalidValue`](broadcast_core::error::InvalidValue) and
+//! [`InvalidField`](broadcast_core::error::InvalidField)) are wrapped
 //! transparently; the rest are EBML- and Matroska-specific.
 
 use thiserror::Error;
@@ -164,17 +164,17 @@ pub enum Error {
 
     /// Input buffer was shorter than the smallest valid encoding for the type.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// A field had an invalid or reserved value.
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
 
     /// A field was missing or structurally invalid.
     #[error(transparent)]
-    InvalidField(#[from] broadcast_common::error::InvalidField),
+    InvalidField(#[from] broadcast_core::error::InvalidField),
 }

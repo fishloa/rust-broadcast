@@ -17,8 +17,8 @@
 
 use alloc::vec::Vec;
 
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use crate::box_support::OpaqueBox;
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxIter, box_len, write_box_header};
@@ -85,7 +85,7 @@ impl Serialize for UdtaText {
         need_out(buf, need)?;
         let mut cursor = write_box_header(buf, &self.key, need)?;
         for translation in &self.translations {
-            let len = broadcast_common::len::fit_u16(translation.value.len(), "udta text length")?;
+            let len = broadcast_core::len::fit_u16(translation.value.len(), "udta text length")?;
             buf[cursor..cursor + U16_LEN].copy_from_slice(&len.to_be_bytes());
             cursor += U16_LEN;
             buf[cursor..cursor + U16_LEN].copy_from_slice(&translation.language.to_be_bytes());

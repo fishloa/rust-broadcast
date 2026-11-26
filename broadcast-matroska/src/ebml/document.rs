@@ -7,7 +7,7 @@
 
 use alloc::vec::Vec;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::ebml::global::{CRC32_ID, Crc32, VOID_ID, Void};
 use crate::ebml::leaf::{TextElement, Unknown, UnsignedElement};
@@ -408,7 +408,7 @@ fn write_master<T: Serialize<Error = Error>>(
     for child in children {
         let have = buf.len();
         let rest = buf.get_mut(used..).ok_or(Error::OutputBufferTooSmall(
-            broadcast_common::error::OutputBufferTooSmall {
+            broadcast_core::error::OutputBufferTooSmall {
                 need: used + child.serialized_len(),
                 have,
             },

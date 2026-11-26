@@ -4,7 +4,7 @@
 //! Fixtures live in `private/fixtures/mp4/quicktime/` and `camera/`; they are
 //! loaded only through `test_fixtures`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::MovieBox;
 use isobmff::init_segment::{SampleEntryVariant, TrackBox};
 use isobmff::metadata::{ItemKey, MovieMetadata};

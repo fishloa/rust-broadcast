@@ -8,7 +8,7 @@
 //! entry carries an `esds` box with a full ES_Descriptor chain (ES_Descriptor,
 //! DecoderConfigDescriptor, DecoderSpecificInfo for AAC, SLConfigDescriptor).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::{ESDescriptor, EsdsBox, ObjectTypeIndication, StreamType};
 
 /// Find the first `esds` box in the byte stream by scanning for the four-CC.

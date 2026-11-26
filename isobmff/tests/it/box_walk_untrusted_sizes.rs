@@ -1,7 +1,7 @@
 //! Box walkers must survive an untrusted `largesize` that overflows `usize`
 //! arithmetic (ISO/IEC 14496-12:2026 §4.2 `Box.size` / `largesize`).
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 const FOURCCS: &[&[u8; 4]] = &[
     b"avc1", b"avc3", b"hvc1", b"hev1", b"vvc1", b"mp4v", b"mp4a", b"enca", b"ac-3", b"ec-3",
@@ -111,7 +111,7 @@ fn box_walker_rejects_overflowing_largesize() {
 /// never an out-of-bounds index.
 #[test]
 fn tfhd_body_shorter_than_track_id_is_a_short_read() {
-    use broadcast_common::error::BufferTooShort;
+    use broadcast_core::error::BufferTooShort;
     for len in 0..=7usize {
         let err = isobmff::movie_fragment::TrackFragmentHeaderBox::parse_body(&vec![0u8; len])
             .expect_err("truncated tfhd must not parse");
@@ -128,7 +128,7 @@ fn tfhd_body_shorter_than_track_id_is_a_short_read() {
 /// (ISO/IEC 14496-12:2026 §8.8.7.1), including non-zero upper bytes.
 #[test]
 fn tfhd_track_id_is_a_big_endian_u32_and_round_trips() {
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     for id in [0x0102_0304u32, 0xFFFF_FFFF, 0x0000_0100] {
         let mut body = vec![0u8, 0, 0, 0];
         body.extend_from_slice(&id.to_be_bytes());

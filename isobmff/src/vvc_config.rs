@@ -70,11 +70,11 @@ use crate::box_types::{BOX_HEADER_MIN_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_OF
 use crate::error::{Error, Result};
 use crate::nalu_types::VALID_LENGTH_SIZES;
 use alloc::vec::Vec;
-use broadcast_common::bits::{BitError, BitWriter};
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::u24_at;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::bits::{BitError, BitWriter};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 use core::fmt;
 
 // ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ impl VvcNalUnitType {
     }
 }
 
-broadcast_common::impl_spec_display!(VvcNalUnitType, Other);
+broadcast_core::impl_spec_display!(VvcNalUnitType, Other);
 
 // ---------------------------------------------------------------------------
 // VvcNalArray — one NAL-unit array in the record
@@ -808,22 +808,22 @@ fn bytes_needed(bit_pos: usize, n: usize) -> usize {
 
 /// Writes the low `n` bits of `value` after a `fit_bits` range check.
 fn write_bits_checked(w: &mut BitWriter<'_>, value: u64, n: u32, what: &'static str) -> Result<()> {
-    let value = broadcast_common::len::fit_bits(value, n, what)?;
+    let value = broadcast_core::len::fit_bits(value, n, what)?;
     w.write_bits(value, n).map_err(|e| bit_error(what, e))
 }
 
 /// MSB-first bit reader over the `vvcC` record bytes: the shared
-/// [`broadcast_common::bits::BitReader`] with this crate's typed errors.
+/// [`broadcast_core::bits::BitReader`] with this crate's typed errors.
 struct VvcBitReader<'a> {
     data: &'a [u8],
-    inner: broadcast_common::bits::BitReader<'a>,
+    inner: broadcast_core::bits::BitReader<'a>,
 }
 
 impl<'a> VvcBitReader<'a> {
     fn new(data: &'a [u8]) -> Self {
         Self {
             data,
-            inner: broadcast_common::bits::BitReader::new(data),
+            inner: broadcast_core::bits::BitReader::new(data),
         }
     }
 
@@ -969,7 +969,7 @@ impl<'a> VvcBitWriter<'a> {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::{BufferTooShort, InvalidValue};
+    use broadcast_core::error::{BufferTooShort, InvalidValue};
 
     use super::*;
 
@@ -1030,7 +1030,7 @@ mod tests {
         );
         assert_eq!(r.inner.bits_read(), 0, "a refused take moves no cursor");
     }
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     // The vvcC record body walked out of the committed real fixture
     // (fixtures/mp4/frag/vvc.frag.mp4): the 4-byte FullBox header + record.

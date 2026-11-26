@@ -131,7 +131,7 @@ impl CueTrigger {
     }
 }
 
-broadcast_common::impl_spec_display!(CueTrigger);
+broadcast_core::impl_spec_display!(CueTrigger);
 
 /// Which `SCTE35-*` attribute carries the splice payload (RFC 8216bis
 /// §4.4.5.1.1).
@@ -157,7 +157,7 @@ impl Scte35Kind {
     }
 }
 
-broadcast_common::impl_spec_display!(Scte35Kind);
+broadcast_core::impl_spec_display!(Scte35Kind);
 
 /// The `CUE` attribute's set of Trigger Identifiers (RFC 8216bis §4.4.5.1),
 /// in wire order. `PRE` and `POST` are mutually exclusive and a trigger may

@@ -42,10 +42,10 @@
 use crate::error::{Error, Result};
 use crate::nalu_types::{AvcPps, AvcSps, AvcSpsExt, VALID_LENGTH_SIZES};
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
-use broadcast_common::len::need_out;
 use broadcast_common::wire::{read_nalu_16, read_u8};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::InvalidValue;
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 use core::fmt;
 
 /// Largest permitted `bit_depth_luma_minus8` / `bit_depth_chroma_minus8`
@@ -336,7 +336,7 @@ impl Serialize for AVCDecoderConfigurationRecord {
         cursor += 1;
 
         // reserved(3) + numOfSequenceParameterSets(5): reserved bits = all-ones
-        let num_sps = broadcast_common::len::fit_bits(
+        let num_sps = broadcast_core::len::fit_bits(
             self.sps.len() as u64,
             NUM_SPS_BITS,
             "numOfSequenceParameterSets",
@@ -346,7 +346,7 @@ impl Serialize for AVCDecoderConfigurationRecord {
 
         // SPS array
         for sps in &self.sps {
-            let len = broadcast_common::len::fit_u16(sps.0.len(), "sps NALU length")?;
+            let len = broadcast_core::len::fit_u16(sps.0.len(), "sps NALU length")?;
             buf[cursor..cursor + NAL_LENGTH_PREFIX_LEN].copy_from_slice(&len.to_be_bytes());
             cursor += NAL_LENGTH_PREFIX_LEN;
             buf[cursor..cursor + sps.0.len()].copy_from_slice(&sps.0);
@@ -354,13 +354,13 @@ impl Serialize for AVCDecoderConfigurationRecord {
         }
 
         // numOfPictureParameterSets
-        let num_pps = broadcast_common::len::fit_u8(self.pps.len(), "numOfPictureParameterSets")?;
+        let num_pps = broadcast_core::len::fit_u8(self.pps.len(), "numOfPictureParameterSets")?;
         buf[cursor] = num_pps;
         cursor += 1;
 
         // PPS array
         for pps in &self.pps {
-            let len = broadcast_common::len::fit_u16(pps.0.len(), "pps NALU length")?;
+            let len = broadcast_core::len::fit_u16(pps.0.len(), "pps NALU length")?;
             buf[cursor..cursor + NAL_LENGTH_PREFIX_LEN].copy_from_slice(&len.to_be_bytes());
             cursor += NAL_LENGTH_PREFIX_LEN;
             buf[cursor..cursor + pps.0.len()].copy_from_slice(&pps.0);
@@ -389,13 +389,13 @@ impl Serialize for AVCDecoderConfigurationRecord {
 
             // numOfSequenceParameterSetExt
             let num_sps_ext =
-                broadcast_common::len::fit_u8(self.sps_ext.len(), "numOfSequenceParameterSetExt")?;
+                broadcast_core::len::fit_u8(self.sps_ext.len(), "numOfSequenceParameterSetExt")?;
             buf[cursor] = num_sps_ext;
             cursor += 1;
 
             // SPSExt array
             for sps_ext in &self.sps_ext {
-                let len = broadcast_common::len::fit_u16(sps_ext.0.len(), "sps_ext NALU length")?;
+                let len = broadcast_core::len::fit_u16(sps_ext.0.len(), "sps_ext NALU length")?;
                 buf[cursor..cursor + NAL_LENGTH_PREFIX_LEN].copy_from_slice(&len.to_be_bytes());
                 cursor += NAL_LENGTH_PREFIX_LEN;
                 buf[cursor..cursor + sps_ext.0.len()].copy_from_slice(&sps_ext.0);
@@ -487,11 +487,11 @@ fn check_bit_depth(field: &'static str, value: u8) -> Result<u8> {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::InvalidValue;
+    use broadcast_core::error::InvalidValue;
 
     use super::*;
     use alloc::vec;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     /// Minimal avcC: baseline profile at level 3.0, 1 SPS, 1 PPS, no high-profile ext.
     fn make_minimal_avcc_body() -> Vec<u8> {
@@ -840,7 +840,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "sps NALU length",
                     ..
                 })
@@ -873,7 +873,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "numOfSequenceParameterSets",
                     ..
                 })

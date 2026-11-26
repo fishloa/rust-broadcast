@@ -32,9 +32,9 @@
 //! See ISO/IEC 14496-12:2026 §4.2.
 
 use crate::error::{Error, Result};
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 use core::fmt;
 
 // ---------------------------------------------------------------------------
@@ -382,7 +382,7 @@ pub fn write_box_header(
         Ok(BOX_HEADER_LARGESIZE_SIZE)
     } else {
         need_out(buf, BOX_HEADER_MIN_SIZE)?;
-        let size = broadcast_common::len::fit_u32(need, "box size")?;
+        let size = broadcast_core::len::fit_u32(need, "box size")?;
         buf[0..BOX_TYPE_SIZE].copy_from_slice(&size.to_be_bytes());
         buf[BOX_TYPE_RANGE].copy_from_slice(fourcc);
         Ok(BOX_HEADER_MIN_SIZE)
@@ -401,7 +401,7 @@ pub fn write_full_box_header(
     compact: bool,
 ) -> Result<usize> {
     let mut c = if compact {
-        let size = broadcast_common::len::fit_u32(need, "box size")?;
+        let size = broadcast_core::len::fit_u32(need, "box size")?;
         need_out(buf, BOX_HEADER_MIN_SIZE)?;
         buf[0..BOX_TYPE_SIZE].copy_from_slice(&size.to_be_bytes());
         buf[BOX_TYPE_RANGE].copy_from_slice(fourcc);
@@ -949,10 +949,10 @@ pub fn descend_boxes<'a>(start: &'a [u8], path: &[&[u8; BOX_TYPE_SIZE]]) -> Opti
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::{BufferTooShort, InvalidValue};
+    use broadcast_core::error::{BufferTooShort, InvalidValue};
 
     use super::*;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     // -- BoxHeader tests ---------------------------------------------------
 
@@ -1615,12 +1615,12 @@ mod tests {
 /// with a small real payload from a committed fixture.
 #[cfg(test)]
 mod largesize_tests {
-    use broadcast_common::error::OutputBufferTooSmall;
+    use broadcast_core::error::OutputBufferTooSmall;
 
     use super::*;
     use crate::init_segment::MovieBox;
     use crate::movie_fragment::MovieFragmentBox;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     const FOUR_GIB: u64 = 1 << 32;
 

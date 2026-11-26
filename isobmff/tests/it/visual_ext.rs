@@ -11,7 +11,7 @@
 //! 4. Mutating a field → bytes change (proves no raw-passthrough in parser)
 //! 5. clap from spec vector build + round-trip
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRatioBox};
 
 // Oracle bytes from fixtures/mp4/PROVENANCE.md

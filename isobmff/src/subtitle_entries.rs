@@ -25,10 +25,10 @@ use crate::error::{Error, Result};
 use crate::sample_entries::SAMPLE_ENTRY_RESERVED_LEN;
 use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{be_u16, be_u32};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 const SAMPLE_ENTRY_FIXED_LEN: usize = SAMPLE_ENTRY_RESERVED_LEN + core::mem::size_of::<u16>();
 const DATA_REFERENCE_INDEX_OFFSET: usize = SAMPLE_ENTRY_RESERVED_LEN;
@@ -815,10 +815,10 @@ impl Serialize for WvttSampleEntry {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::InvalidValue;
+    use broadcast_core::error::InvalidValue;
 
     use super::*;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     #[test]
     fn xml_subtitle_sample_entry_round_trip() {

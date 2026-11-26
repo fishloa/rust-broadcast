@@ -33,7 +33,7 @@ impl ClientAttrNameError {
     }
 }
 
-broadcast_common::impl_spec_display!(ClientAttrNameError);
+broadcast_core::impl_spec_display!(ClientAttrNameError);
 
 /// Why a [`crate::CustomTagName`] was rejected (RFC 8216bis §4.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +64,7 @@ impl CustomTagNameError {
     }
 }
 
-broadcast_common::impl_spec_display!(CustomTagNameError);
+broadcast_core::impl_spec_display!(CustomTagNameError);
 
 /// Why an attribute-list text was rejected by the strict wire scanner
 /// (RFC 8216bis §4.2).
@@ -111,7 +111,7 @@ impl AttributeListError {
     }
 }
 
-broadcast_common::impl_spec_display!(AttributeListError);
+broadcast_core::impl_spec_display!(AttributeListError);
 
 /// Why an `EXT-X-DATERANGE` was rejected (RFC 8216bis §4.4.5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,7 +169,7 @@ impl DateRangeError {
     }
 }
 
-broadcast_common::impl_spec_display!(DateRangeError);
+broadcast_core::impl_spec_display!(DateRangeError);
 
 /// Error variants that [`crate::MediaPlaylist::parse`]/[`crate::MasterPlaylist::parse`]
 /// can return.

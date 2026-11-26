@@ -8,8 +8,8 @@
 //! on [`TrackInfo`](crate::reader::TrackInfo), and the caller hands each text
 //! sample to [`chapter_title`].
 
-use broadcast_common::len::need_in;
 use broadcast_common::wire::u16_at;
+use broadcast_core::len::need_in;
 
 use crate::error::{Error, Result};
 
@@ -37,7 +37,7 @@ pub fn chapter_title(sample: &[u8]) -> Result<&str> {
     let text = sample
         .get(LENGTH_PREFIX..LENGTH_PREFIX.saturating_add(len))
         .ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: LENGTH_PREFIX.saturating_add(len),
                 have: sample.len(),
                 what: "chapter title text",

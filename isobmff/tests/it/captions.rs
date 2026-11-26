@@ -8,7 +8,7 @@
 //!   Build a WVTTSampleEntry from a spec vector (vttC "WEBVTT" + a vttc/payl cue),
 //!   round-trip serialize→parse→serialize and assert byte-identical.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::{
     CuePayloadBox, SampleDescriptionBox, SampleEntryVariant, VttCueBox, VttEmptyCueBox,
     WebVttConfigurationBox, WvttSampleEntry, XmlSubtitleSampleEntry,

@@ -1,7 +1,7 @@
 //! Real `EXT-X-DATERANGE` lines from a production packager (Unified Streaming).
 //! The SCTE35-OUT hex is the splice input; PLANNED-DURATION is the golden output.
 
-use broadcast_common::traits::Parse;
+use broadcast_core::traits::Parse;
 use scte35_splice::SpliceInfoSection;
 use timed_metadata::TimeAnchor;
 use timed_metadata::convert::scte35_to_daterange;

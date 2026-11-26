@@ -19,8 +19,8 @@ use crate::timing::{
 };
 use crate::track_id::TrackId;
 use alloc::vec::Vec;
-use broadcast_common::Serialize;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::Serialize;
+use broadcast_core::timescale::Timescale;
 
 /// The `sap_type` of a subsegment that starts with a closed GOP: every sample
 /// of a written fragment is independently decodable from its first sync sample
@@ -158,7 +158,7 @@ pub(crate) fn random_access(
             |total, table| total.checked_add(table.serialized_len()),
         )
         .ok_or(Error::InvalidInput("mfra length overflows"))?;
-    let parent_size = broadcast_common::len::fit_u32(size, "mfro parent_size")?;
+    let parent_size = broadcast_core::len::fit_u32(size, "mfro parent_size")?;
     let mfra = MovieFragmentRandomAccessBox {
         tfra: tables,
         mfro: MovieFragmentRandomAccessOffsetBox {

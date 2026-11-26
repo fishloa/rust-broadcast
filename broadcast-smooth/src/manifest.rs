@@ -54,13 +54,13 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::str::FromStr;
 
-use broadcast_common::timescale::Timescale;
 use broadcast_common::xml::{Elem, Namespace, XmlError, read_tree};
 use broadcast_common::xml_chars::{
     LimitExceeded, NO_ATTRS, WriteRefusal, XmlLimit, XmlLimits, XmlWriter, close_element as close,
     empty_element as empty, finish_document, new_writer, open_element as open, text_element,
     write_declaration,
 };
+use broadcast_core::timescale::Timescale;
 
 /// Why [`SmoothManifest::to_xml`] could not render the document.
 pub type ManifestWriteError = WriteRefusal;
@@ -292,7 +292,7 @@ pub const SMOOTH_TIMESCALE: u64 = SMOOTH_DEFAULT_TIMESCALE.as_u64();
 
 /// The Smooth default manifest time scale as a [`Timescale`]: the value an
 /// absent `SmoothStreamingMedia@TimeScale` resolves to.
-pub const SMOOTH_DEFAULT_TIMESCALE: Timescale = broadcast_common::timescale!(10_000_000);
+pub const SMOOTH_DEFAULT_TIMESCALE: Timescale = broadcast_core::timescale!(10_000_000);
 
 /// `SmoothStreamingMedia@MajorVersion` a constructed manifest carries (2).
 pub const DEFAULT_MAJOR_VERSION: u32 = 2;
@@ -371,7 +371,7 @@ impl StreamType {
     }
 }
 
-broadcast_common::impl_spec_display!(StreamType);
+broadcast_core::impl_spec_display!(StreamType);
 
 // ---------------------------------------------------------------------------
 // Model

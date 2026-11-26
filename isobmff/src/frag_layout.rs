@@ -29,7 +29,7 @@ use crate::movie_fragment::{
 };
 use crate::track_id::TrackId;
 use alloc::vec::Vec;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 
 /// The sample flags a sample's sync flag stands for (§8.8.8.3): a sync sample
 /// states `sample_depends_on = 2` (an I frame), a non-sync one the

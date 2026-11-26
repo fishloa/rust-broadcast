@@ -111,7 +111,7 @@ impl ElementHeader {
     }
 }
 
-impl<'a> broadcast_common::Parse<'a> for ElementHeader {
+impl<'a> broadcast_core::Parse<'a> for ElementHeader {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -119,7 +119,7 @@ impl<'a> broadcast_common::Parse<'a> for ElementHeader {
     }
 }
 
-impl broadcast_common::Serialize for ElementHeader {
+impl broadcast_core::Serialize for ElementHeader {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {

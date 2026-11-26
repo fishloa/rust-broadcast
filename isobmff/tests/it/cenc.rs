@@ -6,7 +6,7 @@
 //! The fixture was authored by ffmpeg with `cenc-aes-ctr` scheme and carries
 //! `tenc`/`senc`/`saiz`/`saio`/`schm`/`frma`/`sinf`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use isobmff::cenc::{
     OriginalFormatBox, ProtectionSchemeInfoBox, ProtectionSystemSpecificHeaderBox,
     SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION, SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox,

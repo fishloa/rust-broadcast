@@ -5,7 +5,7 @@
 //! [`from_u64`](TrackType::from_u64) returns `None` for it rather than
 //! inventing a variant.
 
-use broadcast_common::impl_spec_display;
+use broadcast_core::impl_spec_display;
 
 /// Build a spec enum that is a closed decode view over an integer field.
 macro_rules! spec_enum {

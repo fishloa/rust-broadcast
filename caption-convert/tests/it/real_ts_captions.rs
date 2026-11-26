@@ -14,7 +14,7 @@
 //!    renderings agree with each other.
 #![cfg(feature = "cc-data")]
 use crate::support::ga94::{ga94_from_ts, parse_reference};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use caption_convert::Cea608ToWebVtt;
 use cc_data::CcData;
 use cc_data::decode::Cea608Channel;

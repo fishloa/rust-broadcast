@@ -3,8 +3,8 @@
 use std::collections::BTreeSet;
 use std::time::Duration;
 
-use broadcast_common::timescale::Timescale;
 use broadcast_common::xml::{Elem, Namespace, read_tree};
+use broadcast_core::timescale::Timescale;
 
 use crate::descriptors::XLINK_RESOLVE_TO_ZERO;
 use crate::duration::parse_iso8601_duration;

@@ -23,7 +23,7 @@ broadcast-hls = "0.9"
 | IETF HLS 2nd edition, `draft-pantos-hls-rfc8216bis` | `-22`, 1 May 2026 (private repo: `private/specs-verified/ietf/specs/ietf_draft_pantos_hls_rfc8216bis.txt`) | §4.4 tags (all 32 recognised), §8 protocol version derivation, §9 examples (fixtures), Low-Latency directives | Partial | 28 of 32 tags typed; cross-tag and cross-file MUSTs are not enforced; a draft, not a ratified RFC |
 | IETF RFC 8216 HLS | RFC 8216 (private repo: `private/specs-verified/ietf/specs/ietf_rfc8216_hls.txt`) | §4.2 attribute-list grammar and quoted strings, §4.3 tags including I-frame variants | Full for the syntax | Superseded in intent by the draft above |
 | Apple HLS timed metadata | private repo: `private/specs-verified/hls/apple/apple_hls_timed_metadata.html` | `EXT-X-DATERANGE`: typed `DateRange` (ID/CLASS/START-DATE/END-DATE/DURATION/PLANNED-DURATION/END-ON-NEXT, `X-` client attributes, SCTE-35 `Cue`); a parsed playlist keeps the line verbatim | Partial | `timed-metadata` and `ssai-runtime` build ranges through `DateRange` |
-| ISO/IEC 23001-7 Common Encryption | Edition not in the vendored index | `cenc_ext_x_key`: `cbcs` becomes `METHOD=SAMPLE-AES`, `cenc` becomes `METHOD=SAMPLE-AES-CTR` with no `IV` (draft §4.4.4.4) | Partial | Scheme identity is `broadcast_common::cenc::CencScheme`, shared with `transmux` |
+| ISO/IEC 23001-7 Common Encryption | Edition not in the vendored index | `cenc_ext_x_key`: `cbcs` becomes `METHOD=SAMPLE-AES`, `cenc` becomes `METHOD=SAMPLE-AES-CTR` with no `IV` (draft §4.4.4.4) | Partial | Scheme identity is `broadcast_core::cenc::CencScheme`, shared with `transmux` |
 
 ## Features
 

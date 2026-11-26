@@ -9,8 +9,8 @@
 //! Each parsed box is serialised back and compared byte-for-byte with the
 //! original box body (excluding the 8-byte box header).
 
-use broadcast_common::timescale::Timescale;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::timescale::Timescale;
+use broadcast_core::{Parse, Serialize};
 use isobmff::BoxIter;
 use isobmff::timing::{
     CompositionOffsetBox, EditListBox, MovieFragmentRandomAccessBox, SegmentIndexBox,

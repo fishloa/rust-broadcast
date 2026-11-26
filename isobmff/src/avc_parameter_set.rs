@@ -15,9 +15,9 @@ use crate::error::{Error, Result};
 use crate::nalu_types::{AvcNalUnit, VALID_LENGTH_SIZES};
 use crate::sample_entries::AVCSampleEntry;
 use alloc::vec::Vec;
-use broadcast_common::Serialize;
-use broadcast_common::error::{BufferTooShort, InvalidValue};
-use broadcast_common::len::{fit_bits, need_in, need_out};
+use broadcast_core::Serialize;
+use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::len::{fit_bits, need_in, need_out};
 
 /// Sample entry four-CC of an AVC parameter set stream (§5.4.3.1).
 pub const AVCP_SAMPLE_ENTRY: [u8; 4] = *b"avcp";

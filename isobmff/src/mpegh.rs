@@ -9,10 +9,10 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::error::InvalidValue;
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::be_u16;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::InvalidValue;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 // ---------------------------------------------------------------------------
 // Four-CC constants
@@ -155,7 +155,7 @@ impl Serialize for MHADecoderConfigurationRecord {
         buf[1] = self.mpegh3da_profile_level_indication;
         buf[MHAC_REFERENCE_CHANNEL_LAYOUT_OFFSET] = self.reference_channel_layout;
         let config_len =
-            broadcast_common::len::fit_u16(self.mpegh3da_config.len(), "mpegh3daConfigLength")?;
+            broadcast_core::len::fit_u16(self.mpegh3da_config.len(), "mpegh3daConfigLength")?;
         buf[MHAC_CONFIG_LENGTH_OFFSET..MHAC_CONFIG_LENGTH_OFFSET + MHAC_CONFIG_LENGTH_LEN]
             .copy_from_slice(&config_len.to_be_bytes());
         buf[MHAC_RECORD_FIXED_LEN..need].copy_from_slice(&self.mpegh3da_config);
@@ -187,7 +187,7 @@ mod mhac_record_tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "mpegh3daConfigLength",
                     ..
                 })

@@ -8,7 +8,7 @@
 
 use alloc::vec::Vec;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::ebml::VintSize;
 use crate::ebml::vint::VintWidth;
@@ -191,7 +191,7 @@ impl BlockHeader {
         let rest = buf
             .get_mut(used..used + TIMESTAMP_OCTETS + FLAGS_OCTETS)
             .ok_or(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need: used + TIMESTAMP_OCTETS + FLAGS_OCTETS,
                     have,
                 },
@@ -573,7 +573,7 @@ impl Serialize for Block<'_> {
         let used = self.header.write(buf)?;
         let have = buf.len();
         let rest = buf.get_mut(used..).ok_or(Error::OutputBufferTooSmall(
-            broadcast_common::error::OutputBufferTooSmall {
+            broadcast_core::error::OutputBufferTooSmall {
                 need: used + self.lacing.serialized_len(),
                 have,
             },
@@ -808,7 +808,7 @@ fn write_xiph(frames: &[&[u8]], buf: &mut [u8]) -> Result<usize> {
     for frame in frames {
         used += copy_into(
             buf.get_mut(used..).ok_or(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need: used + frame.len(),
                     have,
                 },
@@ -842,7 +842,7 @@ fn write_ebml(
         width: first_width,
     };
     used += first.write(buf.get_mut(used..).ok_or(Error::OutputBufferTooSmall(
-        broadcast_common::error::OutputBufferTooSmall {
+        broadcast_core::error::OutputBufferTooSmall {
             need: used + first_width.get(),
             have,
         },
@@ -864,7 +864,7 @@ fn write_ebml(
             });
         }
         used += size.write(buf.get_mut(used..).ok_or(Error::OutputBufferTooSmall(
-            broadcast_common::error::OutputBufferTooSmall {
+            broadcast_core::error::OutputBufferTooSmall {
                 need: used + delta_width.get(),
                 have,
             },
@@ -873,7 +873,7 @@ fn write_ebml(
     for frame in frames {
         used += copy_into(
             buf.get_mut(used..).ok_or(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need: used + frame.len(),
                     have,
                 },
@@ -906,7 +906,7 @@ fn write_fixed(frames: &[&[u8]], buf: &mut [u8]) -> Result<usize> {
     for frame in frames {
         used += copy_into(
             buf.get_mut(used..).ok_or(Error::OutputBufferTooSmall(
-                broadcast_common::error::OutputBufferTooSmall {
+                broadcast_core::error::OutputBufferTooSmall {
                     need: used + frame.len(),
                     have,
                 },
@@ -921,7 +921,7 @@ fn write_fixed(frames: &[&[u8]], buf: &mut [u8]) -> Result<usize> {
 fn write_byte(buf: &mut [u8], used: &mut usize, octet: u8) -> Result<()> {
     let have = buf.len();
     let slot = buf.get_mut(*used).ok_or(Error::OutputBufferTooSmall(
-        broadcast_common::error::OutputBufferTooSmall {
+        broadcast_core::error::OutputBufferTooSmall {
             need: *used + 1,
             have,
         },
@@ -937,7 +937,7 @@ fn copy_into(buf: &mut [u8], bytes: &[u8]) -> Result<usize> {
     let target = buf
         .get_mut(..bytes.len())
         .ok_or(Error::OutputBufferTooSmall(
-            broadcast_common::error::OutputBufferTooSmall {
+            broadcast_core::error::OutputBufferTooSmall {
                 need: bytes.len(),
                 have,
             },

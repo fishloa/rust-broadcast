@@ -4,8 +4,8 @@
 //! see `fixtures/scte35/PROVENANCE.md` for the exact command and the oracle
 //! values read from `tstabcomp --decompile`'s own output, not from this
 //! crate's parser or serializer.
-use broadcast_common::Serialize;
-use broadcast_common::traits::Parse;
+use broadcast_core::Serialize;
+use broadcast_core::traits::Parse;
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, SpliceInsert};
 use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
@@ -71,7 +71,7 @@ fn time_signal_without_id_errors_on_daterange_conversion() {
         }),
         scte35_splice::descriptor_loop::SpliceDescriptorLoop::new(&[]),
     );
-    let raw = broadcast_common::traits::Serialize::try_to_bytes(&section).unwrap();
+    let raw = broadcast_core::traits::Serialize::try_to_bytes(&section).unwrap();
     let ev = TimedEvent::from_scte35(&section, &raw).unwrap();
     assert_eq!(ev.id, None);
 

@@ -6,9 +6,9 @@
 
 use crate::box_types::BOX_TYPE_SIZE;
 use crate::error::{Error, Result};
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{u16_at, u32_at};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// Byte offset of `DTSSamplingFrequency` in the `ddts` body.
 const DDTS_SAMPLING_FREQUENCY_OFFSET: usize = 0;

@@ -18,6 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 scte35-splice = { path = "../scte35-splice", version = "8.0.0", default-features = false }
 isobmff       = { path = "../isobmff",       version = "0.1.0", default-features = false }
 broadcast-common    = { path = "../broadcast-common",    version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 # The shared HLS attribute-list tokenizer/renderer (issue #1140 T12):
 # `daterange.rs` used to carry its own copy of the quoted-comma splitter and
 # hand-format `,NAME="VALUE"` with no validation of interpolated content.

@@ -5,7 +5,7 @@
 use std::collections::BTreeMap;
 use std::process::Command;
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use isobmff::box_support::OpaqueBox;
 use isobmff::init_segment::{Mp4aSampleEntry, SampleEntryVariant};
 use isobmff::plan::{PlanBuilder, PlanSample};
@@ -222,7 +222,7 @@ fn a_mov_is_authored_from_typed_values() {
         timecode_id,
         *b"tmcd",
         b"TimecodeHandler\0".to_vec(),
-        broadcast_common::timescale!(12800),
+        broadcast_core::timescale!(12800),
         SampleEntry::Typed(SampleEntryVariant::Tmcd(Box::new(timecode_entry()))),
     );
     timecode_setup.gmhd = Some(gmhd());
@@ -306,7 +306,7 @@ fn a_mov_is_authored_from_typed_values() {
             Sink::Seekable,
         ),
         FileType::quicktime(),
-        MovieHeader::new(broadcast_common::timescale!(1000)),
+        MovieHeader::new(broadcast_core::timescale!(1000)),
         Limits::default(),
     )
     .expect("progressive writer");
@@ -445,13 +445,13 @@ fn the_fragmented_writer_accepts_a_typed_quicktime_track() {
         TrackId::new(1),
         *b"tmcd",
         b"TimecodeHandler\0".to_vec(),
-        broadcast_common::timescale!(12800),
+        broadcast_core::timescale!(12800),
         SampleEntry::Typed(SampleEntryVariant::Tmcd(Box::new(timecode_entry()))),
     );
     setup.gmhd = Some(gmhd());
     let writer = Writer::fragmented(
         vec![setup],
-        broadcast_common::timescale!(1000),
+        broadcast_core::timescale!(1000),
         Limits::default(),
     )
     .expect("fragmented writer");
@@ -473,7 +473,7 @@ fn the_classic_quicktime_form_has_no_ftyp() {
             TrackId::new(1),
             *b"tmcd",
             b"TimecodeHandler\0".to_vec(),
-            broadcast_common::timescale!(12800),
+            broadcast_core::timescale!(12800),
             SampleEntry::Typed(SampleEntryVariant::Tmcd(Box::new(timecode_entry()))),
         );
         setup.gmhd = Some(gmhd());
@@ -482,7 +482,7 @@ fn the_classic_quicktime_form_has_no_ftyp() {
 
     let mut fragmented = Writer::fragmented(
         vec![timecode_setup()],
-        broadcast_common::timescale!(1000),
+        broadcast_core::timescale!(1000),
         Limits::default(),
     )
     .expect("fragmented writer");
@@ -519,7 +519,7 @@ fn the_classic_quicktime_form_has_no_ftyp() {
             Sink::Seekable,
         ),
         FileType::without_ftyp(),
-        MovieHeader::new(broadcast_common::timescale!(1000)),
+        MovieHeader::new(broadcast_core::timescale!(1000)),
         Limits::default(),
     )
     .expect("progressive writer");

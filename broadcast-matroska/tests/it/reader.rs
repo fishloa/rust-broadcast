@@ -4,7 +4,7 @@
 
 use std::time::Duration;
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 
 use broadcast_matroska::ebml::document::parse_document_start;
 use broadcast_matroska::ebml::vint::{VintSize, VintWidth};

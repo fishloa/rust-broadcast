@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use broadcast_dash::Mpd;
 use broadcast_dash::error::{MpdError, Unsupported};
 use broadcast_dash::limits::Limits;

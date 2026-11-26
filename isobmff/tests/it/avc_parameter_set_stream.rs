@@ -10,8 +10,8 @@
 //! Spec input: `private/specs-verified/mpeg/isobmff/iso-iec-14496-15-2017-avc-hevc-config.md`.
 use isobmff::{Error, TrackId};
 
-use broadcast_common::error::InvalidValue;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::InvalidValue;
+use broadcast_core::{Parse, Serialize};
 use isobmff::avc_parameter_set::{AVCP_SAMPLE_ENTRY, AVCParameterSample, AVCParameterSampleEntry};
 use isobmff::init_segment::{MovieBox, SampleDescriptionBox, SampleEntryVariant};
 use isobmff::track_reference::{AVCP_REFERENCE_TYPE, TrackReferenceBox, TrackReferenceTypeBox};

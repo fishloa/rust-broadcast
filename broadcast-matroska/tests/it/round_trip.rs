@@ -1,7 +1,7 @@
 //! Real-file round trips: every committed fixture walks to the end and
 //! re-serialises byte for byte, element by element.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use broadcast_matroska::Limits;
 use broadcast_matroska::ebml::document::parse_document_start;
 use broadcast_matroska::matroska::{Block, Document, Element, ids};

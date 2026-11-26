@@ -44,7 +44,7 @@ impl Cea608ToWebVtt {
     /// [`Error::CcData`] if `cc_data_bytes` is not a valid `cc_data()`
     /// structure.
     pub fn push_cc_data(&mut self, pts_90k: u64, cc_data_bytes: &[u8]) -> Result<(), Error> {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         let cc = cc_data::CcData::parse(cc_data_bytes)?;
         self.extractor.push_frame(pts_90k, cc.processed_triplets());
         Ok(())
@@ -77,7 +77,7 @@ impl Cea708ToWebVtt {
     /// [`Error::CcData`] if `cc_data_bytes` is not a valid `cc_data()`
     /// structure.
     pub fn push_cc_data(&mut self, pts_90k: u64, cc_data_bytes: &[u8]) -> Result<(), Error> {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         let cc = cc_data::CcData::parse(cc_data_bytes)?;
         self.extractor.push_frame(pts_90k, cc.processed_triplets());
         Ok(())
@@ -89,7 +89,7 @@ impl Cea708ToWebVtt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
     use cc_data::{CcData, CcTriplet, CcType};
 
     fn cc_data_bytes(triplets: &[CcTriplet]) -> alloc::vec::Vec<u8> {

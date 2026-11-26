@@ -28,10 +28,10 @@ use crate::box_types::{
 };
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire::{u16_at, u32_at, u64_at};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// Width of an AES-128 content key in bytes (ISO/IEC 23001-7 AES-128 content
 /// encryption), the same width as a key id ([`crate::box_types::KEY_ID_LEN`]).
@@ -71,7 +71,7 @@ fn fullbox_flags(full: &[u8]) -> u32 {
 
 /// A CENC protection scheme (`schm.scheme_type`) — ISO/IEC 23001-7 §4.
 ///
-/// Re-exported from [`broadcast_common::cenc`], which is where the single
+/// Re-exported from [`broadcast_core::cenc`], which is where the single
 /// definition lives. The decrypt path, the encrypt path, and the IR crypto
 /// carrier share that one definition rather than three (issue #564) — and so
 /// does `broadcast-hls`, which renders the HLS `#EXT-X-KEY` tag from it (issue
@@ -79,7 +79,7 @@ fn fullbox_flags(full: &[u8]) -> u32 {
 /// identity is container-independent, so it belongs below both this crate and
 /// the playlist crate; only the *boxes* that carry it (`tenc`/`senc`/`schm`/…,
 /// below) are ISOBMFF-specific and stay here.
-pub use broadcast_common::cenc::CencScheme;
+pub use broadcast_core::cenc::CencScheme;
 
 // ---------------------------------------------------------------------------
 // tenc — TrackEncryptionBox (ISO/IEC 23001-7 §12.2)
@@ -205,7 +205,7 @@ impl Serialize for TrackEncryptionBox {
         buf[c..c + crate::box_types::KEY_ID_LEN].copy_from_slice(&self.default_kid);
         c += crate::box_types::KEY_ID_LEN;
         if let Some(ref iv) = self.default_constant_iv {
-            buf[c] = broadcast_common::len::fit_u8(iv.len(), "default_constant_IV_size")?;
+            buf[c] = broadcast_core::len::fit_u8(iv.len(), "default_constant_IV_size")?;
             c += 1;
             buf[c..c + iv.len()].copy_from_slice(iv);
             c += iv.len();
@@ -439,7 +439,7 @@ impl Serialize for SampleEncryptionBox {
             self.flags,
             false,
         )?;
-        let sample_count = broadcast_common::len::fit_u32(self.entries.len(), "sample_count")?;
+        let sample_count = broadcast_core::len::fit_u32(self.entries.len(), "sample_count")?;
         buf[c..c + SENC_SAMPLE_COUNT_LEN].copy_from_slice(&sample_count.to_be_bytes());
         c += SENC_SAMPLE_COUNT_LEN;
         for e in &self.entries {
@@ -447,7 +447,7 @@ impl Serialize for SampleEncryptionBox {
             c += e.initialization_vector.len();
             if (self.flags & SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION) != 0 {
                 let subsample_count =
-                    broadcast_common::len::fit_u16(e.subsamples.len(), "subsample_count")?;
+                    broadcast_core::len::fit_u16(e.subsamples.len(), "subsample_count")?;
                 buf[c..c + SENC_SUBSAMPLE_COUNT_LEN]
                     .copy_from_slice(&subsample_count.to_be_bytes());
                 c += SENC_SUBSAMPLE_COUNT_LEN;
@@ -577,7 +577,7 @@ impl Serialize for ProtectionSystemSpecificHeaderBox {
         buf[c..c + crate::box_types::KEY_ID_LEN].copy_from_slice(&self.system_id);
         c += crate::box_types::KEY_ID_LEN;
         if self.version > 0 {
-            let kid_count = broadcast_common::len::fit_u32(self.kids.len(), "KID_count")?;
+            let kid_count = broadcast_core::len::fit_u32(self.kids.len(), "KID_count")?;
             buf[c..c + COUNT_FIELD_LEN].copy_from_slice(&kid_count.to_be_bytes());
             c += COUNT_FIELD_LEN;
             for kid in &self.kids {
@@ -585,7 +585,7 @@ impl Serialize for ProtectionSystemSpecificHeaderBox {
                 c += crate::box_types::KEY_ID_LEN;
             }
         }
-        let data_size = broadcast_common::len::fit_u32(self.data.len(), "DataSize")?;
+        let data_size = broadcast_core::len::fit_u32(self.data.len(), "DataSize")?;
         buf[c..c + COUNT_FIELD_LEN].copy_from_slice(&data_size.to_be_bytes());
         c += COUNT_FIELD_LEN;
         buf[c..c + self.data.len()].copy_from_slice(&self.data);
@@ -599,7 +599,7 @@ const SAIZ_VERSION_MAX: u8 = 2;
 
 fn saiz_size_width(version: u8) -> Result<usize> {
     if version > SAIZ_VERSION_MAX {
-        return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+        return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
             field: "saiz version",
             value: u64::from(version),
             reason: "ISO/IEC 14496-12:2026 §8.7.8.2 defines versions 0 to 2",
@@ -621,7 +621,7 @@ fn write_be(
     width: usize,
     field: &'static str,
 ) -> Result<()> {
-    broadcast_common::len::fit_bits(u64::from(value), (width as u32) * u8::BITS, field)?;
+    broadcast_core::len::fit_bits(u64::from(value), (width as u32) * u8::BITS, field)?;
     buf[*c..*c + width]
         .copy_from_slice(&value.to_be_bytes()[core::mem::size_of::<u32>() - width..]);
     *c += width;
@@ -906,12 +906,12 @@ impl Serialize for SampleAuxInfoOffsetsBox {
             buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&param.to_be_bytes());
             c += core::mem::size_of::<u32>();
         }
-        let entry_count = broadcast_common::len::fit_u32(self.offsets.len(), "entry_count")?;
+        let entry_count = broadcast_core::len::fit_u32(self.offsets.len(), "entry_count")?;
         buf[c..c + COUNT_FIELD_LEN].copy_from_slice(&entry_count.to_be_bytes());
         c += COUNT_FIELD_LEN;
         if self.version == 0 {
             for &off in &self.offsets {
-                let off32 = broadcast_common::len::fit_bits(off, u32::BITS, "offset")? as u32;
+                let off32 = broadcast_core::len::fit_bits(off, u32::BITS, "offset")? as u32;
                 buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&off32.to_be_bytes());
                 c += core::mem::size_of::<u32>();
             }
@@ -1322,7 +1322,7 @@ impl Serialize for ProtectionSchemeInfoBox {
 
 #[cfg(test)]
 mod tests {
-    use broadcast_common::error::BufferTooShort;
+    use broadcast_core::error::BufferTooShort;
 
     use super::*;
 
@@ -2044,7 +2044,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "subsample_count",
                     ..
                 })
@@ -2096,7 +2096,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "offset",
                     ..
                 })
