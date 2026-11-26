@@ -103,7 +103,7 @@ impl CodecProvider for LibavProvider {
         descriptors
     }
 
-    fn probe(&self, implementation: &str, direction: Direction, _codec: CodecId) -> Probe {
+    fn probe(&self, implementation: &str, direction: Direction, codec: CodecId) -> Probe {
         match direction {
             Direction::Decode => {
                 let Some(codec) = codec::decoder::find_by_name(implementation) else {
@@ -115,7 +115,7 @@ impl CodecProvider for LibavProvider {
                     Err(error) => Probe::unavailable(error.to_string()),
                 }
             }
-            Direction::Encode => match probe_encoder(implementation) {
+            Direction::Encode => match probe_encoder(implementation, codec) {
                 Ok(()) => Probe::available(),
                 Err(error) => Probe::unavailable(error.to_string()),
             },
@@ -172,7 +172,7 @@ fn descriptor(
 
 /// Whether an encoder called `implementation` opens with a minimal
 /// configuration for its own medium.
-fn probe_encoder(implementation: &str) -> Result<(), CodecError> {
+fn probe_encoder(implementation: &str, codec_id: CodecId) -> Result<(), CodecError> {
     let Some(codec) = codec::encoder::find_by_name(implementation) else {
         return Err(CodecError::unsupported(format!(
             "libav has no encoder `{implementation}`"
@@ -180,7 +180,7 @@ fn probe_encoder(implementation: &str) -> Result<(), CodecError> {
     };
     let config = match codec.medium() {
         ffmpeg_next::media::Type::Audio => EncoderConfig::new(
-            CodecId::Aac,
+            codec_id,
             Timescale::from_nonzero(nonzero(PROBE_SAMPLE_RATE)?),
         )
         .with_audio(broadcast_codec::AudioParameters::new(
@@ -188,7 +188,7 @@ fn probe_encoder(implementation: &str) -> Result<(), CodecError> {
             ChannelLayout::Stereo,
         )),
         ffmpeg_next::media::Type::Video => EncoderConfig::new(
-            CodecId::H264,
+            codec_id,
             Timescale::from_nonzero(nonzero(PROBE_VIDEO_TICKS)?),
         )
         .with_video(broadcast_codec::VideoParameters::new(

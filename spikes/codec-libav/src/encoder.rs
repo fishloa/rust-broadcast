@@ -148,7 +148,9 @@ impl LibavEncoder {
 /// The sample format this adapter configures `codec`'s encoder for.
 fn audio_encoder_format(codec: CodecId) -> Sample {
     match codec {
-        CodecId::Flac => map::libav_sample(SampleFormat::S16, SampleLayout::Interleaved),
+        CodecId::Flac | CodecId::Opus => {
+            map::libav_sample(SampleFormat::S16, SampleLayout::Interleaved)
+        }
         _ => map::libav_sample(SampleFormat::F32, SampleLayout::Planar),
     }
 }

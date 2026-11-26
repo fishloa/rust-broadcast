@@ -39,6 +39,8 @@ const FFMPEG_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Bytes per packed 8-bit 4:2:0 pixel: one luma plus a half of each chroma.
 const YUV420P_FRAME_BYTES: usize = 3;
+/// The sample rate the profile test builds its AAC stream at.
+const PROBE_RATE: u32 = 48_000;
 /// The media timescale the TS fixture states.
 const TS_TIMESCALE: u32 = 90_000;
 /// The MPEG-2 video bit rate the round trip asks for, in bits per second.
@@ -633,4 +635,421 @@ fn wav_data(bytes: &[u8]) -> Option<&[u8]> {
         offset = end + (size % 2) as usize;
     }
     None
+}
+
+/// A registry holding both the libav and the symphonia provider.
+fn both_providers() -> Option<Registry> {
+    let registry = Registry::new()
+        .with(Box::new(LibavProvider::new()))
+        .expect("the libav provider registers")
+        .with(Box::new(codec_symphonia::SymphoniaProvider))
+        .expect("the symphonia provider registers");
+    if registry
+        .candidates(CodecId::Aac, Direction::Decode)
+        .is_empty()
+    {
+        eprintln!("skip: no AAC decoder is registered here");
+        return None;
+    }
+    Some(registry)
+}
+
+/// Decode `audio/aac.adts` through `registry`, returning the interleaved
+/// samples, the integrated loudness and the sample count.
+fn adts_through(registry: &Registry) -> (Vec<f32>, f64, usize) {
+    let data = test_fixtures::read(ADTS_FIXTURE);
+    let packets: Vec<_> = codec_symphonia::adts::AdtsFrames::new(&data).collect();
+    let first = packets.first().expect("the fixture carries ADTS frames");
+    let rate = NonZeroU32::new(first.sample_rate()).expect("a sample rate");
+    let channels = first.channels().expect("a channel layout");
+    let parameters =
+        CodecParameters::new(CodecId::Aac, broadcast_codec::Timescale::from_nonzero(rate))
+            .with_audio(AudioParameters::new(rate, channels));
+    let mut decoder = registry.decoder(&parameters).expect("an AAC decoder");
+    let units: Vec<Unit> = packets
+        .iter()
+        .map(|packet| Unit {
+            data: packet.bytes().to_vec(),
+            pts: None,
+            dts: None,
+            key: true,
+        })
+        .collect();
+    let frames = decode(&mut *decoder, &units);
+    let meter_layout = match channels {
+        ChannelLayout::Mono => broadcast_loudness::ChannelLayout::Mono,
+        ChannelLayout::Stereo => broadcast_loudness::ChannelLayout::Stereo,
+        ChannelLayout::Surround5_1 => broadcast_loudness::ChannelLayout::Surround51,
+        other => panic!("no loudness layout for {other:?}"),
+    };
+    let mut meter = LoudnessMeter::new(rate.get(), meter_layout).expect("a meter");
+    let mut samples = Vec::new();
+    let mut decoded = 0usize;
+    for frame in &frames {
+        let audio = audio(frame);
+        let AudioSamples::F32(values) = audio.samples() else {
+            panic!("an F32 decode was expected");
+        };
+        let channel_count = audio.channels().count();
+        let per_channel = audio.frames();
+        match audio.layout() {
+            SampleLayout::Planar => {
+                for index in 0..per_channel {
+                    let mut one = Vec::with_capacity(channel_count);
+                    for channel in 0..channel_count {
+                        one.push(values[channel * per_channel + index]);
+                    }
+                    meter.push_f32(&one).expect("a sample");
+                    samples.extend_from_slice(&one);
+                }
+            }
+            SampleLayout::Interleaved => {
+                for one in values.chunks(channel_count) {
+                    meter.push_f32(one).expect("a sample");
+                    samples.extend_from_slice(one);
+                }
+            }
+            other => panic!("unexpected sample layout {other:?}"),
+        }
+        decoded += per_channel;
+    }
+    meter.finish();
+    (samples, meter.integrated_lufs(), decoded)
+}
+
+#[test]
+fn t7_the_two_audio_adapters_agree() {
+    if both_providers().is_none() {
+        return;
+    }
+    let mut measurements = Vec::new();
+    for (wanted, text) in [
+        ("symphonia", "dec:aac=symphonia"),
+        ("libav", "dec:aac=libav"),
+    ] {
+        let Some(mut registry) = both_providers() else {
+            return;
+        };
+        let preferences = broadcast_codec::parse_preferences(text).expect("a preference");
+        for preference in preferences {
+            registry = registry.prefer(preference);
+        }
+        let candidates = registry.candidates(CodecId::Aac, Direction::Decode);
+        assert_eq!(
+            candidates.first().map(|descriptor| descriptor.provider()),
+            Some(wanted),
+            "the preference must put `{wanted}` first"
+        );
+        let (samples, lufs, decoded) = adts_through(&registry);
+        println!("{wanted}: {decoded} samples, {lufs:.3} LUFS");
+        assert!(
+            (lufs - EXPECTED_LUFS).abs() <= TOLERANCE_LU,
+            "{wanted} integrated {lufs:.3} LUFS"
+        );
+        measurements.push((wanted, samples, decoded));
+    }
+    let (first, second) = (&measurements[0], &measurements[1]);
+    assert_eq!(first.2, second.2, "both decoders produce the same count");
+    assert_eq!(first.1.len(), second.1.len());
+    let largest = first
+        .1
+        .iter()
+        .zip(&second.1)
+        .map(|(a, b)| (f64::from(*a) - f64::from(*b)).abs())
+        .fold(0.0f64, f64::max);
+    println!(
+        "largest absolute sample difference between {} and {}: {largest:e}",
+        first.0, second.0
+    );
+    assert!(largest.is_finite());
+}
+
+#[test]
+fn t8_lists_what_libav_offers() {
+    let Some(registry) = registry() else {
+        return;
+    };
+    let list = registry.list();
+    let decoders = list
+        .iter()
+        .filter(|descriptor| descriptor.direction() == Direction::Decode)
+        .count();
+    let encoders = list.len() - decoders;
+    println!("libav offers {decoders} decoders and {encoders} encoders here");
+    for descriptor in &list {
+        println!(
+            "{:12} {:8} {:28} hw={}",
+            descriptor.codec().name(),
+            descriptor.direction().name(),
+            descriptor.implementation(),
+            descriptor.hardware()
+        );
+    }
+    assert!(decoders > 0 && encoders > 0);
+    assert!(list.iter().any(|d| {
+        d.codec() == CodecId::H264
+            && d.direction() == Direction::Decode
+            && d.implementation() == "h264"
+    }));
+    assert!(list.iter().any(|d| {
+        d.codec() == CodecId::Aac
+            && d.direction() == Direction::Decode
+            && d.implementation() == "aac"
+    }));
+}
+
+#[test]
+fn t9_videotoolbox_encodes_what_the_software_decoder_reads() {
+    let Some(registry) = registry() else {
+        return;
+    };
+    let implementation = "h264_videotoolbox";
+    let listed = registry
+        .candidates(CodecId::H264, Direction::Encode)
+        .iter()
+        .any(|descriptor| descriptor.implementation() == implementation);
+    if !listed {
+        eprintln!("skip: libav registers no `{implementation}` encoder here");
+        return;
+    }
+    let Some((parameters, units)) = ts_track(true) else {
+        panic!("the fixture must carry a H.264 track");
+    };
+    let mut decoder = registry.decoder(&parameters).expect("an H.264 decoder");
+    let frames = decode(&mut *decoder, &units);
+    assert_eq!(frames.len(), TS_VIDEO_FRAMES);
+
+    let mut registry = registry;
+    for preference in broadcast_codec::parse_preferences("enc:h264=libav:h264_videotoolbox")
+        .expect("a preference")
+    {
+        registry = registry.prefer(preference);
+    }
+    let config = broadcast_codec::EncoderConfig::new(
+        CodecId::H264,
+        broadcast_codec::Timescale::from_nonzero(
+            NonZeroU32::new(MPEG2_TICKS).expect("a non-zero timescale"),
+        ),
+    )
+    .with_video(broadcast_codec::VideoParameters::new(
+        NonZeroU32::new(TS_WIDTH).expect("a width"),
+        NonZeroU32::new(TS_HEIGHT).expect("a height"),
+    ))
+    .with_bit_rate(std::num::NonZeroU64::new(MPEG2_BIT_RATE).expect("a bit rate"))
+    .with_gop(NonZeroU32::new(MPEG2_GOP).expect("a group length"));
+    let mut encoder = registry
+        .encoder(&config)
+        .expect("the VideoToolbox H.264 encoder");
+    let source = broadcast_codec::Timescale::from_nonzero(
+        NonZeroU32::new(TS_TIMESCALE).expect("a non-zero timescale"),
+    );
+    let target = broadcast_codec::Timescale::from_nonzero(
+        NonZeroU32::new(MPEG2_TICKS).expect("a non-zero timescale"),
+    );
+    let frames: Vec<Frame> = frames
+        .into_iter()
+        .map(|frame| match frame {
+            Frame::Video(video) => match video.pts() {
+                Some(pts) => Frame::Video(video.with_pts(broadcast_core::timescale::rescale_i64(
+                    pts,
+                    source,
+                    target,
+                    broadcast_core::timescale::Rounding::Nearest,
+                ))),
+                None => Frame::Video(video),
+            },
+            other => other,
+        })
+        .collect();
+    let packets = encode(&mut *encoder, frames);
+    assert!(!packets.is_empty());
+
+    let reported = encoder.parameters().expect("parameters once encoding");
+    let units: Vec<Unit> = packets
+        .iter()
+        .map(|packet| Unit {
+            data: packet.data().to_vec(),
+            pts: packet.pts(),
+            dts: packet.dts(),
+            key: packet.key(),
+        })
+        .collect();
+    let mut software = registry
+        .decoder(reported)
+        .expect("the software H.264 decoder");
+    let decoded = decode(&mut *software, &units);
+    assert_eq!(
+        decoded.len(),
+        TS_VIDEO_FRAMES,
+        "pictures out of the round trip"
+    );
+    for frame in &decoded {
+        assert_eq!(video(frame).width().get(), TS_WIDTH);
+        assert_eq!(video(frame).height().get(), TS_HEIGHT);
+    }
+}
+
+#[test]
+fn t10_a_candidate_that_cannot_serve_falls_back() {
+    let Some((parameters, units)) = ts_track(true) else {
+        panic!("the fixture must carry a H.264 track");
+    };
+    let Some(mut strict) = registry() else {
+        return;
+    };
+    for preference in
+        broadcast_codec::parse_preferences("dec:h264=libav:h264_cuvid").expect("a preference")
+    {
+        strict = strict.prefer(preference);
+    }
+    let Err(error) = strict.decoder(&parameters) else {
+        panic!("an implementation this libav does not list must not serve");
+    };
+    println!("strict refusal: {error}");
+    assert!(error.to_string().contains("h264_cuvid"), "{error}");
+
+    let config = broadcast_codec::EncoderConfig::new(
+        CodecId::H264,
+        broadcast_codec::Timescale::from_nonzero(
+            NonZeroU32::new(MPEG2_TICKS).expect("a non-zero timescale"),
+        ),
+    )
+    .with_video(broadcast_codec::VideoParameters::new(
+        NonZeroU32::new(TS_WIDTH).expect("a width"),
+        NonZeroU32::new(TS_HEIGHT).expect("a height"),
+    ))
+    .with_bit_rate(std::num::NonZeroU64::new(MPEG2_BIT_RATE).expect("a bit rate"))
+    .with_gop(NonZeroU32::new(MPEG2_GOP).expect("a group length"));
+
+    let Some(mut preferring) = registry() else {
+        return;
+    };
+    for preference in
+        broadcast_codec::parse_preferences("enc:h264=libav:libx264rgb").expect("a preference")
+    {
+        preferring = preferring.prefer(preference);
+    }
+    let candidates = preferring.candidates(CodecId::H264, Direction::Encode);
+    let first = candidates.first().expect("an encoder candidate");
+    let second = candidates.get(1).expect("a second encoder candidate");
+    assert_eq!(first.implementation(), "libx264rgb");
+    assert_eq!(second.implementation(), "libx264");
+    let Err(strict_error) = preferring.encoder(&config) else {
+        panic!("`libx264rgb` does not take an 8-bit 4:2:0 source");
+    };
+    println!("strict refusal: {strict_error}");
+
+    let Some(next) = registry() else {
+        return;
+    };
+    let next = next
+        .fallback(broadcast_codec::Fallback::NextCandidate)
+        .prefer(
+            broadcast_codec::Preference::new(CodecId::H264, "libav")
+                .with_implementation("libx264rgb"),
+        );
+    let mut encoder = next.encoder(&config).expect("the next candidate serves");
+    let Some(decoding) = registry() else {
+        return;
+    };
+    let mut decoder = decoding.decoder(&parameters).expect("an H.264 decoder");
+    let frames = decode(&mut *decoder, &units);
+    let source = broadcast_codec::Timescale::from_nonzero(
+        NonZeroU32::new(TS_TIMESCALE).expect("a non-zero timescale"),
+    );
+    let target = broadcast_codec::Timescale::from_nonzero(
+        NonZeroU32::new(MPEG2_TICKS).expect("a non-zero timescale"),
+    );
+    let frames: Vec<Frame> = frames
+        .into_iter()
+        .map(|frame| match frame {
+            Frame::Video(video) => match video.pts() {
+                Some(pts) => Frame::Video(video.with_pts(broadcast_core::timescale::rescale_i64(
+                    pts,
+                    source,
+                    target,
+                    broadcast_core::timescale::Rounding::Nearest,
+                ))),
+                None => Frame::Video(video),
+            },
+            other => other,
+        })
+        .collect();
+    let packets = encode(&mut *encoder, frames);
+    assert!(!packets.is_empty(), "the second candidate encoded nothing");
+}
+
+#[test]
+fn t11_a_profile_the_implementation_does_not_state_is_not_offered() {
+    let Some(registry) = registry() else {
+        return;
+    };
+    let rate = NonZeroU32::new(PROBE_RATE).expect("a sample rate");
+    let base = CodecParameters::new(CodecId::Aac, broadcast_codec::Timescale::from_nonzero(rate))
+        .with_audio(AudioParameters::new(rate, ChannelLayout::Mono));
+    let high_efficiency = base
+        .clone()
+        .with_profile(broadcast_codec::CodecProfile::AacXhe)
+        .expect("an AAC profile");
+    let rejected = registry.rejected_for(&high_efficiency);
+    println!("rejected for aac/xhe: {rejected:?}");
+    assert!(
+        rejected
+            .iter()
+            .any(|rejection| rejection.descriptor().implementation() == "aac"),
+        "libav's AAC decoder states no extended-HE profile"
+    );
+    let Err(error) = registry.decoder(&high_efficiency) else {
+        panic!("no implementation states aac/xhe");
+    };
+    assert!(error.to_string().contains("aac/xhe"), "{error}");
+
+    let low_complexity = base
+        .with_profile(broadcast_codec::CodecProfile::AacLc)
+        .expect("an AAC profile");
+    assert!(
+        registry
+            .candidates_for(&low_complexity)
+            .iter()
+            .any(|descriptor| descriptor.implementation() == "aac"),
+        "the decoder states Low Complexity"
+    );
+}
+
+#[test]
+fn t12_renders_the_inventory() {
+    let Some(registry) = registry() else {
+        return;
+    };
+    let entries = registry.inventory(true);
+    assert_eq!(entries.len(), registry.list().len());
+    for entry in &entries {
+        assert_ne!(
+            entry.probe().availability(),
+            broadcast_codec::Availability::Unknown,
+            "{} was not probed",
+            entry.descriptor().implementation()
+        );
+    }
+    let table = broadcast_codec::render_inventory(&entries);
+    println!("{table}");
+    assert_eq!(table.lines().count(), entries.len() + 1);
+    let provider = &registry.providers()[0];
+    println!(
+        "{} {} library={:?} licence={:?}",
+        provider.name(),
+        provider.version(),
+        provider.library(),
+        provider.licence()
+    );
+    assert!(
+        provider
+            .library()
+            .is_some_and(|library| library.starts_with("libavcodec "))
+    );
+    assert!(
+        provider
+            .licence()
+            .is_some_and(|licence| !licence.is_empty())
+    );
 }
