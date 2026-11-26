@@ -19,9 +19,17 @@ What it holds today:
 - **Stream formats** ([`annexb`]) — Annex B start-code scanning and the conversion
   to and from the fixed 4-byte length-prefixed form.
 - **Access units** ([`au`]) — the incremental Annex B access-unit splitter.
+- **Sequence parameter sets** ([`sps`]) — the H.264, H.265 and H.266 SPS
+  decoders: profile/tier/level, coded dimensions, chroma and bit depth, VUI
+  timing (H.265 also from the VPS) and the display facts a player needs.
+- **Coded picture facts** ([`facts`]) — the sample aspect ratio tables, the
+  cropping rectangle, the colour description and video signal type, and the
+  active-format / bar-data codes as the specifications state them.
+- **RFC 6381 codec strings** ([`rfc6381`]) — `avc1.PPCCLL`, `hvc1.…`, `vvc1.…`
+  and `mp4a.40.<AOT>` built from the fields the caller already decoded.
 
-Later codec layers (H.264/HEVC parameter sets, slice headers, AAC, AC-3, DTS,
-MPEG-2, MPEG audio) arrive as features on top of this, one family at a time.
+Slice headers, AAC, AC-3, DTS, MPEG-2 and MPEG audio arrive as features on top
+of this, one family at a time.
 
 ## The recorded exception
 
@@ -39,15 +47,23 @@ MPEG-2 sequence headers, each landing as an additive release.
 
 - `std` (default) — forwards `std` to the dependencies. The crate is `#![no_std]`
   plus `alloc` either way.
-- `h264`, `hevc` (both default) — the per-codec NAL unit-type enums.
+- `h264`, `hevc`, `vvc` (all default) — the per-codec NAL unit-type enums and
+  sequence parameter set decoders.
 - `serde` — `Serialize` derives on the spec/field types.
 - `isobmff` — conversions between the crate's typed parameter-set wrappers and
   `isobmff`'s decoder-configuration-record newtypes, for a caller that builds an
   `avcC`/`hvcC`.
 
-It depends on `broadcast-core`, `thiserror` and `memchr` only.
+It depends on `broadcast-core`, `thiserror` and `memchr` only. (`mpeg-ts` and
+`mpeg-pes` are dev-dependencies, used by one example and one test to reach a
+real capture's elementary stream.)
 
 ## Runnable examples
 
-Run with `cargo run -p broadcast-bitstream --example <name>`. Both take a real
-Annex B elementary stream, e.g. `fixtures/candidates/h264.annexb`.
+Run with `cargo run -p broadcast-bitstream --example <name>`:
+
+- `split_annexb` and `annexb_to_avcc` take a real Annex B elementary stream,
+  e.g. `fixtures/candidates/h264.annexb`.
+- `decode_capture_sps` takes a transport-stream capture,
+  e.g. `fixtures/ts/h264-aac.ts`, and prints the resolution, profile, level and
+  RFC 6381 codec string of the SPS in force at its first IDR access unit.
