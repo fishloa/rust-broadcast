@@ -9,9 +9,9 @@
 //!   bytes) and caps the encoding at 9 bytes total (1 header + up to 8
 //!   length bytes) — `private/specs-verified/smpte/st377-1/st377-1.md` §6.3.4.
 
-use crate::error::BufferTooShort;
 use crate::klv::{BerLength, KlvError};
-use crate::len::{fit_u8, need_in, need_out};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::len::{fit_u8, need_in, need_out};
 
 /// Result alias for the BER length codec.
 pub type Result<T> = core::result::Result<T, KlvError>;

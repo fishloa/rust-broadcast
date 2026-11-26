@@ -60,7 +60,8 @@ broadcast-common = "14"
 ## Quick start
 
 ```rust
-use broadcast_common::{bcd, clock33, crc32_mpeg2, Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
+use broadcast_common::{bcd, clock33, crc32_mpeg2};
 
 // CRC-32/MPEG-2 over a real PAT section (from the committed m6-single.ts fixture):
 // the CRC of the body equals the trailing CRC_32 field.

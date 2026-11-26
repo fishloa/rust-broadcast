@@ -57,10 +57,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PackHeader`, `SystemHeader` and `ProgramStreamMap` `serialize_into` returned `Error::BufferTooShort` for a too-small OUTPUT buffer; they now return the new `Error::OutputBufferTooSmall { need, have }` (c3 S1).
 ### Added
 - `Error::OutputBufferTooSmall`.
-- `From<broadcast_core::len::BufferTooShort>` and `From<broadcast_core::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Changed
-- Length pre-checks go through `broadcast_core::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
-- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidField` now wrap `broadcast_core::error` types (tuple variants); `BadCrc { computed, stored }` is replaced by `CrcMismatch(broadcast_core::error::CrcMismatch)` (`what` = "PSM"). The hand-written `From` impls are gone; messages follow the common wording.
+- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidField` now wrap `broadcast_common::error` types (tuple variants); `BadCrc { computed, stored }` is replaced by `CrcMismatch(broadcast_common::error::CrcMismatch)` (`what` = "PSM"). The hand-written `From` impls are gone; messages follow the common wording.
 ### Dependencies
 - Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `mpeg-pes` 0.6 -> 0.7. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
@@ -74,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Serialize: `SystemHeader` `rate_bound` (22 bit), `audio_bound` (6), `video_bound` (5), `P-STD_buffer_size_bound` (13), `stream_id_extension` (7) and the pack-header SCR `base` (33) / `extension` (9) were masked silently; each is now a checked `fit_bits` returning `FieldOverflow`.
 - Serialize -> parse is now the identity for the stream loop (Table 2-40, `nextbits() == '1'`): a `stream_id` without its MSB, `0xB7` without / a non-`0xB7` with a `stream_id_extension`, and a `trailing_reserved` whose first byte has the MSB set (re-read as a stream-bound entry) are rejected with the new `Error::InvalidField` instead of serializing to bytes that parse back differently (#1119 review).
-- Serialize: `SystemHeader` `reserved_bits` was masked silently (`& MASK`), so an over-range hand-set value was written as a different value; it is now a checked `broadcast_core::len::fit_mask` returning `FieldOverflow` (the #1129/#1197 class, found by the extended `serialize_mask_guard` of adversarial review #1268).
+- Serialize: `SystemHeader` `reserved_bits` was masked silently (`& MASK`), so an over-range hand-set value was written as a different value; it is now a checked `broadcast_common::len::fit_mask` returning `FieldOverflow` (the #1129/#1197 class, found by the extended `serialize_mask_guard` of adversarial review #1268).
 
 ### Changed
 - Internal: the 27 MHz PCR constants / modular delta / `base * 300 + extension` arithmetic now come from `broadcast_common::clock33` (`PCR_HZ`, `PCR_WRAP_27MHZ`, `pcr_forward_distance`, `pcr_from_parts`, `pcr_split`) instead of a local copy; no behaviour change (#1206).
@@ -85,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `PACKET_START_CODE_PREFIX` is now re-exported from `mpeg-pes` (same path and value) and `program_stream` no longer carries a private copy (#1141).
-- Requires `broadcast-common` 9.4 (`broadcast_core::len`). A new
+- Requires `broadcast-common` 9.4 (`broadcast_common::len`). A new
   `Error::FieldOverflow` variant is added.
 
 ### Added

@@ -32,16 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.0] - 2026-11-07
 ### Fixed
 - `PesDataField::parse` returns `Error::BadEndOfPesMarker` when exactly one byte follows the last whole segment and it is not the fixed `0xFF` `end_of_PES_data_field_marker` (EN 300 743 §7.2, Table 3); a field with misframed or truncated segments keeps its remainder verbatim as before (c2 TH3).
-- Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_core::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
+- Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_common::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
 ### Removed
 - BREAKING: `Error::UnknownDataType` and `Error::UnknownObjectCodingMethod`: never constructed. Reserved `data_type` and `object_coding_method` values are carried losslessly as `DataType::Reserved` / `ObjectCodingMethod::Reserved`, and EN 300 743 requires no rejection of them.
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 ### Added
-- `From<broadcast_core::len::BufferTooShort>` and `From<broadcast_core::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Changed
-- Length pre-checks go through `broadcast_core::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
-- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidValue` now wrap `broadcast_core::error` types (tuple variants; `InvalidValue` gains the offending `value`, and the reduced-range CLUT colour check now names the exceeding component); `BadSyncByte(u8)` is replaced by `InvalidSync(broadcast_core::error::InvalidSync)`. Hand-written `From` impls removed.
+- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `InvalidValue` now wrap `broadcast_common::error` types (tuple variants; `InvalidValue` gains the offending `value`, and the reduced-range CLUT colour check now names the exceeding component); `BadSyncByte(u8)` is replaced by `InvalidSync(broadcast_common::error::InvalidSync)`. Hand-written `From` impls removed.
 ### Dependencies
 - Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
@@ -110,7 +110,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   segment body exceeds the generic segment header's 16-bit `segment_length`
   field (#1129).
 - `RegionCompositionSegment`'s object-entry serializer now returns
-  `Error::FieldOverflow` (`#[from] broadcast_core::len::FieldOverflow`)
+  `Error::FieldOverflow` (`#[from] broadcast_common::len::FieldOverflow`)
   instead of silently masking, when `object_horizontal_position` or
   `object_vertical_position` (both 12-bit fields, EN 300 743 Table 11)
   exceeds `0x0FFF` (#1044/#1129).

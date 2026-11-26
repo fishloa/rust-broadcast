@@ -40,7 +40,7 @@ impl Error {
     }
 }
 
-crate::impl_spec_display!(Error);
+broadcast_core::impl_spec_display!(Error);
 
 impl core::error::Error for Error {}
 

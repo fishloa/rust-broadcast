@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The `panic_idioms` workspace guard now covers this crate; the `MxfTimestamp`/`Rational`/`ProductVersion` serializers that wrote an exactly-sized buffer with `.expect("fixed-size buffer")` now discard the provably-infallible result (#2773).
 - BREAKING: `PrimerPack::entries` is now `Vec<LocalTagEntry>` — the named `LocalTagEntry { tag: u16, uid: UlBytes }` struct (ST 377-1 Table 15) replaces the anonymous `(u16, UlBytes)` tuple, so an entry's fields are named instead of positional (#2770).
 ### Fixed
-- Counts and lengths are range-checked before they are written, instead of being narrowed with `as u32` (#2758): the Random Index Pack's trailing overall Length and the Primer Pack's entry count now go through `broadcast_core::len::fit_u32` and report `Error::FieldOverflow` when over range, rather than silently wrapping to a different value (and a different on-wire length).
+- Counts and lengths are range-checked before they are written, instead of being narrowed with `as u32` (#2758): the Random Index Pack's trailing overall Length and the Primer Pack's entry count now go through `broadcast_common::len::fit_u32` and report `Error::FieldOverflow` when over range, rather than silently wrapping to a different value (and a different on-wire length).
 - A Primer Pack's duplicate-tag/duplicate-UL check sorts each dimension instead of running a nested loop over the untrusted entry count (#2758): a crafted ~1.2 MB Primer (65 536 distinct tags, duplicate last) cost ~2e9 comparisons before the duplicate was reported.
 - A typed Set parsed from a real file reproduces that encoder's own 8-byte Batch/Array header on serialize instead of this crate's canonical one (#2759). Measured on the real OP1a fixture: its empty `EssenceContainers` Batch carries `item_len = 0` (inside both the Partition Pack value and the typed `Preface`), which the old serializer rewrote as `item_len = 16`, so parse -> serialize was not byte-identical.
 
@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 - `serialize_uid_batch` returns `Result<Vec<u8>>` instead of `Vec<u8>`: a Batch/Array of 16-byte ULs whose count exceeds `u32::MAX` is reported as `Error::FieldOverflow` rather than written with a wrapped count.
-- `Error` gains `FieldOverflow(broadcast_core::len::FieldOverflow)`.
+- `Error` gains `FieldOverflow(broadcast_common::len::FieldOverflow)`.
 - `PartitionPack`, `Preface`, `ContentStorage`, `MaterialPackage`, `SourcePackage` and `Sequence` gain an `*_batch: Option<UidBatch>` field per UL Batch property (`essence_containers_batch`, `identifications_batch`, `dm_schemes_batch`, `packages_batch`, `essence_container_data_batch`, `tracks_batch`, `structural_components_batch`). Fill it with `None` for a freshly built value. `PartialEq` compares a Batch header only when both sides retain one, so a freshly built Set still equals the same Set parsed from a file.
 - `parse_uid_batch` is replaced by `UidBatch::parse`, which returns the parsed Batch (header included) rather than only its elements. `serialize_uid_batch` is unchanged.
 
@@ -51,16 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.0] - 2026-11-07
 ### Fixed
-- Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_core::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
+- Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_common::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
 ### Removed
 - BREAKING: Unused public items, with no use in the workspace beyond their own unit tests: `as_ul_bytes`, `from_ul`.
 - BREAKING: `Error::InvalidKeyLength`: never constructed; a short buffer is reported as `BufferTooShort`.
 ### Changed
-- Length pre-checks go through `broadcast_core::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
-- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall` now wrap `broadcast_core::error` types (tuple variants). Hand-written `From` impls removed; messages follow the common wording.
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall` now wrap `broadcast_common::error` types (tuple variants). Hand-written `From` impls removed; messages follow the common wording.
 ### Added
-- `From<broadcast_core::len::BufferTooShort>` and `From<broadcast_core::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Dependencies
 - Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 

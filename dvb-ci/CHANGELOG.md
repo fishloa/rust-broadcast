@@ -19,7 +19,7 @@ versioning.
 
 ## [0.13.0] - 2026-11-15
 ### Changed
-- `reserved::Reserved`/`ReservedOnes`/`ReservedZero` now live in `broadcast_core::reserved`; `dvb_ci::reserved` re-exports them, so this crate's own paths are unchanged (#2738).
+- `reserved::Reserved`/`ReservedOnes`/`ReservedZero` now live in `broadcast_common::reserved`; `dvb_ci::reserved` re-exports them, so this crate's own paths are unchanged (#2738).
 - BREAKING: `ci_plus::low_speed_comms_v4::IpConfig` is `#[non_exhaustive]`; build it with `IpConfig::new(ip_address, network_mask, default_gateway)` plus `with_dhcp_server(..)` / `with_dns_servers(..)` (both default to the Table 79 "absent" encoding) instead of a struct literal (#2736).
 - BREAKING: `CaPmtBuilder::to_bytes` is now fallible (`Result<Vec<u8>>`); the panicking twin is removed; callers use the fallible one (#2659).
 
@@ -39,11 +39,11 @@ versioning.
 ### Changed
 - The DSM-CC download message header parse and write are one function pair for the transaction-id and `DownloadId` messages (c6 F8).
 - The seven fixed-length SPDUs parse through one `parse_spdu_fixed`; a wrong value length now reports `value length is fixed by the object definition` (c4 M2).
-- Length pre-checks go through `broadcast_core::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
-- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `LengthMismatch` now wrap `broadcast_core::error` types (tuple variants; `LengthMismatch` message is now "length mismatch for <what>: declared N, actual M"). Hand-written `From` impls removed.
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `LengthMismatch` now wrap `broadcast_common::error` types (tuple variants; `LengthMismatch` message is now "length mismatch for <what>: declared N, actual M"). Hand-written `From` impls removed.
 ### Added
-- `From<broadcast_core::len::BufferTooShort>` and `From<broadcast_core::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Dependencies
 - Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `dvb-si` 12 -> 13, `mpeg-ts` 0.6 -> 0.7. The `Cargo.toml` requirements name the new versions; no other manifest change.
 

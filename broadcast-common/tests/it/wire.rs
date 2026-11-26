@@ -1,11 +1,11 @@
 //! The shared big-endian wire readers: each reads the value at its offset, and
 //! a short slice is `BufferTooShort` carrying `need`/`have`.
 
-use broadcast_common::error::BufferTooShort;
 use broadcast_common::wire::{
     be_u16, be_u32, be_u64, fourcc_at, i16_at, i32_at, read_u8, read_u16, read_u48, u16_at, u24_at,
     u32_at, u64_at,
 };
+use broadcast_core::error::BufferTooShort;
 
 #[test]
 fn every_reader_returns_the_value_at_the_offset() {

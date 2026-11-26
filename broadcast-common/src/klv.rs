@@ -18,9 +18,9 @@ pub use crate::ber::{
     ber_length_size, ber_length_size_for, decode_ber_length, encode_ber_length,
     encode_ber_length_as,
 };
-use crate::error::{BufferTooShort, InvalidValue, OutputBufferTooSmall};
-use crate::len::{need_in, need_out};
-use crate::{Parse, Serialize};
+use broadcast_core::error::{BufferTooShort, InvalidValue, OutputBufferTooSmall};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// Length of a SMPTE Universal Label key, in bytes (SMPTE ST 336).
 pub const UNIVERSAL_LABEL_LEN: usize = 16;

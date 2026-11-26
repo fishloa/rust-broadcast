@@ -56,12 +56,12 @@
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - BREAKING: `serde` is no longer a default feature; enable `features = ["serde"]` (owner decision 2026-11-07).
-- Length pre-checks go through `broadcast_core::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
-- BREAKING: `Error::InvalidValue { field, reason }` (no value) is replaced. `Error::InvalidValue` now wraps `broadcast_core::error::InvalidValue { field, value, reason }` and is used for unknown/forbidden parsed values (`compact_SCTE_35.message_type`, `compact_splice_insert.descriptor_length`, `private_data_length`); a serializer value above its field's range returns `Error::FieldOverflow { field, value, max }` (33-bit PTS/duration fields, 40-bit duration, 48-bit `tai_seconds`, `tier`, `section_length`, counts and length bytes); structural problems with no single number return `Error::InvalidField { field, reason }` (`splice_command_length` 0xFFF sentinel, empty section body, `e_crc_32` presence, TEMI presence). New variant: `InvalidField`.
-- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `CrcMismatch` now wrap `broadcast_core::error` types (tuple variants; `CrcMismatch` gains `what` = "splice_info_section", message "<what> CRC-32 mismatch: ..."). Hand-written `From` impls removed. `InvalidValue` stays crate-specific (carries no offending value).
+- BREAKING: `Error::InvalidValue { field, reason }` (no value) is replaced. `Error::InvalidValue` now wraps `broadcast_common::error::InvalidValue { field, value, reason }` and is used for unknown/forbidden parsed values (`compact_SCTE_35.message_type`, `compact_splice_insert.descriptor_length`, `private_data_length`); a serializer value above its field's range returns `Error::FieldOverflow { field, value, max }` (33-bit PTS/duration fields, 40-bit duration, 48-bit `tai_seconds`, `tier`, `section_length`, counts and length bytes); structural problems with no single number return `Error::InvalidField { field, reason }` (`splice_command_length` 0xFFF sentinel, empty section body, `e_crc_32` presence, TEMI presence). New variant: `InvalidField`.
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `CrcMismatch` now wrap `broadcast_common::error` types (tuple variants; `CrcMismatch` gains `what` = "splice_info_section", message "<what> CRC-32 mismatch: ..."). Hand-written `From` impls removed. `InvalidValue` stays crate-specific (carries no offending value).
 ### Added
-- `From<broadcast_core::len::BufferTooShort>` and `From<broadcast_core::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Dependencies
 - Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
@@ -79,7 +79,7 @@
 - **BREAKING (behavioural):** `CompactTimeSignal` / `CompactSpliceInsert` serialize rejects `encrypted_packet: true` with `e_crc_32: None` (it wrote `E_CRC_32 = 0`, which re-parsed as `Some(0)`) and `e_crc_32: Some` when not encrypted (silently dropped).
 
 ### Fixed
-- Serialize: the DVB-TA DAS `reserved` nibble in the compact encoder was masked silently (`& MASK`), so an over-range hand-set value was written as a different value; it is now a checked `broadcast_core::len::fit_mask` returning `FieldOverflow` (the #1129/#1197 class, found by the extended `serialize_mask_guard` of adversarial review #1268).
+- Serialize: the DVB-TA DAS `reserved` nibble in the compact encoder was masked silently (`& MASK`), so an over-range hand-set value was written as a different value; it is now a checked `broadcast_common::len::fit_mask` returning `FieldOverflow` (the #1129/#1197 class, found by the extended `serialize_mask_guard` of adversarial review #1268).
 
 ### Added (item 3 - DVB DAS nibble-order ambiguity, ETSI TS 103 752-1)
 - `dvb_ta::DasNibbleOrder` (`TypeHigh` = Table 8, `TypeLow` = Table 1) plus `DvbDasDescriptor::{parse,serialize_into}_with_order` and `CompactSpliceInsert::{parse,serialize_into}_with_order`: Table 1 (stand-alone `DVB_DAS_descriptor()`, type in the low nibble) and Table 8 (`compact_splice_insert()`, type in the high nibble) disagree about the `equivalent_segmentation_type`/`reserved` nibble order of the same body. After searching for a resolution (no newer edition or corrigendum, no byte examples in TS 103 752-1/TR 103 752-2/A178-1r1, no independent implementation, no real capture) the question stays open: default wire behaviour is unchanged (descriptor: Table 1, compact: Table 8), both readings are selectable and pinned by `tests/das_nibble_order.rs` (revert-verified), and the evidence is recorded in `private/specs-verified/scte/scte35-splice/dvb_ta/compact-scte35.md` and the `DasNibbleOrder` docs.
@@ -120,7 +120,7 @@
 ### Changed (breaking)
 - Serializers now return an error, instead of silently truncating, when a
   length, count, or out-of-range field value does not fit its wire field
-  (#1129). Requires `broadcast-common` 9.4 (`broadcast_core::len`). A new
+  (#1129). Requires `broadcast-common` 9.4 (`broadcast_common::len`). A new
   `Error::FieldOverflow` variant is added (the enum is `#[non_exhaustive]`,
   but this is still a behavior change worth calling out for a crate at
   2.x): `splice_descriptor::header::write_header` now returns `Result<()>`

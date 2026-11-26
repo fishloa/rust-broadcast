@@ -97,8 +97,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.9.0] - 2026-11-07
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
-- BREAKING: error variant `RtmpError::BufferTooShort` now wraps `broadcast_core::error::BufferTooShort` (same `need`/`have`/`what`; the message text is the shared one).
-- Length pre-checks go through `broadcast_core::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- BREAKING: error variant `RtmpError::BufferTooShort` now wraps `broadcast_common::error::BufferTooShort` (same `need`/`have`/`what`; the message text is the shared one).
+- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - Server and client connection adapters share one private `Driver` and `SessionCodec` over an `RtmpSession` trait; no public API change (c3 R1).
 - Dropped the unused `log` dependency (c2 TH4).
 ### Removed

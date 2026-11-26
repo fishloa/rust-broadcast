@@ -56,13 +56,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.6.0] - 2026-11-07
 ### Fixed
-- Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_core::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
+- Serializers report a too-small output buffer as the new `Error::OutputBufferTooSmall { need, have }` (with `From<broadcast_common::len::OutputBufferTooSmall>`) instead of the input-side `Error::BufferTooShort` (c6 C6-02).
 ### Changed
-- Length pre-checks go through `broadcast_core::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
-- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `LengthMismatch` now wrap `broadcast_core::error` types (tuple variants; `LengthMismatch` gains `what`, `computed` is now `actual`); `BadStartCode(u32)` is replaced by `InvalidSync`, `BadFixedBits(&str)` and `ReservedNotZero { what, value }` by one `ReservedBits(broadcast_core::error::ReservedBits)` carrying the expected and found values, `FieldTooWide { what, value: u32, bits }` by `FieldOverflow(broadcast_core::error::FieldOverflow)` (values are no longer truncated to `u32`). Hand-written `From` impls removed.
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `LengthMismatch` now wrap `broadcast_common::error` types (tuple variants; `LengthMismatch` gains `what`, `computed` is now `actual`); `BadStartCode(u32)` is replaced by `InvalidSync`, `BadFixedBits(&str)` and `ReservedNotZero { what, value }` by one `ReservedBits(broadcast_common::error::ReservedBits)` carrying the expected and found values, `FieldTooWide { what, value: u32, bits }` by `FieldOverflow(broadcast_common::error::FieldOverflow)` (values are no longer truncated to `u32`). Hand-written `From` impls removed.
 ### Added
-- `From<broadcast_core::len::BufferTooShort>` and `From<broadcast_core::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Dependencies
 - Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `rtp-packet` 0.5 -> 0.6. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
@@ -153,7 +153,7 @@ name — see below).
     `AncContent`.
   - `AncRtpPayload` — the full RFC 8331 §2.1 payload (`Extended Sequence
     Number`/`Length`/`ANC_Count`/`F`/`reserved` + the `RtpAncPacket` list),
-    implementing `broadcast_core::Parse`/`Serialize`. `Length` and
+    implementing `broadcast_common::Parse`/`Serialize`. `Length` and
     `ANC_Count` are always recomputed on serialize and cross-validated
     against the wire value on parse (a corrupted `Length` or `ANC_Count` is
     rejected, never silently trusted); the 22-bit `reserved` field and each

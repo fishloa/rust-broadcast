@@ -306,7 +306,7 @@
 - The DASH-IF ingest reads the publisher's MPD and matches uploaded segment URLs with `dash-runtime` instead of transmux's removed MPD model (#2340).
 - LL-HLS and TS-HLS outputs now share one HLS media-playlist implementation (parameterised by held/insert-priority), removing the duplicated route/playlist code.
 - The test-only feature set now uses one spelling: `webrtc-runtime/test-support` becomes `webrtc-runtime/test-seams`, matching `test-seams` and the workspace convention (c6 C6-09).
-- The DASH period stitcher's microsecond-to-ticks conversion uses `broadcast_core::timescale::from_micros`; the rounding is unchanged, pinned by a test against the old arithmetic (c6 F7).
+- The DASH period stitcher's microsecond-to-ticks conversion uses `broadcast_common::timescale::from_micros`; the rounding is unchanged, pinned by a test against the old arithmetic (c6 F7).
 - A request carrying more than one `Authorization` header is answered `400 Bad Request` by the output-auth and admin gates (it used to authenticate on the first header and ignore the rest); a header value that is not visible ASCII is still counted, so a hidden duplicate cannot be smuggled past the check.
 - Moves to `broadcast_auth::Verifier::forwarded_from` (`Verifier::forwarded` is removed upstream); the `forwarded` scheme was already peer-checked.
 - BREAKING (behaviour): the `forwarded` output-auth scheme honours `X-Forwarded-User` only from a peer in `trusted_proxies` (default loopback); any other peer is `401`, so a client reaching the origin directly can no longer forge it. A deployment whose proxy is not on loopback must list it. `OutputAuthSpec::Forwarded` gained a field, so code constructing or exhaustively matching it must add `trusted_proxies` / `..`.
@@ -406,17 +406,17 @@
 ## [0.16.0] - 2026-11-07
 ### Fixed
 - The DASH and LL-DASH `type="dynamic"` MPDs now carry `MPD@publishTime` (ISO/IEC 23009-1 section 5.3.1.2 Table 3: shall be present for dynamic MPDs, and a later value marks an update). It is the instant the newest listed segment became available, so it is unchanged while the window is unchanged and later after every new segment.
-- `rescale_to_90k` (segment ingest) and `ticks_to_us` (DASH period stitcher) divided by a zero timescale; both now share `broadcast_core::timescale` and treat 0 as 1. The call sites already skipped a zero timescale, so no panic was reachable, but the helpers no longer rely on that (c2 H6).
+- `rescale_to_90k` (segment ingest) and `ticks_to_us` (DASH period stitcher) divided by a zero timescale; both now share `broadcast_common::timescale` and treat 0 as 1. The call sites already skipped a zero timescale, so no panic was reachable, but the helpers no longer rely on that (c2 H6).
 ### Changed
 - Depends on `broadcast-client` (its `tshttp` module) instead of the absorbed `tshttp-runtime` crate; the policy types are unchanged.
 - The Smooth output manifest is written through the shared `broadcast_common::xml_chars` writer helpers (output byte-identical); the in-crate XML test readers are namespace-aware.
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - DASH and LL-DASH share one manifest handler and `ServedEgress` (`output::dash::serve_mpd`); the in-crate tests share `body_string`, `drain` and `video_spec` from `testutil` (c7 G7).
-- The DASH period stitcher's `ticks_to_us` uses `broadcast_core::timescale::to_micros` (c6 F7).
+- The DASH period stitcher's `ticks_to_us` uses `broadcast_common::timescale::to_micros` (c6 F7).
 - The WHIP and WHEP outputs share one CORS middleware (`webrtc_session::add_cors`), one session registration (`register_session`) and one `SignallingMachine` implementation macro; the push egress, DASH output and segmenters call `CodecConfig::is_video` instead of private copies (c4 D2, M4).
 - The five pull routes are one generic `PullRoute<K: PullKind>`; `RtspRoute`, `HlsPullRoute`, `SmoothPullRoute`, `TsHttpRoute` and `DashPullRoute` are type aliases over it with unchanged constructors and builders (c4 D4). The marker types `RtspKind`, `HlsPullKind`, `SmoothPullKind`, `TsHttpKind` and `DashPullKind` are public.
 - WHIP and WHEP share their `PATCH`/`DELETE` handlers, the H.264 payload-type choice and the ICE candidate extraction (`webrtc_session::{patch_resource, delete_resource, h264_payload, candidate_lines}`), and the LL-HLS/TS-HLS/catch-up outputs share one master-playlist response and one playlist content-type constant (c3 d:W1, d:H1).
-- `split_audio` compares ticks with `broadcast_core::timescale::cmp_ticks` (c3 L1).
+- `split_audio` compares ticks with `broadcast_common::timescale::cmp_ticks` (c3 L1).
 - URL userinfo decoding and stripping (RTSP source, HTTP pulls, RTSP push) use `broadcast_auth::{credentials_from_url, strip_userinfo}` instead of four private copies (dedupe D7).
 - WHIP source and WHEP output share `webrtc_session::{ensure_connect_info, ice_attr}` (dedupe D14).
 - hls-pull, smooth-pull and dash-pull share one `source::driver::terminal_result` (dedupe D13).

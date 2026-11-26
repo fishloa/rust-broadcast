@@ -55,7 +55,7 @@
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - Test/example code calls `broadcast_common` directly instead of a local one-line forwarder (dedupe R4).
 - TS packet size and sync byte come from `mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE}` instead of a local copy (c6 C6-07).
-- BREAKING: `Error::NoSyncByte { found }` is replaced by `InvalidSync(broadcast_core::error::InvalidSync)`.
+- BREAKING: `Error::NoSyncByte { found }` is replaced by `InvalidSync(broadcast_common::error::InvalidSync)`.
 ### Dependencies
 - Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11, `dvb-conformance` 12 -> 13, `dvb-si` 12 -> 13, `mpeg-pes` 0.6 -> 0.7, `mpeg-ts` 0.6 -> 0.7. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
