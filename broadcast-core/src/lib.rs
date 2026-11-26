@@ -33,6 +33,7 @@ pub mod len;
 pub mod reserved;
 pub mod timescale;
 pub mod traits;
+pub mod wire;
 
 pub use cenc::CencScheme;
 pub use traits::{Parse, Serialize};
