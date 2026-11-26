@@ -7,8 +7,8 @@ use core::num::{NonZeroU32, NonZeroUsize};
 const BYTE_SAMPLES: usize = 1;
 /// Bytes per 10-bit sample in a 16-bit container.
 const WORD_SAMPLES: usize = 2;
-/// Half resolution, rounded up.
-const HALF_RES: usize = 2;
+/// Chroma subsampling divisor (half resolution, rounded up).
+const CHROMA_SUBSAMPLE: usize = 2;
 /// Packed 24-bit RGB pixel bytes.
 const RGB24_PIXEL_BYTES: usize = 3;
 /// Packed 32-bit RGBA pixel bytes.
@@ -105,39 +105,49 @@ impl PixelFormat {
             Self::Yuv420p8 => match plane {
                 0 => (height, width.checked_mul(BYTE_SAMPLES)?),
                 _ => (
-                    height.div_ceil(HALF_RES),
-                    width.div_ceil(HALF_RES).checked_mul(BYTE_SAMPLES)?,
+                    height.div_ceil(CHROMA_SUBSAMPLE),
+                    width.div_ceil(CHROMA_SUBSAMPLE).checked_mul(BYTE_SAMPLES)?,
                 ),
             },
             Self::Yuv422p8 => match plane {
                 0 => (height, width.checked_mul(BYTE_SAMPLES)?),
-                _ => (height, width.div_ceil(HALF_RES).checked_mul(BYTE_SAMPLES)?),
+                _ => (
+                    height,
+                    width.div_ceil(CHROMA_SUBSAMPLE).checked_mul(BYTE_SAMPLES)?,
+                ),
             },
             Self::Yuv444p8 => (height, width.checked_mul(BYTE_SAMPLES)?),
             Self::Nv12 => match plane {
                 0 => (height, width.checked_mul(BYTE_SAMPLES)?),
                 _ => (
-                    height.div_ceil(HALF_RES),
-                    width.div_ceil(HALF_RES).checked_mul(NV12_UV_PAIR_BYTES)?,
+                    height.div_ceil(CHROMA_SUBSAMPLE),
+                    width
+                        .div_ceil(CHROMA_SUBSAMPLE)
+                        .checked_mul(NV12_UV_PAIR_BYTES)?,
                 ),
             },
             Self::Yuv420p10 => match plane {
                 0 => (height, width.checked_mul(WORD_SAMPLES)?),
                 _ => (
-                    height.div_ceil(HALF_RES),
-                    width.div_ceil(HALF_RES).checked_mul(WORD_SAMPLES)?,
+                    height.div_ceil(CHROMA_SUBSAMPLE),
+                    width.div_ceil(CHROMA_SUBSAMPLE).checked_mul(WORD_SAMPLES)?,
                 ),
             },
             Self::Yuv422p10 => match plane {
                 0 => (height, width.checked_mul(WORD_SAMPLES)?),
-                _ => (height, width.div_ceil(HALF_RES).checked_mul(WORD_SAMPLES)?),
+                _ => (
+                    height,
+                    width.div_ceil(CHROMA_SUBSAMPLE).checked_mul(WORD_SAMPLES)?,
+                ),
             },
             Self::Yuv444p10 => (height, width.checked_mul(WORD_SAMPLES)?),
             Self::P010 => match plane {
                 0 => (height, width.checked_mul(WORD_SAMPLES)?),
                 _ => (
-                    height.div_ceil(HALF_RES),
-                    width.div_ceil(HALF_RES).checked_mul(P010_UV_PAIR_BYTES)?,
+                    height.div_ceil(CHROMA_SUBSAMPLE),
+                    width
+                        .div_ceil(CHROMA_SUBSAMPLE)
+                        .checked_mul(P010_UV_PAIR_BYTES)?,
                 ),
             },
             Self::Rgb24 => (height, width.checked_mul(RGB24_PIXEL_BYTES)?),

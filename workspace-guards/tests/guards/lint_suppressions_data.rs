@@ -9,6 +9,7 @@ const fn plain(name: &'static str) -> Crate {
 pub const TABLE: &[Crate] = &[
     plain("broadcast-common"),
     plain("broadcast-core"),
+    plain("broadcast-codec"),
     plain("broadcast-matroska"),
     plain("broadcast-auth"),
     plain("dvb-si"),
