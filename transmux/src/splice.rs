@@ -226,10 +226,10 @@ impl SpliceIndexBuilder {
     /// set, `Sample` appends its timing (never its payload).
     pub fn push_event(&mut self, event: &DemuxEvent) {
         match event {
-            DemuxEvent::TrackAdded(spec) => {
-                if !self.tracks.iter().any(|t| t.spec.track_id == spec.track_id) {
-                    self.add_track(spec.clone(), 0);
-                }
+            DemuxEvent::TrackAdded(spec)
+                if !self.tracks.iter().any(|t| t.spec.track_id == spec.track_id) =>
+            {
+                self.add_track(spec.clone(), 0);
             }
             DemuxEvent::TrackUpdated(spec) => {
                 if let Some(track) = self
