@@ -262,7 +262,7 @@ Measured on 2026-11-26 with `cargo test --locked` in
 | test | result |
 | --- | --- |
 | T1 AAC loudness | **-21.087 LUFS over 49 152 samples**, against the pinned -21.1 +/- 0.1 LU; passes |
-| T2 cross-check | both decoders 49 152 samples, priming offset **0** (equal lengths compared at offset 0), largest absolute difference 9.353e-4, RMS 3.125e-5; each run served by the named provider (factory-call counters) |
+| T2 cross-check | both decoders 49 152 samples, priming offset **0** (equal lengths compared at offset 0), largest absolute difference 9.353e-4, RMS 3.125e-5; selectors `dec:aac=oxideav` and `dec:aac=symphonia` each served by the named provider (factory-call counters) |
 | T3 MP3 | 50 688 samples decoded vs 48 000 from ffmpeg; aligned offset **2 257** samples, overlap 48 000, largest 1.524e-5, RMS **8.633e-6** |
 | T3 Opus | 48 648 samples decoded vs 48 000 from ffmpeg; aligned offset **0**, overlap 48 000, largest 1.527e-5, RMS **8.844e-6** |
 | T3 PCM | 48 000 samples, offset 0, largest 0, RMS **0** (bit-exact) |

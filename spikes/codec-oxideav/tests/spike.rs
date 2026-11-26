@@ -6,7 +6,7 @@ mod support;
 use std::sync::atomic::Ordering;
 
 use broadcast_codec::{
-    Availability, CodecId, CodecProfile, Direction, Frame, Packet, Preference, Registry,
+    Availability, CodecId, CodecProfile, Frame, Packet, Registry, parse_preferences,
     render_inventory,
 };
 use broadcast_loudness::LoudnessMeter;
@@ -86,8 +86,10 @@ fn t2_registry_selects_each_named_provider() {
     let packets = support::aac_packets();
 
     let (registry, oxideav_calls, symphonia_calls) = two_provider_registry();
-    let registry =
-        registry.prefer(Preference::new(CodecId::Aac, "oxideav").with_direction(Direction::Decode));
+    let preference = parse_preferences("dec:aac=oxideav")
+        .expect("a valid preference")
+        .remove(0);
+    let registry = registry.prefer(preference);
     let oxideav = support::decode_mono(&registry, &parameters, &packets);
     assert_eq!(
         oxideav_calls.load(Ordering::SeqCst),
@@ -101,8 +103,10 @@ fn t2_registry_selects_each_named_provider() {
     );
 
     let (registry, oxideav_calls, symphonia_calls) = two_provider_registry();
-    let registry = registry
-        .prefer(Preference::new(CodecId::Aac, "symphonia").with_direction(Direction::Decode));
+    let preference = parse_preferences("dec:aac=symphonia")
+        .expect("a valid preference")
+        .remove(0);
+    let registry = registry.prefer(preference);
     let symphonia = support::decode_mono(&registry, &parameters, &packets);
     assert_eq!(
         oxideav_calls.load(Ordering::SeqCst),
