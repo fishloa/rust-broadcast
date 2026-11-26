@@ -1,6 +1,6 @@
 # Bitstream parsers and the codec seam
 
-Status: design, awaiting owner approval. Follows the streaming-first programme
+Status: approved by the owner, 2026-11-26. Follows the streaming-first programme
 (`2026-11-24-streaming-first-containers-design.md`, §10 "a future `codec` crate").
 
 ## 1. Why
@@ -314,6 +314,8 @@ Owner (2026-11-26):
 - Parsers are facts-only in v1 behind a growth-safe API; lossless parse and writers are the roadmap.
 - Names: `broadcast-bitstream` (parsers and stream-format conversion) and `broadcast-codec` (the seam).
   Both free on crates.io on 2026-11-26.
+- `container-probe` takes `broadcast-bitstream` as a second runtime dependency and loses its own ADTS and
+  MP3 header parsers and their drift tests.
 
 Architect's calls, accepted by the owner with the names:
 - One bitstream crate with a feature per codec, not a crate per codec.
