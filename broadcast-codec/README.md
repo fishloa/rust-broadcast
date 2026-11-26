@@ -109,9 +109,11 @@ fn build() -> Result<Registry, Box<dyn std::error::Error>> {
    [`Registry::prefer`] for the same codec and direction replaces an earlier
    one. A preference naming a provider or implementation that is not registered
    is an error from [`Registry::decoder`] and [`Registry::encoder`]
-   ([`CodecError::Unsupported`] naming it), never silently ignored. A
-   preference built with [`Preference::with_direction`] governs that direction
-   only and outranks a preference for the same codec that names both.
+   ([`CodecError::Unsupported`] naming it), never silently ignored; so is one
+   naming a registered provider that offers nothing for that codec and
+   direction. A preference built with [`Preference::with_direction`] governs
+   that direction only and outranks a preference for the same codec that names
+   both.
 4. With no selector and no preference, registration order decides. The library
    ranks nothing.
 5. [`Fallback::Strict`] (the default) tries only the first candidate and
