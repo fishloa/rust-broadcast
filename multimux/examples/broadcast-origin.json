@@ -8,6 +8,7 @@
   "request_timeout_secs": 30.0,
   "max_concurrent_requests": 2048,
   "max_request_body_bytes": 65536,
+  "max_ingest_pes_unit_bytes": 4194304,
   "ingest_connect_timeout_secs": 8.0,
   "ingest_read_timeout_secs": 15.0,
   "output_auth": {

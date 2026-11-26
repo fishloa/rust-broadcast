@@ -1,4 +1,5 @@
 use alloc::string::String;
+use core::num::NonZeroUsize;
 use core::time::Duration;
 
 use transmux::{DemuxEvent, StreamingTsDemux};
@@ -15,6 +16,8 @@ pub struct TsHttpClient {
     policy: TsHttpPolicy,
     demux: StreamingTsDemux,
     opens: u64,
+    /// The caller's PES unit ceiling, carried across a reconnect's fresh demux.
+    max_pes_unit_bytes: Option<NonZeroUsize>,
 }
 
 fn drain_demux(demux: &mut StreamingTsDemux, mut sink: impl FnMut(Event)) -> bool {
@@ -40,12 +43,14 @@ impl TsHttpClient {
         now: Timestamp,
         seed: u64,
     ) -> Self {
+        let max_pes_unit_bytes = config.max_pes_unit_bytes;
         let policy = TsHttpPolicy::with_seed(url, config, now, seed);
         let opens = policy.open_count();
         Self {
             policy,
-            demux: StreamingTsDemux::new(),
+            demux: StreamingTsDemux::new().with_max_pes_unit_bytes(max_pes_unit_bytes),
             opens,
+            max_pes_unit_bytes,
         }
     }
 
@@ -53,7 +58,7 @@ impl TsHttpClient {
         let opens = self.policy.open_count();
         if opens != self.opens {
             self.opens = opens;
-            self.demux = StreamingTsDemux::new();
+            self.demux = StreamingTsDemux::new().with_max_pes_unit_bytes(self.max_pes_unit_bytes);
         }
     }
 

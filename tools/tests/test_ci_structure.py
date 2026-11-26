@@ -72,6 +72,11 @@ def test_dvb_stream_does_not_repeat_workspace_gates():
         assert dup not in run
 
 
+def test_differential_sweep_is_clippy_gated():
+    run = _runs("lint")
+    assert "cargo clippy --manifest-path tools/differential-sweep/Cargo.toml --features head" in run
+
+
 def test_nightly_runs_soak_and_full_fuzz_budget():
     assert "schedule" in NIGHTLY[True] and "workflow_dispatch" in NIGHTLY[True]
     text = (REPO / ".github" / "workflows" / "nightly.yml").read_text()

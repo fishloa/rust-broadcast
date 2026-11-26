@@ -42,8 +42,8 @@ const GIB: u64 = 1024 * 1024 * 1024;
 const FULL_INPUT_BYTES: u64 = 2 * GIB;
 /// The quick size: several fragments and a real decrypt.
 const QUICK_INPUT_BYTES: u64 = 32 * MIB as u64;
-/// Bytes in one generated sample, below the demuxer's per-PES unit cap
-/// (`MAX_PES_BUFFER_BYTES`, 4 MiB) so the TS output is demuxable.
+/// Bytes in one generated sample, kept small enough for the benchmark's own
+/// memory budget and a bounded TS output.
 const SAMPLE_BYTES: u32 = 3 * MIB as u32;
 /// Bytes read from the TS output per feed.
 const READ_CHUNK_BYTES: usize = 64 * 1024;

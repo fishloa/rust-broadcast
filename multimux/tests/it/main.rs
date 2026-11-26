@@ -31,6 +31,7 @@ mod http2_h2c;
 mod http_limits_from_config;
 #[cfg(all(feature = "whip", feature = "test-hooks"))]
 mod ingest_drive_golden;
+mod ingest_pes_ceiling;
 #[cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
 mod limit_budgets;
 mod limit_values;

@@ -5,6 +5,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use container_probe::segment;
+use core::num::NonZeroUsize;
 use core::time::Duration;
 use mpeg_ts::ts::TS_SYNC_BYTE;
 use transmux::TrackId;
@@ -463,6 +464,9 @@ pub struct HlsClient {
     base_override: Option<Url>,
     variant_policy: VariantPolicy,
     limits: Limits,
+    /// Caller-supplied ceiling on one PID's in-progress PES buffer in the
+    /// classic-TS demuxer; `None` is unlimited.
+    max_pes_unit_bytes: Option<NonZeroUsize>,
     master: Option<MasterSelection>,
 
     pending_actions: VecDeque<Action>,
@@ -629,6 +633,10 @@ pub struct HlsClientConfig {
     /// parser accepts, and the largest resource body [`HlsClient::on_resource`]
     /// accepts (audit 20 finding 41, issue #2852).
     pub limits: Limits,
+    /// Caller-supplied ceiling on one PID's in-progress PES buffer in the
+    /// classic-TS demuxer; `None` (the default) is unlimited. A caller whose
+    /// segments arrive over a network supplies one.
+    pub max_pes_unit_bytes: Option<NonZeroUsize>,
 }
 
 impl HlsClientConfig {
@@ -639,6 +647,7 @@ impl HlsClientConfig {
             variant_policy: VariantPolicy::default(),
             playlist_base: None,
             limits: Limits::default(),
+            max_pes_unit_bytes: None,
         }
     }
 
@@ -646,6 +655,13 @@ impl HlsClientConfig {
     #[must_use]
     pub fn with_limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
+        self
+    }
+
+    /// Replace [`HlsClientConfig::max_pes_unit_bytes`].
+    #[must_use]
+    pub fn with_max_pes_unit_bytes(mut self, max_pes_unit_bytes: Option<NonZeroUsize>) -> Self {
+        self.max_pes_unit_bytes = max_pes_unit_bytes;
         self
     }
 
@@ -681,6 +697,7 @@ impl HlsClient {
             base_override: config.playlist_base,
             variant_policy: config.variant_policy,
             limits: config.limits,
+            max_pes_unit_bytes: config.max_pes_unit_bytes,
             master: None,
             pending_actions,
             pending_errors: VecDeque::new(),
@@ -2504,9 +2521,10 @@ impl HlsClient {
     /// first samples and again whenever the track set (a new PID, a codec
     /// change) makes the re-synthesized init differ from the last one.
     fn demux_and_emit_ts(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
-        let TsDemuxState(demux) = self
-            .ts_demux
-            .get_or_insert_with(|| TsDemuxState(StreamingTsDemux::new()));
+        let max_pes_unit_bytes = self.max_pes_unit_bytes;
+        let TsDemuxState(demux) = self.ts_demux.get_or_insert_with(|| {
+            TsDemuxState(StreamingTsDemux::new().with_max_pes_unit_bytes(max_pes_unit_bytes))
+        });
         demux
             .feed(bytes)
             .map_err(|source| super::Error::Demux { id, source })?;

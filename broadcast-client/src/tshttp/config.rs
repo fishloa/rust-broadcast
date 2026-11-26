@@ -1,4 +1,5 @@
 use alloc::vec;
+use core::num::NonZeroUsize;
 use core::time::Duration;
 
 use broadcast_common::backoff::{BackoffSteps, MAX_FLOOR};
@@ -37,6 +38,14 @@ pub struct Config {
     /// chooses no numbers. It lives here because this configuration carries the
     /// knobs every pull source shares.
     pub read_ahead: ReadAhead,
+    /// Caller-supplied ceiling on one PID's in-progress PES buffer, applied to
+    /// every TS-carrying source (TS-over-HTTP, SRT, UDP) through the TS demux.
+    /// `None` (the default) is unlimited: the library picks no bound. A caller
+    /// whose input is a network stream supplies one and gets the demux's
+    /// `DiscontinuityKind::BudgetExceeded` event for an access unit above it.
+    /// It lives here because this configuration carries the knobs every pull
+    /// source shares.
+    pub max_pes_unit_bytes: Option<NonZeroUsize>,
     /// Failed attempts in a row, with no media played in between, after which the session gives up
     /// with one fatal `Event::Error` (`ErrorKind::ReconnectAttemptsExhausted`) instead of retrying.
     /// `None` (the default) retries forever, which is what a live stream wants: the backoff bounds
@@ -133,6 +142,14 @@ impl Config {
         self.max_reconnect_attempts = max_reconnect_attempts;
         self
     }
+
+    /// Set the caller-supplied PES unit ceiling; `None` (the default) is
+    /// unlimited.
+    #[must_use]
+    pub fn with_max_pes_unit_bytes(mut self, max_pes_unit_bytes: Option<NonZeroUsize>) -> Self {
+        self.max_pes_unit_bytes = max_pes_unit_bytes;
+        self
+    }
 }
 
 impl Default for Config {
@@ -147,6 +164,7 @@ impl Default for Config {
             },
             min_reconnect_interval: DEFAULT_MIN_RECONNECT_INTERVAL,
             read_ahead: ReadAhead::Unlimited,
+            max_pes_unit_bytes: None,
             max_reconnect_attempts: None,
         }
     }

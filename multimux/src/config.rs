@@ -2351,6 +2351,18 @@ pub struct Config {
     /// Maximum accepted request body size, in bytes — see
     /// [`crate::origin::HttpLimits::max_request_body_bytes`].
     pub max_request_body_bytes: usize,
+    /// Ceiling on the in-progress PES unit a network TS source
+    /// ([`InputSpec::TsUdp`], [`InputSpec::TsHttp`], [`InputSpec::Srt`],
+    /// [`InputSpec::HlsPull`]) may accumulate for one PID — see
+    /// `media_plane::ts_session::TsIngestSession::with_max_pes_unit_bytes`
+    /// and `broadcast_client::tshttp::Config::max_pes_unit_bytes`. `None`
+    /// leaves the demux's unlimited default. Defaults to
+    /// [`DEFAULT_MAX_INGEST_PES_UNIT_BYTES`] (4 MiB), the bound every
+    /// network TS source applied before this field existed, so an existing
+    /// config keeps it; a caller may raise it, lower it, or set `None` to
+    /// remove it. File playout keeps the demux's unlimited default.
+    #[serde(default = "default_max_ingest_pes_unit_bytes")]
+    pub max_ingest_pes_unit_bytes: Option<std::num::NonZeroUsize>,
     /// How long a request may wait for a concurrency permit before the origin
     /// sheds it with `503 Service Unavailable` (and `Retry-After`) — see
     /// [`crate::origin::HttpLimits::queue_timeout`] and
@@ -2541,6 +2553,23 @@ const DEFAULT_TARGET_DURATION: Duration = Duration::from_secs(4);
 /// Default part target duration.
 const DEFAULT_PART_TARGET: Duration = Duration::from_millis(500);
 
+/// One kibibyte in bytes, the unit [`DEFAULT_MAX_INGEST_PES_UNIT_BYTES`] is
+/// built from.
+const BYTES_PER_KIB: usize = 1024;
+
+/// One mebibyte in bytes.
+const BYTES_PER_MIB: usize = 1024 * BYTES_PER_KIB;
+
+/// Default [`Config::max_ingest_pes_unit_bytes`]: 4 MiB, the bound network TS
+/// ingest has always applied to one PID's in-progress PES.
+pub const DEFAULT_MAX_INGEST_PES_UNIT_BYTES: usize = 4 * BYTES_PER_MIB;
+
+/// Default [`Config::max_ingest_pes_unit_bytes`] in the demux's limit
+/// representation.
+fn default_max_ingest_pes_unit_bytes() -> Option<std::num::NonZeroUsize> {
+    std::num::NonZeroUsize::new(DEFAULT_MAX_INGEST_PES_UNIT_BYTES)
+}
+
 fn default_hold_cold_playlist() -> bool {
     hls_runtime::server::HOLD_COLD_PLAYLIST_DEFAULT
 }
@@ -2559,6 +2588,7 @@ impl Default for Config {
             max_concurrent_warms_per_route: default_max_concurrent_warms_per_route(),
             whep_media_sockets_per_ip: default_whep_media_sockets_per_ip(),
             max_request_body_bytes: crate::origin::DEFAULT_MAX_REQUEST_BODY_BYTES,
+            max_ingest_pes_unit_bytes: default_max_ingest_pes_unit_bytes(),
             concurrency_queue: crate::origin::DEFAULT_QUEUE_TIMEOUT,
             ingest_connect_timeout: crate::source::DEFAULT_CONNECT_TIMEOUT,
             ingest_read_timeout: crate::source::DEFAULT_READ_TIMEOUT,
@@ -2660,6 +2690,16 @@ impl Config {
     #[must_use]
     pub fn with_max_request_body_bytes(mut self, max_request_body_bytes: usize) -> Self {
         self.max_request_body_bytes = max_request_body_bytes;
+        self
+    }
+
+    /// Set the network TS ingest PES unit ceiling; `None` is unlimited.
+    #[must_use]
+    pub fn with_max_ingest_pes_unit_bytes(
+        mut self,
+        max_ingest_pes_unit_bytes: Option<std::num::NonZeroUsize>,
+    ) -> Self {
+        self.max_ingest_pes_unit_bytes = max_ingest_pes_unit_bytes;
         self
     }
 
@@ -3714,6 +3754,38 @@ mod tests {
         assert_eq!(cfg.max_concurrent_requests, 100);
         assert_eq!(cfg.max_request_body_bytes, 2048);
         cfg.validate().unwrap();
+    }
+
+    /// The ingest PES ceiling defaults to [`DEFAULT_MAX_INGEST_PES_UNIT_BYTES`]
+    /// and that constant is 4 MiB — the bound every network TS source applied
+    /// before the ceiling became a config field, so no deployed origin loses it.
+    #[test]
+    fn max_ingest_pes_unit_bytes_defaults_to_four_mib() {
+        assert_eq!(DEFAULT_MAX_INGEST_PES_UNIT_BYTES, 4 * 1024 * 1024);
+        assert_eq!(
+            Config::default().max_ingest_pes_unit_bytes,
+            std::num::NonZeroUsize::new(DEFAULT_MAX_INGEST_PES_UNIT_BYTES)
+        );
+    }
+
+    /// The field is optional in JSON: an omitted key keeps the 4 MiB default,
+    /// an explicit number replaces it, and `null` removes the bound.
+    #[test]
+    fn max_ingest_pes_unit_bytes_parses_omitted_number_and_null() {
+        let omitted: Config = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            omitted.max_ingest_pes_unit_bytes,
+            std::num::NonZeroUsize::new(DEFAULT_MAX_INGEST_PES_UNIT_BYTES)
+        );
+        let explicit: Config =
+            serde_json::from_str(r#"{"max_ingest_pes_unit_bytes": 1024}"#).unwrap();
+        assert_eq!(
+            explicit.max_ingest_pes_unit_bytes,
+            std::num::NonZeroUsize::new(1024)
+        );
+        let unlimited: Config =
+            serde_json::from_str(r#"{"max_ingest_pes_unit_bytes": null}"#).unwrap();
+        assert_eq!(unlimited.max_ingest_pes_unit_bytes, None);
     }
 
     /// Audit W17: an `srt_push` URL is validated at config time — a bad host

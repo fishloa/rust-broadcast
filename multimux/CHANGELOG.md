@@ -6,6 +6,11 @@
 
 - The wire-format contract types now come from `broadcast-core`.
 
+- `source::srt::SrtDialer` is no longer a unit struct: build it with
+  `SrtDialer::new(max_pes_unit_bytes)` (`SrtDialer::default()` is unlimited),
+  and `source::srt::drive_socket` takes that ceiling as its third argument.
+  Both carry the route's `Config::max_ingest_pes_unit_bytes`.
+
 - `FileReaderConfig::max_file_bytes`, `with_max_file_bytes` and
   `DEFAULT_MAX_FILE_BYTES` are deleted: every container streams from disk in
   bounded memory, so the whole-file cap applied to nothing.
@@ -17,6 +22,14 @@
 
 ### Changed
 
+- Every network TS ingest route supplies a PES unit ceiling to the streaming
+  TS demux, which now defaults to unlimited. The ceiling is the new
+  `Config::max_ingest_pes_unit_bytes` (`with_max_ingest_pes_unit_bytes`,
+  optional in JSON, `null` for unlimited): its default is
+  `DEFAULT_MAX_INGEST_PES_UNIT_BYTES` (4 MiB), the bound TS-over-UDP,
+  TS-over-HTTP, SRT (both modes) and HLS-pull applied before, so no deployed
+  origin loses it, while a caller may raise it, lower it or remove it. File
+  playout keeps the demux's unlimited default.
 - A Program Stream file source streams through `media_plane`'s
   `StreamContainer::MpegPs` / `transmux::StreamingPsDemux`, and a Matroska/WebM
   source through `StreamContainer::Matroska` /
