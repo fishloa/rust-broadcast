@@ -34,6 +34,7 @@ mod one_ebml_home;
 mod one_ebml_home_data;
 mod panic_idioms;
 mod panic_idioms_data;
+mod public_fields;
 mod scan_self_tests;
 mod secret_debug;
 mod secret_debug_data;

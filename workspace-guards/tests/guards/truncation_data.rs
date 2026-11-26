@@ -4,6 +4,7 @@
 use crate::truncation::Crate;
 
 pub const EXEMPT: &[&str] = &[
+    "broadcast-codec",
     "broadcast-auth",
     "dvb-si",
     "dvb-conformance",
