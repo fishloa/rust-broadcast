@@ -2273,16 +2273,20 @@ fn packetise_section(pid: Pid, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACK
     packets
 }
 
+/// Bytes of a packet's payload region an adaptation field costs: its
+/// `adaptation_field_length` byte and the flags byte after it (§2.4.3.4).
+const AF_PAYLOAD_OVERHEAD: usize = 1 + 1;
+
 /// Give the first packet of a section-carried elementary stream's batch the
 /// adaptation-field `discontinuity_indicator` (§2.4.3.5).
 ///
-/// The section packetiser emits payload-only packets, so the mark gains an
-/// adaptation field of its flags byte, moving the payload back by the two bytes
-/// that costs — possible while the first packet's `pointer_field` plus
-/// `section_len` bytes leave that much trailing stuffing. A section that fills
-/// the packet leaves no room, and the flag then rides an adaptation-field-only
-/// packet written ahead of the batch instead (§2.4.3.3: a packet with no
-/// payload does not advance the continuity counter).
+/// The section packetiser emits payload-only packets, so the mark brings an
+/// adaptation field of its own and the payload moves back by the length and
+/// flags bytes that costs — possible while the first packet's `pointer_field`
+/// plus `section_len` bytes leave that much trailing stuffing. A section that
+/// fills the packet leaves no room, and the flag then rides an
+/// adaptation-field-only packet written ahead of the batch instead (§2.4.3.3:
+/// a packet with no payload does not advance the continuity counter).
 fn mark_section_packets(
     packets: &mut Vec<[u8; TS_PACKET_SIZE]>,
     pid: Pid,
@@ -2294,10 +2298,7 @@ fn mark_section_packets(
     };
     // `pointer_field` (1) + the section bytes this packet carries.
     let used = TS_HEADER_LEN + 1 + section_len.min(TS_PAYLOAD_CAPACITY - 1);
-    // The flags byte and the AF's own length byte, both of which a payload-only
-    // packet does without.
-    let af_overhead = 1 + 1;
-    if used + af_overhead > TS_PACKET_SIZE {
+    if used + AF_PAYLOAD_OVERHEAD > TS_PACKET_SIZE {
         let mut marker = [STUFFING_BYTE; TS_PACKET_SIZE];
         write_discontinuity_only_packet(&mut marker, pid, cc);
         packets.insert(0, marker);
