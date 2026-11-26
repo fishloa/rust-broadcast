@@ -21,6 +21,7 @@ use crate::provider_info::ProviderInfo;
 use crate::registry_error::RegistryError;
 use crate::rejection::ProfileRejection;
 use crate::traits::{Decoder, Encoder};
+use crate::trim::TrimmedDecoder;
 
 /// The function [`Registry::select_with`] takes: every candidate for a codec
 /// and direction, in registration order, in; the index of the one to try first
@@ -265,6 +266,33 @@ impl Registry {
     /// candidate was skipped under [`Fallback::NextCandidate`]; otherwise the
     /// candidate's own error.
     pub fn decoder(&self, parameters: &CodecParameters) -> Result<Box<dyn Decoder>, CodecError> {
+        self.decoder_with(parameters).map(|(decoder, _)| decoder)
+    }
+
+    /// Build a decoder for `parameters` and apply the container's gapless trim
+    /// unless the selected implementation says it applies the trim itself.
+    ///
+    /// The wrapper returns the decoder's frames with the initial and trailing
+    /// padding removed (see [`TrimStage`](crate::TrimStage)); an implementation
+    /// whose [`CodecDescriptor::applies_trim`] is true is returned unchanged.
+    ///
+    /// # Errors
+    /// As [`Self::decoder`].
+    pub fn trimmed_decoder(
+        &self,
+        parameters: &CodecParameters,
+    ) -> Result<Box<dyn Decoder>, CodecError> {
+        let (decoder, descriptor) = self.decoder_with(parameters)?;
+        if descriptor.applies_trim() {
+            return Ok(decoder);
+        }
+        Ok(Box::new(TrimmedDecoder::new(decoder, parameters)))
+    }
+
+    fn decoder_with(
+        &self,
+        parameters: &CodecParameters,
+    ) -> Result<(Box<dyn Decoder>, CodecDescriptor), CodecError> {
         let codec = parameters.codec();
         let direction = Direction::Decode;
         let candidates = self.checked(codec, direction, parameters.profile())?;
@@ -285,6 +313,7 @@ impl Registry {
         self.build(&candidates, codec, direction, |provider, implementation| {
             provider.make_encoder(implementation, config)
         })
+        .map(|(encoder, _)| encoder)
     }
 
     fn provider(&self, name: &str) -> Option<&dyn CodecProvider> {
@@ -492,7 +521,7 @@ impl Registry {
         codec: CodecId,
         direction: Direction,
         mut make: impl FnMut(&dyn CodecProvider, &str) -> Result<T, CodecError>,
-    ) -> Result<T, CodecError> {
+    ) -> Result<(T, CodecDescriptor), CodecError> {
         let mut tried: Vec<String> = Vec::new();
         for descriptor in candidates {
             let Some(provider) = self.provider(descriptor.provider()) else {
@@ -502,7 +531,7 @@ impl Registry {
                 )));
             };
             match make(provider, descriptor.implementation()) {
-                Ok(built) => return Ok(built),
+                Ok(built) => return Ok((built, descriptor.clone())),
                 Err(error) if self.fallback == Fallback::Strict => return Err(error),
                 Err(error @ (CodecError::Unsupported { .. } | CodecError::Refused { .. })) => {
                     tried.push(format!(

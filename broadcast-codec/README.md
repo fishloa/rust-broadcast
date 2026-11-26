@@ -20,6 +20,11 @@ adapter exchanges with the rest of the workspace:
 - [`CodecProvider`] is one adapter offering one or more implementations, and
   [`Registry`] holds any number of providers and picks one per codec, so an
   application links every adapter it likes and no call site names one.
+- A lossy audio encoder adds priming samples before the first real sample and
+  padding after the last. [`CodecParameters`] carries the container's initial
+  and trailing padding, [`Packet`] carries per-packet trim, and [`TrimStage`]
+  applies it all once; [`Registry::trimmed_decoder`] wraps any decoder that does
+  not apply the trim itself.
 
 ## Contract
 
@@ -37,6 +42,37 @@ held state so the next input starts a new stream.
 
 Every public struct has private fields, a constructor or builder, and
 accessor methods. Every public struct and enum is `#[non_exhaustive]`.
+
+## Gapless trim
+
+A lossy audio encoder adds samples that are not part of the programme: a
+priming lead-in before the first real sample and padding after the last. The
+container says how many to discard, and the seam carries that in two places:
+
+- [`CodecParameters::initial_padding`] and
+  [`CodecParameters::trailing_padding`] are the stream's trim, in samples per
+  channel. `initial_padding` is 0 when there is none or the container does not
+  say; `trailing_padding` is `None` when the container does not say, which is
+  distinct from `Some(0)`. Both builders refuse video parameters with
+  [`PaddingError::Video`].
+- [`Packet::trim_start`] and [`Packet::trim_end`] are per-packet trim for
+  containers that signal it packet by packet. A decoder copies them onto the
+  [`AudioFrame`] it produces; [`TrimStage`] applies and clears them.
+
+**Who trims.** A decoder returns every sample it decodes, untrimmed, unless its
+[`CodecDescriptor`] says [`CodecDescriptor::applies_trim`] is true, in which
+case it has already applied the container's trim itself.
+[`Registry::trimmed_decoder`] is the caller's way to get the right answer either
+way: it returns the selected decoder unchanged when it trims, and otherwise
+wraps it so `receive` goes through a [`TrimStage`].
+
+[`TrimStage`] removes the initial padding from the front, applies and clears
+each frame's own trim, drops frames that become empty, and holds back at most
+the trailing padding plus one frame until [`TrimStage::finish`] discards it. It
+works for interleaved and planar layouts and every [`AudioSamples`] variant. A
+frame's `pts` is in the stream's time base; removing `n` samples at
+`sample_rate` advances it by `n * time_base / sample_rate` ticks, truncated
+toward zero (`broadcast_core::timescale::rescale_i64`).
 
 The API is **0.x and expected to change** while real codecs are brought through
 it. Nothing here participates in the workspace's DVB lockstep; the crate is

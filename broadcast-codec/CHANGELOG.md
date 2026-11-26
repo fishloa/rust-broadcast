@@ -9,6 +9,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 
 ### Added
 
+- `CodecParameters::initial_padding`/`with_initial_padding` and
+  `trailing_padding`/`with_trailing_padding`: a lossy audio stream's gapless
+  trim, in samples per channel. `initial_padding` is 0 when there is none or the
+  container does not say; `trailing_padding` is `None` when the container does
+  not say. Both builders refuse video parameters with `PaddingError::Video`.
+- `Packet::trim_start`/`trim_end` and `AudioFrame::trim_start`/`trim_end` with
+  their builders and accessors: per-packet gapless trim, and its provenance on
+  the frame the packet decoded to.
+- `CodecDescriptor::with_trims`/`applies_trim`: whether an implementation
+  applies the container's trim itself. A decoder returns every decoded sample,
+  untrimmed, unless this is true; the rule is stated at the crate root and on
+  `Decoder::receive`.
+- `TrimStage`, which applies a stream's initial and trailing padding and each
+  frame's own trim once, for every adapter and caller; it adjusts each frame's
+  timestamp by the samples removed from its front, drops frames that become
+  empty, and holds back at most the trailing padding plus one frame until
+  `finish`. `Registry::trimmed_decoder` returns the selected decoder unchanged
+  when its descriptor trims, and otherwise wraps it so `receive` goes through a
+  `TrimStage`.
 - `EncoderConfig::pixel_format`/`with_pixel_format` and
   `sample_format`/`sample_layout`/`with_sample_format`: the storage a caller
   asks an encoder to produce (a picture's pixel format, or an audio frame's

@@ -182,11 +182,12 @@ pub const TABLE: &[Crate] = &[
         name: "broadcast-codec",
         scope: Scope::Crate,
         matcher: Matcher::Loose,
-        // `CodecError`, `PreferenceError`, `ProfileError` and `RegistryError`
-        // are structured errors; `Frame`, `AudioSamples` and `VideoStorage` are
-        // data-carrying ADTs. The label enums are pinned.
+        // `CodecError`, `PaddingError`, `PreferenceError`, `ProfileError` and
+        // `RegistryError` are structured errors; `Frame`, `AudioSamples` and
+        // `VideoStorage` are data-carrying ADTs. The label enums are pinned.
         skip: &[
             "CodecError",
+            "PaddingError",
             "PreferenceError",
             "ProfileError",
             "RegistryError",

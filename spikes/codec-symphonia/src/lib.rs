@@ -209,6 +209,7 @@ impl CodecProvider for SymphoniaProvider {
     fn descriptors(&self) -> Vec<CodecDescriptor> {
         CodecDescriptor::new(PROVIDER, IMPLEMENTATION, CodecId::Aac, Direction::Decode)
             .with_sample_formats(vec![SampleFormat::F32])
+            .with_trims(false)
             .with_profiles([AAC_PROFILE])
             .into_iter()
             .collect()

@@ -22,7 +22,10 @@ use crate::video::PixelFormat;
 /// registry share; an empty list means "not stated", not "all", so the
 /// registry keeps such an implementation for every profile. A stated list is
 /// binding: the registry never offers an implementation a stream of a profile
-/// the implementation does not list.
+/// the implementation does not list. `trims` says the implementation applies
+/// the container's gapless trim itself; otherwise it returns every decoded
+/// sample, and [`Registry::trimmed_decoder`](crate::Registry::trimmed_decoder)
+/// can apply the trim through a [`TrimStage`](crate::TrimStage).
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CodecDescriptor {
@@ -32,6 +35,7 @@ pub struct CodecDescriptor {
     direction: Direction,
     hardware: bool,
     lossless: bool,
+    trims: bool,
     sample_formats: Vec<SampleFormat>,
     pixel_formats: Vec<PixelFormat>,
     profiles: Vec<CodecProfile>,
@@ -53,6 +57,7 @@ impl CodecDescriptor {
             direction,
             hardware: false,
             lossless: false,
+            trims: false,
             sample_formats: Vec::new(),
             pixel_formats: Vec::new(),
             profiles: Vec::new(),
@@ -70,6 +75,14 @@ impl CodecDescriptor {
     #[must_use]
     pub const fn with_lossless(mut self, lossless: bool) -> Self {
         self.lossless = lossless;
+        self
+    }
+
+    /// State whether the implementation applies the container's gapless trim
+    /// itself.
+    #[must_use]
+    pub const fn with_trims(mut self, trims: bool) -> Self {
+        self.trims = trims;
         self
     }
 
@@ -140,6 +153,12 @@ impl CodecDescriptor {
     #[must_use]
     pub const fn lossless(&self) -> bool {
         self.lossless
+    }
+
+    /// Whether the implementation applies the container's gapless trim itself.
+    #[must_use]
+    pub const fn applies_trim(&self) -> bool {
+        self.trims
     }
 
     /// Sample formats the implementation accepts or produces, in the order the
