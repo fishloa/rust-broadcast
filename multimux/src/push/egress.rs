@@ -21,11 +21,10 @@
 //!   there is a real socket underneath every implementor (SRT/RTMP/RTSP).
 //!
 //! [`PushTransportEgress`] is the seam: it owns a `T: PushTransport` and
-//! implements `PushEgress` over it by routing every encode through
-//! [`PushTransport::encode_media`] (issue #942's own addition — the sans-IO
-//! half `send_media` already had in spirit, split out so this type's
-//! synchronous `send` can call it) and queuing the resulting wire messages
-//! for [`PushEgress::poll_transmit`] rather than writing them itself.
+//! implements `PushEgress` over it by routing every sample through the
+//! transport's per-connection muxer ([`PushTransport::media_muxer`]) and
+//! queuing the resulting wire messages for [`PushEgress::poll_transmit`]
+//! rather than writing them itself.
 //! [`PushTransportEgress::flush_transmit`] is the async half a driving loop
 //! (`crate::push::drive_push`) calls once per iteration to actually push
 //! those queued messages out over `T`.
@@ -33,8 +32,8 @@
 //! # Encoded-frame ordering is load-bearing (I3)
 //!
 //! An RTMP message is chunk-stream-framed relative to the previous message on
-//! its chunk stream, so once [`PushTransport::encode_media`] has produced a
-//! frame, that frame must be written **in order** and **exactly once** — a
+//! its chunk stream, so once the connection muxer has produced a frame, that
+//! frame must be written **in order** and **exactly once** — a
 //! dropped, reordered or half-written frame leaves the peer's chunk-header
 //! state disagreeing with the sender's, i.e. a corrupt stream rather than a
 //! clean error. `outbound` is therefore a strict FIFO: [`PushEgress::send`]
@@ -51,7 +50,7 @@
 //!
 //! `push::rtmp::RtmpTransport` used to decide "can I carry this track" via
 //! its own private `is_flv_codec` predicate, checked ad-hoc in both `setup`
-//! (hard error if *nothing* is carriable) and `send_media` (warn once, then
+//! (hard error if *nothing* is carriable) and its batch path (warn once, then
 //! silently exclude, if only *some* tracks are). [`PushTransport::
 //! supports_codec`] is now the one predicate (RTMP overrides it; SRT/RTSP
 //! keep TS's broad default); [`PushTransportEgress::negotiate`]/
@@ -81,7 +80,7 @@ use transmux::TrackId;
 use bytes::Bytes;
 use media_plane::egress::{NegotiationOutcome, PushEgress, TrackSelection};
 use media_plane::trunk::SampleCursorItem;
-use transmux::ir::{Track, TrackSpec};
+use transmux::ir::TrackSpec;
 
 use crate::push::{MuxError, PushTransport, SendMediaError};
 
@@ -92,8 +91,8 @@ pub struct PushTransportEgress<T: PushTransport> {
     /// `negotiate`).
     selection: TrackSelection,
     /// The full [`TrackSpec`]s backing `selection`, in the same order —
-    /// `send` looks a drained item's spec up here to build the single-sample
-    /// batch it hands to [`PushTransport::encode_media`].
+    /// `send` looks a drained item's spec up here to decide whether its track
+    /// is carried.
     specs: Vec<TrackSpec>,
     /// Set once the first `negotiate` accepts a selection — governs whether
     /// `renegotiate` may still freely adopt a changed proposal (see the
@@ -178,8 +177,8 @@ impl<T: PushTransport> PushTransportEgress<T> {
     /// [`PushEgress::poll_transmit`] and actually writes each one out over
     /// the real transport, via [`PushTransport::write_message`] (**not**
     /// [`PushTransport::send`] — `send`'s contract is "frame this payload",
-    /// which would double-frame what [`PushTransport::encode_media`]
-    /// already produced; see that method's own doc) — the async half of
+    /// which would double-frame what the connection muxer already produced;
+    /// see that method's own doc) — the async half of
     /// this adapter, called once per driving-loop iteration after a batch
     /// of `send` calls (see the module doc for why `PushEgress::send`
     /// itself cannot do this: it is synchronous).
@@ -296,10 +295,9 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
         NegotiationOutcome::Accepted(self.selection.clone())
     }
 
-    /// Encoding one drained sample — through the transport's
-    /// [`PushTransport::media_muxer`] when it has one, else a one-sample
-    /// batch through [`PushTransport::encode_media`] — queuing the
-    /// resulting wire messages (sans-IO) for
+    /// Encoding one drained sample through the transport's
+    /// [`PushTransport::media_muxer`], queuing the resulting wire messages
+    /// (sans-IO) for
     /// [`Self::flush_transmit`] to actually send. A track not in the current
     /// selection (excluded by negotiation, or dropped by a since-refused
     /// `renegotiate`) is silently skipped — exclusion was already reported
@@ -347,32 +345,13 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
                 return Ok(());
             }
         }
-        // A per-connection muxer frames this sample directly, one message at a
+        // The connection's muxer frames this sample directly, one message at a
         // time: no batch is built for it.
-        if let Some(muxer) = self.transport.media_muxer() {
-            self.outbound
-                .extend(muxer.encode_sample(track_id, &sample)?);
-            return Ok(());
-        }
-        // Every carried track rides in EVERY batch, the sample only in its
-        // own track (the others empty): the TS muxer derives the PIDs, the
-        // PMT and the PCR PID from the track set, so a one-track batch per
-        // sample would map every track onto the first ES PID and flip the
-        // PMT frame to frame (#1024).
-        let tracks = self
-            .specs
-            .iter()
-            .map(|s| {
-                let samples = if s.track_id == track_id {
-                    vec![sample.clone()]
-                } else {
-                    Vec::new()
-                };
-                Track::new(s.clone(), samples)
-            })
-            .collect::<Vec<Track>>();
-        let messages = self.transport.encode_media(&tracks)?;
-        self.outbound.extend(messages);
+        let Some(muxer) = self.transport.media_muxer() else {
+            return Err(SendMediaError::Mux(MuxError::NoMuxer));
+        };
+        self.outbound
+            .extend(muxer.encode_sample(track_id, &sample)?);
         Ok(())
     }
 
@@ -393,8 +372,36 @@ mod tests {
     use transmux::CodecConfig;
     use transmux::ir::DataIdentity;
 
+    /// A fake per-connection muxer producing a fixed set of wire messages per
+    /// sample — enough to test [`PushTransportEgress`] without a real protocol.
+    struct TestMuxer(&'static [&'static [u8]]);
+
+    impl Default for TestMuxer {
+        fn default() -> Self {
+            Self(&[b"m"])
+        }
+    }
+
+    impl crate::push::MediaMuxer for TestMuxer {
+        fn set_tracks(&mut self, _tracks: &[TrackSpec]) -> Result<(), SendMediaError> {
+            Ok(())
+        }
+
+        fn encode_sample(
+            &mut self,
+            _track: TrackId,
+            _sample: &transmux::ir::Sample,
+        ) -> Result<Vec<Bytes>, SendMediaError> {
+            Ok(self.0.iter().map(|m| Bytes::copy_from_slice(m)).collect())
+        }
+
+        fn flush(&mut self) -> Result<Vec<Bytes>, SendMediaError> {
+            Ok(Vec::new())
+        }
+    }
+
     /// A fake transport double: no real socket, just an in-memory record of
-    /// what `send`/`encode_media` were asked to do — enough to test
+    /// what `send`/the muxer were asked to do — enough to test
     /// [`PushTransportEgress`]'s negotiation/send logic without a real RTMP
     /// server (that's `multimux/tests/it/push_rtmp.rs`'s job, for the transport
     /// itself).
@@ -405,6 +412,7 @@ mod tests {
         /// `push::rtmp::RtmpTransport`'s real restriction, so this double
         /// exercises the exact refusal shape RTMP needs.
         restrict_to_avc_aac: bool,
+        muxer: TestMuxer,
     }
 
     #[derive(Debug, thiserror::Error)]
@@ -433,10 +441,8 @@ mod tests {
             }
         }
 
-        /// One fixed "encoded" message per batch — the tests here judge
-        /// negotiation/queuing/flush, not the wire framing.
-        fn encode_media(&mut self, _tracks: &[Track]) -> Result<Vec<Bytes>, SendMediaError> {
-            Ok(vec![Bytes::from_static(b"m")])
+        fn media_muxer(&mut self) -> Option<&mut dyn crate::push::MediaMuxer> {
+            Some(&mut self.muxer)
         }
 
         fn close(&mut self) {}
@@ -481,7 +487,7 @@ mod tests {
     }
 
     /// One minimal length-prefixed (AVCC-style) NAL, valid enough for
-    /// `TsMuxStage`'s AVC path (the default `encode_media`) to package without
+    /// `TsMuxStage`'s AVC path (the default muxer) to package without
     /// erroring: a 4-byte big-endian length prefix + a one-byte IDR-slice
     /// NAL header (type 5, per ISO/IEC 14496-10 Table 7-1) and no payload.
     fn sample() -> transmux::ir::Sample {
@@ -786,7 +792,9 @@ mod tests {
     /// A transport whose writes never complete (a live peer that stopped
     /// consuming).
     #[derive(Default)]
-    struct HangingTransport;
+    struct HangingTransport {
+        muxer: TestMuxer,
+    }
 
     #[async_trait]
     impl PushTransport for HangingTransport {
@@ -796,24 +804,22 @@ mod tests {
 
         async fn connect(_url: &str, config: &Self::Config) -> Result<Self, Self::Error> {
             config.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(Self)
+            Ok(Self::default())
         }
 
         async fn send(&mut self, _data: &[u8]) -> Result<(), Self::Error> {
             std::future::pending().await
         }
 
-        /// One fixed "encoded" message per batch — the tests here judge
-        /// negotiation/queuing/flush, not the wire framing.
-        fn encode_media(&mut self, _tracks: &[Track]) -> Result<Vec<Bytes>, SendMediaError> {
-            Ok(vec![Bytes::from_static(b"m")])
+        fn media_muxer(&mut self) -> Option<&mut dyn crate::push::MediaMuxer> {
+            Some(&mut self.muxer)
         }
 
         fn close(&mut self) {}
     }
 
     fn egress_with_queued_message() -> PushTransportEgress<HangingTransport> {
-        let mut egress = PushTransportEgress::new(HangingTransport);
+        let mut egress = PushTransportEgress::new(HangingTransport::default());
         egress.negotiate(&[avc_spec(TrackId::new(1))]);
         egress
             .send(&SampleCursorItem::Timed {
@@ -979,6 +985,7 @@ mod tests {
         fail_after: usize,
         /// The payloads attempted, in order.
         attempted: Vec<Vec<u8>>,
+        muxer: TestMuxer,
     }
 
     #[async_trait]
@@ -994,10 +1001,10 @@ mod tests {
             Ok(())
         }
 
-        /// Encode each batch as N distinct "frames" (one per byte of the
-        /// single sample), so ordering across messages is observable.
-        fn encode_media(&mut self, _tracks: &[Track]) -> Result<Vec<Bytes>, SendMediaError> {
-            Ok(vec![Bytes::from_static(b"f0"), Bytes::from_static(b"f1")])
+        /// One sample frames as two distinct messages, so ordering across
+        /// messages is observable.
+        fn media_muxer(&mut self) -> Option<&mut dyn crate::push::MediaMuxer> {
+            Some(&mut self.muxer)
         }
 
         async fn write_message(&mut self, message: &[u8]) -> Result<(), Self::Error> {
@@ -1021,10 +1028,11 @@ mod tests {
         let mut egress = PushTransportEgress::new(FailingTransport {
             fail_after: 1,
             attempted: Vec::new(),
+            muxer: TestMuxer(&[b"f0", b"f1"]),
         });
         let tracks = [avc_spec(TrackId::new(1))];
         let _ = egress.negotiate(&tracks);
-        // Queue two frames (encode_media yields f0, f1).
+        // Queue two frames (the muxer yields f0, f1 for this sample).
         egress
             .send(&SampleCursorItem::Timed {
                 track_id: TrackId::new(1),

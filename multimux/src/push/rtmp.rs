@@ -6,10 +6,11 @@
 //! §E.4.2/§E.4.3) — **not** MPEG-2 TS (issue #934: the pre-fix defect muxed
 //! every push output, RTMP included, to MPEG-2 TS and shipped those TS bytes
 //! as a video message, which no RTMP server can decode). `PushTransport::setup`
-//! sends `onMetaData` plus the AVC/AAC sequence headers (`avcC`/ASC) once, and
-//! `send_media` is overridden to split each batch into FLV-framed payloads
-//! (`transmux::flv_frame_payloads`) dispatched through `send_video`/`send_audio`
-//! — see `transmux::flv` for the tag-body layout this reuses.
+//! sends `onMetaData` plus the AVC/AAC sequence headers (`avcC`/ASC) once, then
+//! the connection's `RtmpMuxStage` frames every later sample as FLV-framed
+//! payloads (`transmux::flv_frame_payloads`) dispatched through
+//! `send_video`/`send_audio` — see `transmux::flv` for the tag-body layout this
+//! reuses.
 
 use crate::push::{MuxError, PushTransport, SendMediaError};
 use broadcast_common::stage::{Stage, Timestamp as StageTimestamp};
@@ -22,7 +23,7 @@ use transmux::TrackId;
 use transmux::flv_track_kind;
 #[cfg(test)]
 use transmux::ir::DataIdentity;
-use transmux::ir::{Track, TrackSpec};
+use transmux::ir::TrackSpec;
 use transmux::mux_stage::{MuxInput, MuxOutput};
 
 /// The metadata pair the publish client frames (`@setDataFrame`/`onMetaData`,
@@ -108,11 +109,6 @@ pub struct RtmpTransport {
     /// The connection's sample muxer: FLV tag framing, the RTMP chunk stream
     /// and the tag order all live here, so they continue across samples.
     muxer: Option<RtmpPushMux>,
-    /// Whether a track-refusal warning has already been emitted. FLV carries
-    /// only AVC video and AAC audio, so any other codec is dropped — but
-    /// dropping it *silently*, once per batch, is both a data-loss hazard and
-    /// log spam. Warn once per connection instead.
-    warned_refused_tracks: bool,
 }
 
 impl std::fmt::Debug for RtmpTransport {
@@ -186,38 +182,6 @@ impl crate::push::MediaMuxer for RtmpPushMux {
     }
 }
 
-/// `carried`'s samples in **decode** order across tracks: every track's own
-/// read order preserved, so a batch is framed in the same order the whole
-/// media would have been. Decode time is the key because a B-frame track's
-/// presentation order is not its decode order.
-fn decode_ordered<'a>(carried: &[&'a Track]) -> Vec<(&'a Track, &'a transmux::Sample)> {
-    let mut items: Vec<(i128, usize, &Track, &transmux::Sample)> = Vec::new();
-    for (index, track) in carried.iter().enumerate() {
-        let mut ticks = 0i64;
-        for sample in &track.samples {
-            let at = sample
-                .timing
-                .and_then(|t| t.dts())
-                .or(sample.timing.and_then(|t| t.pts()))
-                .unwrap_or(ticks);
-            ticks = at;
-            items.push((i128::from(at), index, track, sample));
-        }
-    }
-    // Two tracks' tick counts are only comparable through their own
-    // timescales: multiplying each side by the other's timescale compares the
-    // real instants without a lossy rescale.
-    items.sort_by(|a, b| {
-        (a.0 * i128::from(b.2.spec.timescale.get()))
-            .cmp(&(b.0 * i128::from(a.2.spec.timescale.get())))
-            .then(a.1.cmp(&b.1))
-    });
-    items
-        .into_iter()
-        .map(|(_, _, track, sample)| (track, sample))
-        .collect()
-}
-
 #[async_trait::async_trait]
 impl PushTransport for RtmpTransport {
     type Config = RtmpTransportConfig;
@@ -247,7 +211,6 @@ impl PushTransport for RtmpTransport {
         Ok(Self {
             client: Some(client),
             muxer: None,
-            warned_refused_tracks: false,
         })
     }
 
@@ -265,8 +228,7 @@ impl PushTransport for RtmpTransport {
     /// Writes `message` to the socket verbatim (issue #942) — unlike
     /// [`send`](Self::send) above, this does **not** call `send_video`:
     /// `message` is already a complete chunk-stream-framed RTMP message
-    /// (produced by [`encode_media`](Self::encode_media)'s
-    /// `encode_video`/`encode_audio` calls), so framing it again here would
+    /// (produced by the connection muxer), so framing it again here would
     /// nest one RTMP message inside the body of another.
     async fn write_message(&mut self, message: &[u8]) -> Result<(), Self::Error> {
         let client = self
@@ -288,8 +250,7 @@ impl PushTransport for RtmpTransport {
     /// Send `onMetaData` plus the AVC/AAC sequence headers (`avcC`/ASC) once,
     /// before any frame data (issue #934) — a decoder cannot initialise
     /// without them. Tracks this transport cannot carry over RTMP (anything
-    /// but AVC/AAC — see `transmux::flv_track_kind`) are excluded here and in
-    /// `encode_media`.
+    /// but AVC/AAC — see `transmux::flv_track_kind`) are excluded here.
     ///
     /// This is also where the connection's [`RtmpMuxStage`] is created and
     /// given its tracks: the stage frames every later message, so its chunk
@@ -362,102 +323,6 @@ impl PushTransport for RtmpTransport {
         self.muxer
             .as_mut()
             .map(|muxer| muxer as &mut dyn crate::push::MediaMuxer)
-    }
-
-    /// Frame `media`'s samples as RTMP messages through the connection's
-    /// [`RtmpMuxStage`], performing no I/O (issue #942: the sans-IO half of
-    /// [`send_media`](Self::send_media)).
-    ///
-    /// Tracks this transport cannot carry are excluded, and reported once per
-    /// connection. A batch with no carriable track at all is
-    /// [`MuxError::NoCarriableTrack`]: `Mux` is the right class, because
-    /// reconnecting cannot fix a codec mismatch.
-    ///
-    /// Every carried track is announced before the first sample is fed, even
-    /// when `setup` already did so — the stage then writes the metadata and
-    /// sequence headers as part of this batch, which is what a caller that
-    /// skipped `setup` needs.
-    fn encode_media(&mut self, tracks: &[Track]) -> Result<Vec<bytes::Bytes>, SendMediaError> {
-        let carried: Vec<&Track> = tracks
-            .iter()
-            .filter(|t| flv_track_kind(&t.spec.config).is_some())
-            .collect();
-
-        // Refusing a track the wire format cannot carry is legitimate;
-        // refusing it *silently* is not. Report it once per connection.
-        let refused = tracks.len() - carried.len();
-        if refused > 0 && !self.warned_refused_tracks {
-            self.warned_refused_tracks = true;
-            let refused_track_ids: Vec<TrackId> = tracks
-                .iter()
-                .filter(|t| flv_track_kind(&t.spec.config).is_none())
-                .map(|t| t.spec.track_id)
-                .collect();
-            tracing::warn!(
-                refused,
-                carried = carried.len(),
-                ?refused_track_ids,
-                "RTMP push cannot carry these tracks — FLV carries only AVC video                  and AAC audio; they are excluded from this push"
-            );
-        }
-        if carried.is_empty() {
-            return Err(SendMediaError::Mux(MuxError::NoCarriableTrack));
-        }
-        if self.client.is_none() {
-            return Err(SendMediaError::Transport(Box::new(RtmpPushError::Connect(
-                RtmpConnectError::NotConnected,
-            ))));
-        }
-
-        // A batch is framed through its own muxer: the batch API is stateless
-        // per call (the connection's own muxer numbers the live stream
-        // continuously, through `media_muxer`).
-        let mut muxer = RtmpMuxStage::with_chunk_size(publish_chunk_size()).frames_only();
-        for track in &carried {
-            muxer
-                .feed(
-                    MuxInput::Track(Box::new(track.spec.clone())),
-                    StageTimestamp::ZERO,
-                )
-                .map_err(|e| SendMediaError::Mux(MuxError::Rtmp(e)))?;
-        }
-        let mut messages = drain(&mut muxer);
-        for (track, sample) in decode_ordered(&carried) {
-            muxer
-                .feed(
-                    MuxInput::Sample {
-                        track: track.spec.track_id,
-                        sample: sample.clone(),
-                    },
-                    StageTimestamp::ZERO,
-                )
-                .map_err(|e| SendMediaError::Mux(MuxError::Rtmp(e)))?;
-            messages.extend(drain(&mut muxer));
-        }
-        // A batch boundary is where the stage's one-pending-sample-per-track
-        // ordering can be drained: whatever it still holds goes out now, and
-        // the stream stays open for the next batch.
-        muxer
-            .feed(MuxInput::Flush, StageTimestamp::ZERO)
-            .map_err(|e| SendMediaError::Mux(MuxError::Rtmp(e)))?;
-        messages.extend(drain(&mut muxer));
-        Ok(messages)
-    }
-
-    /// Encodes `media` via [`encode_media`](Self::encode_media) then writes
-    /// each resulting chunk-framed RTMP message straight to the socket —
-    /// bypasses [`send`](Self::send) (which would re-frame the bytes as a
-    /// *new* video message) and the trait's default `TsMuxStage` path entirely.
-    async fn send_media(&mut self, tracks: &[Track]) -> Result<u64, SendMediaError> {
-        let messages = self.encode_media(tracks)?;
-        let mut total = 0u64;
-        for message in &messages {
-            self.write_message(message)
-                .await
-                .map_err(|e| SendMediaError::Transport(Box::new(e)))?;
-            total += message.len() as u64;
-        }
-        Ok(total)
     }
 
     fn close(&mut self) {
@@ -631,15 +496,14 @@ mod tests {
     /// carriable) makes both assertions fail identically — `supports_codec`
     /// would then never refuse the opaque config, which is exactly what
     /// would have let a `Data`-carried private stream silently reach
-    /// `negotiate` as "carriable" and later fail deep inside
-    /// `encode_media`'s FLV framing instead of being refused truthfully at
-    /// negotiation time. Reverted after confirming the failure.
+    /// `negotiate` as "carriable" and later fail deep inside the muxer's FLV
+    /// framing instead of being refused truthfully at negotiation time.
+    /// Reverted after confirming the failure.
     #[test]
     fn supports_codec_matches_flv_track_kind() {
         let transport = RtmpTransport {
             client: None,
             muxer: None,
-            warned_refused_tracks: false,
         };
         assert!(
             transport.supports_codec(&avc_config()),
@@ -651,100 +515,15 @@ mod tests {
         );
     }
 
-    fn timescale() -> broadcast_common::timescale::Timescale {
-        broadcast_common::timescale::Timescale::try_new(90_000).expect("a non-zero timescale")
-    }
-
-    fn spec(track_id: u32, config: CodecConfig) -> TrackSpec {
-        TrackSpec::new(TrackId::new(track_id), timescale(), config)
-    }
-
     /// The `Debug` body names the type and its connection state.
     #[test]
     fn transport_debug_reports_the_connection_state() {
         let transport = RtmpTransport {
             client: None,
             muxer: None,
-            warned_refused_tracks: false,
         };
         let shown = format!("{transport:?}");
         assert!(shown.contains("RtmpTransport"), "{shown}");
         assert!(shown.contains("connected: false"), "{shown}");
-    }
-
-    /// The refused-track warning fires once per connection with the exact
-    /// count of tracks FLV cannot carry, and never when every track is
-    /// carriable.
-    #[test]
-    fn refused_tracks_are_warned_once_with_the_right_count() {
-        #[derive(Clone, Default)]
-        struct Capture(std::sync::Arc<std::sync::Mutex<String>>);
-
-        impl tracing::Subscriber for Capture {
-            fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
-                true
-            }
-            fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
-                tracing::span::Id::from_u64(1)
-            }
-            fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
-            fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
-            fn enter(&self, _: &tracing::span::Id) {}
-            fn exit(&self, _: &tracing::span::Id) {}
-            fn event(&self, event: &tracing::Event<'_>) {
-                struct Fields<'a>(&'a mut String);
-                impl tracing::field::Visit for Fields<'_> {
-                    fn record_debug(
-                        &mut self,
-                        field: &tracing::field::Field,
-                        value: &dyn std::fmt::Debug,
-                    ) {
-                        use std::fmt::Write as _;
-                        let _ = write!(self.0, "{}={value:?} ", field.name());
-                    }
-                }
-                let mut line = String::new();
-                event.record(&mut Fields(&mut line));
-                line.push('\n');
-                let mut buffer = self
-                    .0
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                buffer.push_str(&line);
-            }
-        }
-
-        let capture = Capture::default();
-        let buffer = capture.0.clone();
-        tracing::subscriber::with_default(capture, || {
-            let mut transport = RtmpTransport {
-                client: None,
-                muxer: None,
-                warned_refused_tracks: false,
-            };
-            let mixed = vec![
-                Track::new(spec(1, avc_config()), Vec::new()),
-                Track::new(spec(2, opaque_config()), Vec::new()),
-                Track::new(spec(3, opaque_config()), Vec::new()),
-                Track::new(spec(4, opaque_config()), Vec::new()),
-            ];
-            let all_carriable = vec![Track::new(spec(1, avc_config()), Vec::new())];
-            // An all-carriable batch first: `refused == 0` must not warn at
-            // all (a `>= 0` boundary would).
-            let _ = transport.encode_media(&all_carriable);
-            let _ = transport.encode_media(&mixed);
-            let _ = transport.encode_media(&mixed);
-        });
-        let logs = buffer
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-        assert_eq!(
-            logs.matches("RTMP push cannot carry these tracks").count(),
-            1,
-            "the refusal is reported once per connection: {logs}"
-        );
-        assert!(logs.contains("refused=3 "), "{logs}");
-        assert!(logs.contains("carried=1 "), "{logs}");
     }
 }

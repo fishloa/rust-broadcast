@@ -5,7 +5,7 @@
 //! SRT is the first concrete [`PushTransport`] (see `super`): the simplest
 //! push wire protocol this crate could start with — a single
 //! [`srt_runtime::io::SrtSocket::connect`] handshake and a
-//! [`send`](SrtTransport#method.send) per muxed batch, with no session
+//! [`send`](SrtTransport#method.send) per muxed packet, with no session
 //! protocol (no RTMP connect/publish, no RTSP ANNOUNCE/RECORD) to run before
 //! the first payload.
 

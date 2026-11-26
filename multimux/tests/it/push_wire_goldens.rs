@@ -121,10 +121,7 @@ async fn rtmp_push_wire_bodies_match_the_recorded_golden() {
         .expect("setup must not hang")
         .expect("setup");
 
-    tokio::time::timeout(GUARD, transport.send_media(&media.tracks))
-        .await
-        .expect("send_media must not hang")
-        .expect("send_media");
+    crate::support::shared_it::push_tracks_through_muxer(&mut transport, &media.tracks).await;
 
     transport.close();
     drop(transport);
