@@ -7,6 +7,7 @@ use core::fmt;
 use crate::availability::Probe;
 use crate::codec::token;
 use crate::descriptor::CodecDescriptor;
+use crate::profile::CodecProfile;
 use crate::provider_info::ProviderInfo;
 
 /// The number of columns the table writes.
@@ -167,11 +168,19 @@ fn lossless(descriptor: &CodecDescriptor) -> &'static str {
     if descriptor.lossless() { "yes" } else { ABSENT }
 }
 
-/// The profiles joined by `/`, or [`ABSENT`].
+/// The profile tokens joined by `/`, or [`ABSENT`].
+///
+/// The codec half of a profile's token is left out: the row already names the
+/// codec.
 fn profiles(descriptor: &CodecDescriptor) -> String {
     if descriptor.profiles().is_empty() {
         ABSENT.into()
     } else {
-        descriptor.profiles().join("/")
+        let tokens: Vec<String> = descriptor
+            .profiles()
+            .iter()
+            .map(CodecProfile::profile_token)
+            .collect();
+        tokens.join("/")
     }
 }

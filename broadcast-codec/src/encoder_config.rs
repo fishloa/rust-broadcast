@@ -7,12 +7,15 @@ use core::num::{NonZeroU32, NonZeroU64};
 use broadcast_core::timescale::Timescale;
 
 use crate::codec::{AudioParameters, CodecId, VideoParameters};
+use crate::profile::CodecProfile;
+use crate::profile_error::ProfileError;
 
 /// The settings an encoder is built with.
 ///
 /// The typed settings are the ones every encoder needs: the coded format, the
-/// tick rate its output timestamps use, the source parameters it is asked to
-/// produce, an optional target bit rate and an optional picture group length.
+/// tick rate its output timestamps use, the profile to produce, the source
+/// parameters it is asked to produce, an optional target bit rate and an
+/// optional picture group length.
 ///
 /// [`options`](Self::options) carries everything that is provider-specific, in
 /// the order it was added. A provider that does not recognise a key MUST return
@@ -24,6 +27,7 @@ use crate::codec::{AudioParameters, CodecId, VideoParameters};
 pub struct EncoderConfig {
     codec: CodecId,
     time_base: Timescale,
+    profile: Option<CodecProfile>,
     audio: Option<AudioParameters>,
     video: Option<VideoParameters>,
     bit_rate: Option<NonZeroU64>,
@@ -39,12 +43,25 @@ impl EncoderConfig {
         Self {
             codec,
             time_base,
+            profile: None,
             audio: None,
             video: None,
             bit_rate: None,
             gop: None,
             options: Vec::new(),
         }
+    }
+
+    /// Ask the encoder to produce `profile`.
+    ///
+    /// # Errors
+    /// [`ProfileError::Mismatch`] when the profile belongs to another codec.
+    pub fn with_profile(mut self, profile: CodecProfile) -> Result<Self, ProfileError> {
+        if profile.codec() != self.codec {
+            return Err(ProfileError::mismatch(profile, self.codec));
+        }
+        self.profile = Some(profile);
+        Ok(self)
     }
 
     /// Attach the audio half of the source parameters.
@@ -93,6 +110,12 @@ impl EncoderConfig {
     #[must_use]
     pub const fn time_base(&self) -> Timescale {
         self.time_base
+    }
+
+    /// The codec profile to produce, when one was asked for.
+    #[must_use]
+    pub const fn profile(&self) -> Option<CodecProfile> {
+        self.profile
     }
 
     /// Audio source parameters, when this is an audio encoder.

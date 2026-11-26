@@ -46,9 +46,46 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
   accepted by `CodecId::from_name` and written by the preference text form, so
   a format the enum does not name can be preferred and listed. `other` alone is
   still an unknown codec.
+- `CodecProfile`, the typed codec-variant key the stream and the implementation
+  share: H.264, HEVC, VVC, AV1, VP9, MPEG-2 video and AAC profiles named as
+  their specifications name them, plus `Other { codec, tag }`. `codec()` says
+  which codec a profile belongs to, `token()`/`from_token` are the text form
+  (`h264/high10`, `aac/lc`, `other:00000007/deadbeef`) and `profile_token()` is
+  the profile half for a table that already names the codec. No profile
+  identifier number is in this crate: mapping one to a variant is the bitstream
+  parser's and the adapter's job.
+- `CodecParameters::profile`/`with_profile` and
+  `EncoderConfig::profile`/`with_profile`: the profile a stream is in and the
+  profile an encoder is asked to produce, refused with `ProfileError` when the
+  profile belongs to another codec.
+- `CodecProvider::profiles` (defaulting to the union over the provider's
+  descriptors, first-seen order, no duplicates) and `Registry::profiles`, which
+  attributes each profile to the providers that state it.
+- `Registry::candidates_for` and `Registry::encoder_candidates_for`, which
+  apply the new profile clause, and `Registry::rejected_for` and
+  `Registry::encoder_rejected_for`, which report each removed candidate and why
+  (`ProfileRejection`).
+- The preference text form gained an optional profile: `h264/high10=libav`,
+  `dec:aac/he=oxideav:fdk`. `Preference::with_profile` builds one, and
+  `PreferenceError::UnknownProfile` names a profile token that names none of
+  the codec's profiles. A profiled preference applies only to streams of that
+  profile and outranks one for the bare codec.
 
 ### Breaking
 
+- `CodecDescriptor::profiles` is `&[CodecProfile]` rather than `&[String]`, and
+  `with_profiles` takes an iterator and returns `Result<Self, ProfileError>`, so
+  a descriptor cannot state a profile another codec owns. Empty still means
+  "not stated", not "all".
+- The selection rule gained a clause (now rule 4, ahead of the fallback rules):
+  a candidate that states profiles without the stream's profile is removed, and
+  the remaining rules number 5 to 7. `Registry::candidates` keeps its signature
+  and reports the order alone; `candidates_for`/`encoder_candidates_for` apply
+  the clause. A selector or preference that picks a removed candidate is an
+  error naming it, never a silent switch to another.
+- `Registry::prefer` replaces an earlier preference for the same codec, profile
+  and direction, so a profiled preference and a bare one for the same codec now
+  coexist instead of replacing each other.
 - `CodecProvider` gained a required `info` method: every adapter must say who
   it is and under what terms. `CodecProvider::probe` has a default answer of
   `Availability::Unknown`, so probing is opt-in.

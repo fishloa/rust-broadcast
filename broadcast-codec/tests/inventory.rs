@@ -6,9 +6,9 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 
 use broadcast_codec::{
-    Availability, CodecDescriptor, CodecError, CodecId, CodecParameters, CodecProvider, Decoder,
-    Direction, Encoder, EncoderConfig, Frame, InventoryEntry, Packet, Probe, ProviderInfo,
-    Registry, Timescale, render_inventory,
+    Availability, CodecDescriptor, CodecError, CodecId, CodecParameters, CodecProfile,
+    CodecProvider, Decoder, Direction, Encoder, EncoderConfig, Frame, InventoryEntry, Packet,
+    Probe, ProviderInfo, Registry, Timescale, render_inventory,
 };
 
 /// Sample rate the fake requests use.
@@ -68,7 +68,9 @@ impl CodecProvider for Fake {
                     CodecDescriptor::new(self.name, *implementation, *codec, *direction)
                         .with_hardware(implementation.ends_with("_hw"));
                 if self.profiles && implementation.starts_with("h264") {
-                    descriptor.with_profiles(vec!["High".into(), "Main".into()])
+                    descriptor
+                        .with_profiles([CodecProfile::H264High, CodecProfile::H264Main])
+                        .expect("an H.264 descriptor states H.264 profiles")
                 } else {
                     descriptor
                 }
@@ -249,7 +251,7 @@ fn profiles_reach_the_inventory() {
         .expect("alpha's H.264 implementation is listed");
     assert_eq!(
         h264.descriptor().profiles(),
-        ["High".to_string(), "Main".to_string()]
+        [CodecProfile::H264High, CodecProfile::H264Main]
     );
     let aac = entries
         .iter()
@@ -259,7 +261,7 @@ fn profiles_reach_the_inventory() {
 }
 
 #[test]
-fn profiles_do_not_change_the_selection_outcome() {
+fn profiles_change_nothing_when_the_stream_states_no_profile() {
     for profiles in [false, true] {
         let bench = bench(profiles);
         assert_eq!(
@@ -284,7 +286,7 @@ fn entry_display_is_the_documented_line() {
         .expect("the hardware implementation is listed");
     assert_eq!(
         hardware.to_string(),
-        "h264 decode beta h264_hw hw High/Main unavailable MIT"
+        "h264 decode beta h264_hw hw high/main unavailable MIT"
     );
 
     let aac = entries
@@ -309,7 +311,12 @@ fn the_table_renders_the_documented_columns() {
     let entries = [
         InventoryEntry::new(
             CodecDescriptor::new("alpha", "h264", CodecId::H264, Direction::Decode)
-                .with_profiles(vec!["High".into(), "Main".into()]),
+                .with_profiles([
+                    CodecProfile::H264Baseline,
+                    CodecProfile::H264Main,
+                    CodecProfile::H264High,
+                ])
+                .expect("an H.264 descriptor states H.264 profiles"),
             ProviderInfo::new("alpha", "1.0.0").with_licence("MIT"),
             Probe::available(),
         ),
@@ -321,17 +328,16 @@ fn the_table_renders_the_documented_columns() {
         ),
         InventoryEntry::new(
             CodecDescriptor::new("gamma", "flac", CodecId::Flac, Direction::Decode)
-                .with_lossless(true)
-                .with_profiles(vec!["5.1".into()]),
+                .with_lossless(true),
             ProviderInfo::new("gamma", "1.0.0").with_licence("MPL-2.0"),
             Probe::unknown(),
         ),
     ];
     let expected = "\
-codec  direction  provider  implementation  kind  lossless  profiles   availability  licence
-h264   decode     alpha     h264            sw    -         High/Main  available     MIT
-aac    encode     beta      aac_hw          hw    -         -          unavailable   -
-flac   decode     gamma     flac            sw    yes       5.1        unknown       MPL-2.0
+codec  direction  provider  implementation  kind  lossless  profiles            availability  licence
+h264   decode     alpha     h264            sw    -         baseline/main/high  available     MIT
+aac    encode     beta      aac_hw          hw    -         -                   unavailable   -
+flac   decode     gamma     flac            sw    yes       -                   unknown       MPL-2.0
 ";
     assert_eq!(render_inventory(&entries), expected);
 }

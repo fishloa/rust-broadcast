@@ -1,6 +1,8 @@
 //! The preference text form: the codec token, parse, display and the list.
 
-use broadcast_codec::{CodecId, Direction, Preference, PreferenceError, parse_preferences};
+use broadcast_codec::{
+    CodecId, CodecProfile, Direction, Preference, PreferenceError, parse_preferences,
+};
 
 /// Every codec that has a textual token.
 const NAMED: &[CodecId] = &[
@@ -56,6 +58,24 @@ fn documented_examples_parse_to_their_preference() {
             .parse::<Preference>()
             .expect("h264=libav:h264_videotoolbox"),
         Preference::new(CodecId::H264, "libav").with_implementation("h264_videotoolbox")
+    );
+    assert_eq!(
+        "h264/high10=libav"
+            .parse::<Preference>()
+            .expect("h264/high10=libav"),
+        Preference::new(CodecId::H264, "libav")
+            .with_profile(CodecProfile::H264High10)
+            .expect("an H.264 profile")
+    );
+    assert_eq!(
+        "dec:aac/he=oxideav:fdk"
+            .parse::<Preference>()
+            .expect("dec:aac/he=oxideav:fdk"),
+        Preference::new(CodecId::Aac, "oxideav")
+            .with_direction(Direction::Decode)
+            .with_implementation("fdk")
+            .with_profile(CodecProfile::AacHe)
+            .expect("an AAC profile")
     );
     assert_eq!(
         "dec:aac=oxideav"
@@ -138,6 +158,21 @@ fn display_writes_the_documented_form() {
         Preference::new(CodecId::Mpeg2Video, "alpha").to_string(),
         "mpeg2video=alpha"
     );
+    assert_eq!(
+        Preference::new(CodecId::H264, "libav")
+            .with_profile(CodecProfile::H264High10)
+            .expect("an H.264 profile")
+            .to_string(),
+        "h264/high10=libav"
+    );
+    assert_eq!(
+        Preference::new(CodecId::Aac, "oxideav")
+            .with_direction(Direction::Decode)
+            .with_profile(CodecProfile::AacHe)
+            .expect("an AAC profile")
+            .to_string(),
+        "dec:aac/he=oxideav"
+    );
 }
 
 #[test]
@@ -152,6 +187,29 @@ fn display_round_trips_over_a_table() {
                 .with_direction(Direction::Encode)
                 .with_implementation("x264"),
         );
+    }
+    for (codec, profile) in [
+        (CodecId::H264, CodecProfile::H264High10),
+        (CodecId::Hevc, CodecProfile::HevcMain10),
+        (CodecId::Aac, CodecProfile::AacHe),
+        (CodecId::Mpeg2Video, CodecProfile::Mpeg2FourTwoTwo),
+        (
+            CodecId::Other(7),
+            CodecProfile::Other {
+                codec: CodecId::Other(7),
+                tag: 0xDEAD_BEEF,
+            },
+        ),
+    ] {
+        for direction in [None, Some(Direction::Decode), Some(Direction::Encode)] {
+            let mut preference = Preference::new(codec, "alpha")
+                .with_profile(profile)
+                .expect("a profile of the preference's codec");
+            if let Some(direction) = direction {
+                preference = preference.with_direction(direction);
+            }
+            table.push(preference);
+        }
     }
     for preference in table {
         let text = preference.to_string();
@@ -266,6 +324,74 @@ fn other_malformed_digits_are_an_unknown_codec() {
             preference.parse::<Preference>(),
             Err(PreferenceError::UnknownCodec { token: text.into() }),
             "{preference}"
+        );
+    }
+}
+
+#[test]
+fn a_profile_token_names_no_other_codecs_profile() {
+    assert_eq!(
+        "h264/nope=libav".parse::<Preference>(),
+        Err(PreferenceError::UnknownProfile {
+            codec: CodecId::H264,
+            token: "nope".into(),
+        })
+    );
+    assert_eq!(
+        "h264/he=libav".parse::<Preference>(),
+        Err(PreferenceError::UnknownProfile {
+            codec: CodecId::H264,
+            token: "he".into(),
+        })
+    );
+    assert_eq!(
+        "h264/high!=libav".parse::<Preference>(),
+        Err(PreferenceError::InvalidCharacter {
+            token: "high!".into(),
+            character: '!',
+        })
+    );
+}
+
+#[test]
+fn a_profile_is_read_as_loosely_as_a_codec() {
+    assert_eq!(
+        "H.264/High 10=libav"
+            .parse::<Preference>()
+            .expect("a loose profile"),
+        Preference::new(CodecId::H264, "libav")
+            .with_profile(CodecProfile::H264High10)
+            .expect("an H.264 profile")
+    );
+}
+
+#[test]
+fn an_other_profile_carries_its_digits() {
+    let preference = Preference::new(CodecId::Other(7), "alpha")
+        .with_profile(CodecProfile::Other {
+            codec: CodecId::Other(7),
+            tag: 0xDEAD_BEEF,
+        })
+        .expect("a profile of the preference's codec");
+    assert_eq!(preference.to_string(), "other:00000007/deadbeef=alpha");
+    assert_eq!(
+        "other:00000007/deadbeef=alpha"
+            .parse::<Preference>()
+            .expect("a tagged profile"),
+        preference
+    );
+    for text in ["other:00000007/beef=alpha", "other:00000007/=alpha"] {
+        assert_eq!(
+            text.parse::<Preference>(),
+            Err(PreferenceError::UnknownProfile {
+                codec: CodecId::Other(7),
+                token: text
+                    .split_once('/')
+                    .map(|(_, token)| token.trim_end_matches("=alpha"))
+                    .unwrap_or_default()
+                    .into(),
+            }),
+            "{text}"
         );
     }
 }

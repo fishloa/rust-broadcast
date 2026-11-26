@@ -8,6 +8,8 @@ use core::str::FromStr;
 use crate::codec::{CodecId, OTHER_TOKEN, same_token, token};
 use crate::direction::Direction;
 use crate::preference_error::PreferenceError;
+use crate::profile::CodecProfile;
+use crate::profile_error::ProfileError;
 use crate::provider::offending_character;
 
 /// Separates a codec from its provider, and a provider from its
@@ -17,6 +19,8 @@ const SCOPE: char = ':';
 const LIST_SEPARATOR: char = ',';
 /// Separates the codec token from the provider.
 const ASSIGNMENT: char = '=';
+/// Separates the codec token from the profile token.
+const PROFILE_SEPARATOR: char = '/';
 
 /// A choice of provider for one codec and direction.
 ///
@@ -27,10 +31,15 @@ const ASSIGNMENT: char = '=';
 ///
 /// A preference for [`CodecId::Other`] spells its tag: `other:00000007=alpha`.
 /// `other` alone names no codec and is [`PreferenceError::UnknownCodec`].
+///
+/// A preference built with [`Self::with_profile`] applies only to streams of
+/// that profile (`h264/high10=libav`), and outranks a preference for the bare
+/// codec when a stream of that profile is served.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preference {
     codec: CodecId,
+    profile: Option<CodecProfile>,
     direction: Option<Direction>,
     provider: String,
     implementation: Option<String>,
@@ -42,10 +51,23 @@ impl Preference {
     pub fn new(codec: CodecId, provider: impl Into<String>) -> Self {
         Self {
             codec,
+            profile: None,
             direction: None,
             provider: provider.into(),
             implementation: None,
         }
+    }
+
+    /// Narrow the preference to streams of `profile`.
+    ///
+    /// # Errors
+    /// [`ProfileError::Mismatch`] when the profile belongs to another codec.
+    pub fn with_profile(mut self, profile: CodecProfile) -> Result<Self, ProfileError> {
+        if profile.codec() != self.codec {
+            return Err(ProfileError::mismatch(profile, self.codec));
+        }
+        self.profile = Some(profile);
+        Ok(self)
     }
 
     /// Narrow the preference to one direction.
@@ -66,6 +88,12 @@ impl Preference {
     #[must_use]
     pub const fn codec(&self) -> CodecId {
         self.codec
+    }
+
+    /// The one profile the preference is about, or `None` for every profile.
+    #[must_use]
+    pub const fn profile(&self) -> Option<CodecProfile> {
+        self.profile
     }
 
     /// The one direction the preference is about, or `None` for both.
@@ -92,7 +120,11 @@ impl fmt::Display for Preference {
         if let Some(direction) = self.direction {
             write!(f, "{}:", direction.prefix())?;
         }
-        write!(f, "{}={}", token(self.codec), self.provider)?;
+        match self.profile {
+            Some(profile) => write!(f, "{}", profile.token())?,
+            None => write!(f, "{}", token(self.codec))?,
+        }
+        write!(f, "={}", self.provider)?;
         if let Some(implementation) = &self.implementation {
             write!(f, ":{implementation}")?;
         }
@@ -115,7 +147,15 @@ impl FromStr for Preference {
             },
             None => (None, codec_side),
         };
+        let (codec_token, profile_token) = match codec_token.split_once(PROFILE_SEPARATOR) {
+            Some((codec, profile)) => (codec, Some(profile)),
+            None => (codec_token, None),
+        };
         let codec = parse_codec(codec_token)?;
+        let profile = match profile_token {
+            Some(token) => Some(parse_profile(codec, token)?),
+            None => None,
+        };
         let (provider, implementation) = match provider_side.split_once(SCOPE) {
             Some((provider, implementation)) => (provider, Some(implementation)),
             None => (provider_side, None),
@@ -129,6 +169,7 @@ impl FromStr for Preference {
             None => None,
         };
         let mut preference = Self::new(codec, provider);
+        preference.profile = profile;
         preference.direction = direction;
         preference.implementation = implementation;
         Ok(preference)
@@ -174,6 +215,16 @@ fn parse_codec(token: &str) -> Result<CodecId, PreferenceError> {
         return Err(PreferenceError::invalid_character(token, character));
     }
     CodecId::from_name(token).ok_or_else(|| PreferenceError::unknown_codec(token))
+}
+
+/// The profile a token names for `codec`, refusing a stray character first so
+/// the error says which character is wrong rather than "unknown profile".
+fn parse_profile(codec: CodecId, token: &str) -> Result<CodecProfile, PreferenceError> {
+    if let Some(character) = token.chars().find(|c| !codec_token_character(*c)) {
+        return Err(PreferenceError::invalid_character(token, character));
+    }
+    CodecProfile::from_parts(codec, token)
+        .ok_or_else(|| PreferenceError::unknown_profile(codec, token))
 }
 
 /// Refuse a name part that is empty or breaks the provider-name rule.

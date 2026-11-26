@@ -5,30 +5,56 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 
 use broadcast_codec::{
-    CodecDescriptor, CodecError, CodecId, CodecParameters, CodecProvider, Decoder, Direction,
-    Encoder, EncoderConfig, Fallback, Frame, Packet, Preference, ProviderInfo, Registry,
+    CodecDescriptor, CodecError, CodecId, CodecParameters, CodecProfile, CodecProvider, Decoder,
+    Direction, Encoder, EncoderConfig, Fallback, Frame, Packet, Preference, ProviderInfo, Registry,
     RegistryError, SampleFormat, Timescale,
 };
 
 /// Sample rate the fake requests use.
 const SAMPLE_RATE: u32 = 48_000;
 
-/// One implementation a fake provider offers.
-type Offer = (&'static str, CodecId, Direction);
+/// The profiles `alpha` states for its H.264 implementations.
+const H264_STATED: &[CodecProfile] = &[CodecProfile::H264High, CodecProfile::H264Main];
+/// The profiles `beta`'s hardware H.264 implementation states.
+const H264_HIGH10: &[CodecProfile] = &[CodecProfile::H264High10];
 
-/// What the `alpha` provider offers: H.264 both ways and AAC decode.
+/// One implementation a fake provider offers.
+struct Offer {
+    implementation: &'static str,
+    codec: CodecId,
+    direction: Direction,
+    profiles: &'static [CodecProfile],
+}
+
+const fn offer(
+    implementation: &'static str,
+    codec: CodecId,
+    direction: Direction,
+    profiles: &'static [CodecProfile],
+) -> Offer {
+    Offer {
+        implementation,
+        codec,
+        direction,
+        profiles,
+    }
+}
+
+/// What the `alpha` provider offers: H.264 both ways and AAC decode, stating a
+/// profile list for H.264 and none for AAC.
 const ALPHA_OFFERS: &[Offer] = &[
-    ("h264", CodecId::H264, Direction::Decode),
-    ("h264", CodecId::H264, Direction::Encode),
-    ("aac", CodecId::Aac, Direction::Decode),
+    offer("h264", CodecId::H264, Direction::Decode, H264_STATED),
+    offer("h264", CodecId::H264, Direction::Encode, H264_STATED),
+    offer("aac", CodecId::Aac, Direction::Decode, &[]),
 ];
 
-/// What the `beta` provider offers: H.264 both ways, two implementations.
+/// What the `beta` provider offers: H.264 both ways, two implementations, the
+/// hardware one stating High 10 and the software one stating nothing.
 const BETA_OFFERS: &[Offer] = &[
-    ("h264_hw", CodecId::H264, Direction::Decode),
-    ("h264_sw", CodecId::H264, Direction::Decode),
-    ("h264_hw", CodecId::H264, Direction::Encode),
-    ("h264_sw", CodecId::H264, Direction::Encode),
+    offer("h264_hw", CodecId::H264, Direction::Decode, H264_HIGH10),
+    offer("h264_sw", CodecId::H264, Direction::Decode, &[]),
+    offer("h264_hw", CodecId::H264, Direction::Encode, H264_HIGH10),
+    offer("h264_sw", CodecId::H264, Direction::Encode, &[]),
 ];
 
 /// What a fake provider's builder answers.
@@ -54,7 +80,12 @@ impl Fake {
         codec: CodecId,
         direction: Direction,
     ) -> Result<(), CodecError> {
-        if !self.catalogue.contains(&(implementation, codec, direction)) {
+        let offered = self.catalogue.iter().any(|offer| {
+            offer.implementation == implementation
+                && offer.codec == codec
+                && offer.direction == direction
+        });
+        if !offered {
             return Err(CodecError::unsupported(format!(
                 "{} does not offer {implementation} for {codec} {direction}",
                 self.name
@@ -86,10 +117,17 @@ impl CodecProvider for Fake {
     fn descriptors(&self) -> Vec<CodecDescriptor> {
         self.catalogue
             .iter()
-            .map(|(implementation, codec, direction)| {
-                CodecDescriptor::new(self.name, *implementation, *codec, *direction)
-                    .with_hardware(implementation.ends_with("_hw"))
-                    .with_sample_formats(vec![SampleFormat::S16])
+            .map(|offer| {
+                CodecDescriptor::new(
+                    self.name,
+                    offer.implementation,
+                    offer.codec,
+                    offer.direction,
+                )
+                .with_hardware(offer.implementation.ends_with("_hw"))
+                .with_sample_formats(vec![SampleFormat::S16])
+                .with_profiles(offer.profiles.iter().copied())
+                .expect("a fake states only its own codec's profiles")
             })
             .collect()
     }
@@ -190,6 +228,12 @@ fn parameter(codec: CodecId) -> CodecParameters {
     CodecParameters::new(codec, timescale())
 }
 
+fn profiled(profile: CodecProfile) -> CodecParameters {
+    CodecParameters::new(CodecId::H264, timescale())
+        .with_profile(profile)
+        .expect("an H.264 profile")
+}
+
 fn config(codec: CodecId) -> EncoderConfig {
     EncoderConfig::new(codec, timescale())
 }
@@ -242,8 +286,34 @@ impl Bench {
         self.registry.decoder(&parameter(CodecId::H264))
     }
 
+    fn decoder_in(&self, profile: CodecProfile) -> Result<Box<dyn Decoder>, CodecError> {
+        self.registry.decoder(
+            &parameter(CodecId::H264)
+                .with_profile(profile)
+                .expect("an H.264 profile"),
+        )
+    }
+
     fn encoder(&self) -> Result<Box<dyn Encoder>, CodecError> {
         self.registry.encoder(&config(CodecId::H264))
+    }
+
+    fn encoder_in(&self, profile: CodecProfile) -> Result<Box<dyn Encoder>, CodecError> {
+        self.registry.encoder(
+            &config(CodecId::H264)
+                .with_profile(profile)
+                .expect("an H.264 profile"),
+        )
+    }
+
+    fn candidates_for(&self, profile: CodecProfile) -> Vec<String> {
+        names(
+            &self.registry.candidates_for(
+                &parameter(CodecId::H264)
+                    .with_profile(profile)
+                    .expect("an H.264 profile"),
+            ),
+        )
     }
 
     fn served(&self) -> Vec<String> {
@@ -406,7 +476,7 @@ fn rule_3_registered_provider_offering_nothing_is_an_error() {
 }
 
 #[test]
-fn rule_4_registration_order_decides_when_nothing_is_set() {
+fn rule_5_registration_order_decides_when_nothing_is_set() {
     let bench = Bench::new(Answer::Serve, Answer::Serve);
     bench.decoder().expect("alpha serves the decoder");
     bench.encoder().expect("alpha serves the encoder");
@@ -414,7 +484,7 @@ fn rule_4_registration_order_decides_when_nothing_is_set() {
 }
 
 #[test]
-fn rule_5_strict_returns_the_first_candidates_error() {
+fn rule_6_strict_returns_the_first_candidates_error() {
     let bench = Bench::new(Answer::Refuse, Answer::Serve);
     let error = bench.decoder().error();
     assert_eq!(error, CodecError::refused("fake refusal"));
@@ -422,7 +492,7 @@ fn rule_5_strict_returns_the_first_candidates_error() {
 }
 
 #[test]
-fn rule_5_next_candidate_skips_unsupported_and_refused() {
+fn rule_6_next_candidate_skips_unsupported_and_refused() {
     let bench = Bench::new(Answer::Unsupported, Answer::Serve).fallback(Fallback::NextCandidate);
     bench.decoder().expect("beta serves after an Unsupported");
     assert_eq!(bench.served(), ["beta:h264_hw"]);
@@ -433,7 +503,7 @@ fn rule_5_next_candidate_skips_unsupported_and_refused() {
 }
 
 #[test]
-fn rule_5_next_candidate_stops_on_failed() {
+fn rule_6_next_candidate_stops_on_failed() {
     let bench = Bench::new(Answer::Fail, Answer::Serve).fallback(Fallback::NextCandidate);
     let error = bench.decoder().error();
     assert_eq!(error, CodecError::failed("fake failure"));
@@ -441,7 +511,7 @@ fn rule_5_next_candidate_stops_on_failed() {
 }
 
 #[test]
-fn rule_5_all_skipped_lists_what_was_tried() {
+fn rule_6_all_skipped_lists_what_was_tried() {
     let bench = Bench::new(Answer::Unsupported, Answer::Refuse).fallback(Fallback::NextCandidate);
     let error = bench.decoder().error();
     let message = unsupported_message(&error);
@@ -451,7 +521,7 @@ fn rule_5_all_skipped_lists_what_was_tried() {
 }
 
 #[test]
-fn rule_6_no_candidate_names_the_codec_and_direction() {
+fn rule_7_no_candidate_names_the_codec_and_direction() {
     let bench = Bench::new(Answer::Serve, Answer::Serve);
     assert!(bench.candidates(CodecId::Vp9, Direction::Decode).is_empty());
     let error = bench.registry.decoder(&parameter(CodecId::Vp9)).error();
@@ -502,6 +572,153 @@ fn invalid_provider_name_is_refused() {
             character: None,
         }
     );
+}
+
+#[test]
+fn rule_4_a_stated_profile_list_that_omits_the_streams_profile_is_removed() {
+    let bench = Bench::new(Answer::Serve, Answer::Serve);
+    assert_eq!(
+        bench.candidates_for(CodecProfile::H264High10),
+        ["beta:h264_hw", "beta:h264_sw"]
+    );
+    bench
+        .decoder_in(CodecProfile::H264High10)
+        .expect("beta's hardware decoder states High 10");
+    assert_eq!(bench.served(), ["beta:h264_hw"]);
+}
+
+#[test]
+fn rule_4_a_candidate_that_states_no_profiles_is_kept() {
+    let bench = Bench::new(Answer::Serve, Answer::Serve);
+    assert_eq!(
+        bench.candidates_for(CodecProfile::H264High),
+        ["alpha:h264", "beta:h264_sw"]
+    );
+    let rejected: Vec<String> = bench
+        .registry
+        .rejected_for(&profiled(CodecProfile::H264High))
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(rejected, ["beta:h264_hw (states h264/high10)"]);
+}
+
+#[test]
+fn rule_4_an_unstated_stream_profile_removes_nothing() {
+    let bench = Bench::new(Answer::Serve, Answer::Serve);
+    assert_eq!(
+        names(&bench.registry.candidates_for(&parameter(CodecId::H264))),
+        ["alpha:h264", "beta:h264_hw", "beta:h264_sw"]
+    );
+    assert!(
+        bench
+            .registry
+            .rejected_for(&parameter(CodecId::H264))
+            .is_empty()
+    );
+}
+
+#[test]
+fn rule_4_a_mismatch_is_removed_under_strict() {
+    let bench = Bench::new(Answer::Serve, Answer::Serve).fallback(Fallback::Strict);
+    bench
+        .decoder_in(CodecProfile::H264High10)
+        .expect("the removed first candidate is not tried");
+    assert_eq!(bench.served(), ["beta:h264_hw"]);
+}
+
+#[test]
+fn rule_4_all_removed_names_the_codec_the_profile_and_each_candidate() {
+    let served: Served = Rc::new(RefCell::new(Vec::new()));
+    let registry = Registry::new()
+        .with(provider("alpha", ALPHA_OFFERS, Answer::Serve, &served))
+        .expect("alpha registers");
+    let error = registry
+        .decoder(&profiled(CodecProfile::H264High10))
+        .error();
+    assert_eq!(
+        unsupported_message(&error),
+        "decode of H.264 at profile h264/high10: no candidate handles it; \
+         removed alpha:h264 (states h264/high, h264/main)"
+    );
+    assert!(served.borrow().is_empty(), "no candidate may be asked");
+}
+
+#[test]
+fn rule_4_a_preference_naming_a_removed_candidate_is_an_error() {
+    let bench =
+        Bench::new(Answer::Serve, Answer::Serve).prefer(Preference::new(CodecId::H264, "alpha"));
+    let error = bench.decoder_in(CodecProfile::H264High10).error();
+    let message = unsupported_message(&error);
+    for expected in ["preference `alpha`", "alpha:h264", "h264/high10"] {
+        assert!(
+            message.contains(expected),
+            "{expected} missing from {message}"
+        );
+    }
+    assert!(bench.served().is_empty(), "no engine may be switched to");
+}
+
+#[test]
+fn rule_4_a_selector_index_at_a_removed_candidate_is_an_error() {
+    let bench = Bench::new(Answer::Serve, Answer::Serve).select(|candidates| {
+        candidates
+            .iter()
+            .position(|descriptor| descriptor.codec() == CodecId::H264)
+    });
+    let error = bench.decoder_in(CodecProfile::H264High10).error();
+    let message = unsupported_message(&error);
+    assert!(message.contains("alpha:h264"), "{message}");
+    assert!(message.contains("selector chose"), "{message}");
+    assert!(bench.served().is_empty(), "no engine may be switched to");
+}
+
+#[test]
+fn rule_4_an_encoder_config_profile_removes_mismatched_encoders() {
+    let bench = Bench::new(Answer::Serve, Answer::Serve);
+    let requested = config(CodecId::H264)
+        .with_profile(CodecProfile::H264High10)
+        .expect("an H.264 profile");
+    assert_eq!(
+        names(&bench.registry.encoder_candidates_for(&requested)),
+        ["beta:h264_hw", "beta:h264_sw"]
+    );
+    let rejected: Vec<String> = bench
+        .registry
+        .encoder_rejected_for(&requested)
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(rejected, ["alpha:h264 (states h264/high, h264/main)"]);
+    bench
+        .encoder_in(CodecProfile::H264High10)
+        .expect("beta's hardware encoder states High 10");
+    assert_eq!(bench.served(), ["beta:h264_hw"]);
+}
+
+#[test]
+fn a_profile_scoped_preference_beats_a_bare_one_for_that_profile_only() {
+    let preferences = |bench: Bench| {
+        bench
+            .prefer(Preference::new(CodecId::H264, "alpha"))
+            .prefer(
+                Preference::new(CodecId::H264, "beta")
+                    .with_profile(CodecProfile::H264High10)
+                    .expect("an H.264 profile"),
+            )
+    };
+
+    let bench = preferences(Bench::new(Answer::Serve, Answer::Serve));
+    bench
+        .decoder_in(CodecProfile::H264High10)
+        .expect("the profile-scoped preference picks beta");
+    assert_eq!(bench.served(), ["beta:h264_hw"]);
+
+    let bench = preferences(Bench::new(Answer::Serve, Answer::Serve));
+    bench
+        .decoder_in(CodecProfile::H264High)
+        .expect("the profile-scoped preference does not apply");
+    assert_eq!(bench.served(), ["alpha:h264"]);
 }
 
 /// The error of a `Result` whose success type is a trait object or a registry,

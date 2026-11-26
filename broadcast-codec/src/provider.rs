@@ -9,6 +9,7 @@ use crate::descriptor::CodecDescriptor;
 use crate::direction::Direction;
 use crate::encoder_config::EncoderConfig;
 use crate::error::CodecError;
+use crate::profile::CodecProfile;
 use crate::provider_info::ProviderInfo;
 use crate::traits::{Decoder, Encoder};
 
@@ -39,6 +40,28 @@ pub trait CodecProvider {
     /// depend on the machine (a hardware encoder absent on this host is absent
     /// here too).
     fn descriptors(&self) -> Vec<CodecDescriptor>;
+
+    /// Every profile this provider states for `codec` in `direction`: the
+    /// union over its descriptors, in first-seen order and without duplicates.
+    ///
+    /// The default answer reads [`Self::descriptors`], so an adapter that
+    /// states profiles only on its descriptors needs no code of its own here.
+    /// [`Registry::profiles`](crate::Registry::profiles) attributes each of
+    /// them to the providers that state it.
+    fn profiles(&self, codec: CodecId, direction: Direction) -> Vec<CodecProfile> {
+        let mut profiles: Vec<CodecProfile> = Vec::new();
+        for descriptor in self.descriptors() {
+            if descriptor.codec() != codec || descriptor.direction() != direction {
+                continue;
+            }
+            for profile in descriptor.profiles() {
+                if !profiles.contains(profile) {
+                    profiles.push(*profile);
+                }
+            }
+        }
+        profiles
+    }
 
     /// Whether `implementation` opens here.
     ///

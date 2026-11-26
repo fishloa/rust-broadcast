@@ -3,6 +3,8 @@
 use alloc::string::String;
 use core::fmt;
 
+use crate::codec::CodecId;
+
 /// Why a [`Preference`](crate::Preference) text form was refused.
 ///
 /// Every variant names the token it refused, so a command-line error says
@@ -23,6 +25,14 @@ pub enum PreferenceError {
     /// A codec token names no codec: `foo=libav`.
     UnknownCodec {
         /// The codec token.
+        token: String,
+    },
+    /// A profile token names no profile of the preference's codec:
+    /// `h264/nope=libav`.
+    UnknownProfile {
+        /// The codec whose profiles were searched.
+        codec: CodecId,
+        /// The profile token.
         token: String,
     },
     /// The provider part is empty: `aac=`.
@@ -60,6 +70,13 @@ impl PreferenceError {
         }
     }
 
+    pub(crate) fn unknown_profile(codec: CodecId, token: &str) -> Self {
+        Self::UnknownProfile {
+            codec,
+            token: token.into(),
+        }
+    }
+
     pub(crate) fn invalid_character(token: &str, character: char) -> Self {
         Self::InvalidCharacter {
             token: token.into(),
@@ -80,6 +97,13 @@ impl fmt::Display for PreferenceError {
             }
             Self::UnknownCodec { token } => {
                 write!(f, "preference codec token `{token}` names no codec")
+            }
+            Self::UnknownProfile { codec, token } => {
+                write!(
+                    f,
+                    "preference profile token `{token}` names no {} profile",
+                    codec.name()
+                )
             }
             Self::EmptyProvider => f.write_str("preference has an empty provider"),
             Self::EmptyImplementation => f.write_str("preference has an empty implementation"),

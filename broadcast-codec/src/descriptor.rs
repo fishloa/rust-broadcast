@@ -5,6 +5,8 @@ use alloc::vec::Vec;
 
 use crate::codec::CodecId;
 use crate::direction::Direction;
+use crate::profile::CodecProfile;
+use crate::profile_error::ProfileError;
 use crate::sample_format::SampleFormat;
 use crate::video::PixelFormat;
 
@@ -15,11 +17,12 @@ use crate::video::PixelFormat;
 /// `h264_videotoolbox`); the two are equal when a provider offers exactly one.
 /// The format lists are what the implementation accepts for
 /// [`Direction::Encode`] or produces for [`Direction::Decode`]; an empty list
-/// means the provider does not state them. `profiles` names the codec's
-/// variants this implementation handles, in the provider's own spelling
-/// (`LC`, `HE-AAC`, `High`, `Main 10`); empty means "not stated", not "all".
-/// Profiles inform a selector and the inventory, and the registry never reads
-/// them when choosing.
+/// means the provider does not state them. `profiles` names the codec variants
+/// this implementation handles, as [`CodecProfile`] keys the caller and the
+/// registry share; an empty list means "not stated", not "all", so the
+/// registry keeps such an implementation for every profile. A stated list is
+/// binding: the registry never offers an implementation a stream of a profile
+/// the implementation does not list.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CodecDescriptor {
@@ -31,7 +34,7 @@ pub struct CodecDescriptor {
     lossless: bool,
     sample_formats: Vec<SampleFormat>,
     pixel_formats: Vec<PixelFormat>,
-    profiles: Vec<String>,
+    profiles: Vec<CodecProfile>,
 }
 
 impl CodecDescriptor {
@@ -84,12 +87,23 @@ impl CodecDescriptor {
         self
     }
 
-    /// State the codec variants the implementation handles, in the provider's
-    /// own spelling.
-    #[must_use]
-    pub fn with_profiles(mut self, profiles: Vec<String>) -> Self {
-        self.profiles = profiles;
-        self
+    /// State the codec variants the implementation handles.
+    ///
+    /// # Errors
+    /// [`ProfileError::Mismatch`] when a profile belongs to another codec.
+    pub fn with_profiles(
+        mut self,
+        profiles: impl IntoIterator<Item = CodecProfile>,
+    ) -> Result<Self, ProfileError> {
+        let mut stated = Vec::new();
+        for profile in profiles {
+            if profile.codec() != self.codec {
+                return Err(ProfileError::mismatch(profile, self.codec));
+            }
+            stated.push(profile);
+        }
+        self.profiles = stated;
+        Ok(self)
     }
 
     /// Name of the provider that offers this implementation.
@@ -142,10 +156,9 @@ impl CodecDescriptor {
         &self.pixel_formats
     }
 
-    /// Codec variants the implementation handles, in the provider's own
-    /// spelling; empty means "not stated".
+    /// Codec variants the implementation handles; empty means "not stated".
     #[must_use]
-    pub fn profiles(&self) -> &[String] {
+    pub fn profiles(&self) -> &[CodecProfile] {
         &self.profiles
     }
 }

@@ -6,6 +6,8 @@ use broadcast_core::timescale::Timescale;
 use core::num::NonZeroU32;
 
 use crate::audio::ChannelLayout;
+use crate::profile::CodecProfile;
+use crate::profile_error::ProfileError;
 
 /// The token that introduces an [`CodecId::Other`] tag in the text form.
 pub(crate) const OTHER_TOKEN: &str = "other";
@@ -139,28 +141,28 @@ fn other_from_digits(digits: &str) -> Option<CodecId> {
         .map(CodecId::Other)
 }
 
+/// `label` lower-cased with spaces and punctuation removed: the compact token
+/// the codec and profile text forms are built from.
+pub(crate) fn compact(label: &str) -> String {
+    label
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
 /// The compact text form a preference and the inventory use: [`CodecId::name`]
 /// lower-cased with punctuation removed, or `other:<8 hex digits>`.
 pub(crate) fn token(codec: CodecId) -> String {
     match codec {
         CodecId::Other(tag) => alloc::format!("{OTHER_TOKEN}{OTHER_SEPARATOR}{tag:08x}"),
-        named => named
-            .name()
-            .chars()
-            .filter(char::is_ascii_alphanumeric)
-            .map(|c| c.to_ascii_lowercase())
-            .collect(),
+        named => compact(named.name()),
     }
 }
 
 /// Whether `input` names `label` once case and punctuation are ignored.
 pub(crate) fn same_token(input: &str, label: &str) -> bool {
-    fn token(text: &str) -> impl Iterator<Item = char> + '_ {
-        text.chars()
-            .filter(char::is_ascii_alphanumeric)
-            .map(|c| c.to_ascii_lowercase())
-    }
-    token(input).eq(token(label))
+    compact(input) == compact(label)
 }
 
 broadcast_core::impl_spec_display!(CodecId, Other);
@@ -232,11 +234,14 @@ impl VideoParameters {
 ///
 /// `extradata` is the out-of-band configuration in the form the codec's own
 /// container record carries it (for example an `avcC` or `AudioSpecificConfig`
-/// payload); the seam treats it as opaque bytes.
+/// payload); the seam treats it as opaque bytes. `profile` is the codec variant
+/// the stream is in, when the caller knows it; the registry never offers the
+/// stream to an implementation that states it cannot handle that profile.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodecParameters {
     codec: CodecId,
+    profile: Option<CodecProfile>,
     extradata: Vec<u8>,
     time_base: Timescale,
     audio: Option<AudioParameters>,
@@ -250,11 +255,24 @@ impl CodecParameters {
     pub const fn new(codec: CodecId, time_base: Timescale) -> Self {
         Self {
             codec,
+            profile: None,
             extradata: Vec::new(),
             time_base,
             audio: None,
             video: None,
         }
+    }
+
+    /// State the codec profile the stream is in.
+    ///
+    /// # Errors
+    /// [`ProfileError::Mismatch`] when the profile belongs to another codec.
+    pub fn with_profile(mut self, profile: CodecProfile) -> Result<Self, ProfileError> {
+        if profile.codec() != self.codec {
+            return Err(ProfileError::mismatch(profile, self.codec));
+        }
+        self.profile = Some(profile);
+        Ok(self)
     }
 
     /// Replace the opaque out-of-band configuration.
@@ -282,6 +300,12 @@ impl CodecParameters {
     #[must_use]
     pub const fn codec(&self) -> CodecId {
         self.codec
+    }
+
+    /// The codec profile the stream is in, when it is known.
+    #[must_use]
+    pub const fn profile(&self) -> Option<CodecProfile> {
+        self.profile
     }
 
     /// Opaque out-of-band configuration.
