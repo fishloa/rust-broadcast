@@ -56,17 +56,17 @@ fn scan(name: &str, files: &[(String, String)]) -> Vec<String> {
                         .collect::<String>();
                     let open_tuple = after.find('(');
                     let open_brace = after.find('{');
-                    if let Some(tuple) = open_tuple {
-                        if open_brace.is_none_or(|brace| tuple < brace) {
-                            let tuple_body = &after[tuple..];
-                            if tuple_body.contains("pub ") {
-                                problems.push(format!(
-                                    "{name}: {path}:{}: public tuple field in `{type_name}`: {trimmed}",
-                                    number + 1
-                                ));
-                            }
-                            break;
+                    if let Some(tuple) = open_tuple
+                        && open_brace.is_none_or(|brace| tuple < brace)
+                    {
+                        let tuple_body = &after[tuple..];
+                        if tuple_body.contains("pub ") {
+                            problems.push(format!(
+                                "{name}: {path}:{}: public tuple field in `{type_name}`: {trimmed}",
+                                number + 1
+                            ));
                         }
+                        break;
                     }
                     let Some(brace) = open_brace else {
                         break;
