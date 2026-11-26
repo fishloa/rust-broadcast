@@ -41,6 +41,8 @@ const FFMPEG_DEADLINE: Duration = Duration::from_secs(120);
 const YUV420P_FRAME_BYTES: usize = 3;
 /// The sample rate the profile test builds its AAC stream at.
 const PROBE_RATE: u32 = 48_000;
+/// Extra bytes one synthetic padded plane carries per row.
+const PLANE_PADDING: usize = 32;
 /// The media timescale the TS fixture states.
 const TS_TIMESCALE: u32 = 90_000;
 /// The MPEG-2 video bit rate the round trip asks for, in bits per second.
@@ -941,6 +943,10 @@ fn t10_a_candidate_that_cannot_serve_falls_back() {
         panic!("`libx264rgb` does not take an 8-bit 4:2:0 source");
     };
     println!("strict refusal: {strict_error}");
+    assert!(
+        strict_error.to_string().contains("libx264rgb"),
+        "{strict_error}"
+    );
 
     let Some(next) = registry() else {
         return;
@@ -1054,5 +1060,96 @@ fn t12_renders_the_inventory() {
         provider
             .licence()
             .is_some_and(|licence| !licence.is_empty())
+    );
+}
+
+/// A copy of `frame` whose planes are padded to a wider line than the visible
+/// row, as a decoder may hand back.
+fn padded(frame: &VideoFrame) -> VideoFrame {
+    let format = frame.format();
+    let width = usize::try_from(frame.width().get()).expect("width");
+    let height = usize::try_from(frame.height().get()).expect("height");
+    let VideoStorage::Cpu(planes) = frame.storage() else {
+        panic!("hardware storage");
+    };
+    let mut padded = Vec::with_capacity(planes.len());
+    for (index, plane) in planes.iter().enumerate() {
+        let size = format.plane_size(width, height, index).expect("plane size");
+        let stride = plane.stride().get();
+        let rows = plane.data().len() / stride;
+        let row_bytes = size / rows;
+        let padded_stride = stride + PLANE_PADDING;
+        let mut data = vec![0u8; padded_stride * rows];
+        for row in 0..rows {
+            let from = row * stride;
+            let to = row * padded_stride;
+            data[to..to + row_bytes].copy_from_slice(&plane.data()[from..from + row_bytes]);
+        }
+        padded.push(broadcast_codec::VideoPlane::new(
+            data,
+            std::num::NonZeroUsize::new(padded_stride).expect("a stride"),
+        ));
+    }
+    VideoFrame::new(
+        frame.width(),
+        frame.height(),
+        format,
+        VideoStorage::Cpu(padded),
+    )
+    .expect("a padded picture")
+}
+
+#[test]
+fn a_padded_source_plane_is_copied_by_its_stride() {
+    let Some(registry) = registry() else {
+        return;
+    };
+    let Some((parameters, units)) = ts_track(true) else {
+        panic!("the fixture must carry a H.264 track");
+    };
+    let mut decoder = registry.decoder(&parameters).expect("an H.264 decoder");
+    let Some(Frame::Video(original)) = decode(&mut *decoder, &units).into_iter().next() else {
+        panic!("one picture");
+    };
+    let padded = padded(&original);
+
+    let config = broadcast_codec::EncoderConfig::new(
+        CodecId::Mpeg2Video,
+        broadcast_codec::Timescale::from_nonzero(
+            NonZeroU32::new(MPEG2_TICKS).expect("a non-zero timescale"),
+        ),
+    )
+    .with_video(broadcast_codec::VideoParameters::new(
+        NonZeroU32::new(TS_WIDTH).expect("a width"),
+        NonZeroU32::new(TS_HEIGHT).expect("a height"),
+    ))
+    .with_pixel_format(PixelFormat::Yuv420p8)
+    .with_bit_rate(std::num::NonZeroU64::new(MPEG2_BIT_RATE).expect("a bit rate"))
+    .with_gop(NonZeroU32::new(MPEG2_GOP).expect("a group length"));
+
+    let encode_one = |frame: VideoFrame| {
+        let mut encoder = registry.encoder(&config).expect("an MPEG-2 encoder");
+        let frames = encode(&mut *encoder, vec![Frame::Video(frame)]);
+        let reported = encoder.parameters().expect("parameters").clone();
+        let units: Vec<Unit> = frames
+            .iter()
+            .map(|packet| Unit {
+                data: packet.data().to_vec(),
+                pts: packet.pts(),
+                dts: packet.dts(),
+                key: packet.key(),
+            })
+            .collect();
+        let mut decoder = registry.decoder(&reported).expect("a decoder");
+        decode(&mut *decoder, &units)
+    };
+    let plain = encode_one(original);
+    let padded = encode_one(padded);
+    assert_eq!(plain.len(), 1);
+    assert_eq!(padded.len(), 1);
+    assert_eq!(
+        hash_visible(video(&plain[0])),
+        hash_visible(video(&padded[0])),
+        "padding must not reach the encoded picture"
     );
 }

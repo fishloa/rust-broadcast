@@ -110,7 +110,7 @@ impl LibavEncoder {
                     encoder.set_gop(gop.get());
                 }
                 target = Target::Video(pixel_format);
-                open_video(encoder, &options).map(Opened::Video)?
+                open_video(encoder, implementation, &options).map(Opened::Video)?
             }
             (None, Some(audio)) => {
                 let mut encoder = ffmpeg_next::codec::Context::new_with_codec(codec)
@@ -128,7 +128,7 @@ impl LibavEncoder {
                 if let Some(bit_rate) = config.bit_rate() {
                     encoder.set_bit_rate(usize::try_from(bit_rate.get()).unwrap_or(usize::MAX));
                 }
-                open_audio(encoder, &options).map(Opened::Audio)?
+                open_audio(encoder, implementation, &options).map(Opened::Audio)?
             }
             _ => {
                 return Err(CodecError::unsupported(
@@ -183,6 +183,7 @@ fn audio_encoder_format(config: &EncoderConfig) -> Sample {
 /// Build the options dictionary and open.
 fn open_video(
     encoder: VideoBuilder,
+    implementation: &str,
     options: &[(&str, String)],
 ) -> Result<VideoEncoder, CodecError> {
     let mut dictionary = Dictionary::new();
@@ -191,12 +192,13 @@ fn open_video(
     }
     encoder
         .open_with(dictionary)
-        .map_err(|error| refused_option(options, &error))
+        .map_err(|error| refused_option(implementation, options, &error))
 }
 
 /// Build the options dictionary and open.
 fn open_audio(
     encoder: AudioBuilder,
+    implementation: &str,
     options: &[(&str, String)],
 ) -> Result<AudioEncoder, CodecError> {
     let mut dictionary = Dictionary::new();
@@ -205,15 +207,19 @@ fn open_audio(
     }
     encoder
         .open_with(dictionary)
-        .map_err(|error| refused_option(options, &error))
+        .map_err(|error| refused_option(implementation, options, &error))
 }
 
 /// A refusal naming the option libav's own message names, when it names one.
-fn refused_option(options: &[(&str, String)], error: &ffmpeg_next::Error) -> CodecError {
+fn refused_option(
+    implementation: &str,
+    options: &[(&str, String)],
+    error: &ffmpeg_next::Error,
+) -> CodecError {
     let message = error.to_string();
     match options.iter().find(|(key, _)| message.contains(key)) {
         Some((key, _)) => CodecError::refused(format!("option `{key}`: {message}")),
-        None => refused("this implementation", error),
+        None => refused(implementation, error),
     }
 }
 
@@ -441,8 +447,12 @@ impl Encoder for LibavEncoder {
             (Opened::Audio(encoder), Target::Audio(format), Frame::Audio(audio)) => {
                 send_audio(encoder, implementation, format, audio)
             }
-            (Opened::Video(_), _, _) => Err(CodecError::refused("an audio frame for a video encoder")),
-            (Opened::Audio(_), _, _) => Err(CodecError::refused("a video frame for an audio encoder")),
+            (Opened::Video(_), _, _) => {
+                Err(CodecError::refused("an audio frame for a video encoder"))
+            }
+            (Opened::Audio(_), _, _) => {
+                Err(CodecError::refused("a video frame for an audio encoder"))
+            }
         }
     }
 

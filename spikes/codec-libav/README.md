@@ -29,6 +29,29 @@ vendoring feature enabled.
 
 This spike is not published and carries no release version.
 
+## What the binding allows
+
+`ffmpeg-next` 8.1 does not expose every libav facility the adapter would use:
+
+- **No extradata setter.** A H.264 decoder is opened in libav's own in-band
+  mode and the `avcC` parameter sets are supplied in-band; a raw AAC access
+  unit is wrapped in an ADTS header. The adapter's own framing code does this.
+- **No hardware-device API.** libav's hardware *acceleration modes* of an
+  ordinary decoder are neither listed nor used. A dedicated hardware codec that
+  libav registers under its own name (for example the `h264_videotoolbox`
+  encoder) is listed and usable.
+- **Frame side data is opaque.** Colour description is carried; content-light
+  and mastering-display metadata are not.
+- **Unknown option keys are ignored by libavcodec.** An option whose *value*
+  libav rejects is refused naming the key; an unknown key cannot be named.
+- **A video encoder's time base is the picture rate.** libav's MPEG-2 encoder
+  refuses a 1/90000 time base, so the caller states one tick per picture.
+- **The output storage is the caller's choice.** `EncoderConfig` states the
+  target pixel format, or sample format and layout. When it states none, the
+  adapter configures 8-bit 4:2:0 pictures, and interleaved 16-bit samples for
+  FLAC and Opus or planar 32-bit floats for every other audio codec. A source
+  frame in another storage is refused, never converted.
+
 ## What it provides
 
 - `LibavProvider`: every decoder and encoder the linked libav reports whose
