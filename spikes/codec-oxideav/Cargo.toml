@@ -1,0 +1,25 @@
+[workspace]
+
+[package]
+name = "codec-oxideav"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Codec-seam spike: OxideAV audio decoders behind broadcast-codec::Decoder."
+
+[dependencies]
+broadcast-codec = { path = "../../broadcast-codec" }
+broadcast-loudness = { path = "../../broadcast-loudness" }
+oxideav-aac = "0.1"
+oxideav-basic = "0.0"
+oxideav-codec = "0.1"
+oxideav-core = "0.1"
+oxideav-mp3 = "0.1"
+oxideav-opus = "0.0"
+
+[dev-dependencies]
+codec-symphonia = { path = "../codec-symphonia" }
+test-fixtures = { path = "../../test-fixtures" }
+
+[lints.rust]
+unsafe_code = "deny"
