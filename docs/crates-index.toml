@@ -91,9 +91,9 @@ blurb = "`publish = false` dev-dependencies shared by the workspace's test suite
 
 [crate.broadcast-core]
 domain = "foundation"
-summary = "Frozen wire-format contract: Parse/Serialize, checked field widths, bit I/O, shared errors, timescale and the CENC scheme identity."
+summary = "Frozen wire-format contract: Parse/Serialize, checked field widths, bit I/O, shared errors, big-endian wire field readers, timescale and the CENC scheme identity."
 standards = "ISO/IEC 23001-7 scheme identity (`cenc`); no format of its own"
-what = "The stable floor every wire crate builds on: the symmetric `Parse<'a>` / `Serialize` traits, the checked field-width helpers (`len`), MSB-first bit I/O (`bits`), the shared error kinds (`error`), typed reserved-bit fields (`reserved`), the media `timescale` codec and the container-independent CENC scheme identity, plus the `impl_spec_display!` macro. `#![no_std]` + `alloc`, no non-optional dependency; the public API is meant to be frozen (pinned by the `core_api_pin` guard). Unpublished until its release lane runs."
+what = "The stable floor every wire crate builds on: the symmetric `Parse<'a>` / `Serialize` traits, the checked field-width helpers (`len`), MSB-first bit I/O (`bits`), the shared error kinds (`error`), typed reserved-bit fields (`reserved`), the media `timescale` codec, the container-independent CENC scheme identity and the big-endian wire field readers (`wire`), plus the `impl_spec_display!` macro. `#![no_std]` + `alloc`, no non-optional dependency; the public API is meant to be frozen (pinned by the `core_api_pin` guard). Unpublished until its release lane runs."
 crates_io = false
 lifecycle = "internal"
 
@@ -329,7 +329,7 @@ lifecycle = "active"
 domain = "containers"
 summary = "ISO/IEC 14496-12:2026 (ISO BMFF) box syntax plus the sans-IO MP4 reader and writers: sample tables, fragments, CENC boxes, emsg, typed metadata, private-box registry."
 standards = "ISO/IEC 14496-12:2026, ISO/IEC 23001-7 (CENC boxes), ISO/IEC 23009-1 §5.10.3.3 (emsg), QuickTime File Format, 3GPP TS 26.244 (3GPP metadata atoms); DASH-IF IOP Part 10 V5.0.0"
-what = "Parses and serializes the ISO BMFF box layer below `transmux`: `size`/`type` headers (64-bit `largesize`, `uuid` usertype), the size-driven `BoxIter` walker, `ftyp`/`styp`/`mdat`, the sample-table/timing boxes, the visual-extension and sample-group boxes, the movie-fragment boxes, the CENC boxes, the §8.8.7/§8.8.8 fragment sample-offset resolver, the DASH Event Message Box (`emsg`), typed `udta`/`meta` metadata and the QuickTime atoms a `.mov` carries. On top of it: a sans-IO `Reader` that asks for structure byte ranges and yields every track and one sample descriptor at a time (fragmented files included, seeking through `stss`/`sidx`/`mfra`), a sample plan that is the file's index, fragmented and progressive writers, blocking drivers, and a `BoxRegistry` a third party registers its own private box or sample entry with. A file read and rewritten through it comes back byte for byte. It knows box syntax only, never the media IR or a codec bitstream, so it depends only on `broadcast-common`."
+what = "Parses and serializes the ISO BMFF box layer below `transmux`: `size`/`type` headers (64-bit `largesize`, `uuid` usertype), the size-driven `BoxIter` walker, `ftyp`/`styp`/`mdat`, the sample-table/timing boxes, the visual-extension and sample-group boxes, the movie-fragment boxes, the CENC boxes, the §8.8.7/§8.8.8 fragment sample-offset resolver, the DASH Event Message Box (`emsg`), typed `udta`/`meta` metadata and the QuickTime atoms a `.mov` carries. On top of it: a sans-IO `Reader` that asks for structure byte ranges and yields every track and one sample descriptor at a time (fragmented files included, seeking through `stss`/`sidx`/`mfra`), a sample plan that is the file's index, fragmented and progressive writers, blocking drivers, and a `BoxRegistry` a third party registers its own private box or sample entry with. A file read and rewritten through it comes back byte for byte. It knows box syntax only, never the media IR or a codec bitstream, so it depends only on `broadcast-core`."
 crates_io = true
 lifecycle = "active"
 

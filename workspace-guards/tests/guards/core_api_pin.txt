@@ -96,6 +96,7 @@ mod len
 mod reserved
 mod timescale
 mod traits
+mod wire
 reserved::Reserved
 reserved::Reserved::FILL
 reserved::Reserved::MASK
@@ -126,3 +127,19 @@ timescale::rescale_u64
 timescale::to_micros
 traits::Parse
 traits::Serialize
+wire::U24_LEN
+wire::be_u16
+wire::be_u32
+wire::be_u64
+wire::fourcc_at
+wire::i16_at
+wire::i32_at
+wire::read_u16
+wire::read_u32
+wire::read_u48
+wire::read_u8
+wire::take
+wire::u16_at
+wire::u24_at
+wire::u32_at
+wire::u64_at
