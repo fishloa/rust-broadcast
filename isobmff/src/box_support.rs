@@ -465,3 +465,32 @@ impl OpaqueBox {
         Ok(c + self.data.len())
     }
 }
+
+/// Read one NUL-terminated UTF-8 string (an ISO `utf8string` field) from
+/// `bytes`, advancing `cursor` past the terminator when one is present.
+///
+/// The bytes are returned verbatim (the terminator is not) so a box round-trips
+/// even when a writer omitted the final NUL: [`write_c_string`] always adds it,
+/// which is the form the standard specifies.
+pub(crate) fn take_c_string(
+    bytes: &[u8],
+    cursor: &mut usize,
+    what: &'static str,
+) -> Result<Vec<u8>> {
+    let rest = bytes.get(*cursor..).ok_or(Error::InvalidInput(what))?;
+    let end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
+    let value = rest[..end].to_vec();
+    *cursor += end;
+    if *cursor < bytes.len() {
+        *cursor += 1;
+    }
+    Ok(value)
+}
+
+/// Write one NUL-terminated string at `offset`, returning the bytes written.
+pub(crate) fn write_c_string(buf: &mut [u8], offset: usize, value: &[u8]) -> Result<usize> {
+    need_out(buf, offset + value.len() + 1)?;
+    buf[offset..offset + value.len()].copy_from_slice(value);
+    buf[offset + value.len()] = 0;
+    Ok(value.len() + 1)
+}

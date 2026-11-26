@@ -654,6 +654,10 @@ fn push_udta_child(child: &UdtaChild, items: &mut Vec<MetadataItem>) {
         UdtaChild::Chapters(chpl) => items.push(MetadataItem::Chapters(chpl.chapters.clone())),
         UdtaChild::Location(loci) => items.push(MetadataItem::Loci(loci.clone())),
         UdtaChild::Meta(meta) => push_meta(meta, items),
+        UdtaChild::Kind(_)
+        | UdtaChild::Label(_)
+        | UdtaChild::Loudness(_)
+        | UdtaChild::TrackSelection(_) => {}
         UdtaChild::Opaque(opaque) => items.push(MetadataItem::Opaque(opaque.clone())),
     }
 }

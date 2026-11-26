@@ -3049,6 +3049,53 @@ pub enum SampleEntryVariant {
 }
 
 impl SampleEntryVariant {
+    /// The sample entry's unmodelled child boxes, when this is an audio entry
+    /// that carries them.
+    #[must_use]
+    pub fn audio_config_boxes(&self) -> Option<&[OpaqueBox]> {
+        match self {
+            Self::Mp4a(e) => Some(&e.config_boxes),
+            Self::Ac3(e) => Some(&e.config_boxes),
+            Self::Ec3(e) => Some(&e.config_boxes),
+            Self::Ac4(e) => Some(&e.config_boxes),
+            Self::Opus(e) => Some(&e.config_boxes),
+            Self::Flac(e) => Some(&e.config_boxes),
+            Self::Mha(e) => Some(&e.config_boxes),
+            Self::Dts(e) => Some(&e.config_boxes),
+            Self::QuickTimeSound(e) => Some(&e.config_boxes),
+            _ => None,
+        }
+    }
+
+    /// The channel layout (`chnl`) this audio sample entry carries, when
+    /// present.
+    #[must_use]
+    pub fn channel_layout(&self) -> Option<crate::audio_boxes::ChannelLayoutBox> {
+        let child = self
+            .audio_config_boxes()?
+            .iter()
+            .find(|child| child.box_type == crate::audio_boxes::CHNL)?;
+        crate::audio_boxes::ChannelLayoutBox::parse_body(&child.data).ok()
+    }
+
+    /// The out-of-stream downmix instructions (`dmix`) this audio sample entry
+    /// carries, parsed against the entry's base channel count.
+    #[must_use]
+    pub fn downmix_instructions(
+        &self,
+        base_channel_count: u8,
+    ) -> Option<crate::audio_boxes::DownMixInstructionsBox> {
+        let child = self
+            .audio_config_boxes()?
+            .iter()
+            .find(|child| child.box_type == crate::audio_boxes::DMIX)?;
+        crate::audio_boxes::DownMixInstructionsBox::parse_body_with_base_channel_count(
+            &child.data,
+            base_channel_count,
+        )
+        .ok()
+    }
+
     /// The `stsd` version this entry requires.
     ///
     /// An `AudioSampleEntryV1` (`entry_version == 1`) is valid only inside an
@@ -3296,6 +3343,9 @@ pub enum StblChild {
     Stco(ChunkOffsetBox),
     Co64(ChunkLargeOffsetBox),
     Stss(SyncSampleBox),
+    Stdp(crate::sample_tables_extra::DegradationPriorityBox),
+    Padb(crate::sample_tables_extra::PaddingBitsBox),
+    Csgp(crate::sample_groups::CompactSampleToGroupBox),
     Opaque(Vec<u8>),
 }
 
@@ -3367,6 +3417,18 @@ fn parse_stbl_children(body: &[u8]) -> Result<Vec<StblChild>> {
                 Ok(b) => StblChild::Stss(b),
                 Err(_) => StblChild::Opaque(box_bytes.to_vec()),
             },
+            b"stdp" => match crate::sample_tables_extra::DegradationPriorityBox::parse(box_bytes) {
+                Ok(b) => StblChild::Stdp(b),
+                Err(_) => StblChild::Opaque(box_bytes.to_vec()),
+            },
+            b"padb" => match crate::sample_tables_extra::PaddingBitsBox::parse(box_bytes) {
+                Ok(b) => StblChild::Padb(b),
+                Err(_) => StblChild::Opaque(box_bytes.to_vec()),
+            },
+            b"csgp" => match crate::sample_groups::CompactSampleToGroupBox::parse(box_bytes) {
+                Ok(b) => StblChild::Csgp(b),
+                Err(_) => StblChild::Opaque(box_bytes.to_vec()),
+            },
             _ => StblChild::Opaque(box_bytes.to_vec()),
         });
     }
@@ -3386,6 +3448,9 @@ fn serialize_stbl_children(children: &[StblChild], buf: &mut [u8], off: &mut usi
             StblChild::Stco(b) => *off += b.serialize_into(&mut buf[*off..])?,
             StblChild::Co64(b) => *off += b.serialize_into(&mut buf[*off..])?,
             StblChild::Stss(b) => *off += b.serialize_into(&mut buf[*off..])?,
+            StblChild::Stdp(b) => *off += b.serialize_into(&mut buf[*off..])?,
+            StblChild::Padb(b) => *off += b.serialize_into(&mut buf[*off..])?,
+            StblChild::Csgp(b) => *off += b.serialize_into(&mut buf[*off..])?,
             StblChild::Opaque(d) => {
                 let len = d.len();
                 buf[*off..*off + len].copy_from_slice(d);
@@ -3410,6 +3475,9 @@ fn stbl_children_len(children: &[StblChild]) -> usize {
             StblChild::Stco(b) => b.serialized_len(),
             StblChild::Co64(b) => b.serialized_len(),
             StblChild::Stss(b) => b.serialized_len(),
+            StblChild::Stdp(b) => b.serialized_len(),
+            StblChild::Padb(b) => b.serialized_len(),
+            StblChild::Csgp(b) => b.serialized_len(),
             StblChild::Opaque(d) => d.len(),
         };
     }
@@ -3790,7 +3858,7 @@ impl Serialize for MediaInformationBox {
 pub const MDIA: [u8; 4] = *b"mdia";
 
 /// Typed child slots in an `mdia` (§8.4.1).
-const MDIA_TYPED_CHILDREN_MAX: usize = 3;
+const MDIA_TYPED_CHILDREN_MAX: usize = 4;
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -3798,6 +3866,8 @@ pub struct MediaBox {
     pub mdhd: Option<MediaHeaderBox>,
     pub hdlr: Option<HandlerBox>,
     pub minf: Option<MediaInformationBox>,
+    /// The extended language tag (§8.4.6), when present.
+    pub elng: Option<crate::track_desc::ExtendedLanguageBox>,
     pub opaque: Vec<OpaqueBox>,
     /// The wire order of this container's children (audit r05-W12).
     pub order: ChildOrder,
@@ -3816,6 +3886,7 @@ impl MediaBox {
             mdhd,
             hdlr,
             minf,
+            elng: None,
             opaque,
             order: ChildOrder::default(),
         }
@@ -3844,6 +3915,9 @@ impl MediaBox {
         if let Some(ref b) = self.minf {
             out.push(b);
         }
+        if let Some(ref b) = self.elng {
+            out.push(b);
+        }
         out
     }
 
@@ -3859,6 +3933,9 @@ impl MediaBox {
         if self.minf.is_some() {
             out.push(b"minf" as &'static [u8; BOX_TYPE_SIZE]);
         }
+        if self.elng.is_some() {
+            out.push(b"elng" as &'static [u8; BOX_TYPE_SIZE]);
+        }
         out
     }
 
@@ -3873,6 +3950,7 @@ impl<'a> Parse<'a> for MediaBox {
         let mut mdhd = None;
         let mut hdlr = None;
         let mut minf = None;
+        let mut elng = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
         for child in parse_box(bytes)?.0.children() {
@@ -3890,7 +3968,10 @@ impl<'a> Parse<'a> for MediaBox {
                     order.push(child.four_cc());
                     minf = Some(MediaInformationBox::parse(child.bytes)?);
                 }
-                // `elng` (§8.4.6) is not modelled and stays opaque, in place.
+                b"elng" => {
+                    order.push(child.four_cc());
+                    elng = Some(crate::track_desc::ExtendedLanguageBox::parse(child.bytes)?);
+                }
                 _ => {
                     order.push_opaque(child.four_cc());
                     opaque.push(OpaqueBox {
@@ -3906,6 +3987,7 @@ impl<'a> Parse<'a> for MediaBox {
             mdhd,
             hdlr,
             minf,
+            elng,
             opaque,
             order,
         })
@@ -4055,7 +4137,7 @@ impl Serialize for EditBox {
 pub const TRAK: [u8; 4] = *b"trak";
 
 /// Typed child slots in a `trak` (§8.3.1).
-const TRAK_TYPED_CHILDREN_MAX: usize = 3;
+const TRAK_TYPED_CHILDREN_MAX: usize = 4;
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -4063,6 +4145,8 @@ pub struct TrackBox {
     pub tkhd: TrackHeaderBox,
     pub edts: Option<EditBox>,
     pub mdia: Option<MediaBox>,
+    /// The track groups (§8.3.4), when present.
+    pub trgr: Option<crate::track_desc::TrackGroupBox>,
     pub opaque: Vec<OpaqueBox>,
     /// The wire order of this container's children (audit r05-W12).
     pub order: ChildOrder,
@@ -4077,6 +4161,42 @@ impl TrackBox {
             .find(|b| b.box_type == *b"tref")
             .map(|b| crate::track_reference::TrackReferenceBox::parse_body(&b.data))
             .transpose()
+    }
+
+    /// The track's sample-group mappings, from both `sbgp` and `csgp`, in
+    /// wire order.
+    ///
+    /// Both box types feed the one [`crate::sample_groups::SampleGroupMapping`]
+    /// lookup, so a caller never reads two shapes for the same fact.
+    /// `max_samples` caps a compact mapping's expansion; pass
+    /// [`crate::limits::DEFAULT_MAX_SAMPLES_PER_TRACK`](crate::limits)
+    /// as `usize` for the crate's hostile-input default.
+    pub fn sample_group_mappings(
+        &self,
+        max_samples: usize,
+    ) -> Result<Vec<crate::sample_groups::SampleGroupMapping>> {
+        let Some(stbl) = self
+            .mdia
+            .as_ref()
+            .and_then(|mdia| mdia.minf.as_ref())
+            .and_then(|minf| minf.stbl.as_ref())
+        else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        for child in &stbl.children {
+            match child {
+                StblChild::Csgp(csgp) => out.push(csgp.mapping_with_limit(max_samples)?),
+                StblChild::Opaque(bytes)
+                    if bytes.get(BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE)
+                        == Some(b"sbgp".as_slice()) =>
+                {
+                    out.push(crate::sample_groups::SampleToGroupBox::parse(bytes)?.mapping());
+                }
+                _ => {}
+            }
+        }
+        Ok(out)
     }
 
     /// The track's typed `udta`/`meta` metadata, when either is present.
@@ -4100,6 +4220,7 @@ impl TrackBox {
             tkhd,
             edts,
             mdia,
+            trgr: None,
             opaque,
             order: ChildOrder::default(),
         }
@@ -4124,6 +4245,9 @@ impl TrackBox {
         if let Some(ref b) = self.mdia {
             out.push(b);
         }
+        if let Some(ref b) = self.trgr {
+            out.push(b);
+        }
         out
     }
 
@@ -4136,6 +4260,9 @@ impl TrackBox {
         }
         if self.mdia.is_some() {
             out.push(b"mdia");
+        }
+        if self.trgr.is_some() {
+            out.push(b"trgr");
         }
         out
     }
@@ -4151,6 +4278,7 @@ impl<'a> Parse<'a> for TrackBox {
         let mut tkhd = None;
         let mut edts = None;
         let mut mdia = None;
+        let mut trgr = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
         for child in parse_box(bytes)?.0.children() {
@@ -4168,7 +4296,11 @@ impl<'a> Parse<'a> for TrackBox {
                     order.push(child.four_cc());
                     mdia = Some(MediaBox::parse(child.bytes)?);
                 }
-                // `tref`/`trgr`/`udta`/`meta` stay opaque, in place.
+                b"trgr" => {
+                    order.push(child.four_cc());
+                    trgr = Some(crate::track_desc::TrackGroupBox::parse(child.bytes)?);
+                }
+                // `tref`/`udta`/`meta` stay opaque, in place.
                 _ => {
                     order.push_opaque(child.four_cc());
                     opaque.push(OpaqueBox {
@@ -4188,6 +4320,7 @@ impl<'a> Parse<'a> for TrackBox {
             }))?,
             edts,
             mdia,
+            trgr,
             opaque,
             order,
         })
@@ -4356,6 +4489,10 @@ impl Serialize for TrackExtendsBox {
 pub struct MovieExtendsBox {
     /// One `trex` per track.
     pub trex: Vec<TrackExtendsBox>,
+    /// The level assignment (§8.8.13), when present.
+    pub leva: Option<crate::index_boxes::LevelAssignmentBox>,
+    /// The track extension properties (§8.8.15), in wire order.
+    pub trep: Vec<crate::index_boxes::TrackExtensionPropertiesBox>,
     /// Other `mvex` children preserved verbatim (e.g. `mehd`).
     pub opaque: Vec<OpaqueBox>,
     /// The wire order of this container's children (audit r05-W12).
@@ -4368,6 +4505,8 @@ impl MovieExtendsBox {
     pub fn new(trex: Vec<TrackExtendsBox>, opaque: Vec<OpaqueBox>) -> Self {
         Self {
             trex,
+            leva: None,
+            trep: Vec::new(),
             opaque,
             order: ChildOrder::default(),
         }
@@ -4386,15 +4525,31 @@ impl MovieExtendsBox {
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
     fn typed_children(&self) -> Vec<&dyn SerializeBox<Error = crate::Error>> {
-        self.trex
+        let mut out: Vec<&dyn SerializeBox<Error = crate::Error>> = self
+            .trex
             .iter()
             .map(|t| t as &dyn SerializeBox<Error = crate::Error>)
-            .collect()
+            .collect();
+        if let Some(ref leva) = self.leva {
+            out.push(leva);
+        }
+        for trep in &self.trep {
+            out.push(trep);
+        }
+        out
     }
 
     /// This container's typed children in declaration order, as four-CCs.
     fn typed_four_ccs(&self) -> Vec<&'static [u8; BOX_TYPE_SIZE]> {
-        alloc::vec![b"trex" as &'static [u8; BOX_TYPE_SIZE]; self.trex.len()]
+        let mut out = alloc::vec![b"trex" as &'static [u8; BOX_TYPE_SIZE]; self.trex.len()];
+        if self.leva.is_some() {
+            out.push(b"leva");
+        }
+        out.extend(core::iter::repeat_n(
+            b"trep" as &'static [u8; BOX_TYPE_SIZE],
+            self.trep.len(),
+        ));
+        out
     }
 
     fn child_order(&self) -> Vec<Option<usize>> {
@@ -4406,6 +4561,8 @@ impl<'a> Parse<'a> for MovieExtendsBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let mut trex = Vec::new();
+        let mut leva = None;
+        let mut trep = Vec::new();
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
         for child in parse_box(bytes)?.0.children() {
@@ -4415,7 +4572,17 @@ impl<'a> Parse<'a> for MovieExtendsBox {
                     order.push(child.four_cc());
                     trex.push(TrackExtendsBox::parse(child.bytes)?);
                 }
-                // `mehd`/`leva`/`trep` stay opaque, in place.
+                b"leva" => {
+                    order.push(child.four_cc());
+                    leva = Some(crate::index_boxes::LevelAssignmentBox::parse(child.bytes)?);
+                }
+                b"trep" => {
+                    order.push(child.four_cc());
+                    trep.push(crate::index_boxes::TrackExtensionPropertiesBox::parse(
+                        child.bytes,
+                    )?);
+                }
+                // `mehd` and any unmodelled child stay opaque, in place.
                 _ => {
                     order.push_opaque(child.four_cc());
                     opaque.push(OpaqueBox {
@@ -4429,6 +4596,8 @@ impl<'a> Parse<'a> for MovieExtendsBox {
         }
         Ok(Self {
             trex,
+            leva,
+            trep,
             opaque,
             order,
         })
@@ -4726,6 +4895,7 @@ pub fn protect_sample_entry(
         }),
         scheme_info: Some(crate::cenc::SchemeInformationBox {
             tenc: Some(tenc.clone()),
+            stvi: None,
             extra_boxes: Vec::new(),
         }),
         extra_boxes: Vec::new(),

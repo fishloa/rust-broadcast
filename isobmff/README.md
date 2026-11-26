@@ -13,6 +13,12 @@ It never knows the media IR or a codec bitstream.
 
 ## Coverage
 
+Typed 76 of 167 registry box types (ISO/IEC 14496-12:2026). The
+`tests/it/coverage.rs` test loads
+`private/specs-verified/mpeg/isobmff/box-registry-14496-12-2026.tsv` and pins
+every remaining type under its issue tier, so these counts cannot drift; the
+types themselves are the one table in `src/coverage.rs`.
+
 | Module | Boxes (four-CC) |
 |---|---|
 | `box_types` | `size`/`type` header, `largesize`, `uuid` usertype, the `BoxIter` walker |
@@ -44,8 +50,12 @@ It never knows the media IR or a codec bitstream.
 | `hdr_boxes` | `mdcv`, `clli` |
 | `timing` | `stts`, `ctts`, `cslg`, `elst`, `sidx` |
 | `visual_ext` | `pasp`, `clap`, `colr` |
+| `audio_boxes` | `chnl`, `dmix`, `ludt`/`tlou`/`alou`, `labl` |
+| `track_desc` | `elng`, `kind`, `trgr` (`msrc`/`ster`), `tsel`, `stvi` |
+| `index_boxes` | `ssix`, `leva`, `pdin`, `trep` |
+| `sample_tables_extra` | `stdp`, `padb`, `stsg` |
 | `cenc` | `tenc`, `senc`, `pssh`, `saiz`, `saio`, `sinf`, `frma`, `schm`, `schi` |
-| `sample_groups` | `prft`, `sgpd`, `sbgp`, `subs`, `ssrt` |
+| `sample_groups` | `prft`, `sgpd`, `sbgp`, `csgp`, `subs`, `ssrt` |
 | `movie_fragment` | `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun` |
 | `limits` | hostile-input caps (`Limits`) for the Phase 2 reader |
 | `writer` | sans-IO fragmented writer (init segment, `moof`+`mdat`, CENC media-segment protection, recorded/compact fragment layouts, regenerated `sidx`/`mfra`) and progressive writer (`Writer::progressive`: whole-file layout from a plan, `stco`/`co64`, seekable or append-only sink) |
@@ -65,6 +75,38 @@ It never knows the media IR or a codec bitstream.
 
 Every type implements the workspace `Parse` / `Serialize` pair, so a parse →
 serialize round-trip is byte-identical.
+
+## Tier 1 box evidence
+
+The tier 1 boxes (issue #4167) are proven one of two ways: against bytes an
+independent tool wrote, or against bytes assembled from the clause. A
+fixture-backed box is asserted field by field against that tool's own dump and
+re-serialized byte-exact from the file's bytes; a clause-assembled box says so
+in its test. `fixtures/mp4/boxes/PROVENANCE.md` records the exact command, the
+tool version and the dump for every file, and lists what was tried for each box
+that no installed tool writes.
+
+| Box | Clause | Evidence | File |
+|---|---|---|---|
+| `chnl` | §12.2.4 | real: written by ffmpeg 8.1.2, dumped by GPAC 26.07 | `mp4/boxes/chnl-ipcm.mp4` |
+| `dmix` | §12.2.5 | clause-assembled | — |
+| `ludt` | §12.2.7 | real: Apple `afconvert --soundcheck-generate` | `mp4/boxes/loudness.m4a` |
+| `tlou` | §12.2.7 | real: same file | `mp4/boxes/loudness.m4a` |
+| `alou` | §12.2.7 | clause-assembled | — |
+| `labl` | §8.10.5 | clause-assembled | — |
+| `elng` | §8.4.6 | real: GPAC 26.07 | `mp4/boxes/track-description.mp4` |
+| `kind` | §8.10.4 | real: GPAC 26.07 | `mp4/boxes/track-description.mp4` |
+| `trgr` | §8.3.4 | real: GPAC 26.07 | `mp4/boxes/track-description.mp4`, `mp4/boxes/track-group-ster.mp4` |
+| `tsel` | §8.10.3 | real: GPAC 26.07, dumped by `MP4Box -disox` | `mp4/boxes/tsel.mp4` |
+| `stvi` | §13.5.4.2 | clause-assembled | — |
+| `ssix` | §8.14.4 | real: GPAC 26.07 `-dash -ssix` | `mp4/boxes/ssix-sidx.mp4` |
+| `leva` | §8.8.13 | clause-assembled | — |
+| `pdin` | §8.1.3 | clause-assembled | — |
+| `trep` | §8.8.15 | clause-assembled | — |
+| `csgp` | §8.9.5 | clause-assembled | — |
+| `stdp` | §8.5.3 | clause-assembled | — |
+| `padb` | §8.7.6 | clause-assembled | — |
+| `stsg` | §8.13.6 | clause-assembled | — |
 
 ## Example
 

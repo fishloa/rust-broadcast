@@ -264,6 +264,27 @@ pub struct SampleEntryInfo {
     pub registered: Option<crate::registry::RegisteredEntry>,
 }
 
+impl SampleEntryInfo {
+    /// The channel layout (`chnl`, §12.2.4) this audio entry carries, when
+    /// present.
+    #[must_use]
+    pub fn channel_layout(&self) -> Option<crate::audio_boxes::ChannelLayoutBox> {
+        self.typed.as_ref()?.channel_layout()
+    }
+
+    /// The downmix instructions (`dmix`, §12.2.5) this audio entry carries,
+    /// parsed against the entry's base channel count.
+    #[must_use]
+    pub fn downmix_instructions(
+        &self,
+        base_channel_count: u8,
+    ) -> Option<crate::audio_boxes::DownMixInstructionsBox> {
+        self.typed
+            .as_ref()?
+            .downmix_instructions(base_channel_count)
+    }
+}
+
 /// Every fact the reader surfaces about one track, including tracks the media
 /// IR has no mapping for.
 #[derive(Debug, Clone, PartialEq)]
@@ -288,6 +309,18 @@ pub struct TrackInfo {
     pub entries: Vec<SampleEntryInfo>,
     /// The QuickTime track aperture dimensions (`tapt`), when present.
     pub tapt: Option<crate::quicktime::TrackApertureModeDimensionsBox>,
+    /// The extended language tag (`elng`, §8.4.6), when present.
+    pub extended_language: Option<crate::track_desc::ExtendedLanguageBox>,
+    /// The track groups (`trgr`, §8.3.4), when present.
+    pub track_groups: Option<crate::track_desc::TrackGroupBox>,
+    /// The track's kind labels (`kind`, §8.10.4), in wire order.
+    pub kinds: Vec<crate::track_desc::KindBox>,
+    /// The track's labels (`labl`, §8.10.5), in wire order.
+    pub labels: Vec<crate::audio_boxes::LabelBox>,
+    /// The track's audio loudness declaration (`ludt`, §12.2.7), when present.
+    pub loudness: Option<crate::audio_boxes::LoudnessBox>,
+    /// The track selection (`tsel`, §8.10.3), when present.
+    pub track_selection: Option<crate::track_desc::TrackSelectionBox>,
 }
 
 impl TrackInfo {
@@ -368,6 +401,7 @@ impl TrackInfo {
             .and_then(|b| {
                 crate::quicktime::TrackApertureModeDimensionsBox::parse_body(&b.data).ok()
             });
+        let desc = track_description(trak);
         Ok(Self {
             track_id: trak.tkhd.track_id,
             handler: mdia
@@ -381,6 +415,12 @@ impl TrackInfo {
             edits,
             entries,
             tapt,
+            extended_language: desc.extended_language,
+            track_groups: desc.track_groups,
+            kinds: desc.kinds,
+            labels: desc.labels,
+            loudness: desc.loudness,
+            track_selection: desc.track_selection,
         })
     }
 }
@@ -399,6 +439,12 @@ pub struct FragmentInfo {
     /// splits, child order and the boxes between it and the previous
     /// fragment. The writer reproduces it byte for byte.
     pub layout: crate::frag_layout::FragmentLayout,
+    /// The subsegment index (`ssix`, §8.14.4) seen before this fragment,
+    /// beside the `sidx`.
+    pub subsegment_index: Option<crate::index_boxes::SubsegmentIndexBox>,
+    /// The movie's level assignment (`leva`, §8.8.13), when `mvex` carries
+    /// one.
+    pub level_assignment: Option<crate::index_boxes::LevelAssignmentBox>,
 }
 
 /// A fault [`Mode::Permissive`] tolerated, reported once as [`Step::Warning`].
@@ -519,6 +565,7 @@ enum Pending {
     Moov(ByteRange),
     Moof(ByteRange),
     Index(ByteRange),
+    Subsegment(ByteRange),
     MfraTrailer(ByteRange),
     Mfra(ByteRange),
     MfraForm(ByteRange),
@@ -533,6 +580,7 @@ impl Pending {
             | Self::Moov(range)
             | Self::Moof(range)
             | Self::Index(range)
+            | Self::Subsegment(range)
             | Self::MfraTrailer(range)
             | Self::Mfra(range)
             | Self::MfraForm(range)
@@ -674,6 +722,8 @@ pub struct Reader {
     indexes: Vec<SegmentIndex>,
     index: crate::frag_layout::FragmentIndex,
     between: Vec<crate::box_support::OpaqueBox>,
+    subsegment_index: Option<crate::index_boxes::SubsegmentIndexBox>,
+    level_assignment: Option<crate::index_boxes::LevelAssignmentBox>,
     seek: Option<SeekRequest>,
     #[cfg(feature = "scan-counters")]
     bytes_requested: u64,
@@ -715,6 +765,8 @@ impl Reader {
             indexes: Vec::new(),
             index: crate::frag_layout::FragmentIndex::default(),
             between: Vec::new(),
+            subsegment_index: None,
+            level_assignment: None,
             seek: None,
             #[cfg(feature = "scan-counters")]
             bytes_requested: 0,
@@ -748,6 +800,7 @@ impl Reader {
             Pending::Moov(range) => self.accept_moov(range, bytes),
             Pending::Moof(_) => self.accept_moof(bytes),
             Pending::Index(range) => self.accept_index(range, bytes),
+            Pending::Subsegment(range) => self.accept_subsegment(range, bytes),
             Pending::MfraTrailer(_) => self.accept_mfra_trailer(bytes),
             Pending::Mfra(_) => self.accept_mfra(bytes),
             Pending::MfraForm(_) => self.accept_mfra_form(bytes),
@@ -1106,6 +1159,11 @@ impl Reader {
         self.cursors.clear();
         self.seek = None;
         self.done = false;
+        Ok(())
+    }
+
+    fn accept_subsegment(&mut self, _range: ByteRange, bytes: &[u8]) -> Result<()> {
+        self.subsegment_index = Some(crate::index_boxes::SubsegmentIndexBox::parse(bytes)?);
         Ok(())
     }
 
@@ -1530,6 +1588,19 @@ impl Reader {
             self.pos = end;
             return Ok(());
         }
+        if header.box_type.is(b"ssix") {
+            if size > self.config.limits.max_moov_bytes() {
+                return Err(Error::LimitExceeded {
+                    what: "subsegment index size",
+                    limit: self.config.limits.max_moov_bytes(),
+                });
+            }
+            let index = ByteRange { offset, len: size };
+            self.request(offset, size)?;
+            self.pending = Some(Pending::Subsegment(index));
+            self.pos = end;
+            return Ok(());
+        }
         if header.box_type.is(b"sidx") {
             if size > self.config.limits.max_moov_bytes() {
                 return Err(Error::LimitExceeded {
@@ -1761,6 +1832,7 @@ impl Reader {
             .as_ref()
             .map(|mvex| mvex.trex.clone())
             .unwrap_or_default();
+        self.level_assignment = movie.mvex.as_ref().and_then(|mvex| mvex.leva.clone());
         let mut movie_metadata = self.movie_metadata(&movie)?;
         if let Some(metadata) = movie_metadata.take() {
             self.metadata = Some(MovieMetadata {
@@ -1991,6 +2063,8 @@ impl Reader {
                 layout: state.layout.clone().ok_or(Error::InvalidInput(
                     "a resolved fragment carries no recorded layout",
                 ))?,
+                subsegment_index: self.subsegment_index.clone(),
+                level_assignment: self.level_assignment.clone(),
             },
             samples: rows.into_iter().map(|(_, sample)| sample).collect(),
             truncated,
@@ -2241,6 +2315,44 @@ fn fragment_aux(
         .collect())
 }
 
+/// The track-description facts that live in `mdia`, `trak` and the track's
+/// `udta`, gathered once so both track-info builders agree.
+#[derive(Default)]
+struct TrackDescription {
+    extended_language: Option<crate::track_desc::ExtendedLanguageBox>,
+    track_groups: Option<crate::track_desc::TrackGroupBox>,
+    kinds: Vec<crate::track_desc::KindBox>,
+    labels: Vec<crate::audio_boxes::LabelBox>,
+    loudness: Option<crate::audio_boxes::LoudnessBox>,
+    track_selection: Option<crate::track_desc::TrackSelectionBox>,
+}
+
+fn track_description(trak: &TrackBox) -> TrackDescription {
+    use crate::metadata::UdtaChild;
+    let mut out = TrackDescription {
+        extended_language: trak.mdia.as_ref().and_then(|mdia| mdia.elng.clone()),
+        track_groups: trak.trgr.clone(),
+        ..TrackDescription::default()
+    };
+    let udta = trak
+        .opaque
+        .iter()
+        .find(|child| child.box_type == crate::metadata::udta::UDTA)
+        .and_then(|child| crate::metadata::Udta::parse_body(&child.data, &Limits::default()).ok());
+    if let Some(udta) = udta {
+        for child in udta.children {
+            match child {
+                UdtaChild::Kind(kind) => out.kinds.push(kind),
+                UdtaChild::Label(label) => out.labels.push(label),
+                UdtaChild::Loudness(loudness) => out.loudness = Some(loudness),
+                UdtaChild::TrackSelection(selection) => out.track_selection = Some(selection),
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
 fn build_track_info(
     trak: &TrackBox,
     raw: Vec<RawEntry>,
@@ -2312,6 +2424,7 @@ fn build_track_info(
         .iter()
         .find(|b| b.box_type == crate::quicktime::aperture::TAPT)
         .and_then(|b| crate::quicktime::TrackApertureModeDimensionsBox::parse_body(&b.data).ok());
+    let desc = track_description(trak);
     Ok(TrackInfo {
         track_id: trak.tkhd.track_id,
         handler: hdlr.handler_type,
@@ -2322,6 +2435,12 @@ fn build_track_info(
         edits,
         entries,
         tapt,
+        extended_language: desc.extended_language,
+        track_groups: desc.track_groups,
+        kinds: desc.kinds,
+        labels: desc.labels,
+        loudness: desc.loudness,
+        track_selection: desc.track_selection,
     })
 }
 

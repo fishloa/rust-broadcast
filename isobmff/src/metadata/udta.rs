@@ -110,6 +110,14 @@ pub enum UdtaChild {
     Location(Loci),
     /// An iTunes `meta` with an `ilst`.
     Meta(Meta),
+    /// A track kind (§8.10.4).
+    Kind(crate::track_desc::KindBox),
+    /// A label (§8.10.5).
+    Label(crate::audio_boxes::LabelBox),
+    /// Audio stream loudness (§12.2.7).
+    Loudness(crate::audio_boxes::LoudnessBox),
+    /// A track selection (§8.10.3).
+    TrackSelection(crate::track_desc::TrackSelectionBox),
     /// Any other child, preserved verbatim.
     Opaque(OpaqueBox),
 }
@@ -123,6 +131,10 @@ impl Serialize for UdtaChild {
             Self::Chapters(chpl) => chpl.serialized_len(),
             Self::Location(loci) => loci.serialized_len(),
             Self::Meta(meta) => meta.serialized_len(),
+            Self::Kind(kind) => kind.serialized_len(),
+            Self::Label(label) => label.serialized_len(),
+            Self::Loudness(loudness) => loudness.serialized_len(),
+            Self::TrackSelection(selection) => selection.serialized_len(),
             Self::Opaque(opaque) => opaque.serialized_len(),
         }
     }
@@ -133,6 +145,10 @@ impl Serialize for UdtaChild {
             Self::Chapters(chpl) => chpl.serialize_into(buf),
             Self::Location(loci) => loci.serialize_into(buf),
             Self::Meta(meta) => meta.serialize_into(buf),
+            Self::Kind(kind) => kind.serialize_into(buf),
+            Self::Label(label) => label.serialize_into(buf),
+            Self::Loudness(loudness) => loudness.serialize_into(buf),
+            Self::TrackSelection(selection) => selection.serialize_into(buf),
             Self::Opaque(opaque) => opaque.serialize_into(buf),
         }
     }
@@ -192,6 +208,18 @@ impl Udta {
                 CHPL => UdtaChild::Chapters(Chpl::parse_body(child.body)?),
                 LOCI => UdtaChild::Location(Loci::parse_body(child.body)?),
                 META => UdtaChild::Meta(Meta::parse_body(child.body, limits)?),
+                crate::track_desc::KIND => {
+                    UdtaChild::Kind(crate::track_desc::KindBox::parse_body(child.body)?)
+                }
+                crate::audio_boxes::LABL => {
+                    UdtaChild::Label(crate::audio_boxes::LabelBox::parse_body(child.body)?)
+                }
+                crate::audio_boxes::LUDT => {
+                    UdtaChild::Loudness(crate::audio_boxes::LoudnessBox::parse_body(child.body)?)
+                }
+                crate::track_desc::TSEL => UdtaChild::TrackSelection(
+                    crate::track_desc::TrackSelectionBox::parse_body(child.body)?,
+                ),
                 _ if super::is_text_key(&fourcc) => {
                     UdtaChild::Text(parse_text(fourcc, child.body)?)
                 }

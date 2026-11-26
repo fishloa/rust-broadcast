@@ -1054,6 +1054,9 @@ impl Serialize for SchemeTypeBox {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SchemeInformationBox {
     pub tenc: Option<TrackEncryptionBox>,
+    /// The stereoscopic-video scheme box (§13.5.4.2), when `scheme_type` is
+    /// `stvi`.
+    pub stvi: Option<crate::track_desc::StereoVideoBox>,
     pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
 }
 
@@ -1063,6 +1066,7 @@ impl<'a> Parse<'a> for SchemeInformationBox {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "schi")?;
         let body = crate::box_types::parse_box(bytes)?.0.body;
         let mut tenc = None;
+        let mut stvi = None;
         let mut extra_boxes = Vec::new();
         let mut off = 0usize;
         while off + crate::box_types::BOX_HEADER_MIN_SIZE <= body.len() {
@@ -1074,6 +1078,8 @@ impl<'a> Parse<'a> for SchemeInformationBox {
             let boxtype = u32_at(body, off + crate::box_types::BOX_TYPE_SIZE).to_be_bytes();
             if &boxtype == b"tenc" {
                 tenc = Some(TrackEncryptionBox::parse_box(&body[off..end])?);
+            } else if &boxtype == b"stvi" {
+                stvi = Some(crate::track_desc::StereoVideoBox::parse(&body[off..end])?);
             } else {
                 extra_boxes.push(crate::box_support::OpaqueBox {
                     box_type: boxtype,
@@ -1084,7 +1090,11 @@ impl<'a> Parse<'a> for SchemeInformationBox {
             }
             off = off.saturating_add(sz);
         }
-        Ok(Self { tenc, extra_boxes })
+        Ok(Self {
+            tenc,
+            stvi,
+            extra_boxes,
+        })
     }
 }
 
@@ -1093,6 +1103,9 @@ impl Serialize for SchemeInformationBox {
     fn serialized_len(&self) -> usize {
         let mut n = BOX_HEADER_MIN_SIZE;
         if let Some(ref t) = self.tenc {
+            n += t.serialized_len();
+        }
+        if let Some(ref t) = self.stvi {
             n += t.serialized_len();
         }
         for b in &self.extra_boxes {
@@ -1106,6 +1119,9 @@ impl Serialize for SchemeInformationBox {
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"schi", need)?;
         if let Some(ref t) = self.tenc {
+            c += t.serialize_into(&mut buf[c..])?;
+        }
+        if let Some(ref t) = self.stvi {
             c += t.serialize_into(&mut buf[c..])?;
         }
         for b in &self.extra_boxes {
