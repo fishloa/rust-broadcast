@@ -5,12 +5,12 @@
 //! `impl_spec_display!` macro is label-free: it only delegates to `name()`),
 //! so a blanked or changed label must fail here, not ship silently.
 
+use broadcast_bitstream::facts::{ActiveFormatDescription, TransferCharacteristics};
 use transmux::hdr10plus::OverlapProcessOption;
 use transmux::interlace::{PicStruct, SourceScanType, VideoScan};
 use transmux::ir::{
-    AbandonReason, ActiveFormatDescription, AfdPersistence, AudioRole, AudioType, DataCarriage,
-    DiscontinuityKind, EditorialClassification, InputDegradation, MixType, SubtitleFormat,
-    TransferCharacteristics, UserDataCarriage,
+    AbandonReason, AfdPersistence, AudioRole, AudioType, DataCarriage, DiscontinuityKind,
+    EditorialClassification, InputDegradation, MixType, SubtitleFormat, UserDataCarriage,
 };
 
 /// Assert both `name()` and its `Display` form (which delegates to it; the

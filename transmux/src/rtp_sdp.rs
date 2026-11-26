@@ -189,7 +189,7 @@ pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVC
     let ext = if isobmff::avc_config::AVCDecoderConfigurationRecord::has_high_profile_ext(
         profile_indication,
     ) {
-        Some(crate::sps::decode_avc_sps(&first_sps.0)?)
+        Some(broadcast_bitstream::sps::decode_avc_sps(&first_sps.0)?)
     } else {
         None
     };
@@ -201,13 +201,13 @@ pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVC
         length_size_minus_one: broadcast_bitstream::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
         sps,
         pps,
-        chroma_format: ext.as_ref().map(|i| i.chroma_format_idc),
+        chroma_format: ext.as_ref().map(|i| i.chroma_format_idc()),
         bit_depth_luma_minus8: ext
             .as_ref()
-            .map(|i| i.bit_depth_luma.saturating_sub(BIT_DEPTH_LUMA_BIAS)),
+            .map(|i| i.bit_depth_luma().saturating_sub(BIT_DEPTH_LUMA_BIAS)),
         bit_depth_chroma_minus8: ext
             .as_ref()
-            .map(|i| i.bit_depth_chroma.saturating_sub(BIT_DEPTH_CHROMA_BIAS)),
+            .map(|i| i.bit_depth_chroma().saturating_sub(BIT_DEPTH_CHROMA_BIAS)),
         sps_ext: Vec::new(),
     };
     Ok(AVCConfigurationBox::new(record))
@@ -478,7 +478,7 @@ mod tests {
         // 44/83/86/118/… are in the wider SPS-parse list but not the trailer
         // set, so the two sets genuinely differ.
         assert!(
-            crate::sps::is_high_profile(44) && !Record::has_high_profile_ext(44),
+            broadcast_bitstream::sps::is_high_profile(44) && !Record::has_high_profile_ext(44),
             "the parse gate and the trailer gate must be different sets"
         );
     }

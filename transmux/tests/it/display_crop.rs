@@ -1,8 +1,9 @@
 //! Crop / conformance-window tests (DESIGN.md Phase 5).
 
 use crate::bit_writer::BitWriter;
+use broadcast_bitstream::facts::{AspectRatioIdc, PictureRect};
+use transmux::ir::DisplayGeometry;
 use transmux::ir::DisplayInfo;
-use transmux::ir::{AspectRatioIdc, DisplayGeometry, PictureRect};
 
 fn avc_sps_crop(
     chroma_format_idc: u8,

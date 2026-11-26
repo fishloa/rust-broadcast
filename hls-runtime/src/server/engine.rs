@@ -803,9 +803,8 @@ fn hdr10plus_supplemental_codecs(spec: &transmux::TrackSpec) -> Option<String> {
         .as_ref()?
         .video_signal
         .as_ref()?
-        .colour
-        .as_ref()?
-        .transfer
+        .colour()?
+        .transfer()
         .code();
     if transfer != TRANSFER_PQ {
         return None;
@@ -2181,9 +2180,9 @@ impl HlsOrigin {
             if !video_range_decided
                 && let Some(display) = &spec.display
                 && let Some(signal) = &display.video_signal
-                && let Some(colour) = &signal.colour
+                && let Some(colour) = &signal.colour()
             {
-                video_range = VideoRange::from_transfer_characteristics(colour.transfer.code());
+                video_range = VideoRange::from_transfer_characteristics(colour.transfer().code());
                 video_range_decided = true;
             }
             if !resolution_decided

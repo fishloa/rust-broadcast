@@ -1,9 +1,13 @@
-//! H.264 / H.265 sequence parameter set (SPS) decode.
+//! H.264 / H.265 / H.266 sequence parameter set (SPS) decode.
 //!
-//! Decodes the fields needed by the transmux pipeline — profile / level /
-//! dimensions / chroma / bit-depth / frame rate — from the raw NAL unit bytes
-//! stored in [`AvcSps`](isobmff::nalu_types::AvcSps) and
-//! [`HevcNalUnit`](isobmff::nalu_types::HevcNalUnit).
+//! Decodes the fields a consumer needs — profile / level / dimensions / chroma /
+//! bit-depth / frame rate — from a raw SPS NAL unit (the 1- or 2-byte NAL
+//! header included), as it arrives from `annexb::iter_annexb_nals` or out of a
+//! container's decoder configuration record.
+//!
+//! H.264 is under the `h264` feature, H.265 under `hevc` and H.266 under `vvc`;
+//! `rfc6381_mp4a` has no feature (it describes an audio configuration), and the
+//! per-codec RFC 6381 helpers follow their codec.
 //!
 //! # Spec citations
 //!
@@ -20,15 +24,23 @@
 //! - **Emulation prevention**: H.264 §7.3 bullet 1 (leading zero_byte),
 //!   §7.4.1 NAL semantics (emulation_prevention_three_byte); H.265 §7.4.2.1.
 
-use crate::error::{Error, Result};
-use crate::ir::{
-    AspectRatioIdc, ColourDescription, EXTENDED_SAR_IDC, VideoFormat, VideoSignalType,
+#[cfg(any(feature = "h264", feature = "hevc"))]
+use crate::Error;
+#[cfg(any(feature = "h264", feature = "hevc", feature = "vvc"))]
+use crate::Result;
+#[cfg(any(feature = "h264", feature = "hevc", feature = "vvc"))]
+use crate::bitreader::BitReader;
+#[cfg(any(feature = "h264", feature = "hevc"))]
+use crate::facts::{
+    AspectRatioIdc, ColourDescription, EXTENDED_SAR_IDC, PictureRect, VideoFormat, VideoSignalType,
 };
-use alloc::string::String;
+#[cfg(feature = "hevc")]
+use crate::nal::HEVC_NAL_HEADER_LEN;
+#[cfg(feature = "hevc")]
 use alloc::vec::Vec;
-use broadcast_bitstream::bitreader::BitReader;
-use broadcast_bitstream::nal::HEVC_NAL_HEADER_LEN;
+#[cfg(any(feature = "h264", feature = "hevc"))]
 use broadcast_core::error::InvalidValue;
+#[cfg(any(feature = "h264", feature = "hevc", feature = "vvc"))]
 use broadcast_core::len::need_in;
 
 // ---------------------------------------------------------------------------
@@ -36,108 +48,135 @@ use broadcast_core::len::need_in;
 // ---------------------------------------------------------------------------
 
 /// Bit widths of the fixed-width `u(n)` fields read below.
+#[cfg(any(feature = "hevc", feature = "vvc"))]
 const U2_BITS: usize = 2;
+#[cfg(any(feature = "hevc", feature = "vvc"))]
 const U3_BITS: usize = 3;
+#[cfg(any(feature = "h264", feature = "hevc", feature = "vvc"))]
 const U4_BITS: usize = 4;
+#[cfg(feature = "hevc")]
 const U5_BITS: usize = 5;
+#[cfg(feature = "hevc")]
 const U6_BITS: usize = 6;
+#[cfg(feature = "vvc")]
 const U7_BITS: usize = 7;
+#[cfg(feature = "hevc")]
 const U16_BITS: usize = u16::BITS as usize;
+#[cfg(feature = "hevc")]
 const U48_BITS: usize = 48;
 
 /// Byte width of an H.264 SPS header: NAL header + `profile_idc` +
 /// `constraint_set_flags` + `level_idc` (ITU-T H.264 §7.3.2.1.1).
+#[cfg(feature = "h264")]
 const AVC_SPS_HEADER_LEN: usize = 4;
 /// Offset of `constraint_set_flags` in an H.264 SPS NAL unit.
+#[cfg(feature = "h264")]
 const AVC_SPS_CONSTRAINT_FLAGS_OFFSET: usize = 2;
 /// Offset of `level_idc` in an H.264 SPS NAL unit.
+#[cfg(feature = "h264")]
 const AVC_SPS_LEVEL_IDC_OFFSET: usize = 3;
 /// Byte width of a VVC NAL header (ITU-T H.266 §7.3.1.2).
+#[cfg(feature = "vvc")]
 const VVC_NAL_HEADER_LEN: usize = 2;
 
 /// `bit_depth_*_minus8` is offset by this to give the bit depth.
+#[cfg(any(feature = "h264", feature = "hevc"))]
 const BIT_DEPTH_MINUS8_OFFSET: u8 = 8;
 /// Largest `chroma_format_idc` (ITU-T H.264 §7.4.2.1 / H.265 Table 6-1).
+#[cfg(any(feature = "h264", feature = "hevc"))]
 const CHROMA_FORMAT_IDC_MAX: u8 = 3;
 /// Largest `bit_depth_luma/chroma_minus8` in an H.264 SPS (§7.4.2.1).
+#[cfg(feature = "h264")]
 const H264_BIT_DEPTH_MINUS8_MAX: u64 = 6;
 /// Largest `bit_depth_luma/chroma_minus8` in an H.265 SPS (§7.4.3.2).
+#[cfg(feature = "hevc")]
 const HEVC_BIT_DEPTH_MINUS8_MAX: u64 = 8;
 /// Default `chroma_format_idc` when the high-profile branch is absent.
+#[cfg(feature = "h264")]
 const DEFAULT_CHROMA_FORMAT_IDC: u8 = 1;
 /// Default luma/chroma bit depth when the high-profile branch is absent.
+#[cfg(feature = "h264")]
 const DEFAULT_BIT_DEPTH: u8 = 8;
 
 /// Scaling lists in a 4:2:0/4:2:2 SPS (ITU-T H.264 §7.3.2.1.1).
+#[cfg(feature = "h264")]
 const SCALING_LIST_COUNT: usize = 8;
 /// Scaling lists in a separate-colour-plane (4:4:4) SPS.
+#[cfg(feature = "h264")]
 const SCALING_LIST_COUNT_SEPARATE_COLOUR_PLANE: usize = 12;
 /// First scaling-list index whose table has 64 coefficients.
+#[cfg(feature = "h264")]
 const SCALING_LIST_LARGE_START_INDEX: usize = 6;
 /// Coefficients in the first six H.264 scaling lists.
+#[cfg(feature = "h264")]
 const SCALING_LIST_SMALL_LEN: usize = 16;
 /// Coefficients in the remaining H.264 scaling lists.
+#[cfg(feature = "h264")]
 const SCALING_LIST_LEN: usize = 64;
 /// Initial `last_scale`/`next_scale` (ITU-T H.264 §7.3.2.1.1).
+#[cfg(feature = "h264")]
 const DEFAULT_SCALING_VALUE: i64 = 8;
 /// Modulus of the scaling-list delta recurrence.
+#[cfg(feature = "h264")]
 const SCALING_MODULUS: i64 = 256;
 
 /// Largest `log2_max_frame_num_minus4` (§7.4.2.1.1).
+#[cfg(feature = "h264")]
 const LOG2_MAX_FRAME_NUM_MINUS4_MAX: u64 = 12;
 /// Offset from `log2_max_frame_num_minus4` to `log2_max_frame_num`.
+#[cfg(feature = "h264")]
 const LOG2_MAX_FRAME_NUM_MINUS4_OFFSET: u8 = 4;
 /// Largest `log2_max_pic_order_cnt_lsb_minus4` (§7.4.2.1.1).
+#[cfg(feature = "h264")]
 const LOG2_MAX_POC_LSB_MINUS4_MAX: u64 = 12;
 /// Offset from `log2_max_pic_order_cnt_lsb_minus4` to
 /// `log2_max_pic_order_cnt_lsb`.
+#[cfg(any(feature = "h264", feature = "hevc"))]
 const LOG2_MAX_POC_LSB_MINUS4_OFFSET: u64 = 4;
 
 /// `frame_mbs_only_flag` converts map units to frame MB units as
 /// `2 - frame_mbs_only_flag` (§7.4.2.1.1).
+#[cfg(feature = "h264")]
 const FRAME_MBS_ONLY_FACTOR: u64 = 2;
 /// Divisor converting `time_scale` to a frame rate (H.264 §E.2.1:
 /// `time_scale / (2 * num_units_in_tick)`).
+#[cfg(feature = "h264")]
 const AVC_TICKS_PER_FRAME: f32 = 2.0;
 
 /// Largest `vps_num_layer_sets_minus1` accepted by the VPS timing walk.
+#[cfg(feature = "hevc")]
 const VPS_NUM_LAYER_SETS_MINUS1_MAX: u64 = 1023;
 /// Size-id count in HEVC `scaling_list_data()` (ITU-T H.265 §7.3.4).
+#[cfg(feature = "hevc")]
 const SCALING_LIST_SIZE_ID_COUNT: u32 = 4;
 /// Largest `size_id` in HEVC `scaling_list_data()`.
+#[cfg(feature = "hevc")]
 const SCALING_LIST_MAX_SIZE_ID: u32 = 3;
 /// Matrix count for `size_id` 0..=2 (H.265 §7.3.4).
+#[cfg(feature = "hevc")]
 const SCALING_LIST_MATRIX_COUNT: u32 = 6;
 /// Matrix count for `size_id` 3 (H.265 §7.3.4).
+#[cfg(feature = "hevc")]
 const SCALING_LIST_MATRIX_COUNT_4X4: u32 = 2;
 /// Maximum coefficient count of an HEVC scaling list.
+#[cfg(feature = "hevc")]
 const SCALING_COEF_NUM_MAX: u32 = 64;
 /// Base log2 coefficient count in an HEVC scaling list.
+#[cfg(feature = "hevc")]
 const SCALING_COEF_BITS_BASE: u32 = 4;
 /// Largest `num_short_term_ref_pic_sets` (H.265 §7.4.3.2).
+#[cfg(feature = "hevc")]
 const NUM_SHORT_TERM_REF_PIC_SETS_MAX: u64 = 64;
 /// Exclusive limit of `abs_delta_rps_minus1` (H.265 §7.4.8: ≤ 2^15-1).
+#[cfg(feature = "hevc")]
 const ABS_DELTA_RPS_MINUS1_LIMIT: u64 = 1 << 15;
 
 /// Maximum number of HEVC sub-layers (`MaxNumSubLayersMinus1` + 1).
+#[cfg(feature = "hevc")]
 const HEVC_MAX_SUB_LAYERS: usize = 8;
 /// Maximum number of VVC sub-layers (`MaxNumSubLayersMinus1` + 1).
+#[cfg(feature = "vvc")]
 const VVC_MAX_SUB_LAYERS: usize = 8;
-
-/// Byte length of the `general_constraint_indicator_flags` tail of the HEVC
-/// 48-bit constraint flags (H.265 §7.3.3).
-const HEVC_CONSTRAINT_BYTES_LEN: usize = 6;
-
-/// Capacity of the `avc1.PPCCLL` codec string.
-const AVC1_CODEC_STRING_CAPACITY: usize = 12;
-/// Capacity of the `vvc1.…` codec string.
-const VVC1_CODEC_STRING_CAPACITY: usize = 24;
-/// Capacity of the `mp4a.40.…` codec string.
-const MP4A_CODEC_STRING_CAPACITY: usize = 16;
-/// Decimal digits of a `u8` (0..=255).
-const U8_DECIMAL_DIGITS: usize = 3;
-/// Radix of the decimal conversion.
-const DECIMAL_RADIX: u8 = 10;
 
 // ---------------------------------------------------------------------------
 // H.264 helpers
@@ -145,15 +184,20 @@ const DECIMAL_RADIX: u8 = 10;
 
 /// Profiles that require the high-profile SPS branch (§7.3.2.1.1):
 /// chroma_format_idc, bit_depth_*_minus8, and optionally scaling lists.
+#[cfg(feature = "h264")]
 const H264_HIGH_PROFILES: &[u8] = &[100, 110, 122, 244, 44, 83, 86, 118, 128, 138, 139, 134, 135];
 
-pub(crate) fn is_high_profile(profile_idc: u8) -> bool {
+/// Whether `profile_idc` selects the high-profile SPS branch (§7.3.2.1.1):
+/// `chroma_format_idc`, `bit_depth_*_minus8` and optionally scaling lists.
+#[cfg(feature = "h264")]
+pub fn is_high_profile(profile_idc: u8) -> bool {
     H264_HIGH_PROFILES.contains(&profile_idc)
 }
 
 /// Narrow a `read_ue` result to `u8` only after checking it against the
 /// field's spec-bounded maximum. A raw `as u8` silently truncates hostile
 /// wire values, which then feed dimension/loop arithmetic.
+#[cfg(any(feature = "h264", feature = "hevc"))]
 fn ue_to_u8(v: u64, spec_max: u64, field: &'static str) -> Result<u8> {
     if v > spec_max {
         return Err(Error::InvalidValue(InvalidValue {
@@ -173,6 +217,7 @@ fn ue_to_u8(v: u64, spec_max: u64, field: &'static str) -> Result<u8> {
 
 /// `bit_depth_*_minus8` → bit depth, checked end to end (never a raw
 /// `read_ue(..)? as u8 + 8`, which overflowed for hostile values).
+#[cfg(any(feature = "h264", feature = "hevc"))]
 fn ue_bit_depth(minus8: u64, spec_max: u64, field: &'static str) -> Result<u8> {
     let minus8 = ue_to_u8(minus8, spec_max, field)?;
     minus8
@@ -186,6 +231,7 @@ fn ue_bit_depth(minus8: u64, spec_max: u64, field: &'static str) -> Result<u8> {
 
 /// Computed SubWidthC / SubHeightC from `chroma_format_idc`
 /// (ITU-T H.264 Table 6-1).
+#[cfg(feature = "h264")]
 fn sub_width_c(chroma_format_idc: u8) -> u32 {
     match chroma_format_idc {
         0 => 1,
@@ -195,6 +241,7 @@ fn sub_width_c(chroma_format_idc: u8) -> u32 {
     }
 }
 
+#[cfg(feature = "h264")]
 fn sub_height_c(chroma_format_idc: u8) -> u32 {
     match chroma_format_idc {
         0 => 1,
@@ -209,77 +256,151 @@ fn sub_height_c(chroma_format_idc: u8) -> u32 {
 // ---------------------------------------------------------------------------
 
 /// `fps` field note retained for compatibility; see `decode_avc_vui_timing`.
+#[cfg(feature = "h264")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AvcVuiTiming {
+    num_units_in_tick: u32,
+    time_scale: u32,
+    fixed_frame_rate: bool,
+}
+
+#[cfg(feature = "h264")]
+impl AvcVuiTiming {
     /// `num_units_in_tick` from VUI `timing_info` (ITU-T H.264 §E.1.1).
-    pub num_units_in_tick: u32,
+    pub fn num_units_in_tick(&self) -> u32 {
+        self.num_units_in_tick
+    }
+
     /// `time_scale` from VUI `timing_info` (ITU-T H.264 §E.1.1).
-    pub time_scale: u32,
+    pub fn time_scale(&self) -> u32 {
+        self.time_scale
+    }
+
     /// `fixed_frame_rate_flag` from VUI `timing_info` (ITU-T H.264 §E.1.1).
     ///
     /// `true` (normative tier): the output interval between consecutive
     /// pictures is constrained to `2 * num_units_in_tick / time_scale`.
     /// `false` (or absent, inferred 0): no such constraint; the same value is
     /// only an implementation-defined convention.
-    pub fixed_frame_rate: bool,
+    pub fn fixed_frame_rate(&self) -> bool {
+        self.fixed_frame_rate
+    }
 }
 
 /// Decoded fields from an H.264/AVC sequence parameter set.
 ///
 /// The decoder is the only producer, so a newly decoded field is an additive
 /// change for a consumer.
+#[cfg(feature = "h264")]
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct AvcSpsInfo {
+    profile_idc: u8,
+    constraint_flags: u8,
+    level_idc: u8,
+    chroma_format_idc: u8,
+    separate_colour_plane: bool,
+    bit_depth_luma: u8,
+    bit_depth_chroma: u8,
+    frame_mbs_only: bool,
+    width: u32,
+    height: u32,
+    num_units_in_tick: Option<u32>,
+    time_scale: Option<u32>,
+    fps: Option<f32>,
+}
+
+#[cfg(feature = "h264")]
+impl AvcSpsInfo {
     /// `profile_idc` — SPS byte index 1.
-    pub profile_idc: u8,
+    pub fn profile_idc(&self) -> u8 {
+        self.profile_idc
+    }
+
     /// The constraint-flags byte (SPS byte index 2 verbatim):
     /// constraint_set0..5 `[7:2]` + reserved_zero_2bits `[1:0]`.
-    pub constraint_flags: u8,
+    pub fn constraint_flags(&self) -> u8 {
+        self.constraint_flags
+    }
+
     /// `level_idc` — SPS byte index 3.
-    pub level_idc: u8,
+    pub fn level_idc(&self) -> u8 {
+        self.level_idc
+    }
+
     /// `chroma_format_idc` (defaults to 1 for non-high profiles).
-    pub chroma_format_idc: u8,
+    pub fn chroma_format_idc(&self) -> u8 {
+        self.chroma_format_idc
+    }
+
     /// `separate_colour_plane_flag`
-    pub separate_colour_plane: bool,
+    pub fn separate_colour_plane(&self) -> bool {
+        self.separate_colour_plane
+    }
+
     /// `bit_depth_luma` (= `bit_depth_luma_minus8 + 8`, default 8).
-    pub bit_depth_luma: u8,
+    pub fn bit_depth_luma(&self) -> u8 {
+        self.bit_depth_luma
+    }
+
     /// `bit_depth_chroma` (= `bit_depth_chroma_minus8 + 8`, default 8).
-    pub bit_depth_chroma: u8,
+    pub fn bit_depth_chroma(&self) -> u8 {
+        self.bit_depth_chroma
+    }
+
     /// `frame_mbs_only_flag`
-    pub frame_mbs_only: bool,
+    pub fn frame_mbs_only(&self) -> bool {
+        self.frame_mbs_only
+    }
+
     /// Coded width in luma samples (after frame cropping).
-    pub width: u32,
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
     /// Coded height in luma samples (after frame cropping).
-    pub height: u32,
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
     /// `num_units_in_tick` from VUI `timing_info` (ITU-T H.264 §E.1.1).
     ///
     /// Present only when `vui_parameters_present_flag` and
     /// `timing_info_present_flag` are both 1 in the SPS.
-    pub num_units_in_tick: Option<u32>,
+    pub fn num_units_in_tick(&self) -> Option<u32> {
+        self.num_units_in_tick
+    }
+
     /// `time_scale` from VUI `timing_info` (ITU-T H.264 §E.1.1).
     ///
     /// Present only when `vui_parameters_present_flag` and
     /// `timing_info_present_flag` are both 1 in the SPS.
-    pub time_scale: Option<u32>,
+    pub fn time_scale(&self) -> Option<u32> {
+        self.time_scale
+    }
+
     /// Frame rate derived from VUI `timing_info` (ITU-T H.264 §E.2.1):
     /// `time_scale / (2 × num_units_in_tick)`.
     ///
     /// `None` when `vui_parameters_present_flag` or `timing_info_present_flag`
     /// is 0, or when `num_units_in_tick` is 0.
-    pub fps: Option<f32>,
+    pub fn fps(&self) -> Option<f32> {
+        self.fps
+    }
 }
 
 /// Decode an H.264 SPS RBSP.
 ///
 /// `sps_bytes` is the raw NAL unit including the 1-byte NAL header
-/// (as returned by [`iter_annexb_nals`](broadcast_bitstream::iter_annexb_nals)).
+/// (as returned by [`iter_annexb_nals`](crate::iter_annexb_nals)).
 /// The NAL header byte is skipped; decoding starts at the next byte.
+#[cfg(feature = "h264")]
 pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
     decode_avc_sps_inner(sps_bytes).map(|(info, _, _, _, _)| info)
 }
 
+#[cfg(feature = "h264")]
 fn build_avc_sps_info(
     profile_idc: u8,
     constraint_flags: u8,
@@ -313,69 +434,149 @@ fn build_avc_sps_info(
 /// The SPS fields a slice-header parser needs (ITU-T H.264 §7.3.3 reads
 /// `frame_num`, `field_pic_flag`, `pic_order_cnt_lsb`, … with widths and
 /// presence conditions taken from the SPS).
+#[cfg(feature = "h264")]
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AvcSliceSps {
+    sps_id: u8,
+    separate_colour_plane: bool,
+    log2_max_frame_num: u8,
+    pic_order_cnt_type: u8,
+    log2_max_poc_lsb: u8,
+    delta_pic_order_always_zero: bool,
+    frame_mbs_only: bool,
+    mb_adaptive_frame_field: bool,
+    pic_timing: Option<AvcPicTimingLayout>,
+}
+
+#[cfg(feature = "h264")]
+impl AvcSliceSps {
     /// `seq_parameter_set_id`.
-    pub sps_id: u8,
+    pub fn sps_id(&self) -> u8 {
+        self.sps_id
+    }
+
     /// `separate_colour_plane_flag` (gates `colour_plane_id`).
-    pub separate_colour_plane: bool,
+    pub fn separate_colour_plane(&self) -> bool {
+        self.separate_colour_plane
+    }
+
     /// `log2_max_frame_num_minus4 + 4` — the bit width of `frame_num`.
-    pub log2_max_frame_num: u8,
+    pub fn log2_max_frame_num(&self) -> u8 {
+        self.log2_max_frame_num
+    }
+
     /// `pic_order_cnt_type`.
-    pub pic_order_cnt_type: u8,
+    pub fn pic_order_cnt_type(&self) -> u8 {
+        self.pic_order_cnt_type
+    }
+
     /// `log2_max_pic_order_cnt_lsb_minus4 + 4` (POC type 0 only, else 0).
-    pub log2_max_poc_lsb: u8,
+    pub fn log2_max_poc_lsb(&self) -> u8 {
+        self.log2_max_poc_lsb
+    }
+
     /// `delta_pic_order_always_zero_flag` (POC type 1 only, else `false`).
-    pub delta_pic_order_always_zero: bool,
+    pub fn delta_pic_order_always_zero(&self) -> bool {
+        self.delta_pic_order_always_zero
+    }
+
     /// `frame_mbs_only_flag` (gates `field_pic_flag`).
-    pub frame_mbs_only: bool,
+    pub fn frame_mbs_only(&self) -> bool {
+        self.frame_mbs_only
+    }
+
     /// `mb_adaptive_frame_field_flag` (`false` when absent, i.e. when
     /// `frame_mbs_only_flag` is 1 — H.264 §7.3.2.1.1).
-    pub mb_adaptive_frame_field: bool,
+    pub fn mb_adaptive_frame_field(&self) -> bool {
+        self.mb_adaptive_frame_field
+    }
+
     /// How to read `pic_struct` out of a picture timing SEI for this SPS, or
     /// `None` when `pic_struct_present_flag` is 0, there is no VUI, the VUI was
     /// truncated, or the NAL and VCL HRD delay lengths disagree (see
     /// `private/specs-verified/mpeg/transmux/codec/h264-vui-pic-timing.md`).
-    pub pic_timing: Option<AvcPicTimingLayout>,
+    pub fn pic_timing(&self) -> Option<AvcPicTimingLayout> {
+        self.pic_timing
+    }
 }
 
 /// The part of the H.264 `pic_timing` SEI layout (§D.1.3) that depends on the
 /// SPS VUI, for an SPS whose `pic_struct_present_flag` is 1.
+#[cfg(feature = "h264")]
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AvcPicTimingLayout {
+    delay_bits: Option<(u8, u8)>,
+}
+
+#[cfg(feature = "h264")]
+impl AvcPicTimingLayout {
+    /// Build from the `(cpb, dpb)` delay widths the SPS HRD states, or `None`
+    /// when `CpbDpbDelaysPresentFlag` is 0.
+    pub fn new(delay_bits: Option<(u8, u8)>) -> Self {
+        Self { delay_bits }
+    }
+
     /// `(cpb_removal_delay bits, dpb_output_delay bits)` that precede
     /// `pic_struct` when `CpbDpbDelaysPresentFlag` is 1 (a NAL or VCL
     /// `hrd_parameters()` is present), else `None`.
-    pub delay_bits: Option<(u8, u8)>,
+    pub fn delay_bits(&self) -> Option<(u8, u8)> {
+        self.delay_bits
+    }
 }
 
 /// The reorder facts of an H.264 SPS: `max_num_reorder_frames` and
 /// `max_dec_frame_buffering` from the VUI `bitstream_restriction` (ITU-T H.264
 /// §E.1.1 / §E.2.1), plus the profile fields §E.2.1 and §A.2.1 condition the
 /// inference on. See [`AvcReorderDepth::depth`].
+#[cfg(feature = "h264")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct AvcReorderDepth {
+    profile_idc: u8,
+    constraint_flags: u8,
+    max_num_reorder_frames: Option<u32>,
+    max_dec_frame_buffering: Option<u32>,
+}
+
+#[cfg(feature = "h264")]
+impl AvcReorderDepth {
     /// `profile_idc`.
-    pub profile_idc: u8,
+    pub fn profile_idc(&self) -> u8 {
+        self.profile_idc
+    }
+
     /// The SPS constraint-flags byte (`constraint_set0..5` in `[7:2]`).
-    pub constraint_flags: u8,
+    pub fn constraint_flags(&self) -> u8 {
+        self.constraint_flags
+    }
+
     /// `max_num_reorder_frames`, `None` unless `bitstream_restriction_flag` is 1.
-    pub max_num_reorder_frames: Option<u32>,
+    pub fn max_num_reorder_frames(&self) -> Option<u32> {
+        self.max_num_reorder_frames
+    }
+
     /// `max_dec_frame_buffering`, `None` unless `bitstream_restriction_flag` is 1.
-    pub max_dec_frame_buffering: Option<u32>,
+    pub fn max_dec_frame_buffering(&self) -> Option<u32> {
+        self.max_dec_frame_buffering
+    }
 }
 
 /// `profile_idc` of the Baseline profile, which carries only I and P slices
 /// (ITU-T H.264 §A.2.1).
+#[cfg(feature = "h264")]
 const PROFILE_BASELINE: u8 = 66;
 /// `profile_idc` values whose `constraint_set3_flag` marks an intra-only
 /// profile and infers `max_num_reorder_frames` 0 (ITU-T H.264 §E.2.1).
+#[cfg(feature = "h264")]
 const INTRA_PROFILES: [u8; 6] = [44, 86, 100, 110, 122, 244];
 /// `constraint_set3_flag` within the constraint-flags byte (MSB-first
 /// `constraint_set0_flag`, ITU-T H.264 §7.3.2.1.1).
+#[cfg(feature = "h264")]
 const CONSTRAINT_SET3_MASK: u8 = 0x10;
 
+#[cfg(feature = "h264")]
 impl AvcReorderDepth {
     /// The reorder depth the SPS itself fixes, in frames: the declared
     /// `max_num_reorder_frames`, else 0 where the standard infers or forces it
@@ -394,67 +595,104 @@ impl AvcReorderDepth {
 
 /// Decode the [`AvcReorderDepth`] of an H.264 SPS NAL unit (1-byte NAL header
 /// included).
+#[cfg(feature = "h264")]
 pub fn decode_avc_reorder_depth(sps_bytes: &[u8]) -> Result<AvcReorderDepth> {
     decode_avc_sps_inner(sps_bytes).map(|(_, _, _, _, r)| r)
 }
 
 /// Decode only the VUI timing facts ([`AvcVuiTiming`]) from an H.264 SPS NAL
 /// unit (1-byte NAL header included).
+#[cfg(feature = "h264")]
 pub fn decode_avc_vui_timing(sps_bytes: &[u8]) -> Result<Option<AvcVuiTiming>> {
     decode_avc_sps_inner(sps_bytes).map(|(_, _, _, t, _)| t)
 }
 /// H.264 SPS NAL unit (1-byte NAL header included).
+#[cfg(feature = "h264")]
 pub fn decode_avc_slice_sps(sps_bytes: &[u8]) -> Result<AvcSliceSps> {
     decode_avc_sps_inner(sps_bytes).map(|(_, s, _, _, _)| s)
 }
 
 /// The display-relevant facts of an SPS that [`AvcSpsInfo`]/[`HevcSpsInfo`]
-/// cannot carry (neither is `#[non_exhaustive]`, so a field added there would
-/// be a breaking change): consumed by
-/// [`DisplayGeometry`](crate::ir::DisplayGeometry).
-use crate::ir::PictureRect;
+/// carry only in part: the coded size before cropping, the output rectangle,
+/// the H.265 default display window and the VUI aspect ratio, overscan and
+/// video signal type. A consumer builds its presentation type from these.
+#[cfg(any(feature = "h264", feature = "hevc"))]
+#[non_exhaustive]
+pub struct SpsDisplayFacts {
+    coded_width: u32,
+    coded_height: u32,
+    output_rect: PictureRect,
+    default_display_rect: Option<PictureRect>,
+    aspect_ratio: Option<AspectRatioIdc>,
+    overscan_appropriate: Option<bool>,
+    video_signal: Option<VideoSignalType>,
+}
 
-pub(crate) struct DisplayFacts {
+#[cfg(any(feature = "h264", feature = "hevc"))]
+impl SpsDisplayFacts {
     /// Decoded picture width before cropping, luma samples (H.264
     /// `PicWidthInSamplesL`; H.265 `pic_width_in_luma_samples`).
-    pub(crate) coded_width: u32,
+    pub fn coded_width(&self) -> u32 {
+        self.coded_width
+    }
+
     /// Decoded picture height before cropping, luma samples (H.264
     /// `16 * FrameHeightInMbs`; H.265 `pic_height_in_luma_samples`).
-    pub(crate) coded_height: u32,
+    pub fn coded_height(&self) -> u32 {
+        self.coded_height
+    }
+
     /// Output (cropped) rectangle.
-    pub(crate) output_rect: PictureRect,
-    /// H.265 default display window, if signalled.
-    pub(crate) default_display_rect: Option<PictureRect>,
+    pub fn output_rect(&self) -> PictureRect {
+        self.output_rect
+    }
+
+    /// H.265 default display window, if signalled. Always `None` for H.264.
+    pub fn default_display_rect(&self) -> Option<PictureRect> {
+        self.default_display_rect
+    }
+
     /// VUI `aspect_ratio_idc` (+ `sar_width`/`sar_height`), `None` when the VUI
     /// or `aspect_ratio_info_present_flag` is absent or the VUI was truncated
     /// before the field was complete.
-    pub(crate) aspect_ratio: Option<AspectRatioIdc>,
+    pub fn aspect_ratio(&self) -> Option<AspectRatioIdc> {
+        self.aspect_ratio
+    }
+
     /// `overscan_appropriate_flag`, `None` when
     /// `overscan_info_present_flag` is 0 or the VUI was truncated.
-    pub(crate) overscan_appropriate: Option<bool>,
+    pub fn overscan_appropriate(&self) -> Option<bool> {
+        self.overscan_appropriate
+    }
+
     /// `video_signal_type()`, `None` when `video_signal_type_present_flag` is
     /// 0 or the VUI was truncated.
-    pub(crate) video_signal: Option<VideoSignalType>,
+    pub fn video_signal(&self) -> Option<VideoSignalType> {
+        self.video_signal
+    }
 }
 
-/// Decode the [`DisplayFacts`] of an H.264 SPS NAL unit (1-byte NAL header
+/// Decode the [`SpsDisplayFacts`] of an H.264 SPS NAL unit (1-byte NAL header
 /// included).
-pub(crate) fn decode_avc_display_facts(sps_bytes: &[u8]) -> Result<DisplayFacts> {
+#[cfg(feature = "h264")]
+pub fn decode_avc_display_facts(sps_bytes: &[u8]) -> Result<SpsDisplayFacts> {
     decode_avc_sps_inner(sps_bytes).map(|(_, _, d, _, _)| d)
 }
 
-/// Decode the [`DisplayFacts`] of an H.265 SPS NAL unit (2-byte NAL header
+/// Decode the [`SpsDisplayFacts`] of an H.265 SPS NAL unit (2-byte NAL header
 /// included).
-pub(crate) fn decode_hevc_display_facts(sps_bytes: &[u8]) -> Result<DisplayFacts> {
+#[cfg(feature = "hevc")]
+pub fn decode_hevc_display_facts(sps_bytes: &[u8]) -> Result<SpsDisplayFacts> {
     decode_hevc_sps_inner(sps_bytes).map(|(_, _, d, _)| d)
 }
 
+#[cfg(feature = "h264")]
 fn decode_avc_sps_inner(
     sps_bytes: &[u8],
 ) -> Result<(
     AvcSpsInfo,
     AvcSliceSps,
-    DisplayFacts,
+    SpsDisplayFacts,
     Option<AvcVuiTiming>,
     AvcReorderDepth,
 )> {
@@ -671,7 +909,7 @@ fn decode_avc_sps_inner(
     };
 
     let clamp_u32 = |v: u64| u32::try_from(v).unwrap_or(u32::MAX);
-    let display = DisplayFacts {
+    let display = SpsDisplayFacts {
         coded_width: clamp_u32(coded_width),
         coded_height: clamp_u32(coded_height),
         output_rect,
@@ -718,9 +956,11 @@ fn decode_avc_sps_inner(
 }
 
 /// Luma samples per macroblock side (H.264 §7.4.2.1.1: `PicWidthInMbs * 16`).
+#[cfg(feature = "h264")]
 const AVC_MB_SIZE: u64 = 16;
 
 /// What the H.264 VUI walk yields (§E.1.1).
+#[cfg(feature = "h264")]
 #[derive(Default)]
 struct AvcVuiFacts {
     /// `aspect_ratio_idc` (+ `sar_*` when Extended_SAR), §E.2.1 Table E-1.
@@ -746,6 +986,7 @@ struct AvcVuiFacts {
 /// truncation is kept. Errors are swallowed because VUI is optional and its
 /// absence must not prevent the caller from using the already-decoded
 /// mandatory fields.
+#[cfg(feature = "h264")]
 fn parse_avc_vui(r: &mut BitReader) -> AvcVuiFacts {
     let mut facts = AvcVuiFacts::default();
     let _ = parse_avc_vui_inner(r, &mut facts);
@@ -754,13 +995,16 @@ fn parse_avc_vui(r: &mut BitReader) -> AvcVuiFacts {
 
 /// Bits of `cpb_removal_delay_length_minus1` / `dpb_output_delay_length_minus1`
 /// (H.264 §E.1.2, `u(5)`), and of the other `u(5)` HRD fields.
+#[cfg(feature = "h264")]
 const HRD_LENGTH_FIELD_BITS: usize = 5;
 /// Largest `cpb_cnt_minus1` (H.264 §E.2.2 and H.265 §7.4.8: 0..=31).
+#[cfg(any(feature = "h264", feature = "hevc"))]
 const HRD_MAX_CPB_CNT_MINUS1: u64 = 31;
 
 /// Walk one H.264 `hrd_parameters()` (§E.1.2); returns
 /// `(cpb_removal_delay_length, dpb_output_delay_length)` in bits.
-fn parse_avc_hrd(r: &mut BitReader) -> crate::error::Result<(u8, u8)> {
+#[cfg(feature = "h264")]
+fn parse_avc_hrd(r: &mut BitReader) -> Result<(u8, u8)> {
     let cpb_cnt_minus1 = r.read_ue("cpb_cnt_minus1")?;
     if cpb_cnt_minus1 > HRD_MAX_CPB_CNT_MINUS1 {
         return Err(Error::InvalidValue(InvalidValue {
@@ -789,6 +1033,7 @@ fn parse_avc_hrd(r: &mut BitReader) -> crate::error::Result<(u8, u8)> {
 /// Read `aspect_ratio_idc` and, for Extended_SAR, `sar_width`/`sar_height`
 /// (H.264 §E.1.1 / H.265 §E.2.1; identical syntax in both). Truncation
 /// mid-field is an `Err`, so the caller never records a half-read value.
+#[cfg(any(feature = "h264", feature = "hevc"))]
 fn read_aspect_ratio(r: &mut BitReader) -> Result<AspectRatioIdc> {
     let idc = r.read_bits(ASPECT_RATIO_IDC_BITS, "aspect_ratio_idc")? as u8;
     let extended = if idc == EXTENDED_SAR_IDC {
@@ -802,13 +1047,17 @@ fn read_aspect_ratio(r: &mut BitReader) -> Result<AspectRatioIdc> {
 }
 
 /// Width of `aspect_ratio_idc`, `u(8)` (H.264 §E.1.1, H.265 §E.2.1).
+#[cfg(any(feature = "h264", feature = "hevc"))]
 const ASPECT_RATIO_IDC_BITS: usize = 8;
 /// Width of `sar_width` / `sar_height`, `u(16)`.
+#[cfg(any(feature = "h264", feature = "hevc"))]
 const SAR_DIMENSION_BITS: usize = 16;
 /// Width of `video_format`, `u(3)` (H.264 §E.1.1, H.265 §E.2.1).
+#[cfg(any(feature = "h264", feature = "hevc"))]
 const VIDEO_FORMAT_BITS: usize = 3;
 /// Width of `colour_primaries` / `transfer_characteristics` /
 /// `matrix_coefficients`, `u(8)` (H.264 §E.1.1, H.265 §E.2.1).
+#[cfg(any(feature = "h264", feature = "hevc"))]
 const COLOUR_CODE_BITS: usize = 8;
 
 /// Read `video_signal_type()` (H.264 §E.1.1 / H.265 §E.2.1; identical syntax
@@ -820,6 +1069,7 @@ const COLOUR_CODE_BITS: usize = 8;
 /// Truncation mid-field is an `Err`, so the caller records nothing half-read.
 /// A `video_format` the `u(3)` field cannot produce is a decode error rather
 /// than a silent clamp.
+#[cfg(any(feature = "h264", feature = "hevc"))]
 fn read_video_signal_type(r: &mut BitReader) -> Result<VideoSignalType> {
     let code = r.read_bits(VIDEO_FORMAT_BITS, "video_format")? as u8;
     let video_format = VideoFormat::from_wire(code).ok_or(Error::InvalidValue(InvalidValue {
@@ -839,7 +1089,8 @@ fn read_video_signal_type(r: &mut BitReader) -> Result<VideoSignalType> {
     Ok(VideoSignalType::new(video_format, full_range, colour))
 }
 
-fn parse_avc_vui_inner(r: &mut BitReader, facts: &mut AvcVuiFacts) -> crate::error::Result<()> {
+#[cfg(feature = "h264")]
+fn parse_avc_vui_inner(r: &mut BitReader, facts: &mut AvcVuiFacts) -> Result<()> {
     // vui_parameters_present_flag  u(1)
     let vui_present = r.read_flag("vui_parameters_present_flag")?;
     if !vui_present {
@@ -937,46 +1188,106 @@ fn parse_avc_vui_inner(r: &mut BitReader, facts: &mut AvcVuiFacts) -> crate::err
 ///
 /// The decoder is the only producer, so a newly decoded field is an additive
 /// change for a consumer.
+#[cfg(feature = "hevc")]
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct HevcSpsInfo {
+    general_profile_space: u8,
+    general_tier_flag: bool,
+    general_profile_idc: u8,
+    general_profile_compatibility_flags: u32,
+    general_constraint_indicator_flags: u64,
+    general_level_idc: u8,
+    chroma_format_idc: u8,
+    bit_depth_luma: u8,
+    bit_depth_chroma: u8,
+    width: u32,
+    height: u32,
+    num_units_in_tick: Option<u32>,
+    time_scale: Option<u32>,
+    fps: Option<f32>,
+}
+
+#[cfg(feature = "hevc")]
+impl HevcSpsInfo {
     /// `general_profile_space` (2 bits).
-    pub general_profile_space: u8,
+    pub fn general_profile_space(&self) -> u8 {
+        self.general_profile_space
+    }
+
     /// `general_tier_flag` (1 bit).
-    pub general_tier_flag: bool,
+    pub fn general_tier_flag(&self) -> bool {
+        self.general_tier_flag
+    }
+
     /// `general_profile_idc` (5 bits).
-    pub general_profile_idc: u8,
+    pub fn general_profile_idc(&self) -> u8 {
+        self.general_profile_idc
+    }
+
     /// `general_profile_compatibility_flags` (32 bits).
-    pub general_profile_compatibility_flags: u32,
+    pub fn general_profile_compatibility_flags(&self) -> u32 {
+        self.general_profile_compatibility_flags
+    }
+
     /// `general_constraint_indicator_flags` (48 bits, i.e. 6 bytes).
-    pub general_constraint_indicator_flags: u64,
+    pub fn general_constraint_indicator_flags(&self) -> u64 {
+        self.general_constraint_indicator_flags
+    }
+
     /// `general_level_idc` (8 bits).
-    pub general_level_idc: u8,
+    pub fn general_level_idc(&self) -> u8 {
+        self.general_level_idc
+    }
+
     /// `chroma_format_idc` — ue(v)
-    pub chroma_format_idc: u8,
+    pub fn chroma_format_idc(&self) -> u8 {
+        self.chroma_format_idc
+    }
+
     /// `bit_depth_luma` (= `bit_depth_luma_minus8 + 8`).
-    pub bit_depth_luma: u8,
+    pub fn bit_depth_luma(&self) -> u8 {
+        self.bit_depth_luma
+    }
+
     /// `bit_depth_chroma` (= `bit_depth_chroma_minus8 + 8`).
-    pub bit_depth_chroma: u8,
+    pub fn bit_depth_chroma(&self) -> u8 {
+        self.bit_depth_chroma
+    }
+
     /// Coded width in luma samples (conformance-window cropped).
-    pub width: u32,
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
     /// Coded height in luma samples (conformance-window cropped).
-    pub height: u32,
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+
     /// `vui_num_units_in_tick` from VUI `vui_timing_info` (ITU-T H.265 §E.2.1).
     ///
     /// Present only when `vui_parameters_present_flag` and
     /// `vui_timing_info_present_flag` are both 1 in the SPS.
-    pub num_units_in_tick: Option<u32>,
+    pub fn num_units_in_tick(&self) -> Option<u32> {
+        self.num_units_in_tick
+    }
+
     /// `vui_time_scale` from VUI `vui_timing_info` (ITU-T H.265 §E.2.1).
     ///
     /// Present only when `vui_parameters_present_flag` and
     /// `vui_timing_info_present_flag` are both 1 in the SPS.
-    pub time_scale: Option<u32>,
+    pub fn time_scale(&self) -> Option<u32> {
+        self.time_scale
+    }
+
     /// Legacy f32 estimate kept for compatibility; only the convention tier
     /// (`vui_time_scale / vui_num_units_in_tick`) applies and only when the
     /// normative HRD path does not. See
     /// `private/specs-verified/mpeg/transmux/codec/vui-timing-frame-rate.md` §2.7.
-    pub fps: Option<f32>,
+    pub fn fps(&self) -> Option<f32> {
+        self.fps
+    }
 }
 
 /// Decode an H.265/HEVC SPS RBSP and return the config-relevant fields.
@@ -1008,10 +1319,12 @@ pub struct HevcSpsInfo {
 /// height = pic_height_in_luma_samples
 ///            - SubHeightC * (conf_win_top_offset  + conf_win_bottom_offset)
 /// ```
+#[cfg(feature = "hevc")]
 pub fn decode_hevc_sps(sps_bytes: &[u8]) -> Result<HevcSpsInfo> {
     decode_hevc_sps_inner(sps_bytes).map(|(info, _, _, _)| info)
 }
 
+#[cfg(feature = "hevc")]
 fn build_hevc_sps_info(
     general_profile_space: u8,
     general_tier_flag: bool,
@@ -1044,6 +1357,43 @@ fn build_hevc_sps_info(
     }
 }
 
+#[cfg(feature = "hevc")]
+#[cfg(feature = "hevc")]
+impl HevcSpsInfo {
+    /// Build the profile / tier / level facts an `hvcC` record carries
+    /// (ISO/IEC 14496-15:2017 Annex E.3), which is all the RFC 6381 codec
+    /// string reads. The record states no coded size and no timing, so those
+    /// stay unknown here rather than invented.
+    pub fn from_record(
+        general_profile_space: u8,
+        general_tier_flag: bool,
+        general_profile_idc: u8,
+        general_profile_compatibility_flags: u32,
+        general_constraint_indicator_flags: u64,
+        general_level_idc: u8,
+        chroma_format_idc: u8,
+        bit_depth_luma: u8,
+        bit_depth_chroma: u8,
+    ) -> Self {
+        Self {
+            general_profile_space,
+            general_tier_flag,
+            general_profile_idc,
+            general_profile_compatibility_flags,
+            general_constraint_indicator_flags,
+            general_level_idc,
+            chroma_format_idc,
+            bit_depth_luma,
+            bit_depth_chroma,
+            width: 0,
+            height: 0,
+            num_units_in_tick: None,
+            time_scale: None,
+            fps: None,
+        }
+    }
+}
+
 /// VUI timing facts for an H.265 SPS (ITU-T H.265 §E.2.1 + hrd_parameters),
 /// carrying the fields needed by `transmux::nominal_frame_rate` without adding
 /// fields to the (literal-constructible, non-`#[non_exhaustive]`)
@@ -1051,32 +1401,93 @@ fn build_hevc_sps_info(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct HevcVuiTiming {
+    num_units_in_tick: u32,
+    time_scale: u32,
+    field_seq: bool,
+    frame_field_info_present: bool,
+    hrd_fixed_pic_rate: Option<u32>,
+}
+
+#[cfg(feature = "hevc")]
+impl HevcVuiTiming {
+    /// Build from the five VUI timing facts.
+    pub fn new(
+        num_units_in_tick: u32,
+        time_scale: u32,
+        field_seq: bool,
+        frame_field_info_present: bool,
+        hrd_fixed_pic_rate: Option<u32>,
+    ) -> Self {
+        Self {
+            num_units_in_tick,
+            time_scale,
+            field_seq,
+            frame_field_info_present,
+            hrd_fixed_pic_rate,
+        }
+    }
+
     /// `vui_num_units_in_tick` from VUI `vui_timing_info`.
-    pub num_units_in_tick: u32,
+    pub fn num_units_in_tick(&self) -> u32 {
+        self.num_units_in_tick
+    }
+
     /// `vui_time_scale` from VUI `vui_timing_info`.
-    pub time_scale: u32,
+    pub fn time_scale(&self) -> u32 {
+        self.time_scale
+    }
+
     /// `field_seq_flag` from the VUI (inferred `false` when absent).
-    pub field_seq: bool,
+    pub fn field_seq(&self) -> bool {
+        self.field_seq
+    }
+
     /// `frame_field_info_present_flag` from the VUI (inferred per §E.3.1 when
     /// absent).
-    pub frame_field_info_present: bool,
+    pub fn frame_field_info_present(&self) -> bool {
+        self.frame_field_info_present
+    }
+
     /// When the HRD fixed-rate path applies for `HighestTid`, the value
     /// `elemental_duration_in_tc_minus1[HighestTid] + 1`; `None` otherwise
     /// (no HRD, or `fixed_pic_rate_within_cvs_flag[HighestTid] == 0`).
-    pub hrd_fixed_pic_rate: Option<u32>,
+    pub fn hrd_fixed_pic_rate(&self) -> Option<u32> {
+        self.hrd_fixed_pic_rate
+    }
 }
 
 /// The interlace-relevant facts of an H.265 SPS (ITU-T H.265 §E.3.1; see
 /// `private/specs-verified/mpeg/transmux/codec/h265-vui-pic-timing.md`).
+#[cfg(feature = "hevc")]
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct HevcInterlaceSps {
+    field_seq: bool,
+    frame_field_info_present: bool,
+}
+
+#[cfg(feature = "hevc")]
+impl HevcInterlaceSps {
+    /// Build from the two VUI flags.
+    pub fn new(field_seq: bool, frame_field_info_present: bool) -> Self {
+        Self {
+            field_seq,
+            frame_field_info_present,
+        }
+    }
+
     /// `field_seq_flag`: the CVS conveys pictures that represent fields
     /// (inferred `false` when the VUI is absent or truncated before it).
-    pub field_seq: bool,
+    pub fn field_seq(&self) -> bool {
+        self.field_seq
+    }
+
     /// `frame_field_info_present_flag`: picture timing SEIs carry
     /// `pic_struct`. Read from the VUI, else inferred from
     /// `general_progressive_source_flag && general_interlaced_source_flag`.
-    pub frame_field_info_present: bool,
+    pub fn frame_field_info_present(&self) -> bool {
+        self.frame_field_info_present
+    }
 }
 
 /// VPS timing facts for an H.265 VPS (ITU-T H.265 §7.3.2.1), carrying
@@ -1085,17 +1496,38 @@ pub struct HevcInterlaceSps {
 /// inherited by an SPS VUI that lacks its own timing (or by an SPS with no VUI
 /// at all — an inference of this derivation, see doc §4). The VPS contributes
 /// only these two values; VPS HRD is not used.
+#[cfg(feature = "hevc")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct HevcVpsTiming {
+    num_units_in_tick: u32,
+    time_scale: u32,
+}
+
+#[cfg(feature = "hevc")]
+impl HevcVpsTiming {
+    /// Build from the two VPS timing values.
+    pub fn new(num_units_in_tick: u32, time_scale: u32) -> Self {
+        Self {
+            num_units_in_tick,
+            time_scale,
+        }
+    }
+
     /// `vps_num_units_in_tick` from VPS `vps_timing_info`.
-    pub num_units_in_tick: u32,
+    pub fn num_units_in_tick(&self) -> u32 {
+        self.num_units_in_tick
+    }
+
     /// `vps_time_scale` from VPS `vps_timing_info`.
-    pub time_scale: u32,
+    pub fn time_scale(&self) -> u32 {
+        self.time_scale
+    }
 }
 
 /// Decode only the VUI timing facts ([`HevcVuiTiming`]) from an H.265 SPS NAL
 /// unit (2-byte NAL header included).
+#[cfg(feature = "hevc")]
 pub fn decode_hevc_vui_timing(sps_bytes: &[u8]) -> Result<Option<HevcVuiTiming>> {
     let (info, interlace, _, hrd_fixed) = decode_hevc_sps_inner(sps_bytes)?;
     match (info.num_units_in_tick, info.time_scale) {
@@ -1114,6 +1546,7 @@ pub fn decode_hevc_vui_timing(sps_bytes: &[u8]) -> Result<Option<HevcVuiTiming>>
 /// unit (2-byte NAL header included). Returns `Ok(None)` when
 /// `vps_timing_info_present_flag` is 0 or either value is 0. Returns `Err` on
 /// truncated / hostile input (never panics).
+#[cfg(feature = "hevc")]
 pub fn decode_hevc_vps_timing(vps_nal: &[u8]) -> Result<Option<HevcVpsTiming>> {
     need_in(vps_nal, HEVC_NAL_HEADER_LEN, "HEVC VPS header")?;
     let mut r = BitReader::with_unescape(&vps_nal[HEVC_NAL_HEADER_LEN..], "HEVC VPS")?;
@@ -1182,19 +1615,23 @@ pub fn decode_hevc_vps_timing(vps_nal: &[u8]) -> Result<Option<HevcVpsTiming>> {
     }))
 }
 /// NAL unit (2-byte NAL header included).
+#[cfg(feature = "hevc")]
 pub fn decode_hevc_interlace_sps(sps_bytes: &[u8]) -> Result<HevcInterlaceSps> {
     decode_hevc_sps_inner(sps_bytes).map(|(_, i, _, _)| i)
 }
 
 /// `general_progressive_source_flag` — bit 47 of the 48-bit
 /// `general_constraint_indicator_flags` as read MSB-first (H.265 §7.3.3).
+#[cfg(feature = "hevc")]
 const PTL_PROGRESSIVE_SOURCE_BIT: u64 = 1 << 47;
 /// `general_interlaced_source_flag` — bit 46 (H.265 §7.3.3).
+#[cfg(feature = "hevc")]
 const PTL_INTERLACED_SOURCE_BIT: u64 = 1 << 46;
 
+#[cfg(feature = "hevc")]
 fn decode_hevc_sps_inner(
     sps_bytes: &[u8],
-) -> Result<(HevcSpsInfo, HevcInterlaceSps, DisplayFacts, Option<u32>)> {
+) -> Result<(HevcSpsInfo, HevcInterlaceSps, SpsDisplayFacts, Option<u32>)> {
     need_in(sps_bytes, HEVC_NAL_HEADER_LEN, "HEVC SPS header")?;
 
     let mut r = BitReader::with_unescape(&sps_bytes[HEVC_NAL_HEADER_LEN..], "HEVC SPS")?;
@@ -1342,7 +1779,7 @@ fn decode_hevc_sps_inner(
         None => None,
     };
 
-    let display = DisplayFacts {
+    let display = SpsDisplayFacts {
         coded_width: clamp_u32(coded_width),
         coded_height: clamp_u32(coded_height),
         output_rect,
@@ -1378,6 +1815,7 @@ fn decode_hevc_sps_inner(
 /// `Some(elemental_duration_in_tc_minus1[HighestTid] + 1)` when
 /// `fixed_pic_rate_within_cvs_flag[HighestTid]` is 1 (inferred from
 /// `fixed_pic_rate_general_flag`), else `None`.
+#[cfg(feature = "hevc")]
 fn parse_hevc_hrd(r: &mut BitReader, max_sub_layers_minus1: u8) -> Result<Option<u32>> {
     // commonInfPresentFlag == 1
     let nal_hrd = r.read_flag("nal_hrd_parameters_present_flag")?;
@@ -1446,6 +1884,7 @@ fn parse_hevc_hrd(r: &mut BitReader, max_sub_layers_minus1: u8) -> Result<Option
     Ok(result)
 }
 
+#[cfg(feature = "hevc")]
 fn parse_hevc_sub_layer_hrd(r: &mut BitReader, cpb_cnt: u64, sub_pic: bool) -> Result<()> {
     for _ in 0..cpb_cnt {
         let _ = r.read_ue("bit_rate_value_minus1")?;
@@ -1468,6 +1907,7 @@ fn parse_hevc_sub_layer_hrd(r: &mut BitReader, cpb_cnt: u64, sub_pic: bool) -> R
 /// out of data before reaching the timing fields.  Errors are silently swallowed
 /// because VUI is optional and its absence must not prevent the caller from using
 /// the already-decoded mandatory fields.
+#[cfg(feature = "hevc")]
 fn parse_hevc_sps_to_vui_timing(
     r: &mut BitReader,
     sps_max_sub_layers_minus1: u8,
@@ -1480,6 +1920,7 @@ fn parse_hevc_sps_to_vui_timing(
 
 /// The VUI display facts the H.265 walk collects (each stays at its default
 /// when the VUI or the governing `_present_flag` is absent).
+#[cfg(feature = "hevc")]
 #[derive(Default)]
 struct HevcVuiColour {
     /// `aspect_ratio_idc` (+ `sar_*` when `EXTENDED_SAR`).
@@ -1495,6 +1936,7 @@ struct HevcVuiColour {
 /// The VUI timing facts the H.265 walk returns: `vui_num_units_in_tick`,
 /// `vui_time_scale`, the convention-tier frame rate they imply (f32, the
 /// legacy field) and the normative tier's `fixed_pic_rate` HRD flag.
+#[cfg(feature = "hevc")]
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
 struct HevcWalkTiming {
     /// `vui_num_units_in_tick` (§E.2.1).
@@ -1510,14 +1952,16 @@ struct HevcWalkTiming {
 /// Largest `num_negative_pics`/`num_positive_pics` (H.265 §7.4.8: at most
 /// `sps_max_dec_pic_buffering_minus1`, itself at most `MaxDpbSize - 1` = 15;
 /// 16 is a generous bound that still caps hostile input).
+#[cfg(feature = "hevc")]
 const HEVC_MAX_RPS_PICS: u64 = 16;
 
+#[cfg(feature = "hevc")]
 fn parse_hevc_sps_to_vui_timing_inner(
     r: &mut BitReader,
     sps_max_sub_layers_minus1: u8,
     interlace: &mut HevcInterlaceSps,
     colour: &mut HevcVuiColour,
-) -> crate::error::Result<HevcWalkTiming> {
+) -> Result<HevcWalkTiming> {
     // log2_max_pic_order_cnt_lsb_minus4  ue(v)
     let log2_max_poc_lsb = r.read_ue("log2_max_pic_order_cnt_lsb_minus4")?;
 
@@ -1839,21 +2283,49 @@ fn parse_hevc_sps_to_vui_timing_inner(
 
 /// Decoded fields from an H.266/VVC sequence parameter set (subset needed by
 /// the transmux pipeline) — ITU-T H.266 §7.3.2.4 + §7.3.3.1.
+#[cfg(feature = "vvc")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct VvcSpsInfo {
+    chroma_format_idc: u8,
+    general_profile_idc: u8,
+    general_tier_flag: bool,
+    general_level_idc: u8,
+    width: u32,
+    height: u32,
+}
+
+#[cfg(feature = "vvc")]
+impl VvcSpsInfo {
     /// `sps_chroma_format_idc` (2 bits).
-    pub chroma_format_idc: u8,
+    pub fn chroma_format_idc(&self) -> u8 {
+        self.chroma_format_idc
+    }
+
     /// `general_profile_idc` (7 bits) — present iff the SPS carries a PTL.
-    pub general_profile_idc: u8,
+    pub fn general_profile_idc(&self) -> u8 {
+        self.general_profile_idc
+    }
+
     /// `general_tier_flag` (1 bit).
-    pub general_tier_flag: bool,
+    pub fn general_tier_flag(&self) -> bool {
+        self.general_tier_flag
+    }
+
     /// `general_level_idc` (8 bits).
-    pub general_level_idc: u8,
+    pub fn general_level_idc(&self) -> u8 {
+        self.general_level_idc
+    }
+
     /// Coded width (`sps_pic_width_max_in_luma_samples`).
-    pub width: u32,
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
     /// Coded height (`sps_pic_height_max_in_luma_samples`).
-    pub height: u32,
+    pub fn height(&self) -> u32 {
+        self.height
+    }
 }
 
 /// Decode an H.266/VVC SPS RBSP for the config-relevant fields
@@ -1865,6 +2337,7 @@ pub struct VvcSpsInfo {
 /// `general_constraint_info()` block is stepped past per §7.3.3.2 (its fields
 /// are not needed for the dimensions, but the block is longer than one byte so
 /// it must be skipped exactly, not merely aligned).
+#[cfg(feature = "vvc")]
 pub fn decode_vvc_sps(sps_bytes: &[u8]) -> Result<VvcSpsInfo> {
     need_in(sps_bytes, VVC_NAL_HEADER_LEN, "VVC SPS header")?;
 
@@ -1911,6 +2384,7 @@ pub fn decode_vvc_sps(sps_bytes: &[u8]) -> Result<VvcSpsInfo> {
     ))
 }
 
+#[cfg(feature = "vvc")]
 fn build_vvc_sps_info(
     chroma_format_idc: u8,
     general_profile_idc: u8,
@@ -1932,6 +2406,7 @@ fn build_vvc_sps_info(
 /// Decode `profile_tier_level(profileTierPresentFlag=1, MaxNumSubLayersMinus1)`
 /// far enough to skip past it and return profile/tier/level — ITU-T H.266
 /// §7.3.3.1 (+ §7.3.3.2 `general_constraints_info()`).
+#[cfg(feature = "vvc")]
 fn decode_vvc_ptl(r: &mut BitReader, max_sublayers_minus1: u8) -> Result<(u8, bool, u8)> {
     // general_profile_idc u(7), general_tier_flag u(1), general_level_idc u(8)
     let general_profile_idc = r.read_bits(U7_BITS, "general_profile_idc")? as u8;
@@ -1979,19 +2454,23 @@ fn decode_vvc_ptl(r: &mut BitReader, max_sublayers_minus1: u8) -> Result<(u8, bo
 /// 4-bit and a 2-bit constraint idc (picture format), then 16 NAL-unit,
 /// tile/slice, and CTU/block-partition flags, another 2-bit idc, and 43
 /// intra/inter/transform/loop-filter flags. Used only to step past the block.
+#[cfg(feature = "vvc")]
 const GCI_FLAG_BLOCK_BITS: [usize; 6] = [3, 4, 2, 16, 2, 43];
 
 /// `gci_num_additional_bits` is followed by this many extra flags when it
 /// exceeds five (§7.3.3.2: `numAdditionalBitsUsed = 6`).
+#[cfg(feature = "vvc")]
 const GCI_ADDITIONAL_FLAG_BITS: usize = 6;
 
 /// The `gci_num_additional_bits` threshold above which the six additional
 /// flags are present (§7.3.3.2 `if (gci_num_additional_bits > 5)`).
+#[cfg(feature = "vvc")]
 const GCI_ADDITIONAL_THRESHOLD: u64 = 5;
 
 /// Skip `general_constraints_info()` (ITU-T H.266 §7.3.3.2), whose fields are
 /// not needed to reach the SPS dimensions — but which must be stepped past
 /// exactly, since the block is longer than the byte its leading flag sits in.
+#[cfg(feature = "vvc")]
 fn skip_general_constraints_info(r: &mut BitReader) -> Result<()> {
     let present = r.read_flag("gci_present_flag")?;
     if present {
@@ -2020,143 +2499,15 @@ fn skip_general_constraints_info(r: &mut BitReader) -> Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// RFC 6381 helpers
-// ---------------------------------------------------------------------------
-
-/// Build RFC 6381 `avc1.PPCCLL` codec string.
-///
-/// UPPERCASE hex: `avc1.<profile_idc><constraint_flags><level_idc>`,
-/// each as two hex digits (e.g. `avc1.4D400D`).
-pub fn rfc6381_avc1(profile_idc: u8, constraint_flags: u8, level_idc: u8) -> String {
-    let mut s = String::with_capacity(AVC1_CODEC_STRING_CAPACITY);
-    s.push_str("avc1.");
-    s.push_str(&broadcast_common::hex::hex_encode_upper(&[
-        profile_idc,
-        constraint_flags,
-        level_idc,
-    ]));
-    s
-}
-
-const HVC1_CODEC_STRING_CAPACITY: usize = 48;
-
-/// `general_profile_space` 1..=3 as the codec-string prefix letters.
-const HEVC_PROFILE_SPACE_LETTERS: [char; 3] = ['A', 'B', 'C'];
-
-/// Build the `hvc1.…` codec string of ISO/IEC 14496-15:2017 Annex E.3 (the HEVC registration
-/// under RFC 6381): `hvc1.<space letter><profile_idc>.<compat>.<tier><level>
-/// [.<constraint byte>…]`, where `general_profile_idc` and `general_level_idc`
-/// are decimal, `<compat>` is the bit-reversed 32-bit compatibility word in hex
-/// without leading zeros, and trailing zero constraint bytes are dropped (the
-/// grammar, with the corrigendum applied, as restated in ETSI TS 103 285
-/// §5.2.2, `private/specs-verified/dash/docs-specs/etsi-ts-103-285/ch05-video.md`).
-pub fn rfc6381_hvc1(info: &HevcSpsInfo) -> String {
-    let mut s = String::with_capacity(HVC1_CODEC_STRING_CAPACITY);
-    s.push_str("hvc1.");
-    if let Some(letter) = usize::from(info.general_profile_space)
-        .checked_sub(1)
-        .and_then(|i| HEVC_PROFILE_SPACE_LETTERS.get(i))
-    {
-        s.push(*letter);
-    }
-    s.push_str(&alloc::format!("{}", info.general_profile_idc));
-    s.push('.');
-    s.push_str(&alloc::format!(
-        "{:X}",
-        info.general_profile_compatibility_flags.reverse_bits()
-    ));
-    s.push('.');
-    s.push(if info.general_tier_flag { 'H' } else { 'L' });
-    s.push_str(&alloc::format!("{}", info.general_level_idc));
-
-    let constraints = info.general_constraint_indicator_flags;
-    let be = constraints.to_be_bytes();
-    let bytes = &be[be.len() - HEVC_CONSTRAINT_BYTES_LEN..];
-
-    let last_nonzero = bytes.iter().rposition(|&b| b != 0);
-    if let Some(end) = last_nonzero {
-        for (i, &b) in bytes.iter().enumerate() {
-            if i > end {
-                break;
-            }
-            s.push('.');
-            s.push_str(&broadcast_common::hex::hex_encode_upper(&[b]));
-        }
-    }
-
-    s
-}
-
-/// Build the RFC 6381 `vvc1.…` codec string for H.266/VVC.
-///
-/// Per the VVC file-format registration (ISO/IEC 14496-15:2022 §11.3.4, the
-/// VVC analogue of the RFC 6381 §3.3 HEVC form):
-/// `vvc1.<general_profile_idc>.<tier><general_level_idc>[.CTA-<constraint…>]`
-/// where the tier prefix is `L` for main tier and `H` for high tier, the level
-/// is the decimal `general_level_idc`, and the constraint suffix (`CTA-` +
-/// hex, dropping trailing zero bytes) is emitted only when constraint bytes are
-/// present. `general_profile_idc` and the level are written in decimal.
-pub fn rfc6381_vvc1(
-    general_profile_idc: u8,
-    general_tier_flag: bool,
-    general_level_idc: u8,
-    general_constraint_info: &[u8],
-    num_bytes_constraint_info: u8,
-) -> String {
-    let mut s = String::with_capacity(VVC1_CODEC_STRING_CAPACITY);
-    s.push_str("vvc1.");
-    write_decimal(&mut s, general_profile_idc);
-    s.push('.');
-    s.push(if general_tier_flag { 'H' } else { 'L' });
-    write_decimal(&mut s, general_level_idc);
-
-    // Constraint suffix: the general_constraint_info payload, already
-    // MSB-aligned into its `num_bytes_constraint_info`-byte block, emitted as
-    // `CTA-` + hex with trailing zero bytes dropped.
-    if num_bytes_constraint_info > 0 {
-        let n = num_bytes_constraint_info as usize;
-        // Only the bytes actually read are meaningful; `n` is the block width.
-        let block = &general_constraint_info[..general_constraint_info.len().min(n)];
-        if let Some(end) = block.iter().rposition(|&b| b != 0) {
-            s.push_str(".CTA-");
-            for &b in &block[..=end] {
-                s.push_str(&broadcast_common::hex::hex_encode_upper(&[b]));
-            }
-        }
-    }
-    s
-}
-
-/// Build RFC 6381 `mp4a.40.<AOT>` codec string from AAC `AudioObjectType`.
-pub fn rfc6381_mp4a(aot: u8) -> String {
-    let mut s = String::with_capacity(MP4A_CODEC_STRING_CAPACITY);
-    s.push_str("mp4a.40.");
-    write_decimal(&mut s, aot);
-    s
-}
-
-fn write_decimal(s: &mut String, mut n: u8) {
-    if n == 0 {
-        s.push('0');
-        return;
-    }
-    let mut buf = [0u8; U8_DECIMAL_DIGITS + 1];
-    let mut len = 0;
-    while n > 0 {
-        buf[len] = b'0' + (n % DECIMAL_RADIX);
-        n /= DECIMAL_RADIX;
-        len += 1;
-    }
-    for i in (0..len).rev() {
-        s.push(buf[i] as char);
-    }
-}
-
-// ---------------------------------------------------------------------------
 // profile_tier_level decode (H.265 §7.3.3)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn decode_ptl(
+/// Walk `profile_tier_level()` (ITU-T H.265 §7.3.3) and return
+/// `(general_profile_space, general_tier_flag, general_profile_idc,
+/// general_profile_compatibility_flags, general_constraint_indicator_flags,
+/// general_level_idc)`.
+#[cfg(feature = "hevc")]
+pub fn decode_ptl(
     r: &mut BitReader,
     profile_present_flag: bool,
     max_sub_layers_minus1: u8,
@@ -2217,15 +2568,41 @@ pub(crate) fn decode_ptl(
     ))
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
-mod tests {
-    use broadcast_core::error::InvalidValue;
+mod strings_tests {
+    use crate::rfc6381::rfc6381_mp4a;
 
+    #[test]
+    fn rfc6381_mp4a_aac_lc() {
+        assert_eq!(rfc6381_mp4a(2), "mp4a.40.2");
+    }
+}
+
+// Movement note: the coded-fact colour tables (`SPEC_TABLE_E3`/`E4`/`E5`,
+// `SPEC_TABLE_E1`) are pinned by the unit tests of the `facts` module and by
+// `transmux`'s display-geometry suite, so they are not repeated here.
+
+/// A value with 32 leading zero bits (an Exp-Golomb value of `0xFFFF_FFFF`):
+/// past every spec bound the decoders check, yet inside the bit reader's
+/// 32-zero cap, so the tests exercise the SPS-level bounds, not the reader's.
+#[cfg(all(test, any(feature = "h264", feature = "hevc")))]
+mod huge_ue {
+    use test_fixtures::bits::BitWriter;
+
+    pub(super) fn ue_huge(s: &mut BitWriter) {
+        s.u(32, 0).bit(true).u(32, 0);
+    }
+}
+
+#[cfg(all(test, feature = "h264"))]
+mod avc_tests {
+    use super::huge_ue::ue_huge;
     use super::*;
+    use crate::rfc6381::rfc6381_avc1;
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use broadcast_core::error::InvalidValue;
+    use test_fixtures::bits::BitWriter;
 
     const X264_PYRAMID_SPS: [u8; 25] = [
         0x67, 0x64, 0x00, 0x1e, 0xac, 0xd9, 0x40, 0xa0, 0x2f, 0xf9, 0x61, 0x00, 0x00, 0x03, 0x00,
@@ -2274,11 +2651,6 @@ mod tests {
         assert_eq!(rfc6381_avc1(66, 0xC0, 13), "avc1.42C00D", "baseline");
         assert_eq!(rfc6381_avc1(77, 0x40, 13), "avc1.4D400D", "main");
         assert_eq!(rfc6381_avc1(100, 0x00, 13), "avc1.64000D", "high");
-    }
-
-    #[test]
-    fn rfc6381_mp4a_aac_lc() {
-        assert_eq!(rfc6381_mp4a(2), "mp4a.40.2");
     }
 
     /// Positive VUI timing case: a real H.264 High-profile SPS extracted from
@@ -2369,6 +2741,95 @@ mod tests {
         assert_eq!(info.height, 240);
         assert!(info.frame_mbs_only);
     }
+
+    /// `num_ref_frames_in_pic_order_cnt_cycle = 2^32-1` as the last field of
+    /// an otherwise-plausible SPS must return `Err` promptly. Pre-fix this
+    /// test would never finish: the loop spun ~4.3 billion times on a
+    /// `read_se` that returned `Ok(0)` at EOF without consuming anything —
+    /// exactly the permanent demux hang from the field reports.
+    #[test]
+    fn avc_sps_huge_poc_cycle_count_is_rejected() {
+        let mut nal = vec![0x67u8, 66, 0x00, 30]; // nal hdr, profile 66 (no high branch)
+        let mut s = BitWriter::new();
+        s.ue(0); // seq_parameter_set_id
+        s.ue(0); // log2_max_frame_num_minus4
+        s.ue(1); // pic_order_cnt_type = 1
+        s.bit(false); // delta_pic_order_always_zero_flag
+        s.bit(true); // offset_for_non_ref_pic se(0)
+        s.bit(true); // offset_for_top_to_bottom_field se(0)
+        ue_huge(&mut s); // num_ref_frames_in_pic_order_cnt_cycle = 2^32-1 > 255
+        nal.extend(s.finish());
+
+        let err =
+            decode_avc_sps(&nal).expect_err("H.264 §7.4.2.1 bounds the cycle count to 0..=255");
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue(InvalidValue {
+                    field: "num_ref_frames_in_pic_order_cnt_cycle",
+                    ..
+                })
+            ),
+            "{err:?}"
+        );
+    }
+
+    /// `chroma_format_idc > 3` (H.264 §7.4.2.1) must be `Err`, not a silently
+    /// truncated `as u8`.
+    #[test]
+    fn avc_sps_chroma_format_idc_above_3_is_rejected() {
+        let mut nal = vec![0x67u8, 100, 0x00, 30]; // High profile → chroma branch
+        let mut s = BitWriter::new();
+        s.ue(0); // seq_parameter_set_id
+        s.ue(4); // chroma_format_idc — out of range
+        nal.extend(s.finish());
+
+        let err = decode_avc_sps(&nal).expect_err("chroma_format_idc shall be 0..=3");
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue(InvalidValue {
+                    field: "chroma_format_idc",
+                    ..
+                })
+            ),
+            "{err:?}"
+        );
+    }
+
+    /// `bit_depth_luma_minus8 > 6` (H.264 §7.4.2.1) must be `Err`; pre-fix it
+    /// was `as u8 + 8`, which overflowed (debug panic / release wrap) for
+    /// values ≥ 248 and mis-computed the bit depth for anything > 6.
+    #[test]
+    fn avc_sps_bit_depth_minus8_above_6_is_rejected() {
+        let mut nal = vec![0x67u8, 100, 0x00, 30];
+        let mut s = BitWriter::new();
+        s.ue(0); // seq_parameter_set_id
+        s.ue(1); // chroma_format_idc
+        s.ue(7); // bit_depth_luma_minus8 — out of range (max 6)
+        nal.extend(s.finish());
+
+        let err = decode_avc_sps(&nal).expect_err("bit_depth_luma_minus8 shall be 0..=6");
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue(InvalidValue {
+                    field: "bit_depth_luma_minus8",
+                    ..
+                })
+            ),
+            "{err:?}"
+        );
+    }
+}
+
+#[cfg(all(test, feature = "hevc"))]
+mod hevc_tests {
+    use super::huge_ue::ue_huge;
+    use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use test_fixtures::bits::BitWriter;
 
     /// Positive HEVC VUI timing case: a real H.265 Main-profile SPS extracted from
     /// `fixtures/mp4/hevc-frag.mp4` (ffprobe: `r_frame_rate=25/1`).
@@ -2508,411 +2969,6 @@ mod tests {
         }
         // If it returns Err, that is also correct — no panic is the invariant here.
     }
-
-    // -------------------------------------------------------------------
-    // H.266/VVC SPS — general_constraints_info() with gci_present_flag == 1
-    // -------------------------------------------------------------------
-
-    /// Build a VVC SPS NAL whose `general_constraints_info()` has
-    /// `gci_present_flag == 1` and the given `gci_num_additional_bits`, with all
-    /// constraint flags zero and the dimensions `width`x`height`. Mirrors
-    /// ITU-T H.266 §7.3.3.2 exactly, so a reader that mis-skips the block
-    /// lands on the wrong bit and mis-decodes the dimensions.
-    fn vvc_sps_with_gci(additional: u8, width: u64, height: u64) -> Vec<u8> {
-        /// 3 general + 4-bit idc + 2-bit idc + 16 NAL/tile/CTU + 2-bit idc +
-        /// 43 intra/inter/transform/loop-filter flags (§7.3.3.2).
-        const GCI_FLAG_BITS: u32 = 3 + 4 + 2 + 16 + 2 + 43;
-        let mut s = BitWriter::new();
-        s.u(8, 0); // sps_seq_parameter_set_id, sps_video_parameter_set_id
-        s.u(3, 0); // sps_max_sublayers_minus1
-        s.u(2, 1); // sps_chroma_format_idc (4:2:0)
-        s.u(2, 0); // sps_log2_ctu_size_minus5
-        s.bit(true); // sps_ptl_dpb_hrd_params_present_flag
-        s.u(7, 1); // general_profile_idc
-        s.bit(false); // general_tier_flag
-        s.u(8, 32); // general_level_idc
-        s.bit(false); // ptl_frame_only_constraint_flag
-        s.bit(false); // ptl_multilayer_enabled_flag
-        s.bit(true); // gci_present_flag
-        for _ in 0..GCI_FLAG_BITS {
-            s.bit(false);
-        }
-        s.u(8, u64::from(additional)); // gci_num_additional_bits
-        if additional > 5 {
-            for _ in 0..6 {
-                s.bit(false); // the six extra constraint flags
-            }
-            for _ in 0..(additional - 6) {
-                s.bit(false); // gci_reserved_bit[i]
-            }
-        } else {
-            for _ in 0..additional {
-                s.bit(false); // gci_reserved_bit[i] — none skipped for 1..=5
-            }
-        }
-        while !s.aligned() {
-            s.bit(false); // gci_alignment_zero_bit
-        }
-        s.u(8, 0); // ptl_num_sub_profiles
-        s.bit(false); // sps_gdr_enabled_flag
-        s.bit(false); // sps_ref_pic_resampling_enabled_flag
-        s.ue(width);
-        s.ue(height);
-        let rbsp = s.finish();
-        // Insert emulation-prevention bytes (H.266 §7.4.2.1 / H.264 §7.4.1.1:
-        // a `0x03` after any `00 00` that precedes a byte <= 0x03), because the
-        // RBSP reader unescapes and an unescaped `00 00 00` would shift the
-        // whole bitstream.
-        let mut escaped = Vec::with_capacity(rbsp.len() + 4);
-        let mut zeros = 0usize;
-        for &byte in &rbsp {
-            if zeros >= 2 && byte <= 0x03 {
-                escaped.push(0x03);
-                zeros = 0;
-            }
-            escaped.push(byte);
-            zeros = if byte == 0 { zeros + 1 } else { 0 };
-        }
-        let mut nal = alloc::vec![0x00, 0x00];
-        nal.extend_from_slice(&escaped);
-        nal[1] = 15 << 3; // nal_unit_type 15 = SPS
-        nal
-    }
-
-    /// Every `gci_num_additional_bits` shape decodes the same dimensions: the
-    /// reserved-bit count is `n - (n > 5 ? 6 : 0)` (§7.3.3.2), so 1..=5 skip
-    /// exactly `n` bits — the case a naive "align straight after the count"
-    /// reader gets wrong.
-    #[test]
-    fn vvc_sps_gci_additional_bits_counts_decode_dimensions() {
-        for additional in [0u8, 1, 3, 5, 6, 8, 255] {
-            let nal = vvc_sps_with_gci(additional, 1920, 1080);
-            let info = decode_vvc_sps(&nal)
-                .unwrap_or_else(|e| panic!("additional={additional} must decode, got {e:?}"));
-            assert_eq!(
-                (info.width, info.height),
-                (1920, 1080),
-                "additional={additional} must land on the right dimensions"
-            );
-        }
-    }
-
-    /// Hostile input: a truncated GCI-present SPS with each additional-bits
-    /// count is an `Err`, never a panic.
-    #[test]
-    fn vvc_sps_gci_truncated_is_error_not_panic_for_every_count() {
-        for additional in [0u8, 3, 5, 6, 8, 255] {
-            let nal = vvc_sps_with_gci(additional, 1920, 1080);
-            // The NAL is 2 header bytes + the RBSP; every cut from inside the
-            // GCI region (which starts at byte 4: the 4-bit+4-bit ids, 3-bit
-            // sublayers, 2-bit chroma and 2-bit CTU occupy byte 2, and the PTL
-            // fields follow) up to the last byte must be an `Err`, never a
-            // panic. `additional=255` makes the region long, so most cuts land
-            // in it.
-            for cut in 4..nal.len() {
-                assert!(
-                    matches!(
-                        decode_vvc_sps(&nal[..cut]),
-                        Err(crate::error::Error::BufferTooShort(..))
-                    ),
-                    "additional={additional} cut={cut} of {} must error",
-                    nal.len()
-                );
-            }
-        }
-    }
-
-    /// A `general_constraints_info()` block with `gci_present_flag == 1` is
-    /// ordinary in the field (ITU-T H.266 §7.3.3.2) and must not fail the SPS —
-    /// the block is skipped exactly (flags, `gci_num_additional_bits`, its
-    /// reserved bits) and then aligned, after which the dimensions follow.
-    #[test]
-    fn vvc_sps_gci_present_flag_is_skipped_to_dimensions() {
-        const GCI_BITS: u32 = 1 + 3 + 4 + 2 + 13 + 6 + 3 + 6 + 15 + 7 + 5 + 6 + 8;
-        let mut s = BitWriter::new();
-        // sps_seq_parameter_set_id u(4), sps_video_parameter_set_id u(4)
-        s.u(8, 0);
-        // sps_max_sublayers_minus1 u(3) == 0
-        s.u(3, 0);
-        // sps_chroma_format_idc u(2) == 1 (4:2:0), sps_log2_ctu_size_minus5 u(2)
-        s.u(2, 1);
-        s.u(2, 0);
-        // sps_ptl_dpb_hrd_params_present_flag u(1) == 1
-        s.bit(true);
-        // profile_tier_level(1, 0):
-        s.u(7, 1); // general_profile_idc
-        s.bit(false); // general_tier_flag
-        s.u(8, 32); // general_level_idc
-        s.bit(false); // ptl_frame_only_constraint_flag
-        s.bit(false); // ptl_multilayer_enabled_flag
-        // general_constraints_info(): gci_present_flag == 1 then 78 zero bits.
-        s.bit(true);
-        for _ in 1..GCI_BITS {
-            s.bit(false);
-        }
-        // gci_alignment_zero_bit to the byte boundary (computed by the sink).
-        while !s.aligned() {
-            s.bit(false);
-        }
-        // ptl_num_sub_profiles u(8) == 0
-        s.u(8, 0);
-        // sps_gdr_enabled_flag, sps_ref_pic_resampling_enabled_flag
-        s.bit(false);
-        s.bit(false);
-        // sps_pic_width_max_in_luma_samples ue(v) == 1920
-        s.ue(1920);
-        // sps_pic_height_max_in_luma_samples ue(v) == 1080
-        s.ue(1080);
-        let rbsp = s.finish();
-
-        // A VVC SPS NAL: 2-byte header (nal_unit_type 15 = SPS) then the RBSP.
-        let mut nal = alloc::vec![0x00, 0x00];
-        nal.extend_from_slice(&rbsp);
-        // nal_unit_type is the low 5 bits of byte 1: 15 = SPS.
-        nal[1] = 15 << 3;
-        let info = decode_vvc_sps(&nal).expect("a GCI-present SPS must decode");
-        assert_eq!(info.chroma_format_idc, 1);
-        assert_eq!(info.general_profile_idc, 1);
-        assert_eq!(info.general_level_idc, 32);
-        assert_eq!(info.width, 1920);
-        assert_eq!(info.height, 1080);
-    }
-
-    /// The same SPS with `gci_present_flag == 0` still decodes (the pre-fix
-    /// path), pinning that the fix did not change the present-flag-0 layout.
-    #[test]
-    fn vvc_sps_gci_absent_still_decodes() {
-        let mut s = BitWriter::new();
-        s.u(8, 0); // ids
-        s.u(3, 0); // sps_max_sublayers_minus1
-        s.u(2, 1); // sps_chroma_format_idc
-        s.u(2, 0); // sps_log2_ctu_size_minus5
-        s.bit(true); // sps_ptl_dpb_hrd_params_present_flag
-        s.u(7, 1); // general_profile_idc
-        s.bit(false); // general_tier_flag
-        s.u(8, 32); // general_level_idc
-        s.bit(false); // ptl_frame_only_constraint_flag
-        s.bit(false); // ptl_multilayer_enabled_flag
-        s.bit(false); // gci_present_flag == 0
-        while !s.aligned() {
-            s.bit(false); // gci_alignment_zero_bit
-        }
-        s.u(8, 0); // ptl_num_sub_profiles
-        s.bit(false); // sps_gdr_enabled_flag
-        s.bit(false); // sps_ref_pic_resampling_enabled_flag
-        s.ue(640);
-        s.ue(360);
-        let rbsp = s.finish();
-        let mut nal = alloc::vec![0x00, 0x00];
-        nal.extend_from_slice(&rbsp);
-        nal[1] = 15 << 3;
-        let info = decode_vvc_sps(&nal).expect("GCI-absent SPS must decode");
-        assert_eq!((info.width, info.height), (640, 360));
-    }
-
-    /// `sps_pic_width_max_in_luma_samples` is `ue(v)` (unbounded), so a coded
-    /// size above `u16::MAX` must be reported as-is rather than truncated to
-    /// its low 16 bits (#997 class). 70 000 truncated to `u16` would be 4464.
-    #[test]
-    fn vvc_sps_width_above_u16_is_not_truncated() {
-        let mut s = BitWriter::new();
-        s.u(8, 0); // ids
-        s.u(3, 0); // sps_max_sublayers_minus1
-        s.u(2, 1); // sps_chroma_format_idc
-        s.u(2, 0); // sps_log2_ctu_size_minus5
-        s.bit(true); // sps_ptl_dpb_hrd_params_present_flag
-        s.u(7, 1); // general_profile_idc
-        s.bit(false); // general_tier_flag
-        s.u(8, 32); // general_level_idc
-        s.bit(false); // ptl_frame_only_constraint_flag
-        s.bit(false); // ptl_multilayer_enabled_flag
-        s.bit(false); // gci_present_flag == 0
-        while !s.aligned() {
-            s.bit(false);
-        }
-        s.u(8, 0); // ptl_num_sub_profiles
-        s.bit(false); // sps_gdr_enabled_flag
-        s.bit(false); // sps_ref_pic_resampling_enabled_flag
-        s.ue(70_000);
-        s.ue(70_000);
-        let rbsp = s.finish();
-        let mut nal = alloc::vec![0x00, 0x00];
-        nal.extend_from_slice(&rbsp);
-        nal[1] = 15 << 3;
-        let info = decode_vvc_sps(&nal).expect("oversized SPS must decode");
-        assert_eq!((info.width, info.height), (70_000, 70_000));
-    }
-
-    /// Hostile input: a truncated GCI-present SPS is an `Err`, never a panic.
-    #[test]
-    fn vvc_sps_gci_present_truncated_is_error_not_panic() {
-        // Only the header + a few bits: the dimensions are never reached.
-        let nal: &[u8] = &[0x00, 0x78, 0x00, 0x40];
-        assert!(matches!(
-            decode_vvc_sps(nal),
-            Err(crate::error::Error::BufferTooShort(..))
-        ));
-        // A two-byte header alone (the minimum for the reader to start).
-        assert!(matches!(
-            decode_vvc_sps(&[0x00, 0x78]),
-            Err(crate::error::Error::BufferTooShort(..))
-        ));
-    }
-
-    // -------------------------------------------------------------------
-    // Hostile SPS field bounds (P0 batch B, item 5)
-    // -------------------------------------------------------------------
-
-    use alloc::vec;
-    use alloc::vec::Vec;
-
-    use crate::test_bits::BitWriter;
-
-    /// A value with exactly 32 leading zero bits (ue value `0xFFFF_FFFF`): past
-    /// every spec bound above, yet inside the reader's 32-zero cap, so these
-    /// tests exercise the SPS-level checks, not the bitreader cap.
-    fn ue_huge(s: &mut BitWriter) {
-        s.u(32, 0).bit(true).u(32, 0);
-    }
-
-    /// `num_ref_frames_in_pic_order_cnt_cycle = 2^32-1` as the last field of
-    /// an otherwise-plausible SPS must return `Err` promptly. Pre-fix this
-    /// test would never finish: the loop spun ~4.3 billion times on a
-    /// `read_se` that returned `Ok(0)` at EOF without consuming anything —
-    /// exactly the permanent demux hang from the field reports.
-    #[test]
-    fn avc_sps_huge_poc_cycle_count_is_rejected() {
-        let mut nal = vec![0x67u8, 66, 0x00, 30]; // nal hdr, profile 66 (no high branch)
-        let mut s = BitWriter::new();
-        s.ue(0); // seq_parameter_set_id
-        s.ue(0); // log2_max_frame_num_minus4
-        s.ue(1); // pic_order_cnt_type = 1
-        s.bit(false); // delta_pic_order_always_zero_flag
-        s.bit(true); // offset_for_non_ref_pic se(0)
-        s.bit(true); // offset_for_top_to_bottom_field se(0)
-        ue_huge(&mut s); // num_ref_frames_in_pic_order_cnt_cycle = 2^32-1 > 255
-        nal.extend(s.finish());
-
-        let err =
-            decode_avc_sps(&nal).expect_err("H.264 §7.4.2.1 bounds the cycle count to 0..=255");
-        assert!(
-            matches!(
-                err,
-                Error::InvalidValue(InvalidValue {
-                    field: "num_ref_frames_in_pic_order_cnt_cycle",
-                    ..
-                })
-            ),
-            "{err:?}"
-        );
-    }
-
-    /// `chroma_format_idc > 3` (H.264 §7.4.2.1) must be `Err`, not a silently
-    /// truncated `as u8`.
-    #[test]
-    fn avc_sps_chroma_format_idc_above_3_is_rejected() {
-        let mut nal = vec![0x67u8, 100, 0x00, 30]; // High profile → chroma branch
-        let mut s = BitWriter::new();
-        s.ue(0); // seq_parameter_set_id
-        s.ue(4); // chroma_format_idc — out of range
-        nal.extend(s.finish());
-
-        let err = decode_avc_sps(&nal).expect_err("chroma_format_idc shall be 0..=3");
-        assert!(
-            matches!(
-                err,
-                Error::InvalidValue(InvalidValue {
-                    field: "chroma_format_idc",
-                    ..
-                })
-            ),
-            "{err:?}"
-        );
-    }
-
-    /// `bit_depth_luma_minus8 > 6` (H.264 §7.4.2.1) must be `Err`; pre-fix it
-    /// was `as u8 + 8`, which overflowed (debug panic / release wrap) for
-    /// values ≥ 248 and mis-computed the bit depth for anything > 6.
-    #[test]
-    fn avc_sps_bit_depth_minus8_above_6_is_rejected() {
-        let mut nal = vec![0x67u8, 100, 0x00, 30];
-        let mut s = BitWriter::new();
-        s.ue(0); // seq_parameter_set_id
-        s.ue(1); // chroma_format_idc
-        s.ue(7); // bit_depth_luma_minus8 — out of range (max 6)
-        nal.extend(s.finish());
-
-        let err = decode_avc_sps(&nal).expect_err("bit_depth_luma_minus8 shall be 0..=6");
-        assert!(
-            matches!(
-                err,
-                Error::InvalidValue(InvalidValue {
-                    field: "bit_depth_luma_minus8",
-                    ..
-                })
-            ),
-            "{err:?}"
-        );
-    }
-
-    /// HEVC analogue: `num_short_term_ref_pic_sets = 2^32-1` (H.265 §7.4.3.2
-    /// bounds it to 0..=64). Pre-fix the VUI walk looped ~4.3 billion times
-    /// on EOF `Ok(0)` reads; post-fix the bound makes the error-swallowing
-    /// wrapper return promptly with no timing.
-    #[test]
-    fn hevc_sps_huge_short_term_ref_pic_set_count_terminates_promptly() {
-        let mut nal = vec![0x42u8, 0x01]; // NAL header (nal_unit_type=33)
-        let mut s = BitWriter::new();
-        s.u(4, 0); // sps_video_parameter_set_id u(4)
-        s.u(3, 0); // sps_max_sub_layers_minus1 u(3) = 0
-        s.bit(false); // sps_temporal_id_nesting_flag
-        // profile_tier_level(1, 0): general_* only.
-        s.u(2, 0); // general_profile_space
-        s.bit(false); // general_tier_flag
-        s.u(5, 1); // general_profile_idc
-        s.u(32, 0); // general_profile_compatibility_flags
-        s.u(48, 0xE0_00_00_00_00_00); // general_constraint_indicator_flags
-        s.u(8, 93); // general_level_idc
-        s.ue(0); // sps_seq_parameter_set_id
-        s.ue(1); // chroma_format_idc
-        s.ue(16); // pic_width_in_luma_samples
-        s.ue(16); // pic_height_in_luma_samples
-        s.bit(false); // conformance_window_flag
-        s.ue(2); // bit_depth_luma_minus8 (10-bit)
-        s.ue(2); // bit_depth_chroma_minus8
-        // parse_hevc_sps_to_vui_timing_inner resumes here:
-        s.ue(3); // log2_max_pic_order_cnt_lsb_minus4
-        s.bit(false); // sps_sub_layer_ordering_info_present_flag
-        s.ue(0); // sps_max_dec_pic_buffering_minus1[0]
-        s.ue(0); // sps_max_num_reorder_pics[0]
-        s.ue(0); // sps_max_latency_increase_plus1[0]
-        s.ue(0); // log2_min_luma_coding_block_size_minus3
-        s.ue(3); // log2_diff_max_min_luma_coding_block_size
-        s.ue(0); // log2_min_luma_transform_block_size_minus2
-        s.ue(3); // log2_diff_max_min_luma_transform_block_size
-        s.ue(1); // max_transform_hierarchy_depth_inter
-        s.ue(1); // max_transform_hierarchy_depth_intra
-        s.bit(false); // scaling_list_enabled_flag
-        s.bit(false); // amp_enabled_flag
-        s.bit(false); // sample_adaptive_offset_enabled_flag
-        s.bit(false); // pcm_enabled_flag
-        ue_huge(&mut s); // num_short_term_ref_pic_sets = 2^32-1 > 64
-        nal.extend(s.finish());
-
-        let info = decode_hevc_sps(&nal)
-            .expect("mandatory fields parse; the bounded VUI walk error is swallowed");
-        assert_eq!(info.fps, None);
-    }
-
-    // -------------------------------------------------------------------
-    // Interlace facts (#1162 R3): spec-built synthetic streams. Every field
-    // is written per the transcribed syntax in docs/codec/h26{4,5}-vui-pic-
-    // timing.md, so a mis-walk of any preceding element shifts the bits the
-    // assertions read.
-    // -------------------------------------------------------------------
-
-    use crate::interlace::{PicStruct, SourceScanType, avc_facts, hevc_facts};
-    use crate::slice_header::AvcParamSets;
 
     /// Build an HEVC SPS NAL whose RPS section exercises inter-RPS prediction
     /// (so the VUI is only reachable with the exact (7-61)/(7-62) counts) and
@@ -3061,1121 +3117,61 @@ mod tests {
         assert!(!one.frame_field_info_present);
     }
 
-    fn hevc_nal(nal_type: u8, body: &[u8]) -> Vec<u8> {
-        let mut v = vec![nal_type << 1, 0x01];
-        v.extend_from_slice(body);
-        v
-    }
-
-    /// A HEVC prefix SEI carrying a `pic_timing` with the given
-    /// `pic_struct`/`source_scan_type`/`duplicate_flag` (§D.2.3).
-    fn hevc_pic_timing_sei(pic_struct: u64, scan: u64) -> Vec<u8> {
-        let mut p = BitWriter::new();
-        p.u(4, pic_struct);
-        p.u(2, scan);
-        p.bit(false); // duplicate_flag
-        let payload = p.finish(); // one byte (7 bits + pad)
-        let mut body = vec![1u8, payload.len() as u8]; // payloadType 1, size
-        body.extend_from_slice(&payload);
-        body.push(0x80); // rbsp_trailing_bits
-        hevc_nal(39, &body)
-    }
-
+    /// HEVC analogue: `num_short_term_ref_pic_sets = 2^32-1` (H.265 §7.4.3.2
+    /// bounds it to 0..=64). Pre-fix the VUI walk looped ~4.3 billion times
+    /// on EOF `Ok(0)` reads; post-fix the bound makes the error-swallowing
+    /// wrapper return promptly with no timing.
     #[test]
-    fn hevc_pic_struct_and_scan_type_are_read_from_prefix_sei() {
-        let sps = hevc_interlace_sps(true, true, true, 0);
-        let vcl = hevc_nal(1, &[0x80]);
-        for (code, want, bottom_first) in [
-            (1u64, PicStruct::TopField, Some(false)),
-            (2, PicStruct::BottomField, Some(true)),
-            (10, PicStruct::BottomPairedWithPreviousTop, Some(true)),
-            (11, PicStruct::TopPairedWithNextBottom, Some(false)),
-        ] {
-            let sei = hevc_pic_timing_sei(code, 0);
-            let f = hevc_facts(&sps, &[sei.as_slice(), vcl.as_slice()]).expect("facts");
-            assert!(f.field_pic);
-            assert_eq!(f.fields, 1);
-            assert_eq!(f.pic_struct, Some(want));
-            assert_eq!(f.bottom_field_first, bottom_first);
-            assert_eq!(f.source_scan_type, Some(SourceScanType::Interlaced));
-        }
-        // source_scan_type 3 (reserved) reads as unknown (§D.3.3).
-        let sei = hevc_pic_timing_sei(1, 3);
-        let f = hevc_facts(&sps, &[sei.as_slice(), vcl.as_slice()]).unwrap();
-        assert_eq!(f.source_scan_type, Some(SourceScanType::Unknown));
-        // Reserved pic_struct (13) is reported as None, not guessed.
-        let sei = hevc_pic_timing_sei(13, 0);
-        let f = hevc_facts(&sps, &[sei.as_slice(), vcl.as_slice()]).unwrap();
-        assert_eq!(f.pic_struct, None);
-        // A SEI-less picture of a field sequence is still a field, parity unknown.
-        let f = hevc_facts(&sps, &[vcl.as_slice()]).unwrap();
-        assert!(f.field_pic);
-        assert_eq!((f.pic_struct, f.bottom_field_first), (None, None));
-        // No VCL NAL at all: not a picture.
-        assert!(hevc_facts(&sps, &[sei.as_slice()]).is_none());
-        // frame_field_info_present = 0: the SEI is not interpreted.
-        let sps0 = hevc_interlace_sps(false, false, true, 0);
-        let sei = hevc_pic_timing_sei(4, 0);
-        let f = hevc_facts(&sps0, &[sei.as_slice(), vcl.as_slice()]).unwrap();
-        assert!(!f.field_pic);
-        assert_eq!(f.pic_struct, None);
-    }
-
-    /// Build an H.264 SPS (profile 66, `pic_order_cnt_type` 2 so slice headers
-    /// carry no POC syntax). `hrd`: optional `(cpb_removal_delay_length_minus1,
-    /// dpb_output_delay_length_minus1)` for the NAL HRD, `vcl` likewise.
-    fn avc_interlace_sps(
-        mbaff: bool,
-        pic_struct_present: bool,
-        nal_hrd: Option<(u64, u64)>,
-        vcl_hrd: Option<(u64, u64)>,
-    ) -> Vec<u8> {
-        fn hrd(s: &mut BitWriter, (cpb, dpb): (u64, u64)) {
-            s.ue(1); // cpb_cnt_minus1 (two schedules, so the loop must iterate)
-            s.u(4, 0); // bit_rate_scale
-            s.u(4, 0); // cpb_size_scale
-            for _ in 0..2 {
-                s.ue(7); // bit_rate_value_minus1
-                s.ue(9); // cpb_size_value_minus1
-                s.bit(true); // cbr_flag
-            }
-            s.u(5, 22); // initial_cpb_removal_delay_length_minus1
-            s.u(5, cpb); // cpb_removal_delay_length_minus1
-            s.u(5, dpb); // dpb_output_delay_length_minus1
-            s.u(5, 24); // time_offset_length
-        }
-        let mut nal = vec![0x67u8, 66, 0x00, 30];
+    fn hevc_sps_huge_short_term_ref_pic_set_count_terminates_promptly() {
+        let mut nal = vec![0x42u8, 0x01]; // NAL header (nal_unit_type=33)
         let mut s = BitWriter::new();
-        s.ue(0); // seq_parameter_set_id
-        s.ue(0); // log2_max_frame_num_minus4 -> frame_num is 4 bits
-        s.ue(2); // pic_order_cnt_type
-        s.ue(1); // max_num_ref_frames
-        s.bit(false); // gaps_in_frame_num_value_allowed_flag
-        s.ue(3); // pic_width_in_mbs_minus1
-        s.ue(1); // pic_height_in_map_units_minus1
-        s.bit(false); // frame_mbs_only_flag
-        s.bit(mbaff); // mb_adaptive_frame_field_flag
-        s.bit(true); // direct_8x8_inference_flag
-        s.bit(false); // frame_cropping_flag
-        s.bit(true); // vui_parameters_present_flag
-        s.bit(false); // aspect_ratio_info_present_flag
-        s.bit(false); // overscan_info_present_flag
-        s.bit(false); // video_signal_type_present_flag
-        s.bit(false); // chroma_loc_info_present_flag
-        s.bit(true); // timing_info_present_flag
-        s.u(32, 1); // num_units_in_tick
-        s.u(32, 50); // time_scale
-        s.bit(true); // fixed_frame_rate_flag
-        s.bit(nal_hrd.is_some()); // nal_hrd_parameters_present_flag
-        if let Some(h) = nal_hrd {
-            hrd(&mut s, h);
-        }
-        s.bit(vcl_hrd.is_some()); // vcl_hrd_parameters_present_flag
-        if let Some(h) = vcl_hrd {
-            hrd(&mut s, h);
-        }
-        if nal_hrd.is_some() || vcl_hrd.is_some() {
-            s.bit(false); // low_delay_hrd_flag
-        }
-        s.bit(pic_struct_present); // pic_struct_present_flag
-        s.bit(false); // bitstream_restriction_flag
-        s.bit(true); // rbsp_stop_one_bit
-        nal.extend(s.finish());
-        nal
-    }
-
-    fn avc_pps() -> Vec<u8> {
-        let mut s = BitWriter::new();
-        s.ue(0); // pic_parameter_set_id
-        s.ue(0); // seq_parameter_set_id
-        s.bit(false); // entropy_coding_mode_flag
-        s.bit(false); // bottom_field_pic_order_in_frame_present_flag
-        s.ue(0); // num_slice_groups_minus1
-        s.ue(0);
-        s.ue(0); // num_ref_idx_l0/l1_default_active_minus1
-        s.bit(false); // weighted_pred_flag
-        s.u(2, 0); // weighted_bipred_idc
-        s.ue(0); // pic_init_qp_minus26 se(0)
-        s.ue(0); // pic_init_qs_minus26
-        s.ue(0); // chroma_qp_index_offset
-        s.bit(false); // deblocking_filter_control_present_flag
-        s.bit(false); // constrained_intra_pred_flag
-        s.bit(false); // redundant_pic_cnt_present_flag
-        s.bit(true);
-        let mut nal = vec![0x68u8];
-        nal.extend(s.finish());
-        nal
-    }
-
-    /// An I slice (type 7), `frame_num` 0, as a frame or as a top/bottom field.
-    fn avc_slice(field: Option<bool>) -> Vec<u8> {
-        let mut s = BitWriter::new();
-        s.ue(0); // first_mb_in_slice
-        s.ue(7); // slice_type (I)
-        s.ue(0); // pic_parameter_set_id
-        s.u(4, 0); // frame_num
-        match field {
-            None => {
-                s.bit(false); // field_pic_flag
-            }
-            Some(bottom) => {
-                s.bit(true); // field_pic_flag
-                s.bit(bottom); // bottom_field_flag
-            }
-        }
-        s.u(8, 0); // slice data stand-in (never parsed)
-        let mut nal = vec![0x61u8]; // nal_ref_idc 3, type 1
-        nal.extend(s.finish());
-        nal
-    }
-
-    /// An H.264 `pic_timing` SEI NAL: `cpb`/`dpb` delay bit lengths, then
-    /// `pic_struct` (§D.1.3), then a zero clock-timestamp-flag tail.
-    fn avc_pic_timing_sei(delays: Option<(u32, u32)>, pic_struct: u64) -> Vec<u8> {
-        let mut p = BitWriter::new();
-        if let Some((cpb, dpb)) = delays {
-            p.u(cpb, 0x15555 & ((1 << cpb) - 1)); // cpb_removal_delay
-            p.u(dpb, 0x2AAAA & ((1 << dpb) - 1)); // dpb_output_delay
-        }
-        p.u(4, pic_struct);
-        p.u(3, 0); // clock_timestamp_flag[0..] = 0
-        let payload = p.finish();
-        let mut nal = vec![0x06u8, 1, payload.len() as u8];
-        nal.extend_from_slice(&payload);
-        nal.push(0x80);
-        nal
-    }
-
-    fn avc_ps(sps: &[u8]) -> AvcParamSets {
-        let mut ps = AvcParamSets::new();
-        ps.observe_nal(sps);
-        ps.observe_nal(&avc_pps());
-        ps
-    }
-
-    #[test]
-    fn avc_sps_scan_flags_and_pic_timing_layout() {
-        let paff = decode_avc_slice_sps(&avc_interlace_sps(false, false, None, None)).unwrap();
-        assert!(!paff.frame_mbs_only && !paff.mb_adaptive_frame_field);
-        assert_eq!(paff.pic_timing, None, "pic_struct_present_flag = 0");
-        let mbaff = decode_avc_slice_sps(&avc_interlace_sps(true, true, None, None)).unwrap();
-        assert!(mbaff.mb_adaptive_frame_field);
-        assert_eq!(
-            mbaff.pic_timing,
-            Some(AvcPicTimingLayout { delay_bits: None })
-        );
-        let hrd = decode_avc_slice_sps(&avc_interlace_sps(true, true, Some((4, 3)), None)).unwrap();
-        assert_eq!(
-            hrd.pic_timing,
-            Some(AvcPicTimingLayout {
-                delay_bits: Some((5, 4))
-            })
-        );
-        let both = decode_avc_slice_sps(&avc_interlace_sps(true, true, Some((4, 3)), Some((4, 3))))
-            .unwrap();
-        assert_eq!(both.pic_timing, hrd.pic_timing);
-        // NAL and VCL disagree: the spec names no winner, so no pic_struct.
-        let clash =
-            decode_avc_slice_sps(&avc_interlace_sps(true, true, Some((4, 3)), Some((6, 3))))
-                .unwrap();
-        assert_eq!(clash.pic_timing, None);
-    }
-
-    #[test]
-    fn avc_pic_struct_is_read_after_the_hrd_delays() {
-        let sps = avc_interlace_sps(true, true, Some((4, 3)), None);
-        let ps = avc_ps(&sps);
-        let frame = avc_slice(None);
-        let sei = avc_pic_timing_sei(Some((5, 4)), 4);
-        let f = avc_facts(&ps, &[sei.as_slice(), frame.as_slice()]).expect("facts");
-        assert!(!f.field_pic);
-        assert_eq!(f.fields, 0);
-        assert_eq!(f.pic_struct, Some(PicStruct::BottomTop));
-        assert_eq!(f.bottom_field_first, Some(true));
-        // Reserved pic_struct (9 is HEVC-only) is None for H.264.
-        let sei = avc_pic_timing_sei(Some((5, 4)), 9);
-        let f = avc_facts(&ps, &[sei.as_slice(), frame.as_slice()]).unwrap();
-        assert_eq!(f.pic_struct, None);
-        // No HRD: pic_struct is the first field of the payload.
-        let sps = avc_interlace_sps(false, true, None, None);
-        let ps = avc_ps(&sps);
-        let sei = avc_pic_timing_sei(None, 3);
-        let f = avc_facts(&ps, &[sei.as_slice(), frame.as_slice()]).unwrap();
-        assert_eq!(f.pic_struct, Some(PicStruct::TopBottom));
-        assert_eq!(f.bottom_field_first, Some(false));
-    }
-
-    #[test]
-    fn avc_field_pair_parity_comes_from_the_first_slice() {
-        let ps = avc_ps(&avc_interlace_sps(false, false, None, None));
-        let (top, bottom) = (avc_slice(Some(false)), avc_slice(Some(true)));
-        let pair = avc_facts(&ps, &[top.as_slice(), bottom.as_slice()]).unwrap();
-        assert_eq!(
-            (pair.field_pic, pair.fields, pair.bottom_field_first),
-            (true, 2, Some(false))
-        );
-        let pair = avc_facts(&ps, &[bottom.as_slice(), top.as_slice()]).unwrap();
-        assert_eq!(
-            (pair.field_pic, pair.fields, pair.bottom_field_first),
-            (true, 2, Some(true))
-        );
-        let lone = avc_facts(&ps, &[bottom.as_slice()]).unwrap();
-        assert_eq!((lone.fields, lone.bottom_field_first), (1, Some(true)));
-        // Two slices of the SAME field are one picture, not a pair.
-        let same = avc_facts(&ps, &[top.as_slice(), top.as_slice()]).unwrap();
-        assert_eq!(same.fields, 1);
-        // Unknown PPS: no facts.
-        assert!(avc_facts(&AvcParamSets::new(), &[top.as_slice()]).is_none());
-    }
-
-    // -----------------------------------------------------------------
-    // Display geometry: aspect_ratio_idc / sar_width / sar_height
-    // (H.264 §E.1.1 + Table E-1; H.265 §E.2.1 + Table E.1).
-    // -----------------------------------------------------------------
-
-    /// H.264 Table E-1 / H.265 Table E.1 rows 1..=16 as `(idc, SAR w, SAR h)`,
-    /// transcribed from the rendered PDF pages (PDF p455 / p449) and kept as
-    /// a separate literal from `display::TABLE_E1` so the two can disagree.
-    const SPEC_TABLE_E1: [(u8, u16, u16); 16] = [
-        (1, 1, 1),
-        (2, 12, 11),
-        (3, 10, 11),
-        (4, 16, 11),
-        (5, 40, 33),
-        (6, 24, 11),
-        (7, 20, 11),
-        (8, 32, 11),
-        (9, 80, 33),
-        (10, 18, 11),
-        (11, 15, 11),
-        (12, 64, 33),
-        (13, 160, 99),
-        (14, 4, 3),
-        (15, 3, 2),
-        (16, 2, 1),
-    ];
-
-    /// Baseline-profile 720x576 progressive SPS whose VUI carries `aspect`
-    /// then overscan/video-signal/chroma-loc absent and `timing_info` 1/50 (so
-    /// a mis-sized aspect read shifts the walk and corrupts the frame rate).
-    fn avc_display_sps(vui: bool, aspect: AspectBits) -> Vec<u8> {
-        let mut nal = vec![0x67u8, 66, 0x00, 30];
-        let mut s = BitWriter::new();
-        s.ue(0); // seq_parameter_set_id
-        s.ue(0); // log2_max_frame_num_minus4
-        s.ue(2); // pic_order_cnt_type
-        s.ue(1); // max_num_ref_frames
-        s.bit(false); // gaps_in_frame_num_value_allowed_flag
-        s.ue(44); // pic_width_in_mbs_minus1 -> 720
-        s.ue(35); // pic_height_in_map_units_minus1 -> 576
-        s.bit(true); // frame_mbs_only_flag
-        s.bit(true); // direct_8x8_inference_flag
-        s.bit(false); // frame_cropping_flag
-        s.bit(vui); // vui_parameters_present_flag
-        if vui {
-            put_aspect(&mut s, aspect);
-            s.bit(false); // overscan_info_present_flag
-            s.bit(false); // video_signal_type_present_flag
-            s.bit(false); // chroma_loc_info_present_flag
-            s.bit(true); // timing_info_present_flag
-            s.u(32, 1); // num_units_in_tick
-            s.u(32, 50); // time_scale
-            s.bit(true); // fixed_frame_rate_flag
-            s.bit(false); // nal_hrd_parameters_present_flag
-            s.bit(false); // vcl_hrd_parameters_present_flag
-            s.bit(false); // pic_struct_present_flag
-            s.bit(false); // bitstream_restriction_flag
-        }
-        s.bit(true); // rbsp_stop_one_bit
-        nal.extend(s.finish());
-        nal
-    }
-
-    fn avc_geometry(aspect: AspectBits) -> crate::ir::DisplayGeometry {
-        let sps = avc_display_sps(true, aspect);
-        // The VUI walk stays aligned past the aspect field: timing is intact.
-        assert_eq!(decode_avc_sps(&sps).unwrap().fps, Some(25.0));
-        crate::ir::DisplayGeometry::from_avc_sps(&sps).unwrap()
-    }
-
-    fn hevc_geometry(aspect: AspectBits) -> crate::ir::DisplayGeometry {
-        let sps = hevc_sps_full(true, true, true, 0, aspect);
-        // The VUI walk stays aligned past the aspect field: field_seq_flag and
-        // frame_field_info_present_flag (read after it) are intact.
-        let i = decode_hevc_interlace_sps(&sps).unwrap();
-        assert!(i.field_seq && i.frame_field_info_present);
-        crate::ir::DisplayGeometry::from_hevc_sps(&sps).unwrap()
-    }
-
-    #[test]
-    fn avc_every_table_e1_idc_decodes_to_its_ratio() {
-        for (idc, w, h) in SPEC_TABLE_E1 {
-            let g = avc_geometry(Some((idc, None)));
-            assert_eq!(g.sample_aspect_ratio(), Some((w, h)), "H.264 idc {idc}");
-            assert_eq!(g.aspect_ratio.unwrap().idc(), idc);
-            assert_eq!((g.coded_width, g.coded_height), (720, 576));
-        }
-    }
-
-    // -----------------------------------------------------------------
-    // Colour signalling: overscan + video_signal_type() (H.264 §E.1.1 /
-    // H.265 §E.2.1; Tables E-2..E-5 / E.2..E.5, transcribed in
-    // `private/specs-verified/mpeg/transmux/codec/vui-colour-tables.md`).
-    // -----------------------------------------------------------------
-
-    use crate::ir::{
-        ColourDescription, ColourPrimaries, MatrixCoefficients, TransferCharacteristics,
-        VideoFormat, VideoSignalType,
-    };
-
-    /// `(video_format, video_full_range_flag, colour_primaries/transfer/matrix)`.
-    type VideoSignalBits = (u8, bool, Option<(u8, u8, u8)>);
-
-    /// What a test wants in the VUI's overscan + video signal type.
-    #[derive(Clone, Copy, Default)]
-    struct ColourVui {
-        overscan: Option<bool>,
-        vst: Option<VideoSignalBits>,
-    }
-
-    /// Append `overscan_info_present_flag(..)` then `video_signal_type(..)`.
-    fn put_colour_vui(s: &mut BitWriter, v: ColourVui) {
-        match v.overscan {
-            Some(appropriate) => {
-                s.bit(true); // overscan_info_present_flag
-                s.bit(appropriate); // overscan_appropriate_flag
-            }
-            None => {
-                s.bit(false);
-            }
-        }
-        match v.vst {
-            Some((format, full_range, colour)) => {
-                s.bit(true); // video_signal_type_present_flag
-                s.u(3, u64::from(format)); // video_format
-                s.bit(full_range); // video_full_range_flag
-                match colour {
-                    Some((primaries, transfer, matrix)) => {
-                        s.bit(true); // colour_description_present_flag
-                        s.u(8, u64::from(primaries));
-                        s.u(8, u64::from(transfer));
-                        s.u(8, u64::from(matrix));
-                    }
-                    None => {
-                        s.bit(false);
-                    }
-                }
-            }
-            None => {
-                s.bit(false);
-            }
-        }
-    }
-
-    /// A colour description from three wire code points.
-    fn colour(primaries: u8, transfer: u8, matrix: u8) -> ColourDescription {
-        ColourDescription::from_wire(primaries, transfer, matrix)
-    }
-
-    /// H.264 Table E-3 (H.265 E.3): defined rows -> primaries text.
-    const SPEC_TABLE_E3: [(u8, &str); 12] = [
-        (1, "Rec. ITU-R BT.709-6"),
-        (2, "Unspecified"),
-        (4, "Rec. ITU-R BT.470-7 System M (historical)"),
-        (5, "Rec. ITU-R BT.470-7 System B, G (historical)"),
-        (6, "Rec. ITU-R BT.601-7 525"),
-        (7, "SMPTE 240M (1999, historical)"),
-        (8, "Generic film (colour filters using Illuminant C)"),
-        (9, "Rec. ITU-R BT.2020-2"),
-        (10, "SMPTE ST 428-1 (2006)"),
-        (11, "SMPTE RP 431-2 (2011)"),
-        (12, "SMPTE EG 432-1 (2010)"),
-        (22, "EBU Tech. 3213-E (1975)"),
-    ];
-
-    /// H.264 Table E-4 / H.265 E.4: every defined row.
-    const SPEC_TABLE_E4_ROWS: [u8; 17] =
-        [1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18];
-
-    /// H.264 Table E-5 / H.265 E.5: every defined row 0..=17.
-    const SPEC_TABLE_E5_ROWS: [u8; 17] =
-        [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
-
-    #[test]
-    fn colour_primaries_match_table_e3_rows() {
-        for (code, label) in SPEC_TABLE_E3 {
-            let p = <ColourPrimaries>::from_wire(code);
-            assert_eq!(p.code(), code);
-            assert_eq!(p.name(), label, "colour_primaries {code}");
-        }
-    }
-
-    #[test]
-    fn transfer_matches_table_e4_defined_rows() {
-        for code in SPEC_TABLE_E4_ROWS {
-            let t = TransferCharacteristics::from_wire(code);
-            assert_eq!(t.code(), code);
-            assert_ne!(t.name(), "reserved", "transfer {code} must be defined");
-        }
-        // The two HDR transfers a UHD player must not miss.
-        assert_eq!(
-            TransferCharacteristics::from_wire(16),
-            TransferCharacteristics::SmpteSt2084
-        );
-        assert_eq!(
-            TransferCharacteristics::from_wire(18),
-            TransferCharacteristics::AribStdB67
-        );
-    }
-
-    #[test]
-    fn matrix_coefficients_match_table_e5_defined_rows() {
-        for code in SPEC_TABLE_E5_ROWS {
-            let m = MatrixCoefficients::from_wire(code);
-            assert_eq!(m.code(), code);
-            assert_ne!(m.name(), "reserved", "matrix {code} must be defined");
-        }
-        // The classic Y'CbCr matrices a player must tell apart.
-        assert_eq!(
-            MatrixCoefficients::from_wire(5),
-            MatrixCoefficients::Bt470SystemB
-        );
-        assert_eq!(
-            MatrixCoefficients::from_wire(6),
-            MatrixCoefficients::Bt470SystemM
-        );
-        // BT.709 vs BT.601 must render differently (the whole point of Phase 1b).
-        assert_ne!(
-            MatrixCoefficients::from_wire(1).name(),
-            MatrixCoefficients::from_wire(6).name()
-        );
-    }
-
-    /// H.264 Table E-2 0..=7; 6 and 7 are reserved in both specs.
-    #[test]
-    fn video_format_matches_table_e2() {
-        const MEANINGS: [&str; 8] = [
-            "Component",
-            "PAL",
-            "NTSC",
-            "SECAM",
-            "MAC",
-            "Unspecified video format",
-            "reserved",
-            "reserved",
-        ];
-        for (code, label) in (0u8..).zip(MEANINGS) {
-            let f = VideoFormat::from_wire(code).expect("u(3) value");
-            assert_eq!(f.code(), code);
-            assert_eq!(f.name(), label);
-        }
-        // The field is u(3): nothing wider can come off the wire.
-        assert_eq!(VideoFormat::from_wire(8), None);
-        assert_eq!(VideoFormat::from_wire(255), None);
-    }
-
-    #[test]
-    fn every_colour_code_round_trips_and_has_a_label() {
-        for code in 0..=u8::MAX {
-            let p = ColourPrimaries::from_wire(code);
-            let t = TransferCharacteristics::from_wire(code);
-            let m = MatrixCoefficients::from_wire(code);
-            assert_eq!((p.code(), t.code(), m.code()), (code, code, code));
-            for label in [p.name(), t.name(), m.name()] {
-                assert!(!label.is_empty());
-            }
-            let d = colour(code, code, code);
-            assert_eq!(d.primaries.code(), code);
-            assert_eq!(d.transfer.code(), code);
-            assert_eq!(d.matrix.code(), code);
-        }
-        // Reserved rows keep their code and say so.
-        assert_eq!(ColourPrimaries::from_wire(0), ColourPrimaries::Reserved(0));
-        assert_eq!(
-            TransferCharacteristics::from_wire(19),
-            TransferCharacteristics::Reserved(19)
-        );
-        assert_eq!(
-            MatrixCoefficients::from_wire(3),
-            MatrixCoefficients::Reserved(3)
-        );
-        assert_eq!(ColourPrimaries::Reserved(255).code(), 255u8);
-    }
-
-    /// An H.264 Baseline SPS whose VUI carries `colour` and a timing block
-    /// after it: a mis-sized colour read shifts the walk and corrupts the fps.
-    fn avc_colour_sps(colour: ColourVui) -> Vec<u8> {
-        let mut nal = vec![0x67u8, 66, 0x00, 30];
-        let mut s = BitWriter::new();
-        s.ue(0); // seq_parameter_set_id
-        s.ue(0); // log2_max_frame_num_minus4
-        s.ue(2); // pic_order_cnt_type
-        s.ue(1); // max_num_ref_frames
-        s.bit(false); // gaps_in_frame_num_value_allowed_flag
-        s.ue(44); // pic_width_in_mbs_minus1 -> 720
-        s.ue(35); // pic_height_in_map_units_minus1 -> 576
-        s.bit(true); // frame_mbs_only_flag
-        s.bit(true); // direct_8x8_inference_flag
-        s.bit(false); // frame_cropping_flag
-        s.bit(true); // vui_parameters_present_flag
-        put_aspect(&mut s, Some((1, None)));
-        put_colour_vui(&mut s, colour);
-        s.bit(false); // chroma_loc_info_present_flag
-        s.bit(true); // timing_info_present_flag
-        s.u(32, 1); // num_units_in_tick
-        s.u(32, 50); // time_scale
-        s.bit(true); // fixed_frame_rate_flag
-        s.bit(false); // nal_hrd_parameters_present_flag
-        s.bit(false); // vcl_hrd_parameters_present_flag
-        s.bit(false); // pic_struct_present_flag
-        s.bit(false); // bitstream_restriction_flag
-        s.bit(true); // rbsp_stop_one_bit
-        nal.extend(s.finish());
-        nal
-    }
-
-    /// The same VUI tail on an H.265 SPS: after the colour block come
-    /// `field_seq_flag`/`frame_field_info_present_flag`, read and asserted.
-    fn hevc_colour_sps(colour: ColourVui) -> Vec<u8> {
-        let mut nal = vec![0x42u8, 0x01];
-        let mut s = BitWriter::new();
-        s.u(4, 0); // sps_video_parameter_set_id
-        s.u(3, 0); // sps_max_sub_layers_minus1
-        s.bit(true); // sps_temporal_id_nesting_flag
+        s.u(4, 0); // sps_video_parameter_set_id u(4)
+        s.u(3, 0); // sps_max_sub_layers_minus1 u(3) = 0
+        s.bit(false); // sps_temporal_id_nesting_flag
+        // profile_tier_level(1, 0): general_* only.
         s.u(2, 0); // general_profile_space
         s.bit(false); // general_tier_flag
         s.u(5, 1); // general_profile_idc
         s.u(32, 0); // general_profile_compatibility_flags
-        s.u(48, 0); // general_constraint_indicator_flags
+        s.u(48, 0xE0_00_00_00_00_00); // general_constraint_indicator_flags
         s.u(8, 93); // general_level_idc
         s.ue(0); // sps_seq_parameter_set_id
         s.ue(1); // chroma_format_idc
         s.ue(16); // pic_width_in_luma_samples
         s.ue(16); // pic_height_in_luma_samples
         s.bit(false); // conformance_window_flag
-        s.ue(0); // bit_depth_luma_minus8
-        s.ue(0); // bit_depth_chroma_minus8
+        s.ue(2); // bit_depth_luma_minus8 (10-bit)
+        s.ue(2); // bit_depth_chroma_minus8
+        // parse_hevc_sps_to_vui_timing_inner resumes here:
         s.ue(3); // log2_max_pic_order_cnt_lsb_minus4
         s.bit(false); // sps_sub_layer_ordering_info_present_flag
-        s.ue(0); // sps_max_dec_pic_buffering_minus1
-        s.ue(0); // sps_max_num_reorder_pics
-        s.ue(0); // sps_max_latency_increase_plus1
-        s.ue(0);
-        s.ue(3);
-        s.ue(0);
-        s.ue(3); // coding/transform block sizes
-        s.ue(1);
-        s.ue(1); // max_transform_hierarchy_depth_inter/intra
+        s.ue(0); // sps_max_dec_pic_buffering_minus1[0]
+        s.ue(0); // sps_max_num_reorder_pics[0]
+        s.ue(0); // sps_max_latency_increase_plus1[0]
+        s.ue(0); // log2_min_luma_coding_block_size_minus3
+        s.ue(3); // log2_diff_max_min_luma_coding_block_size
+        s.ue(0); // log2_min_luma_transform_block_size_minus2
+        s.ue(3); // log2_diff_max_min_luma_transform_block_size
+        s.ue(1); // max_transform_hierarchy_depth_inter
+        s.ue(1); // max_transform_hierarchy_depth_intra
         s.bit(false); // scaling_list_enabled_flag
         s.bit(false); // amp_enabled_flag
         s.bit(false); // sample_adaptive_offset_enabled_flag
         s.bit(false); // pcm_enabled_flag
-        s.ue(0); // num_short_term_ref_pic_sets
-        s.bit(false); // long_term_ref_pics_present_flag
-        s.bit(false); // sps_temporal_mvp_enabled_flag
-        s.bit(false); // strong_intra_smoothing_enabled_flag
-        s.bit(true); // vui_parameters_present_flag
-        put_aspect(&mut s, Some((1, None)));
-        put_colour_vui(&mut s, colour);
-        s.bit(false); // chroma_loc_info_present_flag
-        s.bit(false); // neutral_chroma_indication_flag
-        s.bit(true); // field_seq_flag
-        s.bit(true); // frame_field_info_present_flag
-        s.bit(false); // default_display_window_flag
-        s.bit(false); // vui_timing_info_present_flag
-        s.bit(false); // bitstream_restriction_flag
-        s.bit(true); // rbsp_stop_one_bit
+        ue_huge(&mut s); // num_short_term_ref_pic_sets = 2^32-1 > 64
         nal.extend(s.finish());
-        nal
+
+        let info = decode_hevc_sps(&nal)
+            .expect("mandatory fields parse; the bounded VUI walk error is swallowed");
+        assert_eq!(info.fps, None);
     }
 
-    /// Decode a colour VUI on both codecs and hand back the geometry.
-    fn both_colour_geometries(v: ColourVui) -> [crate::ir::DisplayGeometry; 2] {
-        let avc = avc_colour_sps(v);
-        assert_eq!(decode_avc_sps(&avc).unwrap().fps, Some(25.0), "AVC walk");
-        let hevc = hevc_colour_sps(v);
-        let i = decode_hevc_interlace_sps(&hevc).expect("HEVC walk");
-        assert!(
-            i.field_seq && i.frame_field_info_present,
-            "HEVC walk past the colour block"
-        );
-        [
-            crate::ir::DisplayGeometry::from_avc_sps(&avc).unwrap(),
-            crate::ir::DisplayGeometry::from_hevc_sps(&hevc).unwrap(),
-        ]
-    }
-
-    #[test]
-    fn absent_video_signal_type_is_none_with_the_spec_inferred_defaults() {
-        let g = both_colour_geometries(ColourVui::default());
-        for g in g {
-            assert_eq!(g.video_signal, None);
-            assert_eq!(g.overscan_appropriate, None);
-            assert!(!g.full_range());
-            assert_eq!(g.video_format(), VideoFormat::Unspecified);
-            let d = g.colour_description();
-            assert_eq!(d.primaries, ColourPrimaries::Unspecified);
-            assert_eq!(d.transfer, TransferCharacteristics::Unspecified);
-            assert_eq!(d.matrix, MatrixCoefficients::Unspecified);
-        }
-    }
-
-    #[test]
-    fn video_signal_without_colour_description_keeps_colour_none() {
-        let g = both_colour_geometries(ColourVui {
-            overscan: None,
-            vst: Some((0, true, None)),
-        });
-        for g in g {
-            assert_eq!(
-                g.video_signal,
-                Some(VideoSignalType::new(VideoFormat::Component, true, None))
-            );
-            assert!(g.full_range());
-            // Signalled format survives; colour falls back to the inference.
-            assert_eq!(g.video_format(), VideoFormat::Component);
-            assert_eq!(
-                g.colour_description().matrix,
-                MatrixCoefficients::Unspecified
-            );
-        }
-    }
-
-    #[test]
-    fn full_colour_description_is_read_in_spec_order() {
-        // 5/5/5 = melodie; 1/1/1 = BT.709; 9/16/9 = BT.2020 PQ. Distinct
-        // codes catch a primaries/transfer/matrix read swap.
-        for (p, t, m) in [(5u8, 5u8, 5u8), (1, 1, 1), (9, 16, 9)] {
-            let g = both_colour_geometries(ColourVui {
-                overscan: None,
-                vst: Some((5, false, Some((p, t, m)))),
-            });
-            for g in g {
-                assert_eq!(g.colour_description(), colour(p, t, m));
-                assert_eq!(g.video_signal.unwrap().colour, Some(colour(p, t, m)));
-                assert!(!g.full_range());
-            }
-        }
-    }
-
-    #[test]
-    fn reserved_and_boundary_code_points_survive_the_walk() {
-        for (p, t, m) in [(0u8, 0u8, 0u8), (3, 3, 3), (255, 255, 255), (17, 19, 18)] {
-            let g = both_colour_geometries(ColourVui {
-                overscan: None,
-                vst: Some((5, false, Some((p, t, m)))),
-            });
-            for g in g {
-                let d = g.colour_description();
-                assert_eq!(
-                    (d.primaries.code(), d.transfer.code(), d.matrix.code()),
-                    (p, t, m)
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn overscan_flag_precedes_the_video_signal_type() {
-        // The fixture that catches a swapped overscan/video_signal order: with
-        // overscan present, a walk reading video_signal_type first reads the
-        // overscan bits as the signal type and corrupts everything after it.
-        for appropriate in [true, false] {
-            let g = both_colour_geometries(ColourVui {
-                overscan: Some(appropriate),
-                vst: Some((5, true, Some((1, 1, 1)))),
-            });
-            for g in g {
-                assert_eq!(g.overscan_appropriate, Some(appropriate));
-                assert!(g.full_range());
-                assert_eq!(g.colour_description(), colour(1, 1, 1));
-            }
-        }
-        // Overscan present, video signal type absent.
-        let g = both_colour_geometries(ColourVui {
-            overscan: Some(true),
-            vst: None,
-        });
-        for g in g {
-            assert_eq!(g.overscan_appropriate, Some(true));
-            assert_eq!(g.video_signal, None);
-        }
-    }
-
-    /// H.265 has no real fixture with a non-square SAR: spec vectors only.
-    #[test]
-    fn hevc_every_table_e1_idc_decodes_to_its_ratio() {
-        for (idc, w, h) in SPEC_TABLE_E1 {
-            let g = hevc_geometry(Some((idc, None)));
-            assert_eq!(g.sample_aspect_ratio(), Some((w, h)), "H.265 idc {idc}");
-            assert_eq!(g.aspect_ratio.unwrap().idc(), idc);
-            assert_eq!((g.coded_width, g.coded_height), (16, 16));
-        }
-    }
-
-    #[test]
-    fn extended_sar_reads_width_then_height_for_both_codecs() {
-        // 64:45 is the melodie fixture's value; width != height catches a swap.
-        for g in [
-            avc_geometry(Some((255, Some((64, 45))))),
-            hevc_geometry(Some((255, Some((64, 45))))),
-        ] {
-            assert_eq!(
-                g.aspect_ratio,
-                Some(AspectRatioIdc::ExtendedSar {
-                    sar_width: 64,
-                    sar_height: 45
-                })
-            );
-            assert_eq!(g.sample_aspect_ratio(), Some((64, 45)));
-        }
-        // Full 16-bit range, not truncated to 8 bits.
-        let g = avc_geometry(Some((255, Some((0x1234, 0x0101)))));
-        assert_eq!(g.sample_aspect_ratio(), Some((0x1234, 0x0101)));
-    }
-
-    #[test]
-    fn unspecified_ratios_are_none_never_a_zero_sentinel() {
-        let cases: [AspectBits; 6] = [
-            Some((0, None)),            // idc 0: Unspecified
-            Some((17, None)),           // first reserved
-            Some((254, None)),          // last reserved
-            Some((255, Some((0, 45)))), // sar_width 0
-            Some((255, Some((64, 0)))), // sar_height 0
-            Some((255, Some((0, 0)))),  // both 0
-        ];
-        for c in cases {
-            for g in [avc_geometry(c), hevc_geometry(c)] {
-                // The wire value is kept, the ratio is unspecified.
-                assert!(g.aspect_ratio.is_some(), "{c:?}");
-                assert_eq!(g.sample_aspect_ratio(), None, "{c:?}");
-                assert_eq!(g.typed_sample_aspect_ratio(), None, "{c:?}");
-            }
-        }
-        assert_eq!(
-            avc_geometry(Some((17, None))).aspect_ratio,
-            Some(AspectRatioIdc::Reserved(17))
-        );
-        assert_eq!(
-            avc_geometry(Some((254, None))).aspect_ratio,
-            Some(AspectRatioIdc::Reserved(254))
-        );
-    }
-
-    #[test]
-    fn absent_aspect_info_is_none_for_both_codecs() {
-        // No VUI at all.
-        let g = crate::ir::DisplayGeometry::from_avc_sps(&avc_display_sps(false, None)).unwrap();
-        assert_eq!((g.aspect_ratio, g.sample_aspect_ratio()), (None, None));
-        let hevc = hevc_sps_full(false, false, false, 0, None);
-        let g = crate::ir::DisplayGeometry::from_hevc_sps(&hevc).unwrap();
-        assert_eq!((g.aspect_ratio, g.sample_aspect_ratio()), (None, None));
-        // VUI present, aspect_ratio_info_present_flag 0.
-        assert_eq!(avc_geometry(None).aspect_ratio, None);
-        assert_eq!(hevc_geometry(None).aspect_ratio, None);
-    }
-
-    #[test]
-    fn a_vui_truncated_inside_the_aspect_field_never_yields_a_half_read_value() {
-        let whole = avc_display_sps(true, Some((255, Some((64, 45)))));
-        let hevc_whole = hevc_sps_full(true, true, true, 0, Some((255, Some((64, 45)))));
-        let full = Some(AspectRatioIdc::ExtendedSar {
-            sar_width: 64,
-            sar_height: 45,
-        });
-        let mut absent_seen = false;
-        for cut in 0..whole.len() {
-            // Never a panic, and the field is either intact or absent.
-            if let Ok(g) = crate::ir::DisplayGeometry::from_avc_sps(&whole[..cut]) {
-                assert!(
-                    g.aspect_ratio.is_none() || g.aspect_ratio == full,
-                    "avc cut {cut}"
-                );
-                absent_seen |= g.aspect_ratio.is_none();
-            }
-        }
-        for cut in 0..hevc_whole.len() {
-            if let Ok(g) = crate::ir::DisplayGeometry::from_hevc_sps(&hevc_whole[..cut]) {
-                assert!(
-                    g.aspect_ratio.is_none() || g.aspect_ratio == full,
-                    "hevc cut {cut}"
-                );
-            }
-        }
-        // Not vacuous: some cut parsed the SPS but lost the field, and the
-        // whole SPS carries it.
-        assert!(absent_seen);
-        let g = crate::ir::DisplayGeometry::from_avc_sps(&whole).unwrap();
-        assert_eq!(g.aspect_ratio, full);
-    }
-
-    fn hevc_sps_vui_hrd(
-        field_seq: bool,
-        ffi: bool,
-        num_units: u32,
-        time_scale: u32,
-        hrd: Option<(bool, bool, u32)>, // (general, within, ed_minus1)
-    ) -> Vec<u8> {
-        let mut nal = vec![0x42u8, 0x01];
-        let mut s = BitWriter::new();
-        s.u(4, 0); // vps id
-        s.u(3, 0); // max sub layers minus1 = 0
-        s.bit(true); // temporal id nesting
-        s.u(2, 0); // profile space
-        s.bit(false); // tier
-        s.u(5, 1); // profile idc
-        s.u(32, 0); // compat
-        s.u(48, 0); // constraint
-        s.u(8, 93); // level
-        s.ue(0); // sps id
-        s.ue(1); // chroma
-        s.ue(16); // width
-        s.ue(16); // height
-        s.bit(false); // conf window
-        s.ue(0); // bd luma
-        s.ue(0); // bd chroma
-        s.ue(3); // log2 poc
-        s.bit(false); // sub layer ordering
-        s.ue(0);
-        s.ue(0);
-        s.ue(0);
-        s.ue(0);
-        s.ue(3);
-        s.ue(0);
-        s.ue(3);
-        s.ue(1);
-        s.ue(1);
-        s.bit(false); // scaling list
-        s.bit(false); // amp
-        s.bit(false); // sao
-        s.bit(false); // pcm
-        s.ue(0); // num short term
-        s.bit(false); // ltrp
-        s.bit(false); // temporal mvp
-        s.bit(false); // strong intra
-        s.bit(true); // vui present
-        s.bit(false); // aspect ratio info present
-        s.bit(false); // overscan
-        s.bit(false); // video signal
-        s.bit(false); // chroma loc
-        s.bit(false); // neutral chroma
-        s.bit(field_seq); // field_seq_flag
-        s.bit(ffi); // frame_field_info_present_flag
-        s.bit(false); // default display window
-        s.bit(true); // vui timing info present
-        s.u(32, u64::from(num_units));
-        s.u(32, u64::from(time_scale));
-        s.bit(false); // poc proportional
-        if let Some((general, within, ed)) = hrd {
-            s.bit(true); // vui_hrd_parameters_present_flag
-            // hrd_parameters(1, 0): common info
-            s.bit(true); // nal_hrd_parameters_present_flag
-            s.bit(false); // vcl_hrd_parameters_present_flag
-            // nal||vcl true:
-            s.bit(false); // sub_pic_hrd_params_present_flag
-            s.u(4, 0); // bit_rate_scale
-            s.u(4, 0); // cpb_size_scale
-            s.u(5, 0); // initial_cpb_removal_delay_length_minus1
-            s.u(5, 0); // au_cpb_removal_delay_length_minus1
-            s.u(5, 0); // dpb_output_delay_length_minus1
-            // i=0
-            s.bit(general); // fixed_pic_rate_general_flag
-            if !general {
-                s.bit(within); // fixed_pic_rate_within_cvs_flag
-            }
-            if general || within {
-                s.ue(u64::from(ed)); // elemental_duration_in_tc_minus1
-            } else {
-                s.bit(false); // low_delay_hrd_flag
-                s.ue(0); // cpb_cnt_minus1
-            }
-            // nal present => sub_layer_hrd_parameters(0): CpbCnt=1
-            s.ue(0); // bit_rate_value_minus1
-            s.ue(0); // cpb_size_value_minus1
-            s.bit(false); // cbr_flag
-        } else {
-            s.bit(false); // vui_hrd_parameters_present_flag
-        }
-        s.bit(false); // bitstream_restriction_flag
-        s.bit(true); // rbsp stop
-        nal.extend(s.finish());
-        nal
-    }
-
-    fn hevc_cfg_for_sps(sps: Vec<u8>) -> crate::pipeline::CodecConfig {
-        crate::pipeline::CodecConfig::Hevc {
-            config: isobmff::hevc_config::HEVCConfigurationBox::new(
-                isobmff::hevc_config::HEVCDecoderConfigurationRecord {
-                    configuration_version: 1,
-                    general_profile_space: 0,
-                    general_tier_flag: false,
-                    general_profile_idc: 1,
-                    general_profile_compatibility_flags: 0,
-                    general_constraint_indicator_flags: 0,
-                    general_level_idc: 93,
-                    min_spatial_segmentation_idc: 0,
-                    parallelism_type: 0,
-                    chroma_format_idc: 1,
-                    bit_depth_luma_minus8: 0,
-                    bit_depth_chroma_minus8: 0,
-                    avg_frame_rate: 0,
-                    constant_frame_rate: 0,
-                    num_temporal_layers: 1,
-                    temporal_id_nested: true,
-                    length_size_minus_one: 3,
-                    arrays: vec![isobmff::nalu_types::HevcNalArray {
-                        array_completeness: true,
-                        nal_unit_type: 33,
-                        nalus: vec![isobmff::nalu_types::HevcNalUnit(sps)],
-                    }],
-                },
-            ),
-            width: 320,
-            height: 240,
-        }
-    }
-
-    #[test]
-    fn hevc_vui_hrd_cases() {
-        use crate::pipeline::FrameRateBasis::Normative;
-        type Hrd = Option<(bool, bool, u32)>;
-        struct Case {
-            name: &'static str,
-            field_seq: bool,
-            ffip: bool,
-            num_units: u32,
-            hrd: Hrd,
-            fixed_pic_rate: Option<Option<u32>>,
-            field_seq_out: Option<bool>,
-            rate: Option<Option<(u32, crate::pipeline::FrameRateBasis)>>,
-        }
-        let cases = [
-            Case {
-                name: "ed_one_halves_rate",
-                field_seq: false,
-                ffip: false,
-                num_units: 1,
-                hrd: Some((true, true, 1)),
-                fixed_pic_rate: Some(Some(2)),
-                field_seq_out: None,
-                rate: Some(Some((12500, Normative))),
-            },
-            Case {
-                name: "field_ed_one_quarters",
-                field_seq: true,
-                ffip: true,
-                num_units: 1,
-                hrd: Some((true, true, 1)),
-                fixed_pic_rate: Some(Some(2)),
-                field_seq_out: Some(true),
-                rate: None,
-            },
-            Case {
-                name: "ffip_one_field_seq_zero_none",
-                field_seq: false,
-                ffip: true,
-                num_units: 1,
-                hrd: Some((true, true, 0)),
-                fixed_pic_rate: None,
-                field_seq_out: None,
-                rate: Some(None),
-            },
-            Case {
-                name: "general_zero_within_one_tier_b_or_a",
-                field_seq: false,
-                ffip: false,
-                num_units: 1,
-                hrd: Some((false, true, 0)),
-                fixed_pic_rate: Some(Some(1)),
-                field_seq_out: None,
-                rate: None,
-            },
-            Case {
-                name: "general_zero_within_zero_tier_b",
-                field_seq: false,
-                ffip: false,
-                num_units: 1,
-                hrd: Some((false, false, 0)),
-                fixed_pic_rate: Some(None),
-                field_seq_out: None,
-                rate: None,
-            },
-            Case {
-                name: "field_seq_one_no_hrd_none",
-                field_seq: true,
-                ffip: true,
-                num_units: 1,
-                hrd: None,
-                fixed_pic_rate: None,
-                field_seq_out: None,
-                rate: Some(None),
-            },
-            Case {
-                name: "zero_num_units_none",
-                field_seq: false,
-                ffip: false,
-                num_units: 0,
-                hrd: Some((true, true, 0)),
-                fixed_pic_rate: None,
-                field_seq_out: None,
-                rate: Some(None),
-            },
-        ];
-        for c in cases {
-            let sps = hevc_sps_vui_hrd(c.field_seq, c.ffip, c.num_units, 25, c.hrd);
-            if let Some(expected) = c.fixed_pic_rate {
-                let t = crate::sps::decode_hevc_vui_timing(&sps).unwrap().unwrap();
-                assert_eq!(t.hrd_fixed_pic_rate, expected, "{}", c.name);
-                if let Some(fs) = c.field_seq_out {
-                    assert_eq!(t.field_seq, fs, "{}", c.name);
-                }
-            }
-            if let Some(expected) = c.rate {
-                assert_eq!(
-                    crate::pipeline::nominal_frame_rate(&hevc_cfg_for_sps(sps)),
-                    expected,
-                    "{}",
-                    c.name
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn hevc_field_seq_one_ffip_zero_no_hrd_is_none() {
-        let sps = hevc_sps_vui_hrd(true, false, 1, 25, None);
-        let cfg = crate::pipeline::CodecConfig::Hevc {
-            config: isobmff::hevc_config::HEVCConfigurationBox::new(
-                isobmff::hevc_config::HEVCDecoderConfigurationRecord {
-                    configuration_version: 1,
-                    general_profile_space: 0,
-                    general_tier_flag: false,
-                    general_profile_idc: 1,
-                    general_profile_compatibility_flags: 0,
-                    general_constraint_indicator_flags: 0,
-                    general_level_idc: 93,
-                    min_spatial_segmentation_idc: 0,
-                    parallelism_type: 0,
-                    chroma_format_idc: 1,
-                    bit_depth_luma_minus8: 0,
-                    bit_depth_chroma_minus8: 0,
-                    avg_frame_rate: 0,
-                    constant_frame_rate: 0,
-                    num_temporal_layers: 1,
-                    temporal_id_nested: true,
-                    length_size_minus_one: 3,
-                    arrays: vec![isobmff::nalu_types::HevcNalArray {
-                        array_completeness: true,
-                        nal_unit_type: 33,
-                        nalus: vec![isobmff::nalu_types::HevcNalUnit(sps)],
-                    }],
-                },
-            ),
-            width: 320,
-            height: 240,
-        };
-        assert_eq!(crate::pipeline::nominal_frame_rate(&cfg), None);
-    }
+    // -------------------------------------------------------------------
+    // Interlace facts (#1162 R3): spec-built synthetic streams. Every field
+    // is written per the transcribed syntax in docs/codec/h26{4,5}-vui-pic-
+    // timing.md, so a mis-walk of any preceding element shifts the bits the
+    // assertions read.
+    // -------------------------------------------------------------------
 
     #[test]
     fn hevc_vps_timing_synthetic_valid() {
@@ -4296,7 +3292,7 @@ mod tests {
         nal.extend(s.finish());
         let r = decode_hevc_vps_timing(&nal);
         assert!(
-            matches!(r, Err(crate::error::Error::InvalidValue(..))),
+            matches!(r, Err(Error::InvalidValue(..))),
             "expected Err, got {:?}",
             r
         );
@@ -4349,7 +3345,7 @@ mod tests {
         assert!(
             matches!(
                 decode_hevc_vps_timing(&synth_vps(1024, 7, 9)),
-                Err(crate::error::Error::InvalidValue(..))
+                Err(Error::InvalidValue(..))
             ),
             "1024 layer sets is out of range"
         );
@@ -4373,4 +3369,259 @@ mod tests {
                 .is_some()
         );
     }
+}
+
+#[cfg(all(test, feature = "vvc"))]
+mod vvc_tests {
+    use super::*;
+    use crate::Error;
+    use alloc::vec::Vec;
+    use test_fixtures::bits::BitWriter;
+
+    /// Build a VVC SPS NAL whose `general_constraints_info()` has
+    /// `gci_present_flag == 1` and the given `gci_num_additional_bits`, with all
+    /// constraint flags zero and the dimensions `width`x`height`. Mirrors
+    /// ITU-T H.266 §7.3.3.2 exactly, so a reader that mis-skips the block
+    /// lands on the wrong bit and mis-decodes the dimensions.
+    fn vvc_sps_with_gci(additional: u8, width: u64, height: u64) -> Vec<u8> {
+        /// 3 general + 4-bit idc + 2-bit idc + 16 NAL/tile/CTU + 2-bit idc +
+        /// 43 intra/inter/transform/loop-filter flags (§7.3.3.2).
+        const GCI_FLAG_BITS: u32 = 3 + 4 + 2 + 16 + 2 + 43;
+        let mut s = BitWriter::new();
+        s.u(8, 0); // sps_seq_parameter_set_id, sps_video_parameter_set_id
+        s.u(3, 0); // sps_max_sublayers_minus1
+        s.u(2, 1); // sps_chroma_format_idc (4:2:0)
+        s.u(2, 0); // sps_log2_ctu_size_minus5
+        s.bit(true); // sps_ptl_dpb_hrd_params_present_flag
+        s.u(7, 1); // general_profile_idc
+        s.bit(false); // general_tier_flag
+        s.u(8, 32); // general_level_idc
+        s.bit(false); // ptl_frame_only_constraint_flag
+        s.bit(false); // ptl_multilayer_enabled_flag
+        s.bit(true); // gci_present_flag
+        for _ in 0..GCI_FLAG_BITS {
+            s.bit(false);
+        }
+        s.u(8, u64::from(additional)); // gci_num_additional_bits
+        if additional > 5 {
+            for _ in 0..6 {
+                s.bit(false); // the six extra constraint flags
+            }
+            for _ in 0..(additional - 6) {
+                s.bit(false); // gci_reserved_bit[i]
+            }
+        } else {
+            for _ in 0..additional {
+                s.bit(false); // gci_reserved_bit[i] — none skipped for 1..=5
+            }
+        }
+        while !s.aligned() {
+            s.bit(false); // gci_alignment_zero_bit
+        }
+        s.u(8, 0); // ptl_num_sub_profiles
+        s.bit(false); // sps_gdr_enabled_flag
+        s.bit(false); // sps_ref_pic_resampling_enabled_flag
+        s.ue(width);
+        s.ue(height);
+        let rbsp = s.finish();
+        // Insert emulation-prevention bytes (H.266 §7.4.2.1 / H.264 §7.4.1.1:
+        // a `0x03` after any `00 00` that precedes a byte <= 0x03), because the
+        // RBSP reader unescapes and an unescaped `00 00 00` would shift the
+        // whole bitstream.
+        let mut escaped = Vec::with_capacity(rbsp.len() + 4);
+        let mut zeros = 0usize;
+        for &byte in &rbsp {
+            if zeros >= 2 && byte <= 0x03 {
+                escaped.push(0x03);
+                zeros = 0;
+            }
+            escaped.push(byte);
+            zeros = if byte == 0 { zeros + 1 } else { 0 };
+        }
+        let mut nal = alloc::vec![0x00, 0x00];
+        nal.extend_from_slice(&escaped);
+        nal[1] = 15 << 3; // nal_unit_type 15 = SPS
+        nal
+    }
+
+    /// Every `gci_num_additional_bits` shape decodes the same dimensions: the
+    /// reserved-bit count is `n - (n > 5 ? 6 : 0)` (§7.3.3.2), so 1..=5 skip
+    /// exactly `n` bits — the case a naive "align straight after the count"
+    /// reader gets wrong.
+    #[test]
+    fn vvc_sps_gci_additional_bits_counts_decode_dimensions() {
+        for additional in [0u8, 1, 3, 5, 6, 8, 255] {
+            let nal = vvc_sps_with_gci(additional, 1920, 1080);
+            let info = decode_vvc_sps(&nal)
+                .unwrap_or_else(|e| panic!("additional={additional} must decode, got {e:?}"));
+            assert_eq!(
+                (info.width, info.height),
+                (1920, 1080),
+                "additional={additional} must land on the right dimensions"
+            );
+        }
+    }
+
+    /// Hostile input: a truncated GCI-present SPS with each additional-bits
+    /// count is an `Err`, never a panic.
+    #[test]
+    fn vvc_sps_gci_truncated_is_error_not_panic_for_every_count() {
+        for additional in [0u8, 3, 5, 6, 8, 255] {
+            let nal = vvc_sps_with_gci(additional, 1920, 1080);
+            // The NAL is 2 header bytes + the RBSP; every cut from inside the
+            // GCI region (which starts at byte 4: the 4-bit+4-bit ids, 3-bit
+            // sublayers, 2-bit chroma and 2-bit CTU occupy byte 2, and the PTL
+            // fields follow) up to the last byte must be an `Err`, never a
+            // panic. `additional=255` makes the region long, so most cuts land
+            // in it.
+            for cut in 4..nal.len() {
+                assert!(
+                    matches!(decode_vvc_sps(&nal[..cut]), Err(Error::BufferTooShort(..))),
+                    "additional={additional} cut={cut} of {} must error",
+                    nal.len()
+                );
+            }
+        }
+    }
+
+    /// A `general_constraints_info()` block with `gci_present_flag == 1` is
+    /// ordinary in the field (ITU-T H.266 §7.3.3.2) and must not fail the SPS —
+    /// the block is skipped exactly (flags, `gci_num_additional_bits`, its
+    /// reserved bits) and then aligned, after which the dimensions follow.
+    #[test]
+    fn vvc_sps_gci_present_flag_is_skipped_to_dimensions() {
+        const GCI_BITS: u32 = 1 + 3 + 4 + 2 + 13 + 6 + 3 + 6 + 15 + 7 + 5 + 6 + 8;
+        let mut s = BitWriter::new();
+        // sps_seq_parameter_set_id u(4), sps_video_parameter_set_id u(4)
+        s.u(8, 0);
+        // sps_max_sublayers_minus1 u(3) == 0
+        s.u(3, 0);
+        // sps_chroma_format_idc u(2) == 1 (4:2:0), sps_log2_ctu_size_minus5 u(2)
+        s.u(2, 1);
+        s.u(2, 0);
+        // sps_ptl_dpb_hrd_params_present_flag u(1) == 1
+        s.bit(true);
+        // profile_tier_level(1, 0):
+        s.u(7, 1); // general_profile_idc
+        s.bit(false); // general_tier_flag
+        s.u(8, 32); // general_level_idc
+        s.bit(false); // ptl_frame_only_constraint_flag
+        s.bit(false); // ptl_multilayer_enabled_flag
+        // general_constraints_info(): gci_present_flag == 1 then 78 zero bits.
+        s.bit(true);
+        for _ in 1..GCI_BITS {
+            s.bit(false);
+        }
+        // gci_alignment_zero_bit to the byte boundary (computed by the sink).
+        while !s.aligned() {
+            s.bit(false);
+        }
+        // ptl_num_sub_profiles u(8) == 0
+        s.u(8, 0);
+        // sps_gdr_enabled_flag, sps_ref_pic_resampling_enabled_flag
+        s.bit(false);
+        s.bit(false);
+        // sps_pic_width_max_in_luma_samples ue(v) == 1920
+        s.ue(1920);
+        // sps_pic_height_max_in_luma_samples ue(v) == 1080
+        s.ue(1080);
+        let rbsp = s.finish();
+
+        // A VVC SPS NAL: 2-byte header (nal_unit_type 15 = SPS) then the RBSP.
+        let mut nal = alloc::vec![0x00, 0x00];
+        nal.extend_from_slice(&rbsp);
+        // nal_unit_type is the low 5 bits of byte 1: 15 = SPS.
+        nal[1] = 15 << 3;
+        let info = decode_vvc_sps(&nal).expect("a GCI-present SPS must decode");
+        assert_eq!(info.chroma_format_idc, 1);
+        assert_eq!(info.general_profile_idc, 1);
+        assert_eq!(info.general_level_idc, 32);
+        assert_eq!(info.width, 1920);
+        assert_eq!(info.height, 1080);
+    }
+
+    /// The same SPS with `gci_present_flag == 0` still decodes (the pre-fix
+    /// path), pinning that the fix did not change the present-flag-0 layout.
+    #[test]
+    fn vvc_sps_gci_absent_still_decodes() {
+        let mut s = BitWriter::new();
+        s.u(8, 0); // ids
+        s.u(3, 0); // sps_max_sublayers_minus1
+        s.u(2, 1); // sps_chroma_format_idc
+        s.u(2, 0); // sps_log2_ctu_size_minus5
+        s.bit(true); // sps_ptl_dpb_hrd_params_present_flag
+        s.u(7, 1); // general_profile_idc
+        s.bit(false); // general_tier_flag
+        s.u(8, 32); // general_level_idc
+        s.bit(false); // ptl_frame_only_constraint_flag
+        s.bit(false); // ptl_multilayer_enabled_flag
+        s.bit(false); // gci_present_flag == 0
+        while !s.aligned() {
+            s.bit(false); // gci_alignment_zero_bit
+        }
+        s.u(8, 0); // ptl_num_sub_profiles
+        s.bit(false); // sps_gdr_enabled_flag
+        s.bit(false); // sps_ref_pic_resampling_enabled_flag
+        s.ue(640);
+        s.ue(360);
+        let rbsp = s.finish();
+        let mut nal = alloc::vec![0x00, 0x00];
+        nal.extend_from_slice(&rbsp);
+        nal[1] = 15 << 3;
+        let info = decode_vvc_sps(&nal).expect("GCI-absent SPS must decode");
+        assert_eq!((info.width, info.height), (640, 360));
+    }
+
+    /// `sps_pic_width_max_in_luma_samples` is `ue(v)` (unbounded), so a coded
+    /// size above `u16::MAX` must be reported as-is rather than truncated to
+    /// its low 16 bits (#997 class). 70 000 truncated to `u16` would be 4464.
+    #[test]
+    fn vvc_sps_width_above_u16_is_not_truncated() {
+        let mut s = BitWriter::new();
+        s.u(8, 0); // ids
+        s.u(3, 0); // sps_max_sublayers_minus1
+        s.u(2, 1); // sps_chroma_format_idc
+        s.u(2, 0); // sps_log2_ctu_size_minus5
+        s.bit(true); // sps_ptl_dpb_hrd_params_present_flag
+        s.u(7, 1); // general_profile_idc
+        s.bit(false); // general_tier_flag
+        s.u(8, 32); // general_level_idc
+        s.bit(false); // ptl_frame_only_constraint_flag
+        s.bit(false); // ptl_multilayer_enabled_flag
+        s.bit(false); // gci_present_flag == 0
+        while !s.aligned() {
+            s.bit(false);
+        }
+        s.u(8, 0); // ptl_num_sub_profiles
+        s.bit(false); // sps_gdr_enabled_flag
+        s.bit(false); // sps_ref_pic_resampling_enabled_flag
+        s.ue(70_000);
+        s.ue(70_000);
+        let rbsp = s.finish();
+        let mut nal = alloc::vec![0x00, 0x00];
+        nal.extend_from_slice(&rbsp);
+        nal[1] = 15 << 3;
+        let info = decode_vvc_sps(&nal).expect("oversized SPS must decode");
+        assert_eq!((info.width, info.height), (70_000, 70_000));
+    }
+
+    /// Hostile input: a truncated GCI-present SPS is an `Err`, never a panic.
+    #[test]
+    fn vvc_sps_gci_present_truncated_is_error_not_panic() {
+        // Only the header + a few bits: the dimensions are never reached.
+        let nal: &[u8] = &[0x00, 0x78, 0x00, 0x40];
+        assert!(matches!(
+            decode_vvc_sps(nal),
+            Err(Error::BufferTooShort(..))
+        ));
+        // A two-byte header alone (the minimum for the reader to start).
+        assert!(matches!(
+            decode_vvc_sps(&[0x00, 0x78]),
+            Err(Error::BufferTooShort(..))
+        ));
+    }
+
+    // -------------------------------------------------------------------
+    // Hostile SPS field bounds (P0 batch B, item 5)
+    // -------------------------------------------------------------------
 }

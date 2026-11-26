@@ -17,13 +17,12 @@ use transmux::dash::{
     InbandEventStream, TrackSegments, TrickModeAdaptationSet, TrickModeRepr,
 };
 
+use broadcast_bitstream::facts::AspectRatioIdc;
 use isobmff::WvttSampleEntry;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
-use transmux::{
-    AspectRatioIdc, MediaKind, Sample, SmoothPackager, TrackId, TrackSpec, playready_wrmheader,
-};
+use transmux::{MediaKind, Sample, SmoothPackager, TrackId, TrackSpec, playready_wrmheader};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")

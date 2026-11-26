@@ -1,11 +1,12 @@
 #![cfg(feature = "std")]
 //! HEVC VPS timing extraction (private/specs-verified/mpeg/transmux/codec/hevc-vps-timing.md).
 
+use broadcast_bitstream::sps::decode_hevc_vps_timing;
 use broadcast_core::Parse;
 use isobmff::nalu_types::{HevcNalArray, HevcNalUnit};
 use isobmff::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use transmux::CodecConfig;
-use transmux::{decode_hevc_vps_timing, nominal_frame_rate};
+use transmux::nominal_frame_rate;
 
 fn find_box<'a>(data: &'a [u8], four_cc: &[u8; 4]) -> Option<&'a [u8]> {
     let mut offset = 0usize;
@@ -53,8 +54,8 @@ fn hevc_vps_timing_fixture_decodes() {
     let t = decode_hevc_vps_timing(&vps)
         .expect("parse")
         .expect("timing present");
-    assert_eq!(t.num_units_in_tick, 1001);
-    assert_eq!(t.time_scale, 30000);
+    assert_eq!(t.num_units_in_tick(), 1001);
+    assert_eq!(t.time_scale(), 30000);
 }
 
 #[test]
@@ -190,7 +191,7 @@ fn hevc_vps_fallback_is_selected_by_nal_unit_type_not_array_order() {
     // timing is unreadable, so the only timing left in the record is the VPS's.
     let truncated_sps = sps[..sps.len() / 2].to_vec();
     assert!(
-        transmux::decode_hevc_vui_timing(&truncated_sps)
+        broadcast_bitstream::sps::decode_hevc_vui_timing(&truncated_sps)
             .ok()
             .flatten()
             .is_none(),

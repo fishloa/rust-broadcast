@@ -2,7 +2,8 @@
 //! wrapped by H.264/H.265 T.35 SEI payloads and by MPEG-2 picture
 //! `user_data()` (ETSI TS 101 154 Annex B, SMPTE ST 2016-1).
 
-use crate::ir::{ActiveFormatDescription, BarData};
+use broadcast_bitstream::facts::{ActiveFormatDescription, BarData};
+
 use broadcast_core::wire::{be_u16, be_u32};
 
 /// `user_identifier` of `afd_data()` (TS 101 154 Table B.1).
@@ -148,37 +149,35 @@ pub fn bar_data_from_ga94_payload(payload: &[u8]) -> Option<BarData> {
     let left = flags & BAR_LEFT_FLAG_BIT != 0;
     let right = flags & BAR_RIGHT_FLAG_BIT != 0;
     if !top && !bottom && !left && !right {
-        return Some(BarData {
-            top_bar_end_line: None,
-            bottom_bar_start_line: None,
-            left_bar_end_pixel: None,
-            right_bar_start_pixel: None,
-        });
+        return Some(BarData::new(None, None, None, None));
     }
     let mut pos = 0usize;
-    let mut bd = BarData {
-        top_bar_end_line: None,
-        bottom_bar_start_line: None,
-        left_bar_end_pixel: None,
-        right_bar_start_pixel: None,
-    };
     let value = |pos: &mut usize| -> Option<u16> {
         let end = pos.checked_add(core::mem::size_of::<u16>())?;
         let field: [u8; core::mem::size_of::<u16>()] = payload.get(*pos..end)?.try_into().ok()?;
         *pos = end;
         Some(u16::from_be_bytes(field) & BAR_VALUE_MASK)
     };
+    let mut top_bar_end_line = None;
+    let mut bottom_bar_start_line = None;
+    let mut left_bar_end_pixel = None;
+    let mut right_bar_start_pixel = None;
     if top {
-        bd.top_bar_end_line = value(&mut pos);
+        top_bar_end_line = Some(value(&mut pos)?);
     }
     if bottom {
-        bd.bottom_bar_start_line = value(&mut pos);
+        bottom_bar_start_line = Some(value(&mut pos)?);
     }
     if left {
-        bd.left_bar_end_pixel = value(&mut pos);
+        left_bar_end_pixel = Some(value(&mut pos)?);
     }
     if right {
-        bd.right_bar_start_pixel = value(&mut pos);
+        right_bar_start_pixel = Some(value(&mut pos)?);
     }
-    Some(bd)
+    Some(BarData::new(
+        top_bar_end_line,
+        bottom_bar_start_line,
+        left_bar_end_pixel,
+        right_bar_start_pixel,
+    ))
 }

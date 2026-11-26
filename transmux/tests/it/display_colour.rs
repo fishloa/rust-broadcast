@@ -28,10 +28,11 @@
 //! private HEVC capture signals a non-default colour description), so HEVC
 //! colour is covered by the spec vectors in `src/sps.rs` only.
 
-use transmux::ir::{
-    CodecConfig, ColourDescription, ColourPrimaries, MatrixCoefficients, TransferCharacteristics,
-    VideoFormat, VideoSignalType,
+use broadcast_bitstream::facts::{
+    ColourDescription, ColourPrimaries, MatrixCoefficients, TransferCharacteristics, VideoFormat,
+    VideoSignalType,
 };
+use transmux::ir::CodecConfig;
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 fn read(fixture: &str) -> Option<Vec<u8>> {
@@ -152,7 +153,7 @@ fn transformers_is_full_range_component_without_colour_description() {
         assert_eq!(g.video_format(), VideoFormat::Component);
         // No colour description: the inference (matrix 2), never BT.601.
         assert_eq!(
-            g.colour_description().matrix,
+            g.colour_description().matrix(),
             MatrixCoefficients::Unspecified
         );
     }
@@ -203,7 +204,7 @@ fn fmp4_round_trip(fixture: &str) {
     // nothing about carrying it through the muxer).
     let signalled = want.expect("TS input signals a video signal type");
     assert!(
-        signalled.colour.is_some(),
+        signalled.colour().is_some(),
         "{fixture}: no colour description"
     );
     let fmp4 = crate::cmaf::package(&media).expect("CMAF mux");
@@ -224,11 +225,11 @@ fn fmp4_round_trip(fixture: &str) {
     // The typed label survives too (the point of the typed enums).
     let d = g.colour_description();
     assert!(matches!(
-        d.matrix,
+        d.matrix(),
         MatrixCoefficients::Bt709 | MatrixCoefficients::Bt470SystemB
     ));
-    assert_ne!(d.primaries, ColourPrimaries::Reserved(0));
-    assert_ne!(d.transfer, TransferCharacteristics::Reserved(19));
+    assert_ne!(d.primaries(), ColourPrimaries::Reserved(0));
+    assert_ne!(d.transfer(), TransferCharacteristics::Reserved(19));
 }
 
 /// The colour description survives an fMP4 (CMAF) mux + demux: the fields live

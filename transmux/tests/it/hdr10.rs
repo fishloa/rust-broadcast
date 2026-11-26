@@ -102,13 +102,13 @@ fn detects_pq_bt2020_and_exact_static_metadata() {
         .expect("display")
         .video_signal
         .expect("video signal")
-        .colour
+        .colour()
         .expect("colour description");
-    assert_eq!(colour.primaries.code(), 9);
-    assert_eq!(colour.transfer.code(), 16);
-    assert_eq!(colour.matrix.code(), 9);
+    assert_eq!(colour.primaries().code(), 9);
+    assert_eq!(colour.transfer().code(), 16);
+    assert_eq!(colour.matrix().code(), 9);
     assert_eq!(
-        broadcast_hls::VideoRange::from_transfer_characteristics(colour.transfer.code()),
+        broadcast_hls::VideoRange::from_transfer_characteristics(colour.transfer().code()),
         Some(broadcast_hls::VideoRange::Pq)
     );
 

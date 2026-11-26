@@ -47,10 +47,10 @@
 //! (`record.sps[0]`), which is unaffected by that gap.
 
 use crate::bit_writer::BitWriter;
+use broadcast_bitstream::sps::{decode_avc_reorder_depth, decode_avc_sps, decode_avc_vui_timing};
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::pipeline::CodecConfig;
 use transmux::validate::{Severity, validate_init_segment};
-use transmux::{decode_avc_reorder_depth, decode_avc_sps, decode_avc_vui_timing};
 
 // ---------------------------------------------------------------------------
 // Ground-truth table
@@ -304,49 +304,57 @@ fn h264_matrix_decode_matches_ffprobe_oracle() {
             .unwrap_or_else(|e| panic!("{}: SPS decode must succeed: {e:?}", oracle.file));
 
         assert_eq!(
-            info.profile_idc, oracle.profile,
+            info.profile_idc(),
+            oracle.profile,
             "{}: decoded profile_idc",
             oracle.file
         );
         assert_eq!(
-            info.level_idc, oracle.level,
+            info.level_idc(),
+            oracle.level,
             "{}: decoded level_idc",
             oracle.file
         );
         assert_eq!(
-            info.chroma_format_idc, oracle.chroma_format_idc,
+            info.chroma_format_idc(),
+            oracle.chroma_format_idc,
             "{}: decoded chroma_format_idc",
             oracle.file
         );
         assert_eq!(
-            info.bit_depth_luma, oracle.bit_depth_luma,
+            info.bit_depth_luma(),
+            oracle.bit_depth_luma,
             "{}: decoded bit_depth_luma",
             oracle.file
         );
         assert_eq!(
-            info.bit_depth_chroma, oracle.bit_depth_chroma,
+            info.bit_depth_chroma(),
+            oracle.bit_depth_chroma,
             "{}: decoded bit_depth_chroma",
             oracle.file
         );
         assert_eq!(
-            info.width, oracle.width,
+            info.width(),
+            oracle.width,
             "{}: SPS-decoded width",
             oracle.file
         );
         assert_eq!(
-            info.height, oracle.height,
+            info.height(),
+            oracle.height,
             "{}: SPS-decoded height",
             oracle.file
         );
         assert_eq!(
-            !info.frame_mbs_only, oracle.interlaced,
+            !info.frame_mbs_only(),
+            oracle.interlaced,
             "{}: frame_mbs_only_flag must invert to ffprobe's interlaced/progressive field_order",
             oracle.file
         );
 
         // VUI fps (#523/#546): every fixture in the matrix is 25 fps.
         let fps = info
-            .fps
+            .fps()
             .unwrap_or_else(|| panic!("{}: VUI fps must be present", oracle.file));
         assert!(
             (fps - 25.0_f32).abs() < 0.01,
@@ -433,44 +441,51 @@ fn hevc_matrix_decode_matches_ffprobe_oracle() {
             .unwrap_or_else(|| panic!("{}: NAL must decode as an SPS", oracle.file));
 
         assert_eq!(
-            info.general_profile_idc, oracle.profile,
+            info.general_profile_idc(),
+            oracle.profile,
             "{}: SPS-decoded general_profile_idc",
             oracle.file
         );
         assert_eq!(
-            info.general_level_idc, oracle.level,
+            info.general_level_idc(),
+            oracle.level,
             "{}: SPS-decoded general_level_idc",
             oracle.file
         );
         assert_eq!(
-            info.chroma_format_idc, oracle.chroma_format_idc,
+            info.chroma_format_idc(),
+            oracle.chroma_format_idc,
             "{}: SPS-decoded chroma_format_idc",
             oracle.file
         );
         assert_eq!(
-            info.bit_depth_luma, oracle.bit_depth_luma,
+            info.bit_depth_luma(),
+            oracle.bit_depth_luma,
             "{}: SPS-decoded bit_depth_luma",
             oracle.file
         );
         assert_eq!(
-            info.bit_depth_chroma, oracle.bit_depth_chroma,
+            info.bit_depth_chroma(),
+            oracle.bit_depth_chroma,
             "{}: SPS-decoded bit_depth_chroma",
             oracle.file
         );
         assert_eq!(
-            info.width, oracle.width,
+            info.width(),
+            oracle.width,
             "{}: SPS-decoded width",
             oracle.file
         );
         assert_eq!(
-            info.height, oracle.height,
+            info.height(),
+            oracle.height,
             "{}: SPS-decoded height",
             oracle.file
         );
 
         // VUI fps (#523/#546): both HEVC fixtures are 25 fps.
         let fps = info
-            .fps
+            .fps()
             .unwrap_or_else(|| panic!("{}: VUI fps must be present", oracle.file));
         assert!(
             (fps - 25.0_f32).abs() < 0.01,
@@ -545,12 +560,14 @@ fn h264_matrix_ts_to_cmaf_init_segment() {
                     .decode()
                     .expect("round-trip SPS must decode");
                 assert_eq!(
-                    info.chroma_format_idc, oracle.chroma_format_idc,
+                    info.chroma_format_idc(),
+                    oracle.chroma_format_idc,
                     "{}: round-trip chroma_format_idc preserved",
                     oracle.file
                 );
                 assert_eq!(
-                    info.bit_depth_luma, oracle.bit_depth_luma,
+                    info.bit_depth_luma(),
+                    oracle.bit_depth_luma,
                     "{}: round-trip bit_depth_luma preserved",
                     oracle.file
                 );
@@ -650,8 +667,8 @@ fn avc_poc_cycle_count_bound() {
         num_ref_cycle: 255,
         ..AvcSps::default()
     });
-    let info = transmux::decode_avc_sps(&sps).expect("255 is the legal maximum");
-    assert_eq!((info.width, info.height), (720, 576));
+    let info = broadcast_bitstream::sps::decode_avc_sps(&sps).expect("255 is the legal maximum");
+    assert_eq!((info.width(), info.height()), (720, 576));
 
     let sps = avc_sps(&AvcSps {
         pic_order_cnt_type: 1,
@@ -660,8 +677,8 @@ fn avc_poc_cycle_count_bound() {
     });
     assert!(
         matches!(
-            transmux::decode_avc_sps(&sps),
-            Err(transmux::error::Error::InvalidValue(_))
+            broadcast_bitstream::sps::decode_avc_sps(&sps),
+            Err(broadcast_bitstream::Error::InvalidValue(_))
         ),
         "256 ref frames in the POC cycle is outside 0..=255"
     );
@@ -683,21 +700,21 @@ fn avc_hrd_cpb_cnt_bound() {
     assert_eq!(
         decode_avc_reorder_depth(&avc_hrd_sps(31))
             .expect("decode")
-            .max_num_reorder_frames,
+            .max_num_reorder_frames(),
         Some(2),
         "cpb_cnt_minus1 31 is the legal maximum, so the VUI continues"
     );
     assert_eq!(
         decode_avc_reorder_depth(&avc_hrd_sps(32))
             .expect("decode")
-            .max_num_reorder_frames,
+            .max_num_reorder_frames(),
         None,
         "cpb_cnt_minus1 32 stops the VUI walk before bitstream_restriction"
     );
     assert_eq!(
         decode_avc_reorder_depth(&avc_hrd_sps(40))
             .expect("decode")
-            .max_num_reorder_frames,
+            .max_num_reorder_frames(),
         None,
         "cpb_cnt_minus1 40 stops the VUI walk before bitstream_restriction"
     );
@@ -713,10 +730,10 @@ fn avc_vui_timing_frame_rate_and_zero_num_units() {
         }),
         ..AvcSps::default()
     });
-    let info = transmux::decode_avc_sps(&sps).expect("decode SPS");
-    assert_eq!(info.num_units_in_tick, Some(1001));
-    assert_eq!(info.time_scale, Some(60000));
-    let fps = info.fps.expect("frame rate");
+    let info = broadcast_bitstream::sps::decode_avc_sps(&sps).expect("decode SPS");
+    assert_eq!(info.num_units_in_tick(), Some(1001));
+    assert_eq!(info.time_scale(), Some(60000));
+    let fps = info.fps().expect("frame rate");
     assert!(
         (fps - 29.97).abs() < 1e-3,
         "AVC fps = time_scale / (2 * num_units_in_tick), got {fps}"
@@ -730,10 +747,10 @@ fn avc_vui_timing_frame_rate_and_zero_num_units() {
         }),
         ..AvcSps::default()
     });
-    let info = transmux::decode_avc_sps(&sps).expect("decode SPS");
-    assert_eq!(info.num_units_in_tick, Some(0));
-    assert_eq!(info.time_scale, Some(60000));
-    assert_eq!(info.fps, None, "num_units_in_tick 0 yields no frame rate");
+    let info = broadcast_bitstream::sps::decode_avc_sps(&sps).expect("decode SPS");
+    assert_eq!(info.num_units_in_tick(), Some(0));
+    assert_eq!(info.time_scale(), Some(60000));
+    assert_eq!(info.fps(), None, "num_units_in_tick 0 yields no frame rate");
 }
 
 // ---------------------------------------------------------------------------
@@ -800,18 +817,21 @@ fn high_profile_scaling_lists_do_not_shift_later_sps_fields() {
     sps.extend(w.trailing());
 
     let info = decode_avc_sps(&sps).expect("High-profile SPS with scaling lists");
-    assert_eq!(info.profile_idc, 100);
-    assert_eq!(info.chroma_format_idc, 1);
-    assert_eq!((info.width, info.height), (320, 240));
-    assert_eq!(info.num_units_in_tick, Some(1001));
-    assert_eq!(info.time_scale, Some(60000));
+    assert_eq!(info.profile_idc(), 100);
+    assert_eq!(info.chroma_format_idc(), 1);
+    assert_eq!((info.width(), info.height()), (320, 240));
+    assert_eq!(info.num_units_in_tick(), Some(1001));
+    assert_eq!(info.time_scale(), Some(60000));
 
     let reorder = decode_avc_reorder_depth(&sps).expect("reorder depth");
-    assert_eq!(reorder.max_num_reorder_frames, Some(2));
+    assert_eq!(reorder.max_num_reorder_frames(), Some(2));
     assert_eq!(reorder.depth(), Some(2));
 
     let timing = decode_avc_vui_timing(&sps)
         .expect("VUI timing")
         .expect("timing_info_present_flag is 1");
-    assert_eq!((timing.num_units_in_tick, timing.time_scale), (1001, 60000));
+    assert_eq!(
+        (timing.num_units_in_tick(), timing.time_scale()),
+        (1001, 60000)
+    );
 }

@@ -9,7 +9,7 @@
 //!
 //! - **declared**: the VUI `time_scale`/`num_units_in_tick` frame rate
 //!   decoded from the track's own recovered `avcC`/`hvcC` SPS (ITU-T H.264
-//!   §E.2.1 / ITU-T H.265 §E.2.1 — decoded via [`transmux::sps`], never
+//!   §E.2.1 / ITU-T H.265 §E.2.1 — decoded via `broadcast_bitstream::sps`, never
 //!   re-parsed here).
 //! - **measured**: `timescale / mean(sample.duration)`, where each sample's
 //!   duration was resolved by the demuxer from the actual PES-timestamp delta
@@ -22,8 +22,8 @@
 //! narrow enough to catch a real cadence fault (e.g. VUI claims 30 fps while
 //! the stream is actually delivered at 25).
 //!
-//! No VUI/SPS parsing happens here — [`transmux::sps::AvcSpsInfo::fps`] /
-//! [`transmux::sps::HevcSpsInfo::fps`] (via the recovered config's own SPS)
+//! No VUI/SPS parsing happens here — [`broadcast_bitstream::sps::AvcSpsInfo::fps`] /
+//! [`broadcast_bitstream::sps::HevcSpsInfo::fps`] (via the recovered config's own SPS)
 //! do that; this check only compares the two already-decoded numbers.
 
 use alloc::boxed::Box;
@@ -157,10 +157,10 @@ fn check_track(track: &TrackCadence, report: &mut Report) {
             // resolve without knowing the demuxer's field/frame sample
             // convention, so it skips interlaced tracks rather than risk
             // a false positive (the `PtsCheck`-lesson hard gate).
-            if !info.frame_mbs_only {
+            if !info.frame_mbs_only() {
                 return None;
             }
-            info.fps
+            info.fps()
         }),
         CodecConfig::Hevc { config, .. } => config
             .config
@@ -168,7 +168,7 @@ fn check_track(track: &TrackCadence, report: &mut Report) {
             .iter()
             .find(|a| a.nal_unit_type == HEVC_NAL_SPS)
             .and_then(|a| a.nalus.first())
-            .and_then(|n| n.decode_sps().ok().flatten()?.fps),
+            .and_then(|n| n.decode_sps().ok().flatten()?.fps()),
         _ => None,
     };
     let Some(declared_fps) = declared_fps else {

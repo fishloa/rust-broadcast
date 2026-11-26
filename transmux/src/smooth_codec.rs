@@ -124,17 +124,17 @@ pub fn track_spec_from_quality_level(
                 .and_then(|s| s.decode().ok())
                 .map(|info| {
                     Ok::<_, CrateError>((
-                        u16::try_from(info.width).map_err(|_| {
+                        u16::try_from(info.width()).map_err(|_| {
                             CrateError::InvalidValue(InvalidValue {
                                 field: "SPS sps_pic_width_max_in_luma_samples",
-                                value: u64::from(info.width),
+                                value: u64::from(info.width()),
                                 reason: "does not fit the IR's 16-bit dimension field",
                             })
                         })?,
-                        u16::try_from(info.height).map_err(|_| {
+                        u16::try_from(info.height()).map_err(|_| {
                             CrateError::InvalidValue(InvalidValue {
                                 field: "SPS sps_pic_height_max_in_luma_samples",
-                                value: u64::from(info.height),
+                                value: u64::from(info.height()),
                                 reason: "does not fit the IR's 16-bit dimension field",
                             })
                         })?,
@@ -690,9 +690,9 @@ mod tests {
         );
         // The SPS really does decode to 65 536 (so the error below is the
         // over-range check, not a decode failure falling back to `None`).
-        let decoded = crate::sps::decode_avc_sps(&quality.codec_private_data[4..])
+        let decoded = broadcast_bitstream::sps::decode_avc_sps(&quality.codec_private_data[4..])
             .expect("the oversize SPS decodes");
-        assert_eq!(decoded.width, 65_536);
+        assert_eq!(decoded.width(), 65_536);
         match track_spec_from_quality_level(
             TrackId::new(1),
             timescale(90_000),

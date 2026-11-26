@@ -17,7 +17,7 @@
 //!   `general_profile_idc`/`general_level_idc` (HEVC) disagrees with the
 //!   same fields re-decoded from the record's own embedded SPS (a level
 //!   at or above the SPS level is conformant)
-//!   ([`transmux::decode_avc_sps`]/[`transmux::decode_hevc_sps`] — reused,
+//!   ([`broadcast_bitstream::sps::decode_avc_sps`]/[`broadcast_bitstream::sps::decode_hevc_sps`] — reused,
 //!   never re-implemented) — ISO/IEC 14496-15:2017 §5.3.3.1/§8.3.3.1.
 //! - **`container-sps-dimension-mismatch`** (Error): the sample entry's
 //!   `width`/`height` disagrees with the SPS-decoded coded dimensions
@@ -386,7 +386,7 @@ fn check_avc_track(
         return;
     };
 
-    if record.profile_indication != info.profile_idc {
+    if record.profile_indication != info.profile_idc() {
         report.push(Finding::new(
             Severity::Error,
             Location::at_track(0, track_id),
@@ -395,11 +395,11 @@ fn check_avc_track(
                 "avcC AVCProfileIndication 0x{:02X} on track {track_id} disagrees with the \
                  embedded SPS profile_idc 0x{:02X} — ISO/IEC 14496-15:2017 §5.3.3.1.1",
                 record.profile_indication,
-                info.profile_idc,
+                info.profile_idc(),
             ),
         ));
     }
-    if record.level_indication < info.level_idc {
+    if record.level_indication < info.level_idc() {
         report.push(Finding::new(
             Severity::Error,
             Location::at_track(0, track_id),
@@ -408,12 +408,12 @@ fn check_avc_track(
                 "avcC AVCLevelIndication 0x{:02X} on track {track_id} is below the \
                  embedded SPS level_idc 0x{:02X} — ISO/IEC 14496-15:2017 §5.3.3.1.1",
                 record.level_indication,
-                info.level_idc,
+                info.level_idc(),
             ),
         ));
     }
     if let Some(chroma) = record.chroma_format
-        && chroma != info.chroma_format_idc
+        && chroma != info.chroma_format_idc()
     {
         report.push(Finding::new(
             Severity::Error,
@@ -422,13 +422,13 @@ fn check_avc_track(
             alloc::format!(
                 "avcC chroma_format {chroma} on track {track_id} disagrees with the \
                  embedded SPS chroma_format_idc {} — ISO/IEC 14496-15:2017 §5.3.3.1.1",
-                info.chroma_format_idc,
+                info.chroma_format_idc(),
             ),
         ));
     }
     if width != 0
         && height != 0
-        && (u32::from(width), u32::from(height)) != (info.width, info.height)
+        && (u32::from(width), u32::from(height)) != (info.width(), info.height())
     {
         report.push(Finding::new(
             Severity::Error,
@@ -437,12 +437,12 @@ fn check_avc_track(
             alloc::format!(
                 "Sample entry declares {width}x{height} on track {track_id} but the embedded \
                  SPS decodes to {}x{} — ITU-T H.264 §7.4.2.1.1 cropped coded geometry",
-                info.width,
-                info.height,
+                info.width(),
+                info.height(),
             ),
         ));
     }
-    if !info.frame_mbs_only {
+    if !info.frame_mbs_only() {
         report.push(Finding::new(
             Severity::Info,
             Location::at_track(0, track_id),
@@ -472,7 +472,7 @@ fn check_hevc_track(
         return;
     };
 
-    if record.general_profile_idc != info.general_profile_idc {
+    if record.general_profile_idc != info.general_profile_idc() {
         report.push(Finding::new(
             Severity::Error,
             Location::at_track(0, track_id),
@@ -481,11 +481,11 @@ fn check_hevc_track(
                 "hvcC general_profile_idc {} on track {track_id} disagrees with the embedded \
                  SPS general_profile_idc {} — ISO/IEC 14496-15:2017 §8.3.3.1.1",
                 record.general_profile_idc,
-                info.general_profile_idc,
+                info.general_profile_idc(),
             ),
         ));
     }
-    if record.general_level_idc < info.general_level_idc {
+    if record.general_level_idc < info.general_level_idc() {
         report.push(Finding::new(
             Severity::Error,
             Location::at_track(0, track_id),
@@ -494,11 +494,11 @@ fn check_hevc_track(
                 "hvcC general_level_idc {} on track {track_id} is below the embedded SPS \
                  general_level_idc {} — ISO/IEC 14496-15:2017 §8.3.3.1.1",
                 record.general_level_idc,
-                info.general_level_idc,
+                info.general_level_idc(),
             ),
         ));
     }
-    if record.chroma_format_idc != info.chroma_format_idc {
+    if record.chroma_format_idc != info.chroma_format_idc() {
         report.push(Finding::new(
             Severity::Error,
             Location::at_track(0, track_id),
@@ -507,13 +507,13 @@ fn check_hevc_track(
                 "hvcC chroma_format_idc {} on track {track_id} disagrees with the embedded SPS \
                  chroma_format_idc {} — ISO/IEC 14496-15:2017 §8.3.3.1.1",
                 record.chroma_format_idc,
-                info.chroma_format_idc,
+                info.chroma_format_idc(),
             ),
         ));
     }
     if width != 0
         && height != 0
-        && (u32::from(width), u32::from(height)) != (info.width, info.height)
+        && (u32::from(width), u32::from(height)) != (info.width(), info.height())
     {
         report.push(Finding::new(
             Severity::Error,
@@ -522,8 +522,8 @@ fn check_hevc_track(
             alloc::format!(
                 "Sample entry declares {width}x{height} on track {track_id} but the embedded \
                  SPS decodes to {}x{} — ITU-T H.265 §7.4.3.2.1 cropped coded geometry",
-                info.width,
-                info.height,
+                info.width(),
+                info.height(),
             ),
         ));
     }

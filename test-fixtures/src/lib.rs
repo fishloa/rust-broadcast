@@ -23,6 +23,7 @@
 //! dev-dependency on it never appears in a published manifest (same pattern as
 //! `test-alloc`).
 
+pub mod bits;
 pub mod ffprobe;
 pub mod fuzz;
 pub mod process;

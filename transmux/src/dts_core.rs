@@ -379,9 +379,9 @@ pub fn split_dts_core_frames(payload: &[u8]) -> Vec<DtsCoreFrame<'_>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_bits::BitWriter;
     use broadcast_core::{Parse, Serialize};
     use isobmff::dts::*;
+    use test_fixtures::bits::BitWriter;
 
     /// Spec-derived test vector: hand-computed from §E.2.2.3.1 field layout.
     ///

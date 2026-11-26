@@ -3,10 +3,10 @@
 //! `afd_from_t35_payload`, `bar_data_from_t35_payload` and
 //! `bar_data_from_ga94_payload`.
 
+use broadcast_bitstream::facts::{ActiveFormatDescription, BarData};
 use transmux::user_data::{
     AfdSignal, afd_from_t35_payload, bar_data_from_ga94_payload, bar_data_from_t35_payload,
 };
-use transmux::{ActiveFormatDescription, BarData};
 
 const T35_PREFIX: [u8; 3] = [0xB5, 0x00, 0x31];
 const DTG1: [u8; 4] = *b"DTG1";
@@ -72,12 +72,7 @@ fn afd_rejects_foreign_or_short_payloads() {
 #[test]
 fn bar_data_decodes_each_flagged_value_in_order() {
     let rest = [0x06, 0xF0, 0xC0, 0x10, 0xC0, 0x20, 0xC0, 0x30, 0xC0, 0x40];
-    let want = BarData {
-        top_bar_end_line: Some(0x10),
-        bottom_bar_start_line: Some(0x20),
-        left_bar_end_pixel: Some(0x30),
-        right_bar_start_pixel: Some(0x40),
-    };
+    let want = BarData::new(Some(0x10), Some(0x20), Some(0x30), Some(0x40));
     assert_eq!(
         bar_data_from_t35_payload(&bar_payload(&rest)),
         Some(want.clone())
@@ -94,12 +89,7 @@ fn bar_values_are_masked_to_fourteen_bits() {
     let rest = [0x06, 0x80, 0xFF, 0xFF];
     assert_eq!(
         bar_data_from_ga94_payload(&rest),
-        Some(BarData {
-            top_bar_end_line: Some(0x3FFF),
-            bottom_bar_start_line: None,
-            left_bar_end_pixel: None,
-            right_bar_start_pixel: None,
-        })
+        Some(BarData::new(Some(0x3FFF), None, None, None))
     );
 }
 
@@ -108,12 +98,7 @@ fn only_the_flagged_bars_are_read() {
     let rest = [0x06, 0x50, 0xC0, 0x08, 0xC0, 0x09];
     assert_eq!(
         bar_data_from_ga94_payload(&rest),
-        Some(BarData {
-            top_bar_end_line: None,
-            bottom_bar_start_line: Some(8),
-            left_bar_end_pixel: None,
-            right_bar_start_pixel: Some(9),
-        })
+        Some(BarData::new(None, Some(8), None, Some(9)))
     );
 }
 
@@ -139,12 +124,7 @@ fn bar_data_rejects_foreign_short_or_wrong_type_payloads() {
 }
 
 fn empty_bar_data() -> BarData {
-    BarData {
-        top_bar_end_line: None,
-        bottom_bar_start_line: None,
-        left_bar_end_pixel: None,
-        right_bar_start_pixel: None,
-    }
+    BarData::new(None, None, None, None)
 }
 
 #[test]
@@ -185,33 +165,9 @@ fn each_bar_flag_reads_only_its_own_value() {
         let rest = [&[0x06u8, flags][..], &values[..]].concat();
         bar_data_from_ga94_payload(&rest)
     };
-    assert_eq!(
-        case(0x80),
-        Some(BarData {
-            top_bar_end_line: Some(1),
-            ..empty_bar_data()
-        })
-    );
-    assert_eq!(
-        case(0x40),
-        Some(BarData {
-            bottom_bar_start_line: Some(1),
-            ..empty_bar_data()
-        })
-    );
-    assert_eq!(
-        case(0x20),
-        Some(BarData {
-            left_bar_end_pixel: Some(1),
-            ..empty_bar_data()
-        })
-    );
-    assert_eq!(
-        case(0x10),
-        Some(BarData {
-            right_bar_start_pixel: Some(1),
-            ..empty_bar_data()
-        })
-    );
+    assert_eq!(case(0x80), Some(BarData::new(Some(1), None, None, None)));
+    assert_eq!(case(0x40), Some(BarData::new(None, Some(1), None, None)));
+    assert_eq!(case(0x20), Some(BarData::new(None, None, Some(1), None)));
+    assert_eq!(case(0x10), Some(BarData::new(None, None, None, Some(1))));
     assert_eq!(case(0x00), Some(empty_bar_data()));
 }

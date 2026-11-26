@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use transmux::sps::{decode_avc_slice_sps, decode_hevc_interlace_sps};
+use broadcast_bitstream::sps::{decode_avc_slice_sps, decode_hevc_interlace_sps};
 use broadcast_bitstream::{
     NalCodec,
 };

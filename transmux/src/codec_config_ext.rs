@@ -7,8 +7,9 @@
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::error::Result;
-use crate::sps::rfc6381_vvc1;
 use alloc::string::String;
+use broadcast_bitstream::rfc6381::{rfc6381_hvc1, rfc6381_vvc1};
+use broadcast_bitstream::sps::HevcSpsInfo;
 use broadcast_core::Parse;
 use isobmff::hevc_config::HEVCDecoderConfigurationRecord;
 use isobmff::mp4esds::EsdsBox;
@@ -27,22 +28,17 @@ pub trait HevcRecordCodecInfo {
 
 impl HevcRecordCodecInfo for HEVCDecoderConfigurationRecord {
     fn rfc6381(&self) -> String {
-        crate::sps::rfc6381_hvc1(&crate::sps::HevcSpsInfo {
-            general_profile_space: self.general_profile_space,
-            general_tier_flag: self.general_tier_flag,
-            general_profile_idc: self.general_profile_idc,
-            general_profile_compatibility_flags: self.general_profile_compatibility_flags,
-            general_constraint_indicator_flags: self.general_constraint_indicator_flags,
-            general_level_idc: self.general_level_idc,
-            chroma_format_idc: self.chroma_format_idc,
-            bit_depth_luma: self.bit_depth_luma_minus8 + BIT_DEPTH_OFFSET,
-            bit_depth_chroma: self.bit_depth_chroma_minus8 + BIT_DEPTH_OFFSET,
-            width: 0,
-            height: 0,
-            num_units_in_tick: None,
-            time_scale: None,
-            fps: None,
-        })
+        rfc6381_hvc1(&HevcSpsInfo::from_record(
+            self.general_profile_space,
+            self.general_tier_flag,
+            self.general_profile_idc,
+            self.general_profile_compatibility_flags,
+            self.general_constraint_indicator_flags,
+            self.general_level_idc,
+            self.chroma_format_idc,
+            self.bit_depth_luma_minus8 + BIT_DEPTH_OFFSET,
+            self.bit_depth_chroma_minus8 + BIT_DEPTH_OFFSET,
+        ))
     }
 }
 
@@ -59,8 +55,8 @@ pub trait VvcRecordCodecInfo {
 impl VvcRecordCodecInfo for VvcDecoderConfigurationRecord {
     fn dimensions(&self) -> Option<(u32, u32)> {
         let sps = self.sps()?;
-        let info = crate::sps::decode_vvc_sps(sps).ok()?;
-        Some((info.width, info.height))
+        let info = broadcast_bitstream::sps::decode_vvc_sps(sps).ok()?;
+        Some((info.width(), info.height()))
     }
 
     fn rfc6381(&self) -> String {
@@ -116,7 +112,7 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
             0x00u8, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xFC,
         ];
         assert_eq!(
-            crate::sps::rfc6381_vvc1(1, false, 32, &payload, 12),
+            broadcast_bitstream::rfc6381::rfc6381_vvc1(1, false, 32, &payload, 12),
             "vvc1.1.L32.CTA-00112233445566778899AAFC"
         );
     }

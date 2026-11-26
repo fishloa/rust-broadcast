@@ -28,10 +28,8 @@
 //! Fixtures load through `test_fixtures` and SKIP, never fail, when the
 //! private submodule is not checked out.
 #![cfg(feature = "std")]
-use transmux::ir::{
-    ActiveFormatDescription, AspectRatioIdc, DisplayChangeSet, DisplayGeometry, DisplayInfo,
-    TrackId, TrackSpec,
-};
+use broadcast_bitstream::facts::{ActiveFormatDescription, AspectRatioIdc};
+use transmux::ir::{DisplayChangeSet, DisplayGeometry, DisplayInfo, TrackId, TrackSpec};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 fn read(fixture: &str) -> Option<Vec<u8>> {

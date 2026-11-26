@@ -1,11 +1,12 @@
 #![cfg(feature = "std")]
 //! `nominal_frame_rate_millihertz` — H.264 SPS VUI timing only.
 
+use broadcast_bitstream::sps::decode_hevc_vui_timing;
 use broadcast_core::Parse;
 use isobmff::nalu_types::{HevcNalArray, HevcNalUnit};
 use isobmff::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use transmux::CodecConfig;
-use transmux::{decode_hevc_vui_timing, nominal_frame_rate};
+use transmux::nominal_frame_rate;
 
 // Re-exported? nominal_frame_rate is in transmux root.
 
@@ -122,11 +123,11 @@ fn hevc_vui_timing_and_nominal_rate_per_fixture() {
         let sps = extract_hevc_sps(&format!("mp4/{}.mp4", r.fixture));
         if let Some((tick, scale, field_seq, ffi, hrd)) = r.vui {
             let t = decode_hevc_vui_timing(&sps).unwrap().unwrap();
-            assert_eq!(t.num_units_in_tick, tick, "{}", r.fixture);
-            assert_eq!(t.time_scale, scale, "{}", r.fixture);
-            assert_eq!(t.field_seq, field_seq, "{}", r.fixture);
-            assert_eq!(t.frame_field_info_present, ffi, "{}", r.fixture);
-            assert_eq!(t.hrd_fixed_pic_rate, hrd, "{}", r.fixture);
+            assert_eq!(t.num_units_in_tick(), tick, "{}", r.fixture);
+            assert_eq!(t.time_scale(), scale, "{}", r.fixture);
+            assert_eq!(t.field_seq(), field_seq, "{}", r.fixture);
+            assert_eq!(t.frame_field_info_present(), ffi, "{}", r.fixture);
+            assert_eq!(t.hrd_fixed_pic_rate(), hrd, "{}", r.fixture);
         }
         assert_eq!(
             nominal_frame_rate(&hevc_config(sps)),

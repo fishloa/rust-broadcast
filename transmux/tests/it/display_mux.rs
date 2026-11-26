@@ -7,13 +7,12 @@
 //! captures through `TsDemux` -> `build_init_segment` and cross-check with
 //! ffprobe.
 
+use broadcast_bitstream::facts::{AspectRatioIdc, ColourDescription, VideoFormat, VideoSignalType};
 use broadcast_core::Parse;
 use broadcast_core::timescale::Timescale;
 use isobmff::{AVCDecoderConfigurationRecord, HEVCDecoderConfigurationRecord};
 use isobmff::{AVCSampleEntry, HEVCSampleEntry};
-use transmux::ir::{
-    AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, VideoFormat, VideoSignalType,
-};
+use transmux::ir::{CodecConfig, DisplayGeometry};
 use transmux::pipeline;
 use transmux::{TrackId, TrackSpec};
 

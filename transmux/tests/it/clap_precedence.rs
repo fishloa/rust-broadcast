@@ -8,7 +8,8 @@
 //! eight fields in place.
 //!
 //! Spec input: `private/specs-verified/mpeg/isobmff/sample-entry-ext.md`.
-use transmux::ir::{CodecConfig, DisplayGeometry, PictureRect};
+use broadcast_bitstream::facts::PictureRect;
+use transmux::ir::{CodecConfig, DisplayGeometry};
 
 const FIXTURE: &str = "mp4/clap-vs-crop.mp4";
 const CLAP_BODY_LEN: usize = 32;

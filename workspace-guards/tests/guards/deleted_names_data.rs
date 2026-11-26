@@ -357,4 +357,109 @@ pub const TABLE: &[Banned] = &[
         reason: "split_access_units lives in broadcast_bitstream::au",
         issue: "broadcast-bitstream bs1",
     },
+    Banned {
+        name: "transmux::sps",
+        reason: "the SPS decoders live in broadcast_bitstream::sps",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "crate::sps",
+        reason: "transmux has no sps module; the decoders are broadcast_bitstream::sps",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::test_bits",
+        reason: "the test bit writer is test_fixtures::bits::BitWriter",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "crate::test_bits",
+        reason: "the test bit writer is test_fixtures::bits::BitWriter",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::AvcSpsInfo",
+        reason: "AvcSpsInfo lives in broadcast_bitstream::sps",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::HevcSpsInfo",
+        reason: "HevcSpsInfo lives in broadcast_bitstream::sps",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::rfc6381_avc1",
+        reason: "the per-codec RFC 6381 helpers live in broadcast_bitstream::rfc6381",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::rfc6381_hvc1",
+        reason: "the per-codec RFC 6381 helpers live in broadcast_bitstream::rfc6381",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::rfc6381_mp4a",
+        reason: "the per-codec RFC 6381 helpers live in broadcast_bitstream::rfc6381",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::AspectRatioIdc",
+        reason: "the coded picture facts live in broadcast_bitstream::facts",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::PictureRect",
+        reason: "the coded picture facts live in broadcast_bitstream::facts",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::ColourDescription",
+        reason: "the coded picture facts live in broadcast_bitstream::facts",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::VideoSignalType",
+        reason: "the coded picture facts live in broadcast_bitstream::facts",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::ActiveFormatDescription",
+        reason: "the coded picture facts live in broadcast_bitstream::facts",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::BarData",
+        reason: "the coded picture facts live in broadcast_bitstream::facts",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::ir::AspectRatioIdc",
+        reason: "the coded picture facts live in broadcast_bitstream::facts",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::ir::PictureRect",
+        reason: "the coded picture facts live in broadcast_bitstream::facts",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::ir::ColourDescription",
+        reason: "the coded picture facts live in broadcast_bitstream::facts",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::ir::VideoSignalType",
+        reason: "the coded picture facts live in broadcast_bitstream::facts",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::ir::ActiveFormatDescription",
+        reason: "the coded picture facts live in broadcast_bitstream::facts",
+        issue: "broadcast-bitstream bs2a",
+    },
+    Banned {
+        name: "transmux::ir::BarData",
+        reason: "the coded picture facts live in broadcast_bitstream::facts",
+        issue: "broadcast-bitstream bs2a",
+    },
 ];
