@@ -50,3 +50,7 @@ opt-level = 2
 [patch.crates-io]
 broadcast-common = { path = "broadcast-common" }
 broadcast-core = { path = "broadcast-core" }
+# `motion-imagery-metadata` 0.2.0 on crates.io imports `Parse` and `impl_spec_display!` from
+# `broadcast-common`, where they no longer are. Its `broadcast-core` branch imports them from
+# `broadcast-core`. Remove this line when a release of it built on `broadcast-core` is published.
+motion-imagery-metadata = { git = "https://github.com/fishloa/motion-imagery-metadata", rev = "9696ebfb1b25cb818565ede5ddf8dd4e7eb8d786" }

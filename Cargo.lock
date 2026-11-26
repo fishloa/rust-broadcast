@@ -2491,10 +2491,9 @@ checksum = "d696c0de8f9fcdaa3545b02749fa617c2e756e8e812e2d57c0b68d334aaf6367"
 [[package]]
 name = "motion-imagery-metadata"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "07389d4be0d68d7a36a7701bb40114d39a0620cac64b219751788e82e94c68ea"
+source = "git+https://github.com/fishloa/motion-imagery-metadata?rev=9696ebfb1b25cb818565ede5ddf8dd4e7eb8d786#9696ebfb1b25cb818565ede5ddf8dd4e7eb8d786"
 dependencies = [
- "broadcast-common",
+ "broadcast-core",
  "jiff",
  "misb",
 ]
