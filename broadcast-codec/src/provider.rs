@@ -1,0 +1,113 @@
+//! The object-safe trait one codec adapter implements.
+
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
+use crate::availability::Probe;
+use crate::codec::{CodecId, CodecParameters};
+use crate::descriptor::CodecDescriptor;
+use crate::direction::Direction;
+use crate::encoder_config::EncoderConfig;
+use crate::error::CodecError;
+use crate::profile::CodecProfile;
+use crate::provider_info::ProviderInfo;
+use crate::traits::{Decoder, Encoder};
+
+/// One adapter, offering any number of implementations.
+///
+/// A provider is a value an application registers with a
+/// [`Registry`](crate::Registry); nothing registers itself. The trait is
+/// object-safe, so a registry holds `Box<dyn CodecProvider>` and links any
+/// number of adapters without naming one at its call sites.
+pub trait CodecProvider {
+    /// The provider's name.
+    ///
+    /// It is the provider side of a [`Preference`](crate::Preference), so it
+    /// must be non-empty and made only of lower-case ASCII letters, digits,
+    /// `-` and `_`. A [`Registry`](crate::Registry) refuses a provider whose
+    /// name breaks that rule, and refuses two providers with the same name.
+    fn name(&self) -> &str;
+
+    /// Who provides these implementations, and under what terms.
+    ///
+    /// The registry's inventory reports this, so the adapter states its own
+    /// version, the underlying library when there is one, and that library's
+    /// licence only when it can know it (never a guess).
+    fn info(&self) -> ProviderInfo;
+
+    /// Every implementation this provider offers, in the order the registry
+    /// should try them. Providers are asked on every lookup, so the list may
+    /// depend on the machine (a hardware encoder absent on this host is absent
+    /// here too).
+    fn descriptors(&self) -> Vec<CodecDescriptor>;
+
+    /// Every profile this provider states for `codec` in `direction`: the
+    /// union over its descriptors, in first-seen order and without duplicates.
+    ///
+    /// The default answer reads [`Self::descriptors`], so an adapter that
+    /// states profiles only on its descriptors needs no code of its own here.
+    /// [`Registry::profiles`](crate::Registry::profiles) attributes each of
+    /// them to the providers that state it.
+    fn profiles(&self, codec: CodecId, direction: Direction) -> Vec<CodecProfile> {
+        let mut profiles: Vec<CodecProfile> = Vec::new();
+        for descriptor in self.descriptors() {
+            if descriptor.codec() != codec || descriptor.direction() != direction {
+                continue;
+            }
+            for profile in descriptor.profiles() {
+                if !profiles.contains(profile) {
+                    profiles.push(*profile);
+                }
+            }
+        }
+        profiles
+    }
+
+    /// Whether `implementation` opens here.
+    ///
+    /// The default answer is [`Probe::unknown()`]: a provider that does not
+    /// probe says so rather than claiming availability. Probes are only asked
+    /// for by [`Registry::inventory`](crate::Registry::inventory) with its
+    /// `probe` argument set, because opening a hardware codec has a cost.
+    fn probe(&self, _implementation: &str, _direction: Direction, _codec: CodecId) -> Probe {
+        Probe::unknown()
+    }
+
+    /// Build a decoder for `parameters`.
+    ///
+    /// `implementation` is one of the names [`Self::descriptors`] lists for
+    /// `parameters.codec()` in [`Direction::Decode`](crate::Direction::Decode).
+    ///
+    /// # Errors
+    /// [`CodecError::Unsupported`] or [`CodecError::Refused`] when this
+    /// implementation cannot serve the request: a registry in
+    /// [`Fallback::NextCandidate`](crate::Fallback::NextCandidate) then tries
+    /// the next candidate. [`CodecError::Failed`] stops every further attempt.
+    fn make_decoder(
+        &self,
+        implementation: &str,
+        parameters: &CodecParameters,
+    ) -> Result<Box<dyn Decoder>, CodecError>;
+
+    /// Build an encoder from `config`.
+    ///
+    /// `implementation` is one of the names [`Self::descriptors`] lists for
+    /// `config.codec()` in [`Direction::Encode`](crate::Direction::Encode).
+    ///
+    /// # Errors
+    /// As [`Self::make_decoder`], plus [`CodecError::Refused`] naming any key
+    /// in [`EncoderConfig::options`] this provider does not recognise. An
+    /// unknown key is never ignored.
+    fn make_encoder(
+        &self,
+        implementation: &str,
+        config: &EncoderConfig,
+    ) -> Result<Box<dyn Encoder>, CodecError>;
+}
+
+/// The character in `name` that stops it being a provider or implementation
+/// name, when one does.
+pub(crate) fn offending_character(name: &str) -> Option<char> {
+    name.chars()
+        .find(|c| !(c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '-' || *c == '_'))
+}
