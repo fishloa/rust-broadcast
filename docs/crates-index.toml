@@ -91,9 +91,9 @@ blurb = "`publish = false` dev-dependencies shared by the workspace's test suite
 
 [crate.broadcast-codec]
 domain = "foundation"
-summary = "Codec seam: raw frame types and object-safe sans-IO Decoder/Encoder traits; holds no codec."
+summary = "Codec seam: raw frame types, object-safe sans-IO Decoder/Encoder traits, and the registry that chooses among providers; holds no codec."
 standards = "none (codec seam; no wire format of its own)"
-what = "The vocabulary an outside codec library exchanges with the workspace: `CodecId`/`CodecParameters`, `Packet`, `AudioFrame`/`VideoFrame` with private fields and checked constructors, and the object-safe sans-IO `Decoder`/`Encoder` traits driven by one send/receive/finish contract. It holds no codec; the API is 0.x and expected to change."
+what = "The vocabulary an outside codec library exchanges with the workspace: `CodecId`/`CodecParameters`, `Packet`, `AudioFrame`/`VideoFrame` with private fields and checked constructors, the object-safe sans-IO `Decoder`/`Encoder` traits driven by one send/receive/finish contract, and the provider registry the application builds (`CodecProvider`, `CodecDescriptor`, `EncoderConfig`, `Registry`, `Preference`, `Fallback`) so several adapters can be linked and chosen between per codec, with no static registry and no link-time registration. It holds no codec; the API is 0.x and expected to change."
 crates_io = false
 lifecycle = "internal"
 

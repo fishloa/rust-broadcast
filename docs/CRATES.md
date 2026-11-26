@@ -175,10 +175,10 @@ The stable floor every wire crate builds on: the symmetric `Parse<'a>` / `Serial
 
 #### broadcast-codec
 
-The vocabulary an outside codec library exchanges with the workspace: `CodecId`/`CodecParameters`, `Packet`, `AudioFrame`/`VideoFrame` with private fields and checked constructors, and the object-safe sans-IO `Decoder`/`Encoder` traits driven by one send/receive/finish contract. It holds no codec; the API is 0.x and expected to change.
+The vocabulary an outside codec library exchanges with the workspace: `CodecId`/`CodecParameters`, `Packet`, `AudioFrame`/`VideoFrame` with private fields and checked constructors, the object-safe sans-IO `Decoder`/`Encoder` traits driven by one send/receive/finish contract, and the provider registry the application builds (`CodecProvider`, `CodecDescriptor`, `EncoderConfig`, `Registry`, `Preference`, `Fallback`) so several adapters can be linked and chosen between per codec, with no static registry and no link-time registration. It holds no codec; the API is 0.x and expected to change.
 
 - **Standards:** none (codec seam; no wire format of its own)
-- **Cargo description:** Codec seam for rust-broadcast: raw audio/video frame types and the sans-IO Decoder/Encoder traits an outside codec plugs into. Holds no codec itself. no_std + alloc.
+- **Cargo description:** Codec seam for rust-broadcast: raw audio/video frame types, the sans-IO Decoder/Encoder traits an outside codec plugs into, and the registry that chooses among providers. Holds no codec itself. no_std + alloc.
 - **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-core`](#broadcast-core)
 - **Used by (workspace):** none
