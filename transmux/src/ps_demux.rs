@@ -67,7 +67,6 @@ use mpeg_ps::{PsEvent, PsLimits, PsScanner};
 
 use crate::TrackId;
 use crate::ac3_syncframe::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
-use crate::annexb::iter_annexb_nals;
 use crate::au::AccessUnitSplitter;
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
@@ -86,6 +85,7 @@ use crate::ts_demux::{
     AVC_SPS_CONFIG_MIN_LEN, AVC_SPS_CONSTRAINT_FLAGS_OFFSET, AVC_SPS_LEVEL_IDC_OFFSET,
     MPEG2_PICTURE_START_CODE, mpeg2_is_sync,
 };
+use broadcast_bitstream::annexb::iter_annexb_nals;
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::nalu_types::{AvcPps, AvcSps};
 
@@ -1064,7 +1064,7 @@ impl VideoTiming {
             profile_indication: sps[1],
             profile_compatibility: sps[AVC_SPS_CONSTRAINT_FLAGS_OFFSET],
             level_indication: sps[AVC_SPS_LEVEL_IDC_OFFSET],
-            length_size_minus_one: crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
+            length_size_minus_one: broadcast_bitstream::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
             sps: alloc::vec![AvcSps(sps.clone())],
             pps: alloc::vec![AvcPps(pps.clone())],
             chroma_format: None,

@@ -98,7 +98,6 @@ use mpeg_ts::ts::{
 
 use crate::TrackId;
 use crate::aac_asc::{ADTS_HEADER_SIZE, AudioSpecificConfig};
-use crate::annexb::{NAL_LENGTH_SIZE, iter_length_prefixed_nals, length_prefixed_to_annexb};
 use crate::codec_config_ext::EsdsBoxCodecInfo;
 #[cfg(test)]
 use crate::collect::Collected as Media;
@@ -107,6 +106,9 @@ use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::nal::{AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, nal_unit_type};
 use crate::pipeline::{CodecConfig, DataCarriage, DataIdentity, Sample, TrackSpec};
 use crate::ts_demux::DESCRIPTOR_HEADER_LEN;
+use broadcast_bitstream::annexb::{
+    NAL_LENGTH_SIZE, iter_length_prefixed_nals, length_prefixed_to_annexb,
+};
 use isobmff::mp4esds::{EsdsBox, OTI_MPEG1_AUDIO, OTI_MPEG2_AUDIO};
 use isobmff::nalu_types::HEVC_SPS_NUT;
 
@@ -2074,7 +2076,7 @@ where
 
     if !needs_params {
         // Straight, byte-exact rewrite of the existing NAL sequence.
-        return length_prefixed_to_annexb(length_prefixed);
+        return Ok(length_prefixed_to_annexb(length_prefixed)?);
     }
 
     // Insert the parameter sets after a leading AUD (if any), before the slices.
@@ -2157,7 +2159,7 @@ fn ensure_hevc_aud(mut au: Vec<u8>) -> Result<Vec<u8>> {
 /// The AVC `nal_unit_type` of the first NAL in an Annex B buffer, or `None`
 /// when the buffer is empty (a zero-length sample has no NAL at all).
 fn first_avc_nal_type(annexb: &[u8]) -> Option<u8> {
-    crate::annexb::iter_annexb_nals(annexb)
+    broadcast_bitstream::annexb::iter_annexb_nals(annexb)
         .next()
         .and_then(|n| n.first().map(|b| b & NAL_TYPE_MASK))
 }
@@ -2165,7 +2167,7 @@ fn first_avc_nal_type(annexb: &[u8]) -> Option<u8> {
 /// The HEVC `nal_unit_type` of the first NAL in an Annex B buffer (2-byte NAL
 /// header, H.265 §7.3.1.2), or `None` when the buffer is empty.
 fn first_hevc_nal_type(annexb: &[u8]) -> Option<u8> {
-    crate::annexb::iter_annexb_nals(annexb)
+    broadcast_bitstream::annexb::iter_annexb_nals(annexb)
         .next()
         .and_then(|n| nal_unit_type(NalCodec::Hevc, n))
 }

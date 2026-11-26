@@ -24,7 +24,7 @@
 //! # Subsample map
 //!
 //! For an AVC/HEVC/VVC (NAL-carried) track under [`SubsamplePolicy::Video`],
-//! each length-prefixed NAL unit in a sample ([`crate::annexb::iter_length_prefixed_nals`])
+//! each length-prefixed NAL unit in a sample ([`broadcast_bitstream::annexb::iter_length_prefixed_nals`])
 //! contributes one [`isobmff::cenc::SubSampleEntry`]: the 4-byte length prefix
 //! plus the codec's NAL header (1 byte AVC, 2 bytes HEVC/VVC — ITU-T H.264
 //! §7.3.1 / H.265 §7.3.1.2 / H.266 §7.3.1.2) is left clear, and the rest of
@@ -61,13 +61,13 @@ use alloc::vec::Vec;
 
 use broadcast_common::stage::{Stage, Timestamp};
 
-use crate::annexb::{NAL_LENGTH_SIZE, iter_length_prefixed_nals};
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::ir::{SampleProtection, TrackId, TrackProtection};
 use crate::mux_stage::MuxInput;
 use crate::nal::NalCodec;
 use crate::pipeline::CodecConfig;
+use broadcast_bitstream::annexb::{NAL_LENGTH_SIZE, iter_length_prefixed_nals};
 use bytes::Bytes;
 use isobmff::cenc::{
     CencScheme, KEY_LEN, SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox,

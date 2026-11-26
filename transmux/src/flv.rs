@@ -1506,7 +1506,7 @@ fn onmetadata_properties(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
+    use broadcast_bitstream::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
     use isobmff::avc_config::AVCDecoderConfigurationRecord;
 
     #[test]

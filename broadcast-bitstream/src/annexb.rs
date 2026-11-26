@@ -19,7 +19,7 @@ use broadcast_core::len::need_in;
 use crate::error::{Error, Result};
 
 /// Bytes in the `00 00 01` Annex B start-code prefix (ITU-T H.264 Annex B).
-pub(crate) const START_CODE_PREFIX_LEN: usize = 3;
+pub const START_CODE_PREFIX_LEN: usize = 3;
 /// Offset of the `01` marker inside the start-code prefix.
 const START_CODE_MARKER_OFFSET: usize = 2;
 /// Offset of the second byte of the prefix, counted from its first byte.
@@ -62,19 +62,21 @@ pub fn iter_annexb_nals(annexb: &[u8]) -> AnnexBNalIter<'_> {
 /// (audit r04-O1 / #1141), so a fix here reaches every scanner.
 ///
 /// A prefix at `q` has its `01` at `q + 2`, so this looks for each `01` byte
-/// with `memchr` and checks the two bytes before it, rather than testing every
+/// with a byte search and checks the two bytes before it, rather than testing every
 /// offset: coded video carries few `01` bytes, and every H.264/HEVC access unit
 /// is scanned more than once on the TS → CMAF path. When the two bytes before
 /// a `01` are not `00 00`, no prefix can start at or before that `01`, so the
 /// next search begins just past it. The result is the same as the
 /// byte-by-byte scan's (`find_start_code_prefix_matches_byte_by_byte_scan`).
-pub(crate) fn find_start_code_prefix(data: &[u8], from: usize) -> Option<usize> {
+pub fn find_start_code_prefix(data: &[u8], from: usize) -> Option<usize> {
     let n = data.len();
     let mut p = from;
     while p + START_CODE_PREFIX_LEN <= n {
         let i = p
             + START_CODE_MARKER_OFFSET
-            + memchr::memchr(START_CODE_MARKER, &data[p + START_CODE_MARKER_OFFSET..])?;
+            + data[p + START_CODE_MARKER_OFFSET..]
+                .iter()
+                .position(|&b| b == START_CODE_MARKER)?;
         if data[i - START_CODE_MARKER_OFFSET] == 0
             && data[i - START_CODE_MARKER_OFFSET + START_CODE_SECOND_BYTE_OFFSET] == 0
         {
@@ -103,6 +105,7 @@ pub(crate) fn start_code_positions(data: &[u8]) -> Vec<usize> {
 }
 
 /// Iterator over Annex B NAL units (see [`iter_annexb_nals`]).
+#[non_exhaustive]
 pub struct AnnexBNalIter<'a> {
     data: &'a [u8],
     code_positions: Vec<usize>,
@@ -155,10 +158,7 @@ pub fn annexb_to_length_prefixed(annexb: &[u8]) -> Vec<u8> {
 /// §5.3.3.1.3, `lengthSizeMinusOne = 3`), the one length-prefix writer the
 /// Annex B, RTP and TS paths share. `capacity` is the caller's size bound, so
 /// the output is allocated once.
-pub(crate) fn length_prefix<'a>(
-    capacity: usize,
-    nals: impl IntoIterator<Item = &'a [u8]>,
-) -> Vec<u8> {
+pub fn length_prefix<'a>(capacity: usize, nals: impl IntoIterator<Item = &'a [u8]>) -> Vec<u8> {
     let mut out = Vec::with_capacity(capacity);
     for nal in nals {
         out.extend_from_slice(&(nal.len() as u32).to_be_bytes());
@@ -275,6 +275,7 @@ pub fn length_prefixed_to_annexb(lp: &[u8]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec;
     use broadcast_core::error::InvalidValue;
 
     use super::*;

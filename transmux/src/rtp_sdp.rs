@@ -198,7 +198,7 @@ pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVC
         profile_indication,
         profile_compatibility: first_sps.0[SPS_PROFILE_COMPATIBILITY_OFFSET],
         level_indication: first_sps.0[SPS_LEVEL_IDC_OFFSET],
-        length_size_minus_one: crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
+        length_size_minus_one: broadcast_bitstream::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
         sps,
         pps,
         chroma_format: ext.as_ref().map(|i| i.chroma_format_idc),

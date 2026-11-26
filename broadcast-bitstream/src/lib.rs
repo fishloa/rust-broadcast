@@ -19,8 +19,14 @@
 
 extern crate alloc;
 
+pub mod annexb;
 pub mod bitreader;
 mod error;
 pub mod rbsp;
 
+pub use annexb::{
+    AnnexBNalIter, NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, VALID_NAL_LENGTH_SIZES,
+    annexb_to_length_prefixed, iter_annexb_nals, iter_length_prefixed_nals,
+    iter_length_prefixed_nals_with, length_prefixed_to_annexb, normalise_nal_length_size,
+};
 pub use error::{Error, Result};

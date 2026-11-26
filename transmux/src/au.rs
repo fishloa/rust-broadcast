@@ -35,9 +35,9 @@ use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 use broadcast_core::error::InvalidValue;
 
-use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use crate::error::{Error, Result as AuResult};
 use crate::nal::{NalCodec, nal_unit_type};
+use broadcast_bitstream::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 
 // ── NAL-type classification (VCL ranges + AUD), per each codec's Table 7-1 / 5 ──
 

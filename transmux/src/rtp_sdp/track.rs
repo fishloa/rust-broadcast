@@ -94,7 +94,7 @@ fn pending_avc_config() -> CodecConfig {
             profile_indication: 0,
             profile_compatibility: 0,
             level_indication: 0,
-            length_size_minus_one: crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
+            length_size_minus_one: broadcast_bitstream::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
             sps: Vec::new(),
             pps: Vec::new(),
             chroma_format: None,

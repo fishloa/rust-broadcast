@@ -693,7 +693,7 @@ impl SampleAesStage {
     }
 
     fn transform_h264(&self, data: &[u8]) -> Result<Vec<u8>> {
-        let nals = crate::annexb::iter_length_prefixed_nals(data)?;
+        let nals = broadcast_bitstream::annexb::iter_length_prefixed_nals(data)?;
         let mut out = Vec::with_capacity(data.len());
         for nal in nals {
             let transformed = match self.op {

@@ -47,7 +47,6 @@
 //! parameter sets travel ahead of their use (the normal case) the change is
 //! raised at the first access unit that references them.
 
-use crate::annexb::iter_annexb_nals;
 use crate::ir::{
     ActiveFormat, ActiveFormatDescription, AfdPersistence, BarData, DisplayChangeSet,
     DisplayGeometry, DisplayInfo, UserDataCarriage,
@@ -58,6 +57,7 @@ use crate::user_data;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use broadcast_bitstream::annexb::iter_annexb_nals;
 use broadcast_bitstream::bitreader::BitReader;
 use isobmff::nalu_types::HEVC_SPS_NUT;
 

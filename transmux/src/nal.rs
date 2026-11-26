@@ -39,7 +39,7 @@
 
 use alloc::vec::Vec;
 
-use crate::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
+use broadcast_bitstream::annexb::{iter_annexb_nals, iter_length_prefixed_nals};
 use broadcast_bitstream::bitreader::BitReader;
 use broadcast_bitstream::rbsp::{EMULATION_BYTE_RUN_LEN, EMULATION_PREVENTION_BYTE};
 use broadcast_core::wire::{be_u16, be_u32};
@@ -1140,8 +1140,8 @@ mod tests {
         assert!(access_unit_is_keyframe(NalCodec::Avc, &kf, false));
 
         // Length-prefixed form of the same AUs yields the same verdict.
-        let lp_non_kf = crate::annexb::annexb_to_length_prefixed(&non_kf);
-        let lp_kf = crate::annexb::annexb_to_length_prefixed(&kf);
+        let lp_non_kf = broadcast_bitstream::annexb::annexb_to_length_prefixed(&non_kf);
+        let lp_kf = broadcast_bitstream::annexb::annexb_to_length_prefixed(&kf);
         assert!(!access_unit_is_keyframe(NalCodec::Avc, &lp_non_kf, true));
         assert!(access_unit_is_keyframe(NalCodec::Avc, &lp_kf, true));
     }
@@ -1426,7 +1426,7 @@ mod tests {
 
     #[test]
     fn caption_cc_data_length_prefixed_matches_annexb() {
-        let lp = crate::annexb::annexb_to_length_prefixed(&REAL_A53_SEI_NAL);
+        let lp = broadcast_bitstream::annexb::annexb_to_length_prefixed(&REAL_A53_SEI_NAL);
         let extracted = caption_cc_data(NalCodec::Avc, &lp, true);
         assert_eq!(extracted, REAL_A53_CC_DATA);
     }

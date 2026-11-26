@@ -660,7 +660,8 @@ impl Hdr10PlusMetadata {
 
     /// Whether an Annex B access unit holds an HDR10+ prefix SEI NAL unit.
     pub fn annexb_access_unit_carries_hdr10plus(access_unit: &[u8]) -> bool {
-        crate::annexb::iter_annexb_nals(access_unit).any(Self::hevc_sei_nal_carries_hdr10plus)
+        broadcast_bitstream::annexb::iter_annexb_nals(access_unit)
+            .any(Self::hevc_sei_nal_carries_hdr10plus)
     }
 
     /// Whether a 4-byte length-prefixed (ISO/IEC 14496-15:2017) sample holds an

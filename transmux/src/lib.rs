@@ -170,7 +170,6 @@ struct ReadmeDoctests;
 
 pub mod aac_asc;
 pub mod ac3_syncframe;
-pub mod annexb;
 pub mod au;
 pub mod audio_profile;
 #[cfg(feature = "captions")]
@@ -278,10 +277,6 @@ pub use aac_asc::{
     HeAacSignaling, SamplingFrequencyIndex, build_adts_header, parse_adts_header,
 };
 pub use ac3_syncframe::{Ac3SyncframeInfo, Ec3SyncframeInfo};
-pub use annexb::{
-    NAL_LENGTH_SIZE, annexb_to_length_prefixed, iter_annexb_nals, iter_length_prefixed_nals,
-    iter_length_prefixed_nals_with, length_prefixed_to_annexb, normalise_nal_length_size,
-};
 pub use au::{AccessUnitSplitter, split_access_units};
 pub use broadcast_common::klv::KlvItem;
 pub use broadcast_core::CencScheme;
