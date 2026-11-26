@@ -25,14 +25,14 @@
 //!   Access via [`SegmentationDescriptor::mid`].
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 use super::header::{self, CUEI, HEADER_LEN};
 use super::segmentation_enums::{DeviceRestrictions, SegmentationTypeId, SegmentationUpidType};
 use crate::CANCEL_INDICATOR_MASK;
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// Width in bits (and bytes) of the `format_identifier` field in MPU() (§10.3.3.3, Table 24).
 const MPU_FORMAT_IDENTIFIER_LEN: usize = 4; // 32 bits / 8
@@ -263,7 +263,7 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
         // segmentation_event_id (4) + flags byte (1).
         if body.len() < EVENT_ID_AND_FLAGS_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: HEADER_LEN + EVENT_ID_AND_FLAGS_LEN,
                     have: bytes.len(),
                     what: "segmentation_descriptor header",
@@ -273,7 +273,7 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
         let (eid_bytes, rest) = body
             .split_first_chunk::<SEGMENTATION_EVENT_ID_LEN>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: HEADER_LEN + EVENT_ID_AND_FLAGS_LEN,
                     have: bytes.len(),
                     what: "segmentation_descriptor header",
@@ -297,7 +297,7 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
 
         if body.len() < SEGMENTATION_HEADER_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: HEADER_LEN + SEGMENTATION_HEADER_LEN,
                     have: bytes.len(),
                     what: "segmentation_descriptor flags",
@@ -323,7 +323,7 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
         if !out.program_segmentation_flag {
             if body.len() < pos + 1 {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: HEADER_LEN + pos + 1,
                         have: bytes.len(),
                         what: "segmentation_descriptor component_count",
@@ -335,7 +335,7 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
             for _ in 0..count {
                 if body.len() < pos + COMPONENT_LEN {
                     return Err(Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: HEADER_LEN + pos + COMPONENT_LEN,
                             have: bytes.len(),
                             what: "segmentation_descriptor component",
@@ -363,7 +363,7 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
         if duration_flag {
             if body.len() < pos + DURATION_LEN {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: HEADER_LEN + pos + DURATION_LEN,
                         have: bytes.len(),
                         what: "segmentation_descriptor segmentation_duration",
@@ -382,7 +382,7 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
         // segmentation_upid_type (1) + segmentation_upid_length (1).
         if body.len() < pos + UPID_HEADER_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: HEADER_LEN + pos + UPID_HEADER_LEN,
                     have: bytes.len(),
                     what: "segmentation_descriptor upid header",
@@ -406,7 +406,7 @@ impl<'a> Parse<'a> for SegmentationDescriptor<'a> {
         // segmentation_type_id (1) + segment_num (1) + segments_expected (1).
         if body.len() < pos + TYPE_SEGMENT_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: HEADER_LEN + pos + TYPE_SEGMENT_LEN,
                     have: bytes.len(),
                     what: "segmentation_descriptor type/segment",
@@ -480,7 +480,7 @@ impl<'a> SegmentationDescriptor<'a> {
             bytes
                 .split_first_chunk::<MPU_FORMAT_IDENTIFIER_LEN>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: MPU_FORMAT_IDENTIFIER_LEN,
                         have: bytes.len(),
                         what: "MPU() format_identifier",
@@ -510,7 +510,7 @@ impl<'a> SegmentationDescriptor<'a> {
         while pos < bytes.len() {
             if bytes.len() - pos < MID_ENTRY_HEADER_LEN {
                 return Some(Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + MID_ENTRY_HEADER_LEN,
                         have: bytes.len(),
                         what: "MID() entry header",
@@ -546,7 +546,7 @@ impl Serialize for SegmentationDescriptor<'_> {
         need_out(buf, need)?;
         let body_len = self.body_len();
         if body_len + CUEI_LEN > u8::MAX as usize {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "segmentation_descriptor.descriptor_length",
                 value: (body_len + CUEI_LEN) as u64,
                 max: u64::from(u8::MAX),
@@ -589,7 +589,7 @@ impl Serialize for SegmentationDescriptor<'_> {
         pos += 1;
 
         if !self.program_segmentation_flag {
-            buf[pos] = broadcast_common::len::fit_u8(
+            buf[pos] = broadcast_core::len::fit_u8(
                 self.components.len(),
                 "segmentation_descriptor.component_count",
             )?;
@@ -597,7 +597,7 @@ impl Serialize for SegmentationDescriptor<'_> {
             for c in &self.components {
                 buf[pos] = c.component_tag;
                 if c.pts_offset > crate::time::PTS_MAX {
-                    return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                         field: "segmentation_descriptor.component.pts_offset",
                         value: c.pts_offset,
                         max: crate::time::PTS_MAX,
@@ -617,7 +617,7 @@ impl Serialize for SegmentationDescriptor<'_> {
 
         if let Some(d) = self.segmentation_duration {
             if d > crate::time::DURATION_40_MAX {
-                return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                     field: "segmentation_descriptor.segmentation_duration",
                     value: d,
                     max: crate::time::DURATION_40_MAX,
@@ -632,7 +632,7 @@ impl Serialize for SegmentationDescriptor<'_> {
         }
 
         buf[pos + SEGMENTATION_TYPE_ID_OFFSET] = self.segmentation_upid_type.to_u8();
-        buf[pos + UPID_TYPE_LEN] = broadcast_common::len::fit_u8(
+        buf[pos + UPID_TYPE_LEN] = broadcast_core::len::fit_u8(
             self.segmentation_upid.len(),
             "segmentation_descriptor.segmentation_upid_length",
         )?;
@@ -647,7 +647,7 @@ impl Serialize for SegmentationDescriptor<'_> {
 
         if let Some(sub_segments) = self.sub_segments {
             if !self.segmentation_type_id.has_sub_segments() {
-                return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "segmentation_descriptor.sub_segments",
                     value: u64::from(self.segmentation_type_id.to_u8()),
                     reason: "segmentation_type_id is not one that carries sub_segment_num and sub_segments_expected (Table 23)",
@@ -787,7 +787,7 @@ mod tests {
         };
         assert!(matches!(
             d.try_to_bytes(),
-            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                 field: "segmentation_descriptor.sub_segments",
                 ..
             }))
@@ -865,7 +865,7 @@ mod tests {
         assert_eq!(
             d.try_to_bytes().err(),
             Some(crate::error::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "segmentation_descriptor.component.pts_offset",
                     value: 1u64 << 33,
                     max: crate::time::PTS_MAX
@@ -890,7 +890,7 @@ mod tests {
         assert_eq!(
             d.try_to_bytes().err(),
             Some(crate::error::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "segmentation_descriptor.segmentation_duration",
                     value: 1u64 << 40,
                     max: crate::time::DURATION_40_MAX
@@ -972,7 +972,7 @@ mod tests {
         assert!(matches!(
             d.mpu(),
             Some(Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     what: "MPU() format_identifier",
                     ..
                 }

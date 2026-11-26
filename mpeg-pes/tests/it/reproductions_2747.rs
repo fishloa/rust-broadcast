@@ -26,7 +26,7 @@ fn escr_base_and_extension_are_not_masked() {
     assert!(matches!(
         serialize_header(h),
         Err(mpeg_pes::Error::FieldOverflow(
-            broadcast_common::len::FieldOverflow {
+            broadcast_core::len::FieldOverflow {
                 field: "ESCR_base",
                 ..
             }
@@ -43,7 +43,7 @@ fn escr_base_and_extension_are_not_masked() {
     assert!(matches!(
         serialize_header(h),
         Err(mpeg_pes::Error::FieldOverflow(
-            broadcast_common::len::FieldOverflow {
+            broadcast_core::len::FieldOverflow {
                 field: "ESCR_ext",
                 ..
             }
@@ -63,7 +63,7 @@ fn trick_mode_sub_fields_are_not_masked() {
     assert!(matches!(
         serialize_header(h),
         Err(mpeg_pes::Error::FieldOverflow(
-            broadcast_common::len::FieldOverflow {
+            broadcast_core::len::FieldOverflow {
                 field: "trick_mode.field_id",
                 ..
             }
@@ -78,7 +78,7 @@ fn trick_mode_sub_fields_are_not_masked() {
     assert!(matches!(
         serialize_header(h),
         Err(mpeg_pes::Error::FieldOverflow(
-            broadcast_common::len::FieldOverflow {
+            broadcast_core::len::FieldOverflow {
                 field: "trick_mode.rep_cntrl",
                 ..
             }
@@ -99,7 +99,7 @@ fn program_packet_sequence_counter_is_not_masked() {
     assert!(matches!(
         serialize_header(h),
         Err(mpeg_pes::Error::FieldOverflow(
-            broadcast_common::len::FieldOverflow {
+            broadcast_core::len::FieldOverflow {
                 field: "program_packet_sequence_counter.counter",
                 ..
             }
@@ -114,7 +114,7 @@ fn additional_copy_info_is_not_masked() {
     assert!(matches!(
         serialize_header(h),
         Err(mpeg_pes::Error::FieldOverflow(
-            broadcast_common::len::FieldOverflow {
+            broadcast_core::len::FieldOverflow {
                 field: "additional_copy_info",
                 ..
             }

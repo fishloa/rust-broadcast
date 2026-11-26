@@ -2,8 +2,8 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// Largest `cc_count` the 5-bit field can carry.
 const MAX_CC_COUNT: usize = 31;
@@ -100,7 +100,7 @@ impl CcType {
     }
 }
 
-broadcast_common::impl_spec_display!(CcType);
+broadcast_core::impl_spec_display!(CcType);
 
 /// One closed-caption construct (the per-`cc_count` loop entry of Table B.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,7 +192,7 @@ impl<'a> Parse<'a> for CcData {
             let flags = b[pos];
             // one_bit(1) | reserved(4, set to "1111") | cc_valid(1) | cc_type(2)
             if flags & TRIPLET_FIXED_MASK != TRIPLET_FIXED_MASK {
-                return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+                return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                     field: "one_bit/reserved",
                     expected: u64::from(TRIPLET_FIXED_MASK),
                     found: u64::from(flags & TRIPLET_FIXED_MASK),
@@ -207,7 +207,7 @@ impl<'a> Parse<'a> for CcData {
             pos += TRIPLET_LEN;
         }
         if b[pos] != FF {
-            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "marker_bits",
                 expected: u64::from(FF),
                 found: u64::from(b[pos]),
@@ -382,7 +382,7 @@ mod tests {
         bytes[2] &= !0x80; // clear the triplet's "one_bit=1"
         assert!(matches!(
             CcData::parse(&bytes),
-            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "one_bit/reserved",
                 ..
             }))
@@ -396,7 +396,7 @@ mod tests {
         bytes[last] = 0x00;
         assert!(matches!(
             CcData::parse(&bytes),
-            Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "marker_bits",
                 ..
             }))
@@ -457,7 +457,7 @@ mod tests {
         bytes[2] = 0x7F;
         assert_eq!(
             CcData::parse(&bytes).unwrap_err(),
-            Error::ReservedBits(broadcast_common::error::ReservedBits {
+            Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "one_bit/reserved",
                 expected: 0xF8,
                 found: 0x78,

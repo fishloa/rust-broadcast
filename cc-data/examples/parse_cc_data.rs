@@ -2,7 +2,7 @@
 //!
 //! Run with: `cargo run -p cc-data --example parse_cc_data`
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use cc_data::CcData;
 
 fn main() {

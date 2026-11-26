@@ -18,7 +18,7 @@
 //! ```rust,no_run
 //! use dvb_t2mi::payload::{PayloadRegistry, AnyPayload};
 //! use dvb_t2mi::traits::PayloadDef;
-//! use broadcast_common::Parse;
+//! use broadcast_core::Parse;
 //!
 //! // A registered type must be `serde::Serialize` only when the `serde`
 //! // feature is on (that is what `PayloadObject` requires there).
@@ -30,7 +30,7 @@
 //!     type Error = dvb_t2mi::Error;
 //!     fn parse(bytes: &'a [u8]) -> dvb_t2mi::Result<Self> {
 //!         if bytes.is_empty() {
-//!             return Err(dvb_t2mi::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+//!             return Err(dvb_t2mi::Error::BufferTooShort(broadcast_core::error::BufferTooShort {
 //!                 need: 1, have: 0, what: "MyPrivate",
 //!             }));
 //!         }
@@ -134,7 +134,7 @@ impl PayloadRegistry {
         self.custom.insert(
             packet_type,
             Box::new(|b| {
-                Ok(Box::new(<T as broadcast_common::Parse>::parse(b)?) as Box<dyn PayloadObject>)
+                Ok(Box::new(<T as broadcast_core::Parse>::parse(b)?) as Box<dyn PayloadObject>)
             }),
         );
         self
@@ -154,7 +154,7 @@ impl PayloadRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
 
     // A custom owned payload type for testing, using an unused packet_type.
     #[derive(Debug, PartialEq)]
@@ -171,7 +171,7 @@ mod tests {
         fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
             if bytes.is_empty() {
                 return Err(crate::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: 1,
                         have: 0,
                         what: "TestPayload",

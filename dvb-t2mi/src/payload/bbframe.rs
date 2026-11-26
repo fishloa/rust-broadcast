@@ -1,7 +1,7 @@
 //! T2-MI payload type 0x00: Baseband Frame (BBFRAME) — §5.2.1.
 
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// BBFrame payload (type 0x00) per ETSI TS 102 773 §5.2.1.
 ///
@@ -51,7 +51,7 @@ impl<'a> Parse<'a> for BbframePayload<'a> {
         // RFU: byte 2 bits 6..0 — must be zero
         if bytes[FLAGS_BYTE_OFFSET] & FLAGS_RFU_MASK != 0 {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "byte 2 bits 6..0",
                     expected: 0,
                     found: u64::from(bytes[FLAGS_BYTE_OFFSET] & FLAGS_RFU_MASK),
@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(
             result.err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "byte 2 bits 6..0",
                     expected: 0,
                     found: 64
@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(
             BbframePayload::parse(&[]).err(),
             Some(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 3,
                     have: 0,
                     what: "BbframePayload header (frame_idx + plp_id + intl_frame_start + rfu)"

@@ -9,8 +9,8 @@
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use broadcast_common::Parse;
 use broadcast_common::stage::Timestamp;
+use broadcast_core::Parse;
 
 use crate::pid::{Pid, well_known};
 use crate::section::Section;
@@ -394,7 +394,7 @@ impl SectionRejection {
     }
 }
 
-broadcast_common::impl_spec_display!(SectionRejection);
+broadcast_core::impl_spec_display!(SectionRejection);
 
 /// Section-repetition scheduler that builds TS packets on a caller-supplied clock.
 ///

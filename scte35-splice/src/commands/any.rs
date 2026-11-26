@@ -12,7 +12,7 @@
 //! so a section round-trips byte-for-byte.
 
 use crate::error::Result;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 /// Declares [`AnyCommand`] + its dispatcher from one command-type list.
 macro_rules! declare_commands {
@@ -87,14 +87,14 @@ macro_rules! declare_commands {
             /// Parse a command `body` by its `splice_command_type`. Reserved /
             /// unimplemented types yield [`AnyCommand::Unknown`].
             pub fn dispatch(command_type: u8, body: &$lt [u8]) -> Result<Self> {
-                use broadcast_common::{Parse, Serialize};
+                use broadcast_core::{Parse, Serialize};
                 match command_type {
                     $(
                         $ct => {
                             let command = <$($path)::+>::parse(body)?;
                             if command.serialized_len() != body.len() {
                                 return Err(crate::error::Error::InvalidField(
-                                    broadcast_common::error::InvalidField {
+                                    broadcast_core::error::InvalidField {
                                         field: "splice_info_section.splice_command_length",
                                         reason: "bytes remain after the command structure",
                                     },
@@ -111,7 +111,7 @@ macro_rules! declare_commands {
             /// will write (the `splice_command_length`).
             #[must_use]
             pub fn body_len(&self) -> usize {
-                use broadcast_common::Serialize;
+                use broadcast_core::Serialize;
                 match self {
                     $(
                         Self::$variant(c) => c.serialized_len(),
@@ -122,7 +122,7 @@ macro_rules! declare_commands {
 
             /// Serialize just the command body (no type byte) into `buf`.
             pub fn serialize_body_into(&self, buf: &mut [u8]) -> Result<usize> {
-                use broadcast_common::Serialize;
+                use broadcast_core::Serialize;
                 match self {
                     $(
                         Self::$variant(c) => c.serialize_into(buf),

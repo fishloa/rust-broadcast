@@ -5,8 +5,8 @@ use crate::segments::{
     PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
     be_u16,
 };
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// The region_composition_segment segment_type.
 pub const SEGMENT_TYPE: u8 = 0x11;
@@ -134,7 +134,7 @@ impl RegionLevelOfCompatibility {
     }
 }
 
-broadcast_common::impl_spec_display!(RegionLevelOfCompatibility, Reserved);
+broadcast_core::impl_spec_display!(RegionLevelOfCompatibility, Reserved);
 
 /// Intended region pixel depth as defined in Table 13.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,7 +178,7 @@ impl RegionDepth {
     }
 }
 
-broadcast_common::impl_spec_display!(RegionDepth, Reserved);
+broadcast_core::impl_spec_display!(RegionDepth, Reserved);
 
 /// Object type as defined in Table 14.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,7 +218,7 @@ impl ObjectType {
     }
 }
 
-broadcast_common::impl_spec_display!(ObjectType, Reserved);
+broadcast_core::impl_spec_display!(ObjectType, Reserved);
 
 /// Object provider flag as defined in Table 15.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -254,7 +254,7 @@ impl ObjectProviderFlag {
     }
 }
 
-broadcast_common::impl_spec_display!(ObjectProviderFlag, Reserved);
+broadcast_core::impl_spec_display!(ObjectProviderFlag, Reserved);
 
 /// An object entry within a region composition segment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -293,12 +293,12 @@ impl RegionObjectEntry {
         // both object_horizontal_position and object_vertical_position are
         // 12-bit uimsbf fields; range-check before narrowing so a value that
         // does not fit is rejected instead of silently masked (#1129/#1044).
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(hpos),
             OBJECT_POS_BITS,
             "object_horizontal_position",
         )?;
-        broadcast_common::len::fit_bits(
+        broadcast_core::len::fit_bits(
             u64::from(vpos),
             OBJECT_POS_BITS,
             "object_vertical_position",
@@ -428,7 +428,7 @@ impl<'a> Parse<'a> for RegionCompositionSegment {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HEADER_LEN + FIXED_LEN, "region_composition_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "sync_byte",
                 expected: u32::from(crate::pes_data_field::SYNC_BYTE),
                 found: u32::from(bytes[0]),
@@ -528,13 +528,13 @@ impl Serialize for RegionCompositionSegment {
             .copy_from_slice(&seg_len.to_be_bytes());
 
         buf[HEADER_LEN + REGION_ID_OFFSET] = self.region_id;
-        buf[HEADER_LEN + REGION_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + REGION_FLAGS_OFFSET] = (broadcast_core::len::fit_mask(
             self.region_version_number,
             REGION_VERSION_MASK,
             "region_version_number",
         )? << REGION_VERSION_SHIFT)
             | (u8::from(self.region_fill_flag) << REGION_FILL_FLAG_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.reserved_byte1,
                 REGION_RFU_MASK,
                 "reserved_byte1",
@@ -543,38 +543,30 @@ impl Serialize for RegionCompositionSegment {
             .copy_from_slice(&self.region_width.to_be_bytes());
         buf[HEADER_LEN + REGION_HEIGHT_OFFSET..HEADER_LEN + REGION_DEPTH_OFFSET]
             .copy_from_slice(&self.region_height.to_be_bytes());
-        buf[HEADER_LEN + REGION_DEPTH_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + REGION_DEPTH_OFFSET] = (broadcast_core::len::fit_mask(
             self.region_level_of_compatibility.to_bits(),
             RLOC_MASK,
             "region_level_of_compatibility",
         )? << RLOC_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.region_depth.to_bits(),
                 REGION_DEPTH_MASK,
                 "region_depth",
             )? << REGION_DEPTH_SHIFT)
-            | broadcast_common::len::fit_mask(
-                self.reserved_byte6,
-                DEPTH_RFU_MASK,
-                "reserved_byte6",
-            )?;
+            | broadcast_core::len::fit_mask(self.reserved_byte6, DEPTH_RFU_MASK, "reserved_byte6")?;
         buf[HEADER_LEN + CLUT_ID_OFFSET] = self.clut_id;
         buf[HEADER_LEN + PIXEL_CODE_8BIT_OFFSET] = self.region_8bit_pixel_code;
-        buf[HEADER_LEN + PIXEL_CODE_2_4BIT_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + PIXEL_CODE_2_4BIT_OFFSET] = (broadcast_core::len::fit_mask(
             self.region_4bit_pixel_code,
             PIXEL_CODE_4BIT_MASK,
             "region_4bit_pixel_code",
         )? << PIXEL_CODE_4BIT_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.region_2bit_pixel_code,
                 PIXEL_CODE_2BIT_MASK,
                 "region_2bit_pixel_code",
             )? << PIXEL_CODE_2BIT_SHIFT)
-            | broadcast_common::len::fit_mask(
-                self.reserved_byte9,
-                DEPTH_RFU_MASK,
-                "reserved_byte9",
-            )?;
+            | broadcast_core::len::fit_mask(self.reserved_byte9, DEPTH_RFU_MASK, "reserved_byte9")?;
 
         let mut off = HEADER_LEN + FIXED_LEN;
         for obj in &self.objects {
@@ -588,7 +580,7 @@ impl Serialize for RegionCompositionSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     #[test]
     fn round_trip_bitmap_objects() {
@@ -631,7 +623,7 @@ mod tests {
         ];
         assert!(matches!(
             RegionCompositionSegment::parse(&bytes),
-            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 found: 0x00,
                 ..
             }))

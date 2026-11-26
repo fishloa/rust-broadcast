@@ -7,9 +7,9 @@
 //! The stream terminates with the `MPEG_program_end_code` `0x000001B9`.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use crate::PREFIX_LEN as SYSTEM_HEADER_PREFIX_LEN;
 use crate::error::Error;
@@ -304,7 +304,7 @@ mod tests {
     use crate::DescriptorLoop;
     use crate::program_stream_map::{EsMapEntry, ProgramStreamMap};
     use alloc::{vec, vec::Vec};
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     /// W5 (#1119): a PSM (`stream_id 0xBC`) within a pack must be surfaced
     /// via `Pack::psm`, typed (`stream_type` per elementary stream), not

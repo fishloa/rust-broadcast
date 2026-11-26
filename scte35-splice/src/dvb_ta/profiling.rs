@@ -88,7 +88,7 @@ impl PlacementOpportunity {
         }
     }
 }
-broadcast_common::impl_spec_display!(PlacementOpportunity);
+broadcast_core::impl_spec_display!(PlacementOpportunity);
 
 /// Outcome of validating a `segmentation_descriptor()` against the DVB-TA
 /// profile constraints (§5.3.5). A returned variant pins the first failing
@@ -121,7 +121,7 @@ impl ProfileViolation {
         }
     }
 }
-broadcast_common::impl_spec_display!(ProfileViolation);
+broadcast_core::impl_spec_display!(ProfileViolation);
 
 /// Validate a `segmentation_descriptor()` against the DVB-TA Placement
 /// Opportunity profile (§5.3.5). Only PO-typed descriptors (`0x34`–`0x37`) are

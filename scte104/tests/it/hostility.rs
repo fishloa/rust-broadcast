@@ -4,7 +4,7 @@
 //! `opID`, so each operation parser sees realistic-shaped but wrong bodies.
 //! The contract is "`Ok` or `Err`, never a panic".
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte104::{MultipleOperationMessage, SingleOperationMessage};
 
 #[rustfmt::skip]

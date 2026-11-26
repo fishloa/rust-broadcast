@@ -132,7 +132,7 @@ impl<'a> Iterator for SpliceDescriptorEntryIter<'a> {
         if rem.len() < SPLICE_DESCRIPTOR_HEADER_LEN {
             self.fused = true;
             return Some(Err(crate::error::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: SPLICE_DESCRIPTOR_HEADER_LEN,
                     have: rem.len(),
                     what: "splice_descriptor header in loop",
@@ -145,7 +145,7 @@ impl<'a> Iterator for SpliceDescriptorEntryIter<'a> {
         if rem.len() < total {
             self.fused = true;
             return Some(Err(crate::error::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: total,
                     have: rem.len(),
                     what: "splice_descriptor body in loop",
@@ -234,7 +234,7 @@ mod tests {
             .expect_err("the body runs past the loop");
         assert!(matches!(
             err,
-            crate::error::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            crate::error::Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: 6,
                 have: 3,
                 ..

@@ -4,8 +4,8 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for encrypted_DPI_request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x0107;

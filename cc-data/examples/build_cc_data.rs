@@ -2,7 +2,7 @@
 //!
 //! Run with: `cargo run -p cc-data --example build_cc_data`
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use cc_data::{CcData, CcTriplet, CcType};
 
 fn main() {

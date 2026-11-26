@@ -7,7 +7,7 @@
 /// `PACKET_TYPE` is the wire `packet_type` byte from the T2-MI header that
 /// this type parses. `NAME` is a diagnostic label in SCREAMING_SNAKE convention
 /// without any `_payload` suffix.
-pub trait PayloadDef<'a>: broadcast_common::Parse<'a, Error = crate::error::Error> {
+pub trait PayloadDef<'a>: broadcast_core::Parse<'a, Error = crate::error::Error> {
     /// Wire `packet_type` byte (TS 102 773 Table 1) this type accepts.
     const PACKET_TYPE: u8;
     /// Diagnostic name. Convention (workspace-wide): SCREAMING_SNAKE,

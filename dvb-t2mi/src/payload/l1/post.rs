@@ -9,12 +9,12 @@
 //! As carried in T2-MI (ETSI TS 102 773 §5.2.4 Table 2), each section is
 //! prefixed with a 16-bit bit-length and zero-padded to a byte boundary.
 //!
-//! Parsing uses [`broadcast_common::bits::BitReader`] / [`broadcast_common::bits::BitWriter`] (MSB-first).
+//! Parsing uses [`broadcast_core::bits::BitReader`] / [`broadcast_core::bits::BitWriter`] (MSB-first).
 
 use alloc::vec;
 use alloc::vec::Vec;
-use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::len::need_in;
+use broadcast_core::bits::{BitReader, BitWriter};
+use broadcast_core::len::need_in;
 
 use super::enums::{
     AuxStreamType, PlpCodeRate, PlpFecType, PlpMode, PlpModulation, PlpPayloadType, PlpType,
@@ -729,7 +729,7 @@ impl L1ExtBlock {
         let expected_bytes = (self.data_bit_len as usize).div_ceil(u8::BITS as usize);
         if self.data.len() != expected_bytes {
             return Err(crate::Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "L1ExtBlock.data (ceil(data_bit_len / 8) bytes)",
                     declared: expected_bytes,
                     actual: self.data.len(),
@@ -829,7 +829,7 @@ pub(crate) fn parse_l1_post_from_framed(
         .get(pos..)
         .and_then(|s| s.split_first_chunk::<LENGTH_FIELD_BYTES>())
         .ok_or(crate::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: pos + LENGTH_FIELD_BYTES,
                 have: framed.len(),
                 what: "L1CONF_LEN",
@@ -851,7 +851,7 @@ pub(crate) fn parse_l1_post_from_framed(
         .get(pos..)
         .and_then(|s| s.split_first_chunk::<LENGTH_FIELD_BYTES>())
         .ok_or(crate::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: pos + LENGTH_FIELD_BYTES,
                 have: framed.len(),
                 what: "L1DYN_CURR_LEN",
@@ -869,7 +869,7 @@ pub(crate) fn parse_l1_post_from_framed(
         .get(pos..)
         .and_then(|s| s.split_first_chunk::<LENGTH_FIELD_BYTES>())
         .ok_or(crate::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: pos + LENGTH_FIELD_BYTES,
                 have: framed.len(),
                 what: "L1EXT_LEN",
@@ -899,7 +899,7 @@ fn push_framed_block<F>(out: &mut Vec<u8>, bit_len: usize, write: F) -> crate::e
 where
     F: FnOnce(&mut BitWriter<'_>) -> crate::error::Result<()>,
 {
-    let bit_len_field = broadcast_common::len::fit_u16(bit_len, "framed_block bit_len")?;
+    let bit_len_field = broadcast_core::len::fit_u16(bit_len, "framed_block bit_len")?;
     out.extend_from_slice(&bit_len_field.to_be_bytes());
     let start = out.len();
     out.resize(start + bit_len.div_ceil(u8::BITS as usize), 0);
@@ -1162,7 +1162,7 @@ mod tests {
         assert_eq!(
             result.err(),
             Some(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "framed_block bit_len",
                     value: 65536,
                     max: 65535
@@ -1195,7 +1195,7 @@ mod tests {
         assert_eq!(
             result.err(),
             Some(crate::Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "L1ExtBlock.data (ceil(data_bit_len / 8) bytes)",
                     declared: 1,
                     actual: 2
@@ -1219,7 +1219,7 @@ mod tests {
         assert_eq!(
             result.err(),
             Some(crate::Error::LengthMismatch(
-                broadcast_common::error::LengthMismatch {
+                broadcast_core::error::LengthMismatch {
                     what: "L1ExtBlock.data (ceil(data_bit_len / 8) bytes)",
                     declared: 2,
                     actual: 1
@@ -1300,7 +1300,7 @@ mod tests {
             assert_eq!(
                 parse_l1_post_from_framed(&framed[..have], 1, true).err(),
                 Some(crate::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort { need, have, what }
+                    broadcast_core::error::BufferTooShort { need, have, what }
                 )),
                 "truncated at {have} bytes"
             );

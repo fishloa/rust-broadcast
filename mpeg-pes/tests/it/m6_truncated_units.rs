@@ -56,7 +56,7 @@ fn an_m6_unit_shorter_than_its_declared_length_is_a_truncated_packet() {
         truncated += 1;
         assert_eq!(
             PesPacket::parse(&raw).unwrap_err(),
-            Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need: 6 + declared,
                 have: raw.len(),
                 what: "PES_packet_length",

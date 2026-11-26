@@ -6,8 +6,8 @@
 use crate::error::{Error, Result};
 use crate::operations::AnySingleOperation;
 use crate::operations::{U16_LEN, be};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// Wire constants.
 const HEADER_LEN: usize = 13; // opID(2) + messageSize(2) + result(2) + result_ext(2) + protocol_version(1) + AS_index(1) + message_number(1) + DPI_PID_index(2)
@@ -124,7 +124,7 @@ impl<'a> Parse<'a> for SingleOperationMessage<'a> {
         // messageSize must be at least HEADER_LEN (ANSI/SCTE 104 2023 §8.2.2).
         if (message_size as usize) < HEADER_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: HEADER_LEN,
                     have: message_size as usize,
                     what: "messageSize too small",
@@ -164,7 +164,7 @@ impl Serialize for SingleOperationMessage<'_> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let message_size = u16::try_from(need).map_err(|_| {
-            Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "messageSize",
                 value: need as u64,
                 max: u64::from(u16::MAX),
@@ -223,7 +223,7 @@ mod tests {
         );
         assert_eq!(
             msg.try_to_bytes().err(),
-            Some(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            Some(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "messageSize",
                 value: 65_543,
                 max: 65_535,
@@ -241,7 +241,7 @@ mod tests {
         assert_eq!(
             result.err(),
             Some(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 13,
                     have: 5,
                     what: "messageSize too small"

@@ -36,8 +36,8 @@
 
 use crate::error::{Error, Result};
 use broadcast_common::crc32_mpeg2 as crc;
-use broadcast_common::len::{fit_bits, fit_u8, need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{fit_bits, fit_u8, need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 const MIN_HEADER_LEN: usize = 3;
 
@@ -162,7 +162,7 @@ pub struct Section<'a> {
 pub fn validate_crc(raw: &[u8]) -> Result<()> {
     if raw.len() < MIN_HEADER_LEN {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: MIN_HEADER_LEN,
                 have: raw.len(),
                 what: "section header in validate_crc",
@@ -177,7 +177,7 @@ pub fn validate_crc(raw: &[u8]) -> Result<()> {
     let tail = &raw[raw.len() - CRC_LEN..];
     let expected = read_crc32(tail, 0);
     if computed != expected {
-        return Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
+        return Err(Error::CrcMismatch(broadcast_core::error::CrcMismatch {
             what: "section",
             computed,
             expected,
@@ -300,7 +300,7 @@ impl<'a> Section<'a> {
         covered.extend_from_slice(self.payload);
         let computed = crc::compute(&covered);
         if computed != expected {
-            return Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
+            return Err(Error::CrcMismatch(broadcast_core::error::CrcMismatch {
                 what: "section",
                 computed,
                 expected,
@@ -338,7 +338,7 @@ impl<'a> Parse<'a> for Section<'a> {
             Some(t) => t,
             None => {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: MIN_HEADER_LEN,
                         have: bytes.len(),
                         what: "section header",
@@ -509,7 +509,7 @@ mod tests {
             let buf = vec![0x00u8; bad_len];
             let err = Section::parse(&buf).unwrap_err();
             assert!(
-                matches!(err, Error::BufferTooShort(broadcast_common::error::BufferTooShort { need: 3, have, .. }) if have == bad_len),
+                matches!(err, Error::BufferTooShort(broadcast_core::error::BufferTooShort { need: 3, have, .. }) if have == bad_len),
                 "expected BufferTooShort for len={bad_len}, got {err:?}"
             );
         }
@@ -666,7 +666,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                     need: MIN_HEADER_LEN,
                     ..
                 })

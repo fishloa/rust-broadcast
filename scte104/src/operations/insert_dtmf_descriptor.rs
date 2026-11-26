@@ -5,8 +5,8 @@
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for insert_DTMF_descriptor_request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x0109;
@@ -56,7 +56,7 @@ impl Serialize for InsertDtmfDescriptor<'_> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         buf[0] = self.pre_roll;
-        buf[1] = broadcast_common::len::fit_u8(
+        buf[1] = broadcast_core::len::fit_u8(
             self.dtmf_chars.len(),
             "insert_DTMF_descriptor.dtmf_length",
         )?;

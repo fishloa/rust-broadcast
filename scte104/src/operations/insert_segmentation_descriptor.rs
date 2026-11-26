@@ -6,8 +6,8 @@
 use super::{U16_LEN, U32_LEN, be};
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for insert_segmentation_descriptor_request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x010B;
@@ -136,7 +136,7 @@ impl Serialize for InsertSegmentationDescriptor<'_> {
         buf[SEGMENTATION_EVENT_CANCEL_INDICATOR_OFFSET] = self.segmentation_event_cancel_indicator;
         buf[5..7].copy_from_slice(&self.duration.to_be_bytes());
         buf[SEGMENTATION_UPID_TYPE_OFFSET] = self.segmentation_upid_type;
-        buf[SEGMENTATION_UPID_LENGTH_OFFSET] = broadcast_common::len::fit_u8(
+        buf[SEGMENTATION_UPID_LENGTH_OFFSET] = broadcast_core::len::fit_u8(
             self.segmentation_upid.len(),
             "insert_segmentation_descriptor.segmentation_upid_length",
         )?;

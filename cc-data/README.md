@@ -49,7 +49,7 @@ or `transmux`, does that), render pixels, or decode the XDS metadata catalogue
 ## Quick start
 
 ```rust
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use cc_data::{CcData, CcTriplet, CcType};
 
 // Build a cc_data() with one 608 field-1 pair and one 708 start triplet.

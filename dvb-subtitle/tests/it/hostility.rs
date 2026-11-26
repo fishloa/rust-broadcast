@@ -5,7 +5,7 @@
 //! attacker-controlled lengths and pixel-code strings, which is where a
 //! panicking slice/index on a parsed length would hide.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_subtitle::PesDataField;
 /// Distinct real fields swept (bounded so the test stays fast).
 const MAX_SEEDS: usize = 16;

@@ -2,7 +2,7 @@
 //! descriptor loop: maximum sizes, the shared header's length gate, and the
 //! raw/typed iterator paths (ANSI/SCTE 35 2023r1 §10.1-§10.3).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::Error;
 use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
 use scte35_splice::descriptors::{
@@ -57,7 +57,7 @@ fn dtmf_descriptor_holds_the_maximum_seven_characters() {
     };
     assert_eq!(
         too_many.try_to_bytes(),
-        Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "DTMF_descriptor.dtmf_count",
             value: 8,
             max: 7,
@@ -90,7 +90,7 @@ fn time_descriptor_holds_the_maximum_forty_eight_bit_tai_seconds() {
     };
     assert_eq!(
         over.try_to_bytes(),
-        Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "time_descriptor.tai_seconds",
             value: 1 << 48,
             max: (1 << 48) - 1,
@@ -128,7 +128,7 @@ fn audio_descriptor_holds_the_maximum_fifteen_components() {
     };
     assert_eq!(
         too_many.try_to_bytes(),
-        Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "audio_descriptor.audio_count",
             value: 16,
             max: 15,
@@ -142,7 +142,7 @@ fn the_shared_header_gate_rejects_each_truncation_shape() {
     assert_eq!(
         AvailDescriptor::parse(&[0x00]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 2,
                 have: 1,
                 what: "avail_descriptor",
@@ -153,7 +153,7 @@ fn the_shared_header_gate_rejects_each_truncation_shape() {
     assert_eq!(
         AvailDescriptor::parse(&[0x00, 0x00]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 6,
                 have: 2,
                 what: "avail_descriptor",
@@ -165,7 +165,7 @@ fn the_shared_header_gate_rejects_each_truncation_shape() {
     assert_eq!(
         DtmfDescriptor::parse(&[0x01, 0x04, 0x43, 0x55, 0x45, 0x49]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 8,
                 have: 6,
                 what: "DTMF_descriptor preroll/count",
@@ -185,7 +185,7 @@ fn the_shared_header_gate_rejects_each_truncation_shape() {
     assert_eq!(
         AvailDescriptor::parse(&[0x00, 0x03, 0x43, 0x55, 0x45]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 6,
                 have: 5,
                 what: "avail_descriptor",
@@ -196,7 +196,7 @@ fn the_shared_header_gate_rejects_each_truncation_shape() {
     assert_eq!(
         AvailDescriptor::parse(&[0x00, 0x07, 0x43, 0x55, 0x45, 0x49, 1, 2, 3]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 10,
                 have: 9,
                 what: "avail_descriptor provider_avail_id",
@@ -276,7 +276,7 @@ fn a_loop_left_with_a_single_header_byte_is_one_error() {
     assert_eq!(
         entries.next(),
         Some(Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 2,
                 have: 1,
                 what: "splice_descriptor header in loop",
@@ -291,7 +291,7 @@ fn an_audio_descriptor_with_an_empty_body_reports_the_count_need() {
     assert_eq!(
         AudioDescriptor::parse(&[0x04, 0x04, 0x43, 0x55, 0x45, 0x49]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 7,
                 have: 6,
                 what: "audio_descriptor audio_count",
@@ -313,7 +313,7 @@ fn an_audio_component_cut_short_reports_the_absolute_need() {
     assert_eq!(
         AudioDescriptor::parse(&bytes),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 17,
                 have: 14,
                 what: "audio_descriptor component",
@@ -335,7 +335,7 @@ fn a_dtmf_body_short_of_its_declared_chars_reports_the_need() {
     assert_eq!(
         DtmfDescriptor::parse(&bytes),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 10,
                 have: 9,
                 what: "DTMF_descriptor chars",
@@ -351,7 +351,7 @@ fn a_time_descriptor_short_of_its_twelve_byte_body_reports_the_need() {
     assert_eq!(
         TimeDescriptor::parse(&bytes),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 18,
                 have: 17,
                 what: "time_descriptor body",
@@ -407,7 +407,7 @@ fn a_dtmf_body_short_of_three_declared_chars_reports_the_need() {
     assert_eq!(
         DtmfDescriptor::parse(&bytes),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 11,
                 have: 10,
                 what: "DTMF_descriptor chars",

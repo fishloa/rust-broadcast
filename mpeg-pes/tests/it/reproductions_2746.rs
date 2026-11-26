@@ -3,7 +3,7 @@
 //! not representable, and a buffer shorter than the declared length parsed as
 //! a whole packet.
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use mpeg_pes::{PesHeader, PesPacket, StreamId};
 
 fn packet<'a>(header: Option<PesHeader<'a>>, payload: &'a [u8]) -> PesPacket<'a> {
@@ -39,7 +39,7 @@ fn a_payload_past_the_16_bit_length_ceiling_is_bounded() {
     assert!(matches!(
         audio.try_to_bytes(),
         Err(mpeg_pes::Error::FieldOverflow(
-            broadcast_common::len::FieldOverflow {
+            broadcast_core::len::FieldOverflow {
                 field: "PES_packet_length",
                 ..
             }
@@ -58,7 +58,7 @@ fn a_buffer_shorter_than_the_declared_length_is_rejected() {
     let short = &bytes[..bytes.len() - 1];
     assert_eq!(
         PesPacket::parse(short).unwrap_err(),
-        mpeg_pes::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        mpeg_pes::Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: bytes.len(),
             have: short.len(),
             what: "PES_packet_length",

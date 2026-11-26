@@ -6,8 +6,8 @@
 use super::header::{self, CUEI, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// `splice_descriptor_tag` for avail_descriptor (§10.1, Table 16).
 pub const TAG: u8 = 0x00;
@@ -39,7 +39,7 @@ impl<'a> Parse<'a> for AvailDescriptor {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "avail_descriptor")?;
         if body.len() < PROVIDER_AVAIL_ID_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: HEADER_LEN + PROVIDER_AVAIL_ID_LEN,
                     have: bytes.len(),
                     what: "avail_descriptor provider_avail_id",
@@ -48,7 +48,7 @@ impl<'a> Parse<'a> for AvailDescriptor {
         }
         let provider_avail_id =
             u32::from_be_bytes(*body.first_chunk::<PROVIDER_AVAIL_ID_LEN>().ok_or(
-                Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                     need: HEADER_LEN + PROVIDER_AVAIL_ID_LEN,
                     have: bytes.len(),
                     what: "avail_descriptor provider_avail_id",

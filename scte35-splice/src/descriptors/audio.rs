@@ -4,12 +4,12 @@
 //! of per-component language + ATSC A/52 audio attributes.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 use super::header::{self, CUEI, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `splice_descriptor_tag` for audio_descriptor (§10.1, Table 16).
 pub const TAG: u8 = 0x04;
@@ -73,7 +73,7 @@ impl<'a> Parse<'a> for AudioDescriptor {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "audio_descriptor")?;
         if body.is_empty() {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: HEADER_LEN + 1,
                     have: bytes.len(),
                     what: "audio_descriptor audio_count",
@@ -86,7 +86,7 @@ impl<'a> Parse<'a> for AudioDescriptor {
         for _ in 0..audio_count {
             if body.len() < pos + COMPONENT_LEN {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: HEADER_LEN + pos + COMPONENT_LEN,
                         have: bytes.len(),
                         what: "audio_descriptor component",
@@ -125,7 +125,7 @@ impl Serialize for AudioDescriptor {
         let need = self.serialized_len();
         need_out(buf, need)?;
         if self.components.len() > AUDIO_COUNT_MAX {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "audio_descriptor.audio_count",
                 value: self.components.len() as u64,
                 max: AUDIO_COUNT_MAX as u64,
@@ -140,12 +140,12 @@ impl Serialize for AudioDescriptor {
         for c in &self.components {
             buf[pos + COMPONENT_TAG_OFFSET] = c.component_tag;
             buf[pos + ISO_CODE_OFFSET..pos + PACKED_OFFSET].copy_from_slice(&c.iso_code);
-            buf[pos + PACKED_OFFSET] = (broadcast_common::len::fit_mask(
+            buf[pos + PACKED_OFFSET] = (broadcast_core::len::fit_mask(
                 c.bit_stream_mode,
                 BIT_STREAM_MODE_MASK,
                 "audio_descriptor.bit_stream_mode",
             )? << BIT_STREAM_MODE_SHIFT)
-                | (broadcast_common::len::fit_mask(
+                | (broadcast_core::len::fit_mask(
                     c.num_channels,
                     NUM_CHANNELS_MASK,
                     "audio_descriptor.num_channels",

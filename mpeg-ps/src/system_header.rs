@@ -6,12 +6,12 @@
 //! buffer-size bounds.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::PREFIX_LEN;
 use crate::error::{Error, Result};
 use crate::wire::{read_u16_at, read_u32_at};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `system_header_start_code` — `0x000001BB`.
 pub const SYSTEM_HEADER_START_CODE: u32 = 0x0000_01BB;
@@ -195,7 +195,7 @@ impl<'a> Parse<'a> for SystemHeader {
 
         if body.len() < FIXED_BODY_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: FIXED_BODY_LEN + PREFIX_LEN,
                     have: b.len(),
                     what: "system_header fixed body",
@@ -339,7 +339,7 @@ impl SystemHeader {
     fn validate_stream_loop(&self) -> Result<()> {
         for b in &self.std_buffer_bounds {
             if b.stream_id & STREAM_ENTRY_MSB_MASK == 0 {
-                return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                     field: "system_header.stream_id",
                     reason: "stream_id MSB is 0, so the entry would end the stream loop on parse",
                 }));
@@ -347,12 +347,12 @@ impl SystemHeader {
             match b.stream_id_extension {
                 Some(ext) => {
                     if b.stream_id != EXT_STREAM_ID {
-                        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                             field: "system_header.stream_id_extension",
                             reason: "stream_id_extension requires stream_id 0xB7",
                         }));
                     }
-                    broadcast_common::len::fit_bits(
+                    broadcast_core::len::fit_bits(
                         u64::from(ext),
                         STREAM_ID_EXTENSION_BITS,
                         "system_header.stream_id_extension",
@@ -360,14 +360,14 @@ impl SystemHeader {
                 }
                 None => {
                     if b.stream_id == EXT_STREAM_ID {
-                        return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                        return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                             field: "system_header.stream_id",
                             reason: "stream_id 0xB7 requires stream_id_extension",
                         }));
                     }
                 }
             }
-            broadcast_common::len::fit_bits(
+            broadcast_core::len::fit_bits(
                 u64::from(b.buffer_size_bound),
                 BUFFER_SIZE_BOUND_BITS,
                 "system_header.P-STD_buffer_size_bound",
@@ -378,7 +378,7 @@ impl SystemHeader {
             .first()
             .is_some_and(|f| f & STREAM_ENTRY_MSB_MASK != 0)
         {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "system_header.trailing_reserved",
                 reason: "first byte has its MSB set, so it would be re-read as a stream-bound entry",
             }));
@@ -403,28 +403,28 @@ impl Serialize for SystemHeader {
             .copy_from_slice(&SYSTEM_HEADER_START_CODE.to_be_bytes());
 
         // header_length (bytes after this field)
-        let header_length = broadcast_common::len::fit_u16(
+        let header_length = broadcast_core::len::fit_u16(
             FIXED_BODY_LEN + stream_loop_len(self),
             "system_header.header_length",
         )?;
         buf[HEADER_LENGTH_OFFSET..PREFIX_LEN].copy_from_slice(&header_length.to_be_bytes());
 
-        let rate_bound = broadcast_common::len::fit_bits(
+        let rate_bound = broadcast_core::len::fit_bits(
             u64::from(self.rate_bound),
             RATE_BOUND_BITS,
             "system_header.rate_bound",
         )? as u32;
-        let audio_bound = broadcast_common::len::fit_bits(
+        let audio_bound = broadcast_core::len::fit_bits(
             u64::from(self.audio_bound),
             AUDIO_BOUND_BITS,
             "system_header.audio_bound",
         )? as u8;
-        let video_bound = broadcast_common::len::fit_bits(
+        let video_bound = broadcast_core::len::fit_bits(
             u64::from(self.video_bound),
             VIDEO_BOUND_BITS,
             "system_header.video_bound",
         )? as u8;
-        let reserved_bits = broadcast_common::len::fit_mask(
+        let reserved_bits = broadcast_core::len::fit_mask(
             self.reserved_bits,
             RESERVED_BITS_MASK,
             "system_header.reserved_bits",
@@ -821,7 +821,7 @@ mod tests {
     }
 
     fn invalid(field: &'static str, reason: &'static str) -> Error {
-        Error::InvalidField(broadcast_common::error::InvalidField { field, reason })
+        Error::InvalidField(broadcast_core::error::InvalidField { field, reason })
     }
 
     #[test]

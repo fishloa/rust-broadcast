@@ -64,7 +64,7 @@ mpeg-ps = "0.10"
 ## Quick start
 
 ```rust
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use mpeg_ps::{PackHeader, program_stream};
 
 // A minimal pack header: start_code 0x000001BA, SCR = 0, mux_rate = 3, no stuffing.

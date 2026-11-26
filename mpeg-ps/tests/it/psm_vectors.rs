@@ -7,7 +7,7 @@
 //! serializer (so its CRC_32 is the real MPEG-2 CRC-32), and the PES packet is
 //! a minimal PTS-only packet.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use mpeg_ps::DescriptorLoop;
 use mpeg_ps::{Error, EsMapEntry, ProgramStreamMap};
 
@@ -106,7 +106,7 @@ pub(crate) fn trailing_es_bytes() -> Vec<u8> {
 /// names the decoder).
 #[test]
 fn psm_descriptor_loops_walk_typed_and_keep_bytes() {
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     let prog = [0x05u8, 0x04, b'H', b'D', b'M', b'V'];
     let es = [
@@ -288,7 +288,7 @@ fn the_minimum_length_guard_reports_its_exact_shortfall() {
     let eleven = [0u8, 0, 1, 0xBC, 0x00, 0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE];
     assert_eq!(
         ProgramStreamMap::parse(&eleven).unwrap_err(),
-        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+        Error::BufferTooShort(broadcast_core::error::BufferTooShort {
             need: 12,
             have: 11,
             what: "program_stream_map",

@@ -18,7 +18,7 @@
 //! # Adding a payload
 //!
 //! 1. Create the module with the wire layout and the symmetric
-//!    [`broadcast_common::Parse`] / [`broadcast_common::Serialize`] impls + round-trip
+//!    [`broadcast_core::Parse`] / [`broadcast_core::Serialize`] impls + round-trip
 //!    tests (copy an existing module).
 //! 2. `impl PayloadDef` for the type (`PACKET_TYPE` from the spec / the
 //!    [`crate::packet::PacketType`] enum value, `NAME` in SCREAMING_SNAKE
@@ -129,7 +129,7 @@ macro_rules! declare_payloads {
                 packet_type: u8,
                 payload_bytes: &$lt [u8],
             ) -> Option<crate::Result<Self>> {
-                use broadcast_common::Parse;
+                use broadcast_core::Parse;
                 match packet_type {
                     $(
                         $ptype => Some(
@@ -243,12 +243,12 @@ mod tests {
             _x: u8,
         }
 
-        impl<'a> broadcast_common::Parse<'a> for NameTestPayload {
+        impl<'a> broadcast_core::Parse<'a> for NameTestPayload {
             type Error = crate::Error;
             fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
                 if bytes.is_empty() {
                     return Err(crate::Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: 1,
                             have: 0,
                             what: "NameTest",

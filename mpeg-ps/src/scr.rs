@@ -142,7 +142,7 @@ impl Scr {
 pub(crate) fn read_scr_field(b: &[u8], what: &'static str) -> Result<Scr> {
     if b.len() < SCR_FIELD_LEN {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: SCR_FIELD_LEN,
                 have: b.len(),
                 what,
@@ -218,8 +218,8 @@ pub(crate) fn read_scr_field(b: &[u8], what: &'static str) -> Result<Scr> {
 /// Checked encode of an SCR field: rejects a `base` wider than 33 bits or an
 /// `extension` wider than 9 bits instead of silently masking (#1129 class).
 pub(crate) fn encode_scr_field(scr: Scr) -> crate::error::Result<[u8; SCR_FIELD_LEN]> {
-    broadcast_common::len::fit_bits(scr.base, BASE_BITS, "pack_header.scr.base")?;
-    broadcast_common::len::fit_bits(
+    broadcast_core::len::fit_bits(scr.base, BASE_BITS, "pack_header.scr.base")?;
+    broadcast_core::len::fit_bits(
         u64::from(scr.extension),
         EXT_BITS,
         "pack_header.scr.extension",

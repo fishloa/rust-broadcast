@@ -1,4 +1,4 @@
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use scte35_splice::{Error, SpliceInfoSection};
 
 #[test]

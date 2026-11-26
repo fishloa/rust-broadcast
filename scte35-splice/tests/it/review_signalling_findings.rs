@@ -1,7 +1,7 @@
 //! Adversarial-review findings (review/signalling-captions). Each test is a
 //! FAILING regression for a confirmed defect; production code is untouched.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::dvb_ta::{
     CompactDas, CompactSpliceInsert, CompactTimeSignal, DvbDasDescriptor,
     EquivalentSegmentationType, SI_RESERVED_DEFAULT, Scte35Carriage, StreamEventPayload,

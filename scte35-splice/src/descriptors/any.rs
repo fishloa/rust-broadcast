@@ -13,7 +13,7 @@
 //! loop round-trips byte-for-byte.
 
 use crate::error::Result;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 /// `splice_descriptor_tag` + `descriptor_length` header length.
 const DESCRIPTOR_HEADER_LEN: usize = 2;
@@ -78,14 +78,14 @@ macro_rules! declare_splice_descriptors {
             /// Parse one full descriptor (2-byte header included) by its tag.
             /// Unknown tags yield [`AnySpliceDescriptor::Unknown`].
             pub(crate) fn dispatch(tag: u8, full: &$lt [u8]) -> Result<Self> {
-                use broadcast_common::{Parse, Serialize};
+                use broadcast_core::{Parse, Serialize};
                 match tag {
                     $(
                         $tag => {
                             let descriptor = <$($path)::+>::parse(full)?;
                             if descriptor.serialized_len() != full.len() {
                                 return Err(crate::error::Error::InvalidField(
-                                    broadcast_common::error::InvalidField {
+                                    broadcast_core::error::InvalidField {
                                         field: "splice_descriptor.descriptor_length",
                                         reason: "bytes remain after the descriptor structure",
                                     },
@@ -101,7 +101,7 @@ macro_rules! declare_splice_descriptors {
             /// Bytes this descriptor serializes to (header included).
             #[must_use]
             pub fn serialized_len(&self) -> usize {
-                use broadcast_common::Serialize;
+                use broadcast_core::Serialize;
                 match self {
                     $(
                         Self::$variant(d) => d.serialized_len(),
@@ -112,7 +112,7 @@ macro_rules! declare_splice_descriptors {
 
             /// Serialize this descriptor (header included) into `buf`.
             pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-                use broadcast_common::Serialize;
+                use broadcast_core::Serialize;
                 match self {
                     $(
                         Self::$variant(d) => d.serialize_into(buf),
@@ -121,7 +121,7 @@ macro_rules! declare_splice_descriptors {
                         let need = DESCRIPTOR_HEADER_LEN + body.len();
                         need_out(buf, need)?;
                         buf[0] = *tag;
-                        buf[1] = broadcast_common::len::fit_u8(
+                        buf[1] = broadcast_core::len::fit_u8(
                             body.len(),
                             "splice_descriptor.descriptor_length",
                         )?;
@@ -193,7 +193,7 @@ impl<'a> Iterator for SpliceDescriptorIter<'a> {
         if rem.len() < DESCRIPTOR_HEADER_LEN {
             self.fused = true;
             return Some(Err(crate::error::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: DESCRIPTOR_HEADER_LEN,
                     have: rem.len(),
                     what: "splice_descriptor header in loop",
@@ -206,7 +206,7 @@ impl<'a> Iterator for SpliceDescriptorIter<'a> {
         if rem.len() < total {
             self.fused = true;
             return Some(Err(crate::error::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: total,
                     have: rem.len(),
                     what: "splice_descriptor body in loop",
@@ -227,7 +227,7 @@ mod tests {
     use crate::descriptors::avail::AvailDescriptor;
     use crate::descriptors::header::CUEI;
     use alloc::{vec, vec::Vec};
-    use broadcast_common::Serialize;
+    use broadcast_core::Serialize;
 
     #[test]
     fn loop_dispatches_typed_and_unknown() {

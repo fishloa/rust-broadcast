@@ -156,7 +156,7 @@ taken from the wire; there is deliberately no `From<u16>`. `Pid` implements
   `opcr_reserved`, splice marker bits and every extension reserved bit are
   carried; the structs are `#[non_exhaustive]` with `new()` / `Default`
   (reserved bits default to `1`, per the spec convention).
-- **Checked widths.** Serializers use `broadcast_common::len` checked helpers
+- **Checked widths.** Serializers use `broadcast_core::len` checked helpers
   (`FieldOverflow`), never a silent mask.
 - **Shared clock arithmetic.** PCR and the marker-bit timestamp come from
   `broadcast_common::clock33`.

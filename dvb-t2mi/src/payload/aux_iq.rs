@@ -4,8 +4,8 @@
 //! Each sample: 12-bit two's complement I, then 12-bit two's complement Q.
 //! `Re(x) = I / 2^9`, `Im(x) = Q / 2^9`. Can span multiple T2-MI packets.
 
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// Minimum valid aux_id value.
 const AUX_ID_MIN: u8 = 1;
@@ -55,7 +55,7 @@ impl<'a> Parse<'a> for AuxIqPayload<'a> {
 
         if !(AUX_ID_MIN..=AUX_ID_MAX).contains(&aux_id) {
             return Err(crate::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "aux_id",
                     value: u64::from(aux_id),
                     reason: "aux_id out of range 1..=15",
@@ -68,7 +68,7 @@ impl<'a> Parse<'a> for AuxIqPayload<'a> {
             | (bytes[AUX_RFU_BYTE_OFFSET] as u16);
         if rfu != 0 {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "byte 1 [3:0] + byte 2",
                     expected: 0,
                     found: u64::from(rfu),
@@ -101,7 +101,7 @@ impl Serialize for AuxIqPayload<'_> {
 
         if !(AUX_ID_MIN..=AUX_ID_MAX).contains(&self.aux_id) {
             return Err(crate::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "aux_id",
                     value: u64::from(self.aux_id),
                     reason: "aux_id out of range 1..=15",
@@ -139,7 +139,7 @@ mod tests {
         assert_eq!(
             result.err(),
             Some(crate::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "aux_id",
                     value: 0,
                     reason: "aux_id out of range 1..=15"
@@ -163,7 +163,7 @@ mod tests {
         assert_eq!(
             result.err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "byte 1 [3:0] + byte 2",
                     expected: 0,
                     found: 4095
@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(
             AuxIqPayload::parse(&[0x00]).err(),
             Some(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 3,
                     have: 1,
                     what: "AuxIqPayload header"
@@ -223,7 +223,7 @@ mod tests {
         assert_eq!(
             payload.serialize_into(&mut buf).err(),
             Some(crate::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "aux_id",
                     value: 0,
                     reason: "aux_id out of range 1..=15"

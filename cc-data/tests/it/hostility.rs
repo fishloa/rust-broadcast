@@ -7,7 +7,7 @@
 //! byte-driven state machines whose operands index fixed-size arrays.
 #![cfg(feature = "decode")]
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use cc_data::decode::{Cea608Decoder, Cea708Decoder};
 use cc_data::{CcData, CcTriplet, CcType};
 

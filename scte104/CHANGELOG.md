@@ -34,17 +34,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.7.0] - 2026-11-07
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
-- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- Length pre-checks go through `broadcast_core::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
 - The crate-root docs are the README (`#![doc = include_str!("../README.md")]`) instead of a hand-synced `//!` copy (c3 DOC1).
 - `insert_avail_descriptor` and `start_schedule_download` share one `provider_avail_id` loop parser/writer (internal).
-- BREAKING: `Error::InvalidValue { field, reason }` (no value) is replaced. `Error::InvalidValue` now wraps `broadcast_common::error::InvalidValue { field, value, reason }` and is returned for an unknown `time_type`; a serializer value above its field's range returns `Error::FieldOverflow { field, value, max }` (`TAI_seconds` over 48 bits, `messageSize` over 16 bits); the `component_mode`/`injector_component_list` presence mismatch returns `Error::InvalidField { field, reason }`. New variant: `InvalidField`.
-- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall` now wrap `broadcast_common::error` types (tuple variants); `ReservedSet { field, expected: u16, got: u16 }` is replaced by `ReservedBits(broadcast_common::error::ReservedBits)` (`found` replaces `got`, widened to u64). Hand-written `From` impls removed. `InvalidValue` stays crate-specific (carries no offending value).
+- BREAKING: `Error::InvalidValue { field, reason }` (no value) is replaced. `Error::InvalidValue` now wraps `broadcast_core::error::InvalidValue { field, value, reason }` and is returned for an unknown `time_type`; a serializer value above its field's range returns `Error::FieldOverflow { field, value, max }` (`TAI_seconds` over 48 bits, `messageSize` over 16 bits); the `component_mode`/`injector_component_list` presence mismatch returns `Error::InvalidField { field, reason }`. New variant: `InvalidField`.
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall` now wrap `broadcast_core::error` types (tuple variants); `ReservedSet { field, expected: u16, got: u16 }` is replaced by `ReservedBits(broadcast_core::error::ReservedBits)` (`found` replaces `got`, widened to u64). Hand-written `From` impls removed. `InvalidValue` stays crate-specific (carries no offending value).
 
 ### Removed
 - BREAKING: `Error::UnexpectedOpId`: never constructed; the operation data parsers take the body after `opID` dispatch and cannot see the `opID`.
 - BREAKING: `SingleOpDef` and `MultiOpDef` marker traits (no impls or bounds anywhere).
 ### Added
-- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+- `From<broadcast_core::len::BufferTooShort>` and `From<broadcast_core::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Dependencies
 - Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
@@ -117,13 +117,13 @@ Includes fixes for privately reported security issues; no public advisory is pub
   Ki+ bytes while every item was still serialized (#1129).
 
 ### Changed (breaking)
-- New `Error::FieldOverflow` variant (wrapping `broadcast_common::len::FieldOverflow`),
+- New `Error::FieldOverflow` variant (wrapping `broadcast_core::len::FieldOverflow`),
   returned when a length or count does not fit its wire field instead of the
   value silently wrapping (#1129); `Error` is `#[non_exhaustive]`.
 - `InsertDescriptor::descriptor_count`, `InsertAvailDescriptor::num_provider_avails`,
   and `StartScheduleDownload::num_provider_avails` are removed as stored fields;
   each is now derived from its vec's length at serialize time (via
-  `broadcast_common::len::fit_u8`, erroring past 255 items rather than
+  `broadcast_core::len::fit_u8`, erroring past 255 items rather than
   wrapping) and available as a `descriptor_count()`/`num_provider_avails()`
   method. A separately-stored count could disagree with the vec it
   described — e.g. a stored count of 2 with only one item in the vec would
@@ -131,7 +131,7 @@ Includes fixes for privately reported security issues; no public advisory is pub
   (audit run-09 S4-W1).
 
 ### Changed
-- Requires `broadcast-common` 9.4 (`broadcast_common::len`).
+- Requires `broadcast-common` 9.4 (`broadcast_core::len`).
 - `MultipleOperationMessage::new` now saturates the stored `message_size` at
   `u16::MAX` for operation bodies too large for the 16-bit wire field (it
   previously overflowed `u16` arithmetic); `serialize_into` still recomputes

@@ -44,7 +44,7 @@ use alloc::vec::Vec;
 
 use crate::commands::{AnyCommand, ProgramSplice, SpliceMode};
 use crate::section::SpliceInfoSection;
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use mpeg_ts::ts::{ContinuityCounter, SectionReassembler};
 
 /// Upper bound on simultaneously tracked open events.
@@ -95,7 +95,7 @@ impl NoCue {
     }
 }
 
-broadcast_common::impl_spec_display!(NoCue);
+broadcast_core::impl_spec_display!(NoCue);
 
 /// Why a [`SpliceTracker::feed`] call produced no observation. `Ok(())` means
 /// it produced one or more; nothing is reported when a call completes no
@@ -289,7 +289,7 @@ impl SpliceSanity {
     }
 }
 
-broadcast_common::impl_spec_display!(SpliceSanity);
+broadcast_core::impl_spec_display!(SpliceSanity);
 
 /// One well-formed, non-cancelled `splice_insert` cue, decoded far enough to
 /// judge where it lands on the 90 kHz clock.
@@ -373,8 +373,8 @@ mod tests {
     use super::*;
     use crate::commands::{SpliceInsert, SpliceInsertComponent};
     use crate::time::{PTS_MODULUS, SpliceTime};
-    use broadcast_common::Serialize;
     use broadcast_common::clock33::Clock33;
+    use broadcast_core::Serialize;
 
     fn tracker() -> SpliceTracker {
         SpliceTracker::default()

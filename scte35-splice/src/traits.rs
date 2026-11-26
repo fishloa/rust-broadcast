@@ -7,7 +7,7 @@
 //! to the trait const via a drift test, so the list can never silently drift
 //! from the implemented set.
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 
 /// Implemented by every typed splice command; drives
 /// [`crate::commands::AnyCommand`] dispatch. `COMMAND_TYPE` is the

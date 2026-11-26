@@ -8,8 +8,8 @@ use crate::segments::{
     PAGE_ID_LEN, PAGE_ID_OFFSET, SEGMENT_LENGTH_LEN, SEGMENT_LENGTH_OFFSET, SEGMENT_TYPE_OFFSET,
     be_u16,
 };
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// The object_data_segment segment_type.
 pub const SEGMENT_TYPE: u8 = 0x13;
@@ -126,7 +126,7 @@ impl ObjectCodingMethod {
     }
 }
 
-broadcast_common::impl_spec_display!(ObjectCodingMethod, Reserved);
+broadcast_core::impl_spec_display!(ObjectCodingMethod, Reserved);
 
 /// Data type for pixel-data sub-blocks as defined in Table 21.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,7 +169,7 @@ impl DataType {
     }
 }
 
-broadcast_common::impl_spec_display!(DataType, Reserved);
+broadcast_core::impl_spec_display!(DataType, Reserved);
 
 /// Size of a 2-to-4 bit map table in bytes.
 const MAP_TABLE_2TO4_BYTES: usize = 2;
@@ -794,7 +794,7 @@ fn parse_pixel_sub_blocks<'a>(
     }
     if pos != end {
         return Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: end,
                 have: pos,
                 what,
@@ -810,7 +810,7 @@ impl<'a> Parse<'a> for ObjectDataSegment<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, HEADER_LEN + FIXED_LEN, "object_data_segment")?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "sync_byte",
                 expected: u32::from(crate::pes_data_field::SYNC_BYTE),
                 found: u32::from(bytes[0]),
@@ -988,12 +988,12 @@ impl Serialize for ObjectDataSegment<'_> {
 
         buf[HEADER_LEN + OBJECT_ID_OFFSET..HEADER_LEN + OBJECT_FLAGS_OFFSET]
             .copy_from_slice(&self.object_id.to_be_bytes());
-        buf[HEADER_LEN + OBJECT_FLAGS_OFFSET] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN + OBJECT_FLAGS_OFFSET] = (broadcast_core::len::fit_mask(
             self.object_version_number,
             OBJECT_VERSION_MASK,
             "object_version_number",
         )? << OBJECT_VERSION_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.object_coding_method.to_bits(),
                 CODING_METHOD_MASK,
                 "object_coding_method",
@@ -1009,9 +1009,9 @@ impl Serialize for ObjectDataSegment<'_> {
                     .iter()
                     .map(|s| s.serialized_len())
                     .sum();
-                let top_len = broadcast_common::len::fit_u16(top_len, "top_field_data_length")?;
+                let top_len = broadcast_core::len::fit_u16(top_len, "top_field_data_length")?;
                 let bottom_len =
-                    broadcast_common::len::fit_u16(bottom_len, "bottom_field_data_length")?;
+                    broadcast_core::len::fit_u16(bottom_len, "bottom_field_data_length")?;
                 buf[off + TOP_FIELD_LEN_OFFSET..off + BOTTOM_FIELD_LEN_OFFSET]
                     .copy_from_slice(&top_len.to_be_bytes());
                 buf[off + BOTTOM_FIELD_LEN_OFFSET..off + INTERLACE_LEN_LEN]
@@ -1029,7 +1029,7 @@ impl Serialize for ObjectDataSegment<'_> {
                 off += ip.stuffing.len();
             }
             ObjectDataPayload::Characters { character_codes } => {
-                buf[off] = broadcast_common::len::fit_u8(character_codes.len(), "number_of_codes")?;
+                buf[off] = broadcast_core::len::fit_u8(character_codes.len(), "number_of_codes")?;
                 off += CHARACTER_CODE_COUNT_LEN;
                 for code in character_codes {
                     buf[off..off + CHARACTER_CODE_LEN].copy_from_slice(&code.to_be_bytes());
@@ -1041,7 +1041,7 @@ impl Serialize for ObjectDataSegment<'_> {
                     .copy_from_slice(&pp.bitmap_width.to_be_bytes());
                 buf[off + BITMAP_HEIGHT_OFFSET..off + COMPRESSED_LEN_OFFSET]
                     .copy_from_slice(&pp.bitmap_height.to_be_bytes());
-                let clen = broadcast_common::len::fit_u16(
+                let clen = broadcast_core::len::fit_u16(
                     pp.compressed_data.len(),
                     "compressed_data_length",
                 )?;
@@ -1064,7 +1064,7 @@ impl Serialize for ObjectDataSegment<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     #[test]
     fn round_trip_pixels_no_stuffing() {
@@ -1142,7 +1142,7 @@ mod tests {
         ];
         assert!(matches!(
             ObjectDataSegment::parse(&bytes),
-            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 found: 0x00,
                 ..
             }))

@@ -155,7 +155,7 @@ fn conformant_units_round_trip_and_validate() {
         closed_captioning(21),
         monochrome(719, &ONE_SAMPLE),
     ] {
-        let bytes = broadcast_common::Serialize::try_to_bytes(&unit).unwrap();
+        let bytes = broadcast_core::Serialize::try_to_bytes(&unit).unwrap();
         let (back, used) = DataUnit::parse(&bytes).unwrap();
         assert_eq!(used, bytes.len());
         assert_eq!(back, unit);

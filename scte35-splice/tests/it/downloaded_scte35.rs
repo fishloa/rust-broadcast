@@ -14,7 +14,7 @@
 use mpeg_ts::pid::Pid;
 use std::fs;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_t2mi::inner_ts::InnerTsRecovery;
 use scte35_splice::SpliceInfoSection;
 

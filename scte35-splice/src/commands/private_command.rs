@@ -8,8 +8,8 @@
 
 use crate::error::{Error, Result};
 use crate::traits::CommandDef;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// `splice_command_type` for private_command (§9.6.1, Table 7).
 pub const COMMAND_TYPE: u8 = 0xFF;
@@ -34,7 +34,7 @@ impl<'a> Parse<'a> for PrivateCommand<'a> {
             bytes
                 .split_first_chunk::<IDENTIFIER_LEN>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: IDENTIFIER_LEN,
                         have: bytes.len(),
                         what: "private_command identifier",

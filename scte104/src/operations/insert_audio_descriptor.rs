@@ -7,11 +7,11 @@
 //! request. Transcription: `private/specs-verified/scte/scte104/ansi_scte_104/audio-and-alternate-break.md`.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_core::len::need_out;
 
 use crate::error::{Error, Result};
 use crate::traits::OperationDef;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `opID` for insert_audio_descriptor request (§8.3, Table 8-4).
 pub const OP_ID: u16 = 0x0111;
@@ -48,7 +48,7 @@ pub struct AudioEntry {
 /// insert_audio_descriptor request — §9.8.11, Table 9-33.
 ///
 /// `audio_count` is not a stored field: it is `entries.len()`, written through
-/// `broadcast_common::len::fit_u8` on serialize.
+/// `broadcast_core::len::fit_u8` on serialize.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct InsertAudioDescriptor {
@@ -60,7 +60,7 @@ impl<'a> Parse<'a> for InsertAudioDescriptor {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let (&count, rest) = bytes.split_first().ok_or(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "insert_audio_descriptor audio_count",
@@ -69,7 +69,7 @@ impl<'a> Parse<'a> for InsertAudioDescriptor {
         let need = usize::from(count) * ENTRY_LEN;
         if rest.len() < need {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 1 + need,
                     have: bytes.len(),
                     what: "insert_audio_descriptor entries",
@@ -102,10 +102,8 @@ impl Serialize for InsertAudioDescriptor {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        buf[0] = broadcast_common::len::fit_u8(
-            self.entries.len(),
-            "insert_audio_descriptor.audio_count",
-        )?;
+        buf[0] =
+            broadcast_core::len::fit_u8(self.entries.len(), "insert_audio_descriptor.audio_count")?;
         for (chunk, e) in buf[1..need].chunks_exact_mut(ENTRY_LEN).zip(&self.entries) {
             chunk[COMPONENT_TAG_OFFSET] = e.component_tag;
             chunk[ISO_CODE_OFFSET..ISO_CODE_OFFSET + ISO_CODE_LEN].copy_from_slice(&e.iso_code);

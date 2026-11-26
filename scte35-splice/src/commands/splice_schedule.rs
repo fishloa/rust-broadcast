@@ -6,13 +6,13 @@
 //! (`program_splice_flag == 0`) is deprecated but parsed/serialized losslessly.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::time::BreakDuration;
 use crate::traits::CommandDef;
 use crate::{CANCEL_INDICATOR_MASK, U16_LEN, U32_LEN, be};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// `splice_command_type` for splice_schedule (§9.6.1, Table 7).
 pub const COMMAND_TYPE: u8 = 0x04;
@@ -124,7 +124,7 @@ impl SpliceScheduleEvent {
         let (hdr, _) = bytes[*pos..]
             .split_first_chunk::<EVENT_HEADER_LEN>()
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: *pos + EVENT_HEADER_LEN,
                     have: bytes.len(),
                     what: "splice_schedule event header",
@@ -157,7 +157,7 @@ impl SpliceScheduleEvent {
             let (t, _) = bytes[*pos..]
                 .split_first_chunk::<UTC_SPLICE_TIME_LEN>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: *pos + UTC_SPLICE_TIME_LEN,
                         have: bytes.len(),
                         what: "splice_schedule utc_splice_time",
@@ -171,7 +171,7 @@ impl SpliceScheduleEvent {
             *pos += 1;
             for _ in 0..count {
                 let (comp, _) = bytes[*pos..].split_first_chunk::<COMPONENT_LEN>().ok_or(
-                    Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                    Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                         need: *pos + COMPONENT_LEN,
                         have: bytes.len(),
                         what: "splice_schedule component",
@@ -197,7 +197,7 @@ impl SpliceScheduleEvent {
             bytes[*pos..]
                 .split_first_chunk::<TRAILER_LEN>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: *pos + TRAILER_LEN,
                         have: bytes.len(),
                         what: "splice_schedule event trailer",
@@ -236,7 +236,7 @@ impl SpliceScheduleEvent {
                 .copy_from_slice(&self.utc_splice_time.unwrap_or(0).to_be_bytes());
             *pos += UTC_SPLICE_TIME_LEN;
         } else {
-            buf[*pos] = broadcast_common::len::fit_u8(
+            buf[*pos] = broadcast_core::len::fit_u8(
                 self.components.len(),
                 "splice_schedule.component_count",
             )?;
@@ -295,7 +295,7 @@ impl Serialize for SpliceSchedule {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        buf[0] = broadcast_common::len::fit_u8(self.events.len(), "splice_schedule.splice_count")?;
+        buf[0] = broadcast_core::len::fit_u8(self.events.len(), "splice_schedule.splice_count")?;
         let mut pos = 1;
         for ev in &self.events {
             ev.serialize_at(buf, &mut pos)?;

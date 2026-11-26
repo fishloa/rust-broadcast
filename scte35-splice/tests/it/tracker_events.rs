@@ -2,7 +2,7 @@
 //! the others from the eviction order, retransmission detection, and the
 //! `NoCue`/`SpliceSanity` labels (ANSI/SCTE 35 §9.7.3, §9.8.2).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceInsert, SpliceMode};
 use scte35_splice::descriptor_loop::SpliceDescriptorLoop;

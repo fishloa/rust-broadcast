@@ -8,7 +8,8 @@
 //! either.
 
 use broadcast_common::base64::base64_decode_strict;
-use broadcast_common::{Parse, Serialize, crc32_mpeg2};
+use broadcast_common::crc32_mpeg2;
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 
 /// Real sections: the SCTE 35 §14 samples and the published vectors the other

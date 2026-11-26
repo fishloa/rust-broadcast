@@ -5,7 +5,7 @@
 
 use std::fs;
 
-use broadcast_common::Serialize as _;
+use broadcast_core::Serialize as _;
 use dvb_vbi::DataField;
 
 fn exercise(b: &[u8]) -> bool {

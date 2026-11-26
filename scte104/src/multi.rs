@@ -4,13 +4,13 @@
 //! a shared timestamp.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::operations::{AnyOperation, Operation};
 use crate::operations::{U16_LEN, be};
 use crate::time::Timestamp;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// Wire constants.
 const HEADER_LEN: usize = 10; // reserved(2) + messageSize(2) + protocol_version(1) + AS_index(1) + message_number(1) + DPI_PID_index(2) + SCTE35_protocol_version(1)
@@ -85,7 +85,7 @@ impl<'a> Parse<'a> for MultipleOperationMessage<'a> {
         need_in(bytes, HEADER_LEN, "multiple_operation_message header")?;
         let reserved = u16::from_be_bytes(be::<U16_LEN>(bytes, 0)?);
         if reserved != RESERVED {
-            return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            return Err(Error::ReservedBits(broadcast_core::error::ReservedBits {
                 field: "reserved",
                 expected: u64::from(RESERVED),
                 found: u64::from(reserved),
@@ -164,7 +164,7 @@ impl Serialize for MultipleOperationMessage<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let actual_size = self.message_size();
         let message_size =
-            broadcast_common::len::fit_u16(actual_size, "multiple_operation_message.messageSize")?;
+            broadcast_core::len::fit_u16(actual_size, "multiple_operation_message.messageSize")?;
 
         // Use the freshly-computed size, not `serialized_len()` (which
         // trusts the stored `message_size` field), so a stale field can
@@ -185,7 +185,7 @@ impl Serialize for MultipleOperationMessage<'_> {
         self.timestamp.serialize_into(&mut buf[pos..])?;
         pos += self.timestamp.serialized_len();
 
-        buf[pos] = broadcast_common::len::fit_u8(
+        buf[pos] = broadcast_core::len::fit_u8(
             self.operations.len(),
             "multiple_operation_message.num_ops",
         )?;
@@ -193,7 +193,7 @@ impl Serialize for MultipleOperationMessage<'_> {
 
         for op in &self.operations {
             buf[pos..pos + OP_ID_LEN].copy_from_slice(&op.op_id.to_be_bytes());
-            let data_len = broadcast_common::len::fit_u16(op.body_len(), "operation.data_length")?;
+            let data_len = broadcast_core::len::fit_u16(op.body_len(), "operation.data_length")?;
             buf[pos + OP_ID_LEN..pos + OP_HEADER_LEN].copy_from_slice(&data_len.to_be_bytes());
             pos += OP_HEADER_LEN;
             op.data

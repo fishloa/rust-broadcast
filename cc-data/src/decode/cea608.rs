@@ -75,7 +75,7 @@ impl Cea608Color {
         }
     }
 }
-broadcast_common::impl_spec_display!(Cea608Color);
+broadcast_core::impl_spec_display!(Cea608Color);
 
 /// Number of caption rows on a line-21 screen (§3.2.2).
 pub const SCREEN_ROWS: usize = 15;
@@ -208,7 +208,7 @@ impl Cea608Mode {
         }
     }
 }
-broadcast_common::impl_spec_display!(Cea608Mode);
+broadcast_core::impl_spec_display!(Cea608Mode);
 
 /// A line-21 caption data channel (Table 1, §4.1): the eight CC/Text logical
 /// services keyed by field + data-channel.
@@ -259,7 +259,7 @@ impl Cea608Channel {
         }
     }
 }
-broadcast_common::impl_spec_display!(Cea608Channel);
+broadcast_core::impl_spec_display!(Cea608Channel);
 
 /// A styled character cell on a 608 caption screen.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

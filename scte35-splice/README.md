@@ -83,7 +83,7 @@ scte35-splice = { version = "8", features = ["serde"] }
 
 ```rust
 use scte35_splice::{SpliceInfoSection, commands::AnyCommand};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 // A minimal time_signal() section with no descriptors, built and emitted.
 let ts = scte35_splice::commands::TimeSignal {

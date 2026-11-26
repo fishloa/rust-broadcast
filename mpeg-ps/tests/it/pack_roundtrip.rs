@@ -2,7 +2,7 @@
 //! carrying a system header, a PSM and several PES packets, and the
 //! `pack_stuffing_length` boundary (Table 2-39, a 3-bit field).
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use mpeg_pes::{PesPacket, StreamId};
 use mpeg_ps::{
     DescriptorLoop, Error, EsMapEntry, PackHeader, ProgramStreamMap, Scr, SystemHeader,

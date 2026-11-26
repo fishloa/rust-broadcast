@@ -2,7 +2,7 @@
 //!
 //! Run with: `cargo run -p dvb-t2mi --example parse_header`
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_t2mi::packet::Header;
 
 fn main() {

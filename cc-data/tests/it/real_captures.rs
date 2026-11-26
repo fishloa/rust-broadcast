@@ -8,7 +8,7 @@
 //! (`cc_count` = byte 0 low five bits, `cc_type` = triplet byte 0 low two bits),
 //! not from the code under test.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use cc_data::CcData;
 
 struct Capture {

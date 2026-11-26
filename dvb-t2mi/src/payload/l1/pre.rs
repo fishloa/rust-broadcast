@@ -5,9 +5,9 @@
 //! §5.2.4) the CRC is dropped; the T2-MI packet CRC covers the whole packet.
 
 use alloc::vec::Vec;
-use broadcast_common::bits::{BitReader, BitWriter};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::bits::{BitReader, BitWriter};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use super::enums::{
     GuardInterval, L1CodeRate, L1FecType, L1Modulation, PaprReduction, PaprReductionV0,
@@ -220,7 +220,7 @@ impl L1Pre {
         );
         let computed = broadcast_common::crc32_mpeg2::compute(info);
         if computed != expected {
-            return Err(broadcast_common::error::CrcMismatch {
+            return Err(broadcast_core::error::CrcMismatch {
                 what: "L1-pre",
                 computed,
                 expected,
@@ -364,7 +364,7 @@ impl Serialize for L1Pre {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
 
     fn synthetic_pre() -> L1Pre {
         L1Pre {
@@ -461,7 +461,7 @@ mod tests {
         assert_eq!(
             L1Pre::parse_with_crc(&bytes),
             Err(crate::Error::CrcMismatch(
-                broadcast_common::error::CrcMismatch {
+                broadcast_core::error::CrcMismatch {
                     what: "L1-pre",
                     computed: expected_crc,
                     expected: flipped,
@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(
             L1Pre::parse_with_crc(&bytes[..L1PRE_WITH_CRC_BYTES - 1]),
             Err(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: L1PRE_WITH_CRC_BYTES,
                     have: L1PRE_WITH_CRC_BYTES - 1,
                     what: "L1Pre with CRC",
@@ -504,7 +504,7 @@ mod tests {
         assert_eq!(
             L1Pre::parse(&[0u8; 20]).err(),
             Some(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 21,
                     have: 20,
                     what: "L1Pre"
@@ -523,7 +523,7 @@ mod tests {
         assert_eq!(
             pre.to_bytes().err(),
             Some(crate::Error::L1Bits(
-                broadcast_common::bits::BitError::ValueTooWide { value: 8, bits: 3 }
+                broadcast_core::bits::BitError::ValueTooWide { value: 8, bits: 3 }
             )),
             "an out-of-range field must be rejected, not silently serialised or panic"
         );

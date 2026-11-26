@@ -60,12 +60,12 @@
 ### Documentation
 - Fixed documentation links/citations to resolve to existing paths (docs/tools hygiene).
 ### Added
-- `From<broadcast_common::len::BufferTooShort>` and `From<broadcast_common::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
+- `From<broadcast_core::len::BufferTooShort>` and `From<broadcast_core::len::OutputBufferTooSmall>` for the crate error type, producing the identical existing variants (c3 S1).
 ### Changed
 - Error enums derive `Clone`, `PartialEq` and `Eq` wherever every field allows it (c6 C6-14).
 - BREAKING: `serde` is no longer a default feature; enable `features = ["serde"]` (owner decision 2026-11-07).
-- Length pre-checks go through `broadcast_common::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
-- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `CrcMismatch` now wrap `broadcast_common::error` types (tuple variants; `CrcMismatch` gains `what` and its message becomes "<what> CRC-32 mismatch: ..."); `InvalidSyncByte { found }` is replaced by `InvalidSync(broadcast_common::error::InvalidSync)`. The hand-written `From` impls are gone (`#[from]` replaces them); error values are otherwise unchanged.
+- Length pre-checks go through `broadcast_core::len::{need_in, need_out}`; the error values are unchanged (c3 S1).
+- BREAKING: error variants `BufferTooShort`, `OutputBufferTooSmall`, `CrcMismatch` now wrap `broadcast_core::error` types (tuple variants; `CrcMismatch` gains `what` and its message becomes "<what> CRC-32 mismatch: ..."); `InvalidSyncByte { found }` is replaced by `InvalidSync(broadcast_core::error::InvalidSync)`. The hand-written `From` impls are gone (`#[from]` replaces them); error values are otherwise unchanged.
 ### Dependencies
 - Sibling crates move to a new epoch in this release wave: `broadcast-common` 10 -> 11. The `Cargo.toml` requirements name the new versions; no other manifest change.
 
@@ -88,7 +88,7 @@
 - Builds against new caret epochs of workspace siblings (`broadcast-common` 9 -> 10, `mp4-emsg` 0.4 -> 0.5). A caret-epoch change is major-class for this crate under the epoch-purity rule (`docs/RELEASE-AUDIT.md` §2), whatever its own API diff. `Serialize::to_bytes` was removed (use `try_to_bytes`); consumers must resolve a single `broadcast-common` 10.
 
 ### Fixed
-- Serialize: `AdaptationFieldExtension` `reserved_flags` and `piecewise_rate_reserved` was masked silently (`& MASK`), so an over-range hand-set value was written as a different value; it is now a checked `broadcast_common::len::fit_mask` returning `FieldOverflow` (the #1129/#1197 class, found by the extended `serialize_mask_guard` of adversarial review #1268).
+- Serialize: `AdaptationFieldExtension` `reserved_flags` and `piecewise_rate_reserved` was masked silently (`& MASK`), so an over-range hand-set value was written as a different value; it is now a checked `broadcast_core::len::fit_mask` returning `FieldOverflow` (the #1129/#1197 class, found by the extended `serialize_mask_guard` of adversarial review #1268).
 
 ### Changed
 - Internal: the 5-byte marker-bit PTS/DTS/`DTS_next_AU` field is encoded/decoded by `broadcast_common::clock33::{pack_marked, pack_marked_with, unpack_marked}` instead of a local copy (each crate keeps its own prefix / marker validation and error variants); no behaviour change (#1208).
@@ -186,7 +186,7 @@ Includes fixes for privately reported security issues; no public advisory is pub
 
 ### Changed (breaking)
 - `OwnedTsPacket`'s fields (`raw`, `pid`, `pusi`, `has_adaptation`, `has_payload`, `tei`, `scrambling`, `continuity_counter`) are now **private**, with getters of the same names (`raw()` returning `&[u8; 188]`, `into_raw()`, `pid()`, `pusi()`, `has_adaptation()`, `has_payload()`, `tei()`, `scrambling()`, `continuity_counter()`). A public copy of a header field a caller could assign drifted silently from `raw`, which is what serialises (audit r01-W8, #1074). `discontinuity` stays public: it is caller metadata, not a copy of wire bytes. `ts-fix` and `transmux` call sites updated.
-- Requires `broadcast-common` 9.4 (`broadcast_common::len`).
+- Requires `broadcast-common` 9.4 (`broadcast_core::len`).
 - `OwnedTsPacket::serialize_with_payload` now returns
   `Result<[u8; TS_PACKET_SIZE], Error>` instead of `[u8; TS_PACKET_SIZE]`,
   rejecting a payload over 184 bytes (the new

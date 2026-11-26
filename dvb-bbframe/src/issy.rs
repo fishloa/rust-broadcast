@@ -116,7 +116,7 @@ impl BufsUnit {
     }
 }
 
-broadcast_common::impl_spec_display!(BufsUnit);
+broadcast_core::impl_spec_display!(BufsUnit);
 
 /// Decoded BUFS/TTO signalling — EN 302 755 Annex C, Table C.1.
 ///
@@ -257,7 +257,7 @@ impl SignallingKind {
     }
 }
 
-broadcast_common::impl_spec_display!(SignallingKind);
+broadcast_core::impl_spec_display!(SignallingKind);
 
 /// Decoded ISSY value (EN 302 755 §5.1.7, Annex C).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -287,7 +287,7 @@ impl Issy {
     }
 }
 
-broadcast_common::impl_spec_display!(Issy);
+broadcast_core::impl_spec_display!(Issy);
 
 /// Decode a 2-byte (short) ISSY field.
 ///

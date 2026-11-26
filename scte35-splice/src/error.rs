@@ -13,11 +13,11 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input buffer was shorter than the smallest valid encoding for the type.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// CRC-32 validation failed for a splice_info_section (§9.6.1).
     #[error(transparent)]
-    CrcMismatch(#[from] broadcast_common::error::CrcMismatch),
+    CrcMismatch(#[from] broadcast_core::error::CrcMismatch),
 
     /// `table_id` byte was not the expected `0xFC` (§9.6.1).
     #[error("unexpected table_id {table_id:#04x} for splice_info_section (expected 0xFC)")]
@@ -41,12 +41,12 @@ pub enum Error {
     /// A field carried a value its spec clause forbids (the offending value
     /// is carried).
     #[error(transparent)]
-    InvalidValue(#[from] broadcast_common::error::InvalidValue),
+    InvalidValue(#[from] broadcast_core::error::InvalidValue),
 
     /// A field is structurally invalid with no single offending number (a
     /// missing or inconsistent part).
     #[error(transparent)]
-    InvalidField(#[from] broadcast_common::error::InvalidField),
+    InvalidField(#[from] broadcast_core::error::InvalidField),
 
     /// A declared length (section_length, descriptor_length, …) ran past the
     /// bytes available in the buffer.
@@ -62,10 +62,10 @@ pub enum Error {
 
     /// Write buffer passed to `serialize_into` was smaller than `serialized_len()`.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// A length or count field's value does not fit its wire field
-    /// (see `broadcast_common::len`, #1129).
+    /// (see `broadcast_core::len`, #1129).
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::len::FieldOverflow),
 }

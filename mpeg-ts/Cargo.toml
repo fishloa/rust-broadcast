@@ -12,14 +12,15 @@ exclude      = ["docs/**"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 thiserror  = { version = "2", default-features = false }
 bytes      = { version = "1", default-features = false }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [features]
 default = ["std"]
-std    = ["broadcast-common/std", "thiserror/std", "serde?/std"]
-serde  = ["dep:serde", "broadcast-common/serde"]
+std    = ["broadcast-common/std", "broadcast-core/std", "thiserror/std", "serde?/std"]
+serde  = ["dep:serde", "broadcast-common/serde", "broadcast-core/serde"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }

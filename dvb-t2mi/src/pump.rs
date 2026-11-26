@@ -113,9 +113,9 @@ impl T2miEvent {
     ///
     /// # Errors
     ///
-    /// Propagates [`crate::Error`] from [`broadcast_common::Parse::parse`] on [`Header`].
+    /// Propagates [`crate::Error`] from [`broadcast_core::Parse::parse`] on [`Header`].
     pub fn header(&self) -> crate::Result<Header> {
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
         Header::parse(&self.bytes)
     }
 
@@ -1203,7 +1203,7 @@ mod tests {
     fn payload_with_dispatches_custom_registered_type() {
         use crate::payload::registry::PayloadRegistry;
         use crate::traits::PayloadDef;
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         #[derive(Debug)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -1216,7 +1216,7 @@ mod tests {
             fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
                 if bytes.is_empty() {
                     return Err(crate::Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: 1,
                             have: 0,
                             what: "TestPrivatePayload",
@@ -1269,7 +1269,7 @@ mod tests {
     fn payload_with_dispatches_genuinely_private_packet_type() {
         use crate::payload::registry::PayloadRegistry;
         use crate::traits::PayloadDef;
-        use broadcast_common::Parse;
+        use broadcast_core::Parse;
 
         #[derive(Debug)]
         #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -1282,7 +1282,7 @@ mod tests {
             fn parse(bytes: &'a [u8]) -> crate::Result<Self> {
                 if bytes.is_empty() {
                     return Err(crate::Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: 1,
                             have: 0,
                             what: "PrivatePayload",

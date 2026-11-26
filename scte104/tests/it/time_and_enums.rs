@@ -2,7 +2,7 @@
 //! 2023 §12.4/§12.5 and Tables 9-5, 9-22, 9-35; transcriptions under
 //! `private/specs-verified/scte/scte104/`).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte104::operations::insert_audio_provisioning::CodecIndex;
 use scte104::operations::schedule_definition::SpliceScheduleCommand;
 use scte104::operations::splice_request::SpliceInsertType;

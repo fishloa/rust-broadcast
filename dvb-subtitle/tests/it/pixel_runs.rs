@@ -3,7 +3,7 @@
 //! sub-block dispatch (Tables 20/21) and the Object Data Segment payload
 //! offsets (§7.2.5, Table 17).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_subtitle::{
     DataType, ObjectCodingMethod, ObjectDataPayload, ObjectDataSegment, PixelDataSubBlock, PixelRun,
 };

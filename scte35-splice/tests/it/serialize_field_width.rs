@@ -4,7 +4,7 @@
 //! everything cannot satisfy the test.
 
 use broadcast_common::base64::base64_decode_strict;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::descriptors::audio::{AudioComponent, AudioDescriptor};
 
@@ -40,7 +40,7 @@ fn splice_info_section_sap_type_and_encryption_algorithm_widths() {
     assert_eq!(
         over.try_to_bytes().err(),
         Some(scte35_splice::error::Error::FieldOverflow(
-            broadcast_common::len::FieldOverflow {
+            broadcast_core::len::FieldOverflow {
                 field: "splice_info_section.encryption_algorithm",
                 value: 64,
                 max: 63

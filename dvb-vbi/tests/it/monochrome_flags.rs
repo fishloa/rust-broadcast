@@ -1,8 +1,8 @@
-//! Monochrome data-field flag bits and the `broadcast_common::Serialize`
+//! Monochrome data-field flag bits and the `broadcast_core::Serialize`
 //! delegation of [`DataUnitPayload`] — ETSI EN 301 775 §4.9.1 (Table 12) and
 //! §4.4.1 (Table 1).
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use dvb_vbi::{DataUnitId, DataUnitPayload, MonochromeDataField, TXT_DATA_BLOCK_LEN};
 
 fn sample(first_segment: bool, last_segment: bool, field_parity: bool, line_offset: u8) -> [u8; 5] {

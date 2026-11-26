@@ -47,7 +47,7 @@ fn a_missing_length_field_is_reported() {
     assert_eq!(
         payload(&[0x00]).l1_dynamic_next(0, 0),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 2,
                 have: 1,
                 what: "L1DYN_NEXT_LEN",
@@ -57,7 +57,7 @@ fn a_missing_length_field_is_reported() {
     assert_eq!(
         payload(&[]).l1_dynamic_next(0, 0),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 2,
                 have: 0,
                 what: "L1DYN_NEXT_LEN",
@@ -73,7 +73,7 @@ fn a_block_shorter_than_its_declared_bits_is_reported() {
     assert_eq!(
         payload(&data).l1_dynamic_next(0, 0),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 2 + DYNAMIC_BYTES_NO_PLP_NO_AUX,
                 have: data.len(),
                 what: "L1DYN_NEXT",
@@ -89,7 +89,7 @@ fn the_declared_bit_length_rounds_up_to_whole_bytes() {
     assert_eq!(
         payload(&data).l1_dynamic_next(0, 0),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 4,
                 have: 3,
                 what: "L1DYN_NEXT",

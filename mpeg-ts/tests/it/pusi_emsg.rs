@@ -5,7 +5,7 @@
 //! - The reassembled bytes are byte-identical to the known-good fixture
 //! - The emsg box parses correctly via `isobmff`
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use mpeg_ts::OwnedTsPacket;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::pusi::PusiReassembler;

@@ -35,12 +35,12 @@
 //! field inside the typed function bodies.
 
 use alloc::vec::Vec;
-use broadcast_common::len::{need_in, need_out};
+use broadcast_core::len::{need_in, need_out};
 use core::fmt;
 
 use broadcast_common::wire_enum;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use super::{BYTE_MASK_U16, BYTE_MASK_U32};
 use crate::packet::be_u16;
@@ -51,7 +51,7 @@ wire_enum! {
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
     pub enum AddressingFunctionTag: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
-        broadcast_common::error::InvalidValue {
+        broadcast_core::error::InvalidValue {
             field: "function_tag",
             value: u64::from(value),
             reason: "reserved function tag (§5.2.8.2 Tables 5 & 6)",
@@ -111,7 +111,7 @@ impl AddressingFunctionTag {
         }
     }
 }
-broadcast_common::impl_spec_display!(AddressingFunctionTag);
+broadcast_core::impl_spec_display!(AddressingFunctionTag);
 
 // ── Typed function bodies (§5.2.8.2 Tables 7–12b) ──────────────────────────
 
@@ -648,7 +648,7 @@ impl FunctionBody<'_> {
         }
     }
 }
-broadcast_common::impl_spec_display!(FunctionBody<'_>);
+broadcast_core::impl_spec_display!(FunctionBody<'_>);
 
 // ── TransmitterEntry ───────────────────────────────────────────────────────
 
@@ -730,7 +730,7 @@ fn parse_time_offset(body: &[u8]) -> Result<TimeOffsetBody, crate::Error> {
     let (b, _) =
         body.split_first_chunk::<TIME_OFFSET_BODY_LEN>()
             .ok_or(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: TIME_OFFSET_BODY_LEN,
                     have: body.len(),
                     what: "time offset function body",
@@ -745,7 +745,7 @@ fn parse_frequency_offset(body: &[u8]) -> Result<FrequencyOffsetBody, crate::Err
     let (b, _) = body
         .split_first_chunk::<FREQUENCY_OFFSET_BODY_LEN>()
         .ok_or(crate::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: FREQUENCY_OFFSET_BODY_LEN,
                 have: body.len(),
                 what: "frequency offset function body",
@@ -762,7 +762,7 @@ fn parse_power(body: &[u8]) -> Result<PowerBody, crate::Error> {
     let (b, _) = body
         .split_first_chunk::<POWER_BODY_LEN>()
         .ok_or(crate::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: POWER_BODY_LEN,
                 have: body.len(),
                 what: "power function body",
@@ -777,7 +777,7 @@ fn parse_cell_id(body: &[u8]) -> Result<CellIdBody, crate::Error> {
     let (b, _) =
         body.split_first_chunk::<CELL_ID_BODY_LEN>()
             .ok_or(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: CELL_ID_BODY_LEN,
                     have: body.len(),
                     what: "cell id function body",
@@ -792,7 +792,7 @@ fn parse_cell_id(body: &[u8]) -> Result<CellIdBody, crate::Error> {
 
 fn parse_bandwidth(body: &[u8]) -> Result<BandwidthBody, crate::Error> {
     let b = *body.first().ok_or(crate::Error::BufferTooShort(
-        broadcast_common::error::BufferTooShort {
+        broadcast_core::error::BufferTooShort {
             need: BANDWIDTH_BODY_LEN,
             have: body.len(),
             what: "bandwidth function body",
@@ -843,7 +843,7 @@ fn parse_l1_ace_papr(body: &[u8]) -> Result<L1AcePaprBody, crate::Error> {
     let (b, _) =
         body.split_first_chunk::<L1_ACE_PAPR_BODY_LEN>()
             .ok_or(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: L1_ACE_PAPR_BODY_LEN,
                     have: body.len(),
                     what: "L1-ACE-PAPR function body",
@@ -981,7 +981,7 @@ fn try_parse_typed_body(
 /// and written, so a value that does not fit is rejected instead of silently
 /// wrapped (see `private/specs-verified/dvb/dvb-t2mi/`).
 fn check_bits(value: u64, bits: u32, field: &'static str) -> Result<(), crate::error::Error> {
-    broadcast_common::len::fit_bits(value, bits, field)?;
+    broadcast_core::len::fit_bits(value, bits, field)?;
     Ok(())
 }
 
@@ -995,7 +995,7 @@ fn serialize_frequency_offset(
 ) -> Result<(), crate::error::Error> {
     if !(FREQUENCY_OFFSET_MIN..=FREQUENCY_OFFSET_MAX).contains(&body.frequency_offset) {
         return Err(crate::Error::InvalidValue(
-            broadcast_common::error::InvalidValue {
+            broadcast_core::error::InvalidValue {
                 field: "frequency_offset",
                 value: i64::from(body.frequency_offset).cast_unsigned(),
                 reason: "outside -8388608..=8388607 (24-bit signed field; value shown as two's-complement i64)",
@@ -1334,7 +1334,7 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
         while pos < individual_addressing_length {
             if pos + TX_HEADER_LEN > individual_addressing_length {
                 return Err(crate::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + TX_HEADER_LEN,
                         have: individual_addressing_length,
                         what: "transmitter entry header",
@@ -1346,7 +1346,7 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
                 .get(pos..)
                 .and_then(|s| s.split_first_chunk::<TRANSMITTER_ID_LEN>())
                 .ok_or(crate::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: pos + TRANSMITTER_ID_LEN,
                         have: individual_addressing_length,
                         what: "transmitter entry header",
@@ -1359,7 +1359,7 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
             let func_end = pos + function_loop_length;
             if func_end > individual_addressing_length {
                 return Err(crate::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: func_end,
                         have: individual_addressing_length,
                         what: "function loop",
@@ -1373,7 +1373,7 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
             while pos < func_end {
                 if pos + FUNC_HEADER_LEN > func_end {
                     return Err(crate::Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: pos + FUNC_HEADER_LEN,
                             have: func_end,
                             what: "function entry header",
@@ -1396,7 +1396,7 @@ impl<'a> Parse<'a> for IndividualAddressingPayload<'a> {
                 let body_end = pos + body_len;
                 if body_end > func_end {
                     return Err(crate::Error::BufferTooShort(
-                        broadcast_common::error::BufferTooShort {
+                        broadcast_core::error::BufferTooShort {
                             need: body_end,
                             have: func_end,
                             what: "function body",
@@ -1457,7 +1457,7 @@ impl Serialize for IndividualAddressingPayload<'_> {
 
         if data_len > u8::MAX as usize {
             return Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "individual_addressing_length",
                     value: data_len as u64,
                     max: u64::from(u8::MAX),
@@ -1480,7 +1480,7 @@ impl Serialize for IndividualAddressingPayload<'_> {
             let func_loop_len: usize = tx.functions.iter().map(function_entry_serialized_len).sum();
             if func_loop_len > u8::MAX as usize {
                 return Err(crate::Error::FieldOverflow(
-                    broadcast_common::len::FieldOverflow {
+                    broadcast_core::len::FieldOverflow {
                         field: "function_loop_length",
                         value: func_loop_len as u64,
                         max: u64::from(u8::MAX),
@@ -1498,7 +1498,7 @@ impl Serialize for IndividualAddressingPayload<'_> {
                 let body_len = body_serialized_len(&func.body);
                 // function_length counts the whole function() incl. its header.
                 let function_length =
-                    broadcast_common::len::fit_u8(FUNC_HEADER_LEN + body_len, "function_length")?;
+                    broadcast_core::len::fit_u8(FUNC_HEADER_LEN + body_len, "function_length")?;
 
                 buf[pos] = func.tag;
                 buf[pos + 1] = function_length;
@@ -1552,7 +1552,7 @@ mod tests {
         assert!(matches!(
             AddressingFunctionTag::try_from(0x14),
             Err(crate::error::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "function_tag",
                     value: 20,
                     ..
@@ -1562,7 +1562,7 @@ mod tests {
         assert!(matches!(
             AddressingFunctionTag::try_from(0xFF),
             Err(crate::error::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "function_tag",
                     value: 255,
                     ..
@@ -1623,7 +1623,7 @@ mod tests {
         assert_eq!(
             IndividualAddressingPayload::parse(&[0x00, 0x04, 0xAA, 0xBB]).err(),
             Some(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 6,
                     have: 4,
                     what: "IndividualAddressingPayload data"
@@ -1804,7 +1804,7 @@ mod tests {
         assert_eq!(
             IndividualAddressingPayload::parse(&buf).err(),
             Some(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 5,
                     have: 4,
                     what: "function loop"
@@ -1987,7 +1987,7 @@ mod tests {
         let result = payload.serialize_into(&mut buf);
         assert_eq!(
             result.unwrap_err(),
-            crate::Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            crate::Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "individual_addressing_length",
                 value: 303,
                 max: 255
@@ -2023,7 +2023,7 @@ mod tests {
         assert_eq!(
             serialize_ace_papr(&body, &mut buf),
             Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "ace_gain",
                     value: 32,
                     max: 31
@@ -2059,7 +2059,7 @@ mod tests {
         assert_eq!(
             serialize_tr_papr(&body, &mut buf),
             Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "tr_clipping_threshold",
                     value: 4096,
                     max: 4095
@@ -2081,7 +2081,7 @@ mod tests {
         assert_eq!(
             serialize_frequency(&body, &mut buf),
             Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "rf_idx",
                     value: 8,
                     max: 7
@@ -2238,7 +2238,7 @@ mod tests {
             );
             assert_serialize_rejected(
                 &p,
-                crate::Error::InvalidValue(broadcast_common::error::InvalidValue {
+                crate::Error::InvalidValue(broadcast_core::error::InvalidValue {
                     field: "frequency_offset",
                     value: i64::from(bad).cast_unsigned(),
                     reason: "outside -8388608..=8388607 (24-bit signed field; value shown as two's-complement i64)",
@@ -2306,7 +2306,7 @@ mod tests {
         body.rfu = 0x80;
         assert_serialize_rejected(
             &single(0x04, FunctionBody::CellId(body)),
-            crate::Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            crate::Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "cell_id reserved_future_use",
                 value: 128,
                 max: 127,
@@ -2355,7 +2355,7 @@ mod tests {
                 0x06,
                 FunctionBody::Bandwidth(BandwidthBody::new(128, false)),
             ),
-            crate::Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            crate::Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "ch_bandwidth",
                 value: 128,
                 max: 127,

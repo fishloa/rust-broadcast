@@ -3,10 +3,10 @@
 //! L1-current carries the complete L1 signalling for the current T2 frame:
 //! L1PRE + L1CONF + L1DYN_CURR + optionally L1EXT.
 
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire_enum;
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 use super::l1::post::parse_l1_post_from_framed;
 use super::l1::pre::L1PRE_BYTES;
@@ -18,7 +18,7 @@ wire_enum! {
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
     pub enum FrequencySource: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
-        broadcast_common::error::InvalidValue {
+        broadcast_core::error::InvalidValue {
             field: "freq_source",
             value: u64::from(value),
             reason: "must be 0b00, 0b01 or 0b10",
@@ -45,7 +45,7 @@ impl FrequencySource {
         }
     }
 }
-broadcast_common::impl_spec_display!(FrequencySource);
+broadcast_core::impl_spec_display!(FrequencySource);
 
 /// L1-current payload (type 0x10) per ETSI TS 102 773 §5.2.4.
 ///
@@ -125,7 +125,7 @@ impl<'a> Parse<'a> for L1CurrentPayload<'a> {
         let rfu = bytes[FREQ_SOURCE_BYTE_OFFSET] & FREQ_SOURCE_RFU_MASK;
         if rfu != 0 {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "6-bit RFU after freq_source",
                     expected: 0,
                     found: u64::from(rfu),
@@ -195,7 +195,7 @@ mod tests {
         assert!(matches!(
             FrequencySource::try_from(0b11),
             Err(crate::error::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "freq_source",
                     value: 3,
                     ..
@@ -231,7 +231,7 @@ mod tests {
         assert_eq!(
             L1CurrentPayload::parse(&buf).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "6-bit RFU after freq_source",
                     expected: 0,
                     found: 1

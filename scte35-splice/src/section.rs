@@ -21,8 +21,8 @@ use crate::descriptors::SpliceDescriptorIter;
 use crate::error::{Error, Result};
 use crate::time::PTS_MAX;
 use crate::{NIBBLE_MASK, U16_LEN, be};
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// `table_id` of a splice_info_section (§9.6.1).
 pub const TABLE_ID: u8 = 0xFC;
@@ -228,7 +228,7 @@ fn derive_command_length(command_type: u8, payload: &[u8]) -> Result<usize> {
             return Ok(n);
         }
     }
-    Err(Error::InvalidField(broadcast_common::error::InvalidField {
+    Err(Error::InvalidField(broadcast_core::error::InvalidField {
         field: "splice_info_section.splice_command_length",
         reason: "0xFFF sentinel and the command's extent cannot be derived from its structure",
     }))
@@ -250,7 +250,7 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
             return Err(Error::UnexpectedTableId { table_id: bytes[0] });
         }
         if bytes[1] & SYNTAX_AND_PRIVATE_INDICATOR_MASK != 0 {
-            return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+            return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                 field: "splice_info_section.section_syntax_indicator/private_indicator",
                 reason: "must be 0 (§9.6.1, Table 5)",
             }));
@@ -272,7 +272,7 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         // computing crc_pos so that section_length == 0 doesn't underflow (#216).
         if total < FIXED_HEADER_LEN + CRC_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: FIXED_HEADER_LEN + CRC_LEN,
                     have: total,
                     what: "splice_info_section body + CRC",
@@ -284,7 +284,7 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
             bytes[..total]
                 .split_last_chunk::<CRC_LEN>()
                 .ok_or(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: FIXED_HEADER_LEN + CRC_LEN,
                         have: bytes.len(),
                         what: "splice_info_section header",
@@ -293,7 +293,7 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         let expected = u32::from_be_bytes(*crc_bytes);
         let computed = broadcast_common::crc32_mpeg2::compute(crc_region);
         if computed != expected {
-            return Err(Error::CrcMismatch(broadcast_common::error::CrcMismatch {
+            return Err(Error::CrcMismatch(broadcast_core::error::CrcMismatch {
                 what: "splice_info_section",
                 computed,
                 expected,
@@ -373,7 +373,7 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
             .get(dll_pos..)
             .and_then(|s| s.split_first_chunk::<DESCRIPTOR_LOOP_LENGTH_LEN>())
             .ok_or(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 1 + scl + DESCRIPTOR_LOOP_LENGTH_LEN,
                     have: payload.len(),
                     what: "splice_info_section command + descriptor_loop_length",
@@ -416,7 +416,7 @@ impl Serialize for SpliceInfoSection<'_> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         if self.pts_adjustment > PTS_MAX {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "splice_info_section.pts_adjustment",
                 value: self.pts_adjustment,
                 max: PTS_MAX,
@@ -424,7 +424,7 @@ impl Serialize for SpliceInfoSection<'_> {
         }
         // `tier` is 12 bits; its maximum is the `TIER_IGNORE` value itself.
         if self.tier > TIER_IGNORE {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "splice_info_section.tier",
                 value: u64::from(self.tier),
                 max: u64::from(TIER_IGNORE),
@@ -436,7 +436,7 @@ impl Serialize for SpliceInfoSection<'_> {
         // must be rejected, not silently wrapped (#1129).
         let section_length_usize = need - SECTION_LENGTH_HEADER_LEN;
         if section_length_usize > SECTION_LENGTH_MAX {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "splice_info_section.section_length",
                 value: section_length_usize as u64,
                 max: SECTION_LENGTH_MAX as u64,
@@ -447,7 +447,7 @@ impl Serialize for SpliceInfoSection<'_> {
         buf[0] = TABLE_ID;
         // section_syntax_indicator=0, private_indicator=0, sap_type(2),
         // section_length(12).
-        buf[1] = (broadcast_common::len::fit_mask(
+        buf[1] = (broadcast_core::len::fit_mask(
             self.sap_type,
             SAP_TYPE_MASK,
             "splice_info_section.sap_type",
@@ -456,7 +456,7 @@ impl Serialize for SpliceInfoSection<'_> {
         buf[SECTION_LENGTH_LOW_OFFSET] = (section_length & LOW_BYTE_MASK_U16) as u8;
         buf[PROTOCOL_VERSION_OFFSET] = self.protocol_version;
         buf[ENCRYPTED_PACKET_OFFSET] = (u8::from(self.encrypted_packet) << ENCRYPTED_PACKET_SHIFT)
-            | (broadcast_common::len::fit_mask(
+            | (broadcast_core::len::fit_mask(
                 self.encryption_algorithm,
                 ENCRYPTION_ALGORITHM_MASK,
                 "splice_info_section.encryption_algorithm",
@@ -475,7 +475,7 @@ impl Serialize for SpliceInfoSection<'_> {
                 // splice_command_length is a 12-bit field; check before
                 // narrowing so a body of 4096 bytes or more is rejected
                 // instead of wrapping (#1129).
-                let real_scl = broadcast_common::len::fit_bits(
+                let real_scl = broadcast_core::len::fit_bits(
                     c.command.body_len() as u64,
                     SPLICE_COMMAND_LENGTH_BITS,
                     "splice_info_section.splice_command_length",
@@ -494,7 +494,7 @@ impl Serialize for SpliceInfoSection<'_> {
                 let mut pos = FIXED_HEADER_LEN;
                 pos += c.command.serialize_body_into(&mut buf[pos..])?;
                 // descriptor_loop_length is a 16-bit field; same reasoning.
-                let dll = broadcast_common::len::fit_u16(
+                let dll = broadcast_core::len::fit_u16(
                     c.descriptor_loop.len(),
                     "splice_info_section.descriptor_loop_length",
                 )?;
@@ -518,7 +518,7 @@ impl Serialize for SpliceInfoSection<'_> {
                 // decrypting receiver that trusted the sentinel would
                 // misframe). Fall back to the sentinel only when a
                 // hand-built section genuinely doesn't know it.
-                let scl = broadcast_common::len::fit_bits(
+                let scl = broadcast_core::len::fit_bits(
                     u64::from(
                         self.encrypted_splice_command_length
                             .unwrap_or(SPLICE_COMMAND_LENGTH_IGNORE),
@@ -538,7 +538,7 @@ impl Serialize for SpliceInfoSection<'_> {
                     ((self.tier % TIER_NIBBLE_MODULUS) as u8) << TIER_SHIFT;
                 buf[SPLICE_COMMAND_LENGTH_LOW_OFFSET] = 0;
                 // No command/payload: splice_command_type would be missing.
-                return Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                return Err(Error::InvalidField(broadcast_core::error::InvalidField {
                     field: "splice_info_section",
                     reason: "neither a clear command nor an encrypted payload is present",
                 }));
@@ -576,7 +576,7 @@ mod tests {
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         assert_eq!(
             section.serialize_into(&mut buf).err(),
-            Some(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            Some(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "splice_info_section.section_length",
                 value: 65557,
                 max: 4093
@@ -624,7 +624,7 @@ mod tests {
         assert_eq!(
             section.serialize_into(&mut buf).err(),
             Some(crate::error::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "splice_info_section.section_length",
                     value: 4114,
                     max: 4093
@@ -649,7 +649,7 @@ mod tests {
         assert_eq!(
             section.serialize_into(&mut buf).err(),
             Some(crate::error::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "splice_info_section.section_length",
                     value: 65557,
                     max: 4093

@@ -6,7 +6,7 @@
 //! `private/specs-verified/scte/scte104/ansi_scte_104/operations.md` and
 //! `pams_operations.md`.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte104::Error;
 use scte104::operations::{
     AliveRequest, AliveResponse, ConfigRequest, ConfigResponse, FaultRequest,
@@ -16,10 +16,9 @@ use scte104::time::Time;
 
 fn too_small(e: &Error) -> Option<(usize, usize)> {
     match e {
-        Error::OutputBufferTooSmall(broadcast_common::error::OutputBufferTooSmall {
-            need,
-            have,
-        }) => Some((*need, *have)),
+        Error::OutputBufferTooSmall(broadcast_core::error::OutputBufferTooSmall { need, have }) => {
+            Some((*need, *have))
+        }
         _ => None,
     }
 }
@@ -38,7 +37,7 @@ fn assert_truncations_rejected<'a, T: Parse<'a, Error = Error> + core::fmt::Debu
 ) {
     for have in 0..wire.len() {
         match T::parse(&wire[..have]) {
-            Err(Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            Err(Error::BufferTooShort(broadcast_core::error::BufferTooShort {
                 need,
                 have: got,
                 what: w,
@@ -100,7 +99,7 @@ fn inject_response_wire_round_trip_and_truncation() {
     assert_eq!(
         InjectResponse::parse(&[]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1,
                 have: 0,
                 what: "inject_response message_number",
@@ -169,11 +168,11 @@ fn config_and_fault_request_reject_truncation_and_short_buffers() {
 
 #[test]
 fn a_multiple_operation_message_with_wrong_reserved_bits_is_rejected() {
-    use broadcast_common::Parse;
+    use broadcast_core::Parse;
     let bytes = [0u8; 16];
     assert_eq!(
         scte104::MultipleOperationMessage::parse(&bytes).unwrap_err(),
-        scte104::Error::ReservedBits(broadcast_common::error::ReservedBits {
+        scte104::Error::ReservedBits(broadcast_core::error::ReservedBits {
             field: "reserved",
             expected: 0xFFFF,
             found: 0,

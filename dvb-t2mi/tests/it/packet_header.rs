@@ -1,6 +1,6 @@
 //! T2-MI packet header lengths and payload slicing — ETSI TS 102 773 §5.1.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_t2mi::Error;
 use dvb_t2mi::packet::{Header, PacketType};
 
@@ -37,7 +37,7 @@ fn serialized_len_is_the_six_byte_header() {
     assert_eq!(
         hdr.serialize_into(&mut small).err(),
         Some(Error::OutputBufferTooSmall(
-            broadcast_common::error::OutputBufferTooSmall { need: 6, have: 5 }
+            broadcast_core::error::OutputBufferTooSmall { need: 6, have: 5 }
         ))
     );
 }
@@ -79,7 +79,7 @@ fn stream_id_seven_is_encodable_and_eight_is_rejected() {
     hdr.t2mi_stream_id = 8;
     assert_eq!(
         hdr.serialize_into(&mut buf).err(),
-        Some(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+        Some(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
             field: "t2mi_stream_id",
             value: 8,
             max: 7,

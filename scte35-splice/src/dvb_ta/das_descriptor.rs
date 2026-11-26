@@ -18,8 +18,8 @@ use crate::NIBBLE_MASK;
 use crate::descriptors::header::{self, HEADER_LEN};
 use crate::error::{Error, Result};
 use crate::traits::SpliceDescriptorDef;
-use broadcast_common::len::need_out;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::need_out;
+use broadcast_core::{Parse, Serialize};
 
 /// `splice_descriptor_tag` for `DVB_DAS_descriptor()` (§5.3.5.16). Shall be
 /// `0xF0` (the SCTE 35 private/DVB tag).
@@ -103,7 +103,7 @@ impl EquivalentSegmentationType {
         }
     }
 }
-broadcast_common::impl_spec_display!(EquivalentSegmentationType, Reserved);
+broadcast_core::impl_spec_display!(EquivalentSegmentationType, Reserved);
 
 /// Which nibble of the byte after `breaks_expected` carries
 /// `equivalent_segmentation_type` (the other carries `reserved`).
@@ -181,7 +181,7 @@ impl DasNibbleOrder {
         }
     }
 }
-broadcast_common::impl_spec_display!(DasNibbleOrder);
+broadcast_core::impl_spec_display!(DasNibbleOrder);
 
 /// `DVB_DAS_descriptor()` — §5.3.5.16, Table 1.
 ///
@@ -242,7 +242,7 @@ impl<'a> DvbDasDescriptor<'a> {
         let (identifier, body) = header::descriptor_body(bytes, TAG, "DVB_DAS_descriptor")?;
         if body.len() < FIXED_BODY_LEN {
             return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: HEADER_LEN + FIXED_BODY_LEN,
                     have: bytes.len(),
                     what: "DVB_DAS_descriptor body",
@@ -293,7 +293,7 @@ impl DvbDasDescriptor<'_> {
         // Max allowed body_len = 255 − 4 = 251; a longer upid would make
         // `4 + body_len ≥ 256`, silently truncating the length byte.
         if body_len > MAX_DAS_BODY_LEN {
-            return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            return Err(Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "DVB_DAS_descriptor.descriptor_length",
                 value: (core::mem::size_of::<u32>() + body_len) as u64,
                 max: u64::from(u8::MAX),
@@ -304,7 +304,7 @@ impl DvbDasDescriptor<'_> {
         buf[HEADER_LEN + 1] = self.breaks_expected;
         // reserved nibble = 0xF (reserved bits set to 1 per crate policy) and
         // the 4-bit equivalent_segmentation_type, in the order `order` selects.
-        let das_type = broadcast_common::len::fit_mask(
+        let das_type = broadcast_core::len::fit_mask(
             self.equivalent_segmentation_type.bits(),
             NIBBLE_MASK,
             "equivalent_segmentation_type",
@@ -415,7 +415,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             err,
-            Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            Error::FieldOverflow(broadcast_core::len::FieldOverflow {
                 field: "DVB_DAS_descriptor.descriptor_length",
                 value: 259,
                 max: 255

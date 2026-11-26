@@ -4,9 +4,9 @@
 //! signalling data. Per §5.5, this is always the **last** T2-MI packet
 //! for a given `frame_idx` (if used in current frame).
 
-use broadcast_common::error::BufferTooShort;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::error::BufferTooShort;
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 use super::l1::L1PostDynamic;
 
@@ -77,7 +77,7 @@ impl L1FuturePayload<'_> {
         let (b, _) =
             data.split_first_chunk::<LENGTH_FIELD_BYTES>()
                 .ok_or(crate::Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: LENGTH_FIELD_BYTES,
                         have: data.len(),
                         what: "L1DYN_NEXT_LEN",
@@ -135,7 +135,7 @@ impl<'a> Parse<'a> for L1FuturePayload<'a> {
 
         if bytes[1] != 0 {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "byte 1 RFU",
                     expected: 0,
                     found: u64::from(bytes[1]),
@@ -196,7 +196,7 @@ mod tests {
         assert_eq!(
             L1FuturePayload::parse(&buf).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "byte 1 RFU",
                     expected: 0,
                     found: 1

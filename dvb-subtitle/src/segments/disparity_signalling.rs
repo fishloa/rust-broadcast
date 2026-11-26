@@ -13,8 +13,8 @@ use crate::segments::{
 const INTERVAL_DURATION_HIGH_OFFSET: usize = 1;
 const INTERVAL_DURATION_MID_OFFSET: usize = 2;
 const INTERVAL_DURATION_LOW_OFFSET: usize = 3;
-use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::len::{need_in, need_out};
+use broadcast_core::{Parse, Serialize};
 
 /// The disparity_signalling_segment segment_type.
 pub const SEGMENT_TYPE: u8 = 0x15;
@@ -111,8 +111,8 @@ impl DisparityShiftUpdateSequence {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<()> {
         let body_len = INTERVAL_DURATION_LEN + 1 + self.intervals.len() * INTERVAL_LEN;
-        buf[0] = broadcast_common::len::fit_u8(body_len, "disparity_shift_update_sequence_length")?;
-        broadcast_common::len::fit_bits(
+        buf[0] = broadcast_core::len::fit_u8(body_len, "disparity_shift_update_sequence_length")?;
+        broadcast_core::len::fit_bits(
             u64::from(self.interval_duration),
             INTERVAL_DURATION_BITS,
             "interval_duration",
@@ -123,7 +123,7 @@ impl DisparityShiftUpdateSequence {
             (self.interval_duration >> INTERVAL_DURATION_SHIFT_MID) as u8;
         buf[INTERVAL_DURATION_LOW_OFFSET] = self.interval_duration as u8;
         buf[DIVISION_PERIOD_COUNT_OFFSET] =
-            broadcast_common::len::fit_u8(self.intervals.len(), "division_period_count")?;
+            broadcast_core::len::fit_u8(self.intervals.len(), "division_period_count")?;
         for (i, interval) in self.intervals.iter().enumerate() {
             let off = INTERVALS_OFFSET + i * INTERVAL_LEN;
             buf[off] = interval.interval_count;
@@ -150,7 +150,7 @@ impl DisparityShiftUpdateSequence {
         for _ in 0..count {
             if ipos + INTERVAL_LEN > total {
                 return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
+                    broadcast_core::error::BufferTooShort {
                         need: ipos + INTERVAL_LEN,
                         have: total,
                         what: "disparity_shift_update_sequence interval",
@@ -224,12 +224,12 @@ impl Subregion {
             off = SUBREGION_POSITION_LEN;
         }
         buf[off] = self.subregion_disparity_shift_integer as u8;
-        buf[off + 1] = (broadcast_common::len::fit_mask(
+        buf[off + 1] = (broadcast_core::len::fit_mask(
             self.subregion_disparity_shift_fractional,
             SUBREGION_NIBBLE_MASK,
             "subregion_disparity_shift_fractional",
         )? << SUBREGION_FRACTIONAL_SHIFT)
-            | broadcast_common::len::fit_mask(self.reserved, SUBREGION_NIBBLE_MASK, "reserved")?;
+            | broadcast_core::len::fit_mask(self.reserved, SUBREGION_NIBBLE_MASK, "reserved")?;
         off += SUBREGION_BASE_LEN;
         if let Some(ref seq) = self.update_sequence {
             seq.serialize_into(&mut buf[off..])?;
@@ -273,7 +273,7 @@ impl DisparityRegion {
         let num = (count - 1) as u8;
         buf[0] = self.region_id;
         buf[1] = (u8::from(self.update_sequence_region_flag) << REGION_FLAG_SHIFT)
-            | broadcast_common::len::fit_mask(
+            | broadcast_core::len::fit_mask(
                 self.reserved_flags,
                 REGION_RFU_MASK,
                 "reserved_flags",
@@ -322,7 +322,7 @@ impl<'a> Parse<'a> for DisparitySignallingSegment {
             "disparity_signalling_segment",
         )?;
         if bytes[0] != crate::pes_data_field::SYNC_BYTE {
-            return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            return Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 what: "sync_byte",
                 expected: u32::from(crate::pes_data_field::SYNC_BYTE),
                 found: u32::from(bytes[0]),
@@ -459,13 +459,13 @@ impl Serialize for DisparitySignallingSegment {
         buf[SEGMENT_LENGTH_OFFSET..SEGMENT_LENGTH_OFFSET + SEGMENT_LENGTH_LEN]
             .copy_from_slice(&seg_len.to_be_bytes());
 
-        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(
+        buf[HEADER_LEN] = (broadcast_core::len::fit_mask(
             self.dss_version_number,
             DSS_VERSION_MASK,
             "dss_version_number",
         )? << DSS_VERSION_SHIFT)
             | (u8::from(self.update_sequence_page_flag) << UPDATE_SEQUENCE_PAGE_FLAG_SHIFT)
-            | broadcast_common::len::fit_mask(self.reserved, DSS_RFU_MASK, "reserved")?;
+            | broadcast_core::len::fit_mask(self.reserved, DSS_RFU_MASK, "reserved")?;
         buf[HEADER_LEN + PAGE_DEFAULT_SHIFT_OFFSET] = self.page_default_disparity_shift as u8;
 
         let mut off = HEADER_LEN + FIXED_LEN;
@@ -484,7 +484,7 @@ impl Serialize for DisparitySignallingSegment {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use broadcast_common::{Parse, Serialize};
+    use broadcast_core::{Parse, Serialize};
 
     #[test]
     fn round_trip_simple() {
@@ -534,7 +534,7 @@ mod tests {
         ];
         assert!(matches!(
             DisparitySignallingSegment::parse(&bytes),
-            Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
+            Err(Error::InvalidSync(broadcast_core::error::InvalidSync {
                 found: 0x00,
                 ..
             }))

@@ -6,7 +6,7 @@
 //! these tests add the *semantic* assertions on top.
 
 use broadcast_common::base64::base64_decode_strict;
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceMode};
 use scte35_splice::descriptors::{

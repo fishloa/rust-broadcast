@@ -8,7 +8,7 @@
 
 use std::fs;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_subtitle::{AnySegment, PesDataField};
 use mpeg_pes::{PesAssembler, StreamId};
 

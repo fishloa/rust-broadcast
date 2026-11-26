@@ -9,15 +9,15 @@ pub type Result<T> = core::result::Result<T, Error>;
 pub enum Error {
     /// Input shorter than required.
     #[error(transparent)]
-    BufferTooShort(#[from] broadcast_common::error::BufferTooShort),
+    BufferTooShort(#[from] broadcast_core::error::BufferTooShort),
 
     /// Output buffer smaller than the serialized form requires.
     #[error(transparent)]
-    OutputBufferTooSmall(#[from] broadcast_common::error::OutputBufferTooSmall),
+    OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
 
     /// `packet_start_code_prefix` was not `0x000001`.
     #[error(transparent)]
-    InvalidSync(#[from] broadcast_common::error::InvalidSync),
+    InvalidSync(#[from] broadcast_core::error::InvalidSync),
     /// A required `marker_bit` was not `1` in a PTS/DTS field.
     #[error("bad timestamp marker bit in {0}")]
     BadTimestampMarker(&'static str),
@@ -34,9 +34,9 @@ pub enum Error {
     #[error("optional_fields too large to serialize: {0} bytes (max 255)")]
     OptionalFieldsTooLarge(usize),
     /// A length or count field's value does not fit its wire field
-    /// (see `broadcast_common::len`, #1129).
+    /// (see `broadcast_core::len`, #1129).
     #[error(transparent)]
-    FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    FieldOverflow(#[from] broadcast_core::len::FieldOverflow),
     /// A 33-bit or 27 MHz clock value out of its wire range (see
     /// `broadcast_common::clock33`).
     #[error(transparent)]

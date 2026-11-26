@@ -35,10 +35,10 @@
 //! - **Null timestamp**: all 80 data bits (seconds + subseconds + utco) are 1.
 //! - **Relative timestamp**: `seconds_since_2000 == 0` (and not null).
 
-use broadcast_common::len::{need_in, need_out};
 use broadcast_common::wire_enum;
+use broadcast_core::len::{need_in, need_out};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 wire_enum! {
     /// Bandwidth per §5.2.7 Table 3.
@@ -46,7 +46,7 @@ wire_enum! {
     #[cfg_attr(feature = "serde", derive(serde::Serialize))]
     #[non_exhaustive]
     pub enum Bandwidth: u8, error(crate::error::Error), invalid(value) => crate::error::Error::InvalidValue(
-        broadcast_common::error::InvalidValue {
+        broadcast_core::error::InvalidValue {
             field: "bw",
             value: u64::from(value),
             reason: "must be 0..=5 (Table 3)",
@@ -82,7 +82,7 @@ impl Bandwidth {
         }
     }
 }
-broadcast_common::impl_spec_display!(Bandwidth);
+broadcast_core::impl_spec_display!(Bandwidth);
 
 /// Subsecond denominator D for 1.7 MHz bandwidth.
 /// ETSI TS 102 773 §5.2.7 Table 4: Tsub = 1/D µs, D = 131.
@@ -266,7 +266,7 @@ impl<'a> Parse<'a> for T2TimestampPayload {
         // byte 0 [7:4] = rfu
         if bytes[RFU_AND_BW_OFFSET] & RFU_AND_BW_RFU_MASK != 0 {
             return Err(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "4-bit RFU",
                     expected: 0,
                     found: u64::from(bytes[RFU_AND_BW_OFFSET] >> RFU_SHIFT),
@@ -322,7 +322,7 @@ impl Serialize for T2TimestampPayload {
 
         if self.seconds_since_2000 > SECONDS_SINCE_2000_MAX {
             return Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "seconds_since_2000",
                     value: self.seconds_since_2000,
                     max: SECONDS_SINCE_2000_MAX,
@@ -331,7 +331,7 @@ impl Serialize for T2TimestampPayload {
         }
         if self.subseconds > SUBSECONDS_MAX {
             return Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "subseconds",
                     value: u64::from(self.subseconds),
                     max: u64::from(SUBSECONDS_MAX),
@@ -340,7 +340,7 @@ impl Serialize for T2TimestampPayload {
         }
         if self.utco > UTCO_MAX {
             return Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "utco",
                     value: u64::from(self.utco),
                     max: u64::from(UTCO_MAX),
@@ -422,7 +422,7 @@ impl T2TimestampPayload {
         let seconds_since_2000 = offset.as_secs();
         if seconds_since_2000 > SECONDS_SINCE_2000_MAX {
             return Err(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "seconds_since_2000",
                     value: seconds_since_2000,
                     max: SECONDS_SINCE_2000_MAX,
@@ -435,7 +435,7 @@ impl T2TimestampPayload {
             .ok()
             .filter(|&s| s <= SUBSECONDS_MAX)
             .ok_or(crate::error::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "subseconds",
                     value: u64::try_from(subseconds).unwrap_or(u64::MAX),
                     max: u64::from(SUBSECONDS_MAX),
@@ -482,7 +482,7 @@ impl T2TimestampPayload {
     ) -> Result<(), crate::error::Error> {
         if utco > UTCO_MAX {
             return Err(crate::error::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "utco",
                     value: u64::from(utco),
                     max: u64::from(UTCO_MAX),
@@ -491,7 +491,7 @@ impl T2TimestampPayload {
         }
         let (seconds, nanos) = broadcast_common::time::encode_seconds_since_2000_utc(dt, utco)
             .ok_or(crate::error::Error::InvalidField(
-                broadcast_common::error::InvalidField {
+                broadcast_core::error::InvalidField {
                     field: "seconds_since_2000",
                     reason: "date before 2000 or exceeds 40 bits",
                 },
@@ -519,7 +519,7 @@ mod tests {
         assert!(matches!(
             Bandwidth::try_from(6),
             Err(crate::error::Error::InvalidValue(
-                broadcast_common::error::InvalidValue {
+                broadcast_core::error::InvalidValue {
                     field: "bw",
                     value: 6,
                     ..
@@ -566,7 +566,7 @@ mod tests {
         assert_eq!(
             T2TimestampPayload::parse(&buf).err(),
             Some(crate::Error::ReservedBits(
-                broadcast_common::error::ReservedBits {
+                broadcast_core::error::ReservedBits {
                     field: "4-bit RFU",
                     expected: 0,
                     found: 8
@@ -580,7 +580,7 @@ mod tests {
         assert_eq!(
             T2TimestampPayload::parse(&[0x00; 10]).err(),
             Some(crate::Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
+                broadcast_core::error::BufferTooShort {
                     need: 11,
                     have: 10,
                     what: "T2TimestampPayload header"
@@ -820,7 +820,7 @@ mod tests {
         assert_eq!(
             p.set_emission_offset(too_many_seconds).err(),
             Some(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "seconds_since_2000",
                     value: SECONDS_SINCE_2000_MAX + 1,
                     max: SECONDS_SINCE_2000_MAX
@@ -907,7 +907,7 @@ mod tests {
         assert_eq!(
             p.set_emission_time_utc(before_2000, 0).err(),
             Some(crate::Error::InvalidField(
-                broadcast_common::error::InvalidField {
+                broadcast_core::error::InvalidField {
                     field: "seconds_since_2000",
                     reason: "date before 2000 or exceeds 40 bits"
                 }
@@ -917,7 +917,7 @@ mod tests {
         assert_eq!(
             p.set_emission_time_utc(dt, UTCO_MAX + 1).err(),
             Some(crate::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
+                broadcast_core::len::FieldOverflow {
                     field: "utco",
                     value: u64::from(UTCO_MAX + 1),
                     max: u64::from(UTCO_MAX)

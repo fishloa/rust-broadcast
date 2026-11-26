@@ -3,7 +3,7 @@
 //! `descriptor_loop_length`, `tier_is_ignored`, and every truncation boundary
 //! (ANSI/SCTE 35 2023r1 §9.6.1, Table 5).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::Error;
 use scte35_splice::commands::{AnyCommand, PrivateCommand};
 use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
@@ -104,7 +104,7 @@ fn a_section_shorter_than_the_fixed_header_and_crc_is_rejected() {
     assert_eq!(
         SpliceInfoSection::parse(&bytes),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 18,
                 have: 13,
                 what: "splice_info_section body + CRC",
@@ -139,7 +139,7 @@ fn a_command_cut_short_of_its_declared_length_reports_the_exact_need() {
     assert_eq!(
         SpliceInfoSection::parse(&bytes),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 1 + 304 + 2,
                 have: 3,
                 what: "splice_info_section command + descriptor_loop_length",
@@ -153,7 +153,7 @@ fn a_short_buffer_below_the_fixed_header_is_rejected() {
     assert_eq!(
         SpliceInfoSection::parse(&[0xFC, 0x30, 0x00]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 18,
                 have: 3,
                 what: "splice_info_section header",

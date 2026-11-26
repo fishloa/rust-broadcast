@@ -51,7 +51,7 @@ because of one bad segment.
 ## Quick start
 
 ```rust
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_subtitle::{PesDataField, DATA_IDENTIFIER, SYNC_BYTE, END_OF_PES_MARKER};
 
 let bytes = [

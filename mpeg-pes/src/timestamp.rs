@@ -154,7 +154,7 @@ impl From<Clock33> for Dts {
 pub(crate) fn read(b: &[u8], prefix: u8, what: &'static str) -> Result<u64> {
     if b.len() < FIELD_LEN {
         return Err(crate::error::Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: FIELD_LEN,
                 have: b.len(),
                 what,

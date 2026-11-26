@@ -1,7 +1,7 @@
 //! The data-field family through `broadcast_common::{Parse, Serialize}` on the real
 //! EN 301 775 data-field fixture (one of every typed data unit).
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use dvb_vbi::{
     ClosedCaptioningDataField, DataField, DataUnit, DataUnitPayload, MonochromeDataField,
     TeletextDataField, VpsDataField, WssDataField,

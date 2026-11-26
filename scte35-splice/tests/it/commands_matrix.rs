@@ -2,7 +2,7 @@
 //! fields (ANSI/SCTE 35 2023r1 §9.7.2 Table 9, §9.7.3 Table 10), plus the two
 //! empty commands' parse behaviour.
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 use scte35_splice::Error;
 use scte35_splice::commands::{
     BandwidthReservation, SpliceInsert, SpliceMode, SpliceNull, SpliceSchedule,
@@ -115,7 +115,7 @@ fn a_scheduled_event_truncated_after_its_flags_reports_the_exact_need() {
     assert_eq!(
         SpliceSchedule::parse(&[0x01, 0x01, 0x02, 0x03, 0x04, 0x7F]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 7,
                 have: 6,
                 what: "splice_schedule event flags",
@@ -168,7 +168,7 @@ fn splice_insert_truncated_after_the_event_id_needs_the_flags_byte() {
     assert_eq!(
         SpliceInsert::parse(&[0x01, 0x02, 0x03, 0x04, 0x00]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 6,
                 have: 5,
                 what: "splice_insert flags",
@@ -183,7 +183,7 @@ fn splice_insert_component_mode_missing_the_count_needs_one_more_byte() {
     assert_eq!(
         SpliceInsert::parse(&[0x01, 0x02, 0x03, 0x04, 0x00, 0x08]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 7,
                 have: 6,
                 what: "splice_insert component_count",
@@ -198,7 +198,7 @@ fn splice_insert_component_mode_missing_the_trailer_reports_the_exact_need() {
     assert_eq!(
         SpliceInsert::parse(&[0x01, 0x02, 0x03, 0x04, 0x00, 0x08, 0x00]),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 11,
                 have: 7,
                 what: "splice_insert trailer",
@@ -233,7 +233,7 @@ fn a_second_scheduled_event_truncated_in_its_header_reports_the_absolute_need() 
     assert_eq!(
         SpliceSchedule::parse(&bytes),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 25,
                 have: 24,
                 what: "splice_schedule event header",
@@ -250,7 +250,7 @@ fn a_second_scheduled_event_missing_its_trailer_reports_the_absolute_need() {
     assert_eq!(
         SpliceSchedule::parse(&bytes),
         Err(Error::BufferTooShort(
-            broadcast_common::error::BufferTooShort {
+            broadcast_core::error::BufferTooShort {
                 need: 34,
                 have: 30,
                 what: "splice_schedule event trailer",
