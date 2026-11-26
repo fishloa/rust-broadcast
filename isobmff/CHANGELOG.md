@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tier 1 box types and a tested coverage table (issue #4167).** New typed,
+  private-field boxes with builders, accessors and symmetric parse/serialize:
+  audio signalling `chnl`/`dmix`/`ludt` (`tlou`, `alou`)/`labl`; track
+  description `elng`/`kind`/`trgr` (`msrc`, `ster`)/`tsel`/`stvi`; indexing
+  `ssix`/`leva`/`pdin`/`trep`; sample tables `csgp`/`stdp`/`padb`/`stsg`.
+  `elng`, `trgr`, `leva` and `trep` are typed in their containers, `kind`,
+  `labl`, `ludt` and `tsel` in a track's `udta`, `stvi` in `schi`, and
+  `csgp`/`stdp`/`padb` in `stbl`. `TrackInfo` now exposes the extended
+  language, track groups, kinds, labels, loudness and track selection;
+  `SampleEntryInfo` exposes an audio entry's `chnl`/`dmix`; `FragmentInfo`
+  exposes the `ssix` and `leva` beside the `sidx`. `TrackBox::sample_group_mappings`
+  reads both `sbgp` and `csgp` through the one `SampleGroupMapping` lookup.
+  `coverage::TYPED_BOXES` is the crate's typed registry set (76 of 167
+  ISO/IEC 14496-12:2026 box types), each row proving itself against a minimal
+  box, and `tests/it/coverage.rs` pins every remaining type under its issue
+  tier so the README count cannot drift.
+
 - `sample_table::CursorState::new_with_aux` and `TrackCursor::new_with_aux`
   surface a progressive track's `stbl`-level `senc` on every `SampleRef::aux`,
   one entry per declared sample, so a protected progressive file reads exactly

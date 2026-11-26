@@ -3915,6 +3915,9 @@ impl MediaBox {
         if let Some(ref b) = self.minf {
             out.push(b);
         }
+        if let Some(ref b) = self.elng {
+            out.push(b);
+        }
         out
     }
 
@@ -3929,6 +3932,9 @@ impl MediaBox {
         }
         if self.minf.is_some() {
             out.push(b"minf" as &'static [u8; BOX_TYPE_SIZE]);
+        }
+        if self.elng.is_some() {
+            out.push(b"elng" as &'static [u8; BOX_TYPE_SIZE]);
         }
         out
     }

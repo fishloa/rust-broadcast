@@ -12,7 +12,7 @@
 //!
 //! Every type implements the symmetric [`Parse`]/[`Serialize`] pair. The
 //! bit-packed bodies are read and written with
-//! [`broadcast_core::bits`](broadcast_core::bits) so a reserved field's width
+//! [`broadcast_core::bits`] so a reserved field's width
 //! is never an arithmetic guess.
 
 use alloc::vec::Vec;
@@ -58,6 +58,51 @@ const V1_STREAM_STRUCTURE_BITS: u32 = 4;
 const V1_ORDER_RESERVED_BITS: u32 = 4;
 /// Bits in `channel_order_definition`.
 const V1_ORDER_DEFINITION_BITS: u32 = 3;
+
+/// Bit width of an ISO/IEC 23091-3 `OutputChannelPosition`.
+const SPEAKER_POSITION_BITS: u32 = 8;
+/// Bit width of an explicit `azimuth`.
+const AZIMUTH_BITS: u32 = 16;
+/// Bit width of an explicit `elevation`.
+const ELEVATION_BITS: u32 = 8;
+/// Bits of the 64-bit `omittedChannelsMap`.
+const OMITTED_CHANNELS_MAP_BITS: u32 = 64;
+/// Bit width of a version-0 `stream_structure`.
+const CHNL_V0_STREAM_STRUCTURE_BITS: u32 = 8;
+/// Bit width of `targetLayout` in a downmix instruction.
+const DMIX_TARGET_LAYOUT_BITS: u32 = 8;
+/// Bit width of `mae_group_ID`.
+const LOUDNESS_MAE_GROUP_ID_BITS: u32 = 7;
+/// Bit width of `mae_group_preset_ID`.
+const LOUDNESS_MAE_PRESET_BITS: u32 = 5;
+/// Bit width of `EQ_set_ID`.
+const LOUDNESS_EQ_SET_BITS: u32 = 6;
+/// Bit width of `downmix_ID`.
+const LOUDNESS_DOWNMIX_ID_BITS: u32 = 7;
+/// Bit width of `DRC_set_ID`.
+const LOUDNESS_DRC_SET_BITS: u32 = 6;
+/// Bit width of a true-peak measurement system or a measurement system.
+const LOUDNESS_MEASUREMENT_SYSTEM_BITS: u32 = 4;
+/// Bit width of a true-peak reliability or a measurement reliability.
+const LOUDNESS_RELIABILITY_BITS: u32 = 4;
+/// Bit width of `measurement_count`.
+const LOUDNESS_MEASUREMENT_COUNT_BITS: u32 = 8;
+/// Bit width of `method_definition`.
+const LOUDNESS_METHOD_DEFINITION_BITS: u32 = 8;
+/// Bit width of `method_value`.
+const LOUDNESS_METHOD_VALUE_BITS: u32 = 8;
+/// Bits of the reserved field before `downmix_ID` in a loudness entry.
+const LOUDNESS_ENTRY_RESERVED_BITS: u32 = 3;
+/// Bits of the reserved field before `EQ_set_ID`.
+const LOUDNESS_EQ_RESERVED_BITS: u32 = 2;
+/// Bits of the reserved field before an MAE group id.
+const LOUDNESS_MAE_RESERVED_BITS: u32 = 1;
+/// Bits of the reserved field before `mae_group_preset_ID`.
+const LOUDNESS_MAE_PRESET_RESERVED_BITS: u32 = 3;
+/// Bits of the reserved field in a version-1 loudness header.
+const LOUDNESS_LEGACY_RESERVED_BITS: u32 = 2;
+/// Width of `label_id` in a `labl` box.
+const LABL_LABEL_ID_LEN: usize = core::mem::size_of::<u16>();
 
 /// One speaker position entry of a channel layout (§12.2.4.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,10 +154,11 @@ impl SpeakerPosition {
     }
 
     fn parse(reader: &mut BitReader<'_>) -> Result<Self> {
-        let speaker_position = wire_bits(reader, 8, "chnl speaker_position")? as u8;
+        let speaker_position =
+            wire_bits(reader, SPEAKER_POSITION_BITS, "chnl speaker_position")? as u8;
         let (azimuth, elevation) = if speaker_position == SPEAKER_POSITION_EXPLICIT {
-            let azimuth = wire_bits(reader, 16, "chnl azimuth")? as u16 as i16;
-            let elevation = wire_bits(reader, 8, "chnl elevation")? as u8 as i8;
+            let azimuth = wire_bits(reader, AZIMUTH_BITS, "chnl azimuth")? as u16 as i16;
+            let elevation = wire_bits(reader, ELEVATION_BITS, "chnl elevation")? as u8 as i8;
             (Some(azimuth), Some(elevation))
         } else {
             (None, None)
@@ -128,7 +174,7 @@ impl SpeakerPosition {
         write_bits(
             writer,
             u64::from(self.speaker_position),
-            8,
+            SPEAKER_POSITION_BITS,
             "chnl speaker_position",
         )?;
         if self.speaker_position == SPEAKER_POSITION_EXPLICIT {
@@ -138,8 +184,18 @@ impl SpeakerPosition {
             let Some(elevation) = self.elevation else {
                 return Err(invalid("chnl explicit position without elevation"));
             };
-            write_bits(writer, u64::from(azimuth as u16), 16, "chnl azimuth")?;
-            write_bits(writer, u64::from(elevation as u8), 8, "chnl elevation")?;
+            write_bits(
+                writer,
+                u64::from(azimuth as u16),
+                AZIMUTH_BITS,
+                "chnl azimuth",
+            )?;
+            write_bits(
+                writer,
+                u64::from(elevation as u8),
+                ELEVATION_BITS,
+                "chnl elevation",
+            )?;
         }
         Ok(())
     }
@@ -363,7 +419,11 @@ impl ChannelLayoutBox {
             object_count: None,
         };
         if version == CHNL_VERSION_BYTE {
-            layout.stream_structure = wire_bits(&mut reader, 8, "chnl stream_structure")? as u8;
+            layout.stream_structure = wire_bits(
+                &mut reader,
+                CHNL_V0_STREAM_STRUCTURE_BITS,
+                "chnl stream_structure",
+            )? as u8;
             Self::parse_structure(&mut layout, &mut reader, None)?;
         } else {
             layout.stream_structure = wire_bits(
@@ -377,7 +437,7 @@ impl ChannelLayoutBox {
                 "chnl format_ordering",
             )? as u8));
             layout.base_channel_count =
-                Some(wire_bits(&mut reader, 8, "chnl baseChannelCount")? as u8);
+                Some(wire_bits(&mut reader, u8::BITS, "chnl baseChannelCount")? as u8);
             Self::parse_structure(&mut layout, &mut reader, Some(version))?;
         }
         Ok(layout)
@@ -389,16 +449,16 @@ impl ChannelLayoutBox {
         version: Option<u8>,
     ) -> Result<()> {
         if layout.stream_structure & STREAM_STRUCTURE_CHANNEL != 0 {
-            let defined_layout = wire_bits(reader, 8, "chnl definedLayout")? as u8;
+            let defined_layout = wire_bits(reader, u8::BITS, "chnl definedLayout")? as u8;
             layout.defined_layout = Some(defined_layout);
             if defined_layout == 0 {
                 if version.is_some() {
-                    let count = wire_bits(reader, 8, "chnl layout_channel_count")? as usize;
+                    let count = wire_bits(reader, u8::BITS, "chnl layout_channel_count")? as usize;
                     layout.layout_channel_count = Some(count as u8);
                     layout.speaker_positions = read_positions(reader, count)?;
                 } else {
                     let mut positions = Vec::new();
-                    while reader.bits_remaining() >= 8 {
+                    while reader.bits_remaining() >= u8::BITS as usize {
                         positions.push(SpeakerPosition::parse(reader)?);
                     }
                     layout.speaker_positions = positions;
@@ -410,22 +470,16 @@ impl ChannelLayoutBox {
                 layout.channel_order_definition = Some(order);
                 let present = wire_bits(reader, 1, "chnl omitted_channels_present")? != 0;
                 if present {
-                    layout.omitted_channels_map = Some(wire_bits(
-                        reader,
-                        (OMITTED_CHANNELS_LEN * 8) as u32,
-                        "chnl map",
-                    )?);
+                    layout.omitted_channels_map =
+                        Some(wire_bits(reader, OMITTED_CHANNELS_MAP_BITS, "chnl map")?);
                 }
             } else {
-                layout.omitted_channels_map = Some(wire_bits(
-                    reader,
-                    (OMITTED_CHANNELS_LEN * 8) as u32,
-                    "chnl map",
-                )?);
+                layout.omitted_channels_map =
+                    Some(wire_bits(reader, OMITTED_CHANNELS_MAP_BITS, "chnl map")?);
             }
         }
         if layout.stream_structure & STREAM_STRUCTURE_OBJECT != 0 && version.is_none() {
-            layout.object_count = Some(wire_bits(reader, 8, "chnl object_count")? as u8);
+            layout.object_count = Some(wire_bits(reader, u8::BITS, "chnl object_count")? as u8);
         }
         Ok(())
     }
@@ -475,7 +529,7 @@ impl ChannelLayoutBox {
         let mut len = if self.version == CHNL_VERSION_BYTE {
             1
         } else {
-            2
+            core::mem::size_of::<u16>()
         };
         if self.is_channel_structured() {
             len += 1;
@@ -505,7 +559,7 @@ impl ChannelLayoutBox {
             write_bits(
                 &mut writer,
                 u64::from(self.stream_structure),
-                8,
+                CHNL_V0_STREAM_STRUCTURE_BITS,
                 "chnl stream_structure",
             )?;
             self.write_structure(&mut writer)?;
@@ -528,7 +582,12 @@ impl ChannelLayoutBox {
             let base = self
                 .base_channel_count
                 .ok_or_else(|| invalid("chnl missing baseChannelCount"))?;
-            write_bits(&mut writer, u64::from(base), 8, "chnl baseChannelCount")?;
+            write_bits(
+                &mut writer,
+                u64::from(base),
+                u8::BITS,
+                "chnl baseChannelCount",
+            )?;
             self.write_structure(&mut writer)?;
         }
         writer.align_to_byte();
@@ -542,13 +601,23 @@ impl ChannelLayoutBox {
             let defined_layout = self
                 .defined_layout
                 .ok_or_else(|| invalid("chnl missing definedLayout"))?;
-            write_bits(writer, u64::from(defined_layout), 8, "chnl definedLayout")?;
+            write_bits(
+                writer,
+                u64::from(defined_layout),
+                u8::BITS,
+                "chnl definedLayout",
+            )?;
             if defined_layout == 0 {
                 if self.version != CHNL_VERSION_BYTE {
                     let count = self
                         .layout_channel_count
                         .ok_or_else(|| invalid("chnl missing layout_channel_count"))?;
-                    write_bits(writer, u64::from(count), 8, "chnl layout_channel_count")?;
+                    write_bits(
+                        writer,
+                        u64::from(count),
+                        u8::BITS,
+                        "chnl layout_channel_count",
+                    )?;
                 }
                 for position in &self.speaker_positions {
                     position.serialize(writer)?;
@@ -570,7 +639,7 @@ impl ChannelLayoutBox {
                     )?;
                 }
                 if let Some(map) = self.omitted_channels_map {
-                    write_bits(writer, map, (OMITTED_CHANNELS_LEN * 8) as u32, "chnl map")?;
+                    write_bits(writer, map, OMITTED_CHANNELS_MAP_BITS, "chnl map")?;
                 } else if self.version == CHNL_VERSION_BYTE {
                     return Err(invalid("chnl definedLayout needs omittedChannelsMap"));
                 }
@@ -580,7 +649,7 @@ impl ChannelLayoutBox {
             write_bits(
                 writer,
                 u64::from(self.object_count.unwrap_or(0)),
-                8,
+                u8::BITS,
                 "chnl object_count",
             )?;
         }
@@ -593,7 +662,7 @@ fn position_len(positions: &[SpeakerPosition]) -> usize {
         .iter()
         .map(|p| {
             if p.speaker_position == SPEAKER_POSITION_EXPLICIT {
-                1 + 2 + 1
+                1 + core::mem::size_of::<u16>() + 1
             } else {
                 1
             }
@@ -732,7 +801,7 @@ impl DownMixInstruction {
 /// `baseChannelCount` is not carried in the box (it comes from the audio
 /// sample entry / `chnl` layout), so parsing a box whose coefficients are
 /// out of stream requires it: use
-/// [`DownMixInstructionsBox::parse_with_base_channel_count`].
+/// [`DownMixInstructionsBox::parse_body_with_base_channel_count`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -797,7 +866,8 @@ impl DownMixInstructionsBox {
         let mut instructions =
             Vec::with_capacity(bounded_entry_count(body.len(), FULLBOX_EXTRA_SIZE, count));
         for _ in 0..count {
-            let target_layout = wire_bits(&mut reader, 8, "dmix targetLayout")? as u8;
+            let target_layout =
+                wire_bits(&mut reader, DMIX_TARGET_LAYOUT_BITS, "dmix targetLayout")? as u8;
             wire_bits(&mut reader, 1, "dmix reserved")?;
             let target_channel_count = wire_bits(
                 &mut reader,
@@ -870,7 +940,11 @@ impl Serialize for DownMixInstructionsBox {
             (1 + DMIX_COUNT_BITS) as usize
         };
         for instruction in &self.instructions {
-            bits += 8 + 1 + DMIX_TARGET_CHANNEL_BITS as usize + 1 + DMIX_ID_BITS as usize;
+            bits += u8::BITS as usize
+                + 1
+                + DMIX_TARGET_CHANNEL_BITS as usize
+                + 1
+                + DMIX_ID_BITS as usize;
             if self.version != 0 {
                 if !instruction.in_stream {
                     bits += DMIX_OFFSET_BITS as usize
@@ -902,7 +976,7 @@ impl Serialize for DownMixInstructionsBox {
             write_bits(
                 &mut writer,
                 u64::from(instruction.target_layout),
-                8,
+                DMIX_TARGET_LAYOUT_BITS,
                 "dmix targetLayout",
             )?;
             write_bits(&mut writer, 0, 1, "dmix reserved")?;
@@ -964,9 +1038,9 @@ fn round_up(value: usize, to: usize) -> usize {
 // ---------------------------------------------------------------------------
 
 /// First loudness version with per-entry `EQ_set_ID` and a counted base list.
-const LOUDNESS_VERSION_ONE: u8 = 1;
+const LOUDNESS_FIRST_VERSION: u8 = 1;
 /// First loudness version with `loudness_info_type` and the MAE group id.
-const LOUDNESS_VERSION_TWO: u8 = 2;
+const LOUDNESS_INFO_VERSION: u8 = 2;
 /// The 12-bit signed peak fields' bit width.
 const LOUDNESS_PEAK_BITS: u32 = 12;
 /// The 12-bit signed peak fields' modulus.
@@ -1284,22 +1358,37 @@ impl LoudnessBaseBox {
             mae_group_preset_id: None,
             entries: Vec::new(),
         };
-        let count = if version >= LOUDNESS_VERSION_TWO {
+        let count = if version >= LOUDNESS_INFO_VERSION {
             let info_type =
                 wire_bits(&mut reader, LOUDNESS_INFO_TYPE_BITS, "loudness info_type")? as u8;
             box_.loudness_info_type = Some(info_type);
             let count = wire_bits(&mut reader, LOUDNESS_COUNT_BITS, "loudness count")? as usize;
             if info_type == LOUDNESS_INFO_MAE_GROUP || info_type == LOUDNESS_INFO_MAE_GROUP_ALT {
                 wire_bits(&mut reader, 1, "loudness reserved")?;
-                box_.mae_group_id = Some(wire_bits(&mut reader, 7, "loudness mae_group_ID")? as u8);
+                box_.mae_group_id = Some(wire_bits(
+                    &mut reader,
+                    LOUDNESS_MAE_GROUP_ID_BITS,
+                    "loudness mae_group_ID",
+                )? as u8);
             } else if info_type == LOUDNESS_INFO_MAE_PRESET {
-                wire_bits(&mut reader, 3, "loudness reserved")?;
-                box_.mae_group_preset_id =
-                    Some(wire_bits(&mut reader, 5, "loudness mae_group_preset_ID")? as u8);
+                wire_bits(
+                    &mut reader,
+                    LOUDNESS_MAE_PRESET_RESERVED_BITS,
+                    "loudness reserved",
+                )?;
+                box_.mae_group_preset_id = Some(wire_bits(
+                    &mut reader,
+                    LOUDNESS_MAE_PRESET_BITS,
+                    "loudness mae_group_preset_ID",
+                )? as u8);
             }
             count
-        } else if version == LOUDNESS_VERSION_ONE {
-            wire_bits(&mut reader, 2, "loudness reserved")?;
+        } else if version == LOUDNESS_FIRST_VERSION {
+            wire_bits(
+                &mut reader,
+                LOUDNESS_LEGACY_RESERVED_BITS,
+                "loudness reserved",
+            )?;
             wire_bits(&mut reader, LOUDNESS_COUNT_BITS, "loudness count")? as usize
         } else {
             1
@@ -1314,29 +1403,46 @@ impl LoudnessBaseBox {
 
     fn body_bits(&self) -> usize {
         let mut bits = 0usize;
-        if self.version >= LOUDNESS_VERSION_TWO {
+        if self.version >= LOUDNESS_INFO_VERSION {
             bits += (LOUDNESS_INFO_TYPE_BITS + LOUDNESS_COUNT_BITS) as usize;
             match self.loudness_info_type.unwrap_or(0) {
-                LOUDNESS_INFO_MAE_GROUP | LOUDNESS_INFO_MAE_GROUP_ALT => bits += 1 + 7,
-                LOUDNESS_INFO_MAE_PRESET => bits += 3 + 5,
+                LOUDNESS_INFO_MAE_GROUP | LOUDNESS_INFO_MAE_GROUP_ALT => {
+                    bits +=
+                        LOUDNESS_MAE_RESERVED_BITS as usize + LOUDNESS_MAE_GROUP_ID_BITS as usize
+                }
+                LOUDNESS_INFO_MAE_PRESET => {
+                    bits += LOUDNESS_MAE_PRESET_RESERVED_BITS as usize
+                        + LOUDNESS_MAE_PRESET_BITS as usize
+                }
                 _ => {}
             }
-        } else if self.version == LOUDNESS_VERSION_ONE {
-            bits += 2 + LOUDNESS_COUNT_BITS as usize;
+        } else if self.version == LOUDNESS_FIRST_VERSION {
+            bits += LOUDNESS_LEGACY_RESERVED_BITS as usize + LOUDNESS_COUNT_BITS as usize;
         }
         for entry in &self.entries {
             if self.version != 0 {
-                bits += 2 + 6;
+                bits += LOUDNESS_EQ_RESERVED_BITS as usize + LOUDNESS_EQ_SET_BITS as usize;
             }
-            bits += 3 + 7 + 6 + 12 + 12 + 4 + 4 + 8;
-            bits += entry.measurements.len() * (8 + 8 + 4 + 4);
+            bits += LOUDNESS_ENTRY_RESERVED_BITS as usize
+                + LOUDNESS_DOWNMIX_ID_BITS as usize
+                + LOUDNESS_DRC_SET_BITS as usize
+                + LOUDNESS_PEAK_BITS as usize
+                + LOUDNESS_PEAK_BITS as usize
+                + LOUDNESS_MEASUREMENT_SYSTEM_BITS as usize
+                + LOUDNESS_RELIABILITY_BITS as usize
+                + LOUDNESS_MEASUREMENT_COUNT_BITS as usize;
+            bits += entry.measurements.len()
+                * (LOUDNESS_METHOD_DEFINITION_BITS as usize
+                    + LOUDNESS_METHOD_VALUE_BITS as usize
+                    + LOUDNESS_MEASUREMENT_SYSTEM_BITS as usize
+                    + LOUDNESS_RELIABILITY_BITS as usize);
         }
         bits
     }
 
     fn write_body(&self, buf: &mut [u8]) -> Result<usize> {
         let mut writer = BitBuf::new();
-        if self.version >= LOUDNESS_VERSION_TWO {
+        if self.version >= LOUDNESS_INFO_VERSION {
             let info_type = self.loudness_info_type.unwrap_or(0);
             write_bits(
                 &mut writer,
@@ -1350,20 +1456,30 @@ impl LoudnessBaseBox {
                 write_bits(
                     &mut writer,
                     u64::from(self.mae_group_id.unwrap_or(0)),
-                    7,
+                    LOUDNESS_MAE_GROUP_ID_BITS,
                     "loudness mae_group_ID",
                 )?;
             } else if info_type == LOUDNESS_INFO_MAE_PRESET {
-                write_bits(&mut writer, 0, 3, "loudness reserved")?;
+                write_bits(
+                    &mut writer,
+                    0,
+                    LOUDNESS_MAE_PRESET_RESERVED_BITS,
+                    "loudness reserved",
+                )?;
                 write_bits(
                     &mut writer,
                     u64::from(self.mae_group_preset_id.unwrap_or(0)),
-                    5,
+                    LOUDNESS_MAE_PRESET_BITS,
                     "loudness mae_group_preset_ID",
                 )?;
             }
-        } else if self.version == LOUDNESS_VERSION_ONE {
-            write_bits(&mut writer, 0, 2, "loudness reserved")?;
+        } else if self.version == LOUDNESS_FIRST_VERSION {
+            write_bits(
+                &mut writer,
+                0,
+                LOUDNESS_LEGACY_RESERVED_BITS,
+                "loudness reserved",
+            )?;
             write_count(&mut writer, self.entries.len())?;
         }
         for entry in &self.entries {
@@ -1388,14 +1504,14 @@ fn write_count(writer: &mut BitBuf, count: usize) -> Result<()> {
 
 fn parse_loudness_entry(version: u8, reader: &mut BitReader<'_>) -> Result<LoudnessEntry> {
     let eq_set_id = if version != 0 {
-        wire_bits(reader, 2, "loudness reserved")?;
-        Some(wire_bits(reader, 6, "loudness EQ_set_ID")? as u8)
+        wire_bits(reader, LOUDNESS_EQ_RESERVED_BITS, "loudness reserved")?;
+        Some(wire_bits(reader, LOUDNESS_EQ_SET_BITS, "loudness EQ_set_ID")? as u8)
     } else {
         None
     };
-    wire_bits(reader, 3, "loudness reserved")?;
-    let downmix_id = wire_bits(reader, 7, "loudness downmix_ID")? as u8;
-    let drc_set_id = wire_bits(reader, 6, "loudness DRC_set_ID")? as u8;
+    wire_bits(reader, LOUDNESS_ENTRY_RESERVED_BITS, "loudness reserved")?;
+    let downmix_id = wire_bits(reader, LOUDNESS_DOWNMIX_ID_BITS, "loudness downmix_ID")? as u8;
+    let drc_set_id = wire_bits(reader, LOUDNESS_DRC_SET_BITS, "loudness DRC_set_ID")? as u8;
     let sample_peak_level = sext(
         wire_bits(reader, LOUDNESS_PEAK_BITS, "loudness sample_peak")?,
         LOUDNESS_PEAK_BITS,
@@ -1404,16 +1520,35 @@ fn parse_loudness_entry(version: u8, reader: &mut BitReader<'_>) -> Result<Loudn
         wire_bits(reader, LOUDNESS_PEAK_BITS, "loudness true_peak")?,
         LOUDNESS_PEAK_BITS,
     );
-    let measurement_system_for_tp = wire_bits(reader, 4, "loudness TP system")? as u8;
-    let reliability_for_tp = wire_bits(reader, 4, "loudness TP reliability")? as u8;
-    let count = wire_bits(reader, 8, "loudness measurement_count")? as usize;
+    let measurement_system_for_tp = wire_bits(
+        reader,
+        LOUDNESS_MEASUREMENT_SYSTEM_BITS,
+        "loudness TP system",
+    )? as u8;
+    let reliability_for_tp =
+        wire_bits(reader, LOUDNESS_RELIABILITY_BITS, "loudness TP reliability")? as u8;
+    let count = wire_bits(
+        reader,
+        LOUDNESS_MEASUREMENT_COUNT_BITS,
+        "loudness measurement_count",
+    )? as usize;
     let mut measurements = Vec::with_capacity(count);
     for _ in 0..count {
         measurements.push(LoudnessMeasurement {
-            method_definition: wire_bits(reader, 8, "loudness method_definition")? as u8,
-            method_value: wire_bits(reader, 8, "loudness method_value")? as u8,
-            measurement_system: wire_bits(reader, 4, "loudness measurement_system")? as u8,
-            reliability: wire_bits(reader, 4, "loudness reliability")? as u8,
+            method_definition: wire_bits(
+                reader,
+                LOUDNESS_METHOD_DEFINITION_BITS,
+                "loudness method_definition",
+            )? as u8,
+            method_value: wire_bits(reader, LOUDNESS_METHOD_VALUE_BITS, "loudness method_value")?
+                as u8,
+            measurement_system: wire_bits(
+                reader,
+                LOUDNESS_MEASUREMENT_SYSTEM_BITS,
+                "loudness measurement_system",
+            )? as u8,
+            reliability: wire_bits(reader, LOUDNESS_RELIABILITY_BITS, "loudness reliability")?
+                as u8,
         });
     }
     Ok(LoudnessEntry {
@@ -1430,25 +1565,25 @@ fn parse_loudness_entry(version: u8, reader: &mut BitReader<'_>) -> Result<Loudn
 
 fn write_loudness_entry(version: u8, entry: &LoudnessEntry, writer: &mut BitBuf) -> Result<()> {
     if version != 0 {
-        write_bits(writer, 0, 2, "loudness reserved")?;
+        write_bits(writer, 0, LOUDNESS_EQ_RESERVED_BITS, "loudness reserved")?;
         write_bits(
             writer,
             u64::from(entry.eq_set_id.unwrap_or(0)),
-            6,
+            LOUDNESS_EQ_SET_BITS,
             "loudness EQ_set_ID",
         )?;
     }
-    write_bits(writer, 0, 3, "loudness reserved")?;
+    write_bits(writer, 0, LOUDNESS_ENTRY_RESERVED_BITS, "loudness reserved")?;
     write_bits(
         writer,
         u64::from(entry.downmix_id),
-        7,
+        LOUDNESS_DOWNMIX_ID_BITS,
         "loudness downmix_ID",
     )?;
     write_bits(
         writer,
         u64::from(entry.drc_set_id),
-        6,
+        LOUDNESS_DRC_SET_BITS,
         "loudness DRC_set_ID",
     )?;
     write_peak(writer, entry.sample_peak_level, "loudness sample_peak")?;
@@ -1456,40 +1591,45 @@ fn write_loudness_entry(version: u8, entry: &LoudnessEntry, writer: &mut BitBuf)
     write_bits(
         writer,
         u64::from(entry.measurement_system_for_tp),
-        4,
+        LOUDNESS_MEASUREMENT_SYSTEM_BITS,
         "loudness TP system",
     )?;
     write_bits(
         writer,
         u64::from(entry.reliability_for_tp),
-        4,
+        LOUDNESS_RELIABILITY_BITS,
         "loudness TP reliability",
     )?;
     let count = fit_u8(entry.measurements.len(), "loudness measurement_count")?;
-    write_bits(writer, u64::from(count), 8, "loudness measurement_count")?;
+    write_bits(
+        writer,
+        u64::from(count),
+        LOUDNESS_MEASUREMENT_COUNT_BITS,
+        "loudness measurement_count",
+    )?;
     for measurement in &entry.measurements {
         write_bits(
             writer,
             u64::from(measurement.method_definition),
-            8,
+            LOUDNESS_METHOD_DEFINITION_BITS,
             "loudness method_definition",
         )?;
         write_bits(
             writer,
             u64::from(measurement.method_value),
-            8,
+            LOUDNESS_METHOD_VALUE_BITS,
             "loudness method_value",
         )?;
         write_bits(
             writer,
             u64::from(measurement.measurement_system),
-            4,
+            LOUDNESS_MEASUREMENT_SYSTEM_BITS,
             "loudness measurement_system",
         )?;
         write_bits(
             writer,
             u64::from(measurement.reliability),
-            4,
+            LOUDNESS_RELIABILITY_BITS,
             "loudness reliability",
         )?;
     }
@@ -1502,7 +1642,7 @@ fn write_peak(writer: &mut BitBuf, value: i16, what: &'static str) -> Result<()>
 }
 
 fn sext(value: u64, bits: u32) -> i16 {
-    let shift = u32::BITS * 2 - bits;
+    let shift = u64::BITS - bits;
     ((value << shift) as i64 >> shift) as i16
 }
 
@@ -1797,7 +1937,7 @@ impl LabelBox {
         let version = body[0];
         let flags = u24_at(body, 1) & FULLBOX_FLAGS_MASK;
         let label_id = be_u16(body, FULLBOX_EXTRA_SIZE, "labl label_id")?;
-        let mut cursor = FULLBOX_EXTRA_SIZE + 2;
+        let mut cursor = FULLBOX_EXTRA_SIZE + LABL_LABEL_ID_LEN;
         let language = take_c_string(body, &mut cursor, "labl language")?;
         let label = take_c_string(body, &mut cursor, "labl label")?;
         Ok(Self {
@@ -1822,7 +1962,7 @@ impl<'a> Parse<'a> for LabelBox {
         }
         Self::parse_body(crate::box_types::box_body(
             bytes,
-            FULLBOX_EXTRA_SIZE + 2,
+            FULLBOX_EXTRA_SIZE + LABL_LABEL_ID_LEN,
             "labl box",
         )?)
     }
@@ -1835,7 +1975,7 @@ impl Serialize for LabelBox {
         box_len(
             BOX_HEADER_MIN_SIZE
                 + FULLBOX_EXTRA_SIZE
-                + 2
+                + LABL_LABEL_ID_LEN
                 + self.language.len()
                 + 1
                 + self.label.len()
@@ -1847,8 +1987,8 @@ impl Serialize for LabelBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = write_full_box_header(buf, &LABL, need, self.version, self.flags, false)?;
-        buf[c..c + 2].copy_from_slice(&self.label_id.to_be_bytes());
-        c += 2;
+        buf[c..c + LABL_LABEL_ID_LEN].copy_from_slice(&self.label_id.to_be_bytes());
+        c += LABL_LABEL_ID_LEN;
         c += write_c_string(buf, c, &self.language)?;
         c += write_c_string(buf, c, &self.label)?;
         Ok(c)

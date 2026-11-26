@@ -23,6 +23,8 @@ mod registry;
 mod sample_bytes_budget;
 mod sample_table;
 mod short_buffers;
+mod tier1_boxes;
+mod tier1_fixtures;
 mod timing;
 mod timing_groups;
 mod trait_round_trip;

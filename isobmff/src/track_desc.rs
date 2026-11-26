@@ -368,7 +368,11 @@ impl TrackGroupTypeBox {
         let body = crate::box_types::box_body(bytes, FULLBOX_EXTRA_SIZE, "track group box")?;
         let version = body[0];
         let flags = u24_at(body, 1) & FULLBOX_FLAGS_MASK;
-        need_in(body, FULLBOX_EXTRA_SIZE + 4, "track group body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
+            "track group body",
+        )?;
         let group_id = be_u32(body, FULLBOX_EXTRA_SIZE, "track_group_id")?;
         let rest = &body[FULLBOX_EXTRA_SIZE + 4..];
         let mut out = Self {
@@ -380,8 +384,7 @@ impl TrackGroupTypeBox {
             reserved: 0,
             trailing: Vec::new(),
         };
-        if fourcc == TRACK_GROUP_STER {
-            need_in(rest, 4, "ster left_view_flag")?;
+        if fourcc == TRACK_GROUP_STER && rest.len() >= core::mem::size_of::<u32>() {
             let word = be_u32(rest, 0, "ster left_view_flag")?;
             out.left_view_flag = Some(word & 1 != 0);
             out.reserved = word >> 1;
@@ -392,12 +395,12 @@ impl TrackGroupTypeBox {
     }
 
     fn serialized_len(&self) -> usize {
-        let extra = if self.group_type == TRACK_GROUP_STER {
-            4
+        let extra = if self.group_type == TRACK_GROUP_STER && self.left_view_flag.is_some() {
+            core::mem::size_of::<u32>()
         } else {
             self.trailing.len()
         };
-        box_len(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 4 + extra)
+        box_len(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>() + extra)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -405,13 +408,13 @@ impl TrackGroupTypeBox {
         need_out(buf, need)?;
         let mut c =
             write_full_box_header(buf, &self.group_type, need, self.version, self.flags, false)?;
-        buf[c..c + 4].copy_from_slice(&self.group_id.to_be_bytes());
-        c += 4;
-        if self.group_type == TRACK_GROUP_STER {
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.group_id.to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        if self.group_type == TRACK_GROUP_STER && self.left_view_flag.is_some() {
             let left = u32::from(self.left_view_flag.unwrap_or(false));
             let word = (self.reserved << 1) | left;
-            buf[c..c + 4].copy_from_slice(&word.to_be_bytes());
-            c += 4;
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&word.to_be_bytes());
+            c += core::mem::size_of::<u32>();
         } else {
             buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
             c += self.trailing.len();
@@ -553,7 +556,11 @@ impl TrackSelectionBox {
 
     /// Parse the payload after the 8-byte box header.
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, FULLBOX_EXTRA_SIZE + 4, "tsel body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
+            "tsel body",
+        )?;
         let version = body[0];
         let flags = u24_at(body, 1) & FULLBOX_FLAGS_MASK;
         let switch_group = be_u32(body, FULLBOX_EXTRA_SIZE, "tsel switch_group")? as i32;
@@ -589,7 +596,7 @@ impl<'a> Parse<'a> for TrackSelectionBox {
         }
         Self::parse_body(crate::box_types::box_body(
             bytes,
-            FULLBOX_EXTRA_SIZE + 4,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
             "tsel box",
         )?)
     }
@@ -600,7 +607,10 @@ impl Serialize for TrackSelectionBox {
 
     fn serialized_len(&self) -> usize {
         box_len(
-            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 4 + self.attributes.len() * BOX_TYPE_SIZE,
+            BOX_HEADER_MIN_SIZE
+                + FULLBOX_EXTRA_SIZE
+                + core::mem::size_of::<u32>()
+                + self.attributes.len() * BOX_TYPE_SIZE,
         )
     }
 
@@ -608,8 +618,8 @@ impl Serialize for TrackSelectionBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = write_full_box_header(buf, &TSEL, need, self.version, self.flags, false)?;
-        buf[c..c + 4].copy_from_slice(&self.switch_group.to_be_bytes());
-        c += 4;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.switch_group.to_be_bytes());
+        c += core::mem::size_of::<u32>();
         for attribute in &self.attributes {
             buf[c..c + BOX_TYPE_SIZE].copy_from_slice(attribute);
             c += BOX_TYPE_SIZE;
@@ -688,17 +698,21 @@ impl StereoVideoBox {
 
     /// Parse the payload after the 8-byte box header.
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, FULLBOX_EXTRA_SIZE + 8, "stvi body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u64>(),
+            "stvi body",
+        )?;
         let version = body[0];
         let flags = u24_at(body, 1) & FULLBOX_FLAGS_MASK;
         let mut c = FULLBOX_EXTRA_SIZE;
         let first = be_u32(body, c, "stvi single_view_allowed")?;
         let single_view_allowed = (first & STVI_SINGLE_VIEW_MASK) as u8;
-        c += 4;
+        c += core::mem::size_of::<u32>();
         let stereo_scheme = be_u32(body, c, "stvi stereo_scheme")?;
-        c += 4;
+        c += core::mem::size_of::<u32>();
         let length = be_u32(body, c, "stvi length")? as usize;
-        c += 4;
+        c += core::mem::size_of::<u32>();
         need_in(body, c + length, "stvi stereo_indication_type")?;
         let stereo_indication = body[c..c + length].to_vec();
         c += length;
@@ -723,7 +737,7 @@ impl<'a> Parse<'a> for StereoVideoBox {
         }
         Self::parse_body(crate::box_types::box_body(
             bytes,
-            FULLBOX_EXTRA_SIZE + 8,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u64>(),
             "stvi box",
         )?)
     }
@@ -736,9 +750,8 @@ impl Serialize for StereoVideoBox {
         box_len(
             BOX_HEADER_MIN_SIZE
                 + FULLBOX_EXTRA_SIZE
-                + 4
-                + 4
-                + 4
+                + core::mem::size_of::<u64>()
+                + core::mem::size_of::<u32>()
                 + self.stereo_indication.len()
                 + self.extra.len(),
         )
@@ -749,13 +762,13 @@ impl Serialize for StereoVideoBox {
         need_out(buf, need)?;
         let mut c = write_full_box_header(buf, &STVI, need, self.version, self.flags, false)?;
         let first = u32::from(self.single_view_allowed);
-        buf[c..c + 4].copy_from_slice(&first.to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&self.stereo_scheme.to_be_bytes());
-        c += 4;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&first.to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.stereo_scheme.to_be_bytes());
+        c += core::mem::size_of::<u32>();
         let length = fit_u32(self.stereo_indication.len(), "stvi length")?;
-        buf[c..c + 4].copy_from_slice(&length.to_be_bytes());
-        c += 4;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&length.to_be_bytes());
+        c += core::mem::size_of::<u32>();
         buf[c..c + self.stereo_indication.len()].copy_from_slice(&self.stereo_indication);
         c += self.stereo_indication.len();
         buf[c..c + self.extra.len()].copy_from_slice(&self.extra);

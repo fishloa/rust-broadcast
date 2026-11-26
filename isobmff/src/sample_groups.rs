@@ -48,7 +48,7 @@ use broadcast_core::{Parse, Serialize};
 // Wire-layout constants
 // ---------------------------------------------------------------------------
 
-const U32_PAIR_LEN: usize = core::mem::size_of::<u32>() * 2;
+const U32_PAIR_LEN: usize = core::mem::size_of::<u64>();
 const SGPD_ENTRY_PREFIX_LEN: usize = core::mem::size_of::<u32>();
 const SUBS_ENTRY_HEADER_LEN: usize = core::mem::size_of::<u32>() + core::mem::size_of::<u16>();
 const SUBS_V2_ENTRY_HEADER_LEN: usize = core::mem::size_of::<u32>() + core::mem::size_of::<u16>();
@@ -1815,21 +1815,25 @@ impl CompactSampleToGroupBox {
 
     /// Parse the payload after the 8-byte box header.
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, FULLBOX_EXTRA_SIZE + 8, "csgp body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u64>(),
+            "csgp body",
+        )?;
         let version = body[0];
         let flags = be_u32(body, 0, "csgp flags")? & FULLBOX_FLAGS_MASK;
         let mut c = FULLBOX_EXTRA_SIZE;
         let grouping_type = be_u32(body, c, "csgp grouping_type")?;
-        c += 4;
+        c += core::mem::size_of::<u32>();
         let grouping_type_parameter = if flags & (1 << CSGP_PARAMETER_BIT) != 0 {
             let value = be_u32(body, c, "csgp grouping_type_parameter")?;
-            c += 4;
+            c += core::mem::size_of::<u32>();
             Some(value)
         } else {
             None
         };
         let pattern_count = be_u32(body, c, "csgp pattern_count")? as usize;
-        c += 4;
+        c += core::mem::size_of::<u32>();
         let pattern_code = ((flags >> CSGP_PATTERN_CODE_SHIFT) & CSGP_CODE_MASK) as u8;
         let count_code = ((flags >> CSGP_COUNT_CODE_SHIFT) & CSGP_CODE_MASK) as u8;
         let index_code = ((flags >> CSGP_INDEX_CODE_SHIFT) & CSGP_CODE_MASK) as u8;
@@ -1837,7 +1841,7 @@ impl CompactSampleToGroupBox {
         let pattern_bits = (csgp_width(pattern_code) + csgp_width(count_code)) as usize;
         let mut lengths = Vec::with_capacity(bounded_entry_count(
             body.len().saturating_sub(c),
-            pattern_bits.div_ceil(8),
+            pattern_bits.div_ceil(u8::BITS as usize),
             pattern_count,
         ));
         let mut counts = lengths.clone();
@@ -1902,7 +1906,7 @@ impl<'a> Parse<'a> for CompactSampleToGroupBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(
             bytes,
-            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 8,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u64>(),
             "csgp box",
         )?;
         if be_u32(bytes, BOX_TYPE_OFFSET, "csgp box")? != u32::from_be_bytes(CSGP) {
@@ -1927,12 +1931,17 @@ impl Serialize for CompactSampleToGroupBox {
             bits += csgp_width(index_code) as usize * pattern.indices.len();
         }
         let parameter = if self.grouping_type_parameter.is_some() {
-            4
+            core::mem::size_of::<u32>()
         } else {
             0
         };
         crate::box_types::box_len(
-            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 4 + parameter + 4 + bits.div_ceil(8),
+            BOX_HEADER_MIN_SIZE
+                + FULLBOX_EXTRA_SIZE
+                + core::mem::size_of::<u32>()
+                + parameter
+                + core::mem::size_of::<u32>()
+                + bits.div_ceil(u8::BITS as usize),
         )
     }
 
@@ -1947,15 +1956,15 @@ impl Serialize for CompactSampleToGroupBox {
             self.flags,
             false,
         )?;
-        buf[c..c + 4].copy_from_slice(&self.grouping_type.to_be_bytes());
-        c += 4;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.grouping_type.to_be_bytes());
+        c += core::mem::size_of::<u32>();
         if let Some(parameter) = self.grouping_type_parameter {
-            buf[c..c + 4].copy_from_slice(&parameter.to_be_bytes());
-            c += 4;
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&parameter.to_be_bytes());
+            c += core::mem::size_of::<u32>();
         }
         let pattern_count = broadcast_core::len::fit_u32(self.patterns.len(), "pattern_count")?;
-        buf[c..c + 4].copy_from_slice(&pattern_count.to_be_bytes());
-        c += 4;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&pattern_count.to_be_bytes());
+        c += core::mem::size_of::<u32>();
         let (pattern_code, count_code, index_code) = self.size_codes();
         let mut writer = broadcast_core::bits::BitBuf::new();
         for pattern in &self.patterns {

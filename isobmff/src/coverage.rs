@@ -8,19 +8,20 @@
 //! Each row carries a `proves` function that parses a minimal box of that type
 //! through the real parser, so a row for a type the crate does not parse fails
 //! the coverage test. The private registry has 168 rows; the integration test
-//! `tests/coverage.rs` pins every type not listed here under its issue tier.
+//! `tests/it/coverage.rs` pins every type not listed here under its issue tier.
 
 use alloc::vec::Vec;
 
 use broadcast_core::Parse;
 
+use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE};
 use crate::error::Result;
 
 /// One typed box: its registry four-CC, the Rust type that parses it, and the
 /// proof that a minimal box of that type parses.
 pub struct TypedBox {
     /// The registry four-CC.
-    pub fourcc: [u8; 4],
+    pub fourcc: [u8; BOX_TYPE_SIZE],
     /// The four-CC as text.
     pub name: &'static str,
     /// The Rust type that carries the parse.
@@ -31,35 +32,42 @@ pub struct TypedBox {
 
 /// Whether this crate types `fourcc`.
 #[must_use]
-pub fn is_typed(fourcc: &[u8; 4]) -> bool {
+pub fn is_typed(fourcc: &[u8; BOX_TYPE_SIZE]) -> bool {
     TYPED_BOXES.iter().any(|row| row.fourcc == *fourcc)
 }
 
 /// A zero body long enough for any fixed-layout box; trailing bytes are not
 /// read by a whole-box parser.
-const ZERO: [u8; 128] = [0u8; 128];
+const MINIMAL_BODY_LEN: usize = 256;
+const MINIMAL_BODY: [u8; MINIMAL_BODY_LEN] = [0u8; MINIMAL_BODY_LEN];
 /// A zero body with `timescale` (body offset 12) set to 1.
-const TIMESCALE_AT_12: [u8; 128] = {
-    let mut body = [0u8; 128];
-    body[15] = 1;
+const MVHD_TIMESCALE_LOW_BYTE: usize = 12 + core::mem::size_of::<u32>() - 1;
+const TIMESCALE_AT_12: [u8; MINIMAL_BODY_LEN] = {
+    let mut body = [0u8; MINIMAL_BODY_LEN];
+    body[MVHD_TIMESCALE_LOW_BYTE] = 1;
     body
 };
 /// A zero body with the `sidx` `timescale` (body offset 8) set to 1.
-const TIMESCALE_AT_8: [u8; 128] = {
-    let mut body = [0u8; 128];
-    body[11] = 1;
+const SIDX_TIMESCALE_LOW_BYTE: usize = 8 + core::mem::size_of::<u32>() - 1;
+const TIMESCALE_AT_8: [u8; MINIMAL_BODY_LEN] = {
+    let mut body = [0u8; MINIMAL_BODY_LEN];
+    body[SIDX_TIMESCALE_LOW_BYTE] = 1;
     body
 };
 /// A zero `stz2` body with `field_size` set to 8.
-const STZ2_BODY: [u8; 128] = {
-    let mut body = [0u8; 128];
-    body[7] = 8;
+const STZ2_FIELD_SIZE_OFFSET: usize = 7;
+const STZ2_FIELD_SIZE_BITS: u8 = 8;
+const STZ2_BODY: [u8; MINIMAL_BODY_LEN] = {
+    let mut body = [0u8; MINIMAL_BODY_LEN];
+    body[STZ2_FIELD_SIZE_OFFSET] = STZ2_FIELD_SIZE_BITS;
     body
 };
 
-fn boxed(fourcc: [u8; 4], body: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(8 + body.len());
-    out.extend_from_slice(&((8 + body.len()) as u32).to_be_bytes());
+fn boxed(fourcc: [u8; BOX_TYPE_SIZE], body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(BOX_HEADER_MIN_SIZE + body.len());
+    let size = broadcast_core::len::fit_u32(BOX_HEADER_MIN_SIZE + body.len(), "minimal box size")
+        .unwrap_or(u32::MAX);
+    out.extend_from_slice(&size.to_be_bytes());
     out.extend_from_slice(&fourcc);
     out.extend_from_slice(body);
     out
@@ -79,110 +87,111 @@ macro_rules! leaf {
 // Fixed-layout leaves read a generous zero body; containers get a minimal
 // typed child.
 leaf! {
-    p_co64: b"co64", crate::init_segment::ChunkLargeOffsetBox, &ZERO;
-    p_cslg: b"cslg", crate::timing::CompositionToDecodeBox, &ZERO;
-    p_ctts: b"ctts", crate::timing::CompositionOffsetBox, &ZERO;
+    p_co64: b"co64", crate::init_segment::ChunkLargeOffsetBox, &MINIMAL_BODY;
+    p_cslg: b"cslg", crate::timing::CompositionToDecodeBox, &MINIMAL_BODY;
+    p_ctts: b"ctts", crate::timing::CompositionOffsetBox, &MINIMAL_BODY;
     p_dinf: b"dinf", crate::init_segment::DataInformationBox, &[];
-    p_dref: b"dref", crate::init_segment::DataReferenceBox, &ZERO;
-    p_elst: b"elst", crate::timing::EditListBox, &ZERO;
-    p_frma: b"frma", crate::cenc::OriginalFormatBox, &ZERO;
-    p_hdlr: b"hdlr", crate::init_segment::HandlerBox, &ZERO;
-    p_keys: b"keys", crate::metadata::Keys, &ZERO[..8];
+    p_dref: b"dref", crate::init_segment::DataReferenceBox, &MINIMAL_BODY;
+    p_elst: b"elst", crate::timing::EditListBox, &MINIMAL_BODY;
+    p_frma: b"frma", crate::cenc::OriginalFormatBox, &MINIMAL_BODY;
+    p_hdlr: b"hdlr", crate::init_segment::HandlerBox, &MINIMAL_BODY;
+    p_keys: b"keys", crate::metadata::Keys, &MINIMAL_BODY[..8];
     p_mdhd: b"mdhd", crate::init_segment::MediaHeaderBox, &TIMESCALE_AT_12;
     p_mdia: b"mdia", crate::init_segment::MediaBox, &[];
-    p_meta: b"meta", crate::metadata::Meta, &ZERO;
-    p_mfro: b"mfro", crate::timing::MovieFragmentRandomAccessOffsetBox, &ZERO;
+    p_meta: b"meta", crate::metadata::Meta, &MINIMAL_BODY;
+    p_mfro: b"mfro", crate::timing::MovieFragmentRandomAccessOffsetBox, &MINIMAL_BODY;
     p_minf: b"minf", crate::init_segment::MediaInformationBox, &[];
     p_mvhd: b"mvhd", crate::init_segment::MovieHeaderBox, &TIMESCALE_AT_12;
-    p_prft: b"prft", crate::sample_groups::ProducerReferenceTimeBox, &ZERO;
-    p_sbgp: b"sbgp", crate::sample_groups::SampleToGroupBox, &ZERO;
+    p_prft: b"prft", crate::sample_groups::ProducerReferenceTimeBox, &MINIMAL_BODY;
+    p_sbgp: b"sbgp", crate::sample_groups::SampleToGroupBox, &MINIMAL_BODY;
     p_schi: b"schi", crate::cenc::SchemeInformationBox, &[];
-    p_sdtp: b"sdtp", crate::init_segment::SampleDependencyTypeBox, &ZERO;
-    p_sgpd: b"sgpd", crate::sample_groups::SampleGroupDescriptionBox, &ZERO;
+    p_sdtp: b"sdtp", crate::init_segment::SampleDependencyTypeBox, &MINIMAL_BODY;
+    p_sgpd: b"sgpd", crate::sample_groups::SampleGroupDescriptionBox, &MINIMAL_BODY;
     p_sidx: b"sidx", crate::timing::SegmentIndexBox, &TIMESCALE_AT_8;
-    p_smhd: b"smhd", crate::init_segment::SoundMediaHeaderBox, &ZERO;
-    p_srat: b"srat", crate::init_segment::SamplingRateBox, &ZERO;
+    p_smhd: b"smhd", crate::init_segment::SoundMediaHeaderBox, &MINIMAL_BODY;
+    p_srat: b"srat", crate::init_segment::SamplingRateBox, &MINIMAL_BODY;
     p_stbl: b"stbl", crate::init_segment::SampleTableBox, &[];
-    p_stco: b"stco", crate::init_segment::ChunkOffsetBox, &ZERO;
-    p_stsc: b"stsc", crate::init_segment::SampleToChunkBox, &ZERO;
-    p_stsd: b"stsd", crate::init_segment::SampleDescriptionBox, &ZERO;
-    p_stss: b"stss", crate::init_segment::SyncSampleBox, &ZERO;
-    p_stsz: b"stsz", crate::init_segment::SampleSizeBox, &ZERO;
-    p_stts: b"stts", crate::timing::TimeToSampleBox, &ZERO;
+    p_stco: b"stco", crate::init_segment::ChunkOffsetBox, &MINIMAL_BODY;
+    p_stsc: b"stsc", crate::init_segment::SampleToChunkBox, &MINIMAL_BODY;
+    p_stsd: b"stsd", crate::init_segment::SampleDescriptionBox, &MINIMAL_BODY;
+    p_stss: b"stss", crate::init_segment::SyncSampleBox, &MINIMAL_BODY;
+    p_stsz: b"stsz", crate::init_segment::SampleSizeBox, &MINIMAL_BODY;
+    p_stts: b"stts", crate::timing::TimeToSampleBox, &MINIMAL_BODY;
     p_stz2: b"stz2", crate::init_segment::CompactSampleSizeBox, &STZ2_BODY;
-    p_subs: b"subs", crate::sample_groups::SubSampleInformationBox, &ZERO;
-    p_ssrt: b"ssrt", crate::sample_groups::SubSampleReferenceTableBox, &ZERO;
-    p_tfra: b"tfra", crate::timing::TrackFragmentRandomAccessBox, &ZERO;
-    p_tkhd: b"tkhd", crate::init_segment::TrackHeaderBox, &ZERO;
-    p_trex: b"trex", crate::init_segment::TrackExtendsBox, &ZERO;
+    p_subs: b"subs", crate::sample_groups::SubSampleInformationBox, &MINIMAL_BODY;
+    p_ssrt: b"ssrt", crate::sample_groups::SubSampleReferenceTableBox, &MINIMAL_BODY;
+    p_tfra: b"tfra", crate::timing::TrackFragmentRandomAccessBox, &MINIMAL_BODY;
+    p_tkhd: b"tkhd", crate::init_segment::TrackHeaderBox, &MINIMAL_BODY;
+    p_trex: b"trex", crate::init_segment::TrackExtendsBox, &MINIMAL_BODY;
     p_udta: b"udta", crate::metadata::Udta, &[];
-    p_vmhd: b"vmhd", crate::init_segment::VideoMediaHeaderBox, &ZERO;
-    p_chnl: b"chnl", crate::audio_boxes::ChannelLayoutBox, &ZERO;
-    p_dmix: b"dmix", crate::audio_boxes::DownMixInstructionsBox, &ZERO;
+    p_vmhd: b"vmhd", crate::init_segment::VideoMediaHeaderBox, &MINIMAL_BODY;
+    p_chnl: b"chnl", crate::audio_boxes::ChannelLayoutBox, &MINIMAL_BODY;
+    p_dmix: b"dmix", crate::audio_boxes::DownMixInstructionsBox, &MINIMAL_BODY;
     p_ludt: b"ludt", crate::audio_boxes::LoudnessBox, &[];
-    p_labl: b"labl", crate::audio_boxes::LabelBox, &ZERO;
-    p_elng: b"elng", crate::track_desc::ExtendedLanguageBox, &ZERO;
-    p_kind: b"kind", crate::track_desc::KindBox, &ZERO;
+    p_labl: b"labl", crate::audio_boxes::LabelBox, &MINIMAL_BODY;
+    p_elng: b"elng", crate::track_desc::ExtendedLanguageBox, &MINIMAL_BODY;
+    p_kind: b"kind", crate::track_desc::KindBox, &MINIMAL_BODY;
     p_trgr: b"trgr", crate::track_desc::TrackGroupBox, &[];
-    p_tsel: b"tsel", crate::track_desc::TrackSelectionBox, &ZERO;
-    p_stvi: b"stvi", crate::track_desc::StereoVideoBox, &ZERO;
-    p_ssix: b"ssix", crate::index_boxes::SubsegmentIndexBox, &ZERO;
-    p_leva: b"leva", crate::index_boxes::LevelAssignmentBox, &ZERO;
-    p_pdin: b"pdin", crate::index_boxes::ProgressiveDownloadInfoBox, &ZERO;
-    p_trep: b"trep", crate::index_boxes::TrackExtensionPropertiesBox, &ZERO;
-    p_csgp: b"csgp", crate::sample_groups::CompactSampleToGroupBox, &ZERO;
-    p_stdp: b"stdp", crate::sample_tables_extra::DegradationPriorityBox, &ZERO;
-    p_padb: b"padb", crate::sample_tables_extra::PaddingBitsBox, &ZERO;
-    p_stsg: b"stsg", crate::sample_tables_extra::SubTrackSampleGroupBox, &ZERO;
+    p_tsel: b"tsel", crate::track_desc::TrackSelectionBox, &MINIMAL_BODY;
+    p_stvi: b"stvi", crate::track_desc::StereoVideoBox, &MINIMAL_BODY;
+    p_ssix: b"ssix", crate::index_boxes::SubsegmentIndexBox, &MINIMAL_BODY;
+    p_leva: b"leva", crate::index_boxes::LevelAssignmentBox, &MINIMAL_BODY;
+    p_pdin: b"pdin", crate::index_boxes::ProgressiveDownloadInfoBox, &MINIMAL_BODY;
+    p_trep: b"trep", crate::index_boxes::TrackExtensionPropertiesBox, &MINIMAL_BODY;
+    p_csgp: b"csgp", crate::sample_groups::CompactSampleToGroupBox, &MINIMAL_BODY;
+    p_stdp: b"stdp", crate::sample_tables_extra::DegradationPriorityBox, &MINIMAL_BODY;
+    p_padb: b"padb", crate::sample_tables_extra::PaddingBitsBox, &MINIMAL_BODY;
+    p_stsg: b"stsg", crate::sample_tables_extra::SubTrackSampleGroupBox, &MINIMAL_BODY;
 }
 
 // Body-only visual extensions: their `Parse` takes the box payload, not the
 // header.
 fn p_mdat() -> Result<()> {
-    crate::segments::MediaDataBox::parse_box(&boxed(*b"mdat", &ZERO)).map(|_| ())
+    crate::segments::MediaDataBox::parse_box(&boxed(*b"mdat", &MINIMAL_BODY)).map(|_| ())
 }
 
 fn p_saio() -> Result<()> {
-    crate::cenc::SampleAuxInfoOffsetsBox::parse_box(&boxed(*b"saio", &ZERO)).map(|_| ())
+    crate::cenc::SampleAuxInfoOffsetsBox::parse_box(&boxed(*b"saio", &MINIMAL_BODY)).map(|_| ())
 }
 
 fn p_saiz() -> Result<()> {
-    crate::cenc::SampleAuxInfoSizesBox::parse_box(&boxed(*b"saiz", &ZERO)).map(|_| ())
+    crate::cenc::SampleAuxInfoSizesBox::parse_box(&boxed(*b"saiz", &MINIMAL_BODY)).map(|_| ())
 }
 
 fn p_schm() -> Result<()> {
-    crate::cenc::SchemeTypeBox::parse_body(&ZERO, 0, 0).map(|_| ())
+    crate::cenc::SchemeTypeBox::parse_body(&MINIMAL_BODY, 0, 0).map(|_| ())
 }
 
 fn p_clli() -> Result<()> {
-    crate::hdr_boxes::ContentLightLevel::parse(&ZERO[..4]).map(|_| ())
+    crate::hdr_boxes::ContentLightLevel::parse(&MINIMAL_BODY[..4]).map(|_| ())
 }
 
 fn p_mdcv() -> Result<()> {
-    crate::hdr_boxes::MasteringDisplayColourVolume::parse(&ZERO[..24]).map(|_| ())
+    crate::hdr_boxes::MasteringDisplayColourVolume::parse(&MINIMAL_BODY[..24]).map(|_| ())
 }
 
 fn p_pasp() -> Result<()> {
-    crate::visual_ext::PixelAspectRatioBox::parse(&ZERO[..8]).map(|_| ())
+    crate::visual_ext::PixelAspectRatioBox::parse(&MINIMAL_BODY[..8]).map(|_| ())
 }
 
 fn p_clap() -> Result<()> {
-    crate::visual_ext::CleanApertureBox::parse(&ZERO[..32]).map(|_| ())
+    crate::visual_ext::CleanApertureBox::parse(&MINIMAL_BODY[..32]).map(|_| ())
 }
 
 fn p_colr() -> Result<()> {
-    let mut body = [0u8; 11];
+    const COLR_NCLX_BODY_LEN: usize = 11;
+    let mut body = [0u8; COLR_NCLX_BODY_LEN];
     body[..4].copy_from_slice(b"nclx");
     crate::visual_ext::ColourInformationBox::parse(&body).map(|_| ())
 }
 
 fn p_edts() -> Result<()> {
-    let inner = boxed(*b"elst", &ZERO);
+    let inner = boxed(*b"elst", &MINIMAL_BODY);
     crate::init_segment::EditBox::parse(&boxed(*b"edts", &inner)).map(|_| ())
 }
 
 fn p_trak() -> Result<()> {
-    let inner = boxed(*b"tkhd", &ZERO);
+    let inner = boxed(*b"tkhd", &MINIMAL_BODY);
     crate::init_segment::TrackBox::parse(&boxed(*b"trak", &inner)).map(|_| ())
 }
 
@@ -192,46 +201,47 @@ fn p_moov() -> Result<()> {
 }
 
 fn p_tref() -> Result<()> {
-    let inner = boxed(*b"hint", &ZERO);
+    let inner = boxed(*b"hint", &MINIMAL_BODY);
     crate::track_reference::TrackReferenceBox::parse(&boxed(*b"tref", &inner)).map(|_| ())
 }
 
 fn p_mfra() -> Result<()> {
-    let body = boxed(*b"mfro", &ZERO);
+    let body = boxed(*b"mfro", &MINIMAL_BODY);
     crate::timing::MovieFragmentRandomAccessBox::parse(&boxed(*b"mfra", &body)).map(|_| ())
 }
 
 fn p_sinf() -> Result<()> {
-    let mut body = boxed(*b"frma", &ZERO).to_vec();
-    body.extend_from_slice(&boxed(*b"schm", &ZERO));
+    let mut body = boxed(*b"frma", &MINIMAL_BODY).to_vec();
+    body.extend_from_slice(&boxed(*b"schm", &MINIMAL_BODY));
     crate::cenc::ProtectionSchemeInfoBox::parse(&boxed(*b"sinf", &body)).map(|_| ())
 }
 
 fn p_mfhd() -> Result<()> {
-    crate::movie_fragment::MovieFragmentHeaderBox::parse_body(&ZERO).map(|_| ())
+    crate::movie_fragment::MovieFragmentHeaderBox::parse_body(&MINIMAL_BODY).map(|_| ())
 }
 
 fn p_tfhd() -> Result<()> {
-    crate::movie_fragment::TrackFragmentHeaderBox::parse_body(&ZERO).map(|_| ())
+    crate::movie_fragment::TrackFragmentHeaderBox::parse_body(&MINIMAL_BODY).map(|_| ())
 }
 
 fn p_tfdt() -> Result<()> {
-    crate::movie_fragment::TrackFragmentBaseMediaDecodeTimeBox::parse_body(&ZERO).map(|_| ())
+    crate::movie_fragment::TrackFragmentBaseMediaDecodeTimeBox::parse_body(&MINIMAL_BODY)
+        .map(|_| ())
 }
 
 fn p_trun() -> Result<()> {
-    crate::movie_fragment::TrackFragmentRunBox::parse_body(&ZERO).map(|_| ())
+    crate::movie_fragment::TrackFragmentRunBox::parse_body(&MINIMAL_BODY).map(|_| ())
 }
 
 fn p_moof() -> Result<()> {
-    let mut body = boxed(*b"mfhd", &ZERO);
-    body.extend_from_slice(&boxed(*b"traf", &boxed(*b"tfhd", &ZERO)));
+    let mut body = boxed(*b"mfhd", &MINIMAL_BODY);
+    body.extend_from_slice(&boxed(*b"traf", &boxed(*b"tfhd", &MINIMAL_BODY)));
     let mut budget = crate::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
     crate::movie_fragment::MovieFragmentBox::parse_body_budgeted(&body, &mut budget).map(|_| ())
 }
 
 fn p_traf() -> Result<()> {
-    let body = boxed(*b"tfhd", &ZERO);
+    let body = boxed(*b"tfhd", &MINIMAL_BODY);
     let mut budget = crate::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
     crate::movie_fragment::TrackFragmentBox::parse_body_budgeted(&body, &mut budget).map(|_| ())
 }

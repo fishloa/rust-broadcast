@@ -34,6 +34,10 @@ pub const TREP: [u8; BOX_TYPE_SIZE] = *b"trep";
 const RANGE_SIZE_LEN: usize = 3;
 /// Width of one `ssix` range record: `level`(8) + `range_size`(24).
 const SSIX_RANGE_LEN: usize = 1 + RANGE_SIZE_LEN;
+/// Fixed part of one `leva` entry: `track_ID` plus the packed flag byte.
+const LEVA_LEVEL_HEADER_LEN: usize = core::mem::size_of::<u32>() + 1;
+/// Width of one `pdin` `(rate, initial_delay)` pair.
+const PDIN_ENTRY_LEN: usize = core::mem::size_of::<u32>() * 2;
 /// Bits of `assignment_type` in `leva`.
 const LEVA_ASSIGNMENT_BITS: u32 = 7;
 /// `assignment_type` that maps a sample group to levels.
@@ -133,21 +137,25 @@ impl SubsegmentIndexBox {
 
     /// Parse the payload after the 8-byte box header.
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, FULLBOX_EXTRA_SIZE + 4, "ssix body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
+            "ssix body",
+        )?;
         let version = body[0];
         let flags = u24_at(body, 1) & FULLBOX_FLAGS_MASK;
         let mut c = FULLBOX_EXTRA_SIZE;
         let count = be_u32(body, c, "ssix subsegment_count")? as usize;
-        c += 4;
+        c += core::mem::size_of::<u32>();
         let mut subsegments = Vec::with_capacity(crate::box_support::bounded_entry_count(
             body.len().saturating_sub(c),
-            4,
+            core::mem::size_of::<u32>(),
             count,
         ));
         for _ in 0..count {
-            need_in(body, c + 4, "ssix range_count")?;
+            need_in(body, c + core::mem::size_of::<u32>(), "ssix range_count")?;
             let range_count = be_u32(body, c, "ssix range_count")? as usize;
-            c += 4;
+            c += core::mem::size_of::<u32>();
             let mut ranges = Vec::with_capacity(crate::box_support::bounded_entry_count(
                 body.len().saturating_sub(c),
                 SSIX_RANGE_LEN,
@@ -179,7 +187,7 @@ impl<'a> Parse<'a> for SubsegmentIndexBox {
         }
         Self::parse_body(crate::box_types::box_body(
             bytes,
-            FULLBOX_EXTRA_SIZE + 4,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
             "ssix box",
         )?)
     }
@@ -189,9 +197,9 @@ impl Serialize for SubsegmentIndexBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 4;
+        let mut n = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
         for subsegment in &self.subsegments {
-            n += 4 + subsegment.ranges.len() * SSIX_RANGE_LEN;
+            n += core::mem::size_of::<u32>() + subsegment.ranges.len() * SSIX_RANGE_LEN;
         }
         box_len(n)
     }
@@ -201,12 +209,12 @@ impl Serialize for SubsegmentIndexBox {
         need_out(buf, need)?;
         let mut c = write_full_box_header(buf, &SSIX, need, self.version, self.flags, false)?;
         let count = broadcast_core::len::fit_u32(self.subsegments.len(), "subsegment_count")?;
-        buf[c..c + 4].copy_from_slice(&count.to_be_bytes());
-        c += 4;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&count.to_be_bytes());
+        c += core::mem::size_of::<u32>();
         for subsegment in &self.subsegments {
             let range_count = broadcast_core::len::fit_u32(subsegment.ranges.len(), "range_count")?;
-            buf[c..c + 4].copy_from_slice(&range_count.to_be_bytes());
-            c += 4;
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&range_count.to_be_bytes());
+            c += core::mem::size_of::<u32>();
             for range in &subsegment.ranges {
                 buf[c] = range.level;
                 buf[c + 1..c + 1 + RANGE_SIZE_LEN]
@@ -409,9 +417,9 @@ impl LevelAssignmentBox {
         c += 1;
         let mut levels = Vec::with_capacity(count);
         for _ in 0..count {
-            need_in(body, c + 5, "leva level entry")?;
+            need_in(body, c + LEVA_LEVEL_HEADER_LEN, "leva level entry")?;
             let track_id = be_u32(body, c, "leva track_ID")?;
-            c += 4;
+            c += core::mem::size_of::<u32>();
             let padding_flag = body[c] & LEVA_PADDING_MASK != 0;
             let assignment = LevelAssignmentType::from_code(body[c] & LEVA_ASSIGNMENT_MASK);
             c += 1;
@@ -425,21 +433,21 @@ impl LevelAssignmentBox {
             };
             match assignment {
                 LevelAssignmentType::SampleGroup => {
-                    need_in(body, c + 4, "leva grouping_type")?;
+                    need_in(body, c + core::mem::size_of::<u32>(), "leva grouping_type")?;
                     entry.grouping_type = Some(be_u32(body, c, "leva grouping_type")?);
-                    c += 4;
+                    c += core::mem::size_of::<u32>();
                 }
                 LevelAssignmentType::ParameterizedSampleGroup => {
-                    need_in(body, c + 8, "leva grouping_type_parameter")?;
+                    need_in(body, c + PDIN_ENTRY_LEN, "leva grouping_type_parameter")?;
                     entry.grouping_type = Some(be_u32(body, c, "leva grouping_type")?);
-                    c += 4;
+                    c += core::mem::size_of::<u32>();
                     entry.grouping_type_parameter = Some(be_u32(body, c, "leva parameter")?);
-                    c += 4;
+                    c += core::mem::size_of::<u32>();
                 }
                 LevelAssignmentType::SubTrack => {
-                    need_in(body, c + 4, "leva sub_track_ID")?;
+                    need_in(body, c + core::mem::size_of::<u32>(), "leva sub_track_ID")?;
                     entry.sub_track_id = Some(be_u32(body, c, "leva sub_track_ID")?);
-                    c += 4;
+                    c += core::mem::size_of::<u32>();
                 }
                 _ => {}
             }
@@ -474,11 +482,11 @@ impl Serialize for LevelAssignmentBox {
     fn serialized_len(&self) -> usize {
         let mut n = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 1;
         for level in &self.levels {
-            n += 5;
+            n += LEVA_LEVEL_HEADER_LEN;
             match level.assignment {
-                LevelAssignmentType::SampleGroup => n += 4,
-                LevelAssignmentType::ParameterizedSampleGroup => n += 8,
-                LevelAssignmentType::SubTrack => n += 4,
+                LevelAssignmentType::SampleGroup => n += core::mem::size_of::<u32>(),
+                LevelAssignmentType::ParameterizedSampleGroup => n += PDIN_ENTRY_LEN,
+                LevelAssignmentType::SubTrack => n += core::mem::size_of::<u32>(),
                 _ => {}
             }
         }
@@ -493,8 +501,8 @@ impl Serialize for LevelAssignmentBox {
         buf[c] = count;
         c += 1;
         for level in &self.levels {
-            buf[c..c + 4].copy_from_slice(&level.track_id.to_be_bytes());
-            c += 4;
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&level.track_id.to_be_bytes());
+            c += core::mem::size_of::<u32>();
             let mut first = level.assignment.code();
             if level.padding_flag {
                 first |= LEVA_PADDING_MASK;
@@ -506,27 +514,31 @@ impl Serialize for LevelAssignmentBox {
                     let grouping_type = level
                         .grouping_type
                         .ok_or(Error::InvalidInput("leva missing grouping_type"))?;
-                    buf[c..c + 4].copy_from_slice(&grouping_type.to_be_bytes());
-                    c += 4;
+                    buf[c..c + core::mem::size_of::<u32>()]
+                        .copy_from_slice(&grouping_type.to_be_bytes());
+                    c += core::mem::size_of::<u32>();
                 }
                 LevelAssignmentType::ParameterizedSampleGroup => {
                     let grouping_type = level
                         .grouping_type
                         .ok_or(Error::InvalidInput("leva missing grouping_type"))?;
-                    buf[c..c + 4].copy_from_slice(&grouping_type.to_be_bytes());
-                    c += 4;
+                    buf[c..c + core::mem::size_of::<u32>()]
+                        .copy_from_slice(&grouping_type.to_be_bytes());
+                    c += core::mem::size_of::<u32>();
                     let parameter = level
                         .grouping_type_parameter
                         .ok_or(Error::InvalidInput("leva missing grouping_type_parameter"))?;
-                    buf[c..c + 4].copy_from_slice(&parameter.to_be_bytes());
-                    c += 4;
+                    buf[c..c + core::mem::size_of::<u32>()]
+                        .copy_from_slice(&parameter.to_be_bytes());
+                    c += core::mem::size_of::<u32>();
                 }
                 LevelAssignmentType::SubTrack => {
                     let sub_track_id = level
                         .sub_track_id
                         .ok_or(Error::InvalidInput("leva missing sub_track_ID"))?;
-                    buf[c..c + 4].copy_from_slice(&sub_track_id.to_be_bytes());
-                    c += 4;
+                    buf[c..c + core::mem::size_of::<u32>()]
+                        .copy_from_slice(&sub_track_id.to_be_bytes());
+                    c += core::mem::size_of::<u32>();
                 }
                 _ => {}
             }
@@ -610,11 +622,11 @@ impl ProgressiveDownloadInfoBox {
         let version = body[0];
         let flags = u24_at(body, 1) & FULLBOX_FLAGS_MASK;
         let rest = &body[FULLBOX_EXTRA_SIZE..];
-        let mut entries = Vec::with_capacity(rest.len() / 8);
-        for chunk in rest.chunks_exact(8) {
+        let mut entries = Vec::with_capacity(rest.len() / PDIN_ENTRY_LEN);
+        for chunk in rest.chunks_exact(PDIN_ENTRY_LEN) {
             entries.push(ProgressiveDownloadEntry {
                 rate: be_u32(chunk, 0, "pdin rate")?,
-                initial_delay: be_u32(chunk, 4, "pdin initial_delay")?,
+                initial_delay: be_u32(chunk, core::mem::size_of::<u32>(), "pdin initial_delay")?,
             });
         }
         Ok(Self {
@@ -644,7 +656,7 @@ impl Serialize for ProgressiveDownloadInfoBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        box_len(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + self.entries.len() * 8)
+        box_len(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + self.entries.len() * PDIN_ENTRY_LEN)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -652,9 +664,10 @@ impl Serialize for ProgressiveDownloadInfoBox {
         need_out(buf, need)?;
         let mut c = write_full_box_header(buf, &PDIN, need, self.version, self.flags, false)?;
         for entry in &self.entries {
-            buf[c..c + 4].copy_from_slice(&entry.rate.to_be_bytes());
-            buf[c + 4..c + 8].copy_from_slice(&entry.initial_delay.to_be_bytes());
-            c += 8;
+            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&entry.rate.to_be_bytes());
+            buf[c + core::mem::size_of::<u32>()..c + PDIN_ENTRY_LEN]
+                .copy_from_slice(&entry.initial_delay.to_be_bytes());
+            c += PDIN_ENTRY_LEN;
         }
         Ok(c)
     }
@@ -717,7 +730,11 @@ impl TrackExtensionPropertiesBox {
 
     /// Parse the payload after the 8-byte box header.
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        need_in(body, FULLBOX_EXTRA_SIZE + 4, "trep body")?;
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
+            "trep body",
+        )?;
         let version = body[0];
         let flags = u24_at(body, 1) & FULLBOX_FLAGS_MASK;
         let track_id = be_u32(body, FULLBOX_EXTRA_SIZE, "trep track_ID")?;
@@ -749,7 +766,7 @@ impl<'a> Parse<'a> for TrackExtensionPropertiesBox {
         }
         Self::parse_body(crate::box_types::box_body(
             bytes,
-            FULLBOX_EXTRA_SIZE + 4,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
             "trep box",
         )?)
     }
@@ -759,7 +776,7 @@ impl Serialize for TrackExtensionPropertiesBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + 4;
+        let mut n = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
         for child in &self.children {
             n += child.serialized_len();
         }
@@ -770,8 +787,8 @@ impl Serialize for TrackExtensionPropertiesBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = write_full_box_header(buf, &TREP, need, self.version, self.flags, false)?;
-        buf[c..c + 4].copy_from_slice(&self.track_id.to_be_bytes());
-        c += 4;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.track_id.to_be_bytes());
+        c += core::mem::size_of::<u32>();
         for child in &self.children {
             c += child.serialize_into(&mut buf[c..])?;
         }
