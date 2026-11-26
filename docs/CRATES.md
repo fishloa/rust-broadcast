@@ -155,7 +155,7 @@ builds (see the table above against the in-tree versions below).
 | [`atsc3-route`](#atsc3-route) | IP and multicast delivery over broadcast | 0.7.0 | [![crates.io](https://img.shields.io/crates/v/atsc3-route.svg)](https://crates.io/crates/atsc3-route) | yes | 3 | archived, on crates.io |
 | [`broadcast-loudness`](#broadcast-loudness) | Measurement | 0.10.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-loudness.svg)](https://crates.io/crates/broadcast-loudness) | yes | 1 | on crates.io |
 | [`test-alloc`](#test-alloc) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
-| [`test-fixtures`](#test-fixtures) | Internal test helpers (never published) | 0.1.0 | — | no | 0 | internal, `publish = false` |
+| [`test-fixtures`](#test-fixtures) | Internal test helpers (never published) | 0.1.0 | — | no | 1 | internal, `publish = false` |
 | [`workspace-guards`](#workspace-guards) | Internal test helpers (never published) | 0.1.0 | — | no | 1 | internal, `publish = false` |
 | [`test-harness`](#test-harness) | Internal test helpers (never published) | 0.1.0 | — | no | 8 | internal, `publish = false` |
 
@@ -171,7 +171,7 @@ The stable floor every wire crate builds on: the symmetric `Parse<'a>` / `Serial
 - **Cargo description:** Frozen wire-format contract for the rust-broadcast crates: symmetric Parse/Serialize traits, checked field-width helpers, MSB-first bit I/O, reserved-bit fields, media timescales, the shared error kinds and the CENC scheme identity. no_std + alloc.
 - **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** 63 workspace crates
+- **Used by (workspace):** 64 workspace crates
 - **Links:** [README](../broadcast-core/README.md) · [CHANGELOG](../broadcast-core/CHANGELOG.md)
 
 #### broadcast-codec
@@ -964,8 +964,8 @@ Resolves `<workspace>/fixtures` once, in one place, so test suites cannot get th
 
 - **Standards:** n/a
 - **Cargo description:** Workspace fixture loader shared by test suites (unpublished).
-- **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 0
-- **Depends on (workspace):** none
+- **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 1
+- **Depends on (workspace):** [`broadcast-core`](#broadcast-core)
 - **Used by (workspace):** [`test-harness`](#test-harness)
 
 #### workspace-guards
@@ -993,8 +993,8 @@ One copy of the DASH loopback simulator (world/synth/capture/loopback), the RTMP
 Layer 0 has no workspace dependencies; every other crate sits one layer above its deepest workspace dependency. Normal dependencies only (dev-dependencies are excluded, so the test helpers appear at layer 0 with no edges).
 
 ```text
-layer 0: broadcast-core, test-alloc, test-fixtures
-layer 1: broadcast-codec, broadcast-common, broadcast-loudness, container-probe, dvb-subtitle, isobmff, scte104, workspace-guards
+layer 0: broadcast-core, test-alloc
+layer 1: broadcast-codec, broadcast-common, broadcast-loudness, container-probe, dvb-subtitle, isobmff, scte104, test-fixtures, workspace-guards
 layer 2: atsc3, broadcast-auth, broadcast-bitstream, broadcast-dash, broadcast-hls, broadcast-matroska, broadcast-smooth, buffering-runtime, cc-data, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-vbi, isobmff-private-format, isobmff-tokio, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
 layer 3: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, rtsp-runtime, scte35-splice, ssai-runtime, st291, webrtc-runtime
 layer 4: dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, timed-metadata, transmux
@@ -1172,6 +1172,7 @@ flowchart BT
   st291 --> rtp_packet
   st337 --> broadcast_common
   st377_1 --> broadcast_common
+  test_fixtures --> broadcast_core
   test_harness --> dash_runtime
   test_harness --> test_fixtures
   timed_metadata --> broadcast_hls

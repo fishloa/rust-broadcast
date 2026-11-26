@@ -242,6 +242,7 @@ mod smooth_text_roundtrip;
 mod splice;
 #[path = "support/sps_builder.rs"]
 mod sps_builder;
+mod sps_display;
 mod sps_profile_matrix;
 mod ssai_ad_stitch;
 #[cfg(all(feature = "flv", feature = "rtp", feature = "hls"))]

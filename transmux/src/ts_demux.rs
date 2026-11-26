@@ -3412,13 +3412,13 @@ fn finalize_probe(
             // Coded dimensions + high-profile chroma/bit-depth from the SPS
             // (ISO/IEC 14496-10 §7.3.2.1.1) — the TS in-band parameter set
             // carries them (0/None if undecodable).
-            let info = crate::sps::decode_avc_sps(sps_bytes).ok();
+            let info = broadcast_bitstream::sps::decode_avc_sps(sps_bytes).ok();
             let (width, height) = info
                 .as_ref()
                 .map(|i| {
                     (
-                        i.width.min(u16::MAX as u32) as u16,
-                        i.height.min(u16::MAX as u32) as u16,
+                        i.width().min(u16::MAX as u32) as u16,
+                        i.height().min(u16::MAX as u32) as u16,
                     )
                 })
                 .unwrap_or((0, 0));
@@ -3431,7 +3431,7 @@ fn finalize_probe(
             // shared `sps::is_high_profile` source of truth.
             let ext = info
                 .as_ref()
-                .filter(|i| crate::sps::is_high_profile(i.profile_idc));
+                .filter(|i| broadcast_bitstream::sps::is_high_profile(i.profile_idc()));
             let record = AVCDecoderConfigurationRecord {
                 configuration_version: 1,
                 // profile_idc / constraint_flags / level_idc live at SPS bytes
@@ -3442,11 +3442,11 @@ fn finalize_probe(
                 length_size_minus_one: NAL_LENGTH_SIZE_MINUS_ONE,
                 sps: alloc::vec![AvcSps(sps_bytes.clone())],
                 pps: alloc::vec![AvcPps(pps_bytes.clone())],
-                chroma_format: ext.map(|i| i.chroma_format_idc),
+                chroma_format: ext.map(|i| i.chroma_format_idc()),
                 bit_depth_luma_minus8: ext
-                    .map(|i| i.bit_depth_luma.saturating_sub(BIT_DEPTH_MINUS8_BASE)),
+                    .map(|i| i.bit_depth_luma().saturating_sub(BIT_DEPTH_MINUS8_BASE)),
                 bit_depth_chroma_minus8: ext
-                    .map(|i| i.bit_depth_chroma.saturating_sub(BIT_DEPTH_MINUS8_BASE)),
+                    .map(|i| i.bit_depth_chroma().saturating_sub(BIT_DEPTH_MINUS8_BASE)),
                 sps_ext: alloc::vec![],
             };
             Some((
@@ -3515,9 +3515,9 @@ fn finalize_probe(
             // been seen by the time SPS resolves are included (real encoders
             // always bundle VPS+SPS+PPS in the same access unit).
             let sps_bytes = sps.as_ref()?;
-            let info = crate::sps::decode_hevc_sps(sps_bytes).ok()?;
-            let width = info.width.min(u16::MAX as u32) as u16;
-            let height = info.height.min(u16::MAX as u32) as u16;
+            let info = broadcast_bitstream::sps::decode_hevc_sps(sps_bytes).ok()?;
+            let width = info.width().min(u16::MAX as u32) as u16;
+            let height = info.height().min(u16::MAX as u32) as u16;
 
             let mut arrays: Vec<HevcNalArray> = Vec::new();
             if let Some(vps_nal) = vps.clone() {
@@ -3548,21 +3548,21 @@ fn finalize_probe(
             }
             let record = HEVCDecoderConfigurationRecord {
                 configuration_version: HVCC_CONFIGURATION_VERSION,
-                general_profile_space: info.general_profile_space,
-                general_tier_flag: info.general_tier_flag,
-                general_profile_idc: info.general_profile_idc,
-                general_profile_compatibility_flags: info.general_profile_compatibility_flags,
-                general_constraint_indicator_flags: info.general_constraint_indicator_flags,
-                general_level_idc: info.general_level_idc,
+                general_profile_space: info.general_profile_space(),
+                general_tier_flag: info.general_tier_flag(),
+                general_profile_idc: info.general_profile_idc(),
+                general_profile_compatibility_flags: info.general_profile_compatibility_flags(),
+                general_constraint_indicator_flags: info.general_constraint_indicator_flags(),
+                general_level_idc: info.general_level_idc(),
                 min_spatial_segmentation_idc: HVCC_MIN_SPATIAL_SEGMENTATION_UNSPEC,
                 parallelism_type: HVCC_PARALLELISM_TYPE_UNKNOWN,
-                chroma_format_idc: info.chroma_format_idc,
+                chroma_format_idc: info.chroma_format_idc(),
                 // hvcC stores bit_depth_{luma,chroma}_minus8; the SPS decode
                 // returns the absolute bit depth (minus8 + 8), so subtract 8
                 // back out (saturating — an ES reporting < 8 would be malformed).
-                bit_depth_luma_minus8: info.bit_depth_luma.saturating_sub(BIT_DEPTH_MINUS8_BASE),
+                bit_depth_luma_minus8: info.bit_depth_luma().saturating_sub(BIT_DEPTH_MINUS8_BASE),
                 bit_depth_chroma_minus8: info
-                    .bit_depth_chroma
+                    .bit_depth_chroma()
                     .saturating_sub(BIT_DEPTH_MINUS8_BASE),
                 avg_frame_rate: HVCC_AVG_FRAME_RATE_UNSPEC,
                 constant_frame_rate: HVCC_CONSTANT_FRAME_RATE_UNSPEC,

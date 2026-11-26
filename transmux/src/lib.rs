@@ -74,10 +74,8 @@
 //!   streaming depayload ([`RtpStreamDepacketiser`]) + SDP fmtp→config helpers
 //!   ([`rtp_sdp`]); RTCP control packets ([`RtcpPacket`]).
 //! - **Display geometry:** a video track's coded size, SPS VUI sample aspect
-//!   ratio ([`DisplayGeometry`], [`AspectRatioIdc`], [`SampleAspectRatio`])
-//!   and VUI colour signalling ([`VideoSignalType`], [`VideoFormat`],
-//!   [`ColourDescription`] with [`ColourPrimaries`],
-//!   [`TransferCharacteristics`], [`MatrixCoefficients`]) on
+//!   ratio and VUI colour signalling (the coded facts themselves live in
+//!   `broadcast_bitstream::facts`) on
 //!   `TrackSpec::display`, derived from the `avcC`/`hvcC` first SPS by
 //!   `TrackSpec::new` so every demux path carries it, plus the per-picture
 //!   state ([`DisplayInfo`]) on `Sample::display` with a
@@ -232,8 +230,6 @@ pub mod rebase;
 pub mod repackage;
 pub mod segment_log;
 pub mod stitch;
-#[cfg(test)]
-pub(crate) mod test_bits;
 pub mod timeline;
 #[cfg(feature = "rtp")]
 pub use rtp_packet::rtcp;
@@ -262,7 +258,6 @@ pub mod smooth_codec;
 #[cfg(feature = "std")]
 pub mod smooth_fragment;
 pub mod splice;
-pub mod sps;
 pub mod trickplay;
 pub mod ts_demux;
 #[cfg(feature = "hls")]
@@ -314,12 +309,10 @@ pub use interlace::{
     PicStruct, PictureFacts, SourceScanType, VideoScan, video_picture_facts, video_scan,
 };
 pub use ir::{
-    ActiveFormat, ActiveFormatDescription, AfdPersistence, AspectRatioIdc, AudioLanguage,
-    AudioMetadata, AudioRole, AudioType, BarData, ColourDescription, ColourPrimaries,
-    DisplayChangeSet, DisplayGeometry, DisplayInfo, EXTENDED_SAR_IDC, EditorialClassification,
-    INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT, MPEG2_INFERRED_COLOUR_CODE,
-    MatrixCoefficients, MixType, PictureRect, ProgramNumber, SampleAspectRatio, SupplementaryAudio,
-    TrackId, TransferCharacteristics, UserDataCarriage, VideoFormat, VideoSignalType,
+    ActiveFormat, AfdPersistence, AudioLanguage, AudioMetadata, AudioRole, AudioType,
+    DisplayChangeSet, DisplayGeometry, DisplayInfo, EditorialClassification, INFERRED_COLOUR_CODE,
+    INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT, MPEG2_INFERRED_COLOUR_CODE, MixType, ProgramNumber,
+    SupplementaryAudio, TrackId, UserDataCarriage,
 };
 pub use klv::{
     CHECKSUM_LEN, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM, TAG_PRECISION_TIMESTAMP,
@@ -420,11 +413,6 @@ pub use smooth_codec::track_spec_from_quality_level;
 pub use splice::{
     SpliceIndex, SpliceIndexBuilder, SplicePlan, SplicePoint, SpliceSample, SpliceStage,
     SpliceTrack, TrackSplice, snap_to_preceding_sync,
-};
-pub use sps::{
-    AvcReorderDepth, AvcSpsInfo, AvcVuiTiming, HevcSpsInfo, HevcVpsTiming, HevcVuiTiming,
-    decode_avc_reorder_depth, decode_avc_sps, decode_avc_vui_timing, decode_hevc_sps,
-    decode_hevc_vps_timing, decode_hevc_vui_timing, rfc6381_avc1, rfc6381_hvc1, rfc6381_mp4a,
 };
 pub use trickplay::TrickPlayStage;
 pub use ts_demux::{

@@ -11,11 +11,11 @@
 //! are *frames* (`field_pic_flag == 0`) and classify as [`AvcPicture::Frame`].
 
 use crate::error::{Error, Result};
-use crate::sps::{AvcSliceSps, decode_avc_slice_sps};
 use alloc::collections::BTreeMap;
 use broadcast_bitstream::annexb::iter_annexb_nals;
 use broadcast_bitstream::bitreader::BitReader;
 use broadcast_bitstream::nal::NAL_TYPE_MASK;
+use broadcast_bitstream::sps::{AvcSliceSps, decode_avc_slice_sps};
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 
 /// `nal_unit_type` of a non-IDR coded slice (Table 7-1).
@@ -237,14 +237,14 @@ pub fn parse_avc_slice_header(
             reason: "slice refers to a different PPS than the one supplied",
         }));
     }
-    let colour_plane_id = if sps.separate_colour_plane {
+    let colour_plane_id = if sps.separate_colour_plane() {
         Some(r.read_bits(COLOUR_PLANE_ID_BITS, "colour_plane_id")? as u8)
     } else {
         None
     };
-    let frame_num = r.read_bits(sps.log2_max_frame_num as usize, "frame_num")? as u32;
+    let frame_num = r.read_bits(sps.log2_max_frame_num() as usize, "frame_num")? as u32;
     let (mut field_pic_flag, mut bottom_field_flag) = (false, false);
-    if !sps.frame_mbs_only {
+    if !sps.frame_mbs_only() {
         field_pic_flag = r.read_flag("field_pic_flag")?;
         if field_pic_flag {
             bottom_field_flag = r.read_flag("bottom_field_flag")?;
@@ -259,9 +259,9 @@ pub fn parse_avc_slice_header(
     let mut pic_order_cnt_lsb = None;
     let mut delta_pic_order_cnt_bottom = 0;
     let mut delta_pic_order_cnt = [0i32; DELTA_PIC_ORDER_CNT_LEN];
-    if sps.pic_order_cnt_type == 0 {
+    if sps.pic_order_cnt_type() == 0 {
         pic_order_cnt_lsb =
-            Some(r.read_bits(sps.log2_max_poc_lsb as usize, "pic_order_cnt_lsb")? as u32);
+            Some(r.read_bits(sps.log2_max_poc_lsb() as usize, "pic_order_cnt_lsb")? as u32);
         if bottom_poc_present {
             delta_pic_order_cnt_bottom = to_i32(
                 r.read_se("delta_pic_order_cnt_bottom")?,
@@ -269,7 +269,7 @@ pub fn parse_avc_slice_header(
             )?;
         }
     }
-    if sps.pic_order_cnt_type == 1 && !sps.delta_pic_order_always_zero {
+    if sps.pic_order_cnt_type() == 1 && !sps.delta_pic_order_always_zero() {
         delta_pic_order_cnt[0] = to_i32(
             r.read_se("delta_pic_order_cnt[0]")?,
             "delta_pic_order_cnt[0]",
@@ -379,7 +379,7 @@ impl AvcParamSets {
         match nal.first().map(|b| b & NAL_TYPE_MASK) {
             Some(NAL_SPS) => {
                 if let Ok(s) = decode_avc_slice_sps(nal) {
-                    self.sps.insert(s.sps_id, s);
+                    self.sps.insert(s.sps_id(), s);
                 }
             }
             Some(NAL_PPS) => {
@@ -470,9 +470,9 @@ mod tests {
     use broadcast_core::error::InvalidValue;
 
     use super::*;
-    use crate::test_bits::BitWriter;
     use alloc::vec;
     use alloc::vec::Vec;
+    use test_fixtures::bits::BitWriter;
 
     fn nal(ref_idc: u8, t: u8, rbsp: Vec<u8>) -> Vec<u8> {
         let mut v = vec![(ref_idc << 5) | t];
@@ -577,9 +577,9 @@ mod tests {
     #[test]
     fn parses_every_prefix_field_bit_exact() {
         let sps = decode_avc_slice_sps(&sps_nal(0, false)).unwrap();
-        assert_eq!(sps.log2_max_frame_num, 4);
-        assert_eq!(sps.log2_max_poc_lsb, 6);
-        assert!(!sps.frame_mbs_only);
+        assert_eq!(sps.log2_max_frame_num(), 4);
+        assert_eq!(sps.log2_max_poc_lsb(), 6);
+        assert!(!sps.frame_mbs_only());
         let pps = decode_avc_slice_pps(&pps_nal(0, true, true, 0)).unwrap();
         assert!(pps.bottom_field_pic_order_in_frame_present && pps.redundant_pic_cnt_present);
         // Frame picture (field_pic_flag = 0): delta_pic_order_cnt_bottom + redundant_pic_cnt present.
@@ -610,8 +610,8 @@ mod tests {
     #[test]
     fn poc_type_1_and_progressive_sps() {
         let sps = decode_avc_slice_sps(&sps_nal(1, true)).unwrap();
-        assert!(sps.frame_mbs_only);
-        assert_eq!(sps.pic_order_cnt_type, 1);
+        assert!(sps.frame_mbs_only());
+        assert_eq!(sps.pic_order_cnt_type(), 1);
         let pps = decode_avc_slice_pps(&pps_nal(0, false, false, 0)).unwrap();
         // frame_mbs_only: no field_pic_flag bit at all; POC type 1: delta_pic_order_cnt[0].
         let mut w = BitWriter::new();

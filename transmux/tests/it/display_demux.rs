@@ -2,11 +2,10 @@
 //! `pasp` and `colr nclx` are applied to `TrackSpec::display`.
 
 use crate::ts_mux_stage;
+use broadcast_bitstream::facts::{AspectRatioIdc, ColourDescription, VideoFormat, VideoSignalType};
 use broadcast_core::timescale::Timescale;
 use transmux::TrackSpec;
-use transmux::ir::{
-    AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, VideoFormat, VideoSignalType,
-};
+use transmux::ir::{CodecConfig, DisplayGeometry};
 use transmux::pipeline;
 
 fn timescale(value: u32) -> Timescale {
@@ -170,11 +169,11 @@ fn colr_overrides_colour() {
     let bytes = build(spec);
     let got = demux_display(&bytes).expect("display");
     let vs = got.video_signal.expect("video_signal");
-    assert!(vs.full_range);
-    let c = vs.colour.expect("colour");
-    assert_eq!(c.primaries.code(), 1);
-    assert_eq!(c.transfer.code(), 13);
-    assert_eq!(c.matrix.code(), 6);
+    assert!(vs.full_range());
+    let c = vs.colour().expect("colour");
+    assert_eq!(c.primaries().code(), 1);
+    assert_eq!(c.transfer().code(), 13);
+    assert_eq!(c.matrix().code(), 6);
 }
 
 #[test]
@@ -197,11 +196,11 @@ fn colr_codepoint_over_255_ignored() {
     bytes[i + 9] = 0x01;
     let got = demux_display(&bytes).expect("display");
     let vs = got.video_signal.expect("video_signal");
-    let c = vs.colour.expect("colour");
+    let c = vs.colour().expect("colour");
     // VUI colour 5/5/5 kept
-    assert_eq!(c.primaries.code(), 5);
-    assert_eq!(c.transfer.code(), 5);
-    assert_eq!(c.matrix.code(), 5);
+    assert_eq!(c.primaries().code(), 5);
+    assert_eq!(c.transfer().code(), 5);
+    assert_eq!(c.matrix().code(), 5);
 }
 
 #[test]
@@ -311,11 +310,11 @@ fn ffmpeg_melodie_pasp_colr() {
     };
     assert_eq!(got.sample_aspect_ratio(), Some((64u16, 45u16)));
     let vs = got.video_signal.expect("video_signal");
-    assert!(!vs.full_range);
-    let c = vs.colour.expect("colour");
-    assert_eq!(c.primaries.code(), 5);
-    assert_eq!(c.transfer.code(), 5);
-    assert_eq!(c.matrix.code(), 5);
+    assert!(!vs.full_range());
+    let c = vs.colour().expect("colour");
+    assert_eq!(c.primaries().code(), 5);
+    assert_eq!(c.transfer().code(), 5);
+    assert_eq!(c.matrix().code(), 5);
 }
 
 #[test]

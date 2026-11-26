@@ -15,7 +15,7 @@
 //! - [`FragmentTrackData`] — one track's samples for a single media segment,
 //!   the input shape [`crate::pipeline::build_media_segment`] consumes.
 //! - [`DisplayGeometry`] — a video track's display geometry (coded size and
-//!   the SPS VUI sample aspect ratio, [`AspectRatioIdc`]), carried on
+//!   the SPS VUI sample aspect ratio, `broadcast_bitstream::facts::AspectRatioIdc`), carried on
 //!   [`TrackSpec::display`] (design: `docs/display-geometry/DESIGN.md`).
 //! - [`DemuxEvent`] — the streaming-demux event vocabulary (media plane step
 //!   2e), drained from [`crate::ts_demux::StreamingTsDemux`] /
@@ -62,11 +62,9 @@ pub use audio_meta::{
 pub(crate) use codec::AUDIO_SAMPLE_SIZE_BITS;
 pub use codec::{CodecConfig, DataCarriage, DataIdentity, SubtitleFormat, SubtitleSampleEntry};
 pub use display::{
-    ActiveFormat, ActiveFormatDescription, AfdPersistence, AspectRatioIdc, BarData,
-    ColourDescription, ColourPrimaries, DisplayChangeSet, DisplayGeometry, DisplayInfo,
-    EXTENDED_SAR_IDC, INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT,
-    MPEG2_INFERRED_COLOUR_CODE, MatrixCoefficients, PictureRect, SampleAspectRatio,
-    TransferCharacteristics, UserDataCarriage, VideoFormat, VideoSignalType,
+    ActiveFormat, AfdPersistence, DisplayChangeSet, DisplayGeometry, DisplayInfo,
+    INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT, MPEG2_INFERRED_COLOUR_CODE,
+    UserDataCarriage,
 };
 pub use event::{
     AbandonReason, DegradationRecord, DemuxEvent, DiscontinuityKind, EventProvenance,

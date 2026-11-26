@@ -8,10 +8,11 @@ fn timescale(value: u32) -> Timescale {
 use broadcast_core::timescale::Timescale;
 use std::num::NonZeroUsize;
 
+use broadcast_bitstream::facts::{ColourDescription, VideoFormat, VideoSignalType};
 use hls_runtime::server::{HlsOrigin, HlsOriginConfig};
 use media_plane::trunk::{Trunk, TrunkConfig};
 use transmux::Container;
-use transmux::ir::{ColourDescription, DisplayGeometry, VideoFormat, VideoSignalType};
+use transmux::ir::DisplayGeometry;
 use transmux::{CodecConfig, TrackId, TrackSpec};
 
 use crate::dummy_avc_config::dummy_avc_config;

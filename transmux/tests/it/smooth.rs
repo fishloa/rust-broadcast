@@ -498,10 +498,15 @@ fn parsed_manifest_codec_glue_builds_working_init_segment() {
         } => {
             let sps = demuxed_sps(media);
             assert_eq!(config.config.sps.first().unwrap().0, sps);
-            let info = transmux::sps::decode_avc_sps(&sps).expect("decode real SPS");
-            assert_eq!(*width, info.width as u16, "width must match the TS source");
+            let info = broadcast_bitstream::sps::decode_avc_sps(&sps).expect("decode real SPS");
             assert_eq!(
-                *height, info.height as u16,
+                *width,
+                info.width() as u16,
+                "width must match the TS source"
+            );
+            assert_eq!(
+                *height,
+                info.height() as u16,
                 "height must match the TS source"
             );
         }

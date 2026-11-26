@@ -106,7 +106,7 @@ use crate::ir::{TrackId, TrackSpec};
 use crate::nalu_ext::AvcSpsCodecInfo;
 use crate::pipeline::CodecConfig;
 use crate::segment_log::{SegmentSummaryLog, TrackSummary};
-use crate::sps::rfc6381_avc1;
+use broadcast_bitstream::rfc6381::rfc6381_avc1;
 use broadcast_core::error::InvalidField;
 use broadcast_core::timescale::Timescale;
 use broadcast_dash::{
@@ -762,7 +762,7 @@ impl DashPackager {
                     .sps
                     .first()
                     .and_then(|sps| sps.decode().ok())
-                    .map(|i| (i.width, i.height))
+                    .map(|i| (i.width(), i.height()))
                     .unwrap_or((*width as u32, *height as u32));
                 info.width = Some(w);
                 info.height = Some(h);

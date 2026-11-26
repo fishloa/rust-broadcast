@@ -10,10 +10,10 @@
 //! boundaries and every map type have to be constructed.
 
 use crate::bit_writer::BitWriter;
+use broadcast_bitstream::sps::decode_avc_slice_sps;
 use transmux::slice_header::{
     AvcFieldInfo, AvcParamSets, AvcPicture, decode_avc_slice_pps, parse_avc_slice_header,
 };
-use transmux::sps::decode_avc_slice_sps;
 
 fn nal(ref_idc: u8, t: u8, rbsp: Vec<u8>) -> Vec<u8> {
     let mut v = vec![(ref_idc << 5) | t];

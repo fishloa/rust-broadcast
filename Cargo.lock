@@ -402,6 +402,8 @@ dependencies = [
  "broadcast-core",
  "isobmff",
  "memchr",
+ "mpeg-pes",
+ "mpeg-ts",
  "serde",
  "test-fixtures",
  "thiserror 2.0.21",
@@ -1750,6 +1752,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 name = "hls-runtime"
 version = "0.16.0"
 dependencies = [
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "broadcast-hls",
@@ -4149,6 +4152,7 @@ version = "0.1.0"
 name = "test-fixtures"
 version = "0.1.0"
 dependencies = [
+ "broadcast-core",
  "headers",
  "hex",
  "http",

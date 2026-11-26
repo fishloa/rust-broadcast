@@ -28,10 +28,9 @@
 use crate::h262::{
     afd_from_mpeg2_user_data, find_sequence_header, parse_sequence_at, picture_user_data_payloads,
 };
-use crate::ir::{
-    ActiveFormat, ActiveFormatDescription, BarData, DisplayChangeSet, DisplayGeometry, DisplayInfo,
-    UserDataCarriage,
-};
+use crate::ir::{ActiveFormat, DisplayChangeSet, DisplayGeometry, DisplayInfo, UserDataCarriage};
+use broadcast_bitstream::facts::{ActiveFormatDescription, BarData};
+
 use crate::user_data::{
     BAR_DATA_USER_DATA_TYPE_CODE, DTG1_USER_IDENTIFIER, GA94_USER_IDENTIFIER, USER_IDENTIFIER_LEN,
 };

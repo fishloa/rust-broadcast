@@ -4,9 +4,10 @@
 
 use crate::ts_mux_stage;
 use broadcast_bitstream::annexb::iter_length_prefixed_nals;
+use broadcast_bitstream::facts::{ActiveFormatDescription, BarData};
 use std::sync::Arc;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
-use transmux::ir::{ActiveFormatDescription, AfdPersistence, BarData, CodecConfig, DisplayInfo};
+use transmux::ir::{AfdPersistence, CodecConfig, DisplayInfo};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 fn avc_track_mut(media: &mut Media) -> &mut Track {
@@ -382,12 +383,7 @@ fn afd_reset_at_random_access_also_clears_bar_data() {
     assert_eq!(first_state.afd, Some(ActiveFormatDescription::Centre4x3));
     assert_eq!(
         first_state.bar,
-        Some(BarData {
-            top_bar_end_line: Some(70),
-            bottom_bar_start_line: Some(506),
-            left_bar_end_pixel: None,
-            right_bar_start_pixel: None,
-        })
+        Some(BarData::new(Some(70), Some(506), None, None))
     );
     let changes: Vec<&Seen> = items
         .iter()
@@ -472,15 +468,7 @@ fn afd_bar_data_replace_and_clear() {
     assert!(!c1.changed.unwrap().afd);
     assert!(c1.changed.unwrap().bar_data);
     assert_eq!(c1.afd, Some(ActiveFormatDescription::Centre4x3));
-    assert_eq!(
-        c1.bar,
-        Some(BarData {
-            top_bar_end_line: Some(70),
-            bottom_bar_start_line: Some(506),
-            left_bar_end_pixel: None,
-            right_bar_start_pixel: None,
-        })
-    );
+    assert_eq!(c1.bar, Some(BarData::new(Some(70), Some(506), None, None)));
     let sp = sample_positions(&items);
     let pos1 = items
         .iter()
@@ -502,12 +490,7 @@ fn afd_bar_data_replace_and_clear() {
     assert_eq!(samples[0].bar, None);
     assert_eq!(
         samples[1].bar,
-        Some(BarData {
-            top_bar_end_line: Some(70),
-            bottom_bar_start_line: Some(506),
-            left_bar_end_pixel: None,
-            right_bar_start_pixel: None,
-        })
+        Some(BarData::new(Some(70), Some(506), None, None))
     );
     for s in &samples[2..] {
         assert_eq!(s.bar, None);

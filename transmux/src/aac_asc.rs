@@ -558,7 +558,7 @@ impl AudioSpecificConfig {
     /// Build the RFC 6381 `mp4a.40.<AOT>` codec string, honouring explicit HE-AAC
     /// SBR/PS signaling (`mp4a.40.5` / `mp4a.40.29`).
     pub fn rfc6381(&self) -> String {
-        crate::sps::rfc6381_mp4a(self.heaac_signaling().effective_aot)
+        broadcast_bitstream::rfc6381::rfc6381_mp4a(self.heaac_signaling().effective_aot)
     }
 
     /// Recover the explicit HE-AAC SBR/PS signaling from the ASC bitstream.
@@ -1237,8 +1237,8 @@ fn extension_index_for(hz: u32) -> Option<SamplingFrequencyIndex> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_bits::BitWriter;
     use broadcast_core::Serialize;
+    use test_fixtures::bits::BitWriter;
     const KNOWN: [u8; 5] = [0x12, 0x08, 0x56, 0xe5, 0x00];
 
     fn asc_bits(f: impl FnOnce(&mut BitWriter)) -> Vec<u8> {

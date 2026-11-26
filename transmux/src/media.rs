@@ -45,10 +45,13 @@ use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
 use crate::ir::{
-    AspectRatioIdc, CodecConfig, ColourDescription, DataIdentity, DisplayGeometry, DisplayInfo,
-    EXTENDED_SAR_IDC, PictureRect, Sample, SubtitleFormat, SubtitleSampleEntry, TrackId, TrackSpec,
-    VideoFormat, VideoSignalType,
+    CodecConfig, DataIdentity, DisplayGeometry, DisplayInfo, Sample, SubtitleFormat,
+    SubtitleSampleEntry, TrackId, TrackSpec,
 };
+use broadcast_bitstream::facts::{
+    AspectRatioIdc, ColourDescription, EXTENDED_SAR_IDC, PictureRect, VideoFormat, VideoSignalType,
+};
+
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary};
 use crate::pipeline::build_init_segment;
@@ -899,7 +902,7 @@ pub(crate) fn overlay_sample_entry_geometry(
     };
     let signalled_format = display
         .as_ref()
-        .and_then(|g| g.video_signal.map(|v| v.video_format));
+        .and_then(|g| g.video_signal.map(|v| v.video_format()));
     let mut display = display.unwrap_or_else(|| DisplayGeometry::new(visual_w, visual_h, None));
 
     if let Some(ratio) = pasp_ratio
@@ -912,8 +915,9 @@ pub(crate) fn overlay_sample_entry_geometry(
         let (frame_w, frame_h) = (visual_w, visual_h);
         let origin = if (frame_w, frame_h) == (display.coded_width, display.coded_height) {
             Some((0, 0))
-        } else if (frame_w, frame_h) == (display.output_rect.width, display.output_rect.height) {
-            Some((display.output_rect.left, display.output_rect.top))
+        } else if (frame_w, frame_h) == (display.output_rect.width(), display.output_rect.height())
+        {
+            Some((display.output_rect.left(), display.output_rect.top()))
         } else {
             None
         };

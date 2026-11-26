@@ -29,10 +29,11 @@
 //! [`DisplayGeometry`]: crate::ir::DisplayGeometry
 
 use crate::error::{Error, Result};
-use crate::ir::{
-    AspectRatioIdc, ColourDescription, ColourPrimaries, DisplayGeometry, MatrixCoefficients,
-    PictureRect, TransferCharacteristics, VideoFormat, VideoSignalType,
+use crate::ir::DisplayGeometry;
+use broadcast_bitstream::facts::{
+    AspectRatioIdc, ColourDescription, EXTENDED_SAR_IDC, PictureRect, VideoFormat, VideoSignalType,
 };
+
 use crate::mpeg_legacy::SEQUENCE_HEADER_CODE;
 use broadcast_bitstream::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use broadcast_bitstream::bitreader::BitReader;
@@ -206,15 +207,13 @@ impl SequenceHeaderGeometry {
     /// [`DisplayGeometry::is_mpeg2`]. MPEG-2 has no full-range flag, so
     /// `full_range` is always `false`.
     pub fn to_display_geometry(&self) -> DisplayGeometry {
-        let video_signal = self.display.as_ref().map(|d| VideoSignalType {
-            video_format: VideoFormat::from_wire(d.video_format)
-                .unwrap_or(VideoFormat::Unspecified),
-            full_range: false,
-            colour: d.colour_description.map(|(p, t, m)| ColourDescription {
-                primaries: ColourPrimaries::from_wire(p),
-                transfer: TransferCharacteristics::from_wire(t),
-                matrix: MatrixCoefficients::from_wire(m),
-            }),
+        let video_signal = self.display.as_ref().map(|d| {
+            VideoSignalType::new(
+                VideoFormat::from_wire(d.video_format).unwrap_or(VideoFormat::Unspecified),
+                false,
+                d.colour_description
+                    .map(|(p, t, m)| ColourDescription::from_wire(p, t, m)),
+            )
         });
         DisplayGeometry {
             coded_width: self.coded_width,
@@ -223,10 +222,10 @@ impl SequenceHeaderGeometry {
             default_display_rect: None,
             aspect_ratio: match (self.aspect_ratio_information, self.sample_aspect_ratio()) {
                 (ASPECT_SQUARE, _) => Some(AspectRatioIdc::Square),
-                (_, Some((sar_width, sar_height))) => Some(AspectRatioIdc::ExtendedSar {
-                    sar_width,
-                    sar_height,
-                }),
+                (_, Some((sar_width, sar_height))) => Some(AspectRatioIdc::from_wire(
+                    EXTENDED_SAR_IDC,
+                    Some((sar_width, sar_height)),
+                )),
                 _ => None,
             },
             overscan_appropriate: None,
@@ -390,16 +389,18 @@ pub(crate) fn find_sequence_header(es: &[u8]) -> Option<usize> {
 /// `None` when the payload is too short (silently discarded, §B.6).
 pub(crate) fn afd_from_mpeg2_user_data(
     payload: &[u8],
-) -> Option<Option<crate::ir::ActiveFormatDescription>> {
+) -> Option<Option<broadcast_bitstream::facts::ActiveFormatDescription>> {
     let first = *payload.first()?;
     let active_format_flag = first & crate::user_data::AFD_ACTIVE_FORMAT_FLAG_BIT != 0;
     if !active_format_flag {
         return Some(None);
     }
     let second = *payload.get(1)?;
-    Some(Some(crate::ir::ActiveFormatDescription::from_code(
-        second & crate::user_data::AFD_CODE_MASK,
-    )))
+    Some(Some(
+        broadcast_bitstream::facts::ActiveFormatDescription::from_code(
+            second & crate::user_data::AFD_CODE_MASK,
+        ),
+    ))
 }
 
 /// Split an MPEG-2 access unit into its `extension_and_user_data(2)` user-data

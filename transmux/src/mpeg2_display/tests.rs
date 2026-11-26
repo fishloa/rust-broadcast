@@ -262,12 +262,7 @@ fn new_afd_without_bar_data_clears_bar_data() {
             .active_format
             .as_ref()
             .and_then(|a| a.bar_data.clone()),
-        Some(BarData {
-            top_bar_end_line: Some(0x0100),
-            bottom_bar_start_line: Some(0x0200),
-            left_bar_end_pixel: None,
-            right_bar_start_pixel: None,
-        })
+        Some(BarData::new(Some(0x0100), Some(0x0200), None, None))
     );
     let au = picture(2, &[afd_user_data(Some(9))]);
     let Mpeg2Outcome::Changed {

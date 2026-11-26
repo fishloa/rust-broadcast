@@ -1,7 +1,7 @@
 //! `InterlaceCheck` — surfaces AVC interlaced coding tools (issue #567).
 //!
 //! Decodes the first SPS seen on every PMT-declared H.264 PID
-//! (`stream_type` `0x1B`) via [`transmux::sps::decode_avc_sps`] (reused, not
+//! (`stream_type` `0x1B`) via [`broadcast_bitstream::sps::decode_avc_sps`] (reused, not
 //! duplicated) and flags `frame_mbs_only_flag == 0` (ITU-T H.264
 //! §7.3.2.1.1) — interlaced coding tools (PicAFF/field pictures) are
 //! enabled.
@@ -15,7 +15,7 @@
 //! so a caller can judge it against whatever downstream progressive
 //! assumption applies to their pipeline.
 //!
-//! HEVC is out of scope: `transmux::sps::decode_hevc_sps` does not decode
+//! HEVC is out of scope: `broadcast_bitstream::sps::decode_hevc_sps` does not decode
 //! the VUI `field_seq_flag`/`frame_field_info_present_flag` interlace
 //! signalling (ITU-T H.265 §E.2.1), so there is no decoded field to check
 //! without adding new decode surface to `transmux` — out of bounds for this
@@ -28,8 +28,8 @@ use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
 use broadcast_bitstream::annexb::iter_annexb_nals;
+use broadcast_bitstream::sps::decode_avc_sps;
 use dvb_si::tables::pmt::StreamType;
-use transmux::sps::decode_avc_sps;
 
 use crate::diagnostics::codec_common::{AccessUnitScanner, pids_with_stream_type};
 use crate::report::{Finding, Location, Severity};
@@ -120,7 +120,7 @@ fn scan_payload(
             continue;
         };
         reported.insert(pid, true);
-        if !info.frame_mbs_only {
+        if !info.frame_mbs_only() {
             report.push(Finding::new(
                 Severity::Info,
                 Location::at_pid(packet_index, pid),
@@ -144,7 +144,7 @@ mod tests {
 
     /// A progressive SPS (`frame_mbs_only_flag=1`) must not be flagged.
     /// Real SPS extracted for `decode_high_sps_with_scaling_lists` in
-    /// `transmux::sps` tests (320x240 High profile, progressive).
+    /// `broadcast_bitstream::sps` tests (320x240 High profile, progressive).
     #[test]
     fn progressive_sps_not_flagged() {
         let sps: &[u8] = &[
@@ -200,8 +200,8 @@ mod tests {
     #[test]
     fn baseline_interlaced_sps_decodes_as_expected() {
         let info = decode_avc_sps(INTERLACED_SPS).expect("hand-built SPS must decode");
-        assert_eq!(info.profile_idc, 66);
-        assert!(!info.frame_mbs_only, "SPS must decode as interlaced");
+        assert_eq!(info.profile_idc(), 66);
+        assert!(!info.frame_mbs_only(), "SPS must decode as interlaced");
     }
 
     #[test]

@@ -26,11 +26,10 @@
 //! private submodule is not checked out.
 #![cfg(feature = "std")]
 
+use broadcast_bitstream::facts::ActiveFormatDescription;
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use transmux::ir::{
-    ActiveFormatDescription, CodecConfig, DisplayChangeSet, DisplayInfo, TrackId, UserDataCarriage,
-};
+use transmux::ir::{CodecConfig, DisplayChangeSet, DisplayInfo, TrackId, UserDataCarriage};
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 fn read(fixture: &str) -> Option<Vec<u8>> {

@@ -13,8 +13,9 @@ tkhd presentation size) landed (`[Unreleased]`).**
 - **1b (colour)** landed on top (CHANGELOG `[Unreleased]`): the
   `overscan_appropriate` and `video_signal` fields of §4 with `VideoFormat`,
   `ColourPrimaries`, `TransferCharacteristics`, `MatrixCoefficients`,
-  `ColourDescription` and `VideoSignalType`, read from both VUI walks in
-  `transmux/src/sps.rs`. Tables E-2..E-5 / E.2..E.5 are page-verified and
+  `ColourDescription` and `VideoSignalType` (the coded facts now live in
+  `broadcast-bitstream/src/facts.rs`, read from both VUI walks in
+  `broadcast-bitstream/src/sps.rs`). Tables E-2..E-5 / E.2..E.5 are page-verified and
   transcribed in `private/specs-verified/mpeg/transmux/codec/vui-colour-tables.md`; the real-fixture
   combinations covered are absent, BT.601 SD (5/5/5, two captures), BT.709
   (1/1/1) and full-range `component` without a colour description. HEVC
@@ -90,7 +91,7 @@ existing paths (`TrackSpec`, `DemuxEvent`, `Sample`), the same way
 
 ## 2. What transmux does today (verified in the code at `origin/main` 514e93fec)
 
-- `transmux/src/sps.rs` walks the VUI only to reach `timing_info`:
+- `broadcast-bitstream/src/sps.rs` walks the VUI only to reach `timing_info`:
   `parse_avc_vui_inner` (line ~435) and `parse_hevc_sps_to_vui_timing_inner`
   (line ~995) read `aspect_ratio_idc`, `sar_width`, `sar_height`,
   `video_format`, `video_full_range_flag`, `colour_primaries`,

@@ -1,9 +1,8 @@
-//! SPS-dependent NAL helpers that stay in `transmux` until the parameter-set
-//! layer moves to `broadcast-bitstream` (lane bs1's PR 1).
+//! SPS-dependent NAL helpers that build on the bitstream layer.
 //!
 //! These functions decode an SPS to answer a question about it, so they need
-//! the parser that still lives in [`crate::sps`]. The NAL classification they
-//! build on is [`broadcast_bitstream::nal`].
+//! [`broadcast_bitstream::sps`]. The NAL classification they build on is
+//! [`broadcast_bitstream::nal`].
 
 use broadcast_bitstream::annexb::iter_length_prefixed_nals;
 use broadcast_bitstream::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec, nal_unit_type};
@@ -22,10 +21,10 @@ const HEVC_NAL_MIN_LEN: usize = 2 + 1;
 /// luma size after frame cropping (`decode_avc_sps`), `None` if the SPS does
 /// not decode.
 pub fn avc_sps_dimensions(sps: &[u8]) -> Option<(u16, u16)> {
-    let info = crate::sps::decode_avc_sps(sps).ok()?;
+    let info = broadcast_bitstream::sps::decode_avc_sps(sps).ok()?;
     Some((
-        info.width.min(u32::from(u16::MAX)) as u16,
-        info.height.min(u32::from(u16::MAX)) as u16,
+        info.width().min(u32::from(u16::MAX)) as u16,
+        info.height().min(u32::from(u16::MAX)) as u16,
     ))
 }
 
@@ -105,7 +104,8 @@ pub(crate) fn parameter_set_is_valid(codec: NalCodec, kind: ParamKind, nal: &[u8
                 return false;
             }
             kind != ParamKind::Sps
-                || crate::sps::decode_avc_sps(nal).is_ok_and(|i| i.width > 0 && i.height > 0)
+                || broadcast_bitstream::sps::decode_avc_sps(nal)
+                    .is_ok_and(|i| i.width() > 0 && i.height() > 0)
         }
         NalCodec::Hevc => {
             let want = match kind {
@@ -120,7 +120,8 @@ pub(crate) fn parameter_set_is_valid(codec: NalCodec, kind: ParamKind, nal: &[u8
                 return false;
             }
             kind != ParamKind::Sps
-                || crate::sps::decode_hevc_sps(nal).is_ok_and(|i| i.width > 0 && i.height > 0)
+                || broadcast_bitstream::sps::decode_hevc_sps(nal)
+                    .is_ok_and(|i| i.width() > 0 && i.height() > 0)
         }
         _ => false,
     }
@@ -274,7 +275,7 @@ mod tests {
     fn avc_sps_with_crop(crop: (u64, u64, u64, u64)) -> Vec<u8> {
         let (left, right, top, bottom) = crop;
         let mut nal = alloc::vec![0x67u8, 66, 0x00, 30];
-        let mut s = crate::test_bits::BitWriter::new();
+        let mut s = test_fixtures::bits::BitWriter::new();
         s.ue(0); // seq_parameter_set_id
         s.ue(0); // log2_max_frame_num_minus4
         s.ue(2); // pic_order_cnt_type
@@ -300,7 +301,7 @@ mod tests {
     fn hevc_sps_with_conformance_window(window: (u64, u64, u64, u64)) -> Vec<u8> {
         let (left, right, top, bottom) = window;
         let mut nal = alloc::vec![0x42u8, 0x01];
-        let mut s = crate::test_bits::BitWriter::new();
+        let mut s = test_fixtures::bits::BitWriter::new();
         s.u(4, 0); // sps_video_parameter_set_id
         s.u(3, 0); // sps_max_sub_layers_minus1
         s.bit(true); // sps_temporal_id_nesting_flag
@@ -350,13 +351,13 @@ mod tests {
     fn parameter_set_that_decodes_to_zero_geometry_is_invalid() {
         for (crop, geometry) in [((8, 0, 0, 0), (0, 16)), ((0, 0, 8, 0), (16, 0))] {
             let avc = avc_sps_with_crop(crop);
-            let info = crate::sps::decode_avc_sps(&avc).expect("AVC SPS decodes");
-            assert_eq!((info.width, info.height), geometry);
+            let info = broadcast_bitstream::sps::decode_avc_sps(&avc).expect("AVC SPS decodes");
+            assert_eq!((info.width(), info.height()), geometry);
             assert!(!parameter_set_is_valid(NalCodec::Avc, ParamKind::Sps, &avc));
 
             let hevc = hevc_sps_with_conformance_window(crop);
-            let info = crate::sps::decode_hevc_sps(&hevc).expect("HEVC SPS decodes");
-            assert_eq!((info.width, info.height), geometry);
+            let info = broadcast_bitstream::sps::decode_hevc_sps(&hevc).expect("HEVC SPS decodes");
+            assert_eq!((info.width(), info.height()), geometry);
             assert!(!parameter_set_is_valid(
                 NalCodec::Hevc,
                 ParamKind::Sps,

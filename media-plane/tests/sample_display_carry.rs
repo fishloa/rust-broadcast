@@ -12,9 +12,10 @@
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 
+use broadcast_bitstream::facts::AspectRatioIdc;
 use bytes::Bytes;
 use media_plane::{RetentionClass, SampleCursorItem, Trunk, TrunkConfig};
-use transmux::ir::{AspectRatioIdc, DisplayGeometry, DisplayInfo};
+use transmux::ir::{DisplayGeometry, DisplayInfo};
 use transmux::{Sample, TrackId};
 
 fn nz(v: usize) -> NonZeroUsize {

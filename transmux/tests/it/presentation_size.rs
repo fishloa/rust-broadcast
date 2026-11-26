@@ -1,4 +1,5 @@
-use transmux::ir::{AspectRatioIdc, DisplayGeometry, PictureRect};
+use broadcast_bitstream::facts::{AspectRatioIdc, PictureRect};
+use transmux::ir::DisplayGeometry;
 use transmux::presentation_size;
 
 #[test]

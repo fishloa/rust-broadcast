@@ -1682,7 +1682,7 @@ pub(crate) mod tests {
         assert_eq!(dec3.rfc6381(), "ec-3");
     }
 
-    use crate::test_bits::BitWriter;
+    use test_fixtures::bits::BitWriter;
 
     // ── r04-W5: dec3 built from real syncframes ───────────────────────────────
 
