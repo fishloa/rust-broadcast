@@ -474,12 +474,29 @@ pub struct SpliceOutput {
     pub discontinuity_points: Vec<SplicePoint>,
 }
 
+/// Build the per-track splice index [`SplicePlan`] reads: identity plus each
+/// sample's timing and sync flag, never its coded bytes.
+pub fn splice_index(tracks: &[Track]) -> transmux::SpliceIndex {
+    let mut builder = transmux::SpliceIndexBuilder::new();
+    for track in tracks {
+        let index = builder.add_track(track.spec.clone(), track.start_decode_time);
+        for sample in &track.samples {
+            builder.push_sample(index, sample.timing, sample.flags.is_sync);
+        }
+    }
+    builder.build()
+}
+
 /// Append `b` after `a` through [`SpliceStage`].
 ///
 /// # Errors
 /// Whatever [`SplicePlan::concat`] or the stage returns.
 pub fn concat(a: &Media, b: &Media) -> Result<SpliceOutput, transmux::Error> {
-    let plan = SplicePlan::concat(&a.tracks, &b.tracks, a.movie_timescale)?;
+    let plan = SplicePlan::concat(
+        &splice_index(&a.tracks),
+        &splice_index(&b.tracks),
+        a.movie_timescale,
+    )?;
     drive_splice(&plan, a, Some(b))
 }
 
@@ -492,7 +509,12 @@ pub fn splice_insert(
     ad: &Media,
     at_ticks: u64,
 ) -> Result<SpliceOutput, transmux::Error> {
-    let plan = SplicePlan::insert(&base.tracks, &ad.tracks, base.movie_timescale, at_ticks)?;
+    let plan = SplicePlan::insert(
+        &splice_index(&base.tracks),
+        &splice_index(&ad.tracks),
+        base.movie_timescale,
+        at_ticks,
+    )?;
     drive_splice(&plan, base, Some(ad))
 }
 

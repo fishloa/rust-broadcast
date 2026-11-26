@@ -58,10 +58,10 @@
 //! # Example
 //!
 //! ```rust
-//! use transmux::{SplicePlan, SpliceStage, Track};
+//! use transmux::{SpliceIndex, SplicePlan, SpliceStage};
 //! use broadcast_common::timescale::Timescale;
 //!
-//! # fn plan(base: &[Track], ad: &[Track], scale: Timescale) -> transmux::Result<()> {
+//! # fn plan(base: &SpliceIndex, ad: &SpliceIndex, scale: Timescale) -> transmux::Result<()> {
 //! // Play `base` up to 90 000 presentation ticks (1 s of a 90 kHz track),
 //! // insert `ad`, then resume `base` shifted by `ad`'s span.
 //! let plan = SplicePlan::insert(base, ad, scale, 90_000)?;
@@ -74,14 +74,15 @@
 use alloc::collections::BTreeMap;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+use core::num::NonZeroU32;
+use core::ops::Deref;
 
 use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
 
 use crate::TrackId;
 use crate::error::{Error, Result};
-use crate::ir::Sample;
-use crate::media::Track;
+use crate::ir::{DemuxEvent, Sample, SampleTiming, TrackSpec};
 
 /// A splice / concatenation join point in a resulting track.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +118,153 @@ pub struct TrackSplice {
     pub insert_shift: i64,
     /// Ticks added to every source sample from `split_index + insert_count` on.
     pub resume_shift: i64,
+}
+
+/// One sample's planner-relevant timing and flags, with no payload: exactly
+/// the fields [`SplicePlan::concat`] / [`SplicePlan::insert`] read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SpliceSample {
+    /// Absolute decode timestamp, when the sample has one.
+    pub dts: Option<i64>,
+    /// Absolute presentation timestamp, when the sample has one.
+    pub pts: Option<i64>,
+    /// The sample's span in ticks, when known.
+    pub duration: Option<NonZeroU32>,
+    /// Whether this is a sync sample (random-access point / keyframe).
+    pub is_sync: bool,
+}
+
+impl SpliceSample {
+    /// Build a sample's planner-relevant fields from its [`SampleTiming`] and
+    /// sync flag.
+    #[must_use]
+    pub fn new(timing: Option<SampleTiming>, is_sync: bool) -> Self {
+        Self {
+            dts: timing.and_then(|t| t.dts()),
+            pts: timing.and_then(|t| t.pts()),
+            duration: timing.and_then(|t| t.duration()).and_then(NonZeroU32::new),
+            is_sync,
+        }
+    }
+
+    fn duration_ticks(&self) -> u32 {
+        self.duration.map_or(0, NonZeroU32::get)
+    }
+}
+
+/// One track's planner-relevant identity and sample timings: a [`TrackSpec`]
+/// plus, per sample, only what the splice planner reads.
+#[derive(Debug, Clone)]
+#[non_exhaustive]
+pub struct SpliceTrack {
+    /// Track identity + codec configuration (used to match tracks and pick the
+    /// reference timeline).
+    pub spec: TrackSpec,
+    /// The track's samples, decode order, with no coded bytes.
+    pub samples: Vec<SpliceSample>,
+    /// Absolute decode time of the track's first sample, in its media
+    /// timescale.
+    pub start_decode_time: u64,
+}
+
+/// The per-track index [`SplicePlan::concat`] / [`SplicePlan::insert`] read:
+/// timing and flags only, never coded sample payloads.
+#[derive(Debug, Clone, Default)]
+pub struct SpliceIndex {
+    tracks: Vec<SpliceTrack>,
+}
+
+impl SpliceIndex {
+    /// The indexed tracks, in source order.
+    #[must_use]
+    pub fn tracks(&self) -> &[SpliceTrack] {
+        &self.tracks
+    }
+}
+
+impl Deref for SpliceIndex {
+    type Target = [SpliceTrack];
+
+    fn deref(&self) -> &Self::Target {
+        &self.tracks
+    }
+}
+
+/// Builds a [`SpliceIndex`] one track, `DemuxEvent`, or sample timing at a
+/// time, so a caller never holds the coded samples.
+#[derive(Debug, Clone, Default)]
+pub struct SpliceIndexBuilder {
+    tracks: Vec<SpliceTrack>,
+}
+
+impl SpliceIndexBuilder {
+    /// A builder with no tracks.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a track and return the index its samples attach to.
+    pub fn add_track(&mut self, spec: TrackSpec, start_decode_time: u64) -> usize {
+        self.tracks.push(SpliceTrack {
+            spec,
+            samples: Vec::new(),
+            start_decode_time,
+        });
+        self.tracks.len() - 1
+    }
+
+    /// Append one sample's timing and sync flag to the track at `index`.
+    pub fn push_sample(&mut self, index: usize, timing: Option<SampleTiming>, is_sync: bool) {
+        if let Some(track) = self.tracks.get_mut(index) {
+            track.samples.push(SpliceSample::new(timing, is_sync));
+        }
+    }
+
+    /// Feed one demux event: `TrackAdded`/`TrackUpdated` maintain the track
+    /// set, `Sample` appends its timing (never its payload).
+    pub fn push_event(&mut self, event: &DemuxEvent) {
+        match event {
+            DemuxEvent::TrackAdded(spec) => {
+                if !self.tracks.iter().any(|t| t.spec.track_id == spec.track_id) {
+                    self.add_track(spec.clone(), 0);
+                }
+            }
+            DemuxEvent::TrackUpdated(spec) => {
+                if let Some(track) = self
+                    .tracks
+                    .iter_mut()
+                    .find(|t| t.spec.track_id == spec.track_id)
+                {
+                    track.spec = spec.clone();
+                }
+            }
+            DemuxEvent::Sample { track_id, sample } => {
+                if let Some(index) = self
+                    .tracks
+                    .iter()
+                    .position(|t| t.spec.track_id == *track_id)
+                {
+                    if self.tracks[index].samples.is_empty()
+                        && let Some(dts) = sample.timing.and_then(|t| t.dts())
+                    {
+                        self.tracks[index].start_decode_time = u64::try_from(dts).unwrap_or(0);
+                    }
+                    self.push_sample(index, sample.timing, sample.flags.is_sync);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Finish the index.
+    #[must_use]
+    pub fn build(self) -> SpliceIndex {
+        SpliceIndex {
+            tracks: self.tracks,
+        }
+    }
 }
 
 /// A computed splice over the sample stream, with the joins to signal.
@@ -169,17 +317,17 @@ impl SplicePlan {
 /// The decode time of a track's first sample beyond its last (its **end decode
 /// time**): the last sample's own absolute `dts` plus its `duration` when
 /// known, else the duration-sum from its start.
-fn track_end_decode_time(track: &Track) -> u64 {
+fn track_end_decode_time(track: &SpliceTrack) -> u64 {
     if let Some(last) = track.samples.last()
-        && let Some(dts) = last.timing.and_then(|t| t.dts())
+        && let Some(dts) = last.dts
     {
         let dts = u64::try_from(dts).unwrap_or(0);
-        return dts.saturating_add(last.timing.and_then(|t| t.duration()).unwrap_or(0) as u64);
+        return dts.saturating_add(u64::from(last.duration_ticks()));
     }
     let span: u64 = track
         .samples
         .iter()
-        .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
+        .map(|s| u64::from(s.duration_ticks()))
         .sum();
     track.start_decode_time.saturating_add(span)
 }
@@ -187,7 +335,7 @@ fn track_end_decode_time(track: &Track) -> u64 {
 /// Match `a.tracks[i]` to an index in `b`: by `track_id` first, else by index.
 /// The mapping is injective; mismatched counts, an unavailable match, or an
 /// incompatible codec kind/timescale is [`Error::InvalidInput`].
-fn match_tracks(a: &[Track], b: &[Track]) -> Result<Vec<usize>> {
+fn match_tracks(a: &[SpliceTrack], b: &[SpliceTrack]) -> Result<Vec<usize>> {
     if a.len() != b.len() {
         return Err(Error::InvalidInput(
             "splice: media have differing track counts",
@@ -225,18 +373,13 @@ fn match_tracks(a: &[Track], b: &[Track]) -> Result<Vec<usize>> {
 /// The single track whose timeline anchors the splice offset applied uniformly
 /// to every track (issue #782): the video track if either side has one, else
 /// the first track that carries a real timestamp on either side.
-fn pick_reference_track(a: &[Track], b: &[Track], mapping: &[usize]) -> Option<usize> {
+fn pick_reference_track(a: &[SpliceTrack], b: &[SpliceTrack], mapping: &[usize]) -> Option<usize> {
     if let Some(i) = a.iter().position(|t| t.spec.config.is_video()) {
         return Some(i);
     }
     a.iter().enumerate().position(|(i, at)| {
-        at.samples
-            .iter()
-            .any(|s| s.timing.and_then(|t| t.dts()).is_some())
-            || b[mapping[i]]
-                .samples
-                .iter()
-                .any(|s| s.timing.and_then(|t| t.dts()).is_some())
+        at.samples.iter().any(|s| s.dts.is_some())
+            || b[mapping[i]].samples.iter().any(|s| s.dts.is_some())
     })
 }
 
@@ -253,7 +396,7 @@ fn rescale_ticks(ticks: i64, from_timescale: Timescale, to_timescale: Timescale)
 /// request before the first sample snaps to index 0; a track with no samples
 /// has nothing to snap to (`None`).
 #[must_use]
-pub fn snap_to_preceding_sync(track: &Track, at_ticks: u64) -> Option<(u64, usize)> {
+pub fn snap_to_preceding_sync(track: &SpliceTrack, at_ticks: u64) -> Option<(u64, usize)> {
     if track.samples.is_empty() {
         return None;
     }
@@ -261,17 +404,16 @@ pub fn snap_to_preceding_sync(track: &Track, at_ticks: u64) -> Option<(u64, usiz
     let mut best: (u64, usize) = (track.start_decode_time, 0);
     for (i, s) in track.samples.iter().enumerate() {
         let dts = s
-            .timing
-            .and_then(|t| t.dts())
+            .dts
             .map(|d| u64::try_from(d).unwrap_or(0))
             .unwrap_or(fallback_dts);
         if dts > at_ticks {
             break;
         }
-        if s.flags.is_sync {
+        if s.is_sync {
             best = (dts, i);
         }
-        fallback_dts = dts.saturating_add(s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64);
+        fallback_dts = dts.saturating_add(u64::from(s.duration_ticks()));
     }
     Some(best)
 }
@@ -280,19 +422,15 @@ pub fn snap_to_preceding_sync(track: &Track, at_ticks: u64) -> Option<(u64, usiz
 /// own media timescale: the boundary sample's absolute `dts` when it has one,
 /// the track's end decode time for a past-the-end split, else the duration
 /// sum from the track start.
-fn boundary_decode_time(track: &Track, split_index: usize) -> u64 {
-    match track
-        .samples
-        .get(split_index)
-        .and_then(|s| s.timing.and_then(|t| t.dts()))
-    {
+fn boundary_decode_time(track: &SpliceTrack, split_index: usize) -> u64 {
+    match track.samples.get(split_index).and_then(|s| s.dts) {
         Some(dts) => u64::try_from(dts).unwrap_or(0),
         None if split_index >= track.samples.len() => track_end_decode_time(track),
         None => {
             track.start_decode_time
                 + track.samples[..split_index]
                     .iter()
-                    .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
+                    .map(|s| u64::from(s.duration_ticks()))
                     .sum::<u64>()
         }
     }
@@ -301,18 +439,18 @@ fn boundary_decode_time(track: &Track, split_index: usize) -> u64 {
 /// First sample index of `track` whose **absolute** decode time is at or beyond
 /// `cut_ticks`; clamps to the sample count for a past-the-end cut. Compared in
 /// `i128` so a negative (rebased) absolute time is simply "before the cut".
-fn sample_index_at_absolute_dts(track: &Track, cut_ticks: u64) -> usize {
+fn sample_index_at_absolute_dts(track: &SpliceTrack, cut_ticks: u64) -> usize {
     let mut acc = track.start_decode_time;
     let cut = i128::from(cut_ticks);
     for (i, s) in track.samples.iter().enumerate() {
-        let absolute = match s.timing.and_then(|t| t.dts()) {
+        let absolute = match s.dts {
             Some(dts) => i128::from(dts),
             None => i128::from(acc),
         };
         if absolute >= cut {
             return i;
         }
-        acc = acc.saturating_add(s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64);
+        acc = acc.saturating_add(u64::from(s.duration_ticks()));
     }
     track.samples.len()
 }
@@ -323,11 +461,11 @@ impl SplicePlan {
     /// # Errors
     /// [`Error::InvalidInput`] if the track sets are incompatible, or if a
     /// matched `b` track's first sample is not a sync sample.
-    pub fn concat(a: &[Track], b: &[Track], movie_timescale: Timescale) -> Result<Self> {
+    pub fn concat(a: &SpliceIndex, b: &SpliceIndex, movie_timescale: Timescale) -> Result<Self> {
         let mapping = match_tracks(a, b)?;
         for &bj in &mapping {
             if let Some(first) = b[bj].samples.first()
-                && !first.flags.is_sync
+                && !first.is_sync
             {
                 return Err(Error::InvalidInput(
                     "concat: appended track does not begin on a sync sample",
@@ -341,7 +479,7 @@ impl SplicePlan {
             let incoming_ref_start = bt
                 .samples
                 .first()
-                .and_then(|s| s.timing.and_then(|t| t.dts()))
+                .and_then(|s| s.dts)
                 .unwrap_or(bt.start_decode_time as i64);
             (ref_timescale, join_dts_ref, incoming_ref_start)
         });
@@ -361,11 +499,7 @@ impl SplicePlan {
             let split_index = at.samples.len();
             let insert_count = bt.samples.len();
             if insert_count > 0 {
-                let presentation_time = match bt
-                    .samples
-                    .first()
-                    .and_then(|s| s.timing.and_then(|t| t.pts()))
-                {
+                let presentation_time = match bt.samples.first().and_then(|s| s.pts) {
                     Some(p) => u64::try_from(p.saturating_add(insert_shift)).unwrap_or(0),
                     None => track_end_decode_time(at),
                 };
@@ -402,15 +536,15 @@ impl SplicePlan {
     /// has no video track to align on, or if a matched `ad` track's first
     /// sample is not a sync sample.
     pub fn insert(
-        base: &[Track],
-        ad: &[Track],
+        base: &SpliceIndex,
+        ad: &SpliceIndex,
         movie_timescale: Timescale,
         at_ticks: u64,
     ) -> Result<Self> {
         let mapping = match_tracks(base, ad)?;
         for &aj in &mapping {
             if let Some(first) = ad[aj].samples.first()
-                && !first.flags.is_sync
+                && !first.is_sync
             {
                 return Err(Error::InvalidInput(
                     "splice_insert: ad track does not begin on a sync sample",
@@ -436,7 +570,7 @@ impl SplicePlan {
         let incoming_ref_start = ad_video
             .samples
             .first()
-            .and_then(|s| s.timing.and_then(|t| t.dts()))
+            .and_then(|s| s.dts)
             .unwrap_or(ad_video.start_decode_time as i64);
 
         let mut tracks = Vec::with_capacity(base.len());
@@ -459,13 +593,9 @@ impl SplicePlan {
             let ad_span: u64 = adt
                 .samples
                 .iter()
-                .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
+                .map(|s| u64::from(s.duration_ticks()))
                 .sum();
-            let resume_shift: i64 = match adt
-                .samples
-                .first()
-                .and_then(|s| s.timing.and_then(|t| t.dts()))
-            {
+            let resume_shift: i64 = match adt.samples.first().and_then(|s| s.dts) {
                 Some(first) => first
                     .saturating_add(insert_shift)
                     .saturating_add(ad_span as i64)
@@ -474,11 +604,7 @@ impl SplicePlan {
             };
             let insert_count = adt.samples.len();
             if insert_count > 0 {
-                let presentation_time = match adt
-                    .samples
-                    .first()
-                    .and_then(|s| s.timing.and_then(|t| t.pts()))
-                {
+                let presentation_time = match adt.samples.first().and_then(|s| s.pts) {
                     Some(p) => u64::try_from(p.saturating_add(insert_shift)).unwrap_or(0),
                     None => boundary_dts,
                 };
@@ -489,7 +615,7 @@ impl SplicePlan {
                 });
             }
             if split_index < bt.samples.len() {
-                let presentation_time = match bt.samples[split_index].timing.and_then(|t| t.pts()) {
+                let presentation_time = match bt.samples[split_index].pts {
                     Some(p) => u64::try_from(p.saturating_add(resume_shift)).unwrap_or(0),
                     None => boundary_dts.saturating_add(ad_span),
                 };

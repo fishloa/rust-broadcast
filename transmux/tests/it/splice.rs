@@ -31,7 +31,7 @@ use core::time::Duration;
 use isobmff::box_types::parse_box;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::{AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps};
-use test_harness::collect::{concat, splice_insert};
+use test_harness::collect::{concat, splice_index, splice_insert};
 use transmux::TrackId;
 use transmux::ir::DataIdentity;
 use transmux::pipeline::DataCarriage;
@@ -449,7 +449,7 @@ fn splice_snaps_to_preceding_keyframe() {
     // Request DTS 12000 (sample index 4, NOT a keyframe). Preceding keyframe is
     // index 3 @ DTS 9000.
     let requested = 12000;
-    let (snapped, idx) = snap_to_preceding_sync(&base.tracks[0], requested).unwrap();
+    let (snapped, idx) = snap_to_preceding_sync(&splice_index(&base.tracks)[0], requested).unwrap();
     assert_eq!(snapped, 9000, "snapped to preceding keyframe DTS");
     assert_eq!(idx, 3);
     assert!(snapped <= requested, "snap is at or before the request");
@@ -461,7 +461,7 @@ fn splice_snaps_to_preceding_keyframe() {
     assert_eq!(res.discontinuity_points[0].sample_index, 3);
 
     // An exact-keyframe request is unchanged.
-    let (snapped2, idx2) = snap_to_preceding_sync(&base.tracks[0], 18000).unwrap();
+    let (snapped2, idx2) = snap_to_preceding_sync(&splice_index(&base.tracks)[0], 18000).unwrap();
     assert_eq!((snapped2, idx2), (18000, 6));
 
     // An ad whose first sample is NOT sync → Err.
@@ -601,7 +601,7 @@ fn concat_and_snap_honour_a_genuine_tfdt_gap() {
     // snap_to_preceding_sync: a request that falls inside the gapped
     // sample's span must snap to ITS true dts (56_000), not the naive
     // reconstructed value (6000) a duration-sum walk would have produced.
-    let (snapped, idx) = snap_to_preceding_sync(&a.tracks[0], 57_000).unwrap();
+    let (snapped, idx) = snap_to_preceding_sync(&splice_index(&a.tracks)[0], 57_000).unwrap();
     assert_eq!(
         (snapped, idx),
         (56_000, last),

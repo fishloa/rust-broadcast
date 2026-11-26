@@ -395,7 +395,10 @@ pub use hdr10plus::{
 pub use matroska_demux::{IR_TIMESCALE, MatroskaDemux, MatroskaDemuxConfig, MatroskaInput};
 #[cfg(feature = "std")]
 pub use smooth_codec::track_spec_from_quality_level;
-pub use splice::{SplicePlan, SplicePoint, SpliceStage, TrackSplice, snap_to_preceding_sync};
+pub use splice::{
+    SpliceIndex, SpliceIndexBuilder, SplicePlan, SplicePoint, SpliceSample, SpliceStage,
+    SpliceTrack, TrackSplice, snap_to_preceding_sync,
+};
 pub use sps::{
     AvcReorderDepth, AvcSpsInfo, AvcVuiTiming, HevcSpsInfo, HevcVpsTiming, HevcVuiTiming,
     decode_avc_reorder_depth, decode_avc_sps, decode_avc_vui_timing, decode_hevc_sps,
