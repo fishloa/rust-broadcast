@@ -195,6 +195,46 @@ pub const BANNED: &[Banned] = &[
     ban("moka", "lru"),
     ban("backon", "the runtime crates' sans-IO retry/backoff"),
     ban("backoff", "the runtime crates' sans-IO retry/backoff"),
+    ban(
+        "ffmpeg-sys-next",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "ffmpeg-next",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "ffmpeg-sys",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "ffmpeg",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "rsmpeg",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "rusty_ffmpeg",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "ac-ffmpeg",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "ffmpeg-the-third",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "ffmpeg-sys-the-third",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "broadcast-codec-libav",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
 ];
 
 const fn exempt(member: &'static str, krate: &'static str, reason: &'static str) -> Exempt {
