@@ -1,4 +1,4 @@
-//! Every SRT packet type round-trips through `broadcast_common::{Parse, Serialize}`.
+//! Every SRT packet type round-trips through `broadcast_core::{Parse, Serialize}`.
 
 use broadcast_core::error::OutputBufferTooSmall;
 use broadcast_core::{Parse, Serialize};

@@ -73,7 +73,7 @@
 //! byte-identical:
 //!
 //! ```
-//! use broadcast_common::{Parse, Serialize};
+//! use broadcast_core::{Parse, Serialize};
 //! use dvb_si::tables::AnyTableSection;
 //! use dvb_si::tables::pat::PatSection;
 //!

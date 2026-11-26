@@ -27,7 +27,7 @@
 //! # Example
 //!
 //! ```
-//! use broadcast_common::{Parse, Serialize};
+//! use broadcast_core::{Parse, Serialize};
 //! use isobmff::registry::{BoxDef, BoxRegistry};
 //! use isobmff::Error;
 //!

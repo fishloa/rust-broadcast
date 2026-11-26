@@ -1,4 +1,4 @@
-//! ALC/LCT/FLUTE wire types round-trip through `broadcast_common::{Parse, Serialize}`
+//! ALC/LCT/FLUTE wire types round-trip through `broadcast_core::{Parse, Serialize}`
 //! over the committed FLUTE FDT-packet fixture.
 
 use broadcast_core::{Parse, Serialize};

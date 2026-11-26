@@ -280,7 +280,6 @@ dependencies = [
 name = "dvb-subtitle"
 version = "0.10.0"
 dependencies = [
- "broadcast-common",
  "broadcast-core",
  "serde",
  "thiserror",

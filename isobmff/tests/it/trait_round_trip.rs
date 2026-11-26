@@ -1,4 +1,4 @@
-//! `EmsgBox` through `broadcast_common::{Parse, Serialize}` on the real v0 and v1 fixtures.
+//! `EmsgBox` through `broadcast_core::{Parse, Serialize}` on the real v0 and v1 fixtures.
 
 use broadcast_core::{Parse, Serialize};
 use isobmff::emsg::EmsgBox;

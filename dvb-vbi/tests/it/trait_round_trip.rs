@@ -1,4 +1,4 @@
-//! The data-field family through `broadcast_common::{Parse, Serialize}` on the real
+//! The data-field family through `broadcast_core::{Parse, Serialize}` on the real
 //! EN 301 775 data-field fixture (one of every typed data unit).
 
 use broadcast_core::{Parse, Serialize};

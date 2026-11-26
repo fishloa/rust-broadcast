@@ -1,4 +1,4 @@
-//! `PesPacket` through `broadcast_common::{Parse, Serialize}`.
+//! `PesPacket` through `broadcast_core::{Parse, Serialize}`.
 
 use broadcast_core::{Parse, Serialize};
 use mpeg_pes::{Error, PesPacket};

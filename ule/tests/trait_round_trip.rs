@@ -1,4 +1,4 @@
-//! `Sndu` and `PayloadChain` through `broadcast_common::{Parse, Serialize}`.
+//! `Sndu` and `PayloadChain` through `broadcast_core::{Parse, Serialize}`.
 
 use broadcast_core::{Parse, Serialize};
 use ule::{Error, Sndu};
