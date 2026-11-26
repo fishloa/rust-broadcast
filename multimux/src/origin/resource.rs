@@ -33,7 +33,7 @@
 //! advertises an in-progress segment's whole-segment URI (RFC 8216bis
 //! §4.4.4.9), so a well-behaved client never requests one.
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use std::sync::Arc;
 
 use axum::Router;

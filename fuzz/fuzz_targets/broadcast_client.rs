@@ -1,8 +1,8 @@
 #![no_main]
 
-use url::Url;
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
+use url::Url;
 
 use broadcast_client::{
     Action, BufferHint, ClientIdentity, Config, ConnId, Credentials, DashClockPolicy, Event,
@@ -320,10 +320,7 @@ fn packetise(tracks: &[SeedTrack]) -> (Vec<sdp_types::Media>, Vec<Vec<Vec<u8>>>)
             .with_ssrc(RTP_SSRC)
             .with_stap_a_parameter_sets(false);
         stage
-            .feed(
-                MuxInput::Track(Box::new(spec.clone())),
-                Timestamp::ZERO,
-            )
+            .feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)
             .expect("announce track");
         let mut packets: Vec<Vec<u8>> = Vec::new();
         let drain = |stage: &mut transmux::RtpPacketiserStage, packets: &mut Vec<Vec<u8>>| {
@@ -396,7 +393,9 @@ fn rtp_seed() -> &'static RtpSeed {
         let sdp = rtsp_runtime::sdp::session_description(
             "broadcast-client fuzz seed",
             sdp_types::Origin::with_ip_addr(0, 0, std::net::Ipv4Addr::LOCALHOST),
-            sdp_types::Connection::from_ip_addr(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            sdp_types::Connection::from_ip_addr(std::net::IpAddr::V4(
+                std::net::Ipv4Addr::LOCALHOST,
+            )),
             medias,
         )
         .expect("render session description");
@@ -458,7 +457,10 @@ fn player(session: &mut Session, now: u64, chunk: &[u8]) {
 fn storm(session: &mut Session, watch: &mut Watch, now: u64, chunk: &[u8]) {
     let byte = |i: usize| usize::from(chunk.get(i).copied().unwrap_or(0));
     if byte(3) % 3 != 0 {
-        let _ = session.set_credentials(Timestamp::from_micros(now), Credentials::new("user", "pass"));
+        let _ = session.set_credentials(
+            Timestamp::from_micros(now),
+            Credentials::new("user", "pass"),
+        );
     }
     let first = STORM_FIRST_STATUSES[byte(1) % STORM_FIRST_STATUSES.len()];
     let then = STORM_THEN_STATUSES[byte(4) % STORM_THEN_STATUSES.len()];
@@ -570,7 +572,9 @@ impl Watch {
                     if !url.as_str().starts_with(ORIGIN_PREFIX) {
                         for (name, _) in &headers {
                             assert!(
-                                !AUDIT_HEADERS.iter().any(|h| name.as_str().eq_ignore_ascii_case(h)),
+                                !AUDIT_HEADERS
+                                    .iter()
+                                    .any(|h| name.as_str().eq_ignore_ascii_case(h)),
                                 "{name} sent to {url}"
                             );
                         }
@@ -818,16 +822,22 @@ fn drive(url: &str, data: &[u8]) {
                         ));
                     }
                     session.on_response(
-                conn,
-                code(status),
-                &header_map(&headers),
-                Timestamp::from_micros(now),
-            );
+                        conn,
+                        code(status),
+                        &header_map(&headers),
+                        Timestamp::from_micros(now),
+                    );
                 }
             }
             6 => {
                 if let Some(conn) = conn {
-                    session.on_closed(conn, Some(TransportError::Other { reason: "reset".to_string() }), Timestamp::from_micros(now));
+                    session.on_closed(
+                        conn,
+                        Some(TransportError::Other {
+                            reason: "reset".to_string(),
+                        }),
+                        Timestamp::from_micros(now),
+                    );
                     watch.host_closed(conn);
                 }
             }
@@ -942,7 +952,11 @@ fn rtsp_pump(
 
 fn drive_rtsp(url: &str, data: &[u8]) {
     let (header, data) = split_header(data);
-    let mut session = match Session::open(Url::parse(url).unwrap(), config_from(header), Timestamp::ZERO) {
+    let mut session = match Session::open(
+        Url::parse(url).unwrap(),
+        config_from(header),
+        Timestamp::ZERO,
+    ) {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -980,8 +994,8 @@ fn drive_rtsp(url: &str, data: &[u8]) {
                 }
             }
             5 => {
-                let _ =
-                    session.set_credentials(Timestamp::from_micros(now), Credentials::new("u", "p"));
+                let _ = session
+                    .set_credentials(Timestamp::from_micros(now), Credentials::new("u", "p"));
             }
             6 => session.reconnect(Timestamp::from_micros(now)),
             7 => now = now.saturating_add(TIMER_JUMP_US),
@@ -1066,7 +1080,11 @@ fn srt_like(chunk: &[u8], pick: u8) -> Vec<u8> {
 
 fn drive_datagram(url: &str, data: &[u8]) {
     let (header, data) = split_header(data);
-    let mut session = match Session::open(Url::parse(url).unwrap(), config_from(header), Timestamp::ZERO) {
+    let mut session = match Session::open(
+        Url::parse(url).unwrap(),
+        config_from(header),
+        Timestamp::ZERO,
+    ) {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -1141,11 +1159,8 @@ fn drive_datagram(url: &str, data: &[u8]) {
 fn drive_ts_http(data: &[u8]) {
     let mut config = config_from(&[]);
     config.kind = SourceKind::TsHttp;
-    let mut session = match Session::open(
-        Url::parse(TS_HTTP_URL).unwrap(),
-        config,
-        Timestamp::ZERO,
-    ) {
+    let mut session = match Session::open(Url::parse(TS_HTTP_URL).unwrap(), config, Timestamp::ZERO)
+    {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -1154,11 +1169,14 @@ fn drive_ts_http(data: &[u8]) {
     let mut now = 0u64;
     for chunk in data.chunks(TS_CHUNK_BYTES) {
         now = next_time(now, chunk);
-        let conn = conn_ids.get(usize::from(chunk.get(1).copied().unwrap_or(0)) % conn_ids.len().max(1)).copied();
+        let conn = conn_ids
+            .get(usize::from(chunk.get(1).copied().unwrap_or(0)) % conn_ids.len().max(1))
+            .copied();
         match chunk.first().copied().unwrap_or(0) % 7 {
             0 => {
                 if let Some(conn) = conn {
-                    let status = TS_STATUSES[usize::from(chunk.get(1).copied().unwrap_or(0)) % TS_STATUSES.len()];
+                    let status = TS_STATUSES
+                        [usize::from(chunk.get(1).copied().unwrap_or(0)) % TS_STATUSES.len()];
                     let headers = match chunk.get(2).copied().unwrap_or(0) % 3 {
                         1 => vec![(
                             "Content-Length".to_string(),
@@ -1167,11 +1185,11 @@ fn drive_ts_http(data: &[u8]) {
                         _ => Vec::new(),
                     };
                     session.on_response(
-                conn,
-                code(status),
-                &header_map(&headers),
-                Timestamp::from_micros(now),
-            );
+                        conn,
+                        code(status),
+                        &header_map(&headers),
+                        Timestamp::from_micros(now),
+                    );
                 }
             }
             1 => {

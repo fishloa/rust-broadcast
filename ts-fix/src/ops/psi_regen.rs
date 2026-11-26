@@ -78,7 +78,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
-use broadcast_common::traits::{Parse, Serialize};
+use broadcast_core::traits::{Parse, Serialize};
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{self, PmtSection};
 use mpeg_ts::mux::SectionPacketiser;

@@ -1,6 +1,6 @@
 #![no_main]
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use broadcast_matroska::{Element, Limits};
 use libfuzzer_sys::fuzz_target;
 

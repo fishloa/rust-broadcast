@@ -28,7 +28,7 @@ use mpeg_ts::pid::Pid;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use dvb_conformance::{ConformanceEvent, ConformanceMonitor, Priority};
 use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::tables::AnyTableSection;
@@ -1145,7 +1145,7 @@ mod tests {
     /// The `tables` array is capped (audit r14-DEMO-W2) and says so.
     #[test]
     fn table_array_is_capped_and_flagged_truncated() {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use dvb_si::tables::pat::{PatEntry, PatSection};
         use mpeg_ts::ts::TsHeader;
 
@@ -1258,7 +1258,7 @@ mod tests {
     /// crate's own tests).
     #[test]
     fn scte35_declared_in_pmt_is_reassembled_and_parsed() {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use dvb_si::descriptors::DescriptorLoop;
         use dvb_si::tables::pat::{PatEntry, PatSection};
         use dvb_si::tables::pmt::{PmtSection, PmtStream};

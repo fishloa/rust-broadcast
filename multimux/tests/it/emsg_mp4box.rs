@@ -15,14 +15,14 @@ fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
 }
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use transmux::TrackId;
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use media_plane::ProgramId;
 use media_plane::segmenter::ProgramSegmenter;
 use media_plane::trunk::{EventAnchor, RetentionClass, Trunk, TrunkConfig};
@@ -36,7 +36,7 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
 const TARGET_DURATION: Duration = Duration::from_secs(1);
 const TRACK_ID: u32 = 1;
-const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
+const TIMESCALE: Timescale = broadcast_core::timescale!(90_000);
 const FRAME_DUR: u32 = TIMESCALE.get() / 30;
 const SYNC_INTERVAL: u32 = 15;
 

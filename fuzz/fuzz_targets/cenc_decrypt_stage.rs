@@ -43,7 +43,7 @@ fuzz_target!(|data: &[u8]| {
     };
     let mut spec = TrackSpec::new(
         TrackId::new(1),
-        broadcast_common::timescale::Timescale::try_new(90_000).expect("nonzero"),
+        broadcast_core::timescale::Timescale::try_new(90_000).expect("nonzero"),
         CodecConfig::Avc {
             config: isobmff::AVCConfigurationBox::new(isobmff::AVCDecoderConfigurationRecord {
                 configuration_version: 1,
@@ -68,10 +68,7 @@ fuzz_target!(|data: &[u8]| {
         ConstantIvSenc::default(),
     ));
     let mut stage = CencDecryptStage::new(KeyMap::new().with_key(kid, key));
-    let _ = stage.feed(
-        MuxInput::Track(Box::new(spec)),
-        Timestamp::ZERO,
-    );
+    let _ = stage.feed(MuxInput::Track(Box::new(spec)), Timestamp::ZERO);
     let mut sample = match Sample::new(data.to_vec(), Some(0), Some(0), Some(1), true) {
         Ok(sample) => sample,
         Err(_) => return,

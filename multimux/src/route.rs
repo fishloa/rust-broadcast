@@ -249,7 +249,7 @@ impl HealthState {
     }
 }
 
-broadcast_common::impl_spec_display!(HealthState);
+broadcast_core::impl_spec_display!(HealthState);
 
 /// Why a classic-TS output is not IDR-aligned: the stream carried no IDR
 /// picture within the route's wait bound
@@ -276,7 +276,7 @@ impl TsHlsIdrStatus {
     }
 }
 
-broadcast_common::impl_spec_display!(TsHlsIdrStatus);
+broadcast_core::impl_spec_display!(TsHlsIdrStatus);
 
 /// The outcome of resolving one [`ProgramId`] against a route's
 /// [`RouteHandle::resolve_program`] registry.
@@ -5310,7 +5310,7 @@ mod program_registry_tests {
     /// version-bumped EIT p/f section, as TS packets: a real programme
     /// transition for `service_id`.
     fn eit_transition_packets(ts_bytes: &[u8], service_id: u16) -> Vec<u8> {
-        use broadcast_common::Serialize as WireSerialize;
+        use broadcast_core::Serialize as WireSerialize;
         use dvb_si::demux::{SiDemux, SiDemuxConfig};
         use dvb_si::tables::eit::{EitKind, EitSection, PID as EIT_PID};
         use dvb_si::tables::{AnyTableSection, RunningStatus, SectionVersion};
@@ -5333,7 +5333,7 @@ mod program_registry_tests {
         }
         let parsed: Vec<EitSection<'_>> = sections
             .iter()
-            .map(|b| <EitSection as broadcast_common::Parse>::parse(b).expect("parse"))
+            .map(|b| <EitSection as broadcast_core::Parse>::parse(b).expect("parse"))
             .collect();
         let genuine = &parsed[0];
         let mut following = parsed

@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 
 use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use transmux::{
     AbandonReason, AfdPersistence, DegradationRecord, DemuxEvent, InputDegradation, PcrSample,
     Sample, SkippedTrack, SplicePlan, SplicePoint, SpliceStage, StreamingFlvDemux,
@@ -86,7 +86,7 @@ impl CollectedTrack {
         mut self,
         profile: transmux::HeAacProfile,
     ) -> Result<Self, transmux::Error> {
-        use broadcast_common::timescale::{Rounding, rescale_i64};
+        use broadcast_core::timescale::{Rounding, rescale_i64};
         let from = self.spec.timescale;
         self.spec = self.spec.with_explicit_he_aac(profile)?;
         let to = self.spec.timescale;
@@ -360,7 +360,7 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Collected {
     }
     let mut media = Collected::new(
         tracks,
-        broadcast_common::timescale::Timescale::from_nonzero(DEFAULT_MOVIE_TIMESCALE),
+        broadcast_core::timescale::Timescale::from_nonzero(DEFAULT_MOVIE_TIMESCALE),
     );
     media.skipped = skipped;
     media.degraded = degraded;
@@ -678,7 +678,7 @@ pub fn media_from_rtmp_chunked(
     bytes: &[u8],
     chunk: usize,
 ) -> Result<Collected, transmux::RtmpFlvError> {
-    use broadcast_common::Serialize as _;
+    use broadcast_core::Serialize as _;
     use rtmp_runtime::chunk::ChunkAssembler;
     use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
     use rtmp_runtime::message::{MessageTypeId, ProtocolControl};
@@ -954,7 +954,7 @@ impl CollectedSelectExt for Collected {
     }
 
     fn trim(&self, start: u64, end: u64) -> Result<Collected, transmux::Error> {
-        use broadcast_common::timescale::{Rounding, rescale_i64};
+        use broadcast_core::timescale::{Rounding, rescale_i64};
         if start >= end {
             return Err(transmux::Error::InvalidInput("trim: start must be < end"));
         }
@@ -1034,8 +1034,8 @@ impl CollectedSelectExt for Collected {
 }
 
 /// The earliest first-sample decode time across `tracks`, with its timescale.
-fn origin_of(tracks: &[CollectedTrack]) -> (i64, broadcast_common::timescale::Timescale) {
-    use broadcast_common::timescale::{Timescale, cmp_ticks};
+fn origin_of(tracks: &[CollectedTrack]) -> (i64, broadcast_core::timescale::Timescale) {
+    use broadcast_core::timescale::{Timescale, cmp_ticks};
     let mut best: Option<(i64, Timescale)> = None;
     for t in tracks {
         let Some(d) = t
@@ -1060,9 +1060,9 @@ fn origin_of(tracks: &[CollectedTrack]) -> (i64, broadcast_common::timescale::Ti
 /// A track's presentation times relative to `origin`, in its own timescale.
 fn presentation_times(
     track: &CollectedTrack,
-    origin: (i64, broadcast_common::timescale::Timescale),
+    origin: (i64, broadcast_core::timescale::Timescale),
 ) -> Vec<i64> {
-    use broadcast_common::timescale::{Rounding, rescale_i64};
+    use broadcast_core::timescale::{Rounding, rescale_i64};
     let base = rescale_i64(origin.0, origin.1, track.spec.timescale, Rounding::Floor);
     let mut next = 0i64;
     let mut out = Vec::with_capacity(track.samples.len());
@@ -1081,10 +1081,10 @@ fn presentation_times(
 
 fn rescale_floor(
     ticks: u64,
-    from_timescale: broadcast_common::timescale::Timescale,
-    to_timescale: broadcast_common::timescale::Timescale,
+    from_timescale: broadcast_core::timescale::Timescale,
+    to_timescale: broadcast_core::timescale::Timescale,
 ) -> i64 {
-    use broadcast_common::timescale::{Rounding, rescale_i64};
+    use broadcast_core::timescale::{Rounding, rescale_i64};
     rescale_i64(
         i64::try_from(ticks).unwrap_or(i64::MAX),
         from_timescale,
@@ -1303,7 +1303,7 @@ impl RtpTestStream {
     /// declared clock that disagrees with the config's sampling rate.
     fn validated_clock_rate(
         &self,
-    ) -> Result<broadcast_common::timescale::Timescale, transmux::Error> {
+    ) -> Result<broadcast_core::timescale::Timescale, transmux::Error> {
         use transmux::Error;
         match &self.config {
             Some(transmux::CodecConfig::Aac { sample_rate, .. }) => {
@@ -1313,15 +1313,13 @@ impl RtpTestStream {
                     ));
                 }
                 if self.clock_rate != *sample_rate {
-                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                         field: "rtp_clock_rate",
                         value: u64::from(self.clock_rate),
                         reason: "an MPEG-4 audio stream's RTP clock rate is its sampling rate",
                     }));
                 }
-                Ok(broadcast_common::timescale::Timescale::try_new(
-                    *sample_rate,
-                )?)
+                Ok(broadcast_core::timescale::Timescale::try_new(*sample_rate)?)
             }
             Some(transmux::CodecConfig::Avc { .. }) => {
                 if self.kind != transmux::RtpMediaKind::H264 {
@@ -1330,7 +1328,7 @@ impl RtpTestStream {
                     ));
                 }
                 if self.clock_rate != transmux::rtp::VIDEO_CLOCK_RATE {
-                    return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
                         field: "rtp_clock_rate",
                         value: u64::from(self.clock_rate),
                         reason: "RFC 6184 §8.1 fixes the H.264 RTP clock rate at 90 kHz",
@@ -1342,7 +1340,7 @@ impl RtpTestStream {
                 if self.clock_rate == 0 {
                     return Err(Error::InvalidInput("RTP stream has no clock rate"));
                 }
-                Ok(broadcast_common::timescale::Timescale::try_new(
+                Ok(broadcast_core::timescale::Timescale::try_new(
                     self.clock_rate,
                 )?)
             }
@@ -1651,7 +1649,7 @@ mod tests {
 #[cfg(test)]
 mod equality_tests {
     use super::*;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use mpeg_ts::pid::Pid;
     use mpeg_ts::ts::Pcr;
     use std::sync::Arc;

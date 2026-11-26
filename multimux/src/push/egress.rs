@@ -368,7 +368,7 @@ mod tests {
 
     use super::*;
     use async_trait::async_trait;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use transmux::CodecConfig;
     use transmux::ir::DataIdentity;
 

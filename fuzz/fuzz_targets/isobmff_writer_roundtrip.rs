@@ -1,9 +1,9 @@
 #![no_main]
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
+use isobmff::TrackId;
 use isobmff::movie_fragment::MovieFragmentBox;
 use isobmff::writer::{SampleEntry, SampleMeta, TrackSetup, Writer};
-use isobmff::TrackId;
 use libfuzzer_sys::fuzz_target;
 
 /// Bounded track and sample counts: the writer must round-trip what it wrote,
@@ -16,8 +16,8 @@ const MAX_SAMPLES_PER_TRACK: usize = 8;
 /// would be.
 const RAW_ENTRY: [u8; 8] = [0, 0, 0, 8, b'a', b'v', b'c', b'1'];
 
-fn timescale() -> broadcast_common::timescale::Timescale {
-    broadcast_common::timescale::Timescale::try_new(1000).expect("a non-zero timescale")
+fn timescale() -> broadcast_core::timescale::Timescale {
+    broadcast_core::timescale::Timescale::try_new(1000).expect("a non-zero timescale")
 }
 
 fuzz_target!(|data: &[u8]| {
@@ -38,8 +38,8 @@ fuzz_target!(|data: &[u8]| {
             },
         ));
     }
-    let mut writer = Writer::fragmented(setups, timescale(), isobmff::Limits::default())
-        .expect("writer");
+    let mut writer =
+        Writer::fragmented(setups, timescale(), isobmff::Limits::default()).expect("writer");
     let init = writer.init().expect("init segment");
     let moov = isobmff::init_segment::MovieBox::parse(
         isobmff::box_types::find_box(&init, b"moov").expect("moov"),
@@ -79,7 +79,10 @@ fuzz_target!(|data: &[u8]| {
             track_metas.push(meta);
         }
         writer
-            .set_base_decode_time(TrackId::new(track as u32 + 1), u64::from(track as u32) * 100)
+            .set_base_decode_time(
+                TrackId::new(track as u32 + 1),
+                u64::from(track as u32) * 100,
+            )
             .expect("base decode time");
         for (meta, payload) in track_metas.iter().zip(&track_payloads) {
             writer
@@ -132,11 +135,7 @@ fuzz_target!(|data: &[u8]| {
         )
         .expect("resolve sample ranges");
         assert_eq!(ranges.len(), metas[track].len(), "sample count");
-        for ((range, meta), expected) in ranges
-            .iter()
-            .zip(&metas[track])
-            .zip(&payloads[track])
-        {
+        for ((range, meta), expected) in ranges.iter().zip(&metas[track]).zip(&payloads[track]) {
             assert_eq!(range.duration, meta.duration, "duration");
             assert_eq!(
                 range.composition_offset,
@@ -263,7 +262,9 @@ fn progressive_arm(data: &[u8]) {
             isobmff::Step::Need(range) => {
                 let start = usize::try_from(range.offset).expect("offset");
                 let end = usize::try_from(range.end()).expect("end");
-                reader.supply(range.offset, &out[start..end]).expect("supply");
+                reader
+                    .supply(range.offset, &out[start..end])
+                    .expect("supply");
             }
             isobmff::Step::Sample(sample) => seen.push(sample),
             isobmff::Step::Done => break,

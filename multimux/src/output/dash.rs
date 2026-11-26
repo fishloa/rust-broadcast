@@ -851,7 +851,7 @@ mod tests {
 
     use crate::route::RouteConfig;
     use crate::testutil::video_spec;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use transmux::CodecConfig;
     use transmux::ir::DataIdentity;
 

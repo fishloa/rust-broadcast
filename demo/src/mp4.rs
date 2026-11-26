@@ -18,7 +18,8 @@
 //! phone or a `faststart` remux produces. The demo is handed the whole file
 //! in browser memory, so it drives the seekable stage over that image.
 
-use broadcast_common::{Parse, Stage, Timestamp};
+use broadcast_common::{Stage, Timestamp};
+use broadcast_core::Parse;
 use serde::Serialize;
 use transmux::codec_config_ext::{HevcRecordCodecInfo, VvcRecordCodecInfo};
 use transmux::ir::{AbandonReason, CodecConfig, SkippedTrack, TrackSpec};
@@ -361,9 +362,7 @@ fn demux_mp4(bytes: &[u8]) -> Result<Mp4Report, transmux::Error> {
                 if let Some(&at) = index.get(&track_id) {
                     let entry = &mut stats[at];
                     entry.sample_count = entry.sample_count.saturating_add(1);
-                    entry.total_bytes = entry
-                        .total_bytes
-                        .saturating_add(sample.data.len() as u64);
+                    entry.total_bytes = entry.total_bytes.saturating_add(sample.data.len() as u64);
                     entry.total_ticks = entry.total_ticks.saturating_add(u64::from(
                         sample.timing.and_then(|t| t.duration()).unwrap_or(0),
                     ));
@@ -431,5 +430,3 @@ pub fn analyze_mp4_impl(bytes: &[u8]) -> Mp4Report {
         },
     }
 }
-
-

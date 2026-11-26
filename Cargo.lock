@@ -2338,6 +2338,7 @@ name = "media-doctor"
 version = "0.18.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "broadcast-dash",
  "broadcast-hls",
  "clap",
@@ -2546,6 +2547,7 @@ dependencies = [
  "broadcast-auth",
  "broadcast-client",
  "broadcast-common",
+ "broadcast-core",
  "broadcast-dash",
  "broadcast-hls",
  "broadcast-smooth",
@@ -4139,6 +4141,7 @@ name = "test-harness"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "dash-runtime",
  "headers",
  "isobmff",
@@ -4514,6 +4517,7 @@ name = "ts-fix"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "clap",
  "dvb-conformance",
  "dvb-si",
@@ -4989,6 +4993,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 name = "workspace-guards"
 version = "0.1.0"
 dependencies = [
+ "broadcast-core",
  "serde_json",
 ]
 

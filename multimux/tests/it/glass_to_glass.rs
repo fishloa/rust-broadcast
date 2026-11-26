@@ -69,10 +69,8 @@ use transmux::{CodecConfig, Sample, TrackSpec};
 
 const TRACK_ID: u32 = DEFAULT_TRACK_ID.value();
 /// Matches `multimux::pipeline`'s own fixed CMAF movie timescale.
-const MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
-    broadcast_common::timescale!(90_000);
-const VIDEO_TIMESCALE: broadcast_common::timescale::Timescale =
-    broadcast_common::timescale!(90_000);
+const MOVIE_TIMESCALE: broadcast_core::timescale::Timescale = broadcast_core::timescale!(90_000);
+const VIDEO_TIMESCALE: broadcast_core::timescale::Timescale = broadcast_core::timescale!(90_000);
 const FPS: u32 = 30;
 const FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / FPS;
 /// 3 seconds of synthetic live video — enough to cross several part/segment

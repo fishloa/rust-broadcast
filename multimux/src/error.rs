@@ -353,7 +353,7 @@ impl ConfigField {
     }
 }
 
-broadcast_common::impl_spec_display!(ConfigField);
+broadcast_core::impl_spec_display!(ConfigField);
 
 /// Which phase of an ingest/protocol exchange failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -384,7 +384,7 @@ impl Phase {
     }
 }
 
-broadcast_common::impl_spec_display!(Phase);
+broadcast_core::impl_spec_display!(Phase);
 
 /// Why a [`MultimuxError::Protocol`] failed.
 #[derive(Debug, thiserror::Error)]

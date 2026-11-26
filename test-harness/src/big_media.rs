@@ -15,7 +15,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::collect::{Collected, drive};
-use broadcast_common::{Parse, Serialize, Stage as _};
+use broadcast_common::Stage as _;
+use broadcast_core::{Parse, Serialize};
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
 use transmux::mux_stage::MuxOutput;
 use transmux::{
@@ -505,7 +506,7 @@ pub struct BigMp4 {
 /// a real `ftyp`, a real `moov` with two tracks and full sample tables, and a
 /// sparse `mdat` whose body is never written.
 pub fn write_big_mp4(path: &Path, opts: &BigMp4Options) -> BigMp4 {
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use isobmff::TrackId;
     use isobmff::init_segment::{MovieBox, MovieHeaderBox};
     use isobmff::sample_table::{build_stsc, build_stts};
@@ -651,7 +652,7 @@ struct BigMp4Track<'a> {
 }
 
 fn big_mp4_track(spec: BigMp4Track<'_>) -> isobmff::init_segment::TrackBox {
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use isobmff::init_segment::{
         ChunkLargeOffsetBox, DataEntry, DataEntryUrlBox, DataInformationBox, DataReferenceBox,
         HandlerBox, MediaBox, MediaHeaderBox, MediaInformationBox, SampleSizeBox, SampleTableBox,
@@ -937,7 +938,7 @@ pub fn write_big_fmp4(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
 }
 
 fn write_big_fmp4_sparse(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use isobmff::init_segment::{MovieExtendsBox, TrackExtendsBox};
     use isobmff::movie_fragment::{
         MovieFragmentBox, MovieFragmentHeaderBox, SAMPLE_FLAGS_SYNC, TFHD_DEFAULT_BASE_IS_MOOF,
@@ -1202,7 +1203,7 @@ const BIG_FMP4_BITS_PER_BYTE: u32 = 8;
 /// wrong IV cannot pass a hash comparison.
 fn write_big_fmp4_cenc(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
     use broadcast_common::stage::{Stage, Timestamp};
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use isobmff::cenc::CencScheme;
     use transmux::cenc_encrypt::{CencEncryptStage, EncryptConfig, SubsamplePolicy};
     use transmux::mux_stage::{MuxInput, MuxOutput};
@@ -1557,8 +1558,8 @@ fn ps_pack_at_pass(
     scr_shift: u64,
     pts_shift: u64,
 ) -> Vec<u8> {
-    use broadcast_common::Serialize;
     use broadcast_common::clock33::{PCR_WRAP_27MHZ, pack_marked, pcr_split, unpack_marked};
+    use broadcast_core::Serialize;
 
     let header_len = pack.pack_header.header_len();
     let mut header = pack.pack_header.clone();

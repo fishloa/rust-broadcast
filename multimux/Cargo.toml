@@ -78,6 +78,7 @@ dvb-stream        = { path = "../dvb-stream",     version = "0.11.0", features =
 # that floor, tracking the current published line; same caret bucket, so it
 # is not an epoch change.
 broadcast-common  = { path = "../broadcast-common", version = "14.0.0", features = ["lang", "base64"] }
+broadcast-core = { path = "../broadcast-core", version = "0.1.0" }
 # The media-plane ingress traits this crate's sources port onto (plan step
 # 5a): `Dialer`/`Listener`/`IngestSession`/`IngestDriver`/`ListenDriver`, and
 # the `Trunk` every ported session publishes into.

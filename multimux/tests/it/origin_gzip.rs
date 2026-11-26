@@ -6,7 +6,7 @@ fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
 }
 
-use broadcast_common::timescale::Timescale;
+use broadcast_core::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::io::Read;

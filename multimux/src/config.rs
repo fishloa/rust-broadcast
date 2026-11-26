@@ -552,7 +552,7 @@ impl PushFormat {
     }
 }
 
-broadcast_common::impl_spec_display!(PushFormat);
+broadcast_core::impl_spec_display!(PushFormat);
 
 /// Reconnect policy for push outputs: the workspace's one reconnect policy
 /// (issue audit 18 — the same concept once lived here as a `_ms` struct, in
@@ -1787,7 +1787,7 @@ impl TsHlsIdrFallback {
     }
 }
 
-broadcast_common::impl_spec_display!(TsHlsIdrFallback);
+broadcast_core::impl_spec_display!(TsHlsIdrFallback);
 
 /// The `ts_hls` segment cut rule selected by [`Route::ts_hls_cut`]; the
 /// serde values are `"idr_only"` (default) and `"any_rap"`.
@@ -1812,7 +1812,7 @@ impl TsHlsCutPolicy {
     }
 }
 
-broadcast_common::impl_spec_display!(TsHlsCutPolicy);
+broadcast_core::impl_spec_display!(TsHlsCutPolicy);
 
 impl From<TsHlsCutPolicy> for transmux::SegmentCutPolicy {
     fn from(policy: TsHlsCutPolicy) -> Self {
@@ -2262,7 +2262,7 @@ impl ProgramDateTimeSource {
     }
 }
 
-broadcast_common::impl_spec_display!(ProgramDateTimeSource);
+broadcast_core::impl_spec_display!(ProgramDateTimeSource);
 /// An optional TSBPD latency in the JSON as whole milliseconds (the `srt://`
 /// `latency` query unit), or `null` for the handshake's default.
 mod latency_ms {

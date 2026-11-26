@@ -188,7 +188,7 @@ mod tests {
     }
 
     fn with_entries(base: &TrackSpec, entries: Vec<TeletextEntry>) -> TrackSpec {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         let descriptor = dvb_si::descriptors::teletext::TeletextDescriptor { entries };
         let mut bytes = vec![0u8; descriptor.serialized_len()];
         descriptor.serialize_into(&mut bytes).expect("serialize");

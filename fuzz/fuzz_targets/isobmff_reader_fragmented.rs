@@ -82,8 +82,29 @@ fuzz_target!(|input: &[u8]| {
         Mode::Permissive
     };
     let exact = Some(data.len() as u64);
-    drive(data, mode, SampleOrder::DecodeTime, Source::Seekable, exact, false);
+    drive(
+        data,
+        mode,
+        SampleOrder::DecodeTime,
+        Source::Seekable,
+        exact,
+        false,
+    );
     drive(data, mode, SampleOrder::File, Source::Seekable, exact, true);
-    drive(data, mode, SampleOrder::File, Source::ForwardOnly, exact, false);
-    drive(data, mode, SampleOrder::DecodeTime, Source::Seekable, None, true);
+    drive(
+        data,
+        mode,
+        SampleOrder::File,
+        Source::ForwardOnly,
+        exact,
+        false,
+    );
+    drive(
+        data,
+        mode,
+        SampleOrder::DecodeTime,
+        Source::Seekable,
+        None,
+        true,
+    );
 });

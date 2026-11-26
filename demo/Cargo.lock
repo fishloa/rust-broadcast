@@ -48,6 +48,7 @@ name = "broadcast-common"
 version = "14.0.0"
 dependencies = [
  "base64 0.23.1",
+ "broadcast-core",
  "erased-serde",
  "hex",
  "iso-639",
@@ -58,10 +59,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "broadcast-dash"
 version = "0.3.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "jiff",
  "quick-xml",
  "thiserror",
@@ -72,6 +81,7 @@ name = "broadcast-hls"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "jiff",
  "serde",
  "thiserror",
@@ -82,6 +92,7 @@ name = "broadcast-matroska"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror",
 ]
@@ -91,6 +102,7 @@ name = "broadcast-smooth"
 version = "0.3.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "thiserror",
 ]
 
@@ -129,6 +141,7 @@ name = "cc-data"
 version = "0.11.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror",
 ]
@@ -223,6 +236,7 @@ name = "dvb-conformance"
 version = "16.0.1"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "dvb-si",
  "mpeg-ts",
  "serde",
@@ -233,6 +247,7 @@ name = "dvb-demo"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "dvb-conformance",
  "dvb-si",
  "dvb-subtitle",
@@ -252,6 +267,7 @@ name = "dvb-si"
 version = "16.0.1"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "encoding_rs",
  "jiff",
@@ -265,6 +281,7 @@ name = "dvb-subtitle"
 version = "0.10.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror",
 ]
@@ -385,6 +402,7 @@ name = "isobmff"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror",
 ]
@@ -470,6 +488,7 @@ name = "mpeg-pes"
 version = "0.10.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror",
 ]
@@ -479,6 +498,7 @@ name = "mpeg-ps"
 version = "0.10.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "mpeg-pes",
  "serde",
  "thiserror",
@@ -489,6 +509,7 @@ name = "mpeg-ts"
 version = "0.10.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "serde",
  "thiserror",
@@ -553,6 +574,7 @@ name = "rtmp-runtime"
 version = "0.12.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "subtle",
  "thiserror",
 ]
@@ -562,6 +584,7 @@ name = "rtp-packet"
 version = "0.9.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "serde",
  "thiserror",
 ]
@@ -583,6 +606,7 @@ name = "scte35-splice"
 version = "8.0.0"
 dependencies = [
  "broadcast-common",
+ "broadcast-core",
  "mpeg-ts",
  "serde",
  "thiserror",
@@ -738,6 +762,7 @@ version = "0.33.0"
 dependencies = [
  "aes",
  "broadcast-common",
+ "broadcast-core",
  "broadcast-dash",
  "broadcast-hls",
  "broadcast-matroska",

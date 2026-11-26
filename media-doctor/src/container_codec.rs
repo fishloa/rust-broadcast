@@ -59,7 +59,8 @@
 
 use alloc::collections::BTreeMap;
 
-use broadcast_common::{Parse, Stage, Timestamp};
+use broadcast_common::{Stage, Timestamp};
+use broadcast_core::Parse;
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 #[cfg(all(test, feature = "std"))]
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};

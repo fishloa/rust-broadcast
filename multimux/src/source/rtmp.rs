@@ -996,7 +996,7 @@ mod tests {
     }
 
     use super::*;
-    use broadcast_common::timescale::Timescale;
+    use broadcast_core::timescale::Timescale;
     use media_plane::ts_session::test_support::{handshake, trunk_config};
     use rtmp_runtime::server::ServerSession;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

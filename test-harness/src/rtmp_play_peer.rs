@@ -6,7 +6,7 @@
 //! and then streams whatever media the test hands it. Shared with `broadcast-client`'s wire
 //! tests through a `#[path]` include.
 
-use broadcast_common::Parse;
+use broadcast_core::Parse;
 use rtmp_runtime::RtmpError;
 use rtmp_runtime::amf0::{Amf0Value, Command};
 use rtmp_runtime::chunk::{ChunkAssembler, ChunkWriter, Message};

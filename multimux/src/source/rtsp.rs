@@ -800,8 +800,8 @@ mod tests {
                 padding: None,
                 payload: nal,
             };
-            let mut pkt = vec![0u8; broadcast_common::Serialize::serialized_len(&wire)];
-            broadcast_common::Serialize::serialize_into(&wire, &mut pkt).expect("serialize RTP");
+            let mut pkt = vec![0u8; broadcast_core::Serialize::serialized_len(&wire)];
+            broadcast_core::Serialize::serialize_into(&wire, &mut pkt).expect("serialize RTP");
             pkt
         }
 

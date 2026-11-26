@@ -128,7 +128,11 @@ fuzz_target!(|data: &[u8]| {
     let mpd = pick_mpd(&MPDS, head[1], head[2], head[3], &mut rest);
 
     let url = format!("{BASE_URL}{MPD_NAME}");
-    let mut client = DashClient::new(dash_runtime::client::DashClientConfig::new(url::Url::parse(&url).expect("URL")).with_dash(dash).with_limits(cfg));
+    let mut client = DashClient::new(
+        dash_runtime::client::DashClientConfig::new(url::Url::parse(&url).expect("URL"))
+            .with_dash(dash)
+            .with_limits(cfg),
+    );
     let mut pending: VecDeque<Action> = VecDeque::new();
     let mut terminal = false;
     let mut chunks = rest
@@ -191,7 +195,9 @@ fuzz_target!(|data: &[u8]| {
                 client.retry_mpd(Timestamp::from_micros(now_us));
             }
             (Some(id), Answer::Fail(f)) => {
-                if let Ok(FailureClass::Retry { .. }) = client.on_failure(Timestamp::from_micros(now_us), id, f) {
+                if let Ok(FailureClass::Retry { .. }) =
+                    client.on_failure(Timestamp::from_micros(now_us), id, f)
+                {
                     client.retry(Timestamp::from_micros(now_us), id);
                 }
             }

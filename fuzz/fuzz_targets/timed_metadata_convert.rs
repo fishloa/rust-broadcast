@@ -1,8 +1,8 @@
 #![no_main]
 
-use broadcast_common::timescale::Timescale;
-use libfuzzer_sys::fuzz_target;
+use broadcast_core::timescale::Timescale;
 use isobmff::emsg::EmsgBox;
+use libfuzzer_sys::fuzz_target;
 use timed_metadata::DateRange;
 use timed_metadata::convert::emsg_to_scte35;
 use timed_metadata::convert::{SegmentTiming, emsg_to_v0, emsg_to_v1};
@@ -23,7 +23,8 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let (head, body) = data.split_at(TIMING_LEN);
-    let Ok(timescale) = Timescale::try_new(u32::from_le_bytes(head[0..4].try_into().unwrap())) else {
+    let Ok(timescale) = Timescale::try_new(u32::from_le_bytes(head[0..4].try_into().unwrap()))
+    else {
         return;
     };
     let timing = SegmentTiming {

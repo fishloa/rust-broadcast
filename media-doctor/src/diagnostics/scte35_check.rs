@@ -186,7 +186,7 @@ mod tests {
         cancel: bool,
         break_duration: Option<(bool, u64)>,
     ) -> Vec<u8> {
-        use broadcast_common::Serialize;
+        use broadcast_core::Serialize;
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::SpliceInsert;
         use scte35_splice::descriptor_loop::SpliceDescriptorLoop;

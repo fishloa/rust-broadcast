@@ -55,17 +55,14 @@ fuzz_target!(|data: &[u8]| {
     };
     let spec = TrackSpec::new(
         TrackId::new(1),
-        broadcast_common::timescale::Timescale::try_new(90_000).expect("nonzero"),
+        broadcast_core::timescale::Timescale::try_new(90_000).expect("nonzero"),
         CodecConfig::Avc {
             config: isobmff::AVCConfigurationBox::new(record),
             width: 0,
             height: 0,
         },
     );
-    let _ = stage.feed(
-        MuxInput::Track(Box::new(spec)),
-        Timestamp::ZERO,
-    );
+    let _ = stage.feed(MuxInput::Track(Box::new(spec)), Timestamp::ZERO);
     let sample = Sample::new(data.to_vec(), Some(0), Some(0), Some(1), true);
     if let Ok(sample) = sample {
         let _ = stage.feed(

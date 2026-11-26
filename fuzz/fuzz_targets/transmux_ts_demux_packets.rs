@@ -1,6 +1,6 @@
 #![no_main]
 
-use broadcast_common::Serialize;
+use broadcast_core::Serialize;
 use libfuzzer_sys::fuzz_target;
 use transmux::{CodecConfig, DemuxEvent};
 
