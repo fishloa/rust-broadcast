@@ -1029,12 +1029,19 @@ impl Reorder {
 // The mux stage and its output sinks
 // ---------------------------------------------------------------------------
 
+/// One CMAF-HLS segment as its playlist needs it: the duration measured out of
+/// the produced bytes, and whether the segmenter cut it after a timeline break.
+struct MeasuredSegment {
+    secs: f64,
+    discontinuous: bool,
+}
+
 enum Kind {
     Cmaf(CmafMuxStage),
     Ts(TsMuxStage),
     Hls {
         segmenter: Segmenter,
-        measured: Vec<f64>,
+        measured: Vec<MeasuredSegment>,
     },
     TsHls(StreamingTsHlsSegmenter),
     Dash(Box<DashStream>),
@@ -1165,11 +1172,27 @@ impl CliStream {
         match event {
             DemuxEvent::Sample { track_id, sample } => self.sample(track_id, sample, emit),
             DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => self.announce(spec),
-            // A whole-input drive never carried a discontinuity, so the CLI
-            // ignores one here too: forwarding it would change a byte-exact
-            // segmenter/TS muxer output against the established goldens.
+            DemuxEvent::Discontinuity { track, .. } => self.discontinuity(track, emit),
             _ => Ok(()),
         }
+    }
+
+    /// Forward a timeline break to the output stage, so an output that can
+    /// express it (an HLS playlist's `#EXT-X-DISCONTINUITY`) does, and one that
+    /// cannot refuses with a typed error instead of dropping the mark.
+    ///
+    /// Everything held for decode-order interleaving is released first: the
+    /// break lies after every sample the demux already produced, so those must
+    /// reach the stage before the mark or the segmenter would flag a cut that
+    /// ends before the break.
+    fn discontinuity(&mut self, track: Option<TrackId>, emit: &mut dyn Emit) -> CliResult<()> {
+        #[cfg(feature = "cenc")]
+        if self.decrypt.is_some() {
+            self.drain_decrypt(None)?;
+        }
+        self.drain_order(true, emit)?;
+        self.input(MuxInput::Discontinuity { track })?;
+        self.pump(emit)
     }
 
     /// Feed a track's changed `tenc` (or any other spec update) to the decrypt
@@ -1281,9 +1304,12 @@ impl CliStream {
                         _ => 0,
                     };
                     emit.side(&format!("seg{index}.m4s"), &segment.bytes)?;
-                    let duration = segment_secs(&segment.bytes, &self.specs)?;
+                    let secs = segment_secs(&segment.bytes, &self.specs)?;
                     if let Kind::Hls { measured, .. } = &mut self.kind {
-                        measured.push(duration);
+                        measured.push(MeasuredSegment {
+                            secs,
+                            discontinuous: segment.summary.discontinuous,
+                        });
                     }
                 }
                 (OutputFormat::TsHls, MuxOutput::Segment(segment)) => {
@@ -1440,10 +1466,10 @@ impl DashStream {
                 }
                 self.drain_tracks(false)
             }
-            MuxInput::Discontinuity { .. } => {
-                self.segmenter.feed(input, Timestamp::ZERO)?;
-                Ok(())
-            }
+            MuxInput::Discontinuity { .. } => Err(crate::Error::UnsupportedFeature(
+                "a single-period DASH MPD cannot signal a timeline discontinuity",
+            )
+            .into()),
             MuxInput::Flush => {
                 self.finish_segmenter()?;
                 self.finish_tracks()
@@ -2371,36 +2397,40 @@ fn progressive_plan<R: Read + Seek>(
 // Manifest rendering and measurement
 // ---------------------------------------------------------------------------
 
-/// Render the CMAF-HLS media playlist for `durations`: one `#EXTINF` per
+/// Render the CMAF-HLS media playlist for `segments`: one `#EXTINF` per
 /// segment, each pointing at `seg{i}.m4s` (a media-only `styp`+`moof`+`mdat`
 /// file) with an `#EXT-X-MAP` naming the init segment.
 ///
 /// Each `#EXTINF` is the segment's **own** measured duration (read back out of
 /// the produced bytes by [`segment_secs`]) and `#EXT-X-TARGETDURATION` is the
-/// ceiling of the largest of them (RFC 8216 §4.3.3.1).
+/// ceiling of the largest of them (RFC 8216 §4.3.3.1). A segment the segmenter
+/// cut after a timeline break carries `#EXT-X-DISCONTINUITY` (RFC 8216
+/// §4.3.2.3); the playlist is complete (`#EXT-X-ENDLIST`), so
+/// `#EXT-X-DISCONTINUITY-SEQUENCE` stays `0` — no discontinuous segment has
+/// rolled off (RFC 8216 §4.3.3.3).
 ///
 /// # Errors
 /// [`Error::InvalidInput`](crate::Error::InvalidInput) if a duration does not
 /// fit [`broadcast_hls::DecimalSeconds`], or if there are no segments.
-fn render_cmaf_hls_playlist(durations: &[f64]) -> CliResult<String> {
+fn render_cmaf_hls_playlist(segments: &[MeasuredSegment]) -> CliResult<String> {
     use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 
-    if durations.is_empty() {
+    if segments.is_empty() {
         return Err(
             crate::Error::InvalidInput("cannot render an HLS playlist with no segments").into(),
         );
     }
 
-    let segs = durations
+    let segs = segments
         .iter()
         .enumerate()
-        .map(|(i, secs)| {
+        .map(|(i, segment)| {
             Ok(MediaSegment {
                 uri: format!("seg{i}.m4s"),
-                duration: DecimalSeconds::new(*secs).map_err(|_| {
+                duration: DecimalSeconds::new(segment.secs).map_err(|_| {
                     crate::Error::InvalidInput("segment duration must be finite and non-negative")
                 })?,
-                discontinuous: false,
+                discontinuous: segment.discontinuous,
                 map: Some(broadcast_hls::MapTag {
                     uri: String::from(HLS_INIT_FILE),
                     byte_range: None,
@@ -2411,7 +2441,11 @@ fn render_cmaf_hls_playlist(durations: &[f64]) -> CliResult<String> {
         })
         .collect::<CliResult<Vec<_>>>()?;
 
-    let max_secs = durations.iter().copied().fold(0.0f64, f64::max).max(1.0);
+    let max_secs = segments
+        .iter()
+        .map(|segment| segment.secs)
+        .fold(0.0f64, f64::max)
+        .max(1.0);
     let target_duration = u32::try_from(max_secs.ceil() as u64).unwrap_or(u32::MAX);
 
     let playlist = MediaPlaylist {

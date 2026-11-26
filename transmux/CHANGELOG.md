@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Breaking
 
+- `TsMuxStage` refuses `MuxInput::Discontinuity` with `Error::UnsupportedFeature`
+  instead of returning `Ok(())`: the muxer neither rebases the PES timeline nor
+  sets an adaptation-field `discontinuity_indicator`, so it had no way to carry
+  the mark and dropped it. The `transmux` CLI's `-f ts` output now refuses a
+  capture whose timeline breaks for the same reason, as does `-f dash` (a
+  single-period MPD cannot signal a break either), instead of writing an output
+  that hides the jump.
+
 - The wire-format contract types now come from `broadcast-core`.
 
 - `rtmp-runtime`, `rtp-packet`, `mpeg-ps`, `broadcast-matroska`, `broadcast-hls` and `cc-data` are no longer unconditional dependencies: each now backs one feature (`flv`, `rtp`, `ps`, `matroska`, `hls`, `captions`) that gates the modules using it, and all six are on by default, so the default build is unchanged. A `default-features = false` build keeps the IR and the MP4/TS paths only:
@@ -58,6 +66,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `data_identity`: `DataIdentityMap` is a caller-built table from a source track to the `DataIdentity` it should carry in the output, and `DataIdentityStage` rewrites that data track's `MuxInput::Track` announcement while passing samples and every other input through unchanged. There is no library-chosen default: an unmapped data track reaches the muxer with its own identity.
 - `StreamingFlvDemux` resynchronises past FLV tag framing it cannot parse and keeps the tags after the damage, instead of stopping at the first damaged tag and losing the tail. It decides with `rtmp_runtime::flv::resync_decision`, the incremental form of the same consistency rule the whole-buffer `tags_resync` walks with, so the stage never holds more than one tag's declared size plus the bytes needed to validate the next tag header. Damage is reported on the event stream as the new `DemuxEvent::DamagedSpan { offset, dropped_bytes }` (one event per skipped span), which `test_harness::collect` folds into `Media::degraded`.
 - `StreamingFlvDemux::finish` diagnoses an input that ends before it can yield anything: a header shorter than 9/13 bytes, a `DataOffset` past the input and an incomplete first tag are `FlvError::Codec(BufferTooShort)`, and a complete input carrying no supported track is `FlvError::NoSupportedTrack`. Everything decodable is queued before the error.
+
+### Fixed
+- The `transmux` CLI forwards a demux discontinuity to the output stage
+  (issue #4147). `DemuxEvent::Discontinuity` becomes `MuxInput::Discontinuity`
+  once the decode-order interleave has released every sample the break follows,
+  so a segmenter marks the cut that starts after the break. A CMAF-HLS playlist
+  now writes `#EXT-X-DISCONTINUITY` for a segment the segmenter marked (it
+  rendered every segment as continuous) and `#EXT-X-DISCONTINUITY-SEQUENCE`
+  stays `0` for the complete playlist; the TS-HLS playlist already carried the
+  tag once the mark reached it. `tests/it/cli_discontinuity.rs` pins both
+  against two plays of `fixtures/ts/h264-aac.ts` back to back, whose seam is a
+  real backward jump of the 90 kHz timeline.
 
 ### Breaking
 - `TsDemux`, `FlvDemux`, `RtmpDemux` and `RtpDepacketiser` (and their

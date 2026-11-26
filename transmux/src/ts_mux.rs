@@ -1024,9 +1024,13 @@ impl Stage for TsMuxStage {
         match input {
             MuxInput::Track(spec) => self.announce(*spec),
             MuxInput::Sample { track, sample } => self.push_sample(track, sample),
-            // A TS muxer has no discontinuity to signal: continuity counters
-            // and the PES timeline continue across a source jump.
-            MuxInput::Discontinuity { .. } => Ok(()),
+            // The muxer neither rebases the PES timeline nor sets an
+            // adaptation-field `discontinuity_indicator` (ISO/IEC 13818-1
+            // §2.4.3.5), so a source break would reach the output unmarked:
+            // refuse it rather than emit a stream that hides the jump.
+            MuxInput::Discontinuity { .. } => Err(Error::UnsupportedFeature(
+                "the TS muxer cannot signal a timeline discontinuity",
+            )),
             MuxInput::Flush => self.release_all(),
         }
     }
