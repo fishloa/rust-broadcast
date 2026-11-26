@@ -25,7 +25,7 @@ use std::num::NonZeroU32;
 use broadcast_codec::{
     AudioFrame, AudioSamples, ChannelLayout, CodecDescriptor, CodecError, CodecId,
     CodecParameters, CodecProvider, Decoder, Direction, Encoder, EncoderConfig, Frame, Packet,
-    SampleFormat, SampleLayout,
+    Probe, ProviderInfo, SampleFormat, SampleLayout,
 };
 use symphonia::core::audio::{Channels, Position};
 use symphonia::core::codecs::audio::well_known::CODEC_ID_AAC;
@@ -49,6 +49,13 @@ const SURROUND_7_1_CHANNELS: u16 = 8;
 const PROVIDER: &str = "symphonia";
 /// The one implementation the provider offers.
 const IMPLEMENTATION: &str = "aac";
+/// The underlying library, as its manifest names it.
+const LIBRARY: &str = "symphonia";
+/// The library version the adapter is built against (symphonia's manifest;
+/// the spike's `Cargo.lock` pins it).
+const LIBRARY_VERSION: &str = "0.6.1";
+/// The licence symphonia's manifest states.
+const LIBRARY_LICENCE: &str = "MPL-2.0";
 
 /// An AAC-LC decoder implementing the seam's [`Decoder`].
 pub struct SymphoniaAacDecoder {
@@ -183,11 +190,26 @@ impl CodecProvider for SymphoniaProvider {
         PROVIDER
     }
 
+    fn info(&self) -> ProviderInfo {
+        ProviderInfo::new(PROVIDER, LIBRARY_VERSION)
+            .with_library(format!("{LIBRARY} {LIBRARY_VERSION}"))
+            .with_licence(LIBRARY_LICENCE)
+    }
+
     fn descriptors(&self) -> Vec<CodecDescriptor> {
         vec![
             CodecDescriptor::new(PROVIDER, IMPLEMENTATION, CodecId::Aac, Direction::Decode)
                 .with_sample_formats(vec![SampleFormat::F32]),
         ]
+    }
+
+    fn probe(
+        &self,
+        _implementation: &str,
+        _direction: Direction,
+        _codec: CodecId,
+    ) -> Probe {
+        Probe::available()
     }
 
     fn make_decoder(
