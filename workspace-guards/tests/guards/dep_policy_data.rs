@@ -31,6 +31,10 @@ pub const WORKSPACES_EXEMPT: &[(&str, &str)] = &[
         "codec-seam spike with an MPL-2.0 dependency that must not enter the root Cargo.lock; never built by CI or published",
     ),
     (
+        "spikes/codec-libav",
+        "codec-seam spike that links the system FFmpeg (LGPL/GPL) on purpose; the one sanctioned home for an FFmpeg binding, outside the root graph, never built by CI or published",
+    ),
+    (
         "spikes/codec-oxideav",
         "codec-seam spike proving the OxideAV adapters; its own workspace and lock file so the root lock file does not depend on an unpublished adapter; never built by CI or published",
     ),
