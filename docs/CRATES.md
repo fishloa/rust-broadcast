@@ -102,8 +102,8 @@ builds (see the table above against the in-tree versions below).
 | [`dvb-csa`](#dvb-csa) | Common Interface, conditional access, scrambling, SimulCrypt | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/dvb-csa.svg)](https://crates.io/crates/dvb-csa) | yes | 3 | on crates.io |
 | [`dvb-ci`](#dvb-ci) | Common Interface, conditional access, scrambling, SimulCrypt | 0.14.0 | [![crates.io](https://img.shields.io/crates/v/dvb-ci.svg)](https://crates.io/crates/dvb-ci) | yes | 4 | on crates.io |
 | [`dvb-ci-runtime`](#dvb-ci-runtime) | Common Interface, conditional access, scrambling, SimulCrypt | 0.22.0 | [![crates.io](https://img.shields.io/crates/v/dvb-ci-runtime.svg)](https://crates.io/crates/dvb-ci-runtime) | no | 5 | on crates.io |
+| [`dvb-subtitle`](#dvb-subtitle) | Subtitles, captions, teletext, VBI and ancillary data | 0.10.0 | [![crates.io](https://img.shields.io/crates/v/dvb-subtitle.svg)](https://crates.io/crates/dvb-subtitle) | yes | 1 | on crates.io |
 | [`cc-data`](#cc-data) | Subtitles, captions, teletext, VBI and ancillary data | 0.11.0 | [![crates.io](https://img.shields.io/crates/v/cc-data.svg)](https://crates.io/crates/cc-data) | yes | 2 | on crates.io |
-| [`dvb-subtitle`](#dvb-subtitle) | Subtitles, captions, teletext, VBI and ancillary data | 0.10.0 | [![crates.io](https://img.shields.io/crates/v/dvb-subtitle.svg)](https://crates.io/crates/dvb-subtitle) | yes | 2 | on crates.io |
 | [`dvb-vbi`](#dvb-vbi) | Subtitles, captions, teletext, VBI and ancillary data | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/dvb-vbi.svg)](https://crates.io/crates/dvb-vbi) | yes | 2 | on crates.io |
 | [`ttml-subtitle`](#ttml-subtitle) | Subtitles, captions, teletext, VBI and ancillary data | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/ttml-subtitle.svg)](https://crates.io/crates/ttml-subtitle) | yes | 2 | on crates.io |
 | [`st291`](#st291) | Subtitles, captions, teletext, VBI and ancillary data | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/st291.svg)](https://crates.io/crates/st291) | yes | 3 | on crates.io |
@@ -177,10 +177,10 @@ The stable floor every wire crate builds on: the symmetric `Parse<'a>` / `Serial
 Shared foundations above the frozen `broadcast-core` contract: the MPEG-2 CRC-32, BCD/MJD time and hex codecs, `clock33` wrapping 33-bit PTS/DTS arithmetic and the 27 MHz PCR clock, the incremental `stage::Stage` driver, and the bounded quick-xml tree reader. It re-exports nothing from `broadcast-core` and implements no protocol on its own. Versioned independently of the DVB lockstep.
 
 - **Standards:** ISO/IEC 13818-1 CRC-32 (Annex A)
-- **Cargo description:** Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc.
+- **Cargo description:** Foundation for the rust-broadcast crates: CRC-32/MPEG-2, BCD + MJD time codecs, hex and base64 codecs, 33-bit/PCR clock arithmetic, the incremental Stage contract and the bounded XML reader. no_std + alloc.
 - **Version (in-tree):** 14.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-core`](#broadcast-core)
-- **Used by (workspace):** 57 workspace crates
+- **Used by (workspace):** 56 workspace crates
 - **Links:** [README](../broadcast-common/README.md) · [CHANGELOG](../broadcast-common/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-common) · [docs.rs](https://docs.rs/broadcast-common)
 
 #### broadcast-auth
@@ -342,6 +342,17 @@ Drives a physical CAM over the `dvb-ci` codecs: a `CaDevice` abstraction (with a
 
 Every caption/subtitle carriage in the workspace, plus conversion between them.
 
+#### dvb-subtitle
+
+Parses and builds the subtitling segments of a DVB subtitle PES data field, including 2/4/8-bit pixel-data run-length sub-blocks. It does not render bitmaps.
+
+- **Standards:** ETSI EN 300 743 V1.6.1
+- **Cargo description:** DVB subtitling (bitmap) segment parser — ETSI EN 300 743, the segments carried in subtitle PES.
+- **Version (in-tree):** 0.10.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
+- **Depends on (workspace):** [`broadcast-core`](#broadcast-core)
+- **Used by (workspace):** none
+- **Links:** [README](../dvb-subtitle/README.md) · [CHANGELOG](../dvb-subtitle/CHANGELOG.md) · [crates.io](https://crates.io/crates/dvb-subtitle) · [docs.rs](https://docs.rs/dvb-subtitle)
+
 #### cc-data
 
 Parses the `cc_data()` structure carried in MPEG-2/AVC/HEVC picture user data into typed triplets and splits CEA-608 from CEA-708. The `decode` feature adds the 608 byte-pair and 708 service-block decode model. The caller extracts `cc_data()` from the picture (transmux does this for A/53 `GA94`).
@@ -352,17 +363,6 @@ Parses the `cc_data()` structure carried in MPEG-2/AVC/HEVC picture user data in
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-core`](#broadcast-core)
 - **Used by (workspace):** [`caption-convert`](#caption-convert), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
 - **Links:** [README](../cc-data/README.md) · [CHANGELOG](../cc-data/CHANGELOG.md) · [crates.io](https://crates.io/crates/cc-data) · [docs.rs](https://docs.rs/cc-data)
-
-#### dvb-subtitle
-
-Parses and builds the subtitling segments of a DVB subtitle PES data field, including 2/4/8-bit pixel-data run-length sub-blocks. It does not render bitmaps.
-
-- **Standards:** ETSI EN 300 743 V1.6.1
-- **Cargo description:** DVB subtitling (bitmap) segment parser — ETSI EN 300 743, the segments carried in subtitle PES.
-- **Version (in-tree):** 0.10.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-core`](#broadcast-core)
-- **Used by (workspace):** none
-- **Links:** [README](../dvb-subtitle/README.md) · [CHANGELOG](../dvb-subtitle/CHANGELOG.md) · [crates.io](https://crates.io/crates/dvb-subtitle) · [docs.rs](https://docs.rs/dvb-subtitle)
 
 #### dvb-vbi
 
@@ -970,8 +970,8 @@ Layer 0 has no workspace dependencies; every other crate sits one layer above it
 
 ```text
 layer 0: broadcast-core, test-alloc, test-fixtures
-layer 1: broadcast-common, broadcast-loudness, container-probe, scte104, workspace-guards
-layer 2: atsc3, broadcast-auth, broadcast-dash, broadcast-hls, broadcast-matroska, broadcast-smooth, buffering-runtime, cc-data, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, isobmff, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
+layer 1: broadcast-common, broadcast-loudness, container-probe, dvb-subtitle, scte104, workspace-guards
+layer 2: atsc3, broadcast-auth, broadcast-dash, broadcast-hls, broadcast-matroska, broadcast-smooth, buffering-runtime, cc-data, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-vbi, isobmff, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
 layer 3: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, isobmff-private-format, isobmff-tokio, mpeg-ps, rist-runtime, rtsp-runtime, scte35-splice, ssai-runtime, st291, webrtc-runtime
 layer 4: dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, timed-metadata, transmux
 layer 5: caption-convert, dvb-ci-runtime, media-doctor, ts-fix
@@ -990,6 +990,7 @@ flowchart BT
     broadcast_common["broadcast-common"]
     broadcast_loudness["broadcast-loudness"]
     container_probe["container-probe"]
+    dvb_subtitle["dvb-subtitle"]
     scte104["scte104"]
   end
   subgraph L2["layer 2"]
@@ -1004,7 +1005,6 @@ flowchart BT
     dvb_bbframe["dvb-bbframe"]
     dvb_mabr["dvb-mabr"]
     dvb_simulcrypt["dvb-simulcrypt"]
-    dvb_subtitle["dvb-subtitle"]
     dvb_vbi["dvb-vbi"]
     isobmff["isobmff"]
     mpeg_pes["mpeg-pes"]
@@ -1102,7 +1102,7 @@ flowchart BT
   dvb_stream --> dvb_si
   dvb_stream --> dvb_t2mi
   dvb_stream --> rtp_packet
-  dvb_subtitle --> broadcast_common
+  dvb_subtitle --> broadcast_core
   dvb_t2mi --> dvb_bbframe
   dvb_t2mi --> mpeg_ts
   dvb_tools --> dvb_si

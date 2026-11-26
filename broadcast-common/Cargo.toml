@@ -2,7 +2,7 @@
 name         = "broadcast-common"
 version      = "14.0.0"
 edition      = "2024"
-description  = "Foundation for the rust-broadcast crates: symmetric Parse/Serialize traits, CRC-32/MPEG-2, BCD + MJD time codecs, bit I/O, 33-bit/PCR clock arithmetic, checked field widths, container-mux and Stage traits. no_std + alloc."
+description  = "Foundation for the rust-broadcast crates: CRC-32/MPEG-2, BCD + MJD time codecs, hex and base64 codecs, 33-bit/PCR clock arithmetic, the incremental Stage contract and the bounded XML reader. no_std + alloc."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["dvb", "mpeg", "broadcast", "crc", "parser"]
