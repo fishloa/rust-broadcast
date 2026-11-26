@@ -13,7 +13,9 @@ broadcast-codec = { path = "../../broadcast-codec" }
 ffmpeg-next = { version = "8.1", default-features = false, features = ["codec", "format"] }
 
 [dev-dependencies]
+broadcast-core = { path = "../../broadcast-core" }
 broadcast-loudness = { path = "../../broadcast-loudness" }
 codec-symphonia = { path = "../codec-symphonia" }
 test-fixtures = { path = "../../test-fixtures" }
+test-harness = { path = "../../test-harness" }
 transmux = { path = "../../transmux", default-features = false, features = ["std"] }
