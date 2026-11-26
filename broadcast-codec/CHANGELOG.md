@@ -12,6 +12,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 - Initial contents: `CodecId`, `CodecParameters`, `AudioParameters`,
   `VideoParameters`, `Packet`, `AudioFrame`, `AudioSamples`, `ChannelLayout`,
   `SampleLayout`, `Frame`, `VideoFrame`, `VideoPlane`, `VideoStorage`,
-  `PixelFormat`, `ColourDescription`, `CodecError`, and the object-safe
-  sans-IO `Decoder`/`Encoder` traits.
+  `PixelFormat`, `ColourDescription`, `CodecError`, the object-safe sans-IO
+  `Decoder`/`Encoder` traits, and a `Timescale` re-export so an adapter builds
+  `CodecParameters` without a separate `broadcast-core` dependency.
 - `pcm_passthrough` and `drain_contract` examples.
