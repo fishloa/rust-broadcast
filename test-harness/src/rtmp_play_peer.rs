@@ -356,10 +356,6 @@ impl PlayPeer {
         Ok(self.counted(bytes))
     }
 
-    pub fn set_chunk_size_now(&mut self, chunk_size: ChunkSize) -> Result<Vec<u8>, RtmpError> {
-        self.set_chunk_size(chunk_size)
-    }
-
     pub fn ping(&mut self, ts: u32) -> Result<Vec<u8>, RtmpError> {
         let bytes = self.writer.write(
             &UserControl::PingRequest(ts)
