@@ -211,7 +211,7 @@ One credentials model and one challenge-response helper for clients, plus one se
 
 The codec-bitstream layer, so a project that only splits or classifies video does not take the muxing hub: the owning exp-Golomb/RBSP reader over `broadcast_core::bits`, NAL classification with its own `NalCodec`/`AvcNalUnitType`/`HevcNalUnitType`, key-frame/IRAP/random-access detection, the SEI walk and ATSC A/53 caption extraction, Annex B and length-prefixed NAL iteration/conversion, and the incremental `AccessUnitSplitter` whose open-NAL bound is the caller's. Facts-only in this version (recorded exception in `docs/CRATE-ACCEPTANCE.md`); parameter sets and the audio parsers follow. `no_std`+`alloc`, depends only on `broadcast-core`, `thiserror` and `memchr`. Unpublished.
 
-- **Standards:** ITU-T H.264 §7.3/§7.4/§9.1, ITU-T H.265 §7.3/§7.4/§9.2.2 (NAL units, RBSP, exp-Golomb); ISO/IEC 14496-15 §4.3.3 (length-prefix conversion); ATSC A/53 Part 4 (caption SEI)
+- **Standards:** ITU-T H.264 §7.3/§7.4/§9.1, ITU-T H.265 §7.3/§7.4/§9.2.2 (NAL units, RBSP, exp-Golomb); ISO/IEC 14496-15:2017 §4.3.3 (length-prefix conversion); ATSC A/53 Part 4 (caption SEI)
 - **Cargo description:** Codec bitstream parsers for rust-broadcast: the exp-Golomb/RBSP bit reader, NAL unit classification, Annex B and length-prefixed stream conversion, and access-unit splitting. Parses facts only; holds no decoder. no_std + alloc.
 - **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-core`](#broadcast-core), [`isobmff`](#isobmff)
