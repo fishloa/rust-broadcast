@@ -30,4 +30,7 @@ pub use error::CodecError;
 pub use frame::Frame;
 pub use packet::Packet;
 pub use traits::{Decoder, Encoder};
-pub use video::{ColourDescription, PixelFormat, VideoFrame, VideoPlane, VideoStorage};
+pub use video::{
+    ColourDescription, ContentLightLevel, ItuT35, MasteringDisplay, PixelFormat, VideoFrame,
+    VideoPlane, VideoStorage,
+};

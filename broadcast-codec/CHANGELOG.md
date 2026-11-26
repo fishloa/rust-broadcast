@@ -15,4 +15,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
   `PixelFormat`, `ColourDescription`, `CodecError`, the object-safe sans-IO
   `Decoder`/`Encoder` traits, and a `Timescale` re-export so an adapter builds
   `CodecParameters` without a separate `broadcast-core` dependency.
+- `PixelFormat` variants for 12-bit 4:2:0/4:2:2/4:4:4 and 10/12-bit monochrome,
+  with their plane geometry.
+- `ContentLightLevel`, `MasteringDisplay` and `ItuT35` metadata, carried by
+  `VideoFrame` through `with_content_light`, `with_mastering_display` and
+  `with_itu_t35`.
 - `pcm_passthrough` and `drain_contract` examples.

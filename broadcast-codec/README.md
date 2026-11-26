@@ -9,7 +9,9 @@ adapter exchanges with the rest of the workspace:
 - [`CodecId`] and [`CodecParameters`] say what a stream is and what a decoder
   needs before its first packet.
 - [`Packet`] is one coded access unit; [`Frame`] is one decoded audio or video
-  frame.
+  frame. Video frames carry planar, semi-planar or packed storage at 8, 10 or
+  12 bits, plus colour description, static HDR metadata and opaque ITU-T T.35
+  payloads.
 - [`Decoder`] and [`Encoder`] are object-safe, sans-IO traits. A real codec
   library (`symphonia`, `rav1d`, `rav1e`, `openh264`, …) is wrapped in a type
   that implements one of them, without changing this crate or `transmux`.

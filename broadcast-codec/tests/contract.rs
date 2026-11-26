@@ -6,7 +6,8 @@ use std::num::{NonZeroU16, NonZeroU32, NonZeroUsize};
 
 use broadcast_codec::{
     AudioFrame, AudioParameters, AudioSamples, ChannelLayout, CodecError, CodecId, CodecParameters,
-    Decoder, Encoder, Frame, Packet, SampleLayout, VideoFrame, VideoPlane, VideoStorage,
+    ContentLightLevel, Decoder, Encoder, Frame, ItuT35, MasteringDisplay, Packet, PixelFormat,
+    SampleLayout, VideoFrame, VideoPlane, VideoStorage,
 };
 use broadcast_core::timescale::Timescale;
 
@@ -255,7 +256,7 @@ fn video_constructor_refuses_inconsistent_storage() {
         VideoFrame::new(
             width,
             height,
-            broadcast_codec::PixelFormat::Yuv420p8,
+            PixelFormat::Yuv420p8,
             VideoStorage::Cpu(vec![luma.clone()]),
         )
         .is_none()
@@ -266,7 +267,7 @@ fn video_constructor_refuses_inconsistent_storage() {
         VideoFrame::new(
             width,
             height,
-            broadcast_codec::PixelFormat::Yuv420p8,
+            PixelFormat::Yuv420p8,
             VideoStorage::Cpu(vec![small, chroma.clone(), chroma.clone()]),
         )
         .is_none()
@@ -277,7 +278,7 @@ fn video_constructor_refuses_inconsistent_storage() {
         VideoFrame::new(
             width,
             height,
-            broadcast_codec::PixelFormat::Yuv420p8,
+            PixelFormat::Yuv420p8,
             VideoStorage::Cpu(vec![narrow, chroma.clone(), chroma.clone()]),
         )
         .is_none()
@@ -286,7 +287,7 @@ fn video_constructor_refuses_inconsistent_storage() {
     let frame = VideoFrame::new(
         width,
         height,
-        broadcast_codec::PixelFormat::Yuv420p8,
+        PixelFormat::Yuv420p8,
         VideoStorage::Cpu(vec![luma, chroma.clone(), chroma]),
     )
     .unwrap();
@@ -360,4 +361,40 @@ fn reset_drops_held_state() {
     decoder.finish().unwrap();
     assert!(decoder.receive().unwrap().is_some());
     assert!(decoder.receive().unwrap().is_none());
+}
+
+#[test]
+fn high_bit_depth_and_hdr_metadata_are_carried() {
+    let width = NonZeroU32::new(16).unwrap();
+    let height = NonZeroU32::new(16).unwrap();
+    let luma = VideoPlane::new(vec![0; 16 * 16 * 2], NonZeroUsize::new(32).unwrap());
+    let chroma = VideoPlane::new(vec![0; 8 * 8 * 2], NonZeroUsize::new(16).unwrap());
+
+    let frame = VideoFrame::new(
+        width,
+        height,
+        PixelFormat::Yuv420p12,
+        VideoStorage::Cpu(vec![luma, chroma.clone(), chroma]),
+    )
+    .unwrap()
+    .with_content_light(ContentLightLevel::new(1_000, 400))
+    .with_mastering_display(MasteringDisplay::new(
+        [[1, 2], [3, 4], [5, 6]],
+        [7, 8],
+        1_000,
+        1,
+    ))
+    .with_itu_t35(ItuT35::new(0xB5, 0, vec![1, 2, 3]));
+
+    assert_eq!(frame.format(), PixelFormat::Yuv420p12);
+    assert_eq!(frame.format().plane_size(16, 16, 0), Some(512));
+    assert_eq!(frame.format().plane_size(16, 16, 1), Some(128));
+    assert_eq!(PixelFormat::Gray12.plane_size(16, 16, 0), Some(512));
+    assert_eq!(
+        frame.content_light().unwrap().max_content_light_level(),
+        1_000
+    );
+    assert_eq!(frame.mastering_display().unwrap().max_luminance(), 1_000);
+    assert_eq!(frame.itu_t35().len(), 1);
+    assert_eq!(frame.itu_t35()[0].payload(), &[1, 2, 3]);
 }
