@@ -280,7 +280,15 @@ fn main() {
         if meta.len() > cap {
             continue;
         }
-        let Ok(data) = read_capped(&path, cap) else {
+        #[cfg(feature = "head")]
+        let data = broadcast_common::bounded::read_file_bounded(
+            &path,
+            broadcast_common::bounded::Limit::new("differential-sweep fixture", cap),
+        )
+        .ok();
+        #[cfg(feature = "baseline")]
+        let data = read_capped(&path, cap).ok();
+        let Some(data) = data else {
             continue;
         };
         let rel = path

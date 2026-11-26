@@ -250,10 +250,8 @@ pub fn transmux_batch(fx: &Fixture, _: &Cfg) -> Option<Value> {
                     agg.hasher.extend_from_slice(&sample.data);
                 }
             }
-            transmux::DemuxEvent::ClockReference { pcr: wire, .. } => {
-                if wire.is_some() {
-                    pcr += 1;
-                }
+            transmux::DemuxEvent::ClockReference { pcr: Some(_), .. } => {
+                pcr += 1;
             }
             _ => {}
         }
@@ -717,10 +715,10 @@ pub fn mpeg_ts(fx: &Fixture, _: &Cfg) -> Option<Value> {
         tei += u64::from(pkt.header.tei);
         pusi += u64::from(pkt.header.pusi);
         if pkt.header.has_payload() {
-            if let Some(&prev) = last_cc.get(&key) {
-                if pkt.header.continuity_counter.forward_distance_from(prev) != 1 {
-                    cc_gaps += 1;
-                }
+            if let Some(&prev) = last_cc.get(&key)
+                && pkt.header.continuity_counter.forward_distance_from(prev) != 1
+            {
+                cc_gaps += 1;
             }
             last_cc.insert(key, pkt.header.continuity_counter);
         }
@@ -1076,12 +1074,12 @@ pub fn cli_ts_fix(fx: &Fixture, cfg: &Cfg) -> Option<Value> {
         ];
         args.extend(flags.iter().map(|s| (*s).to_string()));
         let mut v = run_bin(&bin, &cwd, &args, std::time::Duration::from_secs(120));
-        if let Ok((len, digest)) = file_len_sha(&output) {
-            if let Value::Object(m) = &mut v {
-                m.insert("output_len".into(), json!(len));
-                m.insert("output_packets".into(), json!(len / 188));
-                m.insert("output_sha256".into(), json!(digest));
-            }
+        if let Ok((len, digest)) = file_len_sha(&output)
+            && let Value::Object(m) = &mut v
+        {
+            m.insert("output_len".into(), json!(len));
+            m.insert("output_packets".into(), json!(len / 188));
+            m.insert("output_sha256".into(), json!(digest));
         }
         out.insert(name.into(), v);
     }
