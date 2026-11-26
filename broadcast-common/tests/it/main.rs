@@ -5,7 +5,6 @@ mod crc32_mpeg2;
 mod display_and_conversions;
 mod hex_parity;
 mod http_date;
-mod no_panicking_to_bytes_guard;
 mod ordering_guard;
 mod pusi_accumulator;
 mod review_mjd_after_2100;

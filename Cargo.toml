@@ -1,5 +1,5 @@
 [workspace]
-members = ["broadcast-common", "broadcast-matroska", "broadcast-auth", "dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools", "media-doctor", "multimux", "multimux-cli", "scte35-splice", "dvb-stream", "mpeg-pes", "dvb-subtitle", "mpeg-ps", "scte104", "cc-data", "dvb-ci", "st291", "ule", "dvb-simulcrypt", "dvb-vbi", "rmt-flute", "dvb-ci-runtime", "timed-metadata", "mpeg-ts", "ts-fix", "transmux", "rtsp-runtime", "rtmp-runtime", "srt-runtime", "rtp-packet", "st12-1", "st337", "rdd29", "st377-1", "hls-runtime", "dash-runtime", "media-plane", "ttml-subtitle", "broadcast-hls", "broadcast-dash", "broadcast-loudness", "buffering-runtime", "broadcast-client", "dvb-csa", "dvb-mabr", "atsc3", "atsc3-route", "st2022", "rist-runtime", "webrtc-runtime", "caption-convert", "compliance-probe", "ssai-runtime", "playout-runtime", "container-probe", "test-alloc", "test-fixtures", "workspace-guards", "test-harness", "broadcast-smooth", "smooth-runtime", "dvr-runtime", "isobmff", "isobmff-tokio", "examples/isobmff-private-format"]
+members = ["broadcast-common", "broadcast-core", "broadcast-matroska", "broadcast-auth", "dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools", "media-doctor", "multimux", "multimux-cli", "scte35-splice", "dvb-stream", "mpeg-pes", "dvb-subtitle", "mpeg-ps", "scte104", "cc-data", "dvb-ci", "st291", "ule", "dvb-simulcrypt", "dvb-vbi", "rmt-flute", "dvb-ci-runtime", "timed-metadata", "mpeg-ts", "ts-fix", "transmux", "rtsp-runtime", "rtmp-runtime", "srt-runtime", "rtp-packet", "st12-1", "st337", "rdd29", "st377-1", "hls-runtime", "dash-runtime", "media-plane", "ttml-subtitle", "broadcast-hls", "broadcast-dash", "broadcast-loudness", "buffering-runtime", "broadcast-client", "dvb-csa", "dvb-mabr", "atsc3", "atsc3-route", "st2022", "rist-runtime", "webrtc-runtime", "caption-convert", "compliance-probe", "ssai-runtime", "playout-runtime", "container-probe", "test-alloc", "test-fixtures", "workspace-guards", "test-harness", "broadcast-smooth", "smooth-runtime", "dvr-runtime", "isobmff", "isobmff-tokio", "examples/isobmff-private-format"]
 exclude = ["fuzz", "demo", "bindings/python", "bindings/transmux-py", "spikes"]
 resolver = "2"
 
@@ -49,3 +49,4 @@ opt-level = 2
 
 [patch.crates-io]
 broadcast-common = { path = "broadcast-common" }
+broadcast-core = { path = "broadcast-core" }

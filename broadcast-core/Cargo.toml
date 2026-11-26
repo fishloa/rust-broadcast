@@ -1,0 +1,40 @@
+[package]
+name         = "broadcast-core"
+version      = "0.1.0"
+edition      = "2024"
+description  = "Frozen wire-format contract for the rust-broadcast crates: symmetric Parse/Serialize traits, checked field-width helpers, MSB-first bit I/O, reserved-bit fields, media timescales, the shared error kinds and the CENC scheme identity. no_std + alloc."
+license      = "MIT OR Apache-2.0"
+authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
+keywords     = ["dvb", "mpeg", "broadcast", "parser", "bits"]
+categories   = ["parser-implementations", "multimedia"]
+repository   = "https://github.com/fishloa/rust-broadcast"
+readme       = "README.md"
+rust-version.workspace = true
+publish       = false
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+[features]
+default = ["std"]
+# The crate is `#![no_std]` + `alloc` on every target. `std` only forwards to
+# the optional `serde` dependency so a `serde` consumer built for std matches
+# the rest of the workspace; the wire-format core needs no standard library.
+std = ["serde?/std"]
+# `serde::Serialize` derives on the shared spec types (`cenc::CencScheme`,
+# `reserved::Reserved`, `timescale::Timescale`). Off by default: the
+# parse/serialize core needs no serialization framework.
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+
+[lints]
+workspace = true
+
+[[example]]
+name = "implement_parse_serialize"
+required-features = ["std"]
+
+[[example]]
+name = "bits_round_trip"
+required-features = ["std"]

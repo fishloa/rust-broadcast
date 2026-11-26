@@ -54,16 +54,16 @@ crate::impl_spec_display!(Rounding);
 ///
 /// ```compile_fail
 /// // A zero timescale cannot be named, not even inside a function.
-/// fn price() -> broadcast_common::timescale::Timescale {
-///     broadcast_common::timescale!(0)
+/// fn price() -> broadcast_core::timescale::Timescale {
+///     broadcast_core::timescale!(0)
 /// }
 /// ```
 ///
 /// ```
-/// let t = broadcast_common::timescale!(90_000);
+/// let t = broadcast_core::timescale!(90_000);
 /// assert_eq!(t.get(), 90_000);
-/// let micros = ::broadcast_common::timescale!(::broadcast_common::timescale::MICROS_PER_SECOND);
-/// assert_eq!(micros, ::broadcast_common::timescale::Timescale::MICROS);
+/// let micros = ::broadcast_core::timescale!(::broadcast_core::timescale::MICROS_PER_SECOND);
+/// assert_eq!(micros, ::broadcast_core::timescale::Timescale::MICROS);
 /// ```
 #[macro_export]
 macro_rules! timescale {

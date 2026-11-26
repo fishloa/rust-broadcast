@@ -18,7 +18,7 @@ default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`. The std `Error` glue is std-only; the
 # parse/serialize/CRC/BCD/MJD core is fully no_std.
-std = ["jiff?/std", "serde?/std", "erased-serde?/std"]
+std = ["broadcast-core/std", "jiff?/std", "serde?/std", "erased-serde?/std"]
 # `jiff::Timestamp` faces of the UTC time codecs (`time::decode_mjd_bcd_utc`
 # and friends). Off = the MJD/BCD/duration codecs remain available; only the
 # jiff-typed functions are gated. no_std compatible.
@@ -27,7 +27,7 @@ jiff = ["dep:jiff"]
 # `cenc::CencScheme`). Off by default: the parse/serialize core needs no
 # serialization framework, and a consumer that wants one enables it through
 # its own `serde` feature (e.g. `transmux/serde`, `broadcast-hls/serde`).
-serde = ["dep:serde", "dep:erased-serde"]
+serde = ["dep:serde", "dep:erased-serde", "broadcast-core/serde"]
 # `xml_chars`: the XML 1.0 character-data core shared by every crate that reads
 # XML through `quick-xml` (dvb-mabr, ttml-subtitle, dash-runtime, transmux).
 # std-only, because quick-xml is.
@@ -45,6 +45,7 @@ http-date = ["std", "dep:jiff", "dep:headers", "dep:http"]
 url = ["dep:url"]
 
 [dependencies]
+broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 # Typed `Date` values (HTTP-date module's instant bridge).
 headers = { workspace = true, optional = true }
 http    = { workspace = true, optional = true }

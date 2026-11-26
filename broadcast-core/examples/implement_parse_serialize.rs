@@ -7,7 +7,7 @@
 //!
 //! Run with: `cargo run -p broadcast-common --example implement_parse_serialize`
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_core::{Parse, Serialize};
 
 /// A toy 3-byte header: a 1-byte tag and a big-endian 16-bit value.
 #[derive(Debug, PartialEq, Eq)]

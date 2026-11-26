@@ -439,6 +439,7 @@ name = "broadcast-common"
 version = "14.0.0"
 dependencies = [
  "base64 0.23.1",
+ "broadcast-core",
  "criterion",
  "erased-serde",
  "headers",
@@ -451,6 +452,13 @@ dependencies = [
  "test-alloc",
  "thiserror 2.0.21",
  "url",
+]
+
+[[package]]
+name = "broadcast-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
 ]
 
 [[package]]

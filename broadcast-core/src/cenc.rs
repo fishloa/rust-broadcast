@@ -3,7 +3,7 @@
 //! [`CencScheme`] names the protection scheme a protected track is encrypted
 //! under: the `schm.scheme_type` four-CC of ISO/IEC 14496-12:2026 §13.4.6.
 //!
-//! # Why this lives in `broadcast-common`
+//! # Why this lives in `broadcast-core`
 //!
 //! CENC is *Common* Encryption — a container-independent scheme identity, not
 //! an ISOBMFF or an HLS concept. It is referenced from at least three places
@@ -16,7 +16,7 @@
 //!
 //! Those live in different crates (`transmux` owns the ISOBMFF crypto boxes,
 //! `broadcast-hls` owns the M3U8 playlist syntax), so the scheme identity
-//! belongs *below* both — here. Defining it once here
+//! belongs *below* both — in `broadcast-core`. Defining it once here
 //! is what stops "two names for one thing" reappearing every time a new
 //! container crate needs to name a scheme (issue #564 consolidated three
 //! definitions into one; issue #878 keeps it that way across the

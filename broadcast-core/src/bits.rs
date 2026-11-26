@@ -12,7 +12,7 @@
 //! clears each target bit, so the destination buffer need not be pre-zeroed.
 //!
 //! ```
-//! use broadcast_common::bits::{BitReader, BitWriter};
+//! use broadcast_core::bits::{BitReader, BitWriter};
 //!
 //! let mut buf = [0u8; 2];
 //! let mut w = BitWriter::new(&mut buf);
@@ -37,11 +37,10 @@ const BYTE_MSB_INDEX: usize = BITS_PER_BYTE - 1;
 const MAX_FIELD_BITS: u32 = u64::BITS;
 
 /// Error from a [`BitReader`] / [`BitWriter`] operation.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum BitError {
     /// Asked to read/write past the end of the backing buffer.
-    #[error("bit buffer out of bounds: need {needed_bits} bit(s), {remaining_bits} remaining")]
     OutOfBounds {
         /// Bits the operation needed.
         needed_bits: usize,
@@ -49,13 +48,11 @@ pub enum BitError {
         remaining_bits: usize,
     },
     /// Requested a field wider than the 64-bit carrier.
-    #[error("requested {requested} bits exceeds the 64-bit carrier")]
     TooManyBits {
         /// The over-wide width requested.
         requested: u32,
     },
     /// A value passed to [`BitWriter::write_bits`] does not fit in `bits` bits.
-    #[error("value {value:#x} does not fit in {bits} bit(s)")]
     ValueTooWide {
         /// The offending value.
         value: u64,
@@ -63,6 +60,28 @@ pub enum BitError {
         bits: u32,
     },
 }
+
+impl core::fmt::Display for BitError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            BitError::OutOfBounds {
+                needed_bits,
+                remaining_bits,
+            } => write!(
+                f,
+                "bit buffer out of bounds: need {} bit(s), {} remaining",
+                needed_bits, remaining_bits
+            ),
+            BitError::TooManyBits { requested } => {
+                write!(f, "requested {} bits exceeds the 64-bit carrier", requested)
+            }
+            BitError::ValueTooWide { value, bits } => {
+                write!(f, "value {:#x} does not fit in {} bit(s)", value, bits)
+            }
+        }
+    }
+}
+impl core::error::Error for BitError {}
 
 impl From<BitError> for BufferTooShort {
     /// The one conversion from a bit-level failure to the workspace's
