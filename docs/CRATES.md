@@ -81,13 +81,14 @@ builds (see the table above against the in-tree versions below).
 ## The crates
 
 <!-- BEGIN GENERATED: crate-index (tools/gen-crate-index.py) -->
-**69 workspace members.** 55 are on crates.io; 48 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
+**70 workspace members.** 55 are on crates.io; 48 are proven `no_std` by CI (built with `--no-default-features` for `thumbv7em-none-eabi`). Versions below are the **in-tree** versions on this branch; the badge shows what crates.io currently serves.
 
 ### Overview
 
 | Crate | Domain | In-tree version | crates.io | `no_std` (CI) | Layer | Status |
 |---|---|---|---|---|---|---|
 | [`broadcast-core`](#broadcast-core) | Foundation | 0.1.0 | — | no | 0 | internal, `publish = false` |
+| [`broadcast-codec`](#broadcast-codec) | Foundation | 0.1.0 | — | no | 1 | internal, `publish = false` |
 | [`broadcast-common`](#broadcast-common) | Foundation | 14.0.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-common.svg)](https://crates.io/crates/broadcast-common) | yes | 1 | on crates.io |
 | [`broadcast-auth`](#broadcast-auth) | Foundation | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-auth.svg)](https://crates.io/crates/broadcast-auth) | no | 2 | on crates.io |
 | [`mpeg-pes`](#mpeg-pes) | MPEG-2 TS / PES / PS framing | 0.10.0 | [![crates.io](https://img.shields.io/crates/v/mpeg-pes.svg)](https://crates.io/crates/mpeg-pes) | yes | 2 | on crates.io |
@@ -169,8 +170,19 @@ The stable floor every wire crate builds on: the symmetric `Parse<'a>` / `Serial
 - **Cargo description:** Frozen wire-format contract for the rust-broadcast crates: symmetric Parse/Serialize traits, checked field-width helpers, MSB-first bit I/O, reserved-bit fields, media timescales, the shared error kinds and the CENC scheme identity. no_std + alloc.
 - **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** 61 workspace crates
+- **Used by (workspace):** 62 workspace crates
 - **Links:** [README](../broadcast-core/README.md) · [CHANGELOG](../broadcast-core/CHANGELOG.md)
+
+#### broadcast-codec
+
+The vocabulary an outside codec library exchanges with the workspace: `CodecId`/`CodecParameters`, `Packet`, `AudioFrame`/`VideoFrame` with private fields and checked constructors, and the object-safe sans-IO `Decoder`/`Encoder` traits driven by one send/receive/finish contract. It holds no codec; the API is 0.x and expected to change.
+
+- **Standards:** none (codec seam; no wire format of its own)
+- **Cargo description:** Codec seam for rust-broadcast: raw audio/video frame types and the sans-IO Decoder/Encoder traits an outside codec plugs into. Holds no codec itself. no_std + alloc.
+- **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 1
+- **Depends on (workspace):** [`broadcast-core`](#broadcast-core)
+- **Used by (workspace):** none
+- **Links:** [README](../broadcast-codec/README.md) · [CHANGELOG](../broadcast-codec/CHANGELOG.md)
 
 #### broadcast-common
 
@@ -970,7 +982,7 @@ Layer 0 has no workspace dependencies; every other crate sits one layer above it
 
 ```text
 layer 0: broadcast-core, test-alloc, test-fixtures
-layer 1: broadcast-common, broadcast-loudness, container-probe, dvb-subtitle, isobmff, scte104, workspace-guards
+layer 1: broadcast-codec, broadcast-common, broadcast-loudness, container-probe, dvb-subtitle, isobmff, scte104, workspace-guards
 layer 2: atsc3, broadcast-auth, broadcast-dash, broadcast-hls, broadcast-matroska, broadcast-smooth, buffering-runtime, cc-data, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-vbi, isobmff-private-format, isobmff-tokio, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
 layer 3: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, rtsp-runtime, scte35-splice, ssai-runtime, st291, webrtc-runtime
 layer 4: dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, timed-metadata, transmux
@@ -1078,6 +1090,7 @@ flowchart BT
   broadcast_client --> rtsp_runtime
   broadcast_client --> smooth_runtime
   broadcast_client --> srt_runtime
+  broadcast_codec --> broadcast_core
   broadcast_common --> broadcast_core
   broadcast_dash --> broadcast_common
   broadcast_hls --> broadcast_common

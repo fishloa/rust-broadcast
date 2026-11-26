@@ -68,6 +68,7 @@ pub const TABLE: &[Crate] = &[
     // `SrtCallerConfig`/`UdpConfig` etc. already carry the attribute.
     runtime("broadcast-client", &["TsHttpPolicy"], &["PlayoutConfig"]),
     plain("broadcast-core"),
+    plain("broadcast-codec"),
     Crate {
         name: "broadcast-common",
         // `xml::Frame`: a private-to-the-module traversal stack that this

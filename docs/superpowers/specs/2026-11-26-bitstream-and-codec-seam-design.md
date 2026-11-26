@@ -258,6 +258,32 @@ and comparing it with the value an independent tool reports for the same file.
 - Whether it stays in the repository as an example or is removed after the round is the owner's call at
   review.
 
+### 7.4 The libav adapter and its wall
+
+A second spike wraps FFmpeg's libavcodec (`spikes/codec-libav/`, through the `ffmpeg-next` binding), so any
+decoder or encoder libav has can sit behind the `broadcast-codec` traits. It is the real test of the video
+frame types, and with the fake pair it drives the transcode stage of §7.2. Its tests skip loudly when the
+system has no libav.
+
+FFmpeg is LGPL, and GPL in builds that enable GPL parts. The adapter's own source is ours and carries the
+workspace licence; the obligations fall on whoever distributes a binary linked against libav. The rest of
+the workspace is kept clear of it by construction:
+
+1. The dependency runs one way: the adapter depends on `broadcast-codec`. No crate of ours depends on the
+   adapter, not as an optional feature either.
+2. `dep_policy` and `deny.toml` ban every FFmpeg binding and the adapter's own name from the main workspace
+   graph. The ban was added before the adapter existed.
+3. No FFmpeg-derived text is committed: bindings are generated at build time by the binding crate; no
+   vendored headers, no copied code.
+4. Dynamic linking only. The adapter offers no static or build-from-source feature.
+5. Binaries we ship (`transmux`, `multimux`, `media-doctor`, any prebuilt artefact) never link it. A
+   libav-enabled tool is a separate binary its user builds.
+6. The adapter's README states that it links FFmpeg, that the terms of the user's FFmpeg build apply to
+   what they distribute, and that codec patent licences are the distributor's matter.
+7. When it is released it moves to its own repository; the spike stays under `spikes/` until then.
+
+This is engineering practice, not legal advice.
+
 ## 8. Roadmap for `broadcast-bitstream` (after this round)
 
 Lossless parse plus a writer, byte-exact on real fixtures, one type at a time, each with its spec

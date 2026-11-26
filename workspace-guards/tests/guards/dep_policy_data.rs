@@ -21,10 +21,16 @@ pub const WORKSPACES: &[&str] = &[
     "bindings/transmux-py",
 ];
 
-pub const WORKSPACES_EXEMPT: &[(&str, &str)] = &[(
-    "spikes/trunk-bench",
-    "throwaway benchmark spike outside every workspace; never built by CI or published",
-)];
+pub const WORKSPACES_EXEMPT: &[(&str, &str)] = &[
+    (
+        "spikes/trunk-bench",
+        "throwaway benchmark spike outside every workspace; never built by CI or published",
+    ),
+    (
+        "spikes/codec-symphonia",
+        "codec-seam spike with an MPL-2.0 dependency that must not enter the root Cargo.lock; never built by CI or published",
+    ),
+];
 
 const fn one(name: &'static str, crates: &'static [&'static str]) -> Purpose {
     Purpose {
@@ -189,6 +195,46 @@ pub const BANNED: &[Banned] = &[
     ban("moka", "lru"),
     ban("backon", "the runtime crates' sans-IO retry/backoff"),
     ban("backoff", "the runtime crates' sans-IO retry/backoff"),
+    ban(
+        "ffmpeg-sys-next",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "ffmpeg-next",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "ffmpeg-sys",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "ffmpeg",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "rsmpeg",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "rusty_ffmpeg",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "ac-ffmpeg",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "ffmpeg-the-third",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "ffmpeg-sys-the-third",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
+    ban(
+        "broadcast-codec-libav",
+        "FFmpeg binding: links LGPL/GPL code; allowed only in a side workspace adapter, never in the main graph",
+    ),
 ];
 
 const fn exempt(member: &'static str, krate: &'static str, reason: &'static str) -> Exempt {

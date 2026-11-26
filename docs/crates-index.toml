@@ -89,6 +89,14 @@ blurb = "`publish = false` dev-dependencies shared by the workspace's test suite
 
 # ---------------------------------------------------------------- foundation
 
+[crate.broadcast-codec]
+domain = "foundation"
+summary = "Codec seam: raw frame types and object-safe sans-IO Decoder/Encoder traits; holds no codec."
+standards = "none (codec seam; no wire format of its own)"
+what = "The vocabulary an outside codec library exchanges with the workspace: `CodecId`/`CodecParameters`, `Packet`, `AudioFrame`/`VideoFrame` with private fields and checked constructors, and the object-safe sans-IO `Decoder`/`Encoder` traits driven by one send/receive/finish contract. It holds no codec; the API is 0.x and expected to change."
+crates_io = false
+lifecycle = "internal"
+
 [crate.broadcast-core]
 domain = "foundation"
 summary = "Frozen wire-format contract: Parse/Serialize, checked field widths, bit I/O, shared errors, big-endian wire field readers, timescale and the CENC scheme identity."
