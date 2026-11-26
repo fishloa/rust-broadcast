@@ -24,6 +24,11 @@ const ASSIGNMENT: char = '=';
 /// built with [`Self::with_direction`] applies to that direction only, and is
 /// what the `dec:`/`enc:` text prefix produces. See
 /// [`Registry::prefer`](crate::Registry::prefer) for how a registry uses it.
+///
+/// A preference for [`CodecId::Other`] has no text form: its label is `other`
+/// and the tag it carries cannot be spelled, so [`Display`](fmt::Display)
+/// writes `other=…` and parsing that back is
+/// [`PreferenceError::UnknownCodec`]. Build such a preference in code.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preference {

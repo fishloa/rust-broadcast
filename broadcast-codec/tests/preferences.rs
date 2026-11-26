@@ -202,3 +202,15 @@ fn the_first_bad_entry_in_a_list_is_the_one_reported() {
         })
     );
 }
+
+#[test]
+fn other_has_no_text_form() {
+    let preference = Preference::new(CodecId::Other(7), "alpha");
+    assert_eq!(preference.to_string(), "other=alpha");
+    assert_eq!(
+        "other=alpha".parse::<Preference>(),
+        Err(PreferenceError::UnknownCodec {
+            token: "other".into()
+        })
+    );
+}

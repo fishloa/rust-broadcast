@@ -24,9 +24,10 @@ pub trait CodecProvider {
     /// name breaks that rule, and refuses two providers with the same name.
     fn name(&self) -> &str;
 
-    /// Every implementation this provider offers, in the order they will be
-    /// tried. Providers are asked on every lookup, so the list may depend on
-    /// the machine (a hardware encoder absent on this host is absent here too).
+    /// Every implementation this provider offers, in the order the registry
+    /// should try them. Providers are asked on every lookup, so the list may
+    /// depend on the machine (a hardware encoder absent on this host is absent
+    /// here too).
     fn descriptors(&self) -> Vec<CodecDescriptor>;
 
     /// Build a decoder for `parameters`.
