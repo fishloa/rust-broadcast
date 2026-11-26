@@ -25,6 +25,15 @@ const VIDEO_PIXEL_FORMAT: Pixel = Pixel::YUV420P;
 /// The codec option a profile is carried in.
 const PROFILE_OPTION: &str = "profile";
 
+/// The storage this encoder was configured to produce.
+#[derive(Debug, Clone, Copy)]
+enum Target {
+    /// Pictures in one libav pixel format.
+    Video(Pixel),
+    /// Samples in one libav sample format.
+    Audio(Sample),
+}
+
 /// The libav encoder context this adapter drives.
 enum Opened {
     /// A video encoder.
@@ -43,6 +52,7 @@ enum Opened {
 pub struct LibavEncoder {
     implementation: String,
     opened: Opened,
+    target: Target,
     parameters: CodecParameters,
     draining: bool,
 }
@@ -79,15 +89,19 @@ impl LibavEncoder {
         let denominator = i32::try_from(time_base).map_err(|_| {
             CodecError::unsupported(format!("time base `{time_base}` as a libav time base"))
         })?;
+        let target;
         let opened = match (config.video(), config.audio()) {
             (Some(video), None) => {
                 let mut encoder = ffmpeg_next::codec::Context::new_with_codec(codec)
                     .encoder()
                     .video()
                     .map_err(|error| refused(implementation, &error))?;
+                let pixel_format = config
+                    .pixel_format()
+                    .map_or(VIDEO_PIXEL_FORMAT, map::libav_pixel);
                 encoder.set_width(video.coded_width().get());
                 encoder.set_height(video.coded_height().get());
-                encoder.set_format(VIDEO_PIXEL_FORMAT);
+                encoder.set_format(pixel_format);
                 encoder.set_time_base(Rational::new(1, denominator));
                 if let Some(bit_rate) = config.bit_rate() {
                     encoder.set_bit_rate(usize::try_from(bit_rate.get()).unwrap_or(usize::MAX));
@@ -95,6 +109,7 @@ impl LibavEncoder {
                 if let Some(gop) = config.gop() {
                     encoder.set_gop(gop.get());
                 }
+                target = Target::Video(pixel_format);
                 open_video(encoder, &options).map(Opened::Video)?
             }
             (None, Some(audio)) => {
@@ -106,7 +121,9 @@ impl LibavEncoder {
                     .map_err(|_| CodecError::unsupported("sample rate as a libav rate"))?;
                 encoder.set_rate(rate);
                 encoder.set_channel_layout(map::libav_channel_layout(audio.channels()));
-                encoder.set_format(audio_encoder_format(config.codec()));
+                let audio_format = audio_encoder_format(config);
+                encoder.set_format(audio_format);
+                target = Target::Audio(audio_format);
                 encoder.set_time_base(Rational::new(1, denominator));
                 if let Some(bit_rate) = config.bit_rate() {
                     encoder.set_bit_rate(usize::try_from(bit_rate.get()).unwrap_or(usize::MAX));
@@ -133,6 +150,7 @@ impl LibavEncoder {
         Ok(Self {
             implementation: implementation.to_string(),
             opened,
+            target,
             parameters,
             draining: false,
         })
@@ -145,13 +163,20 @@ impl LibavEncoder {
     }
 }
 
-/// The sample format this adapter configures `codec`'s encoder for.
-fn audio_encoder_format(codec: CodecId) -> Sample {
-    match codec {
-        CodecId::Flac | CodecId::Opus => {
-            map::libav_sample(SampleFormat::S16, SampleLayout::Interleaved)
-        }
-        _ => map::libav_sample(SampleFormat::F32, SampleLayout::Planar),
+/// The sample format this adapter configures the encoder for.
+///
+/// The caller's stated target storage wins; otherwise the codec's own needs
+/// decide (FLAC and Opus take interleaved 16-bit samples, the rest planar
+/// 32-bit floats).
+fn audio_encoder_format(config: &EncoderConfig) -> Sample {
+    match (config.sample_format(), config.sample_layout()) {
+        (Some(format), Some(layout)) => map::libav_sample(format, layout),
+        _ => match config.codec() {
+            CodecId::Flac | CodecId::Opus => {
+                map::libav_sample(SampleFormat::S16, SampleLayout::Interleaved)
+            }
+            _ => map::libav_sample(SampleFormat::F32, SampleLayout::Planar),
+        },
     }
 }
 
@@ -201,12 +226,12 @@ fn refused(implementation: &str, error: &ffmpeg_next::Error) -> CodecError {
 fn send_video(
     encoder: &mut VideoEncoder,
     implementation: &str,
+    format: Pixel,
     frame: VideoFrame,
 ) -> Result<(), CodecError> {
-    let format = map::libav_pixel(frame.format());
-    if format != VIDEO_PIXEL_FORMAT {
+    if map::libav_pixel(frame.format()) != format {
         return Err(CodecError::refused(format!(
-            "a source picture in `{:?}`; this encoder takes `{VIDEO_PIXEL_FORMAT:?}`",
+            "a source picture in `{:?}`; this encoder takes `{format:?}`",
             frame.format()
         )));
     }
@@ -237,10 +262,9 @@ fn send_video(
 fn send_audio(
     encoder: &mut AudioEncoder,
     implementation: &str,
-    codec: CodecId,
+    expected: Sample,
     frame: AudioFrame,
 ) -> Result<(), CodecError> {
-    let expected = audio_encoder_format(codec);
     let (storage, layout) = map::sample_format(expected)
         .ok_or_else(|| CodecError::unsupported("an encoder sample format"))?;
     if frame.layout() != layout {
@@ -410,16 +434,15 @@ impl Encoder for LibavEncoder {
             return Err(CodecError::refused("send after finish"));
         }
         let implementation = self.implementation.as_str();
-        let codec = self.parameters.codec();
-        match (&mut self.opened, frame) {
-            (Opened::Video(encoder), Frame::Video(video)) => {
-                send_video(encoder, implementation, video)
+        match (&mut self.opened, self.target, frame) {
+            (Opened::Video(encoder), Target::Video(format), Frame::Video(video)) => {
+                send_video(encoder, implementation, format, video)
             }
-            (Opened::Audio(encoder), Frame::Audio(audio)) => {
-                send_audio(encoder, implementation, codec, audio)
+            (Opened::Audio(encoder), Target::Audio(format), Frame::Audio(audio)) => {
+                send_audio(encoder, implementation, format, audio)
             }
-            (Opened::Video(_), _) => Err(CodecError::refused("an audio frame for a video encoder")),
-            (Opened::Audio(_), _) => Err(CodecError::refused("a video frame for an audio encoder")),
+            (Opened::Video(_), _, _) => Err(CodecError::refused("an audio frame for a video encoder")),
+            (Opened::Audio(_), _, _) => Err(CodecError::refused("a video frame for an audio encoder")),
         }
     }
 

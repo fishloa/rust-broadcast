@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use broadcast_codec::{
     AudioParameters, AudioSamples, ChannelLayout, CodecError, CodecId, CodecParameters, Decoder,
-    Direction, Encoder, Frame, Packet, PixelFormat, Registry, SampleLayout, VideoFrame,
-    VideoStorage,
+    Direction, Encoder, Frame, Packet, PixelFormat, Registry, SampleFormat, SampleLayout,
+    VideoFrame, VideoStorage,
 };
 use broadcast_core::Serialize;
 use broadcast_loudness::LoudnessMeter;
@@ -492,6 +492,7 @@ fn t4_video_encode_round_trip() {
         NonZeroU32::new(TS_WIDTH).expect("a width"),
         NonZeroU32::new(TS_HEIGHT).expect("a height"),
     ))
+    .with_pixel_format(PixelFormat::Yuv420p8)
     .with_bit_rate(std::num::NonZeroU64::new(MPEG2_BIT_RATE).expect("a bit rate"))
     .with_gop(NonZeroU32::new(MPEG2_GOP).expect("a group length"));
     let mut encoder = registry.encoder(&config).expect("an MPEG-2 video encoder");
@@ -564,7 +565,8 @@ fn t5_audio_encode_round_trip() {
         CodecId::Flac,
         broadcast_codec::Timescale::from_nonzero(rate),
     )
-    .with_audio(AudioParameters::new(rate, ChannelLayout::Mono));
+    .with_audio(AudioParameters::new(rate, ChannelLayout::Mono))
+    .with_sample_format(SampleFormat::S16, SampleLayout::Interleaved);
     let mut encoder = registry.encoder(&config).expect("a FLAC encoder");
 
     let mut frames = Vec::new();
@@ -835,6 +837,7 @@ fn t9_videotoolbox_encodes_what_the_software_decoder_reads() {
         NonZeroU32::new(TS_WIDTH).expect("a width"),
         NonZeroU32::new(TS_HEIGHT).expect("a height"),
     ))
+    .with_pixel_format(PixelFormat::Yuv420p8)
     .with_bit_rate(std::num::NonZeroU64::new(MPEG2_BIT_RATE).expect("a bit rate"))
     .with_gop(NonZeroU32::new(MPEG2_GOP).expect("a group length"));
     let mut encoder = registry
