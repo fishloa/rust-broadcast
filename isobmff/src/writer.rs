@@ -398,14 +398,32 @@ pub(crate) fn build_init_segment(
 /// entry.
 fn build_trak(t: &TrackSetup) -> Result<TrackBox> {
     let entry = track_entry(t)?;
-    let stbl = empty_sample_table(empty_sample_description(entry));
-    let stbl = match progressive::stbl_template(t.shell.as_ref()) {
+    let template = progressive::stbl_template(t.shell.as_ref());
+    let stbl = empty_sample_table(
+        empty_sample_description(entry),
+        uniform_sample_size(template),
+    );
+    let stbl = match template {
         Some(template) => SampleTableBox {
             children: progressive::stbl_children(Some(template), stbl.children),
         },
         None => stbl,
     };
     track_box(t, stbl)
+}
+
+/// The constant `sample_size` a source `stbl` declares on its `stsz`, or 0 when
+/// it carries none. A fragmented init's `stsz` holds no entries, but the
+/// constant size it states is still part of the box a rewrite reproduces.
+fn uniform_sample_size(template: Option<&[StblChild]>) -> u32 {
+    template
+        .and_then(|children| {
+            children.iter().find_map(|child| match child {
+                StblChild::Stsz(size) => Some(size.sample_size),
+                _ => None,
+            })
+        })
+        .unwrap_or(0)
 }
 
 /// One `trak` from its setup and a finished `stbl`.
@@ -502,7 +520,7 @@ fn empty_sample_description(entry: SampleEntryVariant) -> SampleDescriptionBox {
 
 /// The empty `stbl` of a fragmented init: `stsd` plus the four sample tables a
 /// fragmenting writer leaves unpopulated (their entries land in `moof`).
-fn empty_sample_table(stsd: SampleDescriptionBox) -> SampleTableBox {
+fn empty_sample_table(stsd: SampleDescriptionBox, sample_size: u32) -> SampleTableBox {
     SampleTableBox {
         children: vec![
             StblChild::Stsd(stsd),
@@ -519,7 +537,7 @@ fn empty_sample_table(stsd: SampleDescriptionBox) -> SampleTableBox {
             StblChild::Stsz(SampleSizeBox {
                 version: 0,
                 flags: 0,
-                sample_size: 0,
+                sample_size,
                 sample_count: 0,
                 entries: vec![],
             }),
