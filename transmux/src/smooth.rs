@@ -58,7 +58,7 @@ use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary};
 use crate::pipeline::CodecConfig;
 use crate::segment_log::{SegmentSummaryLog, TrackSummary};
 use crate::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
-use broadcast_common::wire::{be_u32, be_u64};
+use broadcast_core::wire::{be_u32, be_u64};
 use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex};
 use isobmff::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BoxHeader, BoxType, FULLBOX_EXTRA_SIZE, UUID,

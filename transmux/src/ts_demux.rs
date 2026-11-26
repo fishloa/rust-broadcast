@@ -262,7 +262,7 @@ use crate::nal::{
     is_keyframe_nal, nal_unit_type, parameter_set_is_valid,
 };
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
-use broadcast_common::wire::{be_u16, u16_at};
+use broadcast_core::wire::{be_u16, u16_at};
 use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use isobmff::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use isobmff::mp4esds::{

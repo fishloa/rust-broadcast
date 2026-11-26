@@ -62,10 +62,10 @@ use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::vec::Vec;
 #[cfg(feature = "rtp")]
-use broadcast_common::wire::u16_at;
-#[cfg(feature = "rtp")]
 use broadcast_core::error::BufferTooShort;
 use broadcast_core::error::InvalidValue;
+#[cfg(feature = "rtp")]
+use broadcast_core::wire::u16_at;
 
 #[cfg(feature = "rtp")]
 use broadcast_common::stage::{Stage, Timestamp};
