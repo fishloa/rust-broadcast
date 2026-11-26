@@ -400,7 +400,6 @@ checksum = "ad7d3f647f560b2e5c7d7da6d9326223893247feb3e086a388a14654683aa2f2"
 name = "isobmff"
 version = "0.1.0"
 dependencies = [
- "broadcast-common",
  "broadcast-core",
  "serde",
  "thiserror",
