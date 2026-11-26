@@ -1153,3 +1153,106 @@ fn a_padded_source_plane_is_copied_by_its_stride() {
         "padding must not reach the encoded picture"
     );
 }
+
+/// Bytes in one f32 sample.
+const F32_BYTES: usize = 4;
+/// The sample rate both audio fixtures are decoded at.
+const FIXTURE_RATE: u32 = 48_000;
+
+/// One fixture's packets through libav's own demuxer, in decode order.
+fn libav_stream(fixture: &str, codec: CodecId) -> Option<(CodecParameters, Vec<Unit>)> {
+    let mut input = ffmpeg_next::format::input(&test_fixtures::path(fixture)).ok()?;
+    let stream = input.streams().best(ffmpeg_next::media::Type::Audio)?;
+    let index = stream.index();
+    let denominator = u32::try_from(stream.time_base().denominator()).ok()?;
+    let time_base = broadcast_codec::Timescale::new(denominator)?;
+    let rate = NonZeroU32::new(FIXTURE_RATE)?;
+    let parameters = CodecParameters::new(codec, time_base)
+        .with_audio(AudioParameters::new(rate, ChannelLayout::Mono));
+    let mut units = Vec::new();
+    for (stream, packet) in input.packets() {
+        if stream.index() != index {
+            continue;
+        }
+        let Some(data) = packet.data() else {
+            continue;
+        };
+        units.push(Unit {
+            data: data.to_vec(),
+            pts: packet.pts(),
+            dts: packet.dts(),
+            key: packet.is_key(),
+        });
+    }
+    Some((parameters, units))
+}
+
+/// The per-channel sample count ffmpeg itself decodes from `fixture`.
+fn ffmpeg_audio_samples(fixture: &str) -> Option<usize> {
+    if !tool_available("ffmpeg", "-version") {
+        eprintln!("skip: ffmpeg is not on PATH, so the external decode did NOT run");
+        return None;
+    }
+    let mut command = Command::new("ffmpeg");
+    command
+        .arg("-v")
+        .arg("error")
+        .arg("-i")
+        .arg(test_fixtures::path(fixture))
+        .arg("-f")
+        .arg("f32le")
+        .arg("-ar")
+        .arg(FIXTURE_RATE.to_string())
+        .arg("-ac")
+        .arg("1")
+        .arg("-");
+    let output = output_bounded(&mut command, FFMPEG_DEADLINE).expect("ffmpeg runs");
+    assert!(
+        output.status.success(),
+        "ffmpeg failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Some(output.stdout.len() / F32_BYTES)
+}
+
+#[test]
+fn t13_the_adapter_does_not_apply_the_container_trim() {
+    for (name, fixture, codec) in [
+        ("mp3", "audio/audio.mp3", CodecId::MpegAudio),
+        ("opus", "audio/opus.ogg", CodecId::Opus),
+    ] {
+        let Some(reference) = ffmpeg_audio_samples(fixture) else {
+            return;
+        };
+        let Some((parameters, units)) = libav_stream(fixture, codec) else {
+            eprintln!("skip: the linked libav has no {name} demuxer here");
+            continue;
+        };
+        let registry = Registry::new()
+            .with(Box::new(LibavProvider::new()))
+            .expect("the libav provider registers");
+        let Some(descriptor) = registry
+            .candidates(codec, Direction::Decode)
+            .into_iter()
+            .next()
+        else {
+            eprintln!("skip: the linked libav offers no {name} decoder here");
+            continue;
+        };
+        let Ok(mut decoder) = registry.decoder(&parameters) else {
+            eprintln!("skip: {name}: the linked libav will not open its decoder here");
+            continue;
+        };
+        let frames = decode(&mut *decoder, &units);
+        let count: usize = frames.iter().map(|frame| audio(frame).frames()).sum();
+        println!(
+            "{name}: libav adapter {count} samples, ffmpeg {reference}; applies_trim {}",
+            descriptor.applies_trim()
+        );
+        assert_eq!(
+            descriptor.applies_trim(),
+            count == reference,
+            "{name}: the descriptor must state whether libav applied the container trim"
+        );
+    }
+}

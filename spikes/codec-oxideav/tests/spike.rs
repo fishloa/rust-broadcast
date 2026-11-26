@@ -132,32 +132,26 @@ fn t2_registry_selects_each_named_provider() {
 }
 
 #[test]
-#[ignore = "measured: oxideav 50688 samples, ffmpeg 48000; the registry path does not apply the LAME gapless trim; aligned RMS 8.633e-6"]
 fn t3_mp3_sample_count_matches_ffmpeg() {
-    let parameters = support::mono_parameters(CodecId::MpegAudio);
-    let packets = support::mp3_packets();
+    let (parameters, packets) = support::mp3_stream();
     check_against_ffmpeg("mp3", "audio/audio.mp3", &parameters, &packets);
 }
 
 #[test]
 fn t3_mp3_aligned_audio_matches_ffmpeg() {
-    let parameters = support::mono_parameters(CodecId::MpegAudio);
-    let packets = support::mp3_packets();
+    let (parameters, packets) = support::mp3_stream();
     check_aligned_with_ffmpeg("mp3", "audio/audio.mp3", &parameters, &packets);
 }
 
 #[test]
-#[ignore = "measured: oxideav 48648 samples, ffmpeg 48000; the Ogg end trim is not applied; aligned RMS 8.844e-6"]
 fn t3_opus_sample_count_matches_ffmpeg() {
-    let (head, packets) = support::opus_stream();
-    let parameters = support::mono_parameters(CodecId::Opus).with_extradata(head);
+    let (parameters, packets) = support::opus_stream();
     check_against_ffmpeg("opus", "audio/opus.ogg", &parameters, &packets);
 }
 
 #[test]
 fn t3_opus_aligned_audio_matches_ffmpeg() {
-    let (head, packets) = support::opus_stream();
-    let parameters = support::mono_parameters(CodecId::Opus).with_extradata(head);
+    let (parameters, packets) = support::opus_stream();
     check_aligned_with_ffmpeg("opus", "audio/opus.ogg", &parameters, &packets);
 }
 
@@ -232,11 +226,16 @@ fn compare_with_ffmpeg(
     fixture: &str,
     parameters: &broadcast_codec::CodecParameters,
     packets: &[Vec<u8>],
+    trimmed: bool,
 ) -> Option<Comparison> {
     let registry = Registry::new()
         .with(Box::new(OxideavProvider))
         .expect("the provider registers");
-    let decoded = support::decode_mono(&registry, parameters, packets);
+    let decoded = if trimmed {
+        support::decode_mono_trimmed(&registry, parameters, packets)
+    } else {
+        support::decode_mono(&registry, parameters, packets)
+    };
     let reference = support::ffmpeg_f32(fixture)?;
     let (offset, overlap, largest, rms) = support::align(&decoded, &reference);
     println!(
@@ -263,7 +262,7 @@ fn check_against_ffmpeg(
     parameters: &broadcast_codec::CodecParameters,
     packets: &[Vec<u8>],
 ) {
-    let Some(comparison) = compare_with_ffmpeg(name, fixture, parameters, packets) else {
+    let Some(comparison) = compare_with_ffmpeg(name, fixture, parameters, packets, true) else {
         return;
     };
     assert_eq!(
@@ -285,7 +284,7 @@ fn check_aligned_with_ffmpeg(
     parameters: &broadcast_codec::CodecParameters,
     packets: &[Vec<u8>],
 ) {
-    let Some(comparison) = compare_with_ffmpeg(name, fixture, parameters, packets) else {
+    let Some(comparison) = compare_with_ffmpeg(name, fixture, parameters, packets, false) else {
         return;
     };
     assert_eq!(

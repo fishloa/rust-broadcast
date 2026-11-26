@@ -161,12 +161,14 @@ fn descriptor(
         });
     let descriptor = CodecDescriptor::new(PROVIDER, implementation, codec, direction)
         .with_hardware(map::hardware(implementation))
-        .with_lossless(map::lossless(codec));
+        .with_lossless(map::lossless(codec))
+        .with_trims(false);
     match descriptor.with_profiles(profiles) {
         Ok(descriptor) => descriptor,
         Err(_) => CodecDescriptor::new(PROVIDER, implementation, codec, direction)
             .with_hardware(map::hardware(implementation))
-            .with_lossless(map::lossless(codec)),
+            .with_lossless(map::lossless(codec))
+            .with_trims(false),
     }
 }
 

@@ -1,12 +1,12 @@
 //! One libav decoder behind [`broadcast_codec::Decoder`].
 
-use std::num::{NonZeroU32, NonZeroUsize};
+use std::num::{NonZeroU16, NonZeroU32, NonZeroUsize};
 use std::string::String;
 use std::vec::Vec;
 
 use broadcast_codec::{
-    AudioFrame, AudioSamples, CodecError, CodecParameters, Decoder, Frame, Packet, SampleLayout,
-    VideoFrame, VideoPlane, VideoStorage,
+    AudioFrame, AudioSamples, ChannelLayout, CodecError, CodecParameters, Decoder, Frame, Packet,
+    SampleLayout, VideoFrame, VideoPlane, VideoStorage,
 };
 use ffmpeg_next::codec::decoder::Opened;
 use ffmpeg_next::{Dictionary, Rational};
@@ -94,8 +94,14 @@ impl LibavDecoder {
         })?;
         let per_channel = audio.samples();
         let channel_count = channels.count();
-        let samples = read_samples(audio, storage, layout, per_channel, channel_count)?;
-        let frame = AudioFrame::new(rate, channels, layout, samples)
+        let (samples, sample_layout, actual) =
+            read_samples(audio, storage, layout, per_channel, channel_count)?;
+        let channels = if actual == channel_count {
+            channels
+        } else {
+            layout_for_count(actual)?
+        };
+        let frame = AudioFrame::new(rate, channels, sample_layout, samples)
             .ok_or_else(|| CodecError::failed("a decoded audio frame's sample count"))?;
         Ok(match audio.pts() {
             Some(pts) => frame.with_pts(pts),
@@ -165,7 +171,7 @@ fn read_samples(
     layout: SampleLayout,
     per_channel: usize,
     channels: usize,
-) -> Result<AudioSamples, CodecError> {
+) -> Result<(AudioSamples, SampleLayout, usize), CodecError> {
     use broadcast_codec::SampleFormat;
     let total = per_channel
         .checked_mul(channels)
@@ -178,17 +184,23 @@ fn read_samples(
         _ => return Err(CodecError::unsupported("a decoded audio sample format")),
     };
     let mut bytes: Vec<u8> = Vec::with_capacity(total * width);
+    let used_channels;
     if layout == SampleLayout::Planar {
         let per_plane = per_channel
             .checked_mul(width)
             .ok_or_else(|| CodecError::failed("a decoded audio frame's channel size"))?;
+        let mut actual = 0;
         for index in 0..channels {
-            let plane = audio
-                .data(index)
-                .get(..per_plane)
-                .ok_or_else(|| CodecError::failed("a decoded audio frame's channel plane"))?;
+            let Some(plane) = audio.data(index).get(..per_plane) else {
+                break;
+            };
             bytes.extend_from_slice(plane);
+            actual += 1;
         }
+        if actual == 0 {
+            return Err(CodecError::failed("a decoded audio frame's channel planes"));
+        }
+        used_channels = actual;
     } else {
         let needed = total
             .checked_mul(width)
@@ -198,15 +210,32 @@ fn read_samples(
             .get(..needed)
             .ok_or_else(|| CodecError::failed("a decoded audio frame's sample buffer"))?;
         bytes.extend_from_slice(plane);
+        used_channels = channels;
     }
-    Ok(match storage {
+    let samples = match storage {
         SampleFormat::U8 => AudioSamples::U8(bytes),
         SampleFormat::S16 => AudioSamples::S16(elements(&bytes, i16::from_ne_bytes)),
         SampleFormat::S32 => AudioSamples::S32(elements(&bytes, i32::from_ne_bytes)),
         SampleFormat::F32 => AudioSamples::F32(elements(&bytes, f32::from_ne_bytes)),
         SampleFormat::F64 => AudioSamples::F64(elements(&bytes, f64::from_ne_bytes)),
         _ => return Err(CodecError::unsupported("a decoded audio sample format")),
-    })
+    };
+    Ok((samples, layout, used_channels))
+}
+
+/// The seam layout for a decoded channel count.
+fn layout_for_count(count: usize) -> Result<ChannelLayout, CodecError> {
+    match count {
+        1 => Ok(ChannelLayout::Mono),
+        2 => Ok(ChannelLayout::Stereo),
+        6 => Ok(ChannelLayout::Surround5_1),
+        8 => Ok(ChannelLayout::Surround7_1),
+        other => u16::try_from(other)
+            .ok()
+            .and_then(NonZeroU16::new)
+            .map(ChannelLayout::Discrete)
+            .ok_or_else(|| CodecError::failed("a decoded audio frame's channel count")),
+    }
 }
 
 /// Decode `bytes` as consecutive `WIDTH`-byte native-endian values.
