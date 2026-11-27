@@ -159,7 +159,10 @@ pub const TABLE: &[Crate] = &[
     // arm must be a deliberate, reviewed change rather than a silent fall-through.
     Crate {
         name: "isobmff",
-        skip: &["Advance"],
+        // `Advance` is the closed reader-step classification; `TypedKind` is a
+        // coverage-table selector over kinds of registered code, not a wire
+        // value, and every arm is matched in the coverage proof dispatch.
+        skip: &["Advance", "TypedKind"],
         variants: false,
         structs: false,
         struct_skip: &[],

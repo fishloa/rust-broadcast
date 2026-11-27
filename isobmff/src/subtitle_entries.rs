@@ -371,7 +371,7 @@ pub struct VttCueBox {
     /// Optional cue identifier string (`iden`).
     pub cue_id: Option<CueIdBox>,
     /// Children this crate has no typed model for, verbatim (box header
-    /// preserved through [`OpaqueBox`](crate::box_support::OpaqueBox)).
+    /// preserved through [`OpaqueBox`]).
     pub extra_children: Vec<crate::box_support::OpaqueBox>,
     /// Wire order of the children of a parsed cue; empty for a built one.
     #[cfg_attr(feature = "serde", serde(skip))]

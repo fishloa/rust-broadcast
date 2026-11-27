@@ -1004,7 +1004,12 @@ impl AvcTranscodingInfo {
             }));
         }
         Ok(Self {
-            profile_level_idc: u32::from_be_bytes([0, bytes[0], bytes[1], bytes[2]]),
+            profile_level_idc: u32::from_be_bytes([
+                0,
+                bytes[0],
+                bytes[1],
+                bytes[core::mem::size_of::<u16>()],
+            ]),
             max_bitrate: u32::from_be_bytes(
                 bytes[TRAN_MAX_BITRATE_OFFSET
                     ..TRAN_MAX_BITRATE_OFFSET + core::mem::size_of::<u32>()]
