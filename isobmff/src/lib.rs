@@ -189,6 +189,7 @@ pub mod plan;
 pub mod quicktime;
 pub mod reader;
 pub mod region;
+pub mod registered;
 pub mod registry;
 pub mod sample_entries;
 pub mod sample_groups;
@@ -317,6 +318,10 @@ pub use plan::{
 pub use reader::FragmentInfo;
 pub use reader::{
     ByteRange, Mode, Reader, ReaderConfig, SampleEntryInfo, SampleOrder, Source, Step, TrackInfo,
+};
+pub use registered::{
+    Brand, HandlerType, KeyNamespace, RestrictedSchemeType, SampleGroupType, TrackGroupType,
+    TrackReferenceType, TrackSelectionType,
 };
 pub use sample_entries::{
     AVCSampleEntry, BitRateBox, HEVCSampleEntry, Mp4vSampleEntry, SampleEntryChild, VVCSampleEntry,

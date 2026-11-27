@@ -21,6 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking
 
+- An MP3 track's `TrackSpec::padding` is now the LAME tag's own encoder delay
+  and padding, not a mapping that folded the MP3 decoder's 529-sample warm-up
+  into it: the fixture is 576/960, where it was 1105/431. A decoder
+  implementation declares its intrinsic delay through `broadcast-codec`, so a
+  provider that compensates and one that does not both trim correctly.
+- The codec-seam conversions carry a track's decoder pre-roll both ways
+  (`TrackSpec::pre_roll` <-> `CodecParameters::pre_roll`), and
+  `TranscodeStage` tells its decoder about a `MuxInput::Discontinuity` so the
+  seam can drop the settling output after a splice.
+
 - The MPEG-2 video sequence layer moved to `broadcast-bitstream`:
   `transmux::{mpeg_legacy, h262}` are deleted with `Mpeg2SeqHeader`,
   `SEQUENCE_HEADER_CODE`, `SequenceHeaderGeometry` and

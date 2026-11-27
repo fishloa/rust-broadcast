@@ -233,13 +233,15 @@ pub const TABLE: &[Crate] = &[
             "CodecId",
             "CodecProfile",
             "ConfigurationRecord",
+            "DecoderDelay",
+            "DecoderTrim",
             "Direction",
             "Fallback",
             "PixelFormat",
             "SampleFormat",
             "SampleLayout",
         ]),
-        min_enums: Some(10),
+        min_enums: Some(12),
     },
     Crate {
         name: "broadcast-common",
@@ -2007,6 +2009,10 @@ pub const TABLE: &[Crate] = &[
             "Advance",
             "DriverError",
             "DriverStep",
+            // The MP4RA coverage selector: a category of registered code
+            // (box, sample entry, brand, handler, ...), not a four-CC or a
+            // field value decoded from the wire.
+            "TypedKind",
             // Typed metadata ADTs: every variant wraps a distinct structured
             // value (a text value and its locale, a chapter list, an unknown
             // box), so the variant *is* the label; `MetaFlavor` is a

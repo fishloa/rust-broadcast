@@ -23,8 +23,8 @@ use std::num::NonZeroU32;
 
 use broadcast_codec::{
     AudioFrame, AudioSamples, ChannelLayout, CodecDescriptor, CodecError, CodecId, CodecParameters,
-    CodecProfile, CodecProvider, Decoder, Direction, Encoder, EncoderConfig, Frame, Packet, Probe,
-    ProviderInfo, SampleFormat, SampleLayout,
+    CodecProfile, CodecProvider, Decoder, DecoderDelay, DecoderTrim, Direction, Encoder,
+    EncoderConfig, Frame, Packet, Probe, ProviderInfo, SampleFormat, SampleLayout,
 };
 use oxideav_core as oxideav;
 
@@ -86,6 +86,9 @@ const F64_BYTES: usize = 8;
 const U8_BYTES: usize = 1;
 /// The stream index an OxideAV packet carries; the seam has one stream.
 const STREAM_INDEX: u32 = 0;
+/// The samples OxideAV's MPEG-1 Layer III decoder emits before the first real
+/// one; measured against the committed fixture.
+const MP3_DECODER_DELAY: u32 = 529;
 
 /// The adapter's [`CodecProvider`]: four OxideAV decoders.
 pub struct OxideavProvider;
@@ -179,7 +182,8 @@ fn aac_descriptor() -> CodecDescriptor {
         CodecId::Aac,
         Direction::Decode,
     )
-    .with_sample_formats(vec![SampleFormat::S16]);
+    .with_sample_formats(vec![SampleFormat::S16])
+    .with_trim(trim(CodecId::Aac));
     match descriptor.clone().with_profiles(AAC_PROFILES) {
         Ok(stated) => stated,
         Err(_) => descriptor,
@@ -190,6 +194,21 @@ fn aac_descriptor() -> CodecDescriptor {
 fn simple_descriptor(implementation: &str, codec: CodecId) -> CodecDescriptor {
     CodecDescriptor::new(PROVIDER, implementation, codec, Direction::Decode)
         .with_sample_formats(vec![SampleFormat::S16])
+        .with_trim(trim(codec))
+}
+
+/// What OxideAV states about its own output delay for `codec`.
+///
+/// MPEG audio emits 529 samples of Layer III warm-up; AAC, Opus (whose
+/// pre-skip the adapter clears before opening the decoder) and PCM emit none.
+fn trim(codec: CodecId) -> DecoderTrim {
+    match codec {
+        CodecId::MpegAudio => DecoderTrim::Caller(DecoderDelay::Declared(MP3_DECODER_DELAY)),
+        CodecId::Aac | CodecId::Opus | CodecId::Pcm => {
+            DecoderTrim::Caller(DecoderDelay::Declared(0))
+        }
+        _ => DecoderTrim::Caller(DecoderDelay::Unknown),
+    }
 }
 
 /// Translate the seam's parameters into OxideAV's.

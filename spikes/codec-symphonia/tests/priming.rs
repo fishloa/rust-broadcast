@@ -71,7 +71,7 @@ fn symphonia_applies_no_aac_priming() {
         .into_iter()
         .next()
         .expect("an AAC decoder");
-    assert!(!descriptor.applies_trim());
+    assert!(!descriptor.trim().applies_trim());
 
     let data = test_fixtures::read(ADTS_FIXTURE);
     let packets: Vec<Vec<u8>> = AdtsFrames::new(&data).map(|frame| frame.bytes().to_vec()).collect();
