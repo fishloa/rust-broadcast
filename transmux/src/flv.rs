@@ -1641,8 +1641,11 @@ const META_HANDLER_SET_DATA_FRAME: &str = "@setDataFrame";
 
 /// The informational properties an `onMetaData` script tag states, typed.
 ///
-/// The property names are the de-facto set Adobe's encoders and FFmpeg's
-/// `flvdec.c` agree on (`duration`, `width`, `height`, `framerate`,
+/// Adobe FLV v10.1 §E.4.1 defines the script-data tag and the `onMetaData`
+/// handler but not the property list
+/// (`private/specs-verified/mpeg/transmux/codec/flv.md` §E.4.1). The
+/// property names are the de-facto set FFmpeg's `libavformat/flvdec.c` and
+/// ExifTool's Flash tag table agree on (`duration`, `width`, `height`, `framerate`,
 /// `videocodecid`, `audiosamplerate`, `audiosamplesize`, `stereo`,
 /// `audiocodecid`, `filesize`, `encoder`); a property the writer stated that
 /// this crate does not name stays in [`properties`](Self::properties) as the

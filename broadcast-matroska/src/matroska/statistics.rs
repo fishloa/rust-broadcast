@@ -1,6 +1,8 @@
 //! The de-facto Matroska tag names a real file carries, typed.
 //!
-//! These names are not in RFC 9559: mkvmerge's track statistics (`DURATION`,
+//! These names are not in RFC 9559
+//! (`private/specs-verified/ietf/specs/rfc9559_matroska.txt` §5.1.8 defines
+//! `Tags`, `Tag`, `Targets` and `SimpleTag` but no tag names): mkvmerge's track statistics (`DURATION`,
 //! `NUMBER_OF_FRAMES`, `NUMBER_OF_BYTES`, `BPS`, `_STATISTICS_*`) come from
 //! mkvtoolnix, and the technical tags (`ENCODER`, `ENCODER_SETTINGS`, `BPS`)
 //! from the Matroska tagging page. It is a de-facto convention, taken from
