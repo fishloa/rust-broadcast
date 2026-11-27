@@ -406,9 +406,15 @@ async fn loop_preserves_dts_monotonicity_across_boundary() {
     let trunk = trunk_sized(LOOP_PASSES * source_sample_count("fixtures/ts/h264-aac.ts"));
     let t = trunk.clone();
     let handle = tokio::spawn(async move {
-        reader(fixture("fixtures/ts/h264-aac.ts"), true, false, Some(2), t)
-            .run()
-            .await
+        reader(
+            fixture("fixtures/ts/h264-aac.ts"),
+            true,
+            false,
+            Some(LOOP_PASSES as u32),
+            t,
+        )
+        .run()
+        .await
     });
     handle
         .await
