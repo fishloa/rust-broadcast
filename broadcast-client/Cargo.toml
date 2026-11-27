@@ -77,5 +77,8 @@ name = "session_loop"
 [[example]]
 name = "auth_wait"
 
+[[example]]
+name = "damage_report"
+
 [lints]
 workspace = true

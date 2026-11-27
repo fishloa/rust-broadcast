@@ -28,6 +28,7 @@
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
+use crate::cenc::FOURCC_LEN;
 use crate::error;
 use crate::timescale::Timescale;
 
@@ -412,7 +413,7 @@ pub struct Damage {
     severity: Severity,
     location: DamageLocation,
     what: &'static str,
-    fourcc: Option<[u8; 4]>,
+    fourcc: Option<[u8; FOURCC_LEN]>,
     cause: Option<DamageCause>,
     recoverable_bytes: bool,
 }
@@ -460,7 +461,7 @@ impl Damage {
     /// The box/atom type, for a format whose structures are four-character
     /// codes.
     #[must_use]
-    pub const fn fourcc(&self) -> Option<[u8; 4]> {
+    pub const fn fourcc(&self) -> Option<[u8; FOURCC_LEN]> {
         self.fourcc
     }
 
@@ -518,7 +519,7 @@ impl Damage {
 
     /// Record a four-character box/atom type.
     #[must_use]
-    pub const fn with_fourcc(mut self, fourcc: [u8; 4]) -> Self {
+    pub const fn with_fourcc(mut self, fourcc: [u8; FOURCC_LEN]) -> Self {
         self.fourcc = Some(fourcc);
         self
     }
