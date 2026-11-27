@@ -219,15 +219,24 @@ fn totals() -> Totals {
 }
 
 /// The totals `origin/main` reads from the committed fixtures.
+///
+/// `origin/main`'s own tree reads these 282 files to exactly these results.
+/// The eleven `.mov` fixtures `#4204` added (`quicktime/qt-h263.mov`,
+/// `qt-mjpeg.mov`, `qt-pcm-s16le.mov`, `qt-pcm-s24le.mov`, the six
+/// `qt-prores-ap*.mov` and `qt-svq1.mov`) are the whole difference from the
+/// 271-file totals this lane pinned before that merge: each file's own typed
+/// results were compared one by one against `origin/main` and every one of
+/// the 271 older files is unchanged. (`quicktime/../3gpp/h263.3gp` is not in
+/// the walked extensions.)
 const EXPECTED: Totals = Totals {
-    files: 271,
-    movie_reads: 271,
+    files: 282,
+    movie_reads: 282,
     item_reads: 20,
-    tracks: 211,
-    samples: 257_469,
+    tracks: 222,
+    samples: 259_078,
     items: 50,
     properties: 188,
-    digest: 295_504_044_081_368_128,
+    digest: 16_550_637_486_676_025_805,
 };
 
 #[test]
