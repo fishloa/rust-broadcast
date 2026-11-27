@@ -12,7 +12,7 @@
 use crate::TrackId;
 use crate::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE, BoxIter, FULLBOX_EXTRA_SIZE,
-    FULLBOX_VERSION_OFFSET, parse_box,
+    FULLBOX_FLAGS_MASK, FULLBOX_VERSION_OFFSET, parse_box, write_full_box_header,
 };
 use crate::error::{Error, Result};
 use alloc::boxed::Box;
@@ -883,6 +883,330 @@ impl Serialize for SoundMediaHeaderBox {
         buf[c..c + SMHD_RESERVED_LEN].fill(0);
         c += SMHD_RESERVED_LEN;
         Ok(c)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// NullMediaHeaderBox — nmhd (ISO/IEC 14496-12:2026 §8.4.5.2)
+// HintMediaHeaderBox — hmhd (§12.4.3.1)
+// VolumetricVisualMediaHeaderBox — vvhd (§12.9.2)
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the Null Media Header Box (`nmhd`, §8.4.5.2).
+pub const NMHD: [u8; BOX_TYPE_SIZE] = *b"nmhd";
+/// Four-CC of the Hint Media Header Box (`hmhd`, §12.4.3.1).
+pub const HMHD: [u8; BOX_TYPE_SIZE] = *b"hmhd";
+/// Four-CC of the Volumetric Visual Media Header Box (`vvhd`, §12.9.2).
+pub const VVHD: [u8; BOX_TYPE_SIZE] = *b"vvhd";
+/// `hmhd` body length after the FullBox fields (§12.4.3.1).
+const HMHD_BODY_LEN: usize = 16;
+/// Body offset of `maxbitrate`, after the two 16-bit PDU sizes (§12.4.3.1).
+const HMHD_MAX_BITRATE_OFFSET: usize = 2 * core::mem::size_of::<u16>();
+/// Body offset of `avgbitrate` (§12.4.3.1).
+const HMHD_AVG_BITRATE_OFFSET: usize = HMHD_MAX_BITRATE_OFFSET + core::mem::size_of::<u32>();
+/// Body offset of the trailing reserved word (§12.4.3.1).
+const HMHD_RESERVED_OFFSET: usize = HMHD_AVG_BITRATE_OFFSET + core::mem::size_of::<u32>();
+
+/// Null Media Header Box (`nmhd`) — ISO/IEC 14496-12:2026 §8.4.5.2.
+///
+/// The header a stream with no media-specific header of its own uses: only
+/// the FullBox fields, whose flags the clause reserves.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct NullMediaHeaderBox {
+    version: u8,
+    flags: u32,
+}
+
+impl NullMediaHeaderBox {
+    /// A version-0 header with every flag clear.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The FullBox version.
+    #[must_use]
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+
+    /// The FullBox flags.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(body, FULLBOX_EXTRA_SIZE, "nmhd")?;
+        Ok(Self {
+            version: body[0],
+            flags: u24_at(body, 1) & FULLBOX_FLAGS_MASK,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for NullMediaHeaderBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        need_in(bytes, BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE, "nmhd")?;
+        if bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != NMHD {
+            return Err(Error::UnexpectedBox { expected: "nmhd" });
+        }
+        Self::parse_body(crate::box_types::box_body(
+            bytes,
+            FULLBOX_EXTRA_SIZE,
+            "nmhd",
+        )?)
+    }
+}
+
+impl Serialize for NullMediaHeaderBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        write_full_box_header(buf, &NMHD, need, self.version, self.flags, false)
+    }
+}
+
+/// Hint Media Header Box (`hmhd`) — ISO/IEC 14496-12:2026 §12.4.3.1.
+///
+/// The protocol-independent information every hint track declares: PDU sizes
+/// and bitrates.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct HintMediaHeaderBox {
+    version: u8,
+    flags: u32,
+    max_pdu_size: u16,
+    avg_pdu_size: u16,
+    max_bitrate: u32,
+    avg_bitrate: u32,
+    reserved: u32,
+}
+
+impl HintMediaHeaderBox {
+    /// A version-0 header with the given PDU sizes and bitrates.
+    #[must_use]
+    pub fn new(max_pdu_size: u16, avg_pdu_size: u16, max_bitrate: u32, avg_bitrate: u32) -> Self {
+        Self {
+            version: 0,
+            flags: 0,
+            max_pdu_size,
+            avg_pdu_size,
+            max_bitrate,
+            avg_bitrate,
+            reserved: 0,
+        }
+    }
+
+    /// The FullBox version.
+    #[must_use]
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+
+    /// The FullBox flags.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// `maxPDUsize`, in bytes.
+    #[must_use]
+    pub const fn max_pdu_size(&self) -> u16 {
+        self.max_pdu_size
+    }
+
+    /// `avgPDUsize`, in bytes.
+    #[must_use]
+    pub const fn avg_pdu_size(&self) -> u16 {
+        self.avg_pdu_size
+    }
+
+    /// `maxbitrate`, in bits per second.
+    #[must_use]
+    pub const fn max_bitrate(&self) -> u32 {
+        self.max_bitrate
+    }
+
+    /// `avgbitrate`, in bits per second.
+    #[must_use]
+    pub const fn avg_bitrate(&self) -> u32 {
+        self.avg_bitrate
+    }
+
+    /// The syntax's trailing reserved word (§12.4.3.1).
+    #[must_use]
+    pub const fn reserved(&self) -> u32 {
+        self.reserved
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(body, FULLBOX_EXTRA_SIZE + HMHD_BODY_LEN, "hmhd")?;
+        let cursor = FULLBOX_EXTRA_SIZE;
+        Ok(Self {
+            version: body[0],
+            flags: u24_at(body, 1) & FULLBOX_FLAGS_MASK,
+            max_pdu_size: u16_at(body, cursor),
+            avg_pdu_size: u16_at(body, cursor + core::mem::size_of::<u16>()),
+            max_bitrate: u32_at(body, cursor + HMHD_MAX_BITRATE_OFFSET),
+            avg_bitrate: u32_at(body, cursor + HMHD_AVG_BITRATE_OFFSET),
+            reserved: u32_at(body, cursor + HMHD_RESERVED_OFFSET),
+        })
+    }
+}
+
+impl<'a> Parse<'a> for HintMediaHeaderBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        need_in(
+            bytes,
+            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + HMHD_BODY_LEN,
+            "hmhd",
+        )?;
+        if bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != HMHD {
+            return Err(Error::UnexpectedBox { expected: "hmhd" });
+        }
+        Self::parse_body(crate::box_types::box_body(
+            bytes,
+            FULLBOX_EXTRA_SIZE + HMHD_BODY_LEN,
+            "hmhd",
+        )?)
+    }
+}
+
+impl Serialize for HintMediaHeaderBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + HMHD_BODY_LEN
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor = write_full_box_header(buf, &HMHD, need, self.version, self.flags, false)?;
+        let u16_len = core::mem::size_of::<u16>();
+        let u32_len = core::mem::size_of::<u32>();
+        for value in [self.max_pdu_size, self.avg_pdu_size] {
+            buf[cursor..cursor + u16_len].copy_from_slice(&value.to_be_bytes());
+            cursor += u16_len;
+        }
+        for value in [self.max_bitrate, self.avg_bitrate, self.reserved] {
+            buf[cursor..cursor + u32_len].copy_from_slice(&value.to_be_bytes());
+            cursor += u32_len;
+        }
+        Ok(cursor)
+    }
+}
+
+/// Volumetric Visual Media Header Box (`vvhd`) — ISO/IEC 14496-12:2026
+/// §12.9.2.
+///
+/// The header every volumetric visual track carries: only the FullBox fields.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct VolumetricVisualMediaHeaderBox {
+    version: u8,
+    flags: u32,
+}
+
+impl VolumetricVisualMediaHeaderBox {
+    /// A version-0 header with every flag clear.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The FullBox version.
+    #[must_use]
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+
+    /// The FullBox flags.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(body, FULLBOX_EXTRA_SIZE, "vvhd")?;
+        Ok(Self {
+            version: body[0],
+            flags: u24_at(body, 1) & FULLBOX_FLAGS_MASK,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for VolumetricVisualMediaHeaderBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        need_in(bytes, BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE, "vvhd")?;
+        if bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != VVHD {
+            return Err(Error::UnexpectedBox { expected: "vvhd" });
+        }
+        Self::parse_body(crate::box_types::box_body(
+            bytes,
+            FULLBOX_EXTRA_SIZE,
+            "vvhd",
+        )?)
+    }
+}
+
+impl Serialize for VolumetricVisualMediaHeaderBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        write_full_box_header(buf, &VVHD, need, self.version, self.flags, false)
+    }
+}
+
+/// The media information header one `minf` carries — ISO/IEC 14496-12:2026
+/// §8.4.5.
+///
+/// Exactly one specific media header belongs in a `minf`; this is the crate's
+/// typed view of the ones it models.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum MediaInformationHeader {
+    /// `vmhd` — [`VideoMediaHeaderBox`] (§12.1.2).
+    Video(VideoMediaHeaderBox),
+    /// `smhd` — [`SoundMediaHeaderBox`] (§12.2.2).
+    Sound(SoundMediaHeaderBox),
+    /// `nmhd` — [`NullMediaHeaderBox`] (§8.4.5.2).
+    Null(NullMediaHeaderBox),
+    /// `hmhd` — [`HintMediaHeaderBox`] (§12.4.3.1).
+    Hint(HintMediaHeaderBox),
+    /// `vvhd` — [`VolumetricVisualMediaHeaderBox`] (§12.9.2).
+    Volumetric(VolumetricVisualMediaHeaderBox),
+}
+
+impl MediaInformationHeader {
+    /// The header's four-CC.
+    #[must_use]
+    pub const fn fourcc(&self) -> [u8; BOX_TYPE_SIZE] {
+        match self {
+            Self::Video(_) => *b"vmhd",
+            Self::Sound(_) => *b"smhd",
+            Self::Null(_) => NMHD,
+            Self::Hint(_) => HMHD,
+            Self::Volumetric(_) => VVHD,
+        }
     }
 }
 
@@ -3043,6 +3367,16 @@ pub enum SampleEntryVariant {
     Dts(Box<DtsSampleEntry>),
     /// QuickTime timecode sample entry (`tmcd`).
     Tmcd(Box<crate::quicktime::TimecodeEntry>),
+    /// XML timed-metadata sample entry (`metx`) —
+    /// ISO/IEC 14496-12:2026 §12.3.3.
+    Metx(Box<crate::meta_track::XmlMetaDataSampleEntry>),
+    /// Text metadata (`mett`) or simple text (`stxt`) sample entry —
+    /// §12.3.3, §12.5.3. The entry's `codec_type` records which.
+    Text(Box<crate::meta_track::TextMetaDataSampleEntry>),
+    /// URI metadata sample entry (`urim`) — §12.3.3.
+    Urim(Box<crate::meta_track::UriMetaDataSampleEntry>),
+    /// Boxed metadata sample entry (`mebx`) — §12.8.4.1.
+    Mebx(Box<crate::meta_track::BoxedMetaDataSampleEntry>),
     /// A QuickTime-only sound sample entry (`lpcm`, `in24`, `sowt`, …).
     QuickTimeSound(Box<crate::quicktime::SoundEntry>),
     Unknown(OpaqueBox),
@@ -3143,6 +3477,10 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Mha(m) => m.serialized_len(),
             SampleEntryVariant::Dts(d) => d.serialized_len(),
             SampleEntryVariant::Tmcd(e) => e.serialized_len(),
+            SampleEntryVariant::Metx(e) => e.serialized_len(),
+            SampleEntryVariant::Text(e) => e.serialized_len(),
+            SampleEntryVariant::Urim(e) => e.serialized_len(),
+            SampleEntryVariant::Mebx(e) => e.serialized_len(),
             SampleEntryVariant::QuickTimeSound(e) => e.serialized_len(),
             SampleEntryVariant::Unknown(u) => u.serialized_len(),
         }
@@ -3167,6 +3505,10 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Mha(m) => m.serialize_into(buf),
             SampleEntryVariant::Dts(d) => d.serialize_into(buf),
             SampleEntryVariant::Tmcd(e) => e.serialize_into(buf),
+            SampleEntryVariant::Metx(e) => e.serialize_into(buf),
+            SampleEntryVariant::Text(e) => e.serialize_into(buf),
+            SampleEntryVariant::Urim(e) => e.serialize_into(buf),
+            SampleEntryVariant::Mebx(e) => e.serialize_into(buf),
             SampleEntryVariant::QuickTimeSound(e) => e.serialize_into(buf),
             SampleEntryVariant::Unknown(u) => Ok(u.serialize_into(buf)?),
         }
@@ -3236,6 +3578,18 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
         b"tmcd" => {
             SampleEntryVariant::Tmcd(Box::new(crate::quicktime::TimecodeEntry::parse(box_bytes)?))
         }
+        b"metx" => SampleEntryVariant::Metx(Box::new(
+            crate::meta_track::XmlMetaDataSampleEntry::parse_box(box_bytes)?,
+        )),
+        b"mett" | b"stxt" => SampleEntryVariant::Text(Box::new(
+            crate::meta_track::TextMetaDataSampleEntry::parse_box(box_bytes)?,
+        )),
+        b"urim" => SampleEntryVariant::Urim(Box::new(
+            crate::meta_track::UriMetaDataSampleEntry::parse_box(box_bytes)?,
+        )),
+        b"mebx" => SampleEntryVariant::Mebx(Box::new(
+            crate::meta_track::BoxedMetaDataSampleEntry::parse_box(box_bytes)?,
+        )),
         b"lpcm" | b"in24" | b"in32" | b"sowt" | b"twos" | b"raw " | b"fl32" | b"fl64" | b"ima4"
         | b"MAC3 " | b"MAC6 " | b"ulaw" | b"alaw" | b"NONE" => SampleEntryVariant::QuickTimeSound(
             Box::new(crate::quicktime::SoundEntry::parse(box_bytes)?),
@@ -3643,13 +3997,19 @@ impl Serialize for DataInformationBox {
 pub const MINF: [u8; 4] = *b"minf";
 
 /// Typed child slots in a `minf` (§8.4.4).
-const MINF_TYPED_CHILDREN_MAX: usize = 5;
+const MINF_TYPED_CHILDREN_MAX: usize = 8;
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MediaInformationBox {
     pub vmhd: Option<VideoMediaHeaderBox>,
     pub smhd: Option<SoundMediaHeaderBox>,
+    /// The null media header (`nmhd`, §8.4.5.2), when present.
+    pub nmhd: Option<NullMediaHeaderBox>,
+    /// The hint media header (`hmhd`, §12.4.3.1), when present.
+    pub hmhd: Option<HintMediaHeaderBox>,
+    /// The volumetric visual media header (`vvhd`, §12.9.2), when present.
+    pub vvhd: Option<VolumetricVisualMediaHeaderBox>,
     /// The QuickTime base media information header (`gmhd`), when present.
     pub gmhd: Option<crate::quicktime::gmhd::GmhdAtom>,
     pub dinf: Option<DataInformationBox>,
@@ -3672,6 +4032,9 @@ impl MediaInformationBox {
         Self {
             vmhd,
             smhd,
+            nmhd: None,
+            hmhd: None,
+            vvhd: None,
             gmhd: None,
             dinf,
             stbl,
@@ -3695,6 +4058,15 @@ impl MediaInformationBox {
         if self.smhd.is_some() {
             order.push(*b"smhd");
         }
+        if self.nmhd.is_some() {
+            order.push(*b"nmhd");
+        }
+        if self.hmhd.is_some() {
+            order.push(*b"hmhd");
+        }
+        if self.vvhd.is_some() {
+            order.push(*b"vvhd");
+        }
         if self.gmhd.is_some() {
             order.push(*b"gmhd");
         }
@@ -3715,6 +4087,27 @@ impl MediaInformationBox {
         self.gmhd.clone()
     }
 
+    /// The media information header this `minf` carries (§8.4.5), when the
+    /// crate models its four-CC.
+    #[must_use]
+    pub fn media_header(&self) -> Option<MediaInformationHeader> {
+        if let Some(b) = &self.vmhd {
+            return Some(MediaInformationHeader::Video(b.clone()));
+        }
+        if let Some(b) = &self.smhd {
+            return Some(MediaInformationHeader::Sound(b.clone()));
+        }
+        if let Some(b) = &self.nmhd {
+            return Some(MediaInformationHeader::Null(b.clone()));
+        }
+        if let Some(b) = &self.hmhd {
+            return Some(MediaInformationHeader::Hint(b.clone()));
+        }
+        self.vvhd
+            .as_ref()
+            .map(|b| MediaInformationHeader::Volumetric(b.clone()))
+    }
+
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
     fn typed_children(&self) -> Vec<&dyn SerializeBox<Error = crate::Error>> {
@@ -3724,6 +4117,15 @@ impl MediaInformationBox {
             out.push(b);
         }
         if let Some(ref b) = self.smhd {
+            out.push(b);
+        }
+        if let Some(ref b) = self.nmhd {
+            out.push(b);
+        }
+        if let Some(ref b) = self.hmhd {
+            out.push(b);
+        }
+        if let Some(ref b) = self.vvhd {
             out.push(b);
         }
         if let Some(ref b) = self.gmhd {
@@ -3747,6 +4149,15 @@ impl MediaInformationBox {
         if self.smhd.is_some() {
             out.push(b"smhd" as &'static [u8; BOX_TYPE_SIZE]);
         }
+        if self.nmhd.is_some() {
+            out.push(b"nmhd" as &'static [u8; BOX_TYPE_SIZE]);
+        }
+        if self.hmhd.is_some() {
+            out.push(b"hmhd" as &'static [u8; BOX_TYPE_SIZE]);
+        }
+        if self.vvhd.is_some() {
+            out.push(b"vvhd" as &'static [u8; BOX_TYPE_SIZE]);
+        }
         if self.gmhd.is_some() {
             out.push(b"gmhd" as &'static [u8; BOX_TYPE_SIZE]);
         }
@@ -3769,6 +4180,9 @@ impl<'a> Parse<'a> for MediaInformationBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let mut vmhd = None;
         let mut smhd = None;
+        let mut nmhd = None;
+        let mut hmhd = None;
+        let mut vvhd = None;
         let mut gmhd = None;
         let mut dinf = None;
         let mut stbl = None;
@@ -3784,6 +4198,18 @@ impl<'a> Parse<'a> for MediaInformationBox {
                 b"smhd" => {
                     order.push(child.four_cc());
                     smhd = Some(SoundMediaHeaderBox::parse(child.bytes)?);
+                }
+                b"nmhd" => {
+                    order.push(child.four_cc());
+                    nmhd = Some(NullMediaHeaderBox::parse(child.bytes)?);
+                }
+                b"hmhd" => {
+                    order.push(child.four_cc());
+                    hmhd = Some(HintMediaHeaderBox::parse(child.bytes)?);
+                }
+                b"vvhd" => {
+                    order.push(child.four_cc());
+                    vvhd = Some(VolumetricVisualMediaHeaderBox::parse(child.bytes)?);
                 }
                 b"gmhd" => {
                     order.push(child.four_cc());
@@ -3817,6 +4243,9 @@ impl<'a> Parse<'a> for MediaInformationBox {
         Ok(Self {
             vmhd,
             smhd,
+            nmhd,
+            hmhd,
+            vvhd,
             gmhd,
             dinf,
             stbl,
@@ -4481,9 +4910,141 @@ impl Serialize for TrackExtendsBox {
 /// Movie Extends Box (`mvex`) — ISO/IEC 14496-12:2026 §8.8.1.
 ///
 /// Signals that the movie is fragmented and carries the per-track [`TrackExtendsBox`]
-/// defaults. Any other children (e.g. `mehd`, which Table 2 (§6.2) orders *before* the
-/// `trex` list) are preserved verbatim in `opaque`, at the position they
-/// occupied on the wire — see [`MovieExtendsBox::order`].
+/// defaults. Any other children are preserved verbatim in `opaque`, at the
+/// position they occupied on the wire — see [`MovieExtendsBox::order`].
+///
+/// Movie Extends Header Box (`mehd`) — ISO/IEC 14496-12:2026 §8.8.2.
+///
+/// The presentation's whole duration, fragments included, in the movie
+/// timescale. Version 1 widens `fragment_duration` to 64 bits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct MovieExtendsHeaderBox {
+    version: u8,
+    flags: u32,
+    fragment_duration: u64,
+}
+
+impl MovieExtendsHeaderBox {
+    /// A version-0 header.
+    #[must_use]
+    pub const fn new(fragment_duration: u32) -> Self {
+        Self {
+            version: 0,
+            flags: 0,
+            fragment_duration: fragment_duration as u64,
+        }
+    }
+
+    /// A version-1 header with a 64-bit duration.
+    #[must_use]
+    pub const fn wide(fragment_duration: u64) -> Self {
+        Self {
+            version: 1,
+            flags: 0,
+            fragment_duration,
+        }
+    }
+
+    /// The FullBox version (0 or 1).
+    #[must_use]
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+
+    /// The FullBox flags.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// `fragment_duration`, in the movie timescale.
+    #[must_use]
+    pub const fn fragment_duration(&self) -> u64 {
+        self.fragment_duration
+    }
+
+    /// The width of `fragment_duration` this version uses.
+    const fn duration_len(version: u8) -> usize {
+        if version == 1 {
+            core::mem::size_of::<u64>()
+        } else {
+            core::mem::size_of::<u32>()
+        }
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(body, FULLBOX_EXTRA_SIZE, "mehd")?;
+        let version = body[0];
+        if version > 1 {
+            return Err(Error::UnsupportedVersion(
+                broadcast_core::error::UnsupportedVersion {
+                    what: "mehd",
+                    found: version,
+                },
+            ));
+        }
+        let len = Self::duration_len(version);
+        need_in(body, FULLBOX_EXTRA_SIZE + len, "mehd")?;
+        let fragment_duration = if version == 1 {
+            broadcast_core::wire::be_u64(body, FULLBOX_EXTRA_SIZE, "mehd fragment_duration")?
+        } else {
+            u64::from(broadcast_core::wire::be_u32(
+                body,
+                FULLBOX_EXTRA_SIZE,
+                "mehd fragment_duration",
+            )?)
+        };
+        Ok(Self {
+            version,
+            flags: u24_at(body, 1) & FULLBOX_FLAGS_MASK,
+            fragment_duration,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for MovieExtendsHeaderBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let item = parse_box(bytes)?.0;
+        if item.four_cc() != *b"mehd" {
+            return Err(Error::UnexpectedBox { expected: "mehd" });
+        }
+        Self::parse_body(item.body)
+    }
+}
+
+impl Serialize for MovieExtendsHeaderBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + Self::duration_len(self.version)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor =
+            write_full_box_header(buf, b"mehd", need, self.version, self.flags, false)?;
+        let len = Self::duration_len(self.version);
+        if self.version == 1 {
+            buf[cursor..cursor + len].copy_from_slice(&self.fragment_duration.to_be_bytes());
+        } else {
+            let value = broadcast_core::len::fit_u32(
+                usize::try_from(self.fragment_duration)
+                    .map_err(|_| Error::InvalidInput("mehd duration exceeds u32"))?,
+                "mehd fragment_duration",
+            )?;
+            buf[cursor..cursor + len].copy_from_slice(&value.to_be_bytes());
+        }
+        cursor += len;
+        Ok(cursor)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MovieExtendsBox {
@@ -4493,6 +5054,8 @@ pub struct MovieExtendsBox {
     pub leva: Option<crate::index_boxes::LevelAssignmentBox>,
     /// The track extension properties (§8.8.15), in wire order.
     pub trep: Vec<crate::index_boxes::TrackExtensionPropertiesBox>,
+    /// The movie extends header (`mehd`, §8.8.2), when present.
+    pub mehd: Option<MovieExtendsHeaderBox>,
     /// Other `mvex` children preserved verbatim (e.g. `mehd`).
     pub opaque: Vec<OpaqueBox>,
     /// The wire order of this container's children (audit r05-W12).
@@ -4507,6 +5070,7 @@ impl MovieExtendsBox {
             trex,
             leva: None,
             trep: Vec::new(),
+            mehd: None,
             opaque,
             order: ChildOrder::default(),
         }
@@ -4536,6 +5100,9 @@ impl MovieExtendsBox {
         for trep in &self.trep {
             out.push(trep);
         }
+        if let Some(ref mehd) = self.mehd {
+            out.push(mehd);
+        }
         out
     }
 
@@ -4549,6 +5116,9 @@ impl MovieExtendsBox {
             b"trep" as &'static [u8; BOX_TYPE_SIZE],
             self.trep.len(),
         ));
+        if self.mehd.is_some() {
+            out.push(b"mehd");
+        }
         out
     }
 
@@ -4563,6 +5133,7 @@ impl<'a> Parse<'a> for MovieExtendsBox {
         let mut trex = Vec::new();
         let mut leva = None;
         let mut trep = Vec::new();
+        let mut mehd = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
         for child in parse_box(bytes)?.0.children() {
@@ -4582,7 +5153,11 @@ impl<'a> Parse<'a> for MovieExtendsBox {
                         child.bytes,
                     )?);
                 }
-                // `mehd` and any unmodelled child stay opaque, in place.
+                b"mehd" => {
+                    order.push(child.four_cc());
+                    mehd = Some(MovieExtendsHeaderBox::parse(child.bytes)?);
+                }
+                // Any unmodelled child stays opaque, in place.
                 _ => {
                     order.push_opaque(child.four_cc());
                     opaque.push(OpaqueBox {
@@ -4598,6 +5173,7 @@ impl<'a> Parse<'a> for MovieExtendsBox {
             trex,
             leva,
             trep,
+            mehd,
             opaque,
             order,
         })
@@ -4829,6 +5405,10 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
         | SampleEntryVariant::Stpp(_)
         | SampleEntryVariant::Wvtt(_)
         | SampleEntryVariant::Tmcd(_)
+        | SampleEntryVariant::Metx(_)
+        | SampleEntryVariant::Text(_)
+        | SampleEntryVariant::Urim(_)
+        | SampleEntryVariant::Mebx(_)
         | SampleEntryVariant::QuickTimeSound(_)
         | SampleEntryVariant::Unknown(_) => SampleEntryMediaKind::Unsupported,
     }
@@ -4896,6 +5476,7 @@ pub fn protect_sample_entry(
         scheme_info: Some(crate::cenc::SchemeInformationBox {
             tenc: Some(tenc.clone()),
             stvi: None,
+            spki: None,
             extra_boxes: Vec::new(),
         }),
         extra_boxes: Vec::new(),

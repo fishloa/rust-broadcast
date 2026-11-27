@@ -16,7 +16,7 @@
 use alloc::vec::Vec;
 
 use broadcast_core::len::{fit_u32, need_in, need_out};
-use broadcast_core::wire::{be_u32, u24_at};
+use broadcast_core::wire::{be_u32, i16_at, u24_at};
 use broadcast_core::{Parse, Serialize};
 
 use crate::box_support::{take_c_string, write_c_string};
@@ -773,6 +773,413 @@ impl Serialize for StereoVideoBox {
         c += self.stereo_indication.len();
         buf[c..c + self.extra.len()].copy_from_slice(&self.extra);
         c += self.extra.len();
+        Ok(c)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SubTrackBox — strk (§8.13.3)
+// SubTrackInformationBox — stri (§8.13.4)
+// SubTrackDefinitionBox — strd (§8.13.5)
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the Sub Track Box (`strk`, §8.13.3).
+pub const STRK: [u8; BOX_TYPE_SIZE] = *b"strk";
+/// Four-CC of the Sub Track Information Box (`stri`, §8.13.4).
+pub const STRI: [u8; BOX_TYPE_SIZE] = *b"stri";
+/// Four-CC of the Sub Track Definition Box (`strd`, §8.13.5).
+pub const STRD: [u8; BOX_TYPE_SIZE] = *b"strd";
+/// `stri` fixed body after the FullBox header: three 16/32-bit fields (§8.13.4.2).
+/// `stri` body offset of `alternate_group`, after `switch_group` (§8.13.4.2).
+const STRI_ALTERNATE_GROUP_OFFSET: usize = core::mem::size_of::<i16>();
+/// `stri` body offset of `sub_track_ID` (§8.13.4.2).
+const STRI_SUB_TRACK_ID_OFFSET: usize = 2 * core::mem::size_of::<i16>();
+/// `stri` fixed body after the FullBox header: three 16/32-bit fields (§8.13.4.2).
+const STRI_FIXED_BODY_LEN: usize = STRI_SUB_TRACK_ID_OFFSET + core::mem::size_of::<u32>();
+
+/// Sub Track Information Box (`stri`) — ISO/IEC 14496-12:2026 §8.13.4.
+///
+/// The sub-track's switch and alternate groups, its local identifier and its
+/// attribute four-CC list.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct SubTrackInformationBox {
+    version: u8,
+    flags: u32,
+    switch_group: i16,
+    alternate_group: i16,
+    sub_track_id: u32,
+    attributes: Vec<[u8; BOX_TYPE_SIZE]>,
+}
+
+impl SubTrackInformationBox {
+    /// Build one with no groups and no attributes.
+    #[must_use]
+    pub fn new(sub_track_id: u32) -> Self {
+        Self {
+            version: 0,
+            flags: 0,
+            switch_group: 0,
+            alternate_group: 0,
+            sub_track_id,
+            attributes: Vec::new(),
+        }
+    }
+
+    /// Set the switch group.
+    #[must_use]
+    pub const fn with_switch_group(mut self, switch_group: i16) -> Self {
+        self.switch_group = switch_group;
+        self
+    }
+
+    /// Set the alternate group.
+    #[must_use]
+    pub const fn with_alternate_group(mut self, alternate_group: i16) -> Self {
+        self.alternate_group = alternate_group;
+        self
+    }
+
+    /// Append one attribute four-CC.
+    #[must_use]
+    pub fn with_attribute(mut self, attribute: [u8; BOX_TYPE_SIZE]) -> Self {
+        self.attributes.push(attribute);
+        self
+    }
+
+    /// The FullBox version.
+    #[must_use]
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+
+    /// The FullBox flags.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// The switch group (`0` when switching is not signalled).
+    #[must_use]
+    pub const fn switch_group(&self) -> i16 {
+        self.switch_group
+    }
+
+    /// The alternate group (`0` when no relation is signalled).
+    #[must_use]
+    pub const fn alternate_group(&self) -> i16 {
+        self.alternate_group
+    }
+
+    /// The sub-track's local identifier (`0` when unassigned).
+    #[must_use]
+    pub const fn sub_track_id(&self) -> u32 {
+        self.sub_track_id
+    }
+
+    /// The attribute list, in wire order.
+    #[must_use]
+    pub fn attributes(&self) -> &[[u8; BOX_TYPE_SIZE]] {
+        &self.attributes
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(body, FULLBOX_EXTRA_SIZE + STRI_FIXED_BODY_LEN, "stri body")?;
+        let offset = FULLBOX_EXTRA_SIZE;
+        let switch_group = i16_at(body, offset);
+        let alternate_group = i16_at(body, offset + STRI_ALTERNATE_GROUP_OFFSET);
+        let sub_track_id = be_u32(body, offset + STRI_SUB_TRACK_ID_OFFSET, "stri sub_track_ID")?;
+        let rest = &body[offset + STRI_FIXED_BODY_LEN..];
+        let mut attributes = Vec::with_capacity(rest.len() / BOX_TYPE_SIZE);
+        for chunk in rest.chunks_exact(BOX_TYPE_SIZE) {
+            let mut attribute = [0u8; BOX_TYPE_SIZE];
+            attribute.copy_from_slice(chunk);
+            attributes.push(attribute);
+        }
+        Ok(Self {
+            version: body[0],
+            flags: u24_at(body, 1) & FULLBOX_FLAGS_MASK,
+            switch_group,
+            alternate_group,
+            sub_track_id,
+            attributes,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for SubTrackInformationBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        if be_u32(bytes, BOX_TYPE_OFFSET, "stri box")? != u32::from_be_bytes(STRI) {
+            return Err(Error::InvalidInput("expected stri"));
+        }
+        Self::parse_body(crate::box_types::box_body(
+            bytes,
+            FULLBOX_EXTRA_SIZE + STRI_FIXED_BODY_LEN,
+            "stri box",
+        )?)
+    }
+}
+
+impl Serialize for SubTrackInformationBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        box_len(
+            BOX_HEADER_MIN_SIZE
+                + FULLBOX_EXTRA_SIZE
+                + STRI_FIXED_BODY_LEN
+                + self.attributes.len() * BOX_TYPE_SIZE,
+        )
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = write_full_box_header(buf, &STRI, need, self.version, self.flags, false)?;
+        let u16_len = core::mem::size_of::<u16>();
+        buf[c..c + u16_len].copy_from_slice(&self.switch_group.to_be_bytes());
+        c += u16_len;
+        buf[c..c + u16_len].copy_from_slice(&self.alternate_group.to_be_bytes());
+        c += u16_len;
+        buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.sub_track_id.to_be_bytes());
+        c += core::mem::size_of::<u32>();
+        for attribute in &self.attributes {
+            buf[c..c + BOX_TYPE_SIZE].copy_from_slice(attribute);
+            c += BOX_TYPE_SIZE;
+        }
+        Ok(c)
+    }
+}
+
+/// Sub Track Definition Box (`strd`) — ISO/IEC 14496-12:2026 §8.13.5.
+///
+/// A container of the boxes that define one sub-track; the sample-group
+/// definitions (`stsg`) it may carry are typed by
+/// [`crate::sample_tables_extra::SubTrackSampleGroupBox`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct SubTrackDefinitionBox {
+    sample_groups: Vec<crate::sample_tables_extra::SubTrackSampleGroupBox>,
+    other_boxes: Vec<crate::box_support::OpaqueBox>,
+}
+
+impl SubTrackDefinitionBox {
+    /// An empty definition.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Append one `stsg`.
+    #[must_use]
+    pub fn with_sample_group(
+        mut self,
+        group: crate::sample_tables_extra::SubTrackSampleGroupBox,
+    ) -> Self {
+        self.sample_groups.push(group);
+        self
+    }
+
+    /// The `stsg` boxes, in wire order.
+    #[must_use]
+    pub fn sample_groups(&self) -> &[crate::sample_tables_extra::SubTrackSampleGroupBox] {
+        &self.sample_groups
+    }
+
+    /// Children the clause does not define, kept verbatim.
+    #[must_use]
+    pub fn other_boxes(&self) -> &[crate::box_support::OpaqueBox] {
+        &self.other_boxes
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        let mut sample_groups = Vec::new();
+        let mut other_boxes = Vec::new();
+        for child in crate::box_types::BoxIter::new(body) {
+            let child = child?;
+            if child.four_cc() == crate::sample_tables_extra::STSG {
+                sample_groups.push(crate::sample_tables_extra::SubTrackSampleGroupBox::parse(
+                    child.bytes,
+                )?);
+            } else {
+                other_boxes.push(crate::box_support::OpaqueBox {
+                    box_type: child.four_cc(),
+                    data: child.payload().to_vec(),
+                    to_end: child.to_end(),
+                    largesize: child.has_largesize(),
+                });
+            }
+        }
+        Ok(Self {
+            sample_groups,
+            other_boxes,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for SubTrackDefinitionBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        if be_u32(bytes, BOX_TYPE_OFFSET, "strd box")? != u32::from_be_bytes(STRD) {
+            return Err(Error::InvalidInput("expected strd"));
+        }
+        Self::parse_body(crate::box_types::box_body(bytes, 0, "strd box")?)
+    }
+}
+
+impl Serialize for SubTrackDefinitionBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        box_len(
+            BOX_HEADER_MIN_SIZE
+                + self
+                    .sample_groups
+                    .iter()
+                    .map(Serialize::serialized_len)
+                    .sum::<usize>()
+                + self
+                    .other_boxes
+                    .iter()
+                    .map(Serialize::serialized_len)
+                    .sum::<usize>(),
+        )
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = write_box_header(buf, &STRD, need)?;
+        for group in &self.sample_groups {
+            c += group.serialize_into(&mut buf[c..])?;
+        }
+        for other in &self.other_boxes {
+            c += other.serialize_into(&mut buf[c..])?;
+        }
+        Ok(c)
+    }
+}
+
+/// Sub Track Box (`strk`) — ISO/IEC 14496-12:2026 §8.13.3.
+///
+/// The `stri` describing a sub-track and the `strd` defining it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct SubTrackBox {
+    information: SubTrackInformationBox,
+    definition: Option<SubTrackDefinitionBox>,
+    other_boxes: Vec<crate::box_support::OpaqueBox>,
+}
+
+impl SubTrackBox {
+    /// Build one from its mandatory `stri`.
+    #[must_use]
+    pub fn new(information: SubTrackInformationBox) -> Self {
+        Self {
+            information,
+            definition: None,
+            other_boxes: Vec::new(),
+        }
+    }
+
+    /// Set the definition (`strd`).
+    #[must_use]
+    pub fn with_definition(mut self, definition: SubTrackDefinitionBox) -> Self {
+        self.definition = Some(definition);
+        self
+    }
+
+    /// The sub-track information (`stri`).
+    #[must_use]
+    pub const fn information(&self) -> &SubTrackInformationBox {
+        &self.information
+    }
+
+    /// The sub-track definition (`strd`), when present.
+    #[must_use]
+    pub const fn definition(&self) -> Option<&SubTrackDefinitionBox> {
+        self.definition.as_ref()
+    }
+
+    /// Children the clause does not define, kept verbatim.
+    #[must_use]
+    pub fn other_boxes(&self) -> &[crate::box_support::OpaqueBox] {
+        &self.other_boxes
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        let mut information = None;
+        let mut definition = None;
+        let mut other_boxes = Vec::new();
+        for child in crate::box_types::BoxIter::new(body) {
+            let child = child?;
+            match &child.four_cc() {
+                b"stri" => information = Some(SubTrackInformationBox::parse(child.bytes)?),
+                b"strd" => definition = Some(SubTrackDefinitionBox::parse(child.bytes)?),
+                _ => other_boxes.push(crate::box_support::OpaqueBox {
+                    box_type: child.four_cc(),
+                    data: child.payload().to_vec(),
+                    to_end: child.to_end(),
+                    largesize: child.has_largesize(),
+                }),
+            }
+        }
+        let information = information.ok_or(Error::InvalidInput("strk without a stri"))?;
+        Ok(Self {
+            information,
+            definition,
+            other_boxes,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for SubTrackBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        if be_u32(bytes, BOX_TYPE_OFFSET, "strk box")? != u32::from_be_bytes(STRK) {
+            return Err(Error::InvalidInput("expected strk"));
+        }
+        Self::parse_body(crate::box_types::box_body(bytes, 0, "strk box")?)
+    }
+}
+
+impl Serialize for SubTrackBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        box_len(
+            BOX_HEADER_MIN_SIZE
+                + self.information.serialized_len()
+                + self.definition.as_ref().map_or(0, |b| b.serialized_len())
+                + self
+                    .other_boxes
+                    .iter()
+                    .map(Serialize::serialized_len)
+                    .sum::<usize>(),
+        )
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = write_box_header(buf, &STRK, need)?;
+        c += self.information.serialize_into(&mut buf[c..])?;
+        if let Some(definition) = &self.definition {
+            c += definition.serialize_into(&mut buf[c..])?;
+        }
+        for other in &self.other_boxes {
+            c += other.serialize_into(&mut buf[c..])?;
+        }
         Ok(c)
     }
 }

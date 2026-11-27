@@ -74,10 +74,52 @@ pub const TABLE: &[Crate] = &[
     },
     Crate {
         name: "isobmff",
-        allowed_types: &[(
-            "XmlSubtitleSampleEntry",
-            "ISO BMFF stpp sample entry (XML subtitle track) box, unrelated to XML parsing",
-        )],
+        allowed_types: &[
+            (
+                "XmlSubtitleSampleEntry",
+                "ISO BMFF stpp sample entry (XML subtitle track) box, unrelated to XML parsing",
+            ),
+            (
+                "XmlBox",
+                "ISO BMFF xml box: the document bytes are opaque here, never parsed",
+            ),
+            (
+                "BinaryXmlBox",
+                "ISO BMFF bxml box: opaque binarized XML bytes, never parsed",
+            ),
+            (
+                "XmlMetaDataSampleEntry",
+                "ISO BMFF metx sample entry describing an XML metadata track, not a tree",
+            ),
+            (
+                "AudioElementChild",
+                "audio element box child dispatch, no XML content",
+            ),
+            (
+                "AudioElementBox",
+                "ISO BMFF aelm audio element container, no XML content",
+            ),
+            (
+                "AudioElementDescriptionBox",
+                "ISO BMFF aedb audio element description, no XML content",
+            ),
+            (
+                "AudioElementPosInteractivityPolarBox",
+                "ISO BMFF aepp positioning interactivity, no XML content",
+            ),
+            (
+                "AudioElementProminenceInteractivityBox",
+                "ISO BMFF aepr prominence interactivity, no XML content",
+            ),
+            (
+                "AudioElementSelectionDescriptionBox",
+                "ISO BMFF aesd selection description, no XML content",
+            ),
+            (
+                "AudioElementSelectionBox",
+                "ISO BMFF aesb audio element selection container, no XML content",
+            ),
+        ],
         allowed_fns: &[],
         needs_xml_module: false,
     },

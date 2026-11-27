@@ -92,6 +92,14 @@
 //!   four-character and Apple `mdta` items), Nero `chpl`, and the logical
 //!   [`metadata::Metadata`] view. The reader emits it once as
 //!   [`reader::Step::Metadata`].
+//! - [`meta_track`] — the timed-metadata and text-track boxes: `uri `/`uriI`/
+//!   `txtC`/`mime`, `xml `/`bxml`, `cprt`, the track `keys` table with its
+//!   `keyd`/`loca`/`setu` children, and the `metx`/`mett`/`stxt`/`urim`/`mebx`
+//!   sample entries.
+//! - [`scheme`] — restricted, incomplete and scrambled stream schemes: `rinf`,
+//!   `csch`, `spki`, `scrb`, `cinf`.
+//! - [`audio_elements`] — audio rendering and element signalling: `ardi`,
+//!   `aelm`, `aedb`, `aepp`, `aepr`, `aesb`, `aesd`.
 //!
 //! # Spec citations
 //!
@@ -119,6 +127,7 @@ extern crate alloc;
 pub mod ac3;
 pub mod ac4;
 pub mod audio_boxes;
+pub mod audio_elements;
 pub mod av1;
 pub mod avc_config;
 pub mod avc_parameter_set;
@@ -147,6 +156,7 @@ pub mod item;
 pub mod item_reader;
 pub mod item_writer;
 pub mod limits;
+pub mod meta_track;
 pub mod metadata;
 pub mod movie_fragment;
 pub mod mp4esds;
@@ -161,6 +171,7 @@ pub mod sample_entries;
 pub mod sample_groups;
 pub mod sample_table;
 pub mod sample_tables_extra;
+pub mod scheme;
 pub mod segments;
 pub mod subtitle_entries;
 pub mod timing;
@@ -178,6 +189,12 @@ pub use audio_boxes::{
     ALOU, AlbumLoudnessInfo, CHNL, ChannelLayoutBox, DMIX, DownMixInstruction,
     DownMixInstructionsBox, FormatOrdering, LABL, LUDT, LabelBox, LoudnessBaseBox, LoudnessBox,
     LoudnessEntry, LoudnessKind, LoudnessMeasurement, SpeakerPosition, TLOU, TrackLoudnessInfo,
+};
+pub use audio_elements::{
+    AEDB, AELM, AEPP, AEPR, AESB, AESD, ARDI, AudioElementBox, AudioElementChild,
+    AudioElementDescriptionBox, AudioElementPosInteractivityPolarBox,
+    AudioElementProminenceInteractivityBox, AudioElementSelectionBox,
+    AudioElementSelectionDescriptionBox, AudioRenderingIndication, AudioRenderingIndicationBox,
 };
 pub use av1::{AV01_FOURCC, AV1C_FOURCC, Av1ConfigurationBox, Av1SampleEntry};
 pub use avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
@@ -216,9 +233,10 @@ pub use image::{
     OperatingPointSelectorProperty, PixelInformationProperty, RelativeLocationProperty,
 };
 pub use index_boxes::{
-    LEVA, LevelAssignmentBox, LevelAssignmentEntry, LevelAssignmentType, PDIN,
-    ProgressiveDownloadEntry, ProgressiveDownloadInfoBox, SSIX, SubsegmentIndexBox,
-    SubsegmentIndexEntry, SubsegmentRange, TREP, TrackExtensionPropertiesBox,
+    ASSP, AlternativeStartupEntry, AlternativeStartupSequencePropertiesBox, LEVA,
+    LevelAssignmentBox, LevelAssignmentEntry, LevelAssignmentType, PDIN, ProgressiveDownloadEntry,
+    ProgressiveDownloadInfoBox, SSIX, SubsegmentIndexBox, SubsegmentIndexEntry, SubsegmentRange,
+    TREP, TrackExtensionPropertiesBox,
 };
 pub use init_segment::{
     Ac3SampleEntry, Ac4SampleEntry, AudioSampleEntryV1, ChunkLargeOffsetBox, ChunkOffsetBox,
@@ -229,6 +247,10 @@ pub use init_segment::{
     SampleDependencyTypeBox, SampleDescriptionBox, SampleEntryVariant, SampleSizeBox,
     SampleTableBox, SampleToChunkBox, SamplingRateBox, SoundMediaHeaderBox, StblChild, StscEntry,
     SyncSampleBox, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
+};
+pub use init_segment::{
+    HMHD, HintMediaHeaderBox, MediaInformationHeader, MovieExtendsHeaderBox, NMHD,
+    NullMediaHeaderBox, VVHD, VolumetricVisualMediaHeaderBox,
 };
 pub use item::{
     BrandProperty, ConstructionMethod, EntityGroupType, EntityToGroupBox, GroupId, GroupsListBox,
@@ -243,6 +265,13 @@ pub use item_reader::{
 };
 pub use item_writer::ItemWriter;
 pub use limits::Limits;
+pub use meta_track::{
+    BXML, BinaryXmlBox, BoxedMetaDataSampleEntry, CPRT, CopyrightBox, KEYD, KEYS, LOCA, MEBX, METT,
+    METX, MIME, MetadataKeyBox, MetadataKeyChild, MetadataKeyDeclarationBox, MetadataKeyTableBox,
+    MetadataLocaleBox, MetadataSetupBox, MimeBox, SETU, STXT, TXTC, TextConfigBox,
+    TextMetaDataSampleEntry, URI, URI_INIT, URIM, UriBox, UriInitBox, UriMetaDataSampleEntry, XML,
+    XmlBox, XmlMetaDataSampleEntry,
+};
 pub use mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG1_AUDIO,
     OTI_MPEG2_AUDIO, OTI_MPEG4_AUDIO, ObjectTypeIndication, SLConfigDescriptor, STREAM_TYPE_AUDIO,
@@ -275,17 +304,27 @@ pub use sample_table::{
 pub use sample_tables_extra::{
     DegradationPriorityBox, PADB, PaddingBitsBox, STDP, STSG, SubTrackSampleGroupBox,
 };
+pub use scheme::{
+    CINF, CSCH, CompatibleSchemeTypeBox, CompleteTrackInfoBox, RINF, RestrictedSchemeInfoBox, SCRB,
+    SPKI, SamplePackingInformationBox, ScrambleSchemeInfoBox,
+};
+pub use segments::{
+    ETYP, ExtendedTypeBox, IMDA, IdentifiedMediaDataBox, OTYP, OriginalFileTypeBox, TYCO,
+    TypeCombinationBox,
+};
 pub use subtitle_entries::{
     CueIdBox, CuePayloadBox, CueSettingsBox, VttAdditionalTextBox, VttCueBox, VttEmptyCueBox,
     WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, XmlSubtitleSampleEntry,
     parse_wvtt_sample,
 };
 pub use track_desc::{
-    ELNG, ExtendedLanguageBox, KIND, KindBox, STVI, StereoVideoBox, TRACK_GROUP_MSRC,
-    TRACK_GROUP_STER, TRGR, TSEL, TrackGroupBox, TrackGroupTypeBox, TrackSelectionBox,
+    ELNG, ExtendedLanguageBox, KIND, KindBox, STRD, STRI, STRK, STVI, StereoVideoBox, SubTrackBox,
+    SubTrackDefinitionBox, SubTrackInformationBox, TRACK_GROUP_MSRC, TRACK_GROUP_STER, TRGR, TSEL,
+    TrackGroupBox, TrackGroupTypeBox, TrackSelectionBox,
 };
 pub use track_id::TrackId;
 pub use track_reference::{AVCP_REFERENCE_TYPE, TrackReferenceBox, TrackReferenceTypeBox};
+pub use visual_ext::{AMVE, AmbientViewingEnvironmentBox, CCLV, ContentColourVolumeBox};
 pub use vp9::{VP09_FOURCC, VPCC_FOURCC, Vp9ConfigurationBox, Vp9SampleEntry};
 pub use vvc_config::{
     VvcConfigurationBox, VvcDecoderConfigurationRecord, VvcNalArray, VvcNalUnitType, VvcPtlRecord,

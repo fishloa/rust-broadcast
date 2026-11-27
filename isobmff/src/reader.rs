@@ -117,6 +117,107 @@ impl ByteRange {
     }
 }
 
+/// One identified media data box (`imda`, §8.1.4) the walk has passed.
+///
+/// A `DataEntryImdaBox` (`imdt`) or `DataEntrySeqNumImdaBox` (`snim`) data
+/// reference addresses this box by [`identifier`](Self::identifier); the
+/// media-data offsets are relative to the first byte of
+/// [`payload`](Self::payload) (§6.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct IdentifiedMediaData {
+    identifier: u32,
+    payload: ByteRange,
+}
+
+impl IdentifiedMediaData {
+    /// `imda_identifier`.
+    #[must_use]
+    pub const fn identifier(&self) -> u32 {
+        self.identifier
+    }
+
+    /// The payload's byte range: where media-data offset 0 points.
+    #[must_use]
+    pub const fn payload(&self) -> ByteRange {
+        self.payload
+    }
+}
+
+/// What a sample entry's `data_reference_index` points at (§8.7.2.3, §6.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DataReferenceBase {
+    /// The data is in this file, addressed by absolute offsets (`url ` with
+    /// the self-contained flag, or no data reference).
+    SameFile,
+    /// The data is in the `imda` with this identifier (`imdt`).
+    Identified(u32),
+    /// The data is in the `imda` whose identifier is the fragment's sequence
+    /// number (`snim`).
+    SequenceNumber,
+}
+
+/// The `data_reference_index` at offset 14 of a sample entry's bytes
+/// (SampleEntry `reserved[6]` then the 16-bit index, §8.5.2.2).
+fn entry_data_reference_index(body: &[u8]) -> u16 {
+    const DATA_REFERENCE_INDEX_OFFSET: usize = core::mem::size_of::<u32>() * 2 + 6;
+    body.get(DATA_REFERENCE_INDEX_OFFSET..DATA_REFERENCE_INDEX_OFFSET + core::mem::size_of::<u16>())
+        .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
+        .unwrap_or(1)
+}
+
+/// The offsets a track's stsd entries are addressed relative to.
+fn track_data_references(
+    trak: &crate::init_segment::TrackBox,
+    entries: &[SampleEntryInfo],
+) -> Vec<DataReferenceBase> {
+    let dref = trak
+        .mdia
+        .as_ref()
+        .and_then(|mdia| mdia.minf.as_ref())
+        .and_then(|minf| minf.dinf.as_ref())
+        .and_then(|dinf| dinf.dref.as_ref());
+    entries
+        .iter()
+        .map(|entry| {
+            let index = usize::from(entry_data_reference_index(&entry.body));
+            let Some(dref) = dref else {
+                return DataReferenceBase::SameFile;
+            };
+            match index.checked_sub(1).and_then(|i| dref.entries.get(i)) {
+                Some(crate::init_segment::DataEntry::Imda(box_)) => {
+                    DataReferenceBase::Identified(box_.imda_ref_identifier)
+                }
+                Some(crate::init_segment::DataEntry::SeqNumImda(_)) => {
+                    DataReferenceBase::SequenceNumber
+                }
+                _ => DataReferenceBase::SameFile,
+            }
+        })
+        .collect()
+}
+
+/// The byte offset a sample referenced through `base` starts at, or `None`
+/// when the identified media data box it names has not been walked yet.
+fn data_reference_bias(
+    bases: &[DataReferenceBase],
+    imda: &[IdentifiedMediaData],
+    description_index: u32,
+) -> Option<u64> {
+    let index = usize::try_from(description_index.checked_sub(1)?).ok()?;
+    match bases
+        .get(index)
+        .copied()
+        .unwrap_or(DataReferenceBase::SameFile)
+    {
+        DataReferenceBase::SameFile | DataReferenceBase::SequenceNumber => Some(0),
+        DataReferenceBase::Identified(identifier) => imda
+            .iter()
+            .find(|m| m.identifier == identifier)
+            .map(|m| m.payload.offset),
+    }
+}
+
 /// The order [`Reader::step`] yields [`Step::Sample`] steps in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -265,7 +366,192 @@ pub struct SampleEntryInfo {
     pub registered: Option<crate::registry::RegisteredEntry>,
 }
 
+/// A timed-metadata sample entry, as the configured entry variant.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum TimedMetadataEntry<'a> {
+    /// `metx` — [`XmlMetaDataSampleEntry`](crate::meta_track::XmlMetaDataSampleEntry).
+    Xml(&'a crate::meta_track::XmlMetaDataSampleEntry),
+    /// `mett` or `stxt` — [`TextMetaDataSampleEntry`](crate::meta_track::TextMetaDataSampleEntry).
+    Text(&'a crate::meta_track::TextMetaDataSampleEntry),
+    /// `urim` — [`UriMetaDataSampleEntry`](crate::meta_track::UriMetaDataSampleEntry).
+    Uri(&'a crate::meta_track::UriMetaDataSampleEntry),
+    /// `mebx` — [`BoxedMetaDataSampleEntry`](crate::meta_track::BoxedMetaDataSampleEntry).
+    Boxed(&'a crate::meta_track::BoxedMetaDataSampleEntry),
+}
+
+impl TimedMetadataEntry<'_> {
+    /// The entry's four-CC.
+    #[must_use]
+    pub fn fourcc(&self) -> [u8; BOX_TYPE_SIZE] {
+        match self {
+            Self::Xml(_) => crate::meta_track::METX,
+            Self::Text(entry) => entry.codec_type(),
+            Self::Uri(_) => crate::meta_track::URIM,
+            Self::Boxed(_) => crate::meta_track::MEBX,
+        }
+    }
+
+    /// The metadata form's URI (`uri `), for a `urim` entry.
+    #[must_use]
+    pub fn uri(&self) -> Option<&crate::meta_track::UriBox> {
+        match self {
+            Self::Uri(entry) => Some(entry.uri()),
+            _ => None,
+        }
+    }
+
+    /// The URI initialization data (`uriI`), for a `urim` entry that carries
+    /// it.
+    #[must_use]
+    pub fn uri_init(&self) -> Option<&crate::meta_track::UriInitBox> {
+        match self {
+            Self::Uri(entry) => entry.uri_init(),
+            _ => None,
+        }
+    }
+
+    /// The key table (`keys`), for a `mebx` entry.
+    #[must_use]
+    pub fn key_table(&self) -> Option<&crate::meta_track::MetadataKeyTableBox> {
+        match self {
+            Self::Boxed(entry) => Some(entry.key_table()),
+            _ => None,
+        }
+    }
+
+    /// The XML namespaces (`utf8list`), for a `metx` entry.
+    #[must_use]
+    pub fn namespace(&self) -> Option<&[u8]> {
+        match self {
+            Self::Xml(entry) => Some(entry.namespace()),
+            _ => None,
+        }
+    }
+
+    /// The MIME format, for a `mett`/`stxt` entry.
+    #[must_use]
+    pub fn mime_format(&self) -> Option<&[u8]> {
+        match self {
+            Self::Text(entry) => Some(entry.mime_format()),
+            _ => None,
+        }
+    }
+}
+
 impl SampleEntryInfo {
+    /// The timed-metadata entry this sample description is, when it is one
+    /// (§12.3.3, §12.5.3, §12.8.4.1).
+    #[must_use]
+    pub fn timed_metadata(&self) -> Option<TimedMetadataEntry<'_>> {
+        match self.typed.as_ref()? {
+            crate::init_segment::SampleEntryVariant::Metx(entry) => {
+                Some(TimedMetadataEntry::Xml(entry))
+            }
+            crate::init_segment::SampleEntryVariant::Text(entry) => {
+                Some(TimedMetadataEntry::Text(entry))
+            }
+            crate::init_segment::SampleEntryVariant::Urim(entry) => {
+                Some(TimedMetadataEntry::Uri(entry))
+            }
+            crate::init_segment::SampleEntryVariant::Mebx(entry) => {
+                Some(TimedMetadataEntry::Boxed(entry))
+            }
+            _ => None,
+        }
+    }
+
+    /// The restriction scheme (`rinf`, §13.5.3) this sample description
+    /// carries, when it carries one — either because the entry's four-CC is a
+    /// restricted code (`resv`, `resa`, …) or because an advisory `rinf` sits
+    /// inside an untransformed entry.
+    #[must_use]
+    pub fn restricted_scheme(&self) -> Option<crate::scheme::RestrictedSchemeInfoBox> {
+        self.entry_child(b"rinf")
+            .and_then(|bytes| crate::scheme::RestrictedSchemeInfoBox::parse(bytes).ok())
+    }
+
+    /// The scrambling scheme (`scrb`, §13.4.8) this sample description
+    /// carries, when it carries one.
+    #[must_use]
+    pub fn scramble_scheme(&self) -> Option<crate::scheme::ScrambleSchemeInfoBox> {
+        self.entry_child(b"scrb")
+            .and_then(|bytes| crate::scheme::ScrambleSchemeInfoBox::parse(bytes).ok())
+    }
+
+    /// The complete-track information (`cinf`, §13.6.3) an incomplete track's
+    /// sample description carries, when it carries one.
+    #[must_use]
+    pub fn complete_track_info(&self) -> Option<crate::scheme::CompleteTrackInfoBox> {
+        self.entry_child(b"cinf")
+            .and_then(|bytes| crate::scheme::CompleteTrackInfoBox::parse(bytes).ok())
+    }
+
+    /// The ambient viewing environment (`amve`, §12.1.9) this visual sample
+    /// description carries, when it carries one.
+    #[must_use]
+    pub fn ambient_viewing_environment(
+        &self,
+    ) -> Option<crate::visual_ext::AmbientViewingEnvironmentBox> {
+        self.entry_body(b"amve")
+            .and_then(|body| crate::visual_ext::AmbientViewingEnvironmentBox::parse(body).ok())
+    }
+
+    /// The content colour volume (`cclv`, §12.1.8) this visual sample
+    /// description carries, when it carries one.
+    #[must_use]
+    pub fn content_colour_volume(&self) -> Option<crate::visual_ext::ContentColourVolumeBox> {
+        self.entry_body(b"cclv")
+            .and_then(|body| crate::visual_ext::ContentColourVolumeBox::parse(body).ok())
+    }
+
+    /// One child box of the entry's payload, by four-CC.
+    fn entry_body(&self, fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<&[u8]> {
+        self.entry_child(fourcc)
+            .and_then(|bytes| parse_box(bytes).ok())
+            .map(|(item, _)| item.body)
+    }
+
+    /// One child box of the entry, by four-CC, from the entry's own bytes.
+    ///
+    /// The children start after the SampleEntry fixed part, whose length
+    /// depends on the entry's class (§8.5.2.2, §12.1.3, §12.2.3): a visual
+    /// entry's 78 bytes, an audio entry's 28, and 8 for the metadata, text and
+    /// subtitle classes. A restricted (`resv`/`resa`/...) or incomplete
+    /// (`icpv`/`icpa`) entry keeps its replaced class's fixed part
+    /// (§13.5.2 Table 14, §13.6.2), so the four-CC decides when no typed form
+    /// names the class.
+    fn entry_child(&self, fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<&[u8]> {
+        let body = parse_box(&self.body).ok()?.0.body;
+        let fixed = self.entry_fixed_len();
+        let region = body.get(fixed..)?;
+        crate::box_types::BoxIter::new(region)
+            .filter_map(|child| child.ok())
+            .find(|child| child.four_cc() == *fourcc)
+            .map(|child| child.bytes)
+    }
+
+    /// The SampleEntry fixed-part length this entry uses, in bytes.
+    fn entry_fixed_len(&self) -> usize {
+        use crate::init_segment::SampleEntryVariant as V;
+        const SAMPLE_ENTRY_BASE: usize = 8;
+        const AUDIO_FIXED: usize = 28;
+        const VISUAL_FIXED: usize = 78;
+        match self.typed.as_ref() {
+            Some(V::Avc1(_) | V::Hevc1(_) | V::Vvc(_) | V::Mp4v(_) | V::Av01(_) | V::Vp09(_)) => {
+                VISUAL_FIXED
+            }
+            Some(V::Mp4a(_) | V::Ac3(_) | V::Ec3(_) | V::Ac4(_) | V::Opus(_) | V::Flac(_))
+            | Some(V::Mha(_) | V::Dts(_)) => AUDIO_FIXED,
+            Some(_) => SAMPLE_ENTRY_BASE,
+            None => match &self.fourcc {
+                b"resv" | b"icpv" => VISUAL_FIXED,
+                b"resa" | b"icpa" => AUDIO_FIXED,
+                _ => SAMPLE_ENTRY_BASE,
+            },
+        }
+    }
+
     /// The channel layout (`chnl`, §12.2.4) this audio entry carries, when
     /// present.
     #[must_use]
@@ -322,6 +608,11 @@ pub struct TrackInfo {
     pub loudness: Option<crate::audio_boxes::LoudnessBox>,
     /// The track selection (`tsel`, §8.10.3), when present.
     pub track_selection: Option<crate::track_desc::TrackSelectionBox>,
+    /// The media information header (`vmhd`/`smhd`/`nmhd`/`hmhd`/`vvhd`,
+    /// §8.4.5), when the crate models it.
+    pub media_header: Option<crate::init_segment::MediaInformationHeader>,
+    /// The track's sub-tracks (`strk`, §8.13.3), in wire order.
+    pub subtracks: Vec<crate::track_desc::SubTrackBox>,
 }
 
 impl TrackInfo {
@@ -422,6 +713,8 @@ impl TrackInfo {
             labels: desc.labels,
             loudness: desc.loudness,
             track_selection: desc.track_selection,
+            media_header: desc.media_header,
+            subtracks: desc.subtracks,
         })
     }
 }
@@ -571,6 +864,7 @@ enum Pending {
     Mfra(ByteRange),
     MfraForm(ByteRange),
     TopLevel(ByteRange),
+    Imda { head: ByteRange, payload_end: u64 },
 }
 
 impl Pending {
@@ -586,6 +880,7 @@ impl Pending {
             | Self::Mfra(range)
             | Self::MfraForm(range)
             | Self::TopLevel(range) => *range,
+            Self::Imda { head, .. } => *head,
         }
     }
 }
@@ -700,6 +995,10 @@ pub struct Reader {
     saw_mdat: bool,
     movie: Option<MovieBox>,
     brand: Option<FileTypeBox>,
+    extended_type: Option<crate::segments::ExtendedTypeBox>,
+    original_type: Option<crate::segments::OriginalFileTypeBox>,
+    identified_media: Vec<IdentifiedMediaData>,
+    sample_references: Vec<Vec<DataReferenceBase>>,
     warnings: Vec<Warning>,
     deferred_warning: Option<Warning>,
     mdat_truncation_reported: bool,
@@ -743,6 +1042,10 @@ impl Reader {
             saw_mdat: false,
             movie: None,
             brand: None,
+            extended_type: None,
+            original_type: None,
+            identified_media: Vec::new(),
+            sample_references: Vec::new(),
             warnings: Vec::new(),
             deferred_warning: None,
             mdat_truncation_reported: false,
@@ -806,6 +1109,9 @@ impl Reader {
             Pending::Mfra(_) => self.accept_mfra(bytes),
             Pending::MfraForm(_) => self.accept_mfra_form(bytes),
             Pending::TopLevel(_) => self.accept_top_level(bytes),
+            Pending::Imda { head, payload_end } => {
+                self.accept_imda(head.offset, payload_end, bytes)
+            }
         }
     }
 
@@ -988,6 +1294,39 @@ impl Reader {
             self.decode_times[index] = decode_time;
             self.sample_counts[index] = count;
         }
+    }
+
+    /// The file's extended type declarations (`etyp`, §5.3.2), once the walk
+    /// has passed one.
+    #[must_use]
+    pub fn extended_types(&self) -> Option<&crate::segments::ExtendedTypeBox> {
+        self.extended_type.as_ref()
+    }
+
+    /// The original file type (`otyp`, §8.16.5), once the walk has passed one.
+    #[must_use]
+    pub fn original_type(&self) -> Option<&crate::segments::OriginalFileTypeBox> {
+        self.original_type.as_ref()
+    }
+
+    /// Every identified media data box (`imda`, §8.1.4) the walk has passed,
+    /// with its identifier and payload byte range.
+    #[must_use]
+    pub fn identified_media(&self) -> &[IdentifiedMediaData] {
+        &self.identified_media
+    }
+
+    /// The movie's declared whole duration (`mehd.fragment_duration`,
+    /// §8.8.2), in the movie timescale, once `moov` is parsed.
+    #[must_use]
+    pub fn fragment_duration(&self) -> Option<u64> {
+        self.movie
+            .as_ref()?
+            .mvex
+            .as_ref()?
+            .mehd
+            .as_ref()
+            .map(crate::init_segment::MovieExtendsHeaderBox::fragment_duration)
     }
 
     /// The file's `ftyp` brand box, when the file carries one.
@@ -1672,6 +2011,26 @@ impl Reader {
             for fragment in &mut self.fragments {
                 fragment.mdats.push(MdatRange::new(payload, end));
             }
+        } else if header.box_type.is(&crate::segments::IMDA) {
+            self.saw_mdat = true;
+            let payload = offset.saturating_add(
+                (header.header_size() + crate::segments::IMDA_IDENTIFIER_LEN) as u64,
+            );
+            for fragment in &mut self.fragments {
+                fragment.mdats.push(MdatRange::new(payload, end));
+            }
+            let head = ByteRange {
+                offset,
+                len: ((header.header_size() + crate::segments::IMDA_IDENTIFIER_LEN) as u64)
+                    .min(size),
+            };
+            self.request(offset, head.len)?;
+            self.pos = end;
+            self.pending = Some(Pending::Imda {
+                head,
+                payload_end: end,
+            });
+            return Ok(());
         } else if self
             .fragments
             .front()
@@ -1710,8 +2069,31 @@ impl Reader {
 
     /// Keep one top-level box outside `ftyp`/`moov`/`mdat` so a rewrite can
     /// reproduce it in place.
+    fn accept_imda(&mut self, head_offset: u64, payload_end: u64, bytes: &[u8]) -> Result<()> {
+        let (identifier, payload_offset) =
+            crate::segments::IdentifiedMediaDataBox::parse_identification(bytes)?;
+        let start = head_offset.saturating_add(payload_offset as u64);
+        self.identified_media.push(IdentifiedMediaData {
+            identifier,
+            payload: ByteRange {
+                offset: start,
+                len: payload_end.saturating_sub(start),
+            },
+        });
+        Ok(())
+    }
+
     fn accept_top_level(&mut self, bytes: &[u8]) -> Result<()> {
         let (item, _) = parse_box(bytes)?;
+        match &item.four_cc() {
+            b"etyp" => {
+                self.extended_type = Some(crate::segments::ExtendedTypeBox::parse(bytes)?);
+            }
+            b"otyp" => {
+                self.original_type = Some(crate::segments::OriginalFileTypeBox::parse(bytes)?);
+            }
+            _ => {}
+        }
         let carried = OpaqueBox {
             box_type: item.four_cc(),
             data: item.payload().to_vec(),
@@ -1850,6 +2232,12 @@ impl Reader {
             }
         }
         self.emitted_metadata = false;
+        self.sample_references = movie
+            .tracks
+            .iter()
+            .zip(&tracks)
+            .map(|(trak, info)| track_data_references(trak, &info.entries))
+            .collect();
         self.movie = Some(movie);
         self.tracks = tracks;
         self.cursors = cursors;
@@ -2116,6 +2504,19 @@ impl Reader {
             let Some(sample) = slot.state.peek(stbl)? else {
                 continue;
             };
+            let Some(base) = data_reference_bias(
+                self.sample_references
+                    .get(slot.track_index)
+                    .map_or(&[], alloc::vec::Vec::as_slice),
+                &self.identified_media,
+                sample.description_index,
+            ) else {
+                // The identified media data box this entry addresses has not
+                // been walked yet; a later `Step::Need` pass will find it.
+                continue;
+            };
+            let mut sample = sample;
+            sample.offset = sample.offset.saturating_add(base);
             let replace = match &best {
                 None => true,
                 Some((_, best_index, best_timescale, best_sample)) => {
@@ -2326,12 +2727,19 @@ struct TrackDescription {
     labels: Vec<crate::audio_boxes::LabelBox>,
     loudness: Option<crate::audio_boxes::LoudnessBox>,
     track_selection: Option<crate::track_desc::TrackSelectionBox>,
+    media_header: Option<crate::init_segment::MediaInformationHeader>,
+    subtracks: Vec<crate::track_desc::SubTrackBox>,
 }
 
 fn track_description(trak: &TrackBox) -> TrackDescription {
     use crate::metadata::UdtaChild;
     let mut out = TrackDescription {
         extended_language: trak.mdia.as_ref().and_then(|mdia| mdia.elng.clone()),
+        media_header: trak
+            .mdia
+            .as_ref()
+            .and_then(|mdia| mdia.minf.as_ref())
+            .and_then(|minf| minf.media_header()),
         track_groups: trak.trgr.clone(),
         ..TrackDescription::default()
     };
@@ -2347,6 +2755,7 @@ fn track_description(trak: &TrackBox) -> TrackDescription {
                 UdtaChild::Label(label) => out.labels.push(label),
                 UdtaChild::Loudness(loudness) => out.loudness = Some(loudness),
                 UdtaChild::TrackSelection(selection) => out.track_selection = Some(selection),
+                UdtaChild::SubTrack(subtrack) => out.subtracks.push(subtrack),
                 _ => {}
             }
         }
@@ -2442,6 +2851,8 @@ fn build_track_info(
         labels: desc.labels,
         loudness: desc.loudness,
         track_selection: desc.track_selection,
+        media_header: desc.media_header,
+        subtracks: desc.subtracks,
     })
 }
 

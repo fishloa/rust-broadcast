@@ -6,13 +6,26 @@
 //! - [`FileTypeBox`] (`ftyp`, §5.2) — brand declaration at the head of an init segment.
 //! - [`SegmentTypeBox`] (`styp`, §8.14.2) — brand declaration at the head of a media segment.
 //! - [`MediaDataBox`] (`mdat`, §8.1.1) — the container carrying coded sample data.
+//! - [`IdentifiedMediaDataBox`] (`imda`, §8.1.4) — media data a data
+//!   reference can address by identifier.
+//! - [`TypeCombinationBox`] (`tyco`, §5.3.2) and [`ExtendedTypeBox`] (`etyp`,
+//!   §5.3.2) — the model's "any one of these brand combinations" declaration.
+//! - [`OriginalFileTypeBox`] (`otyp`, §8.16.5) — the brands of the file before
+//!   a transformation such as a compressed `moov`.
+//!
+//! Transcription: `private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`.
 //!
 //! `ftyp` and `styp` are byte-identical in layout (major brand + minor version +
 //! a list of compatible brands); only the four-CC differs.
 
-use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, LARGESIZE_SIZE};
+use crate::box_support::OpaqueBox;
+use crate::box_types::{
+    BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE, LARGESIZE_SIZE, parse_box,
+    write_box_header,
+};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_core::Parse;
 use broadcast_core::Serialize;
 use broadcast_core::error::BufferTooShort;
 use broadcast_core::len::{need_in, need_out};
@@ -547,5 +560,416 @@ mod tests {
         assert!(!starts_with_moof(b"moo"));
         assert!(starts_with_box_type(b"styp..", *b"styp"));
         assert!(!starts_with_box_type(b"styp..", *b"moof"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// IdentifiedMediaDataBox — imda (ISO/IEC 14496-12:2026 §8.1.4)
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the Identified Media Data Box (`imda`, §8.1.4).
+pub const IMDA: [u8; BOX_TYPE_SIZE] = *b"imda";
+/// Width of `imda_identifier` (§8.1.4.2).
+pub const IMDA_IDENTIFIER_LEN: usize = core::mem::size_of::<u32>();
+
+/// Identified Media Data Box (`imda`) — ISO/IEC 14496-12:2026 §8.1.4.
+///
+/// The same media-data payload as [`MediaDataBox`], with a 32-bit identifier a
+/// `DataEntryImdaBox` (`imdt`) or a `DataEntrySeqNumImdaBox` (`snim`) uses to
+/// address it (§8.7.2.3). Data offsets into it are relative to the first byte
+/// of the payload (§6.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct IdentifiedMediaDataBox {
+    identifier: u32,
+    data: Vec<u8>,
+}
+
+impl IdentifiedMediaDataBox {
+    /// Build one from an identifier and its payload.
+    #[must_use]
+    pub fn new(identifier: u32, data: Vec<u8>) -> Self {
+        Self { identifier, data }
+    }
+
+    /// `imda_identifier`, unique among the file's identified media data boxes.
+    #[must_use]
+    pub const fn identifier(&self) -> u32 {
+        self.identifier
+    }
+
+    /// The media-data payload (opaque to this layer).
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Read the identifier out of a box's first bytes, without its payload.
+    ///
+    /// Returns `(identifier, payload_offset)`, where `payload_offset` is
+    /// relative to the box's first byte — so a caller that walked only headers
+    /// can decide where the addressable payload begins.
+    pub fn parse_identification(bytes: &[u8]) -> Result<(u32, usize)> {
+        need_in(bytes, BOX_HEADER_MIN_SIZE + IMDA_IDENTIFIER_LEN, "imda")?;
+        if bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != IMDA {
+            return Err(Error::UnexpectedBox { expected: "imda" });
+        }
+        let size32 = broadcast_core::wire::be_u32(bytes, 0, "imda size")?;
+        let header = if size32 == 1 {
+            BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE
+        } else {
+            BOX_HEADER_MIN_SIZE
+        };
+        need_in(bytes, header + IMDA_IDENTIFIER_LEN, "imda identifier")?;
+        let identifier = broadcast_core::wire::be_u32(bytes, header, "imda identifier")?;
+        Ok((identifier, header + IMDA_IDENTIFIER_LEN))
+    }
+
+    /// Parse a whole `imda` box (including the header).
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        let item = parse_box(bytes)?.0;
+        if item.four_cc() != IMDA {
+            return Err(Error::UnexpectedBox { expected: "imda" });
+        }
+        need_in(item.body, IMDA_IDENTIFIER_LEN, "imda identifier")?;
+        Ok(Self {
+            identifier: broadcast_core::wire::be_u32(item.body, 0, "imda identifier")?,
+            data: item.body[IMDA_IDENTIFIER_LEN..].to_vec(),
+        })
+    }
+}
+
+impl<'a> Parse<'a> for IdentifiedMediaDataBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_box(bytes)
+    }
+}
+
+impl Serialize for IdentifiedMediaDataBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        BOX_HEADER_MIN_SIZE + IMDA_IDENTIFIER_LEN + self.data.len()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor = write_box_header(buf, &IMDA, need)?;
+        buf[cursor..cursor + IMDA_IDENTIFIER_LEN].copy_from_slice(&self.identifier.to_be_bytes());
+        cursor += IMDA_IDENTIFIER_LEN;
+        buf[cursor..cursor + self.data.len()].copy_from_slice(&self.data);
+        cursor += self.data.len();
+        Ok(cursor)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TypeCombinationBox — tyco (ISO/IEC 14496-12:2026 §5.3.2)
+// ExtendedTypeBox — etyp (§5.3.2)
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the Type Combination Box (`tyco`, §5.3.2).
+pub const TYCO: [u8; BOX_TYPE_SIZE] = *b"tyco";
+/// Four-CC of the Extended Type Box (`etyp`, §5.3.2).
+pub const ETYP: [u8; BOX_TYPE_SIZE] = *b"etyp";
+
+/// Type Combination Box (`tyco`) — ISO/IEC 14496-12:2026 §5.3.2.
+///
+/// A list of brands whose intersection the associated file, segment, track or
+/// item complies with.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct TypeCombinationBox {
+    compatible_brands: Vec<[u8; BOX_TYPE_SIZE]>,
+}
+
+impl TypeCombinationBox {
+    /// Build one from a brand list.
+    #[must_use]
+    pub fn new(compatible_brands: Vec<[u8; BOX_TYPE_SIZE]>) -> Self {
+        Self { compatible_brands }
+    }
+
+    /// The brands, in wire order.
+    #[must_use]
+    pub fn compatible_brands(&self) -> &[[u8; BOX_TYPE_SIZE]] {
+        &self.compatible_brands
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        let mut compatible_brands = Vec::with_capacity(body.len() / BOX_TYPE_SIZE);
+        for chunk in body.chunks_exact(BOX_TYPE_SIZE) {
+            let mut brand = [0u8; BOX_TYPE_SIZE];
+            brand.copy_from_slice(chunk);
+            compatible_brands.push(brand);
+        }
+        Ok(Self { compatible_brands })
+    }
+}
+
+impl<'a> Parse<'a> for TypeCombinationBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let item = parse_box(bytes)?.0;
+        if item.four_cc() != TYCO {
+            return Err(Error::UnexpectedBox { expected: "tyco" });
+        }
+        Self::parse_body(item.body)
+    }
+}
+
+impl Serialize for TypeCombinationBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        BOX_HEADER_MIN_SIZE + self.compatible_brands.len() * BOX_TYPE_SIZE
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor = write_box_header(buf, &TYCO, need)?;
+        for brand in &self.compatible_brands {
+            buf[cursor..cursor + BOX_TYPE_SIZE].copy_from_slice(brand);
+            cursor += BOX_TYPE_SIZE;
+        }
+        Ok(cursor)
+    }
+}
+
+/// Extended Type Box (`etyp`) — ISO/IEC 14496-12:2026 §5.3.2.
+///
+/// A reader processes the associated file, segment, track or item only if it
+/// supports all brands of at least one combination here, or one brand of the
+/// preceding `ftyp`/`styp` (or the item's `brnd`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ExtendedTypeBox {
+    combinations: Vec<TypeCombinationBox>,
+    other_boxes: Vec<OpaqueBox>,
+}
+
+impl ExtendedTypeBox {
+    /// Build one from its brand combinations.
+    #[must_use]
+    pub fn new(combinations: Vec<TypeCombinationBox>) -> Self {
+        Self {
+            combinations,
+            other_boxes: Vec::new(),
+        }
+    }
+
+    /// The brand combinations, in wire order.
+    #[must_use]
+    pub fn combinations(&self) -> &[TypeCombinationBox] {
+        &self.combinations
+    }
+
+    /// Children the clause does not define, kept verbatim.
+    #[must_use]
+    pub fn other_boxes(&self) -> &[OpaqueBox] {
+        &self.other_boxes
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        let mut combinations = Vec::new();
+        let mut other_boxes = Vec::new();
+        for child in crate::box_types::BoxIter::new(body) {
+            let child = child?;
+            if child.four_cc() == TYCO {
+                combinations.push(TypeCombinationBox::parse(child.bytes)?);
+            } else {
+                other_boxes.push(OpaqueBox {
+                    box_type: child.four_cc(),
+                    data: child.payload().to_vec(),
+                    to_end: child.to_end(),
+                    largesize: child.has_largesize(),
+                });
+            }
+        }
+        Ok(Self {
+            combinations,
+            other_boxes,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for ExtendedTypeBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let item = parse_box(bytes)?.0;
+        if item.four_cc() != ETYP {
+            return Err(Error::UnexpectedBox { expected: "etyp" });
+        }
+        Self::parse_body(item.body)
+    }
+}
+
+impl Serialize for ExtendedTypeBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        BOX_HEADER_MIN_SIZE
+            + self
+                .combinations
+                .iter()
+                .map(Serialize::serialized_len)
+                .sum::<usize>()
+            + self
+                .other_boxes
+                .iter()
+                .map(Serialize::serialized_len)
+                .sum::<usize>()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor = write_box_header(buf, &ETYP, need)?;
+        for combination in &self.combinations {
+            cursor += combination.serialize_into(&mut buf[cursor..])?;
+        }
+        for other in &self.other_boxes {
+            cursor += other.serialize_into(&mut buf[cursor..])?;
+        }
+        Ok(cursor)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OriginalFileTypeBox — otyp (ISO/IEC 14496-12:2026 §8.16.5)
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the Original File Type Box (`otyp`, §8.16.5).
+pub const OTYP: [u8; BOX_TYPE_SIZE] = *b"otyp";
+
+/// Original File Type Box (`otyp`) — ISO/IEC 14496-12:2026 §8.16.5.
+///
+/// Wraps the `ftyp` and, when present, the `etyp` of the file before a
+/// transformation such as a compressed top-level box. A reader processes the
+/// file as if both boxes were replaced by this box's children (§8.16.5.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct OriginalFileTypeBox {
+    file_type: FileTypeBox,
+    extended_types: Option<ExtendedTypeBox>,
+    other_boxes: Vec<OpaqueBox>,
+}
+
+impl OriginalFileTypeBox {
+    /// Build one from the original `ftyp`.
+    #[must_use]
+    pub fn new(file_type: FileTypeBox) -> Self {
+        Self {
+            file_type,
+            extended_types: None,
+            other_boxes: Vec::new(),
+        }
+    }
+
+    /// Set the original extended type box.
+    #[must_use]
+    pub fn with_extended_types(mut self, extended_types: ExtendedTypeBox) -> Self {
+        self.extended_types = Some(extended_types);
+        self
+    }
+
+    /// The original `ftyp`.
+    #[must_use]
+    pub const fn file_type(&self) -> &FileTypeBox {
+        &self.file_type
+    }
+
+    /// The original `etyp`, when the file carried one.
+    #[must_use]
+    pub const fn extended_types(&self) -> Option<&ExtendedTypeBox> {
+        self.extended_types.as_ref()
+    }
+
+    /// Children the clause does not define, kept verbatim.
+    #[must_use]
+    pub fn other_boxes(&self) -> &[OpaqueBox] {
+        &self.other_boxes
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        let mut file_type = None;
+        let mut extended_types = None;
+        let mut other_boxes = Vec::new();
+        for child in crate::box_types::BoxIter::new(body) {
+            let child = child?;
+            match &child.four_cc() {
+                b"ftyp" => file_type = Some(FileTypeBox::parse_box(child.bytes)?),
+                b"etyp" => extended_types = Some(ExtendedTypeBox::parse(child.bytes)?),
+                _ => other_boxes.push(OpaqueBox {
+                    box_type: child.four_cc(),
+                    data: child.payload().to_vec(),
+                    to_end: child.to_end(),
+                    largesize: child.has_largesize(),
+                }),
+            }
+        }
+        let file_type = file_type.ok_or(Error::InvalidInput("otyp without an ftyp"))?;
+        Ok(Self {
+            file_type,
+            extended_types,
+            other_boxes,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for OriginalFileTypeBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let item = parse_box(bytes)?.0;
+        if item.four_cc() != OTYP {
+            return Err(Error::UnexpectedBox { expected: "otyp" });
+        }
+        Self::parse_body(item.body)
+    }
+}
+
+impl Serialize for OriginalFileTypeBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        BOX_HEADER_MIN_SIZE
+            + self.file_type.serialized_len()
+            + self
+                .extended_types
+                .as_ref()
+                .map_or(0, |b| b.serialized_len())
+            + self
+                .other_boxes
+                .iter()
+                .map(Serialize::serialized_len)
+                .sum::<usize>()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor = write_box_header(buf, &OTYP, need)?;
+        cursor += self.file_type.serialize_into(&mut buf[cursor..])?;
+        if let Some(extended_types) = &self.extended_types {
+            cursor += extended_types.serialize_into(&mut buf[cursor..])?;
+        }
+        for other in &self.other_boxes {
+            cursor += other.serialize_into(&mut buf[cursor..])?;
+        }
+        Ok(cursor)
     }
 }

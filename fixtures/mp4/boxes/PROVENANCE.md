@@ -210,3 +210,75 @@ What was tried, per box:
 All 15 tool invocations of that sweep completed, and a four-CC scan of every
 output found no tier 1 box other than the `ludt`/`tlou` MP4Box carried through
 from an `afconvert` file.
+
+# Tier 3/4 box fixtures
+
+The same rules: written by a real tool, the typed values asserted against that
+tool's own dump, every box re-serialized byte-exact from the file's bytes.
+
+## `cprt.mp4`
+
+A file-level `cprt` with a notice and the `und` language, written by GPAC's
+`-cprt` option.
+
+```sh
+MP4Box -add fixtures/mp4/h264-aac-prog.mp4 -cprt "(c) 2026 Example Corp" \
+       -new fixtures/mp4/boxes/cprt.mp4
+```
+
+`MP4Box -disox` reads it:
+
+```
+<CopyrightBox Size="36" Type="cprt" Version="0" Flags="0" Specification="p12"
+    Container="udta" LanguageCode="und" CopyrightNotice="(c) 2026 Example Corp">
+```
+
+`und` packs to 0x55C4 (three 5-bit letters below the `pad` bit, §8.10.2.2).
+
+## `hint-hmhd.mp4`
+
+Two hint tracks beside the AVC/AAC tracks, so each `minf` carries an `hmhd`.
+
+```sh
+MP4Box -hint -add fixtures/mp4/h264-aac-prog.mp4 \
+       -new fixtures/mp4/boxes/hint-hmhd.mp4
+```
+
+`MP4Box -disox` reads both hint headers:
+
+```
+<HintMediaHeaderBox Size="28" Type="hmhd" Version="0" Flags="0"
+    Specification="p12" Container="minf" MaximumPDUSize="0"
+    AveragePDUSize="0" MaxBitRate="0" AverageBitRate="0">
+```
+
+GPAC fills the four rate fields with zero for a hinted local file.
+
+## `nmhd` and `mehd` in committed fixtures
+
+No new file is needed: the subtitle fixtures already carry `nmhd`
+(`fixtures/subtitles/mp4box/wvtt_progressive.mp4` and six others), and the DASH
+init segments already carry `mehd`
+(`fixtures/dash/ondemand-gpac-pto-quirk/v_dashinit.mp4` and eighteen others),
+so the tests assert those.
+
+## `keyd` in the private Live Photo
+
+`private/fixtures/mp4/quicktime/iphone-x-live-photo.mov` carries two `mebx`
+sample entries whose `keys` boxes hold one local key each, and each local key
+carries a `keyd` (namespace `mdta`):
+
+```
+keys 174 bytes
+  local key 1 (166 bytes)
+    keyd  47 bytes: namespace mdta, key com.apple.quicktime.live-photo-info
+    dtyp  67 bytes (Apple's own setup box)
+    sdpd  20 bytes
+    ctps  24 bytes
+```
+
+The key declaration is the third box at the byte range the test reads; GPAC
+parses the track-level `keys` as its Apple full-box form and reports
+`Key ns="keyd" name="mdtacom.apple.quicktime.live-photo-info"`, so the test
+asserts the clause's reading (§12.8.4.2: a plain box of local-key boxes) of the
+file's own bytes rather than GPAC's.
