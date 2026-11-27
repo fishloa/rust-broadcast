@@ -2999,6 +2999,10 @@ pub struct ItemPropertyAssociationBox {
     version: u8,
     flags: u32,
     entries: Vec<ItemPropertyEntry>,
+    /// Bytes after the last association record the entry count declares
+    /// (§8.11.14.2), carried verbatim so a rewrite is exact. Not a field of
+    /// the box.
+    trailing: Vec<u8>,
 }
 
 impl ItemPropertyAssociationBox {
@@ -3009,7 +3013,21 @@ impl ItemPropertyAssociationBox {
             version: 0,
             flags: 0,
             entries: Vec::new(),
+            trailing: Vec::new(),
         }
+    }
+
+    /// The bytes after the last declared association record, in wire order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared table does not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
     }
 
     /// Append one item's associations.
@@ -3093,7 +3111,7 @@ impl ItemPropertyAssociationBox {
     }
 
     fn body_len(&self) -> usize {
-        let mut len = FULLBOX_EXTRA_SIZE + U32_LEN;
+        let mut len = FULLBOX_EXTRA_SIZE + U32_LEN + self.trailing.len();
         for entry in &self.entries {
             len += self.id_width() + 1 + entry.associations.len() * self.index_width();
         }
@@ -3116,6 +3134,7 @@ impl<'a> Parse<'a> for ItemPropertyAssociationBox {
             version,
             flags,
             entries: Vec::new(),
+            trailing: Vec::new(),
         };
         crate::box_support::check_entry_count(
             body.len() - cursor,
@@ -3179,13 +3198,7 @@ impl<'a> Parse<'a> for ItemPropertyAssociationBox {
                 associations,
             });
         }
-        if cursor != body.len() {
-            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
-                field: "ipma size",
-                value: body.len() as u64,
-                reason: "bytes after the last association record",
-            }));
-        }
+        this.trailing = body[cursor..].to_vec();
         Ok(this)
     }
 }
@@ -3244,7 +3257,8 @@ impl Serialize for ItemPropertyAssociationBox {
                 }
             }
         }
-        Ok(cursor)
+        buf[cursor..cursor + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(cursor + self.trailing.len())
     }
 }
 

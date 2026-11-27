@@ -1344,11 +1344,7 @@ fn rgan_sample_entry_is_typed_in_the_stsd_dispatch() {
         }
         other => panic!("expected rgan, got {other:?}"),
     }
-    let box_ = SampleDescriptionBox {
-        version: 0,
-        flags: 0,
-        entries: vec![SampleEntryVariant::Rgan(Box::new(entry))],
-    };
+    let box_ = SampleDescriptionBox::new(0, 0, vec![SampleEntryVariant::Rgan(Box::new(entry))]);
     let bytes = box_.try_to_bytes().expect("serialize stsd");
     let parsed = SampleDescriptionBox::parse(&bytes).expect("parse stsd");
     assert!(matches!(parsed.entries[0], SampleEntryVariant::Rgan(_)));

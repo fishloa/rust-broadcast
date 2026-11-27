@@ -19,7 +19,7 @@ use crate::error::{Error, Result};
 use crate::init_segment::TrackExtendsBox;
 use alloc::vec::Vec;
 use broadcast_core::Serialize;
-use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::error::BufferTooShort;
 use broadcast_core::len::{need_in, need_out};
 use broadcast_core::wire::{be_u32, be_u64, read_u32};
 
@@ -143,9 +143,49 @@ pub struct TrackFragmentHeaderBox {
     pub default_sample_duration: Option<u32>,
     pub default_sample_size: Option<u32>,
     pub default_sample_flags: Option<u32>,
+    /// Bytes after the last field the flags name (§8.8.6.2), carried verbatim
+    /// so a rewrite is exact. Not a field of the box.
+    trailing: Vec<u8>,
 }
 
 impl TrackFragmentHeaderBox {
+    /// A version-0 `tfhd` with no bytes past its declared fields.
+    #[must_use]
+    pub fn new(
+        flags: u32,
+        track_id: TrackId,
+        base_data_offset: Option<u64>,
+        sample_description_index: Option<u32>,
+        default_sample_duration: Option<u32>,
+        default_sample_size: Option<u32>,
+        default_sample_flags: Option<u32>,
+    ) -> Self {
+        Self {
+            version: 0,
+            flags,
+            track_id,
+            base_data_offset,
+            sample_description_index,
+            default_sample_duration,
+            default_sample_size,
+            default_sample_flags,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// The bytes after the last field the flags name, in wire order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared fields do not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
+    }
+
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         let (version, flags) = read_ver_flags(body)?;
         let mut c = FULLBOX_EXTRA_SIZE;
@@ -187,13 +227,6 @@ impl TrackFragmentHeaderBox {
         } else {
             None
         };
-        if c != body.len() {
-            return Err(Error::InvalidValue(InvalidValue {
-                field: "tfhd size",
-                value: body.len() as u64,
-                reason: "bytes after the last field the flags name",
-            }));
-        }
         Ok(TrackFragmentHeaderBox {
             version,
             flags,
@@ -203,6 +236,7 @@ impl TrackFragmentHeaderBox {
             default_sample_duration: v_dsd,
             default_sample_size: v_dss,
             default_sample_flags: v_dsf,
+            trailing: body[c..].to_vec(),
         })
     }
 }
@@ -273,7 +307,7 @@ impl Serialize for TrackFragmentHeaderBox {
         if self.default_sample_flags.is_some() {
             n += core::mem::size_of::<u32>();
         }
-        n
+        n + self.trailing.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let flags = self.effective_flags();
@@ -304,7 +338,8 @@ impl Serialize for TrackFragmentHeaderBox {
             buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&v.to_be_bytes());
             c += core::mem::size_of::<u32>();
         }
-        Ok(c)
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(c + self.trailing.len())
     }
 }
 
@@ -449,9 +484,44 @@ pub struct TrackFragmentRunBox {
     pub data_offset: Option<i32>,
     pub first_sample_flags: Option<u32>,
     pub samples: Vec<TrunSample>,
+    /// Bytes after the last sample record the count declares (§8.8.8.2),
+    /// carried verbatim so a rewrite is exact. Not a field of the box.
+    trailing: Vec<u8>,
 }
 
 impl TrackFragmentRunBox {
+    /// A `trun` of `samples` with no bytes past the declared table.
+    #[must_use]
+    pub fn new(
+        version: u8,
+        tr_flags: u32,
+        data_offset: Option<i32>,
+        first_sample_flags: Option<u32>,
+        samples: Vec<TrunSample>,
+    ) -> Self {
+        Self {
+            version,
+            tr_flags,
+            data_offset,
+            first_sample_flags,
+            samples,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// The bytes after the last declared sample record, in wire order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared table does not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
+    }
+
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         Self::parse_body_budgeted(body, &mut { MAX_ZERO_WIDTH_TRUN_SAMPLES })
     }
@@ -544,19 +614,13 @@ impl TrackFragmentRunBox {
             }
             samples.push(s);
         }
-        if c != payload.len() {
-            return Err(Error::InvalidValue(InvalidValue {
-                field: "trun size",
-                value: payload.len() as u64,
-                reason: "bytes after the last sample record",
-            }));
-        }
         Ok(TrackFragmentRunBox {
             version: ver,
             tr_flags,
             data_offset,
             first_sample_flags: fsf,
             samples,
+            trailing: payload[c..].to_vec(),
         })
     }
 
@@ -686,7 +750,9 @@ impl Serialize for TrackFragmentRunBox {
         if flags & TRUN_FIRST_SAMPLE_FLAGS_PRESENT != 0 {
             n += core::mem::size_of::<u32>();
         }
-        crate::box_types::box_len(n + self.samples.len() * Self::record_stride(flags))
+        crate::box_types::box_len(
+            n + self.samples.len() * Self::record_stride(flags) + self.trailing.len(),
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let flags = self.effective_flags();
@@ -758,7 +824,8 @@ impl Serialize for TrackFragmentRunBox {
                 c += core::mem::size_of::<u32>();
             }
         }
-        Ok(c)
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(c + self.trailing.len())
     }
 }
 /// A `traf` or `moof` child this crate does not model as a typed field,
@@ -1321,6 +1388,7 @@ mod tests {
             default_sample_duration: None,
             default_sample_size: None,
             default_sample_flags: None,
+            trailing: Vec::new(),
         };
         let b = t.try_to_bytes().unwrap();
         let p = TrackFragmentHeaderBox::parse_body(&b[8..]).unwrap();
@@ -1338,6 +1406,7 @@ mod tests {
             default_sample_duration: Some(512),
             default_sample_size: Some(3933),
             default_sample_flags: None,
+            trailing: Vec::new(),
         };
         let b = t.try_to_bytes().unwrap();
         let p = TrackFragmentHeaderBox::parse_body(&b[8..]).unwrap();
@@ -1363,6 +1432,7 @@ mod tests {
             default_sample_duration: Some(1024),
             default_sample_size: Some(256),
             default_sample_flags: Some(0x01010000),
+            trailing: Vec::new(),
         };
         let b = t.try_to_bytes().unwrap();
         let p = TrackFragmentHeaderBox::parse_body(&b[8..]).unwrap();
@@ -1421,6 +1491,7 @@ mod tests {
             default_sample_duration: Some(512),
             default_sample_size: Some(99),
             default_sample_flags: Some(0x01010000),
+            trailing: Vec::new(),
         };
         let b = t.try_to_bytes().unwrap();
         let p = TrackFragmentHeaderBox::parse_body(&b[8..]).unwrap();
@@ -1448,6 +1519,7 @@ mod tests {
             default_sample_duration: None,
             default_sample_size: None,
             default_sample_flags: None,
+            trailing: Vec::new(),
         };
         let b = t.try_to_bytes().unwrap();
         assert_eq!(b.len(), 16, "no value means no field on the wire");
@@ -1475,6 +1547,7 @@ mod tests {
             default_sample_duration: None,
             default_sample_size: None,
             default_sample_flags: None,
+            trailing: Vec::new(),
         };
         assert_eq!(t.effective_flags(), 0, "no value backs any presence bit");
         let b = t.try_to_bytes().expect("serialize");
@@ -1496,6 +1569,7 @@ mod tests {
             default_sample_duration: None,
             default_sample_size: None,
             default_sample_flags: None,
+            trailing: Vec::new(),
         };
         assert_eq!(t.effective_flags(), TFHD_DEFAULT_BASE_IS_MOOF);
         let b = t.try_to_bytes().expect("serialize");
@@ -1530,6 +1604,7 @@ mod tests {
                     sample_composition_time_offset: None,
                 },
             ],
+            trailing: Vec::new(),
         };
         let b = trun.try_to_bytes().unwrap();
         let p = TrackFragmentRunBox::parse_body(&b[8..]).unwrap();
@@ -1563,6 +1638,7 @@ mod tests {
                     sample_composition_time_offset: None,
                 },
             ],
+            trailing: Vec::new(),
         };
         let err = gapped.try_to_bytes().unwrap_err();
         assert!(
@@ -1590,6 +1666,7 @@ mod tests {
             data_offset: None,
             first_sample_flags: None,
             samples: vec![TrunSample::new()],
+            trailing: Vec::new(),
         };
         assert_eq!(trun.effective_flags(), reserved);
         let b = trun.try_to_bytes().expect("serialize");
@@ -1620,6 +1697,7 @@ mod tests {
                 sample_flags: None,
                 sample_composition_time_offset: Some(offset),
             }],
+            trailing: Vec::new(),
         };
         let b = trun.try_to_bytes().expect("serialize");
         // v0 + sample_count(4) + the 4-byte offset = 20 bytes.
@@ -1651,6 +1729,7 @@ mod tests {
                 sample_flags: None,
                 sample_composition_time_offset: Some(-1),
             }],
+            trailing: Vec::new(),
         };
         let b = neg.try_to_bytes().expect("serialize v1");
         assert_eq!(b[8], 1, "stays version 1");
@@ -1669,6 +1748,7 @@ mod tests {
                 sample_flags: None,
                 sample_composition_time_offset: Some(0x8000_0001),
             }],
+            trailing: Vec::new(),
         };
         let err = too_big.try_to_bytes().unwrap_err();
         assert!(
@@ -1694,6 +1774,7 @@ mod tests {
                 sample_flags: None,
                 sample_composition_time_offset: Some(-1),
             }],
+            trailing: Vec::new(),
         };
         let b = trun.try_to_bytes().expect("serialize");
         let p = TrackFragmentRunBox::parse_body(&b[8..]).expect("parse");
@@ -1711,6 +1792,7 @@ mod tests {
                 sample_flags: None,
                 sample_composition_time_offset: Some(0),
             }],
+            trailing: Vec::new(),
         };
         let p = TrackFragmentRunBox::parse_body(&trun.try_to_bytes().unwrap()[8..]).unwrap();
         assert_eq!(p.version, 0, "a non-negative offset keeps version 0");
@@ -1730,6 +1812,7 @@ mod tests {
             data_offset: Some(64),
             first_sample_flags: None,
             samples: Vec::new(),
+            trailing: Vec::new(),
         };
         let b = trun.try_to_bytes().expect("serialize");
         let p = TrackFragmentRunBox::parse_body(&b[8..]).expect("parse");
@@ -1759,6 +1842,7 @@ mod tests {
             default_sample_duration: None,
             default_sample_size: None,
             default_sample_flags: None,
+            trailing: Vec::new(),
         };
         let b = t
             .try_to_bytes()
@@ -1814,6 +1898,7 @@ mod tests {
                     sample_composition_time_offset: Some(2560),
                 },
             ],
+            trailing: Vec::new(),
         };
         let b = tr.try_to_bytes().unwrap();
         let p = TrackFragmentRunBox::parse_body(&b[8..]).unwrap();
@@ -1958,6 +2043,7 @@ mod tests {
                 sample_flags: None,
                 sample_composition_time_offset: None,
             }],
+            trailing: Vec::new(),
         };
         let orig = t.try_to_bytes().unwrap();
         let m = TrackFragmentRunBox {
@@ -1973,6 +2059,7 @@ mod tests {
                 sample_flags: Some(0x01000000),
                 sample_composition_time_offset: None,
             }],
+            trailing: Vec::new(),
         };
         let mb = m.try_to_bytes().unwrap();
         assert_ne!(mb, orig);
@@ -2002,6 +2089,7 @@ mod tests {
             default_sample_duration: Some(512),
             default_sample_size: Some(3933),
             default_sample_flags: Some(0x01010000),
+            trailing: Vec::new(),
         };
         let tfdt = TrackFragmentBaseMediaDecodeTimeBox::new_v1(0);
         let trun = TrackFragmentRunBox {
@@ -2018,6 +2106,7 @@ mod tests {
                 sample_flags: None,
                 sample_composition_time_offset: Some(1024),
             }],
+            trailing: Vec::new(),
         };
         let traf = TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]);
         let b = traf.try_to_bytes().unwrap();
@@ -2043,6 +2132,7 @@ mod tests {
             default_sample_duration: Some(512),
             default_sample_size: Some(3933),
             default_sample_flags: Some(0x01010000),
+            trailing: Vec::new(),
         };
         let tfdt = TrackFragmentBaseMediaDecodeTimeBox::new_v1(0);
         let trun = TrackFragmentRunBox {
@@ -2059,6 +2149,7 @@ mod tests {
                 sample_flags: None,
                 sample_composition_time_offset: Some(1024),
             }],
+            trailing: Vec::new(),
         };
         let traf = TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]);
         let moof = MovieFragmentBox::new(mfhd, vec![traf]);

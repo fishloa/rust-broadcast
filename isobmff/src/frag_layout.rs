@@ -479,16 +479,15 @@ mod tests {
     /// so the same fragment at another offset still describes itself.
     #[test]
     fn a_base_data_offset_is_recorded_relative_to_its_moof() {
-        let tfhd = TrackFragmentHeaderBox {
-            flags: 0,
-            track_id: TrackId::new(1),
-            version: Default::default(),
-            base_data_offset: Some(5_000),
-            sample_description_index: None,
-            default_sample_duration: Some(40),
-            default_sample_size: None,
-            default_sample_flags: None,
-        };
+        let tfhd = TrackFragmentHeaderBox::new(
+            0,
+            TrackId::new(1),
+            Some(5_000),
+            None,
+            Some(40),
+            None,
+            None,
+        );
         let layout = TrackFragmentHeaderLayout::from_tfhd(&tfhd, 5_000).expect("recorded");
         assert_eq!(layout.base_data_offset, Some(0));
         // The composition of the two is the absolute base again.

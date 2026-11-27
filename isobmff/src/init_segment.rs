@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
-use broadcast_core::error::{BufferTooShort, InvalidValue};
+use broadcast_core::error::BufferTooShort;
 use broadcast_core::len::{need_in, need_out};
 use broadcast_core::timescale::Timescale;
 use broadcast_core::wire::{fourcc_at, i16_at, u16_at, u24_at, u32_at, u64_at};
@@ -1329,6 +1329,35 @@ pub struct DataReferenceBox {
     pub version: u8,
     pub flags: u32,
     pub entries: Vec<DataEntry>,
+    /// Bytes after the last entry the count declares (§8.7.2.1), carried
+    /// verbatim so a rewrite is exact. Not a field of the box.
+    trailing: Vec<u8>,
+}
+
+impl DataReferenceBox {
+    /// A `dref` of `entries` with no bytes past the declared table.
+    #[must_use]
+    pub fn new(version: u8, flags: u32, entries: Vec<DataEntry>) -> Self {
+        Self {
+            version,
+            flags,
+            entries,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// The bytes after the last declared entry, in wire order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared entry table does not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
+    }
 }
 
 /// One entry of a `dref` (§8.7.2.2): the entry four-CC is preserved, so a
@@ -1420,22 +1449,23 @@ impl<'a> Parse<'a> for DataReferenceBox {
             count,
         ));
         let mut rest = &bytes[FLAT_TABLE_HEADER_LEN..];
+        let mut trailing = Vec::new();
         for _ in 0..count {
             let (item, used) = crate::box_types::parse_box(rest)?;
             entries.push(DataEntry::parse(item.bytes)?);
             rest = &rest[used..];
         }
         if !rest.is_empty() {
-            return Err(Error::InvalidValue(InvalidValue {
-                field: "dref entry table",
-                value: rest.len() as u64,
-                reason: "bytes after the last entry",
-            }));
+            // The declared table does not account for these bytes, but the box
+            // is one the readers need: carry them so the rewrite is exact
+            // rather than refusing a table that is still complete.
+            trailing = rest.to_vec();
         }
         Ok(Self {
             version: ver,
             flags,
             entries,
+            trailing,
         })
     }
 }
@@ -1447,7 +1477,7 @@ impl Serialize for DataReferenceBox {
         for e in &self.entries {
             n += e.serialized_len();
         }
-        crate::box_types::box_len(n)
+        crate::box_types::box_len(n + self.trailing.len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1468,7 +1498,8 @@ impl Serialize for DataReferenceBox {
         for entry in &self.entries {
             c += entry.serialize_into(&mut buf[c..])?;
         }
-        Ok(c)
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(c + self.trailing.len())
     }
 }
 
@@ -1852,6 +1883,43 @@ pub struct SampleSizeBox {
     pub sample_size: u32,
     pub sample_count: u32,
     pub entries: Vec<u32>,
+    /// Bytes after the last sample size the header accounts for (§8.7.3.2),
+    /// carried verbatim so a rewrite is exact. Not a field of the box.
+    trailing: Vec<u8>,
+}
+
+impl SampleSizeBox {
+    /// An `stsz` of `entries` with no bytes past the declared table.
+    #[must_use]
+    pub fn new(
+        version: u8,
+        flags: u32,
+        sample_size: u32,
+        sample_count: u32,
+        entries: Vec<u32>,
+    ) -> Self {
+        Self {
+            version,
+            flags,
+            sample_size,
+            sample_count,
+            entries,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// The bytes after the last declared sample size, in wire order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared table does not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
+    }
 }
 
 impl<'a> Parse<'a> for SampleSizeBox {
@@ -1888,7 +1956,7 @@ impl<'a> Parse<'a> for SampleSizeBox {
             0
         };
         let mut entries = Vec::with_capacity(capacity);
-        if sample_size == 0 {
+        let trailing = if sample_size == 0 {
             let mut off = STSZ_PREFIX_LEN;
             for _ in 0..count {
                 if off + entry_len > bytes.len() {
@@ -1897,26 +1965,17 @@ impl<'a> Parse<'a> for SampleSizeBox {
                 entries.push(u32_at(bytes, off));
                 off += entry_len;
             }
-            if off != bytes.len() {
-                return Err(Error::InvalidValue(InvalidValue {
-                    field: "stsz entry table",
-                    value: (bytes.len() - off) as u64,
-                    reason: "bytes after the last sample size",
-                }));
-            }
-        } else if bytes.len() > STSZ_PREFIX_LEN {
-            return Err(Error::InvalidValue(InvalidValue {
-                field: "stsz sample_size",
-                value: u64::from(sample_size),
-                reason: "a non-zero sample_size states there is no per-sample table",
-            }));
-        }
+            bytes[off..].to_vec()
+        } else {
+            bytes[STSZ_PREFIX_LEN..].to_vec()
+        };
         Ok(Self {
             version: ver,
             flags,
             sample_size,
             sample_count: count as u32,
             entries,
+            trailing,
         })
     }
 }
@@ -1929,7 +1988,9 @@ impl Serialize for SampleSizeBox {
         } else {
             0
         };
-        crate::box_types::box_len(STSZ_PREFIX_LEN + count * core::mem::size_of::<u32>())
+        crate::box_types::box_len(
+            STSZ_PREFIX_LEN + count * core::mem::size_of::<u32>() + self.trailing.len(),
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if self.sample_size == 0 && self.entries.len() != self.sample_count as usize {
@@ -1957,7 +2018,8 @@ impl Serialize for SampleSizeBox {
             buf[c..c + u32_len].copy_from_slice(&sz.to_be_bytes());
             c += u32_len;
         }
-        Ok(c)
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(c + self.trailing.len())
     }
 }
 
@@ -3722,6 +3784,35 @@ pub struct SampleDescriptionBox {
     pub version: u8,
     pub flags: u32,
     pub entries: Vec<SampleEntryVariant>,
+    /// Bytes after the last entry the count declares (§8.5.2.2), carried
+    /// verbatim so a rewrite is exact. Not a field of the box.
+    trailing: Vec<u8>,
+}
+
+impl SampleDescriptionBox {
+    /// An `stsd` of `entries` with no bytes past the declared table.
+    #[must_use]
+    pub fn new(version: u8, flags: u32, entries: Vec<SampleEntryVariant>) -> Self {
+        Self {
+            version,
+            flags,
+            entries,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// The bytes after the last declared entry, in wire order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared entry table does not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
+    }
 }
 
 /// Parse one `stsd` entry's bytes into its typed variant.
@@ -3861,17 +3952,14 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
             entries.push(sample_entry_variant(item.bytes)?);
             rest = &rest[used..];
         }
-        if !rest.is_empty() {
-            return Err(Error::InvalidValue(InvalidValue {
-                field: "stsd entry table",
-                value: rest.len() as u64,
-                reason: "bytes after the last entry",
-            }));
-        }
+        // A count smaller than the bytes present leaves the rest unaccounted
+        // for; the table a reader needs is complete, so the bytes are carried.
+        let trailing = rest.to_vec();
         Ok(Self {
             version: ver,
             flags,
             entries,
+            trailing,
         })
     }
 }
@@ -3883,7 +3971,7 @@ impl Serialize for SampleDescriptionBox {
         for e in &self.entries {
             n += e.serialized_len();
         }
-        crate::box_types::box_len(n)
+        crate::box_types::box_len(n + self.trailing.len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -3904,7 +3992,8 @@ impl Serialize for SampleDescriptionBox {
         for e in &self.entries {
             c += e.serialize_into(&mut buf[c..])?;
         }
-        Ok(c)
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(c + self.trailing.len())
     }
 }
 
@@ -5923,6 +6012,7 @@ mod tests {
             version: 0,
             flags: 0,
             entries: alloc::vec![DataEntry::Url(url)],
+            trailing: Vec::new(),
         };
         let bytes = dref.try_to_bytes().unwrap();
         let parsed = DataReferenceBox::parse(&bytes).unwrap();
@@ -6120,6 +6210,7 @@ mod tests {
             sample_size: 512,
             sample_count: 88,
             entries: alloc::vec![],
+            trailing: Vec::new(),
         };
         let bytes = s.try_to_bytes().unwrap();
         let parsed = SampleSizeBox::parse(&bytes).unwrap();
@@ -6209,6 +6300,7 @@ mod tests {
             version: 0,
             flags: 0,
             entries: alloc::vec![DataEntry::Url(url)],
+            trailing: Vec::new(),
         };
         let bytes = dref.try_to_bytes().unwrap();
         let parsed = DataReferenceBox::parse(&bytes).unwrap();

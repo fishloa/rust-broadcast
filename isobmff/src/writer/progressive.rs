@@ -1050,20 +1050,20 @@ fn sample_table(
     use_co64: bool,
 ) -> Result<SampleTableBox> {
     let sizes = match &track.tables.sizes {
-        SampleSizes::Uniform(size) => StblChild::Stsz(SampleSizeBox {
-            version: 0,
-            flags: 0,
-            sample_size: *size,
-            sample_count: track.tables.sample_count,
-            entries: Vec::new(),
-        }),
-        SampleSizes::PerSample(entries) => StblChild::Stsz(SampleSizeBox {
-            version: 0,
-            flags: 0,
-            sample_size: 0,
-            sample_count: track.tables.sample_count,
-            entries: entries.clone(),
-        }),
+        SampleSizes::Uniform(size) => StblChild::Stsz(SampleSizeBox::new(
+            0,
+            0,
+            *size,
+            track.tables.sample_count,
+            Vec::new(),
+        )),
+        SampleSizes::PerSample(entries) => StblChild::Stsz(SampleSizeBox::new(
+            0,
+            0,
+            0,
+            track.tables.sample_count,
+            entries.clone(),
+        )),
         SampleSizes::Compact(compact) => StblChild::Stz2(compact.clone()),
     };
     let stsc = if source_chunks {
@@ -1222,11 +1222,7 @@ fn sample_description(track: &PlannedTrack) -> Result<SampleDescriptionBox> {
             .max()
             .unwrap_or(0)
     });
-    Ok(SampleDescriptionBox {
-        version,
-        flags: 0,
-        entries,
-    })
+    Ok(SampleDescriptionBox::new(version, 0, entries))
 }
 
 /// The source `stsd` version, when the track carries its parsed `trak`.

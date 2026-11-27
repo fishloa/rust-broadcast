@@ -513,11 +513,7 @@ fn raw_entry_variant(fourcc: [u8; BOX_TYPE_SIZE], body: &[u8]) -> Result<SampleE
 /// An empty `stsd` holding the track's single sample entry: the init segment
 /// declares the codec, and every sample arrives through the fragments.
 fn empty_sample_description(entry: SampleEntryVariant) -> SampleDescriptionBox {
-    SampleDescriptionBox {
-        version: entry.required_stsd_version(),
-        flags: 0,
-        entries: vec![entry],
-    }
+    SampleDescriptionBox::new(entry.required_stsd_version(), 0, vec![entry])
 }
 
 /// The empty `stbl` of a fragmented init: `stsd` plus the four sample tables a
@@ -536,13 +532,7 @@ fn empty_sample_table(stsd: SampleDescriptionBox, sample_size: u32) -> SampleTab
                 flags: 0,
                 entries: vec![],
             }),
-            StblChild::Stsz(SampleSizeBox {
-                version: 0,
-                flags: 0,
-                sample_size,
-                sample_count: 0,
-                entries: vec![],
-            }),
+            StblChild::Stsz(SampleSizeBox::new(0, 0, sample_size, 0, vec![])),
             StblChild::Stco(ChunkOffsetBox {
                 version: 0,
                 flags: 0,
@@ -556,15 +546,15 @@ fn empty_sample_table(stsd: SampleDescriptionBox, sample_size: u32) -> SampleTab
 /// (media in this file).
 fn self_contained_data_information() -> DataInformationBox {
     DataInformationBox::new(
-        Some(DataReferenceBox {
-            version: 0,
-            flags: 0,
-            entries: vec![DataEntry::Url(DataEntryUrlBox {
+        Some(DataReferenceBox::new(
+            0,
+            0,
+            vec![DataEntry::Url(DataEntryUrlBox {
                 version: 0,
                 flags: SELF_CONTAINED_DATA_ENTRY_FLAGS,
                 location: vec![],
             })],
-        }),
+        )),
         vec![],
     )
 }

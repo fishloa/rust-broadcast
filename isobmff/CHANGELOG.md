@@ -35,6 +35,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hard-coded to 0 on write. A struct literal must state them (parsed values
   carry them already).
 
+- **A structural box carries the bytes its declared table does not account
+  for.** `DataReferenceBox`, `SampleDescriptionBox`, `SampleSizeBox`,
+  `SampleAuxInfoSizesBox`, `SegmentIndexBox`, `TrackFragmentRandomAccessBox`,
+  `ItemPropertyAssociationBox`, `TrackFragmentHeaderBox`,
+  `TrackFragmentRunBox` and `ChannelLayoutBox` gain a private `trailing`
+  field: bytes after the box's last declared field are kept verbatim and
+  written back, so the round trip is exact and the reader still gets the
+  table. A declared count or size that runs past the box is still a typed
+  error, as is a FullBox version the crate does not model. Build one through
+  its `new` (and `with_trailing`), and read the carried bytes through
+  `trailing()`; a struct literal can no longer name every field.
+
 - **Sample entries keep every parsed byte on a rewrite.** The audio sample
   entries (`Mp4aSampleEntry`, `Ac3SampleEntry`, `Ec3SampleEntry`,
   `Ac4SampleEntry`, `OpusSampleEntry`, `FlacSampleEntry`, `MhaSampleEntry`,
@@ -81,25 +93,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **A top-level box whose `largesize` cannot hold its own header, or a second
-  file-level `meta` box, is a typed error.** Both used to be kept as a
-  zero-length payload, so a re-emit dropped the bytes they claimed; the
-  `isobmff_item_reader` target's new round-trip assertion found both, and each
-  input is a regression test.
+- **A top-level box whose `largesize` cannot hold its own header is a typed
+  error.** It used to be kept as a zero-length payload, so a re-emit dropped
+  the bytes it claimed; the `isobmff_item_reader` target's new round-trip
+  assertion found it, and the input is a regression test.
 
-- **A file with two top-level `meta` boxes is a typed error.** The reader kept
-  one body, so a re-emit wrote the second body under both headers. The
-  whole-file round-trip assertion the `isobmff_item_reader` fuzz target now
-  makes caught it on a 345-byte input, kept as a regression test.
+- **A second file-level `meta` box is carried, not refused.** The item reader
+  uses the first; a later one keeps its file position and re-emits byte-exact,
+  reported as `ImageFinding::ExtraMetaBox`. It used to be a typed error,
+  because only one body was kept. The whole-file round-trip assertion the
+  `isobmff_item_reader` fuzz target makes found the original rewrite; the
+  345-byte input stays as a regression test.
 
-- **A box whose declared extent disagrees with its own fields is a typed
-  error, not a shorten-and-rewrite.** `dref`, `stsd`, `stsz`, `saiz`, `sidx`,
-  `tfra`, `ipma`, `tfhd`, `trun` and `chnl` now refuse trailing bytes (or a
-  sample-info table a non-zero default rules out), which used to be dropped on
-  the way out; `chnl` also refuses a FullBox version above 1. `cprt` keeps its
-  language field unmasked. The new `tests/it/box_audit.rs` walks every committed
-  media fixture, flips each byte of each typed box's fixed part, and requires
-  parse -> serialize identity or a typed error; it found and pinned these.
+- **A box whose declared table leaves bytes over keeps them.** `dref`, `stsd`,
+  `stsz`, `saiz`, `sidx`, `tfra`, `ipma`, `tfhd`, `trun` and `chnl` used to
+  drop those bytes on the way out (and a sample-info table a non-zero default
+  rules out was silently ignored); they are now carried verbatim. `chnl` still
+  refuses a FullBox version above 1 and a tail shorter than a byte. `cprt`
+  keeps its language field unmasked. The new `tests/it/box_audit.rs` walks
+  every committed media fixture, flips each byte of each typed box's fixed
+  part, and requires parse -> serialize identity or a typed error; it found
+  and pinned these.
 
 - **A visual sample entry's opaque child keeps its header form.** A child of
   an `avc1`/`hvc1`/`vvc1` entry written with `size == 0` or `size == 1` +

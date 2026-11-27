@@ -676,16 +676,15 @@ fn layout_track_fragment(
             actual: u64::try_from(ft.samples.len()).unwrap_or(u64::MAX),
         });
     }
-    let tfhd = TrackFragmentHeaderBox {
-        flags: track_layout.tfhd.flags,
-        track_id: ft.track_id,
-        version: Default::default(),
-        base_data_offset: track_layout.tfhd.base_data_offset.map(|_| 0),
-        sample_description_index: track_layout.tfhd.sample_description_index,
-        default_sample_duration: track_layout.tfhd.default_sample_duration,
-        default_sample_size: track_layout.tfhd.default_sample_size,
-        default_sample_flags: track_layout.tfhd.default_sample_flags,
-    };
+    let tfhd = TrackFragmentHeaderBox::new(
+        track_layout.tfhd.flags,
+        ft.track_id,
+        track_layout.tfhd.base_data_offset.map(|_| 0),
+        track_layout.tfhd.sample_description_index,
+        track_layout.tfhd.default_sample_duration,
+        track_layout.tfhd.default_sample_size,
+        track_layout.tfhd.default_sample_flags,
+    );
     let mut runs = Vec::with_capacity(track_layout.runs.len());
     let mut start = 0usize;
     for run in &track_layout.runs {
@@ -810,17 +809,17 @@ fn layout_run(
             actual: u64::from(run.version),
         });
     }
-    Ok(TrackFragmentRunBox {
-        version: run.version,
-        tr_flags: if records.is_empty() {
+    Ok(TrackFragmentRunBox::new(
+        run.version,
+        if records.is_empty() {
             run.fields.flags()
         } else {
             0
         },
-        data_offset: run.data_offset.then_some(0),
-        first_sample_flags: run.first_sample_flags,
-        samples: records,
-    })
+        run.data_offset.then_some(0),
+        run.first_sample_flags,
+        records,
+    ))
 }
 
 /// A recorded `tfhd`/`trex` default against the value a sample states.
@@ -1083,23 +1082,16 @@ pub fn media_fragment_run(
     } else {
         0u8
     };
-    let trun = TrackFragmentRunBox {
-        version,
-        tr_flags,
-        data_offset: Some(0),
-        first_sample_flags: None,
-        samples: run_samples,
-    };
-    let tfhd = TrackFragmentHeaderBox {
-        version: 0,
-        flags: TFHD_DEFAULT_BASE_IS_MOOF,
+    let trun = TrackFragmentRunBox::new(version, tr_flags, Some(0), None, run_samples);
+    let tfhd = TrackFragmentHeaderBox::new(
+        TFHD_DEFAULT_BASE_IS_MOOF,
         track_id,
-        base_data_offset: None,
-        sample_description_index: description_index,
-        default_sample_duration: None,
-        default_sample_size: None,
-        default_sample_flags: None,
-    };
+        None,
+        description_index,
+        None,
+        None,
+        None,
+    );
     Ok((tfhd, trun))
 }
 
@@ -1254,15 +1246,15 @@ fn build_cenc_fragment_boxes(p: &FragmentProtection<'_>) -> Result<Option<CencFr
         .copied()
         .filter(|first| sizes.iter().all(|s| s == first));
     let sample_count = broadcast_core::len::fit_u32(sizes.len(), "saiz sample_count")?;
-    let saiz = crate::cenc::SampleAuxInfoSizesBox {
-        version: 0,
-        flags: 0,
-        aux_info_type: None,
-        aux_info_type_parameter: None,
-        default_sample_info_size: uniform.unwrap_or(0),
+    let saiz = crate::cenc::SampleAuxInfoSizesBox::new(
+        0,
+        0,
+        None,
+        None,
+        uniform.unwrap_or(0),
         sample_count,
-        sample_info_sizes: if uniform.is_some() { Vec::new() } else { sizes },
-    };
+        if uniform.is_some() { Vec::new() } else { sizes },
+    );
     let saio = crate::cenc::SampleAuxInfoOffsetsBox {
         version: 0,
         flags: 0,
@@ -1547,22 +1539,14 @@ mod tests {
     fn protect_media_segment_constant_iv_whole_sample_round_trips_with_no_senc() {
         const TRACK_ID: u32 = 1;
 
-        let tfhd = TrackFragmentHeaderBox {
-            flags: 0,
-            track_id: TrackId::new(TRACK_ID),
-            version: Default::default(),
-            base_data_offset: None,
-            sample_description_index: None,
-            default_sample_duration: None,
-            default_sample_size: None,
-            default_sample_flags: None,
-        };
-        let trun = TrackFragmentRunBox {
-            version: 0,
-            tr_flags: TRUN_SAMPLE_SIZE_PRESENT,
-            data_offset: None,
-            first_sample_flags: None,
-            samples: vec![
+        let tfhd =
+            TrackFragmentHeaderBox::new(0, TrackId::new(TRACK_ID), None, None, None, None, None);
+        let trun = TrackFragmentRunBox::new(
+            0,
+            TRUN_SAMPLE_SIZE_PRESENT,
+            None,
+            None,
+            vec![
                 TrunSample {
                     sample_duration: None,
                     sample_size: Some(4),
@@ -1576,7 +1560,7 @@ mod tests {
                     sample_composition_time_offset: None,
                 },
             ],
-        };
+        );
         let traf = TrackFragmentBox::new(tfhd, None, vec![trun]);
         let moof = MovieFragmentBox::new(MovieFragmentHeaderBox::new(1), vec![traf]);
         let unprotected = moof.try_to_bytes().expect("serialize moof");

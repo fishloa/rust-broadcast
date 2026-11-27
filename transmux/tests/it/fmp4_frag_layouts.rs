@@ -205,32 +205,31 @@ fn two_moofs_before_one_mdat_keeps_both_fragments() {
     let sample_b = vec![0xBBu8; sample_len];
     let mut moofs: Vec<Vec<u8>> = Vec::new();
     for (i, sample) in [&sample_a, &sample_b].iter().enumerate() {
-        let trun = TrackFragmentRunBox {
-            version: 0,
-            tr_flags: isobmff::movie_fragment::TRUN_SAMPLE_SIZE_PRESENT,
-            data_offset: None,
-            first_sample_flags: None,
-            samples: vec![TrunSample {
+        let trun = TrackFragmentRunBox::new(
+            0,
+            isobmff::movie_fragment::TRUN_SAMPLE_SIZE_PRESENT,
+            None,
+            None,
+            vec![TrunSample {
                 sample_duration: None,
                 sample_size: Some(sample.len() as u32),
                 sample_flags: None,
                 sample_composition_time_offset: None,
             }],
-        };
+        );
         let mut moof = MovieFragmentBox::new(
             MovieFragmentHeaderBox::new(i as u32 + 1),
             vec![TrackFragmentBox::new(
-                TrackFragmentHeaderBox {
+                TrackFragmentHeaderBox::new(
                     // An explicit base pointing at the single `mdat` payload.
-                    flags: TFHD_BASE_DATA_OFFSET_PRESENT,
-                    track_id: TrackId::new(1).into(),
-                    version: Default::default(),
-                    base_data_offset: Some(0),
-                    sample_description_index: None,
-                    default_sample_duration: None,
-                    default_sample_size: None,
-                    default_sample_flags: None,
-                },
+                    TFHD_BASE_DATA_OFFSET_PRESENT,
+                    TrackId::new(1).into(),
+                    Some(0),
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
                 Some(TrackFragmentBaseMediaDecodeTimeBox::new_v0(i as u32 * 1024)),
                 vec![trun],
             )],

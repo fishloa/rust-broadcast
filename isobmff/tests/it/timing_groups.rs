@@ -943,16 +943,15 @@ fn sidx_fields_read_every_byte() {
         sap_type: 1,
         sap_delta_time: 0,
     };
-    let b = SegmentIndexBox {
-        version: 0,
-        flags: 0,
-        reference_id: 1,
-        timescale: Timescale::try_new(90000).unwrap(),
-        earliest_presentation_time: 0,
-        first_offset: 0,
-        reserved: Default::default(),
-        references: vec![reference; 300],
-    };
+    let b = SegmentIndexBox::new(
+        0,
+        0,
+        1,
+        Timescale::try_new(90000).unwrap(),
+        0,
+        0,
+        vec![reference; 300],
+    );
     let bytes = b.try_to_bytes().unwrap();
     assert_eq!(&bytes[30..32], &0x012Cu16.to_be_bytes());
     let parsed = SegmentIndexBox::parse(&bytes).unwrap();
@@ -984,15 +983,14 @@ fn sidx_starts_with_sap_is_a_single_bit() {
 /// `reference_type`, `starts_with_sap` or `sap_type` is an error, not a
 /// misframed entry, and the field maxima still round-trip.
 fn sidx_with_reference(reference_type: u8, starts_with_sap: u8, sap_type: u8) -> SegmentIndexBox {
-    SegmentIndexBox {
-        version: 0,
-        flags: 0,
-        reference_id: 1,
-        timescale: Timescale::try_new(90000).unwrap(),
-        earliest_presentation_time: 0,
-        first_offset: 0,
-        reserved: Default::default(),
-        references: vec![SidxReference {
+    SegmentIndexBox::new(
+        0,
+        0,
+        1,
+        Timescale::try_new(90000).unwrap(),
+        0,
+        0,
+        vec![SidxReference {
             reference_type,
             referenced_size: 1,
             subsegment_duration: 1,
@@ -1000,7 +998,7 @@ fn sidx_with_reference(reference_type: u8, starts_with_sap: u8, sap_type: u8) ->
             sap_type,
             sap_delta_time: 0,
         }],
-    }
+    )
 }
 
 fn assert_overflow(bad: SegmentIndexBox, field: &str, value: u64, max: u64) {

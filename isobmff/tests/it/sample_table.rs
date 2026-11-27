@@ -309,13 +309,7 @@ fn stsc(entries: &[(u32, u32, u32)]) -> StblChild {
 }
 
 fn stsz_uniform(size: u32, count: u32) -> StblChild {
-    StblChild::Stsz(SampleSizeBox {
-        version: 0,
-        flags: 0,
-        sample_size: size,
-        sample_count: count,
-        entries: Vec::new(),
-    })
+    StblChild::Stsz(SampleSizeBox::new(0, 0, size, count, Vec::new()))
 }
 
 fn stco(offsets: &[u32]) -> StblChild {
@@ -609,13 +603,13 @@ fn description_index_comes_from_the_stsc_run() {
 }
 
 fn stsz_entries(sizes: &[u32]) -> StblChild {
-    StblChild::Stsz(SampleSizeBox {
-        version: 0,
-        flags: 0,
-        sample_size: 0,
-        sample_count: sizes.len() as u32,
-        entries: sizes.to_vec(),
-    })
+    StblChild::Stsz(SampleSizeBox::new(
+        0,
+        0,
+        0,
+        sizes.len() as u32,
+        sizes.to_vec(),
+    ))
 }
 
 fn rows(stbl: &SampleTableBox, file_len: u64) -> Vec<Row> {

@@ -619,16 +619,7 @@ fn moof_size_zero_child_written_explicitly_when_not_last() {
         TrackFragmentHeaderBox,
     };
 
-    let tfhd = TrackFragmentHeaderBox {
-        flags: 0,
-        track_id: TrackId::new(1),
-        version: Default::default(),
-        base_data_offset: None,
-        sample_description_index: None,
-        default_sample_duration: None,
-        default_sample_size: None,
-        default_sample_flags: None,
-    };
+    let tfhd = TrackFragmentHeaderBox::new(0, TrackId::new(1), None, None, None, None, None);
     let traf = TrackFragmentBox::new(tfhd, None, Vec::new());
     let mut free = OpaqueChild::new(*b"free", vec![0xDD; 12]);
     free.to_end = true;

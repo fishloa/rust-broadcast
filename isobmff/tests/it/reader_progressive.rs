@@ -398,14 +398,14 @@ fn tiny_mp4() -> Vec<u8> {
     use isobmff::timing::{SttsEntry, TimeToSampleBox};
 
     let timescale = Timescale::try_new(1000).expect("timescale");
-    let stsd = SampleDescriptionBox {
-        version: 0,
-        flags: 0,
-        entries: vec![
+    let stsd = SampleDescriptionBox::new(
+        0,
+        0,
+        vec![
             SampleEntryVariant::Unknown(OpaqueBox::new(*b"zzzz", vec![])),
             SampleEntryVariant::Unknown(OpaqueBox::new(*b"yyyy", vec![])),
         ],
-    };
+    );
     let stbl = SampleTableBox {
         children: vec![
             StblChild::Stsd(stsd),
@@ -426,13 +426,7 @@ fn tiny_mp4() -> Vec<u8> {
                     sample_description_index: 2,
                 }],
             }),
-            StblChild::Stsz(SampleSizeBox {
-                version: 0,
-                flags: 0,
-                sample_size: 4,
-                sample_count: 3,
-                entries: vec![],
-            }),
+            StblChild::Stsz(SampleSizeBox::new(0, 0, 4, 3, vec![])),
             StblChild::Stco(ChunkOffsetBox {
                 version: 0,
                 flags: 0,

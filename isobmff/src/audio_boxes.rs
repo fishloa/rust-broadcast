@@ -274,6 +274,9 @@ pub struct ChannelLayoutBox {
     layout_channel_count: Option<u8>,
     speaker_positions: Vec<SpeakerPosition>,
     object_count: Option<u8>,
+    /// Whole bytes after the last field the structure describes (§12.2.4.3),
+    /// carried verbatim so a rewrite is exact. Not a field of the box.
+    trailing: Vec<u8>,
 }
 
 impl ChannelLayoutBox {
@@ -292,7 +295,22 @@ impl ChannelLayoutBox {
             layout_channel_count: None,
             speaker_positions: Vec::new(),
             object_count: None,
+            trailing: Vec::new(),
         }
+    }
+
+    /// The whole bytes after the last field the structure describes, in wire
+    /// order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared structure does not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
     }
 
     /// Set the `definedLayout` (an ISO/IEC 23091-3 `ChannelConfiguration`).
@@ -420,6 +438,7 @@ impl ChannelLayoutBox {
             layout_channel_count: None,
             speaker_positions: Vec::new(),
             object_count: None,
+            trailing: Vec::new(),
         };
         if version > CHNL_VERSION_MAX {
             return Err(Error::UnsupportedVersion(UnsupportedVersion {
@@ -449,9 +468,12 @@ impl ChannelLayoutBox {
                 Some(wire_bits(&mut reader, u8::BITS, "chnl baseChannelCount")? as u8);
             Self::parse_structure(&mut layout, &mut reader, Some(version))?;
         }
-        if reader.bits_remaining() >= u8::BITS as usize {
-            return Err(invalid("chnl holds bytes its structure does not describe"));
+        if !reader.bits_remaining().is_multiple_of(u8::BITS as usize) {
+            // A tail shorter than a byte cannot be written back as parsed.
+            return Err(invalid("chnl ends inside a byte"));
         }
+        let consumed = reader.bits_read() / u8::BITS as usize;
+        layout.trailing = body[FULLBOX_EXTRA_SIZE + consumed..].to_vec();
         Ok(layout)
     }
 
@@ -538,11 +560,12 @@ impl Serialize for ChannelLayoutBox {
 
 impl ChannelLayoutBox {
     fn body_len(&self) -> usize {
-        let mut len = if self.version == CHNL_VERSION_BYTE {
-            1
-        } else {
-            core::mem::size_of::<u16>()
-        };
+        let mut len = self.trailing.len()
+            + if self.version == CHNL_VERSION_BYTE {
+                1
+            } else {
+                core::mem::size_of::<u16>()
+            };
         if self.is_channel_structured() {
             len += 1;
             if self.defined_layout == Some(0) {
@@ -605,7 +628,9 @@ impl ChannelLayoutBox {
         writer.align_to_byte();
         let bytes = writer.as_bytes();
         buf[..bytes.len()].copy_from_slice(bytes);
-        Ok(bytes.len())
+        let end = bytes.len();
+        buf[end..end + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(end + self.trailing.len())
     }
 
     fn write_structure(&self, writer: &mut BitBuf) -> Result<()> {

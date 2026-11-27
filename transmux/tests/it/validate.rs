@@ -956,27 +956,20 @@ fn flagged_segment(
     if first_sample.is_some() {
         tr_flags |= TRUN_FIRST_SAMPLE_FLAGS_PRESENT;
     }
-    let run = TrackFragmentRunBox {
-        version: 0,
-        tr_flags,
-        data_offset: Some(0),
-        first_sample_flags: first_sample,
-        samples: vec![sample, sample],
-    };
+    let run = TrackFragmentRunBox::new(0, tr_flags, Some(0), first_sample, vec![sample, sample]);
     let mut tfhd_flags = TFHD_DEFAULT_BASE_IS_MOOF;
     if tfhd_default.is_some() {
         tfhd_flags |= TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT;
     }
-    let tfhd = TrackFragmentHeaderBox {
-        flags: tfhd_flags,
-        track_id: TrackId::new(1).into(),
-        version: Default::default(),
-        base_data_offset: None,
-        sample_description_index: None,
-        default_sample_duration: None,
-        default_sample_size: None,
-        default_sample_flags: tfhd_default,
-    };
+    let tfhd = TrackFragmentHeaderBox::new(
+        tfhd_flags,
+        TrackId::new(1).into(),
+        None,
+        None,
+        None,
+        None,
+        tfhd_default,
+    );
     let traf = TrackFragmentBox::new(
         tfhd,
         Some(TrackFragmentBaseMediaDecodeTimeBox::new_v1(0)),
