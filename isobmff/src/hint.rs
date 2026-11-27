@@ -1712,6 +1712,140 @@ macro_rules! ts_section_box {
 ts_section_box! {
     PatBox, TPAT, "The PAT sections a MPEG-2 TS hint track describes (`tPAT`, §9.3.3.2).",
     PmtBox, TPMT, "One PMT's sections a MPEG-2 TS hint track describes (`tPMT`, §9.3.3.2).",
+    ObjectDescriptorBox, TOD, "The MPEG-2 OD sections a hint track describes (`tOD `, §9.3.3.2).",
+}
+
+/// Four-CC of the MPEG-2 OD box (`tOD `, §9.3.3.2).
+pub const TOD: [u8; BOX_TYPE_SIZE] = *b"tOD ";
+/// Four-CC of the RTP timestamp offset TLV (`rtpo`, §9.1.3.2).
+pub const RTPO: [u8; BOX_TYPE_SIZE] = *b"rtpo";
+/// Four-CC of the SRTP rollover counter box (`sroc`, §9.4.3.2.3).
+pub const SROC: [u8; BOX_TYPE_SIZE] = *b"sroc";
+
+/// The RTP timestamp offset TLV (`rtpo`) — §9.1.3.2.
+///
+/// The clause states the single field ("a 32-bit signed integer offset to the
+/// actual RTP timestamp") without a class block; the box carries exactly that
+/// `int(32)`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct RtpoOffsetBox {
+    offset: i32,
+}
+
+impl RtpoOffsetBox {
+    /// Build one from the signed offset.
+    #[must_use]
+    pub const fn new(offset: i32) -> Self {
+        Self { offset }
+    }
+
+    /// The signed RTP timestamp offset.
+    #[must_use]
+    pub const fn offset(self) -> i32 {
+        self.offset
+    }
+
+    /// Parse the payload after the box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(body, U32_LEN, "rtpo")?;
+        Ok(Self {
+            offset: be_u32(body, 0, "rtpo")? as i32,
+        })
+    }
+
+    /// Parse the whole box.
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        let item = parse_box(bytes)?.0;
+        if item.four_cc() != RTPO {
+            return Err(Error::UnexpectedBox { expected: "rtpo" });
+        }
+        Self::parse_body(item.body)
+    }
+}
+
+impl<'a> Parse<'a> for RtpoOffsetBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_box(bytes)
+    }
+}
+
+impl Serialize for RtpoOffsetBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        box_len(BOX_HEADER_MIN_SIZE + U32_LEN)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor = write_box_header(buf, &RTPO, need)?;
+        buf[cursor..cursor + U32_LEN].copy_from_slice(&self.offset.to_be_bytes());
+        cursor += U32_LEN;
+        Ok(cursor)
+    }
+}
+
+/// The SRTP rollover counter box (`sroc`) — §9.4.3.2.3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct RolloverCounterBox {
+    rollover_counter: u32,
+}
+
+impl RolloverCounterBox {
+    /// Build one from the ROC value.
+    #[must_use]
+    pub const fn new(rollover_counter: u32) -> Self {
+        Self { rollover_counter }
+    }
+
+    /// The non-zero ROC value.
+    #[must_use]
+    pub const fn rollover_counter(self) -> u32 {
+        self.rollover_counter
+    }
+
+    /// Parse the payload after the box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(body, U32_LEN, "sroc")?;
+        Ok(Self {
+            rollover_counter: be_u32(body, 0, "sroc")?,
+        })
+    }
+
+    /// Parse the whole box.
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        let item = parse_box(bytes)?.0;
+        if item.four_cc() != SROC {
+            return Err(Error::UnexpectedBox { expected: "sroc" });
+        }
+        Self::parse_body(item.body)
+    }
+}
+
+impl<'a> Parse<'a> for RolloverCounterBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_box(bytes)
+    }
+}
+
+impl Serialize for RolloverCounterBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        box_len(BOX_HEADER_MIN_SIZE + U32_LEN)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor = write_box_header(buf, &SROC, need)?;
+        buf[cursor..cursor + U32_LEN].copy_from_slice(&self.rollover_counter.to_be_bytes());
+        cursor += U32_LEN;
+        Ok(cursor)
+    }
 }
 
 /// The sample-time derivation method for one PID (`tsti`, §9.3.3.2).
@@ -2151,6 +2285,8 @@ pub enum Mpeg2TsEntryChild {
     Pat(PatBox),
     /// `tPMT` — one PMT's sections (§9.3.3.2).
     Pmt(PmtBox),
+    /// `tOD ` — the MPEG-2 OD sections (§9.3.3.2).
+    ObjectDescriptor(ObjectDescriptorBox),
     /// `tsti` — the sample-time derivation method (§9.3.3.2).
     TsTiming(TsTimingBox),
     /// `istm` — the initial sample time (§9.3.3.2).
@@ -2168,6 +2304,7 @@ impl Serialize for Mpeg2TsEntryChild {
         match self {
             Self::Pat(b) => b.serialized_len(),
             Self::Pmt(b) => b.serialized_len(),
+            Self::ObjectDescriptor(b) => b.serialized_len(),
             Self::TsTiming(b) => b.serialized_len(),
             Self::InitialSampleTime(b) => b.serialized_len(),
             Self::SchemeInformation(b) => b.serialized_len(),
@@ -2179,6 +2316,7 @@ impl Serialize for Mpeg2TsEntryChild {
         match self {
             Self::Pat(b) => b.serialize_into(buf),
             Self::Pmt(b) => b.serialize_into(buf),
+            Self::ObjectDescriptor(b) => b.serialize_into(buf),
             Self::TsTiming(b) => b.serialize_into(buf),
             Self::InitialSampleTime(b) => b.serialize_into(buf),
             Self::SchemeInformation(b) => b.serialize_into(buf),
@@ -2342,6 +2480,9 @@ impl Mpeg2TsHintSampleEntry {
             children.push(match child.four_cc() {
                 TPAT => Mpeg2TsEntryChild::Pat(PatBox::parse_body(child.payload())?),
                 TPMT => Mpeg2TsEntryChild::Pmt(PmtBox::parse_body(child.payload())?),
+                TOD => Mpeg2TsEntryChild::ObjectDescriptor(ObjectDescriptorBox::parse_body(
+                    child.payload(),
+                )?),
                 TSTI => Mpeg2TsEntryChild::TsTiming(TsTimingBox::parse_body(child.payload())?),
                 ISTM => Mpeg2TsEntryChild::InitialSampleTime(InitialSampleTimeBox::parse_body(
                     child.payload(),

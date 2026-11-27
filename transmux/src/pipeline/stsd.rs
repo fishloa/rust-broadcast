@@ -277,6 +277,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 ..VisualSampleEntryFields::default()
             };
             let entry = SampleEntryVariant::Av01(Box::new(Av1SampleEntry {
+                codec_type: *b"av01",
                 visual,
                 config: config.clone(),
                 children: alloc::vec![isobmff::sample_entries::SampleEntryChild::Config],

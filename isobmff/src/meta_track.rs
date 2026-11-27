@@ -71,6 +71,10 @@ pub const METX: [u8; BOX_TYPE_SIZE] = *b"metx";
 pub const METT: [u8; BOX_TYPE_SIZE] = *b"mett";
 /// Four-CC of the simple-text sample entry (`stxt`, §12.5.3).
 pub const STXT: [u8; BOX_TYPE_SIZE] = *b"stxt";
+/// `enct`: protected text entry (ISO/IEC 14496-12:2026 §13.4.2 Table 13).
+pub const ENCT: [u8; BOX_TYPE_SIZE] = *b"enct";
+/// `icpt`: incomplete text entry (§13.6.2).
+pub const ICPT: [u8; BOX_TYPE_SIZE] = *b"icpt";
 /// Four-CC of the URI metadata sample entry (`urim`, §12.3.3).
 pub const URIM: [u8; BOX_TYPE_SIZE] = *b"urim";
 /// Four-CC of the boxed metadata sample entry (`mebx`, §12.8.4.1).
@@ -1525,8 +1529,8 @@ impl TextMetaDataSampleEntry {
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
         let item = parse_box(bytes)?.0;
         let codec_type = item.four_cc();
-        if codec_type != METT && codec_type != STXT {
-            return Err(Error::InvalidInput("expected mett or stxt"));
+        if codec_type != METT && codec_type != STXT && codec_type != ENCT && codec_type != ICPT {
+            return Err(Error::InvalidInput("expected mett, stxt, enct or icpt"));
         }
         let (reserved, data_reference_index, rest) = parse_sample_entry_base(bytes, "mett")?;
         let mut cursor = 0;

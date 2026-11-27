@@ -259,6 +259,17 @@ const DIGESTS: &[(&str, u32, u64)] = &[
         132,
         0xe27361bec595ff4b,
     ),
+    ("public/quicktime/qt-h263.mov", 1, 0xf174416030b74019),
+    ("public/quicktime/qt-mjpeg.mov", 1, 0x45ffb90f01490efa),
+    ("public/quicktime/qt-pcm-s16le.mov", 800, 0x6952d21c0fc44120),
+    ("public/quicktime/qt-pcm-s24le.mov", 800, 0x6459263dccb6f6e3),
+    ("public/quicktime/qt-prores-ap4h.mov", 1, 0xaac021a1ece99b00),
+    ("public/quicktime/qt-prores-ap4x.mov", 1, 0xdd332e1c80cbba15),
+    ("public/quicktime/qt-prores-apch.mov", 1, 0xbcb91f85c66fcb50),
+    ("public/quicktime/qt-prores-apcn.mov", 1, 0xddc15c7881fa8b35),
+    ("public/quicktime/qt-prores-apco.mov", 1, 0x76688f1dbef23c68),
+    ("public/quicktime/qt-prores-apcs.mov", 1, 0x2ed1986f051f0a53),
+    ("public/quicktime/qt-svq1.mov", 1, 0x54ef33d0cfa2d461),
 ];
 
 use isobmff::Error;

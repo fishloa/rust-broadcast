@@ -80,11 +80,16 @@ fn sample_entries(data: &[u8]) -> Vec<Vec<u8>> {
 fn fixed_len(fourcc: &[u8]) -> usize {
     match fourcc {
         b"avc1" | b"avc2" | b"avc3" | b"avc4" | b"avcp" | b"hvc1" | b"hev1" | b"dvh1" | b"dvhe"
-        | b"vvc1" | b"vvi1" | b"mp4v" | b"av01" | b"vp09" => VISUAL_FIXED_LEN,
+        | b"vvc1" | b"vvi1" | b"mp4v" | b"av01" | b"vp09" | b"PNTG" | b"SVQ1" | b"SVQ3"
+        | b"WRLE" | b"ap4h" | b"ap4x" | b"apch" | b"apcn" | b"apco" | b"apcs" | b"aprh"
+        | b"aprn" | b"civd" | b"dvh5" | b"dvh6" | b"dvhp" | b"dvi " | b"flic" | b"gif "
+        | b"h261" | b"h263" | b"jpeg" | b"mjpa" | b"mjpb" | b"png " | b"rle " | b"rpza"
+        | b"tga " | b"tiff" | b"s263" => VISUAL_FIXED_LEN,
         b"mp4a" | b"enca" | b"ac-3" | b"ec-3" | b"ac-4" | b"Opus" | b"fLaC" | b"mha1" | b"mha2"
         | b"mhm1" | b"mhm2" | b"dtsc" | b"dtsh" | b"dtsl" | b"dtse" | b"lpcm" | b"in24"
         | b"in32" | b"sowt" | b"twos" | b"raw " | b"fl32" | b"fl64" | b"ima4" | b"MAC3 "
-        | b"MAC6 " | b"ulaw" | b"alaw" | b"NONE" => AUDIO_FIXED_LEN,
+        | b"MAC6 " | b"ulaw" | b"alaw" | b"NONE" | b"QDM2" | b"QDMC" | b"Qclp" | b"agsm"
+        | b"vdva" | b"samr" | b"sawb" | b"sawp" | b"sevs" => AUDIO_FIXED_LEN,
         b"tmcd" => TIMECODE_FIXED_LEN,
         b"rtp " | b"srtp" | b"rrtp" | b"rsrp" | b"rtcp" | b"stcp" | b"prtp" | b"fdp " => {
             HINT_RTP_FIXED_LEN
@@ -144,6 +149,18 @@ fn committed_visual_audio_and_subtitle_entries_are_byte_exact() {
         "mp4/opus.mp4",
         "mp4/stpp.mp4",
         "mp4/cmaf-av-subtitle/av-subtitle-frag.mp4",
+        "mp4/quicktime/qt-prores-apco.mov",
+        "mp4/quicktime/qt-prores-apcs.mov",
+        "mp4/quicktime/qt-prores-apcn.mov",
+        "mp4/quicktime/qt-prores-apch.mov",
+        "mp4/quicktime/qt-prores-ap4h.mov",
+        "mp4/quicktime/qt-prores-ap4x.mov",
+        "mp4/quicktime/qt-mjpeg.mov",
+        "mp4/quicktime/qt-svq1.mov",
+        "mp4/quicktime/qt-h263.mov",
+        "mp4/quicktime/qt-pcm-s16le.mov",
+        "mp4/quicktime/qt-pcm-s24le.mov",
+        "mp4/3gpp/h263.3gp",
     ] {
         let data = fixtures::read(fixture);
         all.extend(entries(&data, fixture));

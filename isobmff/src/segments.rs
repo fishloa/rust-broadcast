@@ -327,6 +327,67 @@ impl Serialize for SegmentTypeBox {
     }
 }
 
+/// Track Type Box (`ttyp`) — ISO/IEC 14496-12:2026 §8.3.5.
+///
+/// "The payload of TrackTypeBox has the same syntax as the payload of
+/// FileTypeBox" (§8.3.5.1), so this wraps a [`FileTypeBox`] payload under the
+/// `ttyp` four-CC.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct TrackTypeBox {
+    file_type: FileTypeBox,
+}
+
+/// Four-CC of the Track Type Box (`ttyp`).
+pub const TTYP: [u8; BOX_TYPE_SIZE] = *b"ttyp";
+
+impl TrackTypeBox {
+    /// Build one from a file-type payload.
+    #[must_use]
+    pub const fn new(file_type: FileTypeBox) -> Self {
+        Self { file_type }
+    }
+
+    /// The track's brand list, with `FileTypeBox` syntax.
+    #[must_use]
+    pub const fn file_type(&self) -> &FileTypeBox {
+        &self.file_type
+    }
+
+    /// Parse a whole `ttyp` box, box header included.
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        let brand = BrandBox::parse_body(typed_body(bytes, &TTYP)?)?;
+        Ok(Self {
+            file_type: FileTypeBox {
+                major_brand: brand.major_brand,
+                minor_version: brand.minor_version,
+                compatible_brands: brand.compatible_brands,
+            },
+        })
+    }
+
+    fn brand(&self) -> BrandBox {
+        BrandBox {
+            major_brand: self.file_type.major_brand,
+            minor_version: self.file_type.minor_version,
+            compatible_brands: self.file_type.compatible_brands.clone(),
+        }
+    }
+}
+
+impl Serialize for TrackTypeBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        BOX_HEADER_MIN_SIZE + self.brand().body_len()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        self.brand().serialize_into(&TTYP, buf)
+    }
+}
+
 /// Media Data Box (`mdat`) — ISO/IEC 14496-12:2026 §8.1.1.
 ///
 /// Opaque container for coded sample data. Uses the 32-bit compact size form

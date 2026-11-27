@@ -228,6 +228,8 @@ pub const AV01_FOURCC: [u8; 4] = *b"av01";
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Av1SampleEntry {
+    /// The entry's four-CC (`av01`, or `dav1` for the Dolby Vision AV1 entry).
+    pub codec_type: [u8; crate::box_types::BOX_TYPE_SIZE],
     /// Fixed VisualSampleEntry fields.
     pub visual: VisualSampleEntryFields,
     /// The `av1C` configuration box.
@@ -243,6 +245,16 @@ pub struct Av1SampleEntry {
 impl Av1SampleEntry {
     /// Parse from full box bytes (including the 8-byte header).
     pub fn parse_entry(bytes: &[u8]) -> Result<Self> {
+        let mut codec_type = [0u8; crate::box_types::BOX_TYPE_SIZE];
+        codec_type.copy_from_slice(
+            bytes
+                .get(crate::box_types::BOX_TYPE_OFFSET..crate::box_types::BOX_HEADER_MIN_SIZE)
+                .ok_or(Error::BufferTooShort(BufferTooShort {
+                    need: crate::box_types::BOX_HEADER_MIN_SIZE,
+                    have: bytes.len(),
+                    what: "av01 header",
+                }))?,
+        );
         let visual = VisualSampleEntryFields::parse_body(bytes, "av01")?;
         let region = VisualSampleEntryFields::children_region(bytes, "av01")?;
         let av1c = crate::sample_entries::find_config_box(region, &AV1C_FOURCC).ok_or(
@@ -255,6 +267,7 @@ impl Av1SampleEntry {
         let config = Av1ConfigurationBox::parse(crate::box_types::parse_box(av1c)?.0.body)?;
         let children = crate::sample_entries::entry_children(region, &AV1C_FOURCC)?;
         Ok(Self {
+            codec_type,
             visual,
             config,
             children,
@@ -277,7 +290,7 @@ impl Serialize for Av1SampleEntry {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, &AV01_FOURCC, need)?;
+        c += crate::box_types::write_box_header(buf, &self.codec_type, need)?;
         c += self.visual.serialize_body_into(&mut buf[c..])?;
         // The config box keeps its wire position: a real `vp09`/`av01` entry
         // often carries `pasp` *before* it (audit item 3, round 3).

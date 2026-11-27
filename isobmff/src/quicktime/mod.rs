@@ -14,13 +14,17 @@
 pub mod aperture;
 pub mod chapter;
 pub mod gmhd;
+pub mod preload;
 pub mod sound;
 pub mod timecode;
+pub mod video;
 pub mod wave;
 
 pub use aperture::{ApertureDimensions, TrackApertureModeDimensionsBox};
 pub use chapter::chapter_title;
 pub use gmhd::{GmhdAtom, GminAtom, TcmiAtom};
+pub use preload::PreloadBox;
 pub use sound::{QuickTimeSound, SoundDescriptionV1, SoundDescriptionV2, SoundEntry};
 pub use timecode::{Timecode, TimecodeEntry, timecode_from_sample};
+pub use video::QuickTimeVideoEntry;
 pub use wave::WaveAtom;

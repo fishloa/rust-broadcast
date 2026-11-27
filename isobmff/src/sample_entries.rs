@@ -29,7 +29,7 @@ use broadcast_core::{Parse, Serialize};
 /// Length of the VisualSampleEntry fixed fields (ISO/IEC 14496-12:2026 §12.1.3).
 /// 6+2(data_ref_index)+8+2(width)+2(height)+4(horiz)+4(vert)+4(reserved)+2(frame_count)+
 /// 32(compressorname)+2(depth)+2(predefined) = 78
-const VISUAL_SAMPLE_ENTRY_SIZE: usize = 78;
+pub(crate) const VISUAL_SAMPLE_ENTRY_SIZE: usize = 78;
 
 /// Fewest bytes a bare `avc1`/`hvc1` entry can have: the 8-byte box header, the
 /// fixed VisualSampleEntry fields, and the 8-byte header of its config box.
