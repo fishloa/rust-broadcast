@@ -14,12 +14,23 @@
 //! [`poll_event`](StreamingFlvDemux::poll_event), and call
 //! [`finish`](StreamingFlvDemux::finish) once, at end of input, to flush
 //! each track's trailing pending sample (then drain those with `poll_event`
-//! too). One difference from `StreamingTsDemux::feed` (which is infallible):
-//! FLV's `feed` can return `Err` for a hard structural problem — a bad
-//! signature, an implausible header `DataOffset`, or a corrupt codec-config
-//! payload — because unlike an MPEG-2 TS bitstream (which resynchronises on
-//! `0x47` and simply skips anything it can't parse), a malformed FLV tag
-//! header leaves no safe resynchronisation point to skip to.
+//! too). Like `StreamingTsDemux::feed`, the default demuxer is best-effort:
+//! a damaged header, a damaged tag and a truncated tail are reported through
+//! [`DemuxEvent::DamagedSpan`] and the walk resumes at the next consistent
+//! tag chain. [`StreamingFlvDemux::strict`] keeps the older contract, where
+//! those are errors.
+//!
+//! # Damaged input
+//!
+//! The errors that remain in the default mode are: an input whose header and
+//! every tag chain are damaged (`BadSignature`/`HeaderTooLarge`/`Header` —
+//! no FLV stream at any offset), an input with no complete tag at all
+//! (`BufferTooShort`), an input that framed but carried no AVC video and no
+//! AAC audio (`NoSupportedTrack`), and a video sequence header whose
+//! dimensions do not fit the IR's `u16` (no representable video track).
+//! Everything else is a finding: a backwards timestamp is re-anchored one
+//! nominal step forward, a too-large span is clamped, a broken tag is
+//! skipped, and the partial final tag is reported, never an error.
 //!
 //! This module adds only the incremental tag-boundary buffering and
 //! per-sample duration bookkeeping; it reuses [`crate::flv`]'s tag-header
@@ -218,47 +229,84 @@ impl TrackState {
     ///
     /// The span is a tick count, so a tag whose DTS moved backwards inside one
     /// unroll epoch (the FLV clock only unrolls the 32-bit wrap, Annex E
-    /// §E.4.1) is refused rather than reported as a zero-length span.
+    /// §E.4.1) is refused in strict mode and re-anchored in the default
+    /// best-effort mode, with the damaged tag reported.
     fn advance(
         &mut self,
         track_id: TrackId,
-        sample: Sample,
-        timing: SampleTiming,
+        mut sample: Sample,
+        mut timing: SampleTiming,
+        strict: bool,
+        offset: u64,
+        tag_len: usize,
         events: &mut VecDeque<DemuxEvent>,
     ) -> Result<(), FlvError> {
         if let Some(prev) = self.pending.take() {
-            let (Some(previous), Some(dts)) = (prev.timing.dts(), timing.dts()) else {
-                return Err(FlvError::TimestampBackwards {
-                    previous: prev.timing.dts(),
-                    next: timing.dts(),
-                });
+            let previous = prev.timing.dts();
+            let dts = timing.dts();
+            let (Some(previous), Some(dts)) = (previous, dts) else {
+                if strict {
+                    return Err(FlvError::TimestampBackwards {
+                        previous,
+                        next: dts,
+                    });
+                }
+                StreamingFlvDemux::report_tag_damage(events, offset, tag_len);
+                self.emit_pending(track_id, prev, events);
+                self.pending = Some(PendingSample { sample, timing });
+                return Ok(());
             };
-            let Some(delta) = dts.checked_sub(previous) else {
-                return Err(FlvError::TimestampBackwards {
-                    previous: Some(previous),
-                    next: Some(dts),
-                });
-            };
-            let Some(duration) = u32::try_from(delta).ok().and_then(NonZeroU32::new) else {
-                return Err(if delta <= 0 {
-                    FlvError::TimestampBackwards {
-                        previous: Some(previous),
-                        next: Some(dts),
-                    }
-                } else {
-                    FlvError::SampleDurationTooLarge { ticks: delta }
-                });
+            let delta = dts.checked_sub(previous);
+            let duration = delta
+                .and_then(|delta| u32::try_from(delta).ok())
+                .and_then(NonZeroU32::new);
+            let Some(duration) = duration else {
+                if strict {
+                    return Err(match delta {
+                        Some(delta) if delta > 0 => {
+                            FlvError::SampleDurationTooLarge { ticks: delta }
+                        }
+                        _ => FlvError::TimestampBackwards {
+                            previous: Some(previous),
+                            next: Some(dts),
+                        },
+                    });
+                }
+                StreamingFlvDemux::report_tag_damage(events, offset, tag_len);
+                self.emit_pending(track_id, prev, events);
+                if dts <= previous {
+                    // Re-anchor the tag one nominal step after the sample just
+                    // emitted, keeping its composition offset.
+                    let target = previous.saturating_add(i64::from(self.last_duration.get()));
+                    let shift = target.saturating_sub(dts);
+                    let pts = timing.pts().unwrap_or(dts).saturating_add(shift);
+                    timing = SampleTiming::timed(target, pts);
+                    sample.timing = Some(timing);
+                }
+                self.pending = Some(PendingSample { sample, timing });
+                return Ok(());
             };
             self.last_duration = duration;
-            let mut emitted = prev.sample;
-            emitted.timing = Some(prev.timing.with_duration(duration));
-            events.push_back(DemuxEvent::Sample {
-                track_id,
-                sample: emitted,
-            });
+            self.emit_pending(track_id, prev, events);
         }
         self.pending = Some(PendingSample { sample, timing });
         Ok(())
+    }
+
+    /// Emit a pending sample with `duration` as its span.
+    fn emit_pending(
+        &mut self,
+        track_id: TrackId,
+        prev: PendingSample,
+        events: &mut VecDeque<DemuxEvent>,
+    ) {
+        let duration = self.last_duration;
+        let mut emitted = prev.sample;
+        emitted.timing = Some(prev.timing.with_duration(duration));
+        events.push_back(DemuxEvent::Sample {
+            track_id,
+            sample: emitted,
+        });
     }
 
     /// Flush a trailing pending sample at end-of-stream, reusing the last
@@ -290,6 +338,10 @@ pub struct StreamingFlvDemux {
     /// in-progress tag (see the module `# Memory` note).
     pending: Vec<u8>,
     header_seen: bool,
+    /// Strict mode keeps the pre-best-effort contract: a damaged header, a
+    /// backwards timestamp or a too-large span is an error instead of a
+    /// reported finding. [`StreamingFlvDemux::new`] is best-effort.
+    strict: bool,
     video: TrackState,
     audio: TrackState,
     clock: TimestampUnroll,
@@ -329,6 +381,29 @@ pub struct StreamingFlvDemux {
     bytes_moved: usize,
 }
 
+/// One tag's type, clock and bytes, plus where it sits in the input.
+#[derive(Clone, Copy)]
+struct TagSite {
+    offset: u64,
+    tag_len: usize,
+    strict: bool,
+}
+
+/// One tag handed to `StreamingFlvDemux::process_tag`.
+#[derive(Clone, Copy)]
+struct TagView<'a> {
+    kind: u8,
+    timestamp: i64,
+    body: &'a [u8],
+    site: TagSite,
+}
+
+/// The event queue and the "a track was announced" flag a tag updates.
+struct TagOut<'a> {
+    events: &'a mut VecDeque<DemuxEvent>,
+    announced: &'a mut bool,
+}
+
 impl Default for StreamingFlvDemux {
     fn default() -> Self {
         Self::new()
@@ -341,6 +416,7 @@ impl StreamingFlvDemux {
         Self {
             pending: Vec::new(),
             header_seen: false,
+            strict: false,
             video: TrackState::default(),
             audio: TrackState::default(),
             clock: TimestampUnroll::default(),
@@ -355,6 +431,70 @@ impl StreamingFlvDemux {
             ended_inside_a_tag: false,
             #[cfg(test)]
             bytes_moved: 0,
+        }
+    }
+
+    /// A demuxer that refuses a damaged header, a backwards timestamp and a
+    /// too-large sample span instead of reporting them and carrying on. The
+    /// default ([`new`](Self::new)) is best-effort.
+    #[must_use]
+    pub fn strict() -> Self {
+        Self {
+            strict: true,
+            ..Self::new()
+        }
+    }
+
+    /// The first tag's offset, from a valid FLV header, or `Ok(None)` while
+    /// the declared header has not fully arrived.
+    fn header_skip(bytes: &[u8]) -> Result<Option<usize>, FlvError> {
+        let declared = rtmp_runtime::flv::FlvHeader::declared_data_offset(bytes).map_err(|_| {
+            FlvError::BadSignature([
+                bytes[SIGNATURE_F_OFFSET],
+                bytes[SIGNATURE_L_OFFSET],
+                bytes[SIGNATURE_V_OFFSET],
+            ])
+        })?;
+        if usize::try_from(declared).unwrap_or(usize::MAX) > MAX_FLV_HEADER_LEN {
+            return Err(FlvError::HeaderTooLarge {
+                declared,
+                max: MAX_FLV_HEADER_LEN,
+            });
+        }
+        if usize::try_from(declared)
+            .map_or(true, |declared| bytes.len() < declared + PREV_TAG_SIZE_LEN)
+        {
+            return Ok(None);
+        }
+        let header = rtmp_runtime::flv::FlvHeader::parse(bytes).map_err(|err| match err {
+            RtmpError::Malformed {
+                what: crate::flv::FLV_DATA_OFFSET,
+            } => FlvError::Header(RtmpError::Malformed {
+                what: crate::flv::FLV_DATA_OFFSET,
+            }),
+            err @ RtmpError::FieldOverflow(_) => FlvError::Header(err),
+            _ => FlvError::BadSignature([
+                bytes[SIGNATURE_F_OFFSET],
+                bytes[SIGNATURE_L_OFFSET],
+                bytes[SIGNATURE_V_OFFSET],
+            ]),
+        })?;
+        Ok(Some(header.first_tag_offset()))
+    }
+
+    /// The first offset in `bytes` where a consistent tag chain starts, when
+    /// one does; `None` means the bytes are not an FLV stream at any offset.
+    fn first_tag(bytes: &[u8], at_eof: bool) -> Option<usize> {
+        use rtmp_runtime::flv::ResyncDecision;
+        match rtmp_runtime::flv::resync_decision(bytes, at_eof) {
+            ResyncDecision::Tag => Some(0),
+            ResyncDecision::Skip(len) if len > 0 && len < bytes.len() => {
+                match rtmp_runtime::flv::resync_decision(&bytes[len..], at_eof) {
+                    ResyncDecision::Tag => Some(len),
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 
@@ -432,53 +572,31 @@ impl StreamingFlvDemux {
                 // would keep appending to `pending` forever waiting for a
                 // "header" that never completes (#738 T11a review, Important —
                 // remote OOM/DoS).
-                let declared =
-                    match rtmp_runtime::flv::FlvHeader::declared_data_offset(&self.pending) {
-                        Ok(declared) => declared,
-                        Err(_) => {
-                            return Err(FlvError::BadSignature([
-                                self.pending[SIGNATURE_F_OFFSET],
-                                self.pending[SIGNATURE_L_OFFSET],
-                                self.pending[SIGNATURE_V_OFFSET],
-                            ]));
+                match Self::header_skip(&self.pending) {
+                    Ok(Some(skip)) => {
+                        if self.pending.len() < skip {
+                            break; // a non-standard larger header hasn't fully arrived
                         }
-                    };
-                if usize::try_from(declared).unwrap_or(usize::MAX) > MAX_FLV_HEADER_LEN {
-                    return Err(FlvError::HeaderTooLarge {
-                        declared,
-                        max: MAX_FLV_HEADER_LEN,
-                    });
-                }
-                if usize::try_from(declared)
-                    .map_or(true, |d| self.pending.len() < d + PREV_TAG_SIZE_LEN)
-                {
-                    break;
-                }
-                let header = match rtmp_runtime::flv::FlvHeader::parse(&self.pending) {
-                    Ok(header) => header,
-                    Err(RtmpError::Malformed {
-                        what: crate::flv::FLV_DATA_OFFSET,
-                    }) => {
-                        return Err(FlvError::Header(RtmpError::Malformed {
-                            what: crate::flv::FLV_DATA_OFFSET,
-                        }));
+                        *cursor = skip;
+                        self.header_seen = true;
+                        continue;
                     }
-                    Err(err @ RtmpError::FieldOverflow(_)) => return Err(FlvError::Header(err)),
-                    Err(_) => {
-                        return Err(FlvError::BadSignature([
-                            self.pending[SIGNATURE_F_OFFSET],
-                            self.pending[SIGNATURE_L_OFFSET],
-                            self.pending[SIGNATURE_V_OFFSET],
-                        ]));
+                    Ok(None) => break,
+                    Err(error) => {
+                        // A damaged header: if a tag chain survives it, the
+                        // media is playable, so skip to it and report instead
+                        // of refusing the input.
+                        if !self.strict
+                            && let Some(skip) = Self::first_tag(&self.pending, at_eof)
+                        {
+                            self.report_damage(0, skip);
+                            *cursor = skip;
+                            self.header_seen = true;
+                            continue;
+                        }
+                        return Err(error);
                     }
-                };
-                let skip = header.first_tag_offset();
-                if self.pending.len() < skip {
-                    break; // a non-standard larger header hasn't fully arrived
                 }
-                *cursor = skip;
-                self.header_seen = true;
-                continue;
             }
 
             let remaining = &self.pending[*cursor..];
@@ -487,6 +605,12 @@ impl StreamingFlvDemux {
                 rtmp_runtime::flv::ResyncDecision::Tag => {}
                 rtmp_runtime::flv::ResyncDecision::Need(_) => break,
                 rtmp_runtime::flv::ResyncDecision::Skip(len) => {
+                    if at_eof && !self.tags_seen && !self.damaged && *cursor == 0 {
+                        // Nothing complete was ever parsed: the end-of-input
+                        // diagnosis reports the missing first tag, not a
+                        // silently discarded tail.
+                        break;
+                    }
                     let len = len.min(remaining.len());
                     self.report_damage(*cursor, len);
                     *cursor += len;
@@ -532,13 +656,20 @@ impl StreamingFlvDemux {
                 &mut self.video,
                 &mut self.audio,
                 &mut self.next_track_id,
-                tag_type_byte,
-                timestamp,
-                body,
-                tag_offset,
-                total,
-                &mut self.events,
-                &mut self.announced,
+                TagView {
+                    kind: tag_type_byte,
+                    timestamp,
+                    body,
+                    site: TagSite {
+                        offset: tag_offset,
+                        tag_len: total,
+                        strict: self.strict,
+                    },
+                },
+                &mut TagOut {
+                    events: &mut self.events,
+                    announced: &mut self.announced,
+                },
             )?;
         }
         Ok(())
@@ -667,11 +798,13 @@ impl StreamingFlvDemux {
                     },
                 )));
             }
+            self.report_tail(have);
             self.ended_inside_a_tag = true;
             self.pending.clear();
             return Ok(());
         }
         let Ok(header) = rtmp_runtime::flv::FlvTagHeader::parse(&self.pending) else {
+            self.report_tail(have);
             self.ended_inside_a_tag = true;
             self.pending.clear();
             return Ok(());
@@ -688,6 +821,7 @@ impl StreamingFlvDemux {
                     },
                 )));
             }
+            self.report_tail(have);
             self.ended_inside_a_tag = true;
             self.pending.clear();
             return Ok(());
@@ -729,13 +863,20 @@ impl StreamingFlvDemux {
             &mut self.video,
             &mut self.audio,
             &mut self.next_track_id,
-            tag_type_byte,
-            timestamp,
-            tag.body,
-            offset,
-            header.total_len(),
-            &mut self.events,
-            &mut self.announced,
+            TagView {
+                kind: tag_type_byte,
+                timestamp,
+                body: tag.body,
+                site: TagSite {
+                    offset,
+                    tag_len: header.total_len(),
+                    strict: self.strict,
+                },
+            },
+            &mut TagOut {
+                events: &mut self.events,
+                announced: &mut self.announced,
+            },
         )?;
         self.tags_seen = true;
         self.consumed = self
@@ -801,39 +942,25 @@ impl StreamingFlvDemux {
         ));
     }
 
+    /// Report the partial tag left at end of input as a damaged span: the
+    /// tail is dropped, but the input is truncated, not clean.
+    fn report_tail(&mut self, len: usize) {
+        self.events.push_back(DemuxEvent::damaged_span(
+            self.consumed,
+            u64::try_from(len).unwrap_or(u64::MAX),
+        ));
+    }
+
     fn process_tag(
         video: &mut TrackState,
         audio: &mut TrackState,
         next_track_id: &mut TrackId,
-        tag_type_byte: u8,
-        timestamp: i64,
-        body: &[u8],
-        offset: u64,
-        tag_len: usize,
-        events: &mut VecDeque<DemuxEvent>,
-        announced: &mut bool,
+        tag: TagView<'_>,
+        out: &mut TagOut<'_>,
     ) -> Result<(), FlvError> {
-        match tag_type_byte {
-            tag_type::VIDEO => Self::process_video_tag(
-                video,
-                next_track_id,
-                timestamp,
-                body,
-                offset,
-                tag_len,
-                events,
-                announced,
-            ),
-            tag_type::AUDIO => Self::process_audio_tag(
-                audio,
-                next_track_id,
-                timestamp,
-                body,
-                offset,
-                tag_len,
-                events,
-                announced,
-            ),
+        match tag.kind {
+            tag_type::VIDEO => Self::process_video_tag(video, next_track_id, tag, out),
+            tag_type::AUDIO => Self::process_audio_tag(audio, next_track_id, tag, out),
             tag_type::SCRIPT => Ok(()), // onMetaData — informational, skipped
             _ => Ok(()),                // unknown tag type — skipped leniently
         }
@@ -842,13 +969,10 @@ impl StreamingFlvDemux {
     fn process_video_tag(
         video: &mut TrackState,
         next_track_id: &mut TrackId,
-        timestamp: i64,
-        body: &[u8],
-        offset: u64,
-        tag_len: usize,
-        events: &mut VecDeque<DemuxEvent>,
-        announced: &mut bool,
+        tag: TagView<'_>,
+        out: &mut TagOut<'_>,
     ) -> Result<(), FlvError> {
+        let body = tag.body;
         if body.len() < AVC_PACKET_TYPE_OFFSET + 1 {
             return Ok(());
         }
@@ -867,11 +991,19 @@ impl StreamingFlvDemux {
         match avc_packet_type_byte {
             avc_packet_type::SEQUENCE_HEADER if !data.is_empty() => {
                 let Ok(mut record) = AVCDecoderConfigurationRecord::parse(data) else {
-                    Self::report_tag_damage(events, offset, tag_len);
+                    StreamingFlvDemux::report_tag_damage(
+                        out.events,
+                        tag.site.offset,
+                        tag.site.tag_len,
+                    );
                     return Ok(());
                 };
                 if record.require_sps().is_err() {
-                    Self::report_tag_damage(events, offset, tag_len);
+                    StreamingFlvDemux::report_tag_damage(
+                        out.events,
+                        tag.site.offset,
+                        tag.site.tag_len,
+                    );
                     return Ok(());
                 }
                 let length_size = usize::from(record.length_size_minus_one) + 1;
@@ -907,11 +1039,12 @@ impl StreamingFlvDemux {
                         if video.config_bytes != data {
                             video.config_bytes.clear();
                             video.config_bytes.extend_from_slice(data);
-                            events.push_back(DemuxEvent::TrackUpdated(TrackSpec::new(
-                                track_id,
-                                FLV_TIMESCALE,
-                                codec,
-                            )));
+                            out.events
+                                .push_back(DemuxEvent::TrackUpdated(TrackSpec::new(
+                                    track_id,
+                                    FLV_TIMESCALE,
+                                    codec,
+                                )));
                         }
                     }
                     None => {
@@ -920,8 +1053,8 @@ impl StreamingFlvDemux {
                         video.track_id = Some(track_id);
                         video.config_bytes.clear();
                         video.config_bytes.extend_from_slice(data);
-                        *announced = true;
-                        events.push_back(DemuxEvent::TrackAdded(TrackSpec::new(
+                        *out.announced = true;
+                        out.events.push_back(DemuxEvent::TrackAdded(TrackSpec::new(
                             track_id,
                             FLV_TIMESCALE,
                             codec,
@@ -934,10 +1067,10 @@ impl StreamingFlvDemux {
             // assumption` note.
             avc_packet_type::NALU => {
                 // Absolute dts/pts (media plane step 2c): the FLV tag
-                // timestamp is already an absolute wire clock
+                // tag.timestamp is already an absolute wire clock
                 // (milliseconds, `FLV_TIMESCALE`); `CompositionTime`
                 // (§E.4.3.2) folds directly into `pts`.
-                let dts_abs = timestamp;
+                let dts_abs = tag.timestamp;
                 let pts_abs = dts_abs + composition_time as i64;
                 // The NALU payload's NAL prefixes use the sequence header's
                 // `lengthSizeMinusOne` (§E.4.3.1); rewrite them to the crate's
@@ -947,7 +1080,11 @@ impl StreamingFlvDemux {
                     data,
                     video.nal_length_size.unwrap_or(NAL_LENGTH_SIZE),
                 ) else {
-                    Self::report_tag_damage(events, offset, tag_len);
+                    StreamingFlvDemux::report_tag_damage(
+                        out.events,
+                        tag.site.offset,
+                        tag.site.tag_len,
+                    );
                     return Ok(());
                 };
                 let sample = Sample {
@@ -964,7 +1101,10 @@ impl StreamingFlvDemux {
                         track_id,
                         sample,
                         SampleTiming::timed(dts_abs, pts_abs),
-                        events,
+                        tag.site.strict,
+                        tag.site.offset,
+                        tag.site.tag_len,
+                        out.events,
                     )?;
                 }
             }
@@ -977,13 +1117,10 @@ impl StreamingFlvDemux {
     fn process_audio_tag(
         audio: &mut TrackState,
         next_track_id: &mut TrackId,
-        timestamp: i64,
-        body: &[u8],
-        offset: u64,
-        tag_len: usize,
-        events: &mut VecDeque<DemuxEvent>,
-        announced: &mut bool,
+        tag: TagView<'_>,
+        out: &mut TagOut<'_>,
     ) -> Result<(), FlvError> {
+        let body = tag.body;
         if body.is_empty() {
             return Ok(());
         }
@@ -1000,7 +1137,11 @@ impl StreamingFlvDemux {
         match aac_pkt_type {
             aac_packet_type::SEQUENCE_HEADER if !data.is_empty() => {
                 let Ok(asc) = AudioSpecificConfig::parse(data) else {
-                    Self::report_tag_damage(events, offset, tag_len);
+                    StreamingFlvDemux::report_tag_damage(
+                        out.events,
+                        tag.site.offset,
+                        tag.site.tag_len,
+                    );
                     return Ok(());
                 };
                 // ISO/IEC 14496-3 Table 1.19: the field is a configuration
@@ -1026,11 +1167,12 @@ impl StreamingFlvDemux {
                         if audio.config_bytes != data {
                             audio.config_bytes.clear();
                             audio.config_bytes.extend_from_slice(data);
-                            events.push_back(DemuxEvent::TrackUpdated(TrackSpec::new(
-                                track_id,
-                                FLV_TIMESCALE,
-                                codec,
-                            )));
+                            out.events
+                                .push_back(DemuxEvent::TrackUpdated(TrackSpec::new(
+                                    track_id,
+                                    FLV_TIMESCALE,
+                                    codec,
+                                )));
                         }
                     }
                     None => {
@@ -1039,8 +1181,8 @@ impl StreamingFlvDemux {
                         audio.track_id = Some(track_id);
                         audio.config_bytes.clear();
                         audio.config_bytes.extend_from_slice(data);
-                        *announced = true;
-                        events.push_back(DemuxEvent::TrackAdded(TrackSpec::new(
+                        *out.announced = true;
+                        out.events.push_back(DemuxEvent::TrackAdded(TrackSpec::new(
                             track_id,
                             FLV_TIMESCALE,
                             codec,
@@ -1051,7 +1193,7 @@ impl StreamingFlvDemux {
             // Dropped (not buffered) if the sequence header hasn't resolved
             // the track yet — see the module `# Ordering assumption` note.
             aac_packet_type::RAW => {
-                let dts_abs = timestamp;
+                let dts_abs = tag.timestamp;
                 let sample = Sample {
                     data: data.to_vec().into(),
                     timing: Some(crate::ir::SampleTiming::timed(dts_abs, dts_abs)),
@@ -1066,7 +1208,10 @@ impl StreamingFlvDemux {
                         track_id,
                         sample,
                         SampleTiming::timed(dts_abs, dts_abs),
-                        events,
+                        tag.site.strict,
+                        tag.site.offset,
+                        tag.site.tag_len,
+                        out.events,
                     )?;
                 }
             }
@@ -1814,7 +1959,7 @@ mod tests {
         }
 
         write_tag(&mut out, 0x12, 2, &[0, 0, 0, 0]);
-        let mut demux = StreamingFlvDemux::new();
+        let mut demux = StreamingFlvDemux::strict();
         assert_eq!(
             demux.feed(&out),
             Err(FlvError::TimestampBackwards {
@@ -1848,6 +1993,9 @@ mod tests {
                 TrackId::new(1),
                 sample,
                 SampleTiming::timed(7, 9),
+                false,
+                0,
+                0,
                 &mut events,
             )
             .expect("a first sample has no predecessor to subtract");

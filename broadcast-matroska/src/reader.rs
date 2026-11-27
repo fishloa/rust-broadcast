@@ -873,7 +873,6 @@ impl Reader {
         self.cluster_end = None;
         self.group = None;
         self.current_cluster = None;
-        self.cluster_timestamp = 0;
     }
 
     fn finish_group(&mut self) -> Result<()> {
@@ -919,6 +918,14 @@ impl Reader {
             return Err(error);
         }
         self.warned(Warning::Truncated { offset });
+        if let Some(side) = self.side.take() {
+            // A side read (the Cues the SeekHead points at) ran past the
+            // input: the index is optional, so resume the main walk instead
+            // of ending it.
+            self.pos = side.return_pos;
+            self.phase = Phase::Header { at: Where::Segment };
+            return Ok(());
+        }
         self.done = true;
         self.phase = Phase::Done;
         let _ = at;
@@ -970,6 +977,17 @@ impl Reader {
     }
 
     fn end_of_input(&mut self, at: Where, offset: u64) -> Result<()> {
+        if self.side.is_some() {
+            return self.truncated(
+                at,
+                offset,
+                Error::Truncated {
+                    what: "side read",
+                    need: 0,
+                    have: 0,
+                },
+            );
+        }
         match at {
             Where::Group { end } if self.pos < end => self.truncated(
                 at,
@@ -1003,6 +1021,19 @@ impl Reader {
         if let Some(len) = payload_len
             && len > self.limits.max_element_bytes()
         {
+            if self.tolerated() {
+                // A size larger than the element cap cannot be buffered; it is
+                // a broken size field, so skip the element and resynchronise
+                // rather than refusing the whole input.
+                self.warned(Warning::MalformedElement { offset });
+                self.pos = offset.saturating_add(1);
+                self.resync_carry_len = 0;
+                self.phase = Phase::Resync {
+                    remaining: self.limits.max_resync_bytes(),
+                    at,
+                };
+                return Ok(());
+            }
             return Err(Error::LimitExceeded {
                 limit: "max_element_bytes",
                 value: len,
@@ -1109,7 +1140,11 @@ impl Reader {
             }
             ids::CHAPTERS | ids::TAGS | ids::ATTACHMENTS => {
                 let Some(len) = payload_len else {
-                    return Err(Error::UnknownSizeNotAllowed { id });
+                    return self.malformed(
+                        Where::Segment,
+                        offset,
+                        Error::UnknownSizeNotAllowed { id },
+                    );
                 };
                 let end = self.pos.checked_add(len).ok_or(Error::SizeOverflow)?;
                 self.elements.push_back((
@@ -1129,6 +1164,17 @@ impl Reader {
             ids::CLUSTER => self.enter_cluster(header, offset, payload_len),
             _ if id == crate::ebml::global::VOID_ID || id == crate::ebml::global::CRC32_ID => {
                 self.skip(payload_len, offset, Where::Segment)
+            }
+            _ if is_cluster_child(id) => {
+                // A Block or Timestamp directly under the Segment: a Cluster
+                // declared a size that ended before them (a zero or short
+                // size field). Keep them in the Cluster in force instead of
+                // skipping the rest of its media.
+                self.warned(Warning::MalformedElement { offset });
+                self.cluster_end = None;
+                self.phase = Phase::Header { at: Where::Cluster };
+                self.held = Some((header, offset));
+                Ok(())
             }
             _ => self.malformed(
                 Where::Segment,
@@ -1188,7 +1234,11 @@ impl Reader {
             ids::SIMPLE_BLOCK => self.start_block(BlockOwner::Cluster, header, offset, payload_len),
             ids::BLOCK_GROUP => {
                 let Some(len) = payload_len else {
-                    return Err(Error::UnknownSizeNotAllowed { id });
+                    return self.malformed(
+                        Where::Cluster,
+                        offset,
+                        Error::UnknownSizeNotAllowed { id },
+                    );
                 };
                 let end = self.pos.checked_add(len).ok_or(Error::SizeOverflow)?;
                 self.group = Some(GroupContext {
@@ -1298,13 +1348,17 @@ impl Reader {
     ) -> Result<()> {
         let id = header.id().value();
         let Some(len) = payload_len else {
-            return Err(Error::UnknownSizeNotAllowed { id });
+            return self.malformed(Where::Segment, offset, Error::UnknownSizeNotAllowed { id });
         };
         if len > self.limits.max_master_bytes() {
-            return Err(Error::LimitExceeded {
-                limit: "max_master_bytes",
-                value: len,
-            });
+            return self.malformed(
+                Where::Segment,
+                offset,
+                Error::LimitExceeded {
+                    limit: "max_master_bytes",
+                    value: len,
+                },
+            );
         }
         let body = ByteRange {
             offset: self.pos,
@@ -1328,7 +1382,11 @@ impl Reader {
     ) -> Result<()> {
         let id = header.id().value();
         let Some(len) = payload_len else {
-            return Err(Error::UnknownSizeNotAllowed { id });
+            let at = match kind {
+                UnsignedKind::ClusterTimestamp => Where::Cluster,
+                UnsignedKind::BlockDuration => self.group_where(),
+            };
+            return self.malformed(at, offset, Error::UnknownSizeNotAllowed { id });
         };
         let body = ByteRange {
             offset: self.pos,
@@ -1352,7 +1410,11 @@ impl Reader {
     ) -> Result<()> {
         let id = header.id().value();
         let Some(len) = payload_len else {
-            return Err(Error::UnknownSizeNotAllowed { id });
+            let at = match owner {
+                BlockOwner::Cluster => Where::Cluster,
+                BlockOwner::Group => self.group_where(),
+            };
+            return self.malformed(at, offset, Error::UnknownSizeNotAllowed { id });
         };
         let payload = ByteRange {
             offset: self.pos,
@@ -1432,7 +1494,13 @@ impl Reader {
         };
         match kind {
             MasterKind::Ebml => {
-                EbmlHeader::parse(&full)?;
+                match EbmlHeader::parse(&full) {
+                    Ok(_) => {}
+                    Err(_error) if self.tolerated() => {
+                        self.warned(Warning::MalformedElement { offset });
+                    }
+                    Err(error) => return Err(error),
+                }
                 self.seen_ebml = true;
                 self.phase = Phase::Header { at: Where::Top };
                 Ok(())
@@ -1470,7 +1538,7 @@ impl Reader {
                     pos = pos.saturating_add(used);
                 }
                 Ok((_other, used)) => pos = pos.saturating_add(used),
-                Err(error) => {
+                Err(_error) => {
                     let entry_offset = offset.saturating_add(
                         u64::try_from(header_len.saturating_add(pos)).unwrap_or(u64::MAX),
                     );
@@ -1478,12 +1546,11 @@ impl Reader {
                         id: ids::TRACK_ENTRY,
                         offset: entry_offset,
                     });
-                    let (entry_header, used) = match ElementHeader::parse(&payload[pos..]) {
-                        Ok(parsed) => parsed,
-                        Err(_) => return Err(error),
+                    let Ok((entry_header, used)) = ElementHeader::parse(&payload[pos..]) else {
+                        break;
                     };
                     let Some(len) = entry_header.payload_len() else {
-                        return Err(error);
+                        break;
                     };
                     let skip = used.saturating_add(usize::try_from(len).unwrap_or(usize::MAX));
                     if skip == 0 || pos.saturating_add(skip) > payload.len() {
@@ -1508,7 +1575,10 @@ impl Reader {
             MasterKind::Cues => ids::CUES,
         };
         self.warned(Warning::UnparsedElement { id, offset });
-        self.side = None;
+        if let Some(side) = self.side.take() {
+            self.pos = side.return_pos;
+            self.phase = Phase::Header { at: Where::Segment };
+        }
         Ok(())
     }
 
@@ -1707,7 +1777,21 @@ impl Reader {
                 },
             );
         }
-        let value = crate::ebml::scalar::Unsigned::parse(bytes)?.value();
+        let value = match crate::ebml::scalar::Unsigned::parse(bytes) {
+            Ok(value) => value.value(),
+            Err(_error) if self.tolerated() => {
+                self.warned(Warning::MalformedElement { offset });
+                self.pos = body.end();
+                self.phase = Phase::Header {
+                    at: match kind {
+                        UnsignedKind::ClusterTimestamp => Where::Cluster,
+                        UnsignedKind::BlockDuration => self.group_where(),
+                    },
+                };
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        };
         match kind {
             UnsignedKind::ClusterTimestamp => {
                 let timestamp = i64::try_from(value).map_err(|_| {
@@ -1774,13 +1858,23 @@ impl Reader {
                         self.phase = Phase::Header { at: Where::Cluster };
                     }
                     BlockOwner::Group => {
+                        let mut duplicate = false;
                         if let Some(group) = self.group.as_mut() {
                             if group.block.is_some() {
+                                duplicate = true;
+                            } else {
+                                group.block = Some(pending);
+                            }
+                        }
+                        if duplicate {
+                            if !self.tolerated() {
                                 return Err(Error::InvalidBlock {
                                     what: "BlockGroup carries two Blocks",
                                 });
                             }
-                            group.block = Some(pending);
+                            self.warned(Warning::MalformedBlock {
+                                offset: element.offset,
+                            });
                         }
                         self.pos = payload.end();
                         self.phase = Phase::Header {
@@ -1912,7 +2006,8 @@ impl Reader {
         let mut window = Vec::with_capacity(carry_len + bytes.len());
         window.extend_from_slice(&self.resync_carry[..carry_len]);
         window.extend_from_slice(bytes);
-        if let Some(index) = find_resync(&window, at) {
+        let found = find_resync(&window, at, false).or_else(|| find_resync(&window, at, true));
+        if let Some(index) = found {
             let target = base.saturating_add(u64::try_from(index).unwrap_or(0));
             self.pos = target;
             self.resync_carry_len = 0;
@@ -1968,18 +2063,17 @@ fn is_level_one(id: u32) -> bool {
 /// damaged Cluster child does not lose the rest of its Cluster. Every candidate
 /// must also parse as a complete element header, so a byte pattern inside a
 /// Block payload is not mistaken for a boundary.
-fn find_resync(window: &[u8], at: Where) -> Option<usize> {
+fn find_resync(window: &[u8], at: Where, children: bool) -> Option<usize> {
     for index in 0..window.len() {
         let rest = window.get(index..)?;
         let Some((header, _)) = ElementHeader::parse(rest).ok() else {
             continue;
         };
         let id = header.id().value();
-        let boundary = if matches!(at, Where::Cluster | Where::Group { .. }) {
-            is_level_one(id) || is_cluster_child(id)
-        } else {
-            is_level_one(id)
-        };
+        let boundary = is_level_one(id)
+            || (children
+                && matches!(at, Where::Cluster | Where::Group { .. })
+                && is_cluster_child(id));
         if boundary {
             return Some(index);
         }

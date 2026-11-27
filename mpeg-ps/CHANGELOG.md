@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Breaking
 
 - The wire-format contract types now come from `broadcast-core`.
+
+### Fixed
+- A `PES_packet_length` that runs past the buffered bytes and past a
+  `pack_start_code` in them is now treated as a truncated unit and
+  resynchronised from its own first byte, instead of waiting for bytes that
+  never arrive and swallowing the rest of the pack (and the tail after it).
 ### Added
 - `mpeg_ps::scan::PsScanner` (re-exported as `mpeg_ps::{PsScanner, PsEvent, PsLimits}`):
   a sans-IO pack/PES scanner that is fed the stream in pieces and yields one

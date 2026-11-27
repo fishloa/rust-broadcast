@@ -14,6 +14,25 @@
 //! becomes [`DemuxEvent::InputDegraded`], never a silent skip. A fault it
 //! cannot tolerate is the stage's error, after which the stage is poisoned.
 //!
+//! # Damaged input
+//!
+//! Best-effort by default. A malformed element header, an unparsable master,
+//! a corrupt `TrackEntry`, a Block that does not parse, a Block outside any Cluster (a
+//! zero or short Cluster size), an oversized element size and an `Info` or
+//! `Cues` that does not type are all reported as
+//! [`DemuxEvent::InputDegraded`] and the walk resumes at the next Cluster (or
+//! Cluster child when the damaged Cluster is the last one). A truncated final
+//! Cluster or frame is reported and ends the walk cleanly. A single track
+//! whose known codec's `CodecPrivate` cannot be reconstructed is
+//! [`DemuxEvent::TrackAbandoned`] when another track survives, and the error
+//! when it is the only track (playback is impossible); a Block whose NAL
+//! length prefixes do not fit is one dropped sample with a finding.
+//!
+//! The errors that remain are the caller's configured `Limits` being
+//! exceeded inside a master this walk cannot skip (too many tracks or cues),
+//! and the stage's own protocol contract (a supply that does not match the
+//! outstanding demand, or a feed after `finish`).
+//!
 //! Sample timing and conditioning are exactly the whole-input demuxer's this
 //! replaces: Matroska times a Block (RFC 9559 §12), so a laced Block's frames
 //! are consecutive from the Block's own time at the track's frame cadence
@@ -56,8 +75,8 @@ use bytes::{Bytes, BytesMut};
 use crate::TrackId;
 use crate::error::{Error, Result};
 use crate::ir::{
-    CodecConfig, DataIdentity, DemuxEvent, EventProvenance, GaplessTrim, InputDegradation, Sample,
-    SampleFlags, SampleTiming, TrackSpec,
+    AbandonReason, CodecConfig, DataIdentity, DemuxEvent, EventProvenance, GaplessTrim,
+    InputDegradation, Sample, SampleFlags, SampleTiming, TrackSpec,
 };
 use crate::rtp_sdp::aac_config_from_asc_bytes;
 use broadcast_bitstream::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
@@ -263,15 +282,17 @@ struct HeldBlock {
     pts: i64,
     keyframe: bool,
     first_frame: u64,
+    offset: u64,
     frames: Vec<Bytes>,
 }
 
 impl HeldBlock {
-    fn new(pts: i64, keyframe: bool, first_frame: u64) -> Self {
+    fn new(pts: i64, keyframe: bool, first_frame: u64, offset: u64) -> Self {
         Self {
             pts,
             keyframe,
             first_frame,
+            offset,
             frames: Vec::new(),
         }
     }
@@ -318,8 +339,12 @@ impl TrackState {
     ) -> Result<()> {
         if block.lace_index == 0 {
             let pts = block_pts(block)?;
-            self.blocks
-                .push_back(HeldBlock::new(pts, block.keyframe, self.total_frames));
+            self.blocks.push_back(HeldBlock::new(
+                pts,
+                block.keyframe,
+                self.total_frames,
+                block.frame.offset,
+            ));
         }
         let Some(held) = self.blocks.back_mut() else {
             return Err(Error::InvalidInput(
@@ -398,11 +423,21 @@ impl TrackState {
             } else {
                 i64::try_from(nominal).unwrap_or(i64::MAX)
             };
-            let duration = u32::try_from(delta.max(0)).map_err(|_| {
-                Error::InvalidInput("matroska: sample duration does not fit the IR")
-            })?;
+            let duration = u32::try_from(delta.max(0)).unwrap_or(u32::MAX);
             let data = match self.nal_length_size {
-                Some(size) => Bytes::from(normalise_nal_length_size(&data, size)?),
+                Some(size) => match normalise_nal_length_size(&data, size) {
+                    Ok(normalised) => Bytes::from(normalised),
+                    Err(_) => {
+                        out.push_back(DemuxEvent::input_degraded(
+                            Some(id),
+                            InputDegradation::MalformedUnit {
+                                position: block.offset,
+                            },
+                            EventProvenance::default(),
+                        ));
+                        continue;
+                    }
+                },
                 None => data,
             };
             self.last_pts = Some(pts);
@@ -600,9 +635,16 @@ impl MatroskaDemux {
         for index in 0..self.tracks.len() {
             if !self.tracks[index].requires_frame_config {
                 let (config, nal_length_size) =
-                    match codec_config_for(&self.tracks[index].info, &[])? {
-                        Some(mapped) => mapped,
-                        None => (data_config(&self.tracks[index].info), None),
+                    match codec_config_for(&self.tracks[index].info, &[]) {
+                        Ok(Some(mapped)) => mapped,
+                        Ok(None) => (data_config(&self.tracks[index].info), None),
+                        Err(error) => {
+                            if self.tracks.len() == 1 {
+                                return Err(error);
+                            }
+                            self.abandon(index, AbandonReason::UnsupportedCodec);
+                            continue;
+                        }
                     };
                 self.announce(index, config, nal_length_size)?;
             }
@@ -623,6 +665,17 @@ impl MatroskaDemux {
         track.config = Some((config, nal_length_size));
         track.announced = true;
         Ok(())
+    }
+
+    /// Drop one track whose codec configuration cannot be reconstructed and
+    /// report why; every other track keeps playing.
+    fn abandon(&mut self, index: usize, reason: AbandonReason) {
+        self.tracks[index].abandoned = true;
+        self.events.push_back(DemuxEvent::TrackAbandoned {
+            track_id: None,
+            reason,
+            provenance: EventProvenance::default(),
+        });
     }
 
     /// Emit the queued [`DemuxEvent::TrackAdded`] events in track order, so a
@@ -679,10 +732,19 @@ impl MatroskaDemux {
             && self.tracks[index].requires_frame_config
             && block.keyframe
         {
-            let (config, nal_length_size) = match codec_config_for(&self.tracks[index].info, &data)?
+            let (config, nal_length_size) = match codec_config_for(&self.tracks[index].info, &data)
             {
-                Some(mapped) => mapped,
-                None => (data_config(&self.tracks[index].info), None),
+                Ok(Some(mapped)) => mapped,
+                Ok(None) => (data_config(&self.tracks[index].info), None),
+                Err(error) => {
+                    if self.tracks.len() == 1 {
+                        return Err(error);
+                    }
+                    self.abandon(index, AbandonReason::UnsupportedCodec);
+                    self.flush_announcements();
+                    self.maybe_resolve();
+                    return Ok(());
+                }
             };
             self.announce(index, config, nal_length_size)?;
             self.flush_announcements();
@@ -766,11 +828,7 @@ impl MatroskaDemux {
                 } else {
                     &bytes[..]
                 };
-                let short = u64::try_from(slice.len()).unwrap_or(u64::MAX) < range.len;
                 self.reader.supply(range.offset, slice)?;
-                if short {
-                    self.eof = true;
-                }
                 Ok(true)
             }
             SourceMode::Sequential => {
@@ -963,7 +1021,7 @@ impl Stage for MatroskaDemux {
     }
 
     fn demand(&self) -> Demand {
-        if self.poisoned.is_some() || self.finished || self.done {
+        if self.poisoned.is_some() || self.finished || self.done || self.eof {
             return Demand::saturated();
         }
         match self.source {
@@ -1315,6 +1373,7 @@ mod tests {
             pts,
             keyframe: true,
             first_frame,
+            offset: 0,
             frames: (0..frames).map(|_| Bytes::new()).collect(),
         };
         let blocks = VecDeque::from([block(0, 0, 1), block(10, 0, 0), block(30, 1, 2)]);

@@ -9,6 +9,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Breaking
 
 - The wire-format contract types now come from `broadcast-core`.
+
+### Fixed
+- `flv::resync_decision` at end of input no longer answers `Need` forever for
+  a plausible tag header whose declared body cannot arrive: it scans for a
+  complete tag chain and, when none exists, consumes the damaged tail
+  (`Skip`), so a streaming caller can report it and finish.
 ### Added
 - `flv::resync_decision(input, at_eof) -> ResyncDecision` is the incremental form of the tolerant tag-chain rule `flv::tags_resync` walks with: given the bytes at the front of a streaming buffer it answers `Tag` (parse it normally), `Need(n)` (wait for `n` bytes in total) or `Skip(n)` (the front is damaged; skip one span to the next consistent chain). A caller keeps its own buffer and acts on the decision, so an incremental demuxer resynchronises while holding at most one candidate tag's declared size plus the bytes needed to validate the next tag header. `transmux`'s `StreamingFlvDemux` uses it; `tags_resync` remains for the whole-buffer walk that its golden pins.
 

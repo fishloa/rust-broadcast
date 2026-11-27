@@ -25,6 +25,19 @@
 //! `dac3`/`dec3`, DTS core-frame header → `ddts`) → length-prefixed video /
 //! raw audio samples.
 //!
+//! # Damaged input
+//!
+//! Best-effort by default: a damaged input plays as far as it can. A lost
+//! sync byte, an unparsable packet header, a bad continuity counter, a
+//! scrambled payload, a PES that ends short of its declared length and a
+//! rejected parameter set are all reported as [`DemuxEvent::InputDegraded`]
+//! and the demuxer carries on at the next lock. The one error is a sample
+//! whose timing cannot be represented in the IR (a negative time); it is
+//! unreachable from MPEG-2 TS today because a PES with a PTS and no DTS
+//! defaults DTS to PTS. A caller-set resource limit is not an error either:
+//! the PES-unit byte cap is a [`DemuxEvent::Discontinuity`] and the probe
+//! backlog cap a [`DemuxEvent::TrackAbandoned`].
+//!
 //! Config recovery happens incrementally, access unit by access unit: a
 //! track's `DemuxEvent::TrackAdded` fires as soon as its config is known —
 //! with an opaque [`CodecConfig::Data`] track (issue #557) firing on its very
@@ -5143,6 +5156,17 @@ impl StreamingTsDemux {
         self.packet_index += 1;
         (|| {
             let Ok(pkt) = TsPacket::parse(raw) else {
+                // A packet whose sync byte locked but whose header or
+                // adaptation field does not parse: dropped, reported, and the
+                // next packet is read normally.
+                self.events.push_back(DemuxEvent::input_degraded(
+                    None,
+                    InputDegradation::MalformedUnit {
+                        position: idx
+                            .saturating_mul(u64::try_from(TS_PACKET_SIZE).unwrap_or(u64::MAX)),
+                    },
+                    EventProvenance::default(),
+                ));
                 return Ok(());
             };
 

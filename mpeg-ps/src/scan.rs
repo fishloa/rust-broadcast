@@ -463,6 +463,13 @@ fn pes_step<'a>(avail: &'a [u8], limits: &PsLimits, finished: bool) -> Result<Pe
             });
         }
         if avail.len() < total {
+            // A declared length that runs past the bytes present *and* past a
+            // pack boundary in them is a broken length field: the rest of the
+            // pack would be swallowed. Resynchronise from this unit's own
+            // first byte instead of waiting for bytes that will never come.
+            if find_pack_start(&avail[PREFIX_LEN..]).is_some() {
+                return Ok(PesStep::Truncated);
+            }
             return Ok(PesStep::Wait);
         }
         // A complete PES packet is always followed by another start code

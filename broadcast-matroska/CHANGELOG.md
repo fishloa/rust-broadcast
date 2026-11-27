@@ -11,6 +11,17 @@ All notable changes to this crate are documented here. The format follows
 - The wire-format contract types now come from `broadcast-core`.
 
 ### Changed
+- In `Mode::Permissive` a damaged file keeps playing: an oversized element
+  size and an unknown-size element where the format does not allow it are
+  reported and skipped instead of failing the file; a Block or Timestamp
+  directly under the Segment (a Cluster whose size field was zero or short)
+  continues the Cluster in force; a corrupt `TrackEntry` whose own header
+  will not parse ends the `Tracks` parse but keeps the entries before it; a
+  failed Cues side read (including one past the end of a truncated input)
+  resumes the main walk; and a bad `Cluster/Timestamp` payload is reported and
+  skipped. `finish` on a truncated side read no longer loses the tracks.
+
+### Changed
 
 - In `Mode::Permissive` the reader types each `TrackEntry` on its own: a
   corrupt entry is reported and skipped while the other tracks are still

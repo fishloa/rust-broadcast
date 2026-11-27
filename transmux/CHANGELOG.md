@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Breaking
 
+- Every non-ISOBMFF demuxer is best-effort by default: a damaged input plays
+  as far as it can. `StreamingFlvDemux` no longer returns `BadSignature` /
+  `HeaderTooLarge` / `Header` when a tag chain survives a damaged header, and a
+  backwards timestamp or too-large span is re-anchored with a
+  `DemuxEvent::DamagedSpan` finding. A truncated FLV tail is reported, not
+  silently dropped. `StreamingPsDemux` re-anchors every elementary-stream
+  splitter after a scanner resync (so the timeline stays monotonic) and
+  `MatroskaDemux` reports (instead of failing) a corrupt `TrackEntry`, a
+  Block outside a Cluster, an oversized element, a bad `Cluster/Timestamp`
+  and a Block whose NAL lengths do not fit. A `MatroskaDemux` track whose
+  known codec config is corrupt is `TrackAbandoned` when another track
+  survives. See `docs/demux-damage-matrix.md`.
+### Added
+- `StreamingFlvDemux::strict()`, which keeps the pre-best-effort contract
+  (a damaged header, backwards timestamp or too-large span is an error).
+
 - The MPEG-2 video sequence layer moved to `broadcast-bitstream`:
   `transmux::{mpeg_legacy, h262}` are deleted with `Mpeg2SeqHeader`,
   `SEQUENCE_HEADER_CODE`, `SequenceHeaderGeometry` and

@@ -290,3 +290,131 @@ mkv	mid	field-max	at=40048	err=None	del=206	before=206	after=0	lost=0	dropped_tr
 mkv	mid	field-past	at=40048	err=None	del=133	before=133	after=0	lost=73	dropped_tracks=0	extra=0	mono=false	findings=1
 ```
 
+
+## After
+
+`damage_matrix_cells_follow_the_best_effort_rule` asserts the rule for every cell:
+no error unless playback is impossible, every delivered sample byte-identical
+to the clean run apart from the damaged unit, the tail after a mid-stream
+damage preserved, timestamps monotonic wherever the clean input's are, and a
+finding for a delete/insert that lost samples. All 232 cells pass.
+
+Per damage class (a cell is `ok` when it neither errored nor lost more than two
+samples around the damage):
+
+| format | damage | cells | errored | lost unit | ok |
+|---|---|---:|---:|---:|---:|
+| flv | delete | 11 | 0 | 0 | 11 |
+| flv | field-max | 1 | 0 | 0 | 1 |
+| flv | field-past | 1 | 0 | 0 | 1 |
+| flv | field-zero | 1 | 0 | 0 | 1 |
+| flv | insert | 11 | 0 | 0 | 11 |
+| flv | random | 11 | 0 | 0 | 11 |
+| flv | truncate | 11 | 1 | 0 | 10 |
+| flv | zero | 11 | 0 | 0 | 11 |
+| mkv | delete | 11 | 0 | 10 | 11 |
+| mkv | field-max | 1 | 0 | 0 | 1 |
+| mkv | field-past | 1 | 0 | 0 | 1 |
+| mkv | field-zero | 1 | 0 | 0 | 1 |
+| mkv | insert | 11 | 0 | 10 | 11 |
+| mkv | random | 11 | 0 | 1 | 11 |
+| mkv | truncate | 11 | 0 | 0 | 11 |
+| mkv | zero | 11 | 0 | 0 | 11 |
+| ps | delete | 11 | 0 | 9 | 11 |
+| ps | field-max | 1 | 0 | 1 | 1 |
+| ps | field-past | 1 | 0 | 1 | 1 |
+| ps | field-zero | 1 | 0 | 0 | 1 |
+| ps | insert | 11 | 0 | 9 | 11 |
+| ps | random | 11 | 0 | 4 | 11 |
+| ps | truncate | 11 | 0 | 0 | 11 |
+| ps | zero | 11 | 0 | 4 | 11 |
+| ts | delete | 11 | 0 | 4 | 11 |
+| ts | field-max | 1 | 0 | 0 | 1 |
+| ts | field-past | 1 | 0 | 0 | 1 |
+| ts | field-zero | 1 | 0 | 0 | 1 |
+| ts | insert | 11 | 0 | 1 | 11 |
+| ts | random | 11 | 0 | 0 | 11 |
+| ts | truncate | 11 | 0 | 0 | 11 |
+| ts | zero | 11 | 0 | 0 | 11 |
+
+### Cells that still error
+
+| cell | reason |
+|---|---|
+| `flv start truncate` (0 bytes) | the input is empty: no FLV header and no tag, so no track can be established |
+
+`mkv delete`/`insert` show a non-zero `lost unit` when the shift derails a
+Cluster: the rest of that Cluster is the container unit the damage touched.
+When the damaged Cluster is the last one there is no following Cluster to
+resynchronise to, which the rule test exempts explicitly (`in_last_cluster`).
+PS loses one pack (about 15 samples); TS loses the packets a
+five-sync-byte confirmation needs (up to ten).
+
+`mkv` cells report `mono=false` even when undamaged: Matroska times a Block but
+carries no decode time, so `dts == pts` and a B-frame's presentation order is
+not monotonic. The rule compares against the clean run, so this is not a
+regression. PS's timeline is clamped to stay monotonic after a resync.
+
+### ffprobe comparison
+
+`a_damaged_file_is_not_worse_than_ffprobe` runs `ffprobe -show_packets` on the
+same damaged images (ffprobe 7.x, macOS):
+
+```
+ts at 41266 Zero: ours=206 ffprobe=206
+ts at 30949 Delete: ours=204 ffprobe=205
+flv at 31237 Delete: ours=205 ffprobe=206
+flv at 15618 Random: ours=205 ffprobe=206
+```
+We are never more than the one damaged unit behind.
+
+### Measurement note
+
+The size-field rows for Matroska were refined after the baseline: a Cluster's
+own one-byte size cannot express `maximum` or `one past the remaining bytes`,
+so `field-max`/`field-past` now target the Segment's wide size VINT and
+`field-zero` still targets the Cluster. The baseline table above is otherwise
+the same harness.
+
+### Memory
+
+`a_damaged_input_does_not_materialise_in_memory` (its own process-global
+`ProcessPeak` allocator) runs the worst cells over the 82 KB TS and 60 KB
+Matroska fixtures. Peak live bytes above entry:
+
+```
+ts Zero at 41266: peak=395999 bytes above entry
+ts Random at 27510: peak=395999 bytes above entry
+ts Delete at 20633: peak=393904 bytes above entry
+ts Insert at 16506: peak=396249 bytes above entry
+ts Truncate at 74278: peak=379473 bytes above entry
+mkv Zero at 30410: peak=357202 bytes above entry
+mkv Random at 20273: peak=357202 bytes above entry
+mkv Delete at 15205: peak=346169 bytes above entry
+mkv Insert at 12164: peak=357086 bytes above entry
+mkv Truncate at 54738: peak=345111 bytes above entry
+```
+
+### Structured-damage fuzz target
+
+`fuzz/fuzz_targets/demux_damage.rs` applies a fuzzer-chosen
+offset/kind/length damage script to a committed real seed for each of the four
+formats and asserts both no panic and a bounded per-input allocation volume.
+60 s: 23 403 execs, zero failures. The existing demux targets were re-run for
+120 s each after the changes: `transmux_ts_demux` 319 458,
+`transmux_ts_demux_packets` 340 700, `transmux_flv_stream` 383 546,
+`transmux_matroska_demux` 415 601, `mpeg_ps_scanner` 1 005 258,
+`rtmp_flv_tags` 4 900 031, all with zero failures.
+
+### Known gaps
+
+- A byte-shifting deletion or insertion inside the **last** Matroska Cluster
+  loses the rest of that Cluster: there is no following Cluster to
+  resynchronise to, and the Block size chain is shifted.
+- A Matroska file with no `Tracks` element at all returns an empty track set
+  rather than an error. Nothing playable is lost, but a consumer cannot tell
+  it from a valid empty stream; the rule test only treats an empty *input* as
+  playback-impossible.
+- A payload-only corruption (a run inside an access unit, framing intact) is
+  undetectable without decoding, so it is delivered rather than reported, as
+  the task's damage class 6 allows.

@@ -146,7 +146,7 @@ fn ps_pes_length_field(bytes: &[u8], from: usize) -> Option<(usize, usize)> {
     let mut at = from.min(bytes.len());
     while at + 6 <= bytes.len() {
         if bytes[at..].starts_with(&[0x00, 0x00, 0x01]) {
-            if !matches!(bytes[at + 3], 0xBA | 0xBB | 0xBC | 0xB9) {
+            if !matches!(bytes[at + 3], 0xB9..=0xBC) {
                 return Some((at + 4, 2));
             }
             at += 4;
@@ -176,23 +176,27 @@ fn flv_data_size_field(bytes: &[u8], from: usize) -> Option<(usize, usize)> {
 
 /// Locate an EBML size VINT at or after `from`: the Cluster header, else the
 /// Segment header.
-fn mkv_size_field(bytes: &[u8], from: usize) -> Option<(usize, usize)> {
+fn mkv_cluster_size_field(bytes: &[u8], from: usize) -> Option<(usize, usize)> {
     const CLUSTER: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
+    let seen = bytes[from.min(bytes.len())..]
+        .windows(4)
+        .position(|w| w == CLUSTER)?;
+    vint_at(bytes, from + seen + 4)
+}
+
+/// The Segment's own size VINT, which is wide enough for a large replacement
+/// value without overwriting the first child.
+fn mkv_segment_size_field(bytes: &[u8]) -> Option<(usize, usize)> {
     const SEGMENT: [u8; 4] = [0x18, 0x53, 0x80, 0x67];
-    for id in [CLUSTER, SEGMENT] {
-        if let Some(seen) = bytes[from.min(bytes.len())..]
-            .windows(4)
-            .position(|w| w == id)
-        {
-            let size_at = from + seen + 4;
-            let first = *bytes.get(size_at)?;
-            let width = first.leading_zeros() as usize + 1;
-            if width <= 8 && size_at + width <= bytes.len() {
-                return Some((size_at, width));
-            }
-        }
-    }
-    None
+    let seen = bytes.windows(4).position(|w| w == SEGMENT)?;
+    vint_at(bytes, seen + 4)
+}
+
+/// The (offset, width) of the EBML size VINT starting at `at`.
+fn vint_at(bytes: &[u8], at: usize) -> Option<(usize, usize)> {
+    let first = *bytes.get(at)?;
+    let width = first.leading_zeros() as usize + 1;
+    (width <= 8 && at + width <= bytes.len()).then_some((at, width))
 }
 
 /// The largest value a field of `width` bytes can hold.
@@ -215,6 +219,7 @@ struct Row {
     position: String,
     label: String,
     at: usize,
+    damage: Damage,
     summary: test_harness::damage::Summary,
     damaged: DemuxOutcome,
 }
@@ -250,14 +255,46 @@ fn damage_cells(format: Format, clean: &[u8]) -> Vec<(String, usize, Damage)> {
         }
     }
     // Size/length fields: zero, maximum, and one past the bytes that remain.
-    let locator: fn(&[u8], usize) -> Option<(usize, usize)> = match format {
+    type FieldLocator = fn(&[u8], usize) -> Option<(usize, usize)>;
+    let locator: FieldLocator = match format {
         Format::Ts => ts_pes_length_field,
         Format::Ps => ps_pes_length_field,
         Format::Flv => flv_data_size_field,
-        Format::Mkv => mkv_size_field,
+        Format::Mkv => mkv_cluster_size_field,
     };
     let anchor = clean.len() / 2;
-    if let Some((offset, width)) = locator(clean, anchor) {
+    if format == Format::Mkv {
+        // The Cluster's size gets the zero; the Segment's own wide size gets
+        // the maximum and one-past-the-end values, so a replacement VINT does
+        // not overwrite the first child.
+        if let Some((offset, width)) = mkv_cluster_size_field(clean, anchor) {
+            cells.push((
+                "mid:field-zero".to_string(),
+                offset,
+                Damage::VintSize { width, payload: 0 },
+            ));
+        }
+        if let Some((offset, width)) = mkv_segment_size_field(clean) {
+            let remaining = u64::try_from(clean.len().saturating_sub(offset)).unwrap_or(u64::MAX);
+            let max = vint_max_payload(width);
+            cells.push((
+                "mid:field-max".to_string(),
+                offset,
+                Damage::VintSize {
+                    width,
+                    payload: max,
+                },
+            ));
+            cells.push((
+                "mid:field-past".to_string(),
+                offset,
+                Damage::VintSize {
+                    width,
+                    payload: remaining.min(max),
+                },
+            ));
+        }
+    } else if let Some((offset, width)) = locator(clean, anchor) {
         let remaining = u64::try_from(clean.len().saturating_sub(offset)).unwrap_or(u64::MAX);
         let values: [(&str, u64); 3] = [
             ("field-zero", 0),
@@ -265,25 +302,11 @@ fn damage_cells(format: Format, clean: &[u8]) -> Vec<(String, usize, Damage)> {
             ("field-past", remaining),
         ];
         for (label, value) in values {
-            if width == 2 || width == 3 {
-                let damage = Damage::Field {
-                    width,
-                    value: u32::try_from(value.min(u64::from(u32::MAX))).unwrap_or(u32::MAX),
-                };
-                cells.push((format!("mid:{label}"), offset, damage));
-            } else {
-                // An EBML size VINT: the marker bit is part of the encoding.
-                let payload = if label == "field-max" {
-                    vint_max_payload(width)
-                } else {
-                    value.min(1u64 << (7 * width))
-                };
-                cells.push((
-                    format!("mid:{label}"),
-                    offset,
-                    Damage::VintSize { width, payload },
-                ));
-            }
+            let damage = Damage::Field {
+                width,
+                value: u32::try_from(value.min(u64::from(u32::MAX))).unwrap_or(u32::MAX),
+            };
+            cells.push((format!("mid:{label}"), offset, damage));
         }
     }
     cells
@@ -303,6 +326,7 @@ fn measure(format: Format, clean_bytes: &[u8], clean: &DemuxOutcome) -> Vec<Row>
                 position: position.to_string(),
                 label: label.to_string(),
                 at,
+                damage,
                 summary,
                 damaged,
             }
@@ -374,5 +398,260 @@ fn damage_matrix_report() {
         let (bytes, clean_outcome) = clean(format);
         let rows = measure(format, &bytes, &clean_outcome);
         print_matrix(format, &clean_outcome, &rows);
+    }
+}
+
+/// Why a cell may still error: the damage removed the only thing playback
+/// needs. Every other cell must report the damage and carry on.
+fn playback_impossible(damage: Damage, at: usize) -> Option<&'static str> {
+    match damage {
+        Damage::Truncate if at == 0 => Some("the input is empty: no track can be established"),
+        _ => None,
+    }
+}
+
+/// How many delivered samples may differ from the undamaged run: the one
+/// container unit the damage touched.
+fn allowed_extra(damage: Damage) -> usize {
+    match damage {
+        Damage::Truncate => 1,
+        Damage::Zero | Damage::Random | Damage::Delete | Damage::Insert => 2,
+        Damage::Field { .. } | Damage::VintSize { .. } => 1,
+    }
+}
+
+/// A position whose damage sits in the last fifth of the file, where there is
+/// no tail left to preserve.
+fn in_the_tail(position: &str) -> bool {
+    matches!(position, "last-unit" | "stride7")
+}
+
+/// Whether the damage falls inside the file's last Matroska Cluster. A
+/// byte-shifting damage there leaves no following Cluster to resynchronise
+/// to, so the rest of that Cluster is the container unit the damage touched.
+fn in_last_cluster(format: Format, bytes: &[u8], at: usize) -> bool {
+    const CLUSTER: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
+    if format != Format::Mkv {
+        return false;
+    }
+    bytes
+        .windows(4)
+        .rposition(|w| w == CLUSTER)
+        .is_some_and(|last| at > last)
+}
+
+/// The rule the matrix enforces: an error only when playback is impossible;
+/// every sample outside the damaged unit delivered byte-identically; the
+/// timeline monotonic where the clean input's is; the tail after a mid-stream
+/// damage preserved; and a structural loss reported.
+#[test]
+fn damage_matrix_cells_follow_the_best_effort_rule() {
+    let mut violations = Vec::new();
+    for format in Format::ALL {
+        let (bytes, clean_outcome) = clean(format);
+        let clean_monotonic = clean_outcome.monotonic();
+        for row in measure(format, &bytes, &clean_outcome) {
+            let s = &row.summary;
+            let cell = format!(
+                "{} {} {} @{}",
+                row.format.name(),
+                row.position,
+                row.label,
+                row.at
+            );
+            if let Some(_reason) = playback_impossible(row.damage, row.at) {
+                continue;
+            }
+            if let Some(error) = &s.error {
+                violations.push(format!("{cell}: errored: {error}"));
+                continue;
+            }
+            if s.extra > allowed_extra(row.damage) {
+                violations.push(format!(
+                    "{cell}: {} delivered samples differ from the clean run",
+                    s.extra
+                ));
+            }
+            if clean_monotonic && !s.monotonic {
+                violations.push(format!("{cell}: timestamps regressed"));
+            }
+            let tail_kept = s.after > 0
+                || s.before.saturating_add(allowed_extra(row.damage)) >= clean_outcome.delivered();
+            if row.position != "start"
+                && !in_the_tail(&row.position)
+                && !matches!(row.damage, Damage::Truncate)
+                && !in_last_cluster(row.format, &bytes, row.at)
+                && !tail_kept
+            {
+                violations.push(format!("{cell}: the tail after the damage is gone"));
+            }
+            if rows_structural_loss(row.damage) && s.lost(&clean_outcome) > 0 && s.findings == 0 {
+                violations.push(format!("{cell}: a structural loss was not reported"));
+            }
+            if row.position != "start"
+                && !matches!(row.damage, Damage::Truncate)
+                && s.dropped_tracks > 0
+            {
+                violations.push(format!("{cell}: {} tracks vanished", s.dropped_tracks));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "{} cells break the rule:\n{}",
+        violations.len(),
+        violations.join("\n")
+    );
+}
+
+/// Whether a damage class removes container framing (so a silent loss of
+/// samples is a defect) rather than only changing payload bytes (which a
+/// demuxer that does not decode cannot detect).
+fn rows_structural_loss(damage: Damage) -> bool {
+    matches!(damage, Damage::Delete | Damage::Insert)
+}
+
+/// The payload offset of the first PSI section carried on `pid`.
+fn psi_section(bytes: &[u8], pid: u16) -> Option<usize> {
+    const PACKET: usize = 188;
+    let mut at = 0usize;
+    while at + PACKET <= bytes.len() {
+        if bytes[at] == 0x47 {
+            let packet_pid = (u16::from(bytes[at + 1] & 0x1F) << 8) | u16::from(bytes[at + 2]);
+            let pusi = bytes[at + 1] & 0x40 != 0;
+            let afc = (bytes[at + 3] >> 4) & 0x3;
+            let mut payload = at + 4;
+            if afc & 0x2 != 0 {
+                payload += 1 + usize::from(bytes[at + 4]);
+            }
+            if packet_pid == pid && pusi && afc & 0x1 != 0 && payload < at + PACKET {
+                let section = payload + 1 + usize::from(bytes[payload]);
+                if section < at + PACKET {
+                    return Some(section);
+                }
+            }
+        }
+        at += PACKET;
+    }
+    None
+}
+
+/// The PMT section's first byte in a TS image, via the PAT.
+fn ts_pmt_section(bytes: &[u8]) -> Option<usize> {
+    let pat = psi_section(bytes, 0)?;
+    if bytes.get(pat) != Some(&0x00) {
+        return None;
+    }
+    let section_len = (usize::from(bytes[pat + 1] & 0x0F) << 8) | usize::from(bytes[pat + 2]);
+    let end = pat + 3 + section_len;
+    let mut at = pat + 8;
+    while at + 4 <= end && at + 4 <= bytes.len() {
+        let program = u16::from_be_bytes([bytes[at], bytes[at + 1]]);
+        let pid = (u16::from(bytes[at + 2] & 0x1F) << 8) | u16::from(bytes[at + 3]);
+        if program != 0 {
+            return psi_section(bytes, pid);
+        }
+        at += 4;
+    }
+    None
+}
+
+/// Broken metadata while the media is intact must be skipped, with the
+/// pictures and sound unchanged.
+#[test]
+fn metadata_damage_does_not_stop_the_media() {
+    // TS: damage the first PMT (a later, repeated one re-establishes the
+    // tracks).
+    let bytes = fixture(Format::Ts.fixture());
+    let clean = Format::Ts.demux(&bytes);
+    let pmt = ts_pmt_section(&bytes).expect("a PMT section");
+    let damaged = damage::apply(&bytes, pmt, Damage::Random, 0x5151);
+    let got = Format::Ts.demux(&damaged);
+    assert!(got.error.is_none(), "TS: {:?}", got.error);
+    assert_eq!(got.tracks.len(), clean.tracks.len(), "TS: tracks");
+    assert_eq!(got.delivered(), clean.delivered(), "TS: samples");
+
+    // FLV: the onMetaData script tag is informational.
+    let bytes = fixture(Format::Flv.fixture());
+    let clean = Format::Flv.demux(&bytes);
+    let script = bytes
+        .windows(11)
+        .position(|w| w[0] == 18 && w[8..11] == [0, 0, 0])
+        .expect("an FLV script tag");
+    let damaged = damage::apply(&bytes, script + 13, Damage::Random, 0x5252);
+    let got = Format::Flv.demux(&damaged);
+    assert!(got.error.is_none(), "FLV: {:?}", got.error);
+    assert_eq!(got.delivered(), clean.delivered(), "FLV: samples");
+
+    // Matroska: the Cues index is optional.
+    let bytes = fixture(Format::Mkv.fixture());
+    let clean = Format::Mkv.demux(&bytes);
+    let cues = bytes
+        .windows(4)
+        .rposition(|w| w == [0x1C, 0x53, 0xBB, 0x6B])
+        .expect("a Cues element");
+    let damaged = damage::apply(&bytes, cues + 8, Damage::Random, 0x5353);
+    let got = Format::Mkv.demux(&damaged);
+    assert!(got.error.is_none(), "mkv: {:?}", got.error);
+    assert_eq!(got.delivered(), clean.delivered(), "mkv: samples");
+}
+
+/// An independent, mainstream demuxer must not deliver more than we do: this
+/// is the "we are not worse than ffprobe" check on a sample of cells.
+#[test]
+fn a_damaged_file_is_not_worse_than_ffprobe() {
+    use std::process::Command;
+    use std::time::Duration;
+    if !test_fixtures::process::tool_available("ffprobe", "-version") {
+        eprintln!("skipping: ffprobe is not on PATH");
+        return;
+    }
+    let dir = test_fixtures::process::scratch_dir("rz1-damage");
+    let cells = [
+        (Format::Ts, 41_266usize, Damage::Zero),
+        (Format::Ts, 30_949, Damage::Delete),
+        (Format::Flv, 31_237, Damage::Delete),
+        (Format::Flv, 15_618, Damage::Random),
+    ];
+    for (index, (format, at, harm)) in cells.into_iter().enumerate() {
+        let bytes = fixture(format.fixture());
+        let clean = format.demux(&bytes);
+        let damaged = damage::apply(&bytes, at, harm, 0x6000 + index as u64);
+        let ours = format.demux(&damaged);
+        let summary = damage::compare(&clean, &ours);
+        let path = dir.join(format!("{}-{index}", format.name()));
+        std::fs::write(&path, &damaged).expect("write the damaged copy");
+        let mut command = Command::new("ffprobe");
+        command.args([
+            "-v",
+            "error",
+            "-show_packets",
+            "-show_entries",
+            "packet=codec_type",
+            "-of",
+            "csv",
+        ]);
+        command.arg(&path);
+        let Ok(output) =
+            test_fixtures::process::output_bounded(&mut command, Duration::from_secs(60))
+        else {
+            eprintln!("skipping {}: ffprobe did not run", format.name());
+            continue;
+        };
+        let theirs = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| line.starts_with("packet,"))
+            .count();
+        println!(
+            "{} at {at} {harm:?}: ours={} ffprobe={theirs}",
+            format.name(),
+            summary.delivered
+        );
+        assert!(
+            summary.delivered.saturating_add(2) >= theirs,
+            "{} at {at}: {} samples vs ffprobe's {theirs} packets",
+            format.name(),
+            summary.delivered
+        );
     }
 }
