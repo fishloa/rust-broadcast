@@ -87,7 +87,6 @@ impl SampleGroupDigest {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct Md5IntegrityBox {
-    version: u8,
     flags: u32,
     input_md5: [u8; MD5_LEN],
     input_4cc: [u8; BOX_TYPE_SIZE],
@@ -99,7 +98,6 @@ impl Md5IntegrityBox {
     #[must_use]
     pub const fn new(input_md5: [u8; MD5_LEN], input_4cc: [u8; BOX_TYPE_SIZE]) -> Self {
         Self {
-            version: MD5I_VERSION,
             flags: 0,
             input_md5,
             input_4cc,
@@ -116,12 +114,6 @@ impl Md5IntegrityBox {
         }
         self.sample_group = Some(sample_group);
         self
-    }
-
-    /// The FullBox `version`.
-    #[must_use]
-    pub const fn version(&self) -> u8 {
-        self.version
     }
 
     /// The FullBox flags.
@@ -164,8 +156,7 @@ impl<'a> broadcast_core::Parse<'a> for Md5IntegrityBox {
             FULLBOX_EXTRA_SIZE + MD5_LEN + BOX_TYPE_SIZE,
             "md5i",
         )?;
-        let version = body[0];
-        if version != MD5I_VERSION {
+        if body[0] != MD5I_VERSION {
             return Err(Error::InvalidInput("md5i version"));
         }
         let flags = full_flags(body);
@@ -212,7 +203,6 @@ impl<'a> broadcast_core::Parse<'a> for Md5IntegrityBox {
             return Err(Error::InvalidInput("md5i trailing bytes"));
         }
         Ok(Self {
-            version,
             flags,
             input_md5,
             input_4cc,
@@ -245,7 +235,7 @@ impl broadcast_core::Serialize for Md5IntegrityBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor =
-            write_full_box_header(buf, &MD5I, need, self.version, self.flags, false)?;
+            write_full_box_header(buf, &MD5I, need, MD5I_VERSION, self.flags, false)?;
         buf[cursor..cursor + MD5_LEN].copy_from_slice(&self.input_md5);
         cursor += MD5_LEN;
         buf[cursor..cursor + BOX_TYPE_SIZE].copy_from_slice(&self.input_4cc);

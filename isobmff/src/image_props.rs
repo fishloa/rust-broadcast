@@ -168,6 +168,46 @@ fn full_body<'a>(
     body_of(bytes, min_body, what)
 }
 
+/// The body of a property whose clause fixes its whole FullBox word at
+/// `version = 0, flags = 0` (6.5): a non-zero word is a typed error rather
+/// than a byte a rewrite would silently change.
+fn zero_full_body<'a>(
+    bytes: &'a [u8],
+    fourcc: &[u8; BOX_TYPE_SIZE],
+    min_body: usize,
+    what: &'static str,
+) -> Result<&'a [u8]> {
+    let body = full_body(bytes, fourcc, min_body, what)?;
+    if body.get(..FULLBOX_EXTRA_SIZE) != Some(&[0u8; FULLBOX_EXTRA_SIZE][..]) {
+        return Err(Error::InvalidInput(what));
+    }
+    Ok(body)
+}
+
+/// [`zero_full_body`] for a property whose body is exactly `body_len` bytes
+/// (FullBox word included): a tail past the last field is a typed error.
+fn exact_full_body<'a>(
+    bytes: &'a [u8],
+    fourcc: &[u8; BOX_TYPE_SIZE],
+    body_len: usize,
+    what: &'static str,
+) -> Result<&'a [u8]> {
+    let body = zero_full_body(bytes, fourcc, body_len, what)?;
+    if body.len() != body_len {
+        return Err(Error::InvalidInput(what));
+    }
+    Ok(body)
+}
+
+/// Reject a `version` the clause fixes at 0 where the `flags` word is free
+/// (6.5.37, 6.5.40, Amd 1 6.6.2.5).
+fn expect_version_zero(body: &[u8], what: &'static str) -> Result<()> {
+    if body.first() != Some(&0) {
+        return Err(Error::InvalidInput(what));
+    }
+    Ok(())
+}
+
 /// Split exactly `count` null-terminated byte strings out of `body`.
 pub(crate) fn split_cstrings(
     body: &[u8],
@@ -300,7 +340,7 @@ impl<'a> Parse<'a> for ImageScaling {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &ISCL, FULLBOX_EXTRA_SIZE + ISCL_LEN, "iscl")?;
+        let body = exact_full_body(bytes, &ISCL, FULLBOX_EXTRA_SIZE + ISCL_LEN, "iscl")?;
         let at = FULLBOX_EXTRA_SIZE;
         Ok(Self {
             target_width_numerator: be_u16(body, at, "iscl width numerator")?,
@@ -367,7 +407,7 @@ impl<'a> Parse<'a> for RequiredReferenceTypesProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &RREF, FULLBOX_EXTRA_SIZE + U8_LEN, "rref")?;
+        let body = zero_full_body(bytes, &RREF, FULLBOX_EXTRA_SIZE + U8_LEN, "rref")?;
         let count = usize::from(body[FULLBOX_EXTRA_SIZE]);
         let start = FULLBOX_EXTRA_SIZE + U8_LEN;
         crate::box_support::check_entry_count(body.len() - start, RREF_TYPE_LEN, count, "rref")?;
@@ -376,6 +416,9 @@ impl<'a> Parse<'a> for RequiredReferenceTypesProperty {
             let at = start + index * RREF_TYPE_LEN;
             let fourcc = broadcast_core::wire::fourcc_at(body, at);
             reference_types.push(fourcc);
+        }
+        if start + count * RREF_TYPE_LEN != body.len() {
+            return Err(Error::InvalidInput("rref trailing bytes"));
         }
         Ok(Self { reference_types })
     }
@@ -432,7 +475,7 @@ impl<'a> Parse<'a> for CreationTimeProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &CRTT, FULLBOX_EXTRA_SIZE + U64_LEN, "crtt")?;
+        let body = exact_full_body(bytes, &CRTT, FULLBOX_EXTRA_SIZE + U64_LEN, "crtt")?;
         Ok(Self {
             creation_time: be_u64(body, FULLBOX_EXTRA_SIZE, "crtt creation_time")?,
         })
@@ -481,7 +524,7 @@ impl<'a> Parse<'a> for ModificationTimeProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &MDFT, FULLBOX_EXTRA_SIZE + U64_LEN, "mdft")?;
+        let body = exact_full_body(bytes, &MDFT, FULLBOX_EXTRA_SIZE + U64_LEN, "mdft")?;
         Ok(Self {
             modification_time: be_u64(body, FULLBOX_EXTRA_SIZE, "mdft modification_time")?,
         })
@@ -560,7 +603,7 @@ impl<'a> Parse<'a> for UserDescriptionProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &UDES, FULLBOX_EXTRA_SIZE, "udes")?;
+        let body = zero_full_body(bytes, &UDES, FULLBOX_EXTRA_SIZE, "udes")?;
         let mut strings = split_cstrings(
             &body[FULLBOX_EXTRA_SIZE..],
             UDES_STRING_COUNT,
@@ -641,7 +684,7 @@ impl<'a> Parse<'a> for AccessibilityTextProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &ALTT, FULLBOX_EXTRA_SIZE, "altt")?;
+        let body = zero_full_body(bytes, &ALTT, FULLBOX_EXTRA_SIZE, "altt")?;
         let mut strings = split_cstrings(
             &body[FULLBOX_EXTRA_SIZE..],
             ALTT_STRING_COUNT,
@@ -714,7 +757,7 @@ impl<'a> Parse<'a> for AutoExposureProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &AEBR, FULLBOX_EXTRA_SIZE + U8_PAIR_LEN, "aebr")?;
+        let body = exact_full_body(bytes, &AEBR, FULLBOX_EXTRA_SIZE + U8_PAIR_LEN, "aebr")?;
         Ok(Self {
             exposure_step: body[FULLBOX_EXTRA_SIZE] as i8,
             exposure_numerator: body[FULLBOX_EXTRA_SIZE + U8_LEN] as i8,
@@ -789,7 +832,7 @@ impl<'a> Parse<'a> for WhiteBalanceProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &WBBR, FULLBOX_EXTRA_SIZE + U16_LEN + U8_LEN, "wbbr")?;
+        let body = exact_full_body(bytes, &WBBR, FULLBOX_EXTRA_SIZE + U16_LEN + U8_LEN, "wbbr")?;
         Ok(Self {
             blue_amber: be_u16(body, FULLBOX_EXTRA_SIZE, "wbbr blue_amber")?,
             green_magenta: body[FULLBOX_EXTRA_SIZE + U16_LEN] as i8,
@@ -852,7 +895,7 @@ impl<'a> Parse<'a> for FocusProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &FOBR, FULLBOX_EXTRA_SIZE + U16_PAIR_LEN, "fobr")?;
+        let body = exact_full_body(bytes, &FOBR, FULLBOX_EXTRA_SIZE + U16_PAIR_LEN, "fobr")?;
         Ok(Self {
             focus_distance_numerator: be_u16(body, FULLBOX_EXTRA_SIZE, "fobr numerator")?,
             focus_distance_denominator: be_u16(
@@ -918,7 +961,7 @@ impl<'a> Parse<'a> for FlashExposureProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &AFBR, FULLBOX_EXTRA_SIZE + U8_PAIR_LEN, "afbr")?;
+        let body = exact_full_body(bytes, &AFBR, FULLBOX_EXTRA_SIZE + U8_PAIR_LEN, "afbr")?;
         Ok(Self {
             flash_exposure_numerator: body[FULLBOX_EXTRA_SIZE] as i8,
             flash_exposure_denominator: body[FULLBOX_EXTRA_SIZE + U8_LEN] as i8,
@@ -978,7 +1021,7 @@ impl<'a> Parse<'a> for DepthOfFieldProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &DOBR, FULLBOX_EXTRA_SIZE + U8_PAIR_LEN, "dobr")?;
+        let body = exact_full_body(bytes, &DOBR, FULLBOX_EXTRA_SIZE + U8_PAIR_LEN, "dobr")?;
         Ok(Self {
             f_stop_numerator: body[FULLBOX_EXTRA_SIZE] as i8,
             f_stop_denominator: body[FULLBOX_EXTRA_SIZE + U8_LEN] as i8,
@@ -1131,8 +1174,17 @@ impl<'a> Parse<'a> for PanoramaProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &PANO, FULLBOX_EXTRA_SIZE + PANO_BASE_LEN, "pano")?;
+        let body = zero_full_body(bytes, &PANO, FULLBOX_EXTRA_SIZE + PANO_BASE_LEN, "pano")?;
         let direction = PanoramaDirection::from_value(body[FULLBOX_EXTRA_SIZE]);
+        let body_len = FULLBOX_EXTRA_SIZE
+            + if direction.is_grid() {
+                PANO_GRID_LEN
+            } else {
+                PANO_BASE_LEN
+            };
+        if body.len() != body_len {
+            return Err(Error::InvalidInput("pano trailing bytes"));
+        }
         let grid = if direction.is_grid() {
             let at = FULLBOX_EXTRA_SIZE + PANO_BASE_LEN;
             need_in(body, at + U8_PAIR_LEN, "pano grid")?;
@@ -1200,7 +1252,7 @@ impl<'a> Parse<'a> for TargetOutputLayerSetProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &TOLS, FULLBOX_EXTRA_SIZE + U16_LEN, "tols")?;
+        let body = exact_full_body(bytes, &TOLS, FULLBOX_EXTRA_SIZE + U16_LEN, "tols")?;
         Ok(Self {
             target_ols_idx: be_u16(body, FULLBOX_EXTRA_SIZE, "tols target_ols_idx")?,
         })
@@ -1339,7 +1391,7 @@ impl<'a> Parse<'a> for WipeTransitionEffectProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &WIPE, FULLBOX_EXTRA_SIZE + U8_LEN, "wipe")?;
+        let body = exact_full_body(bytes, &WIPE, FULLBOX_EXTRA_SIZE + U8_LEN, "wipe")?;
         Ok(Self {
             direction: WipeDirection::from_value(body[FULLBOX_EXTRA_SIZE]),
         })
@@ -1487,7 +1539,7 @@ impl<'a> Parse<'a> for ZoomTransitionEffectProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &ZOOM, FULLBOX_EXTRA_SIZE + U8_LEN, "zoom")?;
+        let body = exact_full_body(bytes, &ZOOM, FULLBOX_EXTRA_SIZE + U8_LEN, "zoom")?;
         let packed = body[FULLBOX_EXTRA_SIZE];
         Ok(Self {
             direction: ZoomDirection::from_value(packed & ZOOM_DIRECTION_MASK),
@@ -1601,7 +1653,7 @@ impl<'a> Parse<'a> for FadeTransitionEffectProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &FADE, FULLBOX_EXTRA_SIZE + U8_LEN, "fade")?;
+        let body = exact_full_body(bytes, &FADE, FULLBOX_EXTRA_SIZE + U8_LEN, "fade")?;
         Ok(Self {
             direction: FadeDirection::from_value(body[FULLBOX_EXTRA_SIZE]),
         })
@@ -1707,7 +1759,7 @@ impl<'a> Parse<'a> for SplitTransitionEffectProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &SPLT, FULLBOX_EXTRA_SIZE + U8_LEN, "splt")?;
+        let body = exact_full_body(bytes, &SPLT, FULLBOX_EXTRA_SIZE + U8_LEN, "splt")?;
         Ok(Self {
             direction: SplitDirection::from_value(body[FULLBOX_EXTRA_SIZE]),
         })
@@ -1756,7 +1808,7 @@ impl<'a> Parse<'a> for SuggestedTransitionPeriodProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &STPE, FULLBOX_EXTRA_SIZE + U8_LEN, "stpe")?;
+        let body = exact_full_body(bytes, &STPE, FULLBOX_EXTRA_SIZE + U8_LEN, "stpe")?;
         Ok(Self {
             transition_period: body[FULLBOX_EXTRA_SIZE],
         })
@@ -1805,7 +1857,7 @@ impl<'a> Parse<'a> for SuggestedTimeDisplayDurationProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &SSLD, FULLBOX_EXTRA_SIZE + U16_LEN, "ssld")?;
+        let body = exact_full_body(bytes, &SSLD, FULLBOX_EXTRA_SIZE + U16_LEN, "ssld")?;
         Ok(Self {
             duration: be_u16(body, FULLBOX_EXTRA_SIZE, "ssld duration")?,
         })
@@ -1909,6 +1961,7 @@ impl<'a> Parse<'a> for ProgressiveDerivedImageItemInformationProperty {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let body = full_body(bytes, &PRDI, FULLBOX_EXTRA_SIZE, "prdi")?;
+        expect_version_zero(body, "prdi version")?;
         let flags = full_flags(body);
         let one_item = flags & PRDI_SINGLE_CANDIDATE_PER_STEP != 0;
         let alternatives = flags & PRDI_ALTERNATIVE_IS_CANDIDATE != 0;
@@ -2433,6 +2486,7 @@ impl<'a> Parse<'a> for CameraIntrinsicMatrixProperty {
             FULLBOX_EXTRA_SIZE + CMIN_SIMPLIFIED_FIELDS * U32_LEN,
             "cmin",
         )?;
+        expect_version_zero(body, "cmin version")?;
         let flags = full_flags(body);
         let mut cursor = FULLBOX_EXTRA_SIZE;
         let focal_length_x = read_signed(body, cursor, U32_LEN, "cmin focal_length_x")?;
@@ -2623,6 +2677,7 @@ impl<'a> Parse<'a> for ConstrainedExtentsGridProperty {
             FULLBOX_EXTRA_SIZE + CEXG_GRID_FIELDS * U16_LEN,
             "cexg",
         )?;
+        expect_version_zero(body, "cexg version")?;
         let flags = full_flags(body);
         let mut cursor = FULLBOX_EXTRA_SIZE;
         let rows_minus_one = be_u16(body, cursor, "cexg rows_minus_one")?;
@@ -2744,7 +2799,7 @@ impl<'a> Parse<'a> for DisparityAdjustmentProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &DADJ, FULLBOX_EXTRA_SIZE + U32_LEN, "dadj")?;
+        let body = exact_full_body(bytes, &DADJ, FULLBOX_EXTRA_SIZE + U32_LEN, "dadj")?;
         Ok(Self {
             disparity_adjustment: read_signed(body, FULLBOX_EXTRA_SIZE, U32_LEN, "dadj")?,
         })
@@ -2851,6 +2906,7 @@ broadcast_core::impl_spec_display!(StereoAggressorType, Reserved);
 pub struct StereoAggressor {
     aggressor_type: StereoAggressorType,
     aggressor_severity: u8,
+    sub_type_present: bool,
     sub_type_uri: Vec<u8>,
 }
 
@@ -2861,6 +2917,7 @@ impl StereoAggressor {
         Self {
             aggressor_type,
             aggressor_severity: aggressor_severity & STAG_SEVERITY_MASK,
+            sub_type_present: false,
             sub_type_uri: Vec::new(),
         }
     }
@@ -2868,6 +2925,7 @@ impl StereoAggressor {
     /// Add the absolute-metric sub-type URI.
     #[must_use]
     pub fn with_sub_type_uri(mut self, uri: &[u8]) -> Self {
+        self.sub_type_present = true;
         self.sub_type_uri = uri.to_vec();
         self
     }
@@ -2884,7 +2942,14 @@ impl StereoAggressor {
         self.aggressor_severity
     }
 
-    /// `sub_type_uri` (empty when absent).
+    /// Whether `sub_type_uri` is signalled, which the wire states separately
+    /// from its length.
+    #[must_use]
+    pub const fn sub_type_present(&self) -> bool {
+        self.sub_type_present
+    }
+
+    /// `sub_type_uri` (empty when absent, or when signalled and empty).
     #[must_use]
     pub fn sub_type_uri(&self) -> &[u8] {
         &self.sub_type_uri
@@ -2917,7 +2982,7 @@ impl<'a> Parse<'a> for StereoAggressorsProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &STAG, FULLBOX_EXTRA_SIZE + U8_LEN, "stag")?;
+        let body = zero_full_body(bytes, &STAG, FULLBOX_EXTRA_SIZE + U8_LEN, "stag")?;
         let count = usize::from(body[FULLBOX_EXTRA_SIZE]) + 1;
         crate::box_support::check_entry_count(
             body.len() - (FULLBOX_EXTRA_SIZE + U8_LEN),
@@ -2933,7 +2998,8 @@ impl<'a> Parse<'a> for StereoAggressorsProperty {
             cursor += U8_LEN;
             let packed = body[cursor];
             cursor += U8_LEN;
-            let sub_type_uri = if packed & STAG_SUB_TYPE_MASK != 0 {
+            let sub_type_present = packed & STAG_SUB_TYPE_MASK != 0;
+            let sub_type_uri = if sub_type_present {
                 let rest = body
                     .get(cursor..)
                     .ok_or(Error::InvalidInput("stag sub_type_uri"))?;
@@ -2950,6 +3016,7 @@ impl<'a> Parse<'a> for StereoAggressorsProperty {
             aggressors.push(StereoAggressor {
                 aggressor_type,
                 aggressor_severity: packed & STAG_SEVERITY_MASK,
+                sub_type_present,
                 sub_type_uri,
             });
         }
@@ -2969,10 +3036,10 @@ impl Serialize for StereoAggressorsProperty {
             .iter()
             .map(|entry| {
                 STAG_ENTRY_FIELDS * U8_LEN
-                    + if entry.sub_type_uri.is_empty() {
-                        0
-                    } else {
+                    + if entry.sub_type_present {
                         entry.sub_type_uri.len() + 1
+                    } else {
+                        0
                     }
             })
             .sum();
@@ -2985,10 +3052,10 @@ impl Serialize for StereoAggressorsProperty {
             .iter()
             .map(|entry| {
                 STAG_ENTRY_FIELDS * U8_LEN
-                    + if entry.sub_type_uri.is_empty() {
-                        0
-                    } else {
+                    + if entry.sub_type_present {
                         entry.sub_type_uri.len() + 1
+                    } else {
+                        0
                     }
             })
             .sum();
@@ -3003,10 +3070,10 @@ impl Serialize for StereoAggressorsProperty {
         for entry in &self.aggressors {
             buf[cursor] = entry.aggressor_type.value();
             cursor += U8_LEN;
-            let present = if entry.sub_type_uri.is_empty() {
-                0
-            } else {
+            let present = if entry.sub_type_present {
                 STAG_SUB_TYPE_MASK
+            } else {
+                0
             };
             let severity = fit_mask(
                 u32::from(entry.aggressor_severity),
@@ -3015,7 +3082,7 @@ impl Serialize for StereoAggressorsProperty {
             )?;
             buf[cursor] = present | severity as u8;
             cursor += U8_LEN;
-            if !entry.sub_type_uri.is_empty() {
+            if entry.sub_type_present {
                 let end = cursor + entry.sub_type_uri.len() + 1;
                 need_out(buf, end)?;
                 buf[cursor..cursor + entry.sub_type_uri.len()].copy_from_slice(&entry.sub_type_uri);
@@ -3110,7 +3177,7 @@ impl<'a> Parse<'a> for ReferenceViewingEnvironmentProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &REVE, FULLBOX_EXTRA_SIZE + REVE_LEN, "reve")?;
+        let body = exact_full_body(bytes, &REVE, FULLBOX_EXTRA_SIZE + REVE_LEN, "reve")?;
         let at = FULLBOX_EXTRA_SIZE;
         Ok(Self {
             surround_luminance: be_u32(body, at, "reve surround_luminance")?,
@@ -3190,7 +3257,7 @@ impl<'a> Parse<'a> for NominalDiffuseWhiteProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &NDWT, FULLBOX_EXTRA_SIZE + NDWT_LEN, "ndwt")?;
+        let body = exact_full_body(bytes, &NDWT, FULLBOX_EXTRA_SIZE + NDWT_LEN, "ndwt")?;
         Ok(Self {
             diffuse_white_luminance: be_u32(body, FULLBOX_EXTRA_SIZE, "ndwt")?,
         })
@@ -3238,7 +3305,7 @@ impl<'a> Parse<'a> for MaskConfigurationProperty {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = full_body(bytes, &MSKC, FULLBOX_EXTRA_SIZE + U8_LEN, "mskC")?;
+        let body = exact_full_body(bytes, &MSKC, FULLBOX_EXTRA_SIZE + U8_LEN, "mskC")?;
         Ok(Self {
             bits_per_pixel: body[FULLBOX_EXTRA_SIZE],
         })
