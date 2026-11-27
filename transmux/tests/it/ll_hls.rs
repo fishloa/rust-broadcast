@@ -1916,3 +1916,162 @@ fn cut_plan_starts_come_from_accumulated_durations_without_a_dts() {
         vec![0, 90_000, 180_000, 270_000]
     );
 }
+
+// ── Issue #4154: a break closes the open segment (and parts) and marks next ─
+
+fn ll_stage(two: &crate::discontinuity::TwoSource) -> LlHlsSegmenter {
+    LlHlsSegmenter::with_part_target(
+        two.media.tracks.iter().map(|t| t.spec.clone()).collect(),
+        timescale(1000),
+        Duration::from_secs(2),
+        Duration::from_millis(500),
+    )
+    .expect("LL-HLS segmenter")
+}
+
+fn split_outputs(
+    outputs: Vec<transmux::ll_hls::LlHlsStageOutput>,
+) -> (
+    Vec<transmux::ll_hls::PartInfo>,
+    Vec<transmux::ll_hls::SegmentInfo>,
+) {
+    let mut parts = Vec::new();
+    let mut segments = Vec::new();
+    for output in outputs {
+        match output {
+            transmux::ll_hls::LlHlsStageOutput::Part(part) => parts.push(part),
+            transmux::ll_hls::LlHlsStageOutput::Segment(segment) => segments.push(segment),
+            _ => {}
+        }
+    }
+    (parts, segments)
+}
+
+/// The trailing segment of the first source is closed at the break (so the
+/// jump is never inside one segment's part timeline), and only the segment
+/// that follows is flagged — which `broadcast-hls` renders as
+/// `#EXT-X-DISCONTINUITY` and parses back.
+#[test]
+fn a_forward_break_closes_the_open_segment_and_marks_the_next() {
+    use broadcast_common::stage::Stage;
+    use broadcast_hls::{MediaPlaylist, MediaSegment};
+    use transmux::mux_stage::MuxInput;
+
+    let two = crate::discontinuity::forward();
+    let mut stage = ll_stage(&two);
+    let outputs = crate::discontinuity::drive_fixed(&mut stage, &two, None).expect("LL-HLS drive");
+    let (parts, segments) = split_outputs(outputs);
+    assert!(
+        segments.len() >= 2,
+        "the break must not be inside one segment"
+    );
+    let marked: Vec<_> = segments.iter().filter(|s| s.discontinuous).collect();
+    assert_eq!(
+        marked.len(),
+        1,
+        "exactly one segment opens the new timeline"
+    );
+    let marked_seq = marked[0].segment_seq;
+    assert!(
+        marked_seq > segments[0].segment_seq,
+        "the break's segment is not the first one"
+    );
+    assert!(
+        !parts.is_empty(),
+        "the closed segments are made of independently addressable parts"
+    );
+    assert!(
+        marked[0].duration < Duration::from_secs(5),
+        "the break's jump is not counted as one long segment: {:?}",
+        marked[0].duration
+    );
+
+    let media: Vec<MediaSegment> = segments
+        .iter()
+        .map(|segment| MediaSegment {
+            uri: format!("s{}.m4s", segment.segment_seq),
+            duration: DecimalSeconds::from_duration(segment.duration),
+            discontinuous: segment.discontinuous,
+            ..Default::default()
+        })
+        .collect();
+    let playlist = MediaPlaylist {
+        version: 9,
+        target_duration: 2,
+        msn: broadcast_hls::MediaSequence::new(u64::from(segments[0].segment_seq)),
+        discontinuity_sequence: 0,
+        segments: media,
+        endlist: true,
+        ..Default::default()
+    };
+    let text = playlist.to_m3u8().expect("playlist renders");
+    assert_eq!(
+        text.matches("#EXT-X-DISCONTINUITY\n").count(),
+        1,
+        "exactly one tag:\n{text}"
+    );
+    let parsed = MediaPlaylist::parse(&text).expect("broadcast-hls parses its own playlist");
+    let flagged: Vec<_> = parsed
+        .segments
+        .iter()
+        .filter(|segment| segment.discontinuous)
+        .collect();
+    assert_eq!(flagged.len(), 1, "the mark survives a parse");
+
+    let mut first_break = stage;
+    first_break
+        .feed(
+            MuxInput::Discontinuity { track: None },
+            broadcast_common::Timestamp::ZERO,
+        )
+        .expect("a break before the first sample is expressible");
+    let outputs = crate::discontinuity::drive_media_fixed(&mut first_break, &two.media)
+        .expect("drive with a break at the very start");
+    let (_, segments) = split_outputs(outputs);
+    assert!(
+        segments[0].discontinuous,
+        "a break as the first input marks the first segment"
+    );
+    assert!(
+        segments[1..].iter().all(|segment| !segment.discontinuous),
+        "and only the first"
+    );
+}
+
+/// A changed track description cannot be carried by the open segmenter
+/// (a new init is `#EXT-X-MAP` territory): the stage refuses it, before or
+/// after a break, rather than writing a segment under the wrong map.
+#[test]
+fn a_changed_track_description_after_a_break_is_refused() {
+    use broadcast_common::stage::Stage;
+    use transmux::mux_stage::MuxInput;
+
+    let two = crate::discontinuity::forward();
+    let mut stage = ll_stage(&two);
+    let first = two.media.tracks[0].spec.clone();
+    stage
+        .feed(
+            MuxInput::Sample {
+                track: first.track_id,
+                sample: two.media.tracks[0].samples[0].clone(),
+            },
+            broadcast_common::Timestamp::ZERO,
+        )
+        .expect("first sample");
+    stage
+        .feed(
+            MuxInput::Discontinuity { track: None },
+            broadcast_common::Timestamp::ZERO,
+        )
+        .expect("break");
+    let error = stage
+        .feed(
+            MuxInput::Track(Box::new(first)),
+            broadcast_common::Timestamp::ZERO,
+        )
+        .expect_err("the track set is fixed at construction");
+    assert!(
+        matches!(&error, transmux::error::Error::InvalidInput(reason) if reason.contains("fixed")),
+        "the refusal names the reason: {error:?}"
+    );
+}

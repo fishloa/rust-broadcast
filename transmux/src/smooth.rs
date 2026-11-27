@@ -34,6 +34,24 @@
 //! - Audio `FourCC="AACL"`: `CodecPrivateData` = the hex of the
 //!   AudioSpecificConfig; `AudioTag="255"` (raw AAC).
 //!
+//! # Timeline discontinuity
+//!
+//! MS-SSTR has no discontinuity element; the fragment timeline is explicit.
+//! [`MuxInput::Discontinuity`] closes the open fragment, and the next one
+//! carries its new start in `tfxd` (§2.2.4.4) and in the Manifest's `c@t`
+//! (§2.2.2.6), so a jump that moves time forwards is stated rather than hidden
+//! inside one fragment's durations
+//! (`private/specs-verified/mpeg/transmux/smooth/ms-sstr.md`).
+//!
+//! A break that moves a track's time **backwards** cannot be stated: a client
+//! builds the chunk timeline by accumulating `c@d` from the first chunk's
+//! `c@t` (§2.2.2.6), so the timeline cannot go back. It is expressed by
+//! rebasing instead (`BreakRebase`): the first fragment after the break
+//! continues from the end of the last one written (its last start plus its last
+//! duration, per track) and every later fragment keeps its spacing, so `tfxd`,
+//! `tfrf` and the Manifest's chunk times are written on the continuing
+//! timeline.
+//!
 //! Like the DASH / HLS packagers, the manifest is emitted with a tiny
 //! [`quick_xml::Writer`] (`std` feature; every attribute value and text node is
 //! escaped by quick-xml). Integer arithmetic only.
@@ -55,6 +73,7 @@ use crate::error::{Error, Result};
 use crate::ir::{Sample, TrackSpec};
 use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary};
 use crate::pipeline::CodecConfig;
+use crate::rebase::BreakRebase;
 use crate::segment_log::{SegmentSummaryLog, TrackSummary};
 use crate::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use broadcast_bitstream::aac_asc::AudioSpecificConfig;
@@ -303,7 +322,7 @@ impl SmoothPackager {
         // and composition offsets are used from here (the fragment's absolute
         // start is the caller's `start_smooth`, not the derived one).
         let origin = SmoothOrigin::from_tracks([(spec.timescale, samples)]);
-        let times = smooth_times(samples, origin, spec.timescale, None)?;
+        let times = smooth_times(samples, origin, spec.timescale, None, BreakRebase::NONE)?;
         let duration: u64 = times.iter().map(|t| u64::from(t.duration)).sum();
         let data = build_smooth_fragment(
             spec.track_id,
@@ -497,9 +516,10 @@ fn quality_level(stream: &StreamInfo) -> QualityLevel {
     .without_packet_size()
 }
 
-/// One `c` per fragment, numbered from 0 (`c@n`); `t` on the first only, `d`
-/// always.
+/// One `c` per fragment, numbered from 0 (`c@n`); `t` on the first and on
+/// every fragment whose start is not the previous `t + d`, `d` always.
 fn manifest_chunks(stream: &StreamInfo) -> Vec<C> {
+    let mut expected: Option<u64> = None;
     stream
         .fragments
         .iter()
@@ -507,7 +527,12 @@ fn manifest_chunks(stream: &StreamInfo) -> Vec<C> {
         .map(|(i, fragment)| {
             let ordinal = u32::try_from(i).unwrap_or(u32::MAX);
             let chunk = C::new(fragment.duration).numbered(ordinal);
-            if i == 0 {
+            // `c@t` states the absolute start of the first fragment and of
+            // every fragment whose start is not the previous `t + d` — a
+            // timeline break, which Smooth has no separate marker for.
+            let explicit = i == 0 || expected != Some(fragment.start_time);
+            expected = Some(fragment.start_time.saturating_add(fragment.duration));
+            if explicit {
                 chunk.at(fragment.start_time)
             } else {
                 chunk
@@ -739,23 +764,29 @@ struct SmoothSampleTime {
 /// Rescale one fragment's samples to [`SMOOTH_TIMESCALE`]:
 /// `next_start` is the smooth-tick start of the sample that *follows* the
 /// fragment (the cut point), which ends the fragment's last sample; `None` for
-/// the trailing fragment, whose last sample ends at its own duration.
+/// the trailing fragment, whose last sample ends at its own duration. `rebase`
+/// maps every sample's input decode time onto the timeline the stream has
+/// committed to, so a fragment cut after a backward break continues from the
+/// previous one's end.
 fn smooth_times(
     samples: &[Sample],
     origin: SmoothOrigin,
     media_timescale: Timescale,
     next_start: Option<u64>,
+    rebase: BreakRebase,
 ) -> Result<Vec<SmoothSampleTime>> {
     let base = origin.scaled_to(media_timescale);
     let relative = |sample: &Sample| -> i64 {
-        sample
-            .timing
-            .and_then(|t| t.dts())
-            .map_or(0, |dts| dts.saturating_sub(base).max(0))
+        rebase.apply(
+            sample
+                .timing
+                .and_then(|t| t.dts())
+                .map_or(0, |dts| dts.saturating_sub(base).max(0)),
+        )
     };
     let starts: Vec<u64> = samples
         .iter()
-        .map(|s| to_smooth_ticks(relative(s) as u64, media_timescale))
+        .map(|s| to_smooth_ticks(relative(s).max(0) as u64, media_timescale))
         .collect();
     samples
         .iter()
@@ -763,7 +794,7 @@ fn smooth_times(
         .map(|(i, s)| {
             let start = starts[i];
             let own_end = to_smooth_ticks(
-                (relative(s) as u64)
+                (relative(s).max(0) as u64)
                     .saturating_add(u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0))),
                 media_timescale,
             );
@@ -817,6 +848,19 @@ struct SmoothTrackState {
     next_sequence: u32,
     /// Rounded-up target duration in this track's timescale.
     target_ticks: u64,
+    /// The next fragment cut for this track is marked discontinuous.
+    discontinuous: bool,
+    /// A break named this track and its first sample after it is still to
+    /// come: that sample states the break and, when the break moved time
+    /// backwards, fixes the track's [`Self::rebase`].
+    awaiting_break: bool,
+    /// The end of this track's last cut fragment, in this track's media
+    /// timescale ticks (its last sample's planned decode time plus that
+    /// sample's duration).
+    last_end: Option<i64>,
+    /// The offset this track's samples carry after a break that moved time
+    /// backwards, so the fragment timeline continues from [`Self::last_end`].
+    rebase: BreakRebase,
 }
 
 /// Cut a track stream into keyframe-aligned Smooth fragments, each a
@@ -879,6 +923,10 @@ impl SmoothSegmenter {
                     pending: Vec::new(),
                     pending_duration: 0,
                     next_sequence: 1,
+                    discontinuous: false,
+                    awaiting_break: false,
+                    last_end: None,
+                    rebase: BreakRebase::NONE,
                 })
                 .collect(),
             origin,
@@ -900,15 +948,21 @@ impl SmoothSegmenter {
             .iter()
             .position(|t| t.spec.track_id == track)
             .ok_or(Error::InvalidInput("smooth: unknown track_id"))?;
+        if self.tracks[index].awaiting_break {
+            let natural = self.relative_ticks(index, &sample);
+            let last_end = self.tracks[index].last_end;
+            self.tracks[index].rebase = last_end.map_or(BreakRebase::NONE, |last_end| {
+                BreakRebase::backwards(last_end, natural)
+            });
+            self.tracks[index].awaiting_break = false;
+            self.tracks[index].discontinuous = true;
+        }
         if sample.flags.is_sync
             && self.tracks[index].pending_duration >= self.tracks[index].target_ticks
             && !self.tracks[index].pending.is_empty()
         {
-            let cut = self.relative_ticks(index, &sample);
-            self.cut(
-                index,
-                Some(to_smooth_ticks(cut, self.tracks[index].spec.timescale)),
-            )?;
+            let cut = self.planned_ticks(index, &sample);
+            self.cut(index, Some(cut))?;
         }
         if self.tracks[index].pending.len() >= MAX_PENDING_SAMPLES_PER_TRACK {
             return Err(crate::segmenter::no_sync_sample_error());
@@ -921,33 +975,74 @@ impl SmoothSegmenter {
         Ok(())
     }
 
-    /// `sample`'s decode time relative to the origin, in its track's ticks.
-    fn relative_ticks(&self, index: usize, sample: &Sample) -> u64 {
+    /// `sample`'s decode time relative to the origin, on its track's own input
+    /// timeline, in that track's ticks.
+    fn relative_ticks(&self, index: usize, sample: &Sample) -> i64 {
         let timescale = self.tracks[index].spec.timescale;
         let base = self.origin.scaled_to(timescale);
         sample
             .timing
             .and_then(|t| t.dts())
-            .map_or(0, |dts| dts.saturating_sub(base).max(0)) as u64
+            .map_or(0, |dts| dts.saturating_sub(base).max(0))
+    }
+
+    /// [`Self::relative_ticks`] mapped onto the timeline this track's output
+    /// has committed to (the break offset applied).
+    fn planned_ticks(&self, index: usize, sample: &Sample) -> i64 {
+        self.tracks[index]
+            .rebase
+            .apply(self.relative_ticks(index, sample))
+            .max(0)
     }
 
     /// Cut the buffered fragment of track `index`, whose end is `next_start`
-    /// smooth ticks from the origin (`None`: its last sample's own end).
-    fn cut(&mut self, index: usize, next_start: Option<u64>) -> Result<()> {
-        let state = &mut self.tracks[index];
-        if state.pending.is_empty() {
+    /// planned ticks from the origin (`None`: its last sample's own end).
+    fn cut(&mut self, index: usize, next_start: Option<i64>) -> Result<()> {
+        if self.tracks[index].pending.is_empty() {
             return Ok(());
         }
-        let timescale = state.spec.timescale;
+        let timescale = self.tracks[index].spec.timescale;
+        let rebase = self.tracks[index].rebase;
         let base = self.origin.scaled_to(timescale);
-        let start = state
-            .pending
-            .first()
-            .and_then(|s| s.timing.and_then(|t| t.dts()))
-            .map_or(0, |dts| dts.saturating_sub(base).max(0)) as u64;
-        let times = smooth_times(&state.pending, self.origin, timescale, next_start)?;
-        let start_smooth = to_smooth_ticks(start, timescale);
+        let planned = |sample: &Sample| -> i64 {
+            rebase
+                .apply(
+                    sample
+                        .timing
+                        .and_then(|t| t.dts())
+                        .map_or(0, |dts| dts.saturating_sub(base).max(0)),
+                )
+                .max(0)
+        };
+        let state = &mut self.tracks[index];
+        let start = planned(
+            state
+                .pending
+                .first()
+                .ok_or(Error::InvalidInput("smooth: no sample to cut"))?,
+        );
+        let next_start_smooth = next_start.map(|ticks| to_smooth_ticks(ticks as u64, timescale));
+        let times = smooth_times(
+            &state.pending,
+            self.origin,
+            timescale,
+            next_start_smooth,
+            rebase,
+        )?;
+        let start_smooth = to_smooth_ticks(start as u64, timescale);
         let duration: u64 = times.iter().map(|t| u64::from(t.duration)).sum();
+        let end_ticks = match next_start {
+            Some(end) => end,
+            None => {
+                let last = state
+                    .pending
+                    .last()
+                    .ok_or(Error::InvalidInput("smooth: no sample to cut"))?;
+                planned(last).saturating_add(i64::from(
+                    last.timing.and_then(|t| t.duration()).unwrap_or(0),
+                ))
+            }
+        };
         let sequence = state.next_sequence;
         let data = build_smooth_fragment(
             state.spec.track_id,
@@ -966,11 +1061,12 @@ impl SmoothSegmenter {
             timescale: SMOOTH_DEFAULT_TIMESCALE.get(),
             bytes: state.pending.iter().map(|s| s.data.len() as u64).sum(),
             independent: state.pending.first().is_some_and(|s| s.flags.is_sync),
-            discontinuous: false,
+            discontinuous: core::mem::take(&mut state.discontinuous),
         };
         state.next_sequence += 1;
         state.pending.clear();
         state.pending_duration = 0;
+        state.last_end = Some(end_ticks);
         self.ready
             .push_back(MuxOutput::Segment(Box::new(SegmentOut {
                 bytes: bytes::Bytes::from(data),
@@ -1010,9 +1106,18 @@ impl Stage for SmoothSegmenter {
                 "smooth: the manifest's StreamIndex list is fixed for the session",
             )),
             MuxInput::Sample { track, sample } => self.push_sample(track, sample),
-            // A Smooth fragment states its own absolute start in `tfxd`, so a
-            // decode-time jump needs no separate signalling.
-            MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::Discontinuity { track } => {
+                // Close the open fragment now: a time jump belongs between two
+                // fragments, not inside one (whose `trun` durations would then
+                // describe it as a very long sample).
+                for index in 0..self.tracks.len() {
+                    if track.is_none_or(|broken| self.tracks[index].spec.track_id == broken) {
+                        self.cut(index, None)?;
+                        self.tracks[index].awaiting_break = true;
+                    }
+                }
+                Ok(())
+            }
             MuxInput::Flush => {
                 for index in 0..self.tracks.len() {
                     self.cut(index, None)?;
@@ -1275,8 +1380,14 @@ mod tests {
         // duration sum would drift from the timeline the manifest describes.
         let track = timed_track(1, 90_000, &[(0, 3000), (3003, 3000), (6006, 3000)]);
         let origin = SmoothOrigin::from_tracks([(track.spec.timescale, track.samples.as_slice())]);
-        let times =
-            smooth_times(&track.samples, origin, timescale(90_000), None).expect("timeline");
+        let times = smooth_times(
+            &track.samples,
+            origin,
+            timescale(90_000),
+            None,
+            BreakRebase::NONE,
+        )
+        .expect("timeline");
         let durations: Vec<u32> = times.iter().map(|t| t.duration).collect();
         assert_eq!(durations, alloc::vec![333_667, 333_666, 333_334]);
         let sum: u64 = times.iter().map(|t| u64::from(t.duration)).sum();
@@ -1291,7 +1402,14 @@ mod tests {
             (origin_track.spec.timescale, origin_track.samples.as_slice()),
             (track.spec.timescale, track.samples.as_slice()),
         ]);
-        let times = smooth_times(&track.samples, origin, timescale(1000), None).expect("timeline");
+        let times = smooth_times(
+            &track.samples,
+            origin,
+            timescale(1000),
+            None,
+            BreakRebase::NONE,
+        )
+        .expect("timeline");
         let durations: Vec<u32> = times.iter().map(|t| t.duration).collect();
         assert_eq!(durations, alloc::vec![10_000_000, 10_000_000]);
     }
@@ -1305,7 +1423,13 @@ mod tests {
             (origin_track.spec.timescale, origin_track.samples.as_slice()),
             (track.spec.timescale, track.samples.as_slice()),
         ]);
-        match smooth_times(&track.samples, origin, timescale(1000), None) {
+        match smooth_times(
+            &track.samples,
+            origin,
+            timescale(1000),
+            None,
+            BreakRebase::NONE,
+        ) {
             Err(Error::InvalidValue(v)) => {
                 assert_eq!(v.field, "trun sample_duration");
                 assert_eq!(v.value, 5_000_000_000);

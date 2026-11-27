@@ -197,7 +197,11 @@ pub fn codec_parameters_from_track(spec: &TrackSpec) -> Result<CodecParameters> 
             return Err(unrepresentable("an opaque data track"));
         }
     };
-    with_padding(parameters, spec.padding)
+    let parameters = with_padding(parameters, spec.padding)?;
+    Ok(match spec.pre_roll {
+        Some(pre_roll) => parameters.with_pre_roll(pre_roll.samples()),
+        None => parameters,
+    })
 }
 
 /// The [`TrackSpec`] `parameters` describe, for `track_id`.
@@ -219,7 +223,12 @@ pub fn track_spec_from_codec_parameters(
     }
     let config = track_config(parameters)?;
     let padding = GaplessTrim::new(parameters.initial_padding(), parameters.trailing_padding());
-    Ok(TrackSpec::new(track_id, parameters.time_base(), config).with_padding(padding))
+    let pre_roll = parameters
+        .pre_roll()
+        .and_then(crate::ir::DecoderPreRoll::from_samples);
+    Ok(TrackSpec::new(track_id, parameters.time_base(), config)
+        .with_padding(padding)
+        .with_pre_roll(pre_roll))
 }
 
 /// The codec identity of `config`, or the fact the seam cannot name.

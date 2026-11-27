@@ -1033,3 +1033,127 @@ fn ll_dash_demand_is_saturated_exactly_at_the_pending_bound() {
 // ===========================================================================
 // Whole-`Media` packaging — equal decode time merges the non-anchor track first
 // ===========================================================================
+
+// ── Issue #4154: a break is handed to the caller as a period boundary ──────
+
+/// A chunk stream cannot state a break itself; the MPD does, as a new Period.
+/// The segmenter therefore emits `MuxOutput::Discontinuity` in place, so a
+/// caller records it in the `SegmentSummaryLog` instead of losing it.
+#[test]
+fn a_break_is_handed_to_the_caller_as_a_period_boundary() {
+    use transmux::mux_stage::MuxOutput;
+
+    let two = crate::discontinuity::forward();
+    let specs: Vec<_> = two.media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let mut segmenter = LlSegmenter::new(
+        specs,
+        broadcast_core::timescale::Timescale::try_new(1000).expect("non-zero timescale"),
+        core::time::Duration::from_secs(2),
+        1,
+    )
+    .expect("LL-DASH segmenter");
+    let outputs = crate::discontinuity::drive_fixed(&mut segmenter, &two, None)
+        .expect("a forward break is expressible");
+    let marks: Vec<Option<transmux::TrackId>> = outputs
+        .iter()
+        .filter_map(|output| match output {
+            MuxOutput::Discontinuity { track } => Some(*track),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(marks, vec![None], "the break reaches the caller once");
+    let index = outputs
+        .iter()
+        .position(|output| matches!(output, MuxOutput::Discontinuity { .. }))
+        .expect("the break is in the output");
+    assert!(
+        outputs[..index]
+            .iter()
+            .any(|output| matches!(output, MuxOutput::Bytes(_))),
+        "chunks precede the break"
+    );
+    assert!(
+        outputs[index + 1..]
+            .iter()
+            .any(|output| matches!(output, MuxOutput::Bytes(_))),
+        "chunks follow it"
+    );
+}
+
+/// The break reaches the viewer, not just the caller's output queue: the
+/// segment log the packager renders from opens a new `Period`, the previous
+/// one closes with a duration, the next maps its continuing media clock with
+/// `presentationTimeOffset`, and the period timeline is continuous.
+#[test]
+fn a_break_renders_a_new_period_from_the_segment_log() {
+    let two = crate::discontinuity::forward();
+    let specs: Vec<_> = two.media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let mut segmenter = LlSegmenter::new(
+        specs.clone(),
+        broadcast_core::timescale::Timescale::try_new(1000).expect("non-zero timescale"),
+        core::time::Duration::from_secs(2),
+        1,
+    )
+    .expect("LL-DASH segmenter");
+    crate::discontinuity::drive_fixed(&mut segmenter, &two, None)
+        .expect("a forward break is expressible");
+
+    let mut packager = transmux::ll_dash::LlDashPackager::new(
+        core::time::Duration::from_secs(2),
+        core::time::Duration::from_secs(1),
+        core::time::Duration::from_secs(3),
+        "2026-01-01T00:00:00Z",
+    )
+    .expect("LL-DASH packager");
+    packager.base.publish_time = Some("2026-01-01T00:00:00Z".to_string());
+    let xml = packager
+        .render(&specs, segmenter.segment_log())
+        .expect("render the LL-DASH MPD");
+    if let Some(schema) = test_fixtures::process::xsd::dash_mpd_schema("ll_dash_period_break") {
+        test_fixtures::process::xsd::validate(&schema, "ll_dash_period_break", &xml)
+            .unwrap_or_else(|error| panic!("xmllint rejected the LL-DASH MPD:\n{error}"));
+    }
+    let mpd = broadcast_dash::Mpd::parse(xml.as_bytes()).expect("the MPD parses");
+    assert!(
+        mpd.periods.len() >= 2,
+        "the break must open a new Period, got {}:\n{xml}",
+        mpd.periods.len()
+    );
+    let mut expected_start = core::time::Duration::ZERO;
+    let mut offsets = Vec::new();
+    for (index, period) in mpd.periods.iter().enumerate() {
+        assert_eq!(
+            period.start,
+            Some(expected_start),
+            "period {index} starts where the previous one closed"
+        );
+        let duration = period
+            .duration
+            .unwrap_or_else(|| panic!("period {index} states a duration"));
+        let mut period_offsets = Vec::new();
+        for set in &period.adaptation_sets {
+            for representation in &set.representations {
+                let template = representation
+                    .segment
+                    .template
+                    .as_ref()
+                    .expect("every Representation has a SegmentTemplate");
+                period_offsets.push(template.multi.base.presentation_time_offset.unwrap_or(0));
+            }
+        }
+        if index == 0 {
+            assert!(
+                period_offsets.iter().all(|offset| *offset == 0),
+                "the first Period starts at media zero: {period_offsets:?}"
+            );
+        } else {
+            assert!(
+                period_offsets.iter().all(|offset| *offset > 0),
+                "period {index}'s media clock continues past the break: {period_offsets:?}"
+            );
+        }
+        offsets.push(period_offsets);
+        expected_start += duration;
+    }
+    assert!(offsets.len() >= 2);
+}

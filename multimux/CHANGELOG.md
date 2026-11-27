@@ -20,9 +20,18 @@
   along with the track batch `PushTransportEgress::send` built. Every transport
   frames sample by sample through its per-connection `media_muxer`; a transport
   with no muxer is refused with `MuxError::NoMuxer`.
+- `MediaMuxer` gained `discontinuity`: a cursor hand-off is a break the
+  transport's own muxer must frame (a TS `discontinuity_indicator`, an RTMP
+  timestamp rebase). A third-party transport now states what it does with a
+  break instead of dropping it.
 
 ### Changed
 
+- The DASH and LL-DASH MPDs open a new `Period` at a segment the segmenter
+  marked discontinuous (ISO/IEC 23009-1 §5.3.2), and `RouteHandle::add_segment`
+  keeps the segment's own discontinuous bit instead of discarding it.
+- `PushTransportEgress` forwards `SampleCursorItem::Discontinuity` to the
+  connection's muxer; it used to fall through the cursor's catch-all and drop.
 - Every network TS ingest route supplies a PES unit ceiling to the streaming
   TS demux, which now defaults to unlimited. The ceiling is the new
   `Config::max_ingest_pes_unit_bytes` (`with_max_ingest_pes_unit_bytes`,

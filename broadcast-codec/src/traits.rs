@@ -37,8 +37,12 @@ pub trait Decoder {
     /// [`Packet::trim_start`]/[`Packet::trim_end`] it copies onto the frame,
     /// are left for a [`TrimStage`](crate::TrimStage) to apply, **unless** the
     /// implementation's descriptor says
-    /// [`applies_trim`](crate::CodecDescriptor::applies_trim) is true, in which
-    /// case it has already applied them itself.
+    /// [`DecoderTrim::Implementation`](crate::DecoderTrim::Implementation), in
+    /// which case it has already applied them itself.
+    ///
+    /// [`CodecParameters::pre_roll`] is a decoder requirement, not a trim: the
+    /// implementation is free to use it or ignore it, and a caller never
+    /// discards it as padding.
     ///
     /// # Errors
     /// [`CodecError::Failed`] when the decoder is unusable;
@@ -53,6 +57,21 @@ pub trait Decoder {
 
     /// Drop every held packet and partial frame.
     fn reset(&mut self);
+
+    /// The samples this instance emits before the first real one, when its
+    /// descriptor states [`DecoderDelay::PerStream`](crate::DecoderDelay::PerStream).
+    ///
+    /// `None` means the decoder does not know yet or does not state it. A
+    /// decoder whose descriptor states a number reports it there instead.
+    fn output_delay(&self) -> Option<u32> {
+        None
+    }
+
+    /// The stream's timeline is discontinuous before the next packet, or the
+    /// caller restarted decoding after a seek or a splice.
+    ///
+    /// A decoder may drop state; the default does nothing.
+    fn discontinuity(&mut self) {}
 
     /// Adopt `parameters` mid-stream: a live source changed its resolution,
     /// sample rate or parameter sets.

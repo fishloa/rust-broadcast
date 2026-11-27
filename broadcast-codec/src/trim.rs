@@ -20,6 +20,7 @@ use broadcast_core::timescale::{Rounding, Timescale, rescale_i64};
 
 use crate::audio::{AudioFrame, AudioSamples, SampleLayout};
 use crate::codec::CodecParameters;
+use crate::delay::DecoderDelay;
 use crate::error::CodecError;
 use crate::frame::Frame;
 use crate::traits::Decoder;
@@ -27,32 +28,65 @@ use crate::traits::Decoder;
 /// The gapless trim of one decoded audio stream.
 ///
 /// Built from a [`CodecParameters`], fed frames in decode order, and finished
-/// at end of stream. It removes the initial padding from the front, applies
-/// each frame's own `trim_start`/`trim_end` and clears them, and holds back the
-/// trailing padding until [`Self::finish`], which discards it. It never holds
-/// more than the trailing padding plus the frame just pushed.
+/// at end of stream. Samples discarded from the front are the container's
+/// initial padding plus the decoder implementation's own
+/// [`DecoderDelay`](crate::DecoderDelay), which [`Self::with_decoder_delay`]
+/// states; the tail is shortened by that delay so the programme's duration does
+/// not change. It applies each frame's own `trim_start`/`trim_end` and clears
+/// them, and holds back the trailing padding until [`Self::finish`], which
+/// discards it. It never holds more than the trailing padding plus the frame
+/// just pushed.
+///
+/// A container's pre-roll is not a trim: nothing here reads
+/// [`CodecParameters::pre_roll`].
 pub struct TrimStage {
     time_base: Timescale,
-    initial_padding: u32,
+    container_initial: u32,
+    decoder_delay: u32,
     initial_remaining: u32,
+    container_trailing: Option<u32>,
     trailing_padding: Option<u32>,
     held: VecDeque<AudioFrame>,
     held_samples: usize,
 }
 
 impl TrimStage {
-    /// A stage for `parameters`'s padding and time base.
+    /// A stage for `parameters`'s padding and time base, with no decoder
+    /// delay.
     #[must_use]
     pub fn new(parameters: &CodecParameters) -> Self {
-        let initial_padding = parameters.initial_padding();
         Self {
             time_base: parameters.time_base(),
-            initial_padding,
-            initial_remaining: initial_padding,
+            container_initial: parameters.initial_padding(),
+            decoder_delay: 0,
+            initial_remaining: parameters.initial_padding(),
+            container_trailing: parameters.trailing_padding(),
             trailing_padding: parameters.trailing_padding(),
             held: VecDeque::new(),
             held_samples: 0,
         }
+    }
+
+    /// Discard `samples` per channel of the decoder's own delay before the
+    /// container's initial padding, and shorten the tail by the same amount.
+    ///
+    /// The tail can only shrink when the container states trailing padding; a
+    /// stream that states none keeps every sample after the delay. Call this
+    /// before feeding frames.
+    #[must_use]
+    pub fn with_decoder_delay(mut self, samples: u32) -> Self {
+        self.decoder_delay = samples;
+        self.initial_remaining = self.container_initial.saturating_add(samples);
+        self.trailing_padding = self
+            .container_trailing
+            .map(|trailing| trailing.saturating_sub(samples));
+        self
+    }
+
+    /// The decoder delay this stage was built with.
+    #[must_use]
+    pub const fn decoder_delay(&self) -> u32 {
+        self.decoder_delay
     }
 
     /// Feed one decoded frame in decode order and take the frames that are
@@ -105,7 +139,7 @@ impl TrimStage {
 
     /// Drop all state so the next frame starts a new stream.
     pub fn reset(&mut self) {
-        self.initial_remaining = self.initial_padding;
+        self.initial_remaining = self.container_initial.saturating_add(self.decoder_delay);
         self.held.clear();
         self.held_samples = 0;
     }
@@ -192,6 +226,9 @@ impl TrimStage {
 pub(crate) struct TrimmedDecoder {
     inner: Box<dyn Decoder>,
     trim: TrimStage,
+    delay: DecoderDelay,
+    pre_roll: u32,
+    pre_roll_remaining: u32,
     ready: VecDeque<Frame>,
     finished: bool,
     drained: bool,
@@ -199,14 +236,33 @@ pub(crate) struct TrimmedDecoder {
 
 impl TrimmedDecoder {
     /// Wrap `inner` so its audio output is trimmed by `parameters`.
-    pub(crate) fn new(inner: Box<dyn Decoder>, parameters: &CodecParameters) -> Self {
+    ///
+    /// `delay` states how the implementation's own output delay is learned.
+    pub(crate) fn new(
+        inner: Box<dyn Decoder>,
+        parameters: &CodecParameters,
+        delay: DecoderDelay,
+    ) -> Self {
+        let samples = resolve_delay(inner.as_ref(), delay);
         Self {
+            trim: TrimStage::new(parameters).with_decoder_delay(samples),
             inner,
-            trim: TrimStage::new(parameters),
+            delay,
+            pre_roll: parameters.pre_roll().unwrap_or(0),
+            pre_roll_remaining: 0,
             ready: VecDeque::new(),
             finished: false,
             drained: false,
         }
+    }
+}
+
+/// The samples `delay` states for `inner`.
+fn resolve_delay(inner: &dyn Decoder, delay: DecoderDelay) -> u32 {
+    match delay {
+        DecoderDelay::Declared(samples) => samples,
+        DecoderDelay::PerStream => inner.output_delay().unwrap_or(0),
+        DecoderDelay::Unknown => 0,
     }
 }
 
@@ -226,11 +282,18 @@ impl Decoder for TrimmedDecoder {
             }
             match self.inner.receive()? {
                 Some(Frame::Audio(audio)) => {
+                    let audio = self.skip_pre_roll(audio);
                     for audio in self.trim.push(audio) {
                         self.ready.push_back(Frame::Audio(audio));
                     }
                 }
-                Some(frame) => self.ready.push_back(frame),
+                Some(frame) => {
+                    if self.pre_roll_remaining > 0 {
+                        self.pre_roll_remaining -= 1;
+                    } else {
+                        self.ready.push_back(frame);
+                    }
+                }
                 None => {
                     if self.finished && !self.drained {
                         self.drained = true;
@@ -253,6 +316,7 @@ impl Decoder for TrimmedDecoder {
     fn reset(&mut self) {
         self.inner.reset();
         self.trim.reset();
+        self.pre_roll_remaining = self.pre_roll;
         self.ready.clear();
         self.finished = false;
         self.drained = false;
@@ -260,10 +324,47 @@ impl Decoder for TrimmedDecoder {
 
     fn reconfigure(&mut self, parameters: CodecParameters) -> Result<(), CodecError> {
         self.inner.reconfigure(parameters.clone())?;
-        self.trim = TrimStage::new(&parameters);
+        let samples = resolve_delay(self.inner.as_ref(), self.delay);
+        self.trim = TrimStage::new(&parameters).with_decoder_delay(samples);
+        self.pre_roll = parameters.pre_roll().unwrap_or(0);
+        self.pre_roll_remaining = self.pre_roll;
         self.finished = false;
         self.drained = false;
         Ok(())
+    }
+
+    fn output_delay(&self) -> Option<u32> {
+        match self.delay {
+            DecoderDelay::Declared(samples) => Some(samples),
+            DecoderDelay::PerStream => self.inner.output_delay(),
+            DecoderDelay::Unknown => None,
+        }
+    }
+
+    fn discontinuity(&mut self) {
+        self.pre_roll_remaining = self.pre_roll;
+    }
+}
+
+impl TrimmedDecoder {
+    /// Drop the decoder's settling output before the programme starts.
+    ///
+    /// The pre-roll is a decoder requirement, not a container trim: the first
+    /// `pre_roll` decoded samples after a reset, a reconfiguration or a
+    /// discontinuity are discarded here rather than as padding, and only the
+    /// part of a frame that lies past the requirement is kept.
+    fn skip_pre_roll(&mut self, audio: AudioFrame) -> AudioFrame {
+        if self.pre_roll_remaining == 0 {
+            return audio;
+        }
+        let frames = u32::try_from(audio.frames()).unwrap_or(u32::MAX);
+        let drop = self.pre_roll_remaining.min(frames);
+        self.pre_roll_remaining -= drop;
+        if drop == 0 {
+            return audio;
+        }
+        let start = audio.trim_start().saturating_add(drop);
+        audio.with_trim_start(start)
     }
 }
 

@@ -5,14 +5,13 @@
 //! real backward jump of that timeline at the seam, and `StreamingTsDemux`
 //! raises `DemuxEvent::Discontinuity` there — the precondition the first test
 //! pins. Repackaging those bytes through [`run_bytes`] must forward that mark
-//! to the output stage: an output that can express it writes
-//! `#EXT-X-DISCONTINUITY` or sets the adaptation-field
-//! `discontinuity_indicator`, and one that cannot refuses with a typed error
-//! rather than dropping the event.
+//! to the output stage, which states it in its own format: a manifest's
+//! `#EXT-X-DISCONTINUITY`, a TS adaptation-field `discontinuity_indicator`, a
+//! new CMAF fragment, a new DASH Period, or a progressive file whose sample
+//! timeline continues across the break. No byte output refuses it.
 #![cfg(feature = "cli")]
 
-use transmux::cli::{CliError, Opts, Output, OutputFormat, run_bytes};
-use transmux::error::Error;
+use transmux::cli::{Opts, Output, OutputFormat, run_bytes};
 use transmux::{DemuxEvent, DiscontinuityKind, StreamingTsDemux};
 
 /// One real capture, played twice: the seam is the timeline break under test.
@@ -54,12 +53,16 @@ fn counts_discontinuities(data: &[u8]) -> usize {
 }
 
 fn manifest(data: &[u8], format: OutputFormat) -> String {
-    match run_bytes(data, &opts(format))
-        .unwrap_or_else(|error| panic!("{format} over the capture: {error}"))
+    manifest_with(data, &opts(format))
+}
+
+fn manifest_with(data: &[u8], opts: &Opts) -> String {
+    match run_bytes(data, opts)
+        .unwrap_or_else(|error| panic!("{} over the capture: {error}", opts.format))
     {
         Output::Manifest { text, .. } => text,
-        Output::Bytes(_) => panic!("{format}: expected a manifest"),
-        _ => panic!("{format}: unexpected output"),
+        Output::Bytes(_) => panic!("{}: expected a manifest", opts.format),
+        _ => panic!("{}: unexpected output", opts.format),
     }
 }
 
@@ -71,10 +74,6 @@ fn ts_bytes(data: &[u8]) -> Vec<u8> {
         Output::Manifest { .. } => panic!("ts: expected bytes"),
         _ => panic!("ts: unexpected output"),
     }
-}
-
-fn is_unsupported(error: &CliError) -> bool {
-    matches!(error, CliError::Transmux(Error::UnsupportedFeature(_)))
 }
 
 #[test]
@@ -141,11 +140,216 @@ fn continuous_capture_ts_output_signals_no_break() {
 }
 
 #[test]
-fn dash_output_refuses_the_break_with_a_typed_error() {
-    let error = run_bytes(&broken_capture(), &opts(OutputFormat::Dash))
-        .expect_err("a single-period MPD has no way to signal the break");
+fn dash_output_writes_a_period_per_break() {
+    assert_period_per_break(&manifest(&broken_capture(), OutputFormat::Dash));
+}
+
+#[test]
+fn ll_dash_output_writes_a_period_per_break() {
+    let mut opts = opts(OutputFormat::Dash);
+    opts.low_latency = true;
+    assert_period_per_break(&manifest_with(&broken_capture(), &opts));
+}
+
+fn assert_period_per_break(text: &str) {
+    let mpd = broadcast_dash::Mpd::parse(text.as_bytes()).expect("the rendered MPD parses");
     assert!(
-        is_unsupported(&error),
-        "expected a typed refusal, got: {error}"
+        mpd.periods.len() >= 2,
+        "the break must open a new Period, got {} period(s):\n{text}",
+        mpd.periods.len()
     );
+    let mut expected_start = std::time::Duration::ZERO;
+    let mut offsets = Vec::new();
+    for (index, period) in mpd.periods.iter().enumerate() {
+        assert_eq!(
+            period.start,
+            Some(expected_start),
+            "period {index} starts where the previous one closed"
+        );
+        let duration = period
+            .duration
+            .unwrap_or_else(|| panic!("period {index} states a duration"));
+        let mut period_offsets = Vec::new();
+        for set in &period.adaptation_sets {
+            for representation in &set.representations {
+                let template = representation
+                    .segment
+                    .template
+                    .as_ref()
+                    .expect("every Representation has a SegmentTemplate");
+                period_offsets.push(
+                    template
+                        .multi
+                        .base
+                        .presentation_time_offset
+                        .unwrap_or_else(|| {
+                            panic!("period {index} states a presentationTimeOffset")
+                        }),
+                );
+            }
+        }
+        assert!(
+            !period_offsets.is_empty(),
+            "period {index} carries a Representation"
+        );
+        if index == 0 {
+            assert!(
+                period_offsets.iter().all(|offset| *offset == 0),
+                "the first Period starts at media zero"
+            );
+        } else {
+            assert!(
+                period_offsets.iter().all(|offset| *offset > 0),
+                "period {index}'s media clock continues past the break: {period_offsets:?}"
+            );
+        }
+        offsets.push(period_offsets);
+        expected_start += duration;
+    }
+    assert!(offsets.len() >= 2);
+}
+
+/// A progressive MP4 has no out-of-band marker, but it does not need one:
+/// `stts` states a decode time as the sum of the preceding durations
+/// (ISO/IEC 14496-12:2026 §8.6.1.1), so the plan continues each track's
+/// timeline across the break. The CLI must write such a file, not fail.
+#[test]
+fn progressive_output_continues_across_the_break() {
+    let input = broken_capture();
+    let decoded = test_harness::collect::media_from_ts(&input).expect("demux the doubled capture");
+    let bytes = match run_bytes(&input, &opts(OutputFormat::Progressive))
+        .expect("a byte output must express the break, not refuse it")
+    {
+        Output::Bytes(bytes) => bytes,
+        Output::Manifest { .. } => panic!("progressive: expected bytes"),
+        _ => panic!("progressive: unexpected output"),
+    };
+    let remuxed =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("the progressive file re-demuxes");
+    for track in &decoded.tracks {
+        let got = remuxed
+            .tracks
+            .iter()
+            .find(|candidate| candidate.spec.track_id == track.spec.track_id)
+            .expect("every input track reaches the file");
+        assert_eq!(
+            track.samples.len(),
+            got.samples.len(),
+            "every sample of track {:?} survives the break",
+            track.spec.track_id
+        );
+        let times: Vec<f64> = got
+            .samples
+            .iter()
+            .filter_map(|sample| {
+                sample
+                    .timing
+                    .and_then(|timing| timing.dts().or_else(|| timing.pts()))
+            })
+            .map(|tick| tick as f64)
+            .collect();
+        crate::discontinuity::assert_non_decreasing(
+            &format!("track {:?}", track.spec.track_id),
+            &times,
+        );
+    }
+    // Every stream's stated presentation duration must cover its whole media
+    // span: a plan that did not continue the timeline would truncate a track to
+    // the first source (half of the file).
+    if !test_fixtures::process::tool_available("ffprobe", "-version") {
+        eprintln!("skipping the duration check: ffprobe is not on PATH");
+        return;
+    }
+    let path = crate::discontinuity::scratch_path(&format!(
+        "dc1-cli-progressive-{}.mp4",
+        std::process::id()
+    ));
+    std::fs::write(&path, &bytes).expect("write the progressive file");
+    let mut command = std::process::Command::new("ffprobe");
+    command
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=index,duration",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(&path);
+    let output =
+        test_fixtures::process::output_bounded(&mut command, std::time::Duration::from_secs(30))
+            .expect("run ffprobe");
+    assert!(
+        output.status.success(),
+        "ffprobe failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let durations: Vec<f64> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split(',').nth(1)?.parse().ok())
+        .collect();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(
+        durations.len(),
+        remuxed.tracks.len(),
+        "ffprobe states a duration per stream"
+    );
+    for (duration, track) in durations.iter().zip(&remuxed.tracks) {
+        let first = track
+            .samples
+            .iter()
+            .find_map(|sample| sample.timing.and_then(|timing| timing.dts()))
+            .expect("a timed sample");
+        let last = track
+            .samples
+            .iter()
+            .rev()
+            .find_map(|sample| {
+                sample.timing.and_then(|timing| {
+                    timing
+                        .dts()
+                        .map(|dts| dts + i64::from(timing.duration().unwrap_or(0)))
+                })
+            })
+            .expect("a timed sample");
+        let span = (last - first) as f64 / f64::from(track.spec.timescale.get());
+        assert!(
+            *duration >= 0.9 * span,
+            "track {:?} states {duration} s of {span} s: the break truncated it",
+            track.spec.track_id
+        );
+    }
+}
+
+/// A bare CMAF byte stream states a break with a new fragment whose `tfdt`
+/// carries its decode time, so the CLI's CMAF output must write the file
+/// rather than fail on the mark.
+#[test]
+fn cmaf_output_states_the_break_in_a_new_fragment() {
+    let input = broken_capture();
+    let decoded = test_harness::collect::media_from_ts(&input).expect("demux the doubled capture");
+    let bytes = match run_bytes(&input, &opts(OutputFormat::Cmaf))
+        .expect("a byte output must express the break, not refuse it")
+    {
+        Output::Bytes(bytes) => bytes,
+        Output::Manifest { .. } => panic!("cmaf: expected bytes"),
+        _ => panic!("cmaf: unexpected output"),
+    };
+    let remuxed =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("the CMAF stream re-demuxes");
+    for track in &decoded.tracks {
+        let got = remuxed
+            .tracks
+            .iter()
+            .find(|candidate| candidate.spec.track_id == track.spec.track_id)
+            .expect("every input track reaches the segment");
+        assert_eq!(
+            track.samples.len(),
+            got.samples.len(),
+            "every sample of track {:?} survives the break",
+            track.spec.track_id
+        );
+    }
 }

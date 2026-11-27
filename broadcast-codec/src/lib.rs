@@ -18,6 +18,7 @@ extern crate alloc;
 mod audio;
 mod availability;
 mod codec;
+mod delay;
 mod descriptor;
 mod direction;
 mod encoder_config;
@@ -47,6 +48,7 @@ pub use availability::{Availability, Probe};
 // rather than make every adapter depend on `broadcast-core` for one name.
 pub use broadcast_core::timescale::Timescale;
 pub use codec::{AudioParameters, CodecId, CodecParameters, ConfigurationRecord, VideoParameters};
+pub use delay::{DecoderDelay, DecoderTrim};
 pub use descriptor::CodecDescriptor;
 pub use direction::Direction;
 pub use encoder_config::EncoderConfig;

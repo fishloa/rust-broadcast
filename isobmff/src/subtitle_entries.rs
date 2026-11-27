@@ -6,6 +6,7 @@
 //! |----------|-----------------------------|---------|------------------|
 //! | `stpp`   | XMLSubtitleSampleEntry      | `subt`  | ISO/IEC 14496-30 §7.2 |
 //! | `wvtt`   | WVTTSampleEntry             | `text`  | ISO/IEC 14496-30 §9.2 |
+//! | `c608`   | ClosedCaptionSampleEntry    | `clcp`  | QuickTime File Format |
 //!
 //! Both follow the `SampleEntry` base (6 reserved bytes + `data_reference_index` u16,
 //! ISO/IEC 14496-12:2026 §8.5.2) and carry no `VisualSampleEntry` or `AudioSampleEntry`
@@ -20,6 +21,7 @@
 //! inside the sample entry, but they are provided here for completeness so callers can
 //! build and parse cue sample payloads.
 
+use crate::box_support::{OpaqueBox, capture_children};
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_OFFSET, BOX_TYPE_SIZE};
 use crate::error::{Error, Result};
 use crate::sample_entries::SAMPLE_ENTRY_RESERVED_LEN;
@@ -369,7 +371,7 @@ pub struct VttCueBox {
     /// Optional cue identifier string (`iden`).
     pub cue_id: Option<CueIdBox>,
     /// Children this crate has no typed model for, verbatim (box header
-    /// preserved through [`OpaqueBox`](crate::box_support::OpaqueBox)).
+    /// preserved through [`OpaqueBox`]).
     pub extra_children: Vec<crate::box_support::OpaqueBox>,
     /// Wire order of the children of a parsed cue; empty for a built one.
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -997,5 +999,151 @@ mod tests {
         let mut same_content_other_order = base.clone();
         same_content_other_order.child_order = alloc::vec![CueChild::Payl];
         assert_eq!(base, same_content_other_order);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ClosedCaptionSampleEntry — 'c608' (QuickTime File Format)
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the QuickTime closed-caption sample entry (`c608`).
+pub const C608: [u8; BOX_TYPE_SIZE] = *b"c608";
+
+/// QuickTime closed-caption sample entry (`c608`) — QuickTime File Format,
+/// "Closed captioning sample description".
+///
+/// The entry adds no fields to the `SampleEntry` base; any child boxes after
+/// the fixed part are preserved verbatim so a track round-trips.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ClosedCaptionSampleEntry {
+    reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
+    data_reference_index: u16,
+    config_boxes: Vec<OpaqueBox>,
+    trailing: Vec<u8>,
+}
+
+impl ClosedCaptionSampleEntry {
+    /// Build a version-0 entry with `data_reference_index` 1 and no children.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            reserved: [0; SAMPLE_ENTRY_RESERVED_LEN],
+            data_reference_index: 1,
+            config_boxes: Vec::new(),
+            trailing: Vec::new(),
+        }
+    }
+
+    /// Set `data_reference_index`.
+    #[must_use]
+    pub fn with_data_reference_index(mut self, index: u16) -> Self {
+        self.data_reference_index = index;
+        self
+    }
+
+    /// The SampleEntry `reserved[6]` bytes, carried verbatim.
+    #[must_use]
+    pub fn reserved(&self) -> &[u8; SAMPLE_ENTRY_RESERVED_LEN] {
+        &self.reserved
+    }
+
+    /// The `data_reference_index`.
+    #[must_use]
+    pub const fn data_reference_index(&self) -> u16 {
+        self.data_reference_index
+    }
+
+    /// The complete child boxes after the fixed part, verbatim.
+    #[must_use]
+    pub fn config_boxes(&self) -> &[OpaqueBox] {
+        &self.config_boxes
+    }
+
+    /// Bytes after the last complete child.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Parse the whole entry, box header included.
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        need_in(
+            bytes,
+            BOX_HEADER_MIN_SIZE + SAMPLE_ENTRY_FIXED_LEN,
+            "c608 sample entry",
+        )?;
+        if bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != C608 {
+            return Err(Error::UnexpectedBox { expected: "c608" });
+        }
+        let mut reserved = [0u8; SAMPLE_ENTRY_RESERVED_LEN];
+        reserved.copy_from_slice(
+            bytes
+                .get(BOX_HEADER_MIN_SIZE..BOX_HEADER_MIN_SIZE + SAMPLE_ENTRY_RESERVED_LEN)
+                .ok_or(Error::BufferTooShort(BufferTooShort {
+                    need: BOX_HEADER_MIN_SIZE + SAMPLE_ENTRY_RESERVED_LEN,
+                    have: bytes.len(),
+                    what: "c608 reserved",
+                }))?,
+        );
+        let data_reference_index = be_u16(
+            bytes,
+            BOX_HEADER_MIN_SIZE + DATA_REFERENCE_INDEX_OFFSET,
+            "c608 data_reference_index",
+        )?;
+        let region = bytes
+            .get(BOX_HEADER_MIN_SIZE + SAMPLE_ENTRY_FIXED_LEN..)
+            .unwrap_or_default();
+        let (config_boxes, trailing) = capture_children(region).into_parts();
+        Ok(Self {
+            reserved,
+            data_reference_index,
+            config_boxes,
+            trailing,
+        })
+    }
+}
+
+impl Default for ClosedCaptionSampleEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'a> Parse<'a> for ClosedCaptionSampleEntry {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_box(bytes)
+    }
+}
+
+impl Serialize for ClosedCaptionSampleEntry {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        let children: usize = self
+            .config_boxes
+            .iter()
+            .map(Serialize::serialized_len)
+            .sum();
+        crate::box_types::box_len(
+            BOX_HEADER_MIN_SIZE + SAMPLE_ENTRY_FIXED_LEN + children + self.trailing.len(),
+        )
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_box_header(buf, &C608, need)?;
+        buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].copy_from_slice(&self.reserved);
+        c += SAMPLE_ENTRY_RESERVED_LEN;
+        buf[c..c + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.data_reference_index.to_be_bytes());
+        c += core::mem::size_of::<u16>();
+        for child in &self.config_boxes {
+            c += child.serialize_into(&mut buf[c..])?;
+        }
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        c += self.trailing.len();
+        Ok(c)
     }
 }
