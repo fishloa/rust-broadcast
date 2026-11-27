@@ -511,3 +511,64 @@ fn every_warning_converts_to_a_damage_report() {
         assert!(!damage.what().is_empty(), "{}", warning.name());
     }
 }
+
+/// An element declaring the largest 8-octet size must not make the reader
+/// request, hold or scan the declared bytes: the fault is a size larger than
+/// the caller's cap, so it is reported and the walk resynchronises on the next
+/// level-1 element within the input that exists.
+#[test]
+fn an_element_declaring_a_huge_size_resyncs_without_buffering_it() {
+    use broadcast_matroska::Limits;
+    use broadcast_matroska::reader::{Mode, Reader, Source, Step};
+
+    let mut bytes = ebml_header();
+    write_header(&mut bytes, ids::SEGMENT, VintSize::unknown_max());
+    write_header(
+        &mut bytes,
+        ids::CLUSTER,
+        VintSize::minimal((1u64 << 56) - 1).expect("an eight-octet VINT"),
+    );
+    bytes.extend_from_slice(&element_bytes(ids::TIMESTAMP, &[0]));
+    let mut cluster = element_bytes(ids::TIMESTAMP, &[0]);
+    write_header(
+        &mut bytes,
+        ids::CLUSTER,
+        VintSize::minimal(cluster.len() as u64).expect("a Cluster size"),
+    );
+    bytes.append(&mut cluster);
+    let len = u64::try_from(bytes.len()).expect("a small input");
+
+    let mut reader = Reader::new(Source::Seekable { len }, Mode::Permissive, Limits::new());
+    let mut steps = 0usize;
+    let mut supplied = 0usize;
+    let mut largest_need = 0u64;
+    loop {
+        steps += 1;
+        assert!(
+            steps <= 256,
+            "the walk must finish within a small step budget"
+        );
+        match reader.step().expect("a permissive step") {
+            Step::Need(range) => {
+                largest_need = largest_need.max(range.len);
+                let start = usize::try_from(range.offset).unwrap_or(usize::MAX);
+                let want = usize::try_from(range.len).unwrap_or(0);
+                let end = start.saturating_add(want).min(bytes.len());
+                let piece = bytes.get(start..end).unwrap_or(&[]);
+                supplied = supplied.saturating_add(piece.len());
+                reader.supply(range.offset, piece).expect("supply");
+            }
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    assert!(
+        largest_need <= len,
+        "a demand of {largest_need} bytes exceeds the {len}-byte input"
+    );
+    assert!(
+        supplied <= bytes.len().saturating_mul(8),
+        "the walk examined {supplied} bytes for a {}-byte input",
+        bytes.len()
+    );
+}
