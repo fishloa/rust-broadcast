@@ -4,8 +4,9 @@ Codec bitstream parsers and stream-format conversion for `rust-broadcast`.
 
 **This crate reads codec facts. It never decodes or encodes media.** It is the
 layer below the container and muxing crates: a project that only wants to split
-an Annex B stream, classify NAL units, or read an exp-Golomb field can depend on
-this crate alone instead of taking the whole muxing hub.
+an Annex B stream, classify NAL units, read an exp-Golomb field, or decode an
+AAC, AC-3/E-AC-3, DTS or MHAS header can depend on this crate alone instead of
+taking the whole muxing hub.
 
 What it holds today:
 

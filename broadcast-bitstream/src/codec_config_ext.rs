@@ -5,7 +5,9 @@
 //! strings and reading their SPS-derived geometry needs this crate's bitstream
 //! parsers. [`avc_config_from_sps_pps`] is the value-level building block an
 //! SDP `sprop-parameter-sets` interpreter, or any caller holding parameter-set
-//! NAL units, uses to produce the record.
+//! NAL units, uses to produce the record. [`EsdsBoxCodecInfo`] is the audio
+//! counterpart (`aac` feature): it parses the `AudioSpecificConfig` a `esds`
+//! box's `DecoderSpecificInfo` carries.
 
 #[cfg(feature = "aac")]
 use crate::aac_asc::AudioSpecificConfig;
