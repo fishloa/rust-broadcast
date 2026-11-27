@@ -4,15 +4,17 @@
 //! [`DtsCoreFrameInfo`] parses the core frame header and builds a `ddts` box
 //! via [`DtsCoreFrameInfo::into_ddts`]; [`split_dts_core_frames`] splits a
 //! concatenated PES payload into core frames. The `ddts` box itself lives in
-//! [`isobmff::dts`].
+//! `isobmff::dts`.
 
+use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_bitstream::bitreader::read_bits_checked as read_bits;
 use broadcast_core::error::InvalidValue;
+#[cfg(feature = "isobmff")]
 use isobmff::dts::DtsSpecificBox;
 
-pub(crate) const DTS_CORE_SYNC_WORD: u32 = 0x7FFE_8001;
+/// DTS core substream sync word — ETSI TS 102 114 §5.3 (`SYNC`, 32 bits).
+pub const DTS_CORE_SYNC_WORD: u32 = 0x7FFE_8001;
 
 /// Samples per PCM sample block (`NBLKS` unit) — ETSI TS 102 114 Table 5-1:
 /// "samples per channel = 32 × (NBLKS + 1)".
@@ -26,17 +28,21 @@ const DTS_FSIZE_MIN: u16 = 95;
 
 /// `pcmSampleDepth` for a core-only `ddts` — ETSI TS 102 114 §E.2.2.3.2: the
 /// core substream's PCM sample depth is always 16 bits.
+#[cfg(feature = "isobmff")]
 const DTS_CORE_PCM_SAMPLE_DEPTH: u8 = 16;
 
 /// `StreamConstruction` for a core-only substream (no extensions) — ETSI TS
 /// 102 114 Table E-2, the code mapped to the `dtsc` coding name.
+#[cfg(feature = "isobmff")]
 const DTS_STREAM_CONSTRUCTION_CORE_ONLY: u8 = 1;
 
 /// `CoreLayout` value meaning "use `ChannelLayout`" — ETSI TS 102 114 Table E-3,
 /// used for any `AMODE` arrangement not directly enumerated in the table.
+#[cfg(feature = "isobmff")]
 const DTS_CORE_LAYOUT_USE_CHANNEL_LAYOUT: u8 = 31;
 
 /// `RATE` code for open/variable bit rate — ETSI TS 102 114 Table 5-7 (`0b11101`).
+#[cfg(feature = "isobmff")]
 const DTS_RATE_OPEN: u8 = 0b11101;
 
 /// Width of `SHORT`.
@@ -60,9 +66,10 @@ const DTS_LFF_BITS: usize = 2;
 /// `0..=28`. Verified bit-exact against ffmpeg's `ff_dca_bit_rates` table
 /// (`libavcodec/dcadata.c`), which implements the same ETSI-published values
 /// (a DTS decoder must reproduce the encoder's declared bit rate). Index
-/// [`DTS_RATE_OPEN`] (29) and the two reserved codes above it are not real
+/// `DTS_RATE_OPEN` (29) and the two reserved codes above it are not real
 /// bit rates — `dts_rate_bps` maps every code `>= 29` to `0` (open/unknown).
 #[rustfmt::skip]
+#[cfg(feature = "isobmff")]
 const DTS_RATE_BPS: [u32; 29] = [
       32_000,   56_000,   64_000,   96_000,  112_000,  128_000,
      192_000,  224_000,  256_000,  320_000,  384_000,
@@ -115,7 +122,8 @@ fn dts_amode_channels(amode: u8) -> Option<u8> {
 
 /// `AMODE` field → `ddts` `CoreLayout` — ETSI TS 102 114 Table E-3.
 /// Arrangements not enumerated in the table map to
-/// [`DTS_CORE_LAYOUT_USE_CHANNEL_LAYOUT`] ("use `ChannelLayout`").
+/// `DTS_CORE_LAYOUT_USE_CHANNEL_LAYOUT` ("use `ChannelLayout`").
+#[cfg(feature = "isobmff")]
 fn dts_amode_core_layout(amode: u8) -> u8 {
     match amode {
         0b000000 => 0, // Mono (1/0)
@@ -132,6 +140,7 @@ fn dts_amode_core_layout(amode: u8) -> u8 {
 
 /// `RATE` field (Table 5-7) → nominal bit rate in bits/s; `0` for the
 /// open/variable code and any code beyond the table (see [`DTS_RATE_BPS`]).
+#[cfg(feature = "isobmff")]
 fn dts_rate_bps(rate: u8) -> u32 {
     if rate >= DTS_RATE_OPEN {
         return 0; // open/variable (0b11101) or reserved (0b11110/0b11111)
@@ -139,13 +148,9 @@ fn dts_rate_bps(rate: u8) -> u32 {
     DTS_RATE_BPS.get(rate as usize).copied().unwrap_or(0)
 }
 
-/// Read a big-endian `u32` at `offset`.
+/// Read a big-endian `u32` at `offset`, zero when the buffer is too short.
 fn read_be_u32(bytes: &[u8], offset: usize) -> u32 {
-    u32::from_be_bytes(
-        bytes[offset..offset + core::mem::size_of::<u32>()]
-            .try_into()
-            .expect("u32 length"),
-    )
+    broadcast_core::wire::be_u32(bytes, offset, "DTS sync word").unwrap_or(0)
 }
 
 /// Find the byte offset of the [`DTS_CORE_SYNC_WORD`] in a buffer.
@@ -163,34 +168,74 @@ fn find_dts_sync(data: &[u8]) -> Result<usize> {
 
 /// Fields parsed from a DTS core-substream frame header (ETSI TS 102 114
 /// §5.3/§5.4, Table 5-1), sufficient to describe the elementary stream and
-/// build a core-only [`DtsSpecificBox`] via [`into_ddts`](Self::into_ddts).
+/// build a core-only `DtsSpecificBox` via `into_ddts`.
 /// The parser is the only producer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct DtsCoreFrameInfo {
-    /// Core sampling frequency in Hz (Table 5-5).
-    pub sample_rate: u32,
-    /// Total channel count: `CHS` (Table 5-4) + 1 if LFE is present.
-    pub channels: u8,
-    /// Samples per channel per frame: `32 × (NBLKS + 1)`.
-    pub samples_per_frame: u32,
-    /// Frame byte size: `FSIZE + 1`.
-    pub frame_size: usize,
-    /// Raw `AMODE` field (channel arrangement, Table 5-4).
-    pub amode: u8,
-    /// Raw `LFF` field (low-frequency-effects flag, `0` = none).
-    pub lff: u8,
-    /// Raw `NBLKS` field.
-    pub nblks: u8,
-    /// Raw `FSIZE` field.
-    pub fsize: u16,
-    /// Raw `RATE` field (targeted bit rate, Table 5-7).
-    pub rate: u8,
-    /// Raw `SFREQ` field (Table 5-5).
-    pub sfreq: u8,
+    sample_rate: u32,
+    channels: u8,
+    samples_per_frame: u32,
+    frame_size: usize,
+    amode: u8,
+    lff: u8,
+    nblks: u8,
+    fsize: u16,
+    rate: u8,
+    sfreq: u8,
 }
 
 impl DtsCoreFrameInfo {
+    /// Core sampling frequency in Hz (Table 5-5).
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    /// Total channel count: `CHS` (Table 5-4) + 1 if LFE is present.
+    pub fn channels(&self) -> u8 {
+        self.channels
+    }
+
+    /// Samples per channel per frame: `32 × (NBLKS + 1)`.
+    pub fn samples_per_frame(&self) -> u32 {
+        self.samples_per_frame
+    }
+
+    /// Frame byte size: `FSIZE + 1`.
+    pub fn frame_size(&self) -> usize {
+        self.frame_size
+    }
+
+    /// Raw `AMODE` field (channel arrangement, Table 5-4).
+    pub fn amode(&self) -> u8 {
+        self.amode
+    }
+
+    /// Raw `LFF` field (low-frequency-effects flag, `0` = none).
+    pub fn lff(&self) -> u8 {
+        self.lff
+    }
+
+    /// Raw `NBLKS` field.
+    pub fn nblks(&self) -> u8 {
+        self.nblks
+    }
+
+    /// Raw `FSIZE` field.
+    pub fn fsize(&self) -> u16 {
+        self.fsize
+    }
+
+    /// Raw `RATE` field (targeted bit rate, Table 5-7).
+    pub fn rate(&self) -> u8 {
+        self.rate
+    }
+
+    /// Raw `SFREQ` field (Table 5-5).
+    pub fn sfreq(&self) -> u8 {
+        self.sfreq
+    }
+
     fn with_fields(
         sample_rate: u32,
         channels: u8,
@@ -225,7 +270,8 @@ impl DtsCoreFrameInfo {
         Self::parse_at(data, off)
     }
 
-    pub(crate) fn parse_at(data: &[u8], off: usize) -> Result<Self> {
+    /// Parse the core frame header that begins at `data[off]` (Table 5-1).
+    pub fn parse_at(data: &[u8], off: usize) -> Result<Self> {
         let es = &data[off..];
         let mut bit_pos = 0usize;
 
@@ -290,7 +336,7 @@ impl DtsCoreFrameInfo {
         ))
     }
 
-    /// Build a core-only [`DtsSpecificBox`] (`dtsc`) from the parsed header —
+    /// Build a core-only `DtsSpecificBox` (`dtsc`) from the parsed header —
     /// ETSI TS 102 114 §E.2.2.3.2, Tables E-2/E-3/E-5 (private/specs-verified/mpeg/transmux/codec/dts-core-frame.md
     /// `into_ddts` derivation table).
     ///
@@ -301,6 +347,7 @@ impl DtsCoreFrameInfo {
     /// `private/specs-verified/mpeg/transmux/codec/dts-core-frame.md` (only 5 of its bit roles are cited), so
     /// this is deferred rather than guessed for the arrangements it would
     /// cover.
+    #[cfg(feature = "isobmff")]
     pub fn into_ddts(&self) -> DtsSpecificBox {
         let frame_duration = match self.samples_per_frame {
             512 => 0,
@@ -340,11 +387,27 @@ impl DtsCoreFrameInfo {
 /// samples-per-channel count (mirrors [`crate::ac3_syncframe::Ec3SplitFrame`] — DTS
 /// frames can vary in `NBLKS`/duration stream to stream).
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct DtsCoreFrame<'a> {
+    data: &'a [u8],
+    samples: u32,
+}
+
+impl<'a> DtsCoreFrame<'a> {
+    /// Wrap one core frame's coded bytes and its `32 × (NBLKS + 1)` sample count.
+    pub fn new(data: &'a [u8], samples: u32) -> Self {
+        Self { data, samples }
+    }
+
     /// Coded frame bytes (`FSIZE + 1` long), sync word included.
-    pub data: &'a [u8],
+    pub fn data(&self) -> &'a [u8] {
+        self.data
+    }
+
     /// Samples per channel this frame decodes to (`32 × (NBLKS + 1)`).
-    pub samples: u32,
+    pub fn samples(&self) -> u32 {
+        self.samples
+    }
 }
 
 /// Split a concatenated DTS core PES payload into individual frames, using
@@ -367,10 +430,10 @@ pub fn split_dts_core_frames(payload: &[u8]) -> Vec<DtsCoreFrame<'_>> {
         if len == 0 || off + len > payload.len() {
             break;
         }
-        frames.push(DtsCoreFrame {
-            data: &payload[off..off + len],
-            samples: info.samples_per_frame,
-        });
+        frames.push(DtsCoreFrame::new(
+            &payload[off..off + len],
+            info.samples_per_frame,
+        ));
         off += len;
     }
     frames
@@ -379,7 +442,9 @@ pub fn split_dts_core_frames(payload: &[u8]) -> Vec<DtsCoreFrame<'_>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
     use broadcast_core::{Parse, Serialize};
+    #[cfg(feature = "isobmff")]
     use isobmff::dts::*;
     use test_fixtures::bits::BitWriter;
 

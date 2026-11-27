@@ -2,7 +2,7 @@
 //!
 //! [`DtsSpecificBox`] (`ddts`) and the DTS sample-entry FourCCs. The core
 //! substream frame-header parser, frame splitter and the `ddts` constructor
-//! live in `transmux::dts_core`.
+//! live in `broadcast_bitstream::dts_core`.
 
 use crate::box_types::BOX_TYPE_SIZE;
 use crate::error::{Error, Result};

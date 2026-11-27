@@ -66,7 +66,6 @@ use broadcast_core::wire::u16_at;
 use mpeg_ps::{PsEvent, PsLimits, PsScanner};
 
 use crate::TrackId;
-use crate::ac3_syncframe::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
 use crate::ir::{
@@ -81,6 +80,7 @@ use crate::ts_demux::{
     AVC_SPS_CONFIG_MIN_LEN, AVC_SPS_CONSTRAINT_FLAGS_OFFSET, AVC_SPS_LEVEL_IDC_OFFSET,
     MPEG2_PICTURE_START_CODE, mpeg2_is_sync,
 };
+use broadcast_bitstream::ac3_syncframe::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
 use broadcast_bitstream::annexb::iter_annexb_nals;
 use broadcast_bitstream::au::{AccessUnitSplitter, first_nal_start};
 use broadcast_bitstream::nal::{AVC_NAL_IDR, AVC_NAL_PPS, AVC_NAL_SPS, NAL_TYPE_MASK, NalCodec};
@@ -755,7 +755,7 @@ impl Stream {
                     CodecConfig::Ac3 {
                         config: info.into_dac3(),
                         channel_count: info.channel_count() as u16,
-                        sample_rate: info.sample_rate,
+                        sample_rate: info.sample_rate(),
                         sample_size: AUDIO_SAMPLE_SIZE_BITS,
                     },
                 ))
@@ -885,7 +885,7 @@ impl Stream {
             }
             Decision::Decided(info) if self.ac3_info.is_none() => {
                 self.ac3_info = Some(info);
-                self.ac3_timescale = Timescale::try_new(info.sample_rate)?;
+                self.ac3_timescale = Timescale::try_new(info.sample_rate())?;
             }
             Decision::Pending if self.ac3_info.is_none() => return Ok(()),
             _ => {}
@@ -1426,7 +1426,7 @@ impl Ac3State {
                 self.checked = true;
                 Decision::Decided(info)
             }
-            Err(Error::BufferTooShort(_)) => Decision::Pending,
+            Err(broadcast_bitstream::Error::BufferTooShort(_)) => Decision::Pending,
             Err(_) => {
                 self.checked = true;
                 Decision::Failed
@@ -1456,7 +1456,7 @@ impl Ac3State {
                     }
                     _ => self.drop_byte(),
                 },
-                Err(Error::BufferTooShort(_)) => return None,
+                Err(broadcast_bitstream::Error::BufferTooShort(_)) => return None,
                 Err(_) => self.drop_byte(),
             }
         }
@@ -1804,12 +1804,12 @@ mod interpolate_tests {
     fn ac3_stream(stamp90: u64) -> (Stream, Vec<(usize, usize)>) {
         let data = std::fs::read(test_fixtures::path(AC3_FIXTURE))
             .expect("real AC-3 elementary stream fixture");
-        let frames = crate::ac3_syncframe::split_ac3_syncframe_ranges(&data, true);
+        let frames = broadcast_bitstream::ac3_syncframe::split_ac3_syncframe_ranges(&data, true);
         assert!(frames.len() >= 3, "fixture carries several syncframes");
         let info = Ac3SyncframeInfo::from_es(&data).expect("AC-3 syncframe info");
         let mut stream = Stream::new(Codec::Ac3, Body::Ac3(Ac3State::new()));
         stream.ac3_info = Some(info);
-        stream.ac3_timescale = Timescale::try_new(info.sample_rate).expect("sample rate");
+        stream.ac3_timescale = Timescale::try_new(info.sample_rate()).expect("sample rate");
         stream.push_stamp(frames[0].0 as u64, Some(90_000), Some(90_000));
         stream.push_stamp(frames[1].0 as u64, Some(stamp90), Some(stamp90));
         (stream, frames)
@@ -2012,7 +2012,7 @@ mod private1_tests {
     fn a_complete_frame_before_the_first_access_unit_is_not_emitted() {
         let es = std::fs::read(test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.a0.ac3"))
             .expect("real AC-3 elementary stream fixture");
-        let frames = crate::ac3_syncframe::split_ac3_syncframes(&es);
+        let frames = broadcast_bitstream::ac3_syncframe::split_ac3_syncframes(&es);
         assert!(frames.len() >= 2, "fixture carries several syncframes");
         let (first, second) = (frames[0], frames[1]);
 

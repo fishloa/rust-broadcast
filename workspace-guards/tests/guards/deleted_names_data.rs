@@ -607,4 +607,104 @@ pub const TABLE: &[Banned] = &[
         reason: "the coded picture facts live in broadcast_bitstream::facts",
         issue: "broadcast-bitstream bs2a",
     },
+    Banned {
+        name: "transmux::aac_asc",
+        reason: "the AAC AudioSpecificConfig and ADTS header live in broadcast_bitstream::aac_asc",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::AudioSpecificConfig",
+        reason: "AudioSpecificConfig lives in broadcast_bitstream::aac_asc",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::AudioObjectType",
+        reason: "AudioObjectType lives in broadcast_bitstream::aac_asc",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::SamplingFrequencyIndex",
+        reason: "SamplingFrequencyIndex lives in broadcast_bitstream::aac_asc",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::ChannelConfiguration",
+        reason: "ChannelConfiguration lives in broadcast_bitstream::aac_asc",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::HeAacProfile",
+        reason: "HeAacProfile lives in broadcast_bitstream::aac_asc",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::HeAacSignaling",
+        reason: "HeAacSignaling lives in broadcast_bitstream::aac_asc",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::AdtsHeader",
+        reason: "AdtsHeader lives in broadcast_bitstream::aac_asc",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::parse_adts_header",
+        reason: "parse_adts_header lives in broadcast_bitstream::aac_asc",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::build_adts_header",
+        reason: "build_adts_header lives in broadcast_bitstream::aac_asc",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::ac3_syncframe",
+        reason: "the AC-3/E-AC-3 syncframe parsers live in broadcast_bitstream::ac3_syncframe",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::Ac3SyncframeInfo",
+        reason: "Ac3SyncframeInfo lives in broadcast_bitstream::ac3_syncframe",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::Ec3SyncframeInfo",
+        reason: "Ec3SyncframeInfo lives in broadcast_bitstream::ac3_syncframe",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::Ec3SplitFrame",
+        reason: "Ec3SplitFrame lives in broadcast_bitstream::ac3_syncframe",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::dts_core",
+        reason: "the DTS core frame-header parsers live in broadcast_bitstream::dts_core",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::DtsCoreFrameInfo",
+        reason: "DtsCoreFrameInfo lives in broadcast_bitstream::dts_core",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::DtsCoreFrame",
+        reason: "DtsCoreFrame lives in broadcast_bitstream::dts_core",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::mhas",
+        reason: "the MHAS packet framing lives in broadcast_bitstream::mhas",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::find_mpegh3da_config",
+        reason: "find_mpegh3da_config lives in broadcast_bitstream::mhas",
+        issue: "broadcast-bitstream bs3a",
+    },
+    Banned {
+        name: "transmux::walk_mhas_packets",
+        reason: "walk_mhas_packets lives in broadcast_bitstream::mhas",
+        issue: "broadcast-bitstream bs3a",
+    },
 ];

@@ -61,10 +61,10 @@ use broadcast_common::stage::{Stage, Timestamp};
 use broadcast_core::Serialize;
 use broadcast_core::timescale::{Rounding, Timescale, rescale_i64};
 
-use crate::aac_asc::AudioSpecificConfig;
 use crate::error::{Error, Result};
 use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use broadcast_bitstream::aac_asc::AudioSpecificConfig;
 use isobmff::avc_config::AVCConfigurationBox;
 use isobmff::mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG4_AUDIO,

@@ -195,12 +195,10 @@ pub const TABLE: &[Crate] = &[
     // `EmsgConfig` and `TimedEvent` are conversion/value structs that grow;
     // the DATERANGE/WebVTT models carry no suffix and are handled elsewhere.
     runtime("timed-metadata", &[], &["TimedEvent"]),
-    // The codec configuration records that stay in transmux (the IR-side
-    // `DtsCoreFrameInfo`/`Ac3SyncframeInfo` records) are `#[non_exhaustive]` so
-    // a newly decoded field is additive; `PartInfo`/`SegmentInfo` are LL-HLS
-    // output value structs that grow, and `TimelineJumpConfig`/`EncryptConfig`
-    // are runtime config. The ISO BMFF decoder configuration records themselves
-    // moved to `isobmff`, and the SPS fact types to `broadcast-bitstream`.
+    // `PartInfo`/`SegmentInfo` are LL-HLS output value structs that grow, and
+    // `TimelineJumpConfig`/`EncryptConfig` are runtime config. The ISO BMFF
+    // decoder configuration records moved to `isobmff`, the SPS fact types and
+    // the AAC/AC-3/DTS/MHAS parsers to `broadcast-bitstream`.
     runtime("transmux", &[], &[]),
     plain("ts-fix"),
     plain("ttml-subtitle"),

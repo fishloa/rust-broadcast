@@ -84,7 +84,7 @@ impl CollectedTrack {
     /// The spec's own error when the profile cannot be applied.
     pub fn with_explicit_he_aac(
         mut self,
-        profile: transmux::HeAacProfile,
+        profile: broadcast_bitstream::HeAacProfile,
     ) -> Result<Self, transmux::Error> {
         use broadcast_core::timescale::{Rounding, rescale_i64};
         let from = self.spec.timescale;

@@ -8,9 +8,10 @@ use broadcast_core::timescale::Timescale;
 use broadcast_core::{Parse, Serialize};
 use transmux::TrackId;
 
+use broadcast_bitstream::{Ac3SyncframeInfo, Ec3SyncframeInfo};
 use isobmff::BoxIter;
 use isobmff::{Ac3SpecificBox, Ec3SpecificBox};
-use transmux::{Ac3SyncframeInfo, CodecConfig, Ec3SyncframeInfo, TrackSpec, build_init_segment};
+use transmux::{CodecConfig, TrackSpec, build_init_segment};
 
 // Oracle bytes from dolby-oracle.md
 fn timescale(value: u32) -> Timescale {
@@ -97,12 +98,12 @@ fn ac3_syncframe_to_dac3_oracle() {
     let es = extract_es_data("../fixtures/ts/dolby/ac3.ts", AC3_PID);
     let info = Ac3SyncframeInfo::from_es(&es).unwrap();
 
-    assert_eq!(info.fscod, 1);
-    assert_eq!(info.bsid, 8);
-    assert_eq!(info.acmod, 1);
-    assert!(!info.lfeon);
+    assert_eq!(info.fscod(), 1);
+    assert_eq!(info.bsid(), 8);
+    assert_eq!(info.acmod(), 1);
+    assert!(!info.lfeon());
     // frmsizecod >> 1 = bit_rate_code; oracle has bit_rate_code=10
-    assert_eq!(info.frmsizecod >> 1, 10);
+    assert_eq!(info.frmsizecod() >> 1, 10);
 
     let dac3 = info.into_dac3();
     let mut buf = [0u8; 3];
@@ -119,11 +120,11 @@ fn eac3_syncframe_to_dec3_oracle() {
     let es = extract_es_data("../fixtures/ts/dolby/eac3.ts", EAC3_PID);
     let info = Ec3SyncframeInfo::from_es(&es).unwrap();
 
-    assert_eq!(info.strmtyp, 0);
-    assert_eq!(info.substreamid, 0);
-    assert_eq!(info.acmod, 1);
-    assert!(!info.lfeon);
-    assert_eq!(info.bsid, 16);
+    assert_eq!(info.strmtyp(), 0);
+    assert_eq!(info.substreamid(), 0);
+    assert_eq!(info.acmod(), 1);
+    assert!(!info.lfeon());
+    assert_eq!(info.bsid(), 16);
 
     let dec3 = info
         .into_dec3()

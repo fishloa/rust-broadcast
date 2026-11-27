@@ -1,3 +1,4 @@
+pub mod ac3;
 pub mod big_media;
 pub mod collect;
 pub mod dash;

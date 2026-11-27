@@ -28,7 +28,7 @@ use broadcast_core::len::{need_in, need_out};
 use broadcast_core::{Parse, Serialize};
 
 /// ADTS fixed + variable header length without CRC (ISO/IEC 13818-7 §6.2, Tables 8/9: 28 + 28 bits).
-pub(crate) const ADTS_HEADER_SIZE: usize = 7;
+pub const ADTS_HEADER_SIZE: usize = 7;
 
 /// Mask selecting the layer bits (bits 1-2 of byte 1) in an ADTS header; layer
 /// must be `00` (ISO/IEC 13818-7 §6.2.1).
@@ -95,37 +95,64 @@ const ADTS_BUFFER_FULLNESS_LOW_OFFSET: usize = 6;
 const ADTS_CORE_AOT_MAX: u8 = 4;
 
 // --- AudioObjectType §1.5.1.1 ---
+/// `audioObjectType` — ISO/IEC 14496-3 §1.5.1.1 Table 1.1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum AudioObjectType {
+    /// No object type assigned.
     Null,
+    /// AAC Main.
     AacMain,
+    /// AAC LC — the profile ADTS and every MP4 `mp4a.40.2` stream uses.
     AacLc,
+    /// AAC SSR.
     AacSsr,
+    /// AAC LTP.
     AacLtp,
+    /// An object type with no Table 1.1 row (5, 10, 11, 18, 28..=31).
     Reserved(u8),
+    /// AAC Scalable.
     AacScalable,
+    /// TwinVQ.
     TwinVq,
+    /// CELP.
     Celp,
+    /// HVXC.
     Hvxc,
+    /// TTSI.
     Ttsi,
+    /// Main synthetic.
     MainSynthetic,
+    /// Wavetable synthesis.
     WavetableSynthesis,
+    /// General MIDI.
     GeneralMidi,
+    /// Algorithmic Synthesis and Audio FX.
     AlgorithmicSynthesis,
+    /// ER AAC LC.
     ErAacLc,
+    /// ER AAC LTP.
     ErAacLtp,
+    /// ER AAC Scalable.
     ErAacScalable,
+    /// ER TwinVQ.
     ErTwinVq,
+    /// ER BSAC.
     ErBsac,
+    /// ER AAC LD.
     ErAacLd,
+    /// ER CELP.
     ErCelp,
+    /// ER HVXC.
     ErHvxc,
+    /// ER HILN.
     ErHiln,
+    /// ER Parametric.
     ErParametric,
 }
 impl AudioObjectType {
+    /// The 5-bit `audioObjectType` value this variant denotes (Table 1.1).
     pub fn raw(self) -> u8 {
         match self {
             Self::Null => 0,
@@ -155,6 +182,7 @@ impl AudioObjectType {
             Self::ErParametric => 27,
         }
     }
+    /// The Table 1.1 label, or `"reserved"`.
     pub fn name(&self) -> &'static str {
         match self {
             Self::Null => "null",
@@ -222,24 +250,40 @@ impl From<u8> for AudioObjectType {
 broadcast_core::impl_spec_display!(AudioObjectType, Reserved);
 
 // --- SamplingFrequencyIndex §1.6.3.3 ---
+/// `samplingFrequencyIndex` — ISO/IEC 14496-3 §1.6.3.3 Table 1.10.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum SamplingFrequencyIndex {
+    /// 96000 Hz.
     Fs96000,
+    /// 88200 Hz.
     Fs88200,
+    /// 64000 Hz.
     Fs64000,
+    /// 48000 Hz.
     Fs48000,
+    /// 44100 Hz.
     Fs44100,
+    /// 32000 Hz.
     Fs32000,
+    /// 24000 Hz.
     Fs24000,
+    /// 22050 Hz.
     Fs22050,
+    /// 16000 Hz.
     Fs16000,
+    /// 12000 Hz.
     Fs12000,
+    /// 11025 Hz.
     Fs11025,
+    /// 8000 Hz.
     Fs8000,
+    /// 7350 Hz.
     Fs7350,
+    /// A reserved index (13, 14).
     Reserved(u8),
+    /// The explicit-rate escape (15): a 24-bit `samplingFrequency` follows.
     Escape,
 }
 impl SamplingFrequencyIndex {
@@ -270,6 +314,7 @@ impl SamplingFrequencyIndex {
         }
     }
 
+    /// The 4-bit `samplingFrequencyIndex` value this variant denotes (Table 1.10).
     pub fn raw(self) -> u8 {
         match self {
             Self::Fs96000 => 0x0,
@@ -289,6 +334,7 @@ impl SamplingFrequencyIndex {
             Self::Escape => 0xF,
         }
     }
+    /// The Table 1.10 label, or `"reserved"` / `"escape"`.
     pub fn name(&self) -> &'static str {
         match self {
             Self::Fs96000 => "96000 Hz",
@@ -334,21 +380,32 @@ impl From<u8> for SamplingFrequencyIndex {
 broadcast_core::impl_spec_display!(SamplingFrequencyIndex, Reserved);
 
 // --- ChannelConfiguration §1.6.3.4 ---
+/// `channelConfiguration` — ISO/IEC 14496-3 §1.6.3.4 Table 1.11.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum ChannelConfiguration {
+    /// The mapping is carried in-band by a `program_config_element` (configuration 0).
     InBand,
+    /// Mono (configuration 1).
     Mono,
+    /// Stereo (configuration 2).
     Stereo,
+    /// Three channels (configuration 3).
     Ch3,
+    /// Four channels (configuration 4).
     Ch4,
+    /// Five channels (configuration 5).
     Ch5,
+    /// 5.1 surround (configuration 6).
     Ch5_1,
+    /// 7.1 surround — eight channels (configuration 7).
     Ch7_1,
+    /// A reserved configuration (8..=15).
     Reserved(u8),
 }
 impl ChannelConfiguration {
+    /// The 4-bit `channelConfiguration` value this variant denotes (Table 1.11).
     pub fn raw(self) -> u8 {
         match self {
             Self::InBand => 0,
@@ -362,6 +419,7 @@ impl ChannelConfiguration {
             Self::Reserved(r) => r & CHANNEL_CONFIG_MASK,
         }
     }
+    /// The Table 1.11 label, or `"reserved"`.
     pub fn name(&self) -> &'static str {
         match self {
             Self::InBand => "in-band",
@@ -420,12 +478,12 @@ broadcast_core::impl_spec_display!(ChannelConfiguration, Reserved);
 /// derived", matching this crate's existing placeholder convention
 /// (`ts_demux`'s `MPEGH_CHANNEL_COUNT_UNSPECIFIED`), and is never a channel
 /// count a real stream has.
-pub(crate) const AAC_CHANNEL_COUNT_UNKNOWN: u16 = 0;
+pub const AAC_CHANNEL_COUNT_UNKNOWN: u16 = 0;
 
 /// The channel count a decoded track should carry for `config`.
 ///
 /// [`AAC_CHANNEL_COUNT_UNKNOWN`] when Table 1.19 does not determine one.
-pub(crate) fn aac_channel_count(config: &AudioSpecificConfig) -> u16 {
+pub fn aac_channel_count(config: &AudioSpecificConfig) -> u16 {
     config
         .channel_configuration
         .channel_count()
@@ -441,27 +499,74 @@ pub(crate) fn aac_channel_count(config: &AudioSpecificConfig) -> u16 {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct AudioSpecificConfig {
-    pub audio_object_type: AudioObjectType,
-    pub sampling_frequency_index: SamplingFrequencyIndex,
-    pub sampling_frequency: Option<u32>,
-    pub channel_configuration: ChannelConfiguration,
+    audio_object_type: AudioObjectType,
+    sampling_frequency_index: SamplingFrequencyIndex,
+    sampling_frequency: Option<u32>,
+    channel_configuration: ChannelConfiguration,
     /// Bytes following the byte that contains trailing data start.
-    pub trailing: Vec<u8>,
+    trailing: Vec<u8>,
     /// Bottom 3 bits of the partial byte shared with fixed fields.
-    pub trailing_top: Option<u8>,
+    trailing_top: Option<u8>,
+}
+
+impl AudioSpecificConfig {
+    /// `audioObjectType` — ISO/IEC 14496-3 §1.5.1.1 Table 1.1.
+    pub fn audio_object_type(&self) -> AudioObjectType {
+        self.audio_object_type
+    }
+
+    /// `samplingFrequencyIndex` — Table 1.10.
+    pub fn sampling_frequency_index(&self) -> SamplingFrequencyIndex {
+        self.sampling_frequency_index
+    }
+
+    /// The explicit 24-bit `samplingFrequency` of the escape form.
+    pub fn sampling_frequency(&self) -> Option<u32> {
+        self.sampling_frequency
+    }
+
+    /// `channelConfiguration` — Table 1.11.
+    pub fn channel_configuration(&self) -> ChannelConfiguration {
+        self.channel_configuration
+    }
+
+    /// Bytes following the byte that contains the trailing data start.
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Bottom 3 bits of the partial byte shared with the fixed fields.
+    pub fn trailing_top(&self) -> Option<u8> {
+        self.trailing_top
+    }
 }
 
 /// Explicit-signaling extension state (HE-AAC SBR / HE-AAC v2 PS) recovered from
 /// an [`AudioSpecificConfig`] — ISO/IEC 14496-3 §1.6.2 (SBR: Amd 1, PS: Amd 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct HeAacSignaling {
+    sbr_present: bool,
+    ps_present: bool,
+    effective_aot: u8,
+}
+
+impl HeAacSignaling {
     /// SBR is explicitly signaled (`sbrPresentFlag == 1`, HE-AAC v1).
-    pub sbr_present: bool,
+    pub fn sbr_present(&self) -> bool {
+        self.sbr_present
+    }
+
     /// PS is explicitly signaled (`psPresentFlag == 1`, HE-AAC v2).
-    pub ps_present: bool,
+    pub fn ps_present(&self) -> bool {
+        self.ps_present
+    }
+
     /// The effective object type for RFC 6381: `29` (PS), `5` (SBR), or the core AOT.
-    pub effective_aot: u8,
+    pub fn effective_aot(&self) -> u8 {
+        self.effective_aot
+    }
 }
 
 /// AudioObjectType raw value for SBR (HE-AAC v1).
@@ -558,7 +663,7 @@ impl AudioSpecificConfig {
     /// Build the RFC 6381 `mp4a.40.<AOT>` codec string, honouring explicit HE-AAC
     /// SBR/PS signaling (`mp4a.40.5` / `mp4a.40.29`).
     pub fn rfc6381(&self) -> String {
-        broadcast_bitstream::rfc6381::rfc6381_mp4a(self.heaac_signaling().effective_aot)
+        crate::rfc6381::rfc6381_mp4a(self.heaac_signaling().effective_aot)
     }
 
     /// Recover the explicit HE-AAC SBR/PS signaling from the ASC bitstream.
@@ -637,10 +742,10 @@ const STACK_ASC_MAX: usize = 64;
 /// Read `n` MSB-first bits from `bytes` at `*bit`, advancing it. Returns `None`
 /// if the buffer is exhausted.
 ///
-/// Delegates to the shared [`broadcast_bitstream::bitreader::read_bits_at`] cursor (`n` is
+/// Delegates to the shared [`crate::bitreader::read_bits_at`] cursor (`n` is
 /// always <= 24 for every ASC field this module reads).
 fn asc_read_bits(bytes: &[u8], bit: &mut usize, n: usize) -> Option<u32> {
-    u32::try_from(broadcast_bitstream::bitreader::read_bits_at(bytes, bit, n)?).ok()
+    u32::try_from(crate::bitreader::read_bits_at(bytes, bit, n)?).ok()
 }
 
 /// `GetAudioObjectType()` — 5 bits, or `31 + 6` bits (ISO/IEC 14496-3 §1.5.1.1).
@@ -862,8 +967,10 @@ impl Serialize for AudioSpecificConfig {
 }
 
 // --- ADTS header §A.2.2.3 ---
+/// Fields of an ADTS fixed + variable header (ISO/IEC 13818-7 §6.2, Tables 8/9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct AdtsHeader {
     /// `protection_absent` (1 bit): `true` = no `adts_error_check()` CRC
     /// follows the fixed+variable header; `false` = a 16-bit `crc_check`
@@ -871,15 +978,55 @@ pub struct AdtsHeader {
     /// §6.2, `adts_frame()`. C11 (#1012): this was not read at all, so a
     /// CRC-protected ADTS frame's header was always treated as 7 bytes wide
     /// instead of 9, leaving the 2 CRC bytes inside the "sample" data.
-    pub protection_absent: bool,
-    pub profile: u8,
-    pub sampling_frequency_index: u8,
-    pub channel_configuration: u8,
-    pub frame_length: u16,
-    pub buffer_fullness: u16,
-    pub num_raw_data_blocks: u8,
+    protection_absent: bool,
+    profile: u8,
+    sampling_frequency_index: u8,
+    channel_configuration: u8,
+    frame_length: u16,
+    buffer_fullness: u16,
+    num_raw_data_blocks: u8,
 }
 
+impl AdtsHeader {
+    /// `protection_absent`: the frame carries no `adts_error_check()` CRC.
+    pub fn protection_absent(&self) -> bool {
+        self.protection_absent
+    }
+
+    /// `profile` (2 bits): the core `audioObjectType` minus one.
+    pub fn profile(&self) -> u8 {
+        self.profile
+    }
+
+    /// Raw `sampling_frequency_index` (4 bits) — ISO/IEC 14496-3 Table 1.10.
+    pub fn sampling_frequency_index(&self) -> u8 {
+        self.sampling_frequency_index
+    }
+
+    /// Raw `channel_configuration` (3 bits, split across bytes 2-3).
+    pub fn channel_configuration(&self) -> u8 {
+        self.channel_configuration
+    }
+
+    /// `frame_length` (13 bits), the whole frame including this header.
+    pub fn frame_length(&self) -> u16 {
+        self.frame_length
+    }
+
+    /// `adts_buffer_fullness` (11 bits); `0x7FF` means VBR.
+    pub fn buffer_fullness(&self) -> u16 {
+        self.buffer_fullness
+    }
+
+    /// `num_raw_data_blocks` (2 bits): raw data blocks in the frame, minus one.
+    pub fn num_raw_data_blocks(&self) -> u8 {
+        self.num_raw_data_blocks
+    }
+}
+
+/// Build the seven fixed+variable ADTS header bytes for a raw data block of
+/// `frame_len` bytes (ISO/IEC 13818-7 §6.2). Returns the header bytes because
+/// that is the whole of what it produces.
 pub fn build_adts_header(profile: u8, sfi: u8, cc: u8, frame_len: u16) -> [u8; ADTS_HEADER_SIZE] {
     let mut h = [0u8; ADTS_HEADER_SIZE];
     h[0] = ADTS_SYNCWORD_FIRST_BYTE;
@@ -906,12 +1053,16 @@ pub fn build_adts_header(profile: u8, sfi: u8, cc: u8, frame_len: u16) -> [u8; A
 
 /// Size of the `raw_data_block_position` field (16 bits) in a CRC-protected
 /// multi-block ADTS header (ISO/IEC 13818-7 §6.2, Table 6).
-pub(crate) const ADTS_BLOCK_POSITION_SIZE: usize = 2;
+pub const ADTS_BLOCK_POSITION_SIZE: usize = 2;
 
 /// Size of the 16-bit `crc_check` word following an ADTS header when
 /// `protection_absent == 0` (ISO/IEC 13818-7 §6.2, `adts_error_check()`).
-pub(crate) const ADTS_CRC_SIZE: usize = 2;
+pub const ADTS_CRC_SIZE: usize = 2;
 
+/// Parse an ADTS fixed + variable header (ISO/IEC 13818-7 §6.2).
+///
+/// Rejects a bad syncword, a non-zero `layer`, and a `frame_length` smaller
+/// than the header itself.
 pub fn parse_adts_header(bytes: &[u8]) -> Result<AdtsHeader> {
     need_in(bytes, ADTS_HEADER_SIZE, "ADTS")?;
     if bytes[0] != ADTS_SYNCWORD_FIRST_BYTE
@@ -982,6 +1133,9 @@ pub fn adts_header_len(hdr: &AdtsHeader) -> usize {
 }
 
 impl AudioSpecificConfig {
+    /// Build the seven fixed+variable ADTS header bytes this config implies for
+    /// a raw data block of `frame_len` bytes. Returns the header bytes because
+    /// that is the whole of what it produces.
     pub fn to_adts_header(&self, frame_len: u16) -> Result<[u8; ADTS_HEADER_SIZE]> {
         if frame_len < ADTS_HEADER_SIZE as u16 {
             return Err(Error::InvalidValue(InvalidValue {
@@ -1031,6 +1185,8 @@ impl AudioSpecificConfig {
             frame_len,
         ))
     }
+    /// The config an ADTS header states: object type `profile + 1`, its
+    /// sampling-frequency index and channel configuration, no trailing data.
     pub fn from_adts_header(adts: &AdtsHeader) -> Self {
         Self {
             audio_object_type: AudioObjectType::from((adts.profile + 1) & AOT_MASK),
@@ -1232,18 +1388,6 @@ fn extension_index_for(hz: u32) -> Option<SamplingFrequencyIndex> {
     (0..=SFI_TABLE_LAST)
         .map(SamplingFrequencyIndex::from)
         .find(|i| i.table_hz() == Some(hz))
-}
-
-/// AudioSpecificConfig lookup for an `esds` box.
-pub trait EsdsBoxCodecInfo {
-    /// Parse the `AudioSpecificConfig` carried in the `DecoderSpecificInfo`.
-    fn audio_specific_config(&self) -> Result<AudioSpecificConfig>;
-}
-
-impl EsdsBoxCodecInfo for isobmff::mp4esds::EsdsBox {
-    fn audio_specific_config(&self) -> Result<AudioSpecificConfig> {
-        AudioSpecificConfig::parse(self.require_decoder_specific_info()?)
-    }
 }
 
 #[cfg(test)]
@@ -1836,99 +1980,5 @@ mod tests {
                 "frame_len {len}"
             );
         }
-    }
-}
-
-#[cfg(test)]
-mod drift_agreement {
-    use super::*;
-
-    #[test]
-    fn adts_agrees_with_container_probe() {
-        let frame_len = (ADTS_HEADER_SIZE + 10) as u16;
-        let mut frame = alloc::vec![0u8; frame_len as usize];
-        frame[..ADTS_HEADER_SIZE].copy_from_slice(&build_adts_header(1, 4, 2, frame_len));
-        let mut buf = alloc::vec::Vec::new();
-        for _ in 0..20 {
-            buf.extend_from_slice(&frame);
-        }
-        let p = container_probe::probe(&buf);
-        assert!(matches!(
-            p,
-            container_probe::Probe::Identified {
-                format: container_probe::Format::AdtsAac,
-                ..
-            }
-        ));
-        assert!(parse_adts_header(&buf).is_ok());
-
-        let mp3_frame = [0xFFu8, 0xFB, 0x90, 0x00, 0x00, 0x00, 0x00, 0x00];
-        let mut buf2 = alloc::vec::Vec::new();
-        for _ in 0..20 {
-            buf2.extend_from_slice(&mp3_frame);
-        }
-        let p2 = container_probe::probe(&buf2);
-        assert!(!matches!(
-            p2,
-            container_probe::Probe::Identified {
-                format: container_probe::Format::AdtsAac,
-                ..
-            }
-        ));
-        assert!(parse_adts_header(&mp3_frame).is_err());
-    }
-
-    #[test]
-    fn mp3_layer_iii_header_rejected() {
-        let hdr = [0xFFu8, 0xFB, 0x90, 0x00, 0x00, 0x00, 0x00];
-        let err = parse_adts_header(&hdr).unwrap_err();
-        assert!(
-            matches!(err, crate::error::Error::InvalidValue(v) if v.field == "adts_layer" && v.value == 0x02)
-        );
-    }
-
-    #[test]
-    fn adts_syncword_error_reports_the_offending_bytes() {
-        let hdr = [0xABu8, 0xCD, 0x00, 0x00, 0x00, 0x00, 0x00];
-        let err = parse_adts_header(&hdr).unwrap_err();
-        assert!(
-            matches!(err, crate::error::Error::InvalidValue(v) if v.field == "adts_syncword" && v.value == 0xABCD)
-        );
-    }
-
-    #[test]
-    fn frame_length_below_header_length_rejected() {
-        let hdr = [0xFFu8, 0xF1, 0x00, 0x00, 0x00, 0x00, 0x00];
-        let err = parse_adts_header(&hdr).unwrap_err();
-        assert!(
-            matches!(err, crate::error::Error::InvalidValue(v) if v.field == "adts_frame_length")
-        );
-    }
-}
-
-#[cfg(test)]
-mod esds_glue {
-    use super::*;
-    use alloc::vec;
-    use isobmff::mp4esds::EsdsBox;
-
-    #[test]
-    fn esds_audio_specific_config_reads_the_decoder_specific_info() {
-        let esds = EsdsBox::new(isobmff::mp4esds::ESDescriptor::new(
-            1,
-            0,
-            Some(isobmff::mp4esds::DecoderConfigDescriptor::new(
-                0x40,
-                5,
-                false,
-                0,
-                0,
-                0,
-                Some(isobmff::mp4esds::DecoderSpecificInfo::new(vec![0x12, 0x10])),
-            )),
-            Some(isobmff::mp4esds::SLConfigDescriptor::predefined_two()),
-        ));
-        assert_eq!(esds.decoder_specific_info_data(), Some(&[0x12u8, 0x10][..]));
-        assert!(esds.audio_specific_config().is_ok());
     }
 }

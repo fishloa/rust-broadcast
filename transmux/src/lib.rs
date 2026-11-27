@@ -167,8 +167,6 @@ extern crate alloc;
 #[doc = include_str!("../README.md")]
 struct ReadmeDoctests;
 
-pub mod aac_asc;
-pub mod ac3_syncframe;
 pub mod audio_profile;
 #[cfg(feature = "captions")]
 pub mod caption_detect;
@@ -188,7 +186,6 @@ pub mod data_identity;
 pub(crate) mod display_track;
 pub mod dovi_descriptor;
 pub mod drm;
-pub mod dts_core;
 pub mod error;
 #[cfg(feature = "flv")]
 pub mod flv;
@@ -203,7 +200,6 @@ pub mod ll_dash;
 #[cfg(feature = "hls")]
 pub mod ll_hls;
 pub mod media;
-pub mod mhas;
 #[cfg(feature = "matroska")]
 pub mod mkv_mux;
 pub mod mp4_demux;
@@ -262,11 +258,6 @@ pub(crate) mod units;
 pub mod user_data;
 pub mod validate;
 
-pub use aac_asc::{
-    AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacProfile,
-    HeAacSignaling, SamplingFrequencyIndex, build_adts_header, parse_adts_header,
-};
-pub use ac3_syncframe::{Ac3SyncframeInfo, Ec3SyncframeInfo};
 pub use broadcast_common::klv::KlvItem;
 pub use broadcast_core::CencScheme;
 #[cfg(feature = "captions")]

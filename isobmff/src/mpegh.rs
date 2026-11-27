@@ -5,7 +5,7 @@
 //! is **opaque** to this crate.
 //!
 //! The MHAS packet framing used to locate that blob in an MPEG-2 TS
-//! elementary stream lives in `transmux::mhas`.
+//! elementary stream lives in `broadcast_bitstream::mhas`.
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;

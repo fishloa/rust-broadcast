@@ -227,14 +227,14 @@ pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
 }
 
 /// Scan `payload` for a byte offset at which a well-formed ADTS header parses
-/// (ISO/IEC 13818-7 §6.2, via [`transmux::parse_adts_header`]) — not assumed
+/// (ISO/IEC 13818-7 §6.2, via [`broadcast_bitstream::parse_adts_header`]) — not assumed
 /// to sit at offset 0, so this tolerates leading PES stuffing.
 ///
 /// Shared by every check that asks whether an AAC stream is really
 /// ADTS-framed (`CodecSignallingCheck`, `media-doctor watch`); it lived as two
 /// identical copies before (audit MD-W10).
 pub(crate) fn has_adts_sync(payload: &[u8]) -> bool {
-    (0..payload.len()).any(|off| transmux::parse_adts_header(&payload[off..]).is_ok())
+    (0..payload.len()).any(|off| broadcast_bitstream::parse_adts_header(&payload[off..]).is_ok())
 }
 
 /// Elementary-stream PIDs among `streams` matching `stream_type`, in PMT wire

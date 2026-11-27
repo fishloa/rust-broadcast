@@ -39,11 +39,11 @@ use broadcast_core::timescale::Timescale;
 
 use broadcast_smooth::{QualityLevel, StreamType};
 
-use crate::aac_asc::{ChannelConfiguration, SamplingFrequencyIndex};
 use crate::error::{Error as CrateError, Result as CrateResult};
 use crate::pipeline::{CodecConfig, SubtitleFormat, TrackSpec};
 use crate::rtp_sdp::aac_config_from_asc_bytes;
 use crate::smooth::{FOURCC_AACH, FOURCC_AACL, FOURCC_AVC1, FOURCC_H264};
+use broadcast_bitstream::aac_asc::{ChannelConfiguration, SamplingFrequencyIndex};
 use broadcast_bitstream::annexb::iter_annexb_nals;
 use broadcast_bitstream::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use broadcast_bitstream::nalu_ext::AvcSpsCodecInfo;
@@ -523,10 +523,12 @@ mod tests {
         );
         // And the crate's own parser agrees about what those bytes mean.
         let asc =
-            <crate::aac_asc::AudioSpecificConfig as broadcast_core::Parse>::parse(&[0x12, 0x10])
-                .unwrap();
-        assert_eq!(asc.sampling_frequency_index.raw(), 4);
-        assert_eq!(asc.channel_configuration.raw(), 2);
+            <broadcast_bitstream::aac_asc::AudioSpecificConfig as broadcast_core::Parse>::parse(&[
+                0x12, 0x10,
+            ])
+            .unwrap();
+        assert_eq!(asc.sampling_frequency_index().raw(), 4);
+        assert_eq!(asc.channel_configuration().raw(), 2);
 
         let spec = track_spec_from_quality_level(
             TrackId::new(2),
@@ -597,12 +599,18 @@ mod tests {
             [0x12u8, 0x10],
             "the esds DecoderSpecificInfo must be the core AAC-LC ASC"
         );
-        let asc = <crate::aac_asc::AudioSpecificConfig as broadcast_core::Parse>::parse(&dsi.data)
+        let asc =
+            <broadcast_bitstream::aac_asc::AudioSpecificConfig as broadcast_core::Parse>::parse(
+                &dsi.data,
+            )
             .unwrap();
-        assert_eq!(asc.audio_object_type.raw(), AOT_AAC_LC);
+        assert_eq!(asc.audio_object_type().raw(), AOT_AAC_LC);
         let he = asc.heaac_signaling();
-        assert!(!he.sbr_present, "SBR is implicit, not explicitly signalled");
-        assert!(!he.ps_present);
+        assert!(
+            !he.sbr_present(),
+            "SBR is implicit, not explicitly signalled"
+        );
+        assert!(!he.ps_present());
     }
 
     /// Every Table 1.19 channel count synthesises its literal ASC bytes (48 kHz
@@ -630,9 +638,9 @@ mod tests {
             );
             // The crate's own parser agrees about the channel count.
             let asc =
-                <crate::aac_asc::AudioSpecificConfig as broadcast_core::Parse>::parse(&expected)
+                <broadcast_bitstream::aac_asc::AudioSpecificConfig as broadcast_core::Parse>::parse(&expected)
                     .unwrap();
-            assert_eq!(asc.channel_configuration.channel_count(), Some(channels));
+            assert_eq!(asc.channel_configuration().channel_count(), Some(channels));
         }
         // 7 has no Table 1.19 configuration (Ch7_1 is 8).
         let seven = base.with_audio(48_000, 7, 16, 0, 0);

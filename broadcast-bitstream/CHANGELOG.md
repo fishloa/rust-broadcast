@@ -7,7 +7,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 
 ## [Unreleased]
 
-### Breaking
+### Added
+
+- The AAC layer (`aac_asc`, `aac` feature), moved from `transmux`:
+  `AudioObjectType`, `SamplingFrequencyIndex`, `ChannelConfiguration` (spec
+  labels with `name()` + `Display`), `AudioSpecificConfig` with its `Parse` /
+  `Serialize` round trip and private fields, `HeAacSignaling`, `HeAacProfile`,
+  and `AdtsHeader` with `parse_adts_header`, `build_adts_header`,
+  `to_adts_header` and `adts_header_len`. `EsdsBoxCodecInfo` moved to
+  `codec_config_ext` (`isobmff` + `aac`).
+- The AC-3 / E-AC-3 layer (`ac3_syncframe`, `ac3` feature), moved from
+  `transmux`: `Ac3SyncframeInfo`, `Ec3SyncframeInfo`, `Ec3SplitFrame`, the
+  frame/access-unit splitters, the CRC helpers, and
+  `ec3_specific_box_from_syncframes` / `into_dac3` / `into_dec3` behind
+  `isobmff`.
+- The DTS core layer (`dts_core`, `dts` feature), moved from `transmux`:
+  `DtsCoreFrameInfo`, `DtsCoreFrame`, `split_dts_core_frames`, and `into_ddts`
+  behind `isobmff`.
+- The MPEG-H Audio Stream framing (`mhas`, `mpegh` feature), moved from
+  `transmux`: `walk_mhas_packets` and `find_mpegh3da_config`.
+- A `print_adts_headers` example over `fixtures/audio/aac.adts`, an
+  `audio_fixtures` test that walks that ADTS chain, a broadcast capture's AAC
+  track and one committed AC-3 / E-AC-3 / DTS stream frame by frame, and the
+  `broadcast_bitstream_aac_asc`, `broadcast_bitstream_adts`,
+  `broadcast_bitstream_ac3`, `broadcast_bitstream_eac3`,
+  `broadcast_bitstream_dts_core` and `broadcast_bitstream_mhas` fuzz targets.
 
 - `annexb::start_code_positions` is crate-private: nothing outside the crate
   needs the allocation. `annexb::find_start_code_prefix` stays the one public

@@ -91,7 +91,6 @@ use broadcast_common::{Demand, Stage, Timestamp};
 use broadcast_core::Parse;
 use rtmp_runtime::RtmpError;
 
-use crate::aac_asc::AudioSpecificConfig;
 use crate::flv::{
     CODEC_ID_AVC, FLV_HEADER_LEN, FLV_TIMESCALE, FRAME_TYPE_KEYFRAME, FlvError, MAX_FLV_HEADER_LEN,
     PREV_TAG_SIZE_LEN, TAG_HEADER_LEN, aac_packet_type, asc_rate_hz, avc_dimensions,
@@ -99,6 +98,7 @@ use crate::flv::{
 };
 use crate::ir::{AUDIO_SAMPLE_SIZE_BITS, DemuxEvent, SampleTiming};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use broadcast_bitstream::aac_asc::AudioSpecificConfig;
 use broadcast_bitstream::annexb::{
     NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size,
 };
@@ -1006,7 +1006,7 @@ impl StreamingFlvDemux {
                 // *index*, not the channel count. In-band (0) and the reserved
                 // values yield `AAC_CHANNEL_COUNT_UNKNOWN`, not a fabricated
                 // number.
-                let channels = crate::aac_asc::aac_channel_count(&asc);
+                let channels = broadcast_bitstream::aac_asc::aac_channel_count(&asc);
                 let rate = asc_rate_hz(&asc);
                 let esds = build_aac_esds(data.to_vec());
                 let codec = CodecConfig::Aac {

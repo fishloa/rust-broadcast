@@ -10,8 +10,8 @@
 //! `fixtures/ts/gulli-opengop.ts`, plus (skipped cleanly when absent) the
 //! `france-tnt-uhf32-si-audio.ts` from the private fixtures repo (the whole
 //! capture's non-video packets).
-use transmux::Ec3SyncframeInfo;
-use transmux::ac3_syncframe::{split_eac3_syncframe_ranges, split_eac3_syncframes};
+use broadcast_bitstream::Ec3SyncframeInfo;
+use broadcast_bitstream::ac3_syncframe::{split_eac3_syncframe_ranges, split_eac3_syncframes};
 use transmux::pipeline::CodecConfig;
 
 const AC3_SYNC: [u8; 2] = [0x0B, 0x77];
@@ -44,7 +44,7 @@ fn check(label: &str, ts: &[u8]) -> Vec<(usize, usize)> {
             assert_eq!(frames.len(), 1, "{label}: sample {i} holds one syncframe");
             let info = frames[0];
             assert_eq!(
-                (info.frmsiz as usize + 1) * 2,
+                (info.frmsiz() as usize + 1) * 2,
                 s.data.len(),
                 "{label}: sample {i} is exactly one whole syncframe"
             );

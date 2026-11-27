@@ -10,15 +10,15 @@
 //! through `dvb-si`'s serializer and the TS muxer.
 
 use crate::ts_mux_stage;
+use broadcast_bitstream::{
+    AudioObjectType, AudioSpecificConfig, HeAacProfile, SamplingFrequencyIndex,
+};
 use broadcast_core::timescale::Timescale;
 use broadcast_core::{Parse, Serialize};
 use dvb_si::descriptors::aac::{AacDescriptor, AacExtension};
 use isobmff::EsdsBox;
 use test_harness::collect::Collected as Media;
-use transmux::{
-    AudioObjectType, AudioSpecificConfig, CodecConfig, HeAacProfile, SamplingFrequencyIndex,
-    TrackSpec, build_init_segment, rfc6381_codec_string,
-};
+use transmux::{CodecConfig, TrackSpec, build_init_segment, rfc6381_codec_string};
 
 const MOVIE_TIMESCALE: Timescale = broadcast_core::timescale!(1000);
 const CORE_HZ: u32 = 22_050;
@@ -102,15 +102,15 @@ fn heaac_v1_override_writes_explicit_sbr_asc() {
         .with_explicit_he_aac(HeAacProfile::V1)
         .expect("override applies");
     let asc = asc_in_init(&spec);
-    assert_eq!(asc.audio_object_type.raw(), 5);
+    assert_eq!(asc.audio_object_type().raw(), 5);
     assert_eq!(
-        asc.sampling_frequency_index,
+        asc.sampling_frequency_index(),
         SamplingFrequencyIndex::Fs22050
     );
     assert_eq!(asc.extension_sampling_frequency(), Some(CORE_HZ * 2));
     assert_eq!(asc.core_audio_object_type(), AudioObjectType::AacLc);
-    assert!(asc.heaac_signaling().sbr_present);
-    assert!(!asc.heaac_signaling().ps_present);
+    assert!(asc.heaac_signaling().sbr_present());
+    assert!(!asc.heaac_signaling().ps_present());
     assert_eq!(dsi_bytes(&spec), V1_ASC);
     assert_eq!(rfc6381_codec_string(&spec.config).unwrap(), "mp4a.40.5");
     assert_eq!(spec.config.audio_sample_rate(), Some(OUTPUT_HZ));
@@ -228,15 +228,15 @@ fn heaac_v2_override_writes_explicit_ps_asc() {
         .with_explicit_he_aac(HeAacProfile::V2)
         .expect("override applies");
     let asc = asc_in_init(&spec);
-    assert_eq!(asc.audio_object_type.raw(), 29);
+    assert_eq!(asc.audio_object_type().raw(), 29);
     assert_eq!(
-        asc.sampling_frequency_index,
+        asc.sampling_frequency_index(),
         SamplingFrequencyIndex::Fs22050
     );
     assert_eq!(asc.extension_sampling_frequency(), Some(CORE_HZ * 2));
     assert_eq!(asc.core_audio_object_type(), AudioObjectType::AacLc);
-    assert!(asc.heaac_signaling().sbr_present);
-    assert!(asc.heaac_signaling().ps_present);
+    assert!(asc.heaac_signaling().sbr_present());
+    assert!(asc.heaac_signaling().ps_present());
     assert_eq!(dsi_bytes(&spec), V2_ASC);
     assert_eq!(rfc6381_codec_string(&spec.config).unwrap(), "mp4a.40.29");
     assert_eq!(spec.config.audio_sample_rate(), Some(OUTPUT_HZ));
@@ -253,7 +253,7 @@ fn heaac_descriptor_marks_track_he_aac() {
     assert_eq!(v2.audio_metadata().he_aac, Some(HeAacProfile::V2));
     assert_eq!(rfc6381_codec_string(&v2.config).unwrap(), "mp4a.40.29");
     let asc = asc_in_init(&v2);
-    assert_eq!(asc.audio_object_type.raw(), 29);
+    assert_eq!(asc.audio_object_type().raw(), 29);
     assert_eq!(asc.extension_sampling_frequency(), Some(OUTPUT_HZ));
     assert_eq!(asc.core_audio_object_type(), AudioObjectType::AacLc);
     assert_eq!(dsi_bytes(&v2), V2_ASC);
@@ -279,7 +279,7 @@ fn heaac_v1_descriptor_alone_leaves_track_aac_lc() {
         );
         assert_eq!(rfc6381_codec_string(&spec.config).unwrap(), "mp4a.40.2");
         let asc = asc_in_init(&spec);
-        assert_eq!(asc.audio_object_type, AudioObjectType::AacLc);
+        assert_eq!(asc.audio_object_type(), AudioObjectType::AacLc);
         assert_eq!(dsi_bytes(&spec), plain, "component_type {ct:#04x}");
     }
 }
@@ -338,16 +338,18 @@ fn explicit_he_aac_is_rewritable_and_rejects_what_it_cannot_express() {
     ));
 
     let asc = asc_in_init(&spec);
-    let mut with_extension = asc.clone();
-    with_extension.trailing = vec![0xAA];
+    let mut with_extension_bytes = asc.try_to_bytes().expect("asc bytes");
+    with_extension_bytes.push(0xAA);
+    let with_extension = AudioSpecificConfig::parse(&with_extension_bytes).expect("asc");
     assert!(
         with_extension
             .with_explicit_he_aac(HeAacProfile::V1)
             .is_err()
     );
 
-    let mut odd_hierarchical = asc_in_init(&v1);
-    odd_hierarchical.trailing_top = Some(0);
+    let mut odd_bytes = asc_in_init(&v1).try_to_bytes().expect("asc bytes");
+    odd_bytes[1] ^= 0b111;
+    let odd_hierarchical = AudioSpecificConfig::parse(&odd_bytes).expect("asc");
     assert!(
         odd_hierarchical
             .with_explicit_he_aac(HeAacProfile::V1)
