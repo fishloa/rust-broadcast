@@ -5,10 +5,10 @@
 //! real backward jump of that timeline at the seam, and `StreamingTsDemux`
 //! raises `DemuxEvent::Discontinuity` there — the precondition the first test
 //! pins. Repackaging those bytes through [`run_bytes`] must forward that mark
-//! to the output stage: an output that can express it writes
-//! `#EXT-X-DISCONTINUITY` or sets the adaptation-field
-//! `discontinuity_indicator`, and one that cannot refuses with a typed error
-//! rather than dropping the event.
+//! to the output stage, which states it in its own format: a manifest's
+//! `#EXT-X-DISCONTINUITY`, a TS adaptation-field `discontinuity_indicator`, a
+//! new CMAF fragment, a new DASH Period, or a progressive file whose sample
+//! timeline continues across the break. No byte output refuses it.
 #![cfg(feature = "cli")]
 
 use transmux::cli::{Opts, Output, OutputFormat, run_bytes};
@@ -207,4 +207,83 @@ fn assert_period_per_break(text: &str) {
         expected_start += duration;
     }
     assert!(offsets.len() >= 2);
+}
+
+/// A progressive MP4 has no out-of-band marker, but it does not need one:
+/// `stts` states a decode time as the sum of the preceding durations
+/// (ISO/IEC 14496-12:2026 §8.6.1.1), so the plan continues each track's
+/// timeline across the break. The CLI must write such a file, not fail.
+#[test]
+fn progressive_output_continues_across_the_break() {
+    let input = broken_capture();
+    let decoded = test_harness::collect::media_from_ts(&input).expect("demux the doubled capture");
+    let bytes = match run_bytes(&input, &opts(OutputFormat::Progressive))
+        .expect("a byte output must express the break, not refuse it")
+    {
+        Output::Bytes(bytes) => bytes,
+        Output::Manifest { .. } => panic!("progressive: expected bytes"),
+        _ => panic!("progressive: unexpected output"),
+    };
+    let remuxed =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("the progressive file re-demuxes");
+    for track in &decoded.tracks {
+        let got = remuxed
+            .tracks
+            .iter()
+            .find(|candidate| candidate.spec.track_id == track.spec.track_id)
+            .expect("every input track reaches the file");
+        assert_eq!(
+            track.samples.len(),
+            got.samples.len(),
+            "every sample of track {:?} survives the break",
+            track.spec.track_id
+        );
+        let times: Vec<f64> = got
+            .samples
+            .iter()
+            .filter_map(|sample| {
+                sample
+                    .timing
+                    .and_then(|timing| timing.dts().or_else(|| timing.pts()))
+            })
+            .map(|tick| tick as f64)
+            .collect();
+        crate::discontinuity::assert_non_decreasing(
+            &format!("track {:?}", track.spec.track_id),
+            &times,
+        );
+    }
+}
+
+/// A bare CMAF byte stream states a break with a new fragment whose `tfdt`
+/// carries its decode time, so the CLI's CMAF output must write the file
+/// rather than fail on the mark.
+#[test]
+fn cmaf_output_states_the_break_in_a_new_fragment() {
+    let input = broken_capture();
+    let decoded = test_harness::collect::media_from_ts(&input).expect("demux the doubled capture");
+    let bytes = match run_bytes(&input, &opts(OutputFormat::Cmaf))
+        .expect("a byte output must express the break, not refuse it")
+    {
+        Output::Bytes(bytes) => bytes,
+        Output::Manifest { .. } => panic!("cmaf: expected bytes"),
+        _ => panic!("cmaf: unexpected output"),
+    };
+    let remuxed =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("the CMAF stream re-demuxes");
+    for track in &decoded.tracks {
+        let got = remuxed
+            .tracks
+            .iter()
+            .find(|candidate| candidate.spec.track_id == track.spec.track_id)
+            .expect("every input track reaches the segment");
+        assert_eq!(
+            track.samples.len(),
+            got.samples.len(),
+            "every sample of track {:?} survives the break",
+            track.spec.track_id
+        );
+    }
 }

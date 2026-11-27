@@ -50,11 +50,17 @@
 //! (RFC 9559 §11), whose `Timestamp` is absolute while its Blocks are relative
 //! to it (§12). [`MuxInput::Discontinuity`] therefore closes the open
 //! `Cluster` with [`Writer::cut_cluster`], so the next Block opens a new one at
-//! the post-break time. A break that would move a Block timestamp **backwards**
-//! is refused with [`Error::UnsupportedFeature`]: this stage writes a file,
-//! and its `Cues` and the patched `Info.Duration` describe one non-decreasing
-//! timeline (`private/specs-verified/ietf/specs/rfc9559_matroska.txt` §11,
-//! §12).
+//! the post-break time; a jump that moves time forwards is stated there.
+//!
+//! A break that would move a Block timestamp **backwards** cannot be stated:
+//! this stage writes a file whose `Cues` and patched `Info.Duration` describe
+//! one non-decreasing timeline (`private/specs-verified/ietf/specs/rfc9559_matroska.txt`
+//! §11, §12). It is expressed by rebasing instead (`BreakRebase`): each
+//! track's first Block after the break continues from its own last timestamp
+//! plus its last duration, and every later Block keeps its spacing, so the
+//! Blocks, the `Cues` written after the break and `Info.Duration` are all on
+//! the continuing timeline. A live (unknown-size `Segment`) output is written
+//! the same way.
 //!
 use alloc::collections::VecDeque;
 use alloc::string::String;
@@ -72,6 +78,7 @@ use crate::error::{Error, Result};
 use crate::ir::{DataIdentity, Sample, TrackSpec as IrTrackSpec};
 use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::pipeline::CodecConfig;
+use crate::rebase::BreakRebase;
 use isobmff::opus::OpusSpecificBox;
 
 /// `TimestampScale` this writer emits: 1 ms per Matroska Tick (RFC 9559 §11).
@@ -318,14 +325,19 @@ pub struct MkvMuxStage {
     writer: Option<Writer>,
     out: VecDeque<MuxOutput>,
     started: bool,
-    /// A discontinuity awaits the sample that follows it: `Some(None)` for all
-    /// tracks, `Some(Some(track))` for one. The stage writes a file (Cues and
-    /// `Info.Duration` need a monotonic timeline), so a break that moves the
-    /// named track's Block timestamp backwards is refused rather than written.
-    pending_discontinuity: Option<Option<TrackId>>,
-    /// The last pushed Block's tick timestamp per announced track, parallel to
-    /// [`Self::tracks`].
-    last_ticks: Vec<Option<i64>>,
+    /// A break named each track whose first post-break Block is still to come,
+    /// parallel to [`Self::tracks`]. That Block states the break and, when the
+    /// break moved its timestamp backwards, fixes the track's [`Self::rebase`]
+    /// — a file's `Cues` and `Info.Duration` require one monotonic timeline
+    /// (RFC 9559 §11, §12).
+    awaiting_break: Vec<bool>,
+    /// The end of each track's last pushed Block (its timestamp plus its
+    /// duration, in Matroska ticks) — the point a post-break Block continues
+    /// from.
+    last_end: Vec<Option<i64>>,
+    /// The offset each track's Blocks carry after a break that moved time
+    /// backwards, parallel to [`Self::tracks`].
+    rebase: Vec<BreakRebase>,
 }
 
 impl MkvMuxStage {
@@ -337,8 +349,9 @@ impl MkvMuxStage {
             writer: None,
             out: VecDeque::new(),
             started: false,
-            pending_discontinuity: None,
-            last_ticks: Vec::new(),
+            awaiting_break: Vec::new(),
+            last_end: Vec::new(),
+            rebase: Vec::new(),
         }
     }
 
@@ -393,7 +406,9 @@ impl MkvMuxStage {
             .unwrap_or(u64::MAX)
             .saturating_add(1);
         self.tracks.push(map_track(&spec, number)?);
-        self.last_ticks.push(None);
+        self.awaiting_break.push(false);
+        self.last_end.push(None);
+        self.rebase.push(BreakRebase::NONE);
         Ok(())
     }
 
@@ -418,7 +433,8 @@ impl MkvMuxStage {
         };
         let track_timescale = self.tracks[index].timescale;
         let number = self.tracks[index].number;
-        let pts_ticks = self.block_ticks(index, &sample);
+        let raw_ticks = self.block_ticks(index, &sample);
+        let pts_ticks = self.rebase[index].apply(raw_ticks);
         let pts = sample
             .timing
             .and_then(|timing| timing.pts())
@@ -429,7 +445,8 @@ impl MkvMuxStage {
             .and_then(|timing| timing.duration())
             .unwrap_or(0);
         let end_ticks = to_matroska_ticks(pts.saturating_add(i64::from(duration)), track_timescale);
-        let ticks = u64::try_from(end_ticks.saturating_sub(pts_ticks)).unwrap_or(0);
+        let ticks = u64::try_from(end_ticks.saturating_sub(raw_ticks)).unwrap_or(0);
+        self.last_end[index] = Some(pts_ticks.saturating_add(i64::try_from(ticks).unwrap_or(0)));
         let Some(writer) = self.writer.as_mut() else {
             return Err(Error::InvalidInput("mkv: the writer has not been started"));
         };
@@ -473,21 +490,15 @@ impl Stage for MkvMuxStage {
                     .iter()
                     .position(|announced| announced.track_id == track)
                     .ok_or(Error::InvalidInput("mkv: sample for an unannounced track"))?;
-                let ticks = self.block_ticks(index, &sample);
-                if let Some(pending) = self.pending_discontinuity
-                    && pending.is_none_or(|broken| broken == track)
-                {
-                    if self.last_ticks[index].is_some_and(|previous| ticks < previous) {
-                        return Err(Error::UnsupportedFeature(
-                            "matroska: a timeline discontinuity that moves a Block timestamp \
-                             backwards cannot be written to a file; Cues and Info.Duration \
-                             require a non-decreasing timeline",
-                        ));
-                    }
-                    self.pending_discontinuity = None;
+                if self.awaiting_break[index] {
+                    let natural = self.block_ticks(index, &sample);
+                    let last_end = self.last_end[index];
+                    self.rebase[index] = last_end.map_or(BreakRebase::NONE, |last_end| {
+                        BreakRebase::backwards(last_end, natural)
+                    });
+                    self.awaiting_break[index] = false;
                 }
                 let writes = self.push(track, sample)?;
-                self.last_ticks[index] = Some(ticks);
                 self.queue(writes);
                 Ok(())
             }
@@ -496,7 +507,11 @@ impl Stage for MkvMuxStage {
                     let writes = writer.cut_cluster()?;
                     self.queue(writes);
                 }
-                self.pending_discontinuity = Some(track);
+                for (index, awaiting) in self.awaiting_break.iter_mut().enumerate() {
+                    if track.is_none_or(|broken| self.tracks[index].track_id == broken) {
+                        *awaiting = true;
+                    }
+                }
                 Ok(())
             }
             MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(

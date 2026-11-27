@@ -1181,10 +1181,11 @@ impl CliStream {
         }
     }
 
-    /// Forward a timeline break to the output stage, so an output that can
-    /// express it (an HLS playlist's `#EXT-X-DISCONTINUITY`, a TS packet's
-    /// `discontinuity_indicator`) does, and one that cannot refuses with a
-    /// typed error instead of dropping the mark.
+    /// Forward a timeline break to the output stage, which states it in that
+    /// output's own format: an HLS playlist's `#EXT-X-DISCONTINUITY`, a TS
+    /// packet's `discontinuity_indicator`, a new CMAF fragment, a DASH Period,
+    /// or a progressive file whose sample timeline continues across it. No
+    /// output refuses the mark.
     ///
     /// Everything held for decode-order interleaving is released first: the
     /// break lies after every sample the demux already produced, so those must
@@ -1352,16 +1353,15 @@ impl CliStream {
                     emit.patch(*offset, bytes)?
                 }
                 (_, MuxOutput::Text(text)) => emit.text(text)?,
-                // No CLI output format carries an out-of-band timeline marker:
-                // every one either states the break in-band (a TS
-                // `discontinuity_indicator`) or in its manifest. Refuse rather
-                // than drop it.
-                (_, MuxOutput::Discontinuity { .. }) => {
-                    return Err(crate::Error::UnsupportedFeature(
-                        "the CLI's byte output has no out-of-band timeline marker",
-                    )
-                    .into());
-                }
+                // Every CLI output states a break in-band, in its own format,
+                // before its bytes are written: a TS adaptation-field
+                // `discontinuity_indicator`, a new CMAF fragment whose `tfdt`
+                // carries the (given or rebased) decode time, an HLS
+                // `#EXT-X-DISCONTINUITY`, a new DASH Period, or a progressive
+                // `stts` timeline that continues across the break. An emitted
+                // marker is therefore already accounted for, and the sink has
+                // no out-of-band channel to place it in.
+                (_, MuxOutput::Discontinuity { .. }) => {}
                 _ => {}
             }
         }

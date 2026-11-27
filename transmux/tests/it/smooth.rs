@@ -635,13 +635,15 @@ fn a_forward_break_states_the_jump_in_tfxd_and_the_manifest() {
     let outputs =
         crate::discontinuity::drive(&mut stage, &two, None).expect("Smooth states a forward break");
     let mut log = transmux::segment_log::SegmentSummaryLog::new();
+    let mut all: Vec<SegmentOut> = Vec::new();
     let mut broken: Vec<SegmentOut> = Vec::new();
     for output in outputs {
         if let MuxOutput::Segment(segment) = output {
             log.push(&segment).expect("summary");
             if segment.summary.discontinuous {
-                broken.push(*segment);
+                broken.push((*segment).clone());
             }
+            all.push(*segment);
         }
     }
     assert!(
@@ -655,6 +657,25 @@ fn a_forward_break_states_the_jump_in_tfxd_and_the_manifest() {
             "the fragment's tfxd states the same post-break start as its summary"
         );
         assert_eq!(tfxd.fragment_duration, segment.summary.duration);
+        // A forward jump is stated as given, never rebased away: the fragment
+        // after the break opens a real gap after the one before it.
+        let previous = all
+            .iter()
+            .find(|candidate| {
+                candidate.summary.track == segment.summary.track
+                    && candidate.summary.sequence.saturating_add(1) == segment.summary.sequence
+            })
+            .expect("the fragment before the break");
+        let gap = segment.summary.start.saturating_sub(
+            previous
+                .summary
+                .start
+                .saturating_add(previous.summary.duration),
+        );
+        assert!(
+            gap >= 5 * transmux::smooth::SMOOTH_TIMESCALE,
+            "the forward jump must stay stated, gap {gap}"
+        );
     }
 
     let manifest = SmoothPackager.render(&specs, &log).expect("manifest");
@@ -687,14 +708,41 @@ fn a_forward_break_states_the_jump_in_tfxd_and_the_manifest() {
     }
 }
 
-/// Smooth's chunk timeline only moves forward, so a break that moves a track's
-/// time backwards is refused with a typed error naming the stage.
+/// A break that moves a track's time **backwards** cannot be stated on the
+/// Manifest's chunk timeline ([MS-SSTR] §2.2.2.6: a client accumulates `c@d`
+/// from `c@t`, and that timeline never goes back), so it is expressed by
+/// rebasing: the first fragment after the break continues from the end of the
+/// last one written — that track's last start plus its last duration — and
+/// every later fragment keeps its spacing. The fragments' `tfxd` and the
+/// re-parsed Manifest must both be monotonic on that continuing timeline.
 #[test]
-fn a_backward_break_is_refused_with_a_typed_error() {
+fn a_backward_break_continues_the_fragment_timeline() {
     use transmux::SmoothOrigin;
+    use transmux::mux_stage::{MuxOutput, SegmentOut};
     use transmux::smooth::SmoothSegmenter;
+    use transmux::smooth_fragment::fragment_tfxd;
 
     let two = crate::discontinuity::backwards();
+    // The fixture really does move media time backwards at the seam.
+    for (track, &split) in two.media.tracks.iter().zip(&two.split) {
+        let previous_end = track.samples[split - 1]
+            .timing
+            .and_then(|timing| {
+                timing
+                    .dts()
+                    .map(|dts| dts + i64::from(timing.duration().unwrap_or(0)))
+            })
+            .expect("a timed sample");
+        let seam = track.samples[split]
+            .timing
+            .and_then(|timing| timing.dts())
+            .expect("a timed sample");
+        assert!(
+            seam < previous_end,
+            "the seam must move time backwards: {seam} >= {previous_end}"
+        );
+    }
+
     let specs: Vec<_> = two.media.tracks.iter().map(|t| t.spec.clone()).collect();
     let origin = SmoothOrigin::from_tracks(
         two.media
@@ -702,15 +750,88 @@ fn a_backward_break_is_refused_with_a_typed_error() {
             .iter()
             .map(|track| (track.spec.timescale, track.samples.as_slice())),
     );
-    let mut stage = SmoothSegmenter::new(specs, origin, core::time::Duration::from_secs(2))
+    let mut stage = SmoothSegmenter::new(specs.clone(), origin, core::time::Duration::from_secs(2))
         .expect("Smooth segmenter");
-    let error = crate::discontinuity::drive(&mut stage, &two, None)
-        .expect_err("a backward break cannot be expressed");
-    match error {
-        transmux::error::Error::UnsupportedFeature(reason) => assert!(
-            reason.starts_with("smooth:"),
-            "the refusal names the stage and the reason: {reason}"
-        ),
-        other => panic!("expected a typed unsupported-feature refusal, got {other:?}"),
+    let outputs = crate::discontinuity::drive(&mut stage, &two, None)
+        .expect("a backward break is expressed by rebasing");
+    let mut log = transmux::segment_log::SegmentSummaryLog::new();
+    let mut segments: Vec<SegmentOut> = Vec::new();
+    for output in outputs {
+        if let MuxOutput::Segment(segment) = output {
+            log.push(&segment).expect("summary");
+            segments.push(*segment);
+        }
+    }
+    assert!(!segments.is_empty(), "the stage emitted no fragment");
+
+    let mut seam_starts = Vec::new();
+    for spec in &specs {
+        let own: Vec<&SegmentOut> = segments
+            .iter()
+            .filter(|segment| segment.summary.track == spec.track_id)
+            .collect();
+        assert!(
+            own.len() >= 2,
+            "track {:?} needs a fragment on each side of the break",
+            spec.track_id
+        );
+        for pair in own.windows(2) {
+            assert_eq!(
+                pair[1].summary.start,
+                pair[0]
+                    .summary
+                    .start
+                    .saturating_add(pair[0].summary.duration),
+                "track {:?}: a fragment continues where the last one ended",
+                spec.track_id
+            );
+        }
+        let seam = own
+            .iter()
+            .find(|segment| segment.summary.discontinuous)
+            .expect("the break marks the first fragment after it");
+        let tfxd = fragment_tfxd(&seam.bytes).expect("every Smooth fragment carries tfxd");
+        assert_eq!(
+            tfxd.fragment_absolute_time, seam.summary.start,
+            "the rebased fragment states its continuing start in tfxd"
+        );
+        assert_eq!(tfxd.fragment_duration, seam.summary.duration);
+        seam_starts.push(seam.summary.start);
+    }
+    // Each track continues from its *own* last end, so the two seams differ:
+    // a rebase by another track's duration would place them at one value.
+    assert!(
+        seam_starts.windows(2).any(|pair| pair[0] != pair[1]),
+        "the tracks must end at different times for this test to bite: {seam_starts:?}"
+    );
+
+    let manifest = SmoothPackager.render(&specs, &log).expect("manifest");
+    let parsed = SmoothManifest::parse(&manifest).expect("the manifest parses");
+    for stream in &parsed.streams {
+        let kind = stream.stream_type;
+        let spec = specs
+            .iter()
+            .find(|spec| {
+                matches!(
+                    (&spec.config, kind),
+                    (CodecConfig::Avc { .. }, StreamType::Video)
+                        | (CodecConfig::Aac { .. }, StreamType::Audio)
+                )
+            })
+            .expect("every stream names an announced track");
+        let own: Vec<&SegmentOut> = segments
+            .iter()
+            .filter(|segment| segment.summary.track == spec.track_id)
+            .collect();
+        let chunks = stream
+            .enumerate_chunks()
+            .expect("the manifest's chunk times are monotonic");
+        assert_eq!(
+            chunks,
+            own.iter()
+                .map(|segment| (segment.summary.start, segment.summary.duration))
+                .collect::<Vec<_>>(),
+            "the manifest states exactly the fragment times the stage emitted"
+        );
     }
 }

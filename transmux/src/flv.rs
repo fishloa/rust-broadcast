@@ -76,6 +76,7 @@ use broadcast_core::timescale::{Rounding, Timescale, rescale_i64};
 use crate::error::{Error, Result};
 use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+use crate::rebase::BreakRebase;
 use broadcast_bitstream::aac_asc::AudioSpecificConfig;
 use isobmff::avc_config::AVCConfigurationBox;
 use isobmff::mp4esds::{
@@ -893,8 +894,8 @@ pub(crate) struct FlvTagStream {
     /// marker, so a break is expressed by rebasing: this offset is added to
     /// every later sample's timestamp so the first tag after the break
     /// continues from [`Self::last_written_ms`] plus the triggering track's
-    /// last duration.
-    rebase_ms: i64,
+    /// last duration ([`BreakRebase::continue_from`]).
+    rebase: BreakRebase,
     /// A break is waiting for the first sample after it (that sample computes
     /// the new offset).
     pending_discontinuity: bool,
@@ -1024,7 +1025,7 @@ impl FlvTagStream {
         };
         let natural = ticks_to_ms(dts, self.tracks[index].spec.timescale)?;
         let target = i64::from(last).saturating_add(i64::from(self.last_duration_ms[index]));
-        self.rebase_ms = target.saturating_sub(natural);
+        self.rebase = BreakRebase::continue_from(target, natural);
         Ok(())
     }
 
@@ -1100,8 +1101,9 @@ impl FlvTagStream {
         let Some(dts) = sample.timing.and_then(|t| t.dts()) else {
             return Ok(None);
         };
-        let ms = ticks_to_ms(dts, self.tracks[index].spec.timescale)?
-            .saturating_add(self.rebase_ms)
+        let ms = self
+            .rebase
+            .apply(ticks_to_ms(dts, self.tracks[index].spec.timescale)?)
             .max(0);
         u32::try_from(ms).map(Some).map_err(|_| {
             FlvError::Codec(Error::InvalidInput(

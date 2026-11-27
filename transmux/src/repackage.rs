@@ -207,9 +207,12 @@ fn collect(outputs: &[MuxOutput]) -> RepackageOutput {
         match output {
             MuxOutput::Init(bytes) => init_segment = bytes.to_vec(),
             MuxOutput::Segment(segment) => media_segments.push(segment.bytes.to_vec()),
-            // The output is a bare CMAF byte stream: a break is already stated
-            // by each fragment's own `tfdt`, with no manifest to open a period
-            // in. There is nothing here to put an out-of-band marker into.
+            // The output is a bare CMAF byte stream, where a break has two
+            // in-band forms and no out-of-band one: the next fragment's `tfdt`
+            // carries the given (or rebased) decode time, and the resegmenting
+            // [`Segmenter`] marks that segment's summary `discontinuous` for a
+            // caller that renders a playlist over it. Both come from the stage;
+            // a marker emitted instead names a break already written.
             MuxOutput::Discontinuity { .. } => {}
             _ => {}
         }

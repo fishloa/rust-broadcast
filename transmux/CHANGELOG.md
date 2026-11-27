@@ -176,6 +176,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StreamingFlvDemux::finish` diagnoses an input that ends before it can yield anything: a header shorter than 9/13 bytes, a `DataOffset` past the input and an incomplete first tag are `FlvError::Codec(BufferTooShort)`, and a complete input carrying no supported track is `FlvError::NoSupportedTrack`. Everything decodable is queued before the error.
 
 ### Fixed
+- No output refuses a timeline break that moves time backwards (issue #4154).
+  `SmoothSegmenter` rebases the affected track onto the fragment timeline it has
+  already written — the first fragment after the break continues from that
+  track's last start plus its last duration, and later fragments keep their
+  spacing — so its `tfxd` and the Manifest's chunk times stay on the one
+  forward timeline a client accumulates (MS-SSTR §2.2.2.6). `MkvMuxStage` does
+  the same for its Block timestamps, so the `Cues` written after the break and
+  the patched `Info.Duration` describe one non-decreasing timeline (RFC 9559
+  §11, §12). A forward jump keeps being stated as given. `PlanPass` maps a break
+  the same way for a progressive MP4, whose `stts` can state a decode time only
+  as the sum of the preceding durations (ISO/IEC 14496-12:2026 §8.6.1.1), and
+  `ProgressiveMuxStage` accepts the mark, so the CLI's `-f progressive` and
+  `-f cmaf` byte outputs write a file over a capture whose timeline breaks
+  where the CLI used to fail. The arithmetic is one shared `BreakRebase`, the
+  mapping FLV/RTMP already applied; a break that names every track now marks
+  each track's next fragment, not only the first one's.
 - The `transmux` CLI forwards a demux discontinuity to the output stage
   (issue #4147). `DemuxEvent::Discontinuity` becomes `MuxInput::Discontinuity`
   once the decode-order interleave has released every sample the break follows,
@@ -194,8 +210,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   announced PID, `track: Some(id)` only that track's; PSI packets stay
   unmarked and the continuity counters keep counting (§2.4.3.3). The CLI's
   `-f ts` output therefore remuxes a capture whose timeline breaks, where it
-  used to fail, and `-f dash` keeps refusing one (a single-period MPD cannot
-  signal a break).
+  used to fail; `-f dash` opens a new Period at the break.
 - `DisplayGeometry::from_mpeg2_es` and the MPEG-2 geometry probes reject a
   `sequence_header()` with a zero size value (`broadcast-bitstream` now enforces
   H.262 §6.3.3), so an invalid stream recovers no geometry instead of a 0-pixel
