@@ -183,3 +183,36 @@ fn picture_user_data_exposes_what_it_carries() {
     assert_eq!(PictureUserData::default().afd(), None);
     assert_eq!(PictureUserData::default().bar_data(), None);
 }
+
+/// The two bar-data entry points take different prefixes: the T.35 form starts
+/// at the country code, the GA94 form after it. These are the verbatim bytes
+/// the `broadcast_bitstream_user_data` fuzz target crashed on when it asserted
+/// the two agree on one buffer — the first byte `0x06` is a bare
+/// `user_data_type_code` to the GA94 form (no bar flag set) and not a T.35
+/// country code to the other, so neither answer contradicts the other.
+#[test]
+fn fuzz_input_is_only_a_ga94_carriage() {
+    let input = [
+        0x06, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x0A, 0x00, 0x08, 0x2F, 0x00,
+        0x00, 0x00,
+    ];
+    assert_eq!(bar_data_from_t35_payload(&input), None);
+    assert_eq!(bar_data_from_ga94_payload(&input), Some(empty_bar_data()));
+}
+
+/// A T.35 `bar_data()` payload decodes through the T.35 entry point only; the
+/// shared tail after the country/provider prefix decodes to the same message
+/// through the GA94 entry point.
+#[test]
+fn the_carriages_share_the_tail_after_the_t35_prefix() {
+    use broadcast_bitstream::user_data::{T35_HEADER_LEN, USER_IDENTIFIER_LEN};
+
+    let payload = bar_payload(&[0x06, 0x80, 0xC0, 0x01]);
+    let t35 = bar_data_from_t35_payload(&payload);
+    assert_eq!(t35, Some(BarData::new(Some(1), None, None, None)));
+    assert_eq!(bar_data_from_ga94_payload(&payload), None);
+    assert_eq!(
+        t35,
+        bar_data_from_ga94_payload(&payload[T35_HEADER_LEN - USER_IDENTIFIER_LEN..])
+    );
+}
