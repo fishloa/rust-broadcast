@@ -9,7 +9,8 @@ read, so this is a maintenance tool, not a build step.
 The classification sets below are edited by hand when a code is typed or a held
 document is added; the CSV rows themselves are never copied into the public
 tree. Run `python3 tools/gen-mp4ra-coverage.py` from anywhere; it rewrites
-`isobmff/src/coverage/mp4ra.rs` from the private checkout.
+`isobmff/src/coverage/mp4ra.rs` from the private checkout, and `cargo fmt --all`
+must follow to keep the table rustfmt-clean.
 """
 import os
 from pathlib import Path
