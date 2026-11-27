@@ -277,64 +277,6 @@ fn mkv_double_round_trip_is_stable() {
 
 // ── Issue #4154: a timeline break cuts a Cluster, a backwards one refuses ───
 
-/// Non-decreasing packet `pts_time` values ffprobe reads for one stream, or
-/// `None` when ffprobe is not installed (the test then skips loudly).
-fn ffprobe_pts(path: &std::path::Path, stream: &str) -> Option<Vec<f64>> {
-    if !test_fixtures::process::tool_available("ffprobe", "-version") {
-        eprintln!("skipping: ffprobe is not on PATH");
-        return None;
-    }
-    let mut command = std::process::Command::new("ffprobe");
-    command.args([
-        "-v",
-        "error",
-        "-select_streams",
-        stream,
-        "-show_entries",
-        "packet=pts_time",
-        "-of",
-        "csv=p=0",
-    ]);
-    command.arg(path);
-    let output =
-        test_fixtures::process::output_bounded(&mut command, std::time::Duration::from_secs(30))
-            .expect("run ffprobe");
-    assert!(
-        output.status.success(),
-        "ffprobe failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    Some(
-        String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .filter_map(|line| line.trim().trim_end_matches(',').parse().ok())
-            .collect(),
-    )
-}
-
-fn scratch_path(name: &str) -> std::path::PathBuf {
-    let dir = std::env::var_os("CARGO_TARGET_TMPDIR")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::current_dir()
-                .expect("a working directory")
-                .join("test-artifacts")
-        });
-    std::fs::create_dir_all(&dir).expect("create the scratch directory");
-    dir.join(name)
-}
-
-fn assert_non_decreasing(name: &str, values: &[f64]) {
-    for pair in values.windows(2) {
-        assert!(
-            pair[1] >= pair[0],
-            "{name}: packet times must not step backwards: {} then {}",
-            pair[0],
-            pair[1]
-        );
-    }
-}
-
 #[test]
 fn a_forward_break_cuts_a_cluster_at_the_seam_and_stays_readable() {
     let two = crate::discontinuity::forward();
@@ -376,7 +318,7 @@ fn a_forward_break_cuts_a_cluster_at_the_seam_and_stays_readable() {
         );
     }
 
-    let path = scratch_path(&format!("dc1-mkv-{}.mkv", std::process::id()));
+    let path = crate::discontinuity::scratch_path(&format!("dc1-mkv-{}.mkv", std::process::id()));
     std::fs::write(&path, &bytes).expect("write the muxed file");
     let audio_index = two
         .media
@@ -384,8 +326,8 @@ fn a_forward_break_cuts_a_cluster_at_the_seam_and_stays_readable() {
         .iter()
         .position(|track| matches!(track.spec.config, CodecConfig::Aac { .. }))
         .expect("the fixture carries AAC audio");
-    if let Some(audio) = ffprobe_pts(&path, "a:0") {
-        assert_non_decreasing("audio", &audio);
+    if let Some(audio) = crate::discontinuity::ffprobe_dts(&path, "a:0") {
+        crate::discontinuity::assert_non_decreasing("audio", &audio);
         assert_eq!(
             audio.len(),
             two.media.tracks[audio_index].samples.len(),
@@ -404,7 +346,7 @@ fn a_forward_break_cuts_a_cluster_at_the_seam_and_stays_readable() {
         .iter()
         .position(|track| matches!(track.spec.config, CodecConfig::Avc { .. }))
         .expect("the fixture carries AVC video");
-    if let Some(video) = ffprobe_pts(&path, "v:0") {
+    if let Some(video) = crate::discontinuity::ffprobe_dts(&path, "v:0") {
         assert_eq!(
             video.len(),
             two.media.tracks[video_index].samples.len(),

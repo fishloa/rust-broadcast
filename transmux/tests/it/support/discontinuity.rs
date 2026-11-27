@@ -277,3 +277,61 @@ pub fn seam_matroska_ticks(input: &TwoSource) -> i64 {
         .min()
         .expect("every track has a second source")
 }
+
+/// Packet `dts_time` values ffprobe reads for one stream, or
+/// `None` when ffprobe is not installed (the test then skips loudly).
+pub fn ffprobe_dts(path: &std::path::Path, stream: &str) -> Option<Vec<f64>> {
+    if !test_fixtures::process::tool_available("ffprobe", "-version") {
+        eprintln!("skipping: ffprobe is not on PATH");
+        return None;
+    }
+    let mut command = std::process::Command::new("ffprobe");
+    command.args([
+        "-v",
+        "error",
+        "-select_streams",
+        stream,
+        "-show_entries",
+        "packet=dts_time",
+        "-of",
+        "csv=p=0",
+    ]);
+    command.arg(path);
+    let output =
+        test_fixtures::process::output_bounded(&mut command, std::time::Duration::from_secs(30))
+            .expect("run ffprobe");
+    assert!(
+        output.status.success(),
+        "ffprobe failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| line.trim().trim_end_matches(',').parse().ok())
+            .collect(),
+    )
+}
+
+pub fn scratch_path(name: &str) -> std::path::PathBuf {
+    let dir = std::env::var_os("CARGO_TARGET_TMPDIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .expect("a working directory")
+                .join("test-artifacts")
+        });
+    std::fs::create_dir_all(&dir).expect("create the scratch directory");
+    dir.join(name)
+}
+
+pub fn assert_non_decreasing(name: &str, values: &[f64]) {
+    for pair in values.windows(2) {
+        assert!(
+            pair[1] >= pair[0],
+            "{name}: packet times must not step backwards: {} then {}",
+            pair[0],
+            pair[1]
+        );
+    }
+}
