@@ -745,3 +745,314 @@ mod tests {
         assert_eq!(clap.try_to_bytes().unwrap(), body);
     }
 }
+
+// ---------------------------------------------------------------------------
+// AmbientViewingEnvironmentBox — amve (§12.1.9)
+// ContentColourVolumeBox — cclv (§12.1.8)
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the Ambient Viewing Environment Box (`amve`, §12.1.9).
+pub const AMVE: [u8; BOX_TYPE_SIZE] = *b"amve";
+/// Four-CC of the Content Colour Volume Box (`cclv`, §12.1.8).
+pub const CCLV: [u8; BOX_TYPE_SIZE] = *b"cclv";
+/// `amve` body: `ambient_illuminance` (32) then two 16-bit light coordinates.
+const AMVE_BODY_LEN: usize = core::mem::size_of::<u32>() + 2 * core::mem::size_of::<u16>();
+/// `cclv` body: one flag byte, then the optional fields.
+const CCLV_FLAGS_LEN: usize = 1;
+/// `cclv` `ccv_primaries_present_flag` bit (§12.1.8.2).
+const CCLV_PRIMARIES_PRESENT: u8 = 0x20;
+/// `cclv` `ccv_min_luminance_value_present_flag` bit (§12.1.8.2).
+const CCLV_MIN_LUMINANCE_PRESENT: u8 = 0x10;
+/// `cclv` `ccv_max_luminance_value_present_flag` bit (§12.1.8.2).
+const CCLV_MAX_LUMINANCE_PRESENT: u8 = 0x08;
+/// `cclv` `ccv_avg_luminance_value_present_flag` bit (§12.1.8.2).
+const CCLV_AVG_LUMINANCE_PRESENT: u8 = 0x04;
+/// One `ccv_primaries_x`/`ccv_primaries_y` pair per colour primary.
+const CCLV_PRIMARIES: usize = 3;
+/// Two coordinates per primary, each one 32-bit word.
+const CCLV_PRIMARY_PAIR_LEN: usize = 2 * core::mem::size_of::<i32>();
+/// The whole `ccv_primaries` block: one `(x, y)` pair per primary.
+const CCLV_PRIMARIES_LEN: usize = CCLV_PRIMARIES * CCLV_PRIMARY_PAIR_LEN;
+
+/// Ambient Viewing Environment Box (`amve`) — ISO/IEC 14496-12:2026 §12.1.9.
+///
+/// The nominal ambient viewing environment of the associated video content,
+/// without a version/flags word.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct AmbientViewingEnvironmentBox {
+    ambient_illuminance: u32,
+    ambient_light_x: u16,
+    ambient_light_y: u16,
+}
+
+impl AmbientViewingEnvironmentBox {
+    /// Build one from the illuminance and the light's coordinates.
+    #[must_use]
+    pub const fn new(ambient_illuminance: u32, ambient_light_x: u16, ambient_light_y: u16) -> Self {
+        Self {
+            ambient_illuminance,
+            ambient_light_x,
+            ambient_light_y,
+        }
+    }
+
+    /// `ambient_illuminance`, in units of 0.0001 lux.
+    #[must_use]
+    pub const fn ambient_illuminance(&self) -> u32 {
+        self.ambient_illuminance
+    }
+
+    /// `ambient_light_x`, in units of 0.00002.
+    #[must_use]
+    pub const fn ambient_light_x(&self) -> u16 {
+        self.ambient_light_x
+    }
+
+    /// `ambient_light_y`, in units of 0.00002.
+    #[must_use]
+    pub const fn ambient_light_y(&self) -> u16 {
+        self.ambient_light_y
+    }
+}
+
+impl<'a> Parse<'a> for AmbientViewingEnvironmentBox {
+    type Error = Error;
+
+    fn parse(body: &'a [u8]) -> Result<Self> {
+        need_in(body, AMVE_BODY_LEN, "amve")?;
+        Ok(Self {
+            ambient_illuminance: be_u32(body, 0, "amve ambient_illuminance")?,
+            ambient_light_x: be_u16(body, core::mem::size_of::<u32>(), "amve ambient_light_x")?,
+            ambient_light_y: be_u16(
+                body,
+                core::mem::size_of::<u32>() + core::mem::size_of::<u16>(),
+                "amve ambient_light_y",
+            )?,
+        })
+    }
+}
+
+impl Serialize for AmbientViewingEnvironmentBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        AMVE_BODY_LEN
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        need_out(buf, AMVE_BODY_LEN)?;
+        let u32_len = core::mem::size_of::<u32>();
+        let u16_len = core::mem::size_of::<u16>();
+        buf[..u32_len].copy_from_slice(&self.ambient_illuminance.to_be_bytes());
+        buf[u32_len..u32_len + u16_len].copy_from_slice(&self.ambient_light_x.to_be_bytes());
+        buf[u32_len + u16_len..AMVE_BODY_LEN].copy_from_slice(&self.ambient_light_y.to_be_bytes());
+        Ok(AMVE_BODY_LEN)
+    }
+}
+
+/// Content Colour Volume Box (`cclv`) — ISO/IEC 14496-12:2026 §12.1.8.
+///
+/// The content colour volume of the associated pictures. The two reserved
+/// leading bits correspond to the SEI message's cancel and persistence flags
+/// and are zero in a sample entry; the four presence flags say which optional
+/// fields follow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ContentColourVolumeBox {
+    flags: u8,
+    primaries: Option<[(i32, i32); CCLV_PRIMARIES]>,
+    min_luminance_value: Option<u32>,
+    max_luminance_value: Option<u32>,
+    avg_luminance_value: Option<u32>,
+}
+
+impl ContentColourVolumeBox {
+    /// Build one with every optional field absent.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            flags: 0,
+            primaries: None,
+            min_luminance_value: None,
+            max_luminance_value: None,
+            avg_luminance_value: None,
+        }
+    }
+
+    /// Set the three colour primaries and their presence bit.
+    #[must_use]
+    pub fn with_primaries(mut self, primaries: [(i32, i32); CCLV_PRIMARIES]) -> Self {
+        self.primaries = Some(primaries);
+        self.flags |= CCLV_PRIMARIES_PRESENT;
+        self
+    }
+
+    /// Set the minimum luminance value and its presence bit.
+    #[must_use]
+    pub const fn with_min_luminance(mut self, value: u32) -> Self {
+        self.min_luminance_value = Some(value);
+        self.flags |= CCLV_MIN_LUMINANCE_PRESENT;
+        self
+    }
+
+    /// Set the maximum luminance value and its presence bit.
+    #[must_use]
+    pub const fn with_max_luminance(mut self, value: u32) -> Self {
+        self.max_luminance_value = Some(value);
+        self.flags |= CCLV_MAX_LUMINANCE_PRESENT;
+        self
+    }
+
+    /// Set the average luminance value and its presence bit.
+    #[must_use]
+    pub const fn with_avg_luminance(mut self, value: u32) -> Self {
+        self.avg_luminance_value = Some(value);
+        self.flags |= CCLV_AVG_LUMINANCE_PRESENT;
+        self
+    }
+
+    /// The presence-flag byte (§12.1.8.2).
+    #[must_use]
+    pub const fn flags(&self) -> u8 {
+        self.flags
+    }
+
+    /// The `(x, y)` colour primaries, when the primaries flag is set.
+    #[must_use]
+    pub const fn primaries(&self) -> Option<[(i32, i32); CCLV_PRIMARIES]> {
+        self.primaries
+    }
+
+    /// `ccv_min_luminance_value`, when present.
+    #[must_use]
+    pub const fn min_luminance_value(&self) -> Option<u32> {
+        self.min_luminance_value
+    }
+
+    /// `ccv_max_luminance_value`, when present.
+    #[must_use]
+    pub const fn max_luminance_value(&self) -> Option<u32> {
+        self.max_luminance_value
+    }
+
+    /// `ccv_avg_luminance_value`, when present.
+    #[must_use]
+    pub const fn avg_luminance_value(&self) -> Option<u32> {
+        self.avg_luminance_value
+    }
+
+    fn body_len(&self) -> usize {
+        let primaries = if self.primaries.is_some() {
+            2 * CCLV_PRIMARIES * core::mem::size_of::<i32>()
+        } else {
+            0
+        };
+        CCLV_FLAGS_LEN
+            + primaries
+            + self
+                .min_luminance_value
+                .map_or(0, |_| core::mem::size_of::<u32>())
+            + self
+                .max_luminance_value
+                .map_or(0, |_| core::mem::size_of::<u32>())
+            + self
+                .avg_luminance_value
+                .map_or(0, |_| core::mem::size_of::<u32>())
+    }
+}
+
+impl Default for ContentColourVolumeBox {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'a> Parse<'a> for ContentColourVolumeBox {
+    type Error = Error;
+
+    fn parse(body: &'a [u8]) -> Result<Self> {
+        need_in(body, CCLV_FLAGS_LEN, "cclv")?;
+        let flags = body[0];
+        let mut cursor = CCLV_FLAGS_LEN;
+        let primaries = if (flags & CCLV_PRIMARIES_PRESENT) != 0 {
+            need_in(body, cursor + CCLV_PRIMARIES_LEN, "cclv primaries")?;
+            let mut primaries = [(0i32, 0i32); CCLV_PRIMARIES];
+            for slot in &mut primaries {
+                *slot = (
+                    broadcast_core::wire::i32_at(body, cursor),
+                    broadcast_core::wire::i32_at(body, cursor + core::mem::size_of::<i32>()),
+                );
+                cursor += CCLV_PRIMARY_PAIR_LEN;
+            }
+            Some(primaries)
+        } else {
+            None
+        };
+        let mut take_luminance = |what: &'static str| -> Result<Option<u32>> {
+            let value = be_u32(body, cursor, what)?;
+            cursor += core::mem::size_of::<u32>();
+            Ok(Some(value))
+        };
+        let min_luminance_value = if (flags & CCLV_MIN_LUMINANCE_PRESENT) != 0 {
+            take_luminance("cclv min luminance")?
+        } else {
+            None
+        };
+        let max_luminance_value = if (flags & CCLV_MAX_LUMINANCE_PRESENT) != 0 {
+            take_luminance("cclv max luminance")?
+        } else {
+            None
+        };
+        let avg_luminance_value = if (flags & CCLV_AVG_LUMINANCE_PRESENT) != 0 {
+            take_luminance("cclv avg luminance")?
+        } else {
+            None
+        };
+        Ok(Self {
+            flags,
+            primaries,
+            min_luminance_value,
+            max_luminance_value,
+            avg_luminance_value,
+        })
+    }
+}
+
+impl Serialize for ContentColourVolumeBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        self.body_len()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.body_len();
+        need_out(buf, need)?;
+        let mut cursor = 0usize;
+        buf[cursor] = self.flags;
+        cursor += CCLV_FLAGS_LEN;
+        if let Some(primaries) = &self.primaries {
+            for (x, y) in primaries {
+                buf[cursor..cursor + core::mem::size_of::<i32>()].copy_from_slice(&x.to_be_bytes());
+                cursor += core::mem::size_of::<i32>();
+                buf[cursor..cursor + core::mem::size_of::<i32>()].copy_from_slice(&y.to_be_bytes());
+                cursor += core::mem::size_of::<i32>();
+            }
+        }
+        for value in [
+            self.min_luminance_value,
+            self.max_luminance_value,
+            self.avg_luminance_value,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            buf[cursor..cursor + core::mem::size_of::<u32>()].copy_from_slice(&value.to_be_bytes());
+            cursor += core::mem::size_of::<u32>();
+        }
+        Ok(cursor)
+    }
+}

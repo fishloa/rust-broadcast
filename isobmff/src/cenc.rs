@@ -56,7 +56,8 @@ const SENC_SUBSAMPLE_PROTECTED_LEN: usize = 4;
 /// Whole `senc` subsample width (clear + protected).
 const SENC_SUBSAMPLE_LEN: usize = SENC_SUBSAMPLE_CLEAR_LEN + SENC_SUBSAMPLE_PROTECTED_LEN;
 /// `schm` flag bit announcing a `scheme_uri` (§12.1.4).
-const SCHM_FLAG_HAS_SCHEME_URI: u32 = 0x000001;
+/// `schm`/`csch` flag: `scheme_uri` is present (§13.4.6.2, §13.5.5.2).
+pub const SCHM_FLAG_HAS_SCHEME_URI: u32 = 0x000001;
 
 /// A FullBox's 24-bit `flags`, from a buffer starting at its `version` byte.
 fn fullbox_flags(full: &[u8]) -> u32 {
@@ -1057,6 +1058,9 @@ pub struct SchemeInformationBox {
     /// The stereoscopic-video scheme box (§13.5.4.2), when `scheme_type` is
     /// `stvi`.
     pub stvi: Option<crate::track_desc::StereoVideoBox>,
+    /// The sample-packing information box (§13.5.6.2), when `scheme_type` is
+    /// `spkt`.
+    pub spki: Option<crate::scheme::SamplePackingInformationBox>,
     pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
 }
 
@@ -1067,6 +1071,7 @@ impl<'a> Parse<'a> for SchemeInformationBox {
         let body = crate::box_types::parse_box(bytes)?.0.body;
         let mut tenc = None;
         let mut stvi = None;
+        let mut spki = None;
         let mut extra_boxes = Vec::new();
         let mut off = 0usize;
         while off + crate::box_types::BOX_HEADER_MIN_SIZE <= body.len() {
@@ -1080,6 +1085,10 @@ impl<'a> Parse<'a> for SchemeInformationBox {
                 tenc = Some(TrackEncryptionBox::parse_box(&body[off..end])?);
             } else if &boxtype == b"stvi" {
                 stvi = Some(crate::track_desc::StereoVideoBox::parse(&body[off..end])?);
+            } else if &boxtype == b"spki" {
+                spki = Some(crate::scheme::SamplePackingInformationBox::parse(
+                    &body[off..end],
+                )?);
             } else {
                 extra_boxes.push(crate::box_support::OpaqueBox {
                     box_type: boxtype,
@@ -1093,6 +1102,7 @@ impl<'a> Parse<'a> for SchemeInformationBox {
         Ok(Self {
             tenc,
             stvi,
+            spki,
             extra_boxes,
         })
     }
@@ -1106,6 +1116,9 @@ impl Serialize for SchemeInformationBox {
             n += t.serialized_len();
         }
         if let Some(ref t) = self.stvi {
+            n += t.serialized_len();
+        }
+        if let Some(ref t) = self.spki {
             n += t.serialized_len();
         }
         for b in &self.extra_boxes {
@@ -1122,6 +1135,9 @@ impl Serialize for SchemeInformationBox {
             c += t.serialize_into(&mut buf[c..])?;
         }
         if let Some(ref t) = self.stvi {
+            c += t.serialize_into(&mut buf[c..])?;
+        }
+        if let Some(ref t) = self.spki {
             c += t.serialize_into(&mut buf[c..])?;
         }
         for b in &self.extra_boxes {

@@ -16,6 +16,8 @@ const TABLE: &[(&str, &[&str])] = &[
     ("mp4/av1.mp4", &[]),
     ("mp4/cenc-av-enca.mp4", &[]),
     ("mp4/boxes/chnl-ipcm.mp4", &[]),
+    ("mp4/boxes/cprt.mp4", &[]),
+    ("mp4/boxes/hint-hmhd.mp4", &[]),
     ("mp4/boxes/loudness.m4a", &[]),
     ("mp4/boxes/ssix-sidx.mp4", &[]),
     ("mp4/boxes/track-description.mp4", &[]),

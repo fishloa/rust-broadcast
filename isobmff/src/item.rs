@@ -1829,13 +1829,10 @@ impl<'a> Parse<'a> for ItemReferenceBox {
                 }));
             }
             let (item, used) = crate::box_types::parse_box(rest)?;
-            if item.four_cc() == crate::box_types::UUID {
-                return Err(Error::UnsupportedFeature(
-                    "uuid item reference box (it carries a usertype this model does not keep)",
-                ));
-            }
-            this.references
-                .push(this.parse_reference(item.four_cc(), item.body)?);
+            let usertype = item.header.usertype;
+            let mut reference = this.parse_reference(item.four_cc(), item.body)?;
+            reference.usertype = usertype;
+            this.references.push(reference);
             rest = &rest[used..];
         }
         Ok(this)
@@ -1872,6 +1869,7 @@ impl ItemReferenceBox {
             reference_type: ReferenceType::from_fourcc(reference_type),
             from,
             to,
+            usertype: None,
         })
     }
 
@@ -1901,7 +1899,15 @@ impl ItemReferenceBox {
     }
 
     fn child_len(&self, reference: &SingleItemTypeReferenceBox) -> usize {
-        BOX_HEADER_MIN_SIZE + self.id_width() + U16_LEN + reference.to.len() * self.id_width()
+        BOX_HEADER_MIN_SIZE
+            + if reference.usertype.is_some() {
+                crate::box_types::UUID_TYPE_SIZE
+            } else {
+                0
+            }
+            + self.id_width()
+            + U16_LEN
+            + reference.to.len() * self.id_width()
     }
 }
 
@@ -1922,12 +1928,12 @@ impl Serialize for ItemReferenceBox {
         let mut cursor = write_full_box_header(buf, &IREF, need, self.version, self.flags, false)?;
         for reference in &self.references {
             let child_need = self.child_len(reference);
-            let header = write_box_header(
-                &mut buf[cursor..],
-                &reference.reference_type.fourcc(),
-                child_need,
-            )?;
+            let header = write_box_header(&mut buf[cursor..], &reference.box_type(), child_need)?;
             let mut at = cursor + header;
+            if let Some(usertype) = &reference.usertype {
+                buf[at..at + crate::box_types::UUID_TYPE_SIZE].copy_from_slice(usertype);
+                at += crate::box_types::UUID_TYPE_SIZE;
+            }
             self.write_id(buf, &mut at, reference.from)?;
             let count = u16::try_from(reference.to.len())
                 .map_err(|_| Error::InvalidInput("iref reference_count exceeds u16"))?;
@@ -1950,6 +1956,9 @@ pub struct SingleItemTypeReferenceBox {
     reference_type: ReferenceType,
     from: ItemId,
     to: Vec<ItemId>,
+    /// The `uuid` box's 16-byte extended type (§4.2), when the reference is a
+    /// user extension rather than a registered reference type.
+    usertype: Option<[u8; crate::box_types::UUID_TYPE_SIZE]>,
 }
 
 impl SingleItemTypeReferenceBox {
@@ -1960,6 +1969,39 @@ impl SingleItemTypeReferenceBox {
             reference_type,
             from,
             to,
+            usertype: None,
+        }
+    }
+
+    /// A `uuid` reference from `from` to every item in `to`, keyed by its
+    /// 16-byte extended type (§4.2).
+    #[must_use]
+    pub fn uuid(
+        usertype: [u8; crate::box_types::UUID_TYPE_SIZE],
+        from: ItemId,
+        to: Vec<ItemId>,
+    ) -> Self {
+        Self {
+            reference_type: ReferenceType::Other(crate::box_types::UUID),
+            from,
+            to,
+            usertype: Some(usertype),
+        }
+    }
+
+    /// The box's `uuid` extended type, when it is a `uuid` box.
+    #[must_use]
+    pub const fn usertype(&self) -> Option<[u8; crate::box_types::UUID_TYPE_SIZE]> {
+        self.usertype
+    }
+
+    /// The box type this reference writes: `uuid` for a user extension, else
+    /// the reference type's own four-CC.
+    fn box_type(&self) -> [u8; BOX_TYPE_SIZE] {
+        if self.usertype.is_some() {
+            crate::box_types::UUID
+        } else {
+            self.reference_type.fourcc()
         }
     }
 
@@ -2228,6 +2270,7 @@ broadcast_core::impl_spec_display!(EntityGroupType);
 #[non_exhaustive]
 pub struct EntityToGroupBox {
     grouping_type: EntityGroupType,
+    usertype: Option<[u8; crate::box_types::UUID_TYPE_SIZE]>,
     version: u8,
     flags: u32,
     group_id: GroupId,
@@ -2241,12 +2284,37 @@ impl EntityToGroupBox {
     pub fn new(grouping_type: EntityGroupType, group_id: GroupId, entity_ids: Vec<u32>) -> Self {
         Self {
             grouping_type,
+            usertype: None,
             version: 0,
             flags: 0,
             group_id,
             entity_ids,
             trailing: Vec::new(),
         }
+    }
+
+    /// A `uuid` entity group, keyed by its 16-byte extended type (§4.2).
+    #[must_use]
+    pub fn uuid(
+        usertype: [u8; crate::box_types::UUID_TYPE_SIZE],
+        group_id: GroupId,
+        entity_ids: Vec<u32>,
+    ) -> Self {
+        Self {
+            grouping_type: EntityGroupType::Other(crate::box_types::UUID),
+            usertype: Some(usertype),
+            version: 0,
+            flags: 0,
+            group_id,
+            entity_ids,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// The box's `uuid` extended type, when it is a `uuid` box.
+    #[must_use]
+    pub const fn usertype(&self) -> Option<[u8; crate::box_types::UUID_TYPE_SIZE]> {
+        self.usertype
     }
 
     /// Keep grouping-type-specific bytes after the entity list.
@@ -2297,6 +2365,11 @@ impl EntityToGroupBox {
             + ENTITY_GROUP_FIXED_LEN
             + self.entity_ids.len() * U32_LEN
             + self.trailing.len()
+            + if self.usertype.is_some() {
+                crate::box_types::UUID_TYPE_SIZE
+            } else {
+                0
+            }
     }
 }
 
@@ -2306,11 +2379,6 @@ impl<'a> Parse<'a> for EntityToGroupBox {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, BOX_HEADER_MIN_SIZE, "entity group")?;
         let item = crate::box_types::parse_box(bytes)?.0;
-        if item.four_cc() == crate::box_types::UUID {
-            return Err(Error::UnsupportedFeature(
-                "uuid entity group (it carries a usertype this model does not keep)",
-            ));
-        }
         let body = item.body;
         need_in(
             body,
@@ -2339,6 +2407,7 @@ impl<'a> Parse<'a> for EntityToGroupBox {
         }
         Ok(Self {
             grouping_type: EntityGroupType::from_fourcc(item.four_cc()),
+            usertype: item.header.usertype,
             version,
             flags,
             group_id,
@@ -2358,14 +2427,28 @@ impl Serialize for EntityToGroupBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let mut cursor = write_full_box_header(
-            buf,
-            &self.grouping_type.fourcc(),
-            need,
-            self.version,
-            self.flags,
-            false,
-        )?;
+        let mut cursor = match &self.usertype {
+            Some(usertype) => {
+                // §4.2 puts the `uuid` extended type immediately after the
+                // box header, ahead of the FullBox fields.
+                let mut at = write_box_header(buf, &crate::box_types::UUID, need)?;
+                buf[at..at + crate::box_types::UUID_TYPE_SIZE].copy_from_slice(usertype);
+                at += crate::box_types::UUID_TYPE_SIZE;
+                buf[at] = self.version;
+                let flags = self.flags.to_be_bytes();
+                let flags_len = FULLBOX_EXTRA_SIZE - 1;
+                buf[at + 1..at + 1 + flags_len].copy_from_slice(&flags[1..]);
+                at + FULLBOX_EXTRA_SIZE
+            }
+            None => write_full_box_header(
+                buf,
+                &self.grouping_type.fourcc(),
+                need,
+                self.version,
+                self.flags,
+                false,
+            )?,
+        };
         buf[cursor..cursor + U32_LEN].copy_from_slice(&self.group_id.get().to_be_bytes());
         cursor += U32_LEN;
         buf[cursor..cursor + U32_LEN].copy_from_slice(

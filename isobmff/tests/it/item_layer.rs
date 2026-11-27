@@ -684,3 +684,71 @@ fn a_huge_item_count_under_a_small_limit_is_a_typed_error() {
         "{err:?}"
     );
 }
+
+fn boxed(fourcc: [u8; 4], body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(8 + body.len());
+    out.extend_from_slice(&((8 + body.len()) as u32).to_be_bytes());
+    out.extend_from_slice(&fourcc);
+    out.extend_from_slice(body);
+    out
+}
+
+fn full(version: u8, flags: u32, body: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(4 + body.len());
+    out.push(version);
+    out.extend_from_slice(&flags.to_be_bytes()[1..]);
+    out.extend_from_slice(body);
+    out
+}
+
+#[test]
+fn a_uuid_item_reference_keeps_its_usertype_and_round_trips() {
+    use broadcast_core::{Parse, Serialize};
+    use isobmff::item::ItemReferenceBox;
+
+    let usertype = [0x11u8; 16];
+    let mut child = vec![0u8; 8 + 16];
+    let child_body: Vec<u8> = [1u16.to_be_bytes(), 1u16.to_be_bytes(), 2u16.to_be_bytes()].concat();
+    let child_len = 8 + 16 + child_body.len();
+    child[..4].copy_from_slice(&(child_len as u32).to_be_bytes());
+    child[4..8].copy_from_slice(b"uuid");
+    child[8..24].copy_from_slice(&usertype);
+    child.extend_from_slice(&child_body);
+    let bytes = boxed(*b"iref", &full(0, 0, &child));
+
+    let parsed = ItemReferenceBox::parse(&bytes).expect("iref");
+    let reference = &parsed.references()[0];
+    assert_eq!(reference.usertype(), Some(usertype));
+    assert_eq!(reference.from(), ItemId::new(1));
+    assert_eq!(reference.to(), &[ItemId::new(2)]);
+    assert_eq!(parsed.try_to_bytes().expect("bytes"), bytes);
+
+    let mut rebuilt = isobmff::item::ItemReferenceBox::new();
+    rebuilt.push(isobmff::item::SingleItemTypeReferenceBox::uuid(
+        usertype,
+        ItemId::new(1),
+        vec![ItemId::new(2)],
+    ));
+    assert_eq!(rebuilt.try_to_bytes().expect("bytes"), bytes);
+}
+
+#[test]
+fn a_uuid_entity_group_keeps_its_usertype_and_round_trips() {
+    use broadcast_core::{Parse, Serialize};
+    use isobmff::item::GroupsListBox;
+    use isobmff::item::{EntityToGroupBox, GroupId};
+
+    let usertype = [0x22u8; 16];
+    let group = EntityToGroupBox::uuid(usertype, GroupId::new(3), vec![1, 2, 3]);
+    let mut group_bytes = vec![0u8; group.serialized_len()];
+    let written = group.serialize_into(&mut group_bytes).expect("serialize");
+    group_bytes.truncate(written);
+    assert_eq!(&group_bytes[4..8], b"uuid");
+    assert_eq!(&group_bytes[8..24], &usertype);
+
+    let bytes = boxed(*b"grpl", &group_bytes);
+    let parsed = GroupsListBox::parse(&bytes).expect("grpl");
+    assert_eq!(parsed.groups()[0].usertype(), Some(usertype));
+    assert_eq!(parsed.groups()[0].entity_ids(), &[1, 2, 3]);
+    assert_eq!(parsed.try_to_bytes().expect("bytes"), bytes);
+}

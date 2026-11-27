@@ -167,6 +167,10 @@ pub enum MetaChild {
     Keys(Keys),
     /// The metadata item list.
     Ilst(Ilst),
+    /// The primary XML document of the meta box (`xml `, §8.11.2).
+    Xml(crate::meta_track::XmlBox),
+    /// The binarized XML document of the meta box (`bxml`, §8.11.2).
+    BinaryXml(crate::meta_track::BinaryXmlBox),
     /// Any other child, preserved verbatim.
     Opaque(OpaqueBox),
 }
@@ -179,6 +183,8 @@ impl Serialize for MetaChild {
             Self::Hdlr(hdlr) => hdlr.serialized_len(),
             Self::Keys(keys) => keys.serialized_len(),
             Self::Ilst(ilst) => ilst.serialized_len(),
+            Self::Xml(xml) => xml.serialized_len(),
+            Self::BinaryXml(bxml) => bxml.serialized_len(),
             Self::Opaque(opaque) => opaque.serialized_len(),
         }
     }
@@ -188,6 +194,8 @@ impl Serialize for MetaChild {
             Self::Hdlr(hdlr) => hdlr.serialize_into(buf),
             Self::Keys(keys) => keys.serialize_into(buf),
             Self::Ilst(ilst) => ilst.serialize_into(buf),
+            Self::Xml(xml) => xml.serialize_into(buf),
+            Self::BinaryXml(bxml) => bxml.serialize_into(buf),
             Self::Opaque(opaque) => opaque.serialize_into(buf),
         }
     }
@@ -301,6 +309,12 @@ impl Meta {
             let parsed = match child.four_cc() {
                 HDLR => MetaChild::Hdlr(Hdlr::parse_body(child.body)?),
                 super::keys::KEYS => MetaChild::Keys(Keys::parse_body(child.body)?),
+                crate::meta_track::XML => {
+                    MetaChild::Xml(crate::meta_track::XmlBox::parse_body(child.body)?)
+                }
+                crate::meta_track::BXML => {
+                    MetaChild::BinaryXml(crate::meta_track::BinaryXmlBox::parse_body(child.body)?)
+                }
                 super::ilst::ILST => MetaChild::Ilst(Ilst::parse_body(child.body, limits)?),
                 _ => MetaChild::Opaque(OpaqueBox::new(child.four_cc(), child.payload().to_vec())),
             };

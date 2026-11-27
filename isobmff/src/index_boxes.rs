@@ -689,6 +689,8 @@ pub struct TrackExtensionPropertiesBox {
     flags: u32,
     track_id: u32,
     children: Vec<OpaqueBox>,
+    alternative_startup: Option<AlternativeStartupSequencePropertiesBox>,
+    alternative_startup_at: Option<usize>,
 }
 
 impl TrackExtensionPropertiesBox {
@@ -700,7 +702,26 @@ impl TrackExtensionPropertiesBox {
             flags: 0,
             track_id,
             children: Vec::new(),
+            alternative_startup: None,
+            alternative_startup_at: None,
         }
+    }
+
+    /// Set the alternative startup sequence properties (`assp`).
+    #[must_use]
+    pub fn with_alternative_startup(
+        mut self,
+        alternative_startup: AlternativeStartupSequencePropertiesBox,
+    ) -> Self {
+        self.alternative_startup = Some(alternative_startup);
+        self
+    }
+
+    /// The alternative startup sequence properties (`assp`, §8.8.16), when
+    /// present.
+    #[must_use]
+    pub const fn alternative_startup(&self) -> Option<&AlternativeStartupSequencePropertiesBox> {
+        self.alternative_startup.as_ref()
     }
 
     /// Append one opaque child.
@@ -739,8 +760,16 @@ impl TrackExtensionPropertiesBox {
         let flags = u24_at(body, 1) & FULLBOX_FLAGS_MASK;
         let track_id = be_u32(body, FULLBOX_EXTRA_SIZE, "trep track_ID")?;
         let mut children = Vec::new();
+        let mut alternative_startup = None;
+        let mut alternative_startup_at = None;
         for child in crate::box_types::BoxIter::new(&body[FULLBOX_EXTRA_SIZE + 4..]) {
             let child = child?;
+            if child.four_cc() == ASSP {
+                alternative_startup =
+                    Some(AlternativeStartupSequencePropertiesBox::parse(child.bytes)?);
+                alternative_startup_at = Some(children.len());
+                continue;
+            }
             children.push(OpaqueBox {
                 box_type: child.four_cc(),
                 data: child.payload().to_vec(),
@@ -753,6 +782,8 @@ impl TrackExtensionPropertiesBox {
             flags,
             track_id,
             children,
+            alternative_startup,
+            alternative_startup_at,
         })
     }
 }
@@ -777,6 +808,10 @@ impl Serialize for TrackExtensionPropertiesBox {
 
     fn serialized_len(&self) -> usize {
         let mut n = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
+        n += self
+            .alternative_startup
+            .as_ref()
+            .map_or(0, |assp| assp.serialized_len());
         for child in &self.children {
             n += child.serialized_len();
         }
@@ -789,9 +824,239 @@ impl Serialize for TrackExtensionPropertiesBox {
         let mut c = write_full_box_header(buf, &TREP, need, self.version, self.flags, false)?;
         buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.track_id.to_be_bytes());
         c += core::mem::size_of::<u32>();
-        for child in &self.children {
+        let at = self
+            .alternative_startup_at
+            .unwrap_or(self.children.len())
+            .min(self.children.len());
+        for (index, child) in self.children.iter().enumerate() {
+            if index == at
+                && let Some(assp) = &self.alternative_startup
+            {
+                c += assp.serialize_into(&mut buf[c..])?;
+            }
             c += child.serialize_into(&mut buf[c..])?;
         }
+        if at == self.children.len()
+            && let Some(assp) = &self.alternative_startup
+        {
+            c += assp.serialize_into(&mut buf[c..])?;
+        }
         Ok(c)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// AlternativeStartupSequencePropertiesBox — assp (§8.8.16)
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the Alternative Startup Sequence Properties Box (`assp`, §8.8.16).
+pub const ASSP: [u8; BOX_TYPE_SIZE] = *b"assp";
+/// One version-1 `assp` entry: `grouping_type_parameter` plus the minimum
+/// offset (§8.8.16.2).
+const ASSP_ENTRY_LEN: usize = 2 * core::mem::size_of::<u32>();
+
+/// One version-1 alternative startup sequence grouping's minimum offset
+/// (§8.8.16.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct AlternativeStartupEntry {
+    grouping_type_parameter: u32,
+    min_initial_alt_startup_offset: i32,
+}
+
+impl AlternativeStartupEntry {
+    /// Build one from its grouping parameter and minimum offset.
+    #[must_use]
+    pub const fn new(grouping_type_parameter: u32, min_initial_alt_startup_offset: i32) -> Self {
+        Self {
+            grouping_type_parameter,
+            min_initial_alt_startup_offset,
+        }
+    }
+
+    /// The `grouping_type_parameter` this entry constrains.
+    #[must_use]
+    pub const fn grouping_type_parameter(&self) -> u32 {
+        self.grouping_type_parameter
+    }
+
+    /// The smallest `sample_offset[1]` the grouping may use.
+    #[must_use]
+    pub const fn min_initial_alt_startup_offset(&self) -> i32 {
+        self.min_initial_alt_startup_offset
+    }
+}
+
+/// Alternative Startup Sequence Properties Box (`assp`) —
+/// ISO/IEC 14496-12:2026 §8.8.16.
+///
+/// Version 0 states one minimum offset for the alternative startup sequence
+/// sample grouping; version 1 states one per `grouping_type_parameter`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct AlternativeStartupSequencePropertiesBox {
+    version: u8,
+    flags: u32,
+    min_initial_alt_startup_offset: Option<i32>,
+    entries: Vec<AlternativeStartupEntry>,
+}
+
+impl AlternativeStartupSequencePropertiesBox {
+    /// Build the version-0 form.
+    #[must_use]
+    pub const fn new(min_initial_alt_startup_offset: i32) -> Self {
+        Self {
+            version: 0,
+            flags: 0,
+            min_initial_alt_startup_offset: Some(min_initial_alt_startup_offset),
+            entries: Vec::new(),
+        }
+    }
+
+    /// Build the version-1 form.
+    #[must_use]
+    pub fn per_grouping(entries: Vec<AlternativeStartupEntry>) -> Self {
+        Self {
+            version: 1,
+            flags: 0,
+            min_initial_alt_startup_offset: None,
+            entries,
+        }
+    }
+
+    /// The FullBox version (0 or 1).
+    #[must_use]
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+
+    /// The FullBox flags.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// The version-0 minimum offset.
+    #[must_use]
+    pub const fn min_initial_alt_startup_offset(&self) -> Option<i32> {
+        self.min_initial_alt_startup_offset
+    }
+
+    /// The version-1 entries, in wire order.
+    #[must_use]
+    pub fn entries(&self) -> &[AlternativeStartupEntry] {
+        &self.entries
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(body, FULLBOX_EXTRA_SIZE, "assp")?;
+        let version = body[0];
+        let flags = u24_at(body, 1) & FULLBOX_FLAGS_MASK;
+        let mut cursor = FULLBOX_EXTRA_SIZE;
+        if version == 0 {
+            need_in(body, cursor + core::mem::size_of::<i32>(), "assp offset")?;
+            let offset = broadcast_core::wire::i32_at(body, cursor);
+            return Ok(Self {
+                version,
+                flags,
+                min_initial_alt_startup_offset: Some(offset),
+                entries: Vec::new(),
+            });
+        }
+        if version != 1 {
+            return Err(Error::UnsupportedVersion(
+                broadcast_core::error::UnsupportedVersion {
+                    what: "assp",
+                    found: version,
+                },
+            ));
+        }
+        let count = be_u32(body, cursor, "assp num_entries")? as usize;
+        cursor += core::mem::size_of::<u32>();
+        crate::box_support::check_entry_count(
+            body.len() - cursor,
+            ASSP_ENTRY_LEN,
+            count,
+            "assp num_entries",
+        )?;
+        let mut entries = Vec::with_capacity(crate::box_support::bounded_entry_count(
+            body.len() - cursor,
+            ASSP_ENTRY_LEN,
+            count,
+        ));
+        for _ in 0..count {
+            entries.push(AlternativeStartupEntry {
+                grouping_type_parameter: be_u32(body, cursor, "assp grouping_type_parameter")?,
+                min_initial_alt_startup_offset: broadcast_core::wire::i32_at(
+                    body,
+                    cursor + core::mem::size_of::<u32>(),
+                ),
+            });
+            cursor += ASSP_ENTRY_LEN;
+        }
+        Ok(Self {
+            version,
+            flags,
+            min_initial_alt_startup_offset: None,
+            entries,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for AlternativeStartupSequencePropertiesBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let item = crate::box_types::parse_box(bytes)?.0;
+        if item.four_cc() != ASSP {
+            return Err(Error::UnexpectedBox { expected: "assp" });
+        }
+        Self::parse_body(item.body)
+    }
+}
+
+impl Serialize for AlternativeStartupSequencePropertiesBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        box_len(
+            BOX_HEADER_MIN_SIZE
+                + FULLBOX_EXTRA_SIZE
+                + if self.version == 0 {
+                    core::mem::size_of::<i32>()
+                } else {
+                    core::mem::size_of::<u32>() + self.entries.len() * ASSP_ENTRY_LEN
+                },
+        )
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor = write_full_box_header(buf, &ASSP, need, self.version, self.flags, false)?;
+        if self.version == 0 {
+            let offset = self
+                .min_initial_alt_startup_offset
+                .ok_or(Error::InvalidInput("assp version 0 without an offset"))?;
+            buf[cursor..cursor + core::mem::size_of::<i32>()]
+                .copy_from_slice(&offset.to_be_bytes());
+            cursor += core::mem::size_of::<i32>();
+        } else {
+            let count = broadcast_core::len::fit_u32(self.entries.len(), "assp num_entries")?;
+            buf[cursor..cursor + core::mem::size_of::<u32>()].copy_from_slice(&count.to_be_bytes());
+            cursor += core::mem::size_of::<u32>();
+            for entry in &self.entries {
+                buf[cursor..cursor + core::mem::size_of::<u32>()]
+                    .copy_from_slice(&entry.grouping_type_parameter.to_be_bytes());
+                cursor += core::mem::size_of::<u32>();
+                buf[cursor..cursor + core::mem::size_of::<i32>()]
+                    .copy_from_slice(&entry.min_initial_alt_startup_offset.to_be_bytes());
+                cursor += core::mem::size_of::<i32>();
+            }
+        }
+        Ok(cursor)
     }
 }
