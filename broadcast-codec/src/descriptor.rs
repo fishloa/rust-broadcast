@@ -4,6 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::codec::CodecId;
+use crate::delay::DecoderTrim;
 use crate::direction::Direction;
 use crate::profile::CodecProfile;
 use crate::profile_error::ProfileError;
@@ -22,10 +23,10 @@ use crate::video::PixelFormat;
 /// registry share; an empty list means "not stated", not "all", so the
 /// registry keeps such an implementation for every profile. A stated list is
 /// binding: the registry never offers an implementation a stream of a profile
-/// the implementation does not list. `trims` says the implementation applies
-/// the container's gapless trim itself; otherwise it returns every decoded
-/// sample, and [`Registry::trimmed_decoder`](crate::Registry::trimmed_decoder)
-/// can apply the trim through a [`TrimStage`](crate::TrimStage).
+/// the implementation does not list. `trim` says who applies the container's
+/// gapless trim and what the implementation's own delay is: the caller through
+/// [`Registry::trimmed_decoder`](crate::Registry::trimmed_decoder), or the
+/// implementation itself.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CodecDescriptor {
@@ -35,7 +36,7 @@ pub struct CodecDescriptor {
     direction: Direction,
     hardware: bool,
     lossless: bool,
-    trims: bool,
+    trim: DecoderTrim,
     sample_formats: Vec<SampleFormat>,
     pixel_formats: Vec<PixelFormat>,
     profiles: Vec<CodecProfile>,
@@ -57,7 +58,7 @@ impl CodecDescriptor {
             direction,
             hardware: false,
             lossless: false,
-            trims: false,
+            trim: DecoderTrim::Caller(crate::delay::DecoderDelay::Unknown),
             sample_formats: Vec::new(),
             pixel_formats: Vec::new(),
             profiles: Vec::new(),
@@ -78,11 +79,11 @@ impl CodecDescriptor {
         self
     }
 
-    /// State whether the implementation applies the container's gapless trim
-    /// itself.
+    /// State who applies the container's gapless trim and, when the caller
+    /// does, the implementation's own delay.
     #[must_use]
-    pub const fn with_trims(mut self, trims: bool) -> Self {
-        self.trims = trims;
+    pub const fn with_trim(mut self, trim: DecoderTrim) -> Self {
+        self.trim = trim;
         self
     }
 
@@ -155,10 +156,11 @@ impl CodecDescriptor {
         self.lossless
     }
 
-    /// Whether the implementation applies the container's gapless trim itself.
+    /// Who applies the container's gapless trim, and the implementation's own
+    /// delay when the caller does.
     #[must_use]
-    pub const fn applies_trim(&self) -> bool {
-        self.trims
+    pub const fn trim(&self) -> DecoderTrim {
+        self.trim
     }
 
     /// Sample formats the implementation accepts or produces, in the order the

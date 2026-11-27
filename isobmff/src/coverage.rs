@@ -7,10 +7,12 @@
 //!
 //! Each row carries a `proves` function that parses a minimal box of that type
 //! through the real parser, so a row for a type the crate does not parse fails
-//! the coverage test. The private registry has 168 rows; the integration test
+//! the coverage test. The private registry has 167 rows; the integration test
 //! `tests/it/coverage.rs` pins every type not listed here under its issue tier.
 
 use alloc::vec::Vec;
+
+pub mod mp4ra;
 
 use broadcast_core::Parse;
 
@@ -181,6 +183,49 @@ leaf! {
     p_ipro: b"ipro", crate::item::ItemProtectionBox, &MINIMAL_BODY;
     p_iref: b"iref", crate::item::ItemReferenceBox, &MINIMAL_BODY;
     p_pitm: b"pitm", crate::item::PrimaryItemBox, &MINIMAL_BODY;
+    p_btrt: b"btrt", crate::sample_entries::BitRateBox, &MINIMAL_BODY;
+    p_stsh: b"stsh", crate::sample_tables_extra::ShadowSyncSampleBox, &MINIMAL_BODY;
+    p_rsot: b"rsot", crate::movie_fragment::RedundantSampleOriginalTimingBox, &MINIMAL_BODY;
+    p_trpy: b"trpy", crate::hint::TrpyBox, &MINIMAL_BODY;
+    p_nump: b"nump", crate::hint::NumpBox, &MINIMAL_BODY;
+    p_tpyl: b"tpyl", crate::hint::TpylBox, &MINIMAL_BODY;
+    p_totl: b"totl", crate::hint::TotlBox, &MINIMAL_BODY;
+    p_npck: b"npck", crate::hint::NpckBox, &MINIMAL_BODY;
+    p_tpay: b"tpay", crate::hint::TpayBox, &MINIMAL_BODY;
+    p_maxr: b"maxr", crate::hint::MaxrBox, &MINIMAL_BODY;
+    p_dmed: b"dmed", crate::hint::DmedBox, &MINIMAL_BODY;
+    p_dimm: b"dimm", crate::hint::DimmBox, &MINIMAL_BODY;
+    p_drep: b"drep", crate::hint::DrepBox, &MINIMAL_BODY;
+    p_tmin: b"tmin", crate::hint::TminBox, &MINIMAL_BODY;
+    p_tmax: b"tmax", crate::hint::TmaxBox, &MINIMAL_BODY;
+    p_pmax: b"pmax", crate::hint::PmaxBox, &MINIMAL_BODY;
+    p_dmax: b"dmax", crate::hint::DmaxBox, &MINIMAL_BODY;
+    p_payt: b"payt", crate::hint::PaytBox, &MINIMAL_BODY;
+    p_tims: b"tims", crate::hint::TimescaleEntryBox, &MINIMAL_BODY;
+    p_tsro: b"tsro", crate::hint::TimeOffsetBox, &MINIMAL_BODY;
+    p_snro: b"snro", crate::hint::SequenceOffsetBox, &MINIMAL_BODY;
+    p_tssy: b"tssy", crate::hint::TimestampSynchronyBox, &MINIMAL_BODY;
+    p_rssr: b"rssr", crate::hint::ReceivedSsrcBox, &MINIMAL_BODY;
+    p_srpp: b"srpp", crate::hint::SrtpProcessBox, &MINIMAL_BODY;
+    p_rtpx: b"rtpx", crate::hint::RtpHdrExtBox, &MINIMAL_BODY;
+    p_rcsr: b"rcsr", crate::hint::ReceivedCsrcBox, &MINIMAL_BODY;
+    p_tpat: b"tPAT", crate::hint::PatBox, &MINIMAL_BODY;
+    p_tpmt: b"tPMT", crate::hint::PmtBox, &MINIMAL_BODY;
+    p_tsti: b"tsti", crate::hint::TsTimingBox, &MINIMAL_BODY;
+    p_istm: b"istm", crate::hint::InitialSampleTimeBox, &MINIMAL_BODY;
+    p_rtp_info: b"rtp ", crate::hint::RtpHintInformation, &MINIMAL_BODY;
+    p_sdp_info: b"sdp ", crate::hint::SdpHintInformation, &MINIMAL_BODY;
+    p_hnti: b"hnti", crate::hint::HintInformationBox, &[];
+    p_hinf: b"hinf", crate::hint::HintStatisticsBox, &[];
+    p_fiin: b"fiin", crate::file_delivery::FdItemInformationBox, &MINIMAL_BODY;
+    p_fpar: b"fpar", crate::file_delivery::FilePartitionBox, &MINIMAL_BODY;
+    p_fecr: b"fecr", crate::file_delivery::FecReservoirBox, &MINIMAL_BODY;
+    p_fire: b"fire", crate::file_delivery::FileReservoirBox, &MINIMAL_BODY;
+    p_segr: b"segr", crate::file_delivery::FdSessionGroupBox, &MINIMAL_BODY;
+    p_gitn: b"gitn", crate::file_delivery::GroupIdToNameBox, &MINIMAL_BODY;
+    p_feci: b"feci", crate::file_delivery::FecInformationBox, &MINIMAL_BODY;
+    p_extr: b"extr", crate::file_delivery::ExtraDataBox, &MINIMAL_BODY;
+    p_fdpa: b"fdpa", crate::file_delivery::FdPacketBox, &MINIMAL_BODY;
 }
 
 // Body-only visual extensions: their `Parse` takes the box payload, not the
@@ -337,6 +382,16 @@ fn p_strk() -> Result<()> {
     crate::track_desc::SubTrackBox::parse(&boxed(*b"strk", &body)).map(|_| ())
 }
 
+fn p_paen() -> Result<()> {
+    let inner = boxed(*b"fpar", &MINIMAL_BODY);
+    crate::file_delivery::PartitionEntryBox::parse(&boxed(*b"paen", &inner)).map(|_| ())
+}
+
+fn p_fdsa() -> Result<()> {
+    let inner = boxed(*b"fdpa", &MINIMAL_BODY);
+    crate::file_delivery::FdSample::parse(&inner).map(|_| ())
+}
+
 macro_rules! typed {
     ($( $fn_name:ident : $fourcc:literal , $name:literal , $ty:literal ; )*) => {
         /// Every ISO/IEC 14496-12:2026 registry box type this crate parses.
@@ -476,6 +531,51 @@ typed! {
         p_assp: b"assp", "assp", "AlternativeStartupSequencePropertiesBox";
         p_amve: b"amve", "amve", "AmbientViewingEnvironmentBox";
         p_cclv: b"cclv", "cclv", "ContentColourVolumeBox";
+        p_btrt: b"btrt", "btrt", "BitRateBox";
+        p_stsh: b"stsh", "stsh", "ShadowSyncSampleBox";
+        p_rsot: b"rsot", "rsot", "RedundantSampleOriginalTimingBox";
+        p_trpy: b"trpy", "trpy", "TrpyBox";
+        p_nump: b"nump", "nump", "NumpBox";
+        p_tpyl: b"tpyl", "tpyl", "TpylBox";
+        p_totl: b"totl", "totl", "TotlBox";
+        p_npck: b"npck", "npck", "NpckBox";
+        p_tpay: b"tpay", "tpay", "TpayBox";
+        p_maxr: b"maxr", "maxr", "MaxrBox";
+        p_dmed: b"dmed", "dmed", "DmedBox";
+        p_dimm: b"dimm", "dimm", "DimmBox";
+        p_drep: b"drep", "drep", "DrepBox";
+        p_tmin: b"tmin", "tmin", "TminBox";
+        p_tmax: b"tmax", "tmax", "TmaxBox";
+        p_pmax: b"pmax", "pmax", "PmaxBox";
+        p_dmax: b"dmax", "dmax", "DmaxBox";
+        p_payt: b"payt", "payt", "PaytBox";
+        p_tims: b"tims", "tims", "TimescaleEntryBox";
+        p_tsro: b"tsro", "tsro", "TimeOffsetBox";
+        p_snro: b"snro", "snro", "SequenceOffsetBox";
+        p_tssy: b"tssy", "tssy", "TimestampSynchronyBox";
+        p_rssr: b"rssr", "rssr", "ReceivedSsrcBox";
+        p_srpp: b"srpp", "srpp", "SrtpProcessBox";
+        p_rtpx: b"rtpx", "rtpx", "RtpHdrExtBox";
+        p_rcsr: b"rcsr", "rcsr", "ReceivedCsrcBox";
+        p_tpat: b"tPAT", "tPAT", "PatBox";
+        p_tpmt: b"tPMT", "tPMT", "PmtBox";
+        p_tsti: b"tsti", "tsti", "TsTimingBox";
+        p_istm: b"istm", "istm", "InitialSampleTimeBox";
+        p_rtp_info: b"rtp ", "rtp ", "RtpHintInformation";
+        p_sdp_info: b"sdp ", "sdp ", "SdpHintInformation";
+        p_hnti: b"hnti", "hnti", "HintInformationBox";
+        p_hinf: b"hinf", "hinf", "HintStatisticsBox";
+        p_fiin: b"fiin", "fiin", "FdItemInformationBox";
+        p_paen: b"paen", "paen", "PartitionEntryBox";
+        p_fpar: b"fpar", "fpar", "FilePartitionBox";
+        p_fecr: b"fecr", "fecr", "FecReservoirBox";
+        p_fire: b"fire", "fire", "FileReservoirBox";
+        p_segr: b"segr", "segr", "FdSessionGroupBox";
+        p_gitn: b"gitn", "gitn", "GroupIdToNameBox";
+        p_feci: b"feci", "feci", "FecInformationBox";
+        p_extr: b"extr", "extr", "ExtraDataBox";
+        p_fdpa: b"fdpa", "fdpa", "FdPacketBox";
+        p_fdsa: b"fdsa", "fdsa", "FdSample";
 }
 
 #[cfg(test)]

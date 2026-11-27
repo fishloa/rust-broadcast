@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `ProgramSegmenter` now records a source-clock break: the jump it already
+  detected for SCTE-35 attribution closes the open segment and marks the next
+  one discontinuous, so the served LL-HLS/TS-HLS playlists carry
+  `EXT-X-DISCONTINUITY` and the DASH MPDs open a new `Period`. It used to keep
+  the jump to itself, so a live viewer never learned the timeline broke.
+
 ### Breaking
 
 - `NalCodec`, `access_unit_is_idr` and `annexb_to_length_prefixed` now come from `broadcast-bitstream`, the new codec-bitstream layer below the muxing hub; the crate gains that dependency.

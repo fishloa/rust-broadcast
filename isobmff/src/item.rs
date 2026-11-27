@@ -907,6 +907,18 @@ pub enum ItemType {
     Avc1,
     /// `av01`: an AV1 coded image item (AVIF §2.1).
     Av01,
+    /// `vvc1`: a VVC coded image item (ISO/IEC 23008-12:2025).
+    Vvc1,
+    /// `evc1`: an EVC coded image item (ISO/IEC 23008-12:2025).
+    Evc1,
+    /// `hvt1`: a HEVC tile image item (ISO/IEC 23008-12:2025).
+    Hvt1,
+    /// `lhv1`: a layered HEVC image item (ISO/IEC 23008-12:2025).
+    Lhv1,
+    /// `jpeg`: a JPEG coded image item (ISO/IEC 23008-12:2025).
+    Jpeg,
+    /// `auvd`: an auxiliary video descriptor metadata item (§8.11.6.3).
+    Auvd,
     /// `grid`: an image grid derived image item (ISO/IEC 23008-12:2025 6.6.2.3).
     Grid,
     /// `iovl`: an image overlay derived image item (6.6.2.2).
@@ -917,6 +929,8 @@ pub enum ItemType {
     Tmap,
     /// `cfen`: a colour format enhancement derived image item (Amd 1 6.6.2.5).
     Cfen,
+    /// `sato`: a sample-transform derived image item (AVIF v1.2.0).
+    Sato,
     /// `Exif`: an Exif metadata item (ISO/IEC 23008-12:2025 A.2).
     Exif,
     /// `mime`: an item whose type is its MIME type.
@@ -951,11 +965,18 @@ impl ItemType {
             Self::Hvc1 => *b"hvc1",
             Self::Avc1 => *b"avc1",
             Self::Av01 => *b"av01",
+            Self::Vvc1 => *b"vvc1",
+            Self::Evc1 => *b"evc1",
+            Self::Hvt1 => *b"hvt1",
+            Self::Lhv1 => *b"lhv1",
+            Self::Jpeg => *b"jpeg",
+            Self::Auvd => *b"auvd",
             Self::Grid => *b"grid",
             Self::Iovl => *b"iovl",
             Self::Iden => *b"iden",
             Self::Tmap => *b"tmap",
             Self::Cfen => *b"cfen",
+            Self::Sato => *b"sato",
             Self::Exif => *b"Exif",
             Self::Mime => ITEM_TYPE_MIME,
             Self::Uri => ITEM_TYPE_URI,
@@ -975,11 +996,18 @@ impl ItemType {
             b"hvc1" => Self::Hvc1,
             b"avc1" => Self::Avc1,
             b"av01" => Self::Av01,
+            b"vvc1" => Self::Vvc1,
+            b"evc1" => Self::Evc1,
+            b"hvt1" => Self::Hvt1,
+            b"lhv1" => Self::Lhv1,
+            b"jpeg" => Self::Jpeg,
+            b"auvd" => Self::Auvd,
             b"grid" => Self::Grid,
             b"iovl" => Self::Iovl,
             b"iden" => Self::Iden,
             b"tmap" => Self::Tmap,
             b"cfen" => Self::Cfen,
+            b"sato" => Self::Sato,
             b"Exif" => Self::Exif,
             b"mime" => Self::Mime,
             b"uri " => Self::Uri,
@@ -1014,11 +1042,18 @@ impl ItemType {
             Self::Hvc1 => "hvc1",
             Self::Avc1 => "avc1",
             Self::Av01 => "av01",
+            Self::Vvc1 => "vvc1",
+            Self::Evc1 => "evc1",
+            Self::Hvt1 => "hvt1",
+            Self::Lhv1 => "lhv1",
+            Self::Jpeg => "jpeg",
+            Self::Auvd => "auvd",
             Self::Grid => "grid",
             Self::Iovl => "iovl",
             Self::Iden => "iden",
             Self::Tmap => "tmap",
             Self::Cfen => "cfen",
+            Self::Sato => "sato",
             Self::Exif => "Exif",
             Self::Mime => "mime",
             Self::Uri => "uri",
@@ -1525,6 +1560,18 @@ impl ItemInfoEntry {
     /// The bytes one string field occupies, terminator included when written.
     fn string_len(&self, value: Option<&Vec<u8>>, which: InfeString) -> usize {
         value.map_or(0, Vec::len) + usize::from(self.string_terminated(which))
+    }
+
+
+    /// The file-delivery extension (`fdel`, §8.11.6.1) this version-1 entry
+    /// carries, when its `extension_type` names one.
+    pub fn fd_extension(&self) -> Result<Option<FdItemInfoExtension>> {
+        match self.extension_type {
+            Some(fourcc) if &fourcc == b"fdel" => {
+                Ok(Some(FdItemInfoExtension::parse(&self.trailing)?))
+            }
+            _ => Ok(None),
+        }
     }
 
     fn payload_len(&self) -> usize {
@@ -2436,6 +2483,8 @@ pub enum EntityGroupType {
     Slid,
     /// `prgr`: progressive rendering (6.8.10).
     Prgr,
+    /// `opeg`: an operating-point entity group (ISO/IEC 14496-15:2017).
+    Opeg,
     /// `pymd`: image pyramid (Amd 1 6.8.12).
     Pymd,
     /// `rgpa`: region partition group (Amd 1 6.8.13).
@@ -2473,6 +2522,7 @@ impl EntityGroupType {
             Self::Pano => *b"pano",
             Self::Slid => *b"slid",
             Self::Prgr => *b"prgr",
+            Self::Opeg => *b"opeg",
             Self::Pymd => *b"pymd",
             Self::Rgpa => *b"rgpa",
             Self::Other(fourcc) => fourcc,
@@ -2501,6 +2551,7 @@ impl EntityGroupType {
             b"pano" => Self::Pano,
             b"slid" => Self::Slid,
             b"prgr" => Self::Prgr,
+            b"opeg" => Self::Opeg,
             b"pymd" => Self::Pymd,
             b"rgpa" => Self::Rgpa,
             _ => Self::Other(fourcc),
@@ -2529,6 +2580,7 @@ impl EntityGroupType {
             Self::Pano => "pano",
             Self::Slid => "slid",
             Self::Prgr => "prgr",
+            Self::Opeg => "opeg",
             Self::Pymd => "pymd",
             Self::Rgpa => "rgpa",
             Self::Other(_) => "other",
@@ -3693,6 +3745,153 @@ impl Serialize for ItemPropertiesBox {
         cursor += self.container.serialize_into(&mut buf[cursor..])?;
         for associations in &self.associations {
             cursor += associations.serialize_into(&mut buf[cursor..])?;
+        }
+        Ok(cursor)
+    }
+}
+
+const FD_EXTENSION_LENGTH_FIELDS_LEN: usize = 2 * core::mem::size_of::<u64>();
+
+/// The FD item information extension (`fdel`) of a version-1
+/// [`ItemInfoEntry`] — ISO/IEC 14496-12:2026 §8.11.6.1.
+///
+/// It is not a box: it follows the entry's `extension_type` field, so its
+/// bytes are carried by [`ItemInfoEntry`] and typed on demand through
+/// [`ItemInfoEntry::fd_extension`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct FdItemInfoExtension {
+    content_location: Vec<u8>,
+    content_md5: Vec<u8>,
+    content_length: u64,
+    transfer_length: u64,
+    group_ids: Vec<u32>,
+}
+
+impl FdItemInfoExtension {
+    /// Build one from the file's identity and size.
+    #[must_use]
+    pub fn new(
+        content_location: &[u8],
+        content_md5: &[u8],
+        content_length: u64,
+        transfer_length: u64,
+    ) -> Self {
+        Self {
+            content_location: content_location.to_vec(),
+            content_md5: content_md5.to_vec(),
+            content_length,
+            transfer_length,
+            group_ids: Vec::new(),
+        }
+    }
+
+    /// `content_location`, the item's URI.
+    #[must_use]
+    pub fn content_location(&self) -> &[u8] {
+        &self.content_location
+    }
+
+    /// `content_MD5`, the file's MD5 digest.
+    #[must_use]
+    pub fn content_md5(&self) -> &[u8] {
+        &self.content_md5
+    }
+
+    /// `content_length`, the un-encoded file length.
+    #[must_use]
+    pub const fn content_length(&self) -> u64 {
+        self.content_length
+    }
+
+    /// `transfer_length`, the encoded file length.
+    #[must_use]
+    pub const fn transfer_length(&self) -> u64 {
+        self.transfer_length
+    }
+
+    /// The file group identifiers.
+    #[must_use]
+    pub fn group_ids(&self) -> &[u32] {
+        &self.group_ids
+    }
+
+    /// Append one file group identifier.
+    pub fn push_group_id(&mut self, group_id: u32) {
+        self.group_ids.push(group_id);
+    }
+
+    /// Parse the extension bytes that follow the `extension_type` field.
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cursor = 0usize;
+        let content_location =
+            crate::box_support::take_c_string(bytes, &mut cursor, "fdel content_location")?;
+        let content_md5 =
+            crate::box_support::take_c_string(bytes, &mut cursor, "fdel content_MD5")?;
+        let content_length = be_u64(bytes, cursor, "fdel content_length")?;
+        cursor += core::mem::size_of::<u64>();
+        let transfer_length = be_u64(bytes, cursor, "fdel transfer_length")?;
+        cursor += core::mem::size_of::<u64>();
+        need_in(bytes, cursor + 1, "fdel entry_count")?;
+        let entry_count = usize::from(bytes[cursor]);
+        cursor += 1;
+        crate::box_support::check_entry_count(
+            bytes.len().saturating_sub(cursor),
+            core::mem::size_of::<u32>(),
+            entry_count,
+            "fdel group_ids",
+        )?;
+        let mut group_ids = Vec::with_capacity(crate::box_support::bounded_entry_count(
+            bytes.len().saturating_sub(cursor),
+            core::mem::size_of::<u32>(),
+            entry_count,
+        ));
+        for _ in 0..entry_count {
+            group_ids.push(be_u32(bytes, cursor, "fdel group_id")?);
+            cursor += core::mem::size_of::<u32>();
+        }
+        Ok(Self {
+            content_location,
+            content_md5,
+            content_length,
+            transfer_length,
+            group_ids,
+        })
+    }
+}
+
+impl Serialize for FdItemInfoExtension {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        self.content_location.len()
+            + 1
+            + self.content_md5.len()
+            + 1
+            + FD_EXTENSION_LENGTH_FIELDS_LEN
+            + 1
+            + self.group_ids.len() * core::mem::size_of::<u32>()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor = 0usize;
+        cursor += crate::box_support::write_c_string(buf, cursor, &self.content_location)?;
+        cursor += crate::box_support::write_c_string(buf, cursor, &self.content_md5)?;
+        buf[cursor..cursor + core::mem::size_of::<u64>()]
+            .copy_from_slice(&self.content_length.to_be_bytes());
+        cursor += core::mem::size_of::<u64>();
+        buf[cursor..cursor + core::mem::size_of::<u64>()]
+            .copy_from_slice(&self.transfer_length.to_be_bytes());
+        cursor += core::mem::size_of::<u64>();
+        buf[cursor] = broadcast_core::len::fit_u8(self.group_ids.len(), "fdel entry_count")?;
+        cursor += 1;
+        for group_id in &self.group_ids {
+            buf[cursor..cursor + core::mem::size_of::<u32>()]
+                .copy_from_slice(&group_id.to_be_bytes());
+            cursor += core::mem::size_of::<u32>();
         }
         Ok(cursor)
     }

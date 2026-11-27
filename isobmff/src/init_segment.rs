@@ -774,6 +774,14 @@ pub struct HandlerBox {
     pub name: Vec<u8>,
 }
 
+impl HandlerBox {
+    /// The registered handler type this box declares.
+    #[must_use]
+    pub fn handler(&self) -> crate::registered::HandlerType {
+        crate::registered::HandlerType::from_fourcc(self.handler_type)
+    }
+}
+
 impl<'a> Parse<'a> for HandlerBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -998,6 +1006,8 @@ pub const NMHD: [u8; BOX_TYPE_SIZE] = *b"nmhd";
 pub const HMHD: [u8; BOX_TYPE_SIZE] = *b"hmhd";
 /// Four-CC of the Volumetric Visual Media Header Box (`vvhd`, §12.9.2).
 pub const VVHD: [u8; BOX_TYPE_SIZE] = *b"vvhd";
+/// Four-CC of the Subtitle Media Header Box (`sthd`, §12.6.2).
+pub const STHD: [u8; BOX_TYPE_SIZE] = *b"sthd";
 /// `hmhd` body length after the FullBox fields (§12.4.3.1).
 const HMHD_BODY_LEN: usize = 16;
 /// Body offset of `maxbitrate`, after the two 16-bit PDU sizes (§12.4.3.1).
@@ -1072,6 +1082,74 @@ impl Serialize for NullMediaHeaderBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         write_full_box_header(buf, &NMHD, need, self.version, self.flags, false)
+    }
+}
+
+/// Subtitle Media Header Box (`sthd`) — ISO/IEC 14496-12:2026 §12.6.2.
+///
+/// The header every subtitle track carries in its `minf`: only the FullBox
+/// fields, and the clause fixes both to zero.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct SubtitleMediaHeaderBox {
+    version: u8,
+    flags: u32,
+}
+
+impl SubtitleMediaHeaderBox {
+    /// A version-0 header with every flag clear.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The FullBox version.
+    #[must_use]
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+
+    /// The FullBox flags.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(body, FULLBOX_EXTRA_SIZE, "sthd")?;
+        Ok(Self {
+            version: body[0],
+            flags: u24_at(body, 1) & FULLBOX_FLAGS_MASK,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for SubtitleMediaHeaderBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        need_in(bytes, BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE, "sthd")?;
+        if bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != STHD {
+            return Err(Error::UnexpectedBox { expected: "sthd" });
+        }
+        Self::parse_body(crate::box_types::box_body(
+            bytes,
+            FULLBOX_EXTRA_SIZE,
+            "sthd",
+        )?)
+    }
+}
+
+impl Serialize for SubtitleMediaHeaderBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        crate::box_types::box_len(BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        write_full_box_header(buf, &STHD, need, self.version, self.flags, false)
     }
 }
 
@@ -1294,6 +1372,8 @@ pub enum MediaInformationHeader {
     Hint(HintMediaHeaderBox),
     /// `vvhd` — [`VolumetricVisualMediaHeaderBox`] (§12.9.2).
     Volumetric(VolumetricVisualMediaHeaderBox),
+    /// `sthd` — [`SubtitleMediaHeaderBox`] (§12.6.2).
+    Subtitle(SubtitleMediaHeaderBox),
 }
 
 impl MediaInformationHeader {
@@ -1306,6 +1386,7 @@ impl MediaInformationHeader {
             Self::Null(_) => NMHD,
             Self::Hint(_) => HMHD,
             Self::Volumetric(_) => VVHD,
+            Self::Subtitle(_) => STHD,
         }
     }
 }
@@ -3621,6 +3702,8 @@ pub enum SampleEntryVariant {
     Dts(Box<DtsSampleEntry>),
     /// QuickTime timecode sample entry (`tmcd`).
     Tmcd(Box<crate::quicktime::TimecodeEntry>),
+    /// QuickTime closed-caption sample entry (`c608`).
+    ClosedCaption(Box<crate::subtitle_entries::ClosedCaptionSampleEntry>),
     /// XML timed-metadata sample entry (`metx`) —
     /// ISO/IEC 14496-12:2026 §12.3.3.
     Metx(Box<crate::meta_track::XmlMetaDataSampleEntry>),
@@ -3636,6 +3719,9 @@ pub enum SampleEntryVariant {
     Rgan(Box<crate::region::RegionSampleEntry>),
     /// A QuickTime-only sound sample entry (`lpcm`, `in24`, `sowt`, …).
     QuickTimeSound(Box<crate::quicktime::SoundEntry>),
+    /// An RTP/SRTP/RTCP, MPEG-2 TS or FD hint sample entry (§9.1.2, §9.2.3,
+    /// §9.3.3, §9.4.1–9.4.4).
+    Hint(Box<crate::hint::HintSampleEntry>),
     Unknown(OpaqueBox),
 }
 
@@ -3734,12 +3820,14 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Mha(m) => m.serialized_len(),
             SampleEntryVariant::Dts(d) => d.serialized_len(),
             SampleEntryVariant::Tmcd(e) => e.serialized_len(),
+            SampleEntryVariant::ClosedCaption(e) => e.serialized_len(),
             SampleEntryVariant::Metx(e) => e.serialized_len(),
             SampleEntryVariant::Rgan(e) => e.serialized_len(),
             SampleEntryVariant::Text(e) => e.serialized_len(),
             SampleEntryVariant::Urim(e) => e.serialized_len(),
             SampleEntryVariant::Mebx(e) => e.serialized_len(),
             SampleEntryVariant::QuickTimeSound(e) => e.serialized_len(),
+            SampleEntryVariant::Hint(e) => e.serialized_len(),
             SampleEntryVariant::Unknown(u) => u.serialized_len(),
         }
     }
@@ -3763,12 +3851,14 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Mha(m) => m.serialize_into(buf),
             SampleEntryVariant::Dts(d) => d.serialize_into(buf),
             SampleEntryVariant::Tmcd(e) => e.serialize_into(buf),
+            SampleEntryVariant::ClosedCaption(e) => e.serialize_into(buf),
             SampleEntryVariant::Metx(e) => e.serialize_into(buf),
             SampleEntryVariant::Rgan(e) => e.serialize_into(buf),
             SampleEntryVariant::Text(e) => e.serialize_into(buf),
             SampleEntryVariant::Urim(e) => e.serialize_into(buf),
             SampleEntryVariant::Mebx(e) => e.serialize_into(buf),
             SampleEntryVariant::QuickTimeSound(e) => e.serialize_into(buf),
+            SampleEntryVariant::Hint(e) => e.serialize_into(buf),
             SampleEntryVariant::Unknown(u) => Ok(u.serialize_into(buf)?),
         }
     }
@@ -3894,6 +3984,9 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
         b"tmcd" => {
             SampleEntryVariant::Tmcd(Box::new(crate::quicktime::TimecodeEntry::parse(box_bytes)?))
         }
+        b"c608" => SampleEntryVariant::ClosedCaption(Box::new(
+            crate::subtitle_entries::ClosedCaptionSampleEntry::parse_box(box_bytes)?,
+        )),
         b"metx" => SampleEntryVariant::Metx(Box::new(
             crate::meta_track::XmlMetaDataSampleEntry::parse_box(box_bytes)?,
         )),
@@ -3913,6 +4006,10 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
         | b"MAC3 " | b"MAC6 " | b"ulaw" | b"alaw" | b"NONE" => SampleEntryVariant::QuickTimeSound(
             Box::new(crate::quicktime::SoundEntry::parse(box_bytes)?),
         ),
+        b"rtp " | b"srtp" | b"rrtp" | b"rsrp" | b"rtcp" | b"stcp" | b"prtp" | b"rm2t" | b"sm2t"
+        | b"pm2t" | b"fdp " => SampleEntryVariant::Hint(Box::new(
+            crate::hint::HintSampleEntry::parse_box(box_bytes)?,
+        )),
         _ => {
             let mut c4 = [0u8; BOX_TYPE_SIZE];
             c4.copy_from_slice(&codec[..BOX_TYPE_SIZE.min(codec.len())]);
@@ -4351,7 +4448,7 @@ impl Serialize for DataInformationBox {
 pub const MINF: [u8; 4] = *b"minf";
 
 /// Typed child slots in a `minf` (§8.4.4).
-const MINF_TYPED_CHILDREN_MAX: usize = 8;
+const MINF_TYPED_CHILDREN_MAX: usize = 9;
 
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -4364,6 +4461,8 @@ pub struct MediaInformationBox {
     pub hmhd: Option<HintMediaHeaderBox>,
     /// The volumetric visual media header (`vvhd`, §12.9.2), when present.
     pub vvhd: Option<VolumetricVisualMediaHeaderBox>,
+    /// The subtitle media header (`sthd`, §12.6.2), when present.
+    pub sthd: Option<SubtitleMediaHeaderBox>,
     /// The QuickTime base media information header (`gmhd`), when present.
     pub gmhd: Option<crate::quicktime::gmhd::GmhdAtom>,
     pub dinf: Option<DataInformationBox>,
@@ -4389,6 +4488,7 @@ impl MediaInformationBox {
             nmhd: None,
             hmhd: None,
             vvhd: None,
+            sthd: None,
             gmhd: None,
             dinf,
             stbl,
@@ -4420,6 +4520,9 @@ impl MediaInformationBox {
         }
         if self.vvhd.is_some() {
             order.push(*b"vvhd");
+        }
+        if self.sthd.is_some() {
+            order.push(*b"sthd");
         }
         if self.gmhd.is_some() {
             order.push(*b"gmhd");
@@ -4457,9 +4560,12 @@ impl MediaInformationBox {
         if let Some(b) = &self.hmhd {
             return Some(MediaInformationHeader::Hint(b.clone()));
         }
-        self.vvhd
+        if let Some(b) = &self.vvhd {
+            return Some(MediaInformationHeader::Volumetric(b.clone()));
+        }
+        self.sthd
             .as_ref()
-            .map(|b| MediaInformationHeader::Volumetric(b.clone()))
+            .map(|b| MediaInformationHeader::Subtitle(b.clone()))
     }
 
     /// The container's typed children, in declaration order — the input
@@ -4480,6 +4586,9 @@ impl MediaInformationBox {
             out.push(b);
         }
         if let Some(ref b) = self.vvhd {
+            out.push(b);
+        }
+        if let Some(ref b) = self.sthd {
             out.push(b);
         }
         if let Some(ref b) = self.gmhd {
@@ -4512,6 +4621,9 @@ impl MediaInformationBox {
         if self.vvhd.is_some() {
             out.push(b"vvhd" as &'static [u8; BOX_TYPE_SIZE]);
         }
+        if self.sthd.is_some() {
+            out.push(b"sthd" as &'static [u8; BOX_TYPE_SIZE]);
+        }
         if self.gmhd.is_some() {
             out.push(b"gmhd" as &'static [u8; BOX_TYPE_SIZE]);
         }
@@ -4540,6 +4652,7 @@ impl MediaInformationBox {
         let mut vmhd = None;
         let mut smhd = None;
         let mut nmhd = None;
+        let mut sthd = None;
         let mut hmhd = None;
         let mut vvhd = None;
         let mut gmhd = None;
@@ -4605,6 +4718,10 @@ impl MediaInformationBox {
                         opaque.push(crate::box_support::opaque_child(&child));
                     }
                 }
+                b"sthd" => {
+                    order.push(child.four_cc());
+                    sthd = Some(SubtitleMediaHeaderBox::parse(child.bytes)?);
+                }
                 b"gmhd" => {
                     order.push(child.four_cc());
                     gmhd = crate::box_support::keep_or_note(
@@ -4648,6 +4765,7 @@ impl MediaInformationBox {
             nmhd,
             hmhd,
             vvhd,
+            sthd,
             gmhd,
             dinf,
             stbl,
@@ -5886,6 +6004,8 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
         | SampleEntryVariant::Mebx(_)
         | SampleEntryVariant::Rgan(_)
         | SampleEntryVariant::QuickTimeSound(_)
+        | SampleEntryVariant::ClosedCaption(_)
+        | SampleEntryVariant::Hint(_)
         | SampleEntryVariant::Unknown(_) => SampleEntryMediaKind::Unsupported,
     }
 }

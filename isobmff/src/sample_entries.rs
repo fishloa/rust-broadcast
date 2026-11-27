@@ -21,10 +21,10 @@ use crate::error::{Error, Result};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use alloc::boxed::Box;
 use alloc::vec::Vec;
-use broadcast_core::Serialize;
 use broadcast_core::error::BufferTooShort;
 use broadcast_core::len::{need_in, need_out};
 use broadcast_core::wire::{be_u16, be_u32};
+use broadcast_core::{Parse, Serialize};
 
 /// Length of the VisualSampleEntry fixed fields (ISO/IEC 14496-12:2026 §12.1.3).
 /// 6+2(data_ref_index)+8+2(width)+2(height)+4(horiz)+4(vert)+4(reserved)+2(frame_count)+
@@ -1326,5 +1326,96 @@ mod tests {
         assert_eq!(parsed.config_boxes.len(), 1, "only the btrt is kept");
         assert_eq!(parsed.config_boxes[0].box_type, *b"btrt");
         assert_eq!(parsed.config_boxes[0].data.len(), 12);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// btrt — Bit Rate Box (§8.5.2.2)
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the Bit Rate Box (`btrt`, ISO/IEC 14496-12:2026 §8.5.2).
+pub const BTRT: [u8; BOX_TYPE_SIZE] = *b"btrt";
+const BTRT_BODY_LEN: usize = 3 * core::mem::size_of::<u32>();
+
+/// The Bit Rate Box (`btrt`) — ISO/IEC 14496-12:2026 §8.5.2.
+///
+/// Any sample entry may carry it to signal the decoding buffer size and the
+/// maximum and average bit rates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct BitRateBox {
+    buffer_size_db: u32,
+    max_bitrate: u32,
+    avg_bitrate: u32,
+}
+
+impl BitRateBox {
+    /// Build one from its three rates.
+    #[must_use]
+    pub const fn new(buffer_size_db: u32, max_bitrate: u32, avg_bitrate: u32) -> Self {
+        Self {
+            buffer_size_db,
+            max_bitrate,
+            avg_bitrate,
+        }
+    }
+
+    /// `bufferSizeDB`, the decoding buffer size in bytes.
+    #[must_use]
+    pub const fn buffer_size_db(&self) -> u32 {
+        self.buffer_size_db
+    }
+
+    /// `maxBitrate`, in bits per second.
+    #[must_use]
+    pub const fn max_bitrate(&self) -> u32 {
+        self.max_bitrate
+    }
+
+    /// `avgBitrate`, in bits per second.
+    #[must_use]
+    pub const fn avg_bitrate(&self) -> u32 {
+        self.avg_bitrate
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        Ok(Self {
+            buffer_size_db: be_u32(body, 0, "btrt bufferSizeDB")?,
+            max_bitrate: be_u32(body, core::mem::size_of::<u32>(), "btrt maxBitrate")?,
+            avg_bitrate: be_u32(body, 2 * core::mem::size_of::<u32>(), "btrt avgBitrate")?,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for BitRateBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let item = crate::box_types::parse_box(bytes)?.0;
+        if item.four_cc() != BTRT {
+            return Err(Error::InvalidInput("expected btrt"));
+        }
+        Self::parse_body(item.payload())
+    }
+}
+
+impl Serialize for BitRateBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        crate::box_types::box_len(BOX_HEADER_MIN_SIZE + BTRT_BODY_LEN)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor = crate::box_types::write_box_header(buf, &BTRT, need)?;
+        for value in [self.buffer_size_db, self.max_bitrate, self.avg_bitrate] {
+            buf[cursor..cursor + core::mem::size_of::<u32>()].copy_from_slice(&value.to_be_bytes());
+            cursor += core::mem::size_of::<u32>();
+        }
+        Ok(cursor)
     }
 }

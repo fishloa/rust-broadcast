@@ -81,15 +81,34 @@ container says how many to discard, and the seam carries that in two places:
   [`AudioFrame`] it produces; [`TrimStage`] applies and clears them.
 
 **Who trims.** A decoder returns every sample it decodes, untrimmed, unless its
-[`CodecDescriptor`] says [`CodecDescriptor::applies_trim`] is true, in which
+[`CodecDescriptor`] states
+[`DecoderTrim::Implementation`], in which
 case it has already applied the container's trim itself.
 [`Registry::trimmed_decoder`] is the caller's way to get the right answer either
 way: it returns the selected decoder unchanged when it trims, and otherwise
 wraps it so `receive` goes through a [`TrimStage`].
 
-[`TrimStage`] removes the initial padding from the front, applies and clears
-each frame's own trim, drops frames that become empty, and holds back at most
-the trailing padding plus one frame until [`TrimStage::finish`] discards it. It
+**The decoder's own delay.** A lossy decoder emits samples of its own before the
+first real one, and that number is the implementation's, not the container's.
+[`CodecDescriptor::trim`] states it as a
+[`DecoderDelay`]: `Declared(n)` (zero means the
+implementation compensates), `PerStream` (the decoder instance reports it
+through [`Decoder::output_delay`]), or `Unknown`. [`TrimStage`] discards the
+container's priming plus the declared delay at the front and shortens the tail
+by the same amount, so the programme's duration does not change; when the delay
+is unknown it applies the container's values alone, and
+[`render_inventory`] says so.
+
+**Pre-roll.** [`CodecParameters::pre_roll`] is how many samples a decoder must
+consume after a seek or a splice before its output is correct. It is not a trim:
+[`TrimStage`] never discards it as padding. [`Registry::trimmed_decoder`]
+discards the decoder's settling output for it after a reset, a reconfiguration
+or a [`Decoder::discontinuity`], so a splice does not emit it.
+
+[`TrimStage`] removes the initial padding (plus the declared delay) from the
+front, applies and clears each frame's own trim, drops frames that become
+empty, and holds back at most the trailing padding plus one frame until
+[`TrimStage::finish`] discards it. It
 works for interleaved and planar layouts and every [`AudioSamples`] variant. A
 frame's `pts` is in the stream's time base; removing `n` samples at
 `sample_rate` advances it by `n * time_base / sample_rate` ticks, truncated
@@ -270,14 +289,15 @@ unavailable.
 token, direction, provider, implementation, `hw`/`sw`, `lossless` when true, the
 profile tokens joined by `/`, availability and licence. [`render_inventory`]
 renders a whole slice as a plain table whose column widths come from the
-entries, with no terminal assumptions and no colour. The profiles column leaves
-out the codec half of each profile token, because the row already names the
-codec:
+entries, with no terminal assumptions and no colour. Its delay column shows each
+implementation's declared decoder delay (or `unknown`), and the profiles column
+leaves out the codec half of each profile token, because the row already names
+the codec:
 
 ```text
-codec  direction  provider  implementation  kind  lossless  profiles   availability  licence
-h264   decode     alpha     h264            sw    -         high/main  available     MIT
-aac    encode     beta      aac_hw          hw    -         -          unavailable   -
+codec  direction  provider  implementation  kind  lossless  delay    profiles   availability  licence
+h264   decode     alpha     h264            sw    -         unknown  high/main  available     MIT
+aac    encode     beta      aac_hw          hw    -         unknown  -          unavailable   -
 ```
 
 ## Encoder options

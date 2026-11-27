@@ -396,10 +396,10 @@ impl From<transmux::ll_hls::SegmentInfo> for ReadySegment {
             bytes: info.bytes,
             segment_seq: SegmentSeq::new(info.segment_seq),
             duration: info.duration,
-            // The fMP4 segmenter never itself flags a discontinuity (see
-            // `ProgramSegmenter::publish_ready`'s pre-#887 hardcoded `false` —
-            // preserved here, not a behaviour change).
-            discontinuous: false,
+            // `LlHlsSegmenter` marks the segment that opens a new timeline
+            // (its `MuxInput::Discontinuity` arm closes the open one first);
+            // `ProgramSegmenter` ORs this with its own reconnect mark.
+            discontinuous: info.discontinuous,
         }
     }
 }
@@ -449,6 +449,17 @@ impl AnySegmenter {
         match self {
             AnySegmenter::Fmp4(seg) => seg.set_start_time(start),
             AnySegmenter::Ts(seg) => seg.set_start_time(start),
+        }
+    }
+
+    /// Tell the segmenter the source clock broke before the next sample: it
+    /// closes the open segment and marks the following one discontinuous, which
+    /// is what the served playlists render (`EXT-X-DISCONTINUITY`).
+    fn discontinuity(&mut self) -> transmux::Result<()> {
+        let input = transmux::mux_stage::MuxInput::Discontinuity { track: None };
+        match self {
+            AnySegmenter::Fmp4(seg) => broadcast_common::Stage::feed(seg, input, Timestamp::ZERO),
+            AnySegmenter::Ts(seg) => broadcast_common::Stage::feed(seg, input, Timestamp::ZERO),
         }
     }
 
@@ -1503,7 +1514,13 @@ impl ProgramSegmenter {
                     // filled right now must keep the OLD anchor (its
                     // start really was before the jump); the new one
                     // takes effect at the next segment boundary
-                    // (item 5).
+                    // (item 5). Every track sees its own first
+                    // post-break sample, so only the first one marks
+                    // the break: `pending_anchor` stays set until the
+                    // next segment publishes.
+                    if self.pending_anchor.is_none() {
+                        self.record_break();
+                    }
                     self.pending_anchor = Some(fresh);
                 }
             }
@@ -1511,6 +1528,17 @@ impl ProgramSegmenter {
         let sample = in_declared_timescale(&self.timescale_moves, track_id, sample);
         if let Err(e) = self.seg.push(track_id, sample) {
             tracing::warn!(error = %e, "driver-backed segmenter push failed");
+        }
+    }
+
+    /// Record a source-clock break: close the open segment and mark the next
+    /// one, so the served manifests state the discontinuity the player needs
+    /// (RFC 8216 §4.3.2.3 for HLS, a new `Period` for DASH). Both segmenters
+    /// render the mark on the segment *after* the break from their own input,
+    /// so nothing is also stamped on the segment that closes at the seam.
+    fn record_break(&mut self) {
+        if let Err(e) = self.seg.discontinuity() {
+            tracing::warn!(error = %e, "segmenter refused the timeline discontinuity");
         }
     }
 

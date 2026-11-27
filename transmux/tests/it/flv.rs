@@ -1155,3 +1155,52 @@ fn on_metadata_body_carries_the_flv_e5_audio_properties() {
     assert_eq!(value("audiochannels"), None, "not an §E.5 property");
     assert_eq!(value("duration"), None, "a live body has no length");
 }
+
+// ── Issue #4154: a timeline break rebases the FLV clock, never jumps ────────
+
+/// FLV has one non-decreasing millisecond clock and no discontinuity marker.
+/// A break is expressed by rebasing the first tag after it onto the last
+/// written timestamp plus the triggering track's last duration, so the file
+/// plays continuously instead of carrying the source's jump.
+#[test]
+fn a_timeline_break_rebases_the_flv_timeline_instead_of_jumping() {
+    let two = crate::discontinuity::forward();
+    let video = two
+        .media
+        .tracks
+        .iter()
+        .position(|track| matches!(track.spec.config, CodecConfig::Avc { .. }))
+        .expect("the fixture carries AVC video");
+    let source_gap = {
+        let sample = &two.media.tracks[video].samples[two.split[video]];
+        let dts = sample
+            .timing
+            .and_then(|timing| timing.dts())
+            .expect("timed");
+        f64::from(i32::try_from(dts).unwrap_or(i32::MAX))
+            / f64::from(two.media.tracks[video].spec.timescale.get())
+    };
+    assert!(
+        source_gap > 10.0,
+        "the two sources must really be a forward jump, seam at {source_gap}"
+    );
+
+    let outputs = crate::discontinuity::drive(&mut FlvMuxStage::new(), &two, None)
+        .expect("FLV has a lossless-for-playback mapping of a break");
+    let bytes = crate::mux_bytes::apply(outputs);
+    let path = crate::discontinuity::scratch_path(&format!("dc1-flv-{}.flv", std::process::id()));
+    std::fs::write(&path, &bytes).expect("write the FLV file");
+
+    for (stream, name) in [("v:0", "video"), ("a:0", "audio")] {
+        if let Some(times) = crate::discontinuity::ffprobe_dts(&path, stream) {
+            crate::discontinuity::assert_non_decreasing(name, &times);
+            let last = times.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+            assert!(
+                last < source_gap,
+                "{name} must be rebased onto the FLV timeline (ends {last}), \
+                 not carry the source's {source_gap}s jump"
+            );
+        }
+    }
+    let _ = std::fs::remove_file(&path);
+}

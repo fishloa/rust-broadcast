@@ -329,6 +329,10 @@ broadcast_core::impl_spec_display!(ConfigurationRecord);
 /// after the last. `initial_padding` is 0 when there is none or the container
 /// does not say; `trailing_padding` is `None` when the container does not say,
 /// which is distinct from `Some(0)`. Both are audio-only.
+///
+/// `pre_roll` is the samples a decoder must consume after a seek or a splice
+/// before its output is correct. It is not a trim and is carried for both
+/// audio and video; `None` means the container states none.
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodecParameters {
@@ -341,6 +345,7 @@ pub struct CodecParameters {
     video: Option<VideoParameters>,
     initial_padding: u32,
     trailing_padding: Option<u32>,
+    pre_roll: Option<u32>,
 }
 
 impl CodecParameters {
@@ -358,6 +363,7 @@ impl CodecParameters {
             video: None,
             initial_padding: 0,
             trailing_padding: None,
+            pre_roll: None,
         }
     }
 
@@ -410,6 +416,17 @@ impl CodecParameters {
     #[must_use]
     pub const fn with_video(mut self, video: VideoParameters) -> Self {
         self.video = Some(video);
+        self
+    }
+
+    /// State that a decoder must consume `samples` samples per channel after a
+    /// seek or a splice before its output is correct.
+    ///
+    /// This is a decoder requirement, not a trim: a [`TrimStage`](crate::TrimStage) never
+    /// discards it as padding.
+    #[must_use]
+    pub const fn with_pre_roll(mut self, samples: u32) -> Self {
+        self.pre_roll = Some(samples);
         self
     }
 
@@ -492,5 +509,13 @@ impl CodecParameters {
     #[must_use]
     pub const fn trailing_padding(&self) -> Option<u32> {
         self.trailing_padding
+    }
+
+    /// Samples per channel a decoder must consume after a seek or a splice
+    /// before its output is correct, when the container states a pre-roll
+    /// requirement.
+    #[must_use]
+    pub const fn pre_roll(&self) -> Option<u32> {
+        self.pre_roll
     }
 }

@@ -41,6 +41,7 @@ use crate::track_id::TrackId;
 
 pub mod chapters;
 pub mod ilst;
+pub mod itunsmpb;
 pub mod keys;
 pub mod location;
 pub mod meta;
@@ -48,6 +49,7 @@ pub mod udta;
 
 pub use chapters::{Chapter, Chpl};
 pub use ilst::{Data, Ilst, IlstItem, IlstItemChild, Mean, Name};
+pub use itunsmpb::{ITUNSMPB_MEAN, ITUNSMPB_MIN_FIELDS, ITUNSMPB_NAME, Itunsmpb};
 pub use keys::{KeyEntry, Keys};
 pub use location::{Iso6709, Loci};
 pub use meta::{Hdlr, MDIR_HANDLER, MDTA_HANDLER, Meta, MetaChild, MetaFlavor};
@@ -345,6 +347,9 @@ pub struct CoverArt<'a> {
 pub struct Metadata {
     /// Every item, in the order the containers carried them.
     pub items: Vec<MetadataItem>,
+    /// The file-delivery item information box (`fiin`, §8.12.2), when a
+    /// `meta` carried one.
+    pub fd_item_information: Option<crate::file_delivery::FdItemInformationBox>,
 }
 
 /// The movie's metadata and each track's metadata.
@@ -366,7 +371,10 @@ impl Metadata {
         for child in &udta.children {
             push_udta_child(child, &mut items);
         }
-        Self { items }
+        Self {
+            items,
+            fd_item_information: None,
+        }
     }
 
     /// Gather the item list of a `meta` box.
@@ -374,7 +382,10 @@ impl Metadata {
     pub fn from_meta(meta: &Meta) -> Self {
         let mut items = Vec::new();
         push_meta(meta, &mut items);
-        Self { items }
+        Self {
+            items,
+            fd_item_information: meta.fd_item_information().cloned(),
+        }
     }
 
     /// The first text item stored under `key`.
@@ -659,7 +670,9 @@ fn push_udta_child(child: &UdtaChild, items: &mut Vec<MetadataItem>) {
         | UdtaChild::Loudness(_)
         | UdtaChild::TrackSelection(_)
         | UdtaChild::Copyright(_)
-        | UdtaChild::SubTrack(_) => {}
+        | UdtaChild::SubTrack(_)
+        | UdtaChild::HintInformation(_)
+        | UdtaChild::HintStatistics(_) => {}
         UdtaChild::Opaque(opaque) => items.push(MetadataItem::Opaque(opaque.clone())),
     }
 }

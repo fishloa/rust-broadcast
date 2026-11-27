@@ -1,6 +1,8 @@
 #![no_main]
 
-use broadcast_bitstream::mpeg_audio::{MpegAudioFrameHeader, MpegAudioLayer, MpegAudioVersion};
+use broadcast_bitstream::mpeg_audio::{
+    MpegAudioFrameHeader, MpegAudioLayer, MpegAudioVersion, parse_lame_tag,
+};
 use libfuzzer_sys::fuzz_target;
 
 // Fuzz the MPEG-1/2/2.5 audio frame header parser on arbitrary bytes: an
@@ -26,4 +28,11 @@ fuzz_target!(|data: &[u8]| {
     // The header fields are a pure function of the first four bytes.
     let again = MpegAudioFrameHeader::parse(&data[..4]).expect("an accepted header re-parses");
     assert_eq!(again, hdr);
+    // The LAME/Xing tag reader must stay bounded by the frame it describes and
+    // never report a field its 12-bit encoding cannot hold.
+    if let Ok(Some(tag)) = parse_lame_tag(data) {
+        assert_eq!(tag.encoder().len(), 9);
+        assert!(tag.encoder_delay().is_none_or(|delay| delay < 4096));
+        assert!(tag.encoder_padding().is_none_or(|padding| padding < 4096));
+    }
 });

@@ -157,3 +157,58 @@ fn split_flv(flv: &[u8]) -> Vec<(u8, u32, Vec<u8>)> {
     }
     tags
 }
+
+// ── Issue #4154: a timeline break rebases the RTMP clock, never jumps ──────
+
+/// RTMP message timestamps are FLV's one non-decreasing millisecond clock, so
+/// a break takes the FLV pipeline's rebase rather than being dropped.
+#[test]
+fn a_timeline_break_rebases_the_rtmp_timeline_instead_of_jumping() {
+    let two = crate::discontinuity::forward();
+    let video = two
+        .media
+        .tracks
+        .iter()
+        .position(|track| matches!(track.spec.config, transmux::CodecConfig::Avc { .. }))
+        .expect("the fixture carries AVC video");
+    let source_gap = {
+        let sample = &two.media.tracks[video].samples[two.split[video]];
+        let dts = sample
+            .timing
+            .and_then(|timing| timing.dts())
+            .expect("timed");
+        f64::from(i32::try_from(dts).unwrap_or(i32::MAX))
+            / f64::from(two.media.tracks[video].spec.timescale.get())
+    };
+    assert!(
+        source_gap > 10.0,
+        "the two sources must really be a forward jump, seam at {source_gap}"
+    );
+
+    let outputs = crate::discontinuity::drive(&mut RtmpMuxStage::new(), &two, None)
+        .expect("RTMP has a lossless-for-playback mapping of a break");
+    let bytes = crate::mux_bytes::apply(outputs);
+    let got = test_harness::collect::media_from_rtmp(&bytes).expect("read the RTMP messages back");
+
+    for track in &got.tracks {
+        let mut previous = i64::MIN;
+        for sample in &track.samples {
+            let dts = sample
+                .timing
+                .and_then(|timing| timing.dts())
+                .expect("timed");
+            assert!(
+                dts >= previous,
+                "RTMP message timestamps must not step backwards: {previous} then {dts}"
+            );
+            previous = dts;
+            let seconds = f64::from(i32::try_from(dts).unwrap_or(i32::MAX))
+                / f64::from(track.spec.timescale.get());
+            assert!(
+                seconds < source_gap,
+                "the timeline must be rebased onto RTMP's clock, not carry the \
+                 source's {source_gap}s jump (got {seconds})"
+            );
+        }
+    }
+}

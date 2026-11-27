@@ -157,6 +157,16 @@ fn parse_stts_total(file: &[u8], sc: &[Loc]) -> u32 {
     (0..n).map(|i| be32(b, 8 + i * 8)).sum()
 }
 
+/// Parse stts entries: `(sample_count, sample_duration)` runs.
+fn parse_stts(file: &[u8], sc: &[Loc]) -> Vec<(u32, u32)> {
+    let stts = *find(sc, b"stts").expect("stts");
+    let b = stts.body(file);
+    let n = be32(b, 4) as usize;
+    (0..n)
+        .map(|i| (be32(b, 8 + i * 8), be32(b, 12 + i * 8)))
+        .collect()
+}
+
 /// Parse stss sync-sample indices (1-based), if present.
 fn parse_stss(file: &[u8], sc: &[Loc]) -> Option<Vec<u32>> {
     let stss = find(sc, b"stss")?;
@@ -1203,6 +1213,106 @@ fn a_chunk_past_u32_max_switches_the_tables_to_co64() {
     assert_eq!(offsets[0], payload_start);
     assert_eq!(offsets[1], payload_start + BIG_U64);
     assert!(offsets[1] > u64::from(u32::MAX));
+}
+
+// ---------------------------------------------------------------------------
+// Issue #4154: a timeline break is mapped onto the stts timeline, not refused
+// ---------------------------------------------------------------------------
+
+/// A break that moves a track's time **backwards** cannot be written as such:
+/// `stts` states a decode time only as the sum of the preceding samples'
+/// durations (ISO/IEC 14496-12:2026 §8.6.1.1), so there is no way to step back.
+/// The plan maps it by rebasing: each track's first post-break sample continues
+/// from the last planned one's end, and every later sample keeps its spacing.
+/// The file therefore keeps every sample and a total media duration equal to
+/// the input's own durations (no time repeated, none dropped).
+#[test]
+fn a_backward_break_continues_the_stts_timeline() {
+    use isobmff::writer::{Interleave, Layout, MovieHeader, Sink};
+    use transmux::plan_pass::PlanPass;
+    use transmux::progressive::ProgressiveMuxStage;
+
+    let two = crate::discontinuity::backwards();
+    let mut plan_pass = PlanPass::new(two.media.movie_timescale);
+    let plans = crate::discontinuity::drive(&mut plan_pass, &two, None)
+        .expect("the plan records a backward break by rebasing");
+    let plan = plans.into_iter().next().expect("a finished plan");
+
+    let layout = Layout::new(
+        true,
+        Interleave::ByDuration {
+            millis: crate::progressive_support::INTERLEAVE_MILLIS,
+        },
+        Sink::Seekable,
+    );
+    let movie = MovieHeader::new(two.media.movie_timescale);
+    let mut stage = ProgressiveMuxStage::new(plan, layout, movie);
+    let out = crate::discontinuity::drive(&mut stage, &two, None)
+        .expect("the muxer writes the rebased plan");
+    let bytes = crate::progressive_support::place(&out);
+
+    for trak in traks(&bytes) {
+        let video = is_video_trak(&bytes, trak);
+        let spec = two
+            .media
+            .tracks
+            .iter()
+            .find(|track| {
+                matches!(
+                    (&track.spec.config, video),
+                    (CodecConfig::Avc { .. }, true) | (CodecConfig::Aac { .. }, false)
+                )
+            })
+            .expect("every trak names an input track");
+        let sc = stbl_children(&bytes, trak);
+        let runs = parse_stts(&bytes, &sc);
+        let count: u32 = runs.iter().map(|&(count, _)| count).sum();
+        assert_eq!(
+            usize::try_from(count).expect("a small count"),
+            spec.samples.len(),
+            "every sample of the track survives the break"
+        );
+        let total: u64 = runs
+            .iter()
+            .map(|&(count, duration)| u64::from(count) * u64::from(duration))
+            .sum();
+        let expected: u64 = spec
+            .samples
+            .iter()
+            .map(|sample| {
+                u64::from(
+                    sample
+                        .timing
+                        .and_then(|timing| timing.duration())
+                        .unwrap_or(0),
+                )
+            })
+            .sum();
+        assert_eq!(
+            total, expected,
+            "the break continues the timeline: no time is repeated or dropped"
+        );
+    }
+
+    let remuxed =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("the written file re-demuxes");
+    for track in &remuxed.tracks {
+        let times: Vec<f64> = track
+            .samples
+            .iter()
+            .filter_map(|sample| {
+                sample
+                    .timing
+                    .and_then(|timing| timing.dts().or_else(|| timing.pts()))
+            })
+            .map(|tick| tick as f64)
+            .collect();
+        crate::discontinuity::assert_non_decreasing(
+            &format!("track {:?}", track.spec.track_id),
+            &times,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

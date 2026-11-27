@@ -45,7 +45,7 @@ use crate::pipeline::{FragmentTrackData, build_init_segment, build_media_segment
 use crate::plan_pass::PlanPass;
 use crate::progressive::ProgressiveMuxStage;
 use crate::ps_demux::StreamingPsDemux;
-use crate::segment_log::SegmentSummaryLog;
+use crate::segment_log::{PeriodBoundary, SegmentSummaryLog};
 use crate::segmenter::{MediaClock, Segmenter, choose_anchor};
 use crate::ts_demux::StreamingTsDemux;
 use crate::ts_hls::StreamingTsHlsSegmenter;
@@ -1181,10 +1181,11 @@ impl CliStream {
         }
     }
 
-    /// Forward a timeline break to the output stage, so an output that can
-    /// express it (an HLS playlist's `#EXT-X-DISCONTINUITY`, a TS packet's
-    /// `discontinuity_indicator`) does, and one that cannot refuses with a
-    /// typed error instead of dropping the mark.
+    /// Forward a timeline break to the output stage, which states it in that
+    /// output's own format: an HLS playlist's `#EXT-X-DISCONTINUITY`, a TS
+    /// packet's `discontinuity_indicator`, a new CMAF fragment, a DASH Period,
+    /// or a progressive file whose sample timeline continues across it. No
+    /// output refuses the mark.
     ///
     /// Everything held for decode-order interleaving is released first: the
     /// break lies after every sample the demux already produced, so those must
@@ -1352,6 +1353,15 @@ impl CliStream {
                     emit.patch(*offset, bytes)?
                 }
                 (_, MuxOutput::Text(text)) => emit.text(text)?,
+                // Every CLI output states a break in-band, in its own format,
+                // before its bytes are written: a TS adaptation-field
+                // `discontinuity_indicator`, a new CMAF fragment whose `tfdt`
+                // carries the (given or rebased) decode time, an HLS
+                // `#EXT-X-DISCONTINUITY`, a new DASH Period, or a progressive
+                // `stts` timeline that continues across the break. An emitted
+                // marker is therefore already accounted for, and the sink has
+                // no out-of-band channel to place it in.
+                (_, MuxOutput::Discontinuity { .. }) => {}
                 _ => {}
             }
         }
@@ -1433,6 +1443,9 @@ struct DashStream {
     tracks: Vec<DashTrack>,
     log: SegmentSummaryLog,
     files: Vec<(String, Vec<u8>)>,
+    /// A break reached the writer as an out-of-band output: the next segment
+    /// opens a new presentation period.
+    pending_boundary: bool,
 }
 
 impl DashStream {
@@ -1469,6 +1482,7 @@ impl DashStream {
             tracks,
             log: SegmentSummaryLog::new(),
             files,
+            pending_boundary: false,
         })
     }
 
@@ -1495,17 +1509,18 @@ impl DashStream {
                 }
                 self.drain_tracks(false)
             }
-            MuxInput::Discontinuity { .. } => Err(crate::Error::UnsupportedFeature(
-                "a single-period DASH MPD cannot signal a timeline discontinuity",
-            )
-            .into()),
+            MuxInput::Discontinuity { track } => {
+                self.segmenter
+                    .feed(MuxInput::Discontinuity { track }, Timestamp::ZERO)?;
+                self.process_segments()
+            }
             MuxInput::Flush => {
                 self.finish_segmenter()?;
                 self.finish_tracks()
             }
             MuxInput::Track(_) => Ok(()),
             MuxInput::TrackRemoved { .. } => Err(crate::Error::UnsupportedFeature(
-                "a single-period DASH MPD names a fixed set of Representations",
+                "a DASH MPD names a fixed set of Representations for the session",
             )
             .into()),
         }
@@ -1513,8 +1528,13 @@ impl DashStream {
 
     fn process_segments(&mut self) -> CliResult<()> {
         while let Some(output) = self.segmenter.poll() {
-            if let MuxOutput::Segment(segment) = output {
-                self.boundary(&segment)?;
+            match output {
+                MuxOutput::Segment(segment) => self.boundary(&segment)?,
+                // A segmenter whose break is out of band (LL-DASH chunks carry
+                // their own `tfdt`) names it here instead of on the summary;
+                // the next segment opens the new period.
+                MuxOutput::Discontinuity { .. } => self.pending_boundary = true,
+                _ => {}
             }
         }
         Ok(())
@@ -1545,6 +1565,14 @@ impl DashStream {
             let scale = u64::from(state.spec.timescale.get());
             let start = self.prev_end.saturating_mul(scale) / self.anchor_scale;
             let end_ticks = end.saturating_mul(scale) / self.anchor_scale;
+            if segment.summary.discontinuous || core::mem::take(&mut self.pending_boundary) {
+                self.log.push_boundary(PeriodBoundary {
+                    sequence: segment.summary.sequence,
+                    track: state.spec.track_id,
+                    start,
+                    timescale: state.spec.timescale.get(),
+                });
+            }
             state.boundaries.push_back((start, end_ticks));
         }
         self.prev_end = end;
@@ -2465,6 +2493,22 @@ fn run_progressive<R: Read + Seek>(
 
 /// The plan pass: record every sample's descriptor (no coded bytes held) and
 /// the announced track set.
+/// The progressive plan's view of one demux event: a kept track's sample, or a
+/// timeline break, which the plan maps onto the continuing `stts` timeline
+/// ([`PlanPass`]) exactly as the mux stage it plans for maps it in-band.
+fn plan_input(kept: &[TrackId], event: DemuxEvent) -> Option<MuxInput> {
+    match event {
+        DemuxEvent::Sample { track_id, sample } if kept.contains(&track_id) => {
+            Some(MuxInput::Sample {
+                track: track_id,
+                sample,
+            })
+        }
+        DemuxEvent::Discontinuity { track, .. } => Some(MuxInput::Discontinuity { track }),
+        _ => None,
+    }
+}
+
 fn progressive_plan<R: Read + Seek>(
     reader: &mut R,
     container: Container,
@@ -2480,15 +2524,8 @@ fn progressive_plan<R: Read + Seek>(
     drive_seekable(reader, container, total_len, &mut |event, movie| {
         collector.movie(movie);
         if let Some(pass) = plan_pass.as_mut() {
-            if let DemuxEvent::Sample { track_id, sample } = event
-                && kept.contains(&track_id)
-                && let Err(error) = pass.feed(
-                    MuxInput::Sample {
-                        track: track_id,
-                        sample,
-                    },
-                    Timestamp::ZERO,
-                )
+            if let Some(input) = plan_input(&kept, event)
+                && let Err(error) = pass.feed(input, Timestamp::ZERO)
                 && failure.is_none()
             {
                 failure = Some(error.into());
@@ -2513,16 +2550,8 @@ fn progressive_plan<R: Read + Seek>(
             }
             kept = specs.iter().map(|spec| spec.track_id).collect();
             for event in buffered.drain(..) {
-                if let DemuxEvent::Sample { track_id, sample } = event
-                    && kept.contains(&track_id)
-                {
-                    pass.feed(
-                        MuxInput::Sample {
-                            track: track_id,
-                            sample,
-                        },
-                        Timestamp::ZERO,
-                    )?;
+                if let Some(input) = plan_input(&kept, event) {
+                    pass.feed(input, Timestamp::ZERO)?;
                 }
             }
             plan_pass = Some(pass);
@@ -2538,16 +2567,8 @@ fn progressive_plan<R: Read + Seek>(
         }
         kept = specs.iter().map(|spec| spec.track_id).collect();
         for event in buffered.drain(..) {
-            if let DemuxEvent::Sample { track_id, sample } = event
-                && kept.contains(&track_id)
-            {
-                pass.feed(
-                    MuxInput::Sample {
-                        track: track_id,
-                        sample,
-                    },
-                    Timestamp::ZERO,
-                )?;
+            if let Some(input) = plan_input(&kept, event) {
+                pass.feed(input, Timestamp::ZERO)?;
             }
         }
         plan_pass = Some(pass);

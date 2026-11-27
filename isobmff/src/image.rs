@@ -1906,6 +1906,8 @@ pub enum ItemProperty {
     AvcC(AVCConfigurationBox),
     /// `av1C`: AV1 decoder configuration.
     Av1C(Av1ConfigurationBox),
+    /// `vvcC`: VVC decoder configuration (ISO/IEC 23008-12:2025).
+    VvcC(crate::vvc_config::VvcConfigurationBox),
     /// `a1op`: AV1 operating point selector.
     A1op(OperatingPointSelectorProperty),
     /// `a1lx`: AV1 layered image indexing.
@@ -1984,6 +1986,8 @@ pub enum ItemProperty {
     MskC(MaskConfigurationProperty),
     /// `subs`: sub-sample information (6.5.28, the `subs` box reused).
     Subs(crate::sample_groups::SubSampleInformationBox),
+    /// `stvi`: stereoscopic video information (ISO/IEC 14496-12:2026 13.5.4).
+    Stvi(crate::track_desc::StereoVideoBox),
     /// Any property this crate does not model, preserved box and all.
     Opaque(OpaqueBox),
 }
@@ -2006,6 +2010,7 @@ impl ItemProperty {
             Self::HvcC(_) => HVCC,
             Self::AvcC(_) => AVCC,
             Self::Av1C(_) => AV1C,
+            Self::VvcC(_) => *b"vvcC",
             Self::A1op(_) => A1OP,
             Self::A1lx(_) => A1LX,
             Self::Mdcv(_) => MDCV_FOURCC,
@@ -2045,6 +2050,7 @@ impl ItemProperty {
             Self::Ndwt(_) => crate::image_props::NDWT,
             Self::MskC(_) => crate::image_props::MSKC,
             Self::Subs(_) => *b"subs",
+            Self::Stvi(_) => crate::track_desc::STVI,
             Self::Opaque(opaque) => opaque.box_type,
         }
     }
@@ -2118,6 +2124,9 @@ impl ItemProperty {
             b"hvcC" => Ok(Self::HvcC(HEVCConfigurationBox::parse_body(body)?)),
             b"avcC" => Ok(Self::AvcC(AVCConfigurationBox::parse_body(body)?)),
             b"av1C" => Ok(Self::Av1C(Av1ConfigurationBox::parse(body)?)),
+            b"vvcC" => Ok(Self::VvcC(
+                crate::vvc_config::VvcConfigurationBox::parse_body(body)?,
+            )),
             b"a1op" => Ok(Self::A1op(OperatingPointSelectorProperty::parse(
                 item.bytes,
             )?)),
@@ -2225,6 +2234,9 @@ impl ItemProperty {
             b"subs" => Ok(Self::Subs(
                 crate::sample_groups::SubSampleInformationBox::parse(item.bytes)?,
             )),
+            b"stvi" => Ok(Self::Stvi(crate::track_desc::StereoVideoBox::parse(
+                item.bytes,
+            )?)),
             _ => {
                 let mut opaque = OpaqueBox::new(item.four_cc(), item.payload().to_vec());
                 opaque.to_end = item.to_end();
@@ -2268,6 +2280,7 @@ impl Serialize for ItemProperty {
             Self::Imir(value) => value.serialized_len(),
             Self::HvcC(value) => value.serialized_len(),
             Self::AvcC(value) => value.serialized_len(),
+            Self::VvcC(value) => value.serialized_len(),
             Self::A1op(value) => value.serialized_len(),
             Self::A1lx(value) => value.serialized_len(),
             Self::Brnd(value) => value.serialized_len(),
@@ -2305,6 +2318,7 @@ impl Serialize for ItemProperty {
             Self::Ndwt(value) => value.serialized_len(),
             Self::MskC(value) => value.serialized_len(),
             Self::Subs(value) => value.serialized_len(),
+            Self::Stvi(value) => value.serialized_len(),
             Self::Opaque(value) => value.serialized_len(),
         }
     }
@@ -2326,6 +2340,7 @@ impl Serialize for ItemProperty {
             Self::Imir(value) => value.serialize_into(buf),
             Self::HvcC(value) => value.serialize_into(buf),
             Self::AvcC(value) => value.serialize_into(buf),
+            Self::VvcC(value) => value.serialize_into(buf),
             Self::A1op(value) => value.serialize_into(buf),
             Self::A1lx(value) => value.serialize_into(buf),
             Self::Brnd(value) => value.serialize_into(buf),
@@ -2363,6 +2378,7 @@ impl Serialize for ItemProperty {
             Self::Ndwt(value) => value.serialize_into(buf),
             Self::MskC(value) => value.serialize_into(buf),
             Self::Subs(value) => value.serialize_into(buf),
+            Self::Stvi(value) => value.serialize_into(buf),
             Self::Opaque(value) => value.serialize_into(buf),
         }
     }

@@ -343,6 +343,12 @@ test = false
 doc  = false
 
 [[bin]]
+name = "isobmff_tier5_boxes"
+path = "fuzz_targets/isobmff_tier5_boxes.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "isobmff_sample_entries"
 path = "fuzz_targets/isobmff_sample_entries.rs"
 test = false

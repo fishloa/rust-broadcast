@@ -9,6 +9,10 @@ All notable changes to this crate are documented here. The format follows
 ### Breaking
 
 - The wire-format contract types now come from `broadcast-core`.
+- `reader::BlockStep` gains `discard_padding: Option<i64>` (nanoseconds): a
+  `BlockGroup`'s `DiscardPadding` (RFC 9559 §5.1.3.5.7), positive for silence
+  at the end of the Block and negative at its start. A caller that builds a
+  `BlockStep` literal must set it.
 
 ### Changed
 
@@ -24,9 +28,15 @@ All notable changes to this crate are documented here. The format follows
 
 ### Added
 
+- `writer::Writer::cut_cluster`: ends the open `Cluster` at a caller-known
+  boundary (a container-level timeline discontinuity), flushing held Blocks
+  first so the next one opens a new `Cluster`.
 - `reader::TrackInfo::codec_delay_ns`: the track's `CodecDelay` (RFC 9559
   §5.1.4.1.6), which Opus uses to state its pre-skip. The writer does not emit
   it yet.
+- `reader::TrackInfo::seek_pre_roll_ns`: the track's `SeekPreRoll`
+  (RFC 9559 §5.1.4.1.26), the decoder fill a seek needs before output is
+  correct. The writer does not emit it yet.
 - Initial crate: EBML (RFC 8794) element framing, the scalar payload codecs,
   the EBML header, `Void` and `CRC-32`.
 - The full Matroska (RFC 9559) element table with typed master and leaf

@@ -713,6 +713,7 @@ fn layout_track_fragment(
         tfhd,
         tfdt,
         trun: runs,
+        rsot: None,
         order: track_layout.children.clone(),
     })
 }

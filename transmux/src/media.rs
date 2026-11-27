@@ -45,8 +45,9 @@ use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
 use crate::ir::{
-    CodecConfig, DataIdentity, DisplayGeometry, DisplayInfo, GaplessTrim, Sample, SubtitleFormat,
-    SubtitleSampleEntry, TrackId, TrackSpec,
+    CodecConfig, DataIdentity, DecoderPreRoll, DisplayGeometry, DisplayInfo, GaplessSignal,
+    GaplessTrim, GaplessTrimFinding, Sample, SubtitleFormat, SubtitleSampleEntry, TrackId,
+    TrackSpec,
 };
 use broadcast_bitstream::facts::{
     AspectRatioIdc, ColourDescription, EXTENDED_SAR_IDC, PictureRect, VideoFormat, VideoSignalType,
@@ -733,7 +734,9 @@ impl HlsPackager {
 /// `pub(crate)`: the single shared sample-entry → [`CodecConfig`]
 /// reconstruction path, used by [`crate::mp4_demux::Mp4Demux`], so the
 /// seekable and forward-only reads never diverge on codec-config recovery.
-pub(crate) fn track_spec_from_track_info(info: &TrackInfo) -> Result<TrackSpec> {
+pub(crate) fn track_spec_from_track_info(
+    info: &TrackInfo,
+) -> Result<(TrackSpec, Option<GaplessTrimFinding>)> {
     let entry = info.entries.first().ok_or(Error::UnexpectedBox {
         expected: "stsd entry",
     })?;
@@ -776,9 +779,11 @@ pub(crate) fn track_spec_from_track_info(info: &TrackInfo) -> Result<TrackSpec> 
         },
         Some(Err(err)) => return Err(err),
     };
-    let padding = gapless_padding(&config, &info.edits, info.timescale);
-    let mut spec =
-        TrackSpec::new(info.track_id.into(), info.timescale, config).with_padding(padding);
+    let (padding, finding) =
+        gapless_padding(&config, &info.edits, info.timescale, info.itunsmpb.as_ref());
+    let mut spec = TrackSpec::new(info.track_id.into(), info.timescale, config)
+        .with_padding(padding)
+        .with_pre_roll(info.pre_roll.and_then(DecoderPreRoll::from_samples));
     if let Some(protection) = protection {
         spec = spec.with_protection(protection);
     }
@@ -791,63 +796,109 @@ pub(crate) fn track_spec_from_track_info(info: &TrackInfo) -> Result<TrackSpec> 
         Some(SampleEntryVariant::Hevc1(e)) => overlay_sample_entry_display(spec, &e.extra_boxes),
         _ => spec,
     };
-    Ok(spec)
+    Ok((spec, finding))
 }
 
-/// The track's gapless priming, in samples at its sample rate.
+/// The track's gapless trim, in samples at its sample rate.
 ///
-/// An Opus track states it in `dOps` `PreSkip`, counted at 48 kHz
-/// (RFC 7845 §5.1); any other audio track states it as the `elst`
-/// `media_time` of a non-empty edit, in the media timescale
-/// (ISO/IEC 14496-12:2026 §8.6.6). A video track, or one that states neither,
-/// gets [`GaplessTrim::NONE`]. Trailing padding is not carried by either
-/// signal (the iTunes `iTunSMPB` item states it, and this demuxer does not
-/// read it yet).
+/// The signals are tried in one stated order (the edit list is normative, then
+/// the codec's own configuration, then the de-facto iTunes item), and a lower
+/// signal that states a different trim is returned as a [`GaplessTrimFinding`]
+/// rather than resolved silently.
+///
+/// - The `elst` media time of a non-empty edit, in the media timescale
+///   (ISO/IEC 14496-12:2026 §8.6.6).
+/// - An Opus `dOps` `PreSkip`, counted at 48 kHz (RFC 7845 §5.1).
+/// - The `iTunSMPB` item's priming and padding (`crate::metadata`).
+///
+/// A video track, or one that states none, gets [`GaplessTrim::NONE`].
 fn gapless_padding(
     config: &CodecConfig,
     edits: &[isobmff::timing::EditListEntry],
     timescale: Timescale,
-) -> GaplessTrim {
+    itunsmpb: Option<&isobmff::metadata::Itunsmpb>,
+) -> (GaplessTrim, Option<GaplessTrimFinding>) {
     let Some(rate) = config.audio_sample_rate() else {
-        return GaplessTrim::NONE;
+        return (GaplessTrim::NONE, None);
     };
-    let (Some(rate), Some(opus_rate)) = (
-        core::num::NonZeroU32::new(rate),
-        core::num::NonZeroU32::new(OPUS_PRE_SKIP_RATE),
-    ) else {
-        return GaplessTrim::NONE;
+    let Some(rate) = core::num::NonZeroU32::new(rate) else {
+        return (GaplessTrim::NONE, None);
     };
-    if let CodecConfig::Opus { config, .. } = config {
-        let pre_skip = u32::from(config.pre_skip);
-        if pre_skip > 0 {
-            let samples = rescale_i64(
-                i64::from(pre_skip),
-                Timescale::from_nonzero(opus_rate),
-                Timescale::from_nonzero(rate),
-                Rounding::Floor,
-            );
-            if let Ok(initial) = u32::try_from(samples) {
-                return GaplessTrim::new(initial, None);
-            }
-        }
-    }
-    let Some(media_time) = edits
+    let rate = Timescale::from_nonzero(rate);
+    let candidates = [
+        (
+            GaplessSignal::EditList,
+            edit_list_trim(edits, timescale, rate),
+        ),
+        (
+            GaplessSignal::CodecPreSkip,
+            codec_pre_skip_trim(config, rate),
+        ),
+        (GaplessSignal::ITunesSmpb, itunsmpb_trim(itunsmpb)),
+    ];
+    let Some((used, used_trim)) = candidates
+        .iter()
+        .find_map(|(signal, trim)| trim.map(|trim| (*signal, trim)))
+    else {
+        return (GaplessTrim::NONE, None);
+    };
+    let finding = candidates
+        .iter()
+        .filter_map(|(signal, trim)| trim.map(|trim| (*signal, trim)))
+        .find(|(signal, trim)| *signal != used && *trim != used_trim)
+        .map(|(signal, _)| GaplessTrimFinding::new(used, signal));
+    (used_trim, finding)
+}
+
+/// An MP4 edit list's priming, when a non-empty edit states one.
+fn edit_list_trim(
+    edits: &[isobmff::timing::EditListEntry],
+    timescale: Timescale,
+    rate: Timescale,
+) -> Option<GaplessTrim> {
+    let media_time = edits
         .iter()
         .map(|edit| edit.media_time)
-        .find(|media_time| *media_time > 0)
-    else {
-        return GaplessTrim::NONE;
+        .find(|media_time| *media_time > 0)?;
+    let samples = rescale_i64(media_time, timescale, rate, Rounding::Floor);
+    u32::try_from(samples)
+        .ok()
+        .map(|initial| GaplessTrim::new(initial, None))
+}
+
+/// An Opus `dOps` pre-skip, counted at 48 kHz.
+fn codec_pre_skip_trim(config: &CodecConfig, rate: Timescale) -> Option<GaplessTrim> {
+    let CodecConfig::Opus { config, .. } = config else {
+        return None;
     };
+    let pre_skip = u32::from(config.pre_skip);
+    if pre_skip == 0 {
+        return None;
+    }
+    let opus_rate = core::num::NonZeroU32::new(OPUS_PRE_SKIP_RATE)?;
     let samples = rescale_i64(
-        media_time,
-        timescale,
-        Timescale::from_nonzero(rate),
+        i64::from(pre_skip),
+        Timescale::from_nonzero(opus_rate),
+        rate,
         Rounding::Floor,
     );
-    match u32::try_from(samples) {
-        Ok(initial) => GaplessTrim::new(initial, None),
-        Err(_) => GaplessTrim::NONE,
+    u32::try_from(samples)
+        .ok()
+        .map(|initial| GaplessTrim::new(initial, None))
+}
+
+/// The iTunes item's priming and padding; `None` when it states neither.
+fn itunsmpb_trim(itunsmpb: Option<&isobmff::metadata::Itunsmpb>) -> Option<GaplessTrim> {
+    let itunsmpb = itunsmpb?;
+    let initial = itunsmpb.priming();
+    let trailing = itunsmpb.padding();
+    if initial == 0 && trailing == 0 {
+        return None;
     }
+    Some(GaplessTrim::new(
+        initial,
+        (trailing > 0).then_some(trailing),
+    ))
 }
 
 /// The CENC/CBCS defaults a sample entry's `sinf` states, or `None` for a
@@ -1392,6 +1443,19 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
             fourcc: String::from("unknown"),
         }),
     }
+}
+
+/// The gapless trim an MP3 frame's LAME/Xing tag states, in samples at the
+/// stream's sample rate.
+///
+/// The tag states the encoder's priming and end padding exactly; a decoder's
+/// own output delay is the implementation's to declare through
+/// `broadcast_codec::DecoderDelay`, never folded in here.
+pub(crate) fn lame_padding(frame: &[u8]) -> Option<GaplessTrim> {
+    let tag = broadcast_bitstream::parse_lame_tag(frame).ok().flatten()?;
+    let delay = tag.encoder_delay()?;
+    let padding = tag.encoder_padding()?;
+    Some(GaplessTrim::new(delay, (padding > 0).then_some(padding)))
 }
 
 /// Refine the provisional geometry/layer of a legacy-codec config from a
@@ -2063,5 +2127,76 @@ mod tests {
             config.config.length_size_minus_one, NAL_LENGTH_SIZE_MINUS_ONE,
             "the reported hvcC must declare the 4-byte length size"
         );
+    }
+}
+
+#[cfg(test)]
+mod gapless_precedence_tests {
+    use super::*;
+    use broadcast_core::timescale::Timescale;
+    use isobmff::opus::OpusSpecificBox;
+    use isobmff::timing::EditListEntry;
+
+    fn opus(pre_skip: u16) -> CodecConfig {
+        CodecConfig::Opus {
+            config: OpusSpecificBox {
+                version: 0,
+                output_channel_count: 2,
+                pre_skip,
+                input_sample_rate: 48_000,
+                output_gain: 0,
+                channel_mapping_family: 0,
+                channel_mapping: None,
+            },
+            channel_count: 2,
+            sample_rate: 48_000,
+            sample_size: 16,
+        }
+    }
+
+    fn edit(media_time: i64) -> EditListEntry {
+        EditListEntry {
+            segment_duration: 1000,
+            media_time,
+            media_rate_integer: 1,
+            media_rate_fraction: 0,
+        }
+    }
+
+    #[test]
+    fn the_edit_list_outranks_the_codec_and_the_itunes_item() {
+        let timescale = Timescale::try_new(48_000).expect("a timescale");
+        let itunsmpb =
+            isobmff::metadata::Itunsmpb::parse_text(" 00000000 00000100 00000020 0000000000001000")
+                .expect("parses");
+        let (trim, finding) = gapless_padding(&opus(100), &[edit(312)], timescale, Some(&itunsmpb));
+        assert_eq!(trim, GaplessTrim::new(312, None), "the edit list wins");
+        let finding = finding.expect("the codec disagrees");
+        assert_eq!(finding.used, GaplessSignal::EditList);
+        assert_eq!(finding.ignored, GaplessSignal::CodecPreSkip);
+    }
+
+    #[test]
+    fn the_codec_outranks_the_itunes_item_without_an_edit_list() {
+        let timescale = Timescale::try_new(48_000).expect("a timescale");
+        let itunsmpb =
+            isobmff::metadata::Itunsmpb::parse_text(" 00000000 00000100 00000020 0000000000001000")
+                .expect("parses");
+        let (trim, finding) = gapless_padding(&opus(100), &[], timescale, Some(&itunsmpb));
+        assert_eq!(trim, GaplessTrim::new(100, None));
+        let finding = finding.expect("iTunSMPB disagrees");
+        assert_eq!(finding.used, GaplessSignal::CodecPreSkip);
+        assert_eq!(finding.ignored, GaplessSignal::ITunesSmpb);
+    }
+
+    #[test]
+    fn the_itunes_item_is_the_fallback() {
+        let timescale = Timescale::try_new(48_000).expect("a timescale");
+        let itunsmpb =
+            isobmff::metadata::Itunsmpb::parse_text(" 00000000 00000100 00000020 0000000000001000")
+                .expect("parses");
+        let (trim, finding) = gapless_padding(&opus(0), &[], timescale, Some(&itunsmpb));
+        assert_eq!(trim, GaplessTrim::new(256, Some(32)));
+        assert!(finding.is_none());
     }
 }

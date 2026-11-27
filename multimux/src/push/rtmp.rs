@@ -180,6 +180,18 @@ impl crate::push::MediaMuxer for RtmpPushMux {
             .map_err(|e| SendMediaError::Mux(MuxError::Rtmp(e)))?;
         Ok(drain(&mut self.stage))
     }
+
+    /// Rebase the muxer's one millisecond timeline at the break, exactly as
+    /// [`RtmpMuxStage`] does for its own stage input.
+    fn discontinuity(&mut self) -> Result<Vec<bytes::Bytes>, SendMediaError> {
+        self.stage
+            .feed(
+                MuxInput::Discontinuity { track: None },
+                StageTimestamp::ZERO,
+            )
+            .map_err(|e| SendMediaError::Mux(MuxError::Rtmp(e)))?;
+        Ok(drain(&mut self.stage))
+    }
 }
 
 #[async_trait::async_trait]

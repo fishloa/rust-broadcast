@@ -12,12 +12,16 @@ use media_doctor::{Report, check_container_codec};
 const EXTS: &[&str] = &["mp4", "m4a", "m4v", "mov"];
 
 const TABLE: &[(&str, &[&str])] = &[
+    ("mp4/aac-prol.mp4", &[]),
     ("mp4/aac-sgpd.mp4", &[]),
     ("mp4/av1.mp4", &[]),
     ("mp4/cenc-av-enca.mp4", &[]),
     ("mp4/boxes/chnl-ipcm.mp4", &[]),
     ("mp4/boxes/cprt.mp4", &[]),
     ("mp4/boxes/hint-hmhd.mp4", &[]),
+    ("mp4/boxes/hint-latm.mp4", &[]),
+    ("mp4/boxes/hint-mtu-copy.mp4", &[]),
+    ("mp4/boxes/hint-offsets.mp4", &[]),
     ("mp4/boxes/loudness.m4a", &[]),
     ("mp4/boxes/ssix-sidx.mp4", &[]),
     ("mp4/boxes/track-description.mp4", &[]),

@@ -364,3 +364,93 @@ fn trick_mode_dangling_reference_errors() {
         "got: {err:?}"
     );
 }
+
+// ── Issue #4154: a break becomes a Period, and the MPD still validates ─────
+
+/// A timeline break slices the log into periods: each closes with a duration,
+/// the next starts where it closed, and its `presentationTimeOffset` maps the
+/// continuing media clock onto the presentation timeline. The result must
+/// still validate against the ISO schema.
+#[test]
+fn a_multi_period_mpd_validates_and_closes_each_period() {
+    use transmux::Segmenter;
+    use transmux::mux_stage::MuxOutput;
+    use transmux::segment_log::SegmentSummaryLog;
+
+    let Some(schema) = test_fixtures::process::xsd::dash_mpd_schema("dc1_multi_period") else {
+        return;
+    };
+    let two = crate::discontinuity::forward();
+    let specs: Vec<_> = two.media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let mut segmenter = Segmenter::new(
+        specs.clone(),
+        timescale(1000),
+        core::time::Duration::from_secs(2),
+    )
+    .expect("segmenter");
+    let outputs = crate::discontinuity::drive_fixed(&mut segmenter, &two, None)
+        .expect("a forward break is expressible");
+    let mut log = SegmentSummaryLog::new();
+    for output in outputs {
+        if let MuxOutput::Segment(segment) = output {
+            log.push(&segment).expect("summary");
+        }
+    }
+    assert!(
+        log.period_boundaries().len() >= 2,
+        "the break recorded a per-track period boundary"
+    );
+    let xml = DashPackager::default()
+        .render(&specs, &log)
+        .expect("render the multi-period MPD");
+    validate(&schema, "dc1-multi-period.mpd", &xml);
+
+    let mpd = broadcast_dash::Mpd::parse(xml.as_bytes()).expect("the MPD parses");
+    assert!(
+        mpd.periods.len() >= 2,
+        "the break opens a new Period:\n{xml}"
+    );
+    let mut expected = std::time::Duration::ZERO;
+    let mut previous_offset = None;
+    let mut previous_number = None;
+    for (index, period) in mpd.periods.iter().enumerate() {
+        assert_eq!(
+            period.start,
+            Some(expected),
+            "period {index} starts where the last closed"
+        );
+        let duration = period
+            .duration
+            .unwrap_or_else(|| panic!("period {index} states a duration"));
+        expected += duration;
+        let template = period
+            .adaptation_sets
+            .iter()
+            .flat_map(|set| &set.representations)
+            .find_map(|representation| representation.segment.template.as_ref())
+            .expect("a Representation template");
+        let offset = template
+            .multi
+            .base
+            .presentation_time_offset
+            .unwrap_or_else(|| panic!("period {index} states a presentationTimeOffset"));
+        let number = template
+            .multi
+            .start_number
+            .unwrap_or_else(|| panic!("period {index} states a startNumber"));
+        if index == 0 {
+            assert_eq!(offset, 0, "the first Period starts at media zero");
+        } else {
+            assert!(
+                offset > previous_offset.expect("a prior offset"),
+                "period {index}'s offset advances: {offset}"
+            );
+            assert!(
+                number > previous_number.expect("a prior startNumber"),
+                "period {index}'s startNumber advances"
+            );
+        }
+        previous_offset = Some(offset);
+        previous_number = Some(number);
+    }
+}

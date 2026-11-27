@@ -9,6 +9,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 
 ### Added
 
+- `mpeg_audio::{LameTag, parse_lame_tag}`: the LAME/Xing `Info` tag in the
+  first MPEG Layer III frame, with the 9-byte encoder version string and, for a
+  LAME-family encoder (`LAME`/`Lavf`/`Lavc`), the 12-bit encoder delay and
+  padding. The layout is a de-facto format, cited in the module with its
+  public document and the LAME/FFmpeg readers that define the offsets.
+  `MpegAudioFrameHeader::xing_offset` locates the magic for a frame's version
+  and channel mode.
 - The MPEG-2 video sequence layer (`mpeg2` feature), moved from `transmux`:
   `mpeg2::{Mpeg2SeqHeader, SEQUENCE_HEADER_CODE}` (private fields with
   `width()`/`height()` accessors) and `h262::{SequenceHeaderGeometry,

@@ -112,8 +112,8 @@ fn subtitle_minf_keeps_media_header_before_stbl() {
     };
     assert!(minf.stbl.is_some(), "subtitle track has an stbl");
     assert!(
-        minf.opaque.iter().any(|o| &o.box_type == b"sthd"),
-        "sthd is preserved as an opaque minf child"
+        minf.sthd.is_some(),
+        "sthd is typed as the subtitle media header"
     );
 
     let bytes = moov.try_to_bytes().unwrap();

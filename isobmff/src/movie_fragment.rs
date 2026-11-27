@@ -14,14 +14,15 @@
 use crate::TrackId;
 use crate::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, FULLBOX_FLAGS_MASK, LARGESIZE_SIZE,
+    box_len, write_full_box_header,
 };
 use crate::error::{Error, Result};
 use crate::init_segment::TrackExtendsBox;
 use alloc::vec::Vec;
-use broadcast_core::Serialize;
 use broadcast_core::error::BufferTooShort;
 use broadcast_core::len::{need_in, need_out};
-use broadcast_core::wire::{be_u32, be_u64, read_u32};
+use broadcast_core::wire::{be_u32, be_u64, read_u32, u24_at};
+use broadcast_core::{Parse, Serialize};
 
 const TRUN_SAMPLE_FIELD_COUNT: usize = 4;
 const CENC_AUX_INFO_TYPE_COUNT: usize = 4;
@@ -961,6 +962,8 @@ pub enum TrafChild {
     /// The `trun` at its wire position; the value is the index into
     /// [`TrackFragmentBox::trun`].
     Trun(usize),
+    /// The `rsot` at its wire position (§8.8.18).
+    Rsot,
     /// Any other child, verbatim.
     Opaque(OpaqueChild),
 }
@@ -988,6 +991,9 @@ pub struct TrackFragmentBox {
     pub tfhd: TrackFragmentHeaderBox,
     pub tfdt: Option<TrackFragmentBaseMediaDecodeTimeBox>,
     pub trun: Vec<TrackFragmentRunBox>,
+    /// The redundant-sample original timing box (`rsot`, §8.8.18), when the
+    /// fragment states one.
+    pub rsot: Option<RedundantSampleOriginalTimingBox>,
     /// Every child of this `traf` in the order it appeared on the wire.
     ///
     /// A `traf` parsed from bytes therefore round-trips byte-for-byte, and any
@@ -1011,6 +1017,7 @@ impl TrackFragmentBox {
             tfhd,
             tfdt,
             trun,
+            rsot: None,
             order: Vec::new(),
         }
     }
@@ -1035,6 +1042,7 @@ impl TrackFragmentBox {
         let mut tfhd: Option<TrackFragmentHeaderBox> = None;
         let mut tfdt: Option<TrackFragmentBaseMediaDecodeTimeBox> = None;
         let mut trun: Vec<TrackFragmentRunBox> = Vec::new();
+        let mut rsot = None;
         let mut order: Vec<TrafChild> = Vec::new();
         // The crate's one container-child walker (audit r05-O3 / #1141): this
         // loop used to be a private copy of it.
@@ -1060,6 +1068,11 @@ impl TrackFragmentBox {
                 }
                 order.push(TrafChild::Trun(trun.len()));
                 trun.push(parsed);
+            } else if child.header.box_type.is(b"rsot") {
+                rsot = Some(RedundantSampleOriginalTimingBox::parse_body(
+                    child.payload(),
+                )?);
+                order.push(TrafChild::Rsot);
             } else {
                 // `payload` is everything after `size`+`type` (+ `largesize`),
                 // so a `uuid` child (Smooth `tfxd`, a PlayReady `tfrf`) keeps
@@ -1083,6 +1096,7 @@ impl TrackFragmentBox {
             tfhd,
             tfdt,
             trun,
+            rsot,
             order,
         })
     }
@@ -1102,6 +1116,9 @@ impl TrackFragmentBox {
         for i in 0..self.trun.len() {
             out.push(TrafChild::Trun(i));
         }
+        if self.rsot.is_some() {
+            out.push(TrafChild::Rsot);
+        }
         out
     }
 }
@@ -1115,6 +1132,7 @@ impl Serialize for TrackFragmentBox {
                 TrafChild::Tfhd => self.tfhd.serialized_len(),
                 TrafChild::Tfdt => self.tfdt.as_ref().map_or(0, Serialize::serialized_len),
                 TrafChild::Trun(i) => self.trun.get(i).map_or(0, Serialize::serialized_len),
+                TrafChild::Rsot => self.rsot.as_ref().map_or(0, Serialize::serialized_len),
                 TrafChild::Opaque(ref o) => o.serialized_len(),
             };
         }
@@ -1137,6 +1155,11 @@ impl Serialize for TrackFragmentBox {
                 }
                 TrafChild::Trun(i) => {
                     if let Some(r) = self.trun.get(*i) {
+                        c += r.serialize_into(&mut buf[c..])?;
+                    }
+                }
+                TrafChild::Rsot => {
+                    if let Some(r) = &self.rsot {
                         c += r.serialize_into(&mut buf[c..])?;
                     }
                 }
@@ -1386,6 +1409,158 @@ pub fn apply_trex_defaults(moof: &mut MovieFragmentBox, trex: &[TrackExtendsBox]
             tfhd.default_sample_size
                 .get_or_insert(defaults.default_sample_size);
         }
+    }
+}
+
+/// Four-CC of the Redundant Sample Original Timing Box
+/// (`rsot`, ISO/IEC 14496-12:2026 §8.8.18).
+pub const RSOT: [u8; BOX_TYPE_SIZE] = *b"rsot";
+/// `rsot` flag: the last sample's original duration is signalled.
+pub const RSOT_ORIGINAL_DURATION: u32 = 0x000001;
+/// `rsot` flag: the first sample's elapsed duration is signalled.
+pub const RSOT_ELAPSED_DURATION: u32 = 0x000002;
+const RSOT_KNOWN_FLAGS: u32 = RSOT_ORIGINAL_DURATION | RSOT_ELAPSED_DURATION;
+
+/// The Redundant Sample Original Timing Box (`rsot`, §8.8.18).
+///
+/// The version is fixed at 0 and only the two defined flags may be set;
+/// anything else is a typed error rather than a silently dropped field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct RedundantSampleOriginalTimingBox {
+    flags: u32,
+    original_duration: Option<u32>,
+    elapsed_duration: Option<u32>,
+}
+
+impl RedundantSampleOriginalTimingBox {
+    /// Build one with no durations (no flags set).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            flags: 0,
+            original_duration: None,
+            elapsed_duration: None,
+        }
+    }
+
+    /// The FullBox flags.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// The last sample's original duration, when signalled.
+    #[must_use]
+    pub const fn original_duration(&self) -> Option<u32> {
+        self.original_duration
+    }
+
+    /// The first sample's elapsed duration, when signalled.
+    #[must_use]
+    pub const fn elapsed_duration(&self) -> Option<u32> {
+        self.elapsed_duration
+    }
+
+    /// Sign the last sample's original duration.
+    #[must_use]
+    pub const fn with_original_duration(mut self, duration: u32) -> Self {
+        self.flags |= RSOT_ORIGINAL_DURATION;
+        self.original_duration = Some(duration);
+        self
+    }
+
+    /// Sign the first sample's elapsed duration.
+    #[must_use]
+    pub const fn with_elapsed_duration(mut self, duration: u32) -> Self {
+        self.flags |= RSOT_ELAPSED_DURATION;
+        self.elapsed_duration = Some(duration);
+        self
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(body, FULLBOX_EXTRA_SIZE, "rsot")?;
+        if body[0] != 0 {
+            return Err(Error::InvalidInput("rsot version is 0"));
+        }
+        let flags = u24_at(body, 1) & FULLBOX_FLAGS_MASK;
+        if flags & !RSOT_KNOWN_FLAGS != 0 {
+            return Err(Error::InvalidInput("rsot reserved flag bits are set"));
+        }
+        let mut cursor = FULLBOX_EXTRA_SIZE;
+        let original_duration = if flags & RSOT_ORIGINAL_DURATION != 0 {
+            let value = be_u32(body, cursor, "rsot original_duration")?;
+            cursor += core::mem::size_of::<u32>();
+            Some(value)
+        } else {
+            None
+        };
+        let elapsed_duration = if flags & RSOT_ELAPSED_DURATION != 0 {
+            Some(be_u32(body, cursor, "rsot elapsed_duration")?)
+        } else {
+            None
+        };
+        Ok(Self {
+            flags,
+            original_duration,
+            elapsed_duration,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for RedundantSampleOriginalTimingBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let item = crate::box_types::parse_box(bytes)?.0;
+        if item.four_cc() != RSOT {
+            return Err(Error::InvalidInput("expected rsot"));
+        }
+        Self::parse_body(item.payload())
+    }
+}
+
+impl Serialize for RedundantSampleOriginalTimingBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        let mut len = BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE;
+        if self.original_duration.is_some() {
+            len += core::mem::size_of::<u32>();
+        }
+        if self.elapsed_duration.is_some() {
+            len += core::mem::size_of::<u32>();
+        }
+        box_len(len)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let mut flags = self.flags;
+        if self.original_duration.is_some() {
+            flags |= RSOT_ORIGINAL_DURATION;
+        }
+        if self.elapsed_duration.is_some() {
+            flags |= RSOT_ELAPSED_DURATION;
+        }
+        if flags & !RSOT_KNOWN_FLAGS != 0 {
+            return Err(Error::InvalidInput("rsot reserved flag bits are set"));
+        }
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor = write_full_box_header(buf, &RSOT, need, 0, flags, false)?;
+        if let Some(duration) = self.original_duration {
+            buf[cursor..cursor + core::mem::size_of::<u32>()]
+                .copy_from_slice(&duration.to_be_bytes());
+            cursor += core::mem::size_of::<u32>();
+        }
+        if let Some(duration) = self.elapsed_duration {
+            buf[cursor..cursor + core::mem::size_of::<u32>()]
+                .copy_from_slice(&duration.to_be_bytes());
+            cursor += core::mem::size_of::<u32>();
+        }
+        Ok(cursor)
     }
 }
 

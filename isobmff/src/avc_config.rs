@@ -42,7 +42,7 @@
 use crate::error::{Error, Result};
 use crate::nalu_types::{AvcPps, AvcSps, AvcSpsExt, VALID_LENGTH_SIZES};
 use alloc::vec::Vec;
-use broadcast_core::error::InvalidValue;
+use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::need_out;
 use broadcast_core::wire::{read_u8, read_u16, take};
 use broadcast_core::{Parse, Serialize};
@@ -924,5 +924,289 @@ mod tests {
             matches!(err, Error::BufferTooShort(_)),
             "expected BufferTooShort for a truncated length, got {err:?}"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TranscodingInfoBox — tran (ISO/IEC 14496-15:2010 C.2.10)
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the SVC lightweight transcoding box (`tran`).
+pub const TRAN: [u8; 4] = *b"tran";
+/// `tran` fixed part: `reserved(4)` + `conversion_idc(2)` + two flags.
+const TRAN_FIXED_LEN: usize = 1;
+/// `tran` optional entropy-coding part: `profile_level_idc(24)` +
+/// `max_bitrate(32)` + `avg_bitrate(32)`.
+const TRAN_ENTROPY_LEN: usize = 3 + 2 * core::mem::size_of::<u32>();
+/// `conversion_idc` shift inside the first byte.
+const TRAN_CONVERSION_SHIFT: u8 = 2;
+/// `conversion_idc` mask.
+const TRAN_CONVERSION_MASK: u8 = 0b11;
+/// `cavlc_info_present_flag` mask.
+const TRAN_CAVLC_FLAG: u8 = 0b10;
+/// `cabac_info_present_flag` mask.
+const TRAN_CABAC_FLAG: u8 = 0b01;
+/// Reserved-bit mask inside the first byte.
+const TRAN_RESERVED_MASK: u8 = 0b1111_0000;
+/// Reserved-bit shift inside the first byte.
+const TRAN_RESERVED_SHIFT: u8 = 4;
+/// Offset of `max_bitrate` inside one entropy-coding part.
+const TRAN_MAX_BITRATE_OFFSET: usize = 3;
+/// Offset of `avg_bitrate` inside one entropy-coding part.
+const TRAN_AVG_BITRATE_OFFSET: usize = TRAN_MAX_BITRATE_OFFSET + core::mem::size_of::<u32>();
+
+/// One entropy coder's transcoding information
+/// (ISO/IEC 14496-15:2010 C.2.10.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct AvcTranscodingInfo {
+    profile_level_idc: u32,
+    max_bitrate: u32,
+    avg_bitrate: u32,
+}
+
+impl AvcTranscodingInfo {
+    /// Build one from the three fields the clause defines.
+    #[must_use]
+    pub const fn new(profile_level_idc: u32, max_bitrate: u32, avg_bitrate: u32) -> Self {
+        Self {
+            profile_level_idc,
+            max_bitrate,
+            avg_bitrate,
+        }
+    }
+
+    /// The 24-bit `profile_level_idc`.
+    #[must_use]
+    pub const fn profile_level_idc(&self) -> u32 {
+        self.profile_level_idc
+    }
+
+    /// The maximum bitrate in units of 1000 bits/second.
+    #[must_use]
+    pub const fn max_bitrate(&self) -> u32 {
+        self.max_bitrate
+    }
+
+    /// The average bitrate in units of 1000 bits/second.
+    #[must_use]
+    pub const fn avg_bitrate(&self) -> u32 {
+        self.avg_bitrate
+    }
+
+    fn parse(bytes: &[u8], what: &'static str) -> Result<Self> {
+        if bytes.len() < TRAN_ENTROPY_LEN {
+            return Err(Error::BufferTooShort(BufferTooShort {
+                need: TRAN_ENTROPY_LEN,
+                have: bytes.len(),
+                what,
+            }));
+        }
+        Ok(Self {
+            profile_level_idc: u32::from_be_bytes([
+                0,
+                bytes[0],
+                bytes[1],
+                bytes[core::mem::size_of::<u16>()],
+            ]),
+            max_bitrate: u32::from_be_bytes(
+                bytes[TRAN_MAX_BITRATE_OFFSET
+                    ..TRAN_MAX_BITRATE_OFFSET + core::mem::size_of::<u32>()]
+                    .try_into()
+                    .map_err(|_| Error::InvalidInput("tran max_bitrate"))?,
+            ),
+            avg_bitrate: u32::from_be_bytes(
+                bytes[TRAN_AVG_BITRATE_OFFSET
+                    ..TRAN_AVG_BITRATE_OFFSET + core::mem::size_of::<u32>()]
+                    .try_into()
+                    .map_err(|_| Error::InvalidInput("tran avg_bitrate"))?,
+            ),
+        })
+    }
+
+    fn encode(&self, buf: &mut [u8]) -> Result<usize> {
+        need_out(buf, TRAN_ENTROPY_LEN)?;
+        let idc = self.profile_level_idc.to_be_bytes();
+        buf[..TRAN_MAX_BITRATE_OFFSET].copy_from_slice(&idc[1..]);
+        buf[TRAN_MAX_BITRATE_OFFSET..TRAN_MAX_BITRATE_OFFSET + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.max_bitrate.to_be_bytes());
+        buf[TRAN_AVG_BITRATE_OFFSET..TRAN_AVG_BITRATE_OFFSET + core::mem::size_of::<u32>()]
+            .copy_from_slice(&self.avg_bitrate.to_be_bytes());
+        Ok(TRAN_ENTROPY_LEN)
+    }
+}
+
+/// SVC lightweight transcoding box (`tran`) — ISO/IEC 14496-15:2010 C.2.10.
+///
+/// Carried in an SVC scalable group entry. It states the AVC profile, level
+/// and bitrates a tier can be transcoded to, for either entropy coder or both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct TranscodingInfoBox {
+    reserved: u8,
+    conversion_idc: u8,
+    cavlc: Option<AvcTranscodingInfo>,
+    cabac: Option<AvcTranscodingInfo>,
+    trailing: Vec<u8>,
+}
+
+impl TranscodingInfoBox {
+    /// Build one with no entropy-coder information.
+    #[must_use]
+    pub fn new(conversion_idc: u8) -> Self {
+        Self {
+            reserved: 0,
+            conversion_idc,
+            cavlc: None,
+            cabac: None,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// Add the CAVLC transcoding information.
+    #[must_use]
+    pub fn with_cavlc(mut self, info: AvcTranscodingInfo) -> Self {
+        self.cavlc = Some(info);
+        self
+    }
+
+    /// Add the CABAC transcoding information.
+    #[must_use]
+    pub fn with_cabac(mut self, info: AvcTranscodingInfo) -> Self {
+        self.cabac = Some(info);
+        self
+    }
+
+    /// The four reserved bits, carried verbatim.
+    #[must_use]
+    pub const fn reserved(&self) -> u8 {
+        self.reserved
+    }
+
+    /// The `conversion_idc` (0, 1 or 2).
+    #[must_use]
+    pub const fn conversion_idc(&self) -> u8 {
+        self.conversion_idc
+    }
+
+    /// The CAVLC transcoding information, when signalled.
+    #[must_use]
+    pub const fn cavlc(&self) -> Option<AvcTranscodingInfo> {
+        self.cavlc
+    }
+
+    /// The CABAC transcoding information, when signalled.
+    #[must_use]
+    pub const fn cabac(&self) -> Option<AvcTranscodingInfo> {
+        self.cabac
+    }
+
+    /// Bytes after the signalled parts, carried verbatim.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        if body.len() < TRAN_FIXED_LEN {
+            return Err(Error::BufferTooShort(BufferTooShort {
+                need: TRAN_FIXED_LEN,
+                have: body.len(),
+                what: "tran body",
+            }));
+        }
+        let first = body[0];
+        let reserved = (first >> TRAN_RESERVED_SHIFT) & (TRAN_RESERVED_MASK >> TRAN_RESERVED_SHIFT);
+        let conversion_idc = (first >> TRAN_CONVERSION_SHIFT) & TRAN_CONVERSION_MASK;
+        let mut offset = TRAN_FIXED_LEN;
+        let cavlc = if first & TRAN_CAVLC_FLAG != 0 {
+            let info = AvcTranscodingInfo::parse(
+                body.get(offset..).unwrap_or_default(),
+                "tran cavlc_info",
+            )?;
+            offset += TRAN_ENTROPY_LEN;
+            Some(info)
+        } else {
+            None
+        };
+        let cabac = if first & TRAN_CABAC_FLAG != 0 {
+            let info = AvcTranscodingInfo::parse(
+                body.get(offset..).unwrap_or_default(),
+                "tran cabac_info",
+            )?;
+            offset += TRAN_ENTROPY_LEN;
+            Some(info)
+        } else {
+            None
+        };
+        Ok(Self {
+            reserved,
+            conversion_idc,
+            cavlc,
+            cabac,
+            trailing: body.get(offset..).unwrap_or_default().to_vec(),
+        })
+    }
+}
+
+impl<'a> Parse<'a> for TranscodingInfoBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        if bytes.len() < crate::box_types::BOX_HEADER_MIN_SIZE {
+            return Err(Error::BufferTooShort(BufferTooShort {
+                need: crate::box_types::BOX_HEADER_MIN_SIZE,
+                have: bytes.len(),
+                what: "tran box",
+            }));
+        }
+        if bytes[4..crate::box_types::BOX_HEADER_MIN_SIZE] != TRAN {
+            return Err(Error::InvalidInput("expected tran"));
+        }
+        Self::parse_body(
+            bytes
+                .get(crate::box_types::BOX_HEADER_MIN_SIZE..)
+                .unwrap_or_default(),
+        )
+    }
+}
+
+impl Serialize for TranscodingInfoBox {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        let mut len = crate::box_types::BOX_HEADER_MIN_SIZE + TRAN_FIXED_LEN;
+        if self.cavlc.is_some() {
+            len += TRAN_ENTROPY_LEN;
+        }
+        if self.cabac.is_some() {
+            len += TRAN_ENTROPY_LEN;
+        }
+        crate::box_types::box_len(len + self.trailing.len())
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_box_header(buf, &TRAN, need)?;
+        let mut first = (self.reserved << TRAN_RESERVED_SHIFT) & TRAN_RESERVED_MASK;
+        first |= (self.conversion_idc & TRAN_CONVERSION_MASK) << TRAN_CONVERSION_SHIFT;
+        if self.cavlc.is_some() {
+            first |= TRAN_CAVLC_FLAG;
+        }
+        if self.cabac.is_some() {
+            first |= TRAN_CABAC_FLAG;
+        }
+        buf[c] = first;
+        c += TRAN_FIXED_LEN;
+        if let Some(info) = &self.cavlc {
+            c += info.encode(&mut buf[c..])?;
+        }
+        if let Some(info) = &self.cabac {
+            c += info.encode(&mut buf[c..])?;
+        }
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        c += self.trailing.len();
+        Ok(c)
     }
 }
