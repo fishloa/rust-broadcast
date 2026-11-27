@@ -1,10 +1,11 @@
 //! AFD and bar-data decoding from T.35 / GA94 payloads (ETSI TS 101 154
 //! Annex B, Tables B.1-B.7): every accept and reject branch of
 //! `afd_from_t35_payload`, `bar_data_from_t35_payload` and
-//! `bar_data_from_ga94_payload`.
+//! `bar_data_from_ga94_payload`, and the `PictureUserData` accessors.
 
+use broadcast_bitstream::PictureUserData;
 use broadcast_bitstream::facts::{ActiveFormatDescription, BarData};
-use transmux::user_data::{
+use broadcast_bitstream::user_data::{
     AfdSignal, afd_from_t35_payload, bar_data_from_ga94_payload, bar_data_from_t35_payload,
 };
 
@@ -170,4 +171,15 @@ fn each_bar_flag_reads_only_its_own_value() {
     assert_eq!(case(0x20), Some(BarData::new(None, None, Some(1), None)));
     assert_eq!(case(0x10), Some(BarData::new(None, None, None, Some(1))));
     assert_eq!(case(0x00), Some(empty_bar_data()));
+}
+
+#[test]
+fn picture_user_data_exposes_what_it_carries() {
+    let bar = BarData::new(Some(10), None, None, None);
+    let signal = AfdSignal::Format(ActiveFormatDescription::SameAsCodedFrame);
+    let data = PictureUserData::new(Some(signal.clone()), Some(bar.clone()));
+    assert_eq!(data.afd(), Some(&signal));
+    assert_eq!(data.bar_data(), Some(&bar));
+    assert_eq!(PictureUserData::default().afd(), None);
+    assert_eq!(PictureUserData::default().bar_data(), None);
 }

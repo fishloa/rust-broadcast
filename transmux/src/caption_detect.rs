@@ -220,7 +220,8 @@ fn mpeg2_cc_data(au: &[u8]) -> Vec<u8> {
             continue;
         }
         let (identifier, body) = payload.split_at(MPEG2_USER_IDENTIFIER_LEN);
-        let is_atsc = identifier == crate::user_data::GA94_USER_IDENTIFIER.to_be_bytes();
+        let is_atsc =
+            identifier == broadcast_bitstream::user_data::GA94_USER_IDENTIFIER.to_be_bytes();
         if let Some((&type_code, cc)) = body.split_first()
             && is_atsc
             && type_code == MPEG2_ATSC_CC_USER_DATA_TYPE_CODE

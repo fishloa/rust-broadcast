@@ -52,7 +52,6 @@ use crate::ir::{
 };
 use broadcast_bitstream::facts::{ActiveFormatDescription, BarData};
 
-use crate::user_data;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -60,6 +59,7 @@ use broadcast_bitstream::annexb::iter_annexb_nals;
 use broadcast_bitstream::bitreader::BitReader;
 use broadcast_bitstream::nal::{HEVC_NAL_HEADER_LEN, NAL_TYPE_MASK, NalCodec};
 use broadcast_bitstream::sps::decode_avc_slice_sps;
+use broadcast_bitstream::user_data;
 use isobmff::nalu_types::HEVC_SPS_NUT;
 
 /// `nal_unit_type` of a non-IDR coded slice (H.264 Table 7-1).
@@ -127,7 +127,7 @@ pub(crate) struct Activation {
     /// The access unit is an H.264 IDR, or an H.265 IDR / BLA.
     pub(crate) random_access: bool,
     /// AFD signal present in this AU.
-    pub(crate) afd: Option<crate::user_data::AfdSignal>,
+    pub(crate) afd: Option<broadcast_bitstream::AfdSignal>,
     /// Parsed bar data.
     pub(crate) bar_data: Option<BarData>,
 }
@@ -483,8 +483,8 @@ impl SpsTracker {
         let mut new_active = previous_active.clone();
         if let Some(signal) = &activation.afd {
             let afd_val = match signal {
-                user_data::AfdSignal::NoFormat => None,
-                user_data::AfdSignal::Format(a) => Some(*a),
+                broadcast_bitstream::AfdSignal::Format(a) => Some(*a),
+                _ => None,
             };
             new_active = Some(ActiveFormat {
                 afd: afd_val,

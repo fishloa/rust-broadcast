@@ -391,14 +391,15 @@ pub(crate) fn afd_from_mpeg2_user_data(
     payload: &[u8],
 ) -> Option<Option<broadcast_bitstream::facts::ActiveFormatDescription>> {
     let first = *payload.first()?;
-    let active_format_flag = first & crate::user_data::AFD_ACTIVE_FORMAT_FLAG_BIT != 0;
+    let active_format_flag =
+        first & broadcast_bitstream::user_data::AFD_ACTIVE_FORMAT_FLAG_BIT != 0;
     if !active_format_flag {
         return Some(None);
     }
     let second = *payload.get(1)?;
     Some(Some(
         broadcast_bitstream::facts::ActiveFormatDescription::from_code(
-            second & crate::user_data::AFD_CODE_MASK,
+            second & broadcast_bitstream::user_data::AFD_CODE_MASK,
         ),
     ))
 }

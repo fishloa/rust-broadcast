@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Breaking
 
+- AFD and bar data moved to `broadcast-bitstream`: `transmux::user_data` is
+  deleted. Import `AfdSignal`, `PictureUserData`, the T.35 / GA94 constants
+  and the `afd_from_t35_payload` / `bar_data_from_t35_payload` /
+  `bar_data_from_ga94_payload` decoders from `broadcast_bitstream::user_data`
+  (`AfdSignal` and `PictureUserData` are also at the crate root).
+  `PictureUserData` keeps private fields with `afd()` / `bar_data()`
+  accessors and a `new` constructor. `UserDataCarriage`, `ActiveFormat` and
+  the display trackers stay.
 - The MPEG audio frame-header parsers moved to `broadcast-bitstream`:
   `transmux::mpeg_legacy::{MpegAudioLayer, MpegAudioFrameHeader}` and the
   `MPEG_AUDIO_SYNCWORD` / `MpegAudioLayer` root re-exports are deleted. Import

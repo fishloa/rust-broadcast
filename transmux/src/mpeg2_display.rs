@@ -31,10 +31,10 @@ use crate::h262::{
 use crate::ir::{ActiveFormat, DisplayChangeSet, DisplayGeometry, DisplayInfo, UserDataCarriage};
 use broadcast_bitstream::facts::{ActiveFormatDescription, BarData};
 
-use crate::user_data::{
+use alloc::sync::Arc;
+use broadcast_bitstream::user_data::{
     BAR_DATA_USER_DATA_TYPE_CODE, DTG1_USER_IDENTIFIER, GA94_USER_IDENTIFIER, USER_IDENTIFIER_LEN,
 };
-use alloc::sync::Arc;
 
 /// The outcome of [`Mpeg2DisplayTracker::observe`] for one access unit.
 #[non_exhaustive]
@@ -228,7 +228,7 @@ fn bar_data_from_dvb1(body: &[u8]) -> Option<Option<BarData>> {
     if type_code != BAR_DATA_USER_DATA_TYPE_CODE {
         return None;
     }
-    crate::user_data::bar_data_from_ga94_payload(body).map(Some)
+    broadcast_bitstream::user_data::bar_data_from_ga94_payload(body).map(Some)
 }
 
 #[cfg(test)]

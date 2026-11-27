@@ -9,6 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 
 ### Added
 
+- `user_data` (no codec feature), moved from `transmux`: `AfdSignal`,
+  `PictureUserData` (private fields with accessors and a constructor), the
+  T.35 / GA94 identifiers and field constants, and the one AFD / bar-data
+  decoder each (`afd_from_t35_payload`, `bar_data_from_t35_payload`,
+  `bar_data_from_ga94_payload`). The H.262, AVC and HEVC display paths share
+  them.
 - The MPEG-1/2/2.5 audio layer (`mpeg_audio`, feature `mpeg-audio`), moved
   from `transmux`'s `mpeg_legacy`: `MpegAudioLayer`, `MpegAudioFrameHeader`
   (private fields with accessors) and `MpegAudioFrameHeader::parse`, plus

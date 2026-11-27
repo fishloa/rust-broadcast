@@ -732,4 +732,34 @@ pub const TABLE: &[Banned] = &[
         reason: "the MPEG audio syncword lives in broadcast_bitstream::mpeg_audio",
         issue: "broadcast-bitstream bs5",
     },
+    Banned {
+        name: "transmux::user_data",
+        reason: "AFD and bar data live in broadcast_bitstream::user_data",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::user_data::AfdSignal",
+        reason: "the AFD signal lives in broadcast_bitstream::user_data",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::user_data::PictureUserData",
+        reason: "picture user data lives in broadcast_bitstream::user_data",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::user_data::afd_from_t35_payload",
+        reason: "the AFD decode lives in broadcast_bitstream::user_data",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::user_data::bar_data_from_t35_payload",
+        reason: "the bar-data decode lives in broadcast_bitstream::user_data",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::user_data::bar_data_from_ga94_payload",
+        reason: "the bar-data decode lives in broadcast_bitstream::user_data",
+        issue: "broadcast-bitstream bs5",
+    },
 ];

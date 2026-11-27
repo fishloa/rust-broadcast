@@ -50,6 +50,7 @@ pub mod rfc6381;
 #[cfg(feature = "h264")]
 pub mod slice_header;
 pub mod sps;
+pub mod user_data;
 
 #[cfg(feature = "aac")]
 pub use aac_asc::{
@@ -126,3 +127,4 @@ pub use sps::{
 };
 #[cfg(feature = "vvc")]
 pub use sps::{VvcSpsInfo, decode_vvc_sps};
+pub use user_data::{AfdSignal, PictureUserData, afd_from_t35_payload, bar_data_from_t35_payload};

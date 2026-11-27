@@ -310,7 +310,6 @@ mod ts_mux_streaming;
 mod ts_psi;
 mod ts_sync_loss_degraded;
 mod ts_to_cmaf;
-mod user_data_t35;
 mod uuid_child_roundtrip;
 mod validate;
 #[cfg(feature = "matroska")]

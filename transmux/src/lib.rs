@@ -255,7 +255,6 @@ pub mod ts_demux;
 pub mod ts_hls;
 pub mod ts_mux;
 pub(crate) mod units;
-pub mod user_data;
 pub mod validate;
 
 pub use broadcast_common::klv::KlvItem;
