@@ -11,7 +11,7 @@
 use broadcast_common::stage::{Stage, Timestamp};
 use test_harness::collect::{Collected, CollectedTrack};
 use transmux::ir::SampleTiming;
-use transmux::mux_stage::{MuxInput, MuxOutput};
+use transmux::mux_stage::MuxInput;
 use transmux::{Sample, TrackId};
 
 /// The real capture every two-source input is built from.
@@ -116,21 +116,48 @@ pub fn backwards() -> TwoSource {
 /// Feed a two-source input to `stage`: every track, then the first source in
 /// decode order, one [`MuxInput::Discontinuity`] naming `track` (`None` for
 /// all tracks), then the second source.
-pub fn drive<S>(
+pub fn drive<S, O>(
     stage: &mut S,
     input: &TwoSource,
     track: Option<TrackId>,
-) -> Result<Vec<MuxOutput>, S::Error>
+) -> Result<Vec<O>, S::Error>
 where
-    S: for<'a> Stage<In<'a> = MuxInput, Out = MuxOutput>,
+    S: for<'a> Stage<In<'a> = MuxInput, Out = O>,
+{
+    drive_inner(stage, input, track, true)
+}
+
+/// [`drive`] for a stage whose track set is fixed at construction (a
+/// segmenter): no `MuxInput::Track` announcements.
+pub fn drive_fixed<S, O>(
+    stage: &mut S,
+    input: &TwoSource,
+    track: Option<TrackId>,
+) -> Result<Vec<O>, S::Error>
+where
+    S: for<'a> Stage<In<'a> = MuxInput, Out = O>,
+{
+    drive_inner(stage, input, track, false)
+}
+
+fn drive_inner<S, O>(
+    stage: &mut S,
+    input: &TwoSource,
+    track: Option<TrackId>,
+    announce: bool,
+) -> Result<Vec<O>, S::Error>
+where
+    S: for<'a> Stage<In<'a> = MuxInput, Out = O>,
 {
     let mut out = Vec::new();
-    for track in &input.media.tracks {
-        stage.feed(
-            MuxInput::Track(Box::new(track.spec.clone())),
-            Timestamp::ZERO,
-        )?;
-        drain(stage, &mut out);
+    if announce {
+        for track in &input.media.tracks {
+            stage.feed(
+                MuxInput::Track(Box::new(track.spec.clone())),
+                Timestamp::ZERO,
+            )?;
+            drain(stage, &mut out);
+        }
     }
     drive_range(stage, &input.media, &input.split, true, &mut out)?;
     stage.feed(MuxInput::Discontinuity { track }, Timestamp::ZERO)?;
@@ -141,16 +168,29 @@ where
     Ok(out)
 }
 
+/// Feed a whole media to `stage` with no discontinuity at all.
+pub fn drive_media_fixed<S, O>(stage: &mut S, media: &Collected) -> Result<Vec<O>, S::Error>
+where
+    S: for<'a> Stage<In<'a> = MuxInput, Out = O>,
+{
+    let mut out = Vec::new();
+    let zeros = vec![0usize; media.tracks.len()];
+    drive_range(stage, media, &zeros, false, &mut out)?;
+    stage.finish()?;
+    drain(stage, &mut out);
+    Ok(out)
+}
+
 /// Feed one half of the joined media in decode-time order across tracks.
-fn drive_range<S>(
+fn drive_range<S, O>(
     stage: &mut S,
     media: &Collected,
     split: &[usize],
     first_half: bool,
-    out: &mut Vec<MuxOutput>,
+    out: &mut Vec<O>,
 ) -> Result<(), S::Error>
 where
-    S: for<'a> Stage<In<'a> = MuxInput, Out = MuxOutput>,
+    S: for<'a> Stage<In<'a> = MuxInput, Out = O>,
 {
     let bounds: Vec<(usize, usize)> = media
         .tracks
@@ -199,9 +239,9 @@ where
     }
 }
 
-fn drain<S>(stage: &mut S, out: &mut Vec<MuxOutput>)
+fn drain<S, O>(stage: &mut S, out: &mut Vec<O>)
 where
-    S: for<'a> Stage<In<'a> = MuxInput, Out = MuxOutput>,
+    S: for<'a> Stage<In<'a> = MuxInput, Out = O>,
 {
     while let Some(item) = stage.poll() {
         out.push(item);

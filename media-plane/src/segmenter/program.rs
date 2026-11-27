@@ -396,10 +396,10 @@ impl From<transmux::ll_hls::SegmentInfo> for ReadySegment {
             bytes: info.bytes,
             segment_seq: SegmentSeq::new(info.segment_seq),
             duration: info.duration,
-            // The fMP4 segmenter never itself flags a discontinuity (see
-            // `ProgramSegmenter::publish_ready`'s pre-#887 hardcoded `false` —
-            // preserved here, not a behaviour change).
-            discontinuous: false,
+            // `LlHlsSegmenter` marks the segment that opens a new timeline
+            // (its `MuxInput::Discontinuity` arm closes the open one first);
+            // `ProgramSegmenter` ORs this with its own reconnect mark.
+            discontinuous: info.discontinuous,
         }
     }
 }
