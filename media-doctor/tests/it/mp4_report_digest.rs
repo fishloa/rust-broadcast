@@ -12,6 +12,17 @@ use media_doctor::{Report, check_container_codec};
 const EXTS: &[&str] = &["mp4", "m4a", "m4v", "mov"];
 
 const TABLE: &[(&str, &[&str])] = &[
+    ("mp4/quicktime/qt-h263.mov", &[]),
+    ("mp4/quicktime/qt-mjpeg.mov", &[]),
+    ("mp4/quicktime/qt-pcm-s16le.mov", &[]),
+    ("mp4/quicktime/qt-pcm-s24le.mov", &[]),
+    ("mp4/quicktime/qt-prores-ap4h.mov", &[]),
+    ("mp4/quicktime/qt-prores-ap4x.mov", &[]),
+    ("mp4/quicktime/qt-prores-apch.mov", &[]),
+    ("mp4/quicktime/qt-prores-apcn.mov", &[]),
+    ("mp4/quicktime/qt-prores-apco.mov", &[]),
+    ("mp4/quicktime/qt-prores-apcs.mov", &[]),
+    ("mp4/quicktime/qt-svq1.mov", &[]),
     ("mp4/aac-prol.mp4", &[]),
     ("mp4/aac-sgpd.mp4", &[]),
     ("mp4/av1.mp4", &[]),

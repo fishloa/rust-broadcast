@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn parse_and_round_trip_a_video_entry() {
-        let mut body = vec![0u8; 78];
+        let mut body = Vec::from([0u8; 78]);
         body[24..26].copy_from_slice(&64u16.to_be_bytes());
         body[26..28].copy_from_slice(&48u16.to_be_bytes());
         let child = boxed(*b"pasp", &[0, 1, 0, 1]);
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn trailing_bytes_after_a_broken_child_are_kept() {
-        let mut body = vec![0u8; 78];
+        let mut body = Vec::from([0u8; 78]);
         body.extend_from_slice(&[0, 0, 0, 2, b'x']);
         let bytes = boxed(*b"gif ", &body);
         let entry = QuickTimeVideoEntry::parse_box(&bytes).expect("parses");
