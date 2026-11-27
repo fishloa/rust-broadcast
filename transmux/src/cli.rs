@@ -2493,6 +2493,22 @@ fn run_progressive<R: Read + Seek>(
 
 /// The plan pass: record every sample's descriptor (no coded bytes held) and
 /// the announced track set.
+/// The progressive plan's view of one demux event: a kept track's sample, or a
+/// timeline break, which the plan maps onto the continuing `stts` timeline
+/// ([`PlanPass`]) exactly as the mux stage it plans for maps it in-band.
+fn plan_input(kept: &[TrackId], event: DemuxEvent) -> Option<MuxInput> {
+    match event {
+        DemuxEvent::Sample { track_id, sample } if kept.contains(&track_id) => {
+            Some(MuxInput::Sample {
+                track: track_id,
+                sample,
+            })
+        }
+        DemuxEvent::Discontinuity { track, .. } => Some(MuxInput::Discontinuity { track }),
+        _ => None,
+    }
+}
+
 fn progressive_plan<R: Read + Seek>(
     reader: &mut R,
     container: Container,
@@ -2508,15 +2524,8 @@ fn progressive_plan<R: Read + Seek>(
     drive_seekable(reader, container, total_len, &mut |event, movie| {
         collector.movie(movie);
         if let Some(pass) = plan_pass.as_mut() {
-            if let DemuxEvent::Sample { track_id, sample } = event
-                && kept.contains(&track_id)
-                && let Err(error) = pass.feed(
-                    MuxInput::Sample {
-                        track: track_id,
-                        sample,
-                    },
-                    Timestamp::ZERO,
-                )
+            if let Some(input) = plan_input(&kept, event)
+                && let Err(error) = pass.feed(input, Timestamp::ZERO)
                 && failure.is_none()
             {
                 failure = Some(error.into());
@@ -2541,16 +2550,8 @@ fn progressive_plan<R: Read + Seek>(
             }
             kept = specs.iter().map(|spec| spec.track_id).collect();
             for event in buffered.drain(..) {
-                if let DemuxEvent::Sample { track_id, sample } = event
-                    && kept.contains(&track_id)
-                {
-                    pass.feed(
-                        MuxInput::Sample {
-                            track: track_id,
-                            sample,
-                        },
-                        Timestamp::ZERO,
-                    )?;
+                if let Some(input) = plan_input(&kept, event) {
+                    pass.feed(input, Timestamp::ZERO)?;
                 }
             }
             plan_pass = Some(pass);
@@ -2566,16 +2567,8 @@ fn progressive_plan<R: Read + Seek>(
         }
         kept = specs.iter().map(|spec| spec.track_id).collect();
         for event in buffered.drain(..) {
-            if let DemuxEvent::Sample { track_id, sample } = event
-                && kept.contains(&track_id)
-            {
-                pass.feed(
-                    MuxInput::Sample {
-                        track: track_id,
-                        sample,
-                    },
-                    Timestamp::ZERO,
-                )?;
+            if let Some(input) = plan_input(&kept, event) {
+                pass.feed(input, Timestamp::ZERO)?;
             }
         }
         plan_pass = Some(pass);

@@ -30,7 +30,9 @@
 //! (`BreakRebase`) — the first post-break sample continues from the last
 //! planned one's end and every later sample keeps its spacing. A forward jump
 //! needs no rebase: its distance is written as the preceding sample's duration,
-//! so the jump is stated as given.
+//! so the jump is stated as given. A backward step inside one track that no
+//! signalled break named is continued the same way: `stts` has no way to state
+//! it, and truncating the track to the first source is worse than continuing.
 //!
 //! Spec: ISO/IEC 14496-12:2026 §8.5-§8.7
 //! (`private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`).
@@ -213,12 +215,13 @@ impl PlanPass {
         if let Some(state) = self.tracks.get_mut(index)
             && state.awaiting_break
         {
-            let raw_dts = sample.timing.and_then(|t| t.dts());
-            state.rebase = match (state.last_end, raw_dts) {
-                (Some(last_end), Some(raw)) => BreakRebase::backwards(last_end, raw),
-                _ => BreakRebase::NONE,
-            };
             state.awaiting_break = false;
+            if let (Some(last_end), Some(raw)) = (state.last_end, dts) {
+                // A break that moves time backwards continues the `stts`
+                // timeline; a forward jump is written as given. A stray
+                // residual step is caught by the per-sample check below.
+                state.rebase = BreakRebase::backwards(last_end, raw);
+            }
         }
         let state = self
             .tracks
@@ -245,14 +248,23 @@ impl PlanPass {
                 "progressive: a track's samples must be all timed or all untimed",
             ));
         }
-        let position = match kind {
-            SampleKind::Timed => state.rebase.apply(dts.ok_or(Error::UnsupportedFeature(
-                "progressive: a timed track lost its decode time",
-            ))?),
+        // A `Timed` track's every sample carries a `dts` (checked above).
+        let raw = dts.unwrap_or(0);
+        let mut position = match kind {
+            SampleKind::Timed => state.rebase.apply(raw),
             SampleKind::Untimed => state.position,
         };
         if kind == SampleKind::Untimed {
             state.position = position.saturating_add(i64::from(duration));
+        } else if let Some(prev) = state.prev
+            && position < prev.position
+        {
+            // `stts` cannot step back, and a live source can switch origin
+            // without a signalled break reaching every track: continue this
+            // track from the last sample's end rather than truncating it.
+            let target = prev.position.saturating_add(i64::from(prev.duration));
+            state.rebase = BreakRebase::continue_from(target, raw);
+            position = target;
         }
         state.last_end = Some(position.saturating_add(i64::from(duration)));
         let presentation = position.saturating_add(i64::from(composition_offset));

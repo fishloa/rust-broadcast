@@ -254,6 +254,72 @@ fn progressive_output_continues_across_the_break() {
             &times,
         );
     }
+    // Every stream's stated presentation duration must cover its whole media
+    // span: a plan that did not continue the timeline would truncate a track to
+    // the first source (half of the file).
+    if !test_fixtures::process::tool_available("ffprobe", "-version") {
+        eprintln!("skipping the duration check: ffprobe is not on PATH");
+        return;
+    }
+    let path = crate::discontinuity::scratch_path(&format!(
+        "dc1-cli-progressive-{}.mp4",
+        std::process::id()
+    ));
+    std::fs::write(&path, &bytes).expect("write the progressive file");
+    let mut command = std::process::Command::new("ffprobe");
+    command
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "stream=index,duration",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(&path);
+    let output =
+        test_fixtures::process::output_bounded(&mut command, std::time::Duration::from_secs(30))
+            .expect("run ffprobe");
+    assert!(
+        output.status.success(),
+        "ffprobe failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let durations: Vec<f64> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split(',').nth(1)?.parse().ok())
+        .collect();
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(
+        durations.len(),
+        remuxed.tracks.len(),
+        "ffprobe states a duration per stream"
+    );
+    for (duration, track) in durations.iter().zip(&remuxed.tracks) {
+        let first = track
+            .samples
+            .iter()
+            .find_map(|sample| sample.timing.and_then(|timing| timing.dts()))
+            .expect("a timed sample");
+        let last = track
+            .samples
+            .iter()
+            .rev()
+            .find_map(|sample| {
+                sample.timing.and_then(|timing| {
+                    timing
+                        .dts()
+                        .map(|dts| dts + i64::from(timing.duration().unwrap_or(0)))
+                })
+            })
+            .expect("a timed sample");
+        let span = (last - first) as f64 / f64::from(track.spec.timescale.get());
+        assert!(
+            *duration >= 0.9 * span,
+            "track {:?} states {duration} s of {span} s: the break truncated it",
+            track.spec.track_id
+        );
+    }
 }
 
 /// A bare CMAF byte stream states a break with a new fragment whose `tfdt`

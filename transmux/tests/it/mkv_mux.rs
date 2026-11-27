@@ -275,7 +275,7 @@ fn mkv_double_round_trip_is_stable() {
     assert_media_round_trips(&remuxed_once, &remuxed_twice);
 }
 
-// ── Issue #4154: a timeline break cuts a Cluster, a backwards one refuses ───
+// ── Issue #4154: a timeline break cuts a Cluster and rebases a backward one ──
 
 #[test]
 fn a_forward_break_cuts_a_cluster_at_the_seam_and_stays_readable() {

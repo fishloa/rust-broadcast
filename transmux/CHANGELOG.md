@@ -189,7 +189,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as the sum of the preceding durations (ISO/IEC 14496-12:2026 §8.6.1.1), and
   `ProgressiveMuxStage` accepts the mark, so the CLI's `-f progressive` and
   `-f cmaf` byte outputs write a file over a capture whose timeline breaks
-  where the CLI used to fail. The arithmetic is one shared `BreakRebase`, the
+  where the CLI used to fail; its plan also continues a backward step inside
+  one track that no signalled break named, rather than stating a track
+  presentation duration shorter than the samples it holds. The arithmetic is one shared `BreakRebase`, the
   mapping FLV/RTMP already applied; a break that names every track now marks
   each track's next fragment, not only the first one's.
 - The `transmux` CLI forwards a demux discontinuity to the output stage
