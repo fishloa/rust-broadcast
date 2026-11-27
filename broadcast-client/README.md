@@ -142,6 +142,20 @@ audio track ids are offset by `AUDIO_TRACK_ID_OFFSET` (1000; a main-playlist tra
 dropped and reported once as `ErrorKind::TrackIdReserved`), `Event::Tracks` carries the merged set
 and `Event::AudioRendition` reports the active rendition. Subtitle renditions are not implemented: a `SUBTITLES` rendition is listed in `Event::Variants` (`renditions`) but never fetched, and no event reports it; fetching and rendering it is the host's job.
 
+## Damage reports
+
+Every source publishes what its reader skipped as
+`events::Event::Damage(broadcast_core::damage::Damage)`, in order with the
+samples around it, and `Config::damage_policy` is one policy for every source:
+`Fail` on a severity ends the session at the report with a fatal
+`ErrorKind::DamageRefused` after the report itself.
+
+Reported: everything a source's engine reports (see each crate's own list), the
+RTP reorder buffer's and TS demuxer's losses on the UDP path, SRT's dropped runs,
+an RTSP media section whose `SETUP` the server refused (the other sections still
+play), a malformed RTCP datagram and an arrival-time A/V alignment (once per
+connection), and the HLS fetch failure that made a segment being given up on.
+
 ## Read-ahead backpressure
 
 A live source arrives at the rate it plays; a recording over HTTP arrives at network speed. Every

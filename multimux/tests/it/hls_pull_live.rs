@@ -135,6 +135,7 @@ fn route_config(bind: SocketAddr, upstream: String) -> Config {
         .with_part_target(Duration::from_millis(u64::from(ROUTE_PART_TARGET_MS)))
         .with_window_segments(ROUTE_WINDOW_SEGMENTS)
         .with_routes(vec![Route {
+            damage_policy: Default::default(),
             name: "pulled".to_string(),
             input: InputSpec::HlsPull {
                 url: upstream,

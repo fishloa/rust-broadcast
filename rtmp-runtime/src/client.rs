@@ -7,6 +7,18 @@
 //! [`ClientEvent`]s. Auto-advances: a successful `connect` `_result`
 //! automatically emits `createStream`, and a successful `createStream`
 //! `_result` emits `publish`.
+//!
+//! # Damage reports
+//!
+//! As on the server side (see [`crate::server`]'s module docs for the list),
+//! everything this session skips is published as
+//! [`ClientEvent::Damage`]: an interrupted or aborted message, an over-limit
+//! message consumed without being held, media on a stream id the server never
+//! allocated, a message type or command this engine does not decode, an AMF0
+//! ECMA-Array count that disagrees with its contents, and (through the `tokio`
+//! adapter) input that ends inside a message. The caller's
+//! [`RtmpClientConfig::damage_policy`] decides whether a report also ends the
+//! session (`RtmpError::Damage`).
 
 use broadcast_core::error::BufferTooShort;
 use broadcast_core::len::need_in;
@@ -23,12 +35,15 @@ use crate::handshake::{
 use crate::ids::{ChunkStreamId, MessageStreamId, SequenceNumber, Timestamp};
 use crate::message::{ChunkSize, MessageTypeId, ProtocolControl, UserControl};
 use crate::server::DEFAULT_WINDOW_ACK_SIZE;
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, RtmpError>;
+
+use broadcast_core::damage::Damage as BroadcastDamage;
 
 const COMMAND_CHUNK_STREAM_ID: u32 = 3;
 /// Chunk stream audio and data messages are sent on.
@@ -112,6 +127,10 @@ pub struct RtmpClientConfig {
     /// at once (#1108/RTMP-W1); see
     /// [`crate::chunk::DEFAULT_MAX_IN_PROGRESS_BYTES`] for the default.
     pub max_in_progress_bytes: usize,
+    /// What each [`ClientEvent::Damage`] report means: `Report` (the default
+    /// for everything) publishes it and keeps reading; `Fail` ends the
+    /// session with [`RtmpError::Damage`] carrying the same report.
+    pub damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 /// Manual `Debug`: the stream key is a publish secret and never renders
@@ -127,6 +146,7 @@ impl core::fmt::Debug for RtmpClientConfig {
             .field("stream_key", &"<redacted>")
             .field("tc_url", &self.tc_url)
             .field("max_in_progress_bytes", &self.max_in_progress_bytes)
+            .field("damage_policy", &self.damage_policy)
             .finish()
     }
 }
@@ -142,6 +162,7 @@ impl Default for RtmpClientConfig {
             stream_key: String::new(),
             tc_url: None,
             max_in_progress_bytes: DEFAULT_MAX_IN_PROGRESS_BYTES,
+            damage_policy: broadcast_core::damage::DamagePolicy::new(),
         }
     }
 }
@@ -187,6 +208,12 @@ pub enum ClientEvent {
     },
     /// Session closed.
     Closed,
+    /// Content this session skipped or repaired — the one
+    /// [`broadcast_core::damage::Damage`] report, in wire order with the
+    /// events around it. Whether it also stops the session is the caller's
+    /// [`RtmpClientConfig::damage_policy`]. Boxed so a report does not
+    /// enlarge every event in the crate.
+    Damage(Box<broadcast_core::damage::Damage>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -356,11 +383,24 @@ impl ClientSession {
 
         self.assembler.feed(chunk_input);
         while let Some(msg) = self.assembler.next_message()? {
+            self.publish_chunk_damage(&mut events)?;
             self.dispatch_message(&msg, &mut out, &mut events)?;
         }
+        self.publish_chunk_damage(&mut events)?;
 
         self.maybe_ack(&mut out)?;
         Ok((out, events))
+    }
+
+    /// Bytes buffered from the peer that have not yet formed a complete
+    /// message — a non-zero value at end of input means the stream was cut
+    /// mid-handshake or mid-message, which the session reports as
+    /// `DamageKind::InputTruncated`.
+    #[must_use]
+    pub fn pending_len(&self) -> usize {
+        self.handshake_buf
+            .len()
+            .saturating_add(self.assembler.pending_len())
     }
 
     /// Encode an audio message (type 8). Only valid in `Publishing` state.
@@ -629,15 +669,56 @@ impl ClientSession {
         matches!(self.state, ClientState::PlaySent | ClientState::Playing)
     }
 
-    fn emit_media(
+    /// Emit one inbound media message as [`ClientEvent::Media`], but only on
+    /// the message stream id `createStream` allocated: media on any other
+    /// stream belongs to no played stream and is reported rather than
+    /// delivered.
+    fn emit_media_if_playing(
         &mut self,
         tag_type: MessageTypeId,
         timestamp: u32,
+        message_stream_id: MessageStreamId,
         payload: &[u8],
         events: &mut Vec<ClientEvent>,
     ) -> Result<()> {
+        if self.stream_id != Some(message_stream_id) {
+            let damage =
+                crate::damage::outside_stream("RTMP media on an unknown stream id", timestamp);
+            return self.publish_damage(damage, events);
+        }
         let flv = self.flv.tag(tag_type, timestamp, payload)?;
         events.push(ClientEvent::Media { flv });
+        Ok(())
+    }
+
+    /// Hand one report to the caller's policy: publish it, or end the session
+    /// with it when the policy says `Fail`.
+    fn publish_damage(&self, damage: BroadcastDamage, events: &mut Vec<ClientEvent>) -> Result<()> {
+        crate::damage::publish(
+            &self.config.damage_policy,
+            damage,
+            events,
+            ClientEvent::Damage,
+        )
+    }
+
+    /// Hand every report the chunk assembler collected to the caller's policy.
+    fn publish_chunk_damage(&mut self, events: &mut Vec<ClientEvent>) -> Result<()> {
+        for damage in self.assembler.take_damage() {
+            self.publish_damage(damage, events)?;
+        }
+        Ok(())
+    }
+
+    /// Hand the AMF0 reports a command body produced to the caller's policy.
+    fn publish_diagnostics(
+        &self,
+        diagnostics: Vec<BroadcastDamage>,
+        events: &mut Vec<ClientEvent>,
+    ) -> Result<()> {
+        for damage in diagnostics {
+            self.publish_damage(damage, events)?;
+        }
         Ok(())
     }
 
@@ -687,7 +768,8 @@ impl ClientSession {
             return Ok(());
         }
         if msg.message_type_id == MessageTypeId::CommandAmf0 {
-            let cmd = Command::parse(&msg.payload)?;
+            let (cmd, diagnostics) = Command::parse_with_diagnostics(&msg.payload)?;
+            self.publish_diagnostics(diagnostics, events)?;
             self.handle_command(&cmd, out, events)?;
         }
         if msg.message_type_id == MessageTypeId::CommandAmf3 {
@@ -699,23 +781,42 @@ impl ClientSession {
                     have: msg.payload.len(),
                     what: "AMF3 command encoding marker byte",
                 }))?;
-            let cmd = Command::parse(body)?;
+            let (cmd, diagnostics) = Command::parse_with_diagnostics(body)?;
+            self.publish_diagnostics(diagnostics, events)?;
             self.handle_command(&cmd, out, events)?;
         }
         if self.receiving_media() {
             match msg.message_type_id {
                 MessageTypeId::Audio | MessageTypeId::Video | MessageTypeId::DataAmf0 => {
-                    self.emit_media(
+                    self.emit_media_if_playing(
                         msg.message_type_id,
                         msg.timestamp.millis(),
+                        msg.message_stream_id,
                         &msg.payload,
                         events,
                     )?;
                 }
                 MessageTypeId::Aggregate => {
-                    unpack_aggregate(msg, |tag_type, timestamp, payload| {
-                        self.emit_media(tag_type, timestamp, payload, events)
+                    let message_stream_id = msg.message_stream_id;
+                    let mut damage = Vec::new();
+                    unpack_aggregate(msg, &mut damage, |tag_type, timestamp, payload| {
+                        self.emit_media_if_playing(
+                            tag_type,
+                            timestamp,
+                            message_stream_id,
+                            payload,
+                            events,
+                        )
                     })?;
+                    self.publish_diagnostics(damage, events)?;
+                }
+                // A data message this engine does not decode, or a type
+                // §7.1 does not define: dropped, and reported rather than
+                // silently skipped. Every other type is handled above or by
+                // the User Control arm below.
+                MessageTypeId::DataAmf3 | MessageTypeId::Other(_) => {
+                    let damage = crate::damage::uninterpreted("RTMP message type");
+                    self.publish_damage(damage, events)?;
                 }
                 _ => {}
             }
@@ -737,7 +838,12 @@ impl ClientSession {
                 Ok(UserControl::StreamEof(_)) if self.receiving_media() => {
                     events.push(ClientEvent::StreamEnded);
                 }
-                _ => {}
+                Ok(_) => {}
+                Err(RtmpError::UnsupportedUserControlEvent { .. }) => {
+                    let damage = crate::damage::uninterpreted("RTMP user control event");
+                    self.publish_damage(damage, events)?;
+                }
+                Err(e) => return Err(e),
             }
         }
         Ok(())
@@ -760,7 +866,10 @@ impl ClientSession {
                 Ok(())
             }
             "onStatus" => self.handle_on_status(cmd, events),
-            _ => Ok(()),
+            _ => {
+                let damage = crate::damage::uninterpreted("RTMP command");
+                self.publish_damage(damage, events)
+            }
         }
     }
 
@@ -2011,7 +2120,13 @@ mod tests {
             )
             .unwrap();
         let (_, events) = client.handle_data(&abort).unwrap();
-        assert!(events.is_empty(), "{events:?}");
+        assert_eq!(events.len(), 1, "the aborted message is reported");
+        assert!(matches!(
+            &events[0],
+            ClientEvent::Damage(d)
+                if d.kind() == broadcast_core::damage::DamageKind::MediaUnitDropped
+                    && d.severity() == broadcast_core::damage::Severity::Informational
+        ));
 
         let mut fresh = Vec::new();
         for chunk_len in [128usize, 128, 44] {

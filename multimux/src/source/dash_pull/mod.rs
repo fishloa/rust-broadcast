@@ -116,6 +116,7 @@ pub fn parse_iso8601_utc_for_test(s: &str) -> Option<u64> {
 
 fn session_config(route: &DashPullRoute) -> Config {
     let mut config = Config::relay();
+    config.damage_policy = route.target.damage_policy.clone();
     config.kind = SourceKind::Dash;
     let mut config = config.with_timeouts(route.target.timeouts);
     config.max_queued_bytes = crate::source::SEGMENTED_EVENT_QUEUE_BYTES;

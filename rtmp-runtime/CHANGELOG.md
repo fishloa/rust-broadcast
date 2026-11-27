@@ -9,12 +9,46 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Breaking
 
 - The wire-format contract types now come from `broadcast-core`.
+- `ServerEvent` derives `serde::Serialize` only, not `serde::Deserialize`: a
+  `ServerEvent::Damage` carries a `broadcast_core::damage::Damage`, whose typed
+  cause wraps the workspace's shared error kinds and is therefore write-only,
+  so the enum can no longer be reconstructed from JSON. `RtmpServerConfig`
+  still round-trips.
+
+### Added
+
+- `ServerEvent::Damage`/`ClientEvent::Damage` and a `damage_policy` on both
+  configs: every message, command, user control event, AMF0 value, aggregate
+  sub-message and out-of-stream media packet the session passes over is
+  published as one `broadcast_core::damage::Damage`, and the caller's policy
+  decides whether that report also ends the session (`RtmpError::Damage`).
+- `ChunkAssembler::take_damage` reports a message an interrupting header or an
+  `Abort` discarded, and a message whose declared length exceeds what the
+  session will buffer (the per-message ceiling or the caller's in-progress
+  budget) — such a message is now consumed without being held and reported
+  rather than ending the connection.
+- `amf0::Command::parse_with_diagnostics` returns the AMF0 metadata reports a
+  command body produced (an ECMA-Array count that disagrees with its contents).
+- `flv::ResyncWalk::damage` turns the tolerant FLV walk's skipped spans and
+  truncated tail into `broadcast_core::damage::Damage` reports.
+- `ServerSession::pending_len`/`ClientSession::pending_len`, and the `tokio`
+  adapter now reports a stream that ends inside a message (`InputTruncated`)
+  instead of treating it as a clean EOF.
+
+### Changed
+
+- A message header arriving mid-message on a chunk stream, an over-length and
+  an over-budget message, and a malformed aggregate sub-message no longer end
+  the session: the rest of the connection still frames, so only the affected
+  message is lost (and reported). A chunk stream that cannot be framed at all
+  is still a `ChunkStreamState` error.
 
 ### Fixed
 - `flv::resync_decision` at end of input no longer answers `Need` forever for
   a plausible tag header whose declared body cannot arrive: it scans for a
   complete tag chain and, when none exists, consumes the damaged tail
   (`Skip`), so a streaming caller can report it and finish.
+
 ### Added
 - `amf0::amf0_parse_values`: parse a sequence of AMF0 values that fill a
   body, the inverse of `amf0_values`, for a caller that reads a whole

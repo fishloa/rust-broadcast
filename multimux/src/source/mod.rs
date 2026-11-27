@@ -270,10 +270,47 @@ pub(crate) fn handshake_policy(timeout: Duration) -> media_plane::ingress::Hands
 /// now the one supported call for that; this function (and
 /// `drive_program_segmenters`) are its private implementation.
 pub(crate) fn report_driver_progress<S: media_plane::ingress::IngestSession>(
-    driver: &media_plane::ingress::IngestDriver<S>,
+    driver: &mut media_plane::ingress::IngestDriver<S>,
     route_handle: &crate::route::RouteHandle,
     published: &mut std::collections::HashSet<media_plane::ingress::ProgramId>,
 ) {
+    // What the input's reader skipped: forward each report to this crate's
+    // logs and its metrics facade. No protocol knowledge is added here — the
+    // report's own kind and severity are the labels.
+    for event in driver.take_damage() {
+        if let media_plane::ingress::SessionEvent::Damage {
+            program, damage, ..
+        } = event
+        {
+            let route = route_handle.name().to_string();
+            metrics::counter!(
+                crate::prometheus::SOURCE_DAMAGE_TOTAL,
+                "route" => route.clone(),
+                "source" => route_handle.input_kind(),
+                "kind" => damage.kind().name(),
+                "severity" => damage.severity().name(),
+            )
+            .increment(1);
+            match damage.severity() {
+                broadcast_core::damage::Severity::Degraded => tracing::warn!(
+                    route = %route,
+                    program = ?program,
+                    kind = damage.kind().name(),
+                    what = damage.what(),
+                    %damage,
+                    "input damage",
+                ),
+                _ => tracing::info!(
+                    route = %route,
+                    program = ?program,
+                    kind = damage.kind().name(),
+                    what = damage.what(),
+                    %damage,
+                    "input damage",
+                ),
+            }
+        }
+    }
     if matches!(driver.health(), media_plane::ingress::HealthState::Live)
         && route_handle.health() != crate::route::HealthState::Live
     {
@@ -342,7 +379,7 @@ impl DriverProgress {
 /// routes pays nothing extra: the drain is a no-op when no program has a
 /// recorder.
 pub async fn advance_route<S: media_plane::ingress::IngestSession>(
-    driver: &media_plane::ingress::IngestDriver<S>,
+    driver: &mut media_plane::ingress::IngestDriver<S>,
     route_handle: &crate::route::RouteHandle,
     state: &mut DriverProgress,
 ) {
@@ -526,7 +563,7 @@ mod driver_progress_tests {
 
         // Establish: driver becomes Live once it drains SessionEvent::Established.
         driver.feed(&[], Timestamp::from_nanos(1));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&mut driver, &route, &mut published);
 
         assert_eq!(
             route.health(),
@@ -558,9 +595,9 @@ mod driver_progress_tests {
         let mut published = HashSet::new();
 
         driver.feed(&[], Timestamp::from_nanos(1)); // Established
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&mut driver, &route, &mut published);
         driver.feed(&[], Timestamp::from_nanos(2)); // NewProgram(0)
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&mut driver, &route, &mut published);
 
         let expected = driver.trunk(ProgramId(0)).expect("driver minted a Trunk");
         match route.resolve_program(crate::route::SPTS_PROGRAM_ID) {
@@ -598,11 +635,11 @@ mod driver_progress_tests {
         let mut published = HashSet::new();
 
         driver.feed(&[], Timestamp::from_nanos(1));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&mut driver, &route, &mut published);
         driver.feed(&[], Timestamp::from_nanos(2));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&mut driver, &route, &mut published);
         // No new SessionEvents fed; calling again must be a harmless no-op.
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&mut driver, &route, &mut published);
 
         match route.resolve_program(crate::route::SPTS_PROGRAM_ID) {
             crate::route::ProgramResolution::Found(_) => {}
@@ -692,11 +729,11 @@ mod driver_progress_tests {
 
         // Feed 1: Established.
         driver.feed(&[], Timestamp::from_nanos(1));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&mut driver, &route, &mut published);
         segment::drive_program_segmenters(&driver, &route, &mut segmenters);
         // Feed 2: NewProgram(0, [track_spec(1)]) — populates tracks.
         driver.feed(&[], Timestamp::from_nanos(2));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&mut driver, &route, &mut published);
         segment::drive_program_segmenters(&driver, &route, &mut segmenters);
         let specs = route.track_specs(ProgramId(0));
         assert_eq!(
@@ -708,7 +745,7 @@ mod driver_progress_tests {
         assert!(route.has_active_tracks(ProgramId(0)));
 
         driver.feed(&[], Timestamp::from_nanos(3));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&mut driver, &route, &mut published);
         segment::drive_program_segmenters(&driver, &route, &mut segmenters);
         assert!(
             !route.has_active_tracks(ProgramId(0)),
@@ -766,10 +803,10 @@ mod advance_route_tests {
 
         let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
         driver.feed(&ts_bytes, Timestamp::ZERO);
-        advance_route(&driver, &route, &mut progress).await;
+        advance_route(&mut driver, &route, &mut progress).await;
         let more = build_ts_bytes(TrackId::new(1), 0xCD, 90);
         driver.feed(&more, Timestamp::from_nanos(1));
-        advance_route(&driver, &route, &mut progress).await;
+        advance_route(&mut driver, &route, &mut progress).await;
 
         assert!(
             matches!(
@@ -874,7 +911,7 @@ mod metric_tests {
             ))
             .with_trunk(pull_trunk_config(8))
         };
-        let establishing = IngestDriver::new(TsIngestSession::new(), config());
+        let mut establishing = IngestDriver::new(TsIngestSession::new(), config());
         assert!(
             !matches!(
                 establishing.health(),
@@ -891,7 +928,7 @@ mod metric_tests {
             crate::route::HealthState::Failed,
         ] {
             route.set_health(state);
-            report_driver_progress(&establishing, &route, &mut published);
+            report_driver_progress(&mut establishing, &route, &mut published);
             assert_eq!(
                 route.health(),
                 state,
@@ -913,9 +950,9 @@ mod metric_tests {
             live.health()
         );
         route.set_health(crate::route::HealthState::Connecting);
-        report_driver_progress(&live, &route, &mut published);
+        report_driver_progress(&mut live, &route, &mut published);
         assert_eq!(route.health(), crate::route::HealthState::Live);
-        report_driver_progress(&live, &route, &mut published);
+        report_driver_progress(&mut live, &route, &mut published);
         assert_eq!(route.health(), crate::route::HealthState::Live);
     }
 }

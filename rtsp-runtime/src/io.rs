@@ -362,23 +362,35 @@ where
             first_channel,
         )?;
 
-        for index in 0..plan.setups().len() {
+        // A section whose SETUP the server refuses is dropped and the rest
+        // still play; the session ends only when nothing is left.
+        let mut refused: Option<rtsp_types::StatusCode> = None;
+        let mut index = 0usize;
+        while index < plan.setups().len() {
             let Some(setup) = plan.setups().get(index) else {
                 break;
             };
             let (control, transport) = (setup.control.clone(), setup.transport.clone());
             match self.setup(&control, &transport).await? {
-                crate::client::ClientEvent::Response { status, .. } if status.is_success() => {}
+                crate::client::ClientEvent::Response { status, .. } if status.is_success() => {
+                    let negotiated = self.framed.codec_mut().session.take_negotiated_transport();
+                    plan.accept_setup(index, negotiated.as_ref())?;
+                    index = index.saturating_add(1);
+                }
                 crate::client::ClientEvent::Response { status, .. } => {
-                    return Err(Error::UnexpectedResponse {
-                        method: Method::Setup,
-                        status,
-                    });
+                    refused = Some(status);
+                    plan.refuse_setup(index)?;
                 }
                 other => return Err(Error::UnexpectedEvent { event: other }),
             }
-            let negotiated = self.framed.codec_mut().session.take_negotiated_transport();
-            plan.accept_setup(index, negotiated.as_ref())?;
+        }
+        if plan.setups().is_empty()
+            && let Some(status) = refused
+        {
+            return Err(Error::UnexpectedResponse {
+                method: Method::Setup,
+                status,
+            });
         }
 
         match self.play(plan.play_uri()).await? {
@@ -567,7 +579,9 @@ where
                     self.write(retry).await?;
                     cseq = retry_cseq;
                 }
-                ClientEvent::MediaData { .. } => {
+                // A damage report is media-class content: it is queued with
+                // the frames so the player sees it in wire order.
+                ClientEvent::MediaData { .. } | ClientEvent::Damage(_) => {
                     if self.pending_media.len() >= MAX_PENDING_MEDIA_FRAMES {
                         self.pending_media.pop_front();
                     }

@@ -1663,6 +1663,9 @@ pub const TABLE: &[Crate] = &[
             // Why an srt:// URL was rejected — a parse-error classification
             // (authority, latency, mode), not a spec token.
             "UrlRejection",
+            // The connection's output channel: a payload or a damage report,
+            // a data-carrying ADT, not a wire token.
+            "SrtEvent",
         ],
         expected: None,
         min_enums: None,

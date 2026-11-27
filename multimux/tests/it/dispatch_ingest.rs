@@ -98,6 +98,7 @@ pub(crate) fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
         .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {
+            damage_policy: Default::default(),
             name: "cam".to_string(),
             input,
             outputs: vec![OutputKind::LlHls],
@@ -571,10 +572,10 @@ mod custom_dispatch_driver_backed {
         // rather than starting from "now" -- so this single feed's samples
         // are not lost.
         driver.feed(&[], Timestamp::from_nanos(0));
-        advance_route(&driver, &route_handle, &mut progress).await;
+        advance_route(&mut driver, &route_handle, &mut progress).await;
 
         driver.finish();
-        advance_route(&driver, &route_handle, &mut progress).await;
+        advance_route(&mut driver, &route_handle, &mut progress).await;
 
         Ok(())
     }
@@ -795,9 +796,9 @@ mod custom_dispatch_driver_backed {
             );
             let mut progress = DriverProgress::new();
             driver.feed(&[], Timestamp::from_nanos(0));
-            advance_route(&driver, &route_handle, &mut progress).await;
+            advance_route(&mut driver, &route_handle, &mut progress).await;
             driver.finish();
-            advance_route(&driver, &route_handle, &mut progress).await;
+            advance_route(&mut driver, &route_handle, &mut progress).await;
             Ok(())
         }
 

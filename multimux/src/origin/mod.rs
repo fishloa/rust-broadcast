@@ -1577,6 +1577,7 @@ async fn serve_with_registry_impl(
             RouteHandle::new(route_config)
                 .with_archive_floors(archive_floor)
                 .with_name(route.name.clone())
+                .with_input_kind(crate::origin::admin::input_kind_name(&route.input))
                 .with_dvr(route.dvr.clone()),
         );
         let outputs: Vec<Arc<dyn Output>> = route
@@ -1930,6 +1931,7 @@ fn spawn_ingest(
         cancel,
         window_segments: config.window_segments,
         timeouts,
+        damage_policy: route.damage_policy.clone(),
     };
 
     Ok(match &route.input {
@@ -1940,6 +1942,7 @@ fn spawn_ingest(
                 timeouts,
                 max_pes_unit_bytes,
                 auth,
+                &ctx.damage_policy,
             );
             spawn_pull(route_cfg, ctx)
         }
@@ -2020,6 +2023,7 @@ fn spawn_ingest(
                 timeouts,
                 max_pes_unit_bytes,
                 auth,
+                &ctx.damage_policy,
             );
             spawn_pull(route_cfg, ctx)
         }
@@ -2087,6 +2091,7 @@ fn spawn_ingest(
                 timeouts,
                 max_pes_unit_bytes,
                 auth,
+                &ctx.damage_policy,
             );
             spawn_pull(route_cfg, ctx)
         }
@@ -2101,6 +2106,7 @@ fn spawn_ingest(
                 timeouts,
                 max_pes_unit_bytes,
                 auth,
+                &ctx.damage_policy,
             )
             .with_cross_origin_urls(*allow_cross_origin);
             spawn_pull(route_cfg, ctx)
@@ -2112,6 +2118,7 @@ fn spawn_ingest(
                 timeouts,
                 max_pes_unit_bytes,
                 auth,
+                &ctx.damage_policy,
             );
             spawn_pull(route_cfg, ctx)
         }
@@ -2283,6 +2290,8 @@ struct IngestSpawn {
     cancel: tokio_util::sync::CancellationToken,
     window_segments: usize,
     timeouts: broadcast_common::timeouts::Timeouts,
+    /// The route's own damage policy, handed to each input that carries one.
+    damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 /// Spawn one built-in input's [`supervisor::supervise_driver`] loop — the
@@ -2340,10 +2349,12 @@ fn pull_route<K: PullDrive>(
     timeouts: broadcast_common::timeouts::Timeouts,
     max_pes_unit_bytes: Option<std::num::NonZeroUsize>,
     auth: &Option<crate::config::AuthSpec>,
+    damage_policy: &broadcast_core::damage::DamagePolicy,
 ) -> PullRoute<K> {
     PullRoute::new(name, url)
         .with_timeouts(timeouts)
         .with_max_pes_unit_bytes(max_pes_unit_bytes)
+        .with_damage_policy(damage_policy.clone())
         .with_auth(auth.as_ref().map(crate::config::AuthSpec::to_credentials))
 }
 
@@ -2372,6 +2383,7 @@ where
         cancel,
         window_segments,
         timeouts,
+        ..
     } = ctx;
     let route_cfg = Arc::new(route_cfg);
     let cancel_for_run = cancel.clone();
@@ -4424,6 +4436,7 @@ mod tests {
     async fn serve_with_registry_unregistered_custom_input_tag_errors_not_panics() {
         let cfg = crate::config::Config {
             routes: vec![crate::config::Route {
+                damage_policy: Default::default(),
                 name: "cam1".into(),
                 input: crate::config::InputSpec::Custom {
                     type_tag: "nope".into(),
@@ -4461,6 +4474,7 @@ mod tests {
     async fn serve_with_registry_unregistered_custom_output_tag_errors_not_panics() {
         let cfg = crate::config::Config {
             routes: vec![crate::config::Route {
+                damage_policy: Default::default(),
                 name: "cam1".into(),
                 input: crate::config::InputSpec::Rtsp {
                     url: "rtsp://host/stream".into(),
@@ -4501,6 +4515,7 @@ mod tests {
     async fn serve_with_registry_unregistered_custom_auth_tag_errors_not_panics() {
         let cfg = crate::config::Config {
             routes: vec![crate::config::Route {
+                damage_policy: Default::default(),
                 name: "cam1".into(),
                 input: crate::config::InputSpec::Rtsp {
                     url: "rtsp://host/stream".into(),
@@ -4624,6 +4639,7 @@ mod tests {
 
         let mut cfg = crate::config::Config {
             routes: vec![crate::config::Route {
+                damage_policy: Default::default(),
                 name: "cam1".into(),
                 input: crate::config::InputSpec::TsUdp {
                     addr: addr.to_string(),
@@ -4890,6 +4906,7 @@ mod tests {
             );
 
             let route = crate::config::Route {
+                damage_policy: Default::default(),
                 name: "cam".into(),
                 input: spec.clone(),
                 outputs: vec![crate::output::OutputKind::LlHls],

@@ -642,6 +642,55 @@ mod tests {
         }
     }
 
+    /// A route whose input run ends in a failure — the end a route's
+    /// `damage_policy` gives an input at a refused report, proven end to end
+    /// in `tests/it/damage_policy.rs` — is restarted by the supervisor, and
+    /// the route goes back to `Live` when a later attempt succeeds. The
+    /// supervisor owns one route, so nothing else on the origin is touched.
+    #[tokio::test]
+    async fn an_input_whose_run_ends_at_a_failure_is_restarted() {
+        let route = Arc::new(RouteHandle::new(
+            RouteConfig::default()
+                .with_target_duration(Duration::from_secs(1))
+                .with_part_target(Duration::from_millis(500))
+                .with_window_segments(8),
+        ));
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let attempts = call_count.clone();
+        let attempt = move |handle: Arc<RouteHandle>| {
+            let n = attempts.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async move {
+                if n == 0 {
+                    // The first run ends in a failure, as a refused report
+                    // ends a route's input run.
+                    handle.set_health(HealthState::Live);
+                    return Err(MultimuxError::Connect {
+                        reason: "damage policy refused".to_string(),
+                    });
+                }
+                // The restart is healthy and keeps running until cancelled.
+                handle.set_health(HealthState::Live);
+                std::future::pending::<()>().await;
+                Ok(())
+            })
+        };
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let handle = tokio::spawn(supervise_driver(
+            attempt,
+            route.clone(),
+            Ok(tiny_backoff()),
+            "damage-fail-route".to_string(),
+            cancel.clone(),
+        ));
+        let restarted = wait_until(Duration::from_secs(5), || {
+            call_count.load(Ordering::SeqCst) >= 2 && route.health() == HealthState::Live
+        })
+        .await;
+        assert!(restarted, "the input must be restarted and come back Live");
+        cancel.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
+    }
+
     /// Biting test for issue #957's headline defect: a wrong password
     /// (`MultimuxError::Auth` on every attempt, verified against a real Axis
     /// camera as `Failed(Auth { reason: "DESCRIBE: Unauthorized" })`) must

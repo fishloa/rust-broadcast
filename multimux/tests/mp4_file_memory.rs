@@ -170,6 +170,7 @@ fn one_ll_hls_route(bind: SocketAddr, path: String) -> Config {
         .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {
+            damage_policy: Default::default(),
             name: "cam".to_string(),
             input: InputSpec::File {
                 path,

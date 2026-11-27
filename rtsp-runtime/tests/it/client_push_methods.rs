@@ -1171,3 +1171,93 @@ async fn start_record_does_not_leak_password_in_request_line() {
         );
     }
 }
+
+/// A `SETUP` the server refuses (461: this transport is not supported for
+/// that section) drops that media section and the rest still play; the whole
+/// flow ends only when nothing could be set up.
+#[tokio::test]
+async fn start_play_skips_a_refused_media_section() {
+    const SDP: &str = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n\
+        m=video 0 RTP/AVP 96\r\na=control:trackID=0\r\n\
+        m=audio 0 RTP/AVP 97\r\na=control:trackID=1\r\n";
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf = Vec::new();
+        let mut setups = 0usize;
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = match sock.read(&mut chunk).await {
+                Ok(0) | Err(_) => return,
+                Ok(n) => n,
+            };
+            buf.extend_from_slice(&chunk[..n]);
+            while let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+                let body_len = head
+                    .lines()
+                    .find_map(|l| {
+                        let (name, value) = l.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if buf.len() < end + 4 + body_len {
+                    break;
+                }
+                buf.drain(..end + 4 + body_len);
+                let request_line = head.lines().next().unwrap_or_default().to_string();
+                let cseq = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("CSeq:"))
+                    .unwrap_or("1")
+                    .trim()
+                    .to_string();
+                let response = if request_line.starts_with("DESCRIBE ") {
+                    format!(
+                        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nContent-Type: application/sdp\r\nContent-Length: {}\r\n\r\n{SDP}",
+                        SDP.len()
+                    )
+                } else if request_line.starts_with("SETUP ") {
+                    setups += 1;
+                    if setups == 1 {
+                        // The first section's transport is refused.
+                        format!("RTSP/1.0 461 Unsupported Transport\r\nCSeq: {cseq}\r\n\r\n")
+                    } else {
+                        let echoed = request_transport(&head)
+                            .map(|t| format!("Transport: {t}\r\n"))
+                            .unwrap_or_default();
+                        format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 1\r\n{echoed}\r\n")
+                    }
+                } else {
+                    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n\r\n")
+                };
+                if sock.write_all(response.as_bytes()).await.is_err() {
+                    return;
+                }
+            }
+        }
+    });
+
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
+        .await
+        .unwrap();
+    let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
+    let session = client
+        .start_play(&url, 0)
+        .await
+        .expect("the section that did set up still plays");
+    assert_eq!(session.tracks.len(), 1, "one section was refused");
+    assert_eq!(session.damage.len(), 1, "the refusal is reported");
+    assert_eq!(
+        session.damage[0].kind(),
+        broadcast_core::damage::DamageKind::TrackDropped
+    );
+    // The report names the SDP media section that was refused.
+    assert_eq!(session.damage[0].location().ordinal(), Some(0));
+    drop(client);
+    let _ = tokio::time::timeout(Duration::from_secs(5), server).await;
+}

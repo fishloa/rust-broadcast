@@ -26,9 +26,24 @@ pub struct RtspClientConfig {
     /// The `CSeq` of the first request; every later request advances it
     /// (RFC 2326 §C.1.1).
     pub initial_cseq: u32,
+    /// What each damage report means: `Report` (the default for everything)
+    /// publishes it as [`ClientEvent::Damage`](crate::ClientEvent::Damage)
+    /// and keeps decoding; `Fail` ends the session with
+    /// [`Error::Damage`] carrying the same report.
+    pub damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 impl RtspClientConfig {
+    /// Set what each damage report means (see [`RtspClientConfig::damage_policy`]).
+    #[must_use]
+    pub fn with_damage_policy(
+        mut self,
+        damage_policy: broadcast_core::damage::DamagePolicy,
+    ) -> Self {
+        self.damage_policy = damage_policy;
+        self
+    }
+
     /// Replace [`RtspClientConfig::user_agent`].
     ///
     /// # Errors
@@ -52,6 +67,7 @@ impl Default for RtspClientConfig {
         RtspClientConfig {
             user_agent: DEFAULT_USER_AGENT.to_string(),
             initial_cseq: FIRST_CSEQ,
+            damage_policy: broadcast_core::damage::DamagePolicy::new(),
         }
     }
 }

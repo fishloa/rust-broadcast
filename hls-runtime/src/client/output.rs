@@ -291,6 +291,12 @@ pub enum Output {
         /// How many fragments (or per-track fragment runs) were skipped.
         skipped: usize,
     },
+    /// Content the reader skipped, altered, resynchronised past or truncated —
+    /// the one [`broadcast_core::damage::Damage`] report, delivered in order
+    /// with the outputs around it. What it means is the caller's
+    /// [`HlsClientConfig::damage_policy`](crate::client::HlsClientConfig::damage_policy);
+    /// with `Fail` the client stops feeding and returns `Error::Damage`.
+    Damage(broadcast_core::damage::Damage),
     /// A master (multivariant) playlist was parsed and a variant selected.
     /// The caller may inspect [`MasterSelection`] and, for renditions with a
     /// `url`, create a second client via `HlsClient::new(hls_runtime::client::HlsClientConfig::new(rendition.url))`.

@@ -10,6 +10,7 @@ use http::{HeaderMap, StatusCode};
 
 use hls_runtime::client::{
     Action as HlsAction, Error as CoreError, HlsClient, HlsClientConfig, KeyId, Output, ResourceId,
+    SkipReason,
 };
 use transmux::TrackId;
 use url::Url;
@@ -146,6 +147,7 @@ impl HlsSource {
             HlsClientConfig::new(url.clone())
                 .with_variant_policy(config.variant_policy.clone())
                 .with_limits(config.hls_limits)
+                .with_damage_policy(config.damage_policy.clone())
                 .with_max_pes_unit_bytes(config.ts_http.max_pes_unit_bytes),
         );
         let backoff = Backoff::new(&config.backoff, seed)
@@ -584,6 +586,16 @@ impl HlsSource {
         false
     }
 
+    /// A damage report the caller's own policy refused: publish the report and
+    /// stop for good, rather than retrying onto the same damage. `true` once
+    /// the source has stopped.
+    fn refused(&mut self, refused: &broadcast_core::damage::DamageError) -> bool {
+        self.events
+            .push_back(Event::Damage(refused.damage().clone()));
+        self.go_fatal(ErrorKind::DamageRefused);
+        true
+    }
+
     fn go_fatal(&mut self, kind: ErrorKind) {
         self.events.push_back(Event::Error { kind, fatal: true });
         self.fatal = true;
@@ -629,6 +641,10 @@ impl HlsSource {
                 if !self.report(ErrorKind::InitDecodeFailed) {
                     self.retry_init_later(now);
                 }
+                return;
+            }
+            if let Err(CoreError::Damage(refused)) = &result {
+                self.refused(refused);
                 return;
             }
             if let Err(e) = &result
@@ -768,9 +784,13 @@ impl HlsSource {
         self.skip_error = Some(kind);
         self.retire_resource(id);
         self.seg_retry.remove(&id);
-        self.client.skip_resource(id);
+        let refused = self.client.skip_resource_due_to(id, skip_reason(status));
         self.pump_core();
         self.drain_outputs();
+        if let Err(CoreError::Damage(refused)) = refused {
+            self.refused(&refused);
+            return;
+        }
         self.release_ready(now);
     }
 
@@ -1075,6 +1095,9 @@ impl HlsSource {
                         self.events.push_back(Event::Error { kind, fatal: false });
                     }
                 }
+                Output::Damage(damage) => {
+                    self.events.push_back(Event::Damage(damage));
+                }
                 Output::FragmentDamaged { .. } if !self.damaged_reported => {
                     self.damaged_reported = true;
                     self.events.push_back(Event::Error {
@@ -1107,6 +1130,17 @@ fn skipped_kind(track_id: Option<u32>, fourcc: String) -> ErrorKind {
             stream_type: None,
             fourcc: Some(fourcc),
         }
+    }
+}
+
+/// The reason a lost segment or part is reported with, from the HTTP status
+/// the caller saw: no status means the fetch never completed.
+fn skip_reason(status: Option<StatusCode>) -> SkipReason {
+    match status {
+        Some(StatusCode::NOT_FOUND) => SkipReason::NotFound,
+        Some(StatusCode::GONE) => SkipReason::Gone,
+        None => SkipReason::TimedOut,
+        Some(_) => SkipReason::Unusable,
     }
 }
 

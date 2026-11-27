@@ -189,7 +189,7 @@ fn skipping_a_segment_signals_a_discontinuity_and_it_is_never_requested_again() 
     let _ = outputs(&mut client);
     client.on_error(Some(SEG1));
 
-    client.skip_resource(SEG1);
+    client.skip_resource(SEG1).expect("a report is published");
     let after = outputs(&mut client);
     assert_eq!(
         after
@@ -218,7 +218,7 @@ fn skipping_the_last_open_segment_of_an_ended_playlist_ends_the_stream() {
     let _ = fetches(&mut client);
     client.on_resource(SEG0, &ts("index0.ts")).unwrap();
     client.on_error(Some(SEG1));
-    client.skip_resource(SEG1);
+    client.skip_resource(SEG1).expect("a report is published");
     let after = outputs(&mut client);
     assert!(
         after.iter().any(|o| matches!(o, Output::EndOfStream)),
@@ -232,7 +232,9 @@ fn init_cannot_be_skipped() {
         Url::parse(URL).expect("URL"),
     ));
     let _ = fetches(&mut client);
-    client.skip_resource(ResourceId::Init);
+    client
+        .skip_resource(ResourceId::Init)
+        .expect("init cannot be skipped");
     assert!(outputs(&mut client).is_empty());
 }
 

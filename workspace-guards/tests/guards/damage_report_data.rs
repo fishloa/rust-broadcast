@@ -40,6 +40,51 @@ pub const READERS: &[Reader] = &[
         status: Status::Converted,
         reports: &["Event"],
     },
+    // Lane dm3: the segment-pull clients forward every report their MP4/TS
+    // reader publishes and convert each degradation the reader only describes
+    // into the same report, coalesced by kind per resource.
+    Reader {
+        name: "hls-runtime",
+        status: Status::Converted,
+        reports: &["Output"],
+    },
+    Reader {
+        name: "dash-runtime",
+        status: Status::Converted,
+        reports: &["Output"],
+    },
+    Reader {
+        name: "smooth-runtime",
+        status: Status::Converted,
+        reports: &["Output"],
+    },
+    // Lane dm3: the RTSP client resynchronises past junk between interleaved
+    // frames and reports it, plus the responses and headers it had to skip,
+    // as `ClientEvent::Damage`; a dropped media section converts to a report.
+    Reader {
+        name: "rtsp-runtime",
+        status: Status::Converted,
+        reports: &["ClientEvent"],
+    },
+    // Lane dm3: the SRT delivery engine reports every packet run TSBPD gave
+    // up on (too late, gap skipped, peer drop request) and every datum it
+    // dropped before the scheduler saw it, as `SrtEvent::Damage`.
+    Reader {
+        name: "srt-runtime",
+        status: Status::Converted,
+        reports: &["SrtEvent"],
+    },
+    // Lane dm3: the chunk reassembler reports every message an interrupting
+    // header, an `Abort` or a length ceiling discarded; each session reports
+    // the messages, commands, user control events and AMF0 values it passed
+    // over and the media that belonged to no published stream, and the FLV
+    // reader's tolerant walk reports the spans it jumped and the tail it
+    // lost. `ServerEvent` and `ClientEvent` carry the report.
+    Reader {
+        name: "rtmp-runtime",
+        status: Status::Converted,
+        reports: &["ServerEvent", "ClientEvent"],
+    },
     // Converted with the TS/PS demuxer forwarding: every tolerant bitstream
     // parser is handed a `Findings` collector and records one `ParseFinding`
     // per skip, and `ParseFinding` converts into the one `Damage` report.

@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Config::damage_policy` (with `with_damage_policy`) is one policy for every
+  source: each source's engine is configured from it, so HLS, DASH, Smooth,
+  RTSP, SRT, RTP and UDP publish what their reader skipped as
+  `Event::Damage` and, with `Fail`, end the session at the report with a fatal
+  `ErrorKind::DamageRefused` after the report itself.
+- The RTP/UDP path reports what its reorder buffer and the TS demuxer gave up
+  on, and the SRT path reports every packet run the delivery engine dropped.
+- A refused `SETUP` in the RTSP source drops that media section
+  (`Event::Damage` `TrackDropped`, plus the existing `TrackDropped` error) and
+  the other sections still play; the connection is retried only when no track
+  is left. A malformed RTCP datagram and an arrival-time (provisional) A/V
+  alignment are reported once per connection.
+- The HLS source forwards the client's playlist, delta, media-sequence and
+  segment-duration reports, passes the fetch status through as the skip reason
+  when it gives up on a segment (404, 410, timeout), and maps a policy refusal
+  to a fatal `ErrorKind::DamageRefused` after publishing the report, instead
+  of retrying onto the same damage.
+
+### Added
+
 - `Event::Damage(broadcast_core::damage::Damage)` (and the session-level
   `tshttp` event of the same name): a player learns every skip its reader
   tolerated, in order with the samples around it.

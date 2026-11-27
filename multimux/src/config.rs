@@ -1738,6 +1738,16 @@ pub struct Route {
     /// `multimux_ts_hls_non_idr_total` once the wait passes the bound.
     #[serde(default)]
     pub ts_hls_idr_fallback: TsHlsIdrFallback,
+    /// What each damage report from this route's input means. `"report"` (the
+    /// default for every severity) counts it and logs it and keeps ingesting;
+    /// `"fail"` ends this input's run at the report, which the supervisor then
+    /// restarts like any other input failure — never the whole origin.
+    ///
+    /// Only the pull-family inputs (`hls_pull`, `dash_pull`, `smooth_pull`)
+    /// carry it today; every other input keeps the default until its own route
+    /// type carries the policy.
+    #[serde(default)]
+    pub damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 /// Target durations an `auto` [`TsHlsIdrFallback`] waits for the first IDR.
@@ -3066,6 +3076,48 @@ impl Config {
 }
 
 #[cfg(test)]
+mod damage_policy_config_tests {
+    use super::*;
+
+    /// A route's `damage_policy` is plain JSON: the default reports
+    /// everything, and `"fail"` on a severity is what ends that input's run.
+    #[test]
+    fn a_route_states_its_damage_policy_in_json() {
+        let json = serde_json::json!({
+            "name": "r",
+            "outputs": ["llhls"],
+            "input": { "type": "hls_pull", "url": "http://h/x.m3u8" },
+        });
+        let route: Route = serde_json::from_value(json.clone()).expect("a route");
+        assert_eq!(
+            route
+                .damage_policy
+                .decision(&broadcast_core::damage::Damage::new(
+                    broadcast_core::damage::DamageKind::MediaUnitDropped,
+                    broadcast_core::damage::Severity::Degraded,
+                    "PES packet",
+                )),
+            broadcast_core::damage::Disposition::Report,
+            "the default reports and keeps ingesting"
+        );
+
+        let mut fail = json;
+        fail["damage_policy"] = serde_json::json!({ "degraded": "Fail" });
+        let route: Route = serde_json::from_value(fail).expect("a route with a policy");
+        assert_eq!(
+            route
+                .damage_policy
+                .decision(&broadcast_core::damage::Damage::new(
+                    broadcast_core::damage::DamageKind::MediaUnitDropped,
+                    broadcast_core::damage::Severity::Degraded,
+                    "PES packet",
+                )),
+            broadcast_core::damage::Disposition::Fail,
+        );
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -3652,6 +3704,7 @@ mod tests {
         for bad in [Duration::from_secs(1), Duration::from_secs(5)] {
             let cfg = Config {
                 routes: vec![Route {
+                    damage_policy: Default::default(),
                     name: "x".into(),
                     input: InputSpec::Rtsp {
                         url: "rtsp://a".into(),
@@ -3685,6 +3738,7 @@ mod tests {
     fn validate_rejects_zero_max_concurrent_requests() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::Rtsp {
                     url: "rtsp://a".into(),
@@ -3714,6 +3768,7 @@ mod tests {
     fn validate_rejects_zero_max_request_body_bytes() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::Rtsp {
                     url: "rtsp://a".into(),
@@ -3795,6 +3850,7 @@ mod tests {
     fn validate_rejects_bad_srt_push_url() {
         let mk = |url: &str| Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::Rtsp {
                     url: "rtsp://a".into(),
@@ -3848,6 +3904,7 @@ mod tests {
     fn validate_rejects_rtsp_push_url_without_a_host() {
         let mk = |url: &str| Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::Rtsp {
                     url: "rtsp://a".into(),
@@ -3902,6 +3959,7 @@ mod tests {
         fn route_with(reconnect: ReconnectPolicy) -> Config {
             Config {
                 routes: vec![Route {
+                    damage_policy: Default::default(),
                     name: "x".into(),
                     input: InputSpec::Rtsp {
                         url: "rtsp://a".into(),
@@ -3956,6 +4014,7 @@ mod tests {
         ] {
             let cfg = Config {
                 routes: vec![Route {
+                    damage_policy: Default::default(),
                     name: "x".into(),
                     input: InputSpec::Rtsp {
                         url: "rtsp://a".into(),
@@ -4587,6 +4646,7 @@ mod tests {
     fn validate_rejects_empty_auth_username() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::TsHttp {
                     url: "http://host/stream.ts".into(),
@@ -4618,6 +4678,7 @@ mod tests {
     fn validate_rejects_empty_bearer_token() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::HlsPull {
                     url: "https://host/media.m3u8".into(),
@@ -4647,6 +4708,7 @@ mod tests {
     fn validate_accepts_empty_password() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::TsHttp {
                     url: "http://host/stream.ts".into(),
@@ -4725,6 +4787,7 @@ mod tests {
     fn validate_rejects_bad_ts_http_scheme() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::TsHttp {
                     url: "rtsp://host/stream.ts".into(),
@@ -4753,6 +4816,7 @@ mod tests {
     fn validate_rejects_bad_hls_pull_scheme() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::HlsPull {
                     url: "ftp://host/media.m3u8".into(),
@@ -4781,6 +4845,7 @@ mod tests {
     fn validate_rejects_unparsable_ts_http_url() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::TsHttp {
                     url: "not a url".into(),
@@ -4810,6 +4875,7 @@ mod tests {
     #[test]
     fn route_debug_redacts_ts_http_and_hls_pull_credentials() {
         let ts_http = Route {
+            damage_policy: Default::default(),
             name: "cam-ts-http".into(),
             input: InputSpec::TsHttp {
                 url: "http://user:secretpass@host/stream.ts".into(),
@@ -4835,6 +4901,7 @@ mod tests {
         assert!(debug.contains("***@host"), "debug: {debug}");
 
         let hls_pull = Route {
+            damage_policy: Default::default(),
             name: "cam-hls-pull".into(),
             input: InputSpec::HlsPull {
                 url: "https://user:secretpass@origin/media.m3u8".into(),
@@ -4864,6 +4931,7 @@ mod tests {
     fn validate_rejects_bad_rtsp_scheme() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::Rtsp {
                     url: "http://host/stream".into(),
@@ -4892,6 +4960,7 @@ mod tests {
     fn validate_rejects_unparsable_udp_addr() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::TsUdp {
                     addr: "not-an-addr".into(),
@@ -4921,6 +4990,7 @@ mod tests {
     fn validate_rejects_non_multicast_group() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::TsUdp {
                     addr: "0.0.0.0:5005".into(),
@@ -4948,6 +5018,7 @@ mod tests {
     fn validate_rejects_empty_rtp_sdp() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::Rtp {
                     addr: "0.0.0.0:5004".into(),
@@ -4978,6 +5049,7 @@ mod tests {
     fn validate_rejects_unparsable_inline_rtp_sdp() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::Rtp {
                     addr: "0.0.0.0:5004".into(),
@@ -5010,6 +5082,7 @@ mod tests {
         // connect() reads/parses it (via `crate::source::sdp::load_sdp`).
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "x".into(),
                 input: InputSpec::Rtp {
                     addr: "0.0.0.0:5004".into(),
@@ -5038,6 +5111,7 @@ mod tests {
         let cfg = Config {
             routes: vec![
                 Route {
+                    damage_policy: Default::default(),
                     name: "x".into(),
                     input: InputSpec::Rtsp {
                         url: "rtsp://a".into(),
@@ -5055,6 +5129,7 @@ mod tests {
                     subtitles: true,
                 },
                 Route {
+                    damage_policy: Default::default(),
                     name: "x".into(),
                     input: InputSpec::Rtsp {
                         url: "rtsp://b".into(),
@@ -5131,6 +5206,7 @@ mod tests {
     #[test]
     fn route_debug_redacts_rtsp_credentials() {
         let route = Route {
+            damage_policy: Default::default(),
             name: "cam1".into(),
             input: InputSpec::Rtsp {
                 url: "rtsp://user:secretpass@host/s".into(),
@@ -5163,6 +5239,7 @@ mod tests {
     fn config_debug_redacts_route_credentials() {
         let cfg = Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "cam1".into(),
                 input: InputSpec::Rtsp {
                     url: "rtsp://user:secretpass@host/s".into(),
@@ -5198,6 +5275,7 @@ mod tests {
     fn route_debug_shows_sdp_length_not_full_body() {
         let long_sdp = "v=0\r\n".repeat(50);
         let route = Route {
+            damage_policy: Default::default(),
             name: "cam-rtp".into(),
             input: InputSpec::Rtp {
                 addr: "0.0.0.0:5004".into(),
@@ -5229,6 +5307,7 @@ mod tests {
     fn cfg_with_one_route() -> Config {
         Config {
             routes: vec![Route {
+                damage_policy: Default::default(),
                 name: "cam1".into(),
                 input: InputSpec::Rtsp {
                     url: "rtsp://host/stream".into(),
@@ -6406,6 +6485,7 @@ mod pinned_limits {
 
     fn route_named(name: &str) -> Route {
         Route {
+            damage_policy: Default::default(),
             name: name.into(),
             input: InputSpec::Rtsp {
                 url: "rtsp://a".into(),
@@ -6426,6 +6506,7 @@ mod pinned_limits {
 
     fn route_with_outputs(outputs: Vec<OutputKind>) -> Route {
         Route {
+            damage_policy: Default::default(),
             outputs,
             ..route_named("cam")
         }

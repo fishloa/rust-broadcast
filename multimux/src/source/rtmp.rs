@@ -741,6 +741,14 @@ impl Stage for RtmpIngestSession {
                 ServerEvent::Media { flv } => {
                     self.demux.feed(flv)?;
                 }
+                // The RTMP session's own report reaches the origin through
+                // the same channel every other source uses, so a host sees
+                // one vocabulary whatever the input protocol.
+                ServerEvent::Damage(damage) => {
+                    self.events
+                        .pending
+                        .push_back(SessionEvent::damage(Some(ProgramId(0)), (**damage).clone()));
+                }
                 // `ServerEvent` is `#[non_exhaustive]`; `Publish`/`Eof` need
                 // no reaction here — `Eof` is observed at the transport
                 // level (`RtmpConnection::next_events` returning `Ok(None)`)
@@ -1933,6 +1941,52 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The `rtmp` input kind's reader damage reaches the route's damage
+    /// metric: an RTMP session's own report is the same `SessionEvent::Damage`
+    /// every other source publishes, and the route renders it labelled with
+    /// the kind an operator configured.
+    #[tokio::test]
+    async fn a_session_report_reaches_the_route_damage_metric() {
+        const ROUTE: &str = "rtmp-damage-probe";
+        const KIND: &str = "rtmp";
+        crate::prometheus::install();
+        let (_client, server) = tokio::io::duplex(65_536);
+        let conn = RtmpConnection::from_stream(server, RtmpServerConfig::default());
+        let route = std::sync::Arc::new(
+            RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration(Duration::from_secs(1))
+                    .with_part_target(Duration::from_millis(500))
+                    .with_window_segments(8),
+            )
+            .with_name(ROUTE)
+            .with_input_kind(KIND),
+        );
+        let mut driver = media_plane::ingress::IngestDriver::new(
+            RtmpIngestSession::new(conn, None),
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+        );
+        let report = broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::MediaUnitDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "RTMP message",
+        );
+        driver.feed(
+            &[ServerEvent::Damage(Box::new(report))],
+            broadcast_common::Timestamp::ZERO,
+        );
+        let mut progress = crate::source::DriverProgress::new();
+        crate::source::advance_route(&mut driver, &route, &mut progress).await;
+        let line = crate::testutil::rendered_line(
+            "multimux_source_damage_total",
+            &[("route", ROUTE), ("source", KIND)],
+        );
+        assert!(
+            line.is_some(),
+            "an RTMP session report must reach the route's damage metric"
+        );
     }
 
     /// `next_events_for_test` hands a real batch of protocol events back.

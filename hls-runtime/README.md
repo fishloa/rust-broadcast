@@ -102,6 +102,27 @@ For the origin, `examples/origin_playlist.rs` builds a `Trunk`, publishes parts 
 
 Sans-IO (no clock read, no socket, in the core), `#![forbid(unsafe_code)]`, `no_std` + `alloc` client, one wire model (playlists are `broadcast_hls::MediaPlaylist`, not re-described), the `Trunk` is the single copy of the data (the old push-fed `MediaStore` was deleted), `#[non_exhaustive]` on `Action`, `Output` and errors, golden client transcripts and a no-hand-roll guard. Known gap: a discontinuity revealed only when a still-open segment closes is signalled late, because `OpenSegment` carries no discontinuity flag in the wire model.
 
+## Damage reports
+
+A pull never loses content silently. Every skip reaches the caller as
+`client::Output::Damage(broadcast_core::damage::Damage)`, in wire order with the
+samples around it, and `HlsClientConfig::damage_policy` decides whether a report
+also stops the pull (`client::Error::Damage`).
+
+Reported: everything the MP4/TS reader inside a segment degraded (one report per
+kind per resource), a playlist diagnostic the parser recorded (a dangling
+segment tag is `Degraded` — it drops a segment; a bad `PROGRAM-DATE-TIME` or a
+`DATERANGE` without `START-DATE` is informational), a delta update that could
+not be merged (the client falls back to a full reload), a reload that jumped
+over media sequence numbers, a segment whose demuxed media disagrees with its
+`EXTINF` beyond the caller's `segment_duration_tolerance` (`None` never
+compares), and a segment or part the caller gives up on
+(`HlsClient::skip_resource_due_to`, with the 404/410/timeout reason).
+
+Only a playlist that cannot be read at all (not UTF-8, unparsable, over the
+caller's size limit, an unresolvable URI template), an unsupported encryption
+scheme covering every segment, or a policy refusal is an error.
+
 ## Related crates
 
 Depends on `broadcast-hls` (playlist syntax), `transmux` (demux, `TrackId`), `media-plane` (`Trunk`, `ServedEgress`) and `timed-metadata` (`EXT-X-DATERANGE`). `multimux` is the reference adapter: it serves every LL-HLS route through one `HlsOrigin` per program over axum and tokio, and drives the client engine as its HLS-pull input.

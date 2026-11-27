@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Added
+
+- `Route::damage_policy` (JSON, default-report): what each damage report from
+  that route's input means. `{"degraded": "fail"}` ends *that input's* run at
+  the report, and the supervisor restarts it exactly as it restarts any failed
+  input — the origin and its other routes are untouched. Carried today by the
+  pull-family inputs (`hls_pull`, `dash_pull`, `smooth_pull`).
+- `multimux_source_damage_total` gains a `source` label: the input kind token
+  the report came from (`hls_pull`, `rtmp`, ...), the admin API's fixed token
+  set, so cardinality stays bounded. A test drives every input kind through a
+  route and checks the label.
+- `RouteHandle::with_input_kind`/`input_kind`, and the supervisor's restart of
+  an input whose run ended at a refused report.
+
+### Added
+
+- Every damage report an input publishes is forwarded to the route's log and
+  the Prometheus facade as the new `multimux_source_damage_total` counter
+  (labels `route`, `kind`, `severity`). No protocol knowledge is added: the
+  report's own kind and severity are the labels.
+
 ### Breaking
 
 - `avc_access_unit_parameter_sets` now comes from `broadcast-bitstream` and returns that crate's typed parameter-set wrappers; the WHIP path converts them into the `isobmff` newtypes. `NalCodec`, `access_unit_is_idr` and the other NAL/Annex B helpers move there too, and the crate gains the `broadcast-bitstream` dependency.
@@ -73,6 +94,12 @@
 
 ### Fixed
 
+- Every damage report a pulled input's session publishes (`Event::Damage`) now
+  reaches the route's log and the `multimux_source_damage_total` counter. The
+  session host consumed the event without feeding it to the driver, so the
+  pull-family inputs reported nothing. The run that a route's `damage_policy`
+  ends at a report also keeps that report: a failed step's events are handed to
+  the route before its publisher slot is released.
 - The oracle tests that write a playlist/segment tree and run `mediastreamvalidator` or `ffprobe` over it use a scratch directory unique to the process and to the call (`test_fixtures::process::scratch_dir`), instead of a fixed `target/<tag>` path. Two suites running at once in one checkout (two loops, or a local gate beside CI's) deleted and rewrote each other's tree mid-run, which the oracle then reported as a stale playlist or a missing media file (#4072).
 - Every optional feature builds on its own with `RUSTFLAGS="-D warnings"`. `--features whip` no longer imports the test-seam-only `RouteConfig`, the test-seam helper `register_session_for_test` is gated on `whip` as well as `test-seams` (it is only ever called from `whip`'s `from_spec`), and `test-hooks` declares `whip`, whose signalling seams it re-exports (#4083).
 - TS and FLV `file` inputs stream from disk in bounded memory instead of being read whole, so a large slate/filler/loop asset no longer makes the origin's memory grow with the file. Each loop pass re-opens and re-identifies the file: a longer file simply plays longer, while a file replaced by a different container fails with `FileReaderError::FileChangedContainer` (#4057).

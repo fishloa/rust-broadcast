@@ -97,6 +97,9 @@ pub(crate) struct RtmpSource {
     now_us: u64,
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
+    /// What each report from the RTMP session means (the one policy every
+    /// source is configured from).
+    damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 impl RtmpSource {
@@ -123,6 +126,7 @@ impl RtmpSource {
             now_us,
             actions: VecDeque::new(),
             events: VecDeque::new(),
+            damage_policy: cfg.damage_policy.clone(),
         };
         source.pump_policy(now_us);
         Ok(source)
@@ -193,6 +197,19 @@ impl RtmpSource {
         };
         let (out, events) = match client.handle_data(bytes) {
             Ok(r) => r,
+            Err(rtmp_runtime::RtmpError::Damage(refused)) => {
+                // The player's own policy refused a report: publish the
+                // report and stop for good, rather than reconnecting onto
+                // the same damage.
+                self.events
+                    .push_back(Event::Damage(refused.damage().clone()));
+                self.events.push_back(Event::Error {
+                    kind: ErrorKind::DamageRefused,
+                    fatal: true,
+                });
+                self.close();
+                return;
+            }
             Err(_) => {
                 self.lose_connection(true, now_us);
                 return;
@@ -220,6 +237,7 @@ impl RtmpSource {
                     self.stream_ended(now_us);
                     return;
                 }
+                ClientEvent::Damage(damage) => self.events.push_back(Event::Damage(*damage)),
                 _ => {}
             }
         }
@@ -294,6 +312,7 @@ impl RtmpSource {
         config.app.clone_from(&self.target.app);
         config.stream_key.clone_from(&self.target.stream);
         config.tc_url = Some(self.target.tc_url.clone());
+        config.damage_policy = self.damage_policy.clone();
         config
     }
 

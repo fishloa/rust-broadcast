@@ -202,7 +202,10 @@ mod tests {
         let mut codec = ClientCodec::new(c);
         let mut buf = BytesMut::new();
         buf.extend_from_slice(RESPONSE);
-        buf.extend_from_slice(b"\x01\x02 not rtsp\r\n\r\n");
+        // An unterminated header block past the cap: the framing is gone, so
+        // this is the terminal error the codec must defer behind the response.
+        buf.extend_from_slice(b"RTSP/1.0 200 OK\r\n");
+        buf.extend_from_slice(&vec![b'A'; 70 * 1024]);
         assert!(matches!(
             codec.decode(&mut buf),
             Ok(Some(ClientEvent::Response { cseq: 1, .. }))

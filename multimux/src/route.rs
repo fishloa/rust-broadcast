@@ -177,6 +177,11 @@ const BACKOFF_EXPANSION: u32 = 2;
 /// value rather than an empty string.
 const DEFAULT_ROUTE_NAME: &str = "unknown";
 
+/// The input kind a route reports in the damage metric before it states its
+/// own (see [`RouteHandle::input_kind`]): a fixed token, so the label's
+/// cardinality stays bounded by the input set, never by a URL.
+pub const DEFAULT_INPUT_KIND: &str = "unknown";
+
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("route.rs capacity constants are all non-zero")
 }
@@ -2506,6 +2511,10 @@ pub struct RouteHandle {
     /// sets a real one; `crate::Server` always does, for
     /// every production route.
     name: String,
+    /// The input kind this route pulls from (`"hls_pull"`, `"rtmp"`, ...),
+    /// for the damage metric's `source` label — the admin API's fixed token
+    /// set, [`DEFAULT_INPUT_KIND`] until [`Self::with_input_kind`] is called.
+    input_kind: &'static str,
     /// Per-route DVR config — `None` when not configured, passed to every
     /// [`ProgramServing::new`] built by [`Self::publish_program`].
     dvr_config: Option<crate::dvr::DvrConfig>,
@@ -2614,6 +2623,7 @@ impl RouteHandle {
             created_at: jiff::Timestamp::now(),
             programs: RwLock::new(BTreeMap::new()),
             name: DEFAULT_ROUTE_NAME.to_string(),
+            input_kind: DEFAULT_INPUT_KIND,
             dvr_config: None,
             archive_floors: Mutex::new(crate::dvr::ArchiveFloors::new()),
             archive_predecessors: Mutex::new(BTreeMap::new()),
@@ -2645,6 +2655,21 @@ impl RouteHandle {
     pub fn with_name(mut self, name: impl Into<String>) -> Self {
         self.name = name.into();
         self
+    }
+
+    /// Set [`Self::input_kind`], the input kind token this route pulls from
+    /// (already the admin API's fixed token set).
+    #[must_use]
+    pub fn with_input_kind(mut self, input_kind: &'static str) -> Self {
+        self.input_kind = input_kind;
+        self
+    }
+
+    /// This route's input kind token — [`DEFAULT_INPUT_KIND`] when the route
+    /// never stated one.
+    #[must_use]
+    pub fn input_kind(&self) -> &'static str {
+        self.input_kind
     }
 
     /// This route's name (see the `name` field's own doc) —

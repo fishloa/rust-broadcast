@@ -137,6 +137,15 @@ multimux --config routes.json                           # many routes
 
 Runnable library examples: `serve_rtsp` and `custom_scheme` (`cargo run -p multimux --example <name>`).
 
+## Damage reports
+
+Every input's reports are counted as `multimux_source_damage_total`, labelled
+`route`, `source` (the input kind, e.g. `hls_pull`, `rtmp`), `kind` and
+`severity`, and logged once each. A route's `damage_policy` decides what a
+report means: the default counts it and keeps ingesting, and `{"degraded":
+"fail"}` ends that input's run, which the supervisor restarts like any other
+input failure — the origin and its other routes carry on.
+
 ## Reference
 
 ## Inputs

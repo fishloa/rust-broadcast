@@ -250,6 +250,10 @@ impl ParsedTrack {
 pub struct ParsedFile {
     /// One [`ParsedTrack`] per elementary stream to publish.
     pub tracks: Vec<ParsedTrack>,
+    /// What the reader skipped while collecting the file: a broken frame, a
+    /// truncated tail, a resynchronisation. A finished file is not exempt from
+    /// reporting.
+    pub damage: Vec<broadcast_core::damage::Damage>,
 }
 
 impl ParsedFile {
@@ -647,6 +651,7 @@ where
 {
     let mut tracks: Vec<(TrackSpec, Vec<Sample>)> = Vec::new();
     let mut index: std::collections::HashMap<TrackId, usize> = std::collections::HashMap::new();
+    let mut damage_reports: Vec<broadcast_core::damage::Damage> = Vec::new();
 
     while let Some(event) = poll(demux) {
         match event {
@@ -674,6 +679,9 @@ where
                     tracks[i].1.push(sample);
                 }
             }
+            // The reader's own report is kept: what it skipped is content the
+            // host may want to count, even from a finished file.
+            DemuxEvent::Damage(damage) => damage_reports.push(damage),
             // Track removal / abandonment / clock / discontinuity /
             // degradation events carry either metadata we do not need to
             // replay or warnings on channels this reader does not expose —
@@ -695,7 +703,10 @@ where
         .into_iter()
         .map(|(spec, samples)| ParsedTrack::new(spec, samples))
         .collect();
-    Ok(ParsedFile { tracks })
+    Ok(ParsedFile {
+        tracks,
+        damage: damage_reports,
+    })
 }
 
 /// Window size for walking consecutive presentation-timestamp pairs.
@@ -800,6 +811,9 @@ pub struct FileIngestSession {
     /// Samples handed out since the last [`Stage::feed`] — bounded by
     /// [`MAX_SAMPLES_PER_DRAIN`].
     drained_this_feed: usize,
+    /// What the reader skipped collecting the file, published once before the
+    /// first sample so a host sees the report ahead of the content it describes.
+    damage: VecDeque<broadcast_core::damage::Damage>,
 }
 
 impl FileIngestSession {
@@ -812,6 +826,7 @@ impl FileIngestSession {
         loop_file: bool,
         pace: bool,
     ) -> Result<Self, FileReaderError> {
+        let damage: VecDeque<broadcast_core::damage::Damage> = parsed.damage.clone().into();
         let (specs, order, ranges) = parsed.build_playout();
         if order.is_empty() {
             return Err(FileReaderError::NoPlayableSamples);
@@ -837,6 +852,7 @@ impl FileIngestSession {
             announced: false,
             started: false,
             drained_this_feed: 0,
+            damage,
         };
         // First pass: offsets are all zero (the file's own timeline), so this
         // cannot overflow; the checked path is still taken for uniformity.
@@ -929,6 +945,12 @@ impl Stage for FileIngestSession {
     }
 
     fn poll(&mut self) -> Option<SessionEvent> {
+        if let Some(damage) = self.damage.pop_front() {
+            // Reports come before the content they describe (the reader saw
+            // them while collecting it), and only once: the file is parsed
+            // once and replayed, not re-read.
+            return Some(SessionEvent::damage(Some(self.program), damage));
+        }
         if !self.established {
             self.established = true;
             return Some(SessionEvent::Established);
@@ -1209,6 +1231,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .expect("valid timing");
         ParsedFile {
+            damage: Vec::new(),
             tracks: vec![Track::new(
                 avc_spec(TrackId::new(1), timescale(90_000)),
                 samples,
@@ -1225,6 +1248,7 @@ mod tests {
             .collect::<Result<Vec<_>, _>>()
             .expect("valid timing");
         ParsedFile {
+            damage: Vec::new(),
             tracks: vec![Track::new(
                 avc_spec(TrackId::new(1), timescale(timescale_hz)),
                 samples,
@@ -1260,6 +1284,7 @@ mod tests {
         let samples =
             vec![Sample::new(vec![0], Some(0), Some(0), Some(3000), true).expect("valid timing")];
         let parsed = ParsedFile {
+            damage: Vec::new(),
             tracks: vec![Track::new(
                 avc_spec(TrackId::new(1), timescale(90_000)),
                 samples,
@@ -1363,6 +1388,7 @@ mod tests {
         let samples =
             vec![Sample::new(vec![0], Some(0), Some(0), Some(0), true).expect("valid timing")];
         let parsed = ParsedFile {
+            damage: Vec::new(),
             tracks: vec![Track::new(
                 avc_spec(TrackId::new(1), timescale(90_000)),
                 samples,
@@ -1401,6 +1427,7 @@ mod tests {
     fn no_playable_samples_fails_session() {
         let samples = vec![Sample::new(vec![0], None, None, None, false).expect("valid timing")];
         let parsed = ParsedFile {
+            damage: Vec::new(),
             tracks: vec![Track::new(
                 avc_spec(TrackId::new(1), timescale(90_000)),
                 samples,

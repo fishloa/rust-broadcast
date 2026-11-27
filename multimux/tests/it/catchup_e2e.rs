@@ -28,6 +28,7 @@ fn file_config(bind: std::net::SocketAddr, path: String, tmp: &std::path::Path) 
         .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {
+            damage_policy: Default::default(),
             name: "cam".to_string(),
             input: InputSpec::File {
                 path,

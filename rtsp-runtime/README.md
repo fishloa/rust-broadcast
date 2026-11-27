@@ -110,6 +110,24 @@ Runnable programs: `client_server_loopback` and `transport_and_framing` (`cargo 
 - `Credentials` and `Authenticator`, re-exported from `broadcast-auth`.
 - `io` (feature `tokio`): `AsyncRtspClient`, `AsyncRtspServer`, `broadcast_common::timeouts::Timeouts`, `RTSP_DEFAULT_PORT` (554), `RTSPS_DEFAULT_PORT` (322).
 
+## Damage reports
+
+The client publishes `ClientEvent::Damage` for what it skipped, and
+`RtspClientConfig::damage_policy` decides whether a report also ends the session
+(`Error::Damage`).
+
+Reported: junk between interleaved frames (scanned past to the next `$` frame,
+with its byte range), a response with no `CSeq` or one that matched no pending
+request, an unusable `Session`/`Transport` header, and every media section left
+out of a play plan — an `a=control` on another authority, a section over the
+track budget, or a `SETUP` the server refused (`PlayPlan::refuse_setup`, with
+the section's position). `start_play` drops a refused section and plays the
+rest.
+
+What stays an error: an inbound head over the framing cap, a state-table
+violation (the request sequence can no longer be correlated), and a play flow in
+which no media section could be set up.
+
 ## Design notes
 
 Sans-IO: the core never reads a clock or a socket (the caller passes `Instant` for timeouts and supplies the session-id source). `Error` is `#[non_exhaustive]`. The `Session` id comparison is constant time. Message framing is bounded (header and message size caps). Tests include golden wire transcripts and real-loopback integration tests (OPTIONS to TEARDOWN, fragmented interleaved media, Digest, a TLS handshake with a self-signed certificate). A lexical `no_handroll_guard` test enforces the allowlist.

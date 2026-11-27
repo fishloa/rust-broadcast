@@ -29,14 +29,15 @@ const TAIL_TOLERANCE_SECS: f64 = 0.1;
 /// One LL-HLS-only route named `"cam"`, bound at `bind`, ingesting a
 /// `File` route for `path` with `loop: false`. Short segments (0.5 s /
 /// 100 ms) so the ~3 s real fixture closes several real segments.
-fn file_config(bind: SocketAddr, path: String, loop_file: bool) -> Config {
+fn file_config(bind: SocketAddr, name: &str, path: String, loop_file: bool) -> Config {
     Config::default()
         .with_bind(bind.to_string())
         .with_target_duration(Duration::from_millis(500))
         .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {
-            name: "cam".to_string(),
+            damage_policy: Default::default(),
+            name: name.to_string(),
             input: InputSpec::File { path, loop_file },
             outputs: vec![OutputKind::LlHls],
             dvr: DvrConfig::default(),
@@ -61,7 +62,7 @@ fn file_config(bind: SocketAddr, path: String, loop_file: bool) -> Config {
 /// that samples landed in a Trunk.
 ///
 /// MUTATION PROOF, recorded verbatim: removing the
-/// `crate::source::advance_route(&driver, route_handle, &mut progress)` call
+/// `crate::source::advance_route(&mut driver, route_handle, &mut progress)` call
 /// from `crate::source::file_reader::run_file_source` makes the file's samples
 /// still land in the Trunk but never become servable segments — no segmenter
 /// is pumped, so no closed segment is ever produced and this test FAILS with:
@@ -73,7 +74,7 @@ fn file_config(bind: SocketAddr, path: String, loop_file: bool) -> Config {
 #[tokio::test]
 async fn file_route_serves_real_media_segments() {
     let (bind_addr, bind_listener) = bind_tcp();
-    let config = file_config(bind_addr, fixture_string("ts/h264-aac.ts"), false);
+    let config = file_config(bind_addr, "cam", fixture_string("ts/h264-aac.ts"), false);
 
     let server = tokio::spawn(
         multimux::Server::new(
@@ -99,6 +100,58 @@ async fn file_route_serves_real_media_segments() {
     let _init: bytes::Bytes = get_non_empty(&client, &init_url).await;
 
     server.abort();
+}
+
+/// The `file` input kind's reader damage reaches the route's damage metric: a
+/// continuity gap in a file that still plays is lost media, and the route
+/// renders the report labelled with the kind an operator configured.
+#[tokio::test]
+async fn a_damaged_file_reaches_the_route_damage_metric() {
+    const ROUTE: &str = "file-damage-probe";
+    const KIND: &str = "file";
+    const DAMAGE_WAIT: Duration = Duration::from_secs(60);
+    const POLL: Duration = Duration::from_millis(50);
+    let metrics = multimux::prometheus::install();
+    let mut ts = test_fixtures::read("ts/h264-aac.ts");
+    // A whole packet missing leaves the stream aligned and skips one
+    // continuity counter, the loss a played file still tolerates.
+    let packet = mpeg_ts::ts::TS_PACKET_SIZE;
+    let victim = ts.len() / 2 / packet * packet;
+    ts.drain(victim..victim + packet);
+    let dir = test_fixtures::process::scratch_dir("multimux-file-damage");
+    let path = dir.join("damaged.ts");
+    std::fs::write(&path, &ts).expect("write the damaged file");
+    let (bind, listener) = bind_tcp();
+    let config = file_config(
+        bind,
+        ROUTE,
+        path.to_str().expect("utf-8 scratch path").to_string(),
+        false,
+    );
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(listener),
+        )
+        .serve(),
+    );
+    let deadline = tokio::time::Instant::now() + DAMAGE_WAIT;
+    let mut seen = false;
+    while !seen && tokio::time::Instant::now() < deadline {
+        tokio::time::sleep(POLL).await;
+        seen = metrics.render().lines().any(|line| {
+            line.starts_with("multimux_source_damage_total")
+                && line.contains(&format!("route=\"{ROUTE}\""))
+                && line.contains(&format!("source=\"{KIND}\""))
+        });
+    }
+    server.abort();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(
+        seen,
+        "a continuity gap in a played file must reach the route's damage metric"
+    );
 }
 
 /// Fetches `url`, asserting `200 OK` and a non-empty body.
@@ -159,7 +212,7 @@ fn total_extinf_secs(playlist: &str) -> f64 {
 #[tokio::test]
 async fn file_route_loop_false_stops() {
     let (bind, bind_listener) = bind_tcp();
-    let config = file_config(bind, fixture_string("ts/h264-aac.ts"), false);
+    let config = file_config(bind, "cam", fixture_string("ts/h264-aac.ts"), false);
     let server = tokio::spawn(
         multimux::Server::new(
             multimux::ServeRequest::new(config)
@@ -259,7 +312,7 @@ async fn file_route_loop_false_stops() {
 #[tokio::test]
 async fn file_route_loop_true_keeps_serving_and_paces_across_the_loop_point() {
     let (bind, bind_listener) = bind_tcp();
-    let config = file_config(bind, fixture_string("ts/h264-aac.ts"), true);
+    let config = file_config(bind, "cam", fixture_string("ts/h264-aac.ts"), true);
     let server = tokio::spawn(
         multimux::Server::new(
             multimux::ServeRequest::new(config)

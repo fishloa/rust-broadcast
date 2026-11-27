@@ -172,6 +172,9 @@ pub enum FatalKind {
         /// The segment.
         id: ResourceId,
     },
+    /// The caller's damage policy refused a report: nothing follows, and the
+    /// same report is inside this error.
+    Damage(broadcast_core::damage::DamageError),
 }
 
 impl FatalKind {
@@ -186,6 +189,7 @@ impl FatalKind {
             Self::SegmentFetchFailed { .. } => "segment_fetch_failed",
             Self::InitFetchFailed { .. } => "init_fetch_failed",
             Self::NonFragmentedMp4 { .. } => "non_fragmented_mp4",
+            Self::Damage(_) => "damage",
         }
     }
 }

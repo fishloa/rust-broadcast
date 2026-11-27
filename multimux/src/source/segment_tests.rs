@@ -27,6 +27,7 @@ use media_plane::segmenter::ProgramSegmenter;
 use crate::route::{RouteConfig, RouteHandle};
 use crate::source::report_driver_progress;
 use crate::source::segment::{apply_segmenter_events, drive_program_segmenters};
+use crate::testutil::{rendered_line, rendered_total};
 
 /// Render `route`'s current LL-HLS media playlist synchronously — the exact
 /// production call every LL-HLS request resolves through, so a passing
@@ -80,7 +81,7 @@ fn driver_backed_route_serves_real_media_through_ll_hls() {
     // First feed: resolves the PMT, mints program 0's driver-side Trunk.
     let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
     driver.feed(&ts_bytes, Timestamp::ZERO);
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     // Second feed: more real media, proving the segmenter's cursor keeps
@@ -88,7 +89,7 @@ fn driver_backed_route_serves_real_media_through_ll_hls() {
     // backlog.
     let more = build_ts_bytes(TrackId::new(1), 0xCD, 90);
     driver.feed(&more, Timestamp::from_nanos(1));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     assert!(
@@ -137,10 +138,10 @@ fn a_large_queued_burst_is_segmented_in_bounded_batches() {
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
-    let driver = burst_driver(3 * media_plane::segmenter::program::PUMP_BATCH_ITEMS as u32);
+    let mut driver = burst_driver(3 * media_plane::segmenter::program::PUMP_BATCH_ITEMS as u32);
     let mut published = HashSet::new();
     let mut segmenters = HashMap::new();
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     let mut calls = 1;
     while drive_program_segmenters(&driver, &route, &mut segmenters) {
         calls += 1;
@@ -160,10 +161,10 @@ fn a_small_burst_is_segmented_in_one_call() {
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
-    let driver = burst_driver(30);
+    let mut driver = burst_driver(30);
     let mut published = HashSet::new();
     let mut segmenters = HashMap::new();
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     assert!(!drive_program_segmenters(&driver, &route, &mut segmenters));
 }
 
@@ -175,7 +176,7 @@ async fn a_large_queued_burst_does_not_starve_another_task() {
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
-    let driver = burst_driver(3 * media_plane::segmenter::program::PUMP_BATCH_ITEMS as u32);
+    let mut driver = burst_driver(3 * media_plane::segmenter::program::PUMP_BATCH_ITEMS as u32);
     let mut state = crate::source::DriverProgress::new();
     let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let flag = std::sync::Arc::clone(&ran);
@@ -183,7 +184,7 @@ async fn a_large_queued_burst_does_not_starve_another_task() {
     // Race the two futures on one task instead of spawning a second one:
     // `advance_route` must yield to the runtime between batches, so the
     // other future gets to run before it finishes.
-    let advance = crate::source::advance_route(&driver, &route, &mut state);
+    let advance = crate::source::advance_route(&mut driver, &route, &mut state);
     tokio::join!(advance, other);
     assert!(
         ran.load(std::sync::atomic::Ordering::SeqCst),
@@ -236,11 +237,11 @@ fn drive_program_segmenters_bumps_parts_and_segments_produced_counters() {
 
     let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
     driver.feed(&ts_bytes, Timestamp::ZERO);
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
     let more = build_ts_bytes(TrackId::new(1), 0xCD, 90);
     driver.feed(&more, Timestamp::from_nanos(1));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     let parts_after = metric_total(
@@ -282,7 +283,7 @@ fn samples_published_in_the_same_feed_as_new_program_are_still_segmented() {
     // PES samples (-> Sample events) into the same TS byte stream.
     let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
     driver.feed(&ts_bytes, Timestamp::ZERO);
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     assert!(
@@ -317,12 +318,12 @@ fn segmenter_feeds_the_same_trunk_the_driver_writes_samples_into() {
 
     let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
     driver.feed(&ts_bytes, Timestamp::ZERO);
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     let more = build_ts_bytes(TrackId::new(1), 0xCD, 90);
     driver.feed(&more, Timestamp::from_nanos(1));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     let program_trunk = driver
@@ -452,10 +453,10 @@ fn two_programs_on_one_route_segment_independently() {
     // driver-side Trunks and subscribes both `ProgramSegmenter`s *before* any
     // sample exists).
     driver.feed(&[], Timestamp::from_nanos(0));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
     driver.feed(&[], Timestamp::from_nanos(1));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     // 90 samples @ 3000 ticks/30fps = 3s of media per program, comfortably
@@ -597,10 +598,10 @@ fn ts_hls_mpts_route_serves_each_program_as_its_own_single_pmt_playlist() {
 
     // Feed 1: Established. Feed 2: both NewProgram announcements.
     driver.feed(&[], Timestamp::from_nanos(0));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
     driver.feed(&[], Timestamp::from_nanos(1));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     // Same 90-sample budget as `two_programs_on_one_route_segment_independently`.
@@ -778,10 +779,10 @@ fn new_tracks_media_appears_in_output_after_mid_stream_addition() {
     let mut segmenters = HashMap::new();
 
     driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
     driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     let trunk = feed_until_a_segment_closes(
@@ -799,7 +800,7 @@ fn new_tracks_media_appears_in_output_after_mid_stream_addition() {
     driver.session().add_track_9();
     // Feed once to apply the track change.
     driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     // Sanity: the track change must have been applied to the trunk.
@@ -825,7 +826,7 @@ fn new_tracks_media_appears_in_output_after_mid_stream_addition() {
             break;
         }
         driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&mut driver, &route, &mut published);
         drive_program_segmenters(&driver, &route, &mut segmenters);
         if i + 1 >= MAX_BOUNDED_FEEDS {
             panic!(
@@ -877,10 +878,10 @@ fn existing_tracks_are_uninterrupted_across_mid_stream_addition() {
     let mut segmenters = HashMap::new();
 
     driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
     driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     // Every segment sequence number the route publishes, in publication
@@ -893,7 +894,7 @@ fn existing_tracks_are_uninterrupted_across_mid_stream_addition() {
             break;
         }
         driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&mut driver, &route, &mut published);
         drive_program_segmenters(&driver, &route, &mut segmenters);
         note_segment_seq(&trunk, &mut observed);
         if i + 1 >= MAX_BOUNDED_FEEDS {
@@ -905,7 +906,7 @@ fn existing_tracks_are_uninterrupted_across_mid_stream_addition() {
 
     driver.session().add_track_9();
     driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
     note_segment_seq(&trunk, &mut observed);
 
@@ -915,7 +916,7 @@ fn existing_tracks_are_uninterrupted_across_mid_stream_addition() {
             break;
         }
         driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&mut driver, &route, &mut published);
         drive_program_segmenters(&driver, &route, &mut segmenters);
         note_segment_seq(&trunk, &mut observed);
         if i + 1 >= MAX_BOUNDED_FEEDS {
@@ -965,10 +966,10 @@ fn track_change_lands_on_segment_boundary() {
     let mut segmenters = HashMap::new();
 
     driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
     driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     let trunk = feed_until_a_segment_closes(
@@ -982,7 +983,7 @@ fn track_change_lands_on_segment_boundary() {
 
     driver.session().add_track_9();
     driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     let pre_len = trunk.segment_len();
@@ -991,7 +992,7 @@ fn track_change_lands_on_segment_boundary() {
             break;
         }
         driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-        report_driver_progress(&driver, &route, &mut published);
+        report_driver_progress(&mut driver, &route, &mut published);
         drive_program_segmenters(&driver, &route, &mut segmenters);
         if i + 1 >= MAX_BOUNDED_FEEDS {
             panic!(
@@ -1024,10 +1025,10 @@ fn dash_output_logs_and_continues_on_mid_stream_addition() {
     let mut segmenters = HashMap::new();
 
     driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
     driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     let specs_before = route.track_specs(ProgramId(0));
@@ -1035,7 +1036,7 @@ fn dash_output_logs_and_continues_on_mid_stream_addition() {
 
     driver.session().add_track_9();
     driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
 
     let specs_after = route.track_specs(ProgramId(0));
@@ -1252,7 +1253,7 @@ impl GapRig {
     fn feed(&mut self) {
         self.driver
             .feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
-        report_driver_progress(&self.driver, &self.route, &mut self.published);
+        report_driver_progress(&mut self.driver, &self.route, &mut self.published);
         drive_program_segmenters(&self.driver, &self.route, &mut self.segmenters);
     }
 
@@ -1549,10 +1550,10 @@ fn mpts_programs_segment_independently() {
     let mut segmenters = HashMap::new();
 
     driver.feed(&[], Timestamp::from_nanos(0));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
     driver.feed(&[], Timestamp::from_nanos(1));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
     let _: &HashSet<ProgramId> = &published;
 
@@ -1588,10 +1589,10 @@ fn ts_hls_mpts_serves_one_pmt_per_program() {
     let mut segmenters = HashMap::new();
 
     driver.feed(&[], Timestamp::from_nanos(0));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
     driver.feed(&[], Timestamp::from_nanos(1));
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     drive_program_segmenters(&driver, &route, &mut segmenters);
     for _ in 0..90 {
         driver.feed(&[], Timestamp::from_nanos(driver_feed_nanos()));
@@ -1853,15 +1854,6 @@ fn removal_and_update_degrade_without_panicking() {
     );
 }
 
-fn rendered_total(metric: &str, route_label: &str) -> Option<f64> {
-    crate::prometheus::install()
-        .render()
-        .lines()
-        .find(|l| l.starts_with(metric) && l.contains(route_label))
-        .and_then(|l| l.rsplit(' ').next())
-        .and_then(|v| v.parse::<f64>().ok())
-}
-
 #[test]
 fn an_init_from_event_publishes_the_init_on_the_route() {
     let route = RouteHandle::new(
@@ -1886,6 +1878,177 @@ fn an_init_from_event_publishes_the_init_on_the_route() {
         Some(bytes::Bytes::from(init)),
         "InitFrom must publish the init bytes"
     );
+}
+
+/// A session that publishes one damage report and then nothing.
+struct DamageSession {
+    report: Option<broadcast_core::damage::Damage>,
+}
+
+impl Stage for DamageSession {
+    type In<'a> = &'a [u8];
+    type Out = SessionEvent;
+    type Error = Infallible;
+
+    fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<SessionEvent> {
+        self.report
+            .take()
+            .map(|damage| SessionEvent::damage(Some(ProgramId(1)), damage))
+    }
+
+    fn finish(&mut self) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn demand(&self) -> Demand {
+        Demand::new(1)
+    }
+}
+
+impl IngestSession for DamageSession {
+    type Request = bytes::Bytes;
+}
+
+/// One report an input publishes reaches the route's metrics (and, by the same
+/// call, its log): `report_driver_progress` is the one place an input's events
+/// are fanned out, so its counter is the observable proof.
+#[test]
+fn an_input_damage_report_reaches_the_route_metrics() {
+    crate::prometheus::install();
+    let route = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration(Duration::from_secs(1))
+            .with_part_target(Duration::from_millis(250))
+            .with_window_segments(4),
+    )
+    .with_name("source-damage-probe");
+    let report = broadcast_core::damage::Damage::new(
+        broadcast_core::damage::DamageKind::MediaUnitDropped,
+        broadcast_core::damage::Severity::Degraded,
+        "PES packet",
+    )
+    .for_track(2);
+    let mut driver = IngestDriver::new(
+        DamageSession {
+            report: Some(report),
+        },
+        media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+    );
+    driver.feed(b"x", Timestamp::from_nanos(0));
+    let mut published = HashSet::new();
+    report_driver_progress(&mut driver, &route, &mut published);
+    assert_eq!(
+        rendered_total("multimux_source_damage_total", "source-damage-probe"),
+        Some(1.0)
+    );
+    assert!(
+        driver.take_damage().is_empty(),
+        "the driver hands each report on exactly once"
+    );
+    report_driver_progress(&mut driver, &route, &mut published);
+    assert_eq!(
+        rendered_total("multimux_source_damage_total", "source-damage-probe"),
+        Some(1.0),
+        "nothing new, nothing counted"
+    );
+}
+
+/// The damage counter carries the input kind, and every input kind has a
+/// token for it: the label's cardinality is the fixed input set, never a URL.
+#[test]
+fn the_damage_counter_states_the_input_kind() {
+    crate::prometheus::install();
+    let cases = [
+        (
+            serde_json::json!({ "type": "rtsp", "url": "rtsp://h/s" }),
+            "rtsp",
+        ),
+        (
+            serde_json::json!({
+                "type": "rtp", "addr": "127.0.0.1:5000", "sdp": "v=0", "socket": {},
+            }),
+            "rtp",
+        ),
+        (
+            serde_json::json!({ "type": "ts_udp", "addr": "127.0.0.1:5000", "socket": {} }),
+            "ts_udp",
+        ),
+        (
+            serde_json::json!({ "type": "ts_http", "url": "http://h/x" }),
+            "ts_http",
+        ),
+        (
+            serde_json::json!({ "type": "hls_pull", "url": "http://h/x.m3u8" }),
+            "hls_pull",
+        ),
+        (
+            serde_json::json!({ "type": "dash_pull", "url": "http://h/x.mpd" }),
+            "dash_pull",
+        ),
+        (
+            serde_json::json!({ "type": "smooth_pull", "url": "http://h/x" }),
+            "smooth_pull",
+        ),
+        (
+            serde_json::json!({ "type": "rtmp", "listen": "127.0.0.1:1935" }),
+            "rtmp",
+        ),
+        (
+            serde_json::json!({ "type": "dashif_ingest", "listen": "127.0.0.1:8081" }),
+            "dashif_ingest",
+        ),
+        (
+            serde_json::json!({ "type": "srt", "listen": "127.0.0.1:9000" }),
+            "srt",
+        ),
+        (
+            serde_json::json!({ "type": "custom", "type_tag": "x" }),
+            "custom",
+        ),
+        (
+            serde_json::json!({ "type": "file", "path": "/tmp/x.ts" }),
+            "file",
+        ),
+    ];
+    for (json, token) in cases {
+        let input: crate::config::InputSpec = serde_json::from_value(json).expect("an input spec");
+        assert_eq!(crate::origin::admin::input_kind_name(&input), token);
+        let name = format!("damage-input-{token}");
+        let route = RouteHandle::new(RouteConfig::default())
+            .with_name(name.clone())
+            .with_input_kind(crate::origin::admin::input_kind_name(&input));
+        let report = broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::MediaUnitDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "PES packet",
+        );
+        let mut driver = IngestDriver::new(
+            DamageSession {
+                report: Some(report),
+            },
+            media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+        );
+        driver.feed(b"x", Timestamp::from_nanos(0));
+        let mut published = HashSet::new();
+        report_driver_progress(&mut driver, &route, &mut published);
+        let line = rendered_line(
+            "multimux_source_damage_total",
+            &[
+                ("route", &name),
+                ("source", token),
+                ("kind", "media unit dropped"),
+                ("severity", "degraded"),
+            ],
+        );
+        assert!(
+            line.is_some(),
+            "{token}: no damage line with its input kind"
+        );
+    }
 }
 
 #[test]
@@ -1939,7 +2102,7 @@ fn flushing_a_finished_program_counts_its_parts_and_segments() {
     let mut published = HashSet::new();
     let mut segmenters = HashMap::new();
     driver.feed(&build_ts_bytes(TrackId::new(1), 0xAB, 30), Timestamp::ZERO);
-    report_driver_progress(&driver, &route, &mut published);
+    report_driver_progress(&mut driver, &route, &mut published);
     while drive_program_segmenters(&driver, &route, &mut segmenters) {}
 
     let parts_before = rendered_total(

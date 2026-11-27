@@ -68,6 +68,7 @@
 
 use broadcast_common::stage::Timestamp;
 use broadcast_common::timeouts::Timeouts;
+use broadcast_core::damage::{Damage, DamageError, DamagePolicy};
 use broadcast_core::error::InvalidField;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -140,6 +141,11 @@ pub struct SrtSocketConfig {
     pub handshake: HandshakeConfig,
     /// The tokio adapter's timeouts and sizes.
     pub io: IoConfig,
+    /// What each damage report means for this connection: `Report` (the
+    /// default for everything) publishes it as [`SrtEvent::Damage`] and keeps
+    /// delivering; `Fail` ends the connection with [`Error::Damage`]
+    /// carrying the same report.
+    pub damage_policy: DamagePolicy,
 }
 
 impl SrtSocketConfig {
@@ -148,7 +154,15 @@ impl SrtSocketConfig {
         SrtSocketConfig {
             handshake,
             io: IoConfig::default(),
+            damage_policy: DamagePolicy::new(),
         }
+    }
+
+    /// Set what each damage report means (see [`SrtSocketConfig::damage_policy`]).
+    #[must_use]
+    pub fn with_damage_policy(mut self, damage_policy: DamagePolicy) -> Self {
+        self.damage_policy = damage_policy;
+        self
     }
 
     /// Replace [`SrtSocketConfig::handshake`].
@@ -353,6 +367,84 @@ const UNROUTED_CHANNEL_CAPACITY: usize = 1024;
 /// adapter's live (TLPKTDROP) delivery philosophy of dropping rather than
 /// buffering forever (when TLPKTDROP was negotiated, §4.6).
 const DELIVER_CHANNEL_CAPACITY: usize = 4096;
+
+/// One item the driver hands the application handle, in delivery order.
+///
+/// SRT had no event channel before the damage report: [`SrtSocket::recv`]
+/// returned payloads only. [`SrtSocket::recv_event`] is that channel now, and
+/// `recv` stays the payload-only convenience over it. A refused report (the
+/// caller's [`DamagePolicy`] saying `Fail`) is not an item: it ends the
+/// connection and `recv_event` returns it as the error.
+#[non_exhaustive]
+#[derive(Debug)]
+pub enum SrtEvent {
+    /// A delivered application payload.
+    Payload(Bytes),
+    /// Content this connection gave up on — the one
+    /// [`Damage`] report, in order with the payloads around it.
+    Damage(Damage),
+}
+
+/// What the driver sends the handle: the public event plus the policy stop.
+enum Delivered {
+    Event(SrtEvent),
+    Refused(DamageError),
+}
+
+/// A loss this adapter can only see as a count, reported once per cause so a
+/// flood of datagrams does not become a flood of reports.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CountedCause {
+    /// The bounded hand-off channel to the application was full, so a
+    /// delivered payload was dropped (`SocketStats::deliver_dropped`).
+    DeliverDropped,
+    /// An inbound DATA packet was further ahead of the delivery cursor than
+    /// the negotiated flow window, so it can never be released.
+    OutOfWindow,
+    /// An encrypted DATA packet could not be decrypted: no SEK for its
+    /// `KK` parity, or the AES-CTR pass failed.
+    Undecryptable,
+    /// The peer sent a `PeerError` control packet, which this adapter has no
+    /// reply for.
+    PeerError,
+    /// A datagram from the peer did not parse as an SRT packet at all, so it
+    /// is discarded unread.
+    MalformedDatagram,
+}
+
+impl CountedCause {
+    const fn what(self) -> &'static str {
+        match self {
+            CountedCause::DeliverDropped => "SRT delivered payload (application behind)",
+            CountedCause::OutOfWindow => "SRT data packet (beyond the flow window)",
+            CountedCause::Undecryptable => "SRT encrypted data packet (no usable key)",
+            CountedCause::PeerError => "SRT peer error",
+            CountedCause::MalformedDatagram => "SRT datagram (unparseable)",
+        }
+    }
+}
+
+/// Which count-based causes this connection has already reported.
+#[derive(Debug, Default)]
+struct DamageOnce {
+    deliver_dropped: bool,
+    out_of_window: bool,
+    undecryptable: bool,
+    peer_error: bool,
+    malformed_datagram: bool,
+}
+
+impl DamageOnce {
+    fn slot(&mut self, cause: CountedCause) -> &mut bool {
+        match cause {
+            CountedCause::DeliverDropped => &mut self.deliver_dropped,
+            CountedCause::OutOfWindow => &mut self.out_of_window,
+            CountedCause::Undecryptable => &mut self.undecryptable,
+            CountedCause::PeerError => &mut self.peer_error,
+            CountedCause::MalformedDatagram => &mut self.malformed_datagram,
+        }
+    }
+}
 /// Capacity of the application-to-driver payload channel
 /// ([`SrtSocket::send`]). Bounded so the application is paced by the driver
 /// instead of queueing without limit; the driver additionally stops draining
@@ -531,6 +623,8 @@ struct ConnParams {
     max_flow_window: u32,
     /// The negotiated MTU (§3.2.1): the smaller of the two sides' values.
     mtu: u32,
+    /// The caller's decision about each damage report.
+    damage_policy: DamagePolicy,
     /// Whether Too-Late Packet Drop was negotiated (the `TLPKTDROP` flag both
     /// sides advertised, §3.2.1.1.1): only then may the receiver skip a gap.
     tlpkt_drop: bool,
@@ -560,8 +654,12 @@ pub struct SrtSocket {
     peer_addr: std::net::SocketAddr,
     /// Application payloads flowing to the driver task for transmission.
     to_driver: mpsc::Sender<Bytes>,
-    /// TSBPD/ARQ-delivered payloads flowing back from the driver task.
-    from_driver: mpsc::Receiver<Bytes>,
+    /// TSBPD/ARQ-delivered payloads and damage reports flowing back from the
+    /// driver task, in delivery order.
+    from_driver: mpsc::Receiver<Delivered>,
+    /// Damage reports received ahead of a payload the caller asked for with
+    /// [`SrtSocket::recv`], held for [`SrtSocket::next_damage`].
+    pending_damage: VecDeque<Damage>,
     /// The driver task; aborted on drop.
     driver: Option<tokio::task::JoinHandle<()>>,
     stats: Arc<Counters>,
@@ -632,6 +730,7 @@ impl SrtSocket {
         let SrtSocketConfig {
             handshake: config,
             io,
+            damage_policy,
         } = config;
         let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
         let peer = bounded(io.timeouts.connect, "resolve", resolve_one(remote_addr)).await?;
@@ -760,6 +859,7 @@ impl SrtSocket {
                             epoch,
                             max_datagram,
                             &io,
+                            damage_policy,
                             #[cfg(feature = "crypto")]
                             config
                                 .crypto
@@ -792,6 +892,7 @@ impl SrtSocket {
         epoch: Instant,
         max_datagram: usize,
         io: &IoConfig,
+        damage_policy: DamagePolicy,
         #[cfg(feature = "crypto")] passphrase: Vec<u8>,
     ) -> SrtSocket {
         // This socket is exclusively this connection's own (bound fresh by
@@ -821,6 +922,7 @@ impl SrtSocket {
             epoch,
             max_flow_window: params.max_flow_window_size,
             mtu: params.mtu,
+            damage_policy,
             tlpkt_drop: params.flags.tlpktdrop(),
             #[cfg(feature = "crypto")]
             crypto_passphrase: passphrase,
@@ -873,6 +975,7 @@ impl SrtSocket {
         let SrtSocketConfig {
             handshake: config,
             io,
+            damage_policy,
         } = config;
         let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
         let peer = bounded(io.timeouts.connect, "resolve", resolve_one(remote_addr)).await?;
@@ -990,6 +1093,7 @@ impl SrtSocket {
                             epoch,
                             max_datagram,
                             &io,
+                            damage_policy,
                             #[cfg(feature = "crypto")]
                             config
                                 .crypto
@@ -1013,7 +1117,7 @@ impl SrtSocket {
     /// the [`SrtSocket`] handle wired to it.
     fn spawn(p: ConnParams) -> Self {
         let (to_driver, app_out) = mpsc::channel::<Bytes>(SEND_CHANNEL_CAPACITY);
-        let (deliver, from_driver) = mpsc::channel(DELIVER_CHANNEL_CAPACITY);
+        let (deliver, from_driver) = mpsc::channel::<Delivered>(DELIVER_CHANNEL_CAPACITY);
 
         let udp = Arc::clone(&p.udp);
         let (peer_addr, peer_socket_id, epoch) = (p.peer_addr, p.peer_socket_id, p.epoch);
@@ -1026,6 +1130,7 @@ impl SrtSocket {
             peer_addr,
             to_driver,
             from_driver,
+            pending_damage: VecDeque::new(),
             driver: Some(handle),
             stats,
             udp,
@@ -1061,11 +1166,40 @@ impl SrtSocket {
         self.peer_addr
     }
 
+    /// Receive the next item in delivery order: a payload or a damage report.
+    ///
+    /// Returns `None` once the peer has shut down (or the driver task has
+    /// stopped) and no further items will arrive. The caller's
+    /// [`DamagePolicy`] failing a report (`Fail`) ends the connection here
+    /// with [`Error::Damage`] carrying the same report.
+    pub async fn recv_event(&mut self) -> Result<Option<SrtEvent>> {
+        match self.from_driver.recv().await {
+            Some(Delivered::Event(event)) => Ok(Some(event)),
+            Some(Delivered::Refused(error)) => Err(Error::Damage(error)),
+            None => Ok(None),
+        }
+    }
+
     /// Receive the next payload, waiting until one is available.
     /// Returns `None` once the peer has shut down (or the driver task has
     /// stopped) and no further payloads will arrive.
+    ///
+    /// Damage reports that arrive before the next payload are held (they are
+    /// not dropped): drain them with [`Self::next_damage`], or use
+    /// [`Self::recv_event`] to see both in order.
     pub async fn recv(&mut self) -> Result<Option<Bytes>> {
-        Ok(self.from_driver.recv().await)
+        loop {
+            match self.recv_event().await? {
+                Some(SrtEvent::Payload(payload)) => return Ok(Some(payload)),
+                Some(SrtEvent::Damage(damage)) => self.pending_damage.push_back(damage),
+                None => return Ok(None),
+            }
+        }
+    }
+
+    /// The next damage report already received by a [`Self::recv`] call.
+    pub fn next_damage(&mut self) -> Option<Damage> {
+        self.pending_damage.pop_front()
     }
 
     /// A snapshot of this connection's internal-backpressure drop counters
@@ -1351,9 +1485,18 @@ struct Driver {
     // the same `run()` iteration's RX processing while it slept.
     next_data_send_at: Option<Instant>,
 
-    // Delivered payloads flowing back to the application handle. Bounded
-    // (item 4): see [`DELIVER_CHANNEL_CAPACITY`].
-    deliver: mpsc::Sender<Bytes>,
+    // Delivered payloads (and damage reports) flowing back to the
+    // application handle. Bounded (item 4): see [`DELIVER_CHANNEL_CAPACITY`].
+    deliver: mpsc::Sender<Delivered>,
+
+    /// The caller's decision about each damage report.
+    damage_policy: DamagePolicy,
+    /// Which causes this connection has already reported, so a recurring
+    /// condition is one report, not one per datagram.
+    reported: DamageOnce,
+    /// A report the policy refused: the connection ends after the current
+    /// pass.
+    stop: bool,
 
     peer_shutdown: bool,
 
@@ -1370,7 +1513,7 @@ struct Driver {
 }
 
 impl Driver {
-    fn new(p: ConnParams, deliver: mpsc::Sender<Bytes>) -> Self {
+    fn new(p: ConnParams, deliver: mpsc::Sender<Delivered>) -> Self {
         let now = Instant::now();
         Driver {
             udp: p.udp,
@@ -1397,6 +1540,9 @@ impl Driver {
                 None,
             ),
             livecc: LiveCC::new(DEFAULT_MAX_BW),
+            damage_policy: p.damage_policy,
+            reported: DamageOnce::default(),
+            stop: false,
             next_message_number: 1,
             next_send_seq: p.our_initial_seq,
             epoch: p.epoch,
@@ -1538,8 +1684,11 @@ impl Driver {
                 maybe = self.rx.recv() => {
                     match maybe {
                         Some(bytes) => {
-                            // A malformed datagram is ignored, not fatal.
-                            let _ = self.ingress(bytes);
+                            // A malformed datagram is ignored, not fatal —
+                            // but the content it carried is lost, so say so.
+                            if self.ingress(bytes).is_err() {
+                                self.report_counted(CountedCause::MalformedDatagram, 1);
+                            }
                         }
                         None => break, // upstream demux/forwarder is gone.
                     }
@@ -1564,7 +1713,7 @@ impl Driver {
                 // always sends at least periodic Keep-Alives.
                 break;
             }
-            if self.peer_shutdown || shutting_down {
+            if self.peer_shutdown || shutting_down || self.stop {
                 break;
             }
         }
@@ -1856,11 +2005,15 @@ impl Driver {
                                 )
                                 .is_err()
                             {
+                                self.report_counted(CountedCause::Undecryptable, 1);
                                 return;
                             }
                             (Bytes::from(bytes), EncryptionKeyField::NotEncrypted)
                         }
-                        None => return,
+                        None => {
+                            self.report_counted(CountedCause::Undecryptable, 1);
+                            return;
+                        }
                     }
                 } else {
                     (datagram, key_flag)
@@ -1899,6 +2052,7 @@ impl Driver {
         }
         let outcome = self.receiver.feed_data(seq_number, now);
         if outcome.out_of_window {
+            self.report_counted(CountedCause::OutOfWindow, 1);
             return;
         }
         if let Some(nak_bytes) = outcome.nak {
@@ -1944,6 +2098,9 @@ impl Driver {
             ControlPacket::KeepAlive(_) => {}
             ControlPacket::Shutdown(_) => {
                 self.peer_shutdown = true;
+            }
+            ControlPacket::PeerError(p) => {
+                self.report_counted(CountedCause::PeerError, u64::from(p.error_code));
             }
             #[cfg(feature = "crypto")]
             ControlPacket::UserDefined(u) => {
@@ -1998,21 +2155,55 @@ impl Driver {
                 // The staged datagram is a DATA packet (it parsed as one):
                 // hand over the payload as a view into the same allocation.
                 let payload = datagram.slice(SRT_HEADER_LEN.min(datagram.len())..);
-                if self.deliver.try_send(payload).is_err() {
+                if self
+                    .deliver
+                    .try_send(Delivered::Event(SrtEvent::Payload(payload)))
+                    .is_err()
+                {
                     // Full (app isn't calling `recv` fast enough) or the
                     // handle is gone; either way, drop rather than buffer
-                    // without bound (item 4) and count it.
+                    // without bound (item 4), count it and say so once.
                     self.stats.deliver_dropped.fetch_add(1, Ordering::Relaxed);
+                    self.report_counted(CountedCause::DeliverDropped, 1);
                 }
             }
         }
-        for &seq in &outcome.dropped {
-            self.staged.remove(&seq);
+        for &packet in &outcome.dropped {
+            self.staged.remove(&packet.seq_number);
             self.stats.too_late_dropped.fetch_add(1, Ordering::Relaxed);
         }
-        for (first, last) in contiguous_runs(&outcome.dropped) {
+        let lost: Vec<u32> = outcome.dropped.iter().map(|p| p.seq_number).collect();
+        for (first, last) in contiguous_runs(&lost) {
             self.receiver.skip_range(first, last);
         }
+        for damage in crate::damage::reports(&outcome.dropped) {
+            self.report(damage);
+        }
+    }
+
+    /// Hand one report to the caller's policy: publish it, or end the
+    /// connection with it when the policy says `Fail`.
+    fn report(&mut self, damage: Damage) {
+        match self.damage_policy.admit(damage) {
+            Ok(damage) => {
+                let _ = self
+                    .deliver
+                    .try_send(Delivered::Event(SrtEvent::Damage(damage)));
+            }
+            Err(error) => {
+                self.stop = true;
+                let _ = self.deliver.try_send(Delivered::Refused(error));
+            }
+        }
+    }
+
+    /// Report a loss this adapter only counts, once per cause.
+    fn report_counted(&mut self, cause: CountedCause, count: u64) {
+        if *self.reported.slot(cause) {
+            return;
+        }
+        *self.reported.slot(cause) = true;
+        self.report(crate::damage::dropped_before_delivery(cause.what(), count));
     }
 
     fn tick_engines(&mut self) {
@@ -2335,6 +2526,9 @@ struct ListenerCore {
     udp: Arc<UdpSocket>,
     config: HandshakeConfig,
     io: IoConfig,
+    /// The caller's decision about each damage report, inherited by every
+    /// connection this listener accepts.
+    damage_policy: DamagePolicy,
     /// Per-listener 128-bit key for [`derive_cookie`] (`draft-sharabayko-srt-01`
     /// §4.3.1.1: "a cookie that is crafted based on host, port and current
     /// time"), drawn from the OS at [`SrtListener::bind`] and rotated every
@@ -2510,6 +2704,7 @@ impl SrtListener {
         let SrtSocketConfig {
             handshake: config,
             io,
+            damage_policy,
         } = config;
         let socket = Arc::new(UdpSocket::bind(addr).await.map_err(|e| io_err("bind", e))?);
         let local = socket.local_addr().map_err(|e| io_err("local_addr", e))?;
@@ -2528,6 +2723,7 @@ impl SrtListener {
             udp: Arc::clone(&socket),
             config,
             io,
+            damage_policy,
             cookie_keys: CookieKeys::new(Instant::now())?,
             pending: std::collections::HashMap::new(),
             outbound_queue: std::collections::HashMap::new(),
@@ -3050,6 +3246,7 @@ impl ListenerCore {
             epoch,
             max_flow_window: negotiated.max_flow_window_size,
             mtu: negotiated.mtu,
+            damage_policy: self.damage_policy.clone(),
             tlpkt_drop: negotiated.flags.tlpktdrop(),
             #[cfg(feature = "crypto")]
             crypto_passphrase: self
@@ -3534,7 +3731,7 @@ mod adapter_tests {
     /// channel, with the same engine defaults `spawn` uses — so `ingress`,
     /// `tick_engines` and `staged` can be driven directly without a live
     /// handshake.
-    async fn test_driver(max_flow_window: u32) -> (Driver, mpsc::Receiver<Bytes>) {
+    async fn test_driver(max_flow_window: u32) -> (Driver, mpsc::Receiver<Delivered>) {
         let (driver, rx, _datagram_tx) = test_driver_with_ingress(max_flow_window).await;
         // The inbound-datagram sender is dropped here: the tests that use this
         // drive `ingress`/`tick_engines` directly, never `Driver::run`'s
@@ -3546,7 +3743,7 @@ mod adapter_tests {
     /// driver's inbound-datagram channel, so `Driver::run` can be spawned.
     async fn test_driver_with_ingress(
         max_flow_window: u32,
-    ) -> (Driver, mpsc::Receiver<Bytes>, mpsc::Sender<Bytes>) {
+    ) -> (Driver, mpsc::Receiver<Delivered>, mpsc::Sender<Bytes>) {
         let udp = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
         // Make the socket's writability known up front. Without it the first
         // `send_to` yields to the reactor, and under a paused clock the
@@ -3574,6 +3771,7 @@ mod adapter_tests {
                 epoch: Instant::now(),
                 max_flow_window,
                 mtu: 1500,
+                damage_policy: DamagePolicy::new(),
                 tlpkt_drop: true,
                 #[cfg(feature = "crypto")]
                 crypto_passphrase: Vec::new(),
@@ -3808,6 +4006,7 @@ mod adapter_tests {
             udp,
             config,
             io: IoConfig::default(),
+            damage_policy: DamagePolicy::new(),
             cookie_keys: CookieKeys::new(Instant::now()).unwrap(),
             pending: std::collections::HashMap::new(),
             outbound_queue: std::collections::HashMap::new(),
@@ -4192,12 +4391,29 @@ mod adapter_tests {
         assert!(accepted.try_recv().is_err());
     }
 
-    fn drain_deliveries(rx: &mut mpsc::Receiver<Bytes>) -> Vec<Bytes> {
+    fn drain_deliveries(rx: &mut mpsc::Receiver<Delivered>) -> Vec<Bytes> {
         let mut out = Vec::new();
-        while let Ok(payload) = rx.try_recv() {
-            out.push(payload);
+        while let Ok(item) = rx.try_recv() {
+            if let Delivered::Event(SrtEvent::Payload(payload)) = item {
+                out.push(payload);
+            }
         }
         out
+    }
+
+    /// Everything queued for the application, split into payloads and damage
+    /// reports (one pass: a second drain would find the channel empty).
+    fn drain_all(rx: &mut mpsc::Receiver<Delivered>) -> (Vec<Bytes>, Vec<Damage>) {
+        let mut payloads = Vec::new();
+        let mut damages = Vec::new();
+        while let Ok(item) = rx.try_recv() {
+            match item {
+                Delivered::Event(SrtEvent::Payload(payload)) => payloads.push(payload),
+                Delivered::Event(SrtEvent::Damage(damage)) => damages.push(damage),
+                Delivered::Refused(_) => {}
+            }
+        }
+        (payloads, damages)
     }
 
     // -----------------------------------------------------------------------
@@ -4398,6 +4614,44 @@ mod adapter_tests {
             "the gap must be skipped at the successor's play time and its \
              packets delivered (live mode, §4.6/rule 21)"
         );
+    }
+
+    /// A gap TSBPD skips is one damage report for the whole run, delivered
+    /// before the payloads that continue past it, and the run's first
+    /// sequence number is the ordinal.
+    #[tokio::test(start_paused = true)]
+    async fn a_skipped_gap_is_one_damage_report() {
+        let (mut driver, mut rx) = test_driver(8192).await;
+        // 0 arrives, 1..=3 never do, 4 arrives: a run of three is skipped.
+        for seq in [0u32, 4] {
+            driver
+                .ingress(Bytes::from(data_bytes(
+                    seq,
+                    0,
+                    &[u8::try_from(seq).unwrap()],
+                )))
+                .expect("ingress");
+        }
+        tokio::time::advance(Duration::from_millis(130)).await;
+        driver.tick_engines();
+
+        let (payloads, reports) = drain_all(&mut rx);
+        assert_eq!(reports.len(), 1, "one report per contiguous run");
+        assert_eq!(
+            reports[0].kind(),
+            broadcast_core::damage::DamageKind::MediaUnitDropped
+        );
+        assert_eq!(
+            reports[0].severity(),
+            broadcast_core::damage::Severity::Degraded
+        );
+        assert_eq!(reports[0].location().ordinal(), Some(1));
+        assert!(
+            reports[0].what().contains("unrecoverable gap"),
+            "the report names the reason: {}",
+            reports[0].what()
+        );
+        assert_eq!(payloads.len(), 2, "playback continued past the skipped run");
     }
 
     /// r08-SRT-W2 (adapter side): when TSBPD gives up on a packet (§4.6), the
@@ -4689,7 +4943,12 @@ mod adapter_tests {
     }
 
     #[cfg(feature = "crypto")]
-    async fn encrypted_pair() -> (Driver, mpsc::Receiver<Bytes>, Driver, mpsc::Receiver<Bytes>) {
+    async fn encrypted_pair() -> (
+        Driver,
+        mpsc::Receiver<Delivered>,
+        Driver,
+        mpsc::Receiver<Delivered>,
+    ) {
         let (mut a, a_rx) = test_driver(8192).await;
         let (mut b, b_rx) = test_driver(8192).await;
         let salt = [0x3Cu8; crate::crypto::SALT_LEN];
@@ -4738,7 +4997,7 @@ mod adapter_tests {
     const REFRESH_TEST_STEP: Duration = Duration::from_millis(20);
 
     #[cfg(feature = "crypto")]
-    fn payloads(rx: &mut mpsc::Receiver<Bytes>) -> Vec<u8> {
+    fn payloads(rx: &mut mpsc::Receiver<Delivered>) -> Vec<u8> {
         drain_deliveries(rx).iter().map(|p| p[0]).collect()
     }
 
@@ -5335,6 +5594,7 @@ mod adapter_tests {
                 epoch: Instant::now(),
                 max_flow_window: 8192,
                 mtu: 1500,
+                damage_policy: DamagePolicy::new(),
                 tlpkt_drop: true,
                 #[cfg(feature = "crypto")]
                 crypto_passphrase: Vec::new(),
@@ -5713,6 +5973,7 @@ mod adapter_tests {
                     epoch: Instant::now(),
                     max_flow_window: 8192,
                     mtu: 1500,
+                    damage_policy: DamagePolicy::new(),
                     tlpkt_drop: negotiated,
                     #[cfg(feature = "crypto")]
                     crypto_passphrase: Vec::new(),

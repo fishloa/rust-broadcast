@@ -138,6 +138,7 @@ impl Stage for EventIngest {
                     stitch.discontinuity();
                 }
             }
+            Event::Damage(damage) => self.tracker.damage(damage),
             _ => {}
         }
         Ok(())
@@ -568,7 +569,7 @@ impl SessionStep {
                     verdict = verdict.max(Verdict::Fed);
                     driver.feed(event, now);
                 }
-                Event::Discontinuity => driver.feed(event, now),
+                Event::Discontinuity | Event::Damage(_) => driver.feed(event, now),
                 Event::Status(Status::Stalled { .. }) => self.stalled_seen = true,
                 Event::Status(Status::Reconnecting { .. }) if !self.labels.session_retries => {
                     verdict = verdict.max(self.reconnect_verdict());
@@ -1197,6 +1198,42 @@ mod tests {
                 assert_eq!(tracks[0].es_info_descriptors, vec![0x00]);
             }
             other => panic!("expected TracksChanged, got {other:?}"),
+        }
+    }
+
+    /// Every source that hands this host a broadcast-client [`Event`] stream
+    /// publishes its reader's reports as [`Event::Damage`]; the ingest must
+    /// carry each one to the driver, attributed to the programme that owns the
+    /// track it names, or an origin never sees the loss.
+    #[test]
+    fn a_damage_report_reaches_the_driver_with_its_programme() {
+        let mut ingest = EventIngest::new();
+        ingest
+            .feed(
+                Event::Tracks(vec![spec(1, false), spec(2, false)]),
+                Timestamp::ZERO,
+            )
+            .expect("feed");
+        let _ = events(&mut ingest);
+        let report = broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::MediaUnitDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "media segment",
+        )
+        .for_track(2);
+        ingest
+            .feed(Event::Damage(report.clone()), Timestamp::ZERO)
+            .expect("feed");
+        let reported = events(&mut ingest);
+        assert_eq!(reported.len(), 1, "one report in, one report out");
+        match &reported[0] {
+            SessionEvent::Damage {
+                program, damage, ..
+            } => {
+                assert_eq!(*program, Some(media_plane::ingress::ProgramId(0)));
+                assert_eq!(damage, &report);
+            }
+            other => panic!("expected Damage, got {other:?}"),
         }
     }
 

@@ -35,7 +35,7 @@ percent-encoding = { version = "2", optional = true }
 [features]
 default = []
 # Derive serde on the public wire/event types.
-serde = ["dep:serde"]
+serde = ["dep:serde", "broadcast-common/serde", "broadcast-core/serde"]
 # Real-socket server IO over the sans-IO core (pulls tokio).
 tokio = ["dep:tokio", "dep:tokio-util", "dep:futures-util", "dep:bytes", "target"]
 # `target::RtmpTarget`: the `rtmp[s]://` URL grammar (no sockets).

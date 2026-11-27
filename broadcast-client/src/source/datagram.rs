@@ -62,12 +62,21 @@ pub(crate) struct Ingest {
     validity: SeqValidity,
     stats: DatagramStats,
     discontinuity: bool,
+    damage: Vec<broadcast_core::damage::Damage>,
 }
+
+/// Sequence numbers are counted one per RTP packet (RFC 3550 §5.1), so the
+/// time base a reported run is measured in is one tick per packet.
+const RTP_TIMESCALE: broadcast_core::timescale::Timescale = broadcast_core::timescale!(1 << 16);
 
 #[derive(Default)]
 pub(crate) struct Released {
     pub payloads: Vec<Vec<u8>>,
     pub discontinuity: bool,
+    /// What the transport gave up on: a run of packets the reorder buffer
+    /// skipped, a datagram that is not TS, a packet the delivery engine
+    /// dropped — the one `Damage` report per run.
+    pub damage: Vec<broadcast_core::damage::Damage>,
 }
 
 impl Ingest {
@@ -86,6 +95,7 @@ impl Ingest {
             validity: SeqValidity::default(),
             stats: DatagramStats::default(),
             discontinuity: false,
+            damage: Vec::new(),
         }
     }
 
@@ -111,6 +121,22 @@ impl Ingest {
             out.push(datagram.to_vec());
         } else {
             self.stats.malformed = self.stats.malformed.saturating_add(1);
+            // Coalesced by cause: one report however long the run of
+            // unaligned datagrams is.
+            if !self
+                .damage
+                .iter()
+                .any(|d| d.what() == "MPEG-2 TS datagram (not packet aligned)")
+            {
+                self.damage.push(
+                    broadcast_core::damage::Damage::new(
+                        broadcast_core::damage::DamageKind::MediaUnitDropped,
+                        broadcast_core::damage::Severity::Degraded,
+                        "MPEG-2 TS datagram (not packet aligned)",
+                    )
+                    .with_ordinal(self.stats.malformed),
+                );
+            }
         }
         self.finish(out)
     }
@@ -137,6 +163,7 @@ impl Ingest {
         Released {
             payloads,
             discontinuity: core::mem::take(&mut self.discontinuity),
+            damage: core::mem::take(&mut self.damage),
         }
     }
 
@@ -256,6 +283,23 @@ impl Ingest {
     fn skip_to(&mut self, ext: u64) {
         let gap = ext.saturating_sub(self.next_ext);
         self.stats.lost = self.stats.lost.saturating_add(gap);
+        if gap > 0 {
+            // One report per skipped run, with the first sequence number and
+            // how far the run reached.
+            self.damage.push(
+                broadcast_core::damage::Damage::new(
+                    broadcast_core::damage::DamageKind::MediaUnitDropped,
+                    broadcast_core::damage::Severity::Degraded,
+                    "RTP packet run (reorder buffer skipped)",
+                )
+                .with_ordinal(self.next_ext)
+                .at_media_time(broadcast_core::damage::MediaTimeRange::new(
+                    RTP_TIMESCALE,
+                    i64::try_from(self.next_ext).unwrap_or(i64::MAX),
+                    i64::try_from(ext).unwrap_or(i64::MAX),
+                )),
+            );
+        }
         self.next_ext = ext;
         self.next_seq = self
             .next_seq
@@ -463,6 +507,7 @@ impl Datagram {
             return Released {
                 payloads: Vec::new(),
                 discontinuity: false,
+                damage: Vec::new(),
             };
         };
         let out = s.take_out();
@@ -471,6 +516,7 @@ impl Datagram {
         Released {
             payloads: out.payloads,
             discontinuity: false,
+            damage: out.damage,
         }
     }
 

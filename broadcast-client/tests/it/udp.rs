@@ -520,6 +520,95 @@ fn a_gap_is_held_for_the_reorder_wait_and_the_wake_is_announced() {
     );
 }
 
+/// A run the reorder buffer gives up on reaches the player as one report, in
+/// order with the samples around it, and playback continues past it.
+#[test]
+fn a_skipped_rtp_run_reaches_the_player_as_one_report_and_playback_continues() {
+    let media = small();
+    let rtp = rtp_datagrams(&media, 7, 10, SSRC_A);
+    let mut host = UdpHost::open("rtp://239.1.1.1:5000", Config::default());
+    host.datagram(&rtp[0]);
+    host.datagram(&rtp[2]); // seq 1 lost
+    let wait = instant_micros(UdpConfig::default().reorder_wait);
+    let now = host.now;
+    host.advance_to(now + wait);
+    host.datagram(&rtp[1]); // too late to be used
+    for datagram in &rtp[3..] {
+        host.datagram(datagram);
+    }
+    host.advance_to(host.now + 5_000_000);
+    host.settle();
+
+    let damage: Vec<broadcast_core::damage::Damage> = host
+        .events
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::Damage(damage) => Some(damage.clone()),
+            _ => None,
+        })
+        .collect();
+    // Two causes for one loss, and that is the point: the reorder buffer
+    // skipped a run, and the TS demuxer saw the continuity gap it caused.
+    assert!(!damage.is_empty(), "the skipped run must be reported");
+    let run = damage
+        .iter()
+        .find(|d| d.what() == "RTP packet run (reorder buffer skipped)")
+        .expect("the reorder buffer's own report");
+    assert_eq!(
+        run.kind(),
+        broadcast_core::damage::DamageKind::MediaUnitDropped
+    );
+    assert_eq!(run.severity(), broadcast_core::damage::Severity::Degraded);
+    assert_eq!(
+        run.location().ordinal(),
+        Some(1),
+        "the report names where the run began"
+    );
+    assert!(
+        damage
+            .iter()
+            .all(|d| { d.severity() == broadcast_core::damage::Severity::Degraded })
+    );
+    assert!(
+        host.events
+            .iter()
+            .any(|e| matches!(e.event, Event::Sample { .. })),
+        "playback continued past the skipped run"
+    );
+}
+
+/// The same run with `Fail`: the session publishes the report and stops.
+#[test]
+fn the_fail_policy_ends_the_rtp_session_at_the_same_report() {
+    let media = small();
+    let rtp = rtp_datagrams(&media, 7, 10, SSRC_A);
+    let config = config_with(|cfg| {
+        cfg.damage_policy = broadcast_core::damage::DamagePolicy::new()
+            .fail_on(broadcast_core::damage::Severity::Degraded);
+    });
+    let mut host = UdpHost::open("rtp://239.1.1.1:5000", config);
+    host.datagram(&rtp[0]);
+    host.datagram(&rtp[2]);
+    let wait = instant_micros(UdpConfig::default().reorder_wait);
+    let now = host.now;
+    host.advance_to(now + wait);
+    host.settle();
+
+    let reports = host
+        .events
+        .iter()
+        .filter(|e| matches!(e.event, Event::Damage(_)))
+        .count();
+    assert!(reports >= 1, "the report is published before the stop");
+    assert!(host.events.iter().any(|e| matches!(
+        e.event,
+        Event::Error {
+            kind: broadcast_client::ErrorKind::DamageRefused,
+            fatal: true,
+        }
+    )));
+}
+
 #[test]
 fn a_packet_beyond_the_window_gives_up_everything_held() {
     let media = small();

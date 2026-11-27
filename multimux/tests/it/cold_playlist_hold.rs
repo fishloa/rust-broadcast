@@ -292,6 +292,7 @@ fn fixture_config(bind: std::net::SocketAddr, loop_file: bool) -> Config {
         .with_part_target(Duration::from_millis(u64::from(FIXTURE_PART_TARGET_MS)))
         .with_window_segments(FIXTURE_WINDOW_SEGMENTS)
         .with_routes(vec![Route {
+            damage_policy: Default::default(),
             name: "cam".to_string(),
             input: InputSpec::File {
                 path: test_fixtures::path("ts/h264-aac.ts")

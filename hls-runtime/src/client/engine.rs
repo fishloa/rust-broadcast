@@ -16,8 +16,8 @@ use broadcast_common::url_ref;
 use broadcast_core::timescale::Timescale;
 use broadcast_hls::limits::Limits;
 use broadcast_hls::{
-    ByteRange, EncryptionMethod, MapTag, MasterPlaylist, MediaKey, MediaPlaylist, MediaSegment,
-    OpenSegment, PreloadHintType,
+    ByteRange, DecimalSeconds, EncryptionMethod, MapTag, MasterPlaylist, MediaKey, MediaPlaylist,
+    MediaSegment, OpenSegment, ParseDiagnosticKind, PreloadHintType,
 };
 use isobmff::cenc::KEY_LEN;
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
@@ -386,6 +386,61 @@ fn program_date_time_ms(seg: &MediaSegment) -> Option<i64> {
     program_date_time(seg).map(|pdt| pdt.timestamp().as_millisecond())
 }
 
+/// Why a Part/Segment was given up on, as the report of its loss names it.
+///
+/// The caller knows what it saw (an HTTP status, a timeout); the client maps
+/// it to the structure the report names, so a host counting losses can tell a
+/// missing resource from a slow one without parsing log text.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SkipReason {
+    /// The origin answered 404.
+    NotFound,
+    /// The origin answered 410.
+    Gone,
+    /// The fetch did not complete within the caller's deadline.
+    TimedOut,
+    /// A failure with no status (a transport error, a short body).
+    Unusable,
+}
+
+impl SkipReason {
+    /// Stable label of this reason — used by `Display`.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            SkipReason::NotFound => "not found",
+            SkipReason::Gone => "gone",
+            SkipReason::TimedOut => "timed out",
+            SkipReason::Unusable => "unusable",
+        }
+    }
+
+    /// The label of a segment lost for this reason.
+    #[must_use]
+    pub const fn segment(self) -> &'static str {
+        match self {
+            SkipReason::NotFound => "HLS segment (not found)",
+            SkipReason::Gone => "HLS segment (gone)",
+            SkipReason::TimedOut => "HLS segment (timed out)",
+            SkipReason::Unusable => "HLS segment (unusable)",
+        }
+    }
+
+    /// The label of a part lost for this reason.
+    #[must_use]
+    pub const fn part(self) -> &'static str {
+        match self {
+            SkipReason::NotFound => "HLS part (not found)",
+            SkipReason::Gone => "HLS part (gone)",
+            SkipReason::TimedOut => "HLS part (timed out)",
+            SkipReason::Unusable => "HLS part (unusable)",
+        }
+    }
+}
+
+broadcast_core::impl_spec_display!(SkipReason);
+
 /// A driveable, sans-IO Low-Latency HLS (RFC 8216bis) playback client.
 ///
 /// `HlsClient` never touches a socket or a clock. The caller drives it:
@@ -467,6 +522,14 @@ pub struct HlsClient {
     /// Caller-supplied ceiling on one PID's in-progress PES buffer in the
     /// classic-TS demuxer; `None` is unlimited.
     max_pes_unit_bytes: Option<NonZeroUsize>,
+    /// What each damage report means for this client.
+    damage_policy: broadcast_core::damage::DamagePolicy,
+    /// How far a segment's demuxed media may differ from its `EXTINF` before
+    /// it is reported; `None` never compares.
+    segment_duration_tolerance: Option<core::time::Duration>,
+    /// Playlist diagnostics already reported, so a live reload of the same
+    /// malformed tag is one report rather than one per reload.
+    reported_diagnostics: BTreeSet<String>,
     master: Option<MasterSelection>,
 
     pending_actions: VecDeque<Action>,
@@ -555,6 +618,15 @@ pub struct HlsClient {
     /// forbids it ever decreasing, so a smaller one is an origin restart
     /// (see [`Self::restart_after_regression`]).
     last_media_sequence: Option<broadcast_hls::MediaSequence>,
+    /// The `EXTINF` duration each segment declared, so the media its bytes
+    /// actually carry can be compared with it once demuxed.
+    segment_durations: BTreeMap<broadcast_hls::MediaSequence, DecimalSeconds>,
+    /// The media span accumulated per (segment, track) while that segment's
+    /// bytes are processed.
+    duration_spans: BTreeMap<(broadcast_hls::MediaSequence, u32), (Timescale, i64, i64)>,
+    /// The segment whose bytes are being processed right now, so a drain can
+    /// attribute the samples it sees to it.
+    draining_msn: Option<broadcast_hls::MediaSequence>,
 }
 
 /// Choose a variant index according to the policy: the highest-bandwidth variant the policy
@@ -637,6 +709,17 @@ pub struct HlsClientConfig {
     /// classic-TS demuxer; `None` (the default) is unlimited. A caller whose
     /// segments arrive over a network supplies one.
     pub max_pes_unit_bytes: Option<NonZeroUsize>,
+    /// What each damage report means: `Report` (the default for everything)
+    /// publishes it as [`Output::Damage`] and keeps playing; `Fail` stops the
+    /// client at the report and returns [`crate::client::Error::Damage`]
+    /// carrying it.
+    pub damage_policy: broadcast_core::damage::DamagePolicy,
+    /// How far a segment's demuxed media may differ from its `EXTINF` before
+    /// it is reported ([`Output::Damage`], `MediaUnitDamaged`): `None` (the
+    /// default) never compares, so no number is chosen by the library. A
+    /// caller sets a tolerance it can justify for its own content; one frame
+    /// of a 30 fps segment is `Duration::from_millis(34)`.
+    pub segment_duration_tolerance: Option<core::time::Duration>,
 }
 
 impl HlsClientConfig {
@@ -648,6 +731,8 @@ impl HlsClientConfig {
             playlist_base: None,
             limits: Limits::default(),
             max_pes_unit_bytes: None,
+            damage_policy: broadcast_core::damage::DamagePolicy::new(),
+            segment_duration_tolerance: None,
         }
     }
 
@@ -669,6 +754,26 @@ impl HlsClientConfig {
     #[must_use]
     pub fn with_variant_policy(mut self, variant_policy: VariantPolicy) -> Self {
         self.variant_policy = variant_policy;
+        self
+    }
+
+    /// Set what each damage report means (see [`HlsClientConfig::damage_policy`]).
+    #[must_use]
+    pub fn with_damage_policy(
+        mut self,
+        damage_policy: broadcast_core::damage::DamagePolicy,
+    ) -> Self {
+        self.damage_policy = damage_policy;
+        self
+    }
+
+    /// Set [`HlsClientConfig::segment_duration_tolerance`].
+    #[must_use]
+    pub fn with_segment_duration_tolerance(
+        mut self,
+        segment_duration_tolerance: Option<core::time::Duration>,
+    ) -> Self {
+        self.segment_duration_tolerance = segment_duration_tolerance;
         self
     }
 
@@ -698,6 +803,9 @@ impl HlsClient {
             variant_policy: config.variant_policy,
             limits: config.limits,
             max_pes_unit_bytes: config.max_pes_unit_bytes,
+            damage_policy: config.damage_policy,
+            segment_duration_tolerance: config.segment_duration_tolerance,
+            reported_diagnostics: BTreeSet::new(),
             master: None,
             pending_actions,
             pending_errors: VecDeque::new(),
@@ -736,6 +844,9 @@ impl HlsClient {
             end_emitted: false,
             last_full_playlist: None,
             last_media_sequence: None,
+            segment_durations: BTreeMap::new(),
+            duration_spans: BTreeMap::new(),
+            draining_msn: None,
         }
     }
 
@@ -836,6 +947,173 @@ impl HlsClient {
         Some(anchor.saturating_add(wait))
     }
 
+    /// Hand one report to the caller's policy: publish it, or stop feeding
+    /// with the same report inside [`Error::Damage`].
+    fn publish_damage(&mut self, damage: broadcast_core::damage::Damage) -> Result<()> {
+        match self.damage_policy.admit(damage) {
+            Ok(damage) => {
+                self.pending_outputs.push_back(Output::Damage(damage));
+                Ok(())
+            }
+            Err(error) => Err(Error::Damage(error)),
+        }
+    }
+
+    /// Report each playlist diagnostic the parser recorded, once per
+    /// (kind, line text): a live reload of the same malformed tag is one
+    /// report, not one per reload.
+    ///
+    /// The severity is the cost to the viewer: a dangling segment tag drops
+    /// the segment it would have described, while a bad `PROGRAM-DATE-TIME`
+    /// or a `DATERANGE` without `START-DATE` only loses metadata.
+    fn report_playlist_diagnostics(&mut self, playlist: &MediaPlaylist) -> Result<()> {
+        for diagnostic in &playlist.diagnostics {
+            let (severity, what) = match diagnostic.kind {
+                ParseDiagnosticKind::DanglingSegmentTags => (
+                    broadcast_core::damage::Severity::Degraded,
+                    "HLS segment tag",
+                ),
+                ParseDiagnosticKind::InvalidProgramDateTime => (
+                    broadcast_core::damage::Severity::Informational,
+                    "HLS PROGRAM-DATE-TIME",
+                ),
+                ParseDiagnosticKind::DateRangeWithoutStartDate => (
+                    broadcast_core::damage::Severity::Informational,
+                    "HLS date range",
+                ),
+                // A diagnostic a newer parser adds: it recorded a defect it
+                // could not apply, so it is reported as metadata it skipped.
+                _ => (
+                    broadcast_core::damage::Severity::Informational,
+                    "HLS playlist tag",
+                ),
+            };
+            let key = alloc::format!("{}|{}", diagnostic.kind.name(), diagnostic.line);
+            if !self.reported_diagnostics.insert(key) {
+                continue;
+            }
+            let damage = broadcast_core::damage::Damage::new(
+                broadcast_core::damage::DamageKind::MetadataSkipped,
+                severity,
+                what,
+            );
+            self.publish_damage(damage)?;
+        }
+        Ok(())
+    }
+
+    /// Report the segments a forward-continuing reload jumped over: the new
+    /// window's first Media Sequence Number is later than the one after the
+    /// previous window's last, and nothing ever requests the numbers between.
+    fn report_media_sequence_gap(&mut self, playlist: &MediaPlaylist) -> Result<()> {
+        let Some(previous) = &self.last_full_playlist else {
+            return Ok(());
+        };
+        let Some(expected) = previous.msn.checked_add(index_u64(previous.segments.len())) else {
+            return Ok(());
+        };
+        if playlist.msn <= expected {
+            return Ok(());
+        }
+        let damage = broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::MediaUnitDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "HLS media sequence",
+        )
+        .with_ordinal(expected.value());
+        self.publish_damage(damage)
+    }
+
+    /// Record the media span this drain saw per track, so the segment's whole
+    /// span can be compared with its `EXTINF` once its bytes have all been
+    /// processed (a resource arrives in pieces, and the classic-TS demuxer
+    /// holds one access unit back; only the accumulated span is the segment).
+    fn note_durations(&mut self, samples: &BTreeMap<TrackId, Vec<Sample>>, specs: &[TrackSpec]) {
+        let Some(id_msn) = self.draining_msn else {
+            return;
+        };
+        for (track_id, list) in samples {
+            let Some(spec) = specs.iter().find(|spec| spec.track_id == *track_id) else {
+                continue;
+            };
+            for sample in list {
+                let Some(timing) = sample.timing else {
+                    continue;
+                };
+                let (Some(start), Some(duration)) = (timing.pts(), timing.duration()) else {
+                    continue;
+                };
+                let end = start.saturating_add(i64::from(duration));
+                let entry = self
+                    .duration_spans
+                    .entry((id_msn, track_id.value()))
+                    .or_insert((spec.timescale, start, end));
+                entry.1 = entry.1.min(start);
+                entry.2 = entry.2.max(end);
+            }
+        }
+    }
+
+    /// Compare a completed segment's demuxed media span with the `EXTINF` it
+    /// declared, when the caller set a tolerance.
+    ///
+    /// The span is the longest track's, from its first sample's presentation
+    /// time to the end of its last, in that track's own timescale — a segment
+    /// with audio and video is as long as the longer of the two.
+    fn check_declared_duration(&mut self, id: ResourceId) -> Result<()> {
+        let ResourceId::Segment { msn } = id else {
+            return Ok(());
+        };
+        let Some(tolerance) = self.segment_duration_tolerance else {
+            return Ok(());
+        };
+        let spans: Vec<(u32, Timescale, i64, i64)> = self
+            .duration_spans
+            .iter()
+            .filter(|((key, _), _)| *key == msn)
+            .map(|((_, track), (timescale, start, end))| (*track, *timescale, *start, *end))
+            .collect();
+        let stale: Vec<(broadcast_hls::MediaSequence, u32)> = self
+            .duration_spans
+            .keys()
+            .filter(|(key, _)| *key == msn)
+            .copied()
+            .collect();
+        for key in stale {
+            self.duration_spans.remove(&key);
+        }
+        let Some(expected) = self.segment_durations.get(&msn).copied() else {
+            return Ok(());
+        };
+        let mut longest: Option<(u32, Timescale, i64, i64)> = None;
+        for (track, timescale, start, end) in spans {
+            let span = end.saturating_sub(start);
+            if longest.is_none_or(|(_, _, _, kept)| span > kept) {
+                longest = Some((track, timescale, start, span));
+            }
+        }
+        let Some((track, timescale, start, span)) = longest else {
+            return Ok(());
+        };
+        let actual = span as f64 / f64::from(timescale.get());
+        if (actual - expected.get()).abs() <= tolerance.as_secs_f64() {
+            return Ok(());
+        }
+        let damage = broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::MediaUnitDamaged,
+            broadcast_core::damage::Severity::Degraded,
+            "HLS segment duration",
+        )
+        .for_track(track)
+        .at_media_time(broadcast_core::damage::MediaTimeRange::new(
+            timescale,
+            start,
+            start.saturating_add(span),
+        ))
+        .with_ordinal(msn.value());
+        self.publish_damage(damage)
+    }
+
     /// Drain the next [`Output`] event, if any.
     pub fn next_output(&mut self) -> Option<Output> {
         self.pending_outputs.pop_front()
@@ -920,9 +1198,20 @@ impl HlsClient {
         }
         let playlist = self.merge_delta(playlist);
         if playlist.skip.is_some() {
+            // The delta could not be spliced into the view this client holds:
+            // the reload it stands for is lost, a full playlist is requested
+            // instead, and the caller is told what the fallback cost.
+            let damage = broadcast_core::damage::Damage::new(
+                broadcast_core::damage::DamageKind::MetadataSkipped,
+                broadcast_core::damage::Severity::Degraded,
+                "HLS delta update",
+            )
+            .with_ordinal(playlist.msn.value());
+            self.publish_damage(damage)?;
             return Err(self.request_full_playlist(&playlist));
         }
         self.full_reload_requested = false;
+        self.report_playlist_diagnostics(&playlist)?;
         let segment_keys = playlist.segment_key_results()?;
         if let Some(Err(e)) = segment_keys.first()
             && segment_keys.iter().all(|r| r.is_err())
@@ -956,7 +1245,11 @@ impl HlsClient {
                 Continuity::OlderWindow => {
                     lag_floor = self.last_full_playlist.as_ref().map(|p| p.msn);
                 }
-                Continuity::Lagging | Continuity::Continues => {}
+                // A window that continues forwards but starts past the next
+                // Media Sequence Number has jumped over segments: nothing
+                // requests them, so they are lost and reported here.
+                Continuity::Continues => self.report_media_sequence_gap(&playlist)?,
+                Continuity::Lagging => {}
             }
         }
         // A lagging copy never lowers the high-water mark.
@@ -993,6 +1286,7 @@ impl HlsClient {
                 }
                 None => None,
             };
+            self.segment_durations.insert(msn, seg.duration);
             match self.process_closed_segment(msn, seg, key, playlist.iframes_only) {
                 Ok(()) => {}
                 Err(e @ Error::UnsupportedEncryption { .. }) => {
@@ -1207,7 +1501,46 @@ impl HlsClient {
     /// final access units of the old one are flushed first) and
     /// [`Output::Discontinuity`] follows, so the consumer re-syncs across the
     /// gap. No-op for [`ResourceId::Init`], which cannot be skipped.
-    pub fn skip_resource(&mut self, id: ResourceId) {
+    ///
+    /// The loss is published as [`Output::Damage`]
+    /// ([`broadcast_core::damage::DamageKind::MediaUnitDropped`]) because the
+    /// content that resource carried never reaches the player; the cause is
+    /// the caller's [`SkipReason`].
+    ///
+    /// # Errors
+    /// [`Error::Damage`] when the caller's policy says this report means stop.
+    pub fn skip_resource(&mut self, id: ResourceId) -> Result<()> {
+        self.skip_resource_due_to(id, SkipReason::Unusable)
+    }
+
+    /// [`Self::skip_resource`] with the cause named, so the report says why
+    /// the segment or part was lost (a 404, a 410, a timeout).
+    ///
+    /// # Errors
+    /// [`Error::Damage`] when the caller's
+    /// [`damage_policy`](HlsClientConfig::damage_policy) says this report
+    /// means stop.
+    pub fn skip_resource_due_to(&mut self, id: ResourceId, reason: SkipReason) -> Result<()> {
+        if !matches!(id, ResourceId::Init) {
+            let (what, msn) = match id {
+                ResourceId::Segment { msn } => (reason.segment(), msn),
+                ResourceId::Part { msn, .. } => (reason.part(), msn),
+                ResourceId::Init => return Ok(()),
+            };
+            let damage = broadcast_core::damage::Damage::new(
+                broadcast_core::damage::DamageKind::MediaUnitDropped,
+                broadcast_core::damage::Severity::Degraded,
+                what,
+            )
+            .with_ordinal(msn.value());
+            self.publish_damage(damage)?;
+        }
+        self.forget_resource(id);
+        Ok(())
+    }
+
+    /// Mark `id` delivered and restart the timeline across the gap it leaves.
+    fn forget_resource(&mut self, id: ResourceId) {
         match id {
             ResourceId::Init => return,
             ResourceId::Segment { msn } => {
@@ -1576,18 +1909,26 @@ impl HlsClient {
     /// Route a delivered Part/Segment: decrypt it first when its segment is
     /// AES-128 encrypted (holding the ciphertext until the key arrives).
     fn accept_media_resource(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
-        if let ResourceId::Segment { msn } = id
+        // Samples this resource's bytes produce are attributed to it; a
+        // segment is only complete once all of them have been seen, which is
+        // where its declared `EXTINF` is checked.
+        let previous = core::mem::replace(&mut self.draining_msn, resource_msn(&id));
+        let outcome = if let ResourceId::Segment { msn } = id
             && let Some(crypto) = self.segment_crypto.get(&msn).copied()
         {
-            return match self.key_material.get(&crypto.key_id).copied() {
+            match self.key_material.get(&crypto.key_id).copied() {
                 Some(KeyBytes(key)) => {
                     let plain = decrypt_segment(id, crypto, &key, bytes)?;
                     self.route_media_resource(id, &plain)
                 }
                 None => self.buffer_until_keyed(id, bytes),
-            };
-        }
-        self.route_media_resource(id, bytes)
+            }
+        } else {
+            self.route_media_resource(id, bytes)
+        };
+        self.draining_msn = previous;
+        outcome?;
+        self.check_declared_duration(id)
     }
 
     /// Hold ciphertext until its key arrives, within
@@ -2372,7 +2713,7 @@ impl HlsClient {
             self.restart_demux(slot);
             return Err(Error::Demux { id, source });
         }
-        let (specs, damaged, abandoned, samples) = {
+        let (specs, damaged, abandoned, samples, damage_reports) = {
             let state = self
                 .inits
                 .get_mut(&slot)
@@ -2385,6 +2726,7 @@ impl HlsClient {
             }
             let mut samples: BTreeMap<TrackId, Vec<Sample>> = BTreeMap::new();
             let mut damaged = 0usize;
+            let mut damage_reports: Vec<broadcast_core::damage::Damage> = Vec::new();
             let mut abandoned: Vec<(Option<TrackId>, AbandonReason)> = Vec::new();
             for event in events {
                 match event {
@@ -2418,17 +2760,44 @@ impl HlsClient {
                         samples.entry(track_id).or_default().push(sample);
                     }
                     DemuxEvent::InputDegraded {
-                        kind: InputDegradation::MalformedUnit { .. },
+                        track,
+                        kind,
+                        provenance,
                         ..
-                    } => damaged = damaged.saturating_add(1),
+                    } => {
+                        if matches!(
+                            kind,
+                            InputDegradation::MalformedUnit { .. }
+                                | InputDegradation::TruncatedUnit { .. }
+                        ) {
+                            damaged = damaged.saturating_add(1);
+                        }
+                        // One report per way the resource was damaged: a
+                        // segment with a thousand broken units is one report,
+                        // located at the first.
+                        let report = kind.to_damage(track, None, provenance);
+                        if !damage_reports
+                            .iter()
+                            .any(|kept| kept.kind() == report.kind())
+                        {
+                            damage_reports.push(report);
+                        }
+                    }
+                    // The one report the reader publishes, forwarded as it
+                    // arrived so its location, track and cause survive.
+                    DemuxEvent::Damage(damage) => damage_reports.push(damage),
                     _ => {}
                 }
             }
             let mut specs = state.specs.clone();
             specs.sort_by_key(|spec| spec.track_id);
             samples.retain(|track_id, _| specs.iter().any(|spec| spec.track_id == *track_id));
-            (specs, damaged, abandoned, samples)
+            (specs, damaged, abandoned, samples, damage_reports)
         };
+        self.note_durations(&samples, &specs);
+        for damage in damage_reports {
+            self.publish_damage(damage)?;
+        }
         if damaged > 0 {
             self.pending_outputs.push_back(Output::FragmentDamaged {
                 id,
@@ -2564,6 +2933,7 @@ impl HlsClient {
         };
         let mut per_track: BTreeMap<TrackId, Vec<Sample>> = BTreeMap::new();
         let mut events: Vec<DemuxEvent> = Vec::new();
+        let mut damage_reports: Vec<broadcast_core::damage::Damage> = Vec::new();
         while let Some(event) = demux.poll_event() {
             match event {
                 DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
@@ -2592,8 +2962,28 @@ impl HlsClient {
                 {
                     events.push(event);
                 }
+                DemuxEvent::InputDegraded {
+                    track,
+                    kind,
+                    provenance,
+                    ..
+                } => {
+                    let report = kind.to_damage(track, None, provenance);
+                    if !damage_reports
+                        .iter()
+                        .any(|kept| kept.kind() == report.kind())
+                    {
+                        damage_reports.push(report);
+                    }
+                }
+                // The TS reader's own report: a resynchronisation, a dropped
+                // PES unit, a truncated tail, a continuity gap.
+                DemuxEvent::Damage(damage) => damage_reports.push(damage),
                 _ => {}
             }
+        }
+        for damage in damage_reports {
+            self.publish_damage(damage)?;
         }
         if !self.ts_specs.is_empty() {
             let specs: Vec<TrackSpec> = self.ts_specs.values().cloned().collect();
@@ -2634,6 +3024,10 @@ impl HlsClient {
                 }
                 _ => {}
             }
+        }
+        {
+            let specs: Vec<TrackSpec> = self.ts_specs.values().cloned().collect();
+            self.note_durations(&per_track, &specs);
         }
         for (track_id, samples) in per_track {
             if !samples.is_empty() {
@@ -2794,6 +3188,8 @@ impl HlsClient {
         self.discontinuous_msns.retain(|&m| m >= first);
         self.discontinuity_emitted.retain(|&m| m >= first);
         self.msn_init.retain(|&m, _| m >= first);
+        self.segment_durations.retain(|&m, _| m >= first);
+        self.duration_spans.retain(|(m, _), _| *m >= first);
         self.prune_inits();
 
         if playlist.skip.is_none() {

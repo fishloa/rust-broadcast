@@ -251,13 +251,13 @@ async fn run_demo(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     // is already resident in the ring rather than starting from "now" — so
     // this single feed's samples are not lost.
     driver.feed(&[], Timestamp::from_nanos(0));
-    advance_route(&driver, &route_handle, &mut progress).await;
+    advance_route(&mut driver, &route_handle, &mut progress).await;
 
     // Nothing more to send: end the session cleanly and flush the trailing
     // buffered partial segment, exactly as a real scheme does on a clean
     // disconnect.
     driver.finish();
-    advance_route(&driver, &route_handle, &mut progress).await;
+    advance_route(&mut driver, &route_handle, &mut progress).await;
 
     Ok(())
 }

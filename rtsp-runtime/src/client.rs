@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use broadcast_common::stage::Timestamp;
+use broadcast_core::damage::Damage;
 use rtsp_types::{Message, Method, Request, StatusCode, Version, headers};
 
 use crate::auth::{Authenticator, Credentials, RequestContext};
@@ -132,6 +133,13 @@ pub enum ClientEvent {
         /// The payload bytes (one upper-layer PDU).
         data: bytes::Bytes,
     },
+    /// Content the session skipped or repaired — the one
+    /// [`broadcast_core::damage::Damage`] report, in wire order with the
+    /// events around it. Whether it also stops the session is the caller's
+    /// [`RtspClientConfig::damage_policy`](crate::RtspClientConfig::damage_policy).
+    /// Boxed because this event is embedded in [`Error::UnexpectedEvent`],
+    /// and an unboxed report would enlarge every `Result` in the crate.
+    Damage(Box<broadcast_core::damage::Damage>),
 }
 
 /// What [`ClientSession::handle_data`] decoded from one chunk of inbound
@@ -198,6 +206,11 @@ pub struct ClientSession {
     /// `Location` of the most recent redirection (3xx) response, cleared by any other response.
     redirect_location: Option<String>,
     rtp_info: Vec<RtpInfoEntry>,
+    /// Bytes drained from the wire so far, so a report can name an absolute
+    /// byte offset even though `inbound` is a sliding window.
+    consumed: u64,
+    /// What each damage report means for this session.
+    damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 impl Default for ClientSession {
@@ -224,6 +237,8 @@ impl Default for ClientSession {
             content_base: None,
             redirect_location: None,
             rtp_info: Vec::new(),
+            consumed: 0,
+            damage_policy: broadcast_core::damage::DamagePolicy::new(),
         }
     }
 }
@@ -240,6 +255,7 @@ impl ClientSession {
         Ok(ClientSession {
             user_agent: config.user_agent,
             next_cseq: config.initial_cseq,
+            damage_policy: config.damage_policy,
             ..ClientSession::default()
         })
     }
@@ -636,6 +652,7 @@ impl ClientSession {
         let mut pos = 0;
         let result = self.decode_from(&mut pos, events);
         self.inbound.drain(..pos);
+        self.consumed = self.consumed.saturating_add(pos as u64);
         result?;
         if self.inbound.len() > MAX_INBOUND_BYTES {
             return Err(Error::MessageParse {
@@ -670,6 +687,48 @@ impl ClientSession {
                     None => break, // need more bytes
                 }
                 continue;
+            }
+
+            // Neither a `$` frame nor a message head: a message starts with a
+            // token (`OPTIONS`, `RTSP/1.0`, ...), so anything else is junk
+            // between frames. A player can resynchronise on the next `$`; the
+            // bytes jumped over are reported rather than silently dropped, and
+            // only a buffer with no frame left in it is discarded whole.
+            match crate::framing::start_line_is_message(rest) {
+                Some(true) => {}
+                None => break,
+                Some(false) => {
+                    let next = rest.iter().position(|b| *b == MAGIC);
+                    let skipped = next.unwrap_or(rest.len());
+                    // A run of junk longer than a whole header block means
+                    // this is not an interleaved stream with a gap in it: the
+                    // framing is gone, which is the one thing a player cannot
+                    // scan past.
+                    if skipped >= crate::limits::MAX_HEAD_BYTES {
+                        return Err(Error::MessageParse {
+                            what: MessageKind::Framing,
+                            source: MessageParseError::HeaderUnterminated {
+                                at_least: skipped,
+                                limit: crate::limits::MAX_HEAD_BYTES,
+                            },
+                        });
+                    }
+                    let damage = broadcast_core::damage::Damage::new(
+                        broadcast_core::damage::DamageKind::Resynchronised,
+                        broadcast_core::damage::Severity::Degraded,
+                        "RTSP interleaved junk",
+                    )
+                    .at_byte_range(broadcast_core::damage::ByteRange::new(
+                        self.consumed.saturating_add(*pos as u64),
+                        skipped as u64,
+                    ));
+                    self.publish(events, damage)?;
+                    *pos += skipped;
+                    if next.is_none() {
+                        break;
+                    }
+                    continue;
+                }
             }
 
             // RTSP message path. `framing::head_end` is a bounded framing check
@@ -707,6 +766,18 @@ impl ClientSession {
         Ok(())
     }
 
+    /// Hand one report to the caller's policy: publish it, or end the
+    /// session with it when the policy says `Fail`.
+    fn publish(&self, events: &mut Vec<ClientEvent>, damage: Damage) -> Result<()> {
+        match self.damage_policy.admit(damage) {
+            Ok(damage) => {
+                events.push(ClientEvent::Damage(Box::new(damage)));
+                Ok(())
+            }
+            Err(error) => Err(Error::Damage(error)),
+        }
+    }
+
     fn process_message(
         &mut self,
         message: Message<Body>,
@@ -723,6 +794,12 @@ impl ClientSession {
                 let Some(cseq) = header_value(response.header(&headers::CSEQ))
                     .and_then(|s| s.trim().parse::<u32>().ok())
                 else {
+                    let damage = Damage::new(
+                        broadcast_core::damage::DamageKind::MetadataSkipped,
+                        broadcast_core::damage::Severity::Informational,
+                        "RTSP response (no CSeq)",
+                    );
+                    self.publish(events, damage)?;
                     return Ok(());
                 };
                 let status = response.status();
@@ -745,6 +822,12 @@ impl ClientSession {
                 // or a reply to a request the caller gave up waiting for) is
                 // likewise skipped rather than fatal, for the same reason.
                 let Some(pending) = self.pending.remove(&cseq) else {
+                    let damage = Damage::new(
+                        broadcast_core::damage::DamageKind::MetadataSkipped,
+                        broadcast_core::damage::Severity::Informational,
+                        "RTSP response (unmatched CSeq)",
+                    );
+                    self.publish(events, damage)?;
                     return Ok(());
                 };
 
@@ -785,6 +868,12 @@ impl ClientSession {
                         Err(e) => {
                             let w = format!("unusable Session header {session_hdr:?}: {e}");
                             self.record_session_warning(w);
+                            let damage = Damage::new(
+                                broadcast_core::damage::DamageKind::MetadataSkipped,
+                                broadcast_core::damage::Severity::Informational,
+                                "RTSP Session header",
+                            );
+                            self.publish(events, damage)?;
                         }
                     }
                 }
@@ -801,6 +890,12 @@ impl ClientSession {
                             self.negotiated_transport = None;
                             let w = format!("unusable Transport header {t:?}: {e}");
                             self.record_session_warning(w);
+                            let damage = Damage::new(
+                                broadcast_core::damage::DamageKind::MetadataSkipped,
+                                broadcast_core::damage::Severity::Informational,
+                                "RTSP Transport header",
+                            );
+                            self.publish(events, damage)?;
                         }
                     }
                 }
@@ -1217,8 +1312,11 @@ mod tests {
             .expect("an unmatched CSeq must not fail the whole batch");
         let cseqs: Vec<u32> = events
             .into_iter()
-            .map(|e| match e {
-                ClientEvent::Response { cseq, .. } => cseq,
+            .filter_map(|e| match e {
+                ClientEvent::Response { cseq, .. } => Some(cseq),
+                // The unmatched response is reported as skipped metadata
+                // before the batch's responses are collected.
+                ClientEvent::Damage(_) => None,
                 other => panic!("unexpected event: {other:?}"),
             })
             .collect();

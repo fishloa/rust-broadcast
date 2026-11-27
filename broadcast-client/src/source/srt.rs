@@ -67,6 +67,9 @@ pub(crate) struct Out {
     pub sends: Vec<Vec<u8>>,
     pub payloads: Vec<Vec<u8>>,
     pub notices: Vec<Notice>,
+    /// Content the delivery engine gave up on — payloads no retransmission
+    /// can recover.
+    pub damage: Vec<broadcast_core::damage::Damage>,
 }
 
 struct Handshake {
@@ -484,12 +487,16 @@ impl Link {
                 stats.malformed = stats.malformed.saturating_add(1);
             }
         }
-        for &seq in &outcome.dropped {
-            self.staged.remove(&seq);
+        for packet in &outcome.dropped {
+            self.staged.remove(&packet.seq_number);
             stats.lost = stats.lost.saturating_add(1);
         }
-        for (first, last) in contiguous_runs(&outcome.dropped) {
+        let lost: Vec<u32> = outcome.dropped.iter().map(|p| p.seq_number).collect();
+        for (first, last) in contiguous_runs(&lost) {
             self.receiver.skip_range(first, last);
+        }
+        for damage in srt_runtime::damage::reports(&outcome.dropped) {
+            out.damage.push(damage);
         }
     }
 
