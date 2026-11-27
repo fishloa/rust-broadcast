@@ -376,7 +376,7 @@ impl LlSegmenter {
     /// an MPD renderer reads.
     ///
     /// A chunk carries no `SegmentSummary` (it is a fragment, not a whole
-    /// segment), so [`LlDashPackager`](crate::ll_dash::LlDashPackager) cannot
+    /// segment), so [`LlDashPackager`] cannot
     /// be fed from this stage's output alone. Rendering from this log is the
     /// supported path, and it is what opens a new `Period` at a timeline
     /// break: [`MuxInput::Discontinuity`] closes the open segment and records

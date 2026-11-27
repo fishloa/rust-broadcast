@@ -53,12 +53,16 @@ fn counts_discontinuities(data: &[u8]) -> usize {
 }
 
 fn manifest(data: &[u8], format: OutputFormat) -> String {
-    match run_bytes(data, &opts(format))
-        .unwrap_or_else(|error| panic!("{format} over the capture: {error}"))
+    manifest_with(data, &opts(format))
+}
+
+fn manifest_with(data: &[u8], opts: &Opts) -> String {
+    match run_bytes(data, opts)
+        .unwrap_or_else(|error| panic!("{} over the capture: {error}", opts.format))
     {
         Output::Manifest { text, .. } => text,
-        Output::Bytes(_) => panic!("{format}: expected a manifest"),
-        _ => panic!("{format}: unexpected output"),
+        Output::Bytes(_) => panic!("{}: expected a manifest", opts.format),
+        _ => panic!("{}: unexpected output", opts.format),
     }
 }
 
@@ -137,7 +141,17 @@ fn continuous_capture_ts_output_signals_no_break() {
 
 #[test]
 fn dash_output_writes_a_period_per_break() {
-    let text = manifest(&broken_capture(), OutputFormat::Dash);
+    assert_period_per_break(&manifest(&broken_capture(), OutputFormat::Dash));
+}
+
+#[test]
+fn ll_dash_output_writes_a_period_per_break() {
+    let mut opts = opts(OutputFormat::Dash);
+    opts.low_latency = true;
+    assert_period_per_break(&manifest_with(&broken_capture(), &opts));
+}
+
+fn assert_period_per_break(text: &str) {
     let mpd = broadcast_dash::Mpd::parse(text.as_bytes()).expect("the rendered MPD parses");
     assert!(
         mpd.periods.len() >= 2,

@@ -41,7 +41,11 @@ fn nz(value: usize) -> NonZeroUsize {
 
 /// The committed capture, demuxed once, video track only.
 fn source_video() -> (TrackSpec, Vec<Sample>) {
-    let bytes = test_fixtures::read("ts/h264-aac.ts");
+    source_video_named("ts/h264-aac.ts")
+}
+
+fn source_video_named(fixture: &str) -> (TrackSpec, Vec<Sample>) {
+    let bytes = test_fixtures::read(fixture);
     let media = test_harness::collect::media_from_ts(&bytes).expect("demux the capture");
     let track = media
         .tracks
@@ -65,6 +69,17 @@ struct Rig {
 /// jump at the seam, all pumped through the production segmenter.
 fn rig(container: transmux::Container, window: usize, outputs: Vec<Arc<dyn Output>>) -> Rig {
     let (spec, samples) = source_video();
+    rig_from(spec, samples, container, window, outputs)
+}
+
+/// [`rig`] over a named committed capture.
+fn rig_named(
+    fixture: &str,
+    container: transmux::Container,
+    window: usize,
+    outputs: Vec<Arc<dyn Output>>,
+) -> Rig {
+    let (spec, samples) = source_video_named(fixture);
     rig_from(spec, samples, container, window, outputs)
 }
 
@@ -187,6 +202,23 @@ async fn live_ll_hls_marks_the_segment_after_the_break() {
         playlist.contains("#EXT-X-DISCONTINUITY\n"),
         "a live source break must reach the LL-HLS playlist:\n{playlist}"
     );
+    let parsed = broadcast_hls::MediaPlaylist::parse(&playlist).expect("the playlist parses");
+    let marked: Vec<usize> = parsed
+        .segments
+        .iter()
+        .enumerate()
+        .filter(|(_, segment)| segment.discontinuous)
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(
+        marked.len(),
+        1,
+        "exactly the segment opening the second run is marked:\n{playlist}"
+    );
+    assert!(
+        marked[0] > 0,
+        "the first segment of the run is not the break:\n{playlist}"
+    );
 }
 
 #[tokio::test]
@@ -271,7 +303,8 @@ fn assert_periods(name: &str, xml: &str) {
 
 #[tokio::test]
 async fn live_ll_hls_delta_and_rolled_off_break_keep_the_sequence_right() {
-    let mut rig = rig(
+    let mut rig = rig_named(
+        "ts/h264-aac-40s.ts",
         transmux::Container::Fmp4,
         2,
         vec![Arc::new(HlsOutput::default()) as Arc<dyn Output>],

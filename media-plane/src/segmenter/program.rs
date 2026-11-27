@@ -1533,11 +1533,10 @@ impl ProgramSegmenter {
 
     /// Record a source-clock break: close the open segment and mark the next
     /// one, so the served manifests state the discontinuity the player needs
-    /// (RFC 8216 §4.3.2.3 for HLS, a new `Period` for DASH). The published
-    /// segment is also marked here, which covers a classic-TS segmenter whose
-    /// own summary is the only record.
+    /// (RFC 8216 §4.3.2.3 for HLS, a new `Period` for DASH). Both segmenters
+    /// render the mark on the segment *after* the break from their own input,
+    /// so nothing is also stamped on the segment that closes at the seam.
     fn record_break(&mut self) {
-        self.mark_next_discontinuous = true;
         if let Err(e) = self.seg.discontinuity() {
             tracing::warn!(error = %e, "segmenter refused the timeline discontinuity");
         }

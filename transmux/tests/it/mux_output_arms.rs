@@ -69,7 +69,7 @@ fn match_keywords(src: &str) -> Vec<usize> {
 }
 
 /// The `{ ... }` block that follows the `match` at `at`, if any.
-fn match_block<'a>(src: &'a str, at: usize) -> Option<&'a str> {
+fn match_block(src: &str, at: usize) -> Option<&str> {
     let bytes = src.as_bytes();
     let open = src[at..].find('{')? + at;
     let mut depth = 0i32;
