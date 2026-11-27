@@ -17,8 +17,8 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DecoderDelay {
     /// The implementation emits this many samples before the first real one.
-    /// [`DecoderDelay::Declared`] holding zero means its output starts at the first real
-    /// sample: it compensates its own delay.
+    /// [`DecoderDelay::Declared`] holding zero means its output starts at the
+    /// first real sample: it compensates its own delay.
     Declared(u32),
     /// The delay depends on the stream; the decoder instance reports it
     /// through [`Decoder::output_delay`](crate::Decoder::output_delay) once it
