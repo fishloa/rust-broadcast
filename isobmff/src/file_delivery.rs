@@ -18,6 +18,11 @@
 //! [`FdHintSampleEntry`](crate::hint::FdHintSampleEntry) is the `fdp ` sample
 //! entry (§9.2.3); [`FdSample`] types the bytes of one FD hint sample
 //! (§9.2.4.1). The reader reports samples as opaque bytes.
+//!
+//! OPEN (§9.2.4.5): `FDitemconstructorLarge` (constructor type 5) states
+//! 1 + 4 + 4 + 8 + 3 = 20 bytes while the same clause states every constructor
+//! is 16 bytes. The two cannot both hold, so that one constructor is left
+//! untyped and an FD packet carrying it is a typed parse error.
 
 use alloc::vec;
 use alloc::vec::Vec;

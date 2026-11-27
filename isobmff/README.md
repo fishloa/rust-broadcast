@@ -152,6 +152,12 @@ commands and dumps, and the walk of all 252 committed MP4-family files.
 No registry type is outside a box, so there is no `NOT_A_BOX` list: all 167
 registry entries are boxes and all 167 are typed.
 
+OPEN (§9.2.4.5): the `FDitemconstructorLarge` (constructor type 5) syntax sums
+to 20 bytes (1 + 4 + 4 + 8 + 3) while the same clause states every constructor
+is 16 bytes, so the two statements cannot both hold. That one constructor is
+left untyped and an FD packet carrying it is a typed parse error, rather than
+inventing a field layout the clause does not fix.
+
 ## Example
 
 Open a file and iterate its samples in five lines:
