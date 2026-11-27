@@ -104,7 +104,8 @@ ALIASES = {
     "UserData:Title": ("©nam", "same atom"),
     "UserData:Copyright": ("©cpy", "the QuickTime copyright atom"),
     "UserData:GPSCoordinates": ("©xyz", "the ISO 6709 atom"),
-    "iTunes:iTunSMPB": ("com.apple.iTunes/iTunSMPB", "the freeform item"),
+    "iTunes:iTunSMPB": ("gapless_playback", "the typed gapless trim the freeform item states"),
+    "format:iTunSMPB": ("gapless_playback", "the typed gapless trim the freeform item states"),
     "iTunes:VolumeNormalization": ("com.apple.iTunes/iTunNORM", "the freeform item"),
     "Keys:ContentIdentifier": ("com.apple.quicktime.content.identifier", "the keyed atom"),
     "Keys:CreationDate": ("com.apple.quicktime.creationdate", "the keyed atom"),
@@ -143,6 +144,7 @@ ALIASES = {
     "Track2:Encoder": ("ENCODER", "the de-facto ENCODER SimpleTag this crate types"),
     "stream:ENCODER": ("ENCODER", "the de-facto ENCODER SimpleTag this crate types"),
     "format:ENCODER": ("ENCODER", "the de-facto ENCODER SimpleTag this crate types"),
+    "Flash:Encoder": ("onMetaData", "the FLV script tag's typed encoder property"),
 }
 
 # Containers whose user-data/untyped child boxes the reader keeps verbatim
@@ -150,6 +152,39 @@ ALIASES = {
 OPAQUE_CONTAINERS = {"isobmff"}
 
 TOOL_TIMEOUT_SECONDS = 120
+
+# Aliases that only hold for one container, because two containers spell the
+# same tool key differently (an MP4 encoder atom and an FLV script property
+# both print as `format:encoder`).
+ALIASES_BY_CONTAINER = {
+    ("isobmff", "ffprobe:format:encoder"): ("©too", "the encoder atom, through ffprobe"),
+    ("isobmff", "mediainfo:General:Encoded_Application"): ("©too", "the encoder atom, through MediaInfo"),
+    ("flv", "ffprobe:format:encoder"): ("onMetaData", "the FLV script tag's encoder property"),
+    ("flv", "mediainfo:General:Encoded_Application"): (
+        "onMetaData",
+        "the FLV script tag's encoder property",
+    ),
+    ("isobmff", "ffprobe:format:iTunSMPB"): (
+        "gapless_playback",
+        "the typed gapless trim the freeform item states",
+    ),
+    ("matroska", "ffprobe:stream:ENCODER"): (
+        "ENCODER",
+        "the de-facto ENCODER SimpleTag this crate types",
+    ),
+    ("matroska", "ffprobe:format:ENCODER"): (
+        "ENCODER",
+        "the de-facto ENCODER SimpleTag this crate types",
+    ),
+    ("matroska", "ffprobe:stream:DURATION"): (
+        "DURATION",
+        "the de-facto DURATION SimpleTag this crate types",
+    ),
+    ("matroska", "mediainfo:General:Encoded_Application"): (
+        "MuxingApp",
+        "MediaInfo prints the Segment Info writing application here",
+    ),
+}
 
 # ExifTool groups that describe the file on disk rather than the media it
 # carries: every file has them, so they say nothing about the container.
@@ -159,6 +194,14 @@ NOISE_GROUPS = {"ExifTool", "File", "System"}
 # Matroska element walker prints headers only, so the Segment Info and
 # TrackEntry values are named here with the accessor that returns each.
 TYPED_WITHOUT_DUMP = {
+    "DURATION",
+    "ENCODER",
+    "ENCODER_SETTINGS",
+    "_STATISTICS_WRITING_APP",
+    "_STATISTICS_WRITING_DATE_UTC",
+    "_STATISTICS_TAGS",
+    "gapless_playback",
+    "onMetaData",
     "CodecID",
     "CodecPrivate",
     "DocType",
@@ -400,11 +443,10 @@ def our_keys(container: str, path: Path) -> tuple[set[str], set[str]]:
     return typed, opaque
 
 
-def resolve(tool_key: str) -> list[str]:
+def resolve(container: str, tool_key: str) -> list[str]:
     """The workspace key a tool key is matched under, best candidate first."""
-    prefix, _, tag = tool_key.partition(":")
-    del prefix
-    alias = ALIASES.get(tool_key)
+    _, _, tag = tool_key.partition(":")
+    alias = ALIASES_BY_CONTAINER.get((container, tool_key)) or ALIASES.get(tool_key)
     return [alias[0], tag] if alias else [tag]
 
 
@@ -450,11 +492,11 @@ def survey(fixtures: list[Path]) -> dict:
                 tool_key = key if tool == "exiftool" else f"{tool}:{key}"
                 row["typed"].extend(
                     name
-                    for name in resolve(tool_key)
+                    for name in resolve(container, tool_key)
                     if name in typed or name in TYPED_WITHOUT_DUMP
                 )
                 row["opaque"].extend(
-                    name for name in resolve(tool_key) if name in opaque
+                    name for name in resolve(container, tool_key) if name in opaque
                 )
         for key in typed:
             row = row_for(container, key)
