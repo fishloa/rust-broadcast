@@ -461,6 +461,24 @@ impl SampleEntryInfo {
         }
     }
 
+    /// The hint sample entry this description is, when it is one (§9.1.2,
+    /// §9.2.3, §9.3.3, §9.4.1–9.4.4).
+    #[must_use]
+    pub fn hint(&self) -> Option<&crate::hint::HintSampleEntry> {
+        match self.typed.as_ref()? {
+            crate::init_segment::SampleEntryVariant::Hint(entry) => Some(entry),
+            _ => None,
+        }
+    }
+
+    /// The bit-rate declaration (`btrt`, §8.5.2) this sample description
+    /// carries, when present.
+    #[must_use]
+    pub fn bit_rate(&self) -> Option<crate::sample_entries::BitRateBox> {
+        self.entry_body(b"btrt")
+            .and_then(|body| crate::sample_entries::BitRateBox::parse_body(body).ok())
+    }
+
     /// The restriction scheme (`rinf`, §13.5.3) this sample description
     /// carries, when it carries one — either because the entry's four-CC is a
     /// restricted code (`resv`, `resa`, …) or because an advisory `rinf` sits
@@ -613,6 +631,12 @@ pub struct TrackInfo {
     pub media_header: Option<crate::init_segment::MediaInformationHeader>,
     /// The track's sub-tracks (`strk`, §8.13.3), in wire order.
     pub subtracks: Vec<crate::track_desc::SubTrackBox>,
+    /// The hint information (`hnti`, §9.1.4), when the track's `udta` carries
+    /// one.
+    pub hint_information: Option<crate::hint::HintInformationBox>,
+    /// The hint statistics (`hinf`, §9.1.5), when the track's `udta` carries
+    /// one.
+    pub hint_statistics: Option<crate::hint::HintStatisticsBox>,
 }
 
 impl TrackInfo {
@@ -741,6 +765,8 @@ impl TrackInfo {
             track_selection: desc.track_selection,
             media_header: desc.media_header,
             subtracks: desc.subtracks,
+            hint_information: desc.hint_information,
+            hint_statistics: desc.hint_statistics,
         })
     }
 }
@@ -2755,6 +2781,8 @@ struct TrackDescription {
     track_selection: Option<crate::track_desc::TrackSelectionBox>,
     media_header: Option<crate::init_segment::MediaInformationHeader>,
     subtracks: Vec<crate::track_desc::SubTrackBox>,
+    hint_information: Option<crate::hint::HintInformationBox>,
+    hint_statistics: Option<crate::hint::HintStatisticsBox>,
 }
 
 fn track_description(trak: &TrackBox) -> TrackDescription {
@@ -2782,6 +2810,8 @@ fn track_description(trak: &TrackBox) -> TrackDescription {
                 UdtaChild::Loudness(loudness) => out.loudness = Some(loudness),
                 UdtaChild::TrackSelection(selection) => out.track_selection = Some(selection),
                 UdtaChild::SubTrack(subtrack) => out.subtracks.push(subtrack),
+                UdtaChild::HintInformation(hint) => out.hint_information = Some(*hint),
+                UdtaChild::HintStatistics(statistics) => out.hint_statistics = Some(*statistics),
                 _ => {}
             }
         }
@@ -2879,6 +2909,8 @@ fn build_track_info(
         track_selection: desc.track_selection,
         media_header: desc.media_header,
         subtracks: desc.subtracks,
+        hint_information: desc.hint_information,
+        hint_statistics: desc.hint_statistics,
     })
 }
 

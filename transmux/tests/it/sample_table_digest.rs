@@ -182,6 +182,9 @@ fn cursor_matches_the_pre_move_digest_table() {
 const DIGESTS: &[(&str, u32, u64)] = &[
     ("public/boxes/cprt.mp4", 138, 0xc392f59faac11677),
     ("public/boxes/hint-hmhd.mp4", 207, 0xbfaf49d17d4758c1),
+    ("public/boxes/hint-latm.mp4", 38, 0x8133c95a4c1329b4),
+    ("public/boxes/hint-mtu-copy.mp4", 230, 0x74b6d72b73f6237a),
+    ("public/boxes/hint-offsets.mp4", 207, 0xe4b4b348839aa554),
     ("public/aac-sgpd.mp4", 131, 0x9f808b3f4836a623),
     ("public/av1.mp4", 12, 0xdabde3d714765d4d),
     ("public/boxes/chnl-ipcm.mp4", 14400, 0x2b1ad55bb77541e5),
