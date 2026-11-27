@@ -162,6 +162,7 @@ impl<'a> broadcast_core::Parse<'a> for Md5IntegrityBox {
         input_4cc.copy_from_slice(&body[cursor..cursor + BOX_TYPE_SIZE]);
         cursor += BOX_TYPE_SIZE;
         let sample_group = if input_4cc == INPUT_SGPD {
+            need_in(body, cursor + BOX_TYPE_SIZE, "md5i grouping_type")?;
             let mut grouping_type = [0u8; BOX_TYPE_SIZE];
             grouping_type.copy_from_slice(&body[cursor..cursor + BOX_TYPE_SIZE]);
             cursor += BOX_TYPE_SIZE;

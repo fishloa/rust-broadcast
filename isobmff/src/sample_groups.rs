@@ -141,6 +141,8 @@ const AFBR_ENTRY_LEN: usize = 2;
 const DOBR_ENTRY_LEN: usize = 2;
 /// Bytes of a `'pano'` entry: `frame_number`.
 const PANO_ENTRY_LEN: usize = 2;
+/// Offset of a second 16-bit field in an entry.
+const SECOND_U16_OFFSET: usize = core::mem::size_of::<u16>();
 
 // ---------------------------------------------------------------------------
 // ProducerReferenceTimeBox — prft (ISO/IEC 14496-12:2026 §8.14.5)
@@ -463,7 +465,10 @@ fn typed_entry(grouping_type: u32, bytes: &[u8]) -> Option<SgpdEntry> {
         }),
         GROUPING_TYPE_EQIV if bytes.len() == EQIV_ENTRY_LEN => Some(SgpdEntry::Eqiv {
             time_offset: i16_at(bytes, 0),
-            timescale_multiplier: u16::from_be_bytes([bytes[2], bytes[3]]),
+            timescale_multiplier: u16::from_be_bytes([
+                bytes[SECOND_U16_OFFSET],
+                bytes[SECOND_U16_OFFSET + 1],
+            ]),
         }),
         GROUPING_TYPE_AEBR if bytes.len() == AEBR_ENTRY_LEN => Some(SgpdEntry::Aebr {
             exposure_step: bytes[0] as i8,
@@ -471,11 +476,14 @@ fn typed_entry(grouping_type: u32, bytes: &[u8]) -> Option<SgpdEntry> {
         }),
         GROUPING_TYPE_WBBR if bytes.len() == WBBR_ENTRY_LEN => Some(SgpdEntry::Wbbr {
             blue_amber: u16::from_be_bytes([bytes[0], bytes[1]]),
-            green_magenta: bytes[2] as i8,
+            green_magenta: bytes[SECOND_U16_OFFSET] as i8,
         }),
         GROUPING_TYPE_FOBR if bytes.len() == FOBR_ENTRY_LEN => Some(SgpdEntry::Fobr {
             focus_distance_numerator: u16::from_be_bytes([bytes[0], bytes[1]]),
-            focus_distance_denominator: u16::from_be_bytes([bytes[2], bytes[3]]),
+            focus_distance_denominator: u16::from_be_bytes([
+                bytes[SECOND_U16_OFFSET],
+                bytes[SECOND_U16_OFFSET + 1],
+            ]),
         }),
         GROUPING_TYPE_AFBR if bytes.len() == AFBR_ENTRY_LEN => Some(SgpdEntry::Afbr {
             flash_exposure_numerator: bytes[0] as i8,

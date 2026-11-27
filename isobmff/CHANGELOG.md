@@ -70,6 +70,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An `md5i` integrity box whose body ends right after an `sgpd` `input_4cc`
+  indexed past the body and panicked; the missing grouping type is now the
+  typed buffer error it should be. Found by the `isobmff_item_boxes` fuzz
+  target, with its artifact as the regression case.
+
 - The still-image reader resolved an item stored in `idat` (`construction_method`
   1) to the wrong absolute offset whenever `idat` was not the `meta` box's first
   child. The offset now accumulates the bytes consumed by preceding children,
