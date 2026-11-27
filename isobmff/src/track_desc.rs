@@ -319,6 +319,12 @@ impl TrackGroupTypeBox {
         self
     }
 
+    /// The registered track-grouping type this box names.
+    #[must_use]
+    pub fn track_group_type(&self) -> crate::registered::TrackGroupType {
+        crate::registered::TrackGroupType::from_fourcc(self.group_type)
+    }
+
     /// The `track_group_type` four-CC.
     #[must_use]
     pub const fn group_type(&self) -> [u8; BOX_TYPE_SIZE] {
@@ -552,6 +558,15 @@ impl TrackSelectionBox {
     #[must_use]
     pub fn attributes(&self) -> &[[u8; BOX_TYPE_SIZE]] {
         &self.attributes
+    }
+
+    /// The registered track-selection attributes, in wire order.
+    #[must_use]
+    pub fn attribute_types(&self) -> Vec<crate::registered::TrackSelectionType> {
+        self.attributes
+            .iter()
+            .map(|attribute| crate::registered::TrackSelectionType::from_fourcc(*attribute))
+            .collect()
     }
 
     /// Parse the payload after the 8-byte box header.

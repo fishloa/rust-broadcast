@@ -12,6 +12,8 @@
 
 use alloc::vec::Vec;
 
+pub mod mp4ra;
+
 use broadcast_core::Parse;
 
 use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE};

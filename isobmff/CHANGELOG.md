@@ -71,6 +71,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The MP4 registration tables are measured, and their held codes typed
+  (issue #4167).** `coverage::mp4ra` pins every code in all 30 MP4RA tables as
+  typed, held-but-untyped, not-held or not-applicable, and
+  `tests/it/mp4ra.rs` proves the partition against the CSVs and the README
+  counts. The registered identifier codes gain typed enums in `registered`
+  (`Brand`, `HandlerType`, `SampleGroupType`, `TrackReferenceType`,
+  `TrackGroupType`, `TrackSelectionType`, `KeyNamespace`,
+  `RestrictedSchemeType`), each mapping a four-CC to a named variant and back,
+  with accessors on `HandlerBox`, `TrackReferenceTypeBox`, `TrackGroupTypeBox`,
+  `TrackSelectionBox`, `KeyEntry`, `SampleToGroupBox`,
+  `SampleGroupDescriptionBox`, `SchemeTypeBox`, `FileTypeBox` and
+  `SegmentTypeBox`. New typed boxes: `sthd` (`SubtitleMediaHeaderBox`, now
+  reported by `MediaInformationBox::media_header` as
+  `MediaInformationHeader::Subtitle`), `wide` (`WideAtom`), `tran`
+  (`TranscodingInfoBox`/`AvcTranscodingInfo`) and the `c608` sample entry
+  (`ClosedCaptionSampleEntry`, dispatched as
+  `SampleEntryVariant::ClosedCaption`). `ItemType` gains `Auvd`, `Evc1`,
+  `Hvt1`, `Lhv1`, `Jpeg`, `Sato` and `Vvc1`; `ItemProperty` gains `Stvi` and
+  `VvcC`; `EntityGroupType` gains `Opeg`. 604 of the 1566 registered codes are
+  typed; the README lists the remaining held and not-held counts per table and
+  the specifications not held, in unlock order.
+
 - **Every ISO/IEC 14496-12:2026 box type is typed.** The hint-track family
   joins the crate: `hnti`/`rtp `/`sdp `, the `hinf` counters, the sample-entry
   children `tims`/`tsro`/`snro`/`tssy`/`rssr`/`srpp`/`rtpx`/`rcsr`, the MPEG-2

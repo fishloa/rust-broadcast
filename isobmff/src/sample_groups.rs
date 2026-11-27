@@ -588,6 +588,12 @@ pub struct SampleGroupDescriptionBox {
 }
 
 impl SampleGroupDescriptionBox {
+    /// The registered sample-grouping type this box describes.
+    #[must_use]
+    pub fn group_type(&self) -> crate::registered::SampleGroupType {
+        crate::registered::SampleGroupType::from_code(self.grouping_type)
+    }
+
     /// Version 3: an essential sample group description (§8.9.3.1). A reader
     /// that does not recognise `grouping_type` must not process the track.
     pub fn is_essential(&self) -> bool {
@@ -887,6 +893,12 @@ pub struct SampleToGroupBox {
 }
 
 impl SampleToGroupBox {
+    /// The registered sample-grouping type this box maps samples to.
+    #[must_use]
+    pub fn group_type(&self) -> crate::registered::SampleGroupType {
+        crate::registered::SampleGroupType::from_code(self.grouping_type)
+    }
+
     /// Parse the body of an `sbgp` box (after the 8-byte BoxHeader).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
         need_in(
