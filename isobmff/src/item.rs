@@ -2107,7 +2107,7 @@ impl<'a> Parse<'a> for ItemProtectionBox {
         let version = body[0];
         let flags = u24_at(body, crate::box_types::FULLBOX_FLAGS_OFFSET) & FULLBOX_FLAGS_MASK;
         let count = usize::from(be_u16(body, FULLBOX_EXTRA_SIZE, "ipro protection_count")?);
-        let mut cursor = FULLBOX_EXTRA_SIZE + U16_LEN;
+        let cursor = FULLBOX_EXTRA_SIZE + U16_LEN;
         crate::box_support::check_entry_count(
             body.len() - cursor,
             BOX_HEADER_MIN_SIZE,
@@ -2128,8 +2128,6 @@ impl<'a> Parse<'a> for ItemProtectionBox {
             protections.push(opaque);
             rest = &rest[used..];
         }
-        cursor = body.len() - rest.len();
-        let _ = cursor;
         Ok(Self {
             version,
             flags,
