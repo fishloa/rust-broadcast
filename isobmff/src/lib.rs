@@ -92,6 +92,14 @@
 //!   four-character and Apple `mdta` items), Nero `chpl`, and the logical
 //!   [`metadata::Metadata`] view. The reader emits it once as
 //!   [`reader::Step::Metadata`].
+//! - [`meta_track`] — the timed-metadata and text-track boxes: `uri `/`uriI`/
+//!   `txtC`/`mime`, `xml `/`bxml`, `cprt`, the track `keys` table with its
+//!   `keyd`/`loca`/`setu` children, and the `metx`/`mett`/`stxt`/`urim`/`mebx`
+//!   sample entries.
+//! - [`scheme`] — restricted, incomplete and scrambled stream schemes: `rinf`,
+//!   `csch`, `spki`, `scrb`, `cinf`.
+//! - [`audio_elements`] — audio rendering and element signalling: `ardi`,
+//!   `aelm`, `aedb`, `aepp`, `aepr`, `aesb`, `aesd`.
 //!
 //! # Spec citations
 //!
@@ -241,8 +249,8 @@ pub use init_segment::{
     SyncSampleBox, TrackBox, TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
 pub use init_segment::{
-    HMHD, HintMediaHeaderBox, MediaInformationHeader, NMHD, NullMediaHeaderBox, VVHD,
-    VolumetricVisualMediaHeaderBox,
+    HMHD, HintMediaHeaderBox, MediaInformationHeader, MovieExtendsHeaderBox, NMHD,
+    NullMediaHeaderBox, VVHD, VolumetricVisualMediaHeaderBox,
 };
 pub use item::{
     BrandProperty, ConstructionMethod, EntityGroupType, EntityToGroupBox, GroupId, GroupsListBox,
@@ -260,9 +268,9 @@ pub use limits::Limits;
 pub use meta_track::{
     BXML, BinaryXmlBox, BoxedMetaDataSampleEntry, CPRT, CopyrightBox, KEYD, KEYS, LOCA, MEBX, METT,
     METX, MIME, MetadataKeyBox, MetadataKeyChild, MetadataKeyDeclarationBox, MetadataKeyTableBox,
-    MetadataLocaleBox, MetadataSetupBox, SETU, STXT, TXTC, TextConfigBox, TextMetaDataSampleEntry,
-    URI, URI_INIT, URIM, UriBox, UriInitBox, UriMetaDataSampleEntry, XML, XmlBox,
-    XmlMetaDataSampleEntry,
+    MetadataLocaleBox, MetadataSetupBox, MimeBox, SETU, STXT, TXTC, TextConfigBox,
+    TextMetaDataSampleEntry, URI, URI_INIT, URIM, UriBox, UriInitBox, UriMetaDataSampleEntry, XML,
+    XmlBox, XmlMetaDataSampleEntry,
 };
 pub use mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG1_AUDIO,
@@ -297,8 +305,8 @@ pub use sample_tables_extra::{
     DegradationPriorityBox, PADB, PaddingBitsBox, STDP, STSG, SubTrackSampleGroupBox,
 };
 pub use scheme::{
-    CINF, CSCH, CompatibleSchemeTypeBox, CompleteTrackInfoBox, RINF, SCRB, SPKI,
-    SamplePackingInformationBox, ScrambleSchemeInfoBox,
+    CINF, CSCH, CompatibleSchemeTypeBox, CompleteTrackInfoBox, RINF, RestrictedSchemeInfoBox, SCRB,
+    SPKI, SamplePackingInformationBox, ScrambleSchemeInfoBox,
 };
 pub use segments::{
     ETYP, ExtendedTypeBox, IMDA, IdentifiedMediaDataBox, OTYP, OriginalFileTypeBox, TYCO,

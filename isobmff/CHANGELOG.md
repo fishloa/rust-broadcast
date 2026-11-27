@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Tier 3 and tier 4 box types: metadata tracks, file-level extras, schemes
+  and the newer audio and colour signalling (issue #4167).** New modules
+  `meta_track` (ISO/IEC 14496-12:2026 §12.3.3, §12.5.3, §12.8.4, §8.10.2,
+  §8.11.2: `uri `/`uriI`/`txtC`/`mime`, `xml `/`bxml`, `cprt`, the metadata key
+  table's `keyd`/`loca`/`setu`, and the `metx`/`mett`/`stxt`/`urim`/`mebx`
+  sample entries), `scheme` (§13.4.8, §13.5.3, §13.5.5, §13.5.6.2, §13.6.3:
+  `rinf`, `csch`, `spki`, `scrb`, `cinf`) and `audio_elements` (§12.2.8–14:
+  `ardi` with its `AudioRenderingIndication` label enum, `aelm`, `aedb`,
+  `aepp`, `aepr`, `aesb`, `aesd`). `segments` gains `imda`, `tyco`, `etyp` and
+  `otyp`, `init_segment` gains `nmhd`, `hmhd`, `vvhd` and `mehd`, `track_desc`
+  gains `strk`/`stri`/`strd`, `visual_ext` gains `amve`/`cclv`, `index_boxes`
+  gains `assp` (typed inside `trep`), and `scrb`, `amve` and `cclv` are typed
+  inside an `ipco`. The reader reports a metadata entry's URI and init data
+  (`SampleEntryInfo::timed_metadata`), a track's media header
+  (`TrackInfo::media_header`), its sub-tracks (`TrackInfo::subtracks`) and its
+  restricted/scrambled/incomplete scheme boxes, and the file's extended types,
+  original file type, identified media data and `mehd` duration. A sample
+  addressed through an `imdt` data reference is resolved against the `imda`
+  payload it names. Update: this takes the crate's coverage from 88 to 122 of
+  the 167 ISO/IEC 14496-12:2026 registry box types.
+
 - **The item layer: HEIF and AVIF still images read and written (issue #4167
   tier 2).** New modules `item` (ISO/IEC 14496-12:2026 §8.11/§8.15: `iloc`,
   `iinf`/`infe`, `pitm`, `iref` with its typed reference boxes,
@@ -192,6 +213,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a trailing `free`/`skip`/`uuid` box is carried; a forward-only source still
   finishes as soon as its samples are exhausted.
 - A truncated final `mdat` is reported once, not once per fault site.
+### Fixed
+
+- **A `uuid` item reference and a `uuid` entity group are preserved with
+  their extended type instead of failing.** Both keep their 16-byte usertype
+  and round-trip byte-identically.
+
+### Breaking
+
+- `MediaInformationBox` gains `nmhd`, `hmhd` and `vvhd` fields, and
+  `SchemeInformationBox` gains `spki`. A downstream struct literal of either
+  must list the new field (`MediaInformationBox::new` and the parsed tree set
+  it). `SampleEntryVariant` gains `Metx`, `Text`, `Urim` and `Mebx` (the enum
+  is `#[non_exhaustive]`, so only a match needs a catch-all).
+- `TrackInfo` gains `media_header` and `subtracks` (`#[non_exhaustive]`).
+
 ## [Unreleased]
 ### Added
 - `quicktime`, QuickTime atoms a camera or editing `.mov` carries:

@@ -900,6 +900,12 @@ pub const HMHD: [u8; BOX_TYPE_SIZE] = *b"hmhd";
 pub const VVHD: [u8; BOX_TYPE_SIZE] = *b"vvhd";
 /// `hmhd` body length after the FullBox fields (§12.4.3.1).
 const HMHD_BODY_LEN: usize = 16;
+/// Body offset of `maxbitrate`, after the two 16-bit PDU sizes (§12.4.3.1).
+const HMHD_MAX_BITRATE_OFFSET: usize = 2 * core::mem::size_of::<u16>();
+/// Body offset of `avgbitrate` (§12.4.3.1).
+const HMHD_AVG_BITRATE_OFFSET: usize = HMHD_MAX_BITRATE_OFFSET + core::mem::size_of::<u32>();
+/// Body offset of the trailing reserved word (§12.4.3.1).
+const HMHD_RESERVED_OFFSET: usize = HMHD_AVG_BITRATE_OFFSET + core::mem::size_of::<u32>();
 
 /// Null Media Header Box (`nmhd`) — ISO/IEC 14496-12:2026 §8.4.5.2.
 ///
@@ -1052,15 +1058,9 @@ impl HintMediaHeaderBox {
             flags: u24_at(body, 1) & FULLBOX_FLAGS_MASK,
             max_pdu_size: u16_at(body, cursor),
             avg_pdu_size: u16_at(body, cursor + core::mem::size_of::<u16>()),
-            max_bitrate: u32_at(body, cursor + 2 * core::mem::size_of::<u16>()),
-            avg_bitrate: u32_at(
-                body,
-                cursor + 2 * core::mem::size_of::<u16>() + core::mem::size_of::<u32>(),
-            ),
-            reserved: u32_at(
-                body,
-                cursor + 2 * core::mem::size_of::<u16>() + 2 * core::mem::size_of::<u32>(),
-            ),
+            max_bitrate: u32_at(body, cursor + HMHD_MAX_BITRATE_OFFSET),
+            avg_bitrate: u32_at(body, cursor + HMHD_AVG_BITRATE_OFFSET),
+            reserved: u32_at(body, cursor + HMHD_RESERVED_OFFSET),
         })
     }
 }

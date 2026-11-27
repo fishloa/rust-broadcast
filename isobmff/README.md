@@ -23,8 +23,8 @@ types themselves are the one table in `src/coverage.rs`.
 |---|---|
 | `box_types` | `size`/`type` header, `largesize`, `uuid` usertype, the `BoxIter` walker |
 | `box_support` | shared opaque-child and container building helpers |
-| `segments` | `ftyp`, `styp`, `mdat` |
-| `init_segment` | `moov`, `mvhd`, `trak`, `tkhd`, `mdia`, `mdhd`, `hdlr`, `minf`, `vmhd`/`smhd`, `dinf`/`dref`, `stbl` (`stts`/`ctts`/`stsc`/`stsz`/`stz2`/`sdtp`/`stco`/`co64`/`stss`), `stsd`, `edts`/`elst`, `mvex`/`trex`, the audio sample entries |
+| `segments` | `ftyp`, `styp`, `mdat`, `imda`, `tyco`, `etyp`, `otyp` |
+| `init_segment` | `moov`, `mvhd`, `trak`, `tkhd`, `mdia`, `mdhd`, `hdlr`, `minf`, `vmhd`/`smhd`/`nmhd`/`hmhd`/`vvhd`, `dinf`/`dref`, `stbl` (`stts`/`ctts`/`stsc`/`stsz`/`stz2`/`sdtp`/`stco`/`co64`/`stss`), `stsd`, `edts`/`elst`, `mvex`/`trex`/`mehd`, the audio sample entries |
 | `sample_entries` | `avc1`/`avc3`, `hvc1`/`hev1`, `vvc1`/`vvi1`, `mp4v`, `VisualSampleEntry` |
 | `subtitle_entries` | `stpp`, `wvtt`, `vttc`/`vtte`/`vtta`/`payl`/`sttg`/`iden` |
 | `avc_parameter_set` | `avcp` sample entry and parameter set sample |
@@ -49,12 +49,14 @@ types themselves are the one table in `src/coverage.rs`.
 | `avs3_audio` | `dca3`, `av3a` |
 | `hdr_boxes` | `mdcv`, `clli` |
 | `timing` | `stts`, `ctts`, `cslg`, `elst`, `sidx` |
-| `visual_ext` | `pasp`, `clap`, `colr` |
+| `visual_ext` | `pasp`, `clap`, `colr`, `amve`, `cclv` |
 | `audio_boxes` | `chnl`, `dmix`, `ludt`/`tlou`/`alou`, `labl` |
-| `track_desc` | `elng`, `kind`, `trgr` (`msrc`/`ster`), `tsel`, `stvi` |
-| `index_boxes` | `ssix`, `leva`, `pdin`, `trep` |
+| `audio_elements` | `ardi`, `aelm`/`aedb`/`aepp`/`aepr`, `aesb`/`aesd` |
+| `track_desc` | `elng`, `kind`, `trgr` (`msrc`/`ster`), `tsel`, `stvi`, `strk` (`stri`/`strd`) |
+| `index_boxes` | `ssix`, `leva`, `pdin`, `trep`, `assp` |
 | `sample_tables_extra` | `stdp`, `padb`, `stsg` |
-| `cenc` | `tenc`, `senc`, `pssh`, `saiz`, `saio`, `sinf`, `frma`, `schm`, `schi` |
+| `cenc` | `tenc`, `senc`, `pssh`, `saiz`, `saio`, `sinf`, `frma`, `schm`, `schi` (with `spki`) |
+| `scheme` | `rinf`, `csch`, `spki`, `scrb`, `cinf` |
 | `sample_groups` | `prft`, `sgpd`, `sbgp`, `csgp`, `subs`, `ssrt` |
 | `movie_fragment` | `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun` |
 | `limits` | hostile-input caps (`Limits`) for the Phase 2 reader |
@@ -70,7 +72,8 @@ types themselves are the one table in `src/coverage.rs`.
 | `driver` | blocking drivers over the reader: `FileReader` (`Read + Seek`) and `ForwardReader` (`Read` only), with a bounded reusable buffer |
 | `timing` (random access) | `tfra`, `mfra`, `mfro` |
 | `emsg` | `emsg` (versions 0 and 1, ISO/IEC 23009-1 §5.10.3.3) |
-| `metadata` | `udta`, `meta`, `hdlr`, `keys`, `ilst`, `data`, `mean`, `name`, `chpl`, `loci`; QuickTime user-data text and `©xyz` ISO 6709 |
+| `metadata` | `udta` (with `cprt`/`strk`), `meta` (with `xml `/`bxml`), `hdlr`, `keys`, `ilst`, `data`, `mean`, `name`, `chpl`, `loci`; QuickTime user-data text and `©xyz` ISO 6709 |
+| `meta_track` | `urim` (`uri `/`uriI`), `metx`, `mett`/`stxt` (`txtC`), `mebx` (`keys`/`keyd`/`loca`/`setu`), `mime`, `xml `/`bxml`, `cprt` |
 | `item` | ISO/IEC 14496-12:2026 §8.11/§8.15 item boxes: `iloc`, `iinf`/`infe`, `pitm`, `iref` and its typed reference boxes, `iprp`/`ipco`/`ipma`, `idat`, `ipro`, `grpl` with `EntityToGroupBox`, and the `brnd`/`hdlp` properties |
 | `image` | ISO/IEC 23008-12:2017 clause 6 image properties (`ispe`, `pixi`, `rloc`, `auxC`, `irot`, `lsel`, `imir`), the derived bodies `grid`/`iovl`/`iden`, the AVIF `a1op`/`a1lx` properties and brands; `pasp`/`colr`/`clap`/`hvcC`/`avcC`/`av1C`/`mdcv`/`clli` are the crate's existing types |
 | `item_reader` | sans-IO still-image reader: asks for the top-level headers, the file-level `meta` and the tiny derived-item bodies, then yields `StillImage` (brands, primary item, every item with properties/references/data ranges, entity groups) plus a re-emit plan |
@@ -145,7 +148,7 @@ let ftyp = FileTypeBox {
 let bytes = ftyp.try_to_bytes().unwrap();
 ```
 
-Ten runnable examples ship with the crate:
+Eleven runnable examples ship with the crate:
 
 ```bash
 cargo run -p isobmff --example parse_boxes -- fixtures/mp4/h264-aac-prog.mp4
@@ -157,6 +160,7 @@ cargo run -p isobmff --example read_tags -- fixtures/mp4/progressive/av-prog.mp4
 cargo run -p isobmff --example write_tags -- fixtures/mp4/progressive/av-prog.mp4 /tmp/tags.udta
 cargo run -p isobmff --example heif_info -- fixtures/heif/thumb.heic
 cargo run -p isobmff --example build_avif -- fixtures/avif/plain.avif
+cargo run -p isobmff --example list_metadata_tracks -- fixtures/mp4/boxes/hint-hmhd.mp4
 ```
 
 ## Still images (HEIF and AVIF)
@@ -310,3 +314,61 @@ only needs an index never reads media.
   (`private/specs-verified/apple/isobmff/quicktime-file-format-online.md`),
   ISO/IEC 14496-12:2026 §8.10.1/§8.11, and 3GPP TS 26.244 Table 8.10 for
   `loci`.
+
+## Tier 3 and tier 4 box evidence
+
+The tier 3 (metadata tracks and file-level extras) and tier 4 (newer
+signalling) boxes of issue #4167 follow the same rule as tier 1: a fixture the
+crate has, written by another tool, is asserted field by field against that
+tool's dump and re-serialized byte-exact; a box no installed tool writes says
+so and is tested from the clause. `fixtures/mp4/boxes/PROVENANCE.md` records
+every command, tool version and dump.
+
+Every committed MP4-family file (245 under `fixtures/` and `private/fixtures/`)
+was walked with `BoxIter`, descending sample entries. The tier 3/4 boxes they
+carry are `mehd` (19 DASH init segments), `nmhd` (7 subtitle fixtures), `hmhd`
+(`hint-hmhd.mp4`), `cprt` (`cprt.mp4`), and `keyd` plus its Apple setup boxes
+in the private iPhone Live Photo's two `mebx` entries.
+
+| Box | Clause | Evidence | File |
+|---|---|---|---|
+| `cprt` | §8.10.2 | real: written by GPAC 26.07 `-cprt`, dumped by `-disox` | `mp4/boxes/cprt.mp4` |
+| `hmhd` | §12.4.3.1 | real: written by GPAC 26.07 `-hint`, dumped by `-disox` | `mp4/boxes/hint-hmhd.mp4` |
+| `nmhd` | §8.4.5.2 | real: 7 committed subtitle fixtures | `subtitles/mp4box/wvtt_progressive.mp4`, … |
+| `mehd` | §8.8.2 | real: 19 committed DASH init segments | `dash/ondemand-gpac-pto-quirk/v_dashinit.mp4`, … |
+| `keyd` | §12.8.4.4 | real: Apple's Live Photo `mebx` key table | private `mp4/quicktime/iphone-x-live-photo.mov` |
+| `uri `, `uriI` | §12.3.3 | clause-assembled | — |
+| `metx`, `mett`, `stxt`, `txtC`, `mime` | §12.3.3, §12.5.3 | clause-assembled | — |
+| `urim`, `mebx` | §12.3.3, §12.8.4.1 | `mebx` real in the Live Photo's bytes; the rest clause-assembled | private `mp4/quicktime/iphone-x-live-photo.mov` |
+| `xml `, `bxml` | §8.11.2 | clause-assembled | — |
+| `loca`, `setu` | §12.8.4.5, §12.8.4.6 | clause-assembled | — |
+| `etyp`, `tyco`, `otyp` | §5.3.2, §8.16.5 | clause-assembled | — |
+| `imda` | §8.1.4 | clause-assembled | — |
+| `strk`, `stri`, `strd` | §8.13.3–5 | clause-assembled | — |
+| `vvhd` | §12.9.2 | clause-assembled | — |
+| `rinf`, `csch` | §13.5.3, §13.5.5 | clause-assembled | — |
+| `cinf` | §13.6.3 | clause-assembled | — |
+| `scrb`, `spki` | §13.4.8, §13.5.6.2 | clause-assembled | — |
+| `amve`, `cclv` | §12.1.9, §12.1.8 | clause-assembled | — |
+| `ardi`, `aelm`, `aedb`, `aepp`, `aepr`, `aesb`, `aesd` | §12.2.8–14 | clause-assembled | — |
+| `assp` | §8.8.16 | clause-assembled | — |
+
+What was tried per family, and why no tool produced the rest:
+
+| Attempt | Result |
+|---|---|
+| `MP4Box -add fixtures/mp4/h264-aac-prog.mp4 -cprt "(c) 2026 Example Corp" -new cprt.mp4` | wrote the `cprt` fixture |
+| `MP4Box -hint -add fixtures/mp4/h264-aac-prog.mp4 -new hint-hmhd.mp4` | wrote two hint tracks, each with an `hmhd` |
+| `MP4Box -add h264-aac-prog.mp4 -add meta.xml -new out.mp4`, `-add meta.txt` | exit 1, no metadata track |
+| `gpac -i meta.xml -o out.mp4`, `gpac -i meta.txt -o out.mp4` | "Filter not found for the desired type" |
+| `MP4Box -brand iso6 -ab iso5 -add h264-aac-prog.mp4 -new out.mp4` | rewrote `ftyp` only; no `etyp` |
+| `MP4Box -dref -add h264-aac-prog.mp4 -new out.mp4` | exit 1; no `imda`, and `-dref` writes an in-file `url ` entry |
+| `MP4Box -add h264-aac-prog.mp4 -zmov -new out.mp4` | a compressed `!mov` box, no `otyp` |
+| `ffmpeg -c copy -movflags frag_keyframe+empty_moov` | `mvex` but no `mehd` |
+| `ffmpeg -i iphone-x-live-photo.mov -map 0:2 -c copy out.mp4` | "Could not find tag for codec none"; no metadata track written |
+| `avconvert --preset PresetHEVCHighestQuality` on the Live Photo | kept the two `mebx` entries (no new box), so the private file stays the `keyd` fixture |
+
+The committed GPAC DASH init segments carry `mehd`, which is why that box
+needs no new file. The audio element, colour volume, sub-track, scheme and
+alternative-startup boxes have no writer in GPAC 26.07 or ffmpeg 8.1.2 at
+all.

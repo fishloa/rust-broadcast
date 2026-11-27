@@ -310,13 +310,16 @@ fn p_otyp() -> Result<()> {
     crate::segments::OriginalFileTypeBox::parse(&boxed(*b"otyp", &body)).map(|_| ())
 }
 
+/// `schm` fixed body: version/flags plus `scheme_type` and `scheme_version`.
+const SCHM_FULL_BODY_LEN: usize = 12;
+
 fn p_rinf() -> Result<()> {
-    let body = boxed(*b"schm", &[0u8; 12]);
+    let body = boxed(*b"schm", &[0u8; SCHM_FULL_BODY_LEN]);
     crate::scheme::RestrictedSchemeInfoBox::parse(&boxed(*b"rinf", &body)).map(|_| ())
 }
 
 fn p_scrb() -> Result<()> {
-    let body = boxed(*b"schm", &[0u8; 12]);
+    let body = boxed(*b"schm", &[0u8; SCHM_FULL_BODY_LEN]);
     crate::scheme::ScrambleSchemeInfoBox::parse(&boxed(*b"scrb", &body)).map(|_| ())
 }
 

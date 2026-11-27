@@ -769,6 +769,10 @@ const CCLV_MAX_LUMINANCE_PRESENT: u8 = 0x08;
 const CCLV_AVG_LUMINANCE_PRESENT: u8 = 0x04;
 /// One `ccv_primaries_x`/`ccv_primaries_y` pair per colour primary.
 const CCLV_PRIMARIES: usize = 3;
+/// Two coordinates per primary, each one 32-bit word.
+const CCLV_PRIMARY_PAIR_LEN: usize = 2 * core::mem::size_of::<i32>();
+/// The whole `ccv_primaries` block: one `(x, y)` pair per primary.
+const CCLV_PRIMARIES_LEN: usize = CCLV_PRIMARIES * CCLV_PRIMARY_PAIR_LEN;
 
 /// Ambient Viewing Environment Box (`amve`) — ISO/IEC 14496-12:2026 §12.1.9.
 ///
@@ -974,14 +978,14 @@ impl<'a> Parse<'a> for ContentColourVolumeBox {
         let flags = body[0];
         let mut cursor = CCLV_FLAGS_LEN;
         let primaries = if (flags & CCLV_PRIMARIES_PRESENT) != 0 {
-            need_in(body, cursor + 2 * CCLV_PRIMARIES * 4, "cclv primaries")?;
+            need_in(body, cursor + CCLV_PRIMARIES_LEN, "cclv primaries")?;
             let mut primaries = [(0i32, 0i32); CCLV_PRIMARIES];
             for slot in &mut primaries {
                 *slot = (
                     broadcast_core::wire::i32_at(body, cursor),
                     broadcast_core::wire::i32_at(body, cursor + core::mem::size_of::<i32>()),
                 );
-                cursor += 2 * core::mem::size_of::<i32>();
+                cursor += CCLV_PRIMARY_PAIR_LEN;
             }
             Some(primaries)
         } else {

@@ -161,7 +161,7 @@ enum DataReferenceBase {
 /// (SampleEntry `reserved[6]` then the 16-bit index, §8.5.2.2).
 fn entry_data_reference_index(body: &[u8]) -> u16 {
     const DATA_REFERENCE_INDEX_OFFSET: usize = core::mem::size_of::<u32>() * 2 + 6;
-    body.get(DATA_REFERENCE_INDEX_OFFSET..DATA_REFERENCE_INDEX_OFFSET + 2)
+    body.get(DATA_REFERENCE_INDEX_OFFSET..DATA_REFERENCE_INDEX_OFFSET + core::mem::size_of::<u16>())
         .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
         .unwrap_or(1)
 }

@@ -64,6 +64,10 @@ const AEDB_TOGGLEABLE: u8 = 0x80;
 const AEDB_DEFAULT_ENABLED: u8 = 0x40;
 /// Mask of the six `aedb` reserved bits.
 const AEDB_RESERVED_MASK: u8 = 0x3F;
+/// Bit position of `isDefaultEnabled` in the `aedb` flag byte.
+const AEDB_DEFAULT_ENABLED_SHIFT: u32 = 6;
+/// Bit position of `isToggleable` in the `aedb` flag byte.
+const AEDB_TOGGLEABLE_SHIFT: u32 = 7;
 
 fn opaque_child(child: crate::box_types::BoxItem<'_>) -> OpaqueBox {
     OpaqueBox {
@@ -482,8 +486,8 @@ impl Serialize for AudioElementDescriptionBox {
         need_out(buf, need)?;
         let mut cursor = write_full_box_header(buf, &AEDB, need, self.version, self.flags, false)?;
         cursor += write_c_string(buf, cursor, &self.audio_element_tag)?;
-        buf[cursor] = u8::from(self.is_default_enabled) << 6
-            | u8::from(self.is_toggleable) << 7
+        buf[cursor] = u8::from(self.is_default_enabled) << AEDB_DEFAULT_ENABLED_SHIFT
+            | u8::from(self.is_toggleable) << AEDB_TOGGLEABLE_SHIFT
             | (self.reserved & AEDB_RESERVED_MASK);
         cursor += 1;
         serialize_children(&self.children, buf, cursor)

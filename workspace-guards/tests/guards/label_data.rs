@@ -2008,6 +2008,13 @@ pub const TABLE: &[Crate] = &[
             // are data-carrying ADTs over structured boxes/bodies, and
             // `ItemStep`/`ReemitOp` are the reader's step and the writer's
             // re-emit run, not spec/field codes.
+            // The tier 3/4 containers and step views: every variant wraps a
+            // distinct structured box (or a borrowed typed entry), so the
+            // variant *is* the label; none is a flat spec/field code.
+            "AudioElementChild",
+            "MediaInformationHeader",
+            "MetadataKeyChild",
+            "TimedMetadataEntry",
             "ItemProperty",
             "DerivedImage",
             "ItemStep",

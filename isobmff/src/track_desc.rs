@@ -790,7 +790,12 @@ pub const STRI: [u8; BOX_TYPE_SIZE] = *b"stri";
 /// Four-CC of the Sub Track Definition Box (`strd`, §8.13.5).
 pub const STRD: [u8; BOX_TYPE_SIZE] = *b"strd";
 /// `stri` fixed body after the FullBox header: three 16/32-bit fields (§8.13.4.2).
-const STRI_FIXED_BODY_LEN: usize = core::mem::size_of::<u16>() * 2 + core::mem::size_of::<u32>();
+/// `stri` body offset of `alternate_group`, after `switch_group` (§8.13.4.2).
+const STRI_ALTERNATE_GROUP_OFFSET: usize = core::mem::size_of::<i16>();
+/// `stri` body offset of `sub_track_ID` (§8.13.4.2).
+const STRI_SUB_TRACK_ID_OFFSET: usize = 2 * core::mem::size_of::<i16>();
+/// `stri` fixed body after the FullBox header: three 16/32-bit fields (§8.13.4.2).
+const STRI_FIXED_BODY_LEN: usize = STRI_SUB_TRACK_ID_OFFSET + core::mem::size_of::<u32>();
 
 /// Sub Track Information Box (`stri`) — ISO/IEC 14496-12:2026 §8.13.4.
 ///
@@ -884,12 +889,8 @@ impl SubTrackInformationBox {
         need_in(body, FULLBOX_EXTRA_SIZE + STRI_FIXED_BODY_LEN, "stri body")?;
         let offset = FULLBOX_EXTRA_SIZE;
         let switch_group = i16_at(body, offset);
-        let alternate_group = i16_at(body, offset + core::mem::size_of::<i16>());
-        let sub_track_id = be_u32(
-            body,
-            offset + 2 * core::mem::size_of::<i16>(),
-            "stri sub_track_ID",
-        )?;
+        let alternate_group = i16_at(body, offset + STRI_ALTERNATE_GROUP_OFFSET);
+        let sub_track_id = be_u32(body, offset + STRI_SUB_TRACK_ID_OFFSET, "stri sub_track_ID")?;
         let rest = &body[offset + STRI_FIXED_BODY_LEN..];
         let mut attributes = Vec::with_capacity(rest.len() / BOX_TYPE_SIZE);
         for chunk in rest.chunks_exact(BOX_TYPE_SIZE) {
