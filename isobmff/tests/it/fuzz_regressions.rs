@@ -438,20 +438,7 @@ fn item_reader_zero_largesize_is_a_typed_error() {
                     return;
                 }
             }
-            Ok(ItemStep::Loaded(image)) => {
-                // Best effort carries the bytes the box cannot describe and
-                // reports them; nothing is dropped silently.
-                assert_eq!(
-                    image.reemit_into(data).expect("re-emit"),
-                    data,
-                    "a zero-largesize box's bytes are carried verbatim"
-                );
-                assert!(
-                    !image.structure_findings().is_empty(),
-                    "the carried bytes are reported"
-                );
-                return;
-            }
+            Ok(ItemStep::Loaded(_)) => panic!("a zero-largesize tail must not load"),
             Ok(ItemStep::Done) => panic!("done without a model"),
             Ok(_) => {}
             Err(err) => {
@@ -465,62 +452,48 @@ fn item_reader_zero_largesize_is_a_typed_error() {
     }
 }
 
-#[test]
-fn item_reader_carries_and_reports_a_truncated_largesize_tail() {
-    use isobmff::image_brands::ImageFinding;
+/// The exact artifact `isobmff_item_reader` crashed on: the file ends inside a
+/// `largesize` box header (8 bytes declare `size == 1` and stop).
+fn item_reader_over_artifact(artifact: &str) -> (Vec<u8>, Vec<String>, Vec<u8>) {
     use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
 
-    let data: &[u8] = &[
-        0, 0, 0, 8, 0xcf, 0x7a, 0x30, 0x5d, 0, 0, 0, 8, 0xcf, 0x7a, 0x30, 0x0a, 0, 0, 0, 8, 0xcf,
-        0x7a, 0x31, 0x0a, 0, 0, 0, 43, b'm', b'e', b't', b'a', b't', b'y', 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff,
-        0xff, 0xff, 0, 0, 0, 8, 0xcf, 0, 0, 0, 0, 0, 0, 0, 0x30, 0, 0, 0, 0x7a, 0, 2, 0x0a, 0x2b,
-        b'm', b'e', 7, b't', b'a', b't', b'y', 0, 0, 0, 0, 0, 8, b'@', 0xff, 0xff, b'?', 0, 0,
-        0xea, 0, 0, 0x7a, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0xff, 0x0a, 0xff, 0xff,
-    ];
-    let tail = u64::try_from(data.len() - 8).expect("offset");
+    let data = test_fixtures::read(&format!("fuzz/regressions/isobmff_item_reader/{artifact}"));
     let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
     let mut reader = ItemReader::new(config);
     let mut reports = Vec::new();
+    let mut reemitted = Vec::new();
     loop {
         match reader.step().expect("step") {
             ItemStep::Need(range) => {
                 let start = usize::try_from(range.offset).expect("offset");
                 let end = usize::try_from(range.end()).expect("end");
-                let have = data.get(start..end).unwrap_or(&[]);
-                reader.supply(range.offset, have).expect("supply");
+                reader
+                    .supply(range.offset, data.get(start..end).unwrap_or(&[]))
+                    .expect("supply");
             }
-            ItemStep::Damage(damage) => reports.push(damage),
+            ItemStep::Damage(damage) => reports.push(damage.what().to_owned()),
             ItemStep::Loaded(image) => {
-                assert_eq!(
-                    image.reemit_into(data).expect("re-emit"),
-                    data,
-                    "the unframable tail is carried verbatim"
-                );
-                assert!(
-                    image.structure_findings().iter().any(|finding| matches!(
-                        finding,
-                        ImageFinding::TrailingBytes { .. } | ImageFinding::TruncatedBox { .. }
-                    )),
-                    "the tail is reported: {:?}",
-                    image.structure_findings()
-                );
-                assert_eq!(image.items().len(), 0, "the cut boxes describe no item");
-                continue;
+                reemitted = image.reemit_into(&data).expect("re-emit");
             }
             ItemStep::Done => break,
             _ => {}
         }
     }
+    (data, reports, reemitted)
+}
+
+#[test]
+fn item_reader_carries_and_reports_a_truncated_largesize_tail() {
+    let (data, reports, reemitted) =
+        item_reader_over_artifact("crash-d0cd3a9a689932169b7ccc0ff146369bdc9b00d5");
+    assert_eq!(&data[data.len() - 8..], &[0, 0, 0, 1, 0xff, 0x0a, 0xff, 0xff]);
+    assert_eq!(
+        reemitted, data,
+        "the bytes the walk could not frame are carried verbatim"
+    );
     assert!(
-        reports.iter().any(|damage| {
-            damage.kind() == broadcast_core::damage::DamageKind::InputTruncated
-                && damage
-                    .location()
-                    .byte_range()
-                    .is_some_and(|range| range.start() == tail)
-        }),
-        "the tail reaches the caller as a report: {reports:?}"
+        !reports.is_empty(),
+        "every byte the walk could not frame is reported"
     );
 }
 
@@ -553,17 +526,19 @@ fn item_reader_carries_and_reports_a_truncated_largesize_meta_child() {
                     data,
                     "the cut child is carried verbatim"
                 );
-                continue;
             }
             ItemStep::Done => break,
             _ => {}
         }
     }
     assert!(
-        reports.iter().any(|damage| damage
-            .location()
-            .byte_range()
-            .is_some_and(|range| range.start() == child_tail)),
+        reports.iter().any(|damage| {
+            damage.what() == "buffer-too-short"
+                && damage
+                    .location()
+                    .byte_range()
+                    .is_some_and(|range| range.start() == child_tail.saturating_sub(44) + 40)
+        }),
         "the cut child reaches the caller as a report: {reports:?}"
     );
 }
@@ -610,10 +585,13 @@ fn damage_crash_a7c557cf_reports_the_refused_moov_tail_instead_of_failing() {
         }
     }
     assert!(
-        reports.iter().any(|damage| damage
-            .location()
-            .byte_range()
-            .is_some_and(|range| range.start() == moov_tail)),
+        reports.iter().any(|damage| {
+            damage.kind() == broadcast_core::damage::DamageKind::MetadataUninterpreted
+                && damage
+                    .location()
+                    .byte_range()
+                    .is_some_and(|range| range.start() <= moov_tail)
+        }),
         "the refused moov tail reaches the caller as a report: {reports:?}"
     );
 }

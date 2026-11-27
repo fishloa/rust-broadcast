@@ -2043,13 +2043,39 @@ impl Reader {
         Ok(())
     }
 
-    fn accept_subsegment(&mut self, _range: ByteRange, bytes: &[u8]) -> Result<()> {
-        self.subsegment_index = Some(crate::index_boxes::SubsegmentIndexBox::parse(bytes)?);
+    /// A box that only locates samples failed to parse: it is skipped with its
+    /// fault reported, and the walk keeps the media it does not index. Only
+    /// [`Mode::Strict`] refuses it.
+    fn skip_faulty(&mut self, box_type: [u8; BOX_TYPE_SIZE], range: ByteRange, err: Error) -> Result<()> {
+        if !self.tolerated() {
+            return Err(err);
+        }
+        self.warn(Warning::UnrepresentableBox {
+            box_type,
+            offset: range.offset,
+            reason: crate::error::OpaqueReason::of(&err),
+        });
+        Ok(())
+    }
+
+    fn accept_subsegment(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
+        match crate::index_boxes::SubsegmentIndexBox::parse(bytes) {
+            Ok(index) => self.subsegment_index = Some(index),
+            Err(err) => self.skip_faulty(*b"ssix", range, err)?,
+        }
         Ok(())
     }
 
     fn accept_index(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
-        let index = SegmentIndexBox::parse(bytes)?;
+        let index = match SegmentIndexBox::parse(bytes) {
+            Ok(index) => index,
+            Err(err) => {
+                // A `sidx` indexes fragments; it is not needed to play them,
+                // and the walk finds them without it.
+                self.skip_faulty(*b"sidx", range, err)?;
+                return Ok(());
+            }
+        };
         if self.tolerated() && !index.trailing().is_empty() {
             self.warn(Warning::TrailingBytes {
                 box_type: *b"sidx",
@@ -2155,13 +2181,24 @@ impl Reader {
             return Err(Error::InvalidInput("mfra with no seek pending"));
         };
         let mut notes = Vec::new();
-        let mfra = {
+        let parsed = {
             let mut sink =
                 crate::box_support::Notes::new(bytes, range.offset, self.tolerated(), &mut notes);
             crate::box_types::parse_box(bytes).and_then(|(header, _)| {
                 MovieFragmentRandomAccessBox::parse_body_notes(header.body, Some(&mut sink))
             })
-        }?;
+        };
+        let mfra = match parsed {
+            Ok(mfra) => mfra,
+            Err(err) => {
+                // A trailing index serves seeking only: a seek that cannot be
+                // answered is `NoIndex`, not a refusal to play.
+                self.skip_faulty(*b"mfra", range, err)?;
+                return Err(Error::NoIndex {
+                    track: request.track,
+                });
+            }
+        };
         self.report_notes(notes);
         let offset = mfra
             .tfra
@@ -2816,7 +2853,12 @@ impl Reader {
     }
 
     fn accept_ftyp(&mut self, bytes: &[u8]) -> Result<()> {
-        self.brand = Some(FileTypeBox::parse_box(bytes)?);
+        match FileTypeBox::parse_box(bytes) {
+            Ok(brand) => self.brand = Some(brand),
+            Err(err) => {
+                self.skip_faulty(*b"ftyp", ByteRange { offset: 0, len: 0 }, err)?;
+            }
+        }
         Ok(())
     }
 
@@ -2944,8 +2986,12 @@ impl Reader {
             &repaired
         };
         self.report_notes(core::mem::take(&mut notes));
-        if movie.tracks.is_empty() && movie.mvex.is_none() {
-            // Nothing to play: the input states no track at all.
+        if movie.tracks.is_empty()
+            && movie.mvex.is_none()
+            && self.config.mode == Mode::Strict
+        {
+            // Nothing to play: the input states no track at all. Best effort
+            // carries what the movie does state, as the tail repair does.
             return Err(Error::InvalidInput(
                 "the movie states no track, so no sample can be played",
             ));

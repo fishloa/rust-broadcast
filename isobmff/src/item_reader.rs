@@ -1683,6 +1683,8 @@ pub struct ItemReader {
     carried_body: Vec<u8>,
     meta_cut: bool,
     cut_header: bool,
+    tail_pending: bool,
+    meta_seen: bool,
 }
 
 impl ItemReader {
@@ -1711,6 +1713,8 @@ impl ItemReader {
             carried_body: Vec::new(),
             meta_cut: false,
             cut_header: false,
+            tail_pending: false,
+            meta_seen: false,
         }
     }
 
@@ -1734,6 +1738,14 @@ impl ItemReader {
                         target,
                     } => {
                         let len = target.saturating_sub(prefix.len()) as u64;
+                        if len == 0 {
+                            // Nothing more can be read: the header the walk
+                            // holds describes no bytes it has not seen. It and
+                            // the bytes it claimed are a cut tail.
+                            self.tail_pending = true;
+                            self.input_ended()?;
+                            continue;
+                        }
                         self.pending = Some(ByteRange {
                             offset: offset.saturating_add(prefix.len() as u64),
                             len,
@@ -1875,8 +1887,34 @@ impl ItemReader {
             self.pending = None;
             return Ok(());
         }
-        if self.meta.is_some() {
+        if self.tail_pending {
+            let head = core::mem::take(&mut self.carried_body);
+            let at = match &self.phase {
+                Phase::Header { offset, .. } => *offset,
+                _ => 0,
+            };
+            self.tail_pending = false;
+            self.degraded.push(ImageFinding::TrailingBytes {
+                box_type: fourcc_of(&head),
+                offset: at,
+                carried: head.len() as u64,
+            });
+            self.top_level.push(TopLevelBox {
+                fourcc: fourcc_of(&head),
+                header: Vec::new(),
+                payload: TopLevelPayload::Bytes(head),
+            });
+        }
+        let meta_seen = self.meta_seen;
+        if self.meta.is_none() && meta_seen {
+            // The file-level `meta` was carried opaque: it states no item
+            // model, and its findings say why.
             return self.finalize();
+        }
+        if self.meta.is_none() {
+            return Err(Error::InvalidInput(
+                "the input ended before the item model was read",
+            ));
         }
         if self.config.mode() == crate::reader::Mode::Strict {
             return Err(Error::InvalidInput(
@@ -2021,6 +2059,7 @@ impl ItemReader {
         else {
             return Err(Error::InvalidInput("not at a box header"));
         };
+        let mode = self.config.mode;
         if prefix.len() < *target {
             return Ok(());
         }
@@ -2046,10 +2085,16 @@ impl ItemReader {
             size => (u64::from(size), false),
         };
         if size < header_len as u64 {
-            return Err(Error::BoxSizeUnderflow {
-                size,
-                header_size: header_len,
-            });
+            if mode == crate::reader::Mode::Strict {
+                return Err(Error::BoxSizeUnderflow {
+                    size,
+                    header_size: header_len,
+                });
+            }
+            // Best effort: a size field that describes less than its own
+            // header describes nothing, so the walk treats the bytes as the
+            // previous box's tail (an unterminated child) or as a cut header.
+            return Ok(());
         }
         // A box that declares more bytes than the input holds is read to the
         // end of the input; the cut is reported and the bytes carried are
@@ -2137,6 +2182,7 @@ impl ItemReader {
                 });
             }
             BodyKind::Meta => {
+                self.meta_seen = true;
                 self.carried_body = bytes.to_vec();
                 if u64::try_from(bytes.len()).unwrap_or(u64::MAX)
                     > self.config.limits.max_moov_bytes()
