@@ -89,6 +89,8 @@ fn cstring_len(s: &str) -> usize {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct XmlSubtitleSampleEntry {
+    /// The SampleEntry `reserved[6]` bytes, written back verbatim.
+    pub reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     /// Data reference index (SampleEntry field `[6:7]`).
     pub data_reference_index: u16,
     /// Space-separated XML namespace URIs (null-terminated on wire).
@@ -105,6 +107,7 @@ impl XmlSubtitleSampleEntry {
     /// Create a new `stpp` sample entry with the given namespace.
     pub fn new(namespace: impl Into<String>) -> Self {
         Self {
+            reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
             data_reference_index: 1,
             namespace: namespace.into(),
             schema_location: String::new(),
@@ -122,27 +125,38 @@ impl XmlSubtitleSampleEntry {
             "stpp",
         )?;
         // SampleEntry: reserved(6) + data_reference_index(2)
+        let mut reserved = [0u8; SAMPLE_ENTRY_RESERVED_LEN];
+        reserved.copy_from_slice(&body[..SAMPLE_ENTRY_RESERVED_LEN]);
         let data_reference_index = be_u16(body, DATA_REFERENCE_INDEX_OFFSET, "sample entry")?;
         let pos = SAMPLE_ENTRY_FIXED_LEN; // into body
         let (namespace, pos) = parse_cstring(body, pos)?;
         let (schema_location, pos) = parse_cstring(body, pos)?;
-        let (auxiliary_mime_types, mut pos) = parse_cstring(body, pos)?;
+        let (auxiliary_mime_types, pos) = parse_cstring(body, pos)?;
 
         let mut extra_boxes = Vec::new();
-        while pos + BOX_HEADER_MIN_SIZE <= body.len() {
-            let sz = be_u32(body, pos, "child box size")? as usize;
+        let mut at = pos;
+        while at + BOX_HEADER_MIN_SIZE <= body.len() {
+            let sz = be_u32(body, at, "child box size")? as usize;
             if sz < BOX_HEADER_MIN_SIZE {
                 break;
             }
-            let end = pos.saturating_add(sz).min(body.len());
+            let end = at.saturating_add(sz);
+            if end > body.len() {
+                return Err(Error::BufferTooShort(BufferTooShort {
+                    need: end,
+                    have: body.len(),
+                    what: "stpp child box",
+                }));
+            }
             let mut bt = [0u8; BOX_TYPE_SIZE];
-            bt.copy_from_slice(&body[pos + BOX_TYPE_OFFSET..pos + BOX_HEADER_MIN_SIZE]);
-            let data = body[pos + BOX_HEADER_MIN_SIZE..end].to_vec();
+            bt.copy_from_slice(&body[at + BOX_TYPE_OFFSET..at + BOX_HEADER_MIN_SIZE]);
+            let data = body[at + BOX_HEADER_MIN_SIZE..end].to_vec();
             extra_boxes.push(crate::box_support::OpaqueBox::new(bt, data));
-            pos = pos.saturating_add(sz);
+            at = end;
         }
 
         Ok(Self {
+            reserved,
             data_reference_index,
             namespace,
             schema_location,
@@ -183,10 +197,8 @@ impl Serialize for XmlSubtitleSampleEntry {
         let mut c = 0usize;
         // box header: size(32) + fourcc(32)
         c += crate::box_types::write_box_header(buf, b"stpp", need)?;
-        // SampleEntry: reserved(6) zeros + data_reference_index(16). The zeros
-        // are written, not skipped: a reused/dirty caller buffer would
-        // otherwise keep garbage there (r04-W45).
-        buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].fill(0);
+        // SampleEntry: reserved(6) + data_reference_index(16).
+        buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].copy_from_slice(&self.reserved);
         c += SAMPLE_ENTRY_RESERVED_LEN;
         buf[c..c + core::mem::size_of::<u16>()]
             .copy_from_slice(&self.data_reference_index.to_be_bytes());
@@ -698,6 +710,8 @@ impl Serialize for WvttSampleBox {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct WvttSampleEntry {
+    /// The SampleEntry `reserved[6]` bytes, written back verbatim.
+    pub reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     /// Data reference index (SampleEntry field `[6:7]`).
     pub data_reference_index: u16,
     /// WebVTT configuration box (`vttC`), mandatory.
@@ -710,6 +724,7 @@ impl WvttSampleEntry {
     /// Construct a new `wvtt` sample entry with the given WebVTT header config.
     pub fn new(config: impl Into<String>) -> Self {
         Self {
+            reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
             data_reference_index: 1,
             config: WebVttConfigurationBox::new(config),
             extra_boxes: Vec::new(),
@@ -725,6 +740,8 @@ impl WvttSampleEntry {
             "wvtt",
         )?;
         let body = crate::box_types::parse_box(bytes)?.0.body;
+        let mut reserved = [0u8; SAMPLE_ENTRY_RESERVED_LEN];
+        reserved.copy_from_slice(&body[..SAMPLE_ENTRY_RESERVED_LEN]);
         let data_reference_index = be_u16(body, DATA_REFERENCE_INDEX_OFFSET, "sample entry")?;
 
         let mut pos = SAMPLE_ENTRY_FIXED_LEN;
@@ -736,7 +753,14 @@ impl WvttSampleEntry {
             if sz < BOX_HEADER_MIN_SIZE {
                 break;
             }
-            let end = pos.saturating_add(sz).min(body.len());
+            let end = pos.saturating_add(sz);
+            if end > body.len() {
+                return Err(Error::BufferTooShort(BufferTooShort {
+                    need: end,
+                    have: body.len(),
+                    what: "wvtt child box",
+                }));
+            }
             let child = &body[pos..end];
             let fourcc = &child[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE];
             match fourcc {
@@ -750,7 +774,7 @@ impl WvttSampleEntry {
                     ));
                 }
             }
-            pos = pos.saturating_add(sz);
+            pos = end;
         }
 
         let config = config.ok_or(Error::BufferTooShort(BufferTooShort {
@@ -760,6 +784,7 @@ impl WvttSampleEntry {
         }))?;
 
         Ok(Self {
+            reserved,
             data_reference_index,
             config,
             extra_boxes,
@@ -791,10 +816,8 @@ impl Serialize for WvttSampleEntry {
         need_out(buf, need)?;
         let mut c = 0usize;
         c += crate::box_types::write_box_header(buf, b"wvtt", need)?;
-        // SampleEntry: reserved(6) zeros + data_reference_index(16). Written
-        // explicitly so a reused/dirty caller buffer cannot leave garbage in the
-        // reserved bytes (r04-W45).
-        buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].fill(0);
+        // SampleEntry: reserved(6) + data_reference_index(16).
+        buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].copy_from_slice(&self.reserved);
         c += SAMPLE_ENTRY_RESERVED_LEN;
         buf[c..c + core::mem::size_of::<u16>()]
             .copy_from_slice(&self.data_reference_index.to_be_bytes());

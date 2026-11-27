@@ -26,11 +26,13 @@ use broadcast_core::len::{fit_u8, fit_u16, fit_u32, need_in, need_out};
 use broadcast_core::wire::{be_u16, be_u32, i16_at, i32_at, u16_at, u32_at};
 use broadcast_core::{Parse, Serialize};
 
+use crate::box_support::OpaqueBox;
 use crate::box_types::{
     BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, FULLBOX_EXTRA_SIZE, box_len, write_full_box_header,
 };
 use crate::error::{Error, Result};
 use crate::image::full_flags;
+use crate::meta_track::SAMPLE_ENTRY_RESERVED_LEN;
 
 /// `flags & 1`: 32-bit geometry fields (11.2.1.3).
 const GEOMETRY_WIDE_FIELDS: u32 = 1;
@@ -42,6 +44,10 @@ const GEOMETRY_QUAD_FIELDS: usize = 4;
 const REGION_ITEM_PREFIX_LEN: usize = 2;
 /// Mask of `annotation_container_type` (11.4.3.1.2).
 const ANNOTATION_CONTAINER_MASK: u8 = 0x7;
+/// Width of `annotation_container_type` (11.4.3.1.2).
+const ANNOTATION_CONTAINER_TYPE_BITS: u32 = 3;
+/// Mask of the `reserved` value an association carries (11.4.3.1.2).
+const ANNOTATION_RESERVED_VALUE_MASK: u8 = 0x1f;
 /// Width of one `regm` association (11.4.3.1.2).
 const REGM_ASSOCIATION_LEN: usize = GEOMETRY_TYPE_LEN + 2 * WIDE_FIELD_LEN;
 /// Width of a narrow geometry field (11.2.1.3).
@@ -726,6 +732,7 @@ impl<'a> Parse<'a> for RegionTrackConfigBox {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        crate::image::expect_type(bytes, &RGA_CONFIG, "rgaC")?;
         need_in(bytes, BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE, "rgaC")?;
         let body = crate::box_types::box_body(bytes, FULLBOX_EXTRA_SIZE, "rgaC")?;
         let version = body[0];
@@ -779,22 +786,33 @@ pub const RGAN: [u8; BOX_TYPE_SIZE] = *b"rgan";
 /// The region-track sample entry (`rgan`) — ISO/IEC 23008-12:2025 11.4.2.2.2.
 ///
 /// A `MetadataSampleEntry` whose mandatory `rgaC` child states the reference
-/// space its samples' regions are placed in.
+/// space its samples' regions are placed in. The SampleEntry's six reserved
+/// bytes come back verbatim (ISO/IEC 14496-12:2026 §8.5.2.2), every sibling
+/// child keeps its wire position and header form, and a child region a walk
+/// cannot represent is kept as a verbatim tail.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct RegionSampleEntry {
+    reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     data_reference_index: u16,
     config: RegionTrackConfigBox,
+    other_boxes: Vec<OpaqueBox>,
+    config_position: usize,
+    trailing: Vec<u8>,
 }
 
 impl RegionSampleEntry {
     /// An entry carrying `config`.
     #[must_use]
-    pub const fn new(config: RegionTrackConfigBox) -> Self {
+    pub fn new(config: RegionTrackConfigBox) -> Self {
         Self {
+            reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
             data_reference_index: 1,
             config,
+            other_boxes: Vec::new(),
+            config_position: 0,
+            trailing: Vec::new(),
         }
     }
 
@@ -810,13 +828,43 @@ impl RegionSampleEntry {
         &self.config
     }
 
+    /// Child boxes beside the `rgaC` configuration, in wire order.
+    #[must_use]
+    pub fn other_boxes(&self) -> &[OpaqueBox] {
+        &self.other_boxes
+    }
+
+    /// Bytes after the last complete child, kept verbatim.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
     /// Parse the complete box, header included.
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
-        let (data_reference_index, rest) =
+        let (reserved, data_reference_index, rest) =
             crate::meta_track::parse_sample_entry_base(bytes, "rgan")?;
+        let (children, trailing) = crate::box_support::capture_children(rest).into_parts();
+        let mut config = None;
+        let mut other_boxes = Vec::new();
+        let mut config_position = 0;
+        for child in children {
+            if config.is_none() && child.box_type == RGA_CONFIG {
+                config = Some(RegionTrackConfigBox::parse(&child.try_to_bytes()?)?);
+                continue;
+            }
+            if config.is_none() {
+                config_position += 1;
+            }
+            other_boxes.push(child);
+        }
         Ok(Self {
+            reserved,
             data_reference_index,
-            config: RegionTrackConfigBox::parse(rest)?,
+            config: config.ok_or(Error::InvalidInput("rgan missing rgaC"))?,
+            other_boxes,
+            config_position,
+            trailing,
         })
     }
 }
@@ -837,7 +885,13 @@ impl Serialize for RegionSampleEntry {
         crate::box_types::box_len(
             BOX_HEADER_MIN_SIZE
                 + crate::meta_track::SAMPLE_ENTRY_FIXED_LEN
-                + self.config.serialized_len(),
+                + self.config.serialized_len()
+                + self
+                    .other_boxes
+                    .iter()
+                    .map(Serialize::serialized_len)
+                    .sum::<usize>()
+                + self.trailing.len(),
         )
     }
 
@@ -847,9 +901,19 @@ impl Serialize for RegionSampleEntry {
             buf,
             &RGAN,
             need,
+            &self.reserved,
             self.data_reference_index,
         )?;
-        cursor += self.config.serialize_into(&mut buf[cursor..])?;
+        let mut others = self.other_boxes.iter();
+        for slot in 0..=self.other_boxes.len() {
+            if slot == self.config_position {
+                cursor += self.config.serialize_into(&mut buf[cursor..])?;
+            } else if let Some(child) = others.next() {
+                cursor += child.serialize_into(&mut buf[cursor..])?;
+            }
+        }
+        buf[cursor..cursor + self.trailing.len()].copy_from_slice(&self.trailing);
+        cursor += self.trailing.len();
         Ok(cursor)
     }
 }
@@ -922,6 +986,7 @@ impl RegionSample {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct RegionAnnotationAssociation {
+    reserved: u8,
     container_type: AnnotationContainerType,
     reference_type: [u8; BOX_TYPE_SIZE],
     index: u32,
@@ -936,10 +1001,17 @@ impl RegionAnnotationAssociation {
         index: u32,
     ) -> Self {
         Self {
+            reserved: 0,
             container_type,
             reference_type,
             index,
         }
+    }
+
+    /// The `reserved` run preceding `annotation_container_type`, kept verbatim.
+    #[must_use]
+    pub const fn reserved(&self) -> u8 {
+        self.reserved
     }
 
     /// `annotation_container_type`.
@@ -1058,19 +1130,22 @@ impl RegionAnnotationMap {
             let mut mapped = Vec::with_capacity(associations);
             for _ in 0..associations {
                 need_in(body, cursor + REGM_ASSOCIATION_LEN, "regm association")?;
+                let packed = body[cursor];
                 let container_type =
-                    AnnotationContainerType::from_value(body[cursor] & ANNOTATION_CONTAINER_MASK);
+                    AnnotationContainerType::from_value(packed & ANNOTATION_CONTAINER_MASK);
+                let reserved = packed >> ANNOTATION_CONTAINER_TYPE_BITS;
                 cursor += 1;
                 let mut reference_type = [0u8; BOX_TYPE_SIZE];
                 reference_type.copy_from_slice(&body[cursor..cursor + BOX_TYPE_SIZE]);
                 cursor += BOX_TYPE_SIZE;
                 let index = be_u32(body, cursor, "regm annotation_idx")?;
                 cursor += WIDE_FIELD_LEN;
-                mapped.push(RegionAnnotationAssociation::new(
+                mapped.push(RegionAnnotationAssociation {
+                    reserved,
                     container_type,
                     reference_type,
                     index,
-                ));
+                });
             }
             entries.push(RegionAnnotation {
                 region_id,
@@ -1104,7 +1179,14 @@ impl RegionAnnotationMap {
                 &fit_u16(entry.associations.len(), "regm association_count")?.to_be_bytes(),
             );
             for association in &entry.associations {
-                out.push(association.container_type.value() & ANNOTATION_CONTAINER_MASK);
+                let reserved = broadcast_core::len::fit_mask(
+                    association.reserved,
+                    ANNOTATION_RESERVED_VALUE_MASK,
+                    "regm reserved",
+                )? << ANNOTATION_CONTAINER_TYPE_BITS;
+                out.push(
+                    reserved | (association.container_type.value() & ANNOTATION_CONTAINER_MASK),
+                );
                 out.extend_from_slice(&association.reference_type);
                 out.extend_from_slice(&association.index.to_be_bytes());
             }

@@ -32,6 +32,8 @@ pub const INPUT_SGPD: [u8; BOX_TYPE_SIZE] = *b"sgpd";
 pub const MD5I_GROUPING_PARAMETER: u32 = 1;
 /// Bytes of `input_MD5` (8.4.2).
 const MD5_LEN: usize = 16;
+/// The only `version` an `md5i` states (8.4.2).
+const MD5I_VERSION: u8 = 0;
 
 /// The sample group an [`Md5IntegrityBox`] covers (8.4.2).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -154,6 +156,9 @@ impl<'a> broadcast_core::Parse<'a> for Md5IntegrityBox {
             FULLBOX_EXTRA_SIZE + MD5_LEN + BOX_TYPE_SIZE,
             "md5i",
         )?;
+        if body[0] != MD5I_VERSION {
+            return Err(Error::InvalidInput("md5i version"));
+        }
         let flags = full_flags(body);
         let mut input_md5 = [0u8; MD5_LEN];
         input_md5.copy_from_slice(&body[FULLBOX_EXTRA_SIZE..FULLBOX_EXTRA_SIZE + MD5_LEN]);
@@ -229,7 +234,7 @@ impl broadcast_core::Serialize for Md5IntegrityBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let mut cursor = write_full_box_header(buf, &MD5I, need, 0, self.flags, false)?;
+        let mut cursor = write_full_box_header(buf, &MD5I, need, MD5I_VERSION, self.flags, false)?;
         buf[cursor..cursor + MD5_LEN].copy_from_slice(&self.input_md5);
         cursor += MD5_LEN;
         buf[cursor..cursor + BOX_TYPE_SIZE].copy_from_slice(&self.input_4cc);

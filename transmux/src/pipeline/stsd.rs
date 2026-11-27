@@ -187,6 +187,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             }
             let entry = SampleEntryVariant::Mp4a(Box::new(Mp4aSampleEntry {
                 codec_type: *b"mp4a",
+                reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 entry_version: rate.entry_version,
                 reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
@@ -196,6 +197,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplerate: rate.samplerate_field,
                 quicktime: None,
                 config_boxes,
+                trailing: Vec::new(),
             }));
             TrackMedia::audio(entry)
         }
@@ -217,6 +219,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 config_boxes.push(srat_opaque(srat)?);
             }
             let entry = SampleEntryVariant::Ac3(Box::new(Ac3SampleEntry {
+                reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 entry_version: rate.entry_version,
                 reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
@@ -226,6 +229,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplerate: rate.samplerate_field,
                 quicktime: None,
                 config_boxes,
+                trailing: Vec::new(),
             }));
             TrackMedia::audio(entry)
         }
@@ -247,6 +251,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 config_boxes.push(srat_opaque(srat)?);
             }
             let entry = SampleEntryVariant::Ec3(Box::new(Ec3SampleEntry {
+                reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 entry_version: rate.entry_version,
                 reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
@@ -256,6 +261,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplerate: rate.samplerate_field,
                 quicktime: None,
                 config_boxes,
+                trailing: Vec::new(),
             }));
             TrackMedia::audio(entry)
         }
@@ -316,6 +322,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 config_boxes.push(srat_opaque(srat)?);
             }
             let entry = SampleEntryVariant::Opus(Box::new(OpusSampleEntry {
+                reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 entry_version: rate.entry_version,
                 reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
@@ -325,6 +332,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplerate: rate.samplerate_field,
                 quicktime: None,
                 config_boxes,
+                trailing: Vec::new(),
             }));
             TrackMedia::audio(entry)
         }
@@ -341,6 +349,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 config_boxes.push(srat_opaque(srat)?);
             }
             let entry = SampleEntryVariant::Flac(Box::new(FlacSampleEntry {
+                reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 entry_version: rate.entry_version,
                 reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
@@ -350,6 +359,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplerate: rate.samplerate_field,
                 quicktime: None,
                 config_boxes,
+                trailing: Vec::new(),
             }));
             TrackMedia::audio(entry)
         }
@@ -366,6 +376,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 config_boxes.push(srat_opaque(srat)?);
             }
             let entry = SampleEntryVariant::Ac4(Box::new(Ac4SampleEntry {
+                reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 entry_version: rate.entry_version,
                 reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
@@ -375,6 +386,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplerate: rate.samplerate_field,
                 quicktime: None,
                 config_boxes,
+                trailing: Vec::new(),
             }));
             TrackMedia::audio(entry)
         }
@@ -392,6 +404,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             }
             let entry = SampleEntryVariant::Mha(Box::new(MhaSampleEntry {
                 codec_type: isobmff::mpegh::MHA1_FOURCC,
+                reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 entry_version: rate.entry_version,
                 reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
@@ -401,6 +414,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplerate: rate.samplerate_field,
                 quicktime: None,
                 config_boxes,
+                trailing: Vec::new(),
             }));
             TrackMedia::audio(entry)
         }
@@ -446,6 +460,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             }
             let entry = SampleEntryVariant::Mp4a(Box::new(Mp4aSampleEntry {
                 codec_type: *b"mp4a",
+                reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 entry_version: rate.entry_version,
                 reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
@@ -455,6 +470,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplerate: rate.samplerate_field,
                 quicktime: None,
                 config_boxes,
+                trailing: Vec::new(),
             }));
             TrackMedia::audio(entry)
         }
@@ -473,6 +489,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
             }
             let entry = SampleEntryVariant::Dts(Box::new(DtsSampleEntry {
                 codec_type: *codec_fourcc,
+                reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 entry_version: rate.entry_version,
                 reserved_1: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
                 data_reference_index: 1,
@@ -482,6 +499,7 @@ pub(super) fn track_media(t: &TrackSpec) -> Result<TrackMedia> {
                 samplerate: rate.samplerate_field,
                 quicktime: None,
                 config_boxes,
+                trailing: Vec::new(),
             }));
             TrackMedia::audio(entry)
         }

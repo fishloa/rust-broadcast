@@ -336,6 +336,7 @@ fn sample_timecode() -> TimecodeEntry {
         reserved_tail: vec![0, 0, 0],
         name: None,
         others: Vec::new(),
+        trailing: Vec::new(),
     }
 }
 

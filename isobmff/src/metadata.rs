@@ -818,6 +818,7 @@ fn push_item(
                     language: *language,
                     value: value.as_bytes().to_vec(),
                 }],
+                plain_nul_terminated: true,
             }),
             TextLocale::Itunes {
                 data_type,
@@ -839,6 +840,7 @@ fn push_item(
                 language: 0,
                 value: location.as_str().as_bytes().to_vec(),
             }],
+            plain_nul_terminated: true,
         }),
         MetadataItem::Loci(loci) => udta.children.push(UdtaChild::Location(loci.clone())),
         MetadataItem::Chapters(chapters) => udta

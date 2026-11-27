@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking
+
+- **Sample entries keep every parsed byte on a rewrite.** The audio sample
+  entries (`Mp4aSampleEntry`, `Ac3SampleEntry`, `Ec3SampleEntry`,
+  `Ac4SampleEntry`, `OpusSampleEntry`, `FlacSampleEntry`, `MhaSampleEntry`,
+  `DtsSampleEntry`) and the `stpp`/`wvtt` subtitle entries gain a
+  `reserved: [u8; 6]` field carrying the `SampleEntry` `reserved[6]` block
+  instead of rewriting it as zeros. `SoundEntry`, the audio entries and
+  `TimecodeEntry` gain a `trailing: Vec<u8>` field: a child whose declared size
+  runs past the entry is kept verbatim there rather than being shortened and
+  re-emitted with the clamped length. A sample entry written with `size == 0`
+  stays opaque, and a stub shorter than its declared size is a typed error.
+  Construct a new entry with the type's `new`/builder (or set `reserved` to
+  zeros and `trailing` to empty), not a struct literal. `UdtaText` gains a
+  `plain_nul_terminated` field: a plain `udta` text atom (one without the `©`
+  prefix) is a NUL-terminated string, and a source that omitted the NUL no
+  longer gains one on a rewrite.
+
+- **The HEIF 2025 boxes carry their whole wire state.** `CodingConstraintsBox`
+  carries the 26 `reserved` bits after `max_ref_per_pic`, each
+  `RegionAnnotationAssociation` the five bits before its
+  `annotation_container_type`, each `ColourFormatInput` the seven bits before
+  its `is_packed_flag`, `StereoAggressor` the `sub_type_present` bit (a
+  signalled-but-empty URI no longer loses its bit and terminator), and
+  `RegionSampleEntry` its `reserved` block, sibling children and any child
+  bytes a walk cannot represent, so an `rgan` entry no longer rewrites its
+  reserved block or re-frames a truncated tail. `RegionSampleEntry::new` is a
+  plain `fn`. An `md5i` stating a non-zero `version` no longer parses, and a
+  clause-6.5 property whose FullBox `version`/`flags` the clause fixes at zero,
+  or whose body runs past its last field, is a typed error instead of being
+  rewritten without them. `ColourFormatEnhancement::serialized_len` reports the
+  byte its `serialize_into` writes.
+
+### Fixed
+
+- **A `udta`/`meta`/`ilst` child written with `size == 0` or `size == 1` +
+  `largesize` keeps that header form.** A typed child serialises the compact
+  header, so such a child now stays opaque and is re-emitted verbatim.
+
+- **A sample-entry child box is never shortened and re-emitted.** One
+  `box_support::capture_children` walk serves the sample entries and the
+  QuickTime `tapt`/`gmhd`/`wave` atoms: a child that runs past its region is a
+  typed error, and the codec-config search no longer returns a box clamped to
+  the buffer end (which a rewrite emitted at a length the file never stated).
+  `ColourFormatEnhancement` also refuses a body with bytes past its last input.
+
 ### Added
 
 - **Gain map metadata typed (Amd 1 6.6.2.4.2).** `image` gains

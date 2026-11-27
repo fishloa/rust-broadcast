@@ -27,7 +27,7 @@ use isobmff::image_props::{
     TargetOutputLayerSetProperty, UserDescriptionProperty, WhiteBalanceProperty, WipeDirection,
     WipeTransitionEffectProperty, ZoomDirection, ZoomShape, ZoomTransitionEffectProperty,
 };
-use isobmff::image_sequence::DirectReferenceSamplesList;
+use isobmff::image_sequence::{CodingConstraintsBox, DirectReferenceSamplesList};
 use isobmff::init_segment::{SampleDescriptionBox, SampleEntryVariant};
 use isobmff::integrity::{
     INPUT_TRAK, IntegrityBox, IntegrityItem, Md5IntegrityBox, SampleGroupDigest,
@@ -1353,4 +1353,96 @@ fn rgan_sample_entry_is_typed_in_the_stsd_dispatch() {
     let parsed = SampleDescriptionBox::parse(&bytes).expect("parse stsd");
     assert!(matches!(parsed.entries[0], SampleEntryVariant::Rgan(_)));
     assert_eq!(parsed.try_to_bytes().expect("re-serialize"), bytes);
+}
+
+#[test]
+fn coding_constraints_keep_the_reserved_bits_after_max_ref_per_pic() {
+    let wire = [
+        0u8, 0, 0, 16, b'c', b'c', b's', b't', 0, 0, 0, 0, 0x80, 0, 0, 1,
+    ];
+    let parsed = CodingConstraintsBox::parse(&wire).expect("ccst parses");
+    assert!(parsed.all_ref_pics_intra());
+    assert_eq!(parsed.reserved(), 1);
+    assert_eq!(parsed.try_to_bytes().expect("ccst serializes"), wire);
+}
+
+#[test]
+fn region_annotations_keep_the_reserved_bits_of_each_association() {
+    let wire = [
+        0u8, 0, 0, 1, 0, 0, 0, 7, 0, 1, 0xF9, b'a', b'b', b'c', b'd', 0, 0, 0, 5,
+    ];
+    let parsed = RegionAnnotationMap::parse(&wire).expect("regm parses");
+    let association = parsed.entries()[0].associations()[0];
+    assert_eq!(association.reserved(), 0x1f);
+    assert_eq!(
+        association.container_type(),
+        AnnotationContainerType::SampleGroup
+    );
+    assert_eq!(parsed.to_bytes().expect("regm serializes"), wire);
+}
+
+#[test]
+fn colour_format_enhancement_keeps_the_reserved_bits_before_is_packed() {
+    let wire = [0u8, 0x82, 5];
+    let parsed =
+        ColourFormatEnhancement::parse_with_reference_count(&wire, 1).expect("cfen parses");
+    assert_eq!(parsed.inputs()[0].reserved(), 0x41);
+    assert!(!parsed.inputs()[0].is_packed());
+    assert_eq!(parsed.inputs()[0].channel_id(), 5);
+    assert_eq!(parsed.try_to_bytes().expect("cfen serializes"), wire);
+}
+
+#[test]
+fn colour_format_enhancement_refuses_a_body_it_cannot_split() {
+    let wire = [0u8, 0x00, 5];
+    assert!(ColourFormatEnhancement::parse(&wire).is_err());
+}
+
+#[test]
+fn a_non_zero_md5i_version_is_a_typed_error() {
+    let mut wire = Md5IntegrityBox::new([0u8; 16], INPUT_TRAK)
+        .try_to_bytes()
+        .expect("md5i serializes");
+    wire[8] = 1;
+    assert!(Md5IntegrityBox::parse(&wire).is_err());
+}
+
+#[test]
+fn a_property_fullbox_word_the_clause_fixes_is_a_typed_error() {
+    let wire = ImageScaling::new(2, 3, 4, 5).try_to_bytes().expect("iscl");
+    for offset in [8usize, 9, 10, 11] {
+        let mut mutated = wire.clone();
+        mutated[offset] = 1;
+        assert!(
+            ImageScaling::parse(&mutated).is_err(),
+            "iscl byte {offset} must be refused"
+        );
+    }
+    let mut tail = wire.clone();
+    tail.push(0);
+    let total = u32::try_from(tail.len()).expect("length");
+    tail[..4].copy_from_slice(&total.to_be_bytes());
+    assert!(
+        ImageScaling::parse(&tail).is_err(),
+        "a body tail is refused"
+    );
+
+    let prdi = ProgressiveDerivedImageItemInformationProperty::new(Some(1), vec![1])
+        .try_to_bytes()
+        .expect("prdi");
+    let mut versioned = prdi;
+    versioned[8] = 1;
+    assert!(ProgressiveDerivedImageItemInformationProperty::parse(&versioned).is_err());
+}
+
+#[test]
+fn a_signalled_but_empty_stereo_sub_type_uri_round_trips() {
+    let wire = [
+        0u8, 0, 0, 16, b's', b't', b'a', b'g', 0, 0, 0, 0, 0, 1, 0x81, 0,
+    ];
+    let parsed = StereoAggressorsProperty::parse(&wire).expect("stag parses");
+    let aggressor = &parsed.aggressors()[0];
+    assert!(aggressor.sub_type_present());
+    assert!(aggressor.sub_type_uri().is_empty());
+    assert_eq!(parsed.try_to_bytes().expect("stag serializes"), wire);
 }

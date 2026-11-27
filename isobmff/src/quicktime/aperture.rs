@@ -119,7 +119,7 @@ impl TrackApertureModeDimensionsBox {
         let mut clef = None;
         let mut prof = None;
         let mut enof = None;
-        for item in BoxIter::clamped(body) {
+        for item in BoxIter::new(body) {
             let Ok(item) = item else {
                 break;
             };

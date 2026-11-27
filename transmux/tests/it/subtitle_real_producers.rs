@@ -451,6 +451,7 @@ fn wvtt_unknown_sample_box_and_entry_extras_pin_their_lengths() {
     // An entry with two extra boxes: the length includes both, and the whole
     // entry parses back byte-identically.
     let entry = WvttSampleEntry {
+        reserved: [0u8; 6],
         data_reference_index: 1,
         config: WebVttConfigurationBox::new("WEBVTT"),
         extra_boxes: vec![

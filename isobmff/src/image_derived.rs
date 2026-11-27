@@ -26,8 +26,12 @@ use crate::image::GainMapMetadata;
 const DERIVED_VERSION: u8 = 0;
 /// Bits in one byte.
 const BITS_IN_BYTE: usize = u8::BITS as usize;
-/// Bits of the `is_packed_flag` plus its reserved prefix (Amd 1 6.6.2.5.2).
-const PACKED_FLAG_BITS: u32 = 8;
+/// Bits of the reserved run before `is_packed_flag` (Amd 1 6.6.2.5.2).
+const PACKED_RESERVED_BITS: u32 = 7;
+/// Bits of `is_packed_flag` (Amd 1 6.6.2.5.2).
+const PACKED_IS_PACKED_BITS: u32 = 1;
+/// Bits of the `is_packed_flag` byte, reserved prefix included (Amd 1 6.6.2.5.2).
+const PACKED_FLAG_BITS: u32 = PACKED_RESERVED_BITS + PACKED_IS_PACKED_BITS;
 /// Bits of `num_cols_minus1` (Amd 1 6.6.2.5.2).
 const PACKED_COLS_BITS: u32 = 3;
 /// Bits of `num_rows_minus1` (Amd 1 6.6.2.5.2).
@@ -40,6 +44,8 @@ const PACKED_VER_BAND_BITS: u32 = 5;
 const CHANNEL_ID_BITS: u32 = 8;
 /// Mask of the `is_packed_flag` inside its byte.
 const PACKED_FLAG_MASK: u64 = 1;
+/// Mask of the reserved run inside the `is_packed_flag` byte.
+const PACKED_RESERVED_MASK: u64 = 0x7f;
 /// Mask of `num_cols_minus1`.
 const PACKED_COLS_MASK: u64 = 0x7;
 /// Mask of `num_rows_minus1`.
@@ -146,6 +152,7 @@ impl broadcast_core::Serialize for ToneMapImage {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct ColourFormatInput {
+    reserved: u8,
     is_packed: bool,
     channel_id: u8,
     num_cols_minus1: u8,
@@ -160,6 +167,7 @@ impl ColourFormatInput {
     #[must_use]
     pub const fn whole(channel_id: u8) -> Self {
         Self {
+            reserved: 0,
             is_packed: false,
             channel_id,
             num_cols_minus1: 0,
@@ -181,6 +189,7 @@ impl ColourFormatInput {
         packed_channel_ids: Vec<u8>,
     ) -> Self {
         Self {
+            reserved: 0,
             is_packed: true,
             channel_id: 0,
             num_cols_minus1,
@@ -189,6 +198,12 @@ impl ColourFormatInput {
             ver_guard_band_mul2,
             packed_channel_ids,
         }
+    }
+
+    /// The `reserved` run before `is_packed_flag`, kept verbatim.
+    #[must_use]
+    pub const fn reserved(&self) -> u8 {
+        self.reserved
     }
 
     /// `is_packed_flag`.
@@ -285,7 +300,11 @@ impl<'a> broadcast_core::Parse<'a> for ColourFormatEnhancement {
     type Error = Error;
 
     fn parse(body: &'a [u8]) -> Result<Self> {
-        Self::parse_with_reference_count(body, 0)
+        let parsed = Self::parse_with_reference_count(body, 0)?;
+        if body.len() != 1 {
+            return Err(Error::InvalidInput("cfen input count"));
+        }
+        Ok(parsed)
     }
 }
 
@@ -303,6 +322,8 @@ impl ColourFormatEnhancement {
                 .read_bits(PACKED_FLAG_BITS)
                 .map_err(|_| Error::InvalidInput("cfen packed flag"))?;
             let is_packed = flag & PACKED_FLAG_MASK != 0;
+            let reserved = u8::try_from((flag >> PACKED_IS_PACKED_BITS) & PACKED_RESERVED_MASK)
+                .map_err(|_| Error::InvalidInput("cfen packed flag"))?;
             if is_packed {
                 let cols = reader
                     .read_bits(PACKED_COLS_BITS)
@@ -328,15 +349,21 @@ impl ColourFormatEnhancement {
                             as u8,
                     );
                 }
-                inputs.push(ColourFormatInput::packed(
-                    cols as u8, rows as u8, hor as u8, ver as u8, ids,
-                ));
+                let mut input =
+                    ColourFormatInput::packed(cols as u8, rows as u8, hor as u8, ver as u8, ids);
+                input.reserved = reserved;
+                inputs.push(input);
             } else {
                 let channel = reader
                     .read_bits(CHANNEL_ID_BITS)
                     .map_err(|_| Error::InvalidInput("cfen channel_id"))?;
-                inputs.push(ColourFormatInput::whole(channel as u8));
+                let mut input = ColourFormatInput::whole(channel as u8);
+                input.reserved = reserved;
+                inputs.push(input);
             }
+        }
+        if !reader.is_byte_aligned() || reader.bits_remaining() != 0 {
+            return Err(Error::InvalidInput("cfen trailing bytes"));
         }
         Ok(Self { version, inputs })
     }
@@ -346,8 +373,7 @@ impl broadcast_core::Serialize for ColourFormatEnhancement {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        let bits: u64 =
-            self.inputs.iter().map(Self::body_bits).sum::<u64>() + u64::from(PACKED_FLAG_BITS);
+        let bits: u64 = self.inputs.iter().map(Self::body_bits).sum::<u64>();
         1 + usize::try_from(bits / BITS_IN_BYTE as u64).unwrap_or(usize::MAX)
     }
 
@@ -357,7 +383,12 @@ impl broadcast_core::Serialize for ColourFormatEnhancement {
         buf[0] = self.version;
         let mut writer = BitBuf::new();
         for input in &self.inputs {
-            let flag = u64::from(input.is_packed);
+            let reserved = broadcast_core::len::fit_mask(
+                u64::from(input.reserved),
+                PACKED_RESERVED_MASK,
+                "cfen packed flag",
+            )?;
+            let flag = reserved << PACKED_IS_PACKED_BITS | u64::from(input.is_packed);
             writer
                 .write_bits(flag, PACKED_FLAG_BITS)
                 .map_err(|_| Error::InvalidInput("cfen packed flag"))?;

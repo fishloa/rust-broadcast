@@ -11,8 +11,8 @@ use broadcast_core::Serialize;
 use broadcast_core::len::{fit_u16, need_in, need_out};
 use broadcast_core::wire::{u16_at, u32_at};
 
-use crate::box_support::OpaqueBox;
-use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxIter};
+use crate::box_support::{OpaqueBox, capture_children};
+use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE};
 use crate::error::{Error, Result};
 
 /// Four-CC of the timecode sample entry.
@@ -88,6 +88,8 @@ pub struct TimecodeEntry {
     pub name: Option<Vec<u8>>,
     /// Every other child, verbatim.
     pub others: Vec<OpaqueBox>,
+    /// Bytes after the last complete child box, kept verbatim.
+    pub trailing: Vec<u8>,
 }
 
 impl TimecodeEntry {
@@ -127,19 +129,13 @@ impl<'a> Parse<'a> for TimecodeEntry {
             .get(TMCD_FIXED_BODY_LEN..child_at)
             .map(<[u8]>::to_vec)
             .unwrap_or_default();
-        for item in BoxIter::clamped(body.get(child_at..).unwrap_or(&[])) {
-            let Ok(item) = item else {
-                break;
-            };
-            if item.four_cc() == NAME {
-                name = Some(pascal_or_short_string(item.payload()));
+        let (children, trailing) =
+            capture_children(body.get(child_at..).unwrap_or(&[])).into_parts();
+        for child in children {
+            if child.box_type == NAME {
+                name = Some(pascal_or_short_string(&child.data));
             } else {
-                others.push(OpaqueBox {
-                    box_type: item.four_cc(),
-                    data: item.payload().to_vec(),
-                    to_end: item.to_end(),
-                    largesize: item.has_largesize(),
-                });
+                others.push(child);
             }
         }
         Ok(Self {
@@ -153,6 +149,7 @@ impl<'a> Parse<'a> for TimecodeEntry {
             reserved_tail,
             name,
             others,
+            trailing,
         })
     }
 }
@@ -168,6 +165,7 @@ impl Serialize for TimecodeEntry {
         for other in &self.others {
             n += other.serialized_len();
         }
+        n += self.trailing.len();
         crate::box_types::box_len(n)
     }
 
@@ -205,6 +203,8 @@ impl Serialize for TimecodeEntry {
         for other in &self.others {
             c += other.serialize_into(&mut buf[c..])?;
         }
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        c += self.trailing.len();
         Ok(c)
     }
 }
