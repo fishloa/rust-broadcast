@@ -38,7 +38,8 @@ pub enum MuxInput {
     /// `#EXT-X-DISCONTINUITY` on the next cut, the next fragment's
     /// `SegmentSummary`, or the MPEG-2 TS adaptation-field
     /// `discontinuity_indicator` on the next packet of each affected
-    /// elementary PID. One that cannot refuses it with
+    /// elementary PID, or an emitted [`MuxOutput::Discontinuity`] when only the
+    /// manifest (an LL-DASH `Period`) can state it. One that cannot refuses it with
     /// [`Error::UnsupportedFeature`](crate::Error::UnsupportedFeature) rather
     /// than returning `Ok(())` and dropping the mark.
     Discontinuity {

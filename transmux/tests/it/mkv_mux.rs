@@ -346,7 +346,7 @@ fn a_forward_break_cuts_a_cluster_at_the_seam_and_stays_readable() {
         .iter()
         .position(|track| matches!(track.spec.config, CodecConfig::Avc { .. }))
         .expect("the fixture carries AVC video");
-    if let Some(video) = crate::discontinuity::ffprobe_dts(&path, "v:0") {
+    if let Some(video) = crate::discontinuity::ffprobe_pts(&path, "v:0") {
         assert_eq!(
             video.len(),
             two.media.tracks[video_index].samples.len(),

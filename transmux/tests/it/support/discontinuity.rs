@@ -321,6 +321,16 @@ pub fn seam_matroska_ticks(input: &TwoSource) -> i64 {
 /// Packet `dts_time` values ffprobe reads for one stream, or
 /// `None` when ffprobe is not installed (the test then skips loudly).
 pub fn ffprobe_dts(path: &std::path::Path, stream: &str) -> Option<Vec<f64>> {
+    ffprobe_times(path, stream, "dts_time")
+}
+
+/// Packet `pts_time` values ffprobe reads for one stream. Matroska carries no
+/// decode time, and ffprobe leaves a reordered frame's derived `dts` unset.
+pub fn ffprobe_pts(path: &std::path::Path, stream: &str) -> Option<Vec<f64>> {
+    ffprobe_times(path, stream, "pts_time")
+}
+
+fn ffprobe_times(path: &std::path::Path, stream: &str, field: &str) -> Option<Vec<f64>> {
     if !test_fixtures::process::tool_available("ffprobe", "-version") {
         eprintln!("skipping: ffprobe is not on PATH");
         return None;
@@ -332,7 +342,7 @@ pub fn ffprobe_dts(path: &std::path::Path, stream: &str) -> Option<Vec<f64>> {
         "-select_streams",
         stream,
         "-show_entries",
-        "packet=dts_time",
+        &format!("packet={field}"),
         "-of",
         "csv=p=0",
     ]);

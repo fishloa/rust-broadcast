@@ -65,6 +65,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Segmenter::set_start_decode_time` is public: a caller feeding a segmenter directly must anchor each track's first `tfdt` (the streaming `Repackage::run` already did).
 
 ### Added
+- Every mux stage now signals a timeline break or refuses it, as
+  `MuxInput::Discontinuity` has always required: `LlHlsSegmenter` closes the
+  open segment and its parts and marks the next segment
+  (`SegmentInfo::discontinuous`), the DASH packager opens a new `Period`
+  (`SegmentSummaryLog::period_boundaries`, `PeriodBoundary`) with its own
+  `presentationTimeOffset`, `LlSegmenter` emits the new
+  `MuxOutput::Discontinuity`, `SmoothSegmenter` closes the open fragment and
+  states the jump in `tfxd` and the Manifest's `c@t`, `MkvMuxStage` cuts a
+  `Cluster` (refusing a backwards break), and `FlvMuxStage`/`RtmpMuxStage`
+  rebase their one millisecond timeline. `RtpPacketiserStage` marks the next
+  audio talkspurt (RFC 3551 §4.1) and adds no H.264 marker.
 - `TrackSpec::padding` (`GaplessTrim`) and `Sample::trim` (`SampleTrim`): the
   audio gapless trim in the IR, in samples per channel at the track's sample
   rate, defaulting to "none stated". `Mp4Demux` fills it from an Opus `dOps`

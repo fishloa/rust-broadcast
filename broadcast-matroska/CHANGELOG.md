@@ -24,6 +24,9 @@ All notable changes to this crate are documented here. The format follows
 
 ### Added
 
+- `writer::Writer::cut_cluster`: ends the open `Cluster` at a caller-known
+  boundary (a container-level timeline discontinuity), flushing held Blocks
+  first so the next one opens a new `Cluster`.
 - `reader::TrackInfo::codec_delay_ns`: the track's `CodecDelay` (RFC 9559
   §5.1.4.1.6), which Opus uses to state its pre-skip. The writer does not emit
   it yet.
