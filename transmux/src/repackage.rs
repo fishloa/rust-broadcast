@@ -835,12 +835,24 @@ where
                 // A track the `moov` already named was announced by
                 // `announce_init`; its `TrackAdded` carries the first sample's
                 // refinement and replaces that provisional spec.
-                if let Some(existing) = self
+                if let Some(index) = self
                     .announced
-                    .iter_mut()
-                    .find(|announced| announced.track_id == spec.track_id)
+                    .iter()
+                    .position(|announced| announced.track_id == spec.track_id)
                 {
-                    *existing = *spec;
+                    if self.announced[index] == *spec {
+                        return Ok(());
+                    }
+                    // A description that changes before the segmenter is built
+                    // is the announcement arriving late (a transform that
+                    // holds its output); once it is built, the init segment has
+                    // already been written and the change cannot be expressed.
+                    if self.segmenter.is_some() {
+                        return Err(Error::UnsupportedFeature(
+                            "repackage: a track's description changed after resegmenting started",
+                        ));
+                    }
+                    self.announced[index] = *spec;
                     return Ok(());
                 }
                 let index = self.seen;

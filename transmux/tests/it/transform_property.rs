@@ -279,6 +279,83 @@ fn repackage_takes_a_spec_rewriting_stage() {
     }
 }
 
+/// A track whose description changes *after* the resegmenter started cannot be
+/// expressed by the output — the init segment is already written — and
+/// `Repackage` says so instead of keeping the old description and carrying on
+/// as if the codec never changed.
+#[test]
+fn a_description_that_changes_after_resegmenting_started_is_refused() {
+    /// Pass-through, except that it re-announces its track after three samples.
+    struct LateChange {
+        target: TrackId,
+        seen: usize,
+        changed: Option<TrackSpec>,
+        ready: VecDeque<MuxInput>,
+    }
+
+    impl Stage for LateChange {
+        type In<'a> = MuxInput;
+        type Out = MuxInput;
+        type Error = transmux::Error;
+
+        fn feed(&mut self, input: MuxInput, _now: Timestamp) -> transmux::Result<()> {
+            if let MuxInput::Sample { track, .. } = &input
+                && *track == self.target
+            {
+                self.seen += 1;
+                if self.seen == HOLD
+                    && let Some(changed) = self.changed.clone()
+                {
+                    self.ready.push_back(MuxInput::Track(Box::new(changed)));
+                }
+            }
+            self.ready.push_back(input);
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<MuxInput> {
+            self.ready.pop_front()
+        }
+
+        fn finish(&mut self) -> transmux::Result<()> {
+            Ok(())
+        }
+    }
+
+    let (specs, _) = {
+        let data = test_fixtures::read("ts/h264-aac.ts");
+        let media = test_harness::collect::media_from_ts(&data).expect("demux");
+        (
+            media
+                .tracks
+                .iter()
+                .map(|t| t.spec.clone())
+                .collect::<Vec<TrackSpec>>(),
+            (),
+        )
+    };
+    let audio = specs[1].clone();
+    let changed = TrackSpec::new(audio.track_id, announced_timescale(), audio.config.clone());
+    let stage = LateChange {
+        target: audio.track_id,
+        seen: 0,
+        changed: Some(changed),
+        ready: VecDeque::new(),
+    };
+
+    let ir = oracle_ir();
+    let source = test_harness::collect::cmaf_from_media(&ir, Duration::from_secs(2))
+        .expect("build the source CMAF")
+        .to_contiguous();
+    let err = Repackage::new(Duration::from_secs(1))
+        .run_transformed(&source, stage)
+        .expect_err("a description that changes after the init segment is written is refused");
+    assert!(
+        matches!(err, transmux::error::Error::UnsupportedFeature(msg) if msg.contains("changed")),
+        "the refusal is typed and names the change, got {err:?}"
+    );
+}
+
 /// A transform that never settles the track set is bounded by the caller's
 /// cap rather than left to grow: `MuxChain` holds whole samples, so it says so.
 #[test]
