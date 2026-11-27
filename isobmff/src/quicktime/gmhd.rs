@@ -283,7 +283,7 @@ impl GmhdAtom {
         let mut timecode_wrapped = false;
         let mut others = Vec::new();
         let mut order = Vec::new();
-        for item in BoxIter::clamped(body) {
+        for item in BoxIter::new(body) {
             let Ok(item) = item else {
                 break;
             };
@@ -462,7 +462,7 @@ impl GmhdAtom {
 
 /// The `tcmi` child of ffmpeg's `tmcd` wrapper.
 fn inner_tcmi(body: &[u8]) -> Result<Option<TcmiAtom>> {
-    for item in BoxIter::clamped(body) {
+    for item in BoxIter::new(body) {
         let Ok(item) = item else {
             return Ok(None);
         };

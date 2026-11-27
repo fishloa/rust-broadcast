@@ -8,7 +8,7 @@
 
 use broadcast_core::Serialize;
 use isobmff::box_types::{BOX_HEADER_MIN_SIZE, BoxIter};
-use isobmff::init_segment::sample_entry_variant;
+use isobmff::init_segment::{SampleEntryVariant, sample_entry_variant};
 use isobmff::meta_track::{
     TextMetaDataSampleEntry, UriMetaDataSampleEntry, XmlMetaDataSampleEntry,
 };
@@ -187,4 +187,65 @@ fn metadata_entries_without_a_fixture_carry_reserved() {
             }
         }
     }
+}
+#[test]
+fn rgan_entry_keeps_its_reserved_block_and_unwalkable_tail() {
+    let mut bytes = Vec::new();
+    let reserved = [9u8, 8, 7, 6, 5, 4];
+    let mut body = Vec::new();
+    body.extend_from_slice(&reserved);
+    body.extend_from_slice(&1u16.to_be_bytes());
+    body.extend_from_slice(&[0, 0, 0, 16, b'r', b'g', b'a', b'C', 0, 0, 0, 0, 1, 64, 0, 240]);
+    body.extend_from_slice(&[0, 0, 0, 16, b'p', b'a', b's', b'p', 0, 0, 0, 1, 0, 0, 0, 1]);
+    body.extend_from_slice(&[0, 0, 0, 64, b'f', b'r', b'e', b'e', 0xAA]);
+    let total = u32::try_from(body.len() + BOX_HEADER_MIN_SIZE).expect("entry length");
+    bytes.extend_from_slice(&total.to_be_bytes());
+    bytes.extend_from_slice(b"rgan");
+    bytes.extend_from_slice(&body);
+
+    let SampleEntryVariant::Rgan(entry) = sample_entry_variant(&bytes).expect("rgan parses") else {
+        panic!("expected the rgan entry kind");
+    };
+    assert_eq!(entry.data_reference_index(), 1);
+    assert_eq!(entry.config().reference_width(), 320);
+    assert_eq!(entry.config().reference_height(), 240);
+    assert_eq!(entry.other_boxes().len(), 1);
+    assert_eq!(entry.trailing(), &[0, 0, 0, 64, b'f', b'r', b'e', b'e', 0xAA]);
+    assert_eq!(entry.try_to_bytes().expect("rgan serializes"), bytes);
+
+    assert_eq!(
+        audit(&Entry {
+            label: "rgan assembled",
+            bytes,
+            fixed_len: SAMPLE_ENTRY_FIXED_LEN,
+        }),
+        SAMPLE_ENTRY_FIXED_LEN,
+        "every rgan fixed byte is exercised"
+    );
+}
+
+#[test]
+fn image_sequence_fixture_entries_are_byte_exact() {
+    let mut checked = 0usize;
+    let mut entries_seen = 0usize;
+    for fixture in ["avif/sequence.avif", "heif/sequence.heic"] {
+        let data = fixtures::read(fixture);
+        for entry in entries(&data, fixture) {
+            entries_seen += 1;
+            checked += audit(&entry);
+            let variant = sample_entry_variant(&entry.bytes)
+                .unwrap_or_else(|err| panic!("{fixture} entry: parse failed: {err}"));
+            assert_eq!(
+                variant.try_to_bytes().expect("entry serializes"),
+                entry.bytes,
+                "{fixture} entry does not round-trip"
+            );
+        }
+    }
+    assert_eq!(entries_seen, 2, "one image-sequence entry per fixture");
+    assert_eq!(
+        checked,
+        2 * VISUAL_FIXED_LEN,
+        "every visual fixed byte of both sequence entries is exercised"
+    );
 }

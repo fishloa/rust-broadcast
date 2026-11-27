@@ -53,7 +53,7 @@ impl WaveAtom {
         let mut esds = None;
         let mut others = Vec::new();
         let mut order = Vec::new();
-        for item in BoxIter::clamped(body) {
+        for item in BoxIter::new(body) {
             let Ok(item) = item else {
                 break;
             };

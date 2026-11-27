@@ -135,20 +135,10 @@ impl VisualSampleEntryFields {
                     + VISUAL_RESERVED_FIELDS_LEN],
         );
         let region = body.get(VISUAL_SAMPLE_ENTRY_SIZE..).unwrap_or(&[]);
-        let mut consumed = 0usize;
-        for item in crate::box_types::BoxIter::clamped(region) {
-            let Ok(item) = item else {
-                break;
-            };
-            if item.is_truncated() {
-                break;
-            }
-            consumed = consumed.saturating_add(item.bytes.len());
-        }
-        let trailing = region
-            .get(consumed..)
-            .map(|bytes| bytes.to_vec().into_boxed_slice())
-            .unwrap_or_default();
+        let trailing = crate::box_support::capture_children(region)
+            .into_parts()
+            .1
+            .into_boxed_slice();
         Ok(Self {
             trailing,
             reserved,
@@ -315,37 +305,28 @@ fn extra_boxes_before(
     skip: &[&[u8; BOX_TYPE_SIZE]],
     config_fourcc: &[u8; BOX_TYPE_SIZE],
 ) -> usize {
-    let mut count = 0usize;
-    for item in crate::box_types::BoxIter::clamped(region) {
-        let Ok(item) = item else {
-            break;
-        };
-        if item.is_truncated() {
-            break;
-        }
-        if item.four_cc() == *config_fourcc {
-            break;
-        }
-        if !skip.iter().any(|k| **k == item.four_cc()) {
-            count += 1;
-        }
-    }
-    count
+    crate::box_support::capture_children(region)
+        .into_parts()
+        .0
+        .iter()
+        .take_while(|box_| box_.box_type != *config_fourcc)
+        .filter(|box_| !skip.iter().any(|k| **k == box_.box_type))
+        .count()
 }
 
 /// Find a config box (e.g. `avcC`) inside the sample entry's config region.
 /// Returns the full box bytes (including 8-byte header).
 ///
 /// `size` is an untrusted wire `u32` (ISO/IEC 14496-12:2026 §4.2 `Box.size`),
-/// so it is clamped against what actually remains in `region` before it is
-/// used to slice — the same bound `init_segment::parse_stbl_children` applies
-/// — rather than trusted outright: a child box declaring `size = 0xFFFFFFFF`
-/// would otherwise panic on the out-of-bounds slice (audit finding #2).
+/// so the walk reports a child that runs past `region` (an overrun is an
+/// `Err`, never an out-of-bounds slice, audit finding #2). A damaged child is
+/// therefore never handed back clamped and re-emitted at a length the file did
+/// not state: the entry reports its config box missing instead.
 pub(crate) fn find_config_box<'a>(
     region: &'a [u8],
     fourcc: &[u8; BOX_TYPE_SIZE],
 ) -> Option<&'a [u8]> {
-    crate::box_types::BoxIter::clamped(region)
+    crate::box_types::BoxIter::new(region)
         .filter_map(|b| b.ok())
         .find(|b| b.header.box_type.is(fourcc))
         .map(|b| b.bytes)
@@ -644,24 +625,16 @@ impl Serialize for Mp4vSampleEntry {
 /// config box is located by [`find_config_box`] independently, so a truncated
 /// tail never costs the codec config.)
 fn capture_extra_boxes(region: &[u8], skip: &[&[u8; BOX_TYPE_SIZE]]) -> Vec<OpaqueBox> {
-    let mut out = Vec::new();
-    for item in crate::box_types::BoxIter::clamped(region) {
-        let Ok(item) = item else {
-            break;
-        };
-        // A malformed or truncated length ends the walk rather than losing
-        // earlier boxes.
-        if item.is_truncated() {
-            break;
-        }
-        if !skip.iter().any(|k| **k == item.four_cc()) {
-            out.push(OpaqueBox {
-                box_type: item.four_cc(),
-                data: item.payload().to_vec(),
-            });
-        }
-    }
-    out
+    crate::box_support::capture_children(region)
+        .into_parts()
+        .0
+        .into_iter()
+        .filter(|box_| !skip.iter().any(|k| **k == box_.box_type))
+        .map(|box_| OpaqueBox {
+            box_type: box_.box_type,
+            data: box_.data,
+        })
+        .collect()
 }
 
 /// Split a sample entry's trailing child-box region into verbatim
@@ -669,21 +642,7 @@ fn capture_extra_boxes(region: &[u8], skip: &[&[u8; BOX_TYPE_SIZE]]) -> Vec<Opaq
 /// carrying the box body after its 8-byte header). Stops at the first malformed
 /// length so a truncated tail does not lose earlier boxes.
 fn parse_trailing_boxes(region: &[u8]) -> Vec<crate::box_support::OpaqueBox> {
-    let mut out = Vec::new();
-    for item in crate::box_types::BoxIter::clamped(region) {
-        let Ok(item) = item else {
-            break;
-        };
-        if item.is_truncated() {
-            break;
-        }
-        let mut child = crate::box_support::OpaqueBox::new(item.four_cc(), item.payload().to_vec());
-        // Keep the `size = 1` + `largesize` form so a parse -> serialize trip
-        // re-emits the header it read (§4.2).
-        child.largesize = item.has_largesize();
-        out.push(child);
-    }
-    out
+    crate::box_support::capture_children(region).into_parts().0
 }
 
 // ---------------------------------------------------------------------------
@@ -1140,20 +1099,16 @@ mod tests {
     }
 
     /// A hostile (`0xFFFF_FFFF`) declared size must not panic the config-box
-    /// search: the returned slice is clamped to the region that actually
-    /// exists, so a caller slicing by the (unclamped) size cannot overrun.
+    /// search, and must not hand back a clamped slice either: re-emitting one
+    /// would rewrite a wire length the entry never stated, so the box is
+    /// reported missing instead.
     #[test]
-    fn find_config_box_hostile_size_does_not_panic() {
+    fn find_config_box_hostile_size_is_not_returned_clamped() {
         let mut region = alloc::vec![0u8; 8];
         region[0..4].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
         region[4..8].copy_from_slice(b"avcC");
 
-        let found = find_config_box(&region, b"avcC").expect("fourcc matches at offset 0");
-        assert_eq!(
-            found.len(),
-            region.len(),
-            "hostile size must clamp to the region's actual remaining length"
-        );
+        assert!(find_config_box(&region, b"avcC").is_none());
     }
 
     /// A hostile size on a box whose fourcc does *not* match the one being
