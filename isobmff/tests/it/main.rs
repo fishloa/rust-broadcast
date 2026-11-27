@@ -22,6 +22,7 @@ mod mp4ra;
 mod mp4ra_fixtures;
 mod permissive;
 mod quicktime;
+mod quicktime_entries;
 mod quicktime_write;
 mod reader_fragmented;
 mod reader_progressive;

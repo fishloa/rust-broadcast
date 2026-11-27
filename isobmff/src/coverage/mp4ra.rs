@@ -11,6 +11,9 @@
 //! A specification counts as held only when it is under `private/specs/` or
 //! transcribed under `private/specs-verified/`. A code whose defining document
 //! is not held is pinned as such rather than implemented from memory.
+//!
+//! Regenerate with `tools/gen-mp4ra-coverage.py` after editing the typed sets
+//! or adding a held document.
 
 /// One code a typed row names.
 #[derive(Debug, Clone, Copy)]
@@ -104,6 +107,10 @@ impl TypedKind {
 
 /// The Box codes a held document defines and this crate types.
 pub const TYPED_BOXES_MP4RA: &[TypedRow] = &[
+    TypedRow { code: "!mof" },
+    TypedRow { code: "!mov" },
+    TypedRow { code: "!six" },
+    TypedRow { code: "!ssx" },
     TypedRow { code: "aedb" },
     TypedRow { code: "aelm" },
     TypedRow { code: "aepp" },
@@ -275,6 +282,7 @@ pub const TYPED_BOXES_MP4RA: &[TypedRow] = &[
     TypedRow { code: "tsro" },
     TypedRow { code: "tssy" },
     TypedRow { code: "tsti" },
+    TypedRow { code: "ttyp" },
     TypedRow { code: "tyco" },
     TypedRow { code: "udta" },
     TypedRow { code: "uri" },
@@ -292,6 +300,7 @@ pub const TYPED_QT_ATOMS: &[TypedRow] = &[
     TypedRow { code: "auth" },
     TypedRow { code: "cprt" },
     TypedRow { code: "elng" },
+    TypedRow { code: "load" },
 ];
 
 /// The UdtaAtom codes a held document defines and this crate types.
@@ -319,9 +328,25 @@ pub const TYPED_UDTA_ATOMS: &[TypedRow] = &[
 pub const TYPED_SAMPLE_ENTRIES: &[TypedRow] = &[
     TypedRow { code: "NONE" },
     TypedRow { code: "Opus" },
+    TypedRow { code: "PNTG" },
+    TypedRow { code: "QDM2" },
+    TypedRow { code: "QDMC" },
+    TypedRow { code: "Qclp" },
+    TypedRow { code: "SVQ1" },
+    TypedRow { code: "SVQ3" },
+    TypedRow { code: "WRLE" },
     TypedRow { code: "ac-3" },
     TypedRow { code: "ac-4" },
+    TypedRow { code: "agsm" },
     TypedRow { code: "alaw" },
+    TypedRow { code: "ap4h" },
+    TypedRow { code: "ap4x" },
+    TypedRow { code: "apch" },
+    TypedRow { code: "apcn" },
+    TypedRow { code: "apco" },
+    TypedRow { code: "apcs" },
+    TypedRow { code: "aprh" },
+    TypedRow { code: "aprn" },
     TypedRow { code: "av01" },
     TypedRow { code: "avc1" },
     TypedRow { code: "avc2" },
@@ -330,12 +355,18 @@ pub const TYPED_SAMPLE_ENTRIES: &[TypedRow] = &[
     TypedRow { code: "avcp" },
     TypedRow { code: "avs3" },
     TypedRow { code: "c608" },
+    TypedRow { code: "c708" },
+    TypedRow { code: "civd" },
     TypedRow { code: "dtsc" },
     TypedRow { code: "dtse" },
     TypedRow { code: "dtsh" },
     TypedRow { code: "dtsl" },
     TypedRow { code: "dvh1" },
+    TypedRow { code: "dvh5" },
+    TypedRow { code: "dvh6" },
     TypedRow { code: "dvhe" },
+    TypedRow { code: "dvhp" },
+    TypedRow { code: "dvi" },
     TypedRow { code: "ec-3" },
     TypedRow { code: "enca" },
     TypedRow { code: "encv" },
@@ -343,11 +374,16 @@ pub const TYPED_SAMPLE_ENTRIES: &[TypedRow] = &[
     TypedRow { code: "fdp" },
     TypedRow { code: "fl32" },
     TypedRow { code: "fl64" },
+    TypedRow { code: "flic" },
+    TypedRow { code: "gif" },
+    TypedRow { code: "h261" },
+    TypedRow { code: "h263" },
     TypedRow { code: "hev1" },
     TypedRow { code: "hvc1" },
     TypedRow { code: "ima4" },
     TypedRow { code: "in24" },
     TypedRow { code: "in32" },
+    TypedRow { code: "jpeg" },
     TypedRow { code: "lav3" },
     TypedRow { code: "lpcm" },
     TypedRow { code: "mebx" },
@@ -357,13 +393,18 @@ pub const TYPED_SAMPLE_ENTRIES: &[TypedRow] = &[
     TypedRow { code: "mha2" },
     TypedRow { code: "mhm1" },
     TypedRow { code: "mhm2" },
+    TypedRow { code: "mjpa" },
+    TypedRow { code: "mjpb" },
     TypedRow { code: "mp4a" },
     TypedRow { code: "mp4v" },
     TypedRow { code: "pm2t" },
+    TypedRow { code: "png" },
     TypedRow { code: "prtp" },
     TypedRow { code: "raw" },
     TypedRow { code: "rgan" },
+    TypedRow { code: "rle" },
     TypedRow { code: "rm2t" },
+    TypedRow { code: "rpza" },
     TypedRow { code: "rrtp" },
     TypedRow { code: "rsrp" },
     TypedRow { code: "rtcp" },
@@ -374,10 +415,13 @@ pub const TYPED_SAMPLE_ENTRIES: &[TypedRow] = &[
     TypedRow { code: "stcp" },
     TypedRow { code: "stpp" },
     TypedRow { code: "stxt" },
+    TypedRow { code: "tga" },
+    TypedRow { code: "tiff" },
     TypedRow { code: "tmcd" },
     TypedRow { code: "twos" },
     TypedRow { code: "ulaw" },
     TypedRow { code: "urim" },
+    TypedRow { code: "vdva" },
     TypedRow { code: "vp09" },
     TypedRow { code: "vvc1" },
     TypedRow { code: "vvi1" },
@@ -685,6 +729,7 @@ pub const TYPED_AUX_INFO_TYPES: &[TypedRow] =
 
 /// The ColourType codes a held document defines and this crate types.
 pub const TYPED_COLOUR_TYPES: &[TypedRow] = &[
+    TypedRow { code: "full" },
     TypedRow { code: "nclx" },
     TypedRow { code: "prof" },
     TypedRow { code: "rICC" },
@@ -960,10 +1005,9 @@ pub const TABLES: &[Table] = &[
         rows: 281,
         typed: &[TypedKind::Box],
         untyped_held: &[
-            "!mof", "!mov", "!six", "!ssx", "3dpr", "buff", "imif", "ipmc", "iroi", "ldep", "load",
-            "meco", "mere", "mini", "mstv", "mvcg", "mvci", "mvra", "rrgn", "sdep", "seii", "sstl",
-            "stmg", "stti", "svdr", "svip", "svpr", "swtc", "tfad", "tfma", "tibr", "tiri", "tstb",
-            "ttyp", "vipr", "vwdi",
+            "3dpr", "buff", "iroi", "ldep", "mini", "mstv", "mvcg", "mvci", "mvra", "rrgn", "sdep",
+            "seii", "sstl", "stmg", "stti", "svdr", "svip", "svpr", "swtc", "tfad", "tfma", "tibr",
+            "tiri", "tstb", "vipr", "vwdi",
         ],
         untyped_unheld: &[
             "2dqr", "2dss", "Exif", "ID32", "JXL", "JXS", "UITS", "ainf", "avcn", "bidx", "bloc",
@@ -1004,12 +1048,32 @@ pub const TABLES: &[Table] = &[
                 reason: "reserved by the registry; no syntax is defined",
             },
             NotApplicable {
+                code: "imif",
+                reason: "removed from ISO/IEC 14496-12:2026 (it was the IPMP information box, 2012 §8.12.3); the edition this crate implements defines no syntax for it",
+            },
+            NotApplicable {
+                code: "ipmc",
+                reason: "removed from ISO/IEC 14496-12:2026 (it was the IPMP control box, 2012 §8.12.4); the edition this crate implements defines no syntax for it",
+            },
+            NotApplicable {
                 code: "kmat",
+                reason: "reserved by the registry; no syntax is defined",
+            },
+            NotApplicable {
+                code: "load",
                 reason: "reserved by the registry; no syntax is defined",
             },
             NotApplicable {
                 code: "matt",
                 reason: "reserved by the registry; no syntax is defined",
+            },
+            NotApplicable {
+                code: "meco",
+                reason: "removed from ISO/IEC 14496-12:2026 (it was the additional metadata container box, 2012 §8.11.7); the edition this crate implements defines no syntax for it",
+            },
+            NotApplicable {
+                code: "mere",
+                reason: "removed from ISO/IEC 14496-12:2026 (it was the meta box relation box, 2012 §8.11.8); the edition this crate implements defines no syntax for it",
             },
             NotApplicable {
                 code: "pnot",
@@ -1029,8 +1093,8 @@ pub const TABLES: &[Table] = &[
         csv: "boxes-qt",
         rows: 16,
         typed: &[TypedKind::QtAtom, TypedKind::Box],
-        untyped_held: &["clsf", "csgm", "load"],
-        untyped_unheld: &["dcfD"],
+        untyped_held: &["clsf"],
+        untyped_unheld: &["csgm", "dcfD"],
         not_applicable: &[
             NotApplicable {
                 code: "clip",
@@ -1123,7 +1187,7 @@ pub const TABLES: &[Table] = &[
         csv: "color-types",
         rows: 5,
         typed: &[TypedKind::ColourType],
-        untyped_held: &["full"],
+        untyped_held: &[],
         untyped_unheld: &["nclc"],
         not_applicable: &[],
     },
@@ -1490,12 +1554,7 @@ pub const TABLES: &[Table] = &[
         csv: "sample-entries-qt",
         rows: 59,
         typed: &[TypedKind::SampleEntry],
-        untyped_held: &[
-            "PNTG", "QDM2", "QDMC", "Qclp", "SVQ1", "SVQ3", "WRLE", "agsm", "ap4h", "ap4x", "apch",
-            "apcn", "apco", "apcs", "aprh", "aprn", "c708", "civd", "dvh5", "dvh6", "dvhp", "dvi",
-            "flic", "gif", "h261", "h263", "jpeg", "mjpa", "mjpb", "png", "rle", "rpza", "tga",
-            "tiff", "vdva",
-        ],
+        untyped_held: &[],
         untyped_unheld: &[
             "CFHD", "DV10", "DVOO", "DVOR", "DVTV", "DVVT", "HD10", "M105", "Shr0", "Shr1", "Shr2",
             "Shr3", "Shr4", "drac",

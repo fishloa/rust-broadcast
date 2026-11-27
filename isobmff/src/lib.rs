@@ -151,6 +151,7 @@ pub mod avs3_audio;
 pub mod box_support;
 pub mod box_types;
 pub mod cenc;
+pub mod compressed;
 pub mod coverage;
 pub mod dovi;
 #[cfg(feature = "std")]
@@ -232,6 +233,7 @@ pub use avs3::{
 };
 pub use avs3_audio::{AV3A_FOURCC, Avs3AudioContent, Ca3Config, Ca3SpecificBox, DCA3_FOURCC};
 pub use box_types::{BoxHeader, BoxItem, BoxIter, BoxType, FullBoxHeader, parse_box};
+pub use compressed::CompressedBox;
 pub use dovi::{
     AVC_PROFILE, DOVI_RECORD_LEN, DOVI_RESERVED_LEN, DOVI_RESERVED_ZERO, DVA1_FOURCC, DVCC_FOURCC,
     DVH1_FOURCC, DVHE_FOURCC, DVVC_FOURCC, DoviBlSignalCompatibilityId,
@@ -339,8 +341,8 @@ pub use scheme::{
     SPKI, SamplePackingInformationBox, ScrambleSchemeInfoBox,
 };
 pub use segments::{
-    ETYP, ExtendedTypeBox, IMDA, IdentifiedMediaDataBox, OTYP, OriginalFileTypeBox, TYCO,
-    TypeCombinationBox,
+    ETYP, ExtendedTypeBox, IMDA, IdentifiedMediaDataBox, OTYP, OriginalFileTypeBox, TTYP, TYCO,
+    TrackTypeBox, TypeCombinationBox,
 };
 pub use subtitle_entries::{
     CueIdBox, CuePayloadBox, CueSettingsBox, VttAdditionalTextBox, VttCueBox, VttEmptyCueBox,

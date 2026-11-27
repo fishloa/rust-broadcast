@@ -3528,6 +3528,9 @@ pub enum SampleEntryVariant {
     Rgan(Box<crate::region::RegionSampleEntry>),
     /// A QuickTime-only sound sample entry (`lpcm`, `in24`, `sowt`, …).
     QuickTimeSound(Box<crate::quicktime::SoundEntry>),
+    /// A QuickTime-only video sample entry (`apch`, `SVQ1`, `jpeg`, …), whose
+    /// codec code the entry records.
+    QuickTimeVideo(Box<crate::quicktime::QuickTimeVideoEntry>),
     /// An RTP/SRTP/RTCP, MPEG-2 TS or FD hint sample entry (§9.1.2, §9.2.3,
     /// §9.3.3, §9.4.1–9.4.4).
     Hint(Box<crate::hint::HintSampleEntry>),
@@ -3636,6 +3639,7 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Urim(e) => e.serialized_len(),
             SampleEntryVariant::Mebx(e) => e.serialized_len(),
             SampleEntryVariant::QuickTimeSound(e) => e.serialized_len(),
+            SampleEntryVariant::QuickTimeVideo(e) => e.serialized_len(),
             SampleEntryVariant::Hint(e) => e.serialized_len(),
             SampleEntryVariant::Unknown(u) => u.serialized_len(),
         }
@@ -3667,6 +3671,7 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Urim(e) => e.serialize_into(buf),
             SampleEntryVariant::Mebx(e) => e.serialize_into(buf),
             SampleEntryVariant::QuickTimeSound(e) => e.serialize_into(buf),
+            SampleEntryVariant::QuickTimeVideo(e) => e.serialize_into(buf),
             SampleEntryVariant::Hint(e) => e.serialize_into(buf),
             SampleEntryVariant::Unknown(u) => Ok(u.serialize_into(buf)?),
         }
@@ -3764,7 +3769,7 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
         b"tmcd" => {
             SampleEntryVariant::Tmcd(Box::new(crate::quicktime::TimecodeEntry::parse(box_bytes)?))
         }
-        b"c608" => SampleEntryVariant::ClosedCaption(Box::new(
+        b"c608" | b"c708" => SampleEntryVariant::ClosedCaption(Box::new(
             crate::subtitle_entries::ClosedCaptionSampleEntry::parse_box(box_bytes)?,
         )),
         b"metx" => SampleEntryVariant::Metx(Box::new(
@@ -3783,9 +3788,16 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
             box_bytes,
         )?)),
         b"lpcm" | b"in24" | b"in32" | b"sowt" | b"twos" | b"raw " | b"fl32" | b"fl64" | b"ima4"
-        | b"MAC3 " | b"MAC6 " | b"ulaw" | b"alaw" | b"NONE" => SampleEntryVariant::QuickTimeSound(
-            Box::new(crate::quicktime::SoundEntry::parse(box_bytes)?),
-        ),
+        | b"MAC3 " | b"MAC6 " | b"ulaw" | b"alaw" | b"NONE" | b"QDM2" | b"QDMC" | b"Qclp"
+        | b"agsm" | b"vdva" => SampleEntryVariant::QuickTimeSound(Box::new(
+            crate::quicktime::SoundEntry::parse(box_bytes)?,
+        )),
+        b"PNTG" | b"SVQ1" | b"SVQ3" | b"WRLE" | b"ap4h" | b"ap4x" | b"apch" | b"apcn" | b"apco"
+        | b"apcs" | b"aprh" | b"aprn" | b"civd" | b"dvh5" | b"dvh6" | b"dvhp" | b"dvi "
+        | b"flic" | b"gif " | b"h261" | b"h263" | b"jpeg" | b"mjpa" | b"mjpb" | b"png "
+        | b"rle " | b"rpza" | b"tga " | b"tiff" => SampleEntryVariant::QuickTimeVideo(Box::new(
+            crate::quicktime::QuickTimeVideoEntry::parse_box(box_bytes)?,
+        )),
         b"rtp " | b"srtp" | b"rrtp" | b"rsrp" | b"rtcp" | b"stcp" | b"prtp" | b"rm2t" | b"sm2t"
         | b"pm2t" | b"fdp " => SampleEntryVariant::Hint(Box::new(
             crate::hint::HintSampleEntry::parse_box(box_bytes)?,
@@ -5610,7 +5622,8 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
         | SampleEntryVariant::Vvc(_)
         | SampleEntryVariant::Mp4v(_)
         | SampleEntryVariant::Av01(_)
-        | SampleEntryVariant::Vp09(_) => SampleEntryMediaKind::Video,
+        | SampleEntryVariant::Vp09(_)
+        | SampleEntryVariant::QuickTimeVideo(_) => SampleEntryMediaKind::Video,
         SampleEntryVariant::Mp4a(_)
         | SampleEntryVariant::Ac3(_)
         | SampleEntryVariant::Ec3(_)

@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `quicktime::QuickTimeVideoEntry`: every registered QuickTime video sample
+  description (`apco`/`apcs`/`apcn`/`apch`/`ap4h`/`ap4x`, `jpeg`, `SVQ1`,
+  `h263`, `png`, …) as one type over the standard 78-byte video description,
+  dispatched from `stsd`, with child atoms kept verbatim; the QuickTime sound
+  entries `QDM2`/`QDMC`/`Qclp`/`agsm`/`vdva` join `SoundEntry`'s dispatch.
+- `subtitle_entries::C708` and `ClosedCaptionSampleEntry::codec_type`/
+  `with_codec_type`: the CEA-708 closed-caption video sample description, the
+  same structure as `c608` (QuickTime File Format, "Closed captioning sample
+  description").
+- `visual_ext::ColourType::Full`: the QuickTime `full` colour type, whose body
+  is the `nclx` parameter block with the full-range flag set.
+- `quicktime::PreloadBox` (QuickTime track loading settings, `load`), surfaced
+  as `reader::TrackInfo::preload`.
+- `compressed::CompressedBox`: the four compressed top-level boxes `!mov`,
+  `!mof`, `!six` and `!ssx` (ISO/IEC 14496-12:2026 §8.16), one definition over
+  the replacement-type map, with the payload and header form kept verbatim.
+- `segments::TrackTypeBox` (`ttyp`, §8.3.5): the track brand list with
+  `FileTypeBox` payload syntax.
+
 - `metadata::Itunsmpb` and `Metadata::itunsmpb`: the iTunes `iTunSMPB`
   freeform item's priming, padding and original sample count, parsed from its
   hex text (a de-facto format, cited in the module). The typed view borrows

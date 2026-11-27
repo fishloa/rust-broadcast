@@ -1008,6 +1008,8 @@ mod tests {
 
 /// Four-CC of the QuickTime closed-caption sample entry (`c608`).
 pub const C608: [u8; BOX_TYPE_SIZE] = *b"c608";
+/// Four-CC of the QuickTime CEA-708 closed-caption sample entry (`c708`).
+pub const C708: [u8; BOX_TYPE_SIZE] = *b"c708";
 
 /// QuickTime closed-caption sample entry (`c608`) — QuickTime File Format,
 /// "Closed captioning sample description".
@@ -1018,6 +1020,7 @@ pub const C608: [u8; BOX_TYPE_SIZE] = *b"c608";
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct ClosedCaptionSampleEntry {
+    codec_type: [u8; BOX_TYPE_SIZE],
     reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     data_reference_index: u16,
     config_boxes: Vec<OpaqueBox>,
@@ -1029,11 +1032,25 @@ impl ClosedCaptionSampleEntry {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            codec_type: C608,
             reserved: [0; SAMPLE_ENTRY_RESERVED_LEN],
             data_reference_index: 1,
             config_boxes: Vec::new(),
             trailing: Vec::new(),
         }
+    }
+
+    /// Select the CEA-708 data format (`c708`) instead of the default `c608`.
+    #[must_use]
+    pub fn with_codec_type(mut self, codec_type: [u8; BOX_TYPE_SIZE]) -> Self {
+        self.codec_type = codec_type;
+        self
+    }
+
+    /// The entry's four-CC: `c608` or `c708`.
+    #[must_use]
+    pub const fn codec_type(&self) -> [u8; BOX_TYPE_SIZE] {
+        self.codec_type
     }
 
     /// Set `data_reference_index`.
@@ -1074,8 +1091,12 @@ impl ClosedCaptionSampleEntry {
             BOX_HEADER_MIN_SIZE + SAMPLE_ENTRY_FIXED_LEN,
             "c608 sample entry",
         )?;
-        if bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != C608 {
-            return Err(Error::UnexpectedBox { expected: "c608" });
+        let mut codec_type = [0u8; BOX_TYPE_SIZE];
+        codec_type.copy_from_slice(&bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE]);
+        if codec_type != C608 && codec_type != C708 {
+            return Err(Error::UnexpectedBox {
+                expected: "c608 or c708",
+            });
         }
         let mut reserved = [0u8; SAMPLE_ENTRY_RESERVED_LEN];
         reserved.copy_from_slice(
@@ -1097,6 +1118,7 @@ impl ClosedCaptionSampleEntry {
             .unwrap_or_default();
         let (config_boxes, trailing) = capture_children(region).into_parts();
         Ok(Self {
+            codec_type,
             reserved,
             data_reference_index,
             config_boxes,
@@ -1133,7 +1155,7 @@ impl Serialize for ClosedCaptionSampleEntry {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let mut c = crate::box_types::write_box_header(buf, &C608, need)?;
+        let mut c = crate::box_types::write_box_header(buf, &self.codec_type, need)?;
         buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].copy_from_slice(&self.reserved);
         c += SAMPLE_ENTRY_RESERVED_LEN;
         buf[c..c + core::mem::size_of::<u16>()]

@@ -166,12 +166,12 @@ structure this crate parses). A code in no list, or in two, fails the test.
 | Table | Codes | Typed | Held, untyped | Not held | Not applicable |
 |---|---:|---:|---:|---:|---:|
 | `aux-info-types.csv` | 7 | 2 | 0 | 5 | 0 |
-| `boxes.csv` | 281 | 123 | 36 | 111 | 11 |
-| `boxes-qt.csv` | 16 | 5 | 3 | 1 | 7 |
+| `boxes.csv` | 281 | 128 | 26 | 111 | 16 |
+| `boxes-qt.csv` | 16 | 6 | 1 | 2 | 7 |
 | `boxes-udta.csv` | 42 | 17 | 8 | 17 | 0 |
 | `brands.csv` | 291 | 95 | 0 | 196 | 0 |
 | `checksum-types.csv` | 2 | 0 | 0 | 0 | 2 |
-| `color-types.csv` | 5 | 3 | 1 | 1 | 0 |
+| `color-types.csv` | 5 | 4 | 0 | 1 | 0 |
 | `data-references.csv` | 4 | 4 | 0 | 0 | 0 |
 | `entity-groups.csv` | 29 | 20 | 0 | 9 | 0 |
 | `handlers.csv` | 49 | 17 | 0 | 32 | 0 |
@@ -184,7 +184,7 @@ structure this crate parses). A code in no list, or in two, fails the test.
 | `oti.csv` | 55 | 0 | 0 | 0 | 55 |
 | `sample-entries.csv` | 191 | 54 | 61 | 76 | 0 |
 | `sample-entries-boxes.csv` | 100 | 30 | 24 | 46 | 0 |
-| `sample-entries-qt.csv` | 59 | 10 | 35 | 14 | 0 |
+| `sample-entries-qt.csv` | 59 | 45 | 0 | 14 | 0 |
 | `sample-groups.csv` | 67 | 44 | 0 | 23 | 0 |
 | `schemes.csv` | 24 | 5 | 0 | 19 | 0 |
 | `stream-types.csv` | 15 | 0 | 0 | 0 | 15 |
@@ -195,7 +195,7 @@ structure this crate parses). A code in no list, or in two, fails the test.
 | `track-selection.csv` | 18 | 17 | 0 | 1 | 0 |
 | `uncv-profiles.csv` | 17 | 0 | 0 | 0 | 17 |
 | `unlisted.csv` | 61 | 37 | 9 | 9 | 6 |
-| **Total** | 1566 | 606 | 192 | 630 | 138 |
+| **Total** | 1566 | 648 | 144 | 631 | 143 |
 
 Trailing spaces are trimmed in these tables: a four-CC such as `rap ` is shown as
 `rap` and space-padded back to four bytes for its proof. Duplicate CSV rows (one code

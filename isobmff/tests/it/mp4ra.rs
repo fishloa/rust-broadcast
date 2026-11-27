@@ -501,6 +501,8 @@ fn prove_box(code: &str) -> std::result::Result<(), String> {
         "url" => boxed("url ", &full(0, 1, &[])),
         "wide" => boxed("wide", &[]),
         "tran" => boxed("tran", &[0]),
+        "!mov" | "!mof" | "!six" | "!ssx" => boxed(code, &[1, 2, 3]),
+        "ttyp" => boxed("ttyp", b"isom\0\0\0\0"),
         other => return Err(format!("no box proof for {other:?}")),
     };
     match code {
@@ -516,6 +518,10 @@ fn prove_box(code: &str) -> std::result::Result<(), String> {
         "md5i" => isobmff::integrity::Md5IntegrityBox::parse(&bytes).map(|_| ()),
         "url" => isobmff::init_segment::DataEntryUrlBox::parse(&bytes).map(|_| ()),
         "wide" => isobmff::segments::WideAtom::parse(&bytes).map(|_| ()),
+        "!mov" | "!mof" | "!six" | "!ssx" => {
+            isobmff::compressed::CompressedBox::parse_box(&bytes).map(|_| ())
+        }
+        "ttyp" => isobmff::segments::TrackTypeBox::parse_box(&bytes).map(|_| ()),
         other => return Err(format!("no box proof for {other:?}")),
     }
     .map(|_| ())
@@ -524,12 +530,14 @@ fn prove_box(code: &str) -> std::result::Result<(), String> {
 
 const VISUAL_ENTRIES: &[&str] = &[
     "avc1", "avc2", "avc3", "avc4", "avcp", "hvc1", "hev1", "dvh1", "dvhe", "vvc1", "vvi1", "mp4v",
-    "av01", "vp09", "rgan", "avs3", "lav3",
+    "av01", "vp09", "rgan", "avs3", "lav3", "PNTG", "SVQ1", "SVQ3", "WRLE", "ap4h", "ap4x", "apch",
+    "apcn", "apco", "apcs", "aprh", "aprn", "civd", "dvh5", "dvh6", "dvhp", "dvi", "flic", "gif",
+    "h261", "h263", "jpeg", "mjpa", "mjpb", "png", "rle", "rpza", "tga", "tiff",
 ];
 const AUDIO_ENTRIES: &[&str] = &[
     "mp4a", "enca", "ac-3", "ec-3", "ac-4", "Opus", "fLaC", "mha1", "mha2", "mhm1", "mhm2", "dtsc",
     "dtsh", "dtsl", "dtse", "lpcm", "in24", "in32", "sowt", "twos", "raw", "fl32", "fl64", "ima4",
-    "ulaw", "alaw", "NONE",
+    "ulaw", "alaw", "NONE", "QDM2", "QDMC", "Qclp", "agsm", "vdva",
 ];
 const HINT_ENTRIES: &[&str] = &[
     "rtp", "srtp", "rrtp", "rsrp", "rtcp", "stcp", "prtp", "rm2t", "sm2t", "pm2t", "fdp",
@@ -875,6 +883,11 @@ fn prove_sample_entry_box(code: &str) -> std::result::Result<(), String> {
 }
 
 fn prove_atom(code: &str) -> std::result::Result<(), String> {
+    if code == "load" {
+        return isobmff::quicktime::PreloadBox::parse_box(&boxed("load", &[0u8; 12]))
+            .map(|_| ())
+            .map_err(|e| format!("load: {e:?}"));
+    }
     if code == "elng" {
         return isobmff::track_desc::ExtendedLanguageBox::parse(&boxed(
             "elng",
