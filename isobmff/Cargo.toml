@@ -83,3 +83,11 @@ required-features = ["std"]
 [[example]]
 name = "write_tags"
 required-features = ["std"]
+
+[[example]]
+name = "heif_info"
+required-features = ["std"]
+
+[[example]]
+name = "build_avif"
+required-features = ["std"]

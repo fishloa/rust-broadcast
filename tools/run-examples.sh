@@ -73,6 +73,8 @@ example_args() {
             echo "fixtures/candidates/h264.annexb" ;;
         broadcast-bitstream/decode_capture_sps)
             echo "fixtures/ts/h264-aac.ts" ;;
+        isobmff/heif_info) echo "fixtures/heif/thumb.heic" ;;
+        isobmff/build_avif) echo "fixtures/avif/plain.avif" ;;
         atsc3/parse_lls)      echo "fixtures/atsc3/slt-lls-2019-01-07.bin" ;;
         atsc3/parse_slt)      echo "fixtures/atsc3/slt-lls-2019-01-07.bin" ;;
         st2022/parse_hbrmt)   echo "fixtures/rtp/st2022-6-hbrmt-payload-header.bin" ;;

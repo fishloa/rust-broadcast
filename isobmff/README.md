@@ -13,7 +13,7 @@ It never knows the media IR or a codec bitstream.
 
 ## Coverage
 
-Typed 76 of 167 registry box types (ISO/IEC 14496-12:2026). The
+Typed 88 of 167 registry box types (ISO/IEC 14496-12:2026). The
 `tests/it/coverage.rs` test loads
 `private/specs-verified/mpeg/isobmff/box-registry-14496-12-2026.tsv` and pins
 every remaining type under its issue tier, so these counts cannot drift; the
@@ -71,6 +71,10 @@ types themselves are the one table in `src/coverage.rs`.
 | `timing` (random access) | `tfra`, `mfra`, `mfro` |
 | `emsg` | `emsg` (versions 0 and 1, ISO/IEC 23009-1 §5.10.3.3) |
 | `metadata` | `udta`, `meta`, `hdlr`, `keys`, `ilst`, `data`, `mean`, `name`, `chpl`, `loci`; QuickTime user-data text and `©xyz` ISO 6709 |
+| `item` | ISO/IEC 14496-12:2026 §8.11/§8.15 item boxes: `iloc`, `iinf`/`infe`, `pitm`, `iref` and its typed reference boxes, `iprp`/`ipco`/`ipma`, `idat`, `ipro`, `grpl` with `EntityToGroupBox`, and the `brnd`/`hdlp` properties |
+| `image` | ISO/IEC 23008-12:2017 clause 6 image properties (`ispe`, `pixi`, `rloc`, `auxC`, `irot`, `lsel`, `imir`), the derived bodies `grid`/`iovl`/`iden`, the AVIF `a1op`/`a1lx` properties and brands; `pasp`/`colr`/`clap`/`hvcC`/`avcC`/`av1C`/`mdcv`/`clli` are the crate's existing types |
+| `item_reader` | sans-IO still-image reader: asks for the top-level headers, the file-level `meta` and the tiny derived-item bodies, then yields `StillImage` (brands, primary item, every item with properties/references/data ranges, entity groups) plus a re-emit plan |
+| `item_writer` | builds one still-image file from typed parts (brands, items, properties, references, primary item, entity groups); it chooses the `iloc` field widths and every offset |
 | `registry` | runtime registration of private boxes and sample entries (`BoxDef`, `BoxRegistry`, `RegisteredEntry`) |
 
 Every type implements the workspace `Parse` / `Serialize` pair, so a parse →
@@ -141,7 +145,7 @@ let ftyp = FileTypeBox {
 let bytes = ftyp.try_to_bytes().unwrap();
 ```
 
-Six runnable examples ship with the crate:
+Eight runnable examples ship with the crate:
 
 ```bash
 cargo run -p isobmff --example parse_boxes -- fixtures/mp4/h264-aac-prog.mp4
@@ -151,7 +155,47 @@ cargo run -p isobmff --example build_emsg
 cargo run -p isobmff --example list_samples -- fixtures/mp4/progressive/av-prog.mp4
 cargo run -p isobmff --example read_tags -- fixtures/mp4/progressive/av-prog.mp4
 cargo run -p isobmff --example write_tags -- fixtures/mp4/progressive/av-prog.mp4 /tmp/tags.udta
+cargo run -p isobmff --example heif_info -- fixtures/heif/thumb.heic
+cargo run -p isobmff --example build_avif -- fixtures/avif/plain.avif
 ```
+
+## Still images (HEIF and AVIF)
+
+A still image file has no movie: a file-level `meta` box lists *items*, each
+with a type, properties and data addressed by byte ranges. `item_reader` reads
+that model without holding the file, and `item_writer` builds one.
+
+What this crate reads (and re-emits byte-exactly): the ISO/IEC 14496-12:2026
+§8.11 item boxes, and the image item layer of **ISO/IEC 23008-12:2017** with
+its 2020 corrigendum (the `auxC` spelling) — `ispe`, `pasp`, `colr`, `pixi`,
+`rloc`, `auxC`, `clap`, `irot`, `lsel`, `imir`, the HEVC/AVC configuration
+properties, and the `grid`/`iovl`/`iden` derived image item bodies. For AVIF
+(v1.2.0) it reads the `av01` item type, the `av01` configuration (`av1C`) and
+the `a1op`/`a1lx` properties, and recognises the AVIF brands. Every property
+whose syntax another clause already defines reuses that type; there is no
+second parser.
+
+What it does not do: decode pixels. Coded item data is opaque and is reported
+as ordered byte ranges the caller fetches. Image sequences (tracks with the
+`pict` handler), MIAF conformance rules, the 2022/2025 HEIF editions, and
+anything those editions add are out of scope and not implemented from memory.
+
+The item model carries only facts read from the file: brands, the primary
+item, each item's type/name/hidden flag/protection index, its properties in
+association order with the essential flag, its references in both directions,
+its resolved data ranges, and the entity groups. Image size, rotation,
+mirroring, thumbnails, auxiliary images, grid tiles/canvas, overlay layers and
+the Exif/XMP item ranges are conveniences derived from those facts.
+`StillImage::reemit_plan` re-emits a parsed file through the preserved
+structure (exact top-level headers, the `meta` body rebuilt from its typed
+children in wire order, and a copy for every payload the reader never read), so
+a parsed fixture round-trips byte for byte when the caller supplies its bytes.
+
+Hostile input is capped through `Limits` (item, property and reference counts,
+the `meta` box and derived-item bodies; the count caps default to unlimited and
+are the caller's to set), a derived-item reference cycle is a typed error, an
+extent past the file is a typed error, and an `ipma` index past its `ipco` is a
+typed error.
 
 ## Drivers
 

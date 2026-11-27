@@ -355,6 +355,18 @@ test = false
 doc  = false
 
 [[bin]]
+name = "isobmff_item_boxes"
+path = "fuzz_targets/isobmff_item_boxes.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "isobmff_item_reader"
+path = "fuzz_targets/isobmff_item_reader.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "isobmff_metadata"
 path = "fuzz_targets/isobmff_metadata.rs"
 test = false
