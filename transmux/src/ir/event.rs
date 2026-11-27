@@ -392,6 +392,17 @@ pub enum DemuxEvent {
         /// when the container has one.
         provenance: EventProvenance,
     },
+    /// Two container signals stated different gapless trims. The track's
+    /// `padding` carries the higher-precedence trim (edit list, then codec
+    /// pre-skip, then `iTunSMPB`); this names the signal that was ignored.
+    GaplessSignalConflict {
+        /// The track whose signals disagreed.
+        track_id: TrackId,
+        /// The signal whose trim was used.
+        used: crate::ir::GaplessSignal,
+        /// The signal whose different trim was ignored.
+        ignored: crate::ir::GaplessSignal,
+    },
     /// A completed access unit / audio frame, with absolute per-sample
     /// `dts`/`pts` (issue #556 semantics; media plane step 2c: absolute
     /// rather than carried in a separate `SourceTiming`).

@@ -258,6 +258,138 @@ impl MpegAudioFrameHeader {
             samples_per_frame,
         })
     }
+
+    /// Offset of the `Xing`/`Info` magic from the start of the frame, when
+    /// this header's version and channel mode put it there: after the 4-byte
+    /// header and the side-information block (32 bytes for MPEG-1
+    /// stereo/joint/dual, 17 for MPEG-1 mono and MPEG-2/2.5 non-mono, 9 for
+    /// MPEG-2/2.5 mono).
+    #[must_use]
+    pub fn xing_offset(&self) -> usize {
+        let mpeg1 = matches!(self.version, MpegAudioVersion::Mpeg1);
+        let mono = self.channels == 1;
+        let side_info = match (mpeg1, mono) {
+            (true, false) => MPEG1_STEREO_SIDE_INFO,
+            (true, true) => MPEG1_MONO_SIDE_INFO,
+            (false, false) => LSF_STEREO_SIDE_INFO,
+            (false, true) => LSF_MONO_SIDE_INFO,
+        };
+        FRAME_HEADER_LEN + side_info
+    }
+}
+
+/// The LAME/Xing `Info` tag carried in the first MPEG Layer III frame.
+///
+/// This is a **de-facto format**, not a standard: the layout is the
+/// `Mp3 Info Tag revision 1` specification by Gabriel Bouvigne
+/// (<http://gabriel.mp3-tech.org/mp3infotag.html>), corroborated by LAME's own
+/// reader/writer `libmp3lame/VbrTag.c`
+/// (<https://github.com/lameproject/lame>, LGPL-2.0-or-later) and by FFmpeg's
+/// reader `mp3_parse_info_tag`
+/// (<https://github.com/FFmpeg/FFmpeg>, LGPL-2.1-or-later). The offsets are
+/// relative to the `Xing`/`Info` magic, so they are independent of the version
+/// and channel mode that locate that magic.
+///
+/// Only the gapless facts are typed: the 9-byte encoder version string and,
+/// when a LAME-family encoder wrote it, the 12-bit encoder delay and 12-bit
+/// encoder padding. The rest of the tag stays opaque to this crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct LameTag {
+    encoder: [u8; LAME_VERSION_LEN],
+    encoder_delay: Option<u32>,
+    encoder_padding: Option<u32>,
+}
+
+impl LameTag {
+    /// The 9-byte encoder version string (`LAME3.100`, `Lavc62.28`, …).
+    #[must_use]
+    pub const fn encoder(&self) -> &[u8; LAME_VERSION_LEN] {
+        &self.encoder
+    }
+
+    /// Encoder delay in samples, when a LAME-family encoder wrote the tag.
+    #[must_use]
+    pub const fn encoder_delay(&self) -> Option<u32> {
+        self.encoder_delay
+    }
+
+    /// Encoder padding in samples, when a LAME-family encoder wrote the tag.
+    #[must_use]
+    pub const fn encoder_padding(&self) -> Option<u32> {
+        self.encoder_padding
+    }
+}
+
+/// Parse the LAME/Xing `Info` tag at the start of an MPEG Layer III frame.
+///
+/// Returns `Ok(None)` for a non-Layer-III frame, a frame with no `Xing`/`Info`
+/// magic at its expected offset, or a tag too short to hold the gapless
+/// fields. A frame header that does not parse is the one error.
+pub fn parse_lame_tag(frame: &[u8]) -> Result<Option<LameTag>> {
+    let header = MpegAudioFrameHeader::parse(frame)?;
+    if header.layer() != MpegAudioLayer::LayerIII {
+        return Ok(None);
+    }
+    let end = header.frame_length().min(frame.len());
+    let frame = &frame[..end];
+    let xing = header.xing_offset();
+    let Some(magic) = frame.get(xing..xing.saturating_add(XING_MAGIC_LEN)) else {
+        return Ok(None);
+    };
+    if magic != XING_MAGIC && magic != INFO_MAGIC {
+        return Ok(None);
+    }
+    let Some(flags_bytes) =
+        frame.get(xing + XING_MAGIC_LEN..xing + XING_MAGIC_LEN + XING_FLAGS_LEN)
+    else {
+        return Ok(None);
+    };
+    let flags = flags_bytes.iter().fold(0u32, |value, byte| {
+        (value << WIRE_BYTE_SHIFT) | u32::from(*byte)
+    });
+    let mut cursor = xing + XING_MAGIC_LEN + XING_FLAGS_LEN;
+    for (flag, len) in [
+        (XING_FLAG_FRAMES, XING_FRAMES_LEN),
+        (XING_FLAG_BYTES, XING_BYTES_LEN),
+        (XING_FLAG_TOC, XING_TOC_LEN),
+        (XING_FLAG_QUALITY, XING_QUALITY_LEN),
+    ] {
+        if flags & flag != 0 {
+            cursor = cursor.saturating_add(len);
+        }
+    }
+    let Some(version) = frame.get(cursor..cursor.saturating_add(LAME_VERSION_LEN)) else {
+        return Ok(None);
+    };
+    let mut encoder = [0u8; LAME_VERSION_LEN];
+    encoder.copy_from_slice(version);
+    cursor = cursor.saturating_add(LAME_VERSION_LEN + LAME_FIELDS_BEFORE_DELAY);
+    let Some(delay_bytes) = frame.get(cursor..cursor.saturating_add(DELAY_PADDING_LEN)) else {
+        return Ok(None);
+    };
+    let raw = delay_bytes.iter().fold(0u32, |value, byte| {
+        (value << WIRE_BYTE_SHIFT) | u32::from(*byte)
+    });
+    let delay = raw >> DELAY_SHIFT;
+    let padding = raw & DELAY_PADDING_MASK;
+    let (encoder_delay, encoder_padding) = if is_lame_family(&encoder) {
+        (Some(delay), Some(padding))
+    } else {
+        (None, None)
+    };
+    Ok(Some(LameTag {
+        encoder,
+        encoder_delay,
+        encoder_padding,
+    }))
+}
+
+/// Whether the 9-byte version string names a writer that stores the gapless
+/// counts in the tag (LAME itself, or an FFmpeg `Lavf`/`Lavc` muxer).
+fn is_lame_family(encoder: &[u8; LAME_VERSION_LEN]) -> bool {
+    encoder.starts_with(b"LAME") || encoder.starts_with(b"Lavf") || encoder.starts_with(b"Lavc")
 }
 
 /// Bitrate index → kbit/s, per version+layer (ISO/IEC 11172-3 Table; 0 =
@@ -340,6 +472,55 @@ const STEREO_CHANNELS: u16 = 2;
 const LAYER1_SLOTS_PER_FRAME: usize = 12;
 /// Bytes per Layer I slot.
 const LAYER1_SLOT_BYTES: usize = 4;
+
+/// The `Xing` magic of a VBR/ABR tag.
+const XING_MAGIC: [u8; XING_MAGIC_LEN] = *b"Xing";
+/// The `Info` magic of a constant-bitrate tag.
+const INFO_MAGIC: [u8; XING_MAGIC_LEN] = *b"Info";
+/// Bytes in the `Xing`/`Info` magic.
+const XING_MAGIC_LEN: usize = 4;
+/// Bytes in the tag's flags word.
+const XING_FLAGS_LEN: usize = 4;
+/// Flag bit: a frame count follows.
+const XING_FLAG_FRAMES: u32 = 0x1;
+/// Flag bit: a byte count follows.
+const XING_FLAG_BYTES: u32 = 0x2;
+/// Flag bit: a 100-entry table of contents follows.
+const XING_FLAG_TOC: u32 = 0x4;
+/// Flag bit: a VBR quality value follows.
+const XING_FLAG_QUALITY: u32 = 0x8;
+/// Bytes of the optional frame count.
+const XING_FRAMES_LEN: usize = 4;
+/// Bytes of the optional byte count.
+const XING_BYTES_LEN: usize = 4;
+/// Bytes of the optional table of contents.
+const XING_TOC_LEN: usize = 100;
+/// Bytes of the optional VBR quality value.
+const XING_QUALITY_LEN: usize = 4;
+
+/// Side-information bytes in an MPEG-1 stereo/joint/dual frame.
+const MPEG1_STEREO_SIDE_INFO: usize = 32;
+/// Side-information bytes in an MPEG-1 mono frame.
+const MPEG1_MONO_SIDE_INFO: usize = 17;
+/// Side-information bytes in an MPEG-2/2.5 non-mono frame.
+const LSF_STEREO_SIDE_INFO: usize = 17;
+/// Side-information bytes in an MPEG-2/2.5 mono frame.
+const LSF_MONO_SIDE_INFO: usize = 9;
+
+/// Bytes in the LAME tag's encoder version string.
+const LAME_VERSION_LEN: usize = 9;
+/// Bytes between the version string's end and the delay/padding word: revision
+/// and VBR method, lowpass, peak, two ReplayGain values, encoding flags, ABR or
+/// minimum bitrate.
+const LAME_FIELDS_BEFORE_DELAY: usize = 12;
+/// Bytes of the packed encoder delay and padding.
+const DELAY_PADDING_LEN: usize = 3;
+/// Bit position of the 12-bit encoder delay in the packed word.
+const DELAY_SHIFT: u32 = 12;
+/// Bits in one wire byte, for assembling the 24-bit field.
+const WIRE_BYTE_SHIFT: u32 = 8;
+/// Mask of the 12-bit encoder padding.
+const DELAY_PADDING_MASK: u32 = 0xFFF;
 
 #[cfg(test)]
 mod tests {
@@ -438,5 +619,51 @@ mod tests {
     fn free_and_forbidden_bitrates_are_refused() {
         assert!(MpegAudioFrameHeader::parse(&[0xFF, 0xFB, 0x00, 0xC4]).is_err());
         assert!(MpegAudioFrameHeader::parse(&[0xFF, 0xFB, 0xF0, 0xC4]).is_err());
+    }
+
+    /// Find the first frame in an elementary stream.
+    fn first_frame(bytes: &[u8]) -> &[u8] {
+        for start in 0..bytes.len().saturating_sub(FRAME_HEADER_LEN) {
+            let Ok(header) = MpegAudioFrameHeader::parse(&bytes[start..]) else {
+                continue;
+            };
+            let frames = &bytes[start..];
+            if parse_lame_tag(frames).ok().flatten().is_some() {
+                return &frames[..header.frame_length().min(frames.len())];
+            }
+        }
+        panic!("no frame with a LAME tag");
+    }
+
+    #[test]
+    fn a_real_lame_tag_states_the_encoder_delay_and_padding() {
+        let bytes = test_fixtures::read("audio/audio.mp3");
+        let tag = parse_lame_tag(first_frame(&bytes))
+            .expect("parses")
+            .expect("a LAME tag");
+        assert_eq!(&tag.encoder()[..4], b"Lavc");
+        assert_eq!(tag.encoder_delay(), Some(576));
+        assert_eq!(tag.encoder_padding(), Some(960));
+    }
+
+    #[test]
+    fn a_frame_without_a_tag_is_not_a_lame_tag() {
+        let bytes = test_fixtures::read("audio/audio.mp3");
+        let frame = first_frame(&bytes);
+        let silent = alloc::vec![0u8; frame.len()];
+        assert_eq!(parse_lame_tag(&silent).ok(), None);
+    }
+
+    #[test]
+    fn the_xing_offset_follows_the_side_information_size() {
+        // MPEG-1 stereo: 4 + 32. MPEG-1 mono: 4 + 17.
+        let stereo = MpegAudioFrameHeader::parse(&[0xFF, 0xFB, 0x50, 0x00]).unwrap();
+        assert_eq!(stereo.xing_offset(), 36);
+        let mono = MpegAudioFrameHeader::parse(&[0xFF, 0xFB, 0x50, 0xC0]).unwrap();
+        assert_eq!(mono.xing_offset(), 21);
+        assert_eq!(mono.channels(), 1);
+        // MPEG-2.5 mono: 4 + 9.
+        let lsf = MpegAudioFrameHeader::parse(&[0xFF, 0xE3, 0x90, 0xC4]).unwrap();
+        assert_eq!(lsf.xing_offset(), 13);
     }
 }

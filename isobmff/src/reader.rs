@@ -55,7 +55,7 @@ use crate::movie_fragment::{
     TrafChild, apply_trex_defaults,
 };
 use crate::plan::{BoxPosition, SamplePlan, TopLevelBox, sample_description, sample_table};
-use crate::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox};
+use crate::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox, SampleToGroupBox};
 use crate::sample_table::{CursorState, SampleRef};
 use crate::segments::FileTypeBox;
 use crate::timing::{
@@ -631,6 +631,14 @@ pub struct TrackInfo {
     pub media_header: Option<crate::init_segment::MediaInformationHeader>,
     /// The track's sub-tracks (`strk`, §8.13.3), in wire order.
     pub subtracks: Vec<crate::track_desc::SubTrackBox>,
+    /// The samples a decoder must decode before its output is correct, from a
+    /// `prol` or a negative `roll` sample-group distance (§10.1). This is a
+    /// decoder pre-roll requirement, not a gapless trim.
+    pub pre_roll: Option<u32>,
+    /// The movie's or the track's iTunes gapless facts ([`crate::metadata::Itunsmpb`]),
+    /// when the file states them. A track-level item wins over a movie-level
+    /// one; a movie-level item applies only when the file has one audio track.
+    pub itunsmpb: Option<crate::metadata::Itunsmpb>,
     /// The hint information (`hnti`, §9.1.4), when the track's `udta` carries
     /// one.
     pub hint_information: Option<crate::hint::HintInformationBox>,
@@ -667,6 +675,10 @@ impl TrackInfo {
     }
 
     /// The reader's track view for an already-parsed `trak`.
+    ///
+    /// It carries no movie metadata, so [`itunsmpb`](Self::itunsmpb) is always
+    /// `None`; use [`Reader`] or [`MovieBox`] for
+    /// the file's item list.
     ///
     /// A caller that holds the whole `moov` (the whole-input demuxers) needs
     /// the same per-track facts [`Reader`] surfaces in [`Step::Tracks`]. This
@@ -765,6 +777,8 @@ impl TrackInfo {
             track_selection: desc.track_selection,
             media_header: desc.media_header,
             subtracks: desc.subtracks,
+            pre_roll: track_pre_roll(trak),
+            itunsmpb: None,
             hint_information: desc.hint_information,
             hint_statistics: desc.hint_statistics,
         })
@@ -2283,6 +2297,9 @@ impl Reader {
                     .push((trak.tkhd.track_id, metadata));
             }
         }
+        if let Some(metadata) = self.metadata.as_ref() {
+            apply_itunsmpb(&mut tracks, metadata);
+        }
         self.emitted_metadata = false;
         self.sample_references = movie
             .tracks
@@ -2785,6 +2802,82 @@ struct TrackDescription {
     hint_statistics: Option<crate::hint::HintStatisticsBox>,
 }
 
+/// The track's decoder pre-roll from its `roll`/`prol` sample group (§10.1).
+///
+/// A description only applies when the sibling `sbgp` maps at least one sample
+/// to it (a description index is one-based; zero means no group).
+fn track_pre_roll(trak: &TrackBox) -> Option<u32> {
+    let stbl = sample_table(trak)?;
+    let mut group: Option<(u32, u32)> = None;
+    for child in &stbl.children {
+        let StblChild::Opaque(bytes) = child else {
+            continue;
+        };
+        if bytes.len() < BOX_HEADER_MIN_SIZE
+            || &bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != b"sgpd"
+        {
+            continue;
+        }
+        if let Ok(sgpd) = SampleGroupDescriptionBox::parse(bytes.as_slice())
+            && let Some(samples) = sgpd
+                .entries
+                .first()
+                .and_then(|entry| entry.pre_roll_samples())
+        {
+            group = Some((sgpd.grouping_type, samples));
+            break;
+        }
+    }
+    let (grouping_type, samples) = group?;
+    for child in &stbl.children {
+        let StblChild::Opaque(bytes) = child else {
+            continue;
+        };
+        if bytes.len() < BOX_HEADER_MIN_SIZE
+            || &bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != b"sbgp"
+        {
+            continue;
+        }
+        if let Ok(sbgp) = SampleToGroupBox::parse(bytes.as_slice())
+            && sbgp.grouping_type == grouping_type
+            && sbgp
+                .entries
+                .iter()
+                .any(|entry| entry.group_description_index > 0)
+        {
+            return Some(samples);
+        }
+    }
+    None
+}
+
+/// Attach each track's iTunes gapless facts.
+///
+/// A per-track item always applies to its own track. A movie-level item is
+/// only unambiguous when the file carries one audio track; with several, it is
+/// left unapplied rather than guessed at.
+fn apply_itunsmpb(tracks: &mut [TrackInfo], metadata: &crate::metadata::MovieMetadata) {
+    let movie_item = metadata.movie.itunsmpb();
+    let audio: Vec<TrackId> = tracks
+        .iter()
+        .filter(|track| &track.handler == b"soun")
+        .map(|track| track.track_id)
+        .collect();
+    for track in tracks.iter_mut() {
+        let own = metadata
+            .tracks
+            .iter()
+            .find(|(id, _)| *id == track.track_id)
+            .and_then(|(_, metadata)| metadata.itunsmpb());
+        let from_movie = if audio.len() == 1 && audio[0] == track.track_id {
+            movie_item.clone()
+        } else {
+            None
+        };
+        track.itunsmpb = own.or(from_movie);
+    }
+}
+
 fn track_description(trak: &TrackBox) -> TrackDescription {
     use crate::metadata::UdtaChild;
     let mut out = TrackDescription {
@@ -2909,6 +3002,8 @@ fn build_track_info(
         track_selection: desc.track_selection,
         media_header: desc.media_header,
         subtracks: desc.subtracks,
+        pre_roll: track_pre_roll(trak),
+        itunsmpb: None,
         hint_information: desc.hint_information,
         hint_statistics: desc.hint_statistics,
     })

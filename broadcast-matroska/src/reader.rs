@@ -201,6 +201,7 @@ pub struct TrackInfo {
     codec_private: Vec<u8>,
     default_duration_ns: Option<u64>,
     codec_delay_ns: Option<u64>,
+    seek_pre_roll_ns: Option<u64>,
     pixel_width: Option<u64>,
     pixel_height: Option<u64>,
     channels: Option<u64>,
@@ -258,6 +259,13 @@ impl TrackInfo {
     #[must_use]
     pub const fn codec_delay_ns(&self) -> Option<u64> {
         self.codec_delay_ns
+    }
+
+    /// `SeekPreRoll` in nanoseconds (RFC 9559 §5.1.4.1.26): the samples a
+    /// decoder must consume after a seek before its output is correct.
+    #[must_use]
+    pub const fn seek_pre_roll_ns(&self) -> Option<u64> {
+        self.seek_pre_roll_ns
     }
 
     /// `PixelWidth`, when the track is video.
@@ -338,6 +346,9 @@ pub struct BlockStep {
     pub discardable: bool,
     /// The `SimpleBlock` invisible flag.
     pub invisible: bool,
+    /// `BlockGroup` `DiscardPadding` in nanoseconds (RFC 9559 §5.1.3.5.7):
+    /// positive means silence at the end of the frame, negative at its start.
+    pub discard_padding: Option<i64>,
     /// This frame's byte range in the source.
     pub frame: ByteRange,
     /// Zero-based index of this frame in the Block's lace.
@@ -476,6 +487,12 @@ enum UnsignedKind {
     BlockDuration,
 }
 
+/// The context of a small signed leaf the reader buffers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignedKind {
+    DiscardPadding,
+}
+
 /// Whether a Block sits directly in a Cluster or inside a BlockGroup.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BlockOwner {
@@ -497,6 +514,12 @@ enum Phase {
     },
     Unsigned {
         kind: UnsignedKind,
+        offset: u64,
+        header: ElementHeader,
+        body: ByteRange,
+    },
+    Signed {
+        kind: SignedKind,
         offset: u64,
         header: ElementHeader,
         body: ByteRange,
@@ -544,6 +567,7 @@ struct GroupContext {
     end: u64,
     reference: bool,
     duration: Option<u64>,
+    discard_padding: Option<i64>,
     block: Option<PendingFrames>,
 }
 
@@ -774,7 +798,9 @@ impl Reader {
                 }
                 Phase::Header { at } => self.drive_header(at)?,
                 Phase::Resync { remaining, at } => self.drive_resync(remaining, at)?,
-                Phase::Master { body, .. } | Phase::Unsigned { body, .. } => {
+                Phase::Master { body, .. }
+                | Phase::Unsigned { body, .. }
+                | Phase::Signed { body, .. } => {
                     self.request(body)?;
                 }
                 Phase::Block { payload, .. } => {
@@ -880,7 +906,12 @@ impl Reader {
         if let Some(group) = self.group.take()
             && let Some(block) = group.block
         {
-            self.emit_frames(block, !group.reference, group.duration)?;
+            self.emit_frames(
+                block,
+                !group.reference,
+                group.duration,
+                group.discard_padding,
+            )?;
         }
         Ok(())
     }
@@ -939,6 +970,9 @@ impl Reader {
             Phase::Unsigned {
                 kind, offset, body, ..
             } => self.accept_unsigned(kind, offset, body, range, bytes),
+            Phase::Signed {
+                kind, offset, body, ..
+            } => self.accept_signed(kind, offset, body, range, bytes),
             Phase::Block {
                 owner,
                 header,
@@ -1195,6 +1229,7 @@ impl Reader {
                     end,
                     reference: false,
                     duration: None,
+                    discard_padding: None,
                     block: None,
                 });
                 self.phase = Phase::Header {
@@ -1233,6 +1268,9 @@ impl Reader {
             }
             ids::BLOCK_DURATION => {
                 self.start_unsigned(UnsignedKind::BlockDuration, header, offset, payload_len)
+            }
+            ids::DISCARD_PADDING => {
+                self.start_signed(SignedKind::DiscardPadding, header, offset, payload_len)
             }
             _ => self.skip(payload_len, offset, self.group_where()),
         }
@@ -1335,6 +1373,30 @@ impl Reader {
             len,
         };
         self.phase = Phase::Unsigned {
+            kind,
+            offset,
+            header,
+            body,
+        };
+        self.request(body)
+    }
+
+    fn start_signed(
+        &mut self,
+        kind: SignedKind,
+        header: ElementHeader,
+        offset: u64,
+        payload_len: Option<u64>,
+    ) -> Result<()> {
+        let id = header.id().value();
+        let Some(len) = payload_len else {
+            return Err(Error::UnknownSizeNotAllowed { id });
+        };
+        let body = ByteRange {
+            offset: self.pos,
+            len,
+        };
+        self.phase = Phase::Signed {
             kind,
             offset,
             header,
@@ -1574,6 +1636,7 @@ impl Reader {
                 codec_private: entry.codec_private().unwrap_or(&[]).to_vec(),
                 default_duration_ns: entry.default_duration(),
                 codec_delay_ns: entry.codec_delay(),
+                seek_pre_roll_ns: entry.seek_pre_roll(),
                 pixel_width: video.and_then(crate::matroska::Video::pixel_width),
                 pixel_height: video.and_then(crate::matroska::Video::pixel_height),
                 channels: audio.and_then(crate::matroska::Audio::channels),
@@ -1688,6 +1751,40 @@ impl Reader {
         Ok(())
     }
 
+    fn accept_signed(
+        &mut self,
+        kind: SignedKind,
+        offset: u64,
+        body: ByteRange,
+        range: ByteRange,
+        bytes: &[u8],
+    ) -> Result<()> {
+        if self.short_supply(range, bytes) {
+            return self.truncated(
+                self.group_where(),
+                offset,
+                Error::Truncated {
+                    what: "signed payload",
+                    need: usize::try_from(body.len).unwrap_or(usize::MAX),
+                    have: bytes.len(),
+                },
+            );
+        }
+        let value = crate::ebml::scalar::Signed::parse(bytes)?.value();
+        match kind {
+            SignedKind::DiscardPadding => {
+                if let Some(group) = self.group.as_mut() {
+                    group.discard_padding = Some(value);
+                }
+            }
+        }
+        self.pos = body.end();
+        self.phase = Phase::Header {
+            at: self.group_where(),
+        };
+        Ok(())
+    }
+
     fn accept_unsigned(
         &mut self,
         kind: UnsignedKind,
@@ -1769,7 +1866,7 @@ impl Reader {
                 match owner {
                     BlockOwner::Cluster => {
                         let keyframe = block_header.keyframe_flag();
-                        self.emit_frames(pending, keyframe, None)?;
+                        self.emit_frames(pending, keyframe, None, None)?;
                         self.pos = payload.end();
                         self.phase = Phase::Header { at: Where::Cluster };
                     }
@@ -1872,6 +1969,7 @@ impl Reader {
         block: PendingFrames,
         keyframe: bool,
         duration: Option<u64>,
+        discard_padding: Option<i64>,
     ) -> Result<()> {
         let count = u32::try_from(block.frames.len()).map_err(|_| Error::SizeOverflow)?;
         let timestamp_ns = i128::from(block.timestamp)
@@ -1890,6 +1988,7 @@ impl Reader {
                 keyframe,
                 discardable: block.discardable,
                 invisible: block.invisible,
+                discard_padding,
                 frame: *frame,
                 lace_index,
                 lace_count: count,
