@@ -8,6 +8,8 @@
 //! real backward jump of both tracks' 90 kHz timeline; no bytes are
 //! hand-built.
 
+use std::collections::BTreeMap;
+
 use broadcast_core::damage::{ByteRange, DamageKind, Severity};
 use transmux::TrackId;
 use transmux::ir::SampleTiming;
@@ -258,5 +260,62 @@ fn a_continuous_capture_reports_no_timeline_break() {
             DemuxEvent::Damage(damage) if damage.kind() == DamageKind::TimelineRepaired
         )),
         "a capture whose timestamps never step reports no timeline repair"
+    );
+}
+
+/// A backward step in the emitted samples is not by itself a timeline break:
+/// this real capture's DVB subtitle track (PES PID `0x96`) carries `0xBE`
+/// padding PES between its sparse stamped access units, and each unstamped one
+/// is interpolated forward by one measured frame period
+/// (ISO/IEC 13818-1 §2.4.2.6). The interpolation overshoots the next wire
+/// stamp, so the samples step back when the wire value takes over again — but
+/// the track's timeline never did, and before the wire-stamped rule the demux
+/// reported two breaks on a capture where nothing broke.
+#[test]
+fn an_interpolated_step_back_on_a_real_capture_is_not_a_timeline_break() {
+    let Some(bytes) =
+        test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "demux_timeline_break")
+    else {
+        return;
+    };
+    let events = demux(&bytes);
+
+    let mut stepped: Vec<(TrackId, i64, i64)> = Vec::new();
+    let mut last: BTreeMap<TrackId, i64> = BTreeMap::new();
+    for event in &events {
+        let DemuxEvent::Sample {
+            track_id, sample, ..
+        } = event
+        else {
+            continue;
+        };
+        let Some(dts) = sample.timing.and_then(|t| match t {
+            SampleTiming::Timed { dts, .. } => Some(dts),
+            _ => None,
+        }) else {
+            continue;
+        };
+        if let Some(prev) = last.insert(*track_id, dts)
+            && dts < prev
+        {
+            stepped.push((*track_id, prev, dts));
+        }
+    }
+    assert!(
+        !stepped.is_empty(),
+        "the capture really does emit a backward step: {stepped:?}"
+    );
+    let found = breaks(&events);
+    assert!(
+        found.is_empty(),
+        "a step back that only corrects an interpolated stamp is no break: {} found",
+        found.len()
+    );
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            DemuxEvent::Damage(damage) if damage.kind() == DamageKind::TimelineRepaired
+        )),
+        "nothing was repaired, so nothing claims a timeline repair"
     );
 }

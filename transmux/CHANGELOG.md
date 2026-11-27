@@ -50,7 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   contract (`DemuxEvent::Discontinuity::track`), so a video or data track's
   backward `dts` now raises it too, immediately after that track's last
   old-base sample, carrying the pid and packet index that began the new time
-  base. Each break also publishes the `DamageKind::TimelineRepaired` report
+  base. Only a step between two **wire** decode stamps is a break: a value
+  interpolated forward for an unstamped PES (§2.4.2.6) that overshoots the
+  next real stamp is a guess being corrected, and a wire stamp still behind
+  the program's running PCR is a track-local shift, not a program timeline
+  break. Each break also publishes the `DamageKind::TimelineRepaired` report
   the best-effort rule requires for a repaired timeline, with the track, the
   new media time and the packet's byte offset — and a signalled discontinuity
   whose rebase lifts a track's timeline now publishes that report as well.

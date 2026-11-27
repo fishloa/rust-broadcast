@@ -180,9 +180,12 @@ mod ts_demux_copies {
     // 8-byte `SampleTrim` field (+8 bytes per sample, no extra payload copy).
     // 984 -> 989 for the IR's decoder pre-roll: `TrackSpec` gained one
     // `Option<DecoderPreRoll>`, which grows `DemuxEvent` by 8 bytes and so the
-    // per-sample event queue (no extra payload copy). Measured 989 on this
-    // fixture.
-    const TS_BUDGET_X100: usize = 989; // 1008 before r04-O10, 944 after (midway)
+    // per-sample event queue (no extra payload copy).
+    // 989 -> 990 for issue #4196's one-behind timeline-break tracking: the
+    // per-track slot remembers the last wire decode timestamp, so the track
+    // and backlog boxes grow a few bytes (no extra payload copy). Measured 990
+    // on this fixture.
+    const TS_BUDGET_X100: usize = 990; // 1008 before r04-O10, 944 after (midway)
 }
 
 mod rtp_stream_copies {
