@@ -1315,8 +1315,9 @@ impl StillImage {
         }
         let (idat_offset, idat_len) = idat.unwrap_or((0, 0));
         let mut resolved: Vec<Vec<ByteRange>> = Vec::with_capacity(items.len());
+        let mut degraded = degraded;
         for item in &items {
-            resolved.push(resolve_item_data(
+            match resolve_item_data(
                 item.id,
                 &iloc,
                 &iref,
@@ -1324,7 +1325,23 @@ impl StillImage {
                 idat_len,
                 total_len,
                 &mut Vec::new(),
-            )?);
+            ) {
+                Ok(data) => resolved.push(data),
+                // An extent outside the file, or a data reference this reader
+                // cannot follow, costs that item's data and nothing else.
+                Err(_) => {
+                    if let Some(extent) =
+                        iloc.item(item.id).and_then(|entry| entry.extents().first())
+                    {
+                        degraded.push(ImageFinding::ItemDataDropped {
+                            item: item.id,
+                            offset: extent.offset(),
+                            length: extent.length(),
+                        });
+                    }
+                    resolved.push(Vec::new());
+                }
+            }
         }
         for (item, data) in items.iter_mut().zip(resolved) {
             item.data = data;
@@ -1776,6 +1793,26 @@ impl ItemReader {
         }
     }
 
+    /// The input held fewer bytes than the reader asked for.
+    ///
+    /// Everything already read stands: a model whose `meta` was complete is
+    /// finished (the truncation can only have cut item data, which is
+    /// addressed rather than read), and a file whose `meta` never arrived has
+    /// nothing to model.
+    fn input_ended(&mut self) -> Result<()> {
+        if self.image.is_some() {
+            self.phase = Phase::Loaded;
+            self.pending = None;
+            return Ok(());
+        }
+        if self.meta.is_some() {
+            return self.finalize();
+        }
+        Err(Error::InvalidInput(
+            "the input ended before the item model was read",
+        ))
+    }
+
     /// Accept exactly the bytes the outstanding [`ItemStep::Need`] asked for.
     pub fn supply(&mut self, offset: u64, bytes: &[u8]) -> Result<()> {
         let got = ByteRange {
@@ -1788,8 +1825,14 @@ impl ItemReader {
                 got,
             });
         };
-        if expected.offset != offset || expected.len != got.len {
+        // A shorter supply means the input ended there: the structures that
+        // are complete still read, and the cut tail is the caller's report.
+        if expected.offset != offset || got.len > expected.len {
             return Err(Error::SupplyMismatch { expected, got });
+        }
+        if bytes.is_empty() && expected.len > 0 {
+            self.pending = None;
+            return self.input_ended();
         }
         let filled = match &mut self.phase {
             Phase::Header { prefix, .. } => {
@@ -2207,6 +2250,11 @@ fn reproducible(parsed: &MetaChild, child: &crate::box_types::BoxItem<'_>) -> bo
 }
 
 /// One `item::DegradedChild` as the finding the item reader reports.
+/// Whether an error is a caller limit, which binds in every mode.
+fn limit(error: &Error) -> bool {
+    matches!(error, Error::LimitExceeded { .. })
+}
+
 fn unrepresentable_finding(child: crate::item::DegradedChild) -> ImageFinding {
     ImageFinding::UnrepresentableBox {
         box_type: child.box_type(),
@@ -2247,16 +2295,20 @@ fn parse_meta(
     let children_start = payload_abs.saturating_add(FULLBOX_EXTRA_SIZE as u64);
     let mut consumed_total = 0usize;
     while !rest.is_empty() {
-        if rest.len() < BOX_HEADER_MIN_SIZE {
-            return Err(Error::BufferTooShort(
-                broadcast_core::error::BufferTooShort {
-                    need: BOX_HEADER_MIN_SIZE,
-                    have: rest.len(),
-                    what: "meta child header",
-                },
-            ));
-        }
-        let (child, used) = parse_box(rest)?;
+        let Ok((child, used)) = parse_box(rest) else {
+            // The tail is too short to be a box, or a child overruns the box:
+            // it is carried in place and reported, never a failed file.
+            degraded.push(ImageFinding::UnrepresentableBox {
+                box_type: fourcc_of(rest),
+                offset: children_start.saturating_add(consumed_total as u64),
+                reason: crate::error::OpaqueReason::BufferTooShort,
+            });
+            let mut opaque = OpaqueBox::new(fourcc_of(rest), rest.to_vec());
+            opaque.to_end = true;
+            children.push(MetaChild::Opaque(opaque));
+            forms.push(BoxForm::ToEnd);
+            break;
+        };
         let absolute = children_start
             .saturating_add(consumed_total as u64)
             .saturating_add(child.start as u64);
@@ -2268,38 +2320,79 @@ fn parse_meta(
         } else {
             BoxForm::Compact
         });
+        // A structural child the model needs that cannot be read is carried
+        // opaque in its own position and reported: the items it described lose
+        // that part of themselves, and everything else still loads.
+        let failed = |degraded: &mut Vec<ImageFinding>| {
+            degraded.push(ImageFinding::UnrepresentableBox {
+                box_type: fourcc,
+                offset: absolute,
+                reason: crate::error::OpaqueReason::BufferTooShort,
+            });
+            let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
+            opaque.to_end = child.to_end();
+            opaque.largesize = child.has_largesize();
+            MetaChild::Opaque(opaque)
+        };
         let parsed = match &fourcc {
-            b"hdlr" => MetaChild::Hdlr(Hdlr::parse_box(child.bytes)?),
-            b"pitm" => MetaChild::Pitm(PrimaryItemBox::parse(child.bytes)?),
-            b"iloc" => MetaChild::Iloc(ItemLocationBox::parse(child.bytes)?),
-            b"iinf" => MetaChild::Iinf(ItemInfoBox::parse(child.bytes)?),
-            b"iref" => {
-                let (references, opaque) =
-                    ItemReferenceBox::parse_degrading(child.bytes, absolute)?;
-                degraded.extend(opaque.into_iter().map(unrepresentable_finding));
-                MetaChild::Iref(references)
-            }
-            b"iprp" => {
-                let (properties, opaque) =
-                    ItemPropertiesBox::parse_degrading(child.bytes, absolute)?;
-                degraded.extend(opaque.into_iter().map(unrepresentable_finding));
-                degraded.extend(ipma_trailing_findings(child.bytes, absolute, &properties));
-                MetaChild::Iprp(properties)
-            }
-            b"idat" => {
-                let box_value = ItemDataBox::parse(child.bytes)?;
-                idat = Some((
-                    absolute.saturating_add(child.header.header_size() as u64),
-                    box_value.data().len(),
-                ));
-                MetaChild::Idat(box_value)
-            }
-            b"ipro" => MetaChild::Ipro(crate::item::ItemProtectionBox::parse(child.bytes)?),
-            b"grpl" => {
-                let (groups, opaque) = GroupsListBox::parse_degrading(child.bytes, absolute)?;
-                degraded.extend(opaque.into_iter().map(unrepresentable_finding));
-                MetaChild::Grpl(groups)
-            }
+            b"hdlr" => match Hdlr::parse_box(child.bytes) {
+                Ok(box_value) => MetaChild::Hdlr(box_value),
+                Err(err) if limit(&err) => return Err(err),
+                Err(_) => failed(degraded),
+            },
+            b"pitm" => match PrimaryItemBox::parse(child.bytes) {
+                Ok(box_value) => MetaChild::Pitm(box_value),
+                Err(err) if limit(&err) => return Err(err),
+                Err(_) => failed(degraded),
+            },
+            b"iloc" => match ItemLocationBox::parse(child.bytes) {
+                Ok(box_value) => MetaChild::Iloc(box_value),
+                Err(err) if limit(&err) => return Err(err),
+                Err(_) => failed(degraded),
+            },
+            b"iinf" => match ItemInfoBox::parse(child.bytes) {
+                Ok(box_value) => MetaChild::Iinf(box_value),
+                Err(err) if limit(&err) => return Err(err),
+                Err(_) => failed(degraded),
+            },
+            b"iref" => match ItemReferenceBox::parse_degrading(child.bytes, absolute) {
+                Ok((references, opaque)) => {
+                    degraded.extend(opaque.into_iter().map(unrepresentable_finding));
+                    MetaChild::Iref(references)
+                }
+                Err(_) => failed(degraded),
+            },
+            b"iprp" => match ItemPropertiesBox::parse_degrading(child.bytes, absolute) {
+                Ok((properties, opaque)) => {
+                    degraded.extend(opaque.into_iter().map(unrepresentable_finding));
+                    degraded.extend(ipma_trailing_findings(child.bytes, absolute, &properties));
+                    MetaChild::Iprp(properties)
+                }
+                Err(_) => failed(degraded),
+            },
+            b"idat" => match ItemDataBox::parse(child.bytes) {
+                Ok(box_value) => {
+                    idat = Some((
+                        absolute.saturating_add(child.header.header_size() as u64),
+                        box_value.data().len(),
+                    ));
+                    MetaChild::Idat(box_value)
+                }
+                Err(err) if limit(&err) => return Err(err),
+                Err(_) => failed(degraded),
+            },
+            b"ipro" => match crate::item::ItemProtectionBox::parse(child.bytes) {
+                Ok(box_value) => MetaChild::Ipro(box_value),
+                Err(err) if limit(&err) => return Err(err),
+                Err(_) => failed(degraded),
+            },
+            b"grpl" => match GroupsListBox::parse_degrading(child.bytes, absolute) {
+                Ok((groups, opaque)) => {
+                    degraded.extend(opaque.into_iter().map(unrepresentable_finding));
+                    MetaChild::Grpl(groups)
+                }
+                Err(_) => failed(degraded),
+            },
             _ => {
                 let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
                 opaque.to_end = child.to_end();

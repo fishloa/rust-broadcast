@@ -159,7 +159,7 @@ struct Pos {
 /// [`SampleTableBox`], resolved once by [`CursorState::new`].
 #[derive(Debug, Clone, Copy)]
 struct Layout {
-    stts: usize,
+    stts: Option<usize>,
     ctts: Option<usize>,
     stsc: usize,
     stsz: Option<usize>,
@@ -167,6 +167,62 @@ struct Layout {
     stco: Option<usize>,
     co64: Option<usize>,
     stss: Option<usize>,
+}
+
+fn stts_of(child: &StblChild) -> Option<&TimeToSampleBox> {
+    match child {
+        StblChild::Stts(box_) => Some(box_),
+        _ => None,
+    }
+}
+
+fn ctts_of(child: &StblChild) -> Option<&CompositionOffsetBox> {
+    match child {
+        StblChild::Ctts(box_) => Some(box_),
+        _ => None,
+    }
+}
+
+fn stss_of(child: &StblChild) -> Option<&SyncSampleBox> {
+    match child {
+        StblChild::Stss(box_) => Some(box_),
+        _ => None,
+    }
+}
+
+fn stsz_of(child: &StblChild) -> Option<&SampleSizeBox> {
+    match child {
+        StblChild::Stsz(box_) => Some(box_),
+        _ => None,
+    }
+}
+
+fn stz2_of(child: &StblChild) -> Option<&CompactSampleSizeBox> {
+    match child {
+        StblChild::Stz2(box_) => Some(box_),
+        _ => None,
+    }
+}
+
+fn stsc_of(child: &StblChild) -> Option<&SampleToChunkBox> {
+    match child {
+        StblChild::Stsc(box_) => Some(box_),
+        _ => None,
+    }
+}
+
+fn co64_of(child: &StblChild) -> Option<&ChunkLargeOffsetBox> {
+    match child {
+        StblChild::Co64(box_) => Some(box_),
+        _ => None,
+    }
+}
+
+fn stco_of(child: &StblChild) -> Option<&ChunkOffsetBox> {
+    match child {
+        StblChild::Stco(box_) => Some(box_),
+        _ => None,
+    }
 }
 
 impl Layout {
@@ -262,6 +318,112 @@ impl Layout {
             });
         }
         Ok(Self {
+            stts: Some(stts),
+            ctts,
+            stsc,
+            stsz,
+            stz2,
+            stco,
+            co64,
+            stss,
+        })
+    }
+
+    /// Resolve the tables as far as they go, appending what could not be read.
+    ///
+    /// A table that is missing or unparseable takes the format's default for
+    /// everything it states (§8.6.1.2, §8.6.1.3, §8.6.2): an absent `stts`
+    /// gives every sample a zero duration, an absent `ctts` a zero composition
+    /// offset, and an absent `stss` a sync sample. `stsz`/`stz2`, `stsc` and
+    /// `stco`/`co64` address the bytes themselves and cannot be defaulted, so
+    /// their absence yields no layout.
+    fn resolve_lenient(
+        children: &[StblChild],
+        defects: &mut Vec<SampleTableDefect>,
+    ) -> Option<Self> {
+        fn ignored(defects: &mut Vec<SampleTableDefect>, fourcc: [u8; BOX_TYPE_SIZE]) {
+            defects.push(SampleTableDefect {
+                fourcc,
+                kind: SampleTableDefectKind::Ignored,
+                dropped: 0,
+            });
+        }
+        let (stts, stts_bad) =
+            match find_child(children, b"stts", stts_of, |b| TimeToSampleBox::parse(b)) {
+                Ok(found) => (found, false),
+                Err(_) => (None, true),
+            };
+        if stts_bad {
+            ignored(defects, *b"stts");
+        }
+        let (ctts, ctts_bad) = match find_child(children, b"ctts", ctts_of, |b| {
+            CompositionOffsetBox::parse(b)
+        }) {
+            Ok(found) => (found, false),
+            Err(_) => (None, true),
+        };
+        if ctts_bad {
+            ignored(defects, *b"ctts");
+        }
+        let (stss, stss_bad) =
+            match find_child(children, b"stss", stss_of, |b| SyncSampleBox::parse(b)) {
+                Ok(found) => (found, false),
+                Err(_) => (None, true),
+            };
+        if stss_bad {
+            ignored(defects, *b"stss");
+        }
+        let (stsz, stsz_bad) =
+            match find_child(children, b"stsz", stsz_of, |b| SampleSizeBox::parse(b)) {
+                Ok(found) => (found, false),
+                Err(_) => (None, true),
+            };
+        if stsz_bad {
+            ignored(defects, *b"stsz");
+        }
+        let (stz2, stz2_bad) = match find_child(children, b"stz2", stz2_of, |b| {
+            CompactSampleSizeBox::parse(b)
+        }) {
+            Ok(found) => (found, false),
+            Err(_) => (None, true),
+        };
+        if stz2_bad {
+            ignored(defects, *b"stz2");
+        }
+        let (stsz, stz2) = match (stsz, stz2) {
+            (Some(sz), Some(compact)) => {
+                defects.push(SampleTableDefect {
+                    fourcc: *b"stz2",
+                    kind: SampleTableDefectKind::Ignored,
+                    dropped: 0,
+                });
+                (Some(sz), Some(compact))
+            }
+            (none, compact) => (none, compact),
+        };
+        if stsz.is_none() && stz2.is_none() {
+            return None;
+        }
+        let (stsc, _) = match find_child(children, b"stsc", stsc_of, |b| SampleToChunkBox::parse(b))
+        {
+            Ok(found) => (found, false),
+            Err(_) => (None, true),
+        };
+        let stsc = stsc?;
+        let (co64, _) = match find_child(children, b"co64", co64_of, |b| {
+            ChunkLargeOffsetBox::parse(b)
+        }) {
+            Ok(found) => (found, false),
+            Err(_) => (None, true),
+        };
+        let (stco, _) = match find_child(children, b"stco", stco_of, |b| ChunkOffsetBox::parse(b)) {
+            Ok(found) => (found, false),
+            Err(_) => (None, true),
+        };
+        if co64.is_none() && stco.is_none() {
+            return None;
+        }
+        Some(Self {
             stts,
             ctts,
             stsc,
@@ -273,10 +435,13 @@ impl Layout {
         })
     }
 
-    fn stts<'a>(&self, stbl: &'a SampleTableBox) -> Result<&'a TimeToSampleBox> {
-        match stbl.children.get(self.stts) {
-            Some(StblChild::Stts(b)) => Ok(b),
-            _ => Err(Error::InvalidInput("sample table changed under its cursor")),
+    fn stts<'a>(&self, stbl: &'a SampleTableBox) -> Result<Option<&'a TimeToSampleBox>> {
+        match self.stts {
+            None => Ok(None),
+            Some(index) => match stbl.children.get(index) {
+                Some(StblChild::Stts(b)) => Ok(Some(b)),
+                _ => Err(Error::InvalidInput("sample table changed under its cursor")),
+            },
         }
     }
 
@@ -353,6 +518,70 @@ pub struct CursorState {
     pos: Pos,
     done: bool,
     aux: Option<Vec<crate::writer::SampleAux>>,
+}
+
+/// What a tolerant sample-table walk found wrong with one track's tables.
+///
+/// The reader turns each into a report: the four-CC names the table, the kind
+/// says whether the table was ignored or units were dropped, and `dropped`
+/// counts the units lost.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SampleTableDefect {
+    pub(crate) fourcc: [u8; BOX_TYPE_SIZE],
+    pub(crate) kind: SampleTableDefectKind,
+    pub(crate) dropped: u64,
+}
+
+/// The two ways a defective table costs media.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SampleTableDefectKind {
+    /// The table is missing or unparseable; the format's default applies and
+    /// every sample is still addressed.
+    Ignored,
+    /// The sample count is cut to the shortest extent the tables agree on.
+    SamplesDropped,
+    /// No table can address a sample of this track at all.
+    Unusable,
+}
+
+/// The first sample index whose size exceeds `cap`, when one does.
+fn first_oversized(size_table: SizeTable<'_>, total: u32, cap: u32) -> Option<u32> {
+    (0..total).find(|index| size_table.size(*index).is_ok_and(|size| size > cap))
+}
+
+/// The total duration a track's `stts` states, in its own timescale
+/// (ISO/IEC 14496-12:2026 §8.6.1.2).
+pub(crate) fn declared_duration(stbl: &SampleTableBox) -> Option<u64> {
+    let stts = stbl.children.iter().find_map(|child| match child {
+        StblChild::Stts(box_) => Some(box_),
+        _ => None,
+    })?;
+    Some(stts.entries.iter().fold(0u64, |total, entry| {
+        total.saturating_add(u64::from(entry.sample_count) * u64::from(entry.sample_delta))
+    }))
+}
+
+/// How many samples the `stsc` runs and `stco` entries can address together.
+fn coverable_samples(entries: &[StscEntry], chunk_count: usize) -> u64 {
+    let chunk_count = u64::try_from(chunk_count).unwrap_or(u64::MAX);
+    let mut total = 0u64;
+    for (index, entry) in entries.iter().enumerate() {
+        let per_chunk = u64::from(entry.samples_per_chunk);
+        if per_chunk == 0 {
+            continue;
+        }
+        let first = u64::from(entry.first_chunk);
+        let next = entries
+            .get(index + 1)
+            .map_or(chunk_count.saturating_add(1), |next| {
+                u64::from(next.first_chunk)
+            });
+        let span = next
+            .min(chunk_count.saturating_add(1))
+            .saturating_sub(first);
+        total = total.saturating_add(span.saturating_mul(per_chunk));
+    }
+    total
 }
 
 impl CursorState {
@@ -451,6 +680,128 @@ impl CursorState {
         Ok(state)
     }
 
+    /// Resolve a track's sample tables as far as they go, reporting every
+    /// table the walk had to do without.
+    ///
+    /// Best effort: a table whose every entry is addressable is walked
+    /// exactly as [`CursorState::new_with_aux`] walks it; a table that is
+    /// missing or unparseable takes the format's default, the sample count is
+    /// cut to the shortest extent every table agrees on, and a defective
+    /// extent is reported by the caller when the walk reaches it. `None` means
+    /// no table can address a sample at all, so the track has no media.
+    pub(crate) fn tolerant(
+        stbl: &SampleTableBox,
+        track: TrackId,
+        limits: &Limits,
+        file_len: Option<u64>,
+        per_sample_iv_size: Option<u8>,
+    ) -> Result<(Option<Self>, Vec<SampleTableDefect>)> {
+        let mut defects = Vec::new();
+        let Some(layout) = Layout::resolve_lenient(&stbl.children, &mut defects) else {
+            return Ok((None, defects));
+        };
+        let Some(size_table) = layout.size_table(stbl).ok() else {
+            defects.push(SampleTableDefect {
+                fourcc: *b"stsz",
+                kind: SampleTableDefectKind::Unusable,
+                dropped: 0,
+            });
+            return Ok((None, defects));
+        };
+        let mut total = size_table.count();
+        if let Ok(Some(stts)) = layout.stts(stbl) {
+            let stated = stts.entries.iter().fold(0u64, |total, entry| {
+                total.saturating_add(u64::from(entry.sample_count))
+            });
+            let stated = u32::try_from(stated).unwrap_or(u32::MAX);
+            if stated < total {
+                defects.push(SampleTableDefect {
+                    fourcc: *b"stts",
+                    kind: SampleTableDefectKind::SamplesDropped,
+                    dropped: u64::from(total - stated),
+                });
+                total = stated;
+            }
+        }
+        let (stsc, chunk_count) = match (layout.stsc(stbl), layout.chunk_offsets(stbl)) {
+            (Ok(stsc), Ok(offsets)) => (stsc, offsets.len()),
+            _ => {
+                defects.push(SampleTableDefect {
+                    fourcc: *b"stsc",
+                    kind: SampleTableDefectKind::Unusable,
+                    dropped: u64::from(total),
+                });
+                return Ok((None, defects));
+            }
+        };
+        let covered =
+            u32::try_from(coverable_samples(&stsc.entries, chunk_count)).unwrap_or(u32::MAX);
+        if covered < total {
+            defects.push(SampleTableDefect {
+                fourcc: *b"stsc",
+                kind: SampleTableDefectKind::SamplesDropped,
+                dropped: u64::from(total - covered),
+            });
+            total = covered;
+        }
+        // The caller's caps bind in every mode.
+        if u64::from(total) > u64::from(limits.max_samples_per_track()) {
+            return Err(Error::LimitExceeded {
+                what: "samples per track",
+                limit: u64::from(limits.max_samples_per_track()),
+            });
+        }
+        // A sample the caller's cap refuses is not delivered: the track stops
+        // before it and the rest is reported, so one hostile size costs its
+        // own tail rather than the file.
+        if let Some(first) = first_oversized(size_table, total, limits.max_sample_bytes()) {
+            defects.push(SampleTableDefect {
+                fourcc: *b"stsz",
+                kind: SampleTableDefectKind::SamplesDropped,
+                dropped: u64::from(total - first),
+            });
+            total = first;
+        }
+        let aux = match per_sample_iv_size {
+            Some(iv_size) => progressive_aux(stbl, iv_size, total).ok().flatten(),
+            None => None,
+        };
+        let mut state = Self {
+            track,
+            layout,
+            total_samples: total,
+            file_len,
+            pos: Pos {
+                sample: 0,
+                decode_time: 0,
+                total_bytes: 0,
+                stts_run: 0,
+                stts_left: 0,
+                ctts_run: 0,
+                ctts_left: 0,
+                chunk_no: 0,
+                chunk_remaining: 0,
+                chunk_cursor: 0,
+                stsc_run: 0,
+                stss_pos: 0,
+            },
+            done: false,
+            aux,
+        };
+        match state.start(stbl) {
+            Ok(pos) => state.pos = pos,
+            Err(_) => {
+                defects.push(SampleTableDefect {
+                    fourcc: *b"stbl",
+                    kind: SampleTableDefectKind::Unusable,
+                    dropped: u64::from(total),
+                });
+                state.done = true;
+            }
+        }
+        Ok((Some(state), defects))
+    }
+
     /// The track this cursor walks.
     pub fn track(&self) -> TrackId {
         self.track
@@ -515,8 +866,9 @@ impl CursorState {
         }
         if self.pos.sample >= self.total_samples {
             self.done = true;
-            let stts = self.layout.stts(stbl)?;
-            if self.stts_remainder(stts) != 0 {
+            if let Some(stts) = self.layout.stts(stbl)?
+                && self.stts_remainder(stts) != 0
+            {
                 return Err(Error::InvalidInput(
                     "stts sample count does not match chunk layout",
                 ));
@@ -554,7 +906,9 @@ impl CursorState {
             decode_time: 0,
             total_bytes: 0,
             stts_run: 0,
-            stts_left: stts.entries.first().map_or(0, |e| e.sample_count),
+            stts_left: stts
+                .and_then(|stts| stts.entries.first())
+                .map_or(0, |e| e.sample_count),
             ctts_run: 0,
             ctts_left: ctts
                 .and_then(|c| c.entries.first())
@@ -565,7 +919,9 @@ impl CursorState {
             stsc_run: 0,
             stss_pos: 0,
         };
-        self.advance_stts_run(stts, &mut pos);
+        if let Some(stts) = stts {
+            self.advance_stts_run(stts, &mut pos);
+        }
         if let Some(ctts) = ctts {
             self.advance_ctts_run(ctts, &mut pos);
         }
@@ -632,9 +988,10 @@ impl CursorState {
     }
 
     fn current_duration(&self, stbl: &SampleTableBox) -> Result<u32> {
-        self.layout
-            .stts(stbl)?
-            .entries
+        let Some(stts) = self.layout.stts(stbl)? else {
+            return Ok(0);
+        };
+        stts.entries
             .get(self.pos.stts_run)
             .map(|e| e.sample_delta)
             .ok_or(Error::InvalidInput(
@@ -730,7 +1087,9 @@ impl CursorState {
         if pos.stts_left > 0 {
             pos.stts_left -= 1;
         }
-        self.advance_stts_run(stts, &mut pos);
+        if let Some(stts) = stts {
+            self.advance_stts_run(stts, &mut pos);
+        }
         if let Some(ctts) = ctts {
             if pos.ctts_left > 0 {
                 pos.ctts_left -= 1;

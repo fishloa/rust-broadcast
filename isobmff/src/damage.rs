@@ -92,6 +92,27 @@ impl Warning {
                 Some(DamageByteRange::new(offset, carried)),
                 true,
             ),
+            Self::Resynchronised { offset } => (
+                DamageKind::Resynchronised,
+                Severity::Degraded,
+                None,
+                Some(DamageByteRange::new(offset, 0)),
+                false,
+            ),
+            Self::RebasedFragment { offset } => (
+                DamageKind::TimelineRepaired,
+                Severity::Degraded,
+                None,
+                Some(DamageByteRange::new(offset, 0)),
+                false,
+            ),
+            Self::SynthesizedBox { box_type, offset } => (
+                DamageKind::MetadataSkipped,
+                Severity::Degraded,
+                Some(box_type),
+                Some(DamageByteRange::new(offset, 0)),
+                false,
+            ),
             Self::UnrepresentableBox {
                 box_type, offset, ..
             } => (
@@ -161,6 +182,18 @@ impl ImageFinding {
                 Some(DamageByteRange::new(offset, 0)),
                 true,
                 None,
+            ),
+            Self::ItemDataDropped {
+                item,
+                offset,
+                length,
+            } => (
+                DamageKind::MediaUnitDropped,
+                Severity::Degraded,
+                None,
+                Some(DamageByteRange::new(offset, length)),
+                false,
+                Some(u64::from(item.get())),
             ),
             Self::ToneMapWrongInputCount { item, .. }
             | Self::RegionNamesMissingImage { item, .. }

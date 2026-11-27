@@ -1046,8 +1046,9 @@ impl TrackFragmentBox {
         let mut order: Vec<TrafChild> = Vec::new();
         // The crate's one container-child walker (audit r05-O3 / #1141): this
         // loop used to be a private copy of it.
-        for child in crate::box_types::BoxIter::new(body) {
-            let child = child?;
+        let degrade = notes.as_deref().is_some_and(|notes| notes.degrades());
+        let (children, _) = crate::box_support::container_children(body, degrade)?;
+        for child in children {
             if child.header.box_type.is(b"tfhd") {
                 let parsed = TrackFragmentHeaderBox::parse_body(child.payload())?;
                 if let Some(notes) = notes.as_deref_mut() {
@@ -1219,8 +1220,9 @@ impl MovieFragmentBox {
         let mut mfhd: Option<MovieFragmentHeaderBox> = None;
         let mut traf: Vec<TrackFragmentBox> = Vec::new();
         let mut order: Vec<MoofChild> = Vec::new();
-        for child in crate::box_types::BoxIter::new(body) {
-            let child = child?;
+        let degrade = notes.as_deref().is_some_and(|notes| notes.degrades());
+        let (children, _) = crate::box_support::container_children(body, degrade)?;
+        for child in children {
             if child.header.box_type.is(b"mfhd") {
                 mfhd = Some(MovieFragmentHeaderBox::parse_body(child.payload())?);
                 order.push(MoofChild::Mfhd);

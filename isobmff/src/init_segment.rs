@@ -131,6 +131,41 @@ pub struct MovieHeaderBox {
     pub next_track_id: TrackId,
 }
 
+/// The unity rate and volume a real movie header carries (§8.2.2.2), as the
+/// 16.16 and 8.8 fixed-point integers the wire states.
+const MVHD_UNITY_RATE: u32 = 0x0001_0000;
+/// See [`MVHD_UNITY_RATE`].
+const MVHD_UNITY_VOLUME: u16 = 0x0100;
+/// The identity transformation matrix (§8.2.2.2).
+const MVHD_UNITY_MATRIX: [i32; MATRIX_VALUES] =
+    [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000];
+/// The timescale a synthesized movie header uses when the file states none.
+/// One is the smallest legal value, so durations in it are the film's track
+/// durations counted in ticks.
+const SYNTHESIZED_MVHD_TIMESCALE: u32 = 1;
+
+impl MovieHeaderBox {
+    /// A movie header standing in for one the file does not state: a one-tick
+    /// timescale, no duration, unity rate and volume, and an identity matrix.
+    #[must_use]
+    pub(crate) fn default_header() -> Self {
+        Self {
+            version: 0,
+            flags: 0,
+            creation_time: 0,
+            modification_time: 0,
+            timescale: broadcast_core::timescale!(SYNTHESIZED_MVHD_TIMESCALE),
+            duration: 0,
+            rate: MVHD_UNITY_RATE,
+            volume: MVHD_UNITY_VOLUME,
+            reserved: [0u8; MVHD_RESERVED_LEN],
+            matrix: MVHD_UNITY_MATRIX,
+            pre_defined: [0u8; MVHD_PRE_DEFINED_LEN],
+            next_track_id: crate::track_id::TrackId::new(1),
+        }
+    }
+}
+
 impl<'a> Parse<'a> for MovieHeaderBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -4493,8 +4528,13 @@ impl DataInformationBox {
         let mut dref = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        for child in parse_box(bytes)?.0.children() {
-            let child = child?;
+        let parsed = parse_box(bytes)?.0;
+        let degrade = notes.as_deref().is_some_and(|notes| notes.degrades());
+        let (children, tail) = crate::box_support::container_children(parsed.body, degrade)?;
+        if let (Some(tail), Some(notes)) = (tail, notes.as_deref_mut()) {
+            notes.trailing(tail, tail.len());
+        }
+        for child in children {
             if child.header.box_type.is(b"dref") {
                 order.push(child.four_cc());
                 let parsed = DataReferenceBox::parse(child.bytes)?;
@@ -4766,8 +4806,13 @@ impl MediaInformationBox {
         let mut stbl = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        for child in parse_box(bytes)?.0.children() {
-            let child = child?;
+        let parsed = parse_box(bytes)?.0;
+        let degrade = notes.as_deref().is_some_and(|notes| notes.degrades());
+        let (children, tail) = crate::box_support::container_children(parsed.body, degrade)?;
+        if let (Some(tail), Some(notes)) = (tail, notes.as_deref_mut()) {
+            notes.trailing(tail, tail.len());
+        }
+        for child in children {
             match &child.four_cc() {
                 b"vmhd" => {
                     order.push(child.four_cc());
@@ -5019,8 +5064,13 @@ impl MediaBox {
         let mut elng = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        for child in parse_box(bytes)?.0.children() {
-            let child = child?;
+        let parsed = parse_box(bytes)?.0;
+        let degrade = notes.as_deref().is_some_and(|notes| notes.degrades());
+        let (children, tail) = crate::box_support::container_children(parsed.body, degrade)?;
+        if let (Some(tail), Some(notes)) = (tail, notes.as_deref_mut()) {
+            notes.trailing(tail, tail.len());
+        }
+        for child in children {
             match &child.four_cc() {
                 b"mdhd" => {
                     order.push(child.four_cc());
@@ -5163,8 +5213,9 @@ impl<'a> Parse<'a> for EditBox {
         let mut elst = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        for child in parse_box(bytes)?.0.children() {
-            let child = child?;
+        let parsed = parse_box(bytes)?.0;
+        let (children, _) = crate::box_support::container_children(parsed.body, false)?;
+        for child in children {
             if child.header.box_type.is(b"elst") {
                 order.push(child.four_cc());
                 elst = Some(crate::timing::EditListBox::parse(child.bytes)?);
@@ -5368,8 +5419,13 @@ impl TrackBox {
         let mut trgr = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        for child in parse_box(bytes)?.0.children() {
-            let child = child?;
+        let parsed = parse_box(bytes)?.0;
+        let degrade = notes.as_deref().is_some_and(|notes| notes.degrades());
+        let (children, tail) = crate::box_support::container_children(parsed.body, degrade)?;
+        if let (Some(tail), Some(notes)) = (tail, notes.as_deref_mut()) {
+            notes.trailing(tail, tail.len());
+        }
+        for child in children {
             match &child.four_cc() {
                 b"tkhd" => {
                     order.push(child.four_cc());
@@ -5819,8 +5875,9 @@ impl<'a> Parse<'a> for MovieExtendsBox {
         let mut mehd = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        for child in parse_box(bytes)?.0.children() {
-            let child = child?;
+        let parsed = parse_box(bytes)?.0;
+        let (children, _) = crate::box_support::container_children(parsed.body, false)?;
+        for child in children {
             match &child.four_cc() {
                 b"trex" => {
                     order.push(child.four_cc());
@@ -5987,25 +6044,74 @@ impl MovieBox {
         let mut mvex = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
-        for child in parse_box(bytes)?.0.children() {
-            let child = child?;
+        let parsed = parse_box(bytes)?.0;
+        let degrade = notes.as_deref().is_some_and(|notes| notes.degrades());
+        let (children, tail) = crate::box_support::container_children(parsed.body, degrade)?;
+        if let (Some(tail), Some(notes)) = (tail, notes.as_deref_mut()) {
+            notes.trailing(tail, tail.len());
+        }
+        for child in children {
             match &child.four_cc() {
-                b"mvhd" => {
-                    order.push(child.four_cc());
-                    mvhd = Some(MovieHeaderBox::parse(child.bytes)?);
-                }
-                b"trak" => {
-                    order.push(child.four_cc());
-                    tracks.push(TrackBox::parse_notes(
-                        child.bytes,
-                        notes.as_deref_mut(),
-                        limits,
-                    )?);
-                }
-                b"mvex" => {
-                    order.push(child.four_cc());
-                    mvex = Some(MovieExtendsBox::parse(child.bytes)?);
-                }
+                b"mvhd" => match MovieHeaderBox::parse(child.bytes) {
+                    Ok(header) => {
+                        order.push(child.four_cc());
+                        mvhd = Some(header);
+                    }
+                    // The movie header states the timescale every track's
+                    // duration is compared in. A default keeps the traks
+                    // readable; the walk's notes report what was replaced.
+                    Err(err)
+                        if notes.as_deref().is_some_and(|notes| notes.degrades())
+                            && !matches!(err, Error::LimitExceeded { .. }) =>
+                    {
+                        if let Some(notes) = notes.as_deref_mut() {
+                            notes.missing(child.bytes, *b"mvhd");
+                        }
+                        order.push(child.four_cc());
+                        mvhd = Some(MovieHeaderBox::default_header());
+                    }
+                    Err(err) => return Err(err),
+                },
+                b"trak" => match TrackBox::parse_notes(child.bytes, notes.as_deref_mut(), limits) {
+                    Ok(track) => {
+                        order.push(child.four_cc());
+                        tracks.push(track);
+                    }
+                    // A track whose own structure cannot be read costs that
+                    // track, not the file: it is carried opaque in its own
+                    // position and the walk's notes report it. A caller's cap
+                    // is never a fault to read past.
+                    Err(err)
+                        if notes.as_deref().is_some_and(|notes| notes.degrades())
+                            && !matches!(err, Error::LimitExceeded { .. }) =>
+                    {
+                        if let Some(notes) = notes.as_deref_mut() {
+                            notes.unrepresentable(child.bytes, &err);
+                        }
+                        order.push_opaque(child.four_cc());
+                        opaque.push(crate::box_support::opaque_child(&child));
+                    }
+                    Err(err) => return Err(err),
+                },
+                b"mvex" => match MovieExtendsBox::parse(child.bytes) {
+                    Ok(extends) => {
+                        order.push(child.four_cc());
+                        mvex = Some(extends);
+                    }
+                    // Without `mvex` the fragment defaults are unknown; the
+                    // fragments that need one report it themselves.
+                    Err(err)
+                        if notes.as_deref().is_some_and(|notes| notes.degrades())
+                            && !matches!(err, Error::LimitExceeded { .. }) =>
+                    {
+                        if let Some(notes) = notes.as_deref_mut() {
+                            notes.unrepresentable(child.bytes, &err);
+                        }
+                        order.push_opaque(child.four_cc());
+                        opaque.push(crate::box_support::opaque_child(&child));
+                    }
+                    Err(err) => return Err(err),
+                },
                 // `pssh`/`udta`/`meta`/`iods` stay opaque, in place: the
                 // conventional layout writes `pssh` ahead of the `trak`s, and the
                 // old serializer always emitted it last.
@@ -6018,12 +6124,24 @@ impl MovieBox {
                 }
             }
         }
+        let mvhd = match mvhd {
+            Some(mvhd) => mvhd,
+            None if notes.as_deref().is_some_and(|notes| notes.degrades()) => {
+                if let Some(notes) = notes.as_deref_mut() {
+                    notes.missing(bytes, *b"mvhd");
+                }
+                MovieHeaderBox::default_header()
+            }
+            None => {
+                return Err(Error::BufferTooShort(BufferTooShort {
+                    need: 0,
+                    have: 0,
+                    what: "moov missing mvhd",
+                }));
+            }
+        };
         Ok(Self {
-            mvhd: mvhd.ok_or(Error::BufferTooShort(BufferTooShort {
-                need: 0,
-                have: 0,
-                what: "moov missing mvhd",
-            }))?,
+            mvhd,
             tracks,
             mvex,
             opaque,

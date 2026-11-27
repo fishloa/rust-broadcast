@@ -152,12 +152,15 @@ const META_LARGESIZE_ZERO: [u8; 29] = [
 ];
 
 #[test]
-fn item_reader_zero_largesize_child_is_a_typed_error() {
+fn item_reader_zero_sized_meta_box_stays_bounded() {
     use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
 
+    // A `meta` box whose size field is zero claims the whole input: the walk
+    // must stay bounded and either model nothing or say why.
     let data = &META_LARGESIZE_ZERO;
     let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
     let mut reader = ItemReader::new(config);
+    let mut reports = 0usize;
     loop {
         match reader.step() {
             Ok(ItemStep::Need(range)) => {
@@ -171,8 +174,13 @@ fn item_reader_zero_largesize_child_is_a_typed_error() {
                     return;
                 }
             }
-            Ok(ItemStep::Loaded(_)) => panic!("a zero largesize must not load"),
-            Ok(ItemStep::Done) => panic!("done without an error"),
+            Ok(ItemStep::Damage(_)) => reports += 1,
+            Ok(ItemStep::Loaded(image)) => {
+                assert_eq!(image.items().len(), 0, "no item is described by zero bytes");
+                assert!(reports > 0, "an empty model says why: {reports}");
+                return;
+            }
+            Ok(ItemStep::Done) => panic!("done without a model"),
             Ok(_) => {}
             Err(err) => {
                 assert!(

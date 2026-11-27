@@ -382,6 +382,11 @@ pub(crate) enum Note {
         offset: u64,
         reason: crate::error::OpaqueReason,
     },
+    /// A header the walk needs was absent; a default was synthesized for it.
+    Missing {
+        box_type: [u8; BOX_TYPE_SIZE],
+        offset: u64,
+    },
     /// The typed parse succeeded and kept bytes past its last declared field.
     Trailing {
         box_type: [u8; BOX_TYPE_SIZE],
@@ -466,6 +471,14 @@ impl<'a> Notes<'a> {
         });
     }
 
+    /// Report a header that was missing, so a default replaced it.
+    pub(crate) fn missing(&mut self, bytes: &[u8], fourcc: [u8; BOX_TYPE_SIZE]) {
+        self.out.push(Note::Missing {
+            box_type: fourcc,
+            offset: self.offset_of(bytes),
+        });
+    }
+
     /// Report bytes a typed parse carried past its last declared field.
     pub(crate) fn trailing(&mut self, bytes: &[u8], carried: usize) {
         if carried == 0 {
@@ -490,6 +503,40 @@ pub(crate) fn reject_past_fields(body: &[u8], declared: usize, what: &'static st
         return Err(Error::InvalidInput(what));
     }
     Ok(())
+}
+
+/// One container's children, walking strictly unless the sink degrades.
+///
+/// A best-effort walk stops at a trailing run too short to be a box and hands
+/// that tail back, so the caller can report it instead of failing the
+/// container. A strict walk keeps every error.
+pub(crate) fn container_children<'a>(
+    body: &'a [u8],
+    degrade: bool,
+) -> Result<(Vec<crate::box_types::BoxItem<'a>>, Option<&'a [u8]>)> {
+    if !degrade {
+        let items = crate::box_types::BoxIter::new(body).collect::<Result<Vec<_>>>()?;
+        return Ok((items, None));
+    }
+    let mut items = Vec::new();
+    let mut end = 0usize;
+    for item in crate::box_types::BoxIter::new(body) {
+        let Ok(item) = item else {
+            // The caller's caps bind in every mode: a limit is never a fault
+            // a best-effort walk reads past.
+            if let Err(limit @ Error::LimitExceeded { .. }) = item {
+                return Err(limit);
+            }
+            // A child that overruns the container, or a run too short to be a
+            // box, ends the walk: the bytes from the last child's end are the
+            // tail the caller reports.
+            break;
+        };
+        end = item.end;
+        items.push(item);
+    }
+    let tail = (end < body.len()).then(|| &body[end..]);
+    Ok((items, tail))
 }
 
 /// A sibling the crate does not type, kept opaque with its header form.

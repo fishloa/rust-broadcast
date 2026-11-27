@@ -7,6 +7,7 @@ mod cenc;
 mod codec_config_boxes;
 mod container_child_order;
 mod coverage;
+mod damage_matrix;
 mod degrade_nonstructural;
 mod esds_config;
 mod fixture_read_equality;
