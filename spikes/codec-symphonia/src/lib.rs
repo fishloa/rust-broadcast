@@ -31,7 +31,7 @@ use std::collections::VecDeque;
 use std::num::NonZeroU32;
 
 use broadcast_codec::{
-    AudioFrame, AudioSamples, ChannelLayout, CodecDescriptor, CodecError, CodecId, CodecParameters,
+    AudioFrame, AudioSamples, ChannelLayout, CodecDescriptor, CodecError, CodecId, CodecParameters, DecoderDelay, DecoderTrim,
     CodecProfile, CodecProvider, Decoder, Direction, Encoder, EncoderConfig, Frame, Packet, Probe,
     ProviderInfo, SampleFormat, SampleLayout,
 };
@@ -215,7 +215,7 @@ impl CodecProvider for SymphoniaProvider {
     fn descriptors(&self) -> Vec<CodecDescriptor> {
         CodecDescriptor::new(PROVIDER, IMPLEMENTATION, CodecId::Aac, Direction::Decode)
             .with_sample_formats(vec![SampleFormat::F32])
-            .with_trims(false)
+            .with_trim(DecoderTrim::Caller(DecoderDelay::Declared(0)))
             .with_profiles([AAC_PROFILE])
             .into_iter()
             .collect()

@@ -8,60 +8,43 @@
 //! partial revert; both are caught here. This is a lexical tripwire, not a
 //! proof: a name built at runtime or spelled in a macro evades it, so code
 //! review remains the real control.
+//!
+//! Each table entry is reached from the identifier before its last `::`, so
+//! the 150-odd names cost one scan per distinct needle (`transmux`,
+//! `broadcast_common`, …) rather than one scan per name, while every file is
+//! still read exactly once.
 
 use workspace_guards::{crate_dir, rs_files, workspace_members};
 
-use crate::deleted_names_data::{Banned, EXEMPT, TABLE};
+use crate::deleted_names_data::{EXEMPT, TABLE};
 
 fn is_ident(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-fn names_whole_identifier(text: &str, name: &str) -> bool {
-    let mut from = 0;
-    while let Some(offset) = text[from..].find(name) {
-        let begin = from + offset;
-        let end = begin + name.len();
-        let starts = text[..begin]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !is_ident(c));
-        let ends = text[end..].chars().next().is_none_or(|c| !is_ident(c));
-        if starts && ends {
-            return true;
-        }
-        from = end;
-    }
-    false
+/// `true` when the character at byte `end` does not continue an identifier.
+fn ends_identifier(text: &str, end: usize) -> bool {
+    text[end..].chars().next().is_none_or(|c| !is_ident(c))
 }
 
-/// Byte offsets of every `prefix::{...}` group in `text` whose braces contain
-/// `leaf` as a whole identifier.
-fn group_offsets(text: &str, prefix: &str, leaf: &str) -> Vec<usize> {
-    let mut offsets = Vec::new();
-    let mut from = 0;
-    while let Some(found) = text[from..].find(prefix) {
-        let begin = from + found;
-        let after = begin + prefix.len();
-        if text[..begin]
-            .chars()
-            .next_back()
-            .is_none_or(|c| !is_ident(c))
-        {
-            let rest = text[after..].trim_start();
-            if let Some(rest) = rest.strip_prefix("::") {
-                let rest = rest.trim_start();
-                if let Some(rest) = rest.strip_prefix('{')
-                    && let Some(end) = matching_brace(rest)
-                    && names_whole_identifier(&rest[..end], leaf)
-                {
-                    offsets.push(begin);
-                }
-            }
-        }
-        from = after;
-    }
-    offsets
+/// Byte offsets of every occurrence of `needle` in `text` that starts a whole
+/// identifier.
+fn identifier_starts<'t>(text: &'t str, needle: &'t str) -> impl Iterator<Item = usize> + 't {
+    text.match_indices(needle)
+        .map(|(begin, _)| begin)
+        .filter(move |&begin| {
+            text[..begin]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !is_ident(c))
+        })
+}
+
+/// `true` when `name` occurs in `text` as a whole identifier rather than as
+/// the prefix of a longer one (`CmafMux` must not match `CmafMuxStage`, and
+/// `broadcast_common::wire` must not match `broadcast_common::wire_enum`).
+fn names_whole_identifier(text: &str, name: &str) -> bool {
+    identifier_starts(text, name).any(|begin| ends_identifier(text, begin + name.len()))
 }
 
 fn matching_brace(text: &str) -> Option<usize> {
@@ -77,39 +60,90 @@ fn matching_brace(text: &str) -> Option<usize> {
     None
 }
 
-/// `true` when `name` occurs in `text` as a whole identifier rather than as
-/// the prefix of a longer one (`CmafMux` must not match `CmafMuxStage`, and
-/// `broadcast_common::wire` must not match `broadcast_common::wire_enum`). A
-/// qualified name (one containing `::`) matches as written or as a member of
-/// a `prefix::{...}` group.
-fn names_deleted(text: &str, name: &str) -> bool {
-    if let Some((prefix, leaf)) = name.rsplit_once("::") {
-        return names_whole_identifier(text, name) || !group_offsets(text, prefix, leaf).is_empty();
-    }
-    names_whole_identifier(text, name)
+/// The identifier a table entry is reached from: the name itself when it is
+/// unqualified, otherwise everything before its final `::`.
+fn needle_of(name: &str) -> &str {
+    name.rsplit_once("::").map_or(name, |(prefix, _)| prefix)
 }
 
-fn scan_file(path: &std::path::Path, text: &str, banned: &Banned, problems: &mut Vec<String>) {
-    let mut hits: Vec<usize> = text
-        .lines()
-        .enumerate()
-        .filter(|(_, line)| names_deleted(line, banned.name))
-        .map(|(line_no, _)| line_no + 1)
-        .collect();
-    if let Some((prefix, leaf)) = banned.name.rsplit_once("::") {
-        for offset in group_offsets(text, prefix, leaf) {
-            let line_no = text[..offset].matches('\n').count() + 1;
-            if !hits.contains(&line_no) {
-                hits.push(line_no);
+/// `true` when an occurrence of [`needle_of`]`(name)` beginning at `begin`
+/// spells `name`: as written (`prefix::leaf`), or as a member of a
+/// `prefix::{...}` group.
+fn match_at(text: &str, begin: usize, name: &str) -> bool {
+    let Some((prefix, leaf)) = name.rsplit_once("::") else {
+        return ends_identifier(text, begin + name.len());
+    };
+    let rest = &text[begin + prefix.len()..];
+    if let Some(after) = rest.strip_prefix("::")
+        && after.starts_with(leaf)
+        && ends_identifier(after, leaf.len())
+    {
+        return true;
+    }
+    let trimmed = rest.trim_start();
+    if let Some(after) = trimmed.strip_prefix("::") {
+        let after = after.trim_start();
+        if let Some(after) = after.strip_prefix('{')
+            && let Some(end) = matching_brace(after)
+            && names_whole_identifier(&after[..end], leaf)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// `true` when `name` is spelled in `text` as a whole identifier.
+fn names_deleted(text: &str, name: &str) -> bool {
+    identifier_starts(text, needle_of(name)).any(|begin| match_at(text, begin, name))
+}
+
+/// The table grouped by [`needle_of`], so each needle is scanned for once.
+struct Group {
+    needle: &'static str,
+    /// Table indices, in table order.
+    entries: Vec<usize>,
+}
+
+fn groups() -> Vec<Group> {
+    let mut out: Vec<Group> = Vec::new();
+    for (index, banned) in TABLE.iter().enumerate() {
+        let needle = needle_of(banned.name);
+        match out.iter_mut().find(|group| group.needle == needle) {
+            Some(group) => group.entries.push(index),
+            None => out.push(Group {
+                needle,
+                entries: vec![index],
+            }),
+        }
+    }
+    out
+}
+
+fn scan_file(path: &std::path::Path, text: &str, groups: &[Group], problems: &mut Vec<String>) {
+    let mut hits: Vec<(usize, usize)> = Vec::new();
+    for group in groups {
+        for begin in identifier_starts(text, group.needle) {
+            for &index in &group.entries {
+                if match_at(text, begin, TABLE[index].name) {
+                    hits.push((index, begin));
+                }
             }
         }
     }
     hits.sort_unstable();
-    for line_no in hits {
+    let mut previous: Option<(usize, usize)> = None;
+    for (index, offset) in hits {
+        let line = text[..offset].matches('\n').count() + 1;
+        if previous == Some((index, line)) {
+            continue;
+        }
+        previous = Some((index, line));
+        let banned = &TABLE[index];
         problems.push(format!(
             "{}:{}: `{}` is gone ({}): {}",
             path.display(),
-            line_no,
+            line,
             banned.name,
             banned.issue,
             banned.reason
@@ -119,6 +153,7 @@ fn scan_file(path: &std::path::Path, text: &str, banned: &Banned, problems: &mut
 
 #[test]
 fn deleted_names_stay_deleted() {
+    let groups = groups();
     let mut problems = Vec::new();
     for member in workspace_members() {
         if EXEMPT.contains(&member.as_str()) {
@@ -134,9 +169,7 @@ fn deleted_names_stay_deleted() {
                 let Ok(text) = std::fs::read_to_string(&file) else {
                     continue;
                 };
-                for banned in TABLE {
-                    scan_file(&file, &text, banned, &mut problems);
-                }
+                scan_file(&file, &text, &groups, &mut problems);
             }
         }
     }

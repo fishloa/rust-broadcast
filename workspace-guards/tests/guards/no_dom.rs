@@ -41,21 +41,15 @@ pub struct Crate {
 const BANNED_WORDS: [&str; 5] = ["Node", "Element", "Dom", "Tree", "Xml"];
 const ENTITY_LITERALS: [&str; 5] = ["&amp;", "&lt;", "&gt;", "&quot;", "&apos;"];
 
-/// The production code of a file as `(line number, line)` pairs: comment lines
-/// are dropped and every test-only item (`#[cfg(test)]`, `#[cfg(all(test,
-/// ..))]`) is blanked with the shared lexer, so production code after a
-/// mid-file test module is still scanned and every line number still matches
-/// the file.
-fn code_lines(text: &str) -> Vec<(usize, String)> {
+/// The production code of a file: comment lines are left in place but every
+/// test-only item (`#[cfg(test)]`, `#[cfg(all(test, ..))]`) is blanked with the
+/// shared lexer, so production code after a mid-file test module is still
+/// scanned and every line number still matches the file.
+fn code_text(text: &str) -> String {
     workspace_guards::scan::without_attributed_items(
         text,
         workspace_guards::scan::test_only_attribute,
     )
-    .lines()
-    .enumerate()
-    .filter(|(_, line)| !line.trim_start().starts_with("//"))
-    .map(|(no, line)| (no + 1, line.to_string()))
-    .collect()
 }
 
 /// The CamelCase words of an identifier (`XmlReader` -> `Xml`, `Reader`).
@@ -138,29 +132,27 @@ fn builds_xml_markup(line: &str) -> bool {
     line.contains("\"<?xml")
 }
 
-/// The line `n` (1-based) and the three after it, joined.
-fn lines_after(text: &str, n: usize) -> String {
-    text.lines()
-        .skip(n - 1)
-        .take(4)
-        .collect::<Vec<_>>()
-        .join("\n")
-}
+/// The lines a match/if arm's body may occupy: the arm line plus the three
+/// after it.
+const MARKUP_WINDOW: usize = 4;
 
 /// A match/if arm on the character `'&'`, `'<'` or `'>'` whose body pushes a
 /// string literal: the shape of a hand-rolled escape table.
-fn pushes_literal_for_markup_char(window: &str) -> bool {
-    let first = window.lines().next().unwrap_or("");
+fn pushes_literal_for_markup_char(window: &[&str]) -> bool {
+    let Some(first) = window.first() else {
+        return false;
+    };
     let on_markup_char = [
         "'&' =>", "'<' =>", "'>' =>", "== '&'", "== '<'", "== '>'", "'&' |", "'<' |", "'>' |",
     ]
     .iter()
     .any(|p| first.contains(p));
-    on_markup_char && window.contains("push_str(\"")
+    on_markup_char && window.iter().any(|line| line.contains("push_str(\""))
 }
 
 fn problems_in(c: &Crate, files: &[(String, String)]) -> Vec<String> {
     let mut hits = Vec::new();
+    let mut declared: Vec<String> = Vec::new();
     let mut xml_modules = 0;
     for (path, text) in files {
         let path = format!("{}: {path}", c.name);
@@ -168,8 +160,13 @@ fn problems_in(c: &Crate, files: &[(String, String)]) -> Vec<String> {
         if uses_quick_xml {
             xml_modules += 1;
         }
-        for (n, line) in code_lines(text) {
-            let line = line.as_str();
+        let code = code_text(text);
+        let raw: Vec<&str> = text.lines().collect();
+        for (index, line) in code.lines().enumerate() {
+            let n = index + 1;
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
             let at = |msg: &str| format!("{path}:{n}: {msg}");
             if line.contains("roxmltree") {
                 hits.push(at("`roxmltree`"));
@@ -188,6 +185,7 @@ fn problems_in(c: &Crate, files: &[(String, String)]) -> Vec<String> {
                 if banned && !c.allowed_types.iter().any(|(n, _)| *n == name) {
                     hits.push(at(&format!("type `{name}` looks like an XML tree; allowlist it with a reason if it is not")));
                 }
+                declared.push(name);
             }
             if uses_quick_xml && let Some(name) = declared_fn(line) {
                 let lower = name.to_ascii_lowercase();
@@ -199,7 +197,8 @@ fn problems_in(c: &Crate, files: &[(String, String)]) -> Vec<String> {
                     )));
                 }
             }
-            if pushes_literal_for_markup_char(&lines_after(text, n)) {
+            let window_end = (index + MARKUP_WINDOW).min(raw.len());
+            if pushes_literal_for_markup_char(&raw[index..window_end]) {
                 hits.push(at("match/if arm on '&', '<' or '>' pushing a string literal (hand-rolled escaping)"));
             }
             if !uses_quick_xml && builds_xml_markup(line) {
@@ -216,12 +215,7 @@ fn problems_in(c: &Crate, files: &[(String, String)]) -> Vec<String> {
         ));
     }
     for (allowed, _) in c.allowed_types {
-        let declared = files
-            .iter()
-            .flat_map(|(_, text)| code_lines(text))
-            .filter(|(_, line)| declared_type(line).as_deref() == Some(*allowed))
-            .count();
-        if declared == 0 {
+        if !declared.iter().any(|name| name == allowed) {
             hits.push(format!(
                 "{}: allowlisted type `{allowed}` is not declared anywhere (stale allowlist entry)",
                 c.name
@@ -264,14 +258,14 @@ fn code_lines_scans_past_multiline_cfg_test_mod() {
         }\n\
         struct XmlNode;\n\
         fn z() { let _ = \"x\".replace(\"&amp;\", \"&\"); }\n";
-    let code = code_lines(src);
+    let code = code_text(src);
     assert!(
-        code.iter().any(|(_, l)| l.contains("struct XmlNode;")),
+        code.lines().any(|l| l.contains("struct XmlNode;")),
         "offender after a multi-line cfg(test) mod was skipped: {code:?}"
     );
-    assert!(code.iter().any(|(_, l)| l.contains(".replace(\"&amp;\"")));
+    assert!(code.lines().any(|l| l.contains(".replace(\"&amp;\"")));
     assert!(
-        !code.iter().any(|(_, l)| l.contains("assert!(true)")),
+        !code.lines().any(|l| l.contains("assert!(true)")),
         "test-mod body must still be skipped"
     );
 }
@@ -304,10 +298,11 @@ fn problems_in_flags_a_dom_a_hand_escaper_and_a_stale_allow() {
 #[test]
 fn a_test_module_in_the_middle_does_not_hide_the_code_after_it() {
     let src = "#[cfg(test)]\nmod t {\n    fn f() {}\n}\nfn g(s: &str) -> String {\n    s.replace(\"&amp;\", \"&\")\n}\n";
-    let code = code_lines(src);
+    let code = code_text(src);
     assert!(
-        code.iter()
-            .any(|(no, line)| *no == 6 && line.contains("&amp;")),
+        code.lines()
+            .enumerate()
+            .any(|(index, line)| index + 1 == 6 && line.contains("&amp;")),
         "offender after a mid-file test module was skipped: {code:?}"
     );
 }

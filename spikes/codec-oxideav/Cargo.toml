@@ -21,6 +21,8 @@ oxideav-opus = "0.0"
 [dev-dependencies]
 codec-symphonia = { path = "../codec-symphonia" }
 test-fixtures = { path = "../../test-fixtures" }
+test-harness = { path = "../../test-harness" }
+transmux = { path = "../../transmux", default-features = false, features = ["std", "codec", "matroska"] }
 
 [lints.rust]
 unsafe_code = "deny"

@@ -230,9 +230,11 @@ impl Stage for ProgressiveMuxStage {
                 Ok(())
             }
             MuxInput::Sample { track, sample } => self.sample(track, sample),
-            MuxInput::Discontinuity { .. } => Err(Error::UnsupportedFeature(
-                "progressive: a single-file MP4 cannot signal a discontinuity",
-            )),
+            // The plan this stage was built from already states the break in
+            // its `stts` timeline (the [`PlanPass`] that recorded it maps a
+            // backward break by rebasing its positions, ISO/IEC 14496-12:2026
+            // §8.6.1.1), so there is nothing left to write in-band.
+            MuxInput::Discontinuity { .. } => Ok(()),
             MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(
                 "progressive: a single-file MP4 header is written before its samples",
             )),

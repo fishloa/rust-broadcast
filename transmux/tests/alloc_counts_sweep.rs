@@ -177,9 +177,12 @@ mod ts_demux_copies {
     }
 
     // 976 -> 984 for the IR's per-sample gapless trim: `Sample` gained one
-    // 8-byte `SampleTrim` field (+8 bytes per sample, no extra payload copy),
-    // measured at 984/100 x input on this fixture.
-    const TS_BUDGET_X100: usize = 984; // 1008 before r04-O10, 944 after (midway)
+    // 8-byte `SampleTrim` field (+8 bytes per sample, no extra payload copy).
+    // 984 -> 989 for the IR's decoder pre-roll: `TrackSpec` gained one
+    // `Option<DecoderPreRoll>`, which grows `DemuxEvent` by 8 bytes and so the
+    // per-sample event queue (no extra payload copy). Measured 989 on this
+    // fixture.
+    const TS_BUDGET_X100: usize = 989; // 1008 before r04-O10, 944 after (midway)
 }
 
 mod rtp_stream_copies {

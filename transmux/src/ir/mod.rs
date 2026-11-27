@@ -77,4 +77,4 @@ pub use sample::{
     FragmentTrackData, Provenance, Sample, SampleFlags, SampleProtection, SampleTiming,
 };
 pub use track::{ConstantIvSenc, TrackProtection, TrackSpec};
-pub use trim::{GaplessTrim, SampleTrim};
+pub use trim::{DecoderPreRoll, GaplessSignal, GaplessTrim, GaplessTrimFinding, SampleTrim};

@@ -907,6 +907,18 @@ pub enum ItemType {
     Avc1,
     /// `av01`: an AV1 coded image item (AVIF §2.1).
     Av01,
+    /// `vvc1`: a VVC coded image item (ISO/IEC 23008-12:2025).
+    Vvc1,
+    /// `evc1`: an EVC coded image item (ISO/IEC 23008-12:2025).
+    Evc1,
+    /// `hvt1`: a HEVC tile image item (ISO/IEC 23008-12:2025).
+    Hvt1,
+    /// `lhv1`: a layered HEVC image item (ISO/IEC 23008-12:2025).
+    Lhv1,
+    /// `jpeg`: a JPEG coded image item (ISO/IEC 23008-12:2025).
+    Jpeg,
+    /// `auvd`: an auxiliary video descriptor metadata item (§8.11.6.3).
+    Auvd,
     /// `grid`: an image grid derived image item (ISO/IEC 23008-12:2025 6.6.2.3).
     Grid,
     /// `iovl`: an image overlay derived image item (6.6.2.2).
@@ -917,6 +929,8 @@ pub enum ItemType {
     Tmap,
     /// `cfen`: a colour format enhancement derived image item (Amd 1 6.6.2.5).
     Cfen,
+    /// `sato`: a sample-transform derived image item (AVIF v1.2.0).
+    Sato,
     /// `Exif`: an Exif metadata item (ISO/IEC 23008-12:2025 A.2).
     Exif,
     /// `mime`: an item whose type is its MIME type.
@@ -951,11 +965,18 @@ impl ItemType {
             Self::Hvc1 => *b"hvc1",
             Self::Avc1 => *b"avc1",
             Self::Av01 => *b"av01",
+            Self::Vvc1 => *b"vvc1",
+            Self::Evc1 => *b"evc1",
+            Self::Hvt1 => *b"hvt1",
+            Self::Lhv1 => *b"lhv1",
+            Self::Jpeg => *b"jpeg",
+            Self::Auvd => *b"auvd",
             Self::Grid => *b"grid",
             Self::Iovl => *b"iovl",
             Self::Iden => *b"iden",
             Self::Tmap => *b"tmap",
             Self::Cfen => *b"cfen",
+            Self::Sato => *b"sato",
             Self::Exif => *b"Exif",
             Self::Mime => ITEM_TYPE_MIME,
             Self::Uri => ITEM_TYPE_URI,
@@ -975,11 +996,18 @@ impl ItemType {
             b"hvc1" => Self::Hvc1,
             b"avc1" => Self::Avc1,
             b"av01" => Self::Av01,
+            b"vvc1" => Self::Vvc1,
+            b"evc1" => Self::Evc1,
+            b"hvt1" => Self::Hvt1,
+            b"lhv1" => Self::Lhv1,
+            b"jpeg" => Self::Jpeg,
+            b"auvd" => Self::Auvd,
             b"grid" => Self::Grid,
             b"iovl" => Self::Iovl,
             b"iden" => Self::Iden,
             b"tmap" => Self::Tmap,
             b"cfen" => Self::Cfen,
+            b"sato" => Self::Sato,
             b"Exif" => Self::Exif,
             b"mime" => Self::Mime,
             b"uri " => Self::Uri,
@@ -1014,11 +1042,18 @@ impl ItemType {
             Self::Hvc1 => "hvc1",
             Self::Avc1 => "avc1",
             Self::Av01 => "av01",
+            Self::Vvc1 => "vvc1",
+            Self::Evc1 => "evc1",
+            Self::Hvt1 => "hvt1",
+            Self::Lhv1 => "lhv1",
+            Self::Jpeg => "jpeg",
+            Self::Auvd => "auvd",
             Self::Grid => "grid",
             Self::Iovl => "iovl",
             Self::Iden => "iden",
             Self::Tmap => "tmap",
             Self::Cfen => "cfen",
+            Self::Sato => "sato",
             Self::Exif => "Exif",
             Self::Mime => "mime",
             Self::Uri => "uri",
@@ -2321,6 +2356,8 @@ pub enum EntityGroupType {
     Slid,
     /// `prgr`: progressive rendering (6.8.10).
     Prgr,
+    /// `opeg`: an operating-point entity group (ISO/IEC 14496-15:2017).
+    Opeg,
     /// `pymd`: image pyramid (Amd 1 6.8.12).
     Pymd,
     /// `rgpa`: region partition group (Amd 1 6.8.13).
@@ -2358,6 +2395,7 @@ impl EntityGroupType {
             Self::Pano => *b"pano",
             Self::Slid => *b"slid",
             Self::Prgr => *b"prgr",
+            Self::Opeg => *b"opeg",
             Self::Pymd => *b"pymd",
             Self::Rgpa => *b"rgpa",
             Self::Other(fourcc) => fourcc,
@@ -2386,6 +2424,7 @@ impl EntityGroupType {
             b"pano" => Self::Pano,
             b"slid" => Self::Slid,
             b"prgr" => Self::Prgr,
+            b"opeg" => Self::Opeg,
             b"pymd" => Self::Pymd,
             b"rgpa" => Self::Rgpa,
             _ => Self::Other(fourcc),
@@ -2414,6 +2453,7 @@ impl EntityGroupType {
             Self::Pano => "pano",
             Self::Slid => "slid",
             Self::Prgr => "prgr",
+            Self::Opeg => "opeg",
             Self::Pymd => "pymd",
             Self::Rgpa => "rgpa",
             Self::Other(_) => "other",

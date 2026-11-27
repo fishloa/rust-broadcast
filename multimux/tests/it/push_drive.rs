@@ -80,6 +80,10 @@ impl multimux::push::MediaMuxer for ScriptedMuxer {
     fn flush(&mut self) -> Result<Vec<Bytes>, SendMediaError> {
         Ok(Vec::new())
     }
+
+    fn discontinuity(&mut self) -> Result<Vec<Bytes>, SendMediaError> {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

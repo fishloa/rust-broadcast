@@ -152,6 +152,206 @@ commands and dumps, and the walk of all 252 committed MP4-family files.
 No registry type is outside a box, so there is no `NOT_A_BOX` list: all 167
 registry entries are boxes and all 167 are typed.
 
+## Registered codes (MP4RA)
+
+The MP4 Registration Authority lists every registered four-character code with the
+specification that defines it. `tests/it/mp4ra.rs` loads all 30 tables from
+`private/specs-verified/mpeg/isobmff/mp4ra/` and partitions every code into four
+lists: **typed** (the crate parses it to a typed value, proven in `src/coverage/mp4ra.rs`),
+**held, untyped** (work to do: the defining document is under `private/specs/` or
+transcribed under `private/specs-verified/`), **not held** (the defining document is not
+held, so implementing it would be guessing), and **not applicable** (not an ISOBMFF
+structure this crate parses). A code in no list, or in two, fails the test.
+
+| Table | Codes | Typed | Held, untyped | Not held | Not applicable |
+|---|---:|---:|---:|---:|---:|
+| `aux-info-types.csv` | 7 | 2 | 0 | 5 | 0 |
+| `boxes.csv` | 281 | 123 | 36 | 111 | 11 |
+| `boxes-qt.csv` | 16 | 5 | 3 | 1 | 7 |
+| `boxes-udta.csv` | 42 | 17 | 8 | 17 | 0 |
+| `brands.csv` | 291 | 95 | 0 | 196 | 0 |
+| `checksum-types.csv` | 2 | 0 | 0 | 0 | 2 |
+| `color-types.csv` | 5 | 3 | 1 | 1 | 0 |
+| `data-references.csv` | 4 | 4 | 0 | 0 | 0 |
+| `entity-groups.csv` | 29 | 20 | 0 | 9 | 0 |
+| `handlers.csv` | 49 | 17 | 0 | 32 | 0 |
+| `item-properties.csv` | 85 | 47 | 4 | 34 | 0 |
+| `item-references.csv` | 19 | 17 | 1 | 1 | 0 |
+| `item-types.csv` | 27 | 21 | 0 | 6 | 0 |
+| `key-namespaces.csv` | 4 | 4 | 0 | 0 | 0 |
+| `knownduplicates.csv` | 0 | 0 | 0 | 0 | 0 |
+| `multiview-attributes.csv` | 14 | 4 | 10 | 0 | 0 |
+| `oti.csv` | 55 | 0 | 0 | 0 | 55 |
+| `sample-entries.csv` | 191 | 54 | 61 | 76 | 0 |
+| `sample-entries-boxes.csv` | 100 | 30 | 24 | 46 | 0 |
+| `sample-entries-qt.csv` | 59 | 10 | 35 | 14 | 0 |
+| `sample-groups.csv` | 67 | 44 | 0 | 23 | 0 |
+| `schemes.csv` | 24 | 5 | 0 | 19 | 0 |
+| `stream-types.csv` | 15 | 0 | 0 | 0 | 15 |
+| `textualcontent.csv` | 25 | 0 | 0 | 0 | 25 |
+| `track-groups.csv` | 10 | 2 | 0 | 8 | 0 |
+| `track-references.csv` | 44 | 23 | 0 | 21 | 0 |
+| `track-references-qt.csv` | 5 | 5 | 0 | 0 | 0 |
+| `track-selection.csv` | 18 | 17 | 0 | 1 | 0 |
+| `uncv-profiles.csv` | 17 | 0 | 0 | 0 | 17 |
+| `unlisted.csv` | 61 | 37 | 9 | 9 | 6 |
+| **Total** | 1566 | 606 | 192 | 630 | 138 |
+
+Trailing spaces are trimmed in these tables: a four-CC such as `rap ` is shown as
+`rap` and space-padded back to four bytes for its proof. Duplicate CSV rows (one code
+listed twice, e.g. `xml ` under ISO and JPEG 2000) count once.
+
+A `NALu Video` code added after the held ISO/IEC 14496-15:2017 edition (VVC, EVC and
+the neural-network codes) is counted as not held even though the family name matches.
+
+### Specifications not held
+
+Ordered by how many registered codes each would unlock (codes this crate does not
+type). Buying or finding one of these documents is what turns a pinned code into work.
+
+| Specification | Codes |
+|---|---:|
+| OMAF | 80 |
+| NALu Video | 43 |
+| CMAF | 41 |
+| V3C-SYS | 35 |
+| UNCV | 32 |
+| Apple | 32 |
+| MP4v2 | 23 |
+| JPEG2000 | 17 |
+| DMB-MAF | 16 |
+| JPXS | 15 |
+| ISO-Partial | 15 |
+| DVB | 15 |
+| CENC | 13 |
+| OMA DRM 2.0 | 13 |
+| IFE | 13 |
+| DRC | 11 |
+| MIAF | 10 |
+| Sony | 9 |
+| ISO-Text | 9 |
+| JPEG XL | 8 |
+| DECE | 7 |
+| J2KHEIF | 7 |
+| Metrics | 6 |
+| Digital Voodoo | 6 |
+| Dolby | 5 |
+| JPEGAI | 5 |
+| BitJazz | 5 |
+| OMA DRM 2.1 | 4 |
+| 3GPP2 | 4 |
+| 3GPP-VR | 4 |
+| iTunes | 4 |
+| SAVX | 4 |
+| DTS-UHD | 4 |
+| MJ2 | 4 |
+| MPEG-H | 4 |
+| NGA.STND.0076 | 3 |
+| Hipix | 3 |
+| SDV | 3 |
+| Youtube | 3 |
+| Canon | 3 |
+| SL-HDR | 3 |
+| OGC 24-038 | 3 |
+| ISO-UNCA | 3 |
+| VPxx | 3 |
+| ISO Variants | 3 |
+| id3v2 | 2 |
+| ONVIF | 2 |
+| Samsung | 2 |
+| T-AI-109.7 | 2 |
+| ATSC 3.0 A345 | 2 |
+| SCTE-215-1-1b | 2 |
+| AOM-IAMF | 2 |
+| MPEG-21 | 2 |
+| OMA DRM XBS | 2 |
+| Deprecated | 2 |
+| Auro | 2 |
+| OpenAPV | 2 |
+| Dirac | 2 |
+| Dolby MLP | 2 |
+| SCL6 | 2 |
+| Universal Music Group | 1 |
+| ATSC 3.0 A337 | 1 |
+| JPEG Systems | 1 |
+| WhatsApp | 1 |
+| MPEG-VSAF | 1 |
+| DASH-IF watermarking | 1 |
+| OMArlin | 1 |
+| AppleCTLC | 1 |
+| 3GPP-DASH | 1 |
+| 3GPP-TVP | 1 |
+| ARRI | 1 |
+| Convergent | 1 |
+| Leica | 1 |
+| ISO-MAF | 1 |
+| IEC 62592 | 1 |
+| Ross | 1 |
+| CMAF-ID3 | 1 |
+| Blinkbox | 1 |
+| Casio | 1 |
+| DTS-HD | 1 |
+| DxO | 1 |
+| MPEG-SD | 1 |
+| ISMACryp2 | 1 |
+| JPM | 1 |
+| JPSearch | 1 |
+| JPX | 1 |
+| JPXR | 1 |
+| MMT | 1 |
+| Apple HEVC Alpha | 1 |
+| Nikon | 1 |
+| Panasonic | 1 |
+| PIFF | 1 |
+| Panasonic Video Intercom | 1 |
+| QT-TN2162 | 1 |
+| Avid | 1 |
+| see (1) below | 1 |
+| FF Video Codec | 1 |
+| Avs2 | 1 |
+| CamMotion | 1 |
+| GB-T-20090-9 | 1 |
+| DRA | 1 |
+| ITU G.719 | 1 |
+| RealHD | 1 |
+| SMPTE | 1 |
+| UWA | 1 |
+| CineForm | 1 |
+| Matrox | 1 |
+
+### Typed but not registered
+
+Codes the crate types that no MP4RA table lists, each explained:
+
+| Kind | Code | Why |
+|---|---|---|
+| SampleEntry | `NONE` | QuickTime uncompressed sound entry; no MP4RA table registers it |
+| SampleEntry | `lav3` | AVS3 library sample entry the crate types; MP4RA registers the avs3 entry only |
+| SampleEntry | `sowt` | QuickTime little-endian PCM entry; common in .mov files but no MP4RA table registers it |
+| SampleEntryBox | `av2c` | AVS2 configuration box the crate types; no MP4RA table registers it |
+| SampleEntryBox | `av3c` | AVS3 configuration box the crate types; no MP4RA table registers it |
+| SampleEntryBox | `dOps` | Opus decoder configuration box (RFC 7845); no MP4RA table registers it |
+| SampleEntryBox | `ddts` | DTS decoder configuration box; MP4RA registers the DTS sample entries but not this box |
+| SampleEntryBox | `la2c` | AVS2 library configuration box the crate types; no MP4RA table registers it |
+| SampleEntryBox | `lavc` | AVS3 library configuration box the crate types; no MP4RA table registers it |
+| ItemProperty | `a1lx` | AVIF layered-image-indexing property the crate types; no MP4RA table registers it |
+| ItemProperty | `a1op` | AVIF operating-point selector property the crate types; no MP4RA table registers it |
+| ItemProperty | `cmex` | ISO/IEC 23008-12:2025 camera extrinsic matrix property; not yet in MP4RA |
+| ItemProperty | `cmin` | ISO/IEC 23008-12:2025 camera intrinsic matrix property; not yet in MP4RA |
+| ItemProperty | `prdi` | ISO/IEC 23008-12:2025 progressive derived item information property; not yet in MP4RA |
+| ItemProperty | `sstr` | ISO/IEC 23008-12:2025 single-stream property; not yet in MP4RA |
+| Reference | `anot` | ISO/IEC 23008-12:2025 region annotation reference; not yet in MP4RA |
+| Reference | `drgn` | ISO/IEC 23008-12:2025 derived-region reference; not yet in MP4RA |
+| EntityGroup | `prgr` | progressive rendering entity group; MP4RA registers the slideshow and pyramid groups but not this one |
+| SampleGroup | `regm` | ISO/IEC 23008-12:2025 region annotation sample group; not yet in MP4RA |
+
+Outside every MP4RA table sit the de-facto QuickTime/iTunes atoms the metadata
+layer types: `ilst`, `data`, `mean`, `name`, `----`, `trkn`, `disk`, `covr`,
+`chpl`, `gmhd`, `gmin`, `tapt`, `clef`, `prof`, `enof`, `chan` and every
+`©`-prefixed international-text atom (the parser types the whole `©` family
+generically). MP4RA registers none of them, and the `mdir`/`mdta` metadata
+handlers are likewise typed without a registration.
+
 OPEN (§9.2.4.5): the `FDitemconstructorLarge` (constructor type 5) syntax sums
 to 20 bytes (1 + 4 + 4 + 8 + 3) while the same clause states every constructor
 is 16 bytes, so the two statements cannot both hold. That one constructor is
@@ -466,3 +666,15 @@ The committed GPAC DASH init segments carry `mehd`, which is why that box
 needs no new file. The audio element, colour volume, sub-track, scheme and
 alternative-startup boxes have no writer in GPAC 26.07 or ffmpeg 8.1.2 at
 all.
+
+### Registered-code evidence
+
+| Code | Clause | Evidence | File |
+|---|---|---|---|
+| `sthd` | ISO/IEC 14496-12:2026 §12.6.2 | real: `MP4Box -diso` (Size 12, Version 0, Flags 0) | `mp4/stpp.mp4` |
+| `wide` | QuickTime File Format, Wide atom | real: `MP4Box -diso` (Size 8) | `audio/srat/qt-alac-v1.mov` |
+| `c608` | QuickTime File Format, closed captioning sample description | real: `MP4Box -diso` (Size 16) | private `candidates/shaka/cea608-track-init.mp4` |
+| `tran` | ISO/IEC 14496-15:2010 C.2.10 | clause-assembled: no fixture carries it and no installed tool writes it | — |
+| `Brand`, `HandlerType` | the tables above | real: `MP4Box -diso` (`isom`, `subt`, `qt  `, `soun`) | `mp4/stpp.mp4`, `audio/srat/qt-alac-v1.mov` |
+| `SampleGroupType` | ISO/IEC 14496-12:2026 §10 | real: `MP4Box -diso` (`grouping_type="roll"`, sample_count 87) | `dash/multiperiod-restart/p1_dash_track2_1.m4s` |
+| `TrackReferenceType` | ISO/IEC 14496-12:2026 §8.3.3 | real: `MP4Box -diso` (`hint`, TrackID 1/2) | `mp4/boxes/hint-hmhd.mp4` |

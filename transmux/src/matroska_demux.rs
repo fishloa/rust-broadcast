@@ -64,7 +64,7 @@ use broadcast_common::stage::{Demand, Timestamp};
 use broadcast_core::Parse;
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::need_in;
-use broadcast_core::timescale::{Rounding, Timescale, rescale_u64};
+use broadcast_core::timescale::{Rounding, Timescale, rescale_i64, rescale_u64};
 use broadcast_core::wire::be_u64;
 use broadcast_matroska::Limits;
 use broadcast_matroska::reader::{
@@ -75,8 +75,8 @@ use bytes::{Bytes, BytesMut};
 use crate::TrackId;
 use crate::error::{Error, Result};
 use crate::ir::{
-    AbandonReason, CodecConfig, DataIdentity, DemuxEvent, EventProvenance, GaplessTrim,
-    InputDegradation, Sample, SampleFlags, SampleTiming, TrackSpec,
+    AbandonReason, CodecConfig, DataIdentity, DecoderPreRoll, DemuxEvent, EventProvenance,
+    GaplessTrim, InputDegradation, Sample, SampleFlags, SampleTiming, SampleTrim, TrackSpec,
 };
 use crate::rtp_sdp::aac_config_from_asc_bytes;
 use broadcast_bitstream::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
@@ -283,16 +283,24 @@ struct HeldBlock {
     keyframe: bool,
     first_frame: u64,
     offset: u64,
+    discard_padding: Option<i64>,
     frames: Vec<Bytes>,
 }
 
 impl HeldBlock {
-    fn new(pts: i64, keyframe: bool, first_frame: u64, offset: u64) -> Self {
+    fn new(
+        pts: i64,
+        keyframe: bool,
+        first_frame: u64,
+        offset: u64,
+        discard_padding: Option<i64>,
+    ) -> Self {
         Self {
             pts,
             keyframe,
             first_frame,
             offset,
+            discard_padding,
             frames: Vec::new(),
         }
     }
@@ -305,6 +313,9 @@ struct TrackState {
     info: TrackInfo,
     requires_frame_config: bool,
     config: Option<(CodecConfig, Option<usize>)>,
+    /// The announced config's audio sample rate, retained because
+    /// [`TrackState::config`] is taken when the track is announced.
+    sample_rate: Option<Timescale>,
     spec: Option<TrackSpec>,
     nal_length_size: Option<usize>,
     announced: bool,
@@ -344,6 +355,7 @@ impl TrackState {
                 block.keyframe,
                 self.total_frames,
                 block.frame.offset,
+                block.discard_padding,
             ));
         }
         let Some(held) = self.blocks.back_mut() else {
@@ -407,6 +419,7 @@ impl TrackState {
         let step = nominal.max(1);
         let count = block.frames.len();
         let keyframe = block.keyframe;
+        let discard = self.sample_rate;
         for (index, data) in block.frames.into_iter().enumerate() {
             self.held_bytes = self.held_bytes.saturating_sub(data.len());
             let pts = block.pts.saturating_add(
@@ -441,6 +454,7 @@ impl TrackState {
                 None => data,
             };
             self.last_pts = Some(pts);
+            let trim = block_discard_trim(block.discard_padding, index, count, discard);
             out.push_back(DemuxEvent::sample(
                 id,
                 Sample {
@@ -450,7 +464,7 @@ impl TrackState {
                     provenance: None,
                     display: None,
                     protection: None,
-                    trim: crate::ir::SampleTrim::NONE,
+                    trim,
                 },
             ));
         }
@@ -620,6 +634,7 @@ impl MatroskaDemux {
                 info,
                 requires_frame_config,
                 config: None,
+                sample_rate: None,
                 spec: None,
                 nal_length_size: None,
                 announced: false,
@@ -661,6 +676,10 @@ impl MatroskaDemux {
         nal_length_size: Option<usize>,
     ) -> Result<()> {
         let track = &mut self.tracks[index];
+        track.sample_rate = config
+            .audio_sample_rate()
+            .and_then(core::num::NonZeroU32::new)
+            .map(Timescale::from_nonzero);
         track.nal_length_size = nal_length_size;
         track.config = Some((config, nal_length_size));
         track.announced = true;
@@ -698,9 +717,12 @@ impl MatroskaDemux {
                 break;
             };
             let padding = gapless_padding(&track.info, &config);
+            let pre_roll = seek_pre_roll(&track.info, &config);
             let id = TrackId::new(self.next_track_id);
             self.next_track_id = self.next_track_id.saturating_add(1);
-            let spec = TrackSpec::new(id, IR_TIMESCALE, config).with_padding(padding);
+            let spec = TrackSpec::new(id, IR_TIMESCALE, config)
+                .with_padding(padding)
+                .with_pre_roll(pre_roll);
             track.id = Some(id);
             track.nal_length_size = nal_length_size;
             track.spec = Some(spec.clone());
@@ -1340,6 +1362,52 @@ fn opus_config(info: &TrackInfo) -> Result<CodecConfig> {
     })
 }
 
+/// The track's decoder pre-roll from `SeekPreRoll`, in samples at its sample
+/// rate. `SeekPreRoll` is nanoseconds of decoder fill after a seek before
+/// output is correct (RFC 9559 §5.1.4.1.26); rounding is to the nearest
+/// sample, halfway away from zero (the same choice FFmpeg's Matroska demuxer
+/// makes).
+fn seek_pre_roll(info: &TrackInfo, config: &CodecConfig) -> Option<DecoderPreRoll> {
+    let ns = info.seek_pre_roll_ns()?;
+    let rate = config.audio_sample_rate()?;
+    let rate = core::num::NonZeroU32::new(rate)?;
+    let samples = rescale_i64(
+        i64::try_from(ns).unwrap_or(i64::MAX),
+        NS_TIMESCALE,
+        Timescale::from_nonzero(rate),
+        Rounding::Nearest,
+    );
+    u32::try_from(samples)
+        .ok()
+        .and_then(DecoderPreRoll::from_samples)
+}
+
+/// A Block's `DiscardPadding` as the per-sample trim of the frame it applies
+/// to (RFC 9559 §5.1.3.5.7): positive pads the end of the Block, negative its
+/// start. For a laced Block the trim belongs to the Block as a whole, so it
+/// lands on the last (positive) or first (negative) frame.
+fn block_discard_trim(
+    discard_padding: Option<i64>,
+    index: usize,
+    count: usize,
+    rate: Option<Timescale>,
+) -> SampleTrim {
+    let (Some(ns), Some(rate)) = (discard_padding, rate) else {
+        return SampleTrim::NONE;
+    };
+    let samples = rescale_i64(ns, NS_TIMESCALE, rate, Rounding::Nearest);
+    let Ok(magnitude) = u32::try_from(samples.unsigned_abs()) else {
+        return SampleTrim::NONE;
+    };
+    if samples > 0 && index + 1 == count {
+        SampleTrim::new(0, magnitude)
+    } else if samples < 0 && index == 0 {
+        SampleTrim::new(magnitude, 0)
+    } else {
+        SampleTrim::NONE
+    }
+}
+
 /// The track's priming from `CodecDelay`, in samples at its sample rate.
 ///
 /// `CodecDelay` is nanoseconds of decoder fill before the first real sample
@@ -1374,6 +1442,7 @@ mod tests {
             keyframe: true,
             first_frame,
             offset: 0,
+            discard_padding: None,
             frames: (0..frames).map(|_| Bytes::new()).collect(),
         };
         let blocks = VecDeque::from([block(0, 0, 1), block(10, 0, 0), block(30, 1, 2)]);
@@ -1716,6 +1785,41 @@ mod tests {
         assert_eq!(
             config.config.length_size_minus_one,
             NAL_LENGTH_SIZE_MINUS_ONE
+        );
+    }
+}
+
+#[cfg(test)]
+mod discard_trim_tests {
+    use super::*;
+
+    fn rate() -> Timescale {
+        Timescale::from_nonzero(core::num::NonZeroU32::new(48_000).expect("48 kHz"))
+    }
+
+    #[test]
+    fn discard_padding_rounds_to_the_nearest_sample() {
+        // 10_417 ns at 48 kHz is 0.500016 samples: nearest is 1, floor is 0.
+        assert_eq!(
+            block_discard_trim(Some(10_417), 0, 1, Some(rate())),
+            SampleTrim::new(0, 1)
+        );
+        assert_eq!(
+            block_discard_trim(Some(10_416), 0, 1, Some(rate())),
+            SampleTrim::NONE,
+            "0.499968 samples rounds to none"
+        );
+    }
+
+    #[test]
+    fn a_positive_padding_trims_the_end_and_a_negative_one_the_start() {
+        assert_eq!(
+            block_discard_trim(Some(13_500_000), 0, 1, Some(rate())),
+            SampleTrim::new(0, 648)
+        );
+        assert_eq!(
+            block_discard_trim(Some(-13_500_000), 0, 1, Some(rate())),
+            SampleTrim::new(648, 0)
         );
     }
 }

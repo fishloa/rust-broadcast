@@ -374,3 +374,44 @@ fn strip_cues(bytes: &[u8]) -> Vec<u8> {
     }
     out
 }
+
+#[test]
+fn block_group_discard_padding_and_seek_pre_roll_are_reported() {
+    use broadcast_matroska::Limits;
+    use broadcast_matroska::driver::{DriverStep, FileReader};
+    use broadcast_matroska::reader::Mode;
+    use std::fs::File;
+
+    let file = File::open(test_fixtures::path("mkv/vp9-opus.webm")).expect("fixture opens");
+    let mut reader = FileReader::new(file, Mode::Strict, Limits::new()).expect("driver");
+    let mut discard = Vec::new();
+    let mut seek_pre_roll = None;
+    loop {
+        match reader.step().expect("step") {
+            DriverStep::Tracks { tracks, .. } => {
+                seek_pre_roll = tracks
+                    .iter()
+                    .find(|info| info.codec_id() == "A_OPUS")
+                    .and_then(|info| info.seek_pre_roll_ns());
+            }
+            DriverStep::Block(block) => discard.push(block.discard_padding),
+            DriverStep::Done => break,
+            _ => {}
+        }
+    }
+    assert_eq!(
+        seek_pre_roll,
+        Some(80_000_000),
+        "SeekPreRoll is 80 ms on this Opus track"
+    );
+    let last = discard.len().saturating_sub(1);
+    assert_eq!(
+        discard[last],
+        Some(13_500_000),
+        "the final block states 13.5 ms of end padding"
+    );
+    assert!(
+        discard[..last].iter().all(Option::is_none),
+        "no other block states DiscardPadding"
+    );
+}

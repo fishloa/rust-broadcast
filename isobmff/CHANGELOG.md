@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `metadata::Itunsmpb` and `Metadata::itunsmpb`: the iTunes `iTunSMPB`
+  freeform item's priming, padding and original sample count, parsed from its
+  hex text (a de-facto format, cited in the module). The typed view borrows
+  nothing; the item itself still round-trips byte for byte.
+- `sample_groups::GROUPING_TYPE_PROL` and `SgpdEntry::Prol`: the audio
+  pre-roll sample group description (§10.1), with `SgpdEntry::pre_roll_samples`
+  reporting a negative `roll` or positive `prol` distance as the decoder
+  pre-roll it states.
+- `reader::TrackInfo::pre_roll`: the track's decoder pre-roll requirement in
+  samples, from its `roll`/`prol` sample group (§10.1); and
+  `reader::TrackInfo::itunsmpb`: the file's iTunes gapless facts, a per-track
+  item taking precedence over a movie-level one that applies only when the
+  file has one audio track.
+
 ### Breaking
 
 - **Sample entries keep every parsed byte on a rewrite.** The audio sample
@@ -54,6 +70,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ColourFormatEnhancement` also refuses a body with bytes past its last input.
 
 ### Added
+
+- **The MP4 registration tables are measured, and their held codes typed
+  (issue #4167).** `coverage::mp4ra` pins every code in all 30 MP4RA tables as
+  typed, held-but-untyped, not-held or not-applicable, and
+  `tests/it/mp4ra.rs` proves the partition against the CSVs and the README
+  counts. The registered identifier codes gain typed enums in `registered`
+  (`Brand`, `HandlerType`, `SampleGroupType`, `TrackReferenceType`,
+  `TrackGroupType`, `TrackSelectionType`, `KeyNamespace`,
+  `RestrictedSchemeType`), each mapping a four-CC to a named variant and back,
+  with accessors on `HandlerBox`, `TrackReferenceTypeBox`, `TrackGroupTypeBox`,
+  `TrackSelectionBox`, `KeyEntry`, `SampleToGroupBox`,
+  `SampleGroupDescriptionBox`, `SchemeTypeBox`, `FileTypeBox` and
+  `SegmentTypeBox`. New typed boxes: `sthd` (`SubtitleMediaHeaderBox`, now
+  reported by `MediaInformationBox::media_header` as
+  `MediaInformationHeader::Subtitle`), `wide` (`WideAtom`), `tran`
+  (`TranscodingInfoBox`/`AvcTranscodingInfo`) and the `c608` sample entry
+  (`ClosedCaptionSampleEntry`, dispatched as
+  `SampleEntryVariant::ClosedCaption`). `ItemType` gains `Auvd`, `Evc1`,
+  `Hvt1`, `Lhv1`, `Jpeg`, `Sato` and `Vvc1`; `ItemProperty` gains `Stvi` and
+  `VvcC`; `EntityGroupType` gains `Opeg`. 604 of the 1566 registered codes are
+  typed; the README lists the remaining held and not-held counts per table and
+  the specifications not held, in unlock order.
 
 - **Every ISO/IEC 14496-12:2026 box type is typed.** The hint-track family
   joins the crate: `hnti`/`rtp `/`sdp `, the `hinf` counters, the sample-entry

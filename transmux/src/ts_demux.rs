@@ -235,7 +235,9 @@
 //!   [`mpeg_ts::resync::TsResync`] (also strips 204-byte Reed-Solomon FEC).
 
 use crate::display_track::{ActivationOutcome, SpsTracker, TrackCodec};
-use crate::ir::{AUDIO_SAMPLE_SIZE_BITS, AfdPersistence, DisplayChangeSet, DisplayInfo};
+use crate::ir::{
+    AUDIO_SAMPLE_SIZE_BITS, AfdPersistence, DisplayChangeSet, DisplayInfo, GaplessTrim,
+};
 use crate::mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
 use crate::{ProgramNumber, TrackId};
 use alloc::boxed::Box;
@@ -257,6 +259,7 @@ use mpeg_ts::ts::{
 };
 
 use crate::error::Result;
+use crate::media::lame_padding;
 use crate::nal_params::{ParamKind, parameter_set_is_valid};
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
 use broadcast_bitstream::HdrStaticMetadata;
@@ -1603,6 +1606,9 @@ enum LiveKind {
         /// Frame-exact dts/pts accumulator (issue B5, media plane step-2 fix
         /// wave 1) — see [`AudioAnchor`].
         anchor: AudioAnchor,
+        /// The track's gapless trim, when the stream states one in-band (an
+        /// MP3 LAME tag).
+        padding: GaplessTrim,
     },
     /// Opaque PES data (#557): one `Sample` per access unit.
     Data {
@@ -1623,6 +1629,16 @@ enum LiveKind {
     /// emitted immediately as one `Sample` — sections carry no PTS/DTS, so
     /// there is no one-behind duration lookahead (every duration is `0`).
     Section,
+}
+
+impl LiveKind {
+    /// The gapless trim this kind states (audio only).
+    fn padding(&self) -> GaplessTrim {
+        match self {
+            Self::Audio { padding, .. } => *padding,
+            _ => GaplessTrim::NONE,
+        }
+    }
 }
 
 struct LiveTrack {
@@ -2952,6 +2968,7 @@ fn push_live_au(
                 sample_rate,
                 kind,
                 anchor,
+                ..
             } => {
                 // Sticky: the announced config says whether dependents exist, and
                 // `emit_audio_au` also sets it on seeing one (a track promoted from
@@ -3632,7 +3649,8 @@ fn finalize_probe(
             // Resync within the newest buffered PES payload (issue #638) -- a
             // real broadcast payload is not guaranteed to start on a frame
             // sync.
-            let (_, first) = find_mpeg_audio_sync(latest)?;
+            let (sync_offset, first) = find_mpeg_audio_sync(latest)?;
+            let padding = lame_padding(&latest[sync_offset..]).unwrap_or(GaplessTrim::NONE);
             let sample_rate = first.sample_rate();
             let timescale = Timescale::try_new(sample_rate).ok()?;
             let channel_count = first.channels();
@@ -3673,6 +3691,7 @@ fn finalize_probe(
                     sample_rate: timescale,
                     kind: AudioKind::MpegAudio { samples_per_frame },
                     anchor: AudioAnchor::default(),
+                    padding,
                 },
             ))
         }
@@ -3734,6 +3753,7 @@ fn finalize_probe(
                         duration_scale: timescale.get() / core_rate.get(),
                         ..AudioAnchor::default()
                     },
+                    padding: GaplessTrim::NONE,
                 },
             ))
         }
@@ -3756,6 +3776,7 @@ fn finalize_probe(
                     sample_rate: timescale,
                     kind: AudioKind::Ac3,
                     anchor: AudioAnchor::default(),
+                    padding: GaplessTrim::NONE,
                 },
             ))
         }
@@ -3779,6 +3800,7 @@ fn finalize_probe(
                     sample_rate: timescale,
                     kind: AudioKind::Dts,
                     anchor: AudioAnchor::default(),
+                    padding: GaplessTrim::NONE,
                 },
             ))
         }
@@ -3949,6 +3971,7 @@ fn advance_track(
                 live.timescale = timescale;
                 let updated = TrackSpec::new(live.track_id, live.timescale, live.config.clone())
                     .with_source(pid, stream.descriptors.clone())
+                    .with_padding(live.kind.padding())
                     .with_hdr10plus(live.hdr10plus);
                 // Video is emitted one access unit behind ([`advance_one_behind`]):
                 // an event raised while filling this access unit belongs to
@@ -4401,6 +4424,7 @@ fn eac3_probe_result(
             sample_rate: timescale,
             kind: AudioKind::Eac3,
             anchor: AudioAnchor::default(),
+            padding: GaplessTrim::NONE,
         },
     ))
 }
@@ -6106,6 +6130,7 @@ impl StreamingTsDemux {
             if let Some(TrackState::Live(live)) = stream.track.as_ref() {
                 let spec = TrackSpec::new(live.track_id, live.timescale, live.config.clone())
                     .with_source(es_pid, descriptors)
+                    .with_padding(live.kind.padding())
                     .with_hdr10plus(live.hdr10plus);
                 self.events.push_back(DemuxEvent::TrackUpdated(spec));
             }
@@ -6179,6 +6204,7 @@ impl StreamingTsDemux {
                         });
                     let spec = TrackSpec::new(track_id, timescale, config.clone())
                         .with_source(next_pid, stream.descriptors.clone())
+                        .with_padding(kind.padding())
                         .with_hdr10plus(hdr10plus);
                     // Look up the program_number for this ES PID via its
                     // declaring PMT.

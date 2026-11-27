@@ -7,8 +7,8 @@ use std::rc::Rc;
 
 use broadcast_codec::{
     Availability, CodecDescriptor, CodecError, CodecId, CodecParameters, CodecProfile,
-    CodecProvider, Decoder, Direction, Encoder, EncoderConfig, Frame, InventoryEntry, Packet,
-    Probe, ProviderInfo, Registry, Timescale, render_inventory,
+    CodecProvider, Decoder, DecoderDelay, DecoderTrim, Direction, Encoder, EncoderConfig, Frame,
+    InventoryEntry, Packet, Probe, ProviderInfo, Registry, Timescale, render_inventory,
 };
 
 /// Sample rate the fake requests use.
@@ -334,10 +334,38 @@ fn the_table_renders_the_documented_columns() {
         ),
     ];
     let expected = "\
-codec  direction  provider  implementation  kind  lossless  profiles            availability  licence
-h264   decode     alpha     h264            sw    -         baseline/main/high  available     MIT
-aac    encode     beta      aac_hw          hw    -         -                   unavailable   -
-flac   decode     gamma     flac            sw    yes       -                   unknown       MPL-2.0
+codec  direction  provider  implementation  kind  lossless  delay    profiles            availability  licence
+h264   decode     alpha     h264            sw    -         unknown  baseline/main/high  available     MIT
+aac    encode     beta      aac_hw          hw    -         unknown  -                   unavailable   -
+flac   decode     gamma     flac            sw    yes       unknown  -                   unknown       MPL-2.0
 ";
     assert_eq!(render_inventory(&entries), expected);
+}
+
+#[test]
+fn the_table_shows_each_implementations_declared_delay() {
+    let entries = [
+        InventoryEntry::new(
+            CodecDescriptor::new("alpha", "mp3", CodecId::MpegAudio, Direction::Decode)
+                .with_trim(DecoderTrim::Caller(DecoderDelay::Declared(529))),
+            ProviderInfo::new("alpha", "1.0.0"),
+            Probe::available(),
+        ),
+        InventoryEntry::new(
+            CodecDescriptor::new("beta", "aac", CodecId::Aac, Direction::Decode)
+                .with_trim(DecoderTrim::Caller(DecoderDelay::PerStream)),
+            ProviderInfo::new("beta", "1.0.0"),
+            Probe::available(),
+        ),
+        InventoryEntry::new(
+            CodecDescriptor::new("gamma", "flac", CodecId::Flac, Direction::Decode)
+                .with_trim(DecoderTrim::Implementation),
+            ProviderInfo::new("gamma", "1.0.0"),
+            Probe::available(),
+        ),
+    ];
+    let table = render_inventory(&entries);
+    assert!(table.contains("529"), "{table}");
+    assert!(table.contains("per stream"), "{table}");
+    assert!(table.contains("applies trim"), "{table}");
 }
