@@ -79,6 +79,7 @@ fn audio_entry(mp4a: &Mp4aSampleEntry) -> SampleEntry {
     };
     let entry = Mp4aSampleEntry {
         codec_type: *b"mp4a",
+        reserved: [0; 6],
         entry_version: 1,
         reserved_1: [0; 6],
         data_reference_index: mp4a.data_reference_index,
@@ -93,6 +94,7 @@ fn audio_entry(mp4a: &Mp4aSampleEntry) -> SampleEntry {
             bytes_per_sample: 2,
         })),
         config_boxes: vec![wave_child],
+        trailing: Vec::new(),
     };
     SampleEntry::Typed(SampleEntryVariant::Mp4a(Box::new(entry)))
 }
@@ -109,6 +111,7 @@ fn timecode_entry() -> TimecodeEntry {
         reserved_tail: vec![0, 0, 0],
         name: None,
         others: Vec::new(),
+        trailing: Vec::new(),
     }
 }
 

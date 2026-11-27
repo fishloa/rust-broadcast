@@ -5,7 +5,7 @@
 //! the historical panic before it can reach the typed error the parser now
 //! returns.
 
-use broadcast_core::Parse;
+use broadcast_core::{Parse, Serialize};
 use isobmff::Error;
 use isobmff::audio_elements::{
     AudioElementBox, AudioElementPosInteractivityPolarBox, AudioElementProminenceInteractivityBox,
@@ -38,4 +38,48 @@ fn tier34_boxes_crash_9562f956_is_a_typed_error() {
         }
         other => panic!("expected a typed short-buffer error, got {other:?}"),
     }
+}
+
+#[test]
+fn quicktime_sound_entry_child_size_is_not_rewritten() {
+    // `isobmff_whole_file` crash: `fixtures/mp4/frag/av1.frag.mp4` with the
+    // `av01` entry's four-CC changed to `sowt`. The `0x00480000` at the sound
+    // fixed part's child offset is the visual entry's horizontal resolution,
+    // not a child size; the entry ends 121 bytes later, so the child is
+    // truncated. The rewrite re-stated the clamped 121-byte length.
+    let entry: [u8; 157] = [
+        0, 0, 0, 157, 115, 111, 119, 116, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 1, 64, 0, 240, 0, 72, 0, 0, 0, 72, 0, 0, 0, 0, 0, 0, 0, 1, 23, 76, 97, 118,
+        99, 54, 50, 46, 50, 56, 46, 49, 48, 48, 32, 108, 105, 98, 115, 118, 116, 97, 118, 49, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 24, 255, 255, 0, 0, 0, 25, 97, 118, 49, 67, 129, 0, 12, 0, 10, 11, 0,
+        0, 0, 4, 60, 255, 188, 2, 248, 0, 64, 0, 0, 0, 10, 102, 105, 101, 108, 1, 0, 0, 0, 0, 16,
+        112, 97, 115, 112, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 20, 98, 116, 114, 116, 0, 0, 0, 0, 0,
+        4, 96, 96, 0, 4, 96, 96,
+    ];
+    let parsed = isobmff::quicktime::SoundEntry::parse(&entry).expect("sowt entry parses");
+    assert!(
+        parsed.config_boxes.is_empty(),
+        "the overrunning child is not a box"
+    );
+    assert_eq!(parsed.trailing.len(), entry.len() - 36);
+    let out = parsed.try_to_bytes().expect("sowt entry serializes");
+    assert_eq!(out, entry, "the sound entry rewrite changed a child size");
+}
+
+#[test]
+fn sample_entry_with_to_end_header_stays_opaque() {
+    let mut entry: [u8; 157] = [
+        0, 0, 0, 157, 115, 111, 119, 116, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 1, 64, 0, 240, 0, 72, 0, 0, 0, 72, 0, 0, 0, 0, 0, 0, 0, 1, 23, 76, 97, 118,
+        99, 54, 50, 46, 50, 56, 46, 49, 48, 48, 32, 108, 105, 98, 115, 118, 116, 97, 118, 49, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 24, 255, 255, 0, 0, 0, 25, 97, 118, 49, 67, 129, 0, 12, 0, 10, 11, 0,
+        0, 0, 4, 60, 255, 188, 2, 248, 0, 64, 0, 0, 0, 10, 102, 105, 101, 108, 1, 0, 0, 0, 0, 16,
+        112, 97, 115, 112, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 20, 98, 116, 114, 116, 0, 0, 0, 0, 0,
+        4, 96, 96, 0, 4, 96, 96,
+    ];
+    entry[..4].fill(0);
+    let variant = isobmff::init_segment::sample_entry_variant(&entry)
+        .expect("a to-end sample entry is representable");
+    let out = variant.try_to_bytes().expect("opaque entry serializes");
+    assert_eq!(out, entry, "a to-end entry keeps its header form");
 }

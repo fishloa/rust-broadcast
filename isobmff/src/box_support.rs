@@ -353,6 +353,54 @@ impl<T: Serialize> SerializeBox for T {
     }
 }
 
+/// A sample entry's child region captured for a byte-exact rewrite: every
+/// complete child box in the compact, `largesize` or `size == 0` form, plus
+/// the tail a walk could not represent (ISO/IEC 14496-12:2026 §4.2).
+///
+/// A child whose declared size runs past the region is *not* shortened and
+/// re-emitted: its bytes go into `trailing` verbatim, so a parse -> serialize
+/// trip never rewrites a wire length the entry did not state.
+pub(crate) struct CapturedChildren {
+    boxes: Vec<OpaqueBox>,
+    trailing: Vec<u8>,
+}
+
+impl CapturedChildren {
+    /// Take the child boxes apart from the trailing bytes.
+    pub(crate) fn into_parts(self) -> (Vec<OpaqueBox>, Vec<u8>) {
+        (self.boxes, self.trailing)
+    }
+}
+
+/// Capture a sample entry's child region, complete boxes and an unwalkable
+/// tail kept verbatim.
+pub(crate) fn capture_children(region: &[u8]) -> CapturedChildren {
+    let mut boxes = Vec::new();
+    let mut consumed = 0usize;
+    for item in crate::box_types::BoxIter::clamped(region) {
+        let Ok(item) = item else {
+            break;
+        };
+        if item.is_truncated() {
+            break;
+        }
+        boxes.push(OpaqueBox {
+            box_type: item.four_cc(),
+            data: item.payload().to_vec(),
+            to_end: item.to_end(),
+            largesize: item.has_largesize(),
+        });
+        consumed = consumed.saturating_add(item.bytes.len());
+        if item.to_end() {
+            break;
+        }
+    }
+    CapturedChildren {
+        boxes,
+        trailing: region.get(consumed..).unwrap_or_default().to_vec(),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // OpaqueBox — round-trip unknown child boxes
 // ---------------------------------------------------------------------------

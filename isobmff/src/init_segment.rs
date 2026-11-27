@@ -2465,6 +2465,8 @@ pub fn sampling_rate_override(config_boxes: &[OpaqueBox]) -> Option<u32> {
 
 /// Width of the `reserved[3]` block in an audio sample entry (§12.2.3.2).
 pub const AUDIO_SAMPLE_ENTRY_RESERVED_LEN: usize = 6;
+/// Width of the SampleEntry `reserved[6]` block (§8.5.2.2).
+const SAMPLE_ENTRY_RESERVED_LEN: usize = AUDIO_SAMPLE_ENTRY_RESERVED_LEN;
 
 /// AAC audio sample entry (`mp4a`) — ISO/IEC 14496-12:2026 §12.2.3.
 ///
@@ -2476,6 +2478,8 @@ pub const AUDIO_SAMPLE_ENTRY_RESERVED_LEN: usize = 6;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Mp4aSampleEntry {
+    /// The SampleEntry `reserved[6]` bytes (§8.5.2.2), written back verbatim.
+    pub reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     /// The FourCC of this sample entry — `mp4a`, or `enca` when the track is
     /// CENC-protected (the `sinf` child then carries the real codec under
     /// `frma`). Previously hard-coded to `mp4a` on serialize, which silently
@@ -2507,6 +2511,8 @@ pub struct Mp4aSampleEntry {
     /// The QuickTime version 1/2 extension, when the entry carries one.
     pub quicktime: Option<QuickTimeSound>,
     pub config_boxes: Vec<OpaqueBox>,
+    /// Bytes after the last complete child, kept verbatim.
+    pub trailing: Vec<u8>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2520,6 +2526,8 @@ pub struct Mp4aSampleEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Ac3SampleEntry {
+    /// The SampleEntry `reserved[6]` bytes (§8.5.2.2), written back verbatim.
+    pub reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     /// `entry_version`: 0 for a plain `AudioSampleEntry` (§12.2.3), 1 for an
     /// [`AudioSampleEntryV1`] (§12.2.3.2) whose real rate lives in a
     /// [`SamplingRateBox`] among `config_boxes`, or any other value a
@@ -2545,18 +2553,21 @@ pub struct Ac3SampleEntry {
     /// The QuickTime version 1/2 extension, when the entry carries one.
     pub quicktime: Option<QuickTimeSound>,
     pub config_boxes: Vec<OpaqueBox>,
+    /// Bytes after the last complete child, kept verbatim.
+    pub trailing: Vec<u8>,
 }
 
 impl Serialize for Ac3SampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes, &self.trailing)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
             buf,
             AudioSampleEntryFields {
                 fourcc: b"ac-3",
+                reserved: self.reserved,
                 entry_version: self.entry_version,
                 reserved_1: self.reserved_1,
                 data_reference_index: self.data_reference_index,
@@ -2566,6 +2577,7 @@ impl Serialize for Ac3SampleEntry {
                 samplerate: self.samplerate,
                 quicktime: &self.quicktime,
                 config_boxes: &self.config_boxes,
+                trailing: &self.trailing,
             },
         )
     }
@@ -2582,6 +2594,8 @@ impl Serialize for Ac3SampleEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Ec3SampleEntry {
+    /// The SampleEntry `reserved[6]` bytes (§8.5.2.2), written back verbatim.
+    pub reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     /// `entry_version`: 0 for a plain `AudioSampleEntry` (§12.2.3), 1 for an
     /// [`AudioSampleEntryV1`] (§12.2.3.2) whose real rate lives in a
     /// [`SamplingRateBox`] among `config_boxes`, or any other value a
@@ -2607,18 +2621,21 @@ pub struct Ec3SampleEntry {
     /// The QuickTime version 1/2 extension, when the entry carries one.
     pub quicktime: Option<QuickTimeSound>,
     pub config_boxes: Vec<OpaqueBox>,
+    /// Bytes after the last complete child, kept verbatim.
+    pub trailing: Vec<u8>,
 }
 
 impl Serialize for Ec3SampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes, &self.trailing)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
             buf,
             AudioSampleEntryFields {
                 fourcc: b"ec-3",
+                reserved: self.reserved,
                 entry_version: self.entry_version,
                 reserved_1: self.reserved_1,
                 data_reference_index: self.data_reference_index,
@@ -2628,6 +2645,7 @@ impl Serialize for Ec3SampleEntry {
                 samplerate: self.samplerate,
                 quicktime: &self.quicktime,
                 config_boxes: &self.config_boxes,
+                trailing: &self.trailing,
             },
         )
     }
@@ -2643,6 +2661,8 @@ impl Serialize for Ec3SampleEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct OpusSampleEntry {
+    /// The SampleEntry `reserved[6]` bytes (§8.5.2.2), written back verbatim.
+    pub reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     /// `entry_version`: 0 for a plain `AudioSampleEntry` (§12.2.3), 1 for an
     /// [`AudioSampleEntryV1`] (§12.2.3.2) whose real rate lives in a
     /// [`SamplingRateBox`] among `config_boxes`, or any other value a
@@ -2668,18 +2688,21 @@ pub struct OpusSampleEntry {
     /// The QuickTime version 1/2 extension, when the entry carries one.
     pub quicktime: Option<QuickTimeSound>,
     pub config_boxes: Vec<OpaqueBox>,
+    /// Bytes after the last complete child, kept verbatim.
+    pub trailing: Vec<u8>,
 }
 
 impl Serialize for OpusSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes, &self.trailing)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
             buf,
             AudioSampleEntryFields {
                 fourcc: b"Opus",
+                reserved: self.reserved,
                 entry_version: self.entry_version,
                 reserved_1: self.reserved_1,
                 data_reference_index: self.data_reference_index,
@@ -2689,6 +2712,7 @@ impl Serialize for OpusSampleEntry {
                 samplerate: self.samplerate,
                 quicktime: &self.quicktime,
                 config_boxes: &self.config_boxes,
+                trailing: &self.trailing,
             },
         )
     }
@@ -2699,6 +2723,7 @@ impl<'a> Parse<'a> for OpusSampleEntry {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let e = parse_audio_sample_entry(bytes, "Opus")?;
         Ok(Self {
+            reserved: e.reserved,
             entry_version: e.entry_version,
             reserved_1: e.reserved_1,
             data_reference_index: e.data_reference_index,
@@ -2708,6 +2733,7 @@ impl<'a> Parse<'a> for OpusSampleEntry {
             samplerate: e.samplerate,
             quicktime: e.quicktime,
             config_boxes: e.config_boxes,
+            trailing: e.trailing,
         })
     }
 }
@@ -2718,6 +2744,8 @@ impl<'a> Parse<'a> for OpusSampleEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FlacSampleEntry {
+    /// The SampleEntry `reserved[6]` bytes (§8.5.2.2), written back verbatim.
+    pub reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     /// `entry_version`: 0 for a plain `AudioSampleEntry` (§12.2.3), 1 for an
     /// [`AudioSampleEntryV1`] (§12.2.3.2) whose real rate lives in a
     /// [`SamplingRateBox`] among `config_boxes`, or any other value a
@@ -2743,18 +2771,21 @@ pub struct FlacSampleEntry {
     /// The QuickTime version 1/2 extension, when the entry carries one.
     pub quicktime: Option<QuickTimeSound>,
     pub config_boxes: Vec<OpaqueBox>,
+    /// Bytes after the last complete child, kept verbatim.
+    pub trailing: Vec<u8>,
 }
 
 impl Serialize for FlacSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes, &self.trailing)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
             buf,
             AudioSampleEntryFields {
                 fourcc: b"fLaC",
+                reserved: self.reserved,
                 entry_version: self.entry_version,
                 reserved_1: self.reserved_1,
                 data_reference_index: self.data_reference_index,
@@ -2764,6 +2795,7 @@ impl Serialize for FlacSampleEntry {
                 samplerate: self.samplerate,
                 quicktime: &self.quicktime,
                 config_boxes: &self.config_boxes,
+                trailing: &self.trailing,
             },
         )
     }
@@ -2774,6 +2806,7 @@ impl<'a> Parse<'a> for FlacSampleEntry {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let e = parse_audio_sample_entry(bytes, "fLaC")?;
         Ok(Self {
+            reserved: e.reserved,
             entry_version: e.entry_version,
             reserved_1: e.reserved_1,
             data_reference_index: e.data_reference_index,
@@ -2783,6 +2816,7 @@ impl<'a> Parse<'a> for FlacSampleEntry {
             samplerate: e.samplerate,
             quicktime: e.quicktime,
             config_boxes: e.config_boxes,
+            trailing: e.trailing,
         })
     }
 }
@@ -2793,6 +2827,8 @@ impl<'a> Parse<'a> for FlacSampleEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Ac4SampleEntry {
+    /// The SampleEntry `reserved[6]` bytes (§8.5.2.2), written back verbatim.
+    pub reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     /// `entry_version`: 0 for a plain `AudioSampleEntry` (§12.2.3), 1 for an
     /// [`AudioSampleEntryV1`] (§12.2.3.2) whose real rate lives in a
     /// [`SamplingRateBox`] among `config_boxes`, or any other value a
@@ -2818,18 +2854,21 @@ pub struct Ac4SampleEntry {
     /// The QuickTime version 1/2 extension, when the entry carries one.
     pub quicktime: Option<QuickTimeSound>,
     pub config_boxes: Vec<OpaqueBox>,
+    /// Bytes after the last complete child, kept verbatim.
+    pub trailing: Vec<u8>,
 }
 
 impl Serialize for Ac4SampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes, &self.trailing)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
             buf,
             AudioSampleEntryFields {
                 fourcc: b"ac-4",
+                reserved: self.reserved,
                 entry_version: self.entry_version,
                 reserved_1: self.reserved_1,
                 data_reference_index: self.data_reference_index,
@@ -2839,6 +2878,7 @@ impl Serialize for Ac4SampleEntry {
                 samplerate: self.samplerate,
                 quicktime: &self.quicktime,
                 config_boxes: &self.config_boxes,
+                trailing: &self.trailing,
             },
         )
     }
@@ -2849,6 +2889,7 @@ impl<'a> Parse<'a> for Ac4SampleEntry {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let e = parse_audio_sample_entry(bytes, "ac-4")?;
         Ok(Self {
+            reserved: e.reserved,
             entry_version: e.entry_version,
             reserved_1: e.reserved_1,
             data_reference_index: e.data_reference_index,
@@ -2858,6 +2899,7 @@ impl<'a> Parse<'a> for Ac4SampleEntry {
             samplerate: e.samplerate,
             quicktime: e.quicktime,
             config_boxes: e.config_boxes,
+            trailing: e.trailing,
         })
     }
 }
@@ -2874,6 +2916,8 @@ impl<'a> Parse<'a> for Ac4SampleEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DtsSampleEntry {
+    /// The SampleEntry `reserved[6]` bytes (§8.5.2.2), written back verbatim.
+    pub reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     /// The FourCC of this sample entry — one of `dtsc`, `dtsh`, `dtsl`, `dtse`.
     pub codec_type: [u8; BOX_TYPE_SIZE],
     /// `entry_version`: 0 for a plain `AudioSampleEntry` (§12.2.3), 1 for an
@@ -2901,18 +2945,21 @@ pub struct DtsSampleEntry {
     /// Config and any extra child boxes (typically one `ddts`).
     pub quicktime: Option<QuickTimeSound>,
     pub config_boxes: Vec<OpaqueBox>,
+    /// Bytes after the last complete child, kept verbatim.
+    pub trailing: Vec<u8>,
 }
 
 impl Serialize for DtsSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes, &self.trailing)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
             buf,
             AudioSampleEntryFields {
                 fourcc: &self.codec_type,
+                reserved: self.reserved,
                 entry_version: self.entry_version,
                 reserved_1: self.reserved_1,
                 data_reference_index: self.data_reference_index,
@@ -2922,6 +2969,7 @@ impl Serialize for DtsSampleEntry {
                 samplerate: self.samplerate,
                 quicktime: &self.quicktime,
                 config_boxes: &self.config_boxes,
+                trailing: &self.trailing,
             },
         )
     }
@@ -2938,6 +2986,7 @@ impl<'a> Parse<'a> for DtsSampleEntry {
         let e = parse_audio_sample_entry(bytes, "DtsSampleEntry")?;
         Ok(Self {
             codec_type,
+            reserved: e.reserved,
             entry_version: e.entry_version,
             reserved_1: e.reserved_1,
             data_reference_index: e.data_reference_index,
@@ -2947,6 +2996,7 @@ impl<'a> Parse<'a> for DtsSampleEntry {
             samplerate: e.samplerate,
             quicktime: e.quicktime,
             config_boxes: e.config_boxes,
+            trailing: e.trailing,
         })
     }
 }
@@ -2962,6 +3012,8 @@ impl<'a> Parse<'a> for DtsSampleEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MhaSampleEntry {
+    /// The SampleEntry `reserved[6]` bytes (§8.5.2.2), written back verbatim.
+    pub reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     /// The FourCC of this sample entry — one of `mha1`, `mha2`, `mhm1`, `mhm2`.
     pub codec_type: [u8; BOX_TYPE_SIZE],
     /// `entry_version`: 0 for a plain `AudioSampleEntry` (§12.2.3), 1 for an
@@ -2989,18 +3041,21 @@ pub struct MhaSampleEntry {
     /// Config and any extra child boxes (typically one `mhaC`).
     pub quicktime: Option<QuickTimeSound>,
     pub config_boxes: Vec<OpaqueBox>,
+    /// Bytes after the last complete child, kept verbatim.
+    pub trailing: Vec<u8>,
 }
 
 impl Serialize for MhaSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes, &self.trailing)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
             buf,
             AudioSampleEntryFields {
                 fourcc: &self.codec_type,
+                reserved: self.reserved,
                 entry_version: self.entry_version,
                 reserved_1: self.reserved_1,
                 data_reference_index: self.data_reference_index,
@@ -3010,6 +3065,7 @@ impl Serialize for MhaSampleEntry {
                 samplerate: self.samplerate,
                 quicktime: &self.quicktime,
                 config_boxes: &self.config_boxes,
+                trailing: &self.trailing,
             },
         )
     }
@@ -3026,6 +3082,7 @@ impl<'a> Parse<'a> for MhaSampleEntry {
         let e = parse_audio_sample_entry(bytes, "MhaSampleEntry")?;
         Ok(Self {
             codec_type,
+            reserved: e.reserved,
             entry_version: e.entry_version,
             reserved_1: e.reserved_1,
             data_reference_index: e.data_reference_index,
@@ -3035,6 +3092,7 @@ impl<'a> Parse<'a> for MhaSampleEntry {
             samplerate: e.samplerate,
             quicktime: e.quicktime,
             config_boxes: e.config_boxes,
+            trailing: e.trailing,
         })
     }
 }
@@ -3074,6 +3132,7 @@ const AUDIO_SAMPLE_ENTRY_SAMPLERATE_OFFSET: usize = 24;
 /// and `compression_ID`/`packet_size`), so a real file round-trips
 /// byte-exactly.
 struct ParsedAudioSampleEntry {
+    reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     entry_version: u16,
     reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
     data_reference_index: u16,
@@ -3083,10 +3142,13 @@ struct ParsedAudioSampleEntry {
     samplerate: u32,
     quicktime: Option<QuickTimeSound>,
     config_boxes: Vec<OpaqueBox>,
+    trailing: Vec<u8>,
 }
 
 fn parse_audio_sample_entry(bytes: &[u8], what: &'static str) -> Result<ParsedAudioSampleEntry> {
     let body = crate::box_types::box_body(bytes, AUDIO_SAMPLE_ENTRY_FIXED_LEN, what)?;
+    let mut reserved = [0u8; SAMPLE_ENTRY_RESERVED_LEN];
+    reserved.copy_from_slice(&body[..SAMPLE_ENTRY_RESERVED_LEN]);
     let entry_version = u16_at(body, AUDIO_SAMPLE_ENTRY_ENTRY_VERSION_OFFSET);
     let mut reserved_1 = [0u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN];
     reserved_1.copy_from_slice(
@@ -3104,24 +3166,10 @@ fn parse_audio_sample_entry(bytes: &[u8], what: &'static str) -> Result<ParsedAu
     let sr = u32_at(body, AUDIO_SAMPLE_ENTRY_SAMPLERATE_OFFSET);
     let (quicktime, children_at) = crate::quicktime::sound::parse_extension(bytes, body)?;
 
-    let mut config_boxes = Vec::new();
-    for item in BoxIter::clamped(body.get(children_at..).unwrap_or(&[])) {
-        let Ok(item) = item else {
-            break;
-        };
-        // The entry reader takes the compact form only: a to-end or largesize
-        // child ends the walk, as the fixed-offset reader always did.
-        if item.to_end() || item.has_largesize() {
-            break;
-        }
-        config_boxes.push(OpaqueBox {
-            box_type: item.four_cc(),
-            data: item.payload().to_vec(),
-            to_end: false,
-            largesize: false,
-        });
-    }
+    let (config_boxes, trailing) =
+        crate::box_support::capture_children(body.get(children_at..).unwrap_or(&[])).into_parts();
     Ok(ParsedAudioSampleEntry {
+        reserved,
         entry_version,
         reserved_1,
         data_reference_index: dri,
@@ -3131,6 +3179,7 @@ fn parse_audio_sample_entry(bytes: &[u8], what: &'static str) -> Result<ParsedAu
         samplerate: sr,
         quicktime,
         config_boxes,
+        trailing,
     })
 }
 
@@ -3139,6 +3188,7 @@ impl<'a> Parse<'a> for Ac3SampleEntry {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let e = parse_audio_sample_entry(bytes, "ac-3")?;
         Ok(Self {
+            reserved: e.reserved,
             entry_version: e.entry_version,
             reserved_1: e.reserved_1,
             data_reference_index: e.data_reference_index,
@@ -3148,6 +3198,7 @@ impl<'a> Parse<'a> for Ac3SampleEntry {
             samplerate: e.samplerate,
             quicktime: e.quicktime,
             config_boxes: e.config_boxes,
+            trailing: e.trailing,
         })
     }
 }
@@ -3157,6 +3208,7 @@ impl<'a> Parse<'a> for Ec3SampleEntry {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let e = parse_audio_sample_entry(bytes, "ec-3")?;
         Ok(Self {
+            reserved: e.reserved,
             entry_version: e.entry_version,
             reserved_1: e.reserved_1,
             data_reference_index: e.data_reference_index,
@@ -3166,6 +3218,7 @@ impl<'a> Parse<'a> for Ec3SampleEntry {
             samplerate: e.samplerate,
             quicktime: e.quicktime,
             config_boxes: e.config_boxes,
+            trailing: e.trailing,
         })
     }
 }
@@ -3173,11 +3226,13 @@ impl<'a> Parse<'a> for Ec3SampleEntry {
 fn audio_sample_entry_serialized_len(
     quicktime: &Option<QuickTimeSound>,
     config_boxes: &[OpaqueBox],
+    trailing: &[u8],
 ) -> usize {
     let mut n = BOX_HEADER_MIN_SIZE + crate::quicktime::sound::fixed_len(quicktime);
     for c in config_boxes {
         n += c.serialized_len();
     }
+    n += trailing.len();
     crate::box_types::box_len(n)
 }
 
@@ -3185,6 +3240,7 @@ fn audio_sample_entry_serialized_len(
 /// stays within the argument-count lint.
 struct AudioSampleEntryFields<'a> {
     fourcc: &'a [u8; BOX_TYPE_SIZE],
+    reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     entry_version: u16,
     reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
     data_reference_index: u16,
@@ -3194,19 +3250,20 @@ struct AudioSampleEntryFields<'a> {
     samplerate: u32,
     quicktime: &'a Option<QuickTimeSound>,
     config_boxes: &'a [OpaqueBox],
+    trailing: &'a [u8],
 }
 
 fn serialize_audio_sample_entry(buf: &mut [u8], f: AudioSampleEntryFields<'_>) -> Result<usize> {
     let config_boxes = f.config_boxes;
-    let need = audio_sample_entry_serialized_len(f.quicktime, config_boxes);
+    let need = audio_sample_entry_serialized_len(f.quicktime, config_boxes, f.trailing);
     need_out(buf, need)?;
     let mut c = 0usize;
     c += crate::box_types::write_box_header(buf, f.fourcc, need)?;
-    // SampleEntry: reserved(6) zeros + data_reference_index(2). Written, not
-    // skipped, so a reused caller buffer cannot keep garbage (r04-W45).
+    // SampleEntry: `reserved[6]` (written from the parsed value: a QuickTime
+    // writer may carry its own bytes there) + data_reference_index(2).
     let u16_len = core::mem::size_of::<u16>();
-    buf[c..c + AUDIO_SAMPLE_ENTRY_RESERVED_LEN].fill(0);
-    c += AUDIO_SAMPLE_ENTRY_RESERVED_LEN;
+    buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].copy_from_slice(&f.reserved);
+    c += SAMPLE_ENTRY_RESERVED_LEN;
     buf[c..c + u16_len].copy_from_slice(&f.data_reference_index.to_be_bytes());
     c += u16_len;
     // The 8-byte block: `entry_version` (0 for a plain AudioSampleEntry
@@ -3232,6 +3289,8 @@ fn serialize_audio_sample_entry(buf: &mut [u8], f: AudioSampleEntryFields<'_>) -
     for cb in config_boxes {
         c += cb.serialize_into(&mut buf[c..])?;
     }
+    buf[c..c + f.trailing.len()].copy_from_slice(f.trailing);
+    c += f.trailing.len();
     Ok(c)
 }
 
@@ -3273,6 +3332,7 @@ impl<'a> Parse<'a> for Mp4aSampleEntry {
         let e = parse_audio_sample_entry(bytes, "mp4a")?;
         Ok(Self {
             codec_type,
+            reserved: e.reserved,
             entry_version: e.entry_version,
             reserved_1: e.reserved_1,
             data_reference_index: e.data_reference_index,
@@ -3282,6 +3342,7 @@ impl<'a> Parse<'a> for Mp4aSampleEntry {
             samplerate: e.samplerate,
             quicktime: e.quicktime,
             config_boxes: e.config_boxes,
+            trailing: e.trailing,
         })
     }
 }
@@ -3289,7 +3350,7 @@ impl<'a> Parse<'a> for Mp4aSampleEntry {
 impl Serialize for Mp4aSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes)
+        audio_sample_entry_serialized_len(&self.quicktime, &self.config_boxes, &self.trailing)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -3298,6 +3359,7 @@ impl Serialize for Mp4aSampleEntry {
             buf,
             AudioSampleEntryFields {
                 fourcc: &self.codec_type,
+                reserved: self.reserved,
                 entry_version: self.entry_version,
                 reserved_1: self.reserved_1,
                 data_reference_index: self.data_reference_index,
@@ -3307,6 +3369,7 @@ impl Serialize for Mp4aSampleEntry {
                 samplerate: self.samplerate,
                 quicktime: &self.quicktime,
                 config_boxes: &self.config_boxes,
+                trailing: &self.trailing,
             },
         )
     }
@@ -3534,6 +3597,23 @@ pub struct SampleDescriptionBox {
 /// Parse one sample entry's box bytes into its typed variant (§8.5.2,
 /// ISO/IEC 14496-15:2017 sample entries).
 pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
+    // A typed entry's serialiser writes the compact header form. An entry the
+    // source stated with `size == 0` (§4.2) cannot be represented that way, so
+    // it stays opaque and keeps its own header.
+    if let Ok(header) = crate::box_types::BoxHeader::parse(box_bytes)
+        && header.size == 0
+    {
+        let mut opaque = OpaqueBox::new(
+            header.box_type.0,
+            box_bytes
+                .get(header.header_size()..)
+                .unwrap_or_default()
+                .to_vec(),
+        );
+        opaque.to_end = header.size == 0;
+        opaque.largesize = header.has_largesize();
+        return Ok(SampleEntryVariant::Unknown(opaque));
+    }
     let codec = &box_bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE];
     Ok(match codec {
         b"avc1" | b"avc3" | b"avc2" | b"avc4" => SampleEntryVariant::Avc1(
@@ -5717,6 +5797,7 @@ mod tests {
     fn audio_sample_entry_v1_writes_the_samplerate_placeholder() {
         assert_eq!(AudioSampleEntryV1::SAMPLERATE_PLACEHOLDER, 0x0001_0000);
         let entry = FlacSampleEntry {
+            reserved: [0; 6],
             entry_version: AudioSampleEntryV1::ENTRY_VERSION,
             reserved_1: [0; 6],
             data_reference_index: 1,
@@ -5726,6 +5807,7 @@ mod tests {
             samplerate: AudioSampleEntryV1::SAMPLERATE_PLACEHOLDER,
             quicktime: None,
             config_boxes: alloc::vec![],
+            trailing: alloc::vec![],
         };
         assert_eq!(entry.entry_version, 1);
         let mut buf = alloc::vec![0u8; entry.serialized_len()];
@@ -6213,6 +6295,7 @@ mod tests {
                 &mut clean,
                 AudioSampleEntryFields {
                     fourcc,
+                    reserved: [0u8; 6],
                     entry_version: 0,
                     reserved_1: [0u8; 6],
                     data_reference_index: 1,
@@ -6222,6 +6305,7 @@ mod tests {
                     samplerate: 48_000 << 16,
                     quicktime: &None,
                     config_boxes: &config_boxes,
+                    trailing: &[],
                 },
             )
             .expect("serialize audio sample entry");
@@ -6232,6 +6316,7 @@ mod tests {
                 &mut dirty,
                 AudioSampleEntryFields {
                     fourcc,
+                    reserved: [0u8; 6],
                     entry_version: 0,
                     reserved_1: [0u8; 6],
                     data_reference_index: 1,
@@ -6241,6 +6326,7 @@ mod tests {
                     samplerate: 48_000 << 16,
                     quicktime: &None,
                     config_boxes: &config_boxes,
+                    trailing: &[],
                 },
             )
             .expect("serialize into a dirty buffer");

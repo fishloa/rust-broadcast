@@ -15,8 +15,8 @@ use broadcast_core::len::{need_in, need_out};
 use broadcast_core::wire::{i16_at, u16_at, u32_at, u64_at};
 use broadcast_core::{Parse, Serialize};
 
-use crate::box_support::OpaqueBox;
-use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE, BoxIter};
+use crate::box_support::{OpaqueBox, capture_children};
+use crate::box_types::{BOX_HEADER_MIN_SIZE, BOX_TYPE_SIZE};
 use crate::error::{Error, Result};
 use crate::mp4esds::EsdsBox;
 use crate::quicktime::wave::WaveAtom;
@@ -189,8 +189,11 @@ pub struct SoundEntry {
     pub samplerate: u32,
     /// The version 1/2 extension, when the entry carries one.
     pub quicktime: Option<QuickTimeSound>,
-    /// Every child after the fixed part, verbatim.
+    /// Every complete child after the fixed part, verbatim.
     pub config_boxes: Vec<OpaqueBox>,
+    /// Bytes after the last complete child that no box walk can represent, kept
+    /// verbatim so a truncated or malformed tail is never rewritten.
+    pub trailing: Vec<u8>,
 }
 
 /// The `wave` atom among a sound entry's children, when present.
@@ -272,21 +275,8 @@ impl<'a> Parse<'a> for SoundEntry {
             }
             _ => (None, V0_FIXED_LEN),
         };
-        let mut config_boxes = Vec::new();
-        for item in BoxIter::clamped(body.get(children_at..).unwrap_or(&[])) {
-            let Ok(item) = item else {
-                break;
-            };
-            if item.to_end() || item.has_largesize() {
-                break;
-            }
-            config_boxes.push(OpaqueBox {
-                box_type: item.four_cc(),
-                data: item.payload().to_vec(),
-                to_end: item.to_end(),
-                largesize: item.has_largesize(),
-            });
-        }
+        let (config_boxes, trailing) =
+            capture_children(body.get(children_at..).unwrap_or(&[])).into_parts();
         Ok(Self {
             codec_type,
             reserved,
@@ -299,6 +289,7 @@ impl<'a> Parse<'a> for SoundEntry {
             samplerate: u32_at(body, SAMPLERATE_OFFSET),
             quicktime,
             config_boxes,
+            trailing,
         })
     }
 }
@@ -311,6 +302,7 @@ impl Serialize for SoundEntry {
         for child in &self.config_boxes {
             n += child.serialized_len();
         }
+        n += self.trailing.len();
         crate::box_types::box_len(n)
     }
 
@@ -342,6 +334,8 @@ impl Serialize for SoundEntry {
         for child in &self.config_boxes {
             c += child.serialize_into(&mut buf[c..])?;
         }
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        c += self.trailing.len();
         Ok(c)
     }
 }

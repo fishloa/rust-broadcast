@@ -1249,10 +1249,16 @@ impl Serialize for MetadataKeyTableBox {
 
 /// Parse a SampleEntry's fixed part (§8.5.2.2), returning its
 /// `data_reference_index` and the bytes that follow the fixed part.
-fn parse_sample_entry_base<'a>(bytes: &'a [u8], what: &'static str) -> Result<(u16, &'a [u8])> {
+fn parse_sample_entry_base<'a>(
+    bytes: &'a [u8],
+    what: &'static str,
+) -> Result<([u8; SAMPLE_ENTRY_RESERVED_LEN], u16, &'a [u8])> {
     let body = parse_box(bytes)?.0.body;
     need_in(body, SAMPLE_ENTRY_FIXED_LEN, what)?;
+    let mut reserved = [0u8; SAMPLE_ENTRY_RESERVED_LEN];
+    reserved.copy_from_slice(&body[..SAMPLE_ENTRY_RESERVED_LEN]);
     Ok((
+        reserved,
         be_u16(body, DATA_REFERENCE_INDEX_OFFSET, what)?,
         &body[SAMPLE_ENTRY_FIXED_LEN..],
     ))
@@ -1264,11 +1270,12 @@ fn write_sample_entry_base(
     buf: &mut [u8],
     fourcc: &[u8; BOX_TYPE_SIZE],
     need: usize,
+    reserved: &[u8; SAMPLE_ENTRY_RESERVED_LEN],
     data_reference_index: u16,
 ) -> Result<usize> {
     need_out(buf, need)?;
     let mut cursor = write_box_header(buf, fourcc, need)?;
-    buf[cursor..cursor + SAMPLE_ENTRY_RESERVED_LEN].fill(0);
+    buf[cursor..cursor + SAMPLE_ENTRY_RESERVED_LEN].copy_from_slice(reserved);
     cursor += SAMPLE_ENTRY_RESERVED_LEN;
     buf[cursor..cursor + U16_LEN].copy_from_slice(&data_reference_index.to_be_bytes());
     cursor += U16_LEN;
@@ -1299,6 +1306,7 @@ fn opaque_boxes_len(boxes: &[OpaqueBox]) -> usize {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct XmlMetaDataSampleEntry {
+    reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     data_reference_index: u16,
     content_encoding: Vec<u8>,
     namespace: Vec<u8>,
@@ -1311,6 +1319,7 @@ impl XmlMetaDataSampleEntry {
     #[must_use]
     pub fn new(content_encoding: &str, namespace: &str) -> Self {
         Self {
+            reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
             data_reference_index: 1,
             content_encoding: content_encoding.as_bytes().to_vec(),
             namespace: namespace.as_bytes().to_vec(),
@@ -1365,7 +1374,7 @@ impl XmlMetaDataSampleEntry {
 
     /// Parse the complete box, header included.
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
-        let (data_reference_index, rest) = parse_sample_entry_base(bytes, "metx")?;
+        let (reserved, data_reference_index, rest) = parse_sample_entry_base(bytes, "metx")?;
         let mut cursor = 0;
         let content_encoding = take_c_string(rest, &mut cursor, "metx content_encoding")?;
         let namespace = take_c_string(rest, &mut cursor, "metx namespace")?;
@@ -1375,6 +1384,7 @@ impl XmlMetaDataSampleEntry {
             None
         };
         Ok(Self {
+            reserved,
             data_reference_index,
             content_encoding,
             namespace,
@@ -1414,7 +1424,8 @@ impl Serialize for XmlMetaDataSampleEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        let mut cursor = write_sample_entry_base(buf, &METX, need, self.data_reference_index)?;
+        let mut cursor =
+            write_sample_entry_base(buf, &METX, need, &self.reserved, self.data_reference_index)?;
         cursor += write_c_string(buf, cursor, &self.content_encoding)?;
         cursor += write_c_string(buf, cursor, &self.namespace)?;
         if let Some(schema_location) = &self.schema_location {
@@ -1435,6 +1446,7 @@ impl Serialize for XmlMetaDataSampleEntry {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct TextMetaDataSampleEntry {
+    reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     codec_type: [u8; BOX_TYPE_SIZE],
     data_reference_index: u16,
     content_encoding: Vec<u8>,
@@ -1449,6 +1461,7 @@ impl TextMetaDataSampleEntry {
     pub fn new(content_encoding: &str, mime_format: &str) -> Self {
         Self {
             codec_type: METT,
+            reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
             data_reference_index: 1,
             content_encoding: content_encoding.as_bytes().to_vec(),
             mime_format: mime_format.as_bytes().to_vec(),
@@ -1514,7 +1527,7 @@ impl TextMetaDataSampleEntry {
         if codec_type != METT && codec_type != STXT {
             return Err(Error::InvalidInput("expected mett or stxt"));
         }
-        let (data_reference_index, rest) = parse_sample_entry_base(bytes, "mett")?;
+        let (reserved, data_reference_index, rest) = parse_sample_entry_base(bytes, "mett")?;
         let mut cursor = 0;
         let content_encoding = take_c_string(rest, &mut cursor, "mett content_encoding")?;
         let mime_format = take_c_string(rest, &mut cursor, "mett mime_format")?;
@@ -1530,6 +1543,7 @@ impl TextMetaDataSampleEntry {
         }
         Ok(Self {
             codec_type,
+            reserved,
             data_reference_index,
             content_encoding,
             mime_format,
@@ -1565,8 +1579,13 @@ impl Serialize for TextMetaDataSampleEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        let mut cursor =
-            write_sample_entry_base(buf, &self.codec_type, need, self.data_reference_index)?;
+        let mut cursor = write_sample_entry_base(
+            buf,
+            &self.codec_type,
+            need,
+            &self.reserved,
+            self.data_reference_index,
+        )?;
         cursor += write_c_string(buf, cursor, &self.content_encoding)?;
         cursor += write_c_string(buf, cursor, &self.mime_format)?;
         if let Some(text_config) = &self.text_config {
@@ -1587,6 +1606,7 @@ impl Serialize for TextMetaDataSampleEntry {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct UriMetaDataSampleEntry {
+    reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     data_reference_index: u16,
     uri: UriBox,
     uri_init: Option<UriInitBox>,
@@ -1598,6 +1618,7 @@ impl UriMetaDataSampleEntry {
     #[must_use]
     pub fn new(uri: &str) -> Self {
         Self {
+            reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
             data_reference_index: 1,
             uri: UriBox::new(uri),
             uri_init: None,
@@ -1645,7 +1666,7 @@ impl UriMetaDataSampleEntry {
 
     /// Parse the complete box, header included.
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
-        let (data_reference_index, rest) = parse_sample_entry_base(bytes, "urim")?;
+        let (reserved, data_reference_index, rest) = parse_sample_entry_base(bytes, "urim")?;
         let mut uri = None;
         let mut uri_init = None;
         let mut other_boxes = Vec::new();
@@ -1659,6 +1680,7 @@ impl UriMetaDataSampleEntry {
         }
         let uri = uri.ok_or(Error::InvalidInput("urim without a uri box"))?;
         Ok(Self {
+            reserved,
             data_reference_index,
             uri,
             uri_init,
@@ -1691,7 +1713,8 @@ impl Serialize for UriMetaDataSampleEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        let mut cursor = write_sample_entry_base(buf, &URIM, need, self.data_reference_index)?;
+        let mut cursor =
+            write_sample_entry_base(buf, &URIM, need, &self.reserved, self.data_reference_index)?;
         cursor += self.uri.serialize_into(&mut buf[cursor..])?;
         if let Some(uri_init) = &self.uri_init {
             cursor += uri_init.serialize_into(&mut buf[cursor..])?;
@@ -1711,6 +1734,7 @@ impl Serialize for UriMetaDataSampleEntry {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct BoxedMetaDataSampleEntry {
+    reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
     data_reference_index: u16,
     key_table: MetadataKeyTableBox,
     other_boxes: Vec<OpaqueBox>,
@@ -1721,6 +1745,7 @@ impl BoxedMetaDataSampleEntry {
     #[must_use]
     pub fn new(key_table: MetadataKeyTableBox) -> Self {
         Self {
+            reserved: [0u8; SAMPLE_ENTRY_RESERVED_LEN],
             data_reference_index: 1,
             key_table,
             other_boxes: Vec::new(),
@@ -1754,7 +1779,7 @@ impl BoxedMetaDataSampleEntry {
 
     /// Parse the complete box, header included.
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
-        let (data_reference_index, rest) = parse_sample_entry_base(bytes, "mebx")?;
+        let (reserved, data_reference_index, rest) = parse_sample_entry_base(bytes, "mebx")?;
         let mut key_table = None;
         let mut other_boxes = Vec::new();
         for child in crate::box_types::BoxIter::new(rest) {
@@ -1767,6 +1792,7 @@ impl BoxedMetaDataSampleEntry {
         }
         let key_table = key_table.ok_or(Error::InvalidInput("mebx without a keys box"))?;
         Ok(Self {
+            reserved,
             data_reference_index,
             key_table,
             other_boxes,
@@ -1797,7 +1823,8 @@ impl Serialize for BoxedMetaDataSampleEntry {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
-        let mut cursor = write_sample_entry_base(buf, &MEBX, need, self.data_reference_index)?;
+        let mut cursor =
+            write_sample_entry_base(buf, &MEBX, need, &self.reserved, self.data_reference_index)?;
         cursor += self.key_table.serialize_into(&mut buf[cursor..])?;
         for child in &self.other_boxes {
             cursor += child.serialize_into(&mut buf[cursor..])?;
