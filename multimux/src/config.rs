@@ -2458,7 +2458,7 @@ pub struct Config {
     /// it out of a graph that opted in. Use `Config::default()` + the `with_*`
     /// builders (or field assignment) at construction sites that must survive
     /// the feature being toggled.
-    #[cfg(feature = "test-seams")]
+    #[cfg(any(test, feature = "test-seams"))]
     #[serde(skip)]
     pub prebound: PreboundBinds,
 }
@@ -2466,13 +2466,14 @@ pub struct Config {
 /// Caller-bound sockets a `test-seams`-enabled test hands to a config-driven
 /// route so it consumes them instead of binding its own listen address — see
 /// [`Config::prebound`]. Empty in every production build (the field does not
-/// exist without `test-seams`). The inner maps are behind an
-/// `Arc<Mutex<…>>` so a `Config` clone still observes the same slots and a
-/// route can `take` its socket from a shared `&Config`.
-#[cfg(feature = "test-seams")]
+/// exist without `test-seams`, nor outside this crate's own unit tests). The
+/// inner maps are behind an `Arc<Mutex<…>>` so a `Config` clone still observes
+/// the same slots and a route can `take` its socket from a shared `&Config`.
+#[cfg(any(test, feature = "test-seams"))]
 #[derive(Debug, Clone, Default)]
 pub struct PreboundBinds {
-    /// TCP listeners keyed by the route's `listen` string (`Whip`/`Whep`).
+    /// TCP listeners keyed by the route's `listen` string
+    /// (`Whip`/`Whep`/`Rtmp`/`DashifIngest`).
     pub tcp: std::sync::Arc<
         parking_lot::Mutex<std::collections::HashMap<String, tokio::net::TcpListener>>,
     >,
@@ -2482,7 +2483,7 @@ pub struct PreboundBinds {
     >,
 }
 
-#[cfg(feature = "test-seams")]
+#[cfg(any(test, feature = "test-seams"))]
 impl PreboundBinds {
     /// Insert a pre-bound TCP listener under the route `listen` string that
     /// would otherwise be re-bound; returns `&mut Self` so calls chain.
@@ -2598,7 +2599,7 @@ impl Default for Config {
             output_auth: None,
             admin: None,
             allow_open_ingest: false,
-            #[cfg(feature = "test-seams")]
+            #[cfg(any(test, feature = "test-seams"))]
             prebound: PreboundBinds::default(),
         }
     }
@@ -2821,26 +2822,26 @@ impl Config {
     /// Take the pre-bound TCP listener a `test-seams` test registered for
     /// `listen`, if any — always `None` without `test-seams` (see
     /// [`Config::prebound`]).
-    #[cfg(feature = "test-seams")]
+    #[cfg(any(test, feature = "test-seams"))]
     pub fn prebound_tcp(&self, listen: &str) -> Option<tokio::net::TcpListener> {
         self.prebound.take_tcp(listen)
     }
 
     /// The `test-seams`-off shape: no pre-bound socket ever exists.
-    #[cfg(not(feature = "test-seams"))]
+    #[cfg(not(any(test, feature = "test-seams")))]
     pub fn prebound_tcp(&self, _listen: &str) -> Option<tokio::net::TcpListener> {
         None
     }
 
     /// Take the pre-bound UDP socket a `test-seams` test registered for
     /// `addr`, if any — always `None` without `test-seams`.
-    #[cfg(feature = "test-seams")]
+    #[cfg(any(test, feature = "test-seams"))]
     pub fn prebound_udp(&self, addr: &str) -> Option<tokio::net::UdpSocket> {
         self.prebound.take_udp(addr)
     }
 
     /// The `test-seams`-off shape: no pre-bound socket ever exists.
-    #[cfg(not(feature = "test-seams"))]
+    #[cfg(not(any(test, feature = "test-seams")))]
     pub fn prebound_udp(&self, _addr: &str) -> Option<tokio::net::UdpSocket> {
         None
     }

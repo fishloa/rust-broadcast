@@ -87,23 +87,6 @@ fn rtmp_fixture_path() -> PathBuf {
     test_fixtures::path("rtmp/obs-publish.bin")
 }
 
-/// Reserves a free TCP port, then immediately releases it -- the same
-/// "reserve then drop, hand the exact address to the thing that binds it"
-/// pattern `multimux/src/source/ts_udp.rs`'s own loopback test uses, just
-/// for TCP (this crate's HTTP origin bind address).
-///
-/// Only the RTMP test still needs this: `rtmp-runtime`'s `AsyncRtmpServer`
-/// exposes a `bind(addr)` constructor but no `from_listener`, so multimux's
-/// RTMP route cannot accept a caller-bound listen socket (unlike WHEP/WHIP/
-/// TS-UDP, which now take one via `Config::prebound`). See
-/// `harness_guard.rs`'s RTMP allowlist entry.
-fn reserve_tcp_addr() -> SocketAddr {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
-    let addr = listener.local_addr().expect("local addr");
-    drop(listener);
-    addr
-}
-
 /// One LL-HLS-only route named `"cam"`, bound at `bind`, ingesting `input` --
 /// short segments/parts (0.5 s / 100 ms) so the ~3 s real fixture closes at
 /// least one real segment (two keyframes comfortably land inside the fed
@@ -364,8 +347,8 @@ async fn rtmp_dispatch_serves_real_media_end_to_end() {
     use tokio::net::TcpStream;
 
     let (bind_addr, bind_listener) = bind_tcp();
-    let rtmp_addr = reserve_tcp_addr();
-    let config = base_config(
+    let (rtmp_addr, rtmp_listener) = bind_tcp();
+    let mut config = base_config(
         bind_addr,
         InputSpec::Rtmp {
             listen: rtmp_addr.to_string(),
@@ -373,6 +356,9 @@ async fn rtmp_dispatch_serves_real_media_end_to_end() {
             stream_key: None,
         },
     );
+    config
+        .prebound
+        .with_tcp(rtmp_addr.to_string(), rtmp_listener);
     let server = tokio::spawn(
         multimux::Server::new(
             multimux::ServeRequest::new(config)
@@ -384,17 +370,9 @@ async fn rtmp_dispatch_serves_real_media_end_to_end() {
 
     let fixture = std::fs::read(rtmp_fixture_path()).expect("rtmp fixture must exist");
     let publisher = tokio::spawn(async move {
-        let mut stream = None;
-        for _ in 0..200 {
-            match TcpStream::connect(rtmp_addr).await {
-                Ok(s) => {
-                    stream = Some(s);
-                    break;
-                }
-                Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
-            }
-        }
-        let mut stream = stream.expect("connect to the RTMP listener");
+        let mut stream = TcpStream::connect(rtmp_addr)
+            .await
+            .expect("connect to the RTMP listener");
         stream
             .write_all(&fixture)
             .await

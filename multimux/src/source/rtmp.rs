@@ -227,7 +227,7 @@ struct RtmpInfra {
     /// Set by the accept pump as it ends, so the next [`RtmpRoute::ensure_infra`]
     /// rebinds instead of reusing a listener whose pump is gone.
     dead: Arc<AtomicBool>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-seams"))]
     local_addr: std::net::SocketAddr,
 }
 
@@ -238,6 +238,40 @@ impl Drop for RtmpInfra {
     }
 }
 
+/// How [`RtmpRoute::ensure_infra`] obtains accepted publishers: the runtime's
+/// own bound server, or a caller-supplied listener the runtime does not own
+/// (its `AsyncRtmpServer` has no constructor from one).
+enum RtmpAcceptor {
+    Server(Arc<AsyncRtmpServer>),
+    Listener {
+        listener: Arc<tokio::net::TcpListener>,
+        config: RtmpServerConfig,
+    },
+}
+
+impl RtmpAcceptor {
+    async fn accept(&self) -> std::io::Result<AcceptedRtmpConnection> {
+        match self {
+            RtmpAcceptor::Server(server) => server.accept().await,
+            RtmpAcceptor::Listener { listener, config } => {
+                let (stream, peer) = listener.accept().await?;
+                Ok(AcceptedRtmpConnection::new(
+                    RtmpConnection::from_stream(stream, config.clone()),
+                    peer,
+                ))
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "test-seams"))]
+    fn local_addr(&self) -> std::io::Result<std::net::SocketAddr> {
+        match self {
+            RtmpAcceptor::Server(server) => server.local_addr(),
+            RtmpAcceptor::Listener { listener, .. } => listener.local_addr(),
+        }
+    }
+}
+
 /// An RTMP push-ingest route: binds `listen` once and accepts publishers
 /// against it, gated by an optional `app`/`stream_key` (see
 /// [`Self::with_app`]/[`Self::with_stream_key`]). Replaces the pre-#805
@@ -245,6 +279,9 @@ impl Drop for RtmpInfra {
 pub struct RtmpRoute {
     name: String,
     listen: String,
+    /// A caller-supplied, already-bound listener. `None` binds `listen` on
+    /// first use.
+    prebound: Mutex<Option<tokio::net::TcpListener>>,
     app: Option<String>,
     stream_key: Option<String>,
     timeouts: Timeouts,
@@ -277,6 +314,29 @@ impl RtmpRoute {
         RtmpRoute {
             name: name.into(),
             listen: listen.into(),
+            prebound: Mutex::new(None),
+            app: None,
+            stream_key: None,
+            timeouts: Timeouts::default(),
+            max_sessions: DEFAULT_RTMP_MAX_SESSIONS,
+            infra: AsyncMutex::new(None),
+        }
+    }
+
+    /// Build a route over an already-bound listener, so a caller that must
+    /// know the port before the route starts (a test) does not have to
+    /// reserve one and race to re-bind it. `rtmp-runtime`'s
+    /// [`AsyncRtmpServer`] exposes only `bind`, so the pre-bound listener is
+    /// accepted here instead.
+    pub fn with_listener(name: impl Into<String>, listener: tokio::net::TcpListener) -> Self {
+        let listen = listener
+            .local_addr()
+            .map(|addr| addr.to_string())
+            .unwrap_or_else(|_| "127.0.0.1:0".to_string());
+        RtmpRoute {
+            name: name.into(),
+            listen,
+            prebound: Mutex::new(Some(listener)),
             app: None,
             stream_key: None,
             timeouts: Timeouts::default(),
@@ -323,6 +383,14 @@ impl RtmpRoute {
         self
     }
 
+    /// The address the route's listen socket is actually bound to, binding it
+    /// first if needed — a test hands this to its publisher instead of
+    /// reserving a port and racing to re-bind it.
+    #[cfg(test)]
+    pub(crate) async fn bound_addr(&self) -> Result<std::net::SocketAddr> {
+        Ok(self.ensure_infra().await?.local_addr)
+    }
+
     /// Binds the listen socket and spawns the accept-pump task on the first
     /// call only; every later call — a fresh [`run_rtmp`] attempt — is handed
     /// a clone of the same shared receiver, never re-binding, until that pump
@@ -342,15 +410,22 @@ impl RtmpRoute {
         let config = RtmpServerConfig::default().with_session(
             SessionServerConfig::default().with_expected_stream_key(self.stream_key.clone()),
         );
-        let server = Arc::new(
-            AsyncRtmpServer::bind(self.listen.as_str(), config)
-                .await
-                .map_err(|e| MultimuxError::Connect {
-                    reason: format!("rtmp: bind {}: {e}", self.listen),
-                })?,
-        );
-        #[cfg(test)]
-        let local_addr = server.local_addr().map_err(|e| MultimuxError::Connect {
+        let prebound = self.prebound.lock().take();
+        let acceptor = match prebound {
+            Some(listener) => RtmpAcceptor::Listener {
+                listener: Arc::new(listener),
+                config,
+            },
+            None => RtmpAcceptor::Server(Arc::new(
+                AsyncRtmpServer::bind(self.listen.as_str(), config)
+                    .await
+                    .map_err(|e| MultimuxError::Connect {
+                        reason: format!("rtmp: bind {}: {e}", self.listen),
+                    })?,
+            )),
+        };
+        #[cfg(any(test, feature = "test-seams"))]
+        let local_addr = acceptor.local_addr().map_err(|e| MultimuxError::Connect {
             reason: format!("rtmp: local address of {}: {e}", self.listen),
         })?;
         let (tx, rx) = mpsc::channel(ACCEPT_QUEUE_CAPACITY);
@@ -361,10 +436,10 @@ impl RtmpRoute {
         let dead = Arc::new(AtomicBool::new(false));
         let tracker = tokio_util::task::TaskTracker::new();
         let accept_source = {
-            let server = Arc::clone(&server);
+            let acceptor = Arc::new(acceptor);
             move || {
-                let server = Arc::clone(&server);
-                async move { server.accept().await }
+                let acceptor = Arc::clone(&acceptor);
+                async move { acceptor.accept().await }
             }
         };
         tracker.spawn(accept_pump(
@@ -383,7 +458,7 @@ impl RtmpRoute {
             tracker,
             cancel,
             dead,
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-seams"))]
             local_addr,
         });
         *slot = Some(Arc::clone(&infra));
@@ -801,8 +876,8 @@ impl RtmpRouteShared {
     }
 }
 
-/// Bind an ephemeral loopback listener, start `run_rtmp` against a re-bound
-/// listen address, and return that address + a handle + a cancel token.
+/// Bind a route on an ephemeral loopback port, start `run_rtmp` against it,
+/// and return that bound address + a handle + a cancel token.
 #[cfg(feature = "test-seams")]
 #[doc(hidden)]
 pub async fn serve_for_test_with_read_load() -> (
@@ -810,13 +885,9 @@ pub async fn serve_for_test_with_read_load() -> (
     Arc<RtmpRouteShared>,
     tokio_util::sync::CancellationToken,
 ) {
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .expect("bind");
-    let addr = listener.local_addr().expect("addr");
-    drop(listener);
-    let route = RtmpRoute::new("cam-rtmp", addr.to_string());
+    let route = RtmpRoute::new("cam-rtmp", "127.0.0.1:0");
     let infra = route.ensure_infra().await.expect("ensure_infra");
+    let addr = infra.local_addr;
     let shared = Arc::new(RtmpRouteShared {
         admitted_total: Arc::clone(&infra.admitted_total),
         admit_count_notify: Arc::clone(&infra.admit_count_notify),
@@ -1000,7 +1071,7 @@ mod tests {
     use media_plane::ts_session::test_support::{handshake, trunk_config};
     use rtmp_runtime::server::ServerSession;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::net::TcpStream;
     use transmux::pipeline::CodecConfig;
 
     /// The real ffmpeg-captured RTMP publish (`app=live`, `stream_key=testkey`,
@@ -1010,18 +1081,6 @@ mod tests {
 
     fn load_fixture() -> Vec<u8> {
         std::fs::read(test_fixtures::path(FIXTURE)).expect("read ../fixtures/rtmp/obs-publish.bin")
-    }
-
-    /// Reserves a free loopback TCP port then immediately releases it, so a
-    /// caller can pass the exact address to something that binds it shortly
-    /// after — the same technique `ts_udp`'s own loopback test uses.
-    async fn reserve_addr() -> std::net::SocketAddr {
-        let reserved = TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("reserve port");
-        let addr = reserved.local_addr().expect("local addr");
-        drop(reserved);
-        addr
     }
 
     /// Replays `fixture` byte-by-byte through a fresh sans-IO `ServerSession`,
@@ -1081,19 +1140,12 @@ mod tests {
 
     /// Connects to `addr` and writes `bytes`, draining (and discarding)
     /// whatever the server replies with so its writes never block — shared
-    /// shape by every test below's client task.
+    /// shape by every test below's client task. The route's listener is bound
+    /// before its address is handed out, so the connect needs no retry.
     async fn connect_and_write(addr: std::net::SocketAddr, bytes: Vec<u8>) -> TcpStream {
-        let mut stream = None;
-        for _ in 0..200 {
-            match TcpStream::connect(addr).await {
-                Ok(s) => {
-                    stream = Some(s);
-                    break;
-                }
-                Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
-            }
-        }
-        let mut stream = stream.expect("connect to the RTMP listener");
+        let mut stream = TcpStream::connect(addr)
+            .await
+            .expect("connect to the RTMP listener");
         stream.write_all(&bytes).await.expect("write publish bytes");
         stream
     }
@@ -1140,8 +1192,8 @@ mod tests {
     /// confirmed that exact panic, then reverted.
     #[tokio::test]
     async fn loopback_rtmp_publish_lands_media_in_the_trunk() {
-        let addr = reserve_addr().await;
-        let route = RtmpRoute::new("cam-rtmp", addr.to_string());
+        let route = RtmpRoute::new("cam-rtmp", "127.0.0.1:0");
+        let addr = route.bound_addr().await.expect("bind the RTMP listener");
         let fixture = load_fixture();
 
         let route_handle = Arc::new(RouteHandle::new(
@@ -1347,8 +1399,8 @@ mod tests {
     #[tokio::test]
     async fn a_publisher_connecting_after_the_route_handshake_budget_still_lands() {
         let budget = Duration::from_millis(300);
-        let addr = reserve_addr().await;
-        let route = RtmpRoute::new("cam-rtmp-late", addr.to_string());
+        let route = RtmpRoute::new("cam-rtmp-late", "127.0.0.1:0");
+        let addr = route.bound_addr().await.expect("bind the RTMP listener");
         let fixture = load_fixture();
         let clock = ManualClock::new();
 
@@ -1373,7 +1425,10 @@ mod tests {
 
         // The loop has read its start instant; now the route has "been up" far
         // longer than the budget.
-        tokio::time::timeout(Duration::from_secs(10), clock.started.notified())
+        //
+        // HANG GUARD: the run loop only has to be scheduled once, so this
+        // waits out a real hang under load, not a timing claim.
+        tokio::time::timeout(Duration::from_secs(60), clock.started.notified())
             .await
             .expect("the run loop starts");
         clock.advance(budget * 100);
@@ -1450,14 +1505,14 @@ mod tests {
     /// confirmed that exact panic, then reverted.
     #[tokio::test]
     async fn second_publisher_is_served_while_first_is_stalled_at_handshake() {
-        let addr = reserve_addr().await;
-        let route = RtmpRoute::new("cam-rtmp-concurrent", addr.to_string())
+        let route = RtmpRoute::new("cam-rtmp-concurrent", "127.0.0.1:0")
             .with_max_sessions(4)
             .with_timeouts(
                 broadcast_common::timeouts::Timeouts::default()
                     .with_connect(Timeouts::default().connect)
                     .with_read_idle(Duration::from_secs(30)),
             );
+        let addr = route.bound_addr().await.expect("bind the RTMP listener");
         let fixture = load_fixture();
         let stall_prefix_len = fixture_offset_after_publish_before_any_media(&fixture);
         assert!(
@@ -1597,8 +1652,8 @@ mod tests {
         let chunk1 = chunk1.to_vec();
         let chunk2 = chunk2.to_vec();
 
-        let addr = reserve_addr().await;
-        let route = RtmpRoute::new("cam-rtmp-split", addr.to_string());
+        let route = RtmpRoute::new("cam-rtmp-split", "127.0.0.1:0");
+        let addr = route.bound_addr().await.expect("bind the RTMP listener");
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration(std::time::Duration::from_secs(1))
@@ -1611,17 +1666,9 @@ mod tests {
         });
 
         let client = tokio::spawn(async move {
-            let mut stream = None;
-            for _ in 0..200 {
-                match TcpStream::connect(addr).await {
-                    Ok(s) => {
-                        stream = Some(s);
-                        break;
-                    }
-                    Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
-                }
-            }
-            let mut stream = stream.expect("connect to the RTMP listener");
+            let mut stream = TcpStream::connect(addr)
+                .await
+                .expect("connect to the RTMP listener");
             stream
                 .write_all(&chunk1)
                 .await
@@ -1683,14 +1730,14 @@ mod tests {
     /// confirmed the exact `assert!(landed, ...)` panic, then reverted.
     #[tokio::test]
     async fn idle_publisher_is_reaped_via_read_timeout_freeing_its_slot() {
-        let addr = reserve_addr().await;
-        let route = RtmpRoute::new("cam-rtmp-idle", addr.to_string())
+        let route = RtmpRoute::new("cam-rtmp-idle", "127.0.0.1:0")
             .with_max_sessions(1)
             .with_timeouts(
                 broadcast_common::timeouts::Timeouts::default()
                     .with_connect(Timeouts::default().connect)
                     .with_read_idle(Duration::from_millis(200)),
             );
+        let addr = route.bound_addr().await.expect("bind the RTMP listener");
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration(std::time::Duration::from_secs(1))
@@ -1705,17 +1752,9 @@ mod tests {
         // First client: connects and holds the socket open, sending
         // nothing at all -- occupies the one available slot.
         let idle_client = tokio::spawn(async move {
-            let mut stream = None;
-            for _ in 0..200 {
-                match TcpStream::connect(addr).await {
-                    Ok(s) => {
-                        stream = Some(s);
-                        break;
-                    }
-                    Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
-                }
-            }
-            let stream = stream.expect("connect to the RTMP listener");
+            let stream = TcpStream::connect(addr)
+                .await
+                .expect("connect to the RTMP listener");
             tokio::time::sleep(Duration::from_secs(5)).await;
             drop(stream);
         });
@@ -2042,8 +2081,8 @@ mod tests {
     /// its program released.
     #[tokio::test]
     async fn a_live_session_stays_published_and_is_released_when_it_ends() {
-        let addr = reserve_addr().await;
-        let route = RtmpRoute::new("cam-rtmp-release", addr.to_string());
+        let route = RtmpRoute::new("cam-rtmp-release", "127.0.0.1:0");
+        let addr = route.bound_addr().await.expect("bind the RTMP listener");
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration(Duration::from_secs(1))
@@ -2109,17 +2148,9 @@ mod tests {
     async fn session_count_and_wait_for_sessions_report_admissions() {
         let (addr, shared, cancel) = serve_for_test_with_read_load().await;
         assert_eq!(shared.session_count(), 0, "no session yet");
-        let mut first = None;
-        for _ in 0..200 {
-            match TcpStream::connect(addr).await {
-                Ok(s) => {
-                    first = Some(s);
-                    break;
-                }
-                Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
-            }
-        }
-        let _first = first.expect("connect the first publisher");
+        let _first = TcpStream::connect(addr)
+            .await
+            .expect("connect the first publisher");
         let _second = TcpStream::connect(addr).await.expect("connect the second");
         let admitted = tokio::time::timeout(
             Duration::from_secs(10),
