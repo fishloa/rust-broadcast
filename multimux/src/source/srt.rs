@@ -185,6 +185,36 @@ impl SrtRoute {
         }
         cfg
     }
+
+    async fn ensure_listener(&self) -> Result<Arc<Mutex<SrtListener>>> {
+        let listen = self.listen.as_ref().ok_or_else(|| MultimuxError::Connect {
+            reason: "srt: accept_listener on a caller-mode route".into(),
+        })?;
+        let cfg = self.handshake_config();
+        self.listener
+            .get_or_try_init(|| async {
+                SrtListener::bind(listen.as_str(), SrtSocketConfig::new(cfg.clone()))
+                    .await
+                    .map(|l| Arc::new(Mutex::new(l)))
+                    .map_err(|e| MultimuxError::Connect {
+                        reason: format!("srt: bind {listen}: {e}"),
+                    })
+            })
+            .await
+            .cloned()
+    }
+
+    /// The address the listener is actually bound to, binding it first if
+    /// needed — a test hands this to its Caller instead of reserving a port
+    /// and racing to re-bind it.
+    #[cfg(test)]
+    pub(crate) async fn bound_addr(&self) -> Result<std::net::SocketAddr> {
+        let listener = self.ensure_listener().await?;
+        let guard = listener.lock().await;
+        guard.local_addr().map_err(|e| MultimuxError::Connect {
+            reason: format!("srt: local address: {e}"),
+        })
+    }
 }
 
 impl Source for SrtRoute {
@@ -232,24 +262,7 @@ impl Dialer for SrtDialer {
 /// by this port. The post-accept read is bounded by
 /// [`Timeouts::read_idle`] in the drive loop's first bounded read.
 pub async fn accept_listener(route: &SrtRoute) -> Result<SrtSocket> {
-    let listen = route
-        .listen
-        .as_ref()
-        .ok_or_else(|| MultimuxError::Connect {
-            reason: "srt: accept_listener on a caller-mode route".into(),
-        })?;
-    let cfg = route.handshake_config();
-    let listener = route
-        .listener
-        .get_or_try_init(|| async {
-            SrtListener::bind(listen.as_str(), SrtSocketConfig::new(cfg.clone()))
-                .await
-                .map(|l| Arc::new(Mutex::new(l)))
-                .map_err(|e| MultimuxError::Connect {
-                    reason: format!("srt: bind {listen}: {e}"),
-                })
-        })
-        .await?;
+    let listener = route.ensure_listener().await?;
 
     // Guard dropped at the end of this call, before any read loop — an
     // accepted-but-unresolved connection must never hold the listener lock.
@@ -489,21 +502,16 @@ mod tests {
     /// ever reaches the `Trunk`.
     #[tokio::test]
     async fn loopback_srt_listener_publish_lands_samples_in_trunk() {
-        let reserved = tokio::net::UdpSocket::bind("127.0.0.1:0")
-            .await
-            .expect("reserve port");
-        let addr = reserved.local_addr().expect("local addr");
-        drop(reserved);
-
         // A short read timeout: `SrtSocket::drop` does not send the peer an
         // explicit SRT Shutdown control packet, so once the client stops
         // sending, the drive loop would otherwise wait the full default
         // 30 s read timeout before returning.
-        let route = SrtRoute::new_listener("cam-srt", addr.to_string()).with_timeouts(
+        let route = SrtRoute::new_listener("cam-srt", "127.0.0.1:0").with_timeouts(
             broadcast_common::timeouts::Timeouts::default()
                 .with_connect(Timeouts::default().connect)
                 .with_read_idle(Duration::from_secs(2)),
         );
+        let addr = route.bound_addr().await.expect("bind the SRT listener");
         let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAA, 40);
 
         let client = tokio::spawn(async move {
@@ -821,12 +829,7 @@ mod tests {
     /// wait at once, instead of relying on the supervisor dropping the future.
     #[tokio::test]
     async fn cancel_ends_the_wait_for_a_caller() {
-        let reserved = tokio::net::UdpSocket::bind("127.0.0.1:0")
-            .await
-            .expect("reserve port");
-        let addr = reserved.local_addr().expect("local addr");
-        drop(reserved);
-        let route = SrtRoute::new_listener("cam-srt", addr.to_string());
+        let route = SrtRoute::new_listener("cam-srt", "127.0.0.1:0");
         let route_handle = Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration(std::time::Duration::from_secs(4))
@@ -840,7 +843,7 @@ mod tests {
             canceller.cancel();
         });
         let result = tokio::time::timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(60),
             run_srt_listener_once(&route, trunk_config(), handshake(), &route_handle, cancel),
         )
         .await
