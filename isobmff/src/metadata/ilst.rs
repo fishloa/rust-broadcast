@@ -462,14 +462,23 @@ fn parse_item(item: &crate::box_types::BoxItem<'_>, limits: &Limits) -> Result<I
     let mut children = Vec::new();
     for child in BoxIter::new(item.body) {
         let child = child?;
+        if child.to_end() || child.has_largesize() {
+            let mut opaque = OpaqueBox::new(child.four_cc(), child.payload().to_vec());
+            opaque.to_end = child.to_end();
+            opaque.largesize = child.has_largesize();
+            children.push(IlstItemChild::Opaque(opaque));
+            continue;
+        }
         match child.four_cc() {
             DATA => children.push(IlstItemChild::Data(Data::parse_body(child.body, limits)?)),
             MEAN => children.push(IlstItemChild::Mean(Mean::parse_body(child.body)?)),
             NAME => children.push(IlstItemChild::Name(Name::parse_body(child.body)?)),
-            _ => children.push(IlstItemChild::Opaque(OpaqueBox::new(
-                child.four_cc(),
-                child.payload().to_vec(),
-            ))),
+            _ => {
+                let mut opaque = OpaqueBox::new(child.four_cc(), child.payload().to_vec());
+                opaque.to_end = child.to_end();
+                opaque.largesize = child.has_largesize();
+                children.push(IlstItemChild::Opaque(opaque));
+            }
         }
     }
     Ok(IlstItem::new(item.four_cc(), children))

@@ -306,6 +306,13 @@ impl Meta {
         let mut children = Vec::new();
         for child in BoxIter::new(children_body) {
             let child = child?;
+            if child.to_end() || child.has_largesize() {
+                let mut opaque = OpaqueBox::new(child.four_cc(), child.payload().to_vec());
+                opaque.to_end = child.to_end();
+                opaque.largesize = child.has_largesize();
+                children.push(MetaChild::Opaque(opaque));
+                continue;
+            }
             let parsed = match child.four_cc() {
                 HDLR => MetaChild::Hdlr(Hdlr::parse_body(child.body)?),
                 super::keys::KEYS => MetaChild::Keys(Keys::parse_body(child.body)?),
@@ -316,7 +323,12 @@ impl Meta {
                     MetaChild::BinaryXml(crate::meta_track::BinaryXmlBox::parse_body(child.body)?)
                 }
                 super::ilst::ILST => MetaChild::Ilst(Ilst::parse_body(child.body, limits)?),
-                _ => MetaChild::Opaque(OpaqueBox::new(child.four_cc(), child.payload().to_vec())),
+                _ => {
+                    let mut opaque = OpaqueBox::new(child.four_cc(), child.payload().to_vec());
+                    opaque.to_end = child.to_end();
+                    opaque.largesize = child.has_largesize();
+                    MetaChild::Opaque(opaque)
+                }
             };
             children.push(parsed);
         }

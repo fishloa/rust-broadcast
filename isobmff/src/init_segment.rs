@@ -3688,10 +3688,11 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
         _ => {
             let mut c4 = [0u8; BOX_TYPE_SIZE];
             c4.copy_from_slice(&codec[..BOX_TYPE_SIZE.min(codec.len())]);
-            SampleEntryVariant::Unknown(OpaqueBox::new(
-                c4,
-                crate::box_types::parse_box(box_bytes)?.0.payload().to_vec(),
-            ))
+            let item = crate::box_types::parse_box(box_bytes)?.0;
+            let mut opaque = OpaqueBox::new(c4, item.payload().to_vec());
+            opaque.to_end = item.to_end();
+            opaque.largesize = item.has_largesize();
+            SampleEntryVariant::Unknown(opaque)
         }
     })
 }

@@ -88,3 +88,40 @@ fn truncated_sample_entry_is_a_typed_error() {
         "an entry shorter than its declared size must not be re-emitted"
     );
 }
+
+#[test]
+fn udta_to_end_child_keeps_its_header_form() {
+    // `isobmff_metadata` crash-2f504d53: a `udta` child declared with
+    // `size == 0` (extends to the end of `udta`, ISO/IEC 14496-12:2026 §4.2).
+    let wire = [0, 0, 0, 16, 117, 100, 116, 97, 0, 0, 0, 0, 16, 100, 116, 97];
+    let udta = isobmff::metadata::Udta::parse(&wire).expect("udta parses");
+    let out = udta.try_to_bytes().expect("udta serializes");
+    assert_eq!(out, wire, "the to-end child keeps its header form");
+}
+
+#[test]
+fn udta_to_end_meta_child_keeps_its_header_form() {
+    // `isobmff_metadata` crash-af6003: a typed `meta` child declared with
+    // `size == 0`. A typed child serialises the compact header, so the to-end
+    // child is kept opaque.
+    let wire = [
+        0, 0, 0, 46, 117, 100, 116, 97, 0, 0, 0, 8, 16, 0, 0, 0, 0, 0, 0, 0, 109, 101, 116, 97,
+        254, 255, 0, 0, 0, 0, 0, 10, 109, 97, 8, 16, 20, 0, 0, 0, 0, 0, 0, 0, 0, 200,
+    ];
+    let udta = isobmff::metadata::Udta::parse(&wire).expect("udta parses");
+    let out = udta.try_to_bytes().expect("udta serializes");
+    assert_eq!(out, wire, "the to-end meta child keeps its header form");
+}
+
+#[test]
+fn udta_plain_text_atom_keeps_its_terminator_state() {
+    // `isobmff_metadata` crash-580599: a `name` atom with an empty body. A
+    // plain text atom is a NUL-terminated string, but this one has no NUL and
+    // must not gain one.
+    let wire = [
+        0, 0, 0, 16, 117, 100, 116, 97, 0, 0, 0, 8, 110, 97, 109, 101,
+    ];
+    let udta = isobmff::metadata::Udta::parse(&wire).expect("udta parses");
+    let out = udta.try_to_bytes().expect("udta serializes");
+    assert_eq!(out, wire, "a plain text atom keeps its terminator state");
+}

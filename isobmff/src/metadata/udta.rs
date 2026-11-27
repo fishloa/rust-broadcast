@@ -56,6 +56,13 @@ pub struct UdtaText {
     pub key: [u8; BOX_TYPE_SIZE],
     /// The language-tagged strings, in wire order.
     pub translations: Vec<UdtaTextTranslation>,
+    /// Whether a plain (non-`©`) atom's text carried its NUL terminator.
+    ///
+    /// The international form's translations each carry their own length, so
+    /// this is unread there; a plain atom is a single NUL-terminated string
+    /// (the module doc), and a file that omitted the NUL must not gain one on
+    /// a rewrite.
+    pub plain_nul_terminated: bool,
 }
 
 impl UdtaText {
@@ -66,10 +73,17 @@ impl UdtaText {
     }
 
     fn body_len(&self) -> usize {
-        self.translations
-            .iter()
-            .map(|translation| TRANSLATION_PREFIX_LEN + translation.value.len())
-            .sum()
+        if self.key[0] == super::COPYRIGHT_SIGN {
+            self.translations
+                .iter()
+                .map(|translation| TRANSLATION_PREFIX_LEN + translation.value.len())
+                .sum()
+        } else {
+            self.translations
+                .first()
+                .map_or(0, |translation| translation.value.len())
+                + usize::from(self.plain_nul_terminated)
+        }
     }
 }
 
@@ -84,14 +98,24 @@ impl Serialize for UdtaText {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor = write_box_header(buf, &self.key, need)?;
-        for translation in &self.translations {
-            let len = broadcast_core::len::fit_u16(translation.value.len(), "udta text length")?;
-            buf[cursor..cursor + U16_LEN].copy_from_slice(&len.to_be_bytes());
-            cursor += U16_LEN;
-            buf[cursor..cursor + U16_LEN].copy_from_slice(&translation.language.to_be_bytes());
-            cursor += U16_LEN;
+        if self.key[0] == super::COPYRIGHT_SIGN {
+            for translation in &self.translations {
+                let len =
+                    broadcast_core::len::fit_u16(translation.value.len(), "udta text length")?;
+                buf[cursor..cursor + U16_LEN].copy_from_slice(&len.to_be_bytes());
+                cursor += U16_LEN;
+                buf[cursor..cursor + U16_LEN].copy_from_slice(&translation.language.to_be_bytes());
+                cursor += U16_LEN;
+                buf[cursor..cursor + translation.value.len()].copy_from_slice(&translation.value);
+                cursor += translation.value.len();
+            }
+        } else if let Some(translation) = self.translations.first() {
             buf[cursor..cursor + translation.value.len()].copy_from_slice(&translation.value);
             cursor += translation.value.len();
+            if self.plain_nul_terminated {
+                buf[cursor] = 0;
+                cursor += 1;
+            }
         }
         Ok(cursor)
     }
@@ -212,6 +236,13 @@ impl Udta {
         for child in BoxIter::new(body) {
             let child = child?;
             let fourcc = child.four_cc();
+            if child.to_end() || child.has_largesize() {
+                let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
+                opaque.to_end = child.to_end();
+                opaque.largesize = child.has_largesize();
+                children.push(UdtaChild::Opaque(opaque));
+                continue;
+            }
             let parsed = match fourcc {
                 CHPL => UdtaChild::Chapters(Chpl::parse_body(child.body)?),
                 LOCI => UdtaChild::Location(Loci::parse_body(child.body)?),
@@ -237,7 +268,12 @@ impl Udta {
                 _ if super::is_text_key(&fourcc) => {
                     UdtaChild::Text(parse_text(fourcc, child.body)?)
                 }
-                _ => UdtaChild::Opaque(OpaqueBox::new(fourcc, child.payload().to_vec())),
+                _ => {
+                    let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
+                    opaque.to_end = child.to_end();
+                    opaque.largesize = child.has_largesize();
+                    UdtaChild::Opaque(opaque)
+                }
             };
             children.push(parsed);
         }
@@ -251,16 +287,15 @@ fn parse_text(key: [u8; BOX_TYPE_SIZE], body: &[u8]) -> Result<UdtaText> {
     if key[0] == super::COPYRIGHT_SIGN {
         parse_international_text(key, body)
     } else {
-        let text = body
-            .iter()
-            .position(|byte| *byte == 0)
-            .map_or(body, |end| &body[..end]);
+        let terminator = body.iter().position(|byte| *byte == 0);
+        let text = terminator.map_or(body, |end| &body[..end]);
         Ok(UdtaText {
             key,
             translations: alloc::vec![UdtaTextTranslation {
                 language: 0,
                 value: text.to_vec(),
             }],
+            plain_nul_terminated: terminator.is_some(),
         })
     }
 }
@@ -286,7 +321,11 @@ fn parse_international_text(key: [u8; BOX_TYPE_SIZE], body: &[u8]) -> Result<Udt
     if translations.is_empty() {
         return Err(Error::InvalidInput("udta text atom carries no string"));
     }
-    Ok(UdtaText { key, translations })
+    Ok(UdtaText {
+        key,
+        translations,
+        plain_nul_terminated: false,
+    })
 }
 
 impl Serialize for Udta {

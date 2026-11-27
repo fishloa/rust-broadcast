@@ -20,7 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-emitted with the clamped length. A sample entry written with `size == 0`
   stays opaque, and a stub shorter than its declared size is a typed error.
   Construct a new entry with the type's `new`/builder (or set `reserved` to
-  zeros and `trailing` to empty), not a struct literal.
+  zeros and `trailing` to empty), not a struct literal. `UdtaText` gains a
+  `plain_nul_terminated` field: a plain `udta` text atom (one without the `©`
+  prefix) is a NUL-terminated string, and a source that omitted the NUL no
+  longer gains one on a rewrite.
+
+### Fixed
+
+- **A `udta`/`meta`/`ilst` child written with `size == 0` or `size == 1` +
+  `largesize` keeps that header form.** A typed child serialises the compact
+  header, so such a child now stays opaque and is re-emitted verbatim.
 
 ### Added
 
