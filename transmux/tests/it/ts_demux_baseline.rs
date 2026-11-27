@@ -8,10 +8,40 @@
 //! per-track sample count, first/last timestamps, sync count, coded-byte hash,
 //! timing hash, `start_decode_time`, movie timescale, PCR count, degraded and
 //! skipped reports must equal the recorded lines exactly.
+//!
+//! Feeding a byte at a time costs a `feed` call per byte, so on the ~208 MB
+//! private corpus that granularity alone is tens of seconds. The normal suite
+//! therefore byte-feeds every capture at or below
+//! [`BYTE_AT_A_TIME_MAX_BYTES`] (the four smallest private captures) and feeds
+//! the larger ones in TS packets and 64 KiB chunks; `RUST_BROADCAST_SOAK=1`
+//! (nightly) byte-feeds the whole corpus.
 
-/// Feed one baseline section through the streaming stage at three chunk sizes.
+/// One MPEG-2 TS packet.
+const TS_PACKET_LEN: usize = 188;
+/// A read-sized feed.
+const LARGE_CHUNK: usize = 64 * 1024;
+/// The two granularities every capture is checked at.
+const PACKET_AND_LARGE: [usize; 2] = [TS_PACKET_LEN, LARGE_CHUNK];
+/// Every granularity, including one byte at a time.
+const EVERY_GRANULARITY: [usize; 3] = [1, TS_PACKET_LEN, LARGE_CHUNK];
+/// Largest capture the normal suite also feeds one byte at a time; larger ones
+/// byte-feed under the soak switch.
+const BYTE_AT_A_TIME_MAX_BYTES: usize = 4 << 20;
+
+/// The feed granularities `bytes` is checked at.
+fn chunks_for(bytes: &[u8]) -> &'static [usize] {
+    let soak = std::env::var_os("RUST_BROADCAST_SOAK").is_some_and(|value| value == "1");
+    if soak || bytes.len() <= BYTE_AT_A_TIME_MAX_BYTES {
+        &EVERY_GRANULARITY
+    } else {
+        &PACKET_AND_LARGE
+    }
+}
+
+/// Feed one baseline section through the streaming stage at each of
+/// [`chunks_for`]'s granularities.
 fn check(section: &crate::demux_baseline::Section, bytes: &[u8]) {
-    for chunk in [1usize, 188, 64 * 1024] {
+    for &chunk in chunks_for(bytes) {
         match test_harness::collect::media_from_ts_chunked(bytes, chunk) {
             Ok(media) => {
                 assert!(
@@ -69,6 +99,7 @@ fn every_private_ts_capture_reproduces_the_whole_input_baseline() {
         sections.len() >= 19,
         "the golden must cover every private TS capture"
     );
+    let mut byte_fed = 0usize;
     for section in &sections {
         let Some(fixture) = test_fixtures::private(&format!("ts/{}", section.file)) else {
             panic!(
@@ -77,6 +108,14 @@ fn every_private_ts_capture_reproduces_the_whole_input_baseline() {
             );
         };
         let bytes = std::fs::read(&fixture).expect("read a private TS capture");
+        if chunks_for(&bytes).len() == EVERY_GRANULARITY.len() {
+            byte_fed += 1;
+        }
         check(section, &bytes);
     }
+    assert!(
+        byte_fed > 0,
+        "the normal suite must byte-feed at least one private capture, or the \
+         byte-at-a-time path is only ever exercised under RUST_BROADCAST_SOAK=1"
+    );
 }
