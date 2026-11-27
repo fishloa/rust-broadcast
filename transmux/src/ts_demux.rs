@@ -2230,6 +2230,7 @@ fn advance_one_behind(
                 provenance: Some(ts_provenance(dts, pts)),
                 display: prev.display,
                 protection: None,
+                trim: crate::ir::SampleTrim::NONE,
             },
         });
     }
@@ -2307,6 +2308,7 @@ fn flush_one_behind(
                 provenance: Some(ts_provenance(dts, pts)),
                 display: p.display,
                 protection: None,
+                trim: crate::ir::SampleTrim::NONE,
             },
         });
     }

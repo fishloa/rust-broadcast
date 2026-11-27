@@ -92,6 +92,33 @@ impl CodecId {
         }
     }
 
+    /// Whether a stream of this codec needs a configuration record before its
+    /// first access unit.
+    ///
+    /// A bijective codec does (H.264, AAC, Opus, …); MPEG-2 video, MPEG audio,
+    /// PCM and an unnamed format do not, so an encoder that reports no
+    /// extradata for one of those is stating the whole truth rather than
+    /// writing the record in-band.
+    #[must_use]
+    pub const fn requires_configuration_record(&self) -> bool {
+        matches!(
+            self,
+            Self::H264
+                | Self::Hevc
+                | Self::Vvc
+                | Self::Av1
+                | Self::Vp9
+                | Self::Aac
+                | Self::Ac3
+                | Self::Eac3
+                | Self::Ac4
+                | Self::Dts
+                | Self::Opus
+                | Self::Flac
+                | Self::MpegH3dAudio
+        )
+    }
+
     /// The codec a token names: [`Self::name`] read back.
     ///
     /// Case, spaces, `.`, `-` and `_` are ignored, so `h264`, `H.264` and
@@ -361,6 +388,14 @@ impl CodecParameters {
     #[must_use]
     pub const fn with_in_band_configuration(mut self) -> Self {
         self.configuration = ConfigurationRecord::InBand;
+        self
+    }
+
+    /// State that no configuration record is carried: the stream describes
+    /// itself, or its codec needs none.
+    #[must_use]
+    pub const fn with_no_configuration_record(mut self) -> Self {
+        self.configuration = ConfigurationRecord::Absent;
         self
     }
 

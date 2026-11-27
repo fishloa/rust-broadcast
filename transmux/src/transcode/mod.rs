@@ -6,8 +6,10 @@
 //! dependency on `broadcast-codec` (the trait vocabulary and raw frame types),
 //! never on a codec. The caller names the decoder and encoder, typically
 //! through a `broadcast_codec::Registry` built from adapter crates outside this
-//! workspace, and this module holds no codec knowledge — it matches no codec id
-//! and parses no bitstream.
+//! workspace, and this module holds no codec knowledge of its own: it decodes
+//! and encodes nothing. Its one bitstream read is
+//! `bridge::in_band_record`, which derives the record an encoder declared it
+//! writes in-band.
 //!
 //! [`TranscodeStage`] is a stage over the mux vocabulary
 //! ([`MuxInput`](crate::mux_stage::MuxInput) in and out), so it sits between a
@@ -19,9 +21,16 @@
 //! announces the track once — built from those parameters — before its first
 //! sample, so a downstream muxer's init segment, PMT or file header describes
 //! the output rather than the input. A source `TrackUpdated` is absorbed when
-//! it restates what the decoder was built for; one that changes it is
-//! [`Error::TranscodeSourceChanged`](crate::Error::TranscodeSourceChanged), because the seam's decoder cannot be
-//! rebuilt mid-track.
+//! it restates what the decoder was built for; one that changes it drains the
+//! decoder and hands it to `Decoder::reconfigure`, and when the decoder
+//! refuses, a caller-supplied
+//! [`factory`](TranscodeStage::factory) builds a fresh one. With neither, the
+//! change is [`Error::TranscodeSourceChanged`](crate::Error::TranscodeSourceChanged).
+//!
+//! An encoder that writes its configuration record in-band
+//! (`ConfigurationRecord::InBand`) is announced from the record derived from
+//! its first access unit: AAC from the ADTS header, H.264 from the SPS and
+//! PPS. That derivation is the one place this module reads a bitstream.
 //!
 //! It is bounded by construction: what it holds is what the decoder and encoder
 //! hold plus the samples that arrive before the encoder reports its parameters,

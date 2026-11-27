@@ -23,7 +23,7 @@ use broadcast_core::timescale::{Rounding, rescale_i64};
 use bytes::Bytes;
 use core::num::NonZeroU32;
 
-use super::DisplayInfo;
+use super::{DisplayInfo, SampleTrim};
 
 use broadcast_bitstream::annexb::annexb_to_length_prefixed;
 
@@ -260,6 +260,10 @@ pub struct Sample {
     /// subsample map), or `None` for a cleartext sample (ISO/IEC 23001-7
     /// §12.3). An `Arc` so cloning a sample stays a refcount bump.
     pub protection: Option<Arc<SampleProtection>>,
+    /// This sample's own gapless trim, in samples per channel at the track's
+    /// sample rate, for a container that signals it packet by packet. Defaults
+    /// to [`SampleTrim::NONE`]; see [`Sample::with_trim`].
+    pub trim: SampleTrim,
 }
 
 /// One sample's CENC auxiliary information (ISO/IEC 23001-7 §12.3): its
@@ -313,6 +317,7 @@ impl Sample {
             provenance: None,
             display: None,
             protection: None,
+            trim: SampleTrim::NONE,
         }
     }
 
@@ -337,6 +342,7 @@ impl Sample {
             provenance: None,
             display: None,
             protection: None,
+            trim: SampleTrim::NONE,
         })
     }
 
@@ -356,6 +362,7 @@ impl Sample {
             provenance: None,
             display: None,
             protection: None,
+            trim: SampleTrim::NONE,
         }
     }
 
@@ -426,6 +433,7 @@ impl Sample {
             provenance: None,
             display: None,
             protection: None,
+            trim: SampleTrim::NONE,
         })
     }
 
@@ -452,6 +460,7 @@ impl Sample {
             provenance: None,
             display: None,
             protection: None,
+            trim: SampleTrim::NONE,
         })
     }
 
@@ -476,6 +485,7 @@ impl Sample {
             provenance: None,
             display: None,
             protection: None,
+            trim: SampleTrim::NONE,
         })
     }
 
@@ -500,6 +510,7 @@ impl Sample {
             provenance: None,
             display: None,
             protection: None,
+            trim: SampleTrim::NONE,
         })
     }
 
@@ -531,6 +542,14 @@ impl Sample {
     #[must_use]
     pub fn with_protection(mut self, protection: Arc<SampleProtection>) -> Self {
         self.protection = Some(protection);
+        self
+    }
+
+    /// Attach this sample's own gapless trim, returning `self` (builder
+    /// style). See [`Sample::trim`].
+    #[must_use]
+    pub fn with_trim(mut self, trim: SampleTrim) -> Self {
+        self.trim = trim;
         self
     }
 

@@ -14,6 +14,7 @@ use ffmpeg_next::{Dictionary, Rational};
 
 use crate::decoder::{drained, try_again};
 use crate::map;
+use crate::sys;
 
 /// The pixel format every video encoder this adapter builds is configured for.
 ///
@@ -147,13 +148,51 @@ impl LibavEncoder {
             (None, Some(audio)) => parameters.with_audio(audio),
             _ => parameters,
         };
-        Ok(Self {
+        let mut encoder = Self {
             implementation: implementation.to_string(),
             opened,
             target,
             parameters,
             draining: false,
-        })
+        };
+        encoder.refresh_parameters();
+        Ok(encoder)
+    }
+
+    /// Take libav's extradata, once it has any, as the output stream's
+    /// configuration record; without one the encoder states that it writes the
+    /// record in-band.
+    ///
+    /// An encoder may set `extradata` when it opens (AAC, VP9) or only once it
+    /// has encoded something (H.264 in Annex B); this is called again on every
+    /// `receive` and at `finish` so the reported parameters catch up.
+    fn refresh_parameters(&mut self) {
+        let (extradata, padding) = match &self.opened {
+            Opened::Video(encoder) => (sys::extradata(encoder.as_ref()), (0, None)),
+            Opened::Audio(encoder) => (
+                sys::extradata(encoder.as_ref()),
+                sys::padding(encoder.as_ref()),
+            ),
+        };
+        let mut parameters = self.parameters.clone();
+        if !extradata.is_empty() {
+            parameters = parameters.with_extradata(extradata);
+        } else if parameters.codec().requires_configuration_record() {
+            parameters = parameters.with_in_band_configuration();
+        }
+        if parameters.audio().is_some() {
+            parameters = match parameters.with_initial_padding(padding.0) {
+                Ok(padded) => padded,
+                Err(_) => return,
+            };
+            if let Some(trailing) = padding.1 {
+                parameters = match parameters.with_trailing_padding(trailing) {
+                    Ok(padded) => padded,
+                    Err(_) => return,
+                };
+            }
+        }
+        self.parameters = parameters;
     }
 
     /// The libav implementation this encoder runs.
@@ -478,6 +517,7 @@ impl Encoder for LibavEncoder {
             let Some(data) = coded.data().filter(|data| !data.is_empty()) else {
                 continue;
             };
+            self.refresh_parameters();
             let mut packet = Packet::owned(data.to_vec()).with_key(coded.is_key());
             if let Some(pts) = coded.pts() {
                 packet = packet.with_pts(pts);
@@ -490,6 +530,7 @@ impl Encoder for LibavEncoder {
     }
 
     fn finish(&mut self) -> Result<(), CodecError> {
+        self.refresh_parameters();
         if self.draining {
             return Ok(());
         }

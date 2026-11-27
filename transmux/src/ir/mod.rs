@@ -54,6 +54,7 @@ mod ids;
 mod media;
 mod sample;
 mod track;
+mod trim;
 
 pub use audio_meta::{
     AudioLanguage, AudioMetadata, AudioRole, AudioType, EditorialClassification, MixType,
@@ -76,3 +77,4 @@ pub use sample::{
     FragmentTrackData, Provenance, Sample, SampleFlags, SampleProtection, SampleTiming,
 };
 pub use track::{ConstantIvSenc, TrackProtection, TrackSpec};
+pub use trim::{GaplessTrim, SampleTrim};

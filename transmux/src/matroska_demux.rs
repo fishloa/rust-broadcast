@@ -56,8 +56,8 @@ use bytes::{Bytes, BytesMut};
 use crate::TrackId;
 use crate::error::{Error, Result};
 use crate::ir::{
-    CodecConfig, DataIdentity, DemuxEvent, EventProvenance, InputDegradation, Sample, SampleFlags,
-    SampleTiming, TrackSpec,
+    CodecConfig, DataIdentity, DemuxEvent, EventProvenance, GaplessTrim, InputDegradation, Sample,
+    SampleFlags, SampleTiming, TrackSpec,
 };
 use crate::rtp_sdp::aac_config_from_asc_bytes;
 use broadcast_bitstream::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
@@ -415,6 +415,7 @@ impl TrackState {
                     provenance: None,
                     display: None,
                     protection: None,
+                    trim: crate::ir::SampleTrim::NONE,
                 },
             ));
         }
@@ -643,9 +644,10 @@ impl MatroskaDemux {
             let Some((config, nal_length_size)) = track.config.take() else {
                 break;
             };
+            let padding = gapless_padding(&track.info, &config);
             let id = TrackId::new(self.next_track_id);
             self.next_track_id = self.next_track_id.saturating_add(1);
-            let spec = TrackSpec::new(id, IR_TIMESCALE, config);
+            let spec = TrackSpec::new(id, IR_TIMESCALE, config).with_padding(padding);
             track.id = Some(id);
             track.nal_length_size = nal_length_size;
             track.spec = Some(spec.clone());
@@ -1280,6 +1282,25 @@ fn opus_config(info: &TrackInfo) -> Result<CodecConfig> {
     })
 }
 
+/// The track's priming from `CodecDelay`, in samples at its sample rate.
+///
+/// `CodecDelay` is nanoseconds of decoder fill before the first real sample
+/// (RFC 9559 §5.1.4.1.6); a video track or one with no stated delay gets
+/// [`GaplessTrim::NONE`].
+fn gapless_padding(info: &TrackInfo, config: &CodecConfig) -> GaplessTrim {
+    let Some(delay_ns) = info.codec_delay_ns() else {
+        return GaplessTrim::NONE;
+    };
+    let Some(rate) = config.audio_sample_rate() else {
+        return GaplessTrim::NONE;
+    };
+    let samples = u128::from(delay_ns) * u128::from(rate) / u128::from(NS_TIMESCALE.get());
+    match u32::try_from(samples) {
+        Ok(initial) => GaplessTrim::new(initial, None),
+        Err(_) => GaplessTrim::NONE,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1524,6 +1545,7 @@ mod tests {
             provenance: None,
             display: None,
             protection: None,
+            trim: crate::ir::SampleTrim::NONE,
         };
         Media::new(
             vec![crate::collect::CollectedTrack::new_at(

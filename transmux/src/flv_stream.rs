@@ -957,6 +957,7 @@ impl StreamingFlvDemux {
                     provenance: None,
                     display: None,
                     protection: None,
+                    trim: crate::ir::SampleTrim::NONE,
                 };
                 if let Some(track_id) = video.track_id {
                     video.advance(
@@ -1058,6 +1059,7 @@ impl StreamingFlvDemux {
                     provenance: None,
                     display: None,
                     protection: None,
+                    trim: crate::ir::SampleTrim::NONE,
                 };
                 if let Some(track_id) = audio.track_id {
                     audio.advance(
@@ -1839,6 +1841,7 @@ mod tests {
             provenance: None,
             display: None,
             protection: None,
+            trim: crate::ir::SampleTrim::NONE,
         };
         track
             .advance(

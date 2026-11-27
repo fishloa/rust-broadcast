@@ -200,6 +200,7 @@ pub struct TrackInfo {
     codec_id: String,
     codec_private: Vec<u8>,
     default_duration_ns: Option<u64>,
+    codec_delay_ns: Option<u64>,
     pixel_width: Option<u64>,
     pixel_height: Option<u64>,
     channels: Option<u64>,
@@ -248,6 +249,15 @@ impl TrackInfo {
     #[must_use]
     pub const fn default_duration_ns(&self) -> Option<u64> {
         self.default_duration_ns
+    }
+
+    /// `CodecDelay` in nanoseconds (RFC 9559 §5.1.4.1.6): how much of the
+    /// track's first decoded samples is decoder fill rather than programme.
+    /// Opus states its pre-skip here, and in `CodecPrivate`'s `OpusHead` as
+    /// well.
+    #[must_use]
+    pub const fn codec_delay_ns(&self) -> Option<u64> {
+        self.codec_delay_ns
     }
 
     /// `PixelWidth`, when the track is video.
@@ -1563,6 +1573,7 @@ impl Reader {
                 codec_id: String::from(entry.codec_id().unwrap_or("")),
                 codec_private: entry.codec_private().unwrap_or(&[]).to_vec(),
                 default_duration_ns: entry.default_duration(),
+                codec_delay_ns: entry.codec_delay(),
                 pixel_width: video.and_then(crate::matroska::Video::pixel_width),
                 pixel_height: video.and_then(crate::matroska::Video::pixel_height),
                 channels: audio.and_then(crate::matroska::Audio::channels),
