@@ -40,6 +40,7 @@ mod codecs_new;
 #[cfg(feature = "cli")]
 mod common;
 #[cfg(feature = "rtp")]
+mod damage_report;
 mod damaged_unit_resync;
 mod damaged_unit_resync_flv;
 #[cfg(feature = "matroska")]
