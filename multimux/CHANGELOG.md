@@ -82,6 +82,7 @@
 
 ### Added
 
+- `source::rtmp::RtmpRoute::with_listener(name, listener)`: an RTMP ingest route over a caller-bound listener, so a caller that must know the port before the route starts hands the live listener in instead of reserving a port and racing to re-bind it. A config-driven `InputSpec::Rtmp` route also consumes `Config::prebound` (#4157).
 - Catch-up routes take an optional `program` query parameter naming a program by its `program_number` (`catchup.m3u8?program=1538`, `vod/p{N}.m3u8?program=1538`, `catchup/…?program=1538`) that reads `<route>@<program_number>`; absent (or `0`) reads `<route>/` exactly as before, and `?program=<dvb_service_id>` is an alias of it. Every URI the playlists of a named program list carries the parameter, and a live-tail init the shared resource route does not serve is served under `catchup/`. A program with archived segments but no live program (gone after a replace, or not yet announced since a restart) is served from the archive alone; a `program_number` the route neither serves nor found archived answers `404` and builds no archive reader (#3950).
 
 ### Changed

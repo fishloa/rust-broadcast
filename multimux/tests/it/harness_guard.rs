@@ -4,15 +4,12 @@
 //! - **Reserve-then-rebind ports** (`reserve_tcp_addr`/`reserve_udp_addr`/
 //!   `free_tcp_addr`/`free_port`). The HTTP media/admin listeners now bind
 //!   `127.0.0.1:0` and hand the live listener in (`ServeRequest::with_prebound_*`); WHEP/WHIP/
-//!   TS-UDP config-driven routes consume a caller-bound listener/socket via
-//!   `Config::prebound` (including file-defined routes, via
-//!   `ServeRequest::with_prebound_binds`). The remaining
-//!   helper is LINE-PINNED below (the exact `fn …` line must match): the
-//!   RTMP input (its `rtmp-runtime` server exposes only `bind(addr)`). An
-//!   external `mediamtx` whose config takes a numeric port uses
-//!   `test_fixtures::process::free_tcp_port`. Note this is a
-//!   NAME guard, not a behavioural one: it stops a new `reserve_*` helper name
-//!   from appearing, not a rebind written inline.
+//!   TS-UDP/RTMP config-driven routes consume a caller-bound listener/socket
+//!   via `Config::prebound` (including file-defined routes, via
+//!   `ServeRequest::with_prebound_binds`). An external `mediamtx` whose
+//!   config takes a numeric port uses `test_fixtures::process::free_tcp_port`.
+//!   Note this is a NAME guard, not a behavioural one: it stops a new
+//!   `reserve_*` helper name from appearing, not a rebind written inline.
 //! - **Bare fixed sleeps** in `tests/**` outside the files that predate this
 //!   task. A NEW sleep in a NEW test file fails here, so the pattern does not
 //!   creep back. The detector covers an explicit `tokio::time::sleep(` AND a
@@ -34,17 +31,11 @@ const PORT_HELPERS: &[&str] = &[
 ];
 
 /// Files allowed to still define a port helper, with the reason the address is
-/// genuinely unobservable without it (W2b-1 Task 4 deviation). LINE-PINNED: the
-/// marker must appear on the same source line, so a NEW reserve helper added to
-/// one of these files still trips the guard.
-const PORT_HELPER_ALLOW: &[(&str, &str, &str)] = &[(
-    "dispatch_ingest.rs",
-    "fn reserve_tcp_addr() -> SocketAddr",
-    "`rtmp-runtime`'s `AsyncRtmpServer` exposes only `bind(addr)` (no \
-         `from_listener`), so multimux's RTMP route cannot accept a caller-bound \
-         listen socket; the RTMP input address is a route-internal bind the test \
-         must name. The TsUdp input in this file uses `Config::prebound` instead",
-)];
+/// genuinely unobservable without it. LINE-PINNED: the marker must appear on
+/// the same source line, so a NEW reserve helper added to one of these files
+/// still trips the guard. No file needs one: every in-crate listener now takes
+/// a caller-bound socket (`Config::prebound` / `RtmpRoute::with_listener`).
+const PORT_HELPER_ALLOW: &[(&str, &str, &str)] = &[];
 
 /// Files allowed to contain a bare `tokio::time::sleep(` / `thread::sleep(`.
 /// Each predates the W2b-1 harness work; a NEW file (or a new line in a file
