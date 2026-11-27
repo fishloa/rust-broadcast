@@ -100,15 +100,15 @@ pub(crate) fn segment_index(
             sap_delta_time: 0,
         });
     }
-    let boxed = SegmentIndexBox {
-        version: form.version,
-        flags: form.flags,
-        reference_id: form.reference_id.value(),
-        timescale: form.timescale,
-        earliest_presentation_time: form.earliest_presentation_time,
-        first_offset: 0,
+    let boxed = SegmentIndexBox::new(
+        form.version,
+        form.flags,
+        form.reference_id.value(),
+        form.timescale,
+        form.earliest_presentation_time,
+        0,
         references,
-    };
+    );
     Ok(Some(boxed.try_to_bytes()?))
 }
 
@@ -175,15 +175,15 @@ fn tfra(
     track: &MfraTrackForm,
     entries: Vec<TrackFragmentRandomAccessEntry>,
 ) -> TrackFragmentRandomAccessBox {
-    TrackFragmentRandomAccessBox {
-        version: track.version,
-        flags: 0,
-        track_id: track.track_id,
-        length_size_of_traf_num: track.lengths.traf,
-        length_size_of_trun_num: track.lengths.trun,
-        length_size_of_sample_num: track.lengths.sample,
+    TrackFragmentRandomAccessBox::new(
+        track.version,
+        0,
+        track.track_id,
+        track.lengths.traf,
+        track.lengths.trun,
+        track.lengths.sample,
         entries,
-    }
+    )
 }
 
 /// The `sidx` bytes over `written`, when the index layout sets a form.

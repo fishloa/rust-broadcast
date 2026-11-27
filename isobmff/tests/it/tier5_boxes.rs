@@ -564,6 +564,27 @@ fn bit_rate_shadow_sync_and_redundant_timing_round_trip() {
 }
 
 #[test]
+fn a_fixed_layout_box_refuses_bytes_past_its_last_field() {
+    // One byte past the three rates `btrt` declares.
+    assert!(
+        BitRateBox::parse(&boxed(*b"btrt", &[0u8; 13])).is_err(),
+        "btrt kept a byte past avgBitrate"
+    );
+    assert!(
+        TimescaleEntryBox::parse(&boxed(*b"tims", &[0u8; 5])).is_err(),
+        "tims kept a byte past timescale"
+    );
+    assert!(
+        TimeOffsetBox::parse(&boxed(*b"tsro", &[0u8; 5])).is_err(),
+        "tsro kept a byte past timestamp_offset"
+    );
+    assert!(
+        SequenceOffsetBox::parse(&boxed(*b"snro", &[0u8; 5])).is_err(),
+        "snro kept a byte past packet_sequence_offset"
+    );
+}
+
+#[test]
 fn fd_item_info_extension_reads_back() {
     let mut extension = Vec::new();
     extension.extend_from_slice(b"file.ts\0");

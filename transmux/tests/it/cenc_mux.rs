@@ -1012,15 +1012,15 @@ fn non_cenc_typed_saiz_is_not_treated_as_an_existing_cenc_triple() {
     use isobmff::cenc::{SampleAuxInfoOffsetsBox, SampleAuxInfoSizesBox};
 
     // `saiz` v0, aux_info_type present (flag 0x1) and *not* a CENC four-CC.
-    let saiz = SampleAuxInfoSizesBox {
-        version: 0,
-        flags: 0x01,
-        aux_info_type: Some(u32::from_be_bytes(*b"rocb")),
-        aux_info_type_parameter: Some(1),
-        default_sample_info_size: 0,
-        sample_count: 0,
-        sample_info_sizes: Vec::new(),
-    };
+    let saiz = SampleAuxInfoSizesBox::new(
+        0,
+        0x01,
+        Some(u32::from_be_bytes(*b"rocb")),
+        Some(1),
+        0,
+        0,
+        Vec::new(),
+    );
     let saio = SampleAuxInfoOffsetsBox {
         version: 0,
         flags: 0x01,
@@ -1032,10 +1032,8 @@ fn non_cenc_typed_saiz_is_not_treated_as_an_existing_cenc_triple() {
     extra.extend_from_slice(&saiz.try_to_bytes().unwrap());
     extra.extend_from_slice(&saio.try_to_bytes().unwrap());
     // And a CENC-typed pair for the contrast.
-    let cenc_saiz = SampleAuxInfoSizesBox {
-        aux_info_type: Some(u32::from_be_bytes(*b"cenc")),
-        ..saiz
-    };
+    let mut cenc_saiz = saiz.clone();
+    cenc_saiz.aux_info_type = Some(u32::from_be_bytes(*b"cenc"));
     let mut cenc_extra = Vec::new();
     cenc_extra.extend_from_slice(&cenc_saiz.try_to_bytes().unwrap());
 

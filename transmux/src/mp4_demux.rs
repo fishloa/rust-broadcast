@@ -180,7 +180,7 @@ struct Mapped {
     spec: TrackSpec,
     length_size: Option<usize>,
     in_band: bool,
-    extra: Vec<isobmff::sample_entries::OpaqueBox>,
+    extra: Vec<isobmff::box_support::OpaqueBox>,
     tagger: Option<InbandDisplayTagger>,
     live: bool,
 }

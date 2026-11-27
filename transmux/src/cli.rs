@@ -1041,7 +1041,7 @@ struct MeasuredSegment {
 }
 
 enum Kind {
-    Cmaf(CmafMuxStage),
+    Cmaf(Box<CmafMuxStage>),
     Ts(TsMuxStage),
     Hls {
         segmenter: Segmenter,
@@ -1049,7 +1049,7 @@ enum Kind {
     },
     TsHls(StreamingTsHlsSegmenter),
     Dash(Box<DashStream>),
-    Progressive(ProgressiveMuxStage),
+    Progressive(Box<ProgressiveMuxStage>),
 }
 
 /// Content keys for `--decrypt`. Without the `cenc` feature the CLI has no
@@ -1117,7 +1117,7 @@ impl CliStream {
                 for spec in &specs {
                     stage.feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)?;
                 }
-                Kind::Cmaf(stage)
+                Kind::Cmaf(Box::new(stage))
             }
             OutputFormat::Ts => {
                 let mut stage = TsMuxStage::new(Some(DEFAULT_PSI_INTERVAL));
@@ -1159,7 +1159,7 @@ impl CliStream {
                 for spec in &specs {
                     stage.feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)?;
                 }
-                Kind::Progressive(stage)
+                Kind::Progressive(Box::new(stage))
             }
         };
         Ok(Self {
@@ -1302,11 +1302,11 @@ impl CliStream {
     fn pump(&mut self, emit: &mut dyn Emit) -> CliResult<()> {
         let mut outputs = Vec::new();
         match &mut self.kind {
-            Kind::Cmaf(stage) => drain_stage(stage, &mut outputs),
+            Kind::Cmaf(stage) => drain_stage(stage.as_mut(), &mut outputs),
             Kind::Ts(stage) => drain_stage(stage, &mut outputs),
             Kind::Hls { segmenter, .. } => drain_stage(segmenter, &mut outputs),
             Kind::TsHls(stage) => drain_stage(stage, &mut outputs),
-            Kind::Progressive(stage) => drain_stage(stage, &mut outputs),
+            Kind::Progressive(stage) => drain_stage(stage.as_mut(), &mut outputs),
             Kind::Dash(stage) => {
                 for (name, bytes) in stage.take_files() {
                     emit.side(&name, &bytes)?;

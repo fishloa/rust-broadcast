@@ -372,6 +372,187 @@ impl CapturedChildren {
     }
 }
 
+/// A box a tolerant walk kept as raw bytes, or one whose typed parse carried
+/// bytes its declared fields do not describe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Note {
+    /// The typed parse failed; the box is carried opaque, in its own position.
+    Unrepresentable {
+        box_type: [u8; BOX_TYPE_SIZE],
+        offset: u64,
+        reason: crate::error::OpaqueReason,
+    },
+    /// The typed parse succeeded and kept bytes past its last declared field.
+    Trailing {
+        box_type: [u8; BOX_TYPE_SIZE],
+        offset: u64,
+        carried: usize,
+    },
+}
+
+/// The sink a tolerant box walk reports into, anchored at the container the
+/// walk started from so every note names an absolute file offset.
+pub(crate) struct Notes<'a> {
+    anchor: usize,
+    anchor_len: usize,
+    base: u64,
+    degrade: bool,
+    out: &'a mut Vec<Note>,
+}
+
+impl<'a> Notes<'a> {
+    /// A sink for `anchor`, which sits at absolute offset `base` in the file.
+    /// `degrade` says whether a failed typed parse is kept opaque (`true`) or
+    /// is still the error it was (`false`).
+    pub(crate) fn new(anchor: &[u8], base: u64, degrade: bool, out: &'a mut Vec<Note>) -> Self {
+        Self {
+            anchor: anchor.as_ptr() as usize,
+            anchor_len: anchor.len(),
+            base,
+            degrade,
+            out,
+        }
+    }
+
+    /// Whether a failed typed parse is kept opaque rather than returned.
+    pub(crate) fn degrades(&self) -> bool {
+        self.degrade
+    }
+
+    /// A sink for `anchor` at `base`, sharing this sink's report list and
+    /// degrade policy.
+    pub(crate) fn anchored(&mut self, anchor: &[u8], base: u64) -> Notes<'_> {
+        Notes {
+            anchor: anchor.as_ptr() as usize,
+            anchor_len: anchor.len(),
+            base,
+            degrade: self.degrade,
+            out: self.out,
+        }
+    }
+
+    /// `slice`'s absolute offset, when it lies inside the anchor.
+    pub(crate) fn offset_of(&self, slice: &[u8]) -> u64 {
+        let start = slice.as_ptr() as usize;
+        match start.checked_sub(self.anchor) {
+            Some(delta) if delta <= self.anchor_len => self
+                .base
+                .saturating_add(u64::try_from(delta).unwrap_or(u64::MAX)),
+            _ => self.base,
+        }
+    }
+
+    /// Report a child the typed parse refused and the walk kept opaque.
+    pub(crate) fn unrepresentable(&mut self, bytes: &[u8], error: &Error) {
+        let box_type = crate::box_types::parse_box(bytes)
+            .map(|(item, _)| item.four_cc())
+            .unwrap_or([0u8; BOX_TYPE_SIZE]);
+        self.out.push(Note::Unrepresentable {
+            box_type,
+            offset: self.offset_of(bytes),
+            reason: crate::error::OpaqueReason::of(error),
+        });
+    }
+
+    /// Report a typed child that would not write its own bytes back.
+    pub(crate) fn not_reproducible(&mut self, bytes: &[u8]) {
+        let box_type = crate::box_types::parse_box(bytes)
+            .map(|(item, _)| item.four_cc())
+            .unwrap_or([0u8; BOX_TYPE_SIZE]);
+        self.out.push(Note::Unrepresentable {
+            box_type,
+            offset: self.offset_of(bytes),
+            reason: crate::error::OpaqueReason::NotReproducible,
+        });
+    }
+
+    /// Report bytes a typed parse carried past its last declared field.
+    pub(crate) fn trailing(&mut self, bytes: &[u8], carried: usize) {
+        if carried == 0 {
+            return;
+        }
+        let box_type = crate::box_types::parse_box(bytes)
+            .map(|(item, _)| item.four_cc())
+            .unwrap_or([0u8; BOX_TYPE_SIZE]);
+        self.out.push(Note::Trailing {
+            box_type,
+            offset: self.offset_of(bytes),
+            carried,
+        });
+    }
+}
+
+/// Refuse bytes a fixed-layout box's declared fields do not account for. The
+/// type writes only what it models, so keeping them would make the rewrite
+/// differ from the input.
+pub(crate) fn reject_past_fields(body: &[u8], declared: usize, what: &'static str) -> Result<()> {
+    if body.len() > declared {
+        return Err(Error::InvalidInput(what));
+    }
+    Ok(())
+}
+
+/// A sibling the crate does not type, kept opaque with its header form.
+pub(crate) fn opaque_child(item: &crate::box_types::BoxItem<'_>) -> OpaqueBox {
+    OpaqueBox {
+        box_type: item.four_cc(),
+        data: item.payload().to_vec(),
+        to_end: item.to_end(),
+        largesize: item.has_largesize(),
+    }
+}
+
+/// Report what an opaque container child could not represent, when it is a
+/// `udta` or `meta` tree. Called while the child's bytes are still a slice of
+/// the enclosing box, so the report names the failing atom's own offset. The
+/// typed result is discarded: the reader parses metadata again on demand, and
+/// this pass exists only to say what it will not be able to.
+pub(crate) fn note_metadata_child(
+    child: &crate::box_types::BoxItem<'_>,
+    limits: &crate::limits::Limits,
+    notes: &mut Notes<'_>,
+) {
+    if !notes.degrades() {
+        return;
+    }
+    let fourcc = child.four_cc();
+    let base = notes.offset_of(child.bytes);
+    let mut sub = notes.anchored(child.bytes, base);
+    if fourcc == crate::metadata::udta::UDTA {
+        let _ = crate::metadata::Udta::parse_body_notes(child.body, limits, Some(&mut sub));
+    } else if fourcc == META_FOURCC {
+        let _ = keep_or_note(child.bytes, Some(&mut sub), |_| {
+            crate::metadata::Meta::parse_body(child.body, limits)
+        });
+    }
+}
+
+/// Four-CC of the Meta Box (ISO/IEC 14496-12:2026 §8.11.1).
+const META_FOURCC: [u8; BOX_TYPE_SIZE] = *b"meta";
+
+/// Try a typed parse: on failure, report it through `notes` and answer `None`
+/// so the caller can keep the child opaque instead of failing the file. With
+/// no sink, or a sink that does not degrade, the error is returned.
+pub(crate) fn keep_or_note<T>(
+    bytes: &[u8],
+    notes: Option<&mut Notes<'_>>,
+    parse: impl for<'b> FnOnce(&'b [u8]) -> Result<T>,
+) -> Result<Option<T>> {
+    match parse(bytes) {
+        Ok(value) => Ok(Some(value)),
+        Err(err) => match notes {
+            Some(notes) => {
+                if !notes.degrades() {
+                    return Err(err);
+                }
+                notes.unrepresentable(bytes, &err);
+                Ok(None)
+            }
+            None => Err(err),
+        },
+    }
+}
+
 /// Capture a sample entry's child region, complete boxes and an unwalkable
 /// tail kept verbatim.
 pub(crate) fn capture_children(region: &[u8]) -> CapturedChildren {
@@ -525,20 +706,46 @@ pub(crate) fn take_c_string(
     cursor: &mut usize,
     what: &'static str,
 ) -> Result<Vec<u8>> {
+    Ok(take_c_string_terminated(bytes, cursor, what)?.0)
+}
+
+/// [`take_c_string`], also reporting whether the string ended in the NUL a
+/// writer is supposed to append, so a box whose last string omitted it can
+/// re-emit the payload it parsed.
+pub(crate) fn take_c_string_terminated(
+    bytes: &[u8],
+    cursor: &mut usize,
+    what: &'static str,
+) -> Result<(Vec<u8>, bool)> {
     let rest = bytes.get(*cursor..).ok_or(Error::InvalidInput(what))?;
     let end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
     let value = rest[..end].to_vec();
+    let terminated = end < rest.len();
     *cursor += end;
-    if *cursor < bytes.len() {
+    if terminated {
         *cursor += 1;
     }
-    Ok(value)
+    Ok((value, terminated))
 }
 
 /// Write one NUL-terminated string at `offset`, returning the bytes written.
 pub(crate) fn write_c_string(buf: &mut [u8], offset: usize, value: &[u8]) -> Result<usize> {
-    need_out(buf, offset + value.len() + 1)?;
+    write_c_string_terminated(buf, offset, value, true)
+}
+
+/// [`write_c_string`], optionally omitting the NUL terminator so a payload
+/// whose last string had none is re-emitted as parsed.
+pub(crate) fn write_c_string_terminated(
+    buf: &mut [u8],
+    offset: usize,
+    value: &[u8],
+    terminated: bool,
+) -> Result<usize> {
+    let terminator = usize::from(terminated);
+    need_out(buf, offset + value.len() + terminator)?;
     buf[offset..offset + value.len()].copy_from_slice(value);
-    buf[offset + value.len()] = 0;
-    Ok(value.len() + 1)
+    if terminated {
+        buf[offset + value.len()] = 0;
+    }
+    Ok(value.len() + terminator)
 }

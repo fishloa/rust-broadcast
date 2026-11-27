@@ -10,7 +10,10 @@
 //! The allocator caps this thread's live bytes at 256 MiB so the pre-fix
 //! behaviour fails (aborts) instead of exhausting the host.
 use isobmff::movie_fragment::TrackFragmentRunBox;
-use isobmff::movie_fragment::{MAX_ZERO_WIDTH_TRUN_SAMPLES, TRUN_SAMPLE_DURATION_PRESENT};
+use isobmff::movie_fragment::{
+    MAX_ZERO_WIDTH_TRUN_SAMPLES, TRUN_DATA_OFFSET_PRESENT, TRUN_FIRST_SAMPLE_FLAGS_PRESENT,
+    TRUN_SAMPLE_DURATION_PRESENT,
+};
 use test_alloc::ThreadCapped;
 
 #[global_allocator]
@@ -46,6 +49,18 @@ fn trun_box(sample_count: u32, flags: u32) -> Vec<u8> {
     let mut b = data[off..off - 8 + size].to_vec();
     b[0..4].copy_from_slice(&flags.to_be_bytes());
     b[4..8].copy_from_slice(&sample_count.to_be_bytes());
+    // The fixture's own per-sample records are not part of a body whose flags
+    // select no per-sample field, so keep only the fixed fields the flags name.
+    let mut fixed = 2 * core::mem::size_of::<u32>();
+    for (bit, len) in [
+        (TRUN_DATA_OFFSET_PRESENT, 4),
+        (TRUN_FIRST_SAMPLE_FLAGS_PRESENT, 4),
+    ] {
+        if flags & bit != 0 {
+            fixed += len;
+        }
+    }
+    b.truncate(fixed);
     b
 }
 
