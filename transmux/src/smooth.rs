@@ -40,7 +40,9 @@
 //! [`MuxInput::Discontinuity`] closes the open fragment, and the next one
 //! carries its new start in `tfxd` (§2.2.4.4) and in the Manifest's `c@t`
 //! (§2.2.2.6), so the jump is stated rather than hidden inside one fragment's
-//! durations. A break that moves a track's time **backwards** is refused with
+//! durations
+//! (`private/specs-verified/mpeg/transmux/smooth/ms-sstr.md`). A break that
+//! moves a track's time **backwards** is refused with
 //! [`Error::UnsupportedFeature`]: the Manifest's chunk times are a forward
 //! timeline a client accumulates `d` over.
 //!

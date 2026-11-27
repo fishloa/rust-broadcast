@@ -48,7 +48,8 @@
 //! the triggering track's last duration, with every later tag keeping its
 //! spacing from it. This is a lossless-for-playback mapping (nothing is
 //! dropped or reordered), and the track set is fixed for the stage's life, so
-//! no sequence header is re-sent.
+//! no sequence header is re-sent
+//! (`private/specs-verified/mpeg/transmux/codec/flv.md` §E.4.1).
 //!
 //! `no_std` + `alloc`.
 

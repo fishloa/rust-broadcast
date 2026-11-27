@@ -389,3 +389,77 @@ fn a_backward_break_is_refused_with_a_typed_error() {
         other => panic!("expected a typed unsupported-feature refusal, got {other:?}"),
     }
 }
+
+/// A break that falls inside a GOP (no video keyframe there) is the case the
+/// writer's own rules cannot see: only the explicit `Cluster` cut can start a
+/// new one at the break. A long cluster span removes the span rule, so the
+/// assertion pins the discontinuity handling itself.
+#[test]
+fn a_break_inside_a_gop_cuts_a_cluster_where_no_natural_rule_would() {
+    use broadcast_common::stage::{Stage, Timestamp};
+    use transmux::mux_stage::{MuxInput, MuxOutput};
+
+    let two = crate::discontinuity::forward();
+    let video = two
+        .media
+        .tracks
+        .iter()
+        .find(|track| matches!(track.spec.config, CodecConfig::Avc { .. }))
+        .expect("the fixture carries AVC video");
+    let break_after = 5usize;
+    let sample = &video.samples[break_after];
+    assert!(
+        !sample.flags.is_sync,
+        "the break must fall on a non-keyframe, or a natural Cluster cut hides it"
+    );
+    let pts = sample
+        .timing
+        .and_then(|timing| timing.pts())
+        .expect("a timed video sample");
+    let nanos = i128::from(pts) * i128::from(broadcast_common::units::NANOS_PER_SEC)
+        / i128::from(video.spec.timescale.get());
+    let break_tick = i64::try_from(nanos / 1_000_000).expect("a small tick");
+
+    let mut stage = MkvMuxStage::new(std::time::Duration::from_secs(60));
+    let mut outputs = Vec::new();
+    stage
+        .feed(
+            MuxInput::Track(Box::new(video.spec.clone())),
+            Timestamp::ZERO,
+        )
+        .expect("announce video");
+    for (index, sample) in video.samples.iter().enumerate() {
+        if index == break_after {
+            stage
+                .feed(MuxInput::Discontinuity { track: None }, Timestamp::ZERO)
+                .expect("a break is expressible");
+        }
+        stage
+            .feed(
+                MuxInput::Sample {
+                    track: video.spec.track_id,
+                    sample: sample.clone(),
+                },
+                Timestamp::ZERO,
+            )
+            .expect("video sample");
+        while let Some(output) = stage.poll() {
+            outputs.push(output);
+        }
+    }
+    stage.finish().expect("finish the file");
+    while let Some(output) = stage.poll() {
+        outputs.push(output);
+    }
+    assert!(
+        outputs
+            .iter()
+            .any(|output| matches!(output, MuxOutput::Bytes(_)))
+    );
+    let bytes = crate::mux_bytes::apply(outputs);
+    let clusters = crate::discontinuity::cluster_timestamps(&bytes);
+    assert!(
+        clusters.contains(&break_tick),
+        "a Cluster must start at the mid-GOP break (tick {break_tick}), got {clusters:?}"
+    );
+}

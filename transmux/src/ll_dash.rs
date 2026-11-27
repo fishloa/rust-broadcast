@@ -63,9 +63,10 @@
 //! A CMAF chunk carries its own `tfdt`, so a decode-time jump is readable in
 //! the chunk stream, but the DASH presentation states it as a new `Period`
 //! (ISO/IEC 23009-1 §5.3.2) whose `SegmentTemplate@presentationTimeOffset`
-//! maps the continuing media clock onto the presentation timeline.
+//! maps the continuing media clock onto the presentation timeline
+//! (`private/specs/iso_iec_23009-1_dash_2022_ed5.pdf`).
 //! [`MuxInput::Discontinuity`] therefore emits
-//! [`MuxOutput::Discontinuity`](crate::mux_stage::MuxOutput::Discontinuity),
+//! [`MuxOutput::Discontinuity`],
 //! which the caller records as a period boundary in
 //! [`SegmentSummaryLog`](crate::segment_log::SegmentSummaryLog); the packager
 //! renders the periods from it.

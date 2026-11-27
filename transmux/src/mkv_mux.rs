@@ -53,7 +53,8 @@
 //! the post-break time. A break that would move a Block timestamp **backwards**
 //! is refused with [`Error::UnsupportedFeature`]: this stage writes a file,
 //! and its `Cues` and the patched `Info.Duration` describe one non-decreasing
-//! timeline.
+//! timeline (`private/specs-verified/ietf/specs/rfc9559_matroska.txt` §11,
+//! §12).
 //!
 use alloc::collections::VecDeque;
 use alloc::string::String;

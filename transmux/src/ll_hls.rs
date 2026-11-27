@@ -41,8 +41,9 @@
 //! break. The segment that follows carries [`SegmentInfo::discontinuous`], so
 //! the caller renders `#EXT-X-DISCONTINUITY` before it and advances
 //! `#EXT-X-DISCONTINUITY-SEQUENCE` when a marked segment leaves the window
-//! (RFC 8216 §4.3.2.3 / §4.3.3.3) — the tags themselves are rendered by
-//! `broadcast-hls`, never here. A break with no segment open marks the next
+//! (RFC 8216 §4.3.2.3 / §4.3.3.3; the transcription is
+//! `private/specs-verified/hls/ietf/rfc8216bis-playlist-tags.md`) — the tags
+//! themselves are rendered by `broadcast-hls`, never here. A break with no segment open marks the next
 //! one, so a break as the first input is stated too; a new `#EXT-X-MAP`
 //! follows from the caller's own init-change detection.
 
@@ -1648,6 +1649,15 @@ impl Stage for LlHlsSegmenter {
                 // between two segments, and the next one states it with the
                 // summary's discontinuous flag (rendered by `broadcast-hls`).
                 self.flush()?;
+                // Start the new segment's clock at its own first sample: on a
+                // duration-less stream the jump must not be counted as one
+                // long segment (or part), and the emitted `tfdt`s stay
+                // contiguous.
+                self.anchor_clock = MediaClock::new();
+                for track in &mut self.tracks {
+                    track.part_clock = MediaClock::new();
+                    track.seg_clock = MediaClock::new();
+                }
                 self.pending_discontinuity = true;
                 Ok(())
             }

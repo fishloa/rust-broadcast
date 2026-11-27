@@ -77,7 +77,8 @@
 //! segment): the previous Period closes with a `@duration` and the next starts
 //! where it closed, its `SegmentTemplate@presentationTimeOffset` mapping that
 //! track's continuing media clock onto the presentation timeline (§5.3.9.4,
-//! Table 16) and its `@startNumber` continuing where the last one stopped.
+//! Table 16) and its `@startNumber` continuing where the last one stopped
+//! (`private/specs/iso_iec_23009-1_dash_2022_ed5.pdf` §5.3.2, §5.3.9.4).
 //!
 //! # CENC/CBCS signalling (issue #564)
 //!
@@ -883,10 +884,7 @@ impl DashPackager {
     }
 
     /// Build the MPD model for the resolved representations.
-    fn render_mpd(
-        &self,
-        periods: &[(Vec<ReprInfo<'_>>, Duration, Option<Duration>)],
-    ) -> Result<Mpd> {
+    fn render_mpd(&self, periods: &[PeriodReprs<'_>]) -> Result<Mpd> {
         if self.dynamic && self.publish_time.is_none() {
             return Err(Error::InvalidField(InvalidField {
                 field: "MPD@publishTime",
@@ -1303,7 +1301,7 @@ impl DashPackager {
         tracks: &[TrackSpec],
         reprs: &[ReprInfo<'a>],
         log: &SegmentSummaryLog,
-    ) -> Option<Vec<(Vec<ReprInfo<'a>>, Duration, Option<Duration>)>> {
+    ) -> Option<Vec<PeriodReprs<'a>>> {
         let mut slices: Vec<Vec<SegmentSlice>> = Vec::with_capacity(tracks.len());
         for spec in tracks {
             slices.push(track_slices(&log.track(spec.track_id)?));
@@ -1390,9 +1388,13 @@ impl DashPackager {
             periods.push((period_reprs, presentation, Some(duration)));
             presentation = presentation.saturating_add(duration);
         }
-        (periods.len() >= 2).then_some(periods)
+        (periods.len() > 1).then_some(periods)
     }
 }
+
+/// One presentation period: the representations it describes, where it starts
+/// on the presentation timeline, and how long it lasts.
+type PeriodReprs<'a> = (Vec<ReprInfo<'a>>, Duration, Option<Duration>);
 
 /// One retained segment's media span, as a period slice needs it.
 #[derive(Debug, Clone, Copy)]
