@@ -83,11 +83,13 @@ fn hevc_vps_timing_fixture_nominal_rate() {
         arrays: vec![
             HevcNalArray {
                 array_completeness: true,
+                reserved: false,
                 nal_unit_type: 32,
                 nalus: vec![HevcNalUnit(vps)],
             },
             HevcNalArray {
                 array_completeness: true,
+                reserved: false,
                 nal_unit_type: 33,
                 nalus: vec![HevcNalUnit(sps)],
             },
@@ -174,6 +176,7 @@ fn cfg_record_with_vps(vps: &[u8]) -> HEVCDecoderConfigurationRecord {
         length_size_minus_one: 3,
         arrays: vec![HevcNalArray {
             array_completeness: true,
+            reserved: false,
             nal_unit_type: 32,
             nalus: vec![HevcNalUnit(vps.to_vec())],
         }],
@@ -218,11 +221,13 @@ fn hevc_vps_fallback_is_selected_by_nal_unit_type_not_array_order() {
         arrays: vec![
             HevcNalArray {
                 array_completeness: true,
+                reserved: false,
                 nal_unit_type: 33,
                 nalus: vec![HevcNalUnit(truncated_sps.clone())],
             },
             HevcNalArray {
                 array_completeness: true,
+                reserved: false,
                 nal_unit_type: 32,
                 nalus: vec![HevcNalUnit(vps.clone())],
             },
@@ -243,6 +248,7 @@ fn hevc_vps_fallback_is_selected_by_nal_unit_type_not_array_order() {
     let record = HEVCDecoderConfigurationRecord {
         arrays: vec![HevcNalArray {
             array_completeness: true,
+            reserved: false,
             nal_unit_type: 33,
             nalus: vec![HevcNalUnit(truncated_sps)],
         }],

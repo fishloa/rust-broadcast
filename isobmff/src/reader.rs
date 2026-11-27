@@ -101,6 +101,7 @@ const MAX_REMEMBERED_INDEXES: usize = 16;
 
 /// A half-open byte range in the input file: `[offset, offset + len)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ByteRange {
     /// First byte of the range.
     pub offset: u64,

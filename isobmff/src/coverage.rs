@@ -142,6 +142,16 @@ leaf! {
     p_stdp: b"stdp", crate::sample_tables_extra::DegradationPriorityBox, &MINIMAL_BODY;
     p_padb: b"padb", crate::sample_tables_extra::PaddingBitsBox, &MINIMAL_BODY;
     p_stsg: b"stsg", crate::sample_tables_extra::SubTrackSampleGroupBox, &MINIMAL_BODY;
+    p_brnd: b"brnd", crate::item::BrandProperty, &MINIMAL_BODY;
+    p_grpl: b"grpl", crate::item::GroupsListBox, &[];
+    p_idat: b"idat", crate::item::ItemDataBox, &MINIMAL_BODY;
+    p_iinf: b"iinf", crate::item::ItemInfoBox, &MINIMAL_BODY;
+    p_iloc: b"iloc", crate::item::ItemLocationBox, &MINIMAL_BODY;
+    p_infe: b"infe", crate::item::ItemInfoEntry, &MINIMAL_BODY;
+    p_ipma: b"ipma", crate::item::ItemPropertyAssociationBox, &MINIMAL_BODY;
+    p_ipro: b"ipro", crate::item::ItemProtectionBox, &MINIMAL_BODY;
+    p_iref: b"iref", crate::item::ItemReferenceBox, &MINIMAL_BODY;
+    p_pitm: b"pitm", crate::item::PrimaryItemBox, &MINIMAL_BODY;
 }
 
 // Body-only visual extensions: their `Parse` takes the box payload, not the
@@ -183,6 +193,15 @@ fn p_colr() -> Result<()> {
     let mut body = [0u8; COLR_NCLX_BODY_LEN];
     body[..4].copy_from_slice(b"nclx");
     crate::visual_ext::ColourInformationBox::parse(&body).map(|_| ())
+}
+
+fn p_ipco() -> Result<()> {
+    crate::item::ItemPropertyContainerBox::parse_box(&boxed(*b"ipco", &[])).map(|_| ())
+}
+
+fn p_iprp() -> Result<()> {
+    let inner = boxed(*b"ipco", &[]);
+    crate::item::ItemPropertiesBox::parse(&boxed(*b"iprp", &inner)).map(|_| ())
 }
 
 fn p_edts() -> Result<()> {
@@ -327,6 +346,18 @@ typed! {
         p_stdp: b"stdp", "stdp", "DegradationPriorityBox";
         p_padb: b"padb", "padb", "PaddingBitsBox";
         p_stsg: b"stsg", "stsg", "SubTrackSampleGroupBox";
+        p_brnd: b"brnd", "brnd", "BrandProperty";
+        p_grpl: b"grpl", "grpl", "GroupsListBox";
+        p_idat: b"idat", "idat", "ItemDataBox";
+        p_iinf: b"iinf", "iinf", "ItemInfoBox";
+        p_iloc: b"iloc", "iloc", "ItemLocationBox";
+        p_infe: b"infe", "infe", "ItemInfoEntry";
+        p_ipco: b"ipco", "ipco", "ItemPropertyContainerBox";
+        p_ipma: b"ipma", "ipma", "ItemPropertyAssociationBox";
+        p_ipro: b"ipro", "ipro", "ItemProtectionBox";
+        p_iprp: b"iprp", "iprp", "ItemPropertiesBox";
+        p_iref: b"iref", "iref", "ItemReferenceBox";
+        p_pitm: b"pitm", "pitm", "PrimaryItemBox";
             p_pasp: b"pasp", "pasp", "PixelAspectRatioBox";
         p_clap: b"clap", "clap", "CleanApertureBox";
         p_colr: b"colr", "colr", "ColourInformationBox";

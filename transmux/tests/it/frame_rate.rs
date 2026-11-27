@@ -72,6 +72,7 @@ fn hevc_config(sps: Vec<u8>) -> CodecConfig {
         length_size_minus_one: 3,
         arrays: vec![HevcNalArray {
             array_completeness: true,
+            reserved: false,
             nal_unit_type: 33,
             nalus: vec![HevcNalUnit(sps)],
         }],

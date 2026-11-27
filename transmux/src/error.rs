@@ -582,6 +582,14 @@ impl From<isobmff::Error> for Error {
             I::ReorderBufferFull { .. } => Error::InvalidInput("reorder buffer full"),
             I::PlanIncomplete { .. } => Error::InvalidInput("planned sample missing"),
             I::NoPlan { .. } => Error::InvalidInput("no plan entry"),
+            I::PropertyIndexOutOfRange { .. } => {
+                Error::InvalidInput("item property index past the property container")
+            }
+            I::ReferenceCycle { .. } => Error::InvalidInput("derived image item reference cycle"),
+            I::ExtentOutOfRange { .. } => Error::InvalidInput("item extent outside the file"),
+            I::DataReferenceUnsupported { .. } => {
+                Error::UnsupportedFeature("item data in another file")
+            }
             _ => Error::UnsupportedFeature("unrecognised ISO BMFF box error"),
         }
     }

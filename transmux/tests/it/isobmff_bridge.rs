@@ -211,6 +211,34 @@ fn every_isobmff_error_maps_to_its_transmux_variant() {
             |e| matches!(e, T::InvalidInput("no plan entry")),
             "no plan entry for track",
         ),
+        (
+            I::PropertyIndexOutOfRange {
+                index: 3,
+                available: 2,
+            },
+            |e| matches!(e, T::InvalidInput(_)),
+            "item property index 3 is past the 2-property container",
+        ),
+        (
+            I::ReferenceCycle { item: 4 },
+            |e| matches!(e, T::InvalidInput(_)),
+            "derived image item 4 refers back to itself through its inputs",
+        ),
+        (
+            I::ExtentOutOfRange {
+                item: 1,
+                offset: 10,
+                length: 5,
+                file_len: 12,
+            },
+            |e| matches!(e, T::InvalidInput(_)),
+            "item 1 extent [10, +5) is outside the 12-byte file",
+        ),
+        (
+            I::DataReferenceUnsupported { item: 2, index: 1 },
+            |e| matches!(e, T::UnsupportedFeature(_)),
+            "item 2 names data_reference_index 1, which is not the same file",
+        ),
     ];
     // A new `isobmff::Error` variant needs a case here and an arm in the
     // `From` impl; the fallback check below catches it if only the arm is
