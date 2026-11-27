@@ -1227,7 +1227,9 @@ mod tests {
         let reported = events(&mut ingest);
         assert_eq!(reported.len(), 1, "one report in, one report out");
         match &reported[0] {
-            SessionEvent::Damage { program, damage, .. } => {
+            SessionEvent::Damage {
+                program, damage, ..
+            } => {
                 assert_eq!(*program, Some(media_plane::ingress::ProgramId(0)));
                 assert_eq!(damage, &report);
             }

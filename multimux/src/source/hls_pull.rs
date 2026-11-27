@@ -783,6 +783,102 @@ mod tests {
         server.abort();
     }
 
+    /// The `hls_pull` input kind's reader damage reaches the route's damage
+    /// metric: a playlist whose dangling `EXTINF` describes a segment that is
+    /// therefore lost is reported once, labelled with the kind an operator
+    /// configured, while the pull still plays the segments it can.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_playlist_defect_reaches_the_route_damage_metric() {
+        use axum::Router;
+        use axum::extract::{Path as AxumPath, State};
+        use axum::response::{IntoResponse, Response as AxumResponse};
+        use axum::routing::get;
+
+        const ROUTE: &str = "hls-pull-damage-probe";
+        const KIND: &str = "hls_pull";
+        crate::prometheus::install();
+        let (mut playlist, init, segments) = build_cmaf_fixture();
+        // A segment tag with no URI after it: the segment it describes is
+        // lost before any fetch, so the reader reports it.
+        playlist = playlist.replace("#EXT-X-ENDLIST", "#EXTINF:1.000,\n#EXT-X-ENDLIST");
+
+        #[derive(Clone)]
+        struct DamagedPlaylist {
+            playlist: String,
+            init: Vec<u8>,
+            segments: std::sync::Arc<Vec<Vec<u8>>>,
+        }
+
+        async fn handler(
+            AxumPath(name): AxumPath<String>,
+            State(state): State<DamagedPlaylist>,
+        ) -> AxumResponse {
+            if name == "media.m3u8" {
+                return state.playlist.into_response();
+            }
+            if name == "init.mp4" {
+                return state.init.into_response();
+            }
+            if let Some(idx) = name
+                .strip_prefix("seg")
+                .and_then(|s| s.strip_suffix(".m4s"))
+                .and_then(|s| s.parse::<usize>().ok())
+                && let Some(bytes) = state.segments.get(idx)
+            {
+                return bytes.clone().into_response();
+            }
+            axum::http::StatusCode::NOT_FOUND.into_response()
+        }
+
+        let app = Router::new()
+            .route("/{name}", get(handler))
+            .with_state(DamagedPlaylist {
+                playlist,
+                init,
+                segments: std::sync::Arc::new(segments),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral loopback port");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("axum server");
+        });
+
+        let route = HlsPullRoute::new(ROUTE, format!("http://{addr}/media.m3u8"));
+        let route_handle = std::sync::Arc::new(
+            crate::route::RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration(std::time::Duration::from_secs(4))
+                    .with_part_target(std::time::Duration::from_millis(500))
+                    .with_window_segments(4),
+            )
+            .with_name(ROUTE)
+            .with_input_kind(KIND),
+        );
+        let _ = tokio::time::timeout(
+            Duration::from_secs(60),
+            run_hls_pull(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("run_hls_pull must not hang against a finite playlist");
+        server.abort();
+        let line = crate::testutil::rendered_line(
+            "multimux_source_damage_total",
+            &[("route", ROUTE), ("source", KIND)],
+        );
+        assert!(
+            line.is_some(),
+            "a playlist defect must reach the route's damage metric"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn run_hls_pull_honours_retry_after_on_a_503() {
         use axum::Router;

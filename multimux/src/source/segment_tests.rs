@@ -26,8 +26,8 @@ use media_plane::segmenter::ProgramSegmenter;
 
 use crate::route::{RouteConfig, RouteHandle};
 use crate::source::report_driver_progress;
-use crate::testutil::{rendered_line, rendered_total};
 use crate::source::segment::{apply_segmenter_events, drive_program_segmenters};
+use crate::testutil::{rendered_line, rendered_total};
 
 /// Render `route`'s current LL-HLS media playlist synchronously — the exact
 /// production call every LL-HLS request resolves through, so a passing
