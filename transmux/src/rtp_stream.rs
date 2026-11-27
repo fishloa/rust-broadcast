@@ -190,6 +190,7 @@ use alloc::vec::Vec;
 use broadcast_bitstream::slice_header::{AvcParamSets, AvcPicture};
 use broadcast_common::{Demand, Stage, Timestamp};
 use broadcast_core::Parse;
+use broadcast_core::Serialize;
 use broadcast_core::timescale::Timescale;
 use rtp_packet::{MIN_SEQUENTIAL, RTP_SEQ_MOD_PLUS_ONE, SeqValidity, SeqVerdict};
 
@@ -1175,14 +1176,22 @@ impl RtpStreamDepacketiser {
 
     /// Parse `bytes` as a single RTCP Sender Report (RFC 3550 §6.4.1) and feed
     /// it to [`Self::push_sender_report`]. Anything that isn't a parseable SR
-    /// (a Receiver Report, a different compound-packet member, malformed
-    /// bytes) is silently ignored — this is a convenience wrapper for
-    /// callers holding raw RTCP bytes off the wire, not a general RTCP
-    /// dispatcher.
-    pub fn push_rtcp(&mut self, track_id: TrackId, bytes: &[u8]) {
+    /// (a Receiver Report, a different compound-packet member) is used for
+    /// nothing — this is a convenience wrapper for callers holding raw RTCP
+    /// bytes off the wire, not a general RTCP dispatcher.
+    ///
+    /// Returns whether the datagram is structurally valid RTCP at all: every
+    /// sub-packet's header and declared length inside the datagram, in the
+    /// order they appear. Malformed bytes return `false`, so a caller can
+    /// report a control packet it could not use instead of losing it
+    /// silently. The RFC 3550 §6.1 "a compound packet starts with SR or RR"
+    /// rule is deliberately *not* applied: a Reduced-Size RTCP packet
+    /// (RFC 5506) may lead with anything, and it is still valid.
+    pub fn push_rtcp(&mut self, track_id: TrackId, bytes: &[u8]) -> bool {
         if let Ok(sr) = SenderReport::parse(bytes) {
             self.push_sender_report(track_id, sr);
         }
+        rtcp_well_formed(bytes)
     }
 
     /// Compute the `start_decode_time` (in each track's own `clock_rate`
@@ -1934,6 +1943,32 @@ impl Stage for RtpStreamDepacketiser {
             Demand::default()
         }
     }
+}
+
+/// Whether `bytes` is one or more well-formed RTCP packets back to back: each
+/// sub-packet parses and its own length stays inside the datagram.
+fn rtcp_well_formed(bytes: &[u8]) -> bool {
+    let mut off = 0usize;
+    if bytes.is_empty() {
+        return false;
+    }
+    while off < bytes.len() {
+        let Ok(packet) = crate::rtcp::RtcpPacket::parse(&bytes[off..]) else {
+            return false;
+        };
+        let len = packet.serialized_len();
+        if len == 0 {
+            return false;
+        }
+        let Some(next) = off.checked_add(len) else {
+            return false;
+        };
+        if next > bytes.len() {
+            return false;
+        }
+        off = next;
+    }
+    true
 }
 
 #[cfg(test)]

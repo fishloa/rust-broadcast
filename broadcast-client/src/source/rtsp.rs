@@ -116,6 +116,10 @@ pub(crate) struct RtspSource {
     damage_policy: broadcast_core::damage::DamagePolicy,
     depa: Option<RtpStreamDepacketiser>,
     aligner: TrackAligner,
+    /// Whether a malformed RTCP datagram has been reported on this connection.
+    malformed_rtcp_reported: bool,
+    /// Whether the provisional (arrival-time) A/V alignment has been reported.
+    provisional_reported: bool,
     pre_sample: Vec<Event>,
     tracks_dirty: bool,
     seen_first_sample: bool,
@@ -213,6 +217,8 @@ impl RtspSource {
             plan: None,
             depa: None,
             aligner: TrackAligner::default(),
+            malformed_rtcp_reported: false,
+            provisional_reported: false,
             pre_sample: Vec::new(),
             tracks_dirty: false,
             seen_first_sample: false,
@@ -685,6 +691,11 @@ impl RtspSource {
             return;
         }
         if !status.is_success() {
+            if let Req::Setup(index) = req
+                && self.drop_track(index)
+            {
+                return;
+            }
             self.events.push_back(Event::Error {
                 kind: ErrorKind::RequestRefused {
                     method: req.method_name(),
@@ -846,6 +857,63 @@ impl RtspSource {
         self.reported_drops = current;
     }
 
+    /// The server refused media section `index`'s `SETUP`: that track is
+    /// dropped (reported, so the player knows which one) and the remaining
+    /// sections still set up. `true` when the session continues; `false` when
+    /// no track is left, which the caller answers as a refused request and a
+    /// reconnect (a transport that was refused once may be accepted on the
+    /// next attempt).
+    fn drop_track(&mut self, index: usize) -> bool {
+        let position = index.saturating_add(1);
+        let Some(track) = self.tracks.get_mut(index) else {
+            return false;
+        };
+        if track.dropped {
+            return true;
+        }
+        track.dropped = true;
+        let track_id = TrackId::new(u32::try_from(position).unwrap_or(u32::MAX));
+        self.events.push_back(Event::Damage(
+            broadcast_core::damage::Damage::new(
+                broadcast_core::damage::DamageKind::TrackDropped,
+                broadcast_core::damage::Severity::Degraded,
+                "RTSP media section",
+            )
+            .with_ordinal(u64::try_from(position).unwrap_or(u64::MAX)),
+        ));
+        self.events.push_back(Event::Error {
+            kind: ErrorKind::TrackDropped {
+                track_id,
+                stream_type: None,
+                fourcc: None,
+            },
+            fatal: false,
+        });
+        if !self.tracks.iter().any(|t| !t.dropped) {
+            return false;
+        }
+        self.advance_setup(index)
+    }
+
+    /// Send the next media section's `SETUP`, or `PLAY` when none is left.
+    fn advance_setup(&mut self, index: usize) -> bool {
+        let next = self.next_undropped(index.saturating_add(1));
+        if next < self.tracks.len() {
+            return self.send(Req::Setup(next));
+        }
+        self.finish_setups()
+    }
+
+    /// The next media section at or after `from` that is still expected to set
+    /// up, or `self.tracks.len()` when none is.
+    fn next_undropped(&self, from: usize) -> usize {
+        let mut at = from;
+        while at < self.tracks.len() && self.tracks[at].dropped {
+            at = at.saturating_add(1);
+        }
+        at
+    }
+
     fn on_setup_ok(&mut self, index: usize) -> bool {
         let Some(negotiated) = self.client.take_negotiated_transport() else {
             return false;
@@ -863,20 +931,26 @@ impl RtspSource {
         };
         track.channel = channel;
         track.rtcp_channel = rtcp_channel;
-        let next = index.saturating_add(1);
-        if next < self.tracks.len() {
-            return self.send(Req::Setup(next));
-        }
+        self.advance_setup(index)
+    }
+
+    /// Every section that will set up has: build the demuxer and the aligner
+    /// over the tracks that are left and start playing.
+    fn finish_setups(&mut self) -> bool {
         self.depa = Some(RtpStreamDepacketiser::new(
             self.tracks
                 .iter()
+                .filter(|t| !t.dropped)
                 .map(|t| RtpStreamTrack::new(t.track_id, t.kind, t.config.clone(), t.clock_rate))
                 .collect(),
         ));
+        self.malformed_rtcp_reported = false;
+        self.provisional_reported = false;
         self.aligner = TrackAligner::new(
             &self
                 .tracks
                 .iter()
+                .filter(|t| !t.dropped)
                 .map(|t| {
                     (
                         t.track_id,
@@ -919,7 +993,7 @@ impl RtspSource {
     }
 
     fn route(&self, channel: u8) -> Option<(TrackId, bool)> {
-        self.tracks.iter().find_map(|t| {
+        self.tracks.iter().filter(|t| !t.dropped).find_map(|t| {
             if t.channel == channel {
                 Some((t.track_id, false))
             } else if t.rtcp_channel == channel {
@@ -942,7 +1016,19 @@ impl RtspSource {
         };
         if is_rtcp {
             self.rtcp_frames = self.rtcp_frames.saturating_add(1);
-            depa.push_rtcp(track, data);
+            if !depa.push_rtcp(track, data) && !self.malformed_rtcp_reported {
+                // One report per connection: a peer sending nonsense on its
+                // control channel says nothing new after the first datagram.
+                self.malformed_rtcp_reported = true;
+                self.events.push_back(Event::Damage(
+                    broadcast_core::damage::Damage::new(
+                        broadcast_core::damage::DamageKind::MetadataSkipped,
+                        broadcast_core::damage::Severity::Informational,
+                        "RTSP RTCP packet",
+                    )
+                    .for_track(track.value()),
+                ));
+            }
             self.aligner.note_rtcp();
             return;
         }
@@ -1103,7 +1189,21 @@ impl RtspSource {
             match out {
                 AlignOut::Sample(track, sample) => self.emit_sample(track, sample, now),
                 AlignOut::Discontinuity => self.pre_sample.push(Event::Discontinuity),
-                AlignOut::State(state) => self.pre_sample.push(Event::AvSync(state)),
+                AlignOut::State(state) => {
+                    // Provisional placement is arrival-time placement: the
+                    // tracks are lined up by when their first samples showed
+                    // up, not by the senders' own clocks.
+                    if state == transmux::AvSync::Provisional && !self.provisional_reported {
+                        self.provisional_reported = true;
+                        self.events
+                            .push_back(Event::Damage(broadcast_core::damage::Damage::new(
+                                broadcast_core::damage::DamageKind::TimelineRepaired,
+                                broadcast_core::damage::Severity::Informational,
+                                "RTSP A/V alignment",
+                            )));
+                    }
+                    self.pre_sample.push(Event::AvSync(state));
+                }
                 _ => {}
             }
         }
@@ -1379,6 +1479,7 @@ mod tests {
             setup_uri: "rtsp://cam.test/live/trackID=1".to_string(),
             channel: 0,
             rtcp_channel: 1,
+            dropped: false,
         }
     }
 

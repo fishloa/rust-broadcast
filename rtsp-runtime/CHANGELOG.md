@@ -6,6 +6,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `PlayPlan::refuse_setup` and `PlaySession::damage`: a media section whose
+  `SETUP` the server refuses is left out of the plan, reported as
+  `TrackDropped`, and the remaining sections still play. `start_play` now does
+  this instead of failing the whole flow on the first refusal, and ends with
+  `Error::UnexpectedResponse` only when no section could be set up.
+
 ### Breaking
 
 - `ClientEvent` gains `Damage(Box<broadcast_core::damage::Damage>)`: the one

@@ -377,7 +377,12 @@ fn chunked_tcp_delivery_1_byte_and_arbitrary_splits_identical_events() {
 fn media_only(events: &[Event]) -> Vec<Event> {
     events
         .iter()
-        .filter(|e| !matches!(e, Event::AvSync(_) | Event::Discontinuity))
+        .filter(|e| {
+            !matches!(
+                e,
+                Event::AvSync(_) | Event::Discontinuity | Event::Damage(_)
+            )
+        })
         .cloned()
         .map(|mut e| {
             if let Event::Sample { sample, join, .. } = &mut e {
@@ -1371,5 +1376,108 @@ fn a_protocol_error_inside_on_data_is_hinted_to_the_buffer() {
             |i| matches!(i, BufferInput::Hint {hint, .. } if *hint == BufferHint::SourceError)
         ),
         "protocol error sent no SourceError hint: {inputs:?}"
+    );
+}
+
+// ── Damage reports ──────────────────────────────────────────────────────
+
+fn damage(events: &[Event]) -> Vec<broadcast_core::damage::Damage> {
+    events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Damage(damage) => Some(damage.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_refused_setup_drops_that_track_and_the_others_play() {
+    let mut server = server();
+    // The second media section (audio) is refused (461: this transport is not
+    // supported for that section): the video track still plays. A 454 would be
+    // the *session* being gone, which drops every track.
+    server.setup_refuse.push((1, 461));
+    let mut host = connected(Config::default(), server);
+    let frames: Vec<Vec<u8>> = fixture().frames().into_iter().take(SOME_FRAMES).collect();
+    host.deliver_all(&frames);
+    let events = host.events();
+    let dropped: Vec<&broadcast_core::damage::Damage> = events
+        .iter()
+        .filter_map(|e| match e {
+            Event::Damage(damage)
+                if damage.kind() == broadcast_core::damage::DamageKind::TrackDropped =>
+            {
+                Some(damage)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(dropped.len(), 1, "{:?}", damage(&events));
+    assert_eq!(dropped[0].what(), "RTSP media section");
+    assert_eq!(
+        dropped[0].location().ordinal(),
+        Some(2),
+        "the report names the media section"
+    );
+    assert!(
+        events.iter().any(|e| matches!(
+            e,
+            Event::Error {
+                kind: broadcast_client::ErrorKind::TrackDropped { .. },
+                fatal: false,
+            }
+        )),
+        "the dropped track is still named in the error vocabulary"
+    );
+    assert!(
+        !samples_of(&events).is_empty(),
+        "the section that set up still plays"
+    );
+}
+
+#[test]
+fn a_malformed_rtcp_packet_is_reported_once() {
+    let mut host = playing();
+    // Version 3 is not RTCP: the datagram cannot be parsed at all.
+    host.deliver_all(&[interleaved(channel_of(1) + 1, &[0xC8, 0x00, 0x00, 0x01])]);
+    let reported = damage(&host.events());
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert_eq!(
+        reported[0].kind(),
+        broadcast_core::damage::DamageKind::MetadataSkipped
+    );
+    assert_eq!(reported[0].what(), "RTSP RTCP packet");
+    assert_eq!(
+        reported[0].severity(),
+        broadcast_core::damage::Severity::Informational
+    );
+
+    // A second bad datagram on the same connection is the same loss, already
+    // reported once.
+    host.deliver_all(&[interleaved(channel_of(1) + 1, &[0xC8, 0x00, 0x00, 0x01])]);
+    assert!(
+        damage(&host.events()).is_empty(),
+        "one report per connection, not per datagram"
+    );
+}
+
+#[test]
+fn an_arrival_time_alignment_is_reported() {
+    // No Sender Report and no RTP-Info: the tracks are lined up by when their
+    // first samples arrived, which the player is told.
+    let mut host = playing();
+    let frames: Vec<Vec<u8>> = fixture().frames().into_iter().take(SOME_FRAMES).collect();
+    host.deliver_all(&frames);
+    let reported = damage(&host.events());
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert_eq!(
+        reported[0].kind(),
+        broadcast_core::damage::DamageKind::TimelineRepaired
+    );
+    assert_eq!(reported[0].what(), "RTSP A/V alignment");
+    assert_eq!(
+        reported[0].severity(),
+        broadcast_core::damage::Severity::Informational
     );
 }

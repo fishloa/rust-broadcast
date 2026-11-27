@@ -272,6 +272,10 @@ pub struct Server {
     pub describe_status: Option<u16>,
     pub describe_location: Option<String>,
     pub setup_status: Option<u16>,
+    /// Media-section indices (by their order among the `SETUP`s) answered
+    /// with this status instead of a transport, so one section can be refused
+    /// while the others set up.
+    pub setup_refuse: Vec<(usize, u16)>,
     pub play_status: Option<u16>,
     pub options_status: u16,
     /// The `Public` header an `OPTIONS` success answer carries (RFC 2326
@@ -297,6 +301,7 @@ impl Server {
             describe_status: None,
             describe_location: None,
             setup_status: None,
+            setup_refuse: Vec::new(),
             play_status: None,
             options_status: 200,
             options_public: None,
@@ -388,7 +393,13 @@ impl Server {
                     respond(rec.cseq, 200, extra, self.sdp.clone())
                 }
             },
-            SETUP => match self.setup_status {
+            SETUP => match self
+                .setup_refuse
+                .iter()
+                .find(|(index, _)| *index == self.count(SETUP))
+                .map(|(_, status)| *status)
+                .or(self.setup_status)
+            {
                 Some(status) => respond(rec.cseq, status, Vec::new(), Vec::new()),
                 None => {
                     let reply = self

@@ -36,8 +36,12 @@ pub struct PlaySession {
     pub sdp: String,
     /// The tracks negotiated by the flow.
     pub tracks: Vec<PlayTrack>,
-    /// Control URLs skipped because they crossed authorities.
+    /// Control URLs left out of the plan: a section whose `a=control` crossed
+    /// authorities, or whose `SETUP` the server refused.
     pub skipped: Vec<String>,
+    /// One report per skipped section, for a caller that publishes the one
+    /// damage vocabulary.
+    pub damage: Vec<broadcast_core::damage::Damage>,
 }
 
 /// One `SETUP` the driver must send, in order.
@@ -298,6 +302,23 @@ impl PlayPlan {
         Ok(())
     }
 
+    /// Leave media section `index` out of the plan: the server refused its
+    /// `SETUP`, so the track is dropped and the sections after it still play.
+    /// The skipped section is reported (see [`PlaySession::damage`]).
+    ///
+    /// # Errors
+    /// [`Error::UnusableTransport`] when `index` is not a planned section.
+    pub fn refuse_setup(&mut self, index: usize) -> Result<()> {
+        if index >= self.setups.len() {
+            return Err(Error::UnusableTransport);
+        }
+        let setup = self.setups.remove(index);
+        self.channels.remove(index);
+        self.skipped
+            .push(SkippedMedia::new(setup.media_index, setup.control));
+        Ok(())
+    }
+
     /// The finished session: one [`PlayTrack`] per setup on its accepted
     /// channel, plus the `sdp` the plan came from.
     pub fn into_session(self, sdp: String) -> PlaySession {
@@ -310,10 +331,12 @@ impl PlayPlan {
                 channel,
             })
             .collect();
+        let damage = self.skipped.iter().map(SkippedMedia::damage).collect();
         PlaySession {
             sdp,
             tracks,
             skipped: self.skipped.into_iter().map(|m| m.control).collect(),
+            damage,
         }
     }
 }

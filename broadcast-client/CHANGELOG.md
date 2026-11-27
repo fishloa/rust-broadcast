@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ErrorKind::DamageRefused` after the report itself.
 - The RTP/UDP path reports what its reorder buffer and the TS demuxer gave up
   on, and the SRT path reports every packet run the delivery engine dropped.
+- A refused `SETUP` in the RTSP source drops that media section
+  (`Event::Damage` `TrackDropped`, plus the existing `TrackDropped` error) and
+  the other sections still play; the connection is retried only when no track
+  is left. A malformed RTCP datagram and an arrival-time (provisional) A/V
+  alignment are reported once per connection.
 - The HLS source forwards the client's playlist, delta, media-sequence and
   segment-duration reports, passes the fetch status through as the skip reason
   when it gives up on a segment (404, 410, timeout), and maps a policy refusal
