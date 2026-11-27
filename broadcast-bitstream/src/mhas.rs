@@ -3,8 +3,8 @@
 //!
 //! Used only to locate the `PACTYP_MPEGH3DACFG` packet whose payload is the
 //! opaque `mpegh3daConfig()` blob already carried by
-//! [`isobmff::mpegh::MHADecoderConfigurationRecord`]. The `mhaC` box itself
-//! lives in [`isobmff::mpegh`].
+//! `isobmff::mpegh::MHADecoderConfigurationRecord`. The `mhaC` box itself
+//! lives in `isobmff::mpegh`.
 
 use alloc::vec::Vec;
 
@@ -20,7 +20,7 @@ use alloc::vec::Vec;
 // decodes the MPEG-H audio bitstream, so the framing below is used for
 // exactly one purpose: **locating** the `PACTYP_MPEGH3DACFG` packet whose
 // payload is the opaque `mpegh3daConfig()` blob (already copied through
-// unchanged by [`isobmff::mpegh::MHADecoderConfigurationRecord`]), and flagging an access
+// unchanged by `isobmff::mpegh::MHADecoderConfigurationRecord`), and flagging an access
 // unit that carries one as a random-access point.
 //
 // The packet-type numbering and the three-tier "escaped value" header coding
@@ -113,9 +113,22 @@ fn escaped_value(br: &mut BitReader<'_>, bits: (u32, u32, u32)) -> Option<u64> {
 /// One MHAS packet's type and payload, walked from an MHAS elementary-stream
 /// access unit (`MHASPacketLabel` is discarded — not needed for config/RAP
 /// recovery).
-pub(crate) struct MhasPacket<'a> {
-    pub(crate) packet_type: u8,
-    pub(crate) payload: &'a [u8],
+#[non_exhaustive]
+pub struct MhasPacket<'a> {
+    packet_type: u8,
+    payload: &'a [u8],
+}
+
+impl<'a> MhasPacket<'a> {
+    /// `MHASPacketType` — ISO/IEC 23008-3 Clause 14 Table 6.
+    pub fn packet_type(&self) -> u8 {
+        self.packet_type
+    }
+
+    /// The packet's payload bytes.
+    pub fn payload(&self) -> &'a [u8] {
+        self.payload
+    }
 }
 
 /// Walk the MHAS packets in one access unit. Stops (returning whatever was
@@ -125,7 +138,7 @@ pub(crate) struct MhasPacket<'a> {
 /// unparseable/unknown-future packet layout simply yields no more packets,
 /// and the access unit's bytes are still carried through opaquely as the
 /// `Sample`.
-pub(crate) fn walk_mhas_packets(data: &[u8]) -> Vec<MhasPacket<'_>> {
+pub fn walk_mhas_packets(data: &[u8]) -> Vec<MhasPacket<'_>> {
     let mut br = BitReader::new(data);
     let mut out = Vec::new();
     // A packet's minimal header (unescaped type + label + length) is 16 bits.
@@ -164,7 +177,7 @@ pub(crate) fn walk_mhas_packets(data: &[u8]) -> Vec<MhasPacket<'_>> {
 /// Find the `mpegh3daConfig()` blob — the `PACTYP_MPEGH3DACFG` packet's
 /// payload — in one MHAS access unit, if present. An access unit carrying
 /// one is a random-access point (ETSI TS 101 154 §6.8.4.1).
-pub(crate) fn find_mpegh3da_config(data: &[u8]) -> Option<&[u8]> {
+pub fn find_mpegh3da_config(data: &[u8]) -> Option<&[u8]> {
     walk_mhas_packets(data)
         .into_iter()
         .find(|p| p.packet_type == MHAS_PACTYP_MPEGH3DACFG)

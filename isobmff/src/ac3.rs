@@ -7,7 +7,7 @@
 //! | [`Ec3SpecificBox`] | `dec3` | §F.6 | E-AC-3 decoder config |
 //!
 //! The syncframe BSI parsers, frame splitters and the `dac3`/`dec3`
-//! constructors live in `transmux::ac3_syncframe`.
+//! constructors live in `broadcast_bitstream::ac3_syncframe`.
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;

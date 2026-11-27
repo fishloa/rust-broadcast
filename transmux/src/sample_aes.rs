@@ -339,8 +339,8 @@ pub fn aac_encrypt_frame(
     iv: &[u8; BLOCK_LEN],
     frame: &[u8],
 ) -> Result<Vec<u8>> {
-    let parsed = crate::aac_asc::parse_adts_header(frame)?;
-    let hdr = crate::aac_asc::adts_header_len(&parsed);
+    let parsed = broadcast_bitstream::aac_asc::parse_adts_header(frame)?;
+    let hdr = broadcast_bitstream::aac_asc::adts_header_len(&parsed);
     let mut out = frame.to_vec();
     audio_transform(key, iv, &mut out, hdr + AUDIO_CLEAR_LEADER_LEN, true);
     Ok(out)
@@ -353,8 +353,8 @@ pub fn aac_decrypt_frame(
     iv: &[u8; BLOCK_LEN],
     frame: &[u8],
 ) -> Result<Vec<u8>> {
-    let parsed = crate::aac_asc::parse_adts_header(frame)?;
-    let hdr = crate::aac_asc::adts_header_len(&parsed);
+    let parsed = broadcast_bitstream::aac_asc::parse_adts_header(frame)?;
+    let hdr = broadcast_bitstream::aac_asc::adts_header_len(&parsed);
     let mut out = frame.to_vec();
     audio_transform(key, iv, &mut out, hdr + AUDIO_CLEAR_LEADER_LEN, false);
     Ok(out)
@@ -380,7 +380,7 @@ pub fn ac3_decrypt_frame(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], frame: &[u8]
 /// The protected block of an E-AC-3 stream is a **single syncframe**.
 ///
 /// `eac3_encrypt_frame`/`eac3_decrypt_frame` walk the syncframes of a frame via
-/// `crate::ac3_syncframe::split_eac3_syncframe_ranges` (ETSI TS 102 366 §E.1.3.1.3
+/// `broadcast_bitstream::ac3_syncframe::split_eac3_syncframe_ranges` (ETSI TS 102 366 §E.1.3.1.3
 /// `frmsiz`), applying a 16-byte clear leader and a whole-block CBC pass to
 /// each, with the **IV reset at every syncframe**.
 ///
@@ -411,7 +411,7 @@ fn eac3_transform(
     frame: &[u8],
     encrypt: bool,
 ) -> Result<Vec<u8>> {
-    let ranges = crate::ac3_syncframe::split_eac3_syncframe_ranges(frame);
+    let ranges = broadcast_bitstream::ac3_syncframe::split_eac3_syncframe_ranges(frame);
     if ranges.is_empty() {
         return Err(Error::InvalidInput(
             "E-AC-3 frame does not start with a valid syncframe",
@@ -953,9 +953,9 @@ mod tests {
         // ADTS frame: byte1 bit0 = 1 → 7-byte header (no CRC).
         let mut frame = vec![0xFF, 0xF1, 0x00, 0x00, 0x0D, 0x60, 0x00];
         frame.extend((0u8..100).map(|i| i.wrapping_mul(3)));
-        let parsed = crate::aac_asc::parse_adts_header(&frame).unwrap();
-        let hdr = crate::aac_asc::adts_header_len(&parsed);
-        assert_eq!(hdr, crate::aac_asc::ADTS_HEADER_SIZE);
+        let parsed = broadcast_bitstream::aac_asc::parse_adts_header(&frame).unwrap();
+        let hdr = broadcast_bitstream::aac_asc::adts_header_len(&parsed);
+        assert_eq!(hdr, broadcast_bitstream::aac_asc::ADTS_HEADER_SIZE);
 
         let enc = aac_encrypt_frame(&NIST_KEY, &NIST_IV, &frame).unwrap();
         assert_eq!(enc.len(), frame.len(), "AAC length preserved (no padding)");
@@ -973,8 +973,8 @@ mod tests {
     fn adts_header_len_with_crc() {
         // byte1 bit0 = 0 → 9-byte header (CRC present).
         let frame = vec![0xFF, 0xF0, 0, 0, 0x01, 0x20, 0, 0, 0];
-        let parsed = crate::aac_asc::parse_adts_header(&frame).unwrap();
-        assert_eq!(crate::aac_asc::adts_header_len(&parsed), 9);
+        let parsed = broadcast_bitstream::aac_asc::parse_adts_header(&frame).unwrap();
+        assert_eq!(broadcast_bitstream::aac_asc::adts_header_len(&parsed), 9);
     }
 
     #[test]
@@ -1108,7 +1108,7 @@ mod tests {
         else {
             panic!("eac3 fixture missing");
         };
-        let ranges = crate::ac3_syncframe::split_eac3_syncframe_ranges(&clear);
+        let ranges = broadcast_bitstream::ac3_syncframe::split_eac3_syncframe_ranges(&clear);
         let (s, e) = ranges[0];
         let one = &clear[s..e];
         let via_frame = eac3_encrypt_frame(&NIST_KEY, &NIST_IV, one).expect("encrypt one");

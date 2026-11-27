@@ -4,8 +4,9 @@ Codec bitstream parsers and stream-format conversion for `rust-broadcast`.
 
 **This crate reads codec facts. It never decodes or encodes media.** It is the
 layer below the container and muxing crates: a project that only wants to split
-an Annex B stream, classify NAL units, or read an exp-Golomb field can depend on
-this crate alone instead of taking the whole muxing hub.
+an Annex B stream, classify NAL units, read an exp-Golomb field, or decode an
+AAC, AC-3/E-AC-3, DTS or MHAS header can depend on this crate alone instead of
+taking the whole muxing hub.
 
 What it holds today:
 
@@ -41,8 +42,18 @@ What it holds today:
   newtype, format its RFC 6381 string, and build an `avcC` from SPS/PPS NAL
   units.
 
-AAC, AC-3, DTS, MPEG-2 and MPEG audio arrive as features on top of this, one
-family at a time.
+- **AAC** ([`aac_asc`], `aac`) — the `AudioSpecificConfig` decoder-config record
+  with its `Parse`/`Serialize` round trip, the HE-AAC SBR/PS signalling, and the
+  ADTS header with its parser, builder and header-length helper.
+- **AC-3 / E-AC-3** ([`ac3_syncframe`], `ac3`) — the syncframe BSI of both
+  framings, the frame and access-unit splitters, the `crc2` check, and the
+  `dac3`/`dec3` builders behind `isobmff`.
+- **DTS core** ([`dts_core`], `dts`) — the core frame header, the frame
+  splitter, and the `ddts` builder behind `isobmff`.
+- **MPEG-H Audio Stream framing** ([`mhas`], `mpegh`) — the MHAS packet walk
+  that locates the `mpegh3daConfig()` blob.
+
+MPEG-2 and MPEG audio arrive as features on top of this, one family at a time.
 
 ## The recorded exception
 
@@ -62,6 +73,8 @@ MPEG-2 sequence headers, each landing as an additive release.
   plus `alloc` either way.
 - `h264`, `hevc`, `vvc` (all default) — the per-codec NAL unit-type enums and
   sequence parameter set decoders.
+- `aac`, `ac3`, `dts`, `mpegh` (all default) — the audio parsers. Each builds
+  without `isobmff`; only the box builders need it.
 - `serde` — `Serialize` derives on the spec/field types.
 - `isobmff` — the codec-configuration glue over `isobmff`'s box newtypes
   (parameter-set decoding, RFC 6381 strings, `avcC` construction) and the HDR10
@@ -82,3 +95,6 @@ Run with `cargo run -p broadcast-bitstream --example <name>`:
   RFC 6381 codec string of the SPS in force at its first IDR access unit.
 - `print_capture_slices` takes the same capture and prints each coded picture's
   slice type and whether it is a frame or a field.
+- `print_adts_headers` takes an ADTS elementary stream,
+  e.g. `fixtures/audio/aac.adts`, and prints each frame's profile, sample rate,
+  channel configuration and length, then the frame count.

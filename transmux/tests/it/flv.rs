@@ -147,9 +147,9 @@ fn avcc_matches_ref_mp4_and_asc_decodes() {
         .unwrap()
         .data
         .clone();
-    let asc = transmux::AudioSpecificConfig::parse(&asc_bytes).expect("parse ASC");
+    let asc = broadcast_bitstream::AudioSpecificConfig::parse(&asc_bytes).expect("parse ASC");
     // The ASC (0x12 0x08) is the authority: AAC-LC, SFI 4 (44100 Hz), 1 channel.
-    assert_eq!(asc.channel_configuration.raw(), 1, "ASC channels = 1");
+    assert_eq!(asc.channel_configuration().raw(), 1, "ASC channels = 1");
     assert_eq!(*channel_count, 1, "config channel_count = 1");
     assert_eq!(*sample_rate, 44100, "ASC sample rate = 44100 Hz");
 }
@@ -831,7 +831,7 @@ fn streaming_aac_channel_count_uses_table_1_19() {
 /// case (`channelConfiguration == 0`), which is *not* zero channels.
 #[test]
 fn channel_configuration_channel_counts_match_table_1_19() {
-    use transmux::aac_asc::ChannelConfiguration;
+    use broadcast_bitstream::aac_asc::ChannelConfiguration;
     let cases: [(ChannelConfiguration, Option<u16>); 8] = [
         (ChannelConfiguration::InBand, None), // PCE carries the mapping
         (ChannelConfiguration::Mono, Some(1)),

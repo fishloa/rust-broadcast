@@ -10,7 +10,9 @@
 
 use alloc::vec::Vec;
 
-use crate::{Error, HeAacProfile, TrackId, TrackSpec};
+use broadcast_bitstream::aac_asc::HeAacProfile;
+
+use crate::{Error, TrackId, TrackSpec};
 
 /// Which source audio track a declaration or a separate audio rendition picks
 /// (issue #1428 slice 2b). `Index` is the zero-based ordinal among the
@@ -151,9 +153,9 @@ pub fn apply_overrides(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::aac_asc::EsdsBoxCodecInfo;
     use crate::ir::{CodecConfig, DataCarriage, DataIdentity};
     use crate::mpeg_legacy::MpegAudioLayer;
+    use broadcast_bitstream::codec_config_ext::EsdsBoxCodecInfo;
     use broadcast_core::timescale::Timescale;
     use isobmff::{
         DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,

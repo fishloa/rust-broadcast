@@ -15,10 +15,11 @@ use std::path::PathBuf;
 use test_harness::collect::CollectedSelectExt;
 use transmux::TrackId;
 
+use broadcast_bitstream::Ec3SyncframeInfo;
 use test_harness::collect::{Collected as Media, CollectedTrack as Track};
 use transmux::ir::DataIdentity;
 use transmux::pipeline::{CodecConfig, DataCarriage, Sample, TrackSpec};
-use transmux::{Ec3SyncframeInfo, Error, PcrSample};
+use transmux::{Error, PcrSample};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -261,7 +262,7 @@ fn ac3_syncframe_splitting_exact_pts_and_duration() {
     for s in &track.samples {
         assert_eq!(
             s.timing.and_then(|t| t.duration()),
-            Some(transmux::ac3_syncframe::AC3_SAMPLES_PER_SYNCFRAME),
+            Some(broadcast_bitstream::ac3_syncframe::AC3_SAMPLES_PER_SYNCFRAME),
             "every AC-3 sample duration must be 1536 (6 blocks x 256 samples)"
         );
     }
@@ -278,7 +279,7 @@ fn eac3_syncframe_splitting_exact_pts_and_duration() {
     // gate test does — the byte-exactness of the *split* / *timing*, not the
     // BSI bit-parsing itself, is what this test exercises).
     let info = Ec3SyncframeInfo::from_es(&pes[0].payload).expect("E-AC-3 BSI");
-    let expected_duration = info.numblks as u32 * 256;
+    let expected_duration = info.numblks() as u32 * 256;
 
     let media = demux(&data);
     let track = media

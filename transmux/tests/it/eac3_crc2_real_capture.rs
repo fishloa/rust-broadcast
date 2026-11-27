@@ -13,9 +13,8 @@
 //! Revert-verified: with the `crc2` check in `Ec3SyncframeInfo::
 //! from_ac3_independent` disabled, both tests fail (the false headers parse
 //! and the demuxed track loses its eighth frame).
+use broadcast_bitstream::ac3_syncframe::{Ac3SyncframeInfo, Ec3SyncframeInfo};
 use broadcast_core::error::InvalidValue;
-use transmux::Error;
-use transmux::ac3_syncframe::{Ac3SyncframeInfo, Ec3SyncframeInfo};
 use transmux::pipeline::CodecConfig;
 
 const CAPTURES: [&str; 3] = ["m6-single.ts", "m6-discontinuity.ts", "m6-duplicate.ts"];
@@ -70,10 +69,11 @@ fn false_ac3_headers_in_the_real_payload_are_rejected_by_crc2() {
             let ec3 = Ec3SyncframeInfo::from_es(&es[off..]);
             // Header-shaped as AC-3 (bsid <= 8) yet not an E-AC-3 frame: the
             // reason must be the CRC, not a reserved code.
-            if ac3.is_ok_and(|a| a.bsid <= 8) {
+            if ac3.is_ok_and(|a| a.bsid() <= 8) {
                 match ec3 {
-                    Err(Error::InvalidValue(InvalidValue {
-                        field: "AC-3 crc2", ..
+                    Err(broadcast_bitstream::Error::InvalidValue(InvalidValue {
+                        field: "AC-3 crc2",
+                        ..
                     })) => crc_rejected.push(off),
                     Err(_) => {}
                     Ok(e) => panic!("{name}: false AC-3 header @{off} accepted: {e:?}"),
@@ -106,7 +106,7 @@ fn the_real_eac3_frame_after_a_false_header_is_recovered() {
         for (i, s) in track.samples.iter().enumerate() {
             let info = Ec3SyncframeInfo::from_es(&s.data)
                 .unwrap_or_else(|e| panic!("{name}: sample {i} not an E-AC-3 frame: {e}"));
-            assert_eq!(info.bsid, 16, "{name}: sample {i} is E-AC-3 syntax");
+            assert_eq!(info.bsid(), 16, "{name}: sample {i} is E-AC-3 syntax");
         }
     }
 }

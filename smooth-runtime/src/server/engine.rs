@@ -1056,6 +1056,7 @@ mod tests {
     use std::num::NonZeroUsize;
     use std::time::Duration;
 
+    use broadcast_bitstream::AudioSpecificConfig;
     use broadcast_smooth::StreamType;
     use isobmff::{
         AVCConfigurationBox, DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox,
@@ -1067,7 +1068,7 @@ mod tests {
     use transmux::ll_hls::LlHlsSegmenter;
     use transmux::pipeline::Sample;
     use transmux::smooth_fragment::fragment_tfxd;
-    use transmux::{AudioSpecificConfig, CodecConfig, TrackId, TrackSpec};
+    use transmux::{CodecConfig, TrackId, TrackSpec};
 
     use super::*;
 

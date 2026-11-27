@@ -212,10 +212,10 @@ One credentials model and one challenge-response helper for clients, plus one se
 The codec-bitstream layer, so a project that only splits, classifies or describes video does not take the muxing hub: the owning exp-Golomb/RBSP reader over `broadcast_core::bits`, NAL classification with its own `NalCodec`/`AvcNalUnitType`/`HevcNalUnitType`, key-frame/IRAP/random-access detection, the SEI walk and ATSC A/53 caption extraction, Annex B and length-prefixed NAL iteration/conversion, and the incremental `AccessUnitSplitter` whose open-NAL bound is the caller's. The SPS/VUI decoders and coded picture facts, the H.264 slice-header/PPS parsers and the field-pair classifier, the per-access-unit interlace facts, the HDR10+ ST 2094-40 model with its serializer and the HDR10 static metadata SEI codec all live here too, plus the ISOBMFF codec-configuration glue (`avcC` construction, RFC 6381 strings) behind the optional `isobmff` feature. Facts-only in this version (recorded exception in `docs/CRATE-ACCEPTANCE.md`); the audio parsers follow. `no_std`+`alloc`, depends only on `broadcast-core`, `thiserror` and `memchr` (plus optional `serde`/`isobmff`). Unpublished.
 
 - **Standards:** ITU-T H.264 §7.3/§7.4/§9.1 (incl. §7.3.2.2 PPS and §7.3.3 slice header), ITU-T H.265 §7.3/§7.4/§9.2.2, H.264/H.265 Annex D/E (pic_timing, VUI); ISO/IEC 14496-15:2017 §4.3.3 and §5.3.3.1.2 (length-prefix conversion, avcC); SMPTE ST 2094-40 (HDR10+); ITU-T H.265 D.2.28/D.2.35 (mdcv/clli); ATSC A/53 Part 4 (caption SEI)
-- **Cargo description:** Codec bitstream parsers for rust-broadcast: the exp-Golomb/RBSP bit reader, NAL unit classification, Annex B and length-prefixed stream conversion, and access-unit splitting. Parses facts only; holds no decoder. no_std + alloc.
+- **Cargo description:** Codec bitstream parsers for rust-broadcast: the exp-Golomb/RBSP bit reader, NAL classification, SPS/slice/interlace facts, AAC AudioSpecificConfig and ADTS, AC-3/E-AC-3, DTS core and MHAS framing. Parses facts only; holds no decoder. no_std + alloc.
 - **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-core`](#broadcast-core), [`isobmff`](#isobmff)
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`test-harness`](#test-harness), [`transmux`](#transmux)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime), [`test-harness`](#test-harness), [`transmux`](#transmux)
 - **Links:** [README](../broadcast-bitstream/README.md) · [CHANGELOG](../broadcast-bitstream/CHANGELOG.md)
 
 ### MPEG-2 TS / PES / PS framing
@@ -704,7 +704,7 @@ The one Smooth pull client that `broadcast-client` and `multimux` both adapt: `S
 - **Standards:** MS-SSTR (Microsoft Open Specifications), client Manifest and fragment responses (transcription in the private repo)
 - **Cargo description:** Sans-IO Smooth Streaming (MS-SSTR) engine: a pull client (manifest fetch/refresh, stream/quality selection, chunk enumeration, fragment URLs, init/tfxd handling, retry/backoff, live join) and a live origin that renders the client Manifest and serves fragments from a media-plane Trunk. No I/O, no clock reads.
 - **Version (in-tree):** 0.4.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 7
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-core`](#broadcast-core), [`broadcast-smooth`](#broadcast-smooth), [`isobmff`](#isobmff), [`media-plane`](#media-plane), [`transmux`](#transmux)
+- **Depends on (workspace):** [`broadcast-bitstream`](#broadcast-bitstream), [`broadcast-common`](#broadcast-common), [`broadcast-core`](#broadcast-core), [`broadcast-smooth`](#broadcast-smooth), [`isobmff`](#isobmff), [`media-plane`](#media-plane), [`transmux`](#transmux)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
 - **Links:** [README](../smooth-runtime/README.md) · [CHANGELOG](../smooth-runtime/CHANGELOG.md)
 

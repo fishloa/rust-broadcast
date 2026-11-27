@@ -2,9 +2,9 @@
 //! ETSI TS 102 366 §4.3/E.1.2 and Annex E.
 //!
 //! [`Ac3SyncframeInfo::from_es`] parses the BSI fields from an AC-3 syncframe
-//! (§4.3.2) and builds an [`Ac3SpecificBox`] via `into_dac3()`. Similarly
+//! (§4.3.2) and builds an `Ac3SpecificBox` via `into_dac3()`. Similarly
 //! [`Ec3SyncframeInfo::from_es`] parses the E-AC-3 syncframe (§E.1.2.2/E.1.3.1)
-//! and builds an [`Ec3SpecificBox`] via `into_dec3()`.
+//! and builds an `Ec3SpecificBox` via `into_dec3()`.
 //!
 //! Both parsers scan for the `0x0B77` syncword.
 //!
@@ -14,30 +14,35 @@
 //! syncframe's own bit stream information rather than assuming one PES
 //! payload equals one syncframe.
 //!
-//! The `dac3`/`dec3` boxes themselves live in [`isobmff::ac3`].
+//! The `dac3`/`dec3` boxes themselves live in `isobmff::ac3`.
 
+use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
-use crate::units::BITS_PER_KILOBIT;
 use alloc::vec::Vec;
-use broadcast_bitstream::bitreader::read_bits_checked as read_bits;
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::need_in;
 use broadcast_core::wire::u16_at;
-use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox, Ec3Substream, acmod_channels};
+#[cfg(feature = "isobmff")]
+use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox, Ec3Substream};
 
-// AC-3 syncword (big-endian).
-pub(crate) const AC3_SYNCWORD: u16 = 0x0B77;
+/// AC-3 / E-AC-3 syncword (big-endian).
+pub const AC3_SYNCWORD: u16 = 0x0B77;
 
 /// Bytes per "word" in the AC-3 Table 4.13 frame-size table caption ("1 word
 /// = 16 bits") — ETSI TS 102 366 §4.4.1.4 / Table 4.13.
 const BYTES_PER_WORD: usize = 2;
+
+/// Bits in one kilobit, converting the `data_rate` field's kbit/s to bits/s
+/// (ETSI TS 102 366 §F.6.2.2).
+#[cfg(feature = "isobmff")]
+const BITS_PER_KILOBIT: u32 = 1000;
 
 /// Samples per AC-3/E-AC-3 audio block (`audblk()`) — ETSI TS 102 366 §3.1
 /// (Definitions): "audio block: set of 512 audio samples consisting of 256
 /// samples of the preceding audio block, and 256 new time samples. NOTE 1: A
 /// new audio block occurs every 256 audio samples." (Verified against the
 /// spec; excerpt appended to `private/specs-verified/mpeg/transmux/codec/ac3-syncframe.md`.)
-pub(crate) const SAMPLES_PER_AUDIO_BLOCK: u32 = 256;
+pub const SAMPLES_PER_AUDIO_BLOCK: u32 = 256;
 
 /// AC-3 blocks per syncframe — ETSI TS 102 366 §4.3.0 `syncframe()`:
 /// `for(blk = 0; blk < 6; blk++) { audblk(); }`.
@@ -114,8 +119,10 @@ const SURMIXLEV_BITS: usize = 2;
 /// Width of `dsurmod`.
 const DSURMOD_BITS: usize = 2;
 /// Width of `num_ind_sub`.
+#[cfg(feature = "isobmff")]
 const NUM_IND_SUB_BITS: usize = 3;
 /// Width of `data_rate`.
+#[cfg(feature = "isobmff")]
 const DATA_RATE_BITS: usize = 13;
 /// Width of `dialnorm`.
 const DIALNORM_BITS: usize = 5;
@@ -156,7 +163,7 @@ const EXT_PGM_SCALE_BITS: usize = 4;
 /// reflection, no final XOR. Run over a whole syncframe **after** the 16-bit
 /// syncword, the stored `crc2` (§4.4.5.2: "applies to the entire syncframe")
 /// drives it to zero, so `== 0` means the frame is intact.
-fn ac3_crc16(bytes: &[u8]) -> u16 {
+pub fn ac3_crc16(bytes: &[u8]) -> u16 {
     let mut crc = 0u16;
     for &b in bytes {
         crc ^= u16::from(b) << u8::BITS;
@@ -174,14 +181,33 @@ fn ac3_crc16(bytes: &[u8]) -> u16 {
 /// Whether a whole E-AC-3 syncframe's `crc2` checks out: the CRC after the
 /// 16-bit syncword drives the register to zero (ETSI TS 102 366 §E.2.2: the one
 /// CRC of an E-AC-3 stream "covers the entire syncframe"; algorithm §6.10.1).
-pub(crate) fn eac3_frame_crc_ok(frame: &[u8]) -> bool {
+pub fn eac3_frame_crc_ok(frame: &[u8]) -> bool {
     frame.len() > AC3_SYNCWORD_BYTES && ac3_crc16(&frame[AC3_SYNCWORD_BYTES..]) == 0
+}
+
+/// Number of full-bandwidth channels a coded `acmod` value describes
+/// (ETSI TS 102 366 Table 4.5).
+///
+/// The `dec3` box layer keeps its own copy of this table for its substream
+/// accessors: `isobmff` depends on no bitstream crate, and this parser must
+/// build without `isobmff`.
+fn acmod_channels(acmod: u8) -> u8 {
+    match acmod {
+        0 => 2,
+        1 => 1,
+        2 => 2,
+        3 => 3,
+        4 => 3,
+        5 => 4,
+        6 => 4,
+        _ => 5,
+    }
 }
 
 /// `strmtyp` value marking a dependent-substream E-AC-3 syncframe — ETSI TS
 /// 102 366 Annex E §E.1.2.2 `bsi()`: `if(strmtyp == 0x1) /* if dependent
 /// stream */`.
-pub(crate) const EAC3_STRMTYP_DEPENDENT: u8 = 1;
+pub const EAC3_STRMTYP_DEPENDENT: u8 = 1;
 /// `strmtyp` for an independent substream that is *not* converted from AC-3 —
 /// the only value that carries the programme-mixing block in `bsi()` (§E.1.2.2).
 /// `strmtyp == 0x2` is an independent substream converted from AC-3.
@@ -235,20 +261,55 @@ fn ac3_frame_words(fscod: u8, frmsizecod: u8) -> Option<u16> {
 // ---------------------------------------------------------------------------
 
 /// Fields parsed from an AC-3 `syncinfo()` + `bsi()`, sufficient to build an
-/// [`Ac3SpecificBox`]. The parser is the only producer.
+/// `Ac3SpecificBox`. The parser is the only producer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Ac3SyncframeInfo {
-    pub fscod: u8,
-    pub frmsizecod: u8,
-    pub bsid: u8,
-    pub bsmod: u8,
-    pub acmod: u8,
-    pub lfeon: bool,
-    pub sample_rate: u32,
+    fscod: u8,
+    frmsizecod: u8,
+    bsid: u8,
+    bsmod: u8,
+    acmod: u8,
+    lfeon: bool,
+    sample_rate: u32,
 }
 
 impl Ac3SyncframeInfo {
+    /// `fscod` — sample-rate code (Table 4.1).
+    pub fn fscod(&self) -> u8 {
+        self.fscod
+    }
+
+    /// `frmsizecod` — frame-size code (Table 4.13).
+    pub fn frmsizecod(&self) -> u8 {
+        self.frmsizecod
+    }
+
+    /// `bsid` — bit-stream identification (Table 4.1); 8 is AC-3.
+    pub fn bsid(&self) -> u8 {
+        self.bsid
+    }
+
+    /// `bsmod` — bit-stream mode (§4.4.2.3).
+    pub fn bsmod(&self) -> u8 {
+        self.bsmod
+    }
+
+    /// `acmod` — audio coding mode (Table 4.5).
+    pub fn acmod(&self) -> u8 {
+        self.acmod
+    }
+
+    /// `lfeon` — low-frequency-effects channel on.
+    pub fn lfeon(&self) -> bool {
+        self.lfeon
+    }
+
+    /// Sampling rate in Hz denoted by `fscod` (Table 4.1).
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
     /// Parse the first syncframe from an AC-3 elementary stream buffer.
     /// Scans for the `0x0B77` syncword, then parses `syncinfo()` + `bsi()`.
     pub fn from_es(data: &[u8]) -> Result<Self> {
@@ -256,7 +317,8 @@ impl Ac3SyncframeInfo {
         Self::parse_at(data, off)
     }
 
-    pub(crate) fn parse_at(data: &[u8], off: usize) -> Result<Self> {
+    /// Parse the AC-3 syncframe that begins at `data[off]` (§4.3.1/§4.3.2).
+    pub fn parse_at(data: &[u8], off: usize) -> Result<Self> {
         // syncword(16) + crc1(16) + fscod(2) + frmsizecod(6) = 40 bits = 5 bytes
         let need = off + AC3_SYNCINFO_LEN;
         need_in(data, need, "AC-3 syncinfo")?;
@@ -308,7 +370,8 @@ impl Ac3SyncframeInfo {
         })
     }
 
-    /// Build an [`Ac3SpecificBox`] from the parsed syncframe fields.
+    /// Build an `Ac3SpecificBox` from the parsed syncframe fields.
+    #[cfg(feature = "isobmff")]
     pub fn into_dac3(self) -> Ac3SpecificBox {
         Ac3SpecificBox {
             fscod: self.fscod,
@@ -400,32 +463,96 @@ pub fn split_ac3_syncframe_ranges(payload: &[u8], resync: bool) -> Vec<(usize, u
 // ---------------------------------------------------------------------------
 
 /// Fields parsed from an E-AC-3 syncframe, sufficient to build an
-/// [`Ec3SpecificBox`] and calculate `data_rate`. The parser is the only
+/// `Ec3SpecificBox` and calculate `data_rate`. The parser is the only
 /// producer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Ec3SyncframeInfo {
-    pub strmtyp: u8,
-    pub substreamid: u8,
-    pub frmsiz: u16,
-    pub fscod: u8,
-    pub numblks: u8,
-    pub acmod: u8,
-    pub lfeon: bool,
-    pub bsid: u8,
-    pub sample_rate: u32,
-    /// Effective sample rate in kHz (as f32) for data_rate calculation.
-    pub sample_rate_khz: u32,
-    /// Custom channel map of a dependent substream (`chanmap`, §E.1.3.1.8),
-    /// present in `bsi()` only when `strmtyp == 0x1` and `chanmape == 1`.
-    /// `None` means the channel map is defined by `acmod`/`lfeon` instead.
-    pub chanmap: Option<u16>,
-    /// Bit stream mode from informational metadata (`bsmod`, §E.1.3.1.x);
-    /// 0 when the independent substream carries no `infomdate`.
-    pub bsmod: u8,
+    strmtyp: u8,
+    substreamid: u8,
+    frmsiz: u16,
+    fscod: u8,
+    numblks: u8,
+    acmod: u8,
+    lfeon: bool,
+    bsid: u8,
+    sample_rate: u32,
+    sample_rate_khz: u32,
+    chanmap: Option<u16>,
+    bsmod: u8,
 }
 
 impl Ec3SyncframeInfo {
+    /// `strmtyp` — substream type (§E.1.3.1.4).
+    pub fn strmtyp(&self) -> u8 {
+        self.strmtyp
+    }
+
+    /// `substreamid` — substream identification (§E.1.3.1.5).
+    pub fn substreamid(&self) -> u8 {
+        self.substreamid
+    }
+
+    /// `frmsiz` — syncframe size in 16-bit words, minus one (§E.1.3.1.3).
+    pub fn frmsiz(&self) -> u16 {
+        self.frmsiz
+    }
+
+    /// `fscod` — sample-rate code (§E.1.3.1.6).
+    pub fn fscod(&self) -> u8 {
+        self.fscod
+    }
+
+    /// `numblks` — audio blocks in this syncframe (§E.1.2.2).
+    pub fn numblks(&self) -> u8 {
+        self.numblks
+    }
+
+    /// `acmod` — audio coding mode (Table 4.5).
+    pub fn acmod(&self) -> u8 {
+        self.acmod
+    }
+
+    /// `lfeon` — low-frequency-effects channel on.
+    pub fn lfeon(&self) -> bool {
+        self.lfeon
+    }
+
+    /// `bsid` — bit-stream identification (§E.1.3.1.6); 11..=16 is E-AC-3.
+    pub fn bsid(&self) -> u8 {
+        self.bsid
+    }
+
+    /// Sampling rate in Hz.
+    pub fn sample_rate(&self) -> u32 {
+        self.sample_rate
+    }
+
+    /// Effective sample rate in kHz, for the `data_rate` calculation.
+    pub fn sample_rate_khz(&self) -> u32 {
+        self.sample_rate_khz
+    }
+
+    /// Custom channel map of a dependent substream (`chanmap`, §E.1.3.1.8),
+    /// present in `bsi()` only when `strmtyp == 0x1` and `chanmape == 1`.
+    /// `None` means the channel map is defined by `acmod`/`lfeon` instead.
+    pub fn chanmap(&self) -> Option<u16> {
+        self.chanmap
+    }
+
+    /// Bit stream mode from informational metadata (`bsmod`, §E.1.3.1.x);
+    /// 0 when the independent substream carries no `infomdate`.
+    pub fn bsmod(&self) -> u8 {
+        self.bsmod
+    }
+
+    /// The same frame facts with the stream-wide `bsmod` this substream
+    /// signals in its other frames (see [`Self::first_crc_verified_bsmod`]).
+    pub fn with_bsmod(mut self, bsmod: u8) -> Self {
+        self.bsmod = bsmod;
+        self
+    }
+
     fn with_fields(
         strmtyp: u8,
         substreamid: u8,
@@ -462,7 +589,10 @@ impl Ec3SyncframeInfo {
         Self::parse_at(data, off)
     }
 
-    pub(crate) fn parse_at(data: &[u8], off: usize) -> Result<Self> {
+    /// Parse the E-AC-3 syncframe that begins at `data[off]`
+    /// (§E.1.2.2/E.1.3.1). An AC-3 frame there is read as independent
+    /// substream 0 (§E.1.3.1.2).
+    pub fn parse_at(data: &[u8], off: usize) -> Result<Self> {
         Self::parse_at_with_bsmod_presence(data, off).map(|(info, _)| info)
     }
 
@@ -764,7 +894,7 @@ impl Ec3SyncframeInfo {
         (out, false)
     }
 
-    /// Build an [`Ec3SpecificBox`] from the parsed syncframe fields.
+    /// Build an `Ec3SpecificBox` from the parsed syncframe fields.
     /// Calculates `data_rate` per §F.6.2.2 with ceiling division:
     /// `data_rate = ceil((frmsiz + 1) * sample_rate / (numblks * 16 * 1000))`
     ///
@@ -774,6 +904,7 @@ impl Ec3SyncframeInfo {
     /// [`ec3_specific_box_from_syncframes`] when the whole elementary stream is
     /// available, so dependent substreams are folded into `num_dep_sub`/
     /// `chan_loc` instead of being signalled as a plain 5.1 track.
+    #[cfg(feature = "isobmff")]
     pub fn into_dec3(self) -> Result<Ec3SpecificBox> {
         ec3_specific_box_from_syncframes(&[self])
     }
@@ -795,12 +926,33 @@ impl Ec3SyncframeInfo {
 /// Annex E §E.1.2.2) concatenated onto it, plus the independent frame's
 /// parsed syncframe info (used for the access unit's duration).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Ec3SplitFrame {
+    data: Vec<u8>,
+    info: Ec3SyncframeInfo,
+}
+
+impl Ec3SplitFrame {
+    /// Wrap one access unit's coded bytes and its independent frame's facts.
+    pub fn new(data: Vec<u8>, info: Ec3SyncframeInfo) -> Self {
+        Self { data, info }
+    }
+
     /// Concatenated coded bytes: the independent frame followed by any
     /// dependent frames belonging to the same access unit.
-    pub data: Vec<u8>,
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+
+    /// Consume the access unit and return its coded bytes.
+    pub fn into_data(self) -> Vec<u8> {
+        self.data
+    }
+
     /// The independent frame's parsed syncframe info.
-    pub info: Ec3SyncframeInfo,
+    pub fn info(&self) -> Ec3SyncframeInfo {
+        self.info
+    }
 }
 
 /// Split a concatenated E-AC-3 PES payload into access units: each
@@ -850,10 +1002,7 @@ pub fn split_eac3_syncframes(payload: &[u8]) -> Vec<Ec3SplitFrame> {
             off += len;
             continue;
         }
-        out.push(Ec3SplitFrame {
-            data: frame_bytes.to_vec(),
-            info,
-        });
+        out.push(Ec3SplitFrame::new(frame_bytes.to_vec(), info));
         off += len;
     }
     out
@@ -1224,6 +1373,7 @@ enum AuEnd {
 /// Errors when `frames` has no independent frame — a dependent-only or empty
 /// slice describes no substream, and the resulting box could not be
 /// serialized at all (r04-W5).
+#[cfg(feature = "isobmff")]
 pub fn ec3_specific_box_from_syncframes(frames: &[Ec3SyncframeInfo]) -> Result<Ec3SpecificBox> {
     // data_rate is the sum over all substreams (§F.6.2.2), each computed
     // with ceiling division: ceil((frmsiz + 1) * fs / (numblks * 16 * 1000)).
@@ -1314,6 +1464,7 @@ pub fn ec3_specific_box_from_syncframes(frames: &[Ec3SyncframeInfo]) -> Result<E
 /// `chanmap` can express but `chan_loc` cannot (`Left`…`LFE`, bits 0-4 and 15 of
 /// the chanmap) are the ones the independent substream already carries, and
 /// §F.6.2.13 says only the *additional* locations are reflected.
+#[cfg(feature = "isobmff")]
 fn chan_loc_for_frame(f: &Ec3SyncframeInfo) -> u16 {
     let Some(chanmap) = f.chanmap else {
         // No custom map: the dependent substream's locations are not signalled
@@ -1335,6 +1486,7 @@ fn chan_loc_for_frame(f: &Ec3SyncframeInfo) -> u16 {
 }
 
 /// Width of the `chanmap` field (§E.1.3.1.8): 16 bits, numbered MSB-first.
+#[cfg(feature = "isobmff")]
 const EAC3_CHANMAP_BITS: u8 = 16;
 
 /// `(chanmap bit, chan_loc bit)` pairs for the locations both tables share —
@@ -1345,6 +1497,7 @@ const EAC3_CHANMAP_BITS: u8 = 16;
 /// *that* field's MSB, i.e. bit 0 is the least significant of the nine). Only
 /// the locations *beyond* the standard 5.1 set appear in `chan_loc`, which is
 /// exactly the set below.
+#[cfg(feature = "isobmff")]
 const EAC3_CHANMAP_TO_CHAN_LOC: [(u8, u8); 9] = [
     (5, 0),  // Lc/Rc pair
     (6, 1),  // Lrs/Rrs pair
@@ -1358,10 +1511,12 @@ const EAC3_CHANMAP_TO_CHAN_LOC: [(u8, u8); 9] = [
 ];
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
     use alloc::vec;
     use broadcast_core::{Parse, Serialize};
+    use test_fixtures::bits::BitWriter;
+    use test_harness::ac3::{damaged_for_tests, eac3_bsi, seven_one_eac3_es, wire_chanmap};
 
     #[test]
     fn ec3_channels_with_lfe_counts_chan_loc_dependents() {
@@ -1390,22 +1545,6 @@ pub(crate) mod tests {
         assert_eq!(b.channels_with_lfe(), 6);
     }
 
-    /// The CRC check must be judged on a payload: a "frame" that is only the
-    /// syncword has an empty checked region, whose CRC is trivially zero, so it
-    /// must not verify (ETSI TS 102 366 §E.2.2 — a syncframe carries a `crc2`
-    /// word, which two bytes cannot hold).
-    #[test]
-    fn crc_check_rejects_a_syncword_only_frame() {
-        assert!(!eac3_frame_crc_ok(&[]));
-        assert!(!eac3_frame_crc_ok(&AC3_SYNCWORD.to_be_bytes()));
-        let frame = first_real_eac3_frame();
-        assert_eq!(&frame[..AC3_SYNCWORD_BYTES], &AC3_SYNCWORD.to_be_bytes());
-        assert!(
-            eac3_frame_crc_ok(&frame),
-            "the capture's first frame verifies"
-        );
-    }
-
     /// The sample-rate, half-rate, block-count and channel-count lookup tables
     /// — ETSI TS 102 366 Table 4.3, Annex E and Table 4.5 — every code,
     /// including the reserved fallbacks and `fscod` 2 (32 kHz), which no
@@ -1432,6 +1571,16 @@ pub(crate) mod tests {
         );
     }
 
+    /// `isobmff` keeps its own copy of the `acmod` channel table (it cannot
+    /// depend on this crate); the two must agree for every code.
+    #[cfg(feature = "isobmff")]
+    #[test]
+    fn acmod_channels_agrees_with_the_isobmff_copy() {
+        for acmod in 0u8..=7 {
+            assert_eq!(acmod_channels(acmod), isobmff::acmod_channels(acmod));
+        }
+    }
+
     /// A half-rate frame (`fscod` 3, §E.1.2.2) takes `sr_code2` instead of
     /// `numblkscod` and always carries 6 blocks.
     #[test]
@@ -1455,20 +1604,6 @@ pub(crate) mod tests {
         assert_eq!((info.sample_rate, info.sample_rate_khz), (24000, 24));
         assert_eq!(info.numblks, 6);
         assert_eq!(info.samples_per_frame(), 1536);
-    }
-
-    /// The first sample of the committed Dolby E-AC-3 capture: a real
-    /// syncframe with a real `crc2`.
-    fn first_real_eac3_frame() -> Vec<u8> {
-        use crate::pipeline::CodecConfig;
-        let ts = test_fixtures::read("ts/dolby/eac3.ts");
-        let media = crate::collect::media_from_ts(&ts).unwrap();
-        let track = media
-            .tracks
-            .iter()
-            .find(|t| matches!(t.spec.config, CodecConfig::Eac3 { .. }))
-            .unwrap();
-        track.samples[0].data.to_vec()
     }
 
     /// ETSI TS 102 366 §4.4.2.2: `cmixlev` is carried when `(acmod & 0x1) &&
@@ -1680,101 +1815,6 @@ pub(crate) mod tests {
         assert_eq!(dac3.rfc6381(), "ac-3");
         let dec3 = Ec3SpecificBox::parse(&DEC3_ORACLE).unwrap();
         assert_eq!(dec3.rfc6381(), "ec-3");
-    }
-
-    use test_fixtures::bits::BitWriter;
-
-    // ── r04-W5: dec3 built from real syncframes ───────────────────────────────
-
-    /// Build an E-AC-3 `bsi()` for a frame, per §E.1.2.2. Only the fields the
-    /// crate reads are ever nonzero; `mixmdate` is left 0 so the walk is the
-    /// short path (the mixdata variants are exercised by the fixture below).
-    pub(crate) fn eac3_bsi(
-        strmtyp: u8,
-        substreamid: u8,
-        frmsiz: u16,
-        acmod: u8,
-        lfeon: bool,
-        fscod: u8,
-        numblkscod: u8,
-        chanmape: Option<u16>,
-        bsmod: Option<u8>,
-    ) -> Vec<u8> {
-        let mut w = BitWriter::new();
-        w.u(16, AC3_SYNCWORD as u64);
-        w.u(2, strmtyp as u64);
-        w.u(3, substreamid as u64);
-        w.u(11, frmsiz as u64);
-        w.u(2, fscod as u64);
-        w.u(2, numblkscod as u64);
-        w.u(3, acmod as u64);
-        w.u(1, lfeon as u64);
-        w.u(5, 16); // bsid = 16 (E-AC-3)
-        w.u(5, 31); // dialnorm
-        w.u(1, 0); // compre
-        if acmod == 0 {
-            w.u(5, 31); // dialnorm2
-            w.u(1, 0); // compr2e
-        }
-        if strmtyp == 1 {
-            w.u(1, u64::from(chanmape.is_some()));
-            if let Some(map) = chanmape {
-                w.u(16, map as u64);
-            }
-        }
-        w.u(1, 0); // mixmdate
-        w.u(1, u64::from(bsmod.is_some())); // infomdate
-        if let Some(m) = bsmod {
-            w.u(3, m as u64);
-        }
-        let _ = numblkscod;
-        w.align_zero();
-        // Zero-pad to the declared frame size: §E.1.3.1.3 makes `frmsiz` the
-        // syncframe length in 16-bit words, and the splitter walks frames by it.
-        let mut bytes = w.finish();
-        let frame_len = (frmsiz as usize + 1) * BYTES_PER_WORD;
-        assert!(
-            bytes.len() <= frame_len,
-            "synthetic bsi ({} bytes) exceeds its declared frame size ({frame_len})",
-            bytes.len()
-        );
-        bytes.resize(frame_len, 0);
-        stamp_crc2(&mut bytes);
-        bytes
-    }
-
-    /// Write a valid `crc2` into the last word of a whole E-AC-3 syncframe
-    /// (ETSI TS 102 366 §E.2.2 / §6.10.1): the CRC of everything between the
-    /// syncword and `crc2`, so the check over the whole frame leaves zero.
-    pub(crate) fn stamp_crc2(frame: &mut [u8]) {
-        let n = frame.len();
-        let crc = ac3_crc16(&frame[AC3_SYNCWORD_BYTES..n - 2]);
-        frame[n - 2..].copy_from_slice(&crc.to_be_bytes());
-    }
-
-    /// Format a synthetic E-AC-3 elementary stream for a 7.1 programme: an
-    /// independent 5.1 frame followed by a dependent frame whose custom map
-    /// carries Lrs/Rrs + Cs (§E.2.8.2). Table E.1.4 bits 6 (Lrs/Rrs) and 7 (Cs)
-    /// map to `chan_loc` bits 1 and 2 (§F.6.2.13 Table F.6.1). No real 7.1
-    /// E-AC-3 sample exists in the fixtures — the bundled Dolby captures are
-    /// 5.1, and ffmpeg's native `eac3` encoder refuses any layout above 5.1 —
-    /// so this vector is built directly from the §E.1.2.2 syntax rather than
-    /// copied from a capture.
-    pub(crate) fn seven_one_eac3_es() -> Vec<u8> {
-        let mut es = Vec::new();
-        es.extend_from_slice(&eac3_bsi(0, 0, 64, 7, true, 0, 3, None, Some(0)));
-        es.extend_from_slice(&eac3_bsi(
-            1,
-            0, // dependent substreams are numbered from 0 (§E.1.3.1.2)
-            64,
-            2,
-            false,
-            0,
-            3,
-            Some(wire_chanmap(&[6, 7])),
-            None,
-        ));
-        es
     }
 
     /// r04-W5: `num_ind_sub` is §F.6.2.3's "substreamID of the last independent
@@ -2079,14 +2119,6 @@ pub(crate) mod tests {
         assert_eq!(Ec3SyncframeInfo::from_es(&es0).unwrap().bsmod, 0);
     }
 
-    /// A frame with a flipped byte: its header still parses (the flip is past
-    /// `bsi()`), but its `crc2` fails.
-    pub(crate) fn damaged_for_tests(mut frame: Vec<u8>) -> Vec<u8> {
-        let mid = frame.len() / 2;
-        frame[mid] ^= 0x10;
-        frame
-    }
-
     /// Hand-computed `bsi()` bits (ETSI TS 102 366 §E.1.2.2, page 114) of a
     /// 128-byte stereo frame (`frmsiz` 63) carrying `bsmod` 2, pinning the
     /// builder the CRC/`bsmod` tests below rely on:
@@ -2256,18 +2288,6 @@ pub(crate) mod tests {
         bx.num_ind_sub = 1;
         let bytes = bx.try_to_bytes().unwrap();
         assert_eq!(Ec3SpecificBox::parse(&bytes).unwrap(), bx);
-    }
-
-    /// A `chanmap` value written the way §E.1.3.1.8 describes it: `bits` are
-    /// Table E.1.4 bit numbers, MSB-first, so Table E.1.4 bit 0 is the value's
-    /// most significant bit.
-    fn wire_chanmap(bits: &[u8]) -> u16 {
-        let mut v: u16 = 0;
-        for &b in bits {
-            assert!(b < 16, "Table E.1.4 only defines bits 0..=15");
-            v |= 1u16 << (15 - b);
-        }
-        v
     }
 
     /// §E.1.2.2 gates the programme-mix block on `strmtyp == 0x0`, not on "not

@@ -21,7 +21,7 @@ required-features = ["cli"]
 # nothing else had built the binary (it used to be masked by an earlier
 # all-features build in the same CI job sharing one target dir).
 [dependencies]
-broadcast-bitstream = { path = "../broadcast-bitstream", version = "0.1.0", default-features = false, features = ["h264", "hevc", "isobmff"] }
+broadcast-bitstream = { path = "../broadcast-bitstream", version = "0.1.0", default-features = false, features = ["h264", "hevc", "aac", "isobmff"] }
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false }
 broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 mpeg-pes         = { path = "../mpeg-pes", version = "0.10.0", default-features = false }

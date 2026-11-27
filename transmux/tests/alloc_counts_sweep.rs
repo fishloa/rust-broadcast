@@ -493,8 +493,8 @@ mod hvcc_prealloc {
 
 mod heaac_signaling_allocs {
     use super::measure;
+    use broadcast_bitstream::AudioSpecificConfig;
     use broadcast_core::Parse;
-    use transmux::AudioSpecificConfig;
 
     /// r04-O2: `heaac_signaling()` (and `rfc6381()` through it) re-serialized the
     /// ASC into a fresh `Vec` on every call: 1 allocation per call before, 0 after.
@@ -503,7 +503,7 @@ mod heaac_signaling_allocs {
         // AAC-LC, 44.1 kHz, stereo.
         let asc = AudioSpecificConfig::parse(&[0x12, 0x10]).unwrap();
         let (sig, allocs, _) = measure(|| asc.heaac_signaling());
-        assert_eq!(sig.effective_aot, 2);
+        assert_eq!(sig.effective_aot(), 2);
         eprintln!("heaac_signaling: {allocs} allocs");
         assert_eq!(allocs, 0);
         let (s, allocs, _) = measure(|| asc.rfc6381());

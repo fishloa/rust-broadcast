@@ -19,7 +19,7 @@ broadcast-common = { path = "../broadcast-common" }
 dvb-si     = { path = "../dvb-si" }
 
 [dependencies]
-broadcast-bitstream = { path = "../broadcast-bitstream", version = "0.1.0", default-features = false, features = ["h264", "hevc", "vvc"] }
+broadcast-bitstream = { path = "../broadcast-bitstream", version = "0.1.0", default-features = false, features = ["h264", "hevc", "vvc", "aac", "ac3", "dts", "mpegh", "isobmff"] }
 broadcast-common   = { path = "../broadcast-common" }
 broadcast-core = { path = "../broadcast-core" }
 broadcast-matroska = { path = "../broadcast-matroska" }
@@ -674,5 +674,41 @@ doc  = false
 [[bin]]
 name = "broadcast_bitstream_hdr10plus"
 path = "fuzz_targets/broadcast_bitstream_hdr10plus.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "broadcast_bitstream_aac_asc"
+path = "fuzz_targets/broadcast_bitstream_aac_asc.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "broadcast_bitstream_adts"
+path = "fuzz_targets/broadcast_bitstream_adts.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "broadcast_bitstream_ac3"
+path = "fuzz_targets/broadcast_bitstream_ac3.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "broadcast_bitstream_eac3"
+path = "fuzz_targets/broadcast_bitstream_eac3.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "broadcast_bitstream_dts_core"
+path = "fuzz_targets/broadcast_bitstream_dts_core.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "broadcast_bitstream_mhas"
+path = "fuzz_targets/broadcast_bitstream_mhas.rs"
 test = false
 doc  = false

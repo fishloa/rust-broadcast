@@ -235,9 +235,9 @@ fn ts_to_cmaf_end_to_end() {
 
     // ---- Phase 3: Synthesize esds config from first audio ADTS header --------
     let first_aud_payload = &aud_pes_bufs[0];
-    let adts_header = transmux::aac_asc::parse_adts_header(first_aud_payload)
+    let adts_header = broadcast_bitstream::aac_asc::parse_adts_header(first_aud_payload)
         .expect("first audio payload should start with ADTS header");
-    let asc = transmux::aac_asc::AudioSpecificConfig::from_adts_header(&adts_header);
+    let asc = broadcast_bitstream::aac_asc::AudioSpecificConfig::from_adts_header(&adts_header);
     let asc_bytes = asc.try_to_bytes().unwrap();
 
     let esds = EsdsBox::new(ESDescriptor::new(
@@ -255,8 +255,8 @@ fn ts_to_cmaf_end_to_end() {
         Some(SLConfigDescriptor::predefined_two()),
     ));
 
-    let audio_channel_count = adts_header.channel_configuration as u16;
-    let audio_sample_rate = sfi_to_hz(adts_header.sampling_frequency_index);
+    let audio_channel_count = adts_header.channel_configuration() as u16;
+    let audio_sample_rate = sfi_to_hz(adts_header.sampling_frequency_index());
     let sample_size: u16 = 16;
 
     // ---- Phase 4: Build video samples ---------------------------------------

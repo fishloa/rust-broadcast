@@ -854,9 +854,10 @@ fn declared_au_duration(
             (num + (den >> 1)) / den
         }
         (RtpMediaKind::Aac, CodecConfig::Aac { esds, .. }) => {
-            let asc =
-                crate::aac_asc::AudioSpecificConfig::parse(esds.decoder_specific_info_data()?)
-                    .ok()?;
+            let asc = broadcast_bitstream::aac_asc::AudioSpecificConfig::parse(
+                esds.decoder_specific_info_data()?,
+            )
+            .ok()?;
             let rate = u64::from(asc.effective_sampling_frequency()?);
             if rate == 0 {
                 return None;

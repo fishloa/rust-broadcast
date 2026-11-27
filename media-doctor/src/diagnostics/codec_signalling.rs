@@ -5,7 +5,7 @@
 //! elementary PID (e.g. `0x1B` = H.264, `0x24` = HEVC, `0x0F` = AAC ADTS).
 //! This check walks the raw elementary-stream bytes of every PMT-declared
 //! `0x1B`/`0x24`/`0x0F` PID (via [`broadcast_bitstream::iter_annexb_nals`] for video,
-//! [`transmux::parse_adts_header`] for audio — reused, not duplicated) and
+//! [`broadcast_bitstream::parse_adts_header`] for audio — reused, not duplicated) and
 //! flags a PID whose bytes never once look like the declared codec's framing
 //! at all: zero Annex B NAL units anywhere on a declared H.264/HEVC PID, or
 //! zero valid ADTS sync anywhere on a declared AAC-ADTS PID.
@@ -314,7 +314,7 @@ mod tests {
         const AUDIO_PID: Pid = Pid::from_const(0x102);
         // A minimal valid ADTS header (AAC-LC, 44.1kHz, stereo), built via
         // transmux's own builder rather than hand-encoded.
-        let header = transmux::build_adts_header(1, 4, 2, 7); // frame_len=7 (header only)
+        let header = broadcast_bitstream::build_adts_header(1, 4, 2, 7); // frame_len=7 (header only)
         let mut ts = build_pat_pmt_ts(&[(AUDIO_PID.value(), StreamType::AacAdts)]);
         ts.extend_from_slice(&make_pes_packet(AUDIO_PID, 0, &build_pes(0xC0, &header)));
 

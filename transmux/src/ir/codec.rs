@@ -10,10 +10,10 @@ use bytes::Bytes;
 
 use broadcast_core::Serialize;
 
-use crate::aac_asc::EsdsBoxCodecInfo;
-use crate::aac_asc::HeAacProfile;
 use crate::error::{Error, Result};
 use crate::units::BITS_PER_KILOBIT;
+use broadcast_bitstream::aac_asc::HeAacProfile;
+use broadcast_bitstream::codec_config_ext::EsdsBoxCodecInfo;
 use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 use isobmff::ac4::Ac4SpecificBox;
 use isobmff::av1::Av1ConfigurationBox;
@@ -433,7 +433,7 @@ const HE_AAC_V2_OUTPUT_CHANNELS: u16 = 2;
 
 impl CodecConfig {
     /// Rewrite an AAC-LC `CodecConfig::Aac` as explicit hierarchical HE-AAC
-    /// (see [`AudioSpecificConfig::with_explicit_he_aac`](crate::AudioSpecificConfig::with_explicit_he_aac)):
+    /// (see `AudioSpecificConfig::with_explicit_he_aac`):
     /// the `esds` carries the explicit-signalling ASC, so the RFC 6381 string
     /// becomes `mp4a.40.5` / `mp4a.40.29`. `sample_rate` becomes the SBR
     /// output rate (twice the core rate, as an `mp4a` sample entry of an
@@ -462,11 +462,12 @@ impl CodecConfig {
             dc.decoder_specific_info = Some(DecoderSpecificInfo::new(bytes));
         }
         let channel_count = match profile {
-            HeAacProfile::V1 => match crate::aac_asc::aac_channel_count(&asc) {
-                crate::aac_asc::AAC_CHANNEL_COUNT_UNKNOWN => channel_count,
+            HeAacProfile::V1 => match broadcast_bitstream::aac_asc::aac_channel_count(&asc) {
+                broadcast_bitstream::aac_asc::AAC_CHANNEL_COUNT_UNKNOWN => channel_count,
                 n => n,
             },
             HeAacProfile::V2 => HE_AAC_V2_OUTPUT_CHANNELS,
+            _ => channel_count,
         };
         Ok(CodecConfig::Aac {
             esds,

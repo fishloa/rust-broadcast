@@ -28,7 +28,7 @@ use dvb_si::descriptors::extension::ExtensionBody;
 use dvb_si::descriptors::iso_639_language::AudioType as DvbAudioType;
 
 use super::TrackSpec;
-use crate::aac_asc::HeAacProfile;
+use broadcast_bitstream::aac_asc::HeAacProfile;
 
 /// Language code France 2 / TF1 use for their audio-description track.
 const LANG_AUDIO_DESCRIPTION: &str = "qad";
