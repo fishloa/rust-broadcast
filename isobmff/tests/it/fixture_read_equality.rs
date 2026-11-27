@@ -143,25 +143,28 @@ fn media_files(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// A fixture's name relative to its fixture root, so two checkouts of the same
-/// tree hash the same label.
-fn label(path: &Path) -> String {
-    if let Ok(relative) = path.strip_prefix(fixtures::root()) {
-        return format!("public/{}", relative.display());
-    }
-    if let Some(private) = fixtures::private("")
-        && let Ok(relative) = path.strip_prefix(&private)
-    {
-        return format!("private/{}", relative.display());
-    }
-    path.display().to_string()
-}
-
-fn committed_media() -> Vec<PathBuf> {
+/// Every committed media file with its name relative to its fixture tier
+/// (`public/…` or `private/…`), sorted by that name, so the digest is the same
+/// wherever the two tiers are checked out.
+fn committed_media() -> Vec<(String, PathBuf)> {
     let mut files = Vec::new();
-    media_files(&fixtures::root(), &mut files);
+    let mut tier = |root: &Path, prefix: &str| {
+        let mut found = Vec::new();
+        media_files(root, &mut found);
+        for path in found {
+            if let Ok(relative) = path.strip_prefix(root) {
+                let name = relative
+                    .components()
+                    .map(|part| part.as_os_str().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                files.push((format!("{prefix}/{name}"), path));
+            }
+        }
+    };
+    tier(&fixtures::root(), "public");
     if let Some(private) = fixtures::private("") {
-        media_files(&private, &mut files);
+        tier(&private, "private");
     }
     files.sort();
     files
@@ -187,12 +190,12 @@ fn totals() -> Totals {
         ..Totals::default()
     };
     let mut hash = Hash::new();
-    for path in committed_media() {
+    for (name, path) in committed_media() {
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
         total.files += 1;
-        hash.text(&label(&path));
+        hash.text(&name);
         match movie(&bytes) {
             Ok((tracks, samples, digest)) => {
                 total.movie_reads += 1;
@@ -220,7 +223,8 @@ fn totals() -> Totals {
 
 /// The totals `origin/main` reads from the committed fixtures.
 ///
-/// `origin/main`'s own tree reads these 282 files to exactly these results.
+/// `origin/main`'s own tree reads these 282 files to exactly these results,
+/// whichever directory the private tier is checked out in.
 /// The eleven `.mov` fixtures `#4204` added (`quicktime/qt-h263.mov`,
 /// `qt-mjpeg.mov`, `qt-pcm-s16le.mov`, `qt-pcm-s24le.mov`, the six
 /// `qt-prores-ap*.mov` and `qt-svq1.mov`) are the whole difference from the
@@ -236,7 +240,7 @@ const EXPECTED: Totals = Totals {
     samples: 259_078,
     items: 50,
     properties: 188,
-    digest: 16_550_637_486_676_025_805,
+    digest: 13_913_699_402_099_464_063,
 };
 
 #[test]
