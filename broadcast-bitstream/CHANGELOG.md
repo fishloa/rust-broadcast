@@ -9,6 +9,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 
 ### Added
 
+- The MPEG-2 video sequence layer (`mpeg2` feature), moved from `transmux`:
+  `mpeg2::{Mpeg2SeqHeader, SEQUENCE_HEADER_CODE}` (private fields with
+  `width()`/`height()` accessors) and `h262::{SequenceHeaderGeometry,
+  SequenceDisplayExtension}` with their parsers
+  (`find_sequence_header`, `parse_sequence_at`, `sample_aspect_ratio`) and the
+  `extension_and_user_data(2)` walk (`picture_user_data_payloads`,
+  `afd_from_mpeg2_user_data`). The presentational `DisplayGeometry` conversion
+  stays in `transmux`.
 - `user_data` (no codec feature), moved from `transmux`: `AfdSignal`,
   `PictureUserData` (private fields with accessors and a constructor), the
   T.35 / GA94 identifiers and field constants, and the one AFD / bar-data

@@ -191,7 +191,6 @@ pub mod error;
 pub mod flv;
 #[cfg(feature = "flv")]
 pub mod flv_stream;
-pub mod h262;
 pub mod interlace;
 pub mod ir;
 pub mod klv;
@@ -204,7 +203,6 @@ pub mod media;
 pub mod mkv_mux;
 pub mod mp4_demux;
 pub mod mpeg2_display;
-pub mod mpeg_legacy;
 pub mod mux_stage;
 #[cfg(test)]
 extern crate self as transmux;
@@ -289,7 +287,6 @@ pub use flv::{
 };
 #[cfg(feature = "flv")]
 pub use flv_stream::StreamingFlvDemux;
-pub use h262::{SequenceDisplayExtension, SequenceHeaderGeometry};
 pub use interlace::{video_picture_facts, video_scan};
 pub use ir::{
     ActiveFormat, AfdPersistence, AudioLanguage, AudioMetadata, AudioRole, AudioType,
@@ -312,7 +309,6 @@ pub use media::HlsPackager;
 pub use media::{CmafMuxStage, FragmentCut, PcrSample, SkippedTrack, TrackProtection};
 #[cfg(feature = "matroska")]
 pub use mkv_mux::MkvMuxStage;
-pub use mpeg_legacy::{Mpeg2SeqHeader, SEQUENCE_HEADER_CODE};
 pub use mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
 pub use nal_params::{avc_access_unit_dimensions, avc_sps_dimensions};
 pub use pipeline::{

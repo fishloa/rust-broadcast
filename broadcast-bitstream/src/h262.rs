@@ -1,7 +1,6 @@
 //! MPEG-2 video (ITU-T H.262 | ISO/IEC 13818-2) start-code walk: the
-//! sequence-level display syntax that [`DisplayGeometry`] needs and the
-//! picture-level [`extension_and_user_data(2)`] wrapper that carries AFD and
-//! bar data (Phase 3b of `docs/display-geometry/DESIGN.md`).
+//! sequence-level display syntax and the picture-level
+//! `extension_and_user_data(2)` wrapper that carries AFD and bar data.
 //!
 //! # Spec citations
 //!
@@ -25,18 +24,15 @@
 //! Every syntax element above was page-checked against the rendered PDF and
 //! is transcribed in `private/specs-verified/mpeg/transmux/codec/mpeg2-video-display.md`.
 //!
-//! [`extension_and_user_data(2)`]: SequenceDisplayExtension
-//! [`DisplayGeometry`]: crate::ir::DisplayGeometry
+//! The presentational conversion of [`SequenceHeaderGeometry`] (into a
+//! container's display geometry) belongs to the consumer, not here.
 
-use crate::error::{Error, Result};
-use crate::ir::DisplayGeometry;
-use broadcast_bitstream::facts::{
-    AspectRatioIdc, ColourDescription, EXTENDED_SAR_IDC, PictureRect, VideoFormat, VideoSignalType,
-};
-
-use crate::mpeg_legacy::SEQUENCE_HEADER_CODE;
-use broadcast_bitstream::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
-use broadcast_bitstream::bitreader::BitReader;
+use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
+use crate::bitreader::BitReader;
+use crate::error::Result;
+use crate::facts::ActiveFormatDescription;
+use crate::mpeg2::SEQUENCE_HEADER_CODE;
+use crate::user_data::{AFD_ACTIVE_FORMAT_FLAG_BIT, AFD_CODE_MASK};
 
 /// `sequence_header_code` `0x000001B3` (H.262 §6.2.2.1, Table 6-1).
 pub const SEQUENCE_HEADER_CODE_BYTE: u8 = SEQUENCE_HEADER_CODE[3];
@@ -126,8 +122,8 @@ fn gcd(mut a: u64, mut b: u64) -> u64 {
 /// Reduced sample aspect ratio from two size terms: the H.262 §6.3.3 relation
 /// reads, in width:height terms verified against real captures,
 /// `SAR = DAR_w * size_h / (DAR_h * size_w)`. Returns `None` when the result
-/// does not fit the `u16` wire terms the [`AspectRatioIdc::ExtendedSar`] model
-/// uses, or when a size term is zero.
+/// does not fit the `u16` wire terms the sample-aspect-ratio model uses, or
+/// when a size term is zero.
 fn derived_sar(dar: (u64, u64), size_w: u32, size_h: u32) -> Option<(u16, u16)> {
     let num = dar.0.checked_mul(u64::from(size_h))?;
     let den = dar.1.checked_mul(u64::from(size_w))?;
@@ -150,33 +146,33 @@ fn derived_sar(dar: (u64, u64), size_w: u32, size_h: u32) -> Option<(u16, u16)> 
 #[non_exhaustive]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SequenceHeaderGeometry {
-    /// Coded picture width: `(horizontal_size_extension << 12) | horizontal_size_value`.
-    pub coded_width: u32,
-    /// Coded picture height: `(vertical_size_extension << 12) | vertical_size_value`.
-    pub coded_height: u32,
-    /// Table 6-3 `aspect_ratio_information` as signalled.
-    pub aspect_ratio_information: u8,
-    /// `sequence_display_extension()`, when present.
-    pub display: Option<SequenceDisplayExtension>,
-}
-
-/// H.262 §6.2.2.4 `sequence_display_extension()` fields that describe display.
-#[non_exhaustive]
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct SequenceDisplayExtension {
-    /// Table 6-6 `video_format`.
-    pub video_format: u8,
-    /// `colour_primaries`, `transfer_characteristics` and `matrix_coefficients`
-    /// as signalled (absent when `colour_description == 0`).
-    pub colour_description: Option<(u8, u8, u8)>,
-    /// "Intended display" active rectangle width in samples (Table 6-3's
-    /// `sequence_display_extension()` case).
-    pub display_horizontal_size: u32,
-    /// "Intended display" active rectangle height in lines.
-    pub display_vertical_size: u32,
+    coded_width: u32,
+    coded_height: u32,
+    aspect_ratio_information: u8,
+    display: Option<SequenceDisplayExtension>,
 }
 
 impl SequenceHeaderGeometry {
+    /// Coded picture width: `(horizontal_size_extension << 12) | horizontal_size_value`.
+    pub fn coded_width(&self) -> u32 {
+        self.coded_width
+    }
+
+    /// Coded picture height: `(vertical_size_extension << 12) | vertical_size_value`.
+    pub fn coded_height(&self) -> u32 {
+        self.coded_height
+    }
+
+    /// Table 6-3 `aspect_ratio_information` as signalled.
+    pub fn aspect_ratio_information(&self) -> u8 {
+        self.aspect_ratio_information
+    }
+
+    /// `sequence_display_extension()`, when present.
+    pub fn display(&self) -> Option<&SequenceDisplayExtension> {
+        self.display.as_ref()
+    }
+
     /// The sample aspect ratio this sequence implies, or `None` when the
     /// sequence leaves it unspecified (aspect 0, 5..=15, square with the
     /// extension's display size disagreeing — never happens for a real
@@ -196,42 +192,39 @@ impl SequenceHeaderGeometry {
             }
         }
     }
+}
 
-    /// [`DisplayGeometry`] for this sequence. `output_rect` is the coded
-    /// picture: H.262 has no crop syntax, and `display_*_size` describes the
-    /// intended display rectangle, never a decoder crop.
-    ///
-    /// Colour: `video_signal` records the `sequence_display_extension()` exactly
-    /// as signalled; the MPEG-2 inferred colour (BT.709, 1/1/1) is supplied by
-    /// [`DisplayGeometry::colour_description`] through
-    /// [`DisplayGeometry::is_mpeg2`]. MPEG-2 has no full-range flag, so
-    /// `full_range` is always `false`.
-    pub fn to_display_geometry(&self) -> DisplayGeometry {
-        let video_signal = self.display.as_ref().map(|d| {
-            VideoSignalType::new(
-                VideoFormat::from_wire(d.video_format).unwrap_or(VideoFormat::Unspecified),
-                false,
-                d.colour_description
-                    .map(|(p, t, m)| ColourDescription::from_wire(p, t, m)),
-            )
-        });
-        DisplayGeometry {
-            coded_width: self.coded_width,
-            coded_height: self.coded_height,
-            output_rect: PictureRect::new(0, 0, self.coded_width, self.coded_height),
-            default_display_rect: None,
-            aspect_ratio: match (self.aspect_ratio_information, self.sample_aspect_ratio()) {
-                (ASPECT_SQUARE, _) => Some(AspectRatioIdc::Square),
-                (_, Some((sar_width, sar_height))) => Some(AspectRatioIdc::from_wire(
-                    EXTENDED_SAR_IDC,
-                    Some((sar_width, sar_height)),
-                )),
-                _ => None,
-            },
-            overscan_appropriate: None,
-            video_signal,
-            mpeg2: true,
-        }
+/// H.262 §6.2.2.4 `sequence_display_extension()` fields that describe display.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SequenceDisplayExtension {
+    video_format: u8,
+    colour_description: Option<(u8, u8, u8)>,
+    display_horizontal_size: u32,
+    display_vertical_size: u32,
+}
+
+impl SequenceDisplayExtension {
+    /// Table 6-6 `video_format`.
+    pub fn video_format(&self) -> u8 {
+        self.video_format
+    }
+
+    /// `colour_primaries`, `transfer_characteristics` and `matrix_coefficients`
+    /// as signalled (absent when `colour_description == 0`).
+    pub fn colour_description(&self) -> Option<(u8, u8, u8)> {
+        self.colour_description
+    }
+
+    /// "Intended display" active rectangle width in samples (Table 6-3's
+    /// `sequence_display_extension()` case).
+    pub fn display_horizontal_size(&self) -> u32 {
+        self.display_horizontal_size
+    }
+
+    /// "Intended display" active rectangle height in lines.
+    pub fn display_vertical_size(&self) -> u32 {
+        self.display_vertical_size
     }
 }
 
@@ -244,7 +237,7 @@ fn find_any_start_code(data: &[u8], from: usize) -> Option<(usize, u8)> {
 
 /// The body of the start-code section that begins at `start` (after the
 /// 4-byte start code), up to the next start code or the end of `data`.
-pub(crate) fn section_body(data: &[u8], start: usize) -> &[u8] {
+fn section_body(data: &[u8], start: usize) -> &[u8] {
     let from = start + SEQUENCE_HEADER_CODE.len();
     let end = match find_start_code_prefix(data, from) {
         // `find_start_code_prefix` returns the offset of the `00 00 01`
@@ -323,7 +316,7 @@ fn parse_sequence_display_extension_body(body: &[u8]) -> Result<SequenceDisplayE
 /// (`sequence_extension()`, then `sequence_display_extension()`, in that
 /// order per H.262 §6.2.2.2). Absent extensions leave the base size and no
 /// display description.
-pub(crate) fn parse_sequence_at(es: &[u8], start: usize) -> Result<SequenceHeaderGeometry> {
+pub fn parse_sequence_at(es: &[u8], start: usize) -> Result<SequenceHeaderGeometry> {
     let body_end = section_body(es, start).len();
     let header_end = start + SEQUENCE_HEADER_CODE.len() + body_end;
     let (width, height, aspect) =
@@ -369,7 +362,7 @@ pub(crate) fn parse_sequence_at(es: &[u8], start: usize) -> Result<SequenceHeade
 }
 
 /// First `sequence_header()` in an MPEG-2 elementary-stream prefix.
-pub(crate) fn find_sequence_header(es: &[u8]) -> Option<usize> {
+pub fn find_sequence_header(es: &[u8]) -> Option<usize> {
     let mut from = 0usize;
     while let Some((at, code)) = find_any_start_code(es, from) {
         if code == SEQUENCE_HEADER_CODE_BYTE {
@@ -387,21 +380,16 @@ pub(crate) fn find_sequence_header(es: &[u8]) -> Option<usize> {
 ///
 /// `Some(Some(afd))` when the flag is set, `Some(None)` when it is clear,
 /// `None` when the payload is too short (silently discarded, §B.6).
-pub(crate) fn afd_from_mpeg2_user_data(
-    payload: &[u8],
-) -> Option<Option<broadcast_bitstream::facts::ActiveFormatDescription>> {
+pub fn afd_from_mpeg2_user_data(payload: &[u8]) -> Option<Option<ActiveFormatDescription>> {
     let first = *payload.first()?;
-    let active_format_flag =
-        first & broadcast_bitstream::user_data::AFD_ACTIVE_FORMAT_FLAG_BIT != 0;
+    let active_format_flag = first & AFD_ACTIVE_FORMAT_FLAG_BIT != 0;
     if !active_format_flag {
         return Some(None);
     }
     let second = *payload.get(1)?;
-    Some(Some(
-        broadcast_bitstream::facts::ActiveFormatDescription::from_code(
-            second & broadcast_bitstream::user_data::AFD_CODE_MASK,
-        ),
-    ))
+    Some(Some(ActiveFormatDescription::from_code(
+        second & AFD_CODE_MASK,
+    )))
 }
 
 /// Split an MPEG-2 access unit into its `extension_and_user_data(2)` user-data
@@ -411,7 +399,7 @@ pub(crate) fn afd_from_mpeg2_user_data(
 /// A `user_data_start_code` before the first `picture_start_code` belongs to
 /// `extension_and_user_data(0)` (the sequence), not to a picture, and is not
 /// returned (ETSI TS 101 154 §B.6.1: AFD/bar data are picture-level).
-pub(crate) fn picture_user_data_payloads(au: &[u8]) -> (bool, alloc::vec::Vec<&[u8]>) {
+pub fn picture_user_data_payloads(au: &[u8]) -> (bool, alloc::vec::Vec<&[u8]>) {
     let mut has_sequence_header = false;
     // AFD sits before the picture's slices: `extension_and_user_data(2)`.
     // Before this access unit's first `picture_header()` any user data is
@@ -433,27 +421,281 @@ pub(crate) fn picture_user_data_payloads(au: &[u8]) -> (bool, alloc::vec::Vec<&[
     (has_sequence_header, payloads)
 }
 
-impl DisplayGeometry {
-    /// Geometry of an MPEG-2 video elementary-stream prefix: the first
-    /// `sequence_header()` it contains (H.262 §6.2.2.1) plus the
-    /// `sequence_extension()` / `sequence_display_extension()` that follow it.
-    ///
-    /// The input may be a raw elementary-stream prefix or an `esds`
-    /// DecoderSpecificInfo that carries the sequence header
-    /// (`private/specs-verified/mpeg/transmux/codec/mpeg2-video-h262.md`). [`Error::InvalidInput`] when no
-    /// sequence header is present; nothing is fabricated for a truncated one.
-    ///
-    /// `aspect_ratio` is [`AspectRatioIdc::ExtendedSar`] carrying the reduced
-    /// SAR derived from Table 6-3 and H.262 §6.3.3 ([`AspectRatioIdc::Square`]
-    /// for square samples), or `None` for aspect codes 0 and 5..=15.
-    pub fn from_mpeg2_es(prefix: &[u8]) -> Result<Self> {
-        let start = find_sequence_header(prefix).ok_or(Error::InvalidInput(
-            "no MPEG-2 sequence_header (start code 0x000001B3) in elementary stream",
-        ))?;
-        let sequence = parse_sequence_at(prefix, start)?;
-        Ok(sequence.to_display_geometry())
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+    use alloc::vec::Vec;
+    use test_fixtures::bits::BitWriter;
+
+    fn sequence_header(width: u64, height: u64, aspect: u64) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.u(12, width)
+            .u(12, height)
+            .u(4, aspect)
+            .u(4, 3) // frame_rate_code
+            .u(18, 0x3FFFF) // bit_rate_value
+            .u(1, 1) // marker_bit
+            .u(10, 112) // vbv_buffer_size_value
+            .u(1, 0) // constrained_parameters_flag
+            .u(1, 0) // load_intra_quantiser_matrix
+            .u(1, 0); // load_non_intra_quantiser_matrix
+        let mut out = SEQUENCE_HEADER_CODE.to_vec();
+        out.extend_from_slice(&w.finish());
+        out
+    }
+
+    fn sequence_extension(hx: u64, vx: u64) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.u(4, u64::from(SEQUENCE_EXTENSION_ID))
+            .u(8, 0x48) // profile_and_level_indication: Main @ Main
+            .u(1, 0) // progressive_sequence
+            .u(2, 1) // chroma_format: 4:2:0
+            .u(2, hx)
+            .u(2, vx)
+            .u(12, 0); // bit_rate_extension
+        let mut out = vec![0x00, 0x00, 0x01, EXTENSION_START_CODE_BYTE];
+        out.extend_from_slice(&w.finish());
+        out
+    }
+
+    fn sequence_display_extension(
+        video_format: u64,
+        colour: Option<(u64, u64, u64)>,
+        width: u64,
+        height: u64,
+    ) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.u(4, u64::from(SEQUENCE_DISPLAY_EXTENSION_ID))
+            .u(3, video_format)
+            .u(1, u64::from(colour.is_some()));
+        if let Some((p, t, m)) = colour {
+            w.u(8, p).u(8, t).u(8, m);
+        }
+        w.u(14, width).u(1, 1).u(14, height);
+        let mut out = vec![0x00, 0x00, 0x01, EXTENSION_START_CODE_BYTE];
+        out.extend_from_slice(&w.finish());
+        out
+    }
+
+    fn geometry(parts: &[Vec<u8>]) -> SequenceHeaderGeometry {
+        let es: Vec<u8> = parts.concat();
+        let start = find_sequence_header(&es).expect("a sequence_header()");
+        parse_sequence_at(&es, start).expect("geometry")
+    }
+
+    #[test]
+    fn aspect_codes_derive_the_table_6_3_ratios() {
+        assert_eq!(
+            geometry(&[sequence_header(704, 480, 1)]).sample_aspect_ratio(),
+            Some((1, 1))
+        );
+        assert_eq!(
+            geometry(&[sequence_header(704, 480, 2)]).sample_aspect_ratio(),
+            Some((10, 11))
+        );
+        assert_eq!(
+            geometry(&[sequence_header(704, 576, 3)]).sample_aspect_ratio(),
+            Some((16, 11))
+        );
+        assert_eq!(
+            geometry(&[sequence_header(720, 576, 3)]).sample_aspect_ratio(),
+            Some((64, 45))
+        );
+        assert_eq!(
+            geometry(&[sequence_header(720, 576, 2)]).sample_aspect_ratio(),
+            Some((16, 15))
+        );
+        // 2.21:1 on 720x576: (221/100) * 576 / 720 = 1768/1000 = 221/125.
+        assert_eq!(
+            geometry(&[sequence_header(720, 576, 4)]).sample_aspect_ratio(),
+            Some((221, 125))
+        );
+    }
+
+    #[test]
+    fn forbidden_and_reserved_aspects_are_unspecified() {
+        for aspect in core::iter::once(0u64).chain(u64::from(FIRST_RESERVED_ASPECT)..16) {
+            let g = geometry(&[sequence_header(704, 480, aspect)]);
+            assert_eq!(g.sample_aspect_ratio(), None, "aspect {aspect}");
+        }
+    }
+
+    /// The §6.3.3 relation has no ratio when either size term is zero, and the
+    /// `u16` wire terms bound each reduced component inclusively at 65535.
+    #[test]
+    fn derived_sar_zero_terms_and_the_u16_bound() {
+        assert_eq!(derived_sar((4, 3), 0, 480), None, "zero width");
+        assert_eq!(derived_sar((4, 3), 480, 0), None, "zero height");
+        assert_eq!(derived_sar((65535, 1), 1, 1), Some((65535, 1)));
+        assert_eq!(derived_sar((1, 65535), 1, 1), Some((1, 65535)));
+        assert_eq!(derived_sar((65536, 1), 1, 1), None, "width over u16");
+        assert_eq!(derived_sar((1, 65536), 1, 1), None, "height over u16");
+        assert_eq!(
+            derived_sar((65536, 65536), 1, 1),
+            Some((1, 1)),
+            "reduced before the bound"
+        );
+    }
+
+    #[test]
+    fn sequence_extension_extends_the_coded_size() {
+        let g = geometry(&[sequence_header(111, 222, 1), sequence_extension(1, 2)]);
+        assert_eq!(
+            (g.coded_width(), g.coded_height()),
+            (1 << 12 | 111, 2 << 12 | 222)
+        );
+    }
+
+    /// The extension walk steps past each section by its own length, so a
+    /// `sequence_display_extension()` after a `sequence_extension()` is reached;
+    /// and the first display extension wins over a second one.
+    #[test]
+    fn first_display_extension_after_a_sequence_extension_wins() {
+        let es: Vec<u8> = [
+            sequence_header(111, 222, 1),
+            sequence_extension(1, 2),
+            sequence_display_extension(1, Some((6, 6, 5)), 704, 480),
+            sequence_display_extension(2, None, 640, 360),
+        ]
+        .concat();
+        let g = parse_sequence_at(&es, 0).expect("geometry");
+        assert_eq!(
+            (g.coded_width(), g.coded_height()),
+            (1 << 12 | 111, 2 << 12 | 222)
+        );
+        let display = g.display().expect("the first display extension is kept");
+        assert_eq!(display.video_format(), 1);
+        assert_eq!(display.colour_description(), Some((6, 6, 5)));
+        assert_eq!(display.display_horizontal_size(), 704);
+        assert_eq!(display.display_vertical_size(), 480);
+    }
+
+    #[test]
+    fn display_extension_size_feeds_the_spec_relation() {
+        // H.262 §6.3.3: with sequence_display_extension() present the relation
+        // uses display_horizontal_size / display_vertical_size.
+        let g = geometry(&[
+            sequence_header(720, 576, 3),
+            sequence_display_extension(5, None, 704, 576),
+        ]);
+        assert_eq!(g.coded_width(), 720);
+        // (16/9) * 576 / 704 = 16/11.
+        assert_eq!(g.sample_aspect_ratio(), Some((16, 11)));
+    }
+
+    /// `extension_and_user_data(2)` user data is returned only after the
+    /// picture header, and the sequence-header flag reports a `sequence_header()`
+    /// in the access unit (it gates the sequence-level versus picture-level
+    /// split).
+    #[test]
+    fn picture_user_data_payloads_reports_the_sequence_header() {
+        let picture: [u8; 8] = [
+            0x00,
+            0x00,
+            0x01,
+            PICTURE_START_CODE_BYTE,
+            0x00,
+            0x08,
+            0x00,
+            0x40,
+        ];
+        let user_data: [u8; 8] = [
+            0x00,
+            0x00,
+            0x01,
+            USER_DATA_START_CODE_BYTE,
+            b'D',
+            b'T',
+            b'G',
+            b'1',
+        ];
+
+        let mut with_header = sequence_header(704, 480, 2);
+        with_header.extend_from_slice(&picture);
+        with_header.extend_from_slice(&user_data);
+        let (has_sequence_header, payloads) = picture_user_data_payloads(&with_header);
+        assert!(has_sequence_header, "a sequence_header() is present");
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0], b"DTG1");
+
+        let without_header: Vec<u8> = [picture.to_vec(), user_data.to_vec()].concat();
+        let (has_sequence_header, payloads) = picture_user_data_payloads(&without_header);
+        assert!(
+            !has_sequence_header,
+            "no sequence_header() in the access unit"
+        );
+        assert_eq!(payloads.len(), 1);
+        assert_eq!(payloads[0], b"DTG1");
+    }
+
+    /// An MPEG-2 access unit whose user data precedes the picture header is
+    /// sequence-level and is not returned as picture AFD/bar data.
+    #[test]
+    fn user_data_before_the_picture_header_is_not_picture_user_data() {
+        let user_data: [u8; 8] = [
+            0x00,
+            0x00,
+            0x01,
+            USER_DATA_START_CODE_BYTE,
+            b'D',
+            b'T',
+            b'G',
+            b'1',
+        ];
+        let picture: [u8; 8] = [
+            0x00,
+            0x00,
+            0x01,
+            PICTURE_START_CODE_BYTE,
+            0x00,
+            0x08,
+            0x00,
+            0x40,
+        ];
+        let au: Vec<u8> = [user_data.to_vec(), picture.to_vec()].concat();
+        let (_, payloads) = picture_user_data_payloads(&au);
+        assert!(payloads.is_empty(), "{payloads:?}");
+    }
+
+    /// The `afd_data()` structure after a `'DTG1'` identifier: the flag gates
+    /// the code, and a short payload is discarded.
+    #[test]
+    fn afd_user_data_reads_the_flag_and_code() {
+        assert_eq!(
+            afd_from_mpeg2_user_data(&[0x40, 0xF4]),
+            Some(Some(ActiveFormatDescription::BoxWiderThan16x9Centre))
+        );
+        assert_eq!(afd_from_mpeg2_user_data(&[0x00, 0xFF]), Some(None));
+        assert_eq!(afd_from_mpeg2_user_data(&[0x40]), None);
+        assert_eq!(afd_from_mpeg2_user_data(&[]), None);
+    }
+
+    /// The FIRST sequence header a real capture carries still parses to the
+    /// capture's own geometry (the first header of a stream is the one its
+    /// opening pictures use). It is a weaker oracle than the demux-level tests:
+    /// a capture may open with a sequence header that differs from the one a
+    /// later picture uses.
+    #[test]
+    fn real_capture_sequence_header_matches_the_ffprobe_oracle() {
+        for (fixture, expect) in [
+            // ffprobe: 704x576 16:11 (SAR 16:11), display extension 704x576.
+            (
+                "suites/tsduck/input/test-205.ts",
+                (704u32, 576u32, (16u16, 11u16)),
+            ),
+            ("ts/legacy/mpeg2-mp2.ts", (320, 240, (1, 1))),
+        ] {
+            let Some(ts) = test_fixtures::require_bytes(fixture, "h262") else {
+                return;
+            };
+            let start = find_sequence_header(&ts).expect("a sequence_header()");
+            let g = parse_sequence_at(&ts, start).expect("geometry");
+            assert_eq!(
+                (g.coded_width(), g.coded_height(), g.sample_aspect_ratio()),
+                (expect.0, expect.1, Some(expect.2)),
+                "{fixture}"
+            );
+        }
     }
 }
-
-#[cfg(test)]
-mod tests;

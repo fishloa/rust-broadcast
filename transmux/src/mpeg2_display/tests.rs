@@ -5,6 +5,9 @@
 use super::*;
 use crate::TrackId;
 use alloc::vec::Vec;
+use broadcast_bitstream::h262::{
+    EXTENSION_START_CODE_BYTE, FIRST_RESERVED_ASPECT, SEQUENCE_DISPLAY_EXTENSION_ID,
+};
 
 fn bits(value: u64, width: usize) -> Vec<bool> {
     (0..width).rev().map(|i| (value >> i) & 1 == 1).collect()
@@ -121,10 +124,11 @@ fn mid_gop_stream() -> (Vec<u8>, TrackId) {
     (input, track_id)
 }
 
-/// Build `sequence_header()` at 720x576 with the given `aspect_ratio_information`.
-fn sequence(aspect: u64) -> Vec<u8> {
-    let mut b = bits(720, 12);
-    b.extend(bits(576, 12));
+/// Build `sequence_header()` at `width`x`height` with the given
+/// `aspect_ratio_information`.
+fn sequence_at(width: u64, height: u64, aspect: u64) -> Vec<u8> {
+    let mut b = bits(width, 12);
+    b.extend(bits(height, 12));
     b.extend(bits(aspect, 4));
     b.extend(bits(3, 4));
     b.extend(bits(0x3FFFF, 18));
@@ -132,6 +136,35 @@ fn sequence(aspect: u64) -> Vec<u8> {
     b.extend(bits(112, 10));
     b.extend(bits(0, 3));
     let mut out = vec![0x00, 0x00, 0x01, 0xB3];
+    out.extend_from_slice(&pack(&b));
+    out
+}
+
+/// Build `sequence_header()` at 720x576 with the given `aspect_ratio_information`.
+fn sequence(aspect: u64) -> Vec<u8> {
+    sequence_at(720, 576, aspect)
+}
+
+/// `sequence_display_extension()`: `video_format`, the optional colour
+/// description triple, and the intended display rectangle.
+fn display_extension(
+    video_format: u64,
+    colour: Option<(u64, u64, u64)>,
+    width: u64,
+    height: u64,
+) -> Vec<u8> {
+    let mut b = bits(u64::from(SEQUENCE_DISPLAY_EXTENSION_ID), 4);
+    b.extend(bits(video_format, 3));
+    b.extend(bits(u64::from(colour.is_some()), 1));
+    if let Some((p, t, m)) = colour {
+        b.extend(bits(p, 8));
+        b.extend(bits(t, 8));
+        b.extend(bits(m, 8));
+    }
+    b.extend(bits(width, 14));
+    b.extend(bits(1, 1));
+    b.extend(bits(height, 14));
+    let mut out = vec![0x00, 0x00, 0x01, EXTENSION_START_CODE_BYTE];
     out.extend_from_slice(&pack(&b));
     out
 }
@@ -458,7 +491,9 @@ fn mid_gop_afd_change_through_the_demuxer() {
 /// tracker uses.
 fn geometry_of(au: &[u8]) -> Option<DisplayGeometry> {
     let start = find_sequence_header(au)?;
-    Some(parse_sequence_at(au, start).ok()?.to_display_geometry())
+    Some(DisplayGeometry::from_mpeg2_sequence(
+        &parse_sequence_at(au, start).ok()?,
+    ))
 }
 
 /// #3795: `seed_state` is the level-triggered start — an access unit that
@@ -528,4 +563,131 @@ fn user_data_shorter_than_the_identifier_is_ignored() {
         None,
         "a 2-byte and an empty payload carry no identifier"
     );
+}
+
+/// The sequence geometry an elementary-stream prefix resolves to is the coded
+/// size, with the Table 6-3 aspect as an extended SAR and no crop rectangle.
+#[test]
+fn geometry_from_a_sequence_header_is_the_coded_picture() {
+    let g = DisplayGeometry::from_mpeg2_es(&sequence(3)).expect("geometry");
+    assert_eq!((g.coded_width, g.coded_height), (720, 576));
+    assert_eq!(g.output_rect.width(), 720, "no crop syntax in H.262");
+    assert_eq!(g.output_rect.height(), 576);
+    assert_eq!(g.sample_aspect_ratio(), Some((64, 45)));
+    assert!(g.is_mpeg2(), "MPEG-2 inferred colour is in force");
+}
+
+#[test]
+fn square_samples_are_square() {
+    let g = DisplayGeometry::from_mpeg2_es(&sequence_at(320, 240, 1)).expect("geometry");
+    assert_eq!(g.aspect_ratio.map(|a| a.idc()), Some(1));
+    assert_eq!(g.sample_aspect_ratio(), Some((1, 1)));
+}
+
+#[test]
+fn forbidden_and_reserved_aspects_are_unspecified() {
+    for aspect in core::iter::once(0u64).chain(u64::from(FIRST_RESERVED_ASPECT)..16) {
+        let g = DisplayGeometry::from_mpeg2_es(&sequence(aspect)).expect("geometry");
+        assert_eq!(g.aspect_ratio, None, "aspect {aspect}");
+        assert_eq!(g.sample_aspect_ratio(), None);
+    }
+}
+
+#[test]
+fn display_extension_colour_is_signalled_and_inferred_is_bt709() {
+    let plain = DisplayGeometry::from_mpeg2_es(&sequence(2)).expect("geometry");
+    assert_eq!(plain.video_signal, None);
+    assert!(plain.is_mpeg2());
+    assert_eq!(
+        plain.colour_description(),
+        ColourDescription::from_wire(1, 1, 1)
+    );
+    let signalled = DisplayGeometry::from_mpeg2_es(
+        &[sequence(2), display_extension(1, Some((6, 6, 5)), 704, 480)].concat(),
+    )
+    .expect("geometry");
+    assert_eq!(
+        signalled.colour_description(),
+        ColourDescription::from_wire(6, 6, 5)
+    );
+    let format_only = DisplayGeometry::from_mpeg2_es(
+        &[sequence(2), display_extension(2, None, 704, 480)].concat(),
+    )
+    .expect("geometry");
+    assert_eq!(
+        format_only.video_format(),
+        VideoFormat::Ntsc,
+        "video_format 2 is NTSC (Table 6-6)"
+    );
+    assert_eq!(
+        format_only.colour_description(),
+        ColourDescription::from_wire(1, 1, 1),
+        "colour_description 0 infers BT.709"
+    );
+    assert!(!format_only.full_range(), "H.262 has no full-range flag");
+}
+
+#[test]
+fn no_sequence_header_is_an_error() {
+    assert!(matches!(
+        DisplayGeometry::from_mpeg2_es(&[0x00, 0x00, 0x01, 0x00, 0x08]),
+        Err(crate::error::Error::InvalidInput(..))
+    ));
+}
+
+#[test]
+fn codec_config_without_sequence_header_yields_none() {
+    use isobmff::mp4esds::{
+        DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
+    };
+    let esds = EsdsBox::new(ESDescriptor::new(
+        0,
+        0,
+        Some(DecoderConfigDescriptor::new(
+            crate::ts_demux::OTI_MPEG2_VIDEO_MAIN,
+            crate::ts_demux::STREAM_TYPE_VISUAL,
+            false,
+            0,
+            0,
+            0,
+            Some(DecoderSpecificInfo::new(vec![0x55])),
+        )),
+        Some(SLConfigDescriptor::predefined_two()),
+    ));
+    let config = crate::ir::CodecConfig::Mpeg2Video {
+        esds,
+        width: 704,
+        height: 480,
+    };
+    assert_eq!(DisplayGeometry::from_codec_config(&config), None);
+}
+
+#[test]
+fn codec_config_sequence_header_gives_geometry() {
+    use isobmff::mp4esds::{
+        DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
+    };
+    let es = sequence(3);
+    let esds = EsdsBox::new(ESDescriptor::new(
+        0,
+        0,
+        Some(DecoderConfigDescriptor::new(
+            crate::ts_demux::OTI_MPEG2_VIDEO_MAIN,
+            crate::ts_demux::STREAM_TYPE_VISUAL,
+            false,
+            0,
+            0,
+            0,
+            Some(DecoderSpecificInfo::new(es)),
+        )),
+        Some(SLConfigDescriptor::predefined_two()),
+    ));
+    let config = crate::ir::CodecConfig::Mpeg2Video {
+        esds,
+        width: 704,
+        height: 576,
+    };
+    let g = DisplayGeometry::from_codec_config(&config).expect("esds sequence header");
+    assert!(g.is_mpeg2());
+    assert_eq!(g.sample_aspect_ratio(), Some((64, 45)));
 }

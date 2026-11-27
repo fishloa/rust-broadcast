@@ -1,25 +1,14 @@
-//! Legacy-codec elementary-stream headers: MPEG-2 video (H.262) sequence header.
+//! MPEG-2 video (H.262) `sequence_header()` — ITU-T H.262 = ISO/IEC 13818-2
+//! §6.2.2.1.
 //!
-//! This is the *config-recovery* parser for MPEG-2 video, feeding the
-//! [`CodecConfig::Mpeg2Video`](crate::pipeline::CodecConfig) hub variant. It
-//! reads only the fixed header fields needed to describe the stream (picture
-//! geometry); the rest of the elementary stream is carried opaquely as coded
-//! samples.
-//!
-//! # Spec
-//!
-//! - **MPEG-2 video sequence header**: ITU-T H.262 = ISO/IEC 13818-2 §6.2.2.1
-//!   (`sequence_header()`): start code `0x000001B3`, then
-//!   `horizontal_size_value` `[11:0]` and `vertical_size_value` `[11:0]`.
-//! - **`esds` object-type indications** for these codecs: ISO/IEC 14496-1
-//!   §7.2.6.6 Table 5 — 0x60–0x65 (MPEG-2 Visual profiles, 0x61 = Main),
-//!   0x6A (MPEG-1 Visual), 0x69 (MPEG-2 Audio), 0x6B (MPEG-1 Audio).
+//! The sequence header opens every MPEG-1/2 video elementary stream (and the
+//! `esds` DecoderSpecificInfo a container carries) with the coded picture
+//! geometry, which is the config-recovery fact a demuxer needs. The rest of
+//! the sequence syntax — extensions included — is [`crate::h262`].
 
+use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use crate::error::{Error, Result};
-use broadcast_bitstream::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use broadcast_core::len::need_in;
-
-// ── MPEG-2 video sequence header — ISO/IEC 13818-2 §6.2.2.1 ─────────────────
 
 /// The 32-bit `sequence_header_code` start code (`0x000001B3`) that prefixes a
 /// MPEG-1/2 video `sequence_header()` — ISO/IEC 13818-2 §6.2.2.1, Table 6-1.
@@ -43,17 +32,27 @@ const SEQ_SIZE_LOW_BYTE_INDEX: usize = 2;
 ///
 /// ISO/IEC 13818-2 §6.2.2.1: `horizontal_size_value` and `vertical_size_value`
 /// are 12-bit fields; the full sizes may be extended by a
-/// `sequence_extension()`, but the base 12-bit values carry the standard
-/// (≤ 4095) broadcast resolutions this hub targets.
+/// `sequence_extension()`, which [`crate::h262::SequenceHeaderGeometry`]
+/// carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct Mpeg2SeqHeader {
-    /// `horizontal_size_value` (12 bits) — coded picture width in pixels.
-    pub width: u16,
-    /// `vertical_size_value` (12 bits) — coded picture height in pixels.
-    pub height: u16,
+    width: u16,
+    height: u16,
 }
 
 impl Mpeg2SeqHeader {
+    /// `horizontal_size_value` (12 bits) — coded picture width in pixels.
+    pub fn width(&self) -> u16 {
+        self.width
+    }
+
+    /// `vertical_size_value` (12 bits) — coded picture height in pixels.
+    pub fn height(&self) -> u16 {
+        self.height
+    }
+
     /// Find the first `sequence_header()` in an MPEG-2 video elementary stream
     /// (or `esds` DecoderSpecificInfo) and decode its picture geometry.
     ///
@@ -104,8 +103,8 @@ mod tests {
         // 0x140 << 12 | 0x0F0 = 0x1400F0 → bytes 14 00 F0
         let es = [0x00, 0x00, 0x01, 0xB3, 0x14, 0x00, 0xF0, 0x23, 0xFF];
         let sh = Mpeg2SeqHeader::find(&es).unwrap();
-        assert_eq!(sh.width, 320);
-        assert_eq!(sh.height, 240);
+        assert_eq!(sh.width(), 320);
+        assert_eq!(sh.height(), 240);
     }
 
     #[test]
@@ -113,8 +112,8 @@ mod tests {
         let mut es = alloc::vec![0xDE, 0xAD, 0xBE, 0xEF];
         es.extend_from_slice(&[0x00, 0x00, 0x01, 0xB3, 0x28, 0x01, 0xE0]);
         let sh = Mpeg2SeqHeader::find(&es).unwrap();
-        assert_eq!(sh.width, 640);
-        assert_eq!(sh.height, 480);
+        assert_eq!(sh.width(), 640);
+        assert_eq!(sh.height(), 480);
     }
 
     #[test]
@@ -143,6 +142,6 @@ mod tests {
             }
         }
         let ok = Mpeg2SeqHeader::find(&[0x00, 0x00, 0x01, 0xB3, 0x28, 0x01, 0xE0]).unwrap();
-        assert_eq!((ok.width, ok.height), (640, 480));
+        assert_eq!((ok.width(), ok.height()), (640, 480));
     }
 }

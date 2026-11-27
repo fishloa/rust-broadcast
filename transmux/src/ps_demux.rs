@@ -72,7 +72,6 @@ use crate::ir::{
     AUDIO_SAMPLE_SIZE_BITS, DemuxEvent, DisplayGeometry, EventProvenance, InputDegradation, Sample,
     SampleFlags, TrackSpec,
 };
-use crate::mpeg_legacy::Mpeg2SeqHeader;
 use crate::mpeg2_display::Mpeg2DisplayTracker;
 use crate::nal_params::{ParamKind, parameter_set_is_valid};
 use crate::pipeline::CodecConfig;
@@ -80,6 +79,7 @@ use crate::ts_demux::{
     AVC_SPS_CONFIG_MIN_LEN, AVC_SPS_CONSTRAINT_FLAGS_OFFSET, AVC_SPS_LEVEL_IDC_OFFSET,
     MPEG2_PICTURE_START_CODE, mpeg2_is_sync,
 };
+use broadcast_bitstream::Mpeg2SeqHeader;
 use broadcast_bitstream::ac3_syncframe::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
 use broadcast_bitstream::annexb::iter_annexb_nals;
 use broadcast_bitstream::au::{AccessUnitSplitter, first_nal_start};
@@ -1320,8 +1320,8 @@ impl Mpeg2State {
             tracker.seed_state(Some(geometry));
         }
         Ok(Self {
-            width: seq.width,
-            height: seq.height,
+            width: seq.width(),
+            height: seq.height(),
             tracker,
             buf: probe.to_vec(),
             base: 0,

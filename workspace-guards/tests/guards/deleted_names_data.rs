@@ -762,4 +762,34 @@ pub const TABLE: &[Banned] = &[
         reason: "the bar-data decode lives in broadcast_bitstream::user_data",
         issue: "broadcast-bitstream bs5",
     },
+    Banned {
+        name: "transmux::mpeg_legacy",
+        reason: "the MPEG-2 video sequence header lives in broadcast_bitstream::{mpeg2, h262}",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::h262",
+        reason: "the MPEG-2 sequence and picture user-data walk lives in broadcast_bitstream::h262",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::Mpeg2SeqHeader",
+        reason: "the MPEG-2 sequence header lives in broadcast_bitstream::mpeg2",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::SEQUENCE_HEADER_CODE",
+        reason: "the MPEG-2 sequence_header_code lives in broadcast_bitstream::mpeg2",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::SequenceHeaderGeometry",
+        reason: "the MPEG-2 sequence geometry lives in broadcast_bitstream::h262",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::SequenceDisplayExtension",
+        reason: "the MPEG-2 sequence display extension lives in broadcast_bitstream::h262",
+        issue: "broadcast-bitstream bs5",
+    },
 ];

@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Breaking
 
+- The MPEG-2 video sequence layer moved to `broadcast-bitstream`:
+  `transmux::{mpeg_legacy, h262}` are deleted with `Mpeg2SeqHeader`,
+  `SEQUENCE_HEADER_CODE`, `SequenceHeaderGeometry` and
+  `SequenceDisplayExtension`. Import `Mpeg2SeqHeader` and
+  `SEQUENCE_HEADER_CODE` from `broadcast_bitstream::mpeg2`, and the sequence
+  walk (`find_sequence_header`, `parse_sequence_at`,
+  `picture_user_data_payloads`, `afd_from_mpeg2_user_data`) and the geometry
+  types from `broadcast_bitstream::h262` (feature `mpeg2`).
+  `Mpeg2SeqHeader` keeps private fields with `width()`/`height()` accessors,
+  and the geometry types with accessors. `DisplayGeometry::from_mpeg2_es`
+  stays, and `DisplayGeometry::from_mpeg2_sequence` takes the moved type in
+  place of the deleted `SequenceHeaderGeometry::to_display_geometry`.
 - AFD and bar data moved to `broadcast-bitstream`: `transmux::user_data` is
   deleted. Import `AfdSignal`, `PictureUserData`, the T.35 / GA94 constants
   and the `afd_from_t35_payload` / `bar_data_from_t35_payload` /

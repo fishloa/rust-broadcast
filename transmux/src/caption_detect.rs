@@ -214,7 +214,7 @@ impl CaptionDetector {
 
 fn mpeg2_cc_data(au: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
-    let (_, payloads) = crate::h262::picture_user_data_payloads(au);
+    let (_, payloads) = broadcast_bitstream::h262::picture_user_data_payloads(au);
     for payload in payloads {
         if payload.len() < MPEG2_USER_IDENTIFIER_LEN {
             continue;

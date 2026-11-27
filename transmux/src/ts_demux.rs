@@ -244,10 +244,10 @@ use mpeg_ts::ts::{
 };
 
 use crate::error::Result;
-use crate::mpeg_legacy::Mpeg2SeqHeader;
 use crate::nal_params::{ParamKind, parameter_set_is_valid};
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
 use broadcast_bitstream::HdrStaticMetadata;
+use broadcast_bitstream::Mpeg2SeqHeader;
 use broadcast_bitstream::MpegAudioFrameHeader;
 use broadcast_bitstream::aac_asc::{
     ADTS_BLOCK_POSITION_SIZE, ADTS_CRC_SIZE, ADTS_HEADER_SIZE, AdtsHeader, AudioSpecificConfig,
@@ -746,8 +746,8 @@ pub(crate) fn mpeg2_is_sync(au: &[u8]) -> bool {
         if au[i..i + START_CODE_PREFIX.len()] == START_CODE_PREFIX {
             let code = au[i + START_CODE_PREFIX.len()];
             if code
-                == crate::mpeg_legacy::SEQUENCE_HEADER_CODE
-                    [crate::mpeg_legacy::SEQUENCE_HEADER_CODE.len() - 1]
+                == broadcast_bitstream::SEQUENCE_HEADER_CODE
+                    [broadcast_bitstream::SEQUENCE_HEADER_CODE.len() - 1]
             {
                 return true;
             }
@@ -3601,8 +3601,8 @@ fn finalize_probe(
             Some((
                 CodecConfig::Mpeg2Video {
                     esds,
-                    width: seq.width,
-                    height: seq.height,
+                    width: seq.width(),
+                    height: seq.height(),
                 },
                 VIDEO_TIMESCALE,
                 LiveKind::Video {
