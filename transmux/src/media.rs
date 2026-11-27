@@ -1448,25 +1448,15 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
 /// The gapless trim an MP3 frame's LAME/Xing tag states, in samples at the
 /// stream's sample rate.
 ///
-/// The tag's counts exclude the decoder's own delay; a decoder emits that
-/// many samples before the encoder's first one. `MP3_DECODER_DELAY` is that
-/// fixed MPEG-1 Layer III decoder delay, and the mapping is FFmpeg's
-/// (`mp3_parse_info_tag`): skip `encoder_delay + 529` at the front and
-/// `encoder_padding - 529` at the end.
+/// The tag states the encoder's priming and end padding exactly; a decoder's
+/// own output delay is the implementation's to declare through
+/// `broadcast_codec::DecoderDelay`, never folded in here.
 pub(crate) fn lame_padding(frame: &[u8]) -> Option<GaplessTrim> {
     let tag = broadcast_bitstream::parse_lame_tag(frame).ok().flatten()?;
     let delay = tag.encoder_delay()?;
     let padding = tag.encoder_padding()?;
-    let initial = delay.saturating_add(MP3_DECODER_DELAY);
-    let trailing = padding.saturating_sub(MP3_DECODER_DELAY);
-    Some(GaplessTrim::new(
-        initial,
-        (trailing > 0).then_some(trailing),
-    ))
+    Some(GaplessTrim::new(delay, (padding > 0).then_some(padding)))
 }
-
-/// The MPEG-1 Layer III decoder's fixed output delay, in samples.
-const MP3_DECODER_DELAY: u32 = 529;
 
 /// Refine the provisional geometry/layer of a legacy-codec config from a
 /// coded sample's in-band header (the sample entry alone cannot carry it):
