@@ -195,7 +195,9 @@ fn rgan_entry_keeps_its_reserved_block_and_unwalkable_tail() {
     let mut body = Vec::new();
     body.extend_from_slice(&reserved);
     body.extend_from_slice(&1u16.to_be_bytes());
-    body.extend_from_slice(&[0, 0, 0, 16, b'r', b'g', b'a', b'C', 0, 0, 0, 0, 1, 64, 0, 240]);
+    body.extend_from_slice(&[
+        0, 0, 0, 16, b'r', b'g', b'a', b'C', 0, 0, 0, 0, 1, 64, 0, 240,
+    ]);
     body.extend_from_slice(&[0, 0, 0, 16, b'p', b'a', b's', b'p', 0, 0, 0, 1, 0, 0, 0, 1]);
     body.extend_from_slice(&[0, 0, 0, 64, b'f', b'r', b'e', b'e', 0xAA]);
     let total = u32::try_from(body.len() + BOX_HEADER_MIN_SIZE).expect("entry length");
@@ -210,7 +212,10 @@ fn rgan_entry_keeps_its_reserved_block_and_unwalkable_tail() {
     assert_eq!(entry.config().reference_width(), 320);
     assert_eq!(entry.config().reference_height(), 240);
     assert_eq!(entry.other_boxes().len(), 1);
-    assert_eq!(entry.trailing(), &[0, 0, 0, 64, b'f', b'r', b'e', b'e', 0xAA]);
+    assert_eq!(
+        entry.trailing(),
+        &[0, 0, 0, 64, b'f', b'r', b'e', b'e', 0xAA]
+    );
     assert_eq!(entry.try_to_bytes().expect("rgan serializes"), bytes);
 
     assert_eq!(

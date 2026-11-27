@@ -349,9 +349,8 @@ impl ColourFormatEnhancement {
                             as u8,
                     );
                 }
-                let mut input = ColourFormatInput::packed(
-                    cols as u8, rows as u8, hor as u8, ver as u8, ids,
-                );
+                let mut input =
+                    ColourFormatInput::packed(cols as u8, rows as u8, hor as u8, ver as u8, ids);
                 input.reserved = reserved;
                 inputs.push(input);
             } else {
@@ -384,9 +383,12 @@ impl broadcast_core::Serialize for ColourFormatEnhancement {
         buf[0] = self.version;
         let mut writer = BitBuf::new();
         for input in &self.inputs {
-            let flag = (u64::from(input.reserved) & PACKED_RESERVED_MASK)
-                << PACKED_IS_PACKED_BITS
-                | u64::from(input.is_packed);
+            let reserved = broadcast_core::len::fit_mask(
+                u64::from(input.reserved),
+                PACKED_RESERVED_MASK,
+                "cfen packed flag",
+            )?;
+            let flag = reserved << PACKED_IS_PACKED_BITS | u64::from(input.is_packed);
             writer
                 .write_bits(flag, PACKED_FLAG_BITS)
                 .map_err(|_| Error::InvalidInput("cfen packed flag"))?;

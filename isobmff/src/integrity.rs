@@ -234,8 +234,7 @@ impl broadcast_core::Serialize for Md5IntegrityBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let mut cursor =
-            write_full_box_header(buf, &MD5I, need, MD5I_VERSION, self.flags, false)?;
+        let mut cursor = write_full_box_header(buf, &MD5I, need, MD5I_VERSION, self.flags, false)?;
         buf[cursor..cursor + MD5_LEN].copy_from_slice(&self.input_md5);
         cursor += MD5_LEN;
         buf[cursor..cursor + BOX_TYPE_SIZE].copy_from_slice(&self.input_4cc);

@@ -142,7 +142,7 @@ impl Serialize for CodingConstraintsBox {
         word |= u32::from(self.intra_pred_used) << INTRA_PRED_USED_SHIFT;
         word |=
             u32::from(self.max_ref_per_pic & (MAX_REF_PER_PIC_MASK as u8)) << MAX_REF_PER_PIC_SHIFT;
-        word |= self.reserved & CCST_RESERVED_MASK;
+        word |= broadcast_core::len::fit_mask(self.reserved, CCST_RESERVED_MASK, "ccst reserved")?;
         buf[cursor..cursor + CCST_BODY_LEN].copy_from_slice(&word.to_be_bytes());
         cursor += CCST_BODY_LEN;
         Ok(cursor)

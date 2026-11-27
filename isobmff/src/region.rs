@@ -1179,9 +1179,14 @@ impl RegionAnnotationMap {
                 &fit_u16(entry.associations.len(), "regm association_count")?.to_be_bytes(),
             );
             for association in &entry.associations {
-                let reserved = (association.reserved & ANNOTATION_RESERVED_VALUE_MASK)
-                    << ANNOTATION_CONTAINER_TYPE_BITS;
-                out.push(reserved | (association.container_type.value() & ANNOTATION_CONTAINER_MASK));
+                let reserved = broadcast_core::len::fit_mask(
+                    association.reserved,
+                    ANNOTATION_RESERVED_VALUE_MASK,
+                    "regm reserved",
+                )? << ANNOTATION_CONTAINER_TYPE_BITS;
+                out.push(
+                    reserved | (association.container_type.value() & ANNOTATION_CONTAINER_MASK),
+                );
                 out.extend_from_slice(&association.reference_type);
                 out.extend_from_slice(&association.index.to_be_bytes());
             }

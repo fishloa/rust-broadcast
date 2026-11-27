@@ -1384,7 +1384,8 @@ fn region_annotations_keep_the_reserved_bits_of_each_association() {
 #[test]
 fn colour_format_enhancement_keeps_the_reserved_bits_before_is_packed() {
     let wire = [0u8, 0x82, 5];
-    let parsed = ColourFormatEnhancement::parse_with_reference_count(&wire, 1).expect("cfen parses");
+    let parsed =
+        ColourFormatEnhancement::parse_with_reference_count(&wire, 1).expect("cfen parses");
     assert_eq!(parsed.inputs()[0].reserved(), 0x41);
     assert!(!parsed.inputs()[0].is_packed());
     assert_eq!(parsed.inputs()[0].channel_id(), 5);
@@ -1421,7 +1422,10 @@ fn a_property_fullbox_word_the_clause_fixes_is_a_typed_error() {
     tail.push(0);
     let total = u32::try_from(tail.len()).expect("length");
     tail[..4].copy_from_slice(&total.to_be_bytes());
-    assert!(ImageScaling::parse(&tail).is_err(), "a body tail is refused");
+    assert!(
+        ImageScaling::parse(&tail).is_err(),
+        "a body tail is refused"
+    );
 
     let prdi = ProgressiveDerivedImageItemInformationProperty::new(Some(1), vec![1])
         .try_to_bytes()
@@ -1433,7 +1437,9 @@ fn a_property_fullbox_word_the_clause_fixes_is_a_typed_error() {
 
 #[test]
 fn a_signalled_but_empty_stereo_sub_type_uri_round_trips() {
-    let wire = [0u8, 0, 0, 16, b's', b't', b'a', b'g', 0, 0, 0, 0, 0, 1, 0x81, 0];
+    let wire = [
+        0u8, 0, 0, 16, b's', b't', b'a', b'g', 0, 0, 0, 0, 0, 1, 0x81, 0,
+    ];
     let parsed = StereoAggressorsProperty::parse(&wire).expect("stag parses");
     let aggressor = &parsed.aggressors()[0];
     assert!(aggressor.sub_type_present());
