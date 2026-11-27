@@ -41,6 +41,7 @@ mod codecs_new;
 mod common;
 mod damage_matrix;
 #[cfg(feature = "rtp")]
+mod damage_report;
 mod damaged_unit_resync;
 mod damaged_unit_resync_flv;
 #[cfg(feature = "matroska")]

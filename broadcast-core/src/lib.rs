@@ -29,6 +29,7 @@ extern crate alloc;
 
 pub mod bits;
 pub mod cenc;
+pub mod damage;
 pub mod error;
 pub mod len;
 pub mod reserved;

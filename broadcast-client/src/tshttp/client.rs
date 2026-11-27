@@ -1,7 +1,9 @@
+use alloc::collections::VecDeque;
 use alloc::string::String;
 use core::num::NonZeroUsize;
 use core::time::Duration;
 
+use broadcast_core::damage::DamagePolicy;
 use transmux::{DemuxEvent, StreamingTsDemux};
 
 use crate::tshttp::config::Config;
@@ -18,17 +20,48 @@ pub struct TsHttpClient {
     opens: u64,
     /// The caller's PES unit ceiling, carried across a reconnect's fresh demux.
     max_pes_unit_bytes: Option<NonZeroUsize>,
+    /// The caller's decision about each damage report, kept here so a drain
+    /// applies it without borrowing the event queue as well.
+    damage_policy: DamagePolicy,
 }
 
-fn drain_demux(demux: &mut StreamingTsDemux, mut sink: impl FnMut(Event)) -> bool {
-    let mut sampled = false;
-    while let Some(ev) = demux.poll_event() {
-        if matches!(ev, DemuxEvent::Sample { .. }) {
-            sampled = true;
+/// What one demux drain produced.
+struct Drained {
+    /// At least one sample was produced.
+    sampled: bool,
+    /// The damage policy refused a report: the session stops with this error.
+    refused: bool,
+}
+
+/// Drain `demux` into `events`, applying `policy` to every damage report.
+fn drain_demux(
+    demux: &mut StreamingTsDemux,
+    policy: &DamagePolicy,
+    events: &mut VecDeque<Event>,
+) -> Drained {
+    let mut drained = Drained {
+        sampled: false,
+        refused: false,
+    };
+    while let Some(event) = demux.poll_event() {
+        match event {
+            DemuxEvent::Damage(damage) => match policy.admit(damage) {
+                Ok(damage) => events.push_back(Event::Damage(damage)),
+                Err(error) => {
+                    // The session stops here: nothing the same drain held back
+                    // is delivered after the refusal.
+                    drained.refused = true;
+                    events.push_back(Event::DemuxError(transmux::Error::Damage(error)));
+                    break;
+                }
+            },
+            other => {
+                drained.sampled |= matches!(other, DemuxEvent::Sample { .. });
+                events.push_back(Event::Demux(Box::new(other)));
+            }
         }
-        sink(Event::Demux(Box::new(ev)));
     }
-    sampled
+    drained
 }
 
 impl TsHttpClient {
@@ -44,6 +77,7 @@ impl TsHttpClient {
         seed: u64,
     ) -> Self {
         let max_pes_unit_bytes = config.max_pes_unit_bytes;
+        let damage_policy = config.damage_policy.clone();
         let policy = TsHttpPolicy::with_seed(url, config, now, seed);
         let opens = policy.open_count();
         Self {
@@ -51,6 +85,7 @@ impl TsHttpClient {
             demux: StreamingTsDemux::new().with_max_pes_unit_bytes(max_pes_unit_bytes),
             opens,
             max_pes_unit_bytes,
+            damage_policy,
         }
     }
 
@@ -64,12 +99,19 @@ impl TsHttpClient {
 
     fn flush_demux(&mut self, now: Timestamp) {
         let finished = self.demux.finish();
-        let policy = &mut self.policy;
-        if drain_demux(&mut self.demux, |ev| policy.push_event(ev)) {
-            policy.on_sample(now);
+        let drained = drain_demux(
+            &mut self.demux,
+            &self.damage_policy,
+            self.policy.events_mut(),
+        );
+        if drained.sampled {
+            self.policy.on_sample(now);
+        }
+        if drained.refused {
+            self.policy.stop();
         }
         if let Err(error) = finished {
-            policy.push_event(Event::DemuxError(error));
+            self.policy.push_event(Event::DemuxError(error));
         }
     }
 
@@ -105,12 +147,19 @@ impl TsHttpClient {
             return;
         }
         let fed = self.demux.feed(chunk);
-        let policy = &mut self.policy;
-        let sampled = drain_demux(&mut self.demux, |ev| policy.push_event(ev));
-        if let Err(error) = fed {
-            policy.push_event(Event::DemuxError(error));
+        let drained = drain_demux(
+            &mut self.demux,
+            &self.damage_policy,
+            self.policy.events_mut(),
+        );
+        if drained.refused {
+            self.policy.stop();
+            return;
         }
-        policy.on_bytes(chunk.len(), now, sampled);
+        if let Err(error) = fed {
+            self.policy.push_event(Event::DemuxError(error));
+        }
+        self.policy.on_bytes(chunk.len(), now, drained.sampled);
     }
 
     /// Body ended (T7, T8).
@@ -143,13 +192,21 @@ impl TsHttpClient {
     /// Advance timers (T6, T10-T12, T15).
     pub fn poll_timeout(&mut self, now: Timestamp) {
         let demux = &mut self.demux;
+        let damage_policy = &self.damage_policy;
         let mut error = None;
+        let mut refused = false;
         self.policy.poll_timeout_with(now, |events| {
             if let Err(e) = demux.finish() {
                 error = Some(e);
             }
-            drain_demux(demux, |ev| events.push_back(ev))
+            let drained = drain_demux(demux, damage_policy, events);
+            refused = drained.refused;
+            drained.sampled
         });
+        if refused {
+            self.policy.stop();
+            return;
+        }
         if let (Some(error), false) = (error, self.policy.is_ended()) {
             self.policy.push_event(Event::DemuxError(error));
         }

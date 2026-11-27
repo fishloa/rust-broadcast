@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one discontinuous, so the served LL-HLS/TS-HLS playlists carry
   `EXT-X-DISCONTINUITY` and the DASH MPDs open a new `Period`. It used to keep
   the jump to itself, so a live viewer never learned the timeline broke.
+### Added
+- `SessionEvent::Damage` carries the one `broadcast_core::damage::Damage`
+  report through ingest, with the program the damaged track belongs to when
+  it is known. `IngestDriver::damage_report_count` (and the
+  `ListenDriver` counterpart) counts how many a session produced, so a host
+  can see how damaged an input is without holding every report.
 
 ### Breaking
 

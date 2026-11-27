@@ -6,6 +6,8 @@ mod clock33;
 mod clock33_data;
 mod common;
 mod core_api_pin;
+mod damage_report;
+mod damage_report_data;
 mod deadlines;
 mod deadlines_data;
 mod deleted_names;

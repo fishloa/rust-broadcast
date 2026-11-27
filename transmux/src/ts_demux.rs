@@ -245,6 +245,7 @@ use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use broadcast_core::damage::{ByteRange, Damage, DamageKind, MediaTimeRange, Severity};
 use broadcast_core::timescale::Timescale;
 use core::num::NonZeroUsize;
 use mpeg_ts::pid::Pid;
@@ -351,6 +352,9 @@ const MAX_UNATTRIBUTED_BYTES: usize = 4 * 1024 * 1024;
 /// this as the "one more worst-case packet" margin against
 /// [`MAX_UNATTRIBUTED_BYTES`] (see that impl's doc comment).
 const TS_MAX_PAYLOAD_BYTES: usize = TS_PACKET_SIZE - 4;
+
+/// A TS packet's size in bytes, widened for byte-offset arithmetic.
+const TS_PACKET_BYTES: u64 = TS_PACKET_SIZE as u64;
 /// Bytes of the fixed TS packet header before the adaptation field or payload
 /// (ISO/IEC 13818-1 §2.4.3.2 Table 2-4).
 const TS_HEADER_LEN: usize = 4;
@@ -2124,6 +2128,9 @@ struct StreamState {
     /// the [`StreamState::pes_declared_len`] comparison. Reset on every
     /// `payload_unit_start`.
     pes_received: usize,
+    /// Byte offset of the in-progress PES unit's first packet in the input,
+    /// so a unit dropped whole can report where it was.
+    pes_start_offset: u64,
     /// Running total of bytes held in `track`'s `Probing`/`Parked` backlog —
     /// enforces [`MAX_PROBE_BACKLOG_BYTES`] (issue B8). Kept in sync on every
     /// [`advance_track`] push (never re-walked from the `Vec`), and reset to
@@ -2161,7 +2168,98 @@ struct StreamState {
     unit_released: bool,
 }
 
+/// Report a completed PES unit dropped whole because bytes were lost from it.
+fn events_dropped_unit(
+    stream: &StreamState,
+    unit_start: Option<ByteRange>,
+    unit: &[u8],
+    events: &mut VecDeque<DemuxEvent>,
+) {
+    let range = unit_start
+        .map(|start| ByteRange::new(start.start(), u64::try_from(unit.len()).unwrap_or(u64::MAX)));
+    events.push_back(DemuxEvent::damage(stream.damage(
+        DamageKind::MediaUnitDropped,
+        Severity::Degraded,
+        "PES packet",
+        range,
+    )));
+}
+
+/// Report one degradation: the existing [`DemuxEvent::InputDegraded`] and,
+/// beside it, the one [`DemuxEvent::Damage`] report every reader publishes.
+fn report_degradation(
+    events: &mut VecDeque<DemuxEvent>,
+    track: Option<TrackId>,
+    media_time: Option<MediaTimeRange>,
+    degradation: InputDegradation,
+    provenance: EventProvenance,
+) {
+    let damage = degradation.to_damage(track, media_time, provenance);
+    events.push_back(DemuxEvent::InputDegraded {
+        track,
+        kind: degradation,
+        provenance,
+    });
+    events.push_back(DemuxEvent::damage(damage));
+}
+
 impl StreamState {
+    /// This PID's live track id, once it has one.
+    fn live_track(&self) -> Option<TrackId> {
+        match &self.track {
+            Some(TrackState::Live(live)) => Some(live.track_id),
+            _ => None,
+        }
+    }
+
+    /// The media time of this PID's most recently delivered access unit, in
+    /// the 90 kHz PES clock, when it has one.
+    fn media_time(&self) -> Option<MediaTimeRange> {
+        if !self.has_any {
+            return None;
+        }
+        let pts = i64::try_from(self.fallback.0).ok()?;
+        Some(MediaTimeRange::at(VIDEO_TIMESCALE, pts))
+    }
+
+    /// Report a degradation on this PID.
+    fn report(
+        &self,
+        events: &mut VecDeque<DemuxEvent>,
+        degradation: InputDegradation,
+        provenance: EventProvenance,
+    ) {
+        report_degradation(
+            events,
+            self.live_track(),
+            self.media_time(),
+            degradation,
+            provenance,
+        );
+    }
+
+    /// A report about this PID's content, located at `range`, at this PID's
+    /// live track and its most recent media time.
+    fn damage(
+        &self,
+        kind: DamageKind,
+        severity: Severity,
+        what: &'static str,
+        range: Option<ByteRange>,
+    ) -> Damage {
+        let mut damage = Damage::new(kind, severity, what);
+        if let Some(range) = range {
+            damage = damage.at_byte_range(range);
+        }
+        if let Some(track) = self.live_track() {
+            damage = damage.for_track(track.value());
+        }
+        if let Some(media) = self.media_time() {
+            damage = damage.at_media_time(media);
+        }
+        damage
+    }
+
     /// Forget this PID's old-timeline timing (see
     /// [`StreamingTsDemux::restart_timeline`]); the resolved track stays.
     fn restart_timeline(&mut self, max_pes_unit_bytes: Option<NonZeroUsize>) {
@@ -2179,6 +2277,7 @@ impl StreamState {
         self.last_payload_full = false;
         self.pes_declared_len = 0;
         self.pes_received = 0;
+        self.pes_start_offset = 0;
         match &mut self.track {
             Some(TrackState::Probing { backlog, .. }) => {
                 backlog.clear();
@@ -3297,15 +3396,17 @@ fn harvest_damaged_au(
         _ => None,
     };
     for _ in 0..count_invalid_parameter_sets(stream.codec, data) {
-        events.push_back(DemuxEvent::InputDegraded {
-            track: track_id,
-            kind: InputDegradation::InvalidParameterSet,
-            provenance: EventProvenance {
+        report_degradation(
+            events,
+            track_id,
+            stream.media_time(),
+            InputDegradation::InvalidParameterSet,
+            EventProvenance {
                 pid: Some(pid),
                 packet_index: None,
                 program_number: None,
             },
-        });
+        );
     }
     // Only probing tracks benefit; live tracks are left untouched.
     if !matches!(stream.track, Some(TrackState::Probing { .. })) {
@@ -3903,15 +4004,17 @@ fn advance_track(
         _ => None,
     };
     for _ in 0..count_invalid_parameter_sets(stream.codec, data) {
-        events.push_back(DemuxEvent::InputDegraded {
-            track: track_id,
-            kind: InputDegradation::InvalidParameterSet,
-            provenance: EventProvenance {
+        report_degradation(
+            events,
+            track_id,
+            stream.media_time(),
+            InputDegradation::InvalidParameterSet,
+            EventProvenance {
                 pid: Some(pid),
                 packet_index: None,
                 program_number: None,
             },
-        });
+        );
     }
     let new_track = match track {
         TrackState::Live(mut live) => {
@@ -4503,17 +4606,26 @@ fn feed_pes_bounded(
             Some(TrackState::Live(live)) => Some(live.track_id),
             _ => None,
         };
-        events.push_back(DemuxEvent::Discontinuity {
+        events.push_back(DemuxEvent::discontinuity(
             track,
-            kind: DiscontinuityKind::BudgetExceeded {
+            DiscontinuityKind::BudgetExceeded {
                 bytes: dropped_bytes,
             },
-            provenance: EventProvenance {
+            EventProvenance {
                 pid: Some(pid),
                 packet_index: None,
                 program_number: None,
             },
-        });
+        ));
+        events.push_back(DemuxEvent::damage(stream.damage(
+            DamageKind::LimitReached,
+            Severity::Degraded,
+            "PES packet",
+            Some(ByteRange::new(
+                stream.pes_start_offset,
+                u64::try_from(projected).unwrap_or(u64::MAX),
+            )),
+        )));
     }
     Ok(completed)
 }
@@ -4539,32 +4651,42 @@ fn feed_pes_bounded(
 fn on_completed_pes(
     stream: &mut StreamState,
     pid: Pid,
+    unit_start: Option<ByteRange>,
     pes_bytes: &[u8],
     epoch: &mut ProgramEpoch,
     events: &mut VecDeque<DemuxEvent>,
 ) -> Result<()> {
     let Ok((pes, truncation)) = PesPacket::parse_unit(pes_bytes) else {
+        let range = unit_start.map(|start| {
+            ByteRange::new(
+                start.start(),
+                u64::try_from(pes_bytes.len()).unwrap_or(u64::MAX),
+            )
+        });
+        events.push_back(DemuxEvent::damage(stream.damage(
+            DamageKind::MediaUnitDropped,
+            Severity::Degraded,
+            "PES packet",
+            range,
+        )));
         return Ok(());
     };
     // A unit that ended before its declared `PES_packet_length` is a normal
     // stream join, not lost data: report it so a consumer notices, but keep
     // the samples exactly as received.
     if let Some(short) = truncation {
-        events.push_back(DemuxEvent::InputDegraded {
-            track: stream.track.as_ref().and_then(|t| match t {
-                TrackState::Live(live) => Some(live.track_id),
-                _ => None,
-            }),
-            kind: InputDegradation::PesUnitTruncated {
+        stream.report(
+            events,
+            InputDegradation::PesUnitTruncated {
                 declared: short.declared,
                 available: short.available,
             },
-            provenance: EventProvenance {
+            EventProvenance {
                 pid: Some(pid),
                 packet_index: None,
                 program_number: None,
             },
-        });
+        );
     }
     if pes.payload.is_empty() {
         return Ok(());
@@ -5151,15 +5273,17 @@ impl StreamingTsDemux {
                 dropped_bytes: loss.dropped_bytes,
             }
         };
-        self.events.push_back(DemuxEvent::InputDegraded {
-            track: None,
+        report_degradation(
+            &mut self.events,
+            None,
+            None,
             kind,
-            provenance: EventProvenance {
+            EventProvenance {
                 pid: None,
                 packet_index: Some(loss.packet_index),
                 program_number: None,
             },
-        });
+        );
     }
 
     /// Best-effort resolved track ID for `pid`, when it has already been
@@ -5203,11 +5327,18 @@ impl StreamingTsDemux {
                     packet_index: Some(idx),
                     program_number: None,
                 };
-                self.events.push_back(DemuxEvent::InputDegraded {
-                    track: self.live_track_id(pkt.header.pid),
-                    kind: InputDegradation::TransportError,
+                let track = self.live_track_id(pkt.header.pid);
+                let media = self
+                    .streams
+                    .get(&pkt.header.pid)
+                    .and_then(StreamState::media_time);
+                report_degradation(
+                    &mut self.events,
+                    track,
+                    media,
+                    InputDegradation::TransportError,
                     provenance,
-                });
+                );
             }
 
             // CC check (issue #778) — payload-bearing, non-null packets only,
@@ -5464,6 +5595,10 @@ impl StreamingTsDemux {
                     self.try_promote_ready()?;
                     return Ok(());
                 }
+                let unit_start = Some(ByteRange::new(stream.pes_start_offset, 0));
+                if pusi {
+                    stream.pes_start_offset = idx.saturating_mul(TS_PACKET_BYTES);
+                }
                 let mut sections: Vec<bytes::Bytes> = Vec::new();
                 // ── r04-W49 intactness rule ────────────────────────────────────
                 //
@@ -5546,6 +5681,11 @@ impl StreamingTsDemux {
                     }
                 }
                 // `completed_intact` false means dropped, not delivered (r04-W49).
+                if let Some(completed) = completed_pes.as_ref()
+                    && !completed_intact
+                {
+                    events_dropped_unit(stream, unit_start, completed, &mut self.events);
+                }
                 if completed_pes.is_some() && !completed_intact {
                     // A dropped unit loses its bytes, so an audio frame tail held
                     // from the previous unit can no longer be joined to what
@@ -5553,7 +5693,7 @@ impl StreamingTsDemux {
                     clear_audio_carry(stream, &mut self.events)?;
                 }
                 if completed_intact && let Some(completed) = completed_pes {
-                    on_completed_pes(stream, pid, &completed, epoch, &mut self.events)?;
+                    on_completed_pes(stream, pid, unit_start, &completed, epoch, &mut self.events)?;
                 } else if let Some(completed) = completed_pes
                     && matches!(stream.codec, Codec::H264 | Codec::Hevc)
                 {
@@ -5638,6 +5778,7 @@ impl StreamingTsDemux {
         packet_index: u64,
     ) -> CcVerdict {
         let track = self.live_track_id(pid);
+        let media = self.streams.get(&pid).and_then(StreamState::media_time);
         match self.cc_states.entry(pid) {
             Entry::Occupied(mut e) => {
                 let state = e.get_mut();
@@ -5681,18 +5822,20 @@ impl StreamingTsDemux {
                         // alternating legal/illegal pattern.
                         mpeg_ts::ts_dup::DuplicateVerdict::IllegalThirdRepeat => {
                             if !discontinuity_signalled {
-                                self.events.push_back(DemuxEvent::InputDegraded {
+                                report_degradation(
+                                    &mut self.events,
                                     track,
-                                    kind: InputDegradation::ContinuityGap {
+                                    media,
+                                    InputDegradation::ContinuityGap {
                                         expected: state.last_cc.next().value(),
                                         got: cc.value(),
                                     },
-                                    provenance: EventProvenance {
+                                    EventProvenance {
                                         pid: Some(pid),
                                         packet_index: Some(packet_index),
                                         program_number: None,
                                     },
-                                });
+                                );
                             }
                             state.last_packet = Some(*raw);
                             return CcVerdict::Duplicate;
@@ -5703,18 +5846,20 @@ impl StreamingTsDemux {
                 let expected = state.last_cc.next();
                 let mut verdict = CcVerdict::Deliver;
                 if !discontinuity_signalled && cc != expected {
-                    self.events.push_back(DemuxEvent::InputDegraded {
+                    report_degradation(
+                        &mut self.events,
                         track,
-                        kind: InputDegradation::ContinuityGap {
+                        media,
+                        InputDegradation::ContinuityGap {
                             expected: expected.value(),
                             got: cc.value(),
                         },
-                        provenance: EventProvenance {
+                        EventProvenance {
                             pid: Some(pid),
                             packet_index: Some(packet_index),
                             program_number: None,
                         },
-                    });
+                    );
                     // The gap lost at least one packet, so the access unit the
                     // reassembler is part-way through is missing bytes. Let it
                     // be delivered as if complete and it is corrupt — the
@@ -5856,6 +6001,7 @@ impl StreamingTsDemux {
             last_payload_full: false,
             pes_declared_len: 0,
             pes_received: 0,
+            pes_start_offset: 0,
             fallback: (0, 0),
             frame_period: None,
             last_stamped_dts: None,
@@ -5904,7 +6050,14 @@ impl StreamingTsDemux {
                 };
                 if let Some(completed) = completed_pes {
                     let epoch = self.program_epochs.entry(stream.epoch_key).or_default();
-                    on_completed_pes(&mut stream, es_pid, &completed, epoch, &mut self.events)?;
+                    on_completed_pes(
+                        &mut stream,
+                        es_pid,
+                        None,
+                        &completed,
+                        epoch,
+                        &mut self.events,
+                    )?;
                 }
                 for s in sections {
                     on_completed_section(&mut stream, es_pid, &s[..], &mut self.events)?;
@@ -6683,15 +6836,17 @@ fn drop_scrambled_payload(
         Some(TrackState::Live(live)) => Some(live.track_id),
         _ => None,
     };
-    events.push_back(DemuxEvent::InputDegraded {
+    report_degradation(
+        events,
         track,
-        kind: InputDegradation::Scrambled,
-        provenance: EventProvenance {
+        stream.media_time(),
+        InputDegradation::Scrambled,
+        EventProvenance {
             pid: Some(pid),
             packet_index: Some(packet_index),
             program_number: None,
         },
-    });
+    );
     if pusi {
         flush_stream_pes_tail(pid, stream, epoch, events)?;
     } else if let Carrier::Pes(assembler) = &mut stream.carrier
@@ -6729,9 +6884,28 @@ fn flush_stream_pes_tail(
         let short_of_declared = stream.pes_declared_len > 0
             && completed.len() < PES_LENGTH_FIELD_END + stream.pes_declared_len as usize;
         if matches!(stream.pes_assembly, PesAssembly::Whole) && !short_of_declared {
-            on_completed_pes(stream, pid, &completed, epoch, events)?;
-        } else if matches!(stream.codec, Codec::H264 | Codec::Hevc) {
-            harvest_damaged_au(stream, pid, &completed, events);
+            on_completed_pes(
+                stream,
+                pid,
+                Some(ByteRange::new(stream.pes_start_offset, 0)),
+                &completed,
+                epoch,
+                events,
+            )?;
+        } else {
+            let range = ByteRange::new(
+                stream.pes_start_offset,
+                u64::try_from(completed.len()).unwrap_or(u64::MAX),
+            );
+            events.push_back(DemuxEvent::damage(stream.damage(
+                DamageKind::MediaUnitDropped,
+                Severity::Degraded,
+                "PES packet",
+                Some(range),
+            )));
+            if matches!(stream.codec, Codec::H264 | Codec::Hevc) {
+                harvest_damaged_au(stream, pid, &completed, events);
+            }
         }
     }
     Ok(())
@@ -15404,7 +15578,7 @@ pub(crate) mod tests {
             last: None,
             splice_offset: None,
         };
-        on_completed_pes(stream, pid, &pes, &mut epoch, &mut events)
+        on_completed_pes(stream, pid, None, &pes, &mut epoch, &mut events)
             .expect("truncated PES is reported, not fatal");
         let track = events.iter().find_map(|e| match e {
             DemuxEvent::InputDegraded {
@@ -15859,8 +16033,24 @@ pub(crate) mod tests {
             last: None,
             splice_offset: None,
         };
-        on_completed_pes(stream, ES_PID_UNDER_TEST, &pes, &mut epoch, &mut events).expect("first");
-        on_completed_pes(stream, ES_PID_UNDER_TEST, &pes, &mut epoch, &mut events).expect("second");
+        on_completed_pes(
+            stream,
+            ES_PID_UNDER_TEST,
+            None,
+            &pes,
+            &mut epoch,
+            &mut events,
+        )
+        .expect("first");
+        on_completed_pes(
+            stream,
+            ES_PID_UNDER_TEST,
+            None,
+            &pes,
+            &mut epoch,
+            &mut events,
+        )
+        .expect("second");
         assert!(
             !stream.recent_steps.contains(&0),
             "a zero span is not evidence of cadence"
@@ -15890,8 +16080,15 @@ pub(crate) mod tests {
             last: None,
             splice_offset: None,
         };
-        on_completed_pes(stream, ES_PID_UNDER_TEST, &pes, &mut epoch, &mut events)
-            .expect("unstamped");
+        on_completed_pes(
+            stream,
+            ES_PID_UNDER_TEST,
+            None,
+            &pes,
+            &mut epoch,
+            &mut events,
+        )
+        .expect("unstamped");
         assert_eq!(stream.fallback.0, 10, "prev + step mod 2^33");
         assert!(stream.fallback.0 < TS_WRAP);
     }

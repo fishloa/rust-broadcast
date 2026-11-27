@@ -28,6 +28,27 @@ Binding for every public API in the workspace. New code follows them; a lane tha
 - One shared type per concept across crates (timeouts, backoff, UDP options).
 - A caller-owned stage inserted into an existing assembly is a **per-call parameter**, not a builder field (`Repackage::run_transformed(fmp4, transform)`, `cli::run_bytes_with(input, opts, transform)`), so the configured driver keeps `Clone` and one instance serves several inputs. The bound on what the stage may hold is the caller's (`*_limit`, unlimited by default), never a library-chosen number.
 
+## Best-effort reading
+
+- A reader parses as well as it can and continues. It skips broken metadata and broken frames, and
+  refuses only when what is missing makes playback impossible. **A silent skip is a defect**: whenever
+  the reader leaves content out, alters it, resynchronises past it, truncates, repairs a timeline or
+  drops a track, it publishes a `broadcast_core::damage::Damage`.
+- The report is plain data: `DamageKind` (what happened to the content, not which box), `Severity`
+  (`Informational`/`Degraded`; a fatal failure is an error, never a report), `DamageLocation` (the input
+  byte range, the track, the media time range in a stated timescale and the unit ordinal — each only when
+  the reader observed it), `what` (the structure in the format's own terms, plus a four-character code for
+  box formats), `cause` (a shared error kind from `broadcast_core::error` where one applies) and
+  `recoverable_bytes` (whether the skipped bytes are still available verbatim).
+- The channel is the reader's existing output enum, which gains one variant carrying the `Damage`
+  (`DemuxEvent::Damage`, `SessionEvent::Damage`, `Event::Damage`). No callback is stored in a reader.
+- The caller decides what a report means: `DamagePolicy` maps each `Severity` (and optionally each
+  `DamageKind`) to `Disposition::Report` (the default for everything) or `Disposition::Fail`. A reader
+  calls `DamagePolicy::admit(damage)`: `Ok(damage)` publishes it and continues, `Err(DamageError)` stops
+  with the same report inside the error. There is no silent setting.
+- A crate that keeps its own report enum must convert it into `broadcast_core::damage::Damage` (an
+  `impl From` into `Damage` or `DamageKind`); the `damage_report` workspace guard fails otherwise.
+
 ## Errors
 
 - Typed `thiserror` enums with context fields. No `String` errors, no `Box<dyn Error>` in public APIs.

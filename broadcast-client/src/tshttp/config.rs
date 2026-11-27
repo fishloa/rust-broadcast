@@ -46,6 +46,12 @@ pub struct Config {
     /// It lives here because this configuration carries the knobs every pull
     /// source shares.
     pub max_pes_unit_bytes: Option<NonZeroUsize>,
+    /// What each damage report means: `Report` (the default for everything)
+    /// keeps playing and publishes [`crate::Event::Damage`]; `Fail`
+    /// ends the session with a [`transmux::Error::Damage`] carrying the same
+    /// report. The library chooses no policy: this is the caller's decision
+    /// (`docs/API-CONVENTIONS.md` § Best-effort reading).
+    pub damage_policy: broadcast_core::damage::DamagePolicy,
     /// Failed attempts in a row, with no media played in between, after which the session gives up
     /// with one fatal `Event::Error` (`ErrorKind::ReconnectAttemptsExhausted`) instead of retrying.
     /// `None` (the default) retries forever, which is what a live stream wants: the backoff bounds
@@ -150,6 +156,16 @@ impl Config {
         self.max_pes_unit_bytes = max_pes_unit_bytes;
         self
     }
+
+    /// Set what each damage report means (see [`Config::damage_policy`]).
+    #[must_use]
+    pub fn with_damage_policy(
+        mut self,
+        damage_policy: broadcast_core::damage::DamagePolicy,
+    ) -> Self {
+        self.damage_policy = damage_policy;
+        self
+    }
 }
 
 impl Default for Config {
@@ -165,6 +181,7 @@ impl Default for Config {
             min_reconnect_interval: DEFAULT_MIN_RECONNECT_INTERVAL,
             read_ahead: ReadAhead::Unlimited,
             max_pes_unit_bytes: None,
+            damage_policy: broadcast_core::damage::DamagePolicy::new(),
             max_reconnect_attempts: None,
         }
     }

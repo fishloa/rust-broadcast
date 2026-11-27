@@ -6,6 +6,7 @@ use broadcast_common::stage::Timestamp;
 
 mod audit_1485;
 mod audit_1492;
+mod damage;
 mod edge_cases;
 mod event_serde;
 mod flush;
