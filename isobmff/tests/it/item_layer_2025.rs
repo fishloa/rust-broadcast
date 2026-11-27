@@ -27,6 +27,8 @@ use isobmff::image_props::{
     TargetOutputLayerSetProperty, UserDescriptionProperty, WhiteBalanceProperty, WipeDirection,
     WipeTransitionEffectProperty, ZoomDirection, ZoomShape, ZoomTransitionEffectProperty,
 };
+use isobmff::image_sequence::DirectReferenceSamplesList;
+use isobmff::init_segment::{SampleDescriptionBox, SampleEntryVariant};
 use isobmff::integrity::{
     INPUT_TRAK, IntegrityBox, IntegrityItem, Md5IntegrityBox, SampleGroupDigest,
 };
@@ -34,7 +36,16 @@ use isobmff::item::{EntityGroupType, GroupId, ItemId, ItemInfoEntry, ItemType};
 use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep, StillImage};
 use isobmff::item_writer::ItemWriter;
 use isobmff::limits::Limits;
-use isobmff::region::{RegionGeometry, RegionItem};
+use isobmff::region::{
+    AnnotationContainerType, RegionAnnotation, RegionAnnotationAssociation, RegionAnnotationMap,
+    RegionGeometry, RegionItem, RegionSampleEntry, RegionTrackConfigBox,
+    UserDescriptionSampleGroupEntry,
+};
+use isobmff::sample_groups::{
+    GROUPING_TYPE_AEBR, GROUPING_TYPE_AFBR, GROUPING_TYPE_DOBR, GROUPING_TYPE_EQIV,
+    GROUPING_TYPE_FOBR, GROUPING_TYPE_PANO, GROUPING_TYPE_REFS, GROUPING_TYPE_REGM,
+    GROUPING_TYPE_UDES, GROUPING_TYPE_WBBR, SampleGroupDescriptionBox, SgpdEntry,
+};
 
 fn load(name: &str) -> (Vec<u8>, StillImage) {
     let bytes = test_fixtures::read(name);
@@ -1246,4 +1257,100 @@ fn gainmap_gamma_numerator_is_unsigned() {
         UnsignedRational::new(u32::MAX, 1)
     );
     assert_eq!(parsed.try_to_bytes().expect("serialize"), bytes);
+}
+
+#[test]
+fn sgpd_dispatches_every_image_sequence_sample_group_entry() {
+    let eqiv = SgpdEntry::Eqiv {
+        time_offset: -3,
+        timescale_multiplier: 0x0100,
+    };
+    let aebr = SgpdEntry::Aebr {
+        exposure_step: 3,
+        exposure_numerator: -2,
+    };
+    let wbbr = SgpdEntry::Wbbr {
+        blue_amber: 6500,
+        green_magenta: -12,
+    };
+    let fobr = SgpdEntry::Fobr {
+        focus_distance_numerator: 250,
+        focus_distance_denominator: 1000,
+    };
+    let afbr = SgpdEntry::Afbr {
+        flash_exposure_numerator: 1,
+        flash_exposure_denominator: 2,
+    };
+    let dobr = SgpdEntry::Dobr {
+        f_stop_numerator: 28,
+        f_stop_denominator: 10,
+    };
+    let pano = SgpdEntry::Pano { frame_number: 7 };
+    let refs = SgpdEntry::Refs(DirectReferenceSamplesList::new(9, vec![1, 2]));
+    let regm = SgpdEntry::Regm(RegionAnnotationMap::new(vec![RegionAnnotation::new(
+        4,
+        vec![RegionAnnotationAssociation::new(
+            AnnotationContainerType::SampleGroup,
+            *b"udes",
+            2,
+        )],
+    )]));
+    let udes = SgpdEntry::Udes(UserDescriptionSampleGroupEntry::new(
+        b"en-US",
+        b"panorama frame",
+        b"the third frame of the pano",
+        b"pano,frame",
+    ));
+    let cases = [
+        (GROUPING_TYPE_EQIV, eqiv),
+        (GROUPING_TYPE_AEBR, aebr),
+        (GROUPING_TYPE_WBBR, wbbr),
+        (GROUPING_TYPE_FOBR, fobr),
+        (GROUPING_TYPE_AFBR, afbr),
+        (GROUPING_TYPE_DOBR, dobr),
+        (GROUPING_TYPE_PANO, pano),
+        (GROUPING_TYPE_REFS, refs),
+        (GROUPING_TYPE_REGM, regm),
+        (GROUPING_TYPE_UDES, udes),
+    ];
+    for (grouping_type, entry) in cases {
+        let box_ = SampleGroupDescriptionBox {
+            version: 1,
+            flags: 0,
+            grouping_type,
+            default_length: 0,
+            default_group_description_index: None,
+            entries: vec![entry.clone()],
+        };
+        let bytes = box_.try_to_bytes().expect("serialize");
+        let parsed = SampleGroupDescriptionBox::parse(&bytes).expect("parse");
+        assert_eq!(parsed.entries, [entry], "grouping type {grouping_type:08x}");
+        assert_eq!(parsed.try_to_bytes().expect("re-serialize"), bytes);
+    }
+}
+
+#[test]
+fn rgan_sample_entry_is_typed_in_the_stsd_dispatch() {
+    let entry =
+        RegionSampleEntry::new(RegionTrackConfigBox::new(1920, 1080).with_persistent_region_ids());
+    let bytes = entry.try_to_bytes().expect("serialize");
+    let parsed = isobmff::init_segment::sample_entry_variant(&bytes).expect("entry");
+    match parsed {
+        SampleEntryVariant::Rgan(value) => {
+            assert_eq!(value.data_reference_index(), 1);
+            assert_eq!(value.config().reference_width(), 1920);
+            assert_eq!(value.config().reference_height(), 1080);
+            assert!(value.config().persistent_region_ids());
+        }
+        other => panic!("expected rgan, got {other:?}"),
+    }
+    let box_ = SampleDescriptionBox {
+        version: 0,
+        flags: 0,
+        entries: vec![SampleEntryVariant::Rgan(Box::new(entry))],
+    };
+    let bytes = box_.try_to_bytes().expect("serialize stsd");
+    let parsed = SampleDescriptionBox::parse(&bytes).expect("parse stsd");
+    assert!(matches!(parsed.entries[0], SampleEntryVariant::Rgan(_)));
+    assert_eq!(parsed.try_to_bytes().expect("re-serialize"), bytes);
 }

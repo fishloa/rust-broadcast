@@ -248,7 +248,9 @@ typed error.
 | `cexg`, `dadj`, `stag`, `reve`, `ndwt`, `mskC` | Amd 1 6.5.41-45, 11.2.2 | clause-assembled | — |
 | `tmap` | Amd 1 6.6.2.4 | real: `avifgainmaputil` 1.4.2 | `avif/gainmap-*.avif` |
 | `cfen` | Amd 1 6.6.2.5 | clause-assembled | — |
-| `rgan`, `mski`, region geometry | 11.2-11.3 | clause-assembled | — |
+| `rgan` item, `mski`, region geometry | 11.2-11.3 | clause-assembled | — |
+| `rgan` sample entry | 11.4.2.2.2 | clause-assembled (typed in the `stsd` dispatch) | — |
+| `eqiv`, `aebr`, `wbbr`, `fobr`, `afbr`, `dobr`, `pano`, `refs`, `regm`, `udes` | 6.8.1.2, 6.8.6, 6.8.8.2, 7.4.1, 11.4.3 | clause-assembled (dispatched from `sgpd`) | — |
 | `pymd` body, `rgpa` body | Amd 1 6.8.12-13 | clause-assembled | — |
 | `ccst`, `auxi`, `refs`, `md5i` | 7.2.3, 7.5.3, 7.4.1, 8.4 | clause-assembled | — |
 

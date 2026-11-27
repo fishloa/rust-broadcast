@@ -21,6 +21,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `avifgainmaputil` 1.4.2 (multichannel, single-channel and swapped base)
   cover it.
 
+- **Image-sequence and region sample group entries typed (Amd 1).** `sgpd`
+  now dispatches `eqiv`, the five bracketing entries (`aebr`, `wbbr`, `fobr`,
+  `afbr`, `dobr`), `pano`, and the `refs`, `regm` and `udes` entries to typed
+  `SgpdEntry` variants that read and write byte-exactly; the `rgan`
+  region-track sample entry joins the movie reader's typed sample-entry
+  dispatch as `SampleEntryVariant::Rgan`.
+
 - **Still images brought to the current HEIF edition (issue #4167).** The item
   layer now reads and writes ISO/IEC 23008-12:2025 (third edition) with
   Amendment 1 applied, not only the 2017 subset. New modules `image_props`

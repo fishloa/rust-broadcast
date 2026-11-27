@@ -21,9 +21,11 @@
 //! - **sgpd**: ISO/IEC 14496-12:2026 §8.9.3.2 — version >= 1: `default_length`
 //!   present; version >= 2: `default_group_description_index` also present;
 //!   version 3 is an essential group ([`SampleGroupDescriptionBox::is_essential`]);
-//!   version 0 is deprecated. Only `'roll'` (RollRecoveryEntry, i16
-//!   `roll_distance`) is typed; all other grouping types are stored as raw bytes
-//!   via [`SgpdEntry::Unknown`].
+//!   version 0 is deprecated. `'roll'` (RollRecoveryEntry) and the
+//!   ISO/IEC 23008-12:2025 image-sequence and region entries (`'eqiv'`, the
+//!   five bracketing types, `'pano'`, `'refs'`, `'regm'`, `'udes'`) are typed;
+//!   every other grouping type is stored as raw bytes via
+//!   [`SgpdEntry::Unknown`].
 //! - **sbgp**: ISO/IEC 14496-12:2026 §8.9.2.2 — version 0: no
 //!   `grouping_type_parameter`; version 1: `grouping_type_parameter` present.
 //! - **subs**: ISO/IEC 14496-12:2026 §8.7.7.2 — version 0: `subsample_size` is
@@ -101,6 +103,44 @@ pub const GROUPING_TYPE_ROLL: u32 = u32::from_be_bytes(*b"roll");
 /// implement, rather than silently decrypting every sample with only the
 /// track default key (see `transmux::cenc_decrypt`, issue #990).
 pub const GROUPING_TYPE_SEIG: u32 = u32::from_be_bytes(*b"seig");
+
+/// Grouping type `'eqiv'` (VisualEquivalenceEntry) —
+/// ISO/IEC 23008-12:2025 6.8.1.2.
+pub const GROUPING_TYPE_EQIV: u32 = u32::from_be_bytes(*b"eqiv");
+/// Grouping type `'aebr'` (AutoExposureBracketingEntry) —
+/// ISO/IEC 23008-12:2025 6.8.6.2.2.
+pub const GROUPING_TYPE_AEBR: u32 = u32::from_be_bytes(*b"aebr");
+/// Grouping type `'wbbr'` (WhiteBalanceBracketingEntry) — 6.8.6.3.2.
+pub const GROUPING_TYPE_WBBR: u32 = u32::from_be_bytes(*b"wbbr");
+/// Grouping type `'fobr'` (FocusBracketingEntry) — 6.8.6.4.2.
+pub const GROUPING_TYPE_FOBR: u32 = u32::from_be_bytes(*b"fobr");
+/// Grouping type `'afbr'` (FlashExposureBracketingEntry) — 6.8.6.5.2.
+pub const GROUPING_TYPE_AFBR: u32 = u32::from_be_bytes(*b"afbr");
+/// Grouping type `'dobr'` (DepthOfFieldBracketingEntry) — 6.8.6.6.2.
+pub const GROUPING_TYPE_DOBR: u32 = u32::from_be_bytes(*b"dobr");
+/// Grouping type `'pano'` (PanoramaEntry) — 6.8.8.2.
+pub const GROUPING_TYPE_PANO: u32 = u32::from_be_bytes(*b"pano");
+/// Grouping type `'refs'` (DirectReferenceSamplesList) — 7.4.1.
+pub const GROUPING_TYPE_REFS: u32 = u32::from_be_bytes(*b"refs");
+/// Grouping type `'regm'` (region-to-annotation mapping) — 11.4.3.1.
+pub const GROUPING_TYPE_REGM: u32 = u32::from_be_bytes(*b"regm");
+/// Grouping type `'udes'` (UserDescriptionSampleGroupEntry) — 11.4.3.2.
+pub const GROUPING_TYPE_UDES: u32 = u32::from_be_bytes(*b"udes");
+
+/// Bytes of an `'eqiv'` entry: `time_offset` + `timescale_multiplier`.
+const EQIV_ENTRY_LEN: usize = 4;
+/// Bytes of an `'aebr'` entry: `exposure_step` + `exposure_numerator`.
+const AEBR_ENTRY_LEN: usize = 2;
+/// Bytes of a `'wbbr'` entry: `blue_amber` + `green_magenta`.
+const WBBR_ENTRY_LEN: usize = 3;
+/// Bytes of a `'fobr'` entry: `focus_distance_numerator` + denominator.
+const FOBR_ENTRY_LEN: usize = 4;
+/// Bytes of an `'afbr'` entry: `flash_exposure_numerator` + denominator.
+const AFBR_ENTRY_LEN: usize = 2;
+/// Bytes of a `'dobr'` entry: `f_stop_numerator` + denominator.
+const DOBR_ENTRY_LEN: usize = 2;
+/// Bytes of a `'pano'` entry: `frame_number`.
+const PANO_ENTRY_LEN: usize = 2;
 
 // ---------------------------------------------------------------------------
 // ProducerReferenceTimeBox — prft (ISO/IEC 14496-12:2026 §8.14.5)
@@ -259,6 +299,59 @@ pub enum SgpdEntry {
         /// Roll distance in samples. Negative = pre-roll.
         roll_distance: i16,
     },
+    /// VisualEquivalenceEntry for grouping type `'eqiv'` (23008-12 6.8.1.2).
+    Eqiv {
+        /// `time_offset`, in the timescale `timescale_multiplier` states.
+        time_offset: i16,
+        /// `timescale_multiplier`, an 8.8 fixed-point value.
+        timescale_multiplier: u16,
+    },
+    /// AutoExposureBracketingEntry for `'aebr'` (6.8.6.2.2).
+    Aebr {
+        /// `exposure_step`.
+        exposure_step: i8,
+        /// `exposure_numerator`.
+        exposure_numerator: i8,
+    },
+    /// WhiteBalanceBracketingEntry for `'wbbr'` (6.8.6.3.2).
+    Wbbr {
+        /// `blue_amber`, in Kelvin.
+        blue_amber: u16,
+        /// `green_magenta`, in 1/100 Duv.
+        green_magenta: i8,
+    },
+    /// FocusBracketingEntry for `'fobr'` (6.8.6.4.2).
+    Fobr {
+        /// `focus_distance_numerator`.
+        focus_distance_numerator: u16,
+        /// `focus_distance_denominator`.
+        focus_distance_denominator: u16,
+    },
+    /// FlashExposureBracketingEntry for `'afbr'` (6.8.6.5.2).
+    Afbr {
+        /// `flash_exposure_numerator`.
+        flash_exposure_numerator: i8,
+        /// `flash_exposure_denominator`.
+        flash_exposure_denominator: i8,
+    },
+    /// DepthOfFieldBracketingEntry for `'dobr'` (6.8.6.6.2).
+    Dobr {
+        /// `f_stop_numerator`.
+        f_stop_numerator: i8,
+        /// `f_stop_denominator`.
+        f_stop_denominator: i8,
+    },
+    /// PanoramaEntry for `'pano'` (6.8.8.2).
+    Pano {
+        /// `frame_number`.
+        frame_number: u16,
+    },
+    /// DirectReferenceSamplesList for `'refs'` (7.4.1).
+    Refs(crate::image_sequence::DirectReferenceSamplesList),
+    /// Region-to-annotation mapping for `'regm'` (11.4.3.1).
+    Regm(crate::region::RegionAnnotationMap),
+    /// UserDescriptionSampleGroupEntry for `'udes'` (11.4.3.2).
+    Udes(crate::region::UserDescriptionSampleGroupEntry),
     /// Raw bytes for any grouping type not specifically handled.
     Unknown(Vec<u8>),
 }
@@ -272,8 +365,139 @@ impl SgpdEntry {
     pub fn wire_len(&self) -> usize {
         match self {
             Self::Roll { .. } => ROLL_ENTRY_LEN,
+            Self::Eqiv { .. } => EQIV_ENTRY_LEN,
+            Self::Aebr { .. } => AEBR_ENTRY_LEN,
+            Self::Wbbr { .. } => WBBR_ENTRY_LEN,
+            Self::Fobr { .. } => FOBR_ENTRY_LEN,
+            Self::Afbr { .. } => AFBR_ENTRY_LEN,
+            Self::Dobr { .. } => DOBR_ENTRY_LEN,
+            Self::Pano { .. } => PANO_ENTRY_LEN,
+            Self::Refs(value) => value.serialized_len(),
+            Self::Regm(value) => value.body_len(),
+            Self::Udes(value) => value.body_len(),
             Self::Unknown(v) => v.len(),
         }
+    }
+
+    /// Write this entry's body (no length prefix) into `buf`, returning the
+    /// bytes written.
+    pub fn encode(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.wire_len();
+        need_out(buf, need)?;
+        match self {
+            Self::Roll { roll_distance } => {
+                buf[..ROLL_ENTRY_LEN].copy_from_slice(&roll_distance.to_be_bytes());
+            }
+            Self::Eqiv {
+                time_offset,
+                timescale_multiplier,
+            } => {
+                buf[..core::mem::size_of::<u16>()].copy_from_slice(&time_offset.to_be_bytes());
+                buf[core::mem::size_of::<u16>()..EQIV_ENTRY_LEN]
+                    .copy_from_slice(&timescale_multiplier.to_be_bytes());
+            }
+            Self::Aebr {
+                exposure_step,
+                exposure_numerator,
+            } => {
+                buf[0] = *exposure_step as u8;
+                buf[1] = *exposure_numerator as u8;
+            }
+            Self::Wbbr {
+                blue_amber,
+                green_magenta,
+            } => {
+                buf[..core::mem::size_of::<u16>()].copy_from_slice(&blue_amber.to_be_bytes());
+                buf[core::mem::size_of::<u16>()] = *green_magenta as u8;
+            }
+            Self::Fobr {
+                focus_distance_numerator,
+                focus_distance_denominator,
+            } => {
+                buf[..core::mem::size_of::<u16>()]
+                    .copy_from_slice(&focus_distance_numerator.to_be_bytes());
+                buf[core::mem::size_of::<u16>()..FOBR_ENTRY_LEN]
+                    .copy_from_slice(&focus_distance_denominator.to_be_bytes());
+            }
+            Self::Afbr {
+                flash_exposure_numerator,
+                flash_exposure_denominator,
+            } => {
+                buf[0] = *flash_exposure_numerator as u8;
+                buf[1] = *flash_exposure_denominator as u8;
+            }
+            Self::Dobr {
+                f_stop_numerator,
+                f_stop_denominator,
+            } => {
+                buf[0] = *f_stop_numerator as u8;
+                buf[1] = *f_stop_denominator as u8;
+            }
+            Self::Pano { frame_number } => {
+                buf[..PANO_ENTRY_LEN].copy_from_slice(&frame_number.to_be_bytes());
+            }
+            Self::Refs(value) => {
+                value.serialize_into(buf)?;
+            }
+            Self::Regm(value) => {
+                let bytes = value.to_bytes()?;
+                buf[..bytes.len()].copy_from_slice(&bytes);
+            }
+            Self::Udes(value) => {
+                let bytes = value.to_bytes()?;
+                buf[..bytes.len()].copy_from_slice(&bytes);
+            }
+            Self::Unknown(v) => buf[..v.len()].copy_from_slice(v),
+        }
+        Ok(need)
+    }
+}
+
+/// The typed form of one sample group entry body, when this module models the
+/// grouping type and the body is exactly the length (or, for a variable-length
+/// entry, the layout) it states.
+fn typed_entry(grouping_type: u32, bytes: &[u8]) -> Option<SgpdEntry> {
+    match grouping_type {
+        GROUPING_TYPE_ROLL if bytes.len() == ROLL_ENTRY_LEN => Some(SgpdEntry::Roll {
+            roll_distance: i16_at(bytes, 0),
+        }),
+        GROUPING_TYPE_EQIV if bytes.len() == EQIV_ENTRY_LEN => Some(SgpdEntry::Eqiv {
+            time_offset: i16_at(bytes, 0),
+            timescale_multiplier: u16::from_be_bytes([bytes[2], bytes[3]]),
+        }),
+        GROUPING_TYPE_AEBR if bytes.len() == AEBR_ENTRY_LEN => Some(SgpdEntry::Aebr {
+            exposure_step: bytes[0] as i8,
+            exposure_numerator: bytes[1] as i8,
+        }),
+        GROUPING_TYPE_WBBR if bytes.len() == WBBR_ENTRY_LEN => Some(SgpdEntry::Wbbr {
+            blue_amber: u16::from_be_bytes([bytes[0], bytes[1]]),
+            green_magenta: bytes[2] as i8,
+        }),
+        GROUPING_TYPE_FOBR if bytes.len() == FOBR_ENTRY_LEN => Some(SgpdEntry::Fobr {
+            focus_distance_numerator: u16::from_be_bytes([bytes[0], bytes[1]]),
+            focus_distance_denominator: u16::from_be_bytes([bytes[2], bytes[3]]),
+        }),
+        GROUPING_TYPE_AFBR if bytes.len() == AFBR_ENTRY_LEN => Some(SgpdEntry::Afbr {
+            flash_exposure_numerator: bytes[0] as i8,
+            flash_exposure_denominator: bytes[1] as i8,
+        }),
+        GROUPING_TYPE_DOBR if bytes.len() == DOBR_ENTRY_LEN => Some(SgpdEntry::Dobr {
+            f_stop_numerator: bytes[0] as i8,
+            f_stop_denominator: bytes[1] as i8,
+        }),
+        GROUPING_TYPE_PANO if bytes.len() == PANO_ENTRY_LEN => Some(SgpdEntry::Pano {
+            frame_number: u16::from_be_bytes([bytes[0], bytes[1]]),
+        }),
+        GROUPING_TYPE_REFS => crate::image_sequence::DirectReferenceSamplesList::parse(bytes)
+            .ok()
+            .map(SgpdEntry::Refs),
+        GROUPING_TYPE_REGM => crate::region::RegionAnnotationMap::parse(bytes)
+            .ok()
+            .map(SgpdEntry::Regm),
+        GROUPING_TYPE_UDES => crate::region::UserDescriptionSampleGroupEntry::parse(bytes)
+            .ok()
+            .map(SgpdEntry::Udes),
+        _ => None,
     }
 }
 
@@ -442,12 +666,8 @@ impl SampleGroupDescriptionBox {
             // 2 bytes would re-serialize it 2 bytes wide and shrink the whole
             // entry list (audit r05-W15), so anything else stays opaque and
             // byte-exact.
-            let entry = if grouping_type == GROUPING_TYPE_ROLL && entry_len == ROLL_ENTRY_LEN {
-                let rd = i16_at(entry_bytes, 0);
-                SgpdEntry::Roll { roll_distance: rd }
-            } else {
-                SgpdEntry::Unknown(entry_bytes.to_vec())
-            };
+            let entry = typed_entry(grouping_type, entry_bytes)
+                .unwrap_or_else(|| SgpdEntry::Unknown(entry_bytes.to_vec()));
             entries.push(entry);
             c += entry_len;
         }
@@ -556,17 +776,7 @@ impl Serialize for SampleGroupDescriptionBox {
                     .copy_from_slice(&description_length.to_be_bytes());
                 c += core::mem::size_of::<u32>();
             }
-            match entry {
-                SgpdEntry::Roll { roll_distance } => {
-                    buf[c..c + core::mem::size_of::<u16>()]
-                        .copy_from_slice(&roll_distance.to_be_bytes());
-                    c += core::mem::size_of::<u16>();
-                }
-                SgpdEntry::Unknown(v) => {
-                    buf[c..c + v.len()].copy_from_slice(v);
-                    c += v.len();
-                }
-            }
+            c += entry.encode(&mut buf[c..])?;
         }
         Ok(c)
     }

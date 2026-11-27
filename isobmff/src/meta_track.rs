@@ -83,7 +83,7 @@ const U32_LEN: usize = core::mem::size_of::<u32>();
 /// SampleEntry `reserved[6]` (§8.5.2.2).
 const SAMPLE_ENTRY_RESERVED_LEN: usize = 6;
 /// SampleEntry fixed part: `reserved[6]` plus `data_reference_index` (§8.5.2.2).
-const SAMPLE_ENTRY_FIXED_LEN: usize = SAMPLE_ENTRY_RESERVED_LEN + U16_LEN;
+pub(crate) const SAMPLE_ENTRY_FIXED_LEN: usize = SAMPLE_ENTRY_RESERVED_LEN + U16_LEN;
 /// `data_reference_index` offset inside a SampleEntry body (§8.5.2.2).
 const DATA_REFERENCE_INDEX_OFFSET: usize = SAMPLE_ENTRY_RESERVED_LEN;
 /// `cprt` `pad` bit plus three 5-bit language letters (§8.10.2.2).
@@ -1249,7 +1249,10 @@ impl Serialize for MetadataKeyTableBox {
 
 /// Parse a SampleEntry's fixed part (§8.5.2.2), returning its
 /// `data_reference_index` and the bytes that follow the fixed part.
-fn parse_sample_entry_base<'a>(bytes: &'a [u8], what: &'static str) -> Result<(u16, &'a [u8])> {
+pub(crate) fn parse_sample_entry_base<'a>(
+    bytes: &'a [u8],
+    what: &'static str,
+) -> Result<(u16, &'a [u8])> {
     let body = parse_box(bytes)?.0.body;
     need_in(body, SAMPLE_ENTRY_FIXED_LEN, what)?;
     Ok((
@@ -1260,7 +1263,7 @@ fn parse_sample_entry_base<'a>(bytes: &'a [u8], what: &'static str) -> Result<(u
 
 /// Write a SampleEntry header and its fixed part, returning the offset of the
 /// entry's own fields.
-fn write_sample_entry_base(
+pub(crate) fn write_sample_entry_base(
     buf: &mut [u8],
     fourcc: &[u8; BOX_TYPE_SIZE],
     need: usize,

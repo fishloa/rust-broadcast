@@ -4,8 +4,9 @@
 //! [`RegionGeometry`] the geometry structure 11.2.1 shared by region items and
 //! region-track samples, [`MaskConfigurationProperty`](crate::image_props::MaskConfigurationProperty)
 //! the mask configuration of a mask item (`mski`, 11.2.2),
-//! [`RegionTrackConfigBox`] (`rgaC`) and [`RegionSample`] the region-track
-//! sample entry and sample format (11.4.2), and
+//! [`RegionTrackConfigBox`] (`rgaC`), [`RegionSampleEntry`] (`rgan`) and
+//! [`RegionSample`] the region-track configuration, sample entry and sample
+//! format (11.4.2), and
 //! [`RegionAnnotationMap`] (`regm`) and
 //! [`UserDescriptionSampleGroupEntry`] (`udes`) the two region-track sample
 //! groups (11.4.3).
@@ -49,6 +50,8 @@ const NARROW_FIELD_LEN: usize = core::mem::size_of::<u16>();
 const WIDE_FIELD_LEN: usize = core::mem::size_of::<u32>();
 /// Width of `geometry_type` (11.2.1.2).
 const GEOMETRY_TYPE_LEN: usize = core::mem::size_of::<u8>();
+/// Strings a `udes` entry carries, each NUL-terminated (11.4.3.2.2).
+const UDES_CSTRING_COUNT: usize = 4;
 /// Bits in one byte.
 const BITS_PER_BYTE: u32 = 8;
 /// Bits one inline-mask pixel uses (11.2.1.3).
@@ -770,6 +773,87 @@ impl Serialize for RegionTrackConfigBox {
 /// Four-CC of the Region Track Configuration box (11.4.2.2.1).
 pub const RGA_CONFIG: [u8; BOX_TYPE_SIZE] = *b"rgaC";
 
+/// Four-CC of the region-track sample entry (11.4.2.2.2).
+pub const RGAN: [u8; BOX_TYPE_SIZE] = *b"rgan";
+
+/// The region-track sample entry (`rgan`) — ISO/IEC 23008-12:2025 11.4.2.2.2.
+///
+/// A `MetadataSampleEntry` whose mandatory `rgaC` child states the reference
+/// space its samples' regions are placed in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct RegionSampleEntry {
+    data_reference_index: u16,
+    config: RegionTrackConfigBox,
+}
+
+impl RegionSampleEntry {
+    /// An entry carrying `config`.
+    #[must_use]
+    pub const fn new(config: RegionTrackConfigBox) -> Self {
+        Self {
+            data_reference_index: 1,
+            config,
+        }
+    }
+
+    /// The entry's `data_reference_index` (ISO/IEC 14496-12:2026 §8.5.2.2).
+    #[must_use]
+    pub const fn data_reference_index(&self) -> u16 {
+        self.data_reference_index
+    }
+
+    /// The mandatory `rgaC` configuration.
+    #[must_use]
+    pub const fn config(&self) -> &RegionTrackConfigBox {
+        &self.config
+    }
+
+    /// Parse the complete box, header included.
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        let (data_reference_index, rest) =
+            crate::meta_track::parse_sample_entry_base(bytes, "rgan")?;
+        Ok(Self {
+            data_reference_index,
+            config: RegionTrackConfigBox::parse(rest)?,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for RegionSampleEntry {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        crate::image::expect_type(bytes, &RGAN, "rgan")?;
+        Self::parse_box(bytes)
+    }
+}
+
+impl Serialize for RegionSampleEntry {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        crate::box_types::box_len(
+            BOX_HEADER_MIN_SIZE
+                + crate::meta_track::SAMPLE_ENTRY_FIXED_LEN
+                + self.config.serialized_len(),
+        )
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        let mut cursor = crate::meta_track::write_sample_entry_base(
+            buf,
+            &RGAN,
+            need,
+            self.data_reference_index,
+        )?;
+        cursor += self.config.serialize_into(&mut buf[cursor..])?;
+        Ok(cursor)
+    }
+}
+
 /// A region-track sample (11.4.2.3.2).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -999,6 +1083,17 @@ impl RegionAnnotationMap {
         Ok(Self { entries })
     }
 
+    /// Bytes the entry body occupies.
+    #[must_use]
+    pub fn body_len(&self) -> usize {
+        self.entries.iter().fold(WIDE_FIELD_LEN, |total, entry| {
+            total
+                + WIDE_FIELD_LEN
+                + NARROW_FIELD_LEN
+                + entry.associations.len() * REGM_ASSOCIATION_LEN
+        })
+    }
+
     /// Write the `regm` sample group entry body.
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         let mut out = Vec::new();
@@ -1107,6 +1202,16 @@ impl UserDescriptionSampleGroupEntry {
             description: strings.next().unwrap_or_default(),
             tags: strings.next().unwrap_or_default(),
         })
+    }
+
+    /// Bytes the entry body occupies.
+    #[must_use]
+    pub fn body_len(&self) -> usize {
+        self.lang.len()
+            + self.name.len()
+            + self.description.len()
+            + self.tags.len()
+            + UDES_CSTRING_COUNT
     }
 
     /// Write the sample group entry body.
