@@ -279,9 +279,7 @@ pub(crate) fn report_driver_progress<S: media_plane::ingress::IngestSession>(
     // report's own kind and severity are the labels.
     for event in driver.take_damage() {
         if let media_plane::ingress::SessionEvent::Damage {
-            program,
-            damage,
-            ..
+            program, damage, ..
         } = event
         {
             let route = route_handle.name().to_string();

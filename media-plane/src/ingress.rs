@@ -547,6 +547,16 @@ pub enum SessionEvent {
     },
 }
 
+impl SessionEvent {
+    /// A damage report attributed to `program` when it was known — the
+    /// constructor a session implemented outside this crate uses, since
+    /// `SessionEvent` is `#[non_exhaustive]`.
+    #[must_use]
+    pub fn damage(program: Option<ProgramId>, damage: broadcast_core::damage::Damage) -> Self {
+        SessionEvent::Damage { program, damage }
+    }
+}
+
 /// The sans-IO ingress drive contract: a specialisation of [`Stage`] whose
 /// output is [`SessionEvent`] — see
 /// [the module docs](self#ingestsession-is-a-stage-matching-bytestages-precedent).
@@ -2185,6 +2195,93 @@ mod tests {
     /// fail — `track_ids` still reads back `[1]` instead of `[1, 2]`, and
     /// `track_generation()` stays at `1` instead of advancing to `2`.
     /// Recompiled and re-run to confirm the failure, then reverted.
+    /// The reports a session publishes are kept for the host, in order and
+    /// with their program, not merely counted.
+    ///
+    /// MUTATION VERIFIED: replacing `self.damage.reports.push_back(event)` in
+    /// `drain` with nothing (counting only) makes `take_damage` return an
+    /// empty list and both assertions below fail; reverted.
+    #[test]
+    fn a_damage_report_is_kept_for_the_host_and_counted() {
+        let report = broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::MediaUnitDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "PES packet",
+        )
+        .for_track(3)
+        .with_ordinal(7);
+        let session = ScriptedSession::new(vec![FeedOutcome::Events(vec![
+            SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(TrackId::new(3))],
+            },
+            SessionEvent::damage(Some(ProgramId(1)), report.clone()),
+        ])]);
+        let mut dialer = ScriptedDialer {
+            sessions: VecDeque::from(vec![session]),
+            fail_with: FakeError("unused"),
+        };
+        let mut driver = run_dial(&mut dialer, trunk_config(), handshake(), max_programs())
+            .expect("fake dial succeeds");
+        driver.feed(b"x", Timestamp::from_nanos(0));
+        assert_eq!(driver.damage_report_count(), 1);
+        let kept = driver.take_damage();
+        assert_eq!(kept.len(), 1, "the report itself, not only its count");
+        match &kept[0] {
+            SessionEvent::Damage { program, damage } => {
+                assert_eq!(*program, Some(ProgramId(1)));
+                assert_eq!(damage, &report);
+                assert_eq!(damage.location().track(), Some(3));
+                assert_eq!(damage.location().ordinal(), Some(7));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+        assert!(
+            driver.take_damage().is_empty(),
+            "draining empties the queue"
+        );
+    }
+
+    /// A sample for a program that was never admitted is reported once per
+    /// track: the run of frames is one report, not one per sample.
+    #[test]
+    fn a_sample_for_an_unadmitted_program_is_reported_once_per_track() {
+        let session = ScriptedSession::new(vec![FeedOutcome::Events(vec![
+            SessionEvent::Sample {
+                program: ProgramId(9),
+                track_id: TrackId::new(4),
+                retention: RetentionClass::Timed,
+                sample: sample(0x11),
+            },
+            SessionEvent::Sample {
+                program: ProgramId(9),
+                track_id: TrackId::new(4),
+                retention: RetentionClass::Timed,
+                sample: sample(0x11),
+            },
+        ])]);
+        let mut dialer = ScriptedDialer {
+            sessions: VecDeque::from(vec![session]),
+            fail_with: FakeError("unused"),
+        };
+        let mut driver = run_dial(&mut dialer, trunk_config(), handshake(), max_programs())
+            .expect("fake dial succeeds");
+        driver.feed(b"x", Timestamp::from_nanos(0));
+        let kept = driver.take_damage();
+        assert_eq!(kept.len(), 1, "coalesced by (program, track)");
+        match &kept[0] {
+            SessionEvent::Damage { program, damage } => {
+                assert_eq!(*program, Some(ProgramId(9)));
+                assert_eq!(
+                    damage.kind(),
+                    broadcast_core::damage::DamageKind::TrackDropped
+                );
+                assert_eq!(damage.location().track(), Some(4));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
     #[test]
     fn tracks_changed_replaces_the_set_and_bumps_generation() {
         let session = ScriptedSession::new(vec![

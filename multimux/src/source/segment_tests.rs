@@ -1888,6 +1888,83 @@ fn an_init_from_event_publishes_the_init_on_the_route() {
     );
 }
 
+/// A session that publishes one damage report and then nothing.
+struct DamageSession {
+    report: Option<broadcast_core::damage::Damage>,
+}
+
+impl Stage for DamageSession {
+    type In<'a> = &'a [u8];
+    type Out = SessionEvent;
+    type Error = Infallible;
+
+    fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn poll(&mut self) -> Option<SessionEvent> {
+        self.report
+            .take()
+            .map(|damage| SessionEvent::damage(Some(ProgramId(1)), damage))
+    }
+
+    fn finish(&mut self) -> Result<(), Infallible> {
+        Ok(())
+    }
+
+    fn demand(&self) -> Demand {
+        Demand::new(1)
+    }
+}
+
+impl IngestSession for DamageSession {
+    type Request = bytes::Bytes;
+}
+
+/// One report an input publishes reaches the route's metrics (and, by the same
+/// call, its log): `report_driver_progress` is the one place an input's events
+/// are fanned out, so its counter is the observable proof.
+#[test]
+fn an_input_damage_report_reaches_the_route_metrics() {
+    crate::prometheus::install();
+    let route = RouteHandle::new(
+        RouteConfig::default()
+            .with_target_duration(Duration::from_secs(1))
+            .with_part_target(Duration::from_millis(250))
+            .with_window_segments(4),
+    )
+    .with_name("source-damage-probe");
+    let report = broadcast_core::damage::Damage::new(
+        broadcast_core::damage::DamageKind::MediaUnitDropped,
+        broadcast_core::damage::Severity::Degraded,
+        "PES packet",
+    )
+    .for_track(2);
+    let mut driver = IngestDriver::new(
+        DamageSession {
+            report: Some(report),
+        },
+        media_plane::IngestConfig::new(handshake()).with_trunk(trunk_config()),
+    );
+    driver.feed(b"x", Timestamp::from_nanos(0));
+    let mut published = HashSet::new();
+    report_driver_progress(&mut driver, &route, &mut published);
+    assert_eq!(
+        rendered_total("multimux_source_damage_total", "source-damage-probe"),
+        Some(1.0)
+    );
+    assert!(
+        driver.take_damage().is_empty(),
+        "the driver hands each report on exactly once"
+    );
+    report_driver_progress(&mut driver, &route, &mut published);
+    assert_eq!(
+        rendered_total("multimux_source_damage_total", "source-damage-probe"),
+        Some(1.0),
+        "nothing new, nothing counted"
+    );
+}
+
 #[test]
 fn an_idle_route_creates_no_production_counters() {
     crate::prometheus::install();
