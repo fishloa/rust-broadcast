@@ -6,7 +6,9 @@
 //! where `ffprobe` applies the edit list) the magnitude of the first packet's
 //! negative `pts` under `-ignore_editlist 1`.
 
-use transmux::{GaplessTrim, Sample, TrackId, TrackSpec};
+#[cfg(feature = "codec")]
+use transmux::TrackId;
+use transmux::{GaplessTrim, Sample, TrackSpec};
 
 fn audio_spec(specs: &[TrackSpec]) -> &TrackSpec {
     specs
@@ -91,6 +93,7 @@ fn an_mp4_opus_remux_keeps_its_d_ops_priming() {
     );
 }
 
+#[cfg(feature = "codec")]
 #[test]
 fn the_stage_conversion_carries_padding_both_ways() {
     let specs = mp4_specs("mp4/opus.mp4");

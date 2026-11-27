@@ -8,7 +8,7 @@
 //!
 //! `ffmpeg-next` 8.1 exposes no extradata getter, so the adapter reads
 //! `AVCodecContext.extradata` and the encoder's `initial_padding`/`trailing_padding`
-//! through the binding's raw pointer (`src/sys.rs`, one `SAFETY` argument). A
+//! through the binding's raw pointer (`spikes/codec-libav/src/sys.rs`, one `SAFETY` argument). A
 //! transcoded AAC track therefore announces its `AudioSpecificConfig` and the
 //! encoder's priming, is muxed and demuxed, and decodes again.
 //! [`the_stage_transcodes_the_aac_track_with_libavs_decoder_and_encoder`]

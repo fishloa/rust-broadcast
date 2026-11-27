@@ -456,3 +456,46 @@ properties above met the code:
   `AudioSpecificConfig` and a re-muxed AAC track cannot be decoded again. The
   test drives the whole pipeline, checks the packets and the announced track,
   and records this rather than pretending.
+
+### The three gaps step 3 exposed (2026-11-27)
+
+The stage's first round named three things the seam or the IR could not say. All
+three are closed; the seam is 0.x and unpublished, so the signatures changed
+where the design was better for it.
+
+- **Mid-stream parameters.** `Decoder::reconfigure` takes new
+  `CodecParameters` after the caller has drained (`Ok(None)` from `receive`;
+  a decoder that still holds a frame refuses with `CodecError::Full`). A
+  decoder that cannot adopt them returns the new
+  `CodecError::CannotReconfigure`, and the default implementation is that
+  refusal, so every existing adapter kept compiling. The stage drains, calls
+  it, and on a refusal rebuilds through `TranscodeStage::factory` when the
+  caller supplied one; with neither it still reports
+  `Error::TranscodeSourceChanged`. None of the three spikes can reconfigure in
+  place (libav has no extradata setter, symphonia's decoder is built from one
+  `AudioSpecificConfig`, OxideAV opens for one stream), so each returns the
+  refusal with its reason and a caller's factory covers them.
+- **Gapless trim in the IR.** `TrackSpec::padding` carries `GaplessTrim`
+  (initial, and trailing when the container states it) and `Sample::trim`
+  carries `SampleTrim` for a per-packet signal; both are typed, private-field
+  values defaulting to "none". `Mp4Demux` reads Opus `dOps` `PreSkip` and an
+  `elst` `media_time`; `MatroskaDemux` reads `CodecDelay` (the
+  `broadcast-matroska` reader now exposes it as `TrackInfo::codec_delay_ns`).
+  The transcode conversions carry the values into `CodecParameters` and back
+  out of the encoder's reported padding. No muxer writes the trim yet: a
+  fragmented-MP4 init segment has no edit list, the Matroska writer emits no
+  `CodecDelay`, and writing either would change an existing golden. MP4's
+  `iTunSMPB` item, `sgpd`/`sbgp` `roll`/`prol`, Matroska `DiscardPadding` and
+  MP3's LAME/Xing tag are not read; see the crate's OPEN list.
+- **The encoder's configuration record.** `CodecParameters` gained
+  `ConfigurationRecord` (`Absent`/`OutOfBand`/`InBand`) and
+  `CodecId::requires_configuration_record`, and the per-codec form of the
+  record is documented where a caller looks for it. The stage derives an
+  `InBand` record from the first access unit — ADTS → `AudioSpecificConfig`,
+  SPS/PPS → `avcC` — through one function per family in `transcode::bridge`;
+  HEVC/VVC in-band derivation has no builder there yet (OPEN). The libav
+  adapter now reads `AVCodecContext.extradata` and the encoder's
+  `initial_padding`/`trailing_padding` through one `unsafe` pointer read, so
+  the AAC round trip (packets, sample count after trim, loudness) completes:
+  132 packets, 134 144 samples, −21.798 LUFS against the direct decode's
+  −21.796.
