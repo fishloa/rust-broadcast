@@ -9,6 +9,7 @@ use broadcast_codec::{
     Direction, Encoder, Frame, Packet, PixelFormat, Registry, SampleFormat, SampleLayout,
     VideoFrame, VideoStorage,
 };
+use broadcast_bitstream::{MpegAudioFrameHeader, parse_lame_tag};
 use broadcast_core::Serialize;
 use broadcast_loudness::LoudnessMeter;
 use codec_libav::LibavProvider;
@@ -63,6 +64,14 @@ const RIFF_HEADER_LEN: usize = 12;
 const CHUNK_HEADER_LEN: usize = 8;
 /// Bytes of a chunk id.
 const CHUNK_ID_LEN: usize = 4;
+/// The Ogg page header length up to the segment count.
+const OGG_HEADER_BYTES: usize = 27;
+/// The offset of a page's granule position.
+const OGG_GRANULE_OFFSET: usize = 6;
+/// The width of a granule position.
+const OGG_GRANULE_BYTES: usize = 8;
+/// The offset of the `pre_skip` field in an `OpusHead`.
+const OPUS_HEAD_PRE_SKIP_OFFSET: usize = 10;
 
 /// One coded access unit, ready to send.
 #[derive(Debug, Clone)]
@@ -1215,6 +1224,157 @@ fn ffmpeg_audio_samples(fixture: &str) -> Option<usize> {
     Some(output.stdout.len() / F32_BYTES)
 }
 
+/// The LAME tag of the committed MP3 fixture, which states the encoder's
+/// priming and end padding in samples.
+fn lame_trim() -> (u32, u32) {
+    let bytes = test_fixtures::read("audio/audio.mp3");
+    for offset in 0..bytes.len().saturating_sub(4) {
+        let Ok(header) = MpegAudioFrameHeader::parse(&bytes[offset..]) else {
+            continue;
+        };
+        let end = (offset + header.frame_length()).min(bytes.len());
+        if let Some(tag) = parse_lame_tag(&bytes[offset..end]).expect("the frame parses") {
+            return (
+                tag.encoder_delay().expect("the LAME tag states the delay"),
+                tag.encoder_padding()
+                    .expect("the LAME tag states the padding"),
+            );
+        }
+    }
+    panic!("the fixture has no LAME tag");
+}
+
+/// The committed Ogg Opus fixture's container values: its `pre_skip` and the
+/// last granule position.
+fn opus_container() -> (u32, u64) {
+    let data = test_fixtures::read("audio/opus.ogg");
+    let mut pos = 0;
+    let mut head: Option<Vec<u8>> = None;
+    let mut last_granule = 0u64;
+    while pos + OGG_HEADER_BYTES <= data.len() {
+        assert_eq!(&data[pos..pos + 4], b"OggS");
+        let mut granule = [0u8; OGG_GRANULE_BYTES];
+        granule.copy_from_slice(
+            &data[pos + OGG_GRANULE_OFFSET..pos + OGG_GRANULE_OFFSET + OGG_GRANULE_BYTES],
+        );
+        last_granule = u64::from_le_bytes(granule);
+        let segments = usize::from(data[pos + 26]);
+        let table = pos + OGG_HEADER_BYTES;
+        let mut payload = table + segments;
+        let mut end = payload;
+        for index in 0..segments {
+            end += usize::from(data[table + index]);
+        }
+        if head.is_none() && segments > 0 {
+            let first = usize::from(data[table]);
+            head = Some(data[payload..payload + first].to_vec());
+        }
+        payload = end;
+        pos = payload;
+        assert!(pos <= data.len());
+    }
+    let head = head.expect("an OpusHead packet");
+    assert_eq!(&head[..8], b"OpusHead");
+    let pre_skip = u32::from(u16::from_le_bytes([
+        head[OPUS_HEAD_PRE_SKIP_OFFSET],
+        head[OPUS_HEAD_PRE_SKIP_OFFSET + 1],
+    ]));
+    (pre_skip, last_granule)
+}
+
+#[test]
+fn t15_the_declared_zero_delay_matches_ffmpeg_for_aac() {
+    let Some(reference) = ffmpeg_audio_samples(ADTS_FIXTURE) else {
+        return;
+    };
+    let Some((parameters, units)) = libav_stream(ADTS_FIXTURE, CodecId::Aac) else {
+        eprintln!("skip: the linked libav has no ADTS demuxer here");
+        return;
+    };
+    let registry = Registry::new()
+        .with(Box::new(LibavProvider::new()))
+        .expect("the libav provider registers");
+    let Ok(mut decoder) = registry.trimmed_decoder(&parameters) else {
+        eprintln!("skip: the linked libav will not open its AAC decoder here");
+        return;
+    };
+    let frames = decode(&mut *decoder, &units);
+    let count: usize = frames.iter().map(|frame| audio(frame).frames()).sum();
+    println!("aac: libav with no container trim and no delay -> {count}, ffmpeg {reference}");
+    assert_eq!(count, reference);
+}
+
+#[test]
+fn t15_the_raw_opus_trim_plus_the_declared_zero_delay_matches_ffmpeg() {
+    let Some(reference) = ffmpeg_audio_samples("audio/opus.ogg") else {
+        return;
+    };
+    let Some((parameters, units)) = libav_stream("audio/opus.ogg", CodecId::Opus) else {
+        eprintln!("skip: the linked libav has no Ogg demuxer here");
+        return;
+    };
+    let (pre_skip, last_granule) = opus_container();
+    let registry = Registry::new()
+        .with(Box::new(LibavProvider::new()))
+        .expect("the libav provider registers");
+    let Ok(mut raw) = registry.decoder(&parameters) else {
+        eprintln!("skip: the linked libav will not open its Opus decoder here");
+        return;
+    };
+    let raw_count: u64 = decode(&mut *raw, &units)
+        .iter()
+        .map(|frame| u64::try_from(audio(frame).frames()).expect("a frame length"))
+        .sum();
+    let trailing = u32::try_from(raw_count - last_granule).expect("the tail is bounded");
+    let parameters = parameters
+        .with_initial_padding(pre_skip)
+        .expect("audio parameters take padding")
+        .with_trailing_padding(trailing)
+        .expect("audio parameters take padding");
+    let Ok(mut decoder) = registry.trimmed_decoder(&parameters) else {
+        eprintln!("skip: the linked libav will not open its Opus decoder here");
+        return;
+    };
+    let frames = decode(&mut *decoder, &units);
+    let count: usize = frames.iter().map(|frame| audio(frame).frames()).sum();
+    println!(
+        "opus: raw container {pre_skip}/{trailing} + declared 0 -> {count}, ffmpeg {reference}"
+    );
+    assert_eq!(count, reference);
+}
+
+#[test]
+fn t14_the_raw_container_trim_plus_the_declared_delay_matches_ffmpeg() {
+    let Some(reference) = ffmpeg_audio_samples("audio/audio.mp3") else {
+        return;
+    };
+    let Some((parameters, units)) = libav_stream("audio/audio.mp3", CodecId::MpegAudio) else {
+        eprintln!("skip: the linked libav has no mp3 demuxer here");
+        return;
+    };
+    let (delay, padding) = lame_trim();
+    assert_eq!((delay, padding), (576, 960), "the tag's raw values");
+    let parameters = parameters
+        .with_initial_padding(delay)
+        .expect("audio parameters take padding")
+        .with_trailing_padding(padding)
+        .expect("audio parameters take padding");
+    let registry = Registry::new()
+        .with(Box::new(LibavProvider::new()))
+        .expect("the libav provider registers");
+    let Ok(mut decoder) = registry.trimmed_decoder(&parameters) else {
+        eprintln!("skip: the linked libav will not open its mp3 decoder here");
+        return;
+    };
+    let frames = decode(&mut *decoder, &units);
+    let count: usize = frames.iter().map(|frame| audio(frame).frames()).sum();
+    println!(
+        "mp3: raw container {delay}/{padding} + libav's declared delay -> {count} samples, \
+         ffmpeg {reference}"
+    );
+    assert_eq!(count, reference, "the trimmed count must equal ffmpeg's");
+}
+
 #[test]
 fn t13_the_adapter_does_not_apply_the_container_trim() {
     for (name, fixture, codec) in [
@@ -1246,13 +1406,16 @@ fn t13_the_adapter_does_not_apply_the_container_trim() {
         let frames = decode(&mut *decoder, &units);
         let count: usize = frames.iter().map(|frame| audio(frame).frames()).sum();
         println!(
-            "{name}: libav adapter {count} samples, ffmpeg {reference}; applies_trim {}",
-            descriptor.applies_trim()
+            "{name}: libav adapter {count} samples, ffmpeg {reference}; applies_container_trim {}",
+            descriptor.trim().applies_trim()
         );
-        assert_eq!(
-            descriptor.applies_trim(),
-            count == reference,
-            "{name}: the descriptor must state whether libav applied the container trim"
+        assert!(
+            !descriptor.trim().applies_trim(),
+            "{name}: the adapter returns every decoded sample, untrimmed"
+        );
+        assert_ne!(
+            count, reference,
+            "{name}: the raw decode carries the container's priming, so its count is not ffmpeg's"
         );
     }
 }

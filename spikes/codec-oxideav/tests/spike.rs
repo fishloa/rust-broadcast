@@ -132,9 +132,16 @@ fn t2_registry_selects_each_named_provider() {
 }
 
 #[test]
+fn t3_aac_sample_count_matches_ffmpeg() {
+    let parameters = support::mono_parameters(CodecId::Aac);
+    let packets = support::aac_packets();
+    check_against_ffmpeg("aac", "audio/aac.adts", &parameters, &packets, true);
+}
+
+#[test]
 fn t3_mp3_sample_count_matches_ffmpeg() {
     let (parameters, packets) = support::mp3_stream();
-    check_against_ffmpeg("mp3", "audio/audio.mp3", &parameters, &packets);
+    check_against_ffmpeg("mp3", "audio/audio.mp3", &parameters, &packets, true);
 }
 
 #[test]
@@ -146,7 +153,7 @@ fn t3_mp3_aligned_audio_matches_ffmpeg() {
 #[test]
 fn t3_opus_sample_count_matches_ffmpeg() {
     let (parameters, packets) = support::opus_stream();
-    check_against_ffmpeg("opus", "audio/opus.ogg", &parameters, &packets);
+    check_against_ffmpeg("opus", "audio/opus.ogg", &parameters, &packets, true);
 }
 
 #[test]
@@ -160,7 +167,7 @@ fn t3_pcm_matches_ffmpeg() {
     let bytes = support::pcm_bytes();
     let packets = support::pcm_packets(&bytes);
     let parameters = support::mono_parameters(CodecId::Pcm);
-    check_against_ffmpeg("pcm", "audio/pcm-s16le.wav", &parameters, &packets);
+    check_against_ffmpeg("pcm", "audio/pcm-s16le.wav", &parameters, &packets, false);
 }
 
 #[test]
@@ -192,6 +199,10 @@ fn t4_inventory_is_the_run_time_table() {
     let library = providers[0].library().expect("a library is named");
     assert!(library.contains("oxideav-aac 0.1.7"), "{library}");
     assert!(library.contains("oxideav-opus 0.0.15"), "{library}");
+    assert!(
+        table.contains("529"),
+        "the MPEG audio implementation's measured delay is shown:\n{table}"
+    );
 }
 
 /// Build a registry holding both providers, with fresh call counters.
@@ -261,6 +272,7 @@ fn check_against_ffmpeg(
     fixture: &str,
     parameters: &broadcast_codec::CodecParameters,
     packets: &[Vec<u8>],
+    require_alignment: bool,
 ) {
     let Some(comparison) = compare_with_ffmpeg(name, fixture, parameters, packets, true) else {
         return;
@@ -274,6 +286,12 @@ fn check_against_ffmpeg(
         "{name}: RMS difference {:.9} exceeds {RMS_TOLERANCE}",
         comparison.rms
     );
+    if require_alignment {
+        assert_eq!(
+            comparison.offset, 0,
+            "{name}: the trimmed stream must start at ffmpeg's first sample"
+        );
+    }
 }
 
 /// Decode through OxideAV, compare with ffmpeg over the aligned content, and
