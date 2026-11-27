@@ -111,6 +111,15 @@ pub enum MuxOutput {
     Init(Bytes),
     /// One finished media segment and its summary.
     Segment(Box<SegmentOut>),
+    /// The media timeline breaks before the next output unit.
+    ///
+    /// A muxer whose format has no in-stream marker (LL-DASH chunks: the break
+    /// is a new `Period` in the manifest) emits this so its caller renders the
+    /// break instead of the stage silently dropping [`MuxInput::Discontinuity`].
+    Discontinuity {
+        /// The track the break applies to; `None` for all tracks.
+        track: Option<TrackId>,
+    },
     /// A rendered playlist or manifest.
     Text(String),
 }

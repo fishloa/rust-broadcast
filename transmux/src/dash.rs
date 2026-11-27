@@ -11,7 +11,9 @@
 //! - **MPD** (§5.3.1) — the root element; namespace
 //!   `urn:mpeg:dash:schema:mpd:2011`, a `profiles` attribute (§5.3.1.2), and a
 //!   `type` of `static` (VOD) or `dynamic` (live).
-//! - **Period** (§5.3.2) — a single period covering the presentation.
+//! - **Period** (§5.3.2) — every contiguous run of segments until a timeline
+//!   break; a break opens a new `Period` with its own
+//!   `SegmentTemplate@presentationTimeOffset` (see "Timeline discontinuity").
 //! - **`AdaptationSet`** (§5.3.3) — one per media kind (video / audio), carrying
 //!   the common `mimeType` (`video/mp4` / `audio/mp4`).
 //! - **`Representation`** (§5.3.5) — one per track, with
@@ -67,6 +69,16 @@
 //! `private/specs-verified/dash/docs-specs/23009-1/dash-23009-1-2022-aspect.md` (5th edition; the 2026
 //! 6th edition is paywalled and was not checked).
 //!
+//! # Timeline discontinuity
+//!
+//! A discontinuity is a new `Period` (ISO/IEC 23009-1 §5.3.2). The segments the
+//! [`SegmentSummaryLog`] recorded split at every period boundary it holds
+//! ([`SegmentSummaryLog::period_boundaries`], fed from each discontinuous
+//! segment): the previous Period closes with a `@duration` and the next starts
+//! where it closed, its `SegmentTemplate@presentationTimeOffset` mapping that
+//! track's continuing media clock onto the presentation timeline (§5.3.9.4,
+//! Table 16) and its `@startNumber` continuing where the last one stopped.
+//!
 //! # CENC/CBCS signalling (issue #564)
 //!
 //! When any [`TrackProtection`](crate::TrackProtection) in an
@@ -102,14 +114,14 @@ use core::time::Duration;
 use crate::error::{Error, Result};
 use crate::ir::{TrackId, TrackSpec};
 use crate::pipeline::CodecConfig;
-use crate::segment_log::{SegmentSummaryLog, TrackSummary};
+use crate::segment_log::{PeriodBoundary, SegmentSummaryLog, TrackSummary};
 use broadcast_bitstream::aac_asc::AudioSpecificConfig;
 use broadcast_bitstream::codec_config_ext::EsdsBoxCodecInfo;
 use broadcast_bitstream::codec_config_ext::{HevcRecordCodecInfo, VvcRecordCodecInfo};
 use broadcast_bitstream::nalu_ext::AvcSpsCodecInfo;
 use broadcast_bitstream::rfc6381::rfc6381_avc1;
 use broadcast_core::error::InvalidField;
-use broadcast_core::timescale::Timescale;
+use broadcast_core::timescale::{Rounding, Timescale, rescale_i64};
 use broadcast_dash::{
     AdaptationSet, Descriptor, Mpd, Period, PresentationType, Representation, SegmentTemplate,
     SegmentTimeline, TimelineEntry,
@@ -529,8 +541,19 @@ struct ReprInfo<'a> {
     /// This track's segments, oldest first, when the log holds any.
     segments: Option<TrackSummary<'a>>,
     /// Per-segment durations for `$Time$` addressing, from the caller's
-    /// [`TrackSegments`] entry.
+    /// [`TrackSegments`] entry (or, in a multi-period MPD, from this period's
+    /// segments).
     segment_durations: Option<Vec<u64>>,
+    /// `SegmentTemplate@presentationTimeOffset` for a multi-period MPD: the
+    /// media time this period starts at, so it maps onto the continuing
+    /// presentation timeline. `None` for the single-period path.
+    presentation_time_offset: Option<u64>,
+    /// `SegmentTemplate@startNumber` for a period that does not open the
+    /// presentation. `None` keeps [`DashPackager::start_number`].
+    segment_start_number: Option<u64>,
+    /// The first `SegmentTimeline` entry's `@t`: the period's media start
+    /// (`0` for the single-period path, whose goldens state `t=0`).
+    timeline_start: u64,
     /// `@lang` resolved from the track's `ISO_639_language_descriptor`
     /// (audio only — see [`lang_from_es_info`]).
     lang: Option<String>,
@@ -725,6 +748,9 @@ impl DashPackager {
                 .iter()
                 .find(|s| s.track_id == spec.track_id)
                 .map(|s| s.durations.clone()),
+            presentation_time_offset: None,
+            segment_start_number: None,
+            timeline_start: 0,
             lang,
             encryption_scheme,
             encryption_kid,
@@ -857,7 +883,10 @@ impl DashPackager {
     }
 
     /// Build the MPD model for the resolved representations.
-    fn render_reprs(&self, reprs: &[ReprInfo<'_>]) -> Result<Mpd> {
+    fn render_mpd(
+        &self,
+        periods: &[(Vec<ReprInfo<'_>>, Duration, Option<Duration>)],
+    ) -> Result<Mpd> {
         if self.dynamic && self.publish_time.is_none() {
             return Err(Error::InvalidField(InvalidField {
                 field: "MPD@publishTime",
@@ -899,8 +928,9 @@ impl DashPackager {
                 .as_deref()
                 .map(|v| parse_span("MPD@suggestedPresentationDelay", v))
                 .transpose()?;
-        } else {
-            let max_tenths = reprs
+        } else if periods.len() == 1 && periods[0].2.is_none() {
+            let max_tenths = periods[0]
+                .0
                 .iter()
                 .map(|r| {
                     div_round(
@@ -913,11 +943,46 @@ impl DashPackager {
             mpd.media_presentation_duration = Some(Duration::from_millis(
                 max_tenths.saturating_mul(MILLIS_PER_TENTH),
             ));
+        } else {
+            let total = periods
+                .iter()
+                .filter_map(|(_, _, duration)| *duration)
+                .fold(Duration::ZERO, |total, duration| {
+                    total.saturating_add(duration)
+                });
+            let tenths = div_round(
+                u64::try_from(total.as_millis()).unwrap_or(u64::MAX),
+                MILLIS_PER_TENTH,
+            );
+            mpd.media_presentation_duration = Some(Duration::from_millis(
+                tenths.saturating_mul(MILLIS_PER_TENTH),
+            ));
         }
 
+        for (index, (reprs, start, duration)) in periods.iter().enumerate() {
+            mpd.periods
+                .push(self.render_period(index, reprs, *start, *duration)?);
+        }
+        Ok(mpd)
+    }
+
+    /// One `Period` (ISO/IEC 23009-1 §5.3.2) over `reprs`, starting at
+    /// `start` on the presentation timeline and lasting `duration`.
+    fn render_period(
+        &self,
+        index: usize,
+        reprs: &[ReprInfo<'_>],
+        start: Duration,
+        duration: Option<Duration>,
+    ) -> Result<Period> {
         let mut period = Period::default();
-        period.id = Some(PERIOD_ID.to_string());
-        period.start = Some(Duration::ZERO);
+        period.id = Some(if index == 0 {
+            PERIOD_ID.to_string()
+        } else {
+            format!("{index}")
+        });
+        period.start = Some(start);
+        period.duration = duration;
 
         // One AdaptationSet per (kind, @lang, codec family) — ISO/IEC 23009-1
         // §5.3.3: the Representations inside one AdaptationSet are seamlessly
@@ -969,8 +1034,7 @@ impl DashPackager {
             period.adaptation_sets.push(self.trick_adaptation_set(tm));
         }
 
-        mpd.periods.push(period);
-        Ok(mpd)
+        Ok(period)
     }
 
     fn next_free_id(&self, next_id: &mut u32) -> u32 {
@@ -1096,7 +1160,7 @@ impl DashPackager {
     ///   `SegmentTimeline`, never both (§5.3.9.2.2 L1381), so `@duration` is
     ///   omitted here.
     fn segment_template(&self, r: &ReprInfo<'_>) -> SegmentTemplate {
-        match self.addressing {
+        let mut st = match self.addressing {
             Addressing::Number => {
                 // The caller's own segmentation wins when it supplied one
                 // (the nominal `@duration` must match the files it wrote);
@@ -1115,10 +1179,18 @@ impl DashPackager {
                 let mut st = self.base_template(r.timescale, &self.media_template_time);
                 st.multi.timeline = Some(segment_timeline(
                     r.segment_durations.as_deref().unwrap_or_default(),
+                    r.timeline_start,
                 ));
                 st
             }
+        };
+        if let Some(offset) = r.presentation_time_offset {
+            st.multi.base.presentation_time_offset = Some(offset);
         }
+        if let Some(number) = r.segment_start_number {
+            st.multi.start_number = Some(number);
+        }
+        st
     }
 
     fn number_template(&self, timescale: Timescale, duration: u64) -> SegmentTemplate {
@@ -1197,6 +1269,15 @@ impl DashPackager {
         for spec in tracks {
             reprs.push(self.repr_info(spec, log.track(spec.track_id))?);
         }
+        match self.period_reprs(tracks, &reprs, log) {
+            Some(periods) => self.render_mpd(periods.as_slice()),
+            None => self.render_single(reprs),
+        }
+    }
+
+    /// The single-period MPD the packager has always written (and whose
+    /// output the goldens pin): one `Period` starting at zero.
+    fn render_single(&self, reprs: Vec<ReprInfo<'_>>) -> Result<Mpd> {
         // Addressing::Timeline needs an explicit, non-empty duration list per
         // track (ISO/IEC 23009-1 §5.3.9.6) — there is no whole-track fallback
         // for $Time$/SegmentTimeline the way there is for $Number$.
@@ -1210,8 +1291,138 @@ impl DashPackager {
                 }
             }
         }
-        self.render_reprs(&reprs)
+        self.render_mpd(&[(reprs, Duration::ZERO, None)])
     }
+
+    /// Slice the log into presentation periods at every recorded boundary
+    /// (ISO/IEC 23009-1 §5.3.2). `None` when the boundaries do not split the
+    /// presentation into two or more non-empty periods (a break at the very
+    /// first segment has nothing before it to close).
+    fn period_reprs<'a>(
+        &self,
+        tracks: &[TrackSpec],
+        reprs: &[ReprInfo<'a>],
+        log: &SegmentSummaryLog,
+    ) -> Option<Vec<(Vec<ReprInfo<'a>>, Duration, Option<Duration>)>> {
+        let mut slices: Vec<Vec<SegmentSlice>> = Vec::with_capacity(tracks.len());
+        for spec in tracks {
+            slices.push(track_slices(&log.track(spec.track_id)?));
+        }
+        let mut cuts: Vec<(u64, Vec<PeriodBoundary>)> = Vec::new();
+        for boundary in log.period_boundaries() {
+            match cuts.last_mut() {
+                Some((sequence, group)) if *sequence == boundary.sequence => {
+                    group.push(*boundary);
+                }
+                _ => cuts.push((boundary.sequence, alloc::vec![*boundary])),
+            }
+        }
+        if cuts.is_empty() {
+            return None;
+        }
+        let mut cut_indices: Vec<Vec<usize>> = Vec::with_capacity(tracks.len());
+        for (t, spec) in tracks.iter().enumerate() {
+            let mut indices = Vec::with_capacity(cuts.len());
+            for (_, group) in &cuts {
+                let reference = group[0];
+                let start = group
+                    .iter()
+                    .find(|boundary| boundary.track == spec.track_id)
+                    .map_or_else(
+                        || {
+                            Timescale::try_new(reference.timescale).map_or(
+                                reference.start,
+                                |from| {
+                                    rescale_i64(
+                                        i64::try_from(reference.start).unwrap_or(i64::MAX),
+                                        from,
+                                        spec.timescale,
+                                        Rounding::Floor,
+                                    )
+                                    .max(0) as u64
+                                },
+                            )
+                        },
+                        |boundary| boundary.start,
+                    );
+                indices.push(slices[t].partition_point(|s| s.start < start));
+            }
+            cut_indices.push(indices);
+        }
+        let mut periods = Vec::new();
+        let mut presentation = Duration::ZERO;
+        for k in 0..=cuts.len() {
+            let mut period_reprs = Vec::new();
+            let mut duration = Duration::ZERO;
+            for (t, spec) in tracks.iter().enumerate() {
+                let lo = if k == 0 { 0 } else { cut_indices[t][k - 1] };
+                let hi = if k == cuts.len() {
+                    slices[t].len()
+                } else {
+                    cut_indices[t][k]
+                };
+                if lo >= hi {
+                    continue;
+                }
+                let slice = &slices[t][lo..hi];
+                let mut r = reprs[t].clone();
+                r.segment_durations = Some(slice.iter().map(|s| s.duration).collect());
+                r.presentation_time_offset = Some(slice[0].start);
+                r.timeline_start = slice[0].start;
+                r.segment_start_number = Some(
+                    self.start_number
+                        .saturating_add(u64::try_from(lo).unwrap_or(u64::MAX)),
+                );
+                r.total_duration = slice.iter().map(|s| s.duration).sum();
+                let end = slice
+                    .last()
+                    .map(|s| s.start.saturating_add(s.duration))
+                    .unwrap_or(0);
+                duration = duration.max(duration_from_ticks(
+                    end.saturating_sub(slice[0].start),
+                    spec.timescale,
+                ));
+                period_reprs.push(r);
+            }
+            if period_reprs.is_empty() {
+                continue;
+            }
+            periods.push((period_reprs, presentation, Some(duration)));
+            presentation = presentation.saturating_add(duration);
+        }
+        (periods.len() >= 2).then_some(periods)
+    }
+}
+
+/// One retained segment's media span, as a period slice needs it.
+#[derive(Debug, Clone, Copy)]
+struct SegmentSlice {
+    start: u64,
+    duration: u64,
+}
+
+/// Expand a track's run-length-coded segments into one entry per segment.
+fn track_slices(summary: &TrackSummary<'_>) -> Vec<SegmentSlice> {
+    let mut out = Vec::new();
+    for run in summary.runs() {
+        let count = usize::try_from(run.segments).unwrap_or(usize::MAX);
+        for index in 0..count {
+            out.push(SegmentSlice {
+                start: run
+                    .start
+                    .saturating_add(run.duration.saturating_mul(index as u64)),
+                duration: run.duration,
+            });
+        }
+    }
+    out
+}
+
+/// `ticks` in `timescale` as a [`Duration`], rounded down.
+fn duration_from_ticks(ticks: u64, timescale: Timescale) -> Duration {
+    let nanos = u128::from(ticks).saturating_mul(broadcast_common::units::NANOS_PER_SEC as u128)
+        / u128::from(timescale.as_u64());
+    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 
 // ---------------------------------------------------------------------------
@@ -1433,7 +1644,7 @@ fn format_kid(kid: &[u8; KEY_ID_LEN]) -> String {
 /// `S` — every later run's start time is the spec-default derivation
 /// (`prev S@t + prev@d * (prev@r+1)`, L1791), which this list satisfies by
 /// construction (no gaps/discontinuities are modelled here).
-fn segment_timeline(durations: &[u64]) -> SegmentTimeline {
+fn segment_timeline(durations: &[u64], start: u64) -> SegmentTimeline {
     let mut timeline = SegmentTimeline::default();
     let mut idx = 0usize;
     while idx < durations.len() {
@@ -1444,7 +1655,7 @@ fn segment_timeline(durations: &[u64]) -> SegmentTimeline {
         }
         let mut entry = TimelineEntry::new(d);
         if idx == 0 {
-            entry.t = Some(0);
+            entry.t = Some(start);
         }
         entry.r = i64::try_from(run - 1).unwrap_or(i64::MAX);
         timeline.entries.push(entry);

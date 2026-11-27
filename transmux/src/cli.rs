@@ -45,7 +45,7 @@ use crate::pipeline::{FragmentTrackData, build_init_segment, build_media_segment
 use crate::plan_pass::PlanPass;
 use crate::progressive::ProgressiveMuxStage;
 use crate::ps_demux::StreamingPsDemux;
-use crate::segment_log::SegmentSummaryLog;
+use crate::segment_log::{PeriodBoundary, SegmentSummaryLog};
 use crate::segmenter::{MediaClock, Segmenter, choose_anchor};
 use crate::ts_demux::StreamingTsDemux;
 use crate::ts_hls::StreamingTsHlsSegmenter;
@@ -1495,17 +1495,18 @@ impl DashStream {
                 }
                 self.drain_tracks(false)
             }
-            MuxInput::Discontinuity { .. } => Err(crate::Error::UnsupportedFeature(
-                "a single-period DASH MPD cannot signal a timeline discontinuity",
-            )
-            .into()),
+            MuxInput::Discontinuity { track } => {
+                self.segmenter
+                    .feed(MuxInput::Discontinuity { track }, Timestamp::ZERO)?;
+                self.process_segments()
+            }
             MuxInput::Flush => {
                 self.finish_segmenter()?;
                 self.finish_tracks()
             }
             MuxInput::Track(_) => Ok(()),
             MuxInput::TrackRemoved { .. } => Err(crate::Error::UnsupportedFeature(
-                "a single-period DASH MPD names a fixed set of Representations",
+                "a DASH MPD names a fixed set of Representations for the session",
             )
             .into()),
         }
@@ -1545,6 +1546,14 @@ impl DashStream {
             let scale = u64::from(state.spec.timescale.get());
             let start = self.prev_end.saturating_mul(scale) / self.anchor_scale;
             let end_ticks = end.saturating_mul(scale) / self.anchor_scale;
+            if segment.summary.discontinuous {
+                self.log.push_boundary(PeriodBoundary {
+                    sequence: segment.summary.sequence,
+                    track: state.spec.track_id,
+                    start,
+                    timescale: state.spec.timescale.get(),
+                });
+            }
             state.boundaries.push_back((start, end_ticks));
         }
         self.prev_end = end;

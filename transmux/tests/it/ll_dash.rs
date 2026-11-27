@@ -1033,3 +1033,49 @@ fn ll_dash_demand_is_saturated_exactly_at_the_pending_bound() {
 // ===========================================================================
 // Whole-`Media` packaging — equal decode time merges the non-anchor track first
 // ===========================================================================
+
+// ── Issue #4154: a break is handed to the caller as a period boundary ──────
+
+/// A chunk stream cannot state a break itself; the MPD does, as a new Period.
+/// The segmenter therefore emits `MuxOutput::Discontinuity` in place, so a
+/// caller records it in the `SegmentSummaryLog` instead of losing it.
+#[test]
+fn a_break_is_handed_to_the_caller_as_a_period_boundary() {
+    use transmux::mux_stage::MuxOutput;
+
+    let two = crate::discontinuity::forward();
+    let specs: Vec<_> = two.media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let mut segmenter = LlSegmenter::new(
+        specs,
+        broadcast_core::timescale::Timescale::try_new(1000).expect("non-zero timescale"),
+        core::time::Duration::from_secs(2),
+        1,
+    )
+    .expect("LL-DASH segmenter");
+    let outputs = crate::discontinuity::drive_fixed(&mut segmenter, &two, None)
+        .expect("a forward break is expressible");
+    let marks: Vec<Option<transmux::TrackId>> = outputs
+        .iter()
+        .filter_map(|output| match output {
+            MuxOutput::Discontinuity { track } => Some(*track),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(marks, vec![None], "the break reaches the caller once");
+    let index = outputs
+        .iter()
+        .position(|output| matches!(output, MuxOutput::Discontinuity { .. }))
+        .expect("the break is in the output");
+    assert!(
+        outputs[..index]
+            .iter()
+            .any(|output| matches!(output, MuxOutput::Bytes(_))),
+        "chunks precede the break"
+    );
+    assert!(
+        outputs[index + 1..]
+            .iter()
+            .any(|output| matches!(output, MuxOutput::Bytes(_))),
+        "chunks follow it"
+    );
+}

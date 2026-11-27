@@ -57,6 +57,18 @@
 //! packager: it requires a wall-clock capture timestamp per segment that the
 //! samples-in IR does not carry. A caller with that timing can add it out of
 //! band; its absence does not affect the availability signalling above.
+//!
+//! # Timeline discontinuity
+//!
+//! A CMAF chunk carries its own `tfdt`, so a decode-time jump is readable in
+//! the chunk stream, but the DASH presentation states it as a new `Period`
+//! (ISO/IEC 23009-1 §5.3.2) whose `SegmentTemplate@presentationTimeOffset`
+//! maps the continuing media clock onto the presentation timeline.
+//! [`MuxInput::Discontinuity`] therefore emits
+//! [`MuxOutput::Discontinuity`](crate::mux_stage::MuxOutput::Discontinuity),
+//! which the caller records as a period boundary in
+//! [`SegmentSummaryLog`](crate::segment_log::SegmentSummaryLog); the packager
+//! renders the periods from it.
 
 use crate::TrackId;
 use alloc::collections::VecDeque;
@@ -473,9 +485,13 @@ impl Stage for LlSegmenter {
     fn feed(&mut self, input: MuxInput, _now: Timestamp) -> Result<()> {
         match input {
             MuxInput::Sample { track, sample } => self.push(track, sample),
-            // A chunk carries its own `tfdt`, so a decode-time jump needs no
-            // separate signalling in the LL-DASH chunk stream.
-            MuxInput::Discontinuity { .. } => Ok(()),
+            // A chunk carries its own `tfdt`, but the break is a new `Period`
+            // in the MPD, which only the caller can render: hand it on rather
+            // than dropping it.
+            MuxInput::Discontinuity { track } => {
+                self.ready.push_back(MuxOutput::Discontinuity { track });
+                Ok(())
+            }
             MuxInput::Flush => self.flush(),
             MuxInput::Track(_) => Err(Error::InvalidInput(
                 "an LlSegmenter's track set is fixed at construction; start a new \

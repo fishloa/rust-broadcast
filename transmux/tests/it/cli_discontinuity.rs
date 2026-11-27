@@ -11,8 +11,7 @@
 //! rather than dropping the event.
 #![cfg(feature = "cli")]
 
-use transmux::cli::{CliError, Opts, Output, OutputFormat, run_bytes};
-use transmux::error::Error;
+use transmux::cli::{Opts, Output, OutputFormat, run_bytes};
 use transmux::{DemuxEvent, DiscontinuityKind, StreamingTsDemux};
 
 /// One real capture, played twice: the seam is the timeline break under test.
@@ -71,10 +70,6 @@ fn ts_bytes(data: &[u8]) -> Vec<u8> {
         Output::Manifest { .. } => panic!("ts: expected bytes"),
         _ => panic!("ts: unexpected output"),
     }
-}
-
-fn is_unsupported(error: &CliError) -> bool {
-    matches!(error, CliError::Transmux(Error::UnsupportedFeature(_)))
 }
 
 #[test]
@@ -141,11 +136,61 @@ fn continuous_capture_ts_output_signals_no_break() {
 }
 
 #[test]
-fn dash_output_refuses_the_break_with_a_typed_error() {
-    let error = run_bytes(&broken_capture(), &opts(OutputFormat::Dash))
-        .expect_err("a single-period MPD has no way to signal the break");
+fn dash_output_writes_a_period_per_break() {
+    let text = manifest(&broken_capture(), OutputFormat::Dash);
+    let mpd = broadcast_dash::Mpd::parse(text.as_bytes()).expect("the rendered MPD parses");
     assert!(
-        is_unsupported(&error),
-        "expected a typed refusal, got: {error}"
+        mpd.periods.len() >= 2,
+        "the break must open a new Period, got {} period(s):\n{text}",
+        mpd.periods.len()
     );
+    let mut expected_start = std::time::Duration::ZERO;
+    let mut offsets = Vec::new();
+    for (index, period) in mpd.periods.iter().enumerate() {
+        assert_eq!(
+            period.start,
+            Some(expected_start),
+            "period {index} starts where the previous one closed"
+        );
+        let duration = period
+            .duration
+            .unwrap_or_else(|| panic!("period {index} states a duration"));
+        let mut period_offsets = Vec::new();
+        for set in &period.adaptation_sets {
+            for representation in &set.representations {
+                let template = representation
+                    .segment
+                    .template
+                    .as_ref()
+                    .expect("every Representation has a SegmentTemplate");
+                period_offsets.push(
+                    template
+                        .multi
+                        .base
+                        .presentation_time_offset
+                        .unwrap_or_else(|| {
+                            panic!("period {index} states a presentationTimeOffset")
+                        }),
+                );
+            }
+        }
+        assert!(
+            !period_offsets.is_empty(),
+            "period {index} carries a Representation"
+        );
+        if index == 0 {
+            assert!(
+                period_offsets.iter().all(|offset| *offset == 0),
+                "the first Period starts at media zero"
+            );
+        } else {
+            assert!(
+                period_offsets.iter().all(|offset| *offset > 0),
+                "period {index}'s media clock continues past the break: {period_offsets:?}"
+            );
+        }
+        offsets.push(period_offsets);
+        expected_start += duration;
+    }
+    assert!(offsets.len() >= 2);
 }
