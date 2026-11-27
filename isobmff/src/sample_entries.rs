@@ -1336,6 +1336,10 @@ mod tests {
 /// Four-CC of the Bit Rate Box (`btrt`, ISO/IEC 14496-12:2026 §8.5.2).
 pub const BTRT: [u8; BOX_TYPE_SIZE] = *b"btrt";
 const BTRT_BODY_LEN: usize = 3 * core::mem::size_of::<u32>();
+/// Offset of `avgBitrate`, after `bufferSizeDB` and `maxBitrate`.
+const BTRT_AVG_BITRATE_AT: usize = 2 * core::mem::size_of::<u32>();
+/// Offset of `maxBitrate`, after `bufferSizeDB`.
+const BTRT_MAX_BITRATE_AT: usize = core::mem::size_of::<u32>();
 
 /// The Bit Rate Box (`btrt`) — ISO/IEC 14496-12:2026 §8.5.2.
 ///
@@ -1384,8 +1388,8 @@ impl BitRateBox {
         crate::box_support::reject_past_fields(body, BTRT_BODY_LEN, "btrt extra bytes")?;
         Ok(Self {
             buffer_size_db: be_u32(body, 0, "btrt bufferSizeDB")?,
-            max_bitrate: be_u32(body, core::mem::size_of::<u32>(), "btrt maxBitrate")?,
-            avg_bitrate: be_u32(body, 2 * core::mem::size_of::<u32>(), "btrt avgBitrate")?,
+            max_bitrate: be_u32(body, BTRT_MAX_BITRATE_AT, "btrt maxBitrate")?,
+            avg_bitrate: be_u32(body, BTRT_AVG_BITRATE_AT, "btrt avgBitrate")?,
         })
     }
 }
