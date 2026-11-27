@@ -363,6 +363,24 @@ pub enum ImageFinding {
         /// Why the typed parse did not represent it.
         reason: crate::error::OpaqueReason,
     },
+    /// A box the item model needs carried bytes past its last declared field.
+    /// They are kept verbatim and written back; nothing about the table is
+    /// lost.
+    TrailingBytes {
+        /// The box four-CC.
+        box_type: [u8; crate::box_types::BOX_TYPE_SIZE],
+        /// The box's absolute byte offset in the file.
+        offset: u64,
+        /// How many bytes past its last field the box carried.
+        carried: u64,
+    },
+    /// The file carried a second file-level `meta` box. The first is the item
+    /// model's; this one is carried opaque in its own position and re-emitted
+    /// byte-exact.
+    ExtraMetaBox {
+        /// The second box's absolute byte offset in the file.
+        offset: u64,
+    },
     /// A gain map metadata rational has a zero denominator, which no value can
     /// be divided by.
     GainMapZeroDenominator {
@@ -389,6 +407,8 @@ impl ImageFinding {
             Self::RegionMaskReferenceCount { .. } => "region-mask-reference-count",
             Self::GainMapZeroDenominator { .. } => "tmap-zero-denominator",
             Self::UnrepresentableBox { .. } => "unrepresentable-box",
+            Self::TrailingBytes { .. } => "trailing-bytes",
+            Self::ExtraMetaBox { .. } => "extra-meta-box",
         }
     }
 }

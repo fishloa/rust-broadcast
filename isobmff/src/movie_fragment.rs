@@ -1022,6 +1022,16 @@ impl TrackFragmentBox {
     /// [`TrackFragmentBox::parse_body`] sharing `zero_width_budget` across its
     /// `trun`s (see [`TrackFragmentRunBox::parse_body_budgeted`]).
     pub fn parse_body_budgeted(body: &[u8], zero_width_budget: &mut usize) -> Result<Self> {
+        Self::parse_body_budgeted_notes(body, zero_width_budget, None)
+    }
+
+    /// [`TrackFragmentBox::parse_body_budgeted`], reporting the bytes a `tfhd`
+    /// or `trun` carried past its declared fields.
+    pub(crate) fn parse_body_budgeted_notes(
+        body: &[u8],
+        zero_width_budget: &mut usize,
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
         let mut tfhd: Option<TrackFragmentHeaderBox> = None;
         let mut tfdt: Option<TrackFragmentBaseMediaDecodeTimeBox> = None;
         let mut trun: Vec<TrackFragmentRunBox> = Vec::new();
@@ -1031,7 +1041,11 @@ impl TrackFragmentBox {
         for child in crate::box_types::BoxIter::new(body) {
             let child = child?;
             if child.header.box_type.is(b"tfhd") {
-                tfhd = Some(TrackFragmentHeaderBox::parse_body(child.payload())?);
+                let parsed = TrackFragmentHeaderBox::parse_body(child.payload())?;
+                if let Some(notes) = notes.as_deref_mut() {
+                    notes.trailing(child.bytes, parsed.trailing().len());
+                }
+                tfhd = Some(parsed);
                 order.push(TrafChild::Tfhd);
             } else if child.header.box_type.is(b"tfdt") {
                 tfdt = Some(TrackFragmentBaseMediaDecodeTimeBox::parse_body(
@@ -1041,6 +1055,9 @@ impl TrackFragmentBox {
             } else if child.header.box_type.is(b"trun") {
                 let parsed =
                     TrackFragmentRunBox::parse_body_budgeted(child.payload(), zero_width_budget)?;
+                if let Some(notes) = notes.as_deref_mut() {
+                    notes.trailing(child.bytes, parsed.trailing().len());
+                }
                 order.push(TrafChild::Trun(trun.len()));
                 trun.push(parsed);
             } else {
@@ -1166,6 +1183,16 @@ impl MovieFragmentBox {
     /// `trun` of every `traf` of this `moof`, and a demuxer holding several
     /// `moof`s before their `mdat` passes the same budget to each.
     pub fn parse_body_budgeted(body: &[u8], zero_width_budget: &mut usize) -> Result<Self> {
+        Self::parse_body_budgeted_notes(body, zero_width_budget, None)
+    }
+
+    /// [`MovieFragmentBox::parse_body_budgeted`], reporting the bytes a `tfhd`
+    /// or `trun` carried past its declared fields.
+    pub(crate) fn parse_body_budgeted_notes(
+        body: &[u8],
+        zero_width_budget: &mut usize,
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
         let mut mfhd: Option<MovieFragmentHeaderBox> = None;
         let mut traf: Vec<TrackFragmentBox> = Vec::new();
         let mut order: Vec<MoofChild> = Vec::new();
@@ -1175,8 +1202,11 @@ impl MovieFragmentBox {
                 mfhd = Some(MovieFragmentHeaderBox::parse_body(child.payload())?);
                 order.push(MoofChild::Mfhd);
             } else if child.header.box_type.is(b"traf") {
-                let parsed =
-                    TrackFragmentBox::parse_body_budgeted(child.payload(), zero_width_budget)?;
+                let parsed = TrackFragmentBox::parse_body_budgeted_notes(
+                    child.payload(),
+                    zero_width_budget,
+                    notes.as_deref_mut(),
+                )?;
                 order.push(MoofChild::Traf(traf.len()));
                 traf.push(parsed);
             } else {

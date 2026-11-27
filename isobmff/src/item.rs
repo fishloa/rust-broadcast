@@ -23,7 +23,7 @@ use alloc::vec::Vec;
 
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::{fit_u32, need_in, need_out};
-use broadcast_core::wire::{be_u16, be_u32, be_u64, u24_at, u32_at};
+use broadcast_core::wire::{be_u16, be_u32, be_u64, fourcc_at, u24_at, u32_at};
 use broadcast_core::{Parse, Serialize};
 
 use crate::box_support::OpaqueBox;
@@ -1895,6 +1895,9 @@ pub struct ItemReferenceBox {
     version: u8,
     flags: u32,
     references: Vec<SingleItemTypeReferenceBox>,
+    /// Children the typed parse refused, each with its position among all the
+    /// box's children, so a rewrite keeps the wire order.
+    opaque: Vec<(usize, OpaqueBox)>,
 }
 
 impl ItemReferenceBox {
@@ -1905,6 +1908,7 @@ impl ItemReferenceBox {
             version: 0,
             flags: 0,
             references: Vec::new(),
+            opaque: Vec::new(),
         }
     }
 
@@ -1946,10 +1950,15 @@ impl ItemReferenceBox {
     }
 }
 
-impl<'a> Parse<'a> for ItemReferenceBox {
-    type Error = Error;
+impl ItemReferenceBox {
+    /// [`ItemReferenceBox`]'s parse, keeping a reference whose typed parse
+    /// fails as an opaque child of its own kind and reporting it. `base` is the
+    /// box's absolute file offset, for the report.
+    pub fn parse_degrading(bytes: &[u8], base: u64) -> Result<(Self, Vec<DegradedChild>)> {
+        Self::parse_inner(bytes, Some(base))
+    }
 
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+    fn parse_inner(bytes: &[u8], base: Option<u64>) -> Result<(Self, Vec<DegradedChild>)> {
         expect_type(bytes, &IREF, "expected iref")?;
         let body = body_of(bytes, FULLBOX_EXTRA_SIZE, "iref")?;
         let version = body[0];
@@ -1958,7 +1967,9 @@ impl<'a> Parse<'a> for ItemReferenceBox {
             version,
             flags,
             references: Vec::new(),
+            opaque: Vec::new(),
         };
+        let mut degraded = Vec::new();
         if version > IREF_VERSION_WIDE_ID {
             return Err(Error::UnsupportedVersion(
                 broadcast_core::error::UnsupportedVersion {
@@ -1968,6 +1979,7 @@ impl<'a> Parse<'a> for ItemReferenceBox {
             ));
         }
         let mut rest = &body[FULLBOX_EXTRA_SIZE..];
+        let mut position = 0usize;
         while !rest.is_empty() {
             if rest.len() < BOX_HEADER_MIN_SIZE {
                 return Err(Error::BufferTooShort(BufferTooShort {
@@ -1978,12 +1990,33 @@ impl<'a> Parse<'a> for ItemReferenceBox {
             }
             let (item, used) = crate::box_types::parse_box(rest)?;
             let usertype = item.header.usertype;
-            let mut reference = this.parse_reference(item.four_cc(), item.body)?;
-            reference.usertype = usertype;
-            this.references.push(reference);
+            match this.parse_reference(item.four_cc(), item.body) {
+                Ok(mut reference) => {
+                    reference.usertype = usertype;
+                    this.references.push(reference);
+                }
+                Err(err) => {
+                    let mut opaque = OpaqueBox::new(item.four_cc(), item.payload().to_vec());
+                    opaque.to_end = item.to_end();
+                    opaque.largesize = item.has_largesize();
+                    this.opaque.push((position, opaque));
+                    if let Some(base) = base {
+                        degraded.push(child_report(bytes, item.bytes, base, &err));
+                    }
+                }
+            }
+            position += 1;
             rest = &rest[used..];
         }
-        Ok(this)
+        Ok((this, degraded))
+    }
+}
+
+impl<'a> Parse<'a> for ItemReferenceBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Ok(Self::parse_inner(bytes, None)?.0)
     }
 }
 
@@ -2067,6 +2100,9 @@ impl Serialize for ItemReferenceBox {
         for reference in &self.references {
             len += self.child_len(reference);
         }
+        for (_, opaque) in &self.opaque {
+            len += opaque.serialized_len();
+        }
         box_len(len)
     }
 
@@ -2074,7 +2110,17 @@ impl Serialize for ItemReferenceBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor = write_full_box_header(buf, &IREF, need, self.version, self.flags, false)?;
-        for reference in &self.references {
+        let children = self.references.len() + self.opaque.len();
+        let mut typed = self.references.iter();
+        for position in 0..children {
+            if let Some((_, opaque)) = self.opaque.iter().find(|(at, _)| *at == position) {
+                let is_last = position + 1 == children;
+                cursor += opaque.serialize_child_into(&mut buf[cursor..], is_last)?;
+                continue;
+            }
+            let reference = typed
+                .next()
+                .ok_or(Error::InvalidInput("iref child positions disagree"))?;
             let child_need = self.child_len(reference);
             let header = write_box_header(&mut buf[cursor..], &reference.box_type(), child_need)?;
             let mut at = cursor + header;
@@ -2725,13 +2771,19 @@ impl Serialize for EntityToGroupBox {
 #[non_exhaustive]
 pub struct GroupsListBox {
     groups: Vec<EntityToGroupBox>,
+    /// Children the typed parse refused, each with its position among all the
+    /// box's children, so a rewrite keeps the wire order.
+    opaque: Vec<(usize, OpaqueBox)>,
 }
 
 impl GroupsListBox {
     /// An empty box.
     #[must_use]
     pub fn new() -> Self {
-        Self { groups: Vec::new() }
+        Self {
+            groups: Vec::new(),
+            opaque: Vec::new(),
+        }
     }
 
     /// Append one entity group.
@@ -2754,14 +2806,24 @@ impl GroupsListBox {
     }
 }
 
-impl<'a> Parse<'a> for GroupsListBox {
-    type Error = Error;
+impl GroupsListBox {
+    /// [`GroupsListBox`]'s parse, keeping a group whose typed parse fails as
+    /// an opaque child of its own kind and reporting it. `base` is the box's
+    /// absolute file offset, for the report.
+    pub fn parse_degrading(bytes: &[u8], base: u64) -> Result<(Self, Vec<DegradedChild>)> {
+        Self::parse_inner(bytes, Some(base))
+    }
 
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+    fn parse_inner(bytes: &[u8], base: Option<u64>) -> Result<(Self, Vec<DegradedChild>)> {
         expect_type(bytes, &GRPL, "expected grpl")?;
         let body = body_of(bytes, 0, "grpl")?;
-        let mut groups = Vec::new();
+        let mut this = Self {
+            groups: Vec::new(),
+            opaque: Vec::new(),
+        };
+        let mut degraded = Vec::new();
         let mut rest = body;
+        let mut position = 0usize;
         while !rest.is_empty() {
             if rest.len() < BOX_HEADER_MIN_SIZE {
                 return Err(Error::BufferTooShort(BufferTooShort {
@@ -2771,10 +2833,30 @@ impl<'a> Parse<'a> for GroupsListBox {
                 }));
             }
             let (item, used) = crate::box_types::parse_box(rest)?;
-            groups.push(EntityToGroupBox::parse(item.bytes)?);
+            match EntityToGroupBox::parse(item.bytes) {
+                Ok(group) => this.groups.push(group),
+                Err(err) => {
+                    let mut opaque = OpaqueBox::new(item.four_cc(), item.payload().to_vec());
+                    opaque.to_end = item.to_end();
+                    opaque.largesize = item.has_largesize();
+                    this.opaque.push((position, opaque));
+                    if let Some(base) = base {
+                        degraded.push(child_report(bytes, item.bytes, base, &err));
+                    }
+                }
+            }
+            position += 1;
             rest = &rest[used..];
         }
-        Ok(Self { groups })
+        Ok((this, degraded))
+    }
+}
+
+impl<'a> Parse<'a> for GroupsListBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Ok(Self::parse_inner(bytes, None)?.0)
     }
 }
 
@@ -2786,6 +2868,9 @@ impl Serialize for GroupsListBox {
         for group in &self.groups {
             len += group.serialized_len();
         }
+        for (_, opaque) in &self.opaque {
+            len += opaque.serialized_len();
+        }
         box_len(len)
     }
 
@@ -2793,7 +2878,17 @@ impl Serialize for GroupsListBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor = write_box_header(buf, &GRPL, need)?;
-        for group in &self.groups {
+        let children = self.groups.len() + self.opaque.len();
+        let mut typed = self.groups.iter();
+        for position in 0..children {
+            if let Some((_, opaque)) = self.opaque.iter().find(|(at, _)| *at == position) {
+                let is_last = position + 1 == children;
+                cursor += opaque.serialize_child_into(&mut buf[cursor..], is_last)?;
+                continue;
+            }
+            let group = typed
+                .next()
+                .ok_or(Error::InvalidInput("grpl child positions disagree"))?;
             cursor += group.serialize_into(&mut buf[cursor..])?;
         }
         Ok(cursor)
@@ -3290,6 +3385,18 @@ impl DegradedChild {
     #[must_use]
     pub const fn reason(&self) -> crate::error::OpaqueReason {
         self.reason
+    }
+}
+
+/// The report for one child the typed parse refused, at its absolute offset:
+/// `bytes` is the container the child was sliced from and `base` that
+/// container's own absolute offset.
+fn child_report(container: &[u8], child: &[u8], base: u64, error: &Error) -> DegradedChild {
+    let delta = (child.as_ptr() as usize).saturating_sub(container.as_ptr() as usize);
+    DegradedChild {
+        box_type: fourcc_at(child, BOX_TYPE_OFFSET),
+        offset: base.saturating_add(u64::try_from(delta).unwrap_or(u64::MAX)),
+        reason: crate::error::OpaqueReason::of(error),
     }
 }
 

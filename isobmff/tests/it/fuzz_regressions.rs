@@ -164,37 +164,41 @@ const TWO_META_FILES: [u8; 345] = [
 ];
 
 #[test]
-fn item_reader_two_meta_boxes_is_a_typed_error() {
+fn item_reader_keeps_a_second_meta_box_opaque_and_re_emits_it() {
+    use isobmff::image_brands::ImageFinding;
     use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
 
     let data = &TWO_META_FILES;
     let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
     let mut reader = ItemReader::new(config);
+    let mut image = None;
     loop {
-        match reader.step() {
-            Ok(ItemStep::Need(range)) => {
+        match reader.step().expect("step") {
+            ItemStep::Need(range) => {
                 let start = usize::try_from(range.offset).expect("offset");
                 let len = usize::try_from(range.len).expect("length");
-                if let Err(err) = reader.supply(range.offset, &data[start..start + len]) {
-                    assert!(
-                        matches!(err, Error::InvalidValue(_)),
-                        "expected InvalidValue, got {err:?}"
-                    );
-                    return;
-                }
+                reader
+                    .supply(range.offset, &data[start..start + len])
+                    .expect("supply");
             }
-            Ok(ItemStep::Loaded(_)) => panic!("a two-meta file must not load"),
-            Ok(ItemStep::Done) => panic!("done without an error"),
-            Ok(_) => {}
-            Err(err) => {
-                assert!(
-                    matches!(err, Error::InvalidValue(_)),
-                    "expected InvalidValue, got {err:?}"
-                );
-                return;
-            }
+            ItemStep::Loaded(model) => image = Some(model.clone()),
+            ItemStep::Done => break,
+            _ => {}
         }
     }
+    let image = image.expect("the first meta box describes the model");
+    assert!(
+        image
+            .structure_findings()
+            .iter()
+            .any(|finding| matches!(finding, ImageFinding::ExtraMetaBox { .. })),
+        "the second meta box is reported"
+    );
+    assert_eq!(
+        image.reemit_into(data).expect("re-emit"),
+        data,
+        "the second meta box is carried byte-exact"
+    );
 }
 
 /// The exact 100-byte input `isobmff_item_reader` failed on next: a top-level

@@ -80,16 +80,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **The item reader degrades a box it cannot reproduce instead of refusing the
-  file.** A typed item property whose parse fails is kept as an opaque property
-  of its own kind, byte-exact, and reported as
-  `ImageFinding::UnrepresentableBox` naming the box, the reason token
-  (`error::OpaqueReason`) and its absolute offset; reading continues and
-  `reemit_into` stays byte-exact. `ItemPropertyContainerBox` gains
-  `parse_body_degrading`, `ItemPropertiesBox` `parse_degrading`, and
-  `item::DegradedChild` names what was kept. Only structure the reader cannot
-  walk (the item location and information tables, the property association)
-  remains an error.
+- **Both readers degrade a box they cannot reproduce instead of refusing the
+  file.** `Reader` keeps a non-structural box (`edts`/`elst`, `trgr`, `elng`,
+  a media header, `gmhd`, a `udta`/`meta` atom) opaque in its own position,
+  byte-exact, and reports it as `Warning::UnrepresentableBox`; bytes a
+  structural box carries past its declared fields are reported as
+  `Warning::TrailingBytes`. The `Reader` docs table states the split. The item
+  reader does the same for item properties, entity groups, item references and
+  the derived/region/integrity item bodies, reporting
+  `ImageFinding::UnrepresentableBox`, and reports carried bytes as
+  `ImageFinding::TrailingBytes`. A second file-level `meta` box is carried and
+  reported as `ImageFinding::ExtraMetaBox`. `ItemPropertyContainerBox` gains
+  `parse_body_degrading`, `ItemPropertiesBox`, `ItemReferenceBox` and
+  `GroupsListBox` gain `parse_degrading`, and `item::DegradedChild` names what
+  was kept. Only structure a reader cannot walk (the sample tables, the item
+  location and information tables, the property association) remains an
+  error.
 
 ### Fixed
 

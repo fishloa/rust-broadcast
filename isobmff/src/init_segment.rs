@@ -4027,13 +4027,16 @@ pub enum StblChild {
     Opaque(Vec<u8>),
 }
 
-fn parse_stbl_children(body: &[u8]) -> Result<Vec<StblChild>> {
+fn parse_stbl_children_notes(
+    body: &[u8],
+    mut notes: Option<&mut crate::box_support::Notes<'_>>,
+) -> Result<Vec<StblChild>> {
     let mut children = Vec::new();
     for child in BoxIter::new(body) {
         let child = child?;
         let box_bytes = child.bytes;
         let boxtype = child.four_cc();
-        children.push(match &boxtype {
+        let parsed = match &boxtype {
             // A `stsd` that fails to parse (e.g. an `avcC` with a malformed
             // trailer) is kept as raw bytes rather than defaulted to an empty
             // box — an empty `entries: Vec::new()` would later present to
@@ -4108,7 +4111,15 @@ fn parse_stbl_children(body: &[u8]) -> Result<Vec<StblChild>> {
                 Err(_) => StblChild::Opaque(box_bytes.to_vec()),
             },
             _ => StblChild::Opaque(box_bytes.to_vec()),
-        });
+        };
+        if let Some(notes) = notes.as_deref_mut() {
+            match &parsed {
+                StblChild::Stsd(stsd) => notes.trailing(box_bytes, stsd.trailing().len()),
+                StblChild::Stsz(stsz) => notes.trailing(box_bytes, stsz.trailing().len()),
+                _ => {}
+            }
+        }
+        children.push(parsed);
     }
     Ok(children)
 }
@@ -4175,14 +4186,23 @@ pub struct SampleTableBox {
     pub children: Vec<StblChild>,
 }
 
+impl SampleTableBox {
+    /// `SampleTableBox::parse`, reporting the bytes a structural table carried
+    /// past its declared fields.
+    pub(crate) fn parse_notes(
+        bytes: &[u8],
+        notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
+        Ok(Self {
+            children: parse_stbl_children_notes(parse_box(bytes)?.0.body, notes)?,
+        })
+    }
+}
+
 impl<'a> Parse<'a> for SampleTableBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        // Expect full box bytes (size+type header then body)
-
-        Ok(Self {
-            children: parse_stbl_children(parse_box(bytes)?.0.body)?,
-        })
+        Self::parse_notes(bytes, None)
     }
 }
 
@@ -4260,9 +4280,13 @@ impl DataInformationBox {
     }
 }
 
-impl<'a> Parse<'a> for DataInformationBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+impl DataInformationBox {
+    /// `DataInformationBox::parse`, reporting the bytes `dref` carried past
+    /// its declared entry table.
+    pub(crate) fn parse_notes(
+        bytes: &[u8],
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
         let mut dref = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
@@ -4270,15 +4294,14 @@ impl<'a> Parse<'a> for DataInformationBox {
             let child = child?;
             if child.header.box_type.is(b"dref") {
                 order.push(child.four_cc());
-                dref = Some(DataReferenceBox::parse(child.bytes)?);
+                let parsed = DataReferenceBox::parse(child.bytes)?;
+                if let Some(notes) = notes.as_deref_mut() {
+                    notes.trailing(child.bytes, parsed.trailing().len());
+                }
+                dref = Some(parsed);
             } else {
                 order.push_opaque(child.four_cc());
-                opaque.push(OpaqueBox {
-                    box_type: child.four_cc(),
-                    data: child.payload().to_vec(),
-                    to_end: child.to_end(),
-                    largesize: child.has_largesize(),
-                });
+                opaque.push(crate::box_support::Notes::opaque_child(&child));
             }
         }
         Ok(Self {
@@ -4286,6 +4309,13 @@ impl<'a> Parse<'a> for DataInformationBox {
             opaque,
             order,
         })
+    }
+}
+
+impl<'a> Parse<'a> for DataInformationBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_notes(bytes, None)
     }
 }
 
@@ -4499,9 +4529,14 @@ impl MediaInformationBox {
     }
 }
 
-impl<'a> Parse<'a> for MediaInformationBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+impl MediaInformationBox {
+    /// `MediaInformationBox::parse`, keeping a media header or `gmhd` the
+    /// crate cannot represent opaque in its own position and reporting it, and
+    /// recursing into `dinf`/`stbl`.
+    pub(crate) fn parse_notes(
+        bytes: &[u8],
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
         let mut vmhd = None;
         let mut smhd = None;
         let mut nmhd = None;
@@ -4517,35 +4552,83 @@ impl<'a> Parse<'a> for MediaInformationBox {
             match &child.four_cc() {
                 b"vmhd" => {
                     order.push(child.four_cc());
-                    vmhd = Some(VideoMediaHeaderBox::parse(child.bytes)?);
+                    vmhd = crate::box_support::keep_or_note(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        |bytes| VideoMediaHeaderBox::parse(bytes),
+                    )?;
+                    if vmhd.is_none() {
+                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                    }
                 }
                 b"smhd" => {
                     order.push(child.four_cc());
-                    smhd = Some(SoundMediaHeaderBox::parse(child.bytes)?);
+                    smhd = crate::box_support::keep_or_note(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        |bytes| SoundMediaHeaderBox::parse(bytes),
+                    )?;
+                    if smhd.is_none() {
+                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                    }
                 }
                 b"nmhd" => {
                     order.push(child.four_cc());
-                    nmhd = Some(NullMediaHeaderBox::parse(child.bytes)?);
+                    nmhd = crate::box_support::keep_or_note(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        |bytes| NullMediaHeaderBox::parse(bytes),
+                    )?;
+                    if nmhd.is_none() {
+                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                    }
                 }
                 b"hmhd" => {
                     order.push(child.four_cc());
-                    hmhd = Some(HintMediaHeaderBox::parse(child.bytes)?);
+                    hmhd = crate::box_support::keep_or_note(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        |bytes| HintMediaHeaderBox::parse(bytes),
+                    )?;
+                    if hmhd.is_none() {
+                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                    }
                 }
                 b"vvhd" => {
                     order.push(child.four_cc());
-                    vvhd = Some(VolumetricVisualMediaHeaderBox::parse(child.bytes)?);
+                    vvhd = crate::box_support::keep_or_note(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        |bytes| VolumetricVisualMediaHeaderBox::parse(bytes),
+                    )?;
+                    if vvhd.is_none() {
+                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                    }
                 }
                 b"gmhd" => {
                     order.push(child.four_cc());
-                    gmhd = Some(crate::quicktime::gmhd::GmhdAtom::parse_box(child.bytes)?);
+                    gmhd = crate::box_support::keep_or_note(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        crate::quicktime::gmhd::GmhdAtom::parse_box,
+                    )?;
+                    if gmhd.is_none() {
+                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                    }
                 }
                 b"dinf" => {
                     order.push(child.four_cc());
-                    dinf = Some(DataInformationBox::parse(child.bytes)?);
+                    dinf = Some(DataInformationBox::parse_notes(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                    )?);
                 }
                 b"stbl" => {
                     order.push(child.four_cc());
-                    stbl = Some(SampleTableBox::parse(child.bytes)?);
+                    stbl = Some(SampleTableBox::parse_notes(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                    )?);
                 }
                 // A subtitle track's `sthd` and a data track's `nmhd` are not
                 // modelled (no fields to carry — §12.6.2/§8.4.5.2 are both
@@ -4555,12 +4638,7 @@ impl<'a> Parse<'a> for MediaInformationBox {
                 // `stbl`, where strict readers reject them (audit r05-W12).
                 _ => {
                     order.push_opaque(child.four_cc());
-                    opaque.push(OpaqueBox {
-                        box_type: child.four_cc(),
-                        data: child.payload().to_vec(),
-                        to_end: child.to_end(),
-                        largesize: child.has_largesize(),
-                    });
+                    opaque.push(crate::box_support::Notes::opaque_child(&child));
                 }
             }
         }
@@ -4576,6 +4654,13 @@ impl<'a> Parse<'a> for MediaInformationBox {
             opaque,
             order,
         })
+    }
+}
+
+impl<'a> Parse<'a> for MediaInformationBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_notes(bytes, None)
     }
 }
 
@@ -4697,9 +4782,13 @@ impl MediaBox {
     }
 }
 
-impl<'a> Parse<'a> for MediaBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+impl MediaBox {
+    /// `MediaBox::parse`, keeping an `elng` the crate cannot represent opaque
+    /// in its own position and reporting it, and recursing into `minf`.
+    pub(crate) fn parse_notes(
+        bytes: &[u8],
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
         let mut mdhd = None;
         let mut hdlr = None;
         let mut minf = None;
@@ -4719,20 +4808,28 @@ impl<'a> Parse<'a> for MediaBox {
                 }
                 b"minf" => {
                     order.push(child.four_cc());
-                    minf = Some(MediaInformationBox::parse(child.bytes)?);
+                    minf = Some(MediaInformationBox::parse_notes(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                    )?);
                 }
-                b"elng" => {
-                    order.push(child.four_cc());
-                    elng = Some(crate::track_desc::ExtendedLanguageBox::parse(child.bytes)?);
-                }
+                b"elng" => match crate::box_support::keep_or_note(
+                    child.bytes,
+                    notes.as_deref_mut(),
+                    |bytes| crate::track_desc::ExtendedLanguageBox::parse(bytes),
+                )? {
+                    Some(parsed) => {
+                        order.push(child.four_cc());
+                        elng = Some(parsed);
+                    }
+                    None => {
+                        order.push_opaque(child.four_cc());
+                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                    }
+                },
                 _ => {
                     order.push_opaque(child.four_cc());
-                    opaque.push(OpaqueBox {
-                        box_type: child.four_cc(),
-                        data: child.payload().to_vec(),
-                        to_end: child.to_end(),
-                        largesize: child.has_largesize(),
-                    });
+                    opaque.push(crate::box_support::Notes::opaque_child(&child));
                 }
             }
         }
@@ -4744,6 +4841,13 @@ impl<'a> Parse<'a> for MediaBox {
             opaque,
             order,
         })
+    }
+}
+
+impl<'a> Parse<'a> for MediaBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_notes(bytes, None)
     }
 }
 
@@ -5025,9 +5129,15 @@ impl TrackBox {
     }
 }
 
-impl<'a> Parse<'a> for TrackBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+impl TrackBox {
+    /// `TrackBox::parse`, keeping a non-structural child (`edts`, `trgr`) the
+    /// crate cannot represent opaque in its own position and reporting it, and
+    /// recursing into `mdia`.
+    pub(crate) fn parse_notes(
+        bytes: &[u8],
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+        limits: &Limits,
+    ) -> Result<Self> {
         let mut tkhd = None;
         let mut edts = None;
         let mut mdia = None;
@@ -5041,27 +5151,45 @@ impl<'a> Parse<'a> for TrackBox {
                     order.push(child.four_cc());
                     tkhd = Some(TrackHeaderBox::parse(child.bytes)?);
                 }
-                b"edts" => {
-                    order.push(child.four_cc());
-                    edts = Some(EditBox::parse(child.bytes)?);
-                }
+                b"edts" => match crate::box_support::keep_or_note(
+                    child.bytes,
+                    notes.as_deref_mut(),
+                    |bytes| EditBox::parse(bytes),
+                )? {
+                    Some(parsed) => {
+                        order.push(child.four_cc());
+                        edts = Some(parsed);
+                    }
+                    None => {
+                        order.push_opaque(child.four_cc());
+                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                    }
+                },
                 b"mdia" => {
                     order.push(child.four_cc());
-                    mdia = Some(MediaBox::parse(child.bytes)?);
+                    mdia = Some(MediaBox::parse_notes(child.bytes, notes.as_deref_mut())?);
                 }
-                b"trgr" => {
-                    order.push(child.four_cc());
-                    trgr = Some(crate::track_desc::TrackGroupBox::parse(child.bytes)?);
-                }
+                b"trgr" => match crate::box_support::keep_or_note(
+                    child.bytes,
+                    notes.as_deref_mut(),
+                    |bytes| crate::track_desc::TrackGroupBox::parse(bytes),
+                )? {
+                    Some(parsed) => {
+                        order.push(child.four_cc());
+                        trgr = Some(parsed);
+                    }
+                    None => {
+                        order.push_opaque(child.four_cc());
+                        opaque.push(crate::box_support::Notes::opaque_child(&child));
+                    }
+                },
                 // `tref`/`udta`/`meta` stay opaque, in place.
                 _ => {
+                    if let Some(notes) = notes.as_deref_mut() {
+                        crate::box_support::note_metadata_child(&child, limits, notes);
+                    }
                     order.push_opaque(child.four_cc());
-                    opaque.push(OpaqueBox {
-                        box_type: child.four_cc(),
-                        data: child.payload().to_vec(),
-                        to_end: child.to_end(),
-                        largesize: child.has_largesize(),
-                    });
+                    opaque.push(crate::box_support::Notes::opaque_child(&child));
                 }
             }
         }
@@ -5077,6 +5205,13 @@ impl<'a> Parse<'a> for TrackBox {
             opaque,
             order,
         })
+    }
+}
+
+impl<'a> Parse<'a> for TrackBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_notes(bytes, None, &Limits::default())
     }
 }
 
@@ -5613,9 +5748,16 @@ impl MovieBox {
     }
 }
 
-impl<'a> Parse<'a> for MovieBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
+impl MovieBox {
+    /// `MovieBox::parse`, reporting through `notes` what a non-structural
+    /// child could not represent and what a structural child carried past its
+    /// declared fields. With a degrading sink such a child is kept opaque in
+    /// its own position; without one the parse is the strict one.
+    pub(crate) fn parse_notes(
+        bytes: &[u8],
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+        limits: &Limits,
+    ) -> Result<Self> {
         let mut mvhd = None;
         let mut tracks = Vec::new();
         let mut mvex = None;
@@ -5630,7 +5772,11 @@ impl<'a> Parse<'a> for MovieBox {
                 }
                 b"trak" => {
                     order.push(child.four_cc());
-                    tracks.push(TrackBox::parse(child.bytes)?);
+                    tracks.push(TrackBox::parse_notes(
+                        child.bytes,
+                        notes.as_deref_mut(),
+                        limits,
+                    )?);
                 }
                 b"mvex" => {
                     order.push(child.four_cc());
@@ -5640,13 +5786,11 @@ impl<'a> Parse<'a> for MovieBox {
                 // conventional layout writes `pssh` ahead of the `trak`s, and the
                 // old serializer always emitted it last.
                 _ => {
+                    if let Some(notes) = notes.as_deref_mut() {
+                        crate::box_support::note_metadata_child(&child, limits, notes);
+                    }
                     order.push_opaque(child.four_cc());
-                    opaque.push(OpaqueBox {
-                        box_type: child.four_cc(),
-                        data: child.payload().to_vec(),
-                        to_end: child.to_end(),
-                        largesize: child.has_largesize(),
-                    });
+                    opaque.push(crate::box_support::Notes::opaque_child(&child));
                 }
             }
         }
@@ -5661,6 +5805,13 @@ impl<'a> Parse<'a> for MovieBox {
             opaque,
             order,
         })
+    }
+}
+
+impl<'a> Parse<'a> for MovieBox {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_notes(bytes, None, &Limits::default())
     }
 }
 
@@ -6324,7 +6475,7 @@ mod tests {
         body[0..4].copy_from_slice(&8u32.to_be_bytes());
         body[4..8].copy_from_slice(b"stsc");
 
-        let children = parse_stbl_children(&body).unwrap();
+        let children = parse_stbl_children_notes(&body, None).unwrap();
         assert_eq!(children.len(), 1);
         match &children[0] {
             StblChild::Opaque(raw) => assert_eq!(raw.as_slice(), body.as_slice()),
@@ -6348,7 +6499,7 @@ mod tests {
         body[4..8].copy_from_slice(b"stsc");
         // version/flags already zero; entry_count (bytes 12..16) already zero.
 
-        let children = parse_stbl_children(&body).unwrap();
+        let children = parse_stbl_children_notes(&body, None).unwrap();
         assert_eq!(children.len(), 1);
         match &children[0] {
             StblChild::Stsc(b) => assert!(b.entries.is_empty()),
@@ -6692,6 +6843,88 @@ mod compact_size_and_dependency_tests {
             i += 1;
         }
         None
+    }
+
+    /// The first `size|type` box with `fourcc`, and its length, inside `bytes`.
+    fn locate(bytes: &[u8], fourcc: &[u8; BOX_TYPE_SIZE]) -> Option<(usize, usize)> {
+        let mut at = 0usize;
+        while at + BOX_HEADER_MIN_SIZE <= bytes.len() {
+            if &bytes[at + BOX_TYPE_OFFSET..at + BOX_HEADER_MIN_SIZE] == fourcc {
+                let size =
+                    u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+                        as usize;
+                if size >= BOX_HEADER_MIN_SIZE && at + size <= bytes.len() {
+                    return Some((at, size));
+                }
+            }
+            at += 1;
+        }
+        None
+    }
+
+    /// A `moov` whose one non-structural box is unrepresentable still re-emits
+    /// byte-exact: the box is carried opaque in its own position, one note
+    /// says which one, and the strict parse (what `origin/main` does) refuses
+    /// it.
+    #[test]
+    fn a_degraded_movie_box_tree_re_emits_byte_exact() {
+        // (fixture, box to break, byte offset in its body, written value)
+        let cases: [(&str, [u8; BOX_TYPE_SIZE], usize, u8); 3] = [
+            ("mp4/boxes/track-group-ster.mp4", *b"trgr", 4, 0x0C),
+            ("mp4/progressive/av-prog.mp4", *b"elst", 4, 0xFF),
+            ("mp4/boxes/loudness.m4a", *b"ludt", 0, 0x7F),
+        ];
+        for (fixture, fourcc, body_at, value) in cases {
+            let file = test_fixtures::read(fixture);
+            let Some((moov_at, moov_len)) = locate(&file, b"moov") else {
+                panic!("{fixture}: no moov");
+            };
+            let mut moov = file[moov_at..moov_at + moov_len].to_vec();
+            let (target_at, target_len) =
+                locate(&moov, &fourcc).unwrap_or_else(|| panic!("{fixture}: no target"));
+            if fourcc == *b"trgr" {
+                // Cut the group's declared size below its own fixed fields.
+                moov[target_at + BOX_HEADER_MIN_SIZE..target_at + BOX_HEADER_MIN_SIZE + 4]
+                    .copy_from_slice(&12u32.to_be_bytes());
+            } else if fourcc == *b"elst" {
+                moov[target_at + BOX_HEADER_MIN_SIZE + body_at
+                    ..target_at + BOX_HEADER_MIN_SIZE + body_at + 2]
+                    .copy_from_slice(&[0xFF, 0xFF]);
+            } else {
+                moov[target_at + BOX_HEADER_MIN_SIZE + body_at] = value;
+            }
+            assert!(target_len >= BOX_HEADER_MIN_SIZE);
+            let mut notes = alloc::vec::Vec::new();
+            let movie = {
+                let mut sink = crate::box_support::Notes::new(&moov, 0, true, &mut notes);
+                MovieBox::parse_notes(&moov, Some(&mut sink), &Limits::default())
+            }
+            .unwrap_or_else(|e| panic!("{fixture}: degraded parse: {e}"));
+            assert_eq!(
+                movie.try_to_bytes().expect("re-emit"),
+                moov,
+                "{fixture}: the degraded tree re-emits byte-exact"
+            );
+            let unrepresentable = notes
+                .iter()
+                .filter(|note| matches!(note, crate::box_support::Note::Unrepresentable { .. }))
+                .count();
+            assert_eq!(unrepresentable, 1, "{fixture}: one note, got {notes:?}");
+            if fourcc == *b"ludt" {
+                // A track-level metadata atom is opaque to the box tree, so the
+                // strict refusal is the metadata view the reader asks for.
+                let track = &movie.tracks[0];
+                assert!(
+                    track.metadata(&Limits::default()).is_err(),
+                    "{fixture}: the strict metadata view still refuses it"
+                );
+            } else {
+                assert!(
+                    MovieBox::parse(&moov).is_err(),
+                    "{fixture}: the strict parse still refuses it"
+                );
+            }
+        }
     }
 
     fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {

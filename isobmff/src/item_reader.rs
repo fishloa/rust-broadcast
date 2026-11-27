@@ -1834,26 +1834,32 @@ impl ItemReader {
                     });
                 }
                 if self.meta.is_some() {
-                    // One file-level `meta` describes the item model (§8.11.1);
-                    // a second cannot be re-emitted, because only one body is
-                    // the model's.
-                    return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
-                        field: "file-level meta box",
-                        value: u64::from(self.meta.is_some()) + 1,
-                        reason: "more than one meta box at the top level",
-                    }));
+                    // One file-level `meta` describes the item model (§8.11.1).
+                    // A second is carried opaque in its own position and
+                    // re-emitted byte-exact, with a finding.
+                    self.degraded
+                        .push(ImageFinding::ExtraMetaBox { offset: box_start });
+                    self.top_level.push(TopLevelBox {
+                        fourcc: META,
+                        header: header.clone(),
+                        payload: TopLevelPayload::Copy(ByteRange {
+                            offset: box_start.saturating_add(header.len() as u64),
+                            len: size.saturating_sub(header.len() as u64),
+                        }),
+                    });
+                } else {
+                    let payload_abs = box_start.saturating_add(header.len() as u64);
+                    let (record, idat) = parse_meta(bytes, payload_abs, &mut self.degraded)?;
+                    if let Some(idat) = idat {
+                        self.idat = Some(idat);
+                    }
+                    self.meta = Some(record);
+                    self.top_level.push(TopLevelBox {
+                        fourcc: META,
+                        header,
+                        payload: TopLevelPayload::Meta,
+                    });
                 }
-                let payload_abs = box_start.saturating_add(header.len() as u64);
-                let (record, idat) = parse_meta(bytes, payload_abs, &mut self.degraded)?;
-                if let Some(idat) = idat {
-                    self.idat = Some(idat);
-                }
-                self.meta = Some(record);
-                self.top_level.push(TopLevelBox {
-                    fourcc: META,
-                    header,
-                    payload: TopLevelPayload::Meta,
-                });
             }
         }
         self.phase = Phase::Header {
@@ -1951,10 +1957,40 @@ impl ItemReader {
             .iter()
             .filter(|reference| reference.reference_type == ReferenceType::Dimg)
             .count();
-        match item.item_type {
-            ItemType::Rgan => item.region = Some(RegionItem::parse(body)?),
-            ItemType::Mint => item.integrity = Some(IntegrityItem::parse(body)?),
-            _ => item.derived = Some(DerivedImage::parse(item.item_type, body, reference_count)?),
+        let item_type = item.item_type;
+        let offset = item.data_ranges().first().map_or(0, |range| range.offset);
+        // A body this crate cannot type stays where it is: the item keeps its
+        // data ranges, so the bytes are carried by construction. Only the
+        // typed view is lost, and the finding says which body and why.
+        let failure = match item_type {
+            ItemType::Rgan => match RegionItem::parse(body) {
+                Ok(region) => {
+                    item.region = Some(region);
+                    None
+                }
+                Err(err) => Some(err),
+            },
+            ItemType::Mint => match IntegrityItem::parse(body) {
+                Ok(integrity) => {
+                    item.integrity = Some(integrity);
+                    None
+                }
+                Err(err) => Some(err),
+            },
+            _ => match DerivedImage::parse(item_type, body, reference_count) {
+                Ok(derived) => {
+                    item.derived = Some(derived);
+                    None
+                }
+                Err(err) => Some(err),
+            },
+        };
+        if let Some(err) = failure {
+            image.degraded.push(ImageFinding::UnrepresentableBox {
+                box_type: item_type.fourcc(),
+                offset,
+                reason: crate::error::OpaqueReason::of(&err),
+            });
         }
         Ok(())
     }
@@ -1964,6 +2000,52 @@ fn item_needs_body(item: &Item) -> bool {
     item.derived().is_none()
         && (item.item_type().is_derived_image()
             || matches!(item.item_type(), ItemType::Rgan | ItemType::Mint))
+}
+
+/// One finding per `ipma` whose association table left bytes over. The
+/// association boxes keep their wire order, so the n-th `ipma` child of
+/// `iprp` is the n-th entry of [`ItemPropertiesBox::associations`].
+fn ipma_trailing_findings(
+    iprp: &[u8],
+    base: u64,
+    properties: &ItemPropertiesBox,
+) -> Vec<ImageFinding> {
+    let mut findings = Vec::new();
+    let Some(body) = iprp.get(BOX_HEADER_MIN_SIZE..) else {
+        return findings;
+    };
+    let mut rest = body;
+    let mut seen = 0usize;
+    while !rest.is_empty() {
+        let Ok((item, used)) = parse_box(rest) else {
+            break;
+        };
+        if item.four_cc() == crate::item::IPMA
+            && let Some(association) = properties.associations().get(seen)
+        {
+            let carried = association.trailing().len();
+            if carried != 0 {
+                let delta = (item.bytes.as_ptr() as usize).saturating_sub(iprp.as_ptr() as usize);
+                findings.push(ImageFinding::TrailingBytes {
+                    box_type: crate::item::IPMA,
+                    offset: base.saturating_add(u64::try_from(delta).unwrap_or(u64::MAX)),
+                    carried: u64::try_from(carried).unwrap_or(u64::MAX),
+                });
+            }
+            seen += 1;
+        }
+        rest = &rest[used..];
+    }
+    findings
+}
+
+/// One `item::DegradedChild` as the finding the item reader reports.
+fn unrepresentable_finding(child: crate::item::DegradedChild) -> ImageFinding {
+    ImageFinding::UnrepresentableBox {
+        box_type: child.box_type(),
+        offset: child.offset(),
+        reason: child.reason(),
+    }
 }
 
 fn fourcc_of(prefix: &[u8]) -> [u8; BOX_TYPE_SIZE] {
@@ -2011,42 +2093,45 @@ fn parse_meta(
             .saturating_add(consumed_total as u64)
             .saturating_add(child.start as u64);
         let fourcc = child.four_cc();
-        let parsed =
-            match &fourcc {
-                b"hdlr" => MetaChild::Hdlr(Hdlr::parse_box(child.bytes)?),
-                b"pitm" => MetaChild::Pitm(PrimaryItemBox::parse(child.bytes)?),
-                b"iloc" => MetaChild::Iloc(ItemLocationBox::parse(child.bytes)?),
-                b"iinf" => MetaChild::Iinf(ItemInfoBox::parse(child.bytes)?),
-                b"iref" => MetaChild::Iref(ItemReferenceBox::parse(child.bytes)?),
-                b"iprp" => {
-                    let (properties, opaque) =
-                        ItemPropertiesBox::parse_degrading(child.bytes, absolute)?;
-                    degraded.extend(opaque.into_iter().map(|child| {
-                        ImageFinding::UnrepresentableBox {
-                            box_type: child.box_type(),
-                            offset: child.offset(),
-                            reason: child.reason(),
-                        }
-                    }));
-                    MetaChild::Iprp(properties)
-                }
-                b"idat" => {
-                    let box_value = ItemDataBox::parse(child.bytes)?;
-                    idat = Some((
-                        absolute.saturating_add(child.header.header_size() as u64),
-                        box_value.data().len(),
-                    ));
-                    MetaChild::Idat(box_value)
-                }
-                b"ipro" => MetaChild::Ipro(crate::item::ItemProtectionBox::parse(child.bytes)?),
-                b"grpl" => MetaChild::Grpl(GroupsListBox::parse(child.bytes)?),
-                _ => {
-                    let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
-                    opaque.to_end = child.to_end();
-                    opaque.largesize = child.has_largesize();
-                    MetaChild::Opaque(opaque)
-                }
-            };
+        let parsed = match &fourcc {
+            b"hdlr" => MetaChild::Hdlr(Hdlr::parse_box(child.bytes)?),
+            b"pitm" => MetaChild::Pitm(PrimaryItemBox::parse(child.bytes)?),
+            b"iloc" => MetaChild::Iloc(ItemLocationBox::parse(child.bytes)?),
+            b"iinf" => MetaChild::Iinf(ItemInfoBox::parse(child.bytes)?),
+            b"iref" => {
+                let (references, opaque) =
+                    ItemReferenceBox::parse_degrading(child.bytes, absolute)?;
+                degraded.extend(opaque.into_iter().map(unrepresentable_finding));
+                MetaChild::Iref(references)
+            }
+            b"iprp" => {
+                let (properties, opaque) =
+                    ItemPropertiesBox::parse_degrading(child.bytes, absolute)?;
+                degraded.extend(opaque.into_iter().map(unrepresentable_finding));
+                degraded.extend(ipma_trailing_findings(child.bytes, absolute, &properties));
+                MetaChild::Iprp(properties)
+            }
+            b"idat" => {
+                let box_value = ItemDataBox::parse(child.bytes)?;
+                idat = Some((
+                    absolute.saturating_add(child.header.header_size() as u64),
+                    box_value.data().len(),
+                ));
+                MetaChild::Idat(box_value)
+            }
+            b"ipro" => MetaChild::Ipro(crate::item::ItemProtectionBox::parse(child.bytes)?),
+            b"grpl" => {
+                let (groups, opaque) = GroupsListBox::parse_degrading(child.bytes, absolute)?;
+                degraded.extend(opaque.into_iter().map(unrepresentable_finding));
+                MetaChild::Grpl(groups)
+            }
+            _ => {
+                let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
+                opaque.to_end = child.to_end();
+                opaque.largesize = child.has_largesize();
+                MetaChild::Opaque(opaque)
+            }
+        };
         children.push(parsed);
         rest = &rest[used..];
         consumed_total = consumed_total.saturating_add(used);

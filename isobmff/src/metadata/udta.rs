@@ -232,6 +232,18 @@ impl Udta {
 
     /// Parse a `udta` from its body.
     pub fn parse_body(body: &[u8], limits: &Limits) -> Result<Self> {
+        Self::parse_body_notes(body, limits, None)
+    }
+
+    /// [`Udta::parse_body`], keeping a child whose typed parse fails as an
+    /// opaque child of its own kind and reporting it through `notes`, so one
+    /// unrepresentable atom costs that atom rather than the whole metadata
+    /// tree. With no sink the parse is the strict one.
+    pub(crate) fn parse_body_notes(
+        body: &[u8],
+        limits: &Limits,
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
         let mut children = Vec::new();
         for child in BoxIter::new(body) {
             let child = child?;
@@ -243,38 +255,69 @@ impl Udta {
                 children.push(UdtaChild::Opaque(opaque));
                 continue;
             }
-            let parsed = match fourcc {
-                CHPL => UdtaChild::Chapters(Chpl::parse_body(child.body)?),
-                LOCI => UdtaChild::Location(Loci::parse_body(child.body)?),
-                META => UdtaChild::Meta(Meta::parse_body(child.body, limits)?),
+            let typed = match fourcc {
+                CHPL => {
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        Chpl::parse_body(child.body).map(UdtaChild::Chapters)
+                    })?
+                }
+                LOCI => {
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        Loci::parse_body(child.body).map(UdtaChild::Location)
+                    })?
+                }
+                META => {
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        Meta::parse_body(child.body, limits).map(UdtaChild::Meta)
+                    })?
+                }
                 crate::track_desc::KIND => {
-                    UdtaChild::Kind(crate::track_desc::KindBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::track_desc::KindBox::parse_body(child.body).map(UdtaChild::Kind)
+                    })?
                 }
                 crate::audio_boxes::LABL => {
-                    UdtaChild::Label(crate::audio_boxes::LabelBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::audio_boxes::LabelBox::parse_body(child.body).map(UdtaChild::Label)
+                    })?
                 }
                 crate::audio_boxes::LUDT => {
-                    UdtaChild::Loudness(crate::audio_boxes::LoudnessBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::audio_boxes::LoudnessBox::parse_body(child.body)
+                            .map(UdtaChild::Loudness)
+                    })?
                 }
                 crate::track_desc::STRK => {
-                    UdtaChild::SubTrack(crate::track_desc::SubTrackBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::track_desc::SubTrackBox::parse_body(child.body)
+                            .map(UdtaChild::SubTrack)
+                    })?
                 }
                 crate::meta_track::CPRT => {
-                    UdtaChild::Copyright(crate::meta_track::CopyrightBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::meta_track::CopyrightBox::parse_body(child.body)
+                            .map(UdtaChild::Copyright)
+                    })?
                 }
-                crate::track_desc::TSEL => UdtaChild::TrackSelection(
-                    crate::track_desc::TrackSelectionBox::parse_body(child.body)?,
-                ),
+                crate::track_desc::TSEL => {
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::track_desc::TrackSelectionBox::parse_body(child.body)
+                            .map(UdtaChild::TrackSelection)
+                    })?
+                }
                 _ if super::is_text_key(&fourcc) => {
-                    UdtaChild::Text(parse_text(fourcc, child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        parse_text(fourcc, child.body).map(UdtaChild::Text)
+                    })?
                 }
-                _ => {
-                    let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
-                    opaque.to_end = child.to_end();
-                    opaque.largesize = child.has_largesize();
-                    UdtaChild::Opaque(opaque)
-                }
+                _ => None,
             };
+            let parsed = typed.unwrap_or_else(|| {
+                let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
+                opaque.to_end = child.to_end();
+                opaque.largesize = child.has_largesize();
+                UdtaChild::Opaque(opaque)
+            });
             children.push(parsed);
         }
         Ok(Self { children })

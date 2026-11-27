@@ -1290,12 +1290,25 @@ pub struct MovieFragmentRandomAccessBox {
 impl MovieFragmentRandomAccessBox {
     /// Parse the body of an `mfra` box (after the 8-byte `BoxHeader`).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
+        Self::parse_body_notes(body, None)
+    }
+
+    /// [`MovieFragmentRandomAccessBox::parse_body`], reporting the bytes a
+    /// `tfra` carried past its declared entry table.
+    pub(crate) fn parse_body_notes(
+        body: &[u8],
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
         let mut tfra = Vec::new();
         let mut mfro = None;
         for child in crate::box_types::BoxIter::new(body) {
             let child = child?;
             if child.header.box_type.is(b"tfra") {
-                tfra.push(TrackFragmentRandomAccessBox::parse_body(child.payload())?);
+                let parsed = TrackFragmentRandomAccessBox::parse_body(child.payload())?;
+                if let Some(notes) = notes.as_deref_mut() {
+                    notes.trailing(child.bytes, parsed.trailing().len());
+                }
+                tfra.push(parsed);
             } else if child.header.box_type.is(b"mfro") {
                 mfro = Some(MovieFragmentRandomAccessOffsetBox::parse_body(
                     child.payload(),

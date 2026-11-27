@@ -820,6 +820,28 @@ pub enum Warning {
         /// Absolute offset of the malformed `moof`.
         offset: u64,
     },
+    /// A box the reader typed carried bytes past its last declared field.
+    /// They are kept verbatim and written back with the box; nothing about the
+    /// table is lost.
+    TrailingBytes {
+        /// The four-CC of the box.
+        box_type: [u8; BOX_TYPE_SIZE],
+        /// Absolute offset of the box.
+        offset: u64,
+        /// How many bytes past its last field the box carried.
+        carried: u64,
+    },
+    /// A box that is not needed to locate samples was in a form the crate
+    /// cannot reproduce. It is kept opaque in its own position, byte-exact,
+    /// and reading continues.
+    UnrepresentableBox {
+        /// The four-CC of the box.
+        box_type: [u8; BOX_TYPE_SIZE],
+        /// Absolute offset of the box.
+        offset: u64,
+        /// The class of fault the typed parse reported.
+        reason: crate::error::OpaqueReason,
+    },
 }
 
 impl Warning {
@@ -834,6 +856,8 @@ impl Warning {
             Self::TruncatedMdat { .. } => "truncated-mdat",
             Self::TruncatedFragment { .. } => "truncated-fragment",
             Self::MalformedFragment { .. } => "malformed-fragment",
+            Self::TrailingBytes { .. } => "trailing-bytes",
+            Self::UnrepresentableBox { .. } => "unrepresentable-box",
         }
     }
 }
@@ -851,7 +875,9 @@ impl Warning {
             | Self::ZeroMovieTimescale { offset }
             | Self::TruncatedMdat { offset }
             | Self::TruncatedFragment { offset }
-            | Self::MalformedFragment { offset } => *offset,
+            | Self::MalformedFragment { offset }
+            | Self::TrailingBytes { offset, .. }
+            | Self::UnrepresentableBox { offset, .. } => *offset,
         }
     }
 }
@@ -1013,22 +1039,32 @@ struct ReadyFragment {
 
 /// The sans-IO MP4 reader. See the [module docs](self).
 ///
-/// # What a box the crate cannot type does
+/// # What is structural, and what degrades
 ///
-/// A sample entry (`stsd` child) whose known four-CC fails to parse is kept as
-/// raw bytes with its parse error in
-/// [`SampleEntryInfo::error`](crate::reader::SampleEntryInfo) and, in
-/// [`Mode::Permissive`], reported as [`Warning::UnparseableSampleEntry`];
-/// the file still reads. Every other box inside a track keeps its bytes and is
-/// typed on demand by an accessor that returns `Option`, so a form it cannot
-/// reproduce costs that one view rather than the file. What is still an error
-/// is the box tree itself: a `tkhd`/`mdia`/`minf`/`stbl` whose own syntax
-/// fails, or a non-structural child this crate types inside `trak` (`edts`,
-/// `trgr`), inside `mdia` (`elng`) or inside `minf` (`gmhd`) — those are parsed
-/// strictly, so a file carrying one in an unrepresentable form does not read
-/// yet. The item reader's degrade-to-opaque policy
-/// ([`ImageFinding::UnrepresentableBox`](crate::image_brands::ImageFinding))
-/// covers the still-image layer, not this one.
+/// A box is **structural** when the samples cannot be located without it. Such
+/// a box is read strictly: a declared count or size that runs past the box, a
+/// FullBox version the crate does not model, or a header a size cannot hold is
+/// a typed error. Bytes a structural box carries past its last declared field
+/// are not an error: they are kept verbatim and written back, and reported in
+/// [`Mode::Permissive`] as [`Warning::TrailingBytes`].
+///
+/// | Where | Structural (strict) | Degrades to raw carriage |
+/// |---|---|---|
+/// | top level | `ftyp`, `moov`, `moof`, `mdat`, `sidx`, `ssix`, `mfra` | any other box |
+/// | `moov` | `mvhd`, `trak`, `mvex` | `udta`, `meta` and their typed atoms |
+/// | `trak` | `tkhd`, `mdia` | `edts`/`elst`, `trgr`, `udta`/`meta` atoms |
+/// | `mdia` | `mdhd`, `hdlr`, `minf` | `elng` |
+/// | `minf` | `dinf`/`dref`, `stbl` | `vmhd`, `smhd`, `nmhd`, `hmhd`, `vvhd`, `gmhd` |
+/// | `stbl` | `stsd`, `stts`, `ctts`, `stsc`, `stsz`/`stz2`, `stco`/`co64`, `stss`, `sdtp`, `stdp`, `padb` | a known four-CC whose parse fails (kept as `StblChild::Opaque`) |
+/// | `moof` | `mfhd`, `tfhd`, `tfdt`, `trun` | a `traf` child the crate does not type |
+/// | sample entry | the fixed entry fields and the codec config box | every other child, typed on demand |
+///
+/// A degraded box keeps its bytes, its four-CC and its position, so a rewrite
+/// stays byte-exact; in [`Mode::Permissive`] it is reported as
+/// [`Warning::UnrepresentableBox`] naming the box, its offset and the kind of
+/// fault. A sample entry whose known four-CC fails additionally keeps the
+/// parser's message in [`SampleEntryInfo::error`](crate::reader::SampleEntryInfo)
+/// and is reported as [`Warning::UnparseableSampleEntry`].
 #[derive(Debug)]
 pub struct Reader {
     config: ReaderConfig,
@@ -1149,8 +1185,8 @@ impl Reader {
             Pending::Index(range) => self.accept_index(range, bytes),
             Pending::Subsegment(range) => self.accept_subsegment(range, bytes),
             Pending::MfraTrailer(_) => self.accept_mfra_trailer(bytes),
-            Pending::Mfra(_) => self.accept_mfra(bytes),
-            Pending::MfraForm(_) => self.accept_mfra_form(bytes),
+            Pending::Mfra(range) => self.accept_mfra(range, bytes),
+            Pending::MfraForm(range) => self.accept_mfra_form(range, bytes),
             Pending::TopLevel(_) => self.accept_top_level(bytes),
             Pending::Imda { head, payload_end } => {
                 self.accept_imda(head.offset, payload_end, bytes)
@@ -1424,6 +1460,36 @@ impl Reader {
         self.warnings.push(warning);
     }
 
+    /// Turn the tolerant walk's notes into the warnings a permissive read
+    /// reports.
+    fn report_notes(&mut self, notes: Vec<crate::box_support::Note>) {
+        if !self.tolerated() {
+            return;
+        }
+        for note in notes {
+            self.warn(match note {
+                crate::box_support::Note::Trailing {
+                    box_type,
+                    offset,
+                    carried,
+                } => Warning::TrailingBytes {
+                    box_type,
+                    offset,
+                    carried: u64::try_from(carried).unwrap_or(u64::MAX),
+                },
+                crate::box_support::Note::Unrepresentable {
+                    box_type,
+                    offset,
+                    reason,
+                } => Warning::UnrepresentableBox {
+                    box_type,
+                    offset,
+                    reason,
+                },
+            });
+        }
+    }
+
     /// Report a truncated final `mdat` once per file: the box header and a
     /// sample that runs past the input describe the same fault.
     fn warn_truncated_mdat(&mut self, offset: u64) {
@@ -1552,6 +1618,13 @@ impl Reader {
 
     fn accept_index(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
         let index = SegmentIndexBox::parse(bytes)?;
+        if self.tolerated() && !index.trailing().is_empty() {
+            self.warn(Warning::TrailingBytes {
+                box_type: *b"sidx",
+                offset: range.offset,
+                carried: u64::try_from(index.trailing().len()).unwrap_or(u64::MAX),
+            });
+        }
         if self.index.sidx.is_none() {
             self.index.sidx = Some(crate::frag_layout::SegmentIndexForm {
                 version: index.version,
@@ -1616,10 +1689,19 @@ impl Reader {
     /// Record the trailing `mfra`'s form so a rewrite can regenerate it from
     /// its own positions. A box this crate cannot read states no form, exactly
     /// as it was ignored before.
-    fn accept_mfra_form(&mut self, bytes: &[u8]) -> Result<()> {
-        let Ok(mfra) = MovieFragmentRandomAccessBox::parse(bytes) else {
+    fn accept_mfra_form(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
+        let mut notes = Vec::new();
+        let parsed = {
+            let mut sink =
+                crate::box_support::Notes::new(bytes, range.offset, self.tolerated(), &mut notes);
+            crate::box_types::parse_box(bytes).and_then(|(header, _)| {
+                MovieFragmentRandomAccessBox::parse_body_notes(header.body, Some(&mut sink))
+            })
+        };
+        let Ok(mfra) = parsed else {
             return Ok(());
         };
+        self.report_notes(notes);
         let mut tracks = Vec::with_capacity(mfra.tfra.len());
         for tfra in &mfra.tfra {
             tracks.push(crate::frag_layout::MfraTrackForm {
@@ -1636,11 +1718,19 @@ impl Reader {
         Ok(())
     }
 
-    fn accept_mfra(&mut self, bytes: &[u8]) -> Result<()> {
+    fn accept_mfra(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
         let Some(request) = self.seek.take() else {
             return Err(Error::InvalidInput("mfra with no seek pending"));
         };
-        let mfra = MovieFragmentRandomAccessBox::parse(bytes)?;
+        let mut notes = Vec::new();
+        let mfra = {
+            let mut sink =
+                crate::box_support::Notes::new(bytes, range.offset, self.tolerated(), &mut notes);
+            crate::box_types::parse_box(bytes).and_then(|(header, _)| {
+                MovieFragmentRandomAccessBox::parse_body_notes(header.body, Some(&mut sink))
+            })
+        }?;
+        self.report_notes(notes);
         let offset = mfra
             .tfra
             .iter()
@@ -2161,18 +2251,35 @@ impl Reader {
     }
 
     fn accept_moof(&mut self, bytes: &[u8]) -> Result<()> {
-        let Some(fragment) = self.fragments.back_mut() else {
-            return Err(Error::InvalidInput(
-                "moof supplied with no fragment pending",
-            ));
+        let tolerate = self.tolerated();
+        let mut notes = Vec::new();
+        let offset = match self.fragments.back() {
+            Some(fragment) => fragment.range.offset,
+            None => {
+                return Err(Error::InvalidInput(
+                    "moof supplied with no fragment pending",
+                ));
+            }
         };
-        let offset = fragment.range.offset;
-        let parsed = parse_box(bytes).and_then(|(header, _)| {
-            let mut zero_width_budget = MAX_ZERO_WIDTH_TRUN_SAMPLES;
-            MovieFragmentBox::parse_body_budgeted(header.body, &mut zero_width_budget)
-        });
+        let parsed = {
+            let mut sink = crate::box_support::Notes::new(bytes, offset, tolerate, &mut notes);
+            parse_box(bytes).and_then(|(header, _)| {
+                let mut zero_width_budget = MAX_ZERO_WIDTH_TRUN_SAMPLES;
+                MovieFragmentBox::parse_body_budgeted_notes(
+                    header.body,
+                    &mut zero_width_budget,
+                    Some(&mut sink),
+                )
+            })
+        };
+        self.report_notes(core::mem::take(&mut notes));
         match parsed {
             Ok(mut moof) => {
+                let Some(fragment) = self.fragments.back_mut() else {
+                    return Err(Error::InvalidInput(
+                        "moof supplied with no fragment pending",
+                    ));
+                };
                 // The layout is the moof's *wire* state: the `trex` defaults
                 // below are filled into the `tfhd` so the samples resolve, and
                 // are not fields the source wrote.
@@ -2183,7 +2290,7 @@ impl Reader {
                 fragment.moof = Some(moof);
                 Ok(())
             }
-            Err(err) if self.tolerated() && tolerable_fragment_error(&err) => {
+            Err(err) if tolerate && tolerable_fragment_error(&err) => {
                 self.fragments.pop_back();
                 let truncated = self.config.total_len.is_some_and(|total| self.pos >= total);
                 if !self.done {
@@ -2211,7 +2318,13 @@ impl Reader {
         } else {
             bytes
         };
-        let movie = MovieBox::parse(source)?;
+        let mut notes = Vec::new();
+        let movie = {
+            let mut sink =
+                crate::box_support::Notes::new(source, range.offset, self.tolerated(), &mut notes);
+            MovieBox::parse_notes(source, Some(&mut sink), &self.config.limits)
+        }?;
+        self.report_notes(core::mem::take(&mut notes));
         let mut tracks = Vec::with_capacity(movie.tracks.len());
         let mut cursors = Vec::new();
         let mut crypto = Vec::with_capacity(movie.tracks.len());
@@ -2259,7 +2372,13 @@ impl Reader {
             .map(|mvex| mvex.trex.clone())
             .unwrap_or_default();
         self.level_assignment = movie.mvex.as_ref().and_then(|mvex| mvex.leva.clone());
-        let mut movie_metadata = self.movie_metadata(&movie)?;
+        let mut movie_metadata = match self.movie_metadata(&movie) {
+            Ok(metadata) => metadata,
+            // The parse-time notes already named the atom that would not
+            // parse; losing the metadata view is all that costs.
+            Err(_) if self.tolerated() => None,
+            Err(err) => return Err(err),
+        };
         if let Some(metadata) = movie_metadata.take() {
             self.metadata = Some(MovieMetadata {
                 movie: metadata,
@@ -2267,7 +2386,12 @@ impl Reader {
             });
         }
         for trak in &movie.tracks {
-            if let Some(metadata) = trak.metadata(&self.config.limits)? {
+            let metadata = match trak.metadata(&self.config.limits) {
+                Ok(metadata) => metadata,
+                Err(_) if self.tolerated() => None,
+                Err(err) => return Err(err),
+            };
+            if let Some(metadata) = metadata {
                 self.metadata
                     .get_or_insert_with(MovieMetadata::default)
                     .tracks
