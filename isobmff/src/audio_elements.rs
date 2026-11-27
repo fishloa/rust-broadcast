@@ -585,6 +585,11 @@ impl AudioElementPosInteractivityPolarBox {
         let mut cursor = FULLBOX_EXTRA_SIZE;
         let mut azimuth = None;
         if (flags & AEPP_AZIMUTH_PRESENT) != 0 {
+            need_in(
+                body,
+                cursor + AEPP_TRIPLE * core::mem::size_of::<i16>(),
+                "aepp azimuth",
+            )?;
             let mut values = [0i16; AEPP_TRIPLE];
             for slot in &mut values {
                 *slot = i16_at(body, cursor);
