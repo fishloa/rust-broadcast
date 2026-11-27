@@ -25,6 +25,7 @@
 //! (`DemuxEvent::Damage`, `SessionEvent::Damage`, `Event::Damage`); it is
 //! never a callback stored in the reader, so a reader stays sans-IO.
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 use crate::error;
@@ -133,11 +134,7 @@ impl MediaTimeRange {
 
 impl core::fmt::Display for MediaTimeRange {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(
-            f,
-            "{}..{} @ {} Hz",
-            self.start, self.end, self.timescale
-        )
+        write!(f, "{}..{} @ {} Hz", self.start, self.end, self.timescale)
     }
 }
 
@@ -684,32 +681,35 @@ impl DamagePolicy {
 /// a caller that handles the error sees everything the report says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DamageError {
-    damage: Damage,
+    /// Boxed so a reader's `Result<_, DamageError>` stays small.
+    damage: Box<Damage>,
 }
 
 impl DamageError {
     /// Wrap a report as a stop.
     #[must_use]
-    pub const fn new(damage: Damage) -> Self {
-        Self { damage }
+    pub fn new(damage: Damage) -> Self {
+        Self {
+            damage: Box::new(damage),
+        }
     }
 
     /// The report this stop carries.
     #[must_use]
-    pub const fn damage(&self) -> &Damage {
+    pub fn damage(&self) -> &Damage {
         &self.damage
     }
 
     /// Take the report back out.
     #[must_use]
     pub fn into_damage(self) -> Damage {
-        self.damage
+        *self.damage
     }
 }
 
 impl core::fmt::Display for DamageError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "damage policy refused: {}", self.damage)
+        write!(f, "damage policy refused: {}", &*self.damage)
     }
 }
 
@@ -722,11 +722,15 @@ mod tests {
     use alloc::string::ToString;
 
     fn dropped() -> Damage {
-        Damage::new(DamageKind::MediaUnitDropped, Severity::Degraded, "PES packet")
-            .at_byte_range(ByteRange::new(1_880, 188))
-            .for_track(3)
-            .at_media_time(MediaTimeRange::new(crate::timescale!(90_000), 900, 1_800))
-            .with_ordinal(7)
+        Damage::new(
+            DamageKind::MediaUnitDropped,
+            Severity::Degraded,
+            "PES packet",
+        )
+        .at_byte_range(ByteRange::new(1_880, 188))
+        .for_track(3)
+        .at_media_time(MediaTimeRange::new(crate::timescale!(90_000), 900, 1_800))
+        .with_ordinal(7)
     }
 
     #[test]
@@ -898,6 +902,9 @@ mod tests {
         assert_eq!(policy.clone(), policy);
         let damage = dropped();
         assert_eq!(damage.clone(), damage);
-        assert_ne!(dropped(), Damage::new(DamageKind::TrackDropped, Severity::Degraded, "track"));
+        assert_ne!(
+            dropped(),
+            Damage::new(DamageKind::TrackDropped, Severity::Degraded, "track")
+        );
     }
 }
