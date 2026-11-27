@@ -103,7 +103,7 @@ impl Serialize for HevcNalUnit {
 ///
 /// Corresponds to one iteration of the `numOfArrays` loop in
 /// `HEVCDecoderConfigurationRecord` (ISO/IEC 14496-15:2017 §8.3.3).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct HevcNalArray {
     /// `array_completeness` flag — all NALs of this type are in the array.
@@ -115,6 +115,16 @@ pub struct HevcNalArray {
     pub nal_unit_type: u8,
     /// The NAL units in this array.
     pub nalus: Vec<HevcNalUnit>,
+}
+
+impl core::fmt::Debug for HevcNalArray {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("HevcNalArray")
+            .field("array_completeness", &self.array_completeness)
+            .field("nal_unit_type", &self.nal_unit_type)
+            .field("nalus", &self.nalus)
+            .finish()
+    }
 }
 
 impl HevcNalArray {

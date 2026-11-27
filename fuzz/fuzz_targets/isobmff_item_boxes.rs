@@ -16,8 +16,11 @@ macro_rules! round_trip {
             let mut bytes = vec![0u8; value.serialized_len()];
             let written = value.serialize_into(&mut bytes).expect("serialize");
             assert_eq!(written, bytes.len());
-            let again = <$ty as Parse>::parse(&bytes).expect("re-parse");
-            assert_eq!(again, value);
+            let again = match <$ty as Parse>::parse(&bytes) {
+                Ok(again) => again,
+                Err(err) => panic!("{}: re-parse {err}: value {value:?} bytes {bytes:?}", stringify!($ty)),
+            };
+            assert_eq!(again, value, "{}", stringify!($ty));
         }
     }};
 }

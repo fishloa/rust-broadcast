@@ -638,6 +638,12 @@ impl ItemLocationBox {
         ] {
             field_width(size, what)?;
         }
+        let count_width = if version >= ILOC_VERSION_WIDE_ID {
+            U32_LEN
+        } else {
+            U16_LEN
+        };
+        need_in(body, cursor + count_width, "iloc item_count")?;
         let item_count = if version >= ILOC_VERSION_WIDE_ID {
             let value = be_u32(body, cursor, "iloc item_count")? as usize;
             cursor += U32_LEN;
@@ -1290,6 +1296,20 @@ impl ItemInfoEntry {
     fn parse_payload(body: &[u8]) -> Result<Self> {
         need_in(body, FULLBOX_EXTRA_SIZE, "infe body")?;
         let version = body[0];
+        let id_width = if version == INFE_VERSION_WIDE_ID {
+            U32_LEN
+        } else {
+            U16_LEN
+        };
+        let fixed = FULLBOX_EXTRA_SIZE
+            + id_width
+            + U16_LEN
+            + if version >= INFE_VERSION_TYPED {
+                BOX_TYPE_SIZE
+            } else {
+                0
+            };
+        need_in(body, fixed, "infe entry header")?;
         let flags = u24_at(body, crate::box_types::FULLBOX_FLAGS_OFFSET) & FULLBOX_FLAGS_MASK;
         let mut cursor = FULLBOX_EXTRA_SIZE;
         let item_id = if version == INFE_VERSION_WIDE_ID {
@@ -1564,6 +1584,8 @@ impl<'a> Parse<'a> for ItemInfoBox {
         let version = body[0];
         let flags = u24_at(body, crate::box_types::FULLBOX_FLAGS_OFFSET) & FULLBOX_FLAGS_MASK;
         let mut cursor = FULLBOX_EXTRA_SIZE;
+        let count_width = if version == 0 { U16_LEN } else { U32_LEN };
+        need_in(body, cursor + count_width, "iinf entry_count")?;
         let count = if version == 0 {
             let value = usize::from(be_u16(body, cursor, "iinf entry_count")?);
             cursor += U16_LEN;
@@ -1673,6 +1695,8 @@ impl<'a> Parse<'a> for PrimaryItemBox {
         expect_type(bytes, &PITM, "expected pitm")?;
         let body = body_of(bytes, FULLBOX_EXTRA_SIZE + U16_LEN, "pitm")?;
         let version = body[0];
+        let id_width = if version == 0 { U16_LEN } else { U32_LEN };
+        need_in(body, FULLBOX_EXTRA_SIZE + id_width, "pitm item_ID")?;
         let flags = u24_at(body, crate::box_types::FULLBOX_FLAGS_OFFSET) & FULLBOX_FLAGS_MASK;
         let item_id = if version == 0 {
             ItemId::new(u32::from(be_u16(body, FULLBOX_EXTRA_SIZE, "pitm item_ID")?))
@@ -1805,6 +1829,11 @@ impl<'a> Parse<'a> for ItemReferenceBox {
                 }));
             }
             let (item, used) = crate::box_types::parse_box(rest)?;
+            if item.four_cc() == crate::box_types::UUID {
+                return Err(Error::UnsupportedFeature(
+                    "uuid item reference box (it carries a usertype this model does not keep)",
+                ));
+            }
             this.references
                 .push(this.parse_reference(item.four_cc(), item.body)?);
             rest = &rest[used..];
@@ -2277,13 +2306,19 @@ impl<'a> Parse<'a> for EntityToGroupBox {
     type Error = Error;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        need_in(bytes, BOX_HEADER_MIN_SIZE, "entity group")?;
+        let item = crate::box_types::parse_box(bytes)?.0;
+        if item.four_cc() == crate::box_types::UUID {
+            return Err(Error::UnsupportedFeature(
+                "uuid entity group (it carries a usertype this model does not keep)",
+            ));
+        }
+        let body = item.body;
         need_in(
-            bytes,
-            BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + ENTITY_GROUP_FIXED_LEN,
+            body,
+            FULLBOX_EXTRA_SIZE + ENTITY_GROUP_FIXED_LEN,
             "entity group",
         )?;
-        let item = crate::box_types::parse_box(bytes)?.0;
-        let body = item.body;
         let version = body[0];
         let flags = u24_at(body, crate::box_types::FULLBOX_FLAGS_OFFSET) & FULLBOX_FLAGS_MASK;
         let group_id = GroupId::new(be_u32(body, FULLBOX_EXTRA_SIZE, "group_id")?);

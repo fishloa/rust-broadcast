@@ -19,10 +19,10 @@
 //! | [`Av1ConfigurationBox`] | `av1C` | AVIF 2.2.1 (reused) |
 //! | [`OperatingPointSelectorProperty`] | `a1op` | AVIF 2.3.2.1 |
 //! | [`Av1LayeredImageIndexingProperty`] | `a1lx` | AVIF 2.3.2.3 |
-//! | [`MasteringDisplayColourVolume`] | `mdcv` | ISO/IEC 14496-12 §12.1.7 (reused) |
-//! | [`ContentLightLevel`] | `clli` | ISO/IEC 14496-12 §12.1.6 (reused) |
-//! | [`BrandProperty`] | `brnd` | ISO/IEC 14496-12 §8.11.15 |
-//! | [`HandlerProperty`] | `hdlp` | ISO/IEC 14496-12 §8.11.16 |
+//! | [`MasteringDisplayColourVolume`] | `mdcv` | ISO/IEC 14496-12:2026 §12.1.7 (reused) |
+//! | [`ContentLightLevel`] | `clli` | ISO/IEC 14496-12:2026 §12.1.6 (reused) |
+//! | [`BrandProperty`] | `brnd` | ISO/IEC 14496-12:2026 §8.11.15 |
+//! | [`HandlerProperty`] | `hdlp` | ISO/IEC 14496-12:2026 §8.11.16 |
 //!
 //! The derived image item bodies are [`IdentityDerivation`] (`iden`),
 //! [`ImageOverlay`] (`iovl`) and [`ImageGrid`] (`grid`)
@@ -1272,6 +1272,7 @@ fn read_derived_unsigned(
     width: usize,
     what: &'static str,
 ) -> Result<u32> {
+    need_in(bytes, *cursor + width, what)?;
     let value = match width {
         DERIVED_SMALL_FIELD_LEN => u32::from(be_u16(bytes, *cursor, what)?),
         _ => be_u32(bytes, *cursor, what)?,
@@ -1286,6 +1287,7 @@ fn read_derived_signed(
     width: usize,
     what: &'static str,
 ) -> Result<i32> {
+    need_in(bytes, *cursor + width, what)?;
     let value = match width {
         DERIVED_SMALL_FIELD_LEN => {
             let mut word = [0u8; DERIVED_SMALL_FIELD_LEN];

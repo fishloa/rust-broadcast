@@ -145,7 +145,7 @@ let ftyp = FileTypeBox {
 let bytes = ftyp.try_to_bytes().unwrap();
 ```
 
-Eight runnable examples ship with the crate:
+Ten runnable examples ship with the crate:
 
 ```bash
 cargo run -p isobmff --example parse_boxes -- fixtures/mp4/h264-aac-prog.mp4
