@@ -20,6 +20,9 @@ const HEADER: usize = 8;
 const FULLBOX: usize = 4;
 /// A value past every count a fixture states.
 const HUGE_COUNT: [u8; 2] = [0xFF, 0xFF];
+/// Width of the 16-bit language field a 3GPP metadata atom carries after its
+/// version/flags word.
+const TWO_BYTES: usize = 2;
 
 fn load_item(bytes: &[u8]) -> StillImage {
     let config = ItemReaderConfig::default().with_total_len(Some(bytes.len() as u64));
@@ -237,6 +240,26 @@ fn an_edit_list_that_cannot_be_typed_is_carried() {
     bytes[count_at..count_at + 2].copy_from_slice(&HUGE_COUNT);
     let warnings = read_movie(&bytes, Mode::Permissive).expect("permissive read");
     one_unrepresentable(name, &warnings, *b"edts");
+    assert!(
+        read_movie(&bytes, Mode::Strict).is_err(),
+        "{name}: strict still refuses it"
+    );
+}
+
+/// A 3GPP user-data atom whose body is not the syntax its clause gives it is
+/// carried like any other: the atoms this crate types reach `udta` through the
+/// same tolerant walk, so one that cannot be typed costs that atom.
+#[test]
+fn a_threegpp_metadata_atom_that_cannot_be_typed_is_carried() {
+    let name = "mp4/boxes/loudness.m4a";
+    let mut bytes = fixtures::read(name);
+    let ludt = find_box(&bytes, b"ludt");
+    // Re-label the loudness box as 3GPP keywords and give it a keyword count
+    // its body cannot hold, so the typed parse fails.
+    bytes[ludt + TYPE_OFFSET..ludt + HEADER].copy_from_slice(b"kywd");
+    bytes[ludt + HEADER + FULLBOX + TWO_BYTES] = HUGE_COUNT[0];
+    let warnings = read_movie(&bytes, Mode::Permissive).expect("permissive read");
+    one_unrepresentable(name, &warnings, *b"kywd");
     assert!(
         read_movie(&bytes, Mode::Strict).is_err(),
         "{name}: strict still refuses it"
