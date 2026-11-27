@@ -406,3 +406,31 @@ pub(crate) fn scan_archive(
     .scan()
     .expect("scan")
 }
+
+/// The rendered sample line for `metric` carrying every `(label, value)`
+/// pair, so a test can assert one label without depending on the others'
+/// order. `None` when no such line has been recorded.
+pub(crate) fn rendered_line(metric: &str, labels: &[(&str, &str)]) -> Option<String> {
+    crate::prometheus::install()
+        .render()
+        .lines()
+        .find_map(|line| {
+            if !line.starts_with(metric) {
+                return None;
+            }
+            let all = labels
+                .iter()
+                .all(|(name, value)| line.contains(&format!("{name}=\"{value}\"")));
+            all.then(|| line.to_string())
+        })
+}
+
+/// The rendered total of `metric` for `route_label`, if any line carries it.
+pub(crate) fn rendered_total(metric: &str, route_label: &str) -> Option<f64> {
+    crate::prometheus::install()
+        .render()
+        .lines()
+        .find(|l| l.starts_with(metric) && l.contains(route_label))
+        .and_then(|l| l.rsplit(' ').next())
+        .and_then(|v| v.parse::<f64>().ok())
+}

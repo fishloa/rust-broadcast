@@ -94,6 +94,11 @@
 
 ### Fixed
 
+- Every damage report a pulled input's session publishes (`Event::Damage`) now
+  reaches the route's log and the `multimux_source_damage_total` counter. The
+  session host consumed the event without feeding it to the driver, so the
+  pull-family inputs reported nothing, and a route whose `damage_policy` fails
+  on a report lost that report from the log even though it ended the run.
 - The oracle tests that write a playlist/segment tree and run `mediastreamvalidator` or `ffprobe` over it use a scratch directory unique to the process and to the call (`test_fixtures::process::scratch_dir`), instead of a fixed `target/<tag>` path. Two suites running at once in one checkout (two loops, or a local gate beside CI's) deleted and rewrote each other's tree mid-run, which the oracle then reported as a stale playlist or a missing media file (#4072).
 - Every optional feature builds on its own with `RUSTFLAGS="-D warnings"`. `--features whip` no longer imports the test-seam-only `RouteConfig`, the test-seam helper `register_session_for_test` is gated on `whip` as well as `test-seams` (it is only ever called from `whip`'s `from_spec`), and `test-hooks` declares `whip`, whose signalling seams it re-exports (#4083).
 - TS and FLV `file` inputs stream from disk in bounded memory instead of being read whole, so a large slate/filler/loop asset no longer makes the origin's memory grow with the file. Each loop pass re-opens and re-identifies the file: a longer file simply plays longer, while a file replaced by a different container fails with `FileReaderError::FileChangedContainer` (#4057).

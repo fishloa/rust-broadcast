@@ -26,6 +26,7 @@ use media_plane::segmenter::ProgramSegmenter;
 
 use crate::route::{RouteConfig, RouteHandle};
 use crate::source::report_driver_progress;
+use crate::testutil::{rendered_line, rendered_total};
 use crate::source::segment::{apply_segmenter_events, drive_program_segmenters};
 
 /// Render `route`'s current LL-HLS media playlist synchronously — the exact
@@ -1851,32 +1852,6 @@ fn removal_and_update_degrade_without_panicking() {
         tracker.poll().is_none(),
         "TrackUpdated for a removed track emits no event"
     );
-}
-
-fn rendered_total(metric: &str, route_label: &str) -> Option<f64> {
-    crate::prometheus::install()
-        .render()
-        .lines()
-        .find(|l| l.starts_with(metric) && l.contains(route_label))
-        .and_then(|l| l.rsplit(' ').next())
-        .and_then(|v| v.parse::<f64>().ok())
-}
-
-/// The rendered sample line for `metric` carrying every `(label, value)` pair,
-/// so a test can assert one label without depending on the others' order.
-fn rendered_line(metric: &str, labels: &[(&str, &str)]) -> Option<String> {
-    crate::prometheus::install()
-        .render()
-        .lines()
-        .find_map(|line| {
-            if !line.starts_with(metric) {
-                return None;
-            }
-            let all = labels
-                .iter()
-                .all(|(name, value)| line.contains(&format!("{name}=\"{value}\"")));
-            all.then(|| line.to_string())
-        })
 }
 
 #[test]

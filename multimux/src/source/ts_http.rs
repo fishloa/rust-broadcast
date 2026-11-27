@@ -221,6 +221,49 @@ mod tests {
         server.abort();
     }
 
+    /// The `ts_http` input kind's reader damage reaches the route's damage
+    /// metric: a span the TS demux cannot align on is one report, and the
+    /// route renders it labelled with the kind an operator configured.
+    #[tokio::test]
+    async fn a_damaged_stream_reaches_the_route_damage_metric() {
+        const ROUTE: &str = "ts-http-damage-probe";
+        const KIND: &str = "ts_http";
+        crate::prometheus::install();
+        let mut body = build_ts_bytes(TrackId::new(1), 0xAB, 10);
+        // Dropping one whole packet leaves the stream aligned but skips a
+        // continuity counter, the loss a live pull actually sees.
+        let victim = body.len() / 2 / mpeg_ts::ts::TS_PACKET_SIZE * mpeg_ts::ts::TS_PACKET_SIZE;
+        body.drain(victim..victim + mpeg_ts::ts::TS_PACKET_SIZE);
+        let (url, server) = start_chunked_ts_server(body).await;
+        let route = TsHttpRoute::new(ROUTE, url);
+        let route_handle = std::sync::Arc::new(
+            crate::route::RouteHandle::new(RouteConfig::default())
+                .with_name(ROUTE)
+                .with_input_kind(KIND),
+        );
+        let _ = tokio::time::timeout(
+            RUN_CEILING,
+            run_ts_http(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("run_ts_http must finish inside the ceiling");
+        server.abort();
+        let line = crate::testutil::rendered_line(
+            "multimux_source_damage_total",
+            &[("route", ROUTE), ("source", KIND)],
+        );
+        assert!(
+            line.is_some(),
+            "a continuity gap the pull tolerates must reach the route's damage metric"
+        );
+    }
+
     #[tokio::test]
     async fn connect_fails_on_non_success_status() {
         let app = Router::new().route(
@@ -474,3 +517,4 @@ mod tests {
         server.abort();
     }
 }
+
