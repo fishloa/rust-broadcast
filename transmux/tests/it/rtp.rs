@@ -2794,3 +2794,137 @@ fn depacketising_h264_without_config_uses_a_four_byte_length_prefix() {
         other => panic!("expected an AVC config, got {other:?}"),
     }
 }
+
+// ── Issue #4154: a timeline break marks an audio talkspurt, not a video AU ──
+
+/// A [`MuxInput::Discontinuity`] is expressed by the only per-format signal
+/// RTP has left: the marker bit means "first packet of a talkspurt" for audio
+/// (RFC 3551 §4.1), and "last packet of an access unit" for H.264
+/// (RFC 6184 §5.1). Sequence numbers and timestamps are untouched.
+#[test]
+fn a_timeline_break_marks_the_next_audio_talkspurt_and_never_a_video_frame() {
+    use broadcast_common::stage::{Stage, Timestamp};
+    use transmux::mux_stage::{MuxInput, MuxOutput};
+
+    fn packets(stage: &mut RtpPacketiserStage) -> Vec<RtpPacket> {
+        let mut out = Vec::new();
+        while let Some(MuxOutput::Bytes(bytes)) = stage.poll() {
+            if let Some(packet) = RtpPacket::from_contiguous(bytes) {
+                out.push(packet);
+            }
+        }
+        out
+    }
+
+    let media = demux_fixture();
+    let audio = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+        .expect("fixture audio track");
+    let video = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("fixture video track");
+    assert!(
+        audio.samples.len() > 4,
+        "the break needs samples on both sides"
+    );
+
+    // An MTU small enough to fragment one AAC access unit over several
+    // packets, so the *first* packet's marker is observable on its own.
+    let mut audio_stage = RtpPacketiserStage::new().with_mtu(60).with_ssrc(SSRC);
+    audio_stage
+        .feed(
+            MuxInput::Track(Box::new(audio.spec.clone())),
+            Timestamp::ZERO,
+        )
+        .expect("announce audio");
+    packets(&mut audio_stage);
+    let mut talkspurt = None;
+    for (i, sample) in audio.samples.iter().enumerate() {
+        if i == 3 {
+            audio_stage
+                .feed(
+                    MuxInput::Discontinuity {
+                        track: Some(audio.spec.track_id),
+                    },
+                    Timestamp::ZERO,
+                )
+                .expect("a break is expressible");
+        }
+        audio_stage
+            .feed(
+                MuxInput::Sample {
+                    track: audio.spec.track_id,
+                    sample: sample.clone(),
+                },
+                Timestamp::ZERO,
+            )
+            .expect("audio sample");
+        let got = packets(&mut audio_stage);
+        if i == 3 {
+            assert!(
+                got.len() > 1,
+                "the test's MTU must fragment the access unit, got {} packet(s)",
+                got.len()
+            );
+            talkspurt = Some(got);
+        }
+    }
+    let talkspurt = talkspurt.expect("a break at sample 3");
+    assert!(
+        parse_hdr(&talkspurt[0]).2,
+        "the first packet after the break opens a talkspurt"
+    );
+    assert!(
+        parse_hdr(&talkspurt[talkspurt.len() - 1]).2,
+        "the last packet keeps its access-unit marker"
+    );
+
+    // H.264: the marker means "last packet of the access unit", so the break
+    // must leave the entire marker series byte-for-byte the same.
+    fn video_markers(video: &test_harness::collect::CollectedTrack, with_break: bool) -> Vec<bool> {
+        let mut stage = RtpPacketiserStage::new().with_mtu(MTU).with_ssrc(SSRC);
+        stage
+            .feed(
+                MuxInput::Track(Box::new(video.spec.clone())),
+                Timestamp::ZERO,
+            )
+            .expect("announce video");
+        packets(&mut stage);
+        let mut markers = Vec::new();
+        for (i, sample) in video.samples.iter().enumerate() {
+            if with_break && i == 3 {
+                stage
+                    .feed(
+                        MuxInput::Discontinuity {
+                            track: Some(video.spec.track_id),
+                        },
+                        Timestamp::ZERO,
+                    )
+                    .expect("a break is expressible");
+                markers.extend(packets(&mut stage).iter().map(|p| parse_hdr(p).2));
+            }
+            stage
+                .feed(
+                    MuxInput::Sample {
+                        track: video.spec.track_id,
+                        sample: sample.clone(),
+                    },
+                    Timestamp::ZERO,
+                )
+                .expect("video sample");
+            let got = packets(&mut stage);
+            assert!(!got.is_empty(), "a video sample emits at least one packet");
+            markers.extend(got.iter().map(|p| parse_hdr(p).2));
+        }
+        markers
+    }
+    assert_eq!(
+        video_markers(video, true),
+        video_markers(video, false),
+        "a break must not add an H.264 marker to the next access unit"
+    );
+}
