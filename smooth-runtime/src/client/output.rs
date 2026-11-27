@@ -75,6 +75,41 @@ pub enum Dropped {
     },
 }
 
+impl Dropped {
+    /// The one damage report this drop stands for: `Dropped` names what was
+    /// given up on in Smooth's own terms, the report carries the severity and
+    /// is what the caller's `DamagePolicy` decides on.
+    #[must_use]
+    pub fn damage(&self) -> broadcast_core::damage::Damage {
+        use broadcast_core::damage::{Damage, DamageKind, Severity};
+        match self {
+            Self::Manifest(_) => Damage::new(
+                DamageKind::MetadataSkipped,
+                Severity::Degraded,
+                "Smooth manifest",
+            ),
+            Self::Fragment { stream, .. } => Damage::new(
+                DamageKind::MediaUnitDropped,
+                Severity::Degraded,
+                "Smooth fragment",
+            )
+            .with_ordinal(u64::try_from(stream.0).unwrap_or(u64::MAX)),
+            Self::FragmentUrl { stream } => Damage::new(
+                DamageKind::MetadataSkipped,
+                Severity::Degraded,
+                "Smooth fragment URL",
+            )
+            .with_ordinal(u64::try_from(stream.0).unwrap_or(u64::MAX)),
+            Self::StreamLost { stream } => Damage::new(
+                DamageKind::TrackDropped,
+                Severity::Degraded,
+                "Smooth stream",
+            )
+            .with_ordinal(u64::try_from(stream.0).unwrap_or(u64::MAX)),
+        }
+    }
+}
+
 /// One thing the host should act on.
 #[derive(Debug, Clone)]
 #[non_exhaustive]

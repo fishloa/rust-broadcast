@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Dropped::damage` (public) and one report alongside every drop: a manifest
+  that failed to fetch or parse, a fragment skipped after its retries, an
+  unresolvable fragment URL, a stream that vanished from the manifest, and a
+  stream skipped because it is not video/audio or has no quality level. A
+  fragment the demuxer already reported is not reported twice.
+- A stream timeline that cannot be enumerated on a refresh is reported
+  (`TimelineRepaired`) as well as dropped.
+- A track that cannot be set up is reported (`TrackDropped`) before the
+  session ends with `SmoothError::TrackSetup` — the announcement covers every
+  live stream at once, so it cannot go out without it.
+
+### Added
+
 - `Output::Damage(broadcast_core::damage::Damage)`: the one report of content
   the reader skipped, altered or truncated, delivered in order before the
   samples around it, including the damage the reader reported while the

@@ -442,3 +442,54 @@ fn a_fragment_body_one_byte_past_the_cap_ends_the_session() {
         "the refused fragment produces no samples"
     );
 }
+
+// ── The drop reports of this session ───────────────────────────────────
+
+fn reports(host: &Host) -> Vec<broadcast_core::damage::Damage> {
+    host.outputs()
+        .iter()
+        .filter_map(|o| match o {
+            Output::Damage(damage) => Some(damage.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_manifest_that_fails_to_fetch_is_reported_and_retried() {
+    let mut host = av_host(SmoothClientConfig::default());
+    host.route(
+        "Manifest",
+        vec![Reply::Status(503), Reply::Body(fixture("av/Manifest"))],
+    );
+    host.run_until(|o| o.iter().any(is_ended));
+    let reported = reports(&host);
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert_eq!(
+        reported[0].kind(),
+        broadcast_core::damage::DamageKind::MetadataSkipped
+    );
+    assert_eq!(reported[0].what(), "Smooth manifest");
+    assert!(host.has(is_ended), "the retry still plays the session");
+}
+
+#[test]
+fn a_stream_with_no_quality_level_is_reported_as_a_lost_track() {
+    // A manifest naming a stream with no QualityLevel cannot be played from
+    // that stream, so it is lost — reported before the session's own answer.
+    let manifest = String::from_utf8(fixture("av/Manifest")).expect("utf8");
+    let broken = manifest
+        .replace("<QualityLevel", "<Unknown")
+        .replace("</QualityLevel>", "</Unknown>");
+    let mut host = Host::new(SmoothClientConfig::default());
+    host.route("Manifest", vec![Reply::Body(broken.into_bytes())]);
+    host.run();
+    let reported = reports(&host);
+    assert!(
+        reported.iter().any(|damage| {
+            damage.kind() == broadcast_core::damage::DamageKind::TrackDropped
+                && damage.what() == "Smooth stream (no quality level)"
+        }),
+        "{reported:?}"
+    );
+}

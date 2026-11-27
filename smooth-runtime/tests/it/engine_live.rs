@@ -223,6 +223,18 @@ fn a_live_fragment_that_keeps_failing_is_skipped_with_a_discontinuity() {
         video_after_gap,
         "playback continues past the skipped fragment"
     );
+    // The skip is reported, naming the stream it belonged to: a live skip is
+    // content the player loses.
+    let reported: Vec<&broadcast_core::damage::Damage> = host
+        .outputs()
+        .iter()
+        .filter_map(|o| match o {
+            Output::Damage(damage) if damage.what() == "Smooth fragment" => Some(damage),
+            _ => None,
+        })
+        .collect();
+    assert!(!reported.is_empty(), "the skip must be reported");
+    assert_eq!(reported[0].location().ordinal(), Some(0));
 }
 
 #[test]
