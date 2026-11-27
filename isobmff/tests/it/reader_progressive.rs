@@ -398,14 +398,14 @@ fn tiny_mp4() -> Vec<u8> {
     use isobmff::timing::{SttsEntry, TimeToSampleBox};
 
     let timescale = Timescale::try_new(1000).expect("timescale");
-    let stsd = SampleDescriptionBox {
-        version: 0,
-        flags: 0,
-        entries: vec![
+    let stsd = SampleDescriptionBox::new(
+        0,
+        0,
+        vec![
             SampleEntryVariant::Unknown(OpaqueBox::new(*b"zzzz", vec![])),
             SampleEntryVariant::Unknown(OpaqueBox::new(*b"yyyy", vec![])),
         ],
-    };
+    );
     let stbl = SampleTableBox {
         children: vec![
             StblChild::Stsd(stsd),
@@ -426,13 +426,7 @@ fn tiny_mp4() -> Vec<u8> {
                     sample_description_index: 2,
                 }],
             }),
-            StblChild::Stsz(SampleSizeBox {
-                version: 0,
-                flags: 0,
-                sample_size: 4,
-                sample_count: 3,
-                entries: vec![],
-            }),
+            StblChild::Stsz(SampleSizeBox::new(0, 0, 4, 3, vec![])),
             StblChild::Stco(ChunkOffsetBox {
                 version: 0,
                 flags: 0,
@@ -466,6 +460,7 @@ fn tiny_mp4() -> Vec<u8> {
             timescale,
             duration: 120,
             language: 0x55c4,
+            quality: Default::default(),
         }),
         Some(HandlerBox {
             version: 0,
@@ -485,10 +480,13 @@ fn tiny_mp4() -> Vec<u8> {
             creation_time: 0,
             modification_time: 0,
             track_id: TrackId::new(1),
+            reserved: Default::default(),
             duration: 120,
+            reserved_2: Default::default(),
             layer: 0,
             alternate_group: 0,
             volume: 0,
+            reserved_3: Default::default(),
             matrix: identity_matrix(),
             width: 0,
             height: 0,
@@ -506,7 +504,9 @@ fn tiny_mp4() -> Vec<u8> {
         duration: 120,
         rate: 0x0001_0000,
         volume: 0x0100,
+        reserved: Default::default(),
         matrix: identity_matrix(),
+        pre_defined: Default::default(),
         next_track_id: TrackId::new(2),
     };
     let ftyp = FileTypeBox {

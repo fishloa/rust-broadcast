@@ -275,28 +275,28 @@ fn avc_hevc_display_extra_boxes(
     display: Option<&crate::ir::DisplayGeometry>,
     hdr: Option<&broadcast_bitstream::HdrStaticMetadata>,
     dovi: Option<&isobmff::dovi::DoviDecoderConfigurationRecord>,
-) -> Result<Vec<isobmff::sample_entries::OpaqueBox>> {
+) -> Result<Vec<isobmff::box_support::OpaqueBox>> {
     let mut extra_boxes = Vec::new();
     if let Some(display) = display {
         push_display_boxes(display, &mut extra_boxes)?;
     }
     if let Some(hdr) = hdr {
         for (box_type, data) in hdr.sample_entry_boxes()? {
-            extra_boxes.push(isobmff::sample_entries::OpaqueBox { box_type, data });
+            extra_boxes.push(isobmff::box_support::OpaqueBox::new(box_type, data));
         }
     }
     if let Some(dovi) = dovi {
-        extra_boxes.push(isobmff::sample_entries::OpaqueBox {
-            box_type: dovi.box_fourcc(),
-            data: dovi.try_to_bytes()?,
-        });
+        extra_boxes.push(isobmff::box_support::OpaqueBox::new(
+            dovi.box_fourcc(),
+            dovi.try_to_bytes()?,
+        ));
     }
     Ok(extra_boxes)
 }
 
 fn push_display_boxes(
     display: &crate::ir::DisplayGeometry,
-    extra_boxes: &mut Vec<isobmff::sample_entries::OpaqueBox>,
+    extra_boxes: &mut Vec<isobmff::box_support::OpaqueBox>,
 ) -> Result<()> {
     // pasp — only when the SAR is specified and not square (§12.1.4.1: an
     // absent pasp means square pixels).
@@ -309,10 +309,7 @@ fn push_display_boxes(
         };
         let mut body = alloc::vec![0u8; pasp.serialized_len()];
         pasp.serialize_into(&mut body)?;
-        extra_boxes.push(isobmff::sample_entries::OpaqueBox {
-            box_type: *b"pasp",
-            data: body,
-        });
+        extra_boxes.push(isobmff::box_support::OpaqueBox::new(*b"pasp", body));
     }
 
     // colr (nclx) — only when a colour description was actually signalled.
@@ -332,10 +329,7 @@ fn push_display_boxes(
         };
         let mut body = alloc::vec![0u8; colr.serialized_len()];
         colr.serialize_into(&mut body)?;
-        extra_boxes.push(isobmff::sample_entries::OpaqueBox {
-            box_type: *b"colr",
-            data: body,
-        });
+        extra_boxes.push(isobmff::box_support::OpaqueBox::new(*b"colr", body));
     }
 
     Ok(())

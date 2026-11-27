@@ -137,31 +137,40 @@ fn audit(entry: &Entry) -> usize {
     checked
 }
 
+/// The committed fixtures whose sample entries this audit reads.
+const FIXTURES: [&str; 20] = [
+    "mp4/frag/av1.frag.mp4",
+    "mp4/frag/hevc-main.frag.mp4",
+    "mp4/frag/vvc.frag.mp4",
+    "mp4/cmaf/av-frag.mp4",
+    "mp4/flac.mp4",
+    "mp4/opus.mp4",
+    "mp4/stpp.mp4",
+    "mp4/cmaf-av-subtitle/av-subtitle-frag.mp4",
+    "mp4/quicktime/qt-prores-apco.mov",
+    "mp4/quicktime/qt-prores-apcs.mov",
+    "mp4/quicktime/qt-prores-apcn.mov",
+    "mp4/quicktime/qt-prores-apch.mov",
+    "mp4/quicktime/qt-prores-ap4h.mov",
+    "mp4/quicktime/qt-prores-ap4x.mov",
+    "mp4/quicktime/qt-mjpeg.mov",
+    "mp4/quicktime/qt-svq1.mov",
+    "mp4/quicktime/qt-h263.mov",
+    "mp4/quicktime/qt-pcm-s16le.mov",
+    "mp4/quicktime/qt-pcm-s24le.mov",
+    "mp4/3gpp/h263.3gp",
+];
+
+/// Bytes appended to an entry's child region.
+const TRAILER: [u8; 4] = [0xD1, 0x2C, 0x9B, 0x5E];
+/// Where an entry's four-CC sits in its header.
+const FOURCC_RANGE: core::ops::Range<usize> =
+    BOX_HEADER_MIN_SIZE - core::mem::size_of::<u32>()..BOX_HEADER_MIN_SIZE;
+
 #[test]
 fn committed_visual_audio_and_subtitle_entries_are_byte_exact() {
     let mut all = Vec::new();
-    for fixture in [
-        "mp4/frag/av1.frag.mp4",
-        "mp4/frag/hevc-main.frag.mp4",
-        "mp4/frag/vvc.frag.mp4",
-        "mp4/cmaf/av-frag.mp4",
-        "mp4/flac.mp4",
-        "mp4/opus.mp4",
-        "mp4/stpp.mp4",
-        "mp4/cmaf-av-subtitle/av-subtitle-frag.mp4",
-        "mp4/quicktime/qt-prores-apco.mov",
-        "mp4/quicktime/qt-prores-apcs.mov",
-        "mp4/quicktime/qt-prores-apcn.mov",
-        "mp4/quicktime/qt-prores-apch.mov",
-        "mp4/quicktime/qt-prores-ap4h.mov",
-        "mp4/quicktime/qt-prores-ap4x.mov",
-        "mp4/quicktime/qt-mjpeg.mov",
-        "mp4/quicktime/qt-svq1.mov",
-        "mp4/quicktime/qt-h263.mov",
-        "mp4/quicktime/qt-pcm-s16le.mov",
-        "mp4/quicktime/qt-pcm-s24le.mov",
-        "mp4/3gpp/h263.3gp",
-    ] {
+    for fixture in FIXTURES {
         let data = fixtures::read(fixture);
         all.extend(entries(&data, fixture));
     }
@@ -170,6 +179,45 @@ fn committed_visual_audio_and_subtitle_entries_are_byte_exact() {
         checked += audit(entry);
     }
     assert!(checked > 0, "at least one fixed byte was exercised");
+}
+
+/// An entry a reader must locate samples through keeps a child region its own
+/// syntax does not describe: four bytes appended past its last child grow its
+/// size and come back out.
+#[test]
+fn a_committed_entry_keeps_a_trailing_region_it_does_not_describe() {
+    let mut checked = 0usize;
+    let mut dropped = Vec::new();
+    for fixture in FIXTURES {
+        let data = fixtures::read(fixture);
+        for entry in entries(&data, fixture) {
+            let mut grown = entry.bytes.clone();
+            grown.extend_from_slice(&TRAILER);
+            let total = u32::try_from(grown.len()).expect("entry length");
+            grown[..FOURCC_RANGE.start].copy_from_slice(&total.to_be_bytes());
+            let Ok(variant) = sample_entry_variant(&grown) else {
+                continue;
+            };
+            let out = variant.try_to_bytes().unwrap_or_else(|err| {
+                panic!("{fixture} entry: serialize failed after parse: {err}")
+            });
+            if out != grown {
+                let fourcc = String::from_utf8_lossy(&grown[FOURCC_RANGE]).into_owned();
+                dropped.push(format!(
+                    "{fixture} {fourcc}: {} in, {} out",
+                    grown.len(),
+                    out.len()
+                ));
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "at least one entry was exercised");
+    assert!(
+        dropped.is_empty(),
+        "{} entries dropped bytes past their last child: {dropped:?}",
+        dropped.len()
+    );
 }
 
 #[test]
@@ -256,6 +304,39 @@ fn rgan_entry_keeps_its_reserved_block_and_unwalkable_tail() {
     );
 }
 
+/// An assembled `stpp` entry whose child region ends in bytes no header
+/// accounts for: three of them are too few to frame a box, and the fourth
+/// declares a `btrt` longer than the entry holds.
+#[test]
+fn stpp_entry_keeps_an_unframeable_child_region() {
+    let mut body = Vec::new();
+    body.extend_from_slice(&[0u8; SAMPLE_ENTRY_FIXED_LEN]);
+    body.extend_from_slice(b"http://www.w3.org/ns/ttml\0");
+    body.extend_from_slice(&[0, 0]);
+    body.extend_from_slice(&[0, 0, 0, 20, b'b', b't', b'r', b't', 0, 0, 0, 0]);
+    body.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
+    let total = u32::try_from(body.len() + BOX_HEADER_MIN_SIZE).expect("entry length");
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(&total.to_be_bytes());
+    bytes.extend_from_slice(b"stpp");
+    bytes.extend_from_slice(&body);
+
+    let SampleEntryVariant::Stpp(entry) = sample_entry_variant(&bytes).expect("stpp parses") else {
+        panic!("expected the stpp entry kind");
+    };
+    assert_eq!(
+        entry.trailing,
+        [
+            0, 0, 0, 20, b'b', b't', b'r', b't', 0, 0, 0, 0, 0xAA, 0xBB, 0xCC
+        ]
+    );
+    assert_eq!(
+        entry.try_to_bytes().expect("stpp serializes"),
+        bytes,
+        "the unframeable region is carried"
+    );
+}
+
 #[test]
 fn image_sequence_fixture_entries_are_byte_exact() {
     let mut checked = 0usize;
@@ -280,6 +361,67 @@ fn image_sequence_fixture_entries_are_byte_exact() {
         2 * VISUAL_FIXED_LEN,
         "every visual fixed byte of both sequence entries is exercised"
     );
+}
+
+/// A child of a visual sample entry written with the `size == 0` form ("extends
+/// to the end of the enclosing container", ISO/IEC 14496-12:2026 §4.2) or the
+/// `size == 1` + 64-bit `largesize` form keeps that form on a rewrite; a
+/// compact-only carrier normalises both. The bytes are
+/// `fixtures/mp4/h264-aac-prog.mp4`'s `avc1` entry (at file offset 457) with
+/// its last child, `btrt` (entry offset 156, file offset 613), rewritten in
+/// each form.
+#[test]
+fn visual_entry_child_header_forms_are_carried() {
+    let data = fixtures::read("mp4/h264-aac-prog.mp4");
+    let entry = sample_entries(&data)
+        .into_iter()
+        .find(|bytes| &bytes[4..8] == b"avc1")
+        .expect("an avc1 entry");
+    let child = last_child_offset(&entry, b"btrt");
+    let child_size =
+        u32::from_be_bytes(entry[child..child + 4].try_into().expect("four size bytes")) as usize;
+
+    let mut to_end = entry.clone();
+    to_end[child..child + 4].copy_from_slice(&0u32.to_be_bytes());
+    let parsed = sample_entry_variant(&to_end).expect("parse a size-0 child");
+    assert_eq!(
+        parsed.try_to_bytes().expect("serialize a size-0 child"),
+        to_end,
+        "the size == 0 child form"
+    );
+
+    let mut wide = entry[..child].to_vec();
+    wide.extend_from_slice(&1u32.to_be_bytes());
+    wide.extend_from_slice(b"btrt");
+    let wide_child = u64::try_from(child_size + BOX_HEADER_MIN_SIZE).expect("child length");
+    wide.extend_from_slice(&wide_child.to_be_bytes());
+    wide.extend_from_slice(&entry[child + BOX_HEADER_MIN_SIZE..child + child_size]);
+    let entry_len = u32::try_from(wide.len()).expect("entry length");
+    wide[..4].copy_from_slice(&entry_len.to_be_bytes());
+    let parsed = sample_entry_variant(&wide).expect("parse a largesize child");
+    assert_eq!(
+        parsed.try_to_bytes().expect("serialize a largesize child"),
+        wide,
+        "the size == 1 + largesize child form"
+    );
+}
+
+/// Byte offset of the last child with `fourcc` in a visual sample entry.
+fn last_child_offset(entry: &[u8], fourcc: &[u8; 4]) -> usize {
+    let mut at = BOX_HEADER_MIN_SIZE + VISUAL_FIXED_LEN;
+    let mut found = None;
+    while at + BOX_HEADER_MIN_SIZE <= entry.len() {
+        let size =
+            u32::from_be_bytes(entry[at..at + 4].try_into().expect("four size bytes")) as usize;
+        if size < BOX_HEADER_MIN_SIZE || at + size > entry.len() {
+            break;
+        }
+        if &entry[at + 4..at + BOX_HEADER_MIN_SIZE] == fourcc {
+            found = Some(at);
+        }
+        at += size;
+    }
+    found.expect("the child is present")
 }
 
 #[test]

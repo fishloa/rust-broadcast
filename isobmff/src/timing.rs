@@ -646,7 +646,52 @@ pub struct SegmentIndexBox {
     pub timescale: Timescale,
     pub earliest_presentation_time: u64,
     pub first_offset: u64,
+    /// The 16 reserved bits before `reference_count` (§8.14.3.2), carried
+    /// verbatim.
+    pub reserved: u16,
     pub references: Vec<SidxReference>,
+    /// Bytes after the last reference the count declares (§8.14.3.2), carried
+    /// verbatim so a rewrite is exact. Not a field of the box.
+    trailing: Vec<u8>,
+}
+
+impl SegmentIndexBox {
+    /// A `sidx` of `references` with no bytes past the declared table.
+    #[must_use]
+    pub fn new(
+        version: u8,
+        flags: u32,
+        reference_id: u32,
+        timescale: Timescale,
+        earliest_presentation_time: u64,
+        first_offset: u64,
+        references: Vec<SidxReference>,
+    ) -> Self {
+        Self {
+            version,
+            flags,
+            reference_id,
+            timescale,
+            earliest_presentation_time,
+            first_offset,
+            reserved: 0,
+            references,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// The bytes after the last declared reference, in wire order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared table does not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
+    }
 }
 
 impl SegmentIndexBox {
@@ -679,7 +724,7 @@ impl SegmentIndexBox {
         // read `reference_count` from the `reserved` field's own 2 bytes,
         // so every conformant sidx (`reserved == 0`) parsed as
         // `reference_count == 0` (C9, #1010).
-        let _reserved = read_u16(body, &mut c, "sidx reserved+count")?;
+        let reserved = read_u16(body, &mut c, "sidx reserved+count")?;
         let reference_count = read_u16(body, &mut c, "sidx reserved+count")? as usize;
 
         let mut references = Vec::with_capacity(bounded_entry_count(
@@ -706,6 +751,7 @@ impl SegmentIndexBox {
                 sap_delta_time,
             });
         }
+        let trailing = body[c..].to_vec();
         Ok(Self {
             version,
             flags,
@@ -713,7 +759,9 @@ impl SegmentIndexBox {
             timescale,
             earliest_presentation_time: ept,
             first_offset,
+            reserved,
             references,
+            trailing,
         })
     }
 }
@@ -754,6 +802,7 @@ impl Serialize for SegmentIndexBox {
             + time_size
             + core::mem::size_of::<u32>()
             + self.references.len() * SIDX_REFERENCE_ENTRY_LEN
+            + self.trailing.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -792,11 +841,8 @@ impl Serialize for SegmentIndexBox {
                 .copy_from_slice(&self.first_offset.to_be_bytes());
             c += core::mem::size_of::<u64>();
         }
-        // reserved(16) = 0, THEN reference_count(16) (see the parse-side
-        // comment) — before the fix, this wrote only `reference_count` at
-        // the position a reader expects `reserved`, and never wrote
-        // `reference_count`'s own bytes at all.
-        buf[c..c + core::mem::size_of::<u16>()].copy_from_slice(&0u16.to_be_bytes());
+        // reserved(16), THEN reference_count(16) (see the parse-side comment).
+        buf[c..c + core::mem::size_of::<u16>()].copy_from_slice(&self.reserved.to_be_bytes());
         c += core::mem::size_of::<u16>();
         let reference_count =
             broadcast_core::len::fit_u16(self.references.len(), "reference_count")?;
@@ -836,7 +882,8 @@ impl Serialize for SegmentIndexBox {
             buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&raw_sap.to_be_bytes());
             c += core::mem::size_of::<u32>();
         }
-        Ok(c)
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(c + self.trailing.len())
     }
 }
 
@@ -879,10 +926,52 @@ pub struct TrackFragmentRandomAccessBox {
     pub length_size_of_traf_num: u8,
     pub length_size_of_trun_num: u8,
     pub length_size_of_sample_num: u8,
+    /// The reserved bits of the field-widths word (§8.8.10.2), carried
+    /// verbatim.
+    pub reserved_widths: u32,
     pub entries: Vec<TrackFragmentRandomAccessEntry>,
+    /// Bytes after the last entry the count declares (§8.8.10.2), carried
+    /// verbatim so a rewrite is exact. Not a field of the box.
+    trailing: Vec<u8>,
 }
 
 impl TrackFragmentRandomAccessBox {
+    /// A `tfra` of `entries` with no bytes past the declared table.
+    #[must_use]
+    pub fn new(
+        version: u8,
+        flags: u32,
+        track_id: TrackId,
+        length_size_of_traf_num: u8,
+        length_size_of_trun_num: u8,
+        length_size_of_sample_num: u8,
+        entries: Vec<TrackFragmentRandomAccessEntry>,
+    ) -> Self {
+        Self {
+            version,
+            flags,
+            track_id,
+            length_size_of_traf_num,
+            length_size_of_trun_num,
+            length_size_of_sample_num,
+            reserved_widths: 0,
+            entries,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// The bytes after the last declared entry, in wire order.
+    #[must_use]
+    pub fn trailing(&self) -> &[u8] {
+        &self.trailing
+    }
+
+    /// Keep bytes the declared table does not account for.
+    #[must_use]
+    pub fn with_trailing(mut self, trailing: Vec<u8>) -> Self {
+        self.trailing = trailing;
+        self
+    }
     /// The byte width of one variable field from its wire value (§8.8.10.3).
     fn field_bytes(wire_value: u8) -> usize {
         usize::from(wire_value) + 1
@@ -918,6 +1007,10 @@ impl TrackFragmentRandomAccessBox {
         let mut c = FULLBOX_EXTRA_SIZE;
         let track_id = TrackId::new(read_u32(body, &mut c, "tfra track_ID")?);
         let widths = read_u32(body, &mut c, "tfra field widths")?;
+        let reserved_widths = widths
+            & !((TFRA_LENGTH_MASK << TFRA_TRAF_NUM_SHIFT)
+                | (TFRA_LENGTH_MASK << TFRA_TRUN_NUM_SHIFT)
+                | TFRA_LENGTH_MASK);
         let length_size_of_traf_num = ((widths >> TFRA_TRAF_NUM_SHIFT) & TFRA_LENGTH_MASK) as u8;
         let length_size_of_trun_num = ((widths >> TFRA_TRUN_NUM_SHIFT) & TFRA_LENGTH_MASK) as u8;
         let length_size_of_sample_num = (widths & TFRA_LENGTH_MASK) as u8;
@@ -968,6 +1061,7 @@ impl TrackFragmentRandomAccessBox {
                 sample_number,
             });
         }
+        let trailing = body[c..].to_vec();
         Ok(Self {
             version,
             flags,
@@ -975,7 +1069,9 @@ impl TrackFragmentRandomAccessBox {
             length_size_of_traf_num,
             length_size_of_trun_num,
             length_size_of_sample_num,
+            reserved_widths,
             entries,
+            trailing,
         })
     }
 }
@@ -1016,6 +1112,7 @@ impl Serialize for TrackFragmentRandomAccessBox {
             + FULLBOX_EXTRA_SIZE
             + TFRA_FIXED_FIELDS_LEN
             + self.entries.len().saturating_mul(self.entry_len())
+            + self.trailing.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1046,7 +1143,10 @@ impl Serialize for TrackFragmentRandomAccessBox {
             TFRA_LENGTH_FIELD_BITS,
             "length_size_of_sample_num",
         )? as u32;
-        let widths = (traf << TFRA_TRAF_NUM_SHIFT) | (trun << TFRA_TRUN_NUM_SHIFT) | sample;
+        let widths = self.reserved_widths
+            | (traf << TFRA_TRAF_NUM_SHIFT)
+            | (trun << TFRA_TRUN_NUM_SHIFT)
+            | sample;
         buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&widths.to_be_bytes());
         c += core::mem::size_of::<u32>();
         let count = broadcast_core::len::fit_u32(self.entries.len(), "tfra number_of_entry")?;
@@ -1079,7 +1179,8 @@ impl Serialize for TrackFragmentRandomAccessBox {
             c += write_uint(buf, c, entry.trun_number, self.length_size_of_trun_num)?;
             c += write_uint(buf, c, entry.sample_number, self.length_size_of_sample_num)?;
         }
-        Ok(c)
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        Ok(c + self.trailing.len())
     }
 }
 
@@ -1189,12 +1290,25 @@ pub struct MovieFragmentRandomAccessBox {
 impl MovieFragmentRandomAccessBox {
     /// Parse the body of an `mfra` box (after the 8-byte `BoxHeader`).
     pub fn parse_body(body: &[u8]) -> Result<Self> {
+        Self::parse_body_notes(body, None)
+    }
+
+    /// [`MovieFragmentRandomAccessBox::parse_body`], reporting the bytes a
+    /// `tfra` carried past its declared entry table.
+    pub(crate) fn parse_body_notes(
+        body: &[u8],
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
         let mut tfra = Vec::new();
         let mut mfro = None;
         for child in crate::box_types::BoxIter::new(body) {
             let child = child?;
             if child.header.box_type.is(b"tfra") {
-                tfra.push(TrackFragmentRandomAccessBox::parse_body(child.payload())?);
+                let parsed = TrackFragmentRandomAccessBox::parse_body(child.payload())?;
+                if let Some(notes) = notes.as_deref_mut() {
+                    notes.trailing(child.bytes, parsed.trailing().len());
+                }
+                tfra.push(parsed);
             } else if child.header.box_type.is(b"mfro") {
                 mfro = Some(MovieFragmentRandomAccessOffsetBox::parse_body(
                     child.payload(),
@@ -1537,6 +1651,7 @@ mod tests {
             timescale: timescale(90000),
             earliest_presentation_time: 0,
             first_offset: 68,
+            reserved: Default::default(),
             references: vec![
                 SidxReference {
                     reference_type: 0,
@@ -1555,6 +1670,7 @@ mod tests {
                     sap_delta_time: 0,
                 },
             ],
+            trailing: Vec::new(),
         };
         let bytes = b.try_to_bytes().unwrap();
         let parsed = SegmentIndexBox::parse(&bytes).unwrap();
@@ -1573,7 +1689,9 @@ mod tests {
             timescale: timescale(90000),
             earliest_presentation_time: u64::from(u32::MAX) + 1,
             first_offset: 0,
+            reserved: Default::default(),
             references: vec![],
+            trailing: Vec::new(),
         };
         let err = b.try_to_bytes().unwrap_err();
         assert!(
@@ -1598,7 +1716,9 @@ mod tests {
             timescale: timescale(90000),
             earliest_presentation_time: u64::from(u32::MAX),
             first_offset: 0,
+            reserved: Default::default(),
             references: vec![],
+            trailing: Vec::new(),
         };
         let bytes = b.try_to_bytes().unwrap();
         let parsed = SegmentIndexBox::parse(&bytes).unwrap();
@@ -1617,6 +1737,7 @@ mod tests {
             timescale: timescale(90000),
             earliest_presentation_time: 0,
             first_offset: 0,
+            reserved: Default::default(),
             references: vec![SidxReference {
                 reference_type: 0,
                 referenced_size: 1 << 31,
@@ -1625,6 +1746,7 @@ mod tests {
                 sap_type: 1,
                 sap_delta_time: 0,
             }],
+            trailing: Vec::new(),
         };
         let err = b.try_to_bytes().unwrap_err();
         assert!(
@@ -1648,6 +1770,7 @@ mod tests {
             timescale: timescale(48000),
             earliest_presentation_time: 0x1_0000_0000,
             first_offset: 0x2_0000_0000,
+            reserved: Default::default(),
             references: vec![SidxReference {
                 reference_type: 1,
                 referenced_size: 500,
@@ -1656,6 +1779,7 @@ mod tests {
                 sap_type: 1,
                 sap_delta_time: 0,
             }],
+            trailing: Vec::new(),
         };
         let bytes = b.try_to_bytes().unwrap();
         let parsed = SegmentIndexBox::parse(&bytes).unwrap();
@@ -1672,6 +1796,7 @@ mod tests {
             timescale: timescale(90000),
             earliest_presentation_time: 0,
             first_offset: 0,
+            reserved: Default::default(),
             references: vec![SidxReference {
                 reference_type: 1,            // 1<<31 in packed u32
                 referenced_size: 0x7FFF_FFFF, // max 31-bit
@@ -1680,6 +1805,7 @@ mod tests {
                 sap_type: 7,                 // 7<<28
                 sap_delta_time: 0x0FFF_FFFF, // max 28-bit
             }],
+            trailing: Vec::new(),
         };
         let bytes = b.try_to_bytes().unwrap();
         let parsed = SegmentIndexBox::parse(&bytes).unwrap();
@@ -1695,7 +1821,9 @@ mod tests {
             timescale: timescale(90000),
             earliest_presentation_time: 0,
             first_offset: 0,
+            reserved: Default::default(),
             references: vec![],
+            trailing: Vec::new(),
         };
         let bytes = b.try_to_bytes().unwrap();
         let parsed = SegmentIndexBox::parse_body(&bytes[8..]).unwrap();
@@ -1707,14 +1835,14 @@ mod tests {
     // -----------------------------------------------------------------------
 
     fn tfra(version: u8, widths: (u8, u8, u8)) -> TrackFragmentRandomAccessBox {
-        TrackFragmentRandomAccessBox {
+        TrackFragmentRandomAccessBox::new(
             version,
-            flags: 0,
-            track_id: TrackId::new(1),
-            length_size_of_traf_num: widths.0,
-            length_size_of_trun_num: widths.1,
-            length_size_of_sample_num: widths.2,
-            entries: vec![
+            0,
+            TrackId::new(1),
+            widths.0,
+            widths.1,
+            widths.2,
+            vec![
                 TrackFragmentRandomAccessEntry {
                     time: if version == 0 {
                         1024
@@ -1738,7 +1866,7 @@ mod tests {
                     sample_number: if widths.2 > 0 { 260 } else { 1 },
                 },
             ],
-        }
+        )
     }
 
     #[test]

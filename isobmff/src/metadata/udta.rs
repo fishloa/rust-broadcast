@@ -269,6 +269,18 @@ impl Udta {
 
     /// Parse a `udta` from its body.
     pub fn parse_body(body: &[u8], limits: &Limits) -> Result<Self> {
+        Self::parse_body_notes(body, limits, None)
+    }
+
+    /// [`Udta::parse_body`], keeping a child whose typed parse fails as an
+    /// opaque child of its own kind and reporting it through `notes`, so one
+    /// unrepresentable atom costs that atom rather than the whole metadata
+    /// tree. With no sink the parse is the strict one.
+    pub(crate) fn parse_body_notes(
+        body: &[u8],
+        limits: &Limits,
+        mut notes: Option<&mut crate::box_support::Notes<'_>>,
+    ) -> Result<Self> {
         let mut children = Vec::new();
         for child in BoxIter::new(body) {
             let child = child?;
@@ -280,69 +292,164 @@ impl Udta {
                 children.push(UdtaChild::Opaque(opaque));
                 continue;
             }
-            let parsed = match fourcc {
-                CHPL => UdtaChild::Chapters(Chpl::parse_body(child.body)?),
-                LOCI => UdtaChild::Location(Loci::parse_body(child.body)?),
-                META => UdtaChild::Meta(Meta::parse_body(child.body, limits)?),
+            let typed = match fourcc {
+                CHPL => {
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        Chpl::parse_body(child.body).map(UdtaChild::Chapters)
+                    })?
+                }
+                LOCI => {
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        Loci::parse_body(child.body).map(UdtaChild::Location)
+                    })?
+                }
+                META => {
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        Meta::parse_body(child.body, limits).map(UdtaChild::Meta)
+                    })?
+                }
                 crate::track_desc::KIND => {
-                    UdtaChild::Kind(crate::track_desc::KindBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::track_desc::KindBox::parse_body(child.body).map(UdtaChild::Kind)
+                    })?
                 }
                 crate::audio_boxes::LABL => {
-                    UdtaChild::Label(crate::audio_boxes::LabelBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::audio_boxes::LabelBox::parse_body(child.body).map(UdtaChild::Label)
+                    })?
                 }
                 crate::audio_boxes::LUDT => {
-                    UdtaChild::Loudness(crate::audio_boxes::LoudnessBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::audio_boxes::LoudnessBox::parse_body(child.body)
+                            .map(UdtaChild::Loudness)
+                    })?
                 }
                 crate::track_desc::STRK => {
-                    UdtaChild::SubTrack(crate::track_desc::SubTrackBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::track_desc::SubTrackBox::parse_body(child.body)
+                            .map(UdtaChild::SubTrack)
+                    })?
                 }
                 crate::meta_track::CPRT => {
-                    UdtaChild::Copyright(crate::meta_track::CopyrightBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::meta_track::CopyrightBox::parse_body(child.body)
+                            .map(UdtaChild::Copyright)
+                    })?
                 }
-                crate::track_desc::TSEL => UdtaChild::TrackSelection(
-                    crate::track_desc::TrackSelectionBox::parse_body(child.body)?,
-                ),
-                crate::hint::HNTI => UdtaChild::HintInformation(Box::new(
-                    crate::hint::HintInformationBox::parse_body(child.body)?,
-                )),
-                crate::hint::HINF => UdtaChild::HintStatistics(Box::new(
-                    crate::hint::HintStatisticsBox::parse_body(child.body)?,
-                )),
-                crate::threegpp::CLSF => UdtaChild::Classification(
-                    crate::threegpp::MediaClassificationBox::parse_body(child.body)?,
-                ),
-                crate::threegpp::COLL => UdtaChild::Collection(
-                    crate::threegpp::CollectionNameBox::parse_body(child.body)?,
-                ),
+                crate::track_desc::TSEL => {
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::track_desc::TrackSelectionBox::parse_body(child.body)
+                            .map(UdtaChild::TrackSelection)
+                    })?
+                }
+                crate::hint::HNTI => {
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::hint::HintInformationBox::parse_body(child.body)
+                            .map(|boxed| UdtaChild::HintInformation(Box::new(boxed)))
+                    })?
+                }
+                crate::hint::HINF => {
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::hint::HintStatisticsBox::parse_body(child.body)
+                            .map(|boxed| UdtaChild::HintStatistics(Box::new(boxed)))
+                    })?
+                }
+                crate::threegpp::CLSF => {
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::threegpp::MediaClassificationBox::parse_body(child.body)
+                            .map(UdtaChild::Classification)
+                    })?
+                }
+                crate::threegpp::COLL => {
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::threegpp::CollectionNameBox::parse_body(child.body)
+                            .map(UdtaChild::Collection)
+                    })?
+                }
                 crate::threegpp::KYWD => {
-                    UdtaChild::Keywords(crate::threegpp::KeywordsBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::threegpp::KeywordsBox::parse_body(child.body)
+                            .map(UdtaChild::Keywords)
+                    })?
                 }
                 crate::threegpp::RTNG => {
-                    UdtaChild::Rating(crate::threegpp::MediaRatingBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::threegpp::MediaRatingBox::parse_body(child.body)
+                            .map(UdtaChild::Rating)
+                    })?
                 }
                 crate::threegpp::URAT => {
-                    UdtaChild::UserRating(crate::threegpp::UserRatingBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::threegpp::UserRatingBox::parse_body(child.body)
+                            .map(UdtaChild::UserRating)
+                    })?
                 }
                 crate::threegpp::THMB => {
-                    UdtaChild::Thumbnail(crate::threegpp::ThumbnailBox::parse_body(child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::threegpp::ThumbnailBox::parse_body(child.body)
+                            .map(UdtaChild::Thumbnail)
+                    })?
                 }
-                crate::threegpp::ORIE => UdtaChild::Orientation(
-                    crate::threegpp::OrientationInformationBox::parse_body(child.body)?,
-                ),
+                crate::threegpp::ORIE => {
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        crate::threegpp::OrientationInformationBox::parse_body(child.body)
+                            .map(UdtaChild::Orientation)
+                    })?
+                }
                 _ if super::is_text_key(&fourcc) => {
-                    UdtaChild::Text(parse_text(fourcc, child.body)?)
+                    crate::box_support::keep_or_note(child.bytes, notes.as_deref_mut(), |_| {
+                        parse_text(fourcc, child.body).map(UdtaChild::Text)
+                    })?
                 }
-                _ => {
-                    let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
-                    opaque.to_end = child.to_end();
-                    opaque.largesize = child.has_largesize();
-                    UdtaChild::Opaque(opaque)
-                }
+                _ => None,
             };
+            // A typed child that would not write its own bytes back — a
+            // dropped tail, a re-derived count — is kept opaque instead, so a
+            // rewrite stays exact.
+            let typed = match typed {
+                Some(value) if reproduces(&value, &child) => Some(value),
+                Some(_) => {
+                    if let Some(notes) = notes.as_deref_mut() {
+                        notes.not_reproducible(child.bytes);
+                    }
+                    None
+                }
+                None => None,
+            };
+            let parsed = typed.unwrap_or_else(|| {
+                let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
+                opaque.to_end = child.to_end();
+                opaque.largesize = child.has_largesize();
+                UdtaChild::Opaque(opaque)
+            });
             children.push(parsed);
         }
         Ok(Self { children })
     }
+}
+
+/// Whether a typed `udta` child writes back the type and body it parsed. The
+/// header form (`size == 0`, `size == 1` + `largesize`) is carried by the
+/// opaque child instead, so only the four-CC and the bytes after the header
+/// are compared.
+fn reproduces(parsed: &UdtaChild, child: &crate::box_types::BoxItem<'_>) -> bool {
+    if matches!(parsed, UdtaChild::Opaque(_)) {
+        return true;
+    }
+    let Ok(bytes) = parsed.try_to_bytes() else {
+        return false;
+    };
+    let Some(body) = bytes.get(BOX_HEADER_MIN_SIZE..) else {
+        return false;
+    };
+    if bytes.get(crate::box_types::BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE)
+        != child
+            .bytes
+            .get(crate::box_types::BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE)
+    {
+        return false;
+    }
+    child.bytes.get(child.header.header_size()..) == Some(body)
 }
 
 /// Parse a text atom body: QuickTime international text for a `©`-prefixed

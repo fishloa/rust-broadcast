@@ -237,6 +237,54 @@ fn sgpd_roll_real_fixture_byte_exact_round_trip() {
     );
 }
 
+/// `sgpd` version 1 with `default_length == 0` states each entry's width in a
+/// `description_length` prefix (ISO/IEC 14496-12:2026 §8.9.3.2), so uniform
+/// entries must not be folded back into the shared-length form. The bytes are
+/// `fixtures/mp4/aac-sgpd.mp4`'s `sgpd` (box at offset 37695, its
+/// `default_length` field at 37711, `entry_count` at 37715) rewritten to state
+/// `default_length = 0` and prefix the one entry with its 2-byte width.
+#[test]
+fn sgpd_v1_zero_default_length_with_uniform_entries_keeps_the_form() {
+    let data = std::fs::read(test_fixtures::path("mp4/aac-sgpd.mp4")).expect("fixture file");
+    let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
+    let sgpd_box = find_full_box(stbl, b"sgpd");
+    let mut bytes = sgpd_box[..24].to_vec();
+    bytes[16..20].copy_from_slice(&0u32.to_be_bytes());
+    bytes.extend_from_slice(&2u32.to_be_bytes());
+    bytes.extend_from_slice(&sgpd_box[24..]);
+    let len = u32::try_from(bytes.len()).expect("box length");
+    bytes[..4].copy_from_slice(&len.to_be_bytes());
+    assert_eq!(
+        bytes[16..20],
+        [0, 0, 0, 0],
+        "mutated default_length is zero"
+    );
+    let parsed = SampleGroupDescriptionBox::parse(&bytes).expect("parse");
+    assert_eq!(parsed.default_length, 0);
+    assert_eq!(parsed.entries, vec![SgpdEntry::Roll { roll_distance: -1 }]);
+    assert_eq!(parsed.try_to_bytes().expect("serialize"), bytes);
+}
+
+/// A version-1 `sgpd` may declare a non-zero `default_length` with no entries
+/// (ISO/IEC 14496-12:2026 §8.9.3.2); the value is the file's, not the
+/// serializer's to re-derive. Same fixture and box as above, with
+/// `entry_count` (offset 37715) zeroed and the entry's two bytes dropped.
+#[test]
+fn sgpd_v1_non_zero_default_length_with_no_entries_keeps_the_value() {
+    let data = std::fs::read(test_fixtures::path("mp4/aac-sgpd.mp4")).expect("fixture file");
+    let stbl = enter_chain(&data, &[b"moov", b"trak", b"mdia", b"minf", b"stbl"]);
+    let sgpd_box = find_full_box(stbl, b"sgpd");
+    let mut bytes = sgpd_box[..20].to_vec();
+    bytes.extend_from_slice(&0u32.to_be_bytes());
+    let len = u32::try_from(bytes.len()).expect("box length");
+    bytes[..4].copy_from_slice(&len.to_be_bytes());
+    assert_eq!(bytes[16..20], [0, 0, 0, 2], "default_length stays 2");
+    let parsed = SampleGroupDescriptionBox::parse(&bytes).expect("parse");
+    assert_eq!(parsed.default_length, 2);
+    assert!(parsed.entries.is_empty());
+    assert_eq!(parsed.try_to_bytes().expect("serialize"), bytes);
+}
+
 #[test]
 fn sgpd_oracle_body_matches() {
     let path = test_fixtures::path("mp4/aac-sgpd.mp4");
@@ -496,8 +544,10 @@ fn ssrt_long_form_entry_count_high_byte_round_trips() {
         discardable: true,
         subsample_priority: None,
         codec_specific_parameters: None,
+        reserved: 0,
     };
     let b = SubSampleReferenceTableBox {
+        version: 0,
         flags: 0,
         is_short_ref: false,
         entries: vec![entry; 300],
@@ -893,15 +943,15 @@ fn sidx_fields_read_every_byte() {
         sap_type: 1,
         sap_delta_time: 0,
     };
-    let b = SegmentIndexBox {
-        version: 0,
-        flags: 0,
-        reference_id: 1,
-        timescale: Timescale::try_new(90000).unwrap(),
-        earliest_presentation_time: 0,
-        first_offset: 0,
-        references: vec![reference; 300],
-    };
+    let b = SegmentIndexBox::new(
+        0,
+        0,
+        1,
+        Timescale::try_new(90000).unwrap(),
+        0,
+        0,
+        vec![reference; 300],
+    );
     let bytes = b.try_to_bytes().unwrap();
     assert_eq!(&bytes[30..32], &0x012Cu16.to_be_bytes());
     let parsed = SegmentIndexBox::parse(&bytes).unwrap();
@@ -933,14 +983,14 @@ fn sidx_starts_with_sap_is_a_single_bit() {
 /// `reference_type`, `starts_with_sap` or `sap_type` is an error, not a
 /// misframed entry, and the field maxima still round-trip.
 fn sidx_with_reference(reference_type: u8, starts_with_sap: u8, sap_type: u8) -> SegmentIndexBox {
-    SegmentIndexBox {
-        version: 0,
-        flags: 0,
-        reference_id: 1,
-        timescale: Timescale::try_new(90000).unwrap(),
-        earliest_presentation_time: 0,
-        first_offset: 0,
-        references: vec![SidxReference {
+    SegmentIndexBox::new(
+        0,
+        0,
+        1,
+        Timescale::try_new(90000).unwrap(),
+        0,
+        0,
+        vec![SidxReference {
             reference_type,
             referenced_size: 1,
             subsegment_duration: 1,
@@ -948,7 +998,7 @@ fn sidx_with_reference(reference_type: u8, starts_with_sap: u8, sap_type: u8) ->
             sap_type,
             sap_delta_time: 0,
         }],
-    }
+    )
 }
 
 fn assert_overflow(bad: SegmentIndexBox, field: &str, value: u64, max: u64) {
@@ -1377,6 +1427,7 @@ fn subs_v2_and_ssrt_advance_past_the_codec_specific_parameters() {
                         len: 3,
                         value: 0x0011_2233,
                     }),
+                    reserved: 0,
                 }),
             },
             SubsV2Subsample {
@@ -1385,6 +1436,7 @@ fn subs_v2_and_ssrt_advance_past_the_codec_specific_parameters() {
                     discardable: false,
                     subsample_priority: Some(0xBB),
                     codec_specific_parameters: None,
+                    reserved: 0,
                 }),
             },
         ]
@@ -1402,15 +1454,78 @@ fn subs_v2_and_ssrt_advance_past_the_codec_specific_parameters() {
                     len: 3,
                     value: 0x0011_2233,
                 }),
+                reserved: 0,
             },
             SubsampleProperties {
                 discardable: false,
                 subsample_priority: Some(0xBB),
                 codec_specific_parameters: None,
+                reserved: 0,
             },
         ]
     );
     assert_eq!(ssrt.try_to_bytes().unwrap(), SSRT_TWO_ENTRIES);
+}
+
+/// No committed fixture carries a `subs` or an `ssrt` box (the box audit lists
+/// both as typed boxes with no real occurrence), so these are spec-layout
+/// vectors. `subs` version 2's byte after `entry_count` is `is_size_16_bits`,
+/// `is_short_ref` and six reserved bits (ISO/IEC 14496-12:2026 §8.7.7.3):
+/// every bit is the file's, so all of them come back.
+#[test]
+fn subs_v2_keeps_the_reserved_header_bits() {
+    let bytes: &[u8] = &[
+        0, 0, 0, 17, b's', b'u', b'b', b's', // box header
+        2, 0, 0, 0, // version 2, flags 0
+        0, 0, 0, 0,    // entry_count
+        0xFF, // 16-bit size, 7-bit reference, six reserved bits set
+    ];
+    let parsed = SubSampleInformationBoxV2::parse(bytes).expect("parse");
+    assert_eq!(parsed.reserved, 0x3F);
+    assert_eq!(parsed.try_to_bytes().expect("serialize"), bytes);
+}
+
+/// An explicit version-2 sub-sample property byte ends with two reserved bits
+/// after `csp_length_minus_1` (§8.7.7.3), and an `ssrt` entry byte with three
+/// after it (§8.7.10). Both are carried.
+#[test]
+fn subs_v2_and_ssrt_keep_their_property_reserved_bits() {
+    let subs: &[u8] = &[
+        0, 0, 0, 26, b's', b'u', b'b', b's', // box header
+        2, 0, 0, 0, // version 2, flags 0
+        0, 0, 0, 1,    // entry_count
+        0xC0, // 16-bit size, 7-bit reference
+        0, 0, 0, 1, // sample_delta
+        0, 1, // subsample_count
+        0, 4,    // subsample_size
+        0x03, // both reserved bits set, no property
+    ];
+    let parsed = SubSampleInformationBoxV2::parse(subs).expect("parse subs");
+    assert_eq!(parsed.try_to_bytes().expect("serialize subs"), subs);
+
+    let ssrt: &[u8] = &[
+        0, 0, 0, 14, b's', b's', b'r', b't', // box header
+        0, 0, 0, 0,    // flags
+        0x81, // 7-bit entry_count = 1
+        0x07, // three reserved bits set
+    ];
+    let parsed = SubSampleReferenceTableBox::parse(ssrt).expect("parse ssrt");
+    assert_eq!(parsed.entries[0].reserved, 0x07);
+    assert_eq!(parsed.try_to_bytes().expect("serialize ssrt"), ssrt);
+}
+
+/// `ssrt` is a version 0 box, but the version byte a file states is what a
+/// rewrite must emit: rewriting it to 0 changes bytes the crate parsed.
+#[test]
+fn ssrt_keeps_the_fullbox_version_it_parsed() {
+    let bytes: &[u8] = &[
+        0, 0, 0, 14, b's', b's', b'r', b't', // box header
+        1, 0, 0, 0, // version 1, flags 0
+        0, 0, // entry_count
+    ];
+    let parsed = SubSampleReferenceTableBox::parse(bytes).expect("parse");
+    assert_eq!(parsed.version, 1);
+    assert_eq!(parsed.try_to_bytes().expect("serialize"), bytes);
 }
 
 #[test]
@@ -1585,6 +1700,7 @@ fn subs_v2_wide_fields_keep_every_byte() {
         flags: 0,
         is_size_16_bits: true,
         is_short_ref: true,
+        reserved: 0,
         entries,
     };
     let bytes = b.try_to_bytes().unwrap();

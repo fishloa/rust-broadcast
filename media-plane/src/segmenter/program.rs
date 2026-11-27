@@ -3825,6 +3825,7 @@ mod segmenter_tests {
                 chroma_subsampling_y: true,
                 chroma_sample_position: 0,
                 initial_presentation_delay_minus_one: None,
+                reserved: Default::default(),
                 config_obus: Vec::new(),
             },
             width: 0,

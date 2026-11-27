@@ -321,3 +321,65 @@ pub enum Error {
         index: u16,
     },
 }
+
+/// Why a box the reader could not type was kept as an opaque child instead of
+/// failing the whole file.
+///
+/// One token per [`enum@Error`] class a typed box parse can report, so a finding
+/// names the fault without carrying the error's fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub enum OpaqueReason {
+    /// The box was shorter than its own syntax requires.
+    BufferTooShort,
+    /// A field held a value the clause does not allow.
+    InvalidValue,
+    /// A call supplied something the box cannot represent.
+    InvalidInput,
+    /// The FullBox version is one this crate does not model.
+    UnsupportedVersion,
+    /// The box was not the type the parser expected.
+    UnexpectedBox,
+    /// A count exceeded the caller's limit.
+    LimitExceeded,
+    /// The typed form would not reproduce the bytes it parsed.
+    NotReproducible,
+    /// A fault outside the classes above.
+    Other,
+}
+
+impl OpaqueReason {
+    /// The reason class one parse error belongs to.
+    #[must_use]
+    pub const fn of(error: &Error) -> Self {
+        match error {
+            Error::BufferTooShort(_)
+            | Error::LargesizeBufferTooShort { .. }
+            | Error::UuidBufferTooShort { .. } => Self::BufferTooShort,
+            Error::InvalidValue(_) => Self::InvalidValue,
+            Error::InvalidInput(_) => Self::InvalidInput,
+            Error::UnsupportedVersion(_) => Self::UnsupportedVersion,
+            Error::UnexpectedBox { .. } => Self::UnexpectedBox,
+            Error::LimitExceeded { .. } => Self::LimitExceeded,
+            _ => Self::Other,
+        }
+    }
+
+    /// The reason's stable token.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::BufferTooShort => "buffer-too-short",
+            Self::InvalidValue => "invalid-value",
+            Self::InvalidInput => "invalid-input",
+            Self::UnsupportedVersion => "unsupported-version",
+            Self::UnexpectedBox => "unexpected-box",
+            Self::LimitExceeded => "limit-exceeded",
+            Self::NotReproducible => "not-reproducible",
+            Self::Other => "other",
+        }
+    }
+}
+
+broadcast_core::impl_spec_display!(OpaqueReason);

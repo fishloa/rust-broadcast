@@ -34,7 +34,9 @@ fn mvhd(version: u8, ct: u64, mt: u64, dur: u64) -> MovieHeaderBox {
         duration: dur,
         rate: 0x0001_0000,
         volume: 0x0100,
+        reserved: Default::default(),
         matrix: [0; 9],
+        pre_defined: Default::default(),
         next_track_id: TrackId::new(2),
     }
 }
@@ -46,10 +48,13 @@ fn tkhd(version: u8, ct: u64, mt: u64, dur: u64) -> TrackHeaderBox {
         creation_time: ct,
         modification_time: mt,
         track_id: TrackId::new(1),
+        reserved: Default::default(),
         duration: dur,
+        reserved_2: Default::default(),
         layer: 0,
         alternate_group: 0,
         volume: 0,
+        reserved_3: Default::default(),
         matrix: [0; 9],
         width: 0,
         height: 0,
@@ -65,6 +70,7 @@ fn mdhd(version: u8, ct: u64, mt: u64, dur: u64) -> MediaHeaderBox {
         timescale: timescale(90_000),
         duration: dur,
         language: 0x55C4,
+        quality: Default::default(),
     }
 }
 

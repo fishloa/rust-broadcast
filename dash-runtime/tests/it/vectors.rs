@@ -831,14 +831,14 @@ fn sidx_zero_size_reference_is_skipped_but_still_advances_the_timeline() {
     use dash_runtime::address::base_index;
     use isobmff::timing::SegmentIndexBox;
     use isobmff::timing::SidxReference;
-    let sidx = SegmentIndexBox {
-        version: 0,
-        flags: 0,
-        reference_id: 1,
-        timescale: timescale(1),
-        earliest_presentation_time: 0,
-        first_offset: 0,
-        references: vec![
+    let sidx = SegmentIndexBox::new(
+        0,
+        0,
+        1,
+        timescale(1),
+        0,
+        0,
+        vec![
             SidxReference {
                 reference_type: 0,
                 referenced_size: 0,
@@ -856,7 +856,7 @@ fn sidx_zero_size_reference_is_skipped_but_still_advances_the_timeline() {
                 sap_delta_time: 0,
             },
         ],
-    };
+    );
     let out = base_index::segments(&sidx, 100).unwrap();
     assert_eq!(out.len(), 1);
     assert_eq!(out[0].range.first, 100);
