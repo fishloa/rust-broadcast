@@ -472,7 +472,10 @@ fn every_warning_converts_to_a_damage_report() {
     use broadcast_matroska::reader::Warning;
 
     let cases = [
-        (Warning::MalformedElement { offset: 11 }, DamageKind::MetadataSkipped),
+        (
+            Warning::MalformedElement { offset: 11 },
+            DamageKind::MetadataSkipped,
+        ),
         (
             Warning::UnparsedElement {
                 id: 0x1853_8067,
@@ -487,8 +490,14 @@ fn every_warning_converts_to_a_damage_report() {
             },
             DamageKind::Resynchronised,
         ),
-        (Warning::MalformedBlock { offset: 44 }, DamageKind::MediaUnitDropped),
-        (Warning::Truncated { offset: 55 }, DamageKind::InputTruncated),
+        (
+            Warning::MalformedBlock { offset: 44 },
+            DamageKind::MediaUnitDropped,
+        ),
+        (
+            Warning::Truncated { offset: 55 },
+            DamageKind::InputTruncated,
+        ),
     ];
     for (warning, kind) in cases {
         let damage = broadcast_core::damage::Damage::from(warning);

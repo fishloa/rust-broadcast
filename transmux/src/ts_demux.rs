@@ -3969,14 +3969,11 @@ fn abandon_backlog(
             program_number: None,
         },
     });
-    events.push_back(DemuxEvent::damage(
-        Damage::new(
-            DamageKind::TrackDropped,
-            Severity::Degraded,
-            "elementary stream",
-        )
-        .at_byte_range(ByteRange::new(0, 0)),
-    ));
+    events.push_back(DemuxEvent::damage(Damage::new(
+        DamageKind::TrackDropped,
+        Severity::Degraded,
+        "elementary stream",
+    )));
     TrackState::Abandoned
 }
 
