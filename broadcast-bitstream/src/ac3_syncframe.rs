@@ -1571,6 +1571,16 @@ mod tests {
         );
     }
 
+    /// `isobmff` keeps its own copy of the `acmod` channel table (it cannot
+    /// depend on this crate); the two must agree for every code.
+    #[cfg(feature = "isobmff")]
+    #[test]
+    fn acmod_channels_agrees_with_the_isobmff_copy() {
+        for acmod in 0u8..=7 {
+            assert_eq!(acmod_channels(acmod), isobmff::acmod_channels(acmod));
+        }
+    }
+
     /// A half-rate frame (`fscod` 3, §E.1.2.2) takes `sr_code2` instead of
     /// `numblkscod` and always carries 6 blocks.
     #[test]
