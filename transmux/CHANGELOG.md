@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+
+- `flv::OnMetadata` and `flv::parse_on_metadata`: the typed view of an FLV
+  script tag's `onMetaData` properties (duration, width, height, frame rate,
+  codec ids, audio sample rate and size, stereo, file size, encoder) with
+  every other property kept as the AMF0 value the file carried and the
+  original body retained for a byte-exact rewrite. `StreamingFlvDemux`
+  exposes the file's tag through `on_metadata()`, and
+  `FlvMuxStage::with_metadata_body` writes a caller's body back verbatim.
+
 ### Breaking
 
 - An MP3 track's `TrackSpec::padding` is now the LAME tag's own encoder delay
