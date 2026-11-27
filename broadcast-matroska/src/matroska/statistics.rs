@@ -5,7 +5,9 @@
 //! mkvtoolnix, and the technical tags (`ENCODER`, `ENCODER_SETTINGS`, `BPS`)
 //! from the Matroska tagging page. It is a de-facto convention, taken from
 //! those two sources and from the getID3 and FFmpeg readers that agree with
-//! them (`private/specs-verified/misc/matroska-statistics/SOURCES.md`).
+//! them (mkvtoolnix's `src/common/track_statistics.cpp` and its
+//! track-statistics tags page; the sources note is recorded with the
+//! workspace's spec notes).
 //!
 //! The typed view is derived: the `SimpleTag` element, its `TagName` and its
 //! `TagString` stay in the tree untouched, so a file still rewrites byte for
