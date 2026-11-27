@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `metadata::Itunsmpb` and `Metadata::itunsmpb`: the iTunes `iTunSMPB`
+  freeform item's priming, padding and original sample count, parsed from its
+  hex text (a de-facto format, cited in the module). The typed view borrows
+  nothing; the item itself still round-trips byte for byte.
+- `sample_groups::GROUPING_TYPE_PROL` and `SgpdEntry::Prol`: the audio
+  pre-roll sample group description (§10.1), with `SgpdEntry::pre_roll_samples`
+  reporting a negative `roll` or positive `prol` distance as the decoder
+  pre-roll it states.
+- `reader::TrackInfo::pre_roll`: the track's decoder pre-roll requirement in
+  samples, from its `roll`/`prol` sample group (§10.1); and
+  `reader::TrackInfo::itunsmpb`: the file's iTunes gapless facts, a per-track
+  item taking precedence over a movie-level one that applies only when the
+  file has one audio track.
+
 ### Breaking
 
 - **Sample entries keep every parsed byte on a rewrite.** The audio sample

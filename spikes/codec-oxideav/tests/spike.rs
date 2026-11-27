@@ -306,3 +306,128 @@ fn check_aligned_with_ffmpeg(
         comparison.offset, comparison.overlap
     );
 }
+
+// ---------------------------------------------------------------------------
+// The container gapless signals, decoded by OxideAV and trimmed by the seam.
+// ---------------------------------------------------------------------------
+
+/// Decode every packet through a plain decoder and return the raw frames.
+fn decode_audio_frames(
+    registry: &Registry,
+    parameters: &broadcast_codec::CodecParameters,
+    packets: &[Vec<u8>],
+) -> Vec<broadcast_codec::AudioFrame> {
+    let mut decoder = registry.decoder(parameters).expect("a decoder");
+    let mut frames = Vec::new();
+    for packet in packets {
+        decoder
+            .send(Packet::borrowed(packet))
+            .expect("the packet is accepted");
+        while let Some(frame) = decoder.receive().expect("receive succeeds") {
+            let Frame::Audio(audio) = frame else {
+                panic!("an audio decoder emitted a non-audio frame");
+            };
+            frames.push(audio);
+        }
+    }
+    decoder.finish().expect("end of input is accepted");
+    while let Some(frame) = decoder.receive().expect("receive succeeds") {
+        let Frame::Audio(audio) = frame else {
+            panic!("an audio decoder emitted a non-audio frame");
+        };
+        frames.push(audio);
+    }
+    frames
+}
+
+fn audio_collected_track(
+    media: &test_harness::collect::Collected,
+) -> &test_harness::collect::CollectedTrack {
+    media
+        .tracks
+        .iter()
+        .find(|track| track.spec.config.audio_sample_rate().is_some())
+        .expect("an audio track")
+}
+
+fn oxideav_registry() -> Registry {
+    Registry::new()
+        .with(Box::new(OxideavProvider))
+        .expect("the provider registers")
+}
+
+#[test]
+fn matroska_discard_padding_trimmed_count_matches_ffmpeg() {
+    use broadcast_codec::TrimStage;
+    use test_harness::collect::{CollectMode, media_from_matroska};
+
+    let Some(reference) = support::ffmpeg_f32("mkv/vp9-opus.webm") else {
+        return;
+    };
+    let bytes = test_fixtures::read("mkv/vp9-opus.webm");
+    let media = media_from_matroska(&bytes, CollectMode::Seekable).expect("demux");
+    let track = audio_collected_track(&media);
+    let trim = track.samples.last().expect("a last sample").trim;
+    assert_eq!(trim.end(), 648, "the WebM states 13.5 ms of end padding");
+    let parameters = transmux::codec_parameters_from_track(&track.spec).expect("converts");
+    // The seam's extradata for an Opus track is the `dOps` record; OxideAV's
+    // decoder takes the raw `OpusHead`, with the pre-skip cleared because it
+    // applies that itself. The container's trim is the stage's job (the same
+    // arrangement as `support::opus_stream`).
+    let transmux::ir::CodecConfig::Opus { config, .. } = &track.spec.config else {
+        panic!("an Opus track");
+    };
+    let mut decoder_head = Vec::new();
+    decoder_head.extend_from_slice(b"OpusHead");
+    decoder_head.push(config.version);
+    decoder_head.push(config.output_channel_count);
+    decoder_head.extend_from_slice(&0u16.to_le_bytes());
+    decoder_head.extend_from_slice(&config.input_sample_rate.to_le_bytes());
+    decoder_head.extend_from_slice(&config.output_gain.to_le_bytes());
+    decoder_head.push(config.channel_mapping_family);
+    if let Some(map) = &config.channel_mapping {
+        decoder_head.push(map.stream_count);
+        decoder_head.push(map.coupled_count);
+        decoder_head.extend_from_slice(&map.channel_mapping);
+    }
+    let raw = parameters
+        .clone()
+        .with_extradata(decoder_head)
+        .with_initial_padding(0)
+        .expect("audio parameters take padding")
+        .with_trailing_padding(0)
+        .expect("audio parameters take padding");
+    let packets: Vec<Vec<u8>> = track.samples.iter().map(|s| s.data.to_vec()).collect();
+    let frames = decode_audio_frames(&oxideav_registry(), &raw, &packets);
+    let trimmed = parameters
+        .clone()
+        .with_initial_padding(track.spec.padding.initial())
+        .expect("audio parameters take padding")
+        .with_trailing_padding(0)
+        .expect("audio parameters take padding");
+    let mut stage = TrimStage::new(&trimmed);
+    let mut produced = 0usize;
+    let last = frames.len().saturating_sub(1);
+    for (index, frame) in frames.into_iter().enumerate() {
+        let frame = if index == last {
+            frame.with_trim_end(trim.end())
+        } else {
+            frame
+        };
+        for frame in stage.push(frame) {
+            produced += frame.frames();
+        }
+    }
+    for frame in stage.finish() {
+        produced += frame.frames();
+    }
+    println!(
+        "matroska DiscardPadding: {produced} trimmed samples, ffmpeg {}",
+        reference.len()
+    );
+    assert_eq!(
+        produced,
+        reference.len(),
+        "the stage's trimmed count must equal ffmpeg's decoded count"
+    );
+}

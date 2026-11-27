@@ -292,9 +292,10 @@ pub use flv_stream::StreamingFlvDemux;
 pub use interlace::{video_picture_facts, video_scan};
 pub use ir::{
     ActiveFormat, AfdPersistence, AudioLanguage, AudioMetadata, AudioRole, AudioType,
-    DisplayChangeSet, DisplayGeometry, DisplayInfo, EditorialClassification, GaplessTrim,
-    INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE, INFERRED_VIDEO_FORMAT, MPEG2_INFERRED_COLOUR_CODE,
-    MixType, ProgramNumber, SampleTrim, SupplementaryAudio, TrackId, UserDataCarriage,
+    DecoderPreRoll, DisplayChangeSet, DisplayGeometry, DisplayInfo, EditorialClassification,
+    GaplessSignal, GaplessTrim, GaplessTrimFinding, INFERRED_COLOUR_CODE, INFERRED_FULL_RANGE,
+    INFERRED_VIDEO_FORMAT, MPEG2_INFERRED_COLOUR_CODE, MixType, ProgramNumber, SampleTrim,
+    SupplementaryAudio, TrackId, UserDataCarriage,
 };
 pub use klv::{
     CHECKSUM_LEN, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM, TAG_PRECISION_TIMESTAMP,

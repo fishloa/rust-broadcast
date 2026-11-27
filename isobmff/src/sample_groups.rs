@@ -92,6 +92,9 @@ const MAX_CSP_LEN: usize = 4;
 /// Grouping type `'roll'` (RollRecoveryEntry) — ISO/IEC 14496-12:2026 §10.1.
 pub const GROUPING_TYPE_ROLL: u32 = u32::from_be_bytes(*b"roll");
 
+/// Grouping type `'prol'` (AudioPreRollEntry) — ISO/IEC 14496-12:2026 §10.1.
+pub const GROUPING_TYPE_PROL: u32 = u32::from_be_bytes(*b"prol");
+
 /// Grouping type `'seig'` (CencSampleEncryptionInformationGroupEntry) —
 /// ISO/IEC 23001-7 (CENC). Maps a run of samples to a KID/IV-size/pattern
 /// override distinct from the track's `tenc` default, i.e. per-sample-group
@@ -301,6 +304,13 @@ pub enum SgpdEntry {
         /// Roll distance in samples. Negative = pre-roll.
         roll_distance: i16,
     },
+    /// AudioPreRollEntry for grouping type `'prol'` (§10.1): samples that are
+    /// independently decodable, whose decoder output is correct only after
+    /// decoding the stated number of samples.
+    Prol {
+        /// Roll distance in samples, positive for the pre-roll count.
+        roll_distance: i16,
+    },
     /// VisualEquivalenceEntry for grouping type `'eqiv'` (23008-12 6.8.1.2).
     Eqiv {
         /// `time_offset`, in the timescale `timescale_multiplier` states.
@@ -361,12 +371,32 @@ pub enum SgpdEntry {
 /// A `roll` sample-group description: `roll_distance` (`signed int(16)`),
 /// ISO/IEC 14496-12:2026 §10.1.2.
 const ROLL_ENTRY_LEN: usize = 2;
+/// An `prol` sample-group description: the same signed 16-bit distance.
+const PROL_ENTRY_LEN: usize = 2;
 
 impl SgpdEntry {
+    /// The samples a decoder must decode before its output is correct, when
+    /// this entry states a pre-roll (§10.1.3): a negative `roll` distance or a
+    /// positive `prol` distance. A positive `roll` distance is post-roll
+    /// (gradual refresh), not a pre-roll requirement, and yields `None`.
+    #[must_use]
+    pub fn pre_roll_samples(&self) -> Option<u32> {
+        match self {
+            Self::Roll { roll_distance } if *roll_distance < 0 => {
+                u32::try_from(-i32::from(*roll_distance)).ok()
+            }
+            Self::Prol { roll_distance } if *roll_distance > 0 => {
+                u32::try_from(*roll_distance).ok()
+            }
+            _ => None,
+        }
+    }
+
     /// Serialized size of this entry on the wire (body bytes only, no length prefix).
     pub fn wire_len(&self) -> usize {
         match self {
             Self::Roll { .. } => ROLL_ENTRY_LEN,
+            Self::Prol { .. } => PROL_ENTRY_LEN,
             Self::Eqiv { .. } => EQIV_ENTRY_LEN,
             Self::Aebr { .. } => AEBR_ENTRY_LEN,
             Self::Wbbr { .. } => WBBR_ENTRY_LEN,
@@ -389,6 +419,9 @@ impl SgpdEntry {
         match self {
             Self::Roll { roll_distance } => {
                 buf[..ROLL_ENTRY_LEN].copy_from_slice(&roll_distance.to_be_bytes());
+            }
+            Self::Prol { roll_distance } => {
+                buf[..PROL_ENTRY_LEN].copy_from_slice(&roll_distance.to_be_bytes());
             }
             Self::Eqiv {
                 time_offset,
@@ -461,6 +494,9 @@ impl SgpdEntry {
 fn typed_entry(grouping_type: u32, bytes: &[u8]) -> Option<SgpdEntry> {
     match grouping_type {
         GROUPING_TYPE_ROLL if bytes.len() == ROLL_ENTRY_LEN => Some(SgpdEntry::Roll {
+            roll_distance: i16_at(bytes, 0),
+        }),
+        GROUPING_TYPE_PROL if bytes.len() == PROL_ENTRY_LEN => Some(SgpdEntry::Prol {
             roll_distance: i16_at(bytes, 0),
         }),
         GROUPING_TYPE_EQIV if bytes.len() == EQIV_ENTRY_LEN => Some(SgpdEntry::Eqiv {
@@ -613,7 +649,7 @@ impl SampleGroupDescriptionBox {
             } else {
                 default_length as usize
             }
-        } else if grouping_type == GROUPING_TYPE_ROLL {
+        } else if grouping_type == GROUPING_TYPE_ROLL || grouping_type == GROUPING_TYPE_PROL {
             ROLL_ENTRY_LEN
         } else {
             1
@@ -648,9 +684,9 @@ impl SampleGroupDescriptionBox {
                 default_length as usize
             } else {
                 // version 0: entry size is implied by the grouping_type; we
-                // parse until we hit the known size for 'roll' (2 bytes), else
+                // parse until we hit the known size for 'roll'/'prol' (2 bytes), else
                 // we consume remaining bytes as one blob (rare / deprecated).
-                if grouping_type == GROUPING_TYPE_ROLL {
+                if grouping_type == GROUPING_TYPE_ROLL || grouping_type == GROUPING_TYPE_PROL {
                     ROLL_ENTRY_LEN
                 } else {
                     // unknown v0: consume all remaining as one entry. A
@@ -2474,6 +2510,45 @@ mod tests {
         assert_eq!(parsed.entries.len(), 1);
         assert_eq!(parsed.entries[0], SgpdEntry::Roll { roll_distance: -1 });
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn sgpd_round_trip_prol_v1() {
+        let b = SampleGroupDescriptionBox {
+            version: 1,
+            flags: 0,
+            grouping_type: GROUPING_TYPE_PROL,
+            default_length: 2,
+            default_group_description_index: None,
+            entries: vec![SgpdEntry::Prol { roll_distance: 80 }],
+        };
+        let bytes = b.try_to_bytes().unwrap();
+        let parsed = SampleGroupDescriptionBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.entries.len(), 1);
+        assert_eq!(parsed.entries[0], SgpdEntry::Prol { roll_distance: 80 });
+        assert_eq!(parsed.entries[0].pre_roll_samples(), Some(80));
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn only_a_pre_roll_statement_reports_a_pre_roll() {
+        assert_eq!(
+            SgpdEntry::Roll { roll_distance: -4 }.pre_roll_samples(),
+            Some(4)
+        );
+        assert_eq!(
+            SgpdEntry::Prol { roll_distance: 80 }.pre_roll_samples(),
+            Some(80)
+        );
+        assert_eq!(
+            SgpdEntry::Roll { roll_distance: 4 }.pre_roll_samples(),
+            None,
+            "a positive roll distance is post-roll, not a pre-roll requirement"
+        );
+        assert_eq!(
+            SgpdEntry::Prol { roll_distance: -1 }.pre_roll_samples(),
+            None
+        );
     }
 
     #[test]

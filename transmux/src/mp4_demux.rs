@@ -461,7 +461,14 @@ impl Mp4Demux {
         self.tracks.clear();
         for info in infos {
             match track_spec_from_track_info(&info) {
-                Ok(mut spec) => {
+                Ok((mut spec, finding)) => {
+                    if let Some(finding) = finding {
+                        self.events.push_back(DemuxEvent::GaplessSignalConflict {
+                            track_id: info.track_id.into(),
+                            used: finding.used,
+                            ignored: finding.ignored,
+                        });
+                    }
                     let (in_band, extra) = info
                         .entries
                         .first()
@@ -795,6 +802,12 @@ impl Mp4Demux {
             } else {
                 let fragmented = self.reader.is_fragmented() == Some(true);
                 refine_legacy_config(&mut mapped.spec.config, &sample);
+                if mapped.spec.padding.is_none()
+                    && matches!(mapped.spec.config, CodecConfig::MpegAudio { .. })
+                    && let Some(padding) = crate::media::lame_padding(&sample.data)
+                {
+                    mapped.spec.padding = padding;
+                }
                 if mapped.in_band && fragmented {
                     mapped.tagger = InbandDisplayTagger::new(&mapped.spec.config, &mapped.extra);
                 }

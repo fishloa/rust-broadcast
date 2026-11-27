@@ -41,6 +41,7 @@ use crate::track_id::TrackId;
 
 pub mod chapters;
 pub mod ilst;
+pub mod itunsmpb;
 pub mod keys;
 pub mod location;
 pub mod meta;
@@ -48,6 +49,7 @@ pub mod udta;
 
 pub use chapters::{Chapter, Chpl};
 pub use ilst::{Data, Ilst, IlstItem, IlstItemChild, Mean, Name};
+pub use itunsmpb::{ITUNSMPB_MEAN, ITUNSMPB_MIN_FIELDS, ITUNSMPB_NAME, Itunsmpb};
 pub use keys::{KeyEntry, Keys};
 pub use location::{Iso6709, Loci};
 pub use meta::{Hdlr, MDIR_HANDLER, MDTA_HANDLER, Meta, MetaChild, MetaFlavor};
