@@ -39,19 +39,19 @@ const COUNT_HEX_DIGITS: usize = 16;
 /// Counts are samples per channel at the track's sample rate. `priming` is the
 /// encoder's lead-in before the first programme sample, `padding` the samples
 /// after the last one and `original_samples` the programme's length.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
-pub struct Itunsmpb<'a> {
-    text: &'a str,
+pub struct Itunsmpb {
+    text: alloc::string::String,
     priming: u32,
     padding: u32,
     original_samples: u64,
 }
 
-impl<'a> Itunsmpb<'a> {
+impl Itunsmpb {
     /// Parse the hexadecimal value text.
-    pub fn parse_text(text: &'a str) -> Result<Self> {
+    pub fn parse_text(text: &str) -> Result<Self> {
         let mut fields = text.split_ascii_whitespace();
         let reserved = fields
             .next()
@@ -67,7 +67,7 @@ impl<'a> Itunsmpb<'a> {
             .ok_or(Error::InvalidInput("iTunSMPB value has no original sample count"))?;
         let _reserved = parse_u32_hex(reserved, FIELD_HEX_DIGITS, "iTunSMPB reserved field")?;
         Ok(Self {
-            text,
+            text: text.into(),
             priming: parse_u32_hex(priming, FIELD_HEX_DIGITS, "iTunSMPB priming field")?,
             padding: parse_u32_hex(padding, FIELD_HEX_DIGITS, "iTunSMPB padding field")?,
             original_samples: parse_u64_hex(
@@ -80,8 +80,8 @@ impl<'a> Itunsmpb<'a> {
 
     /// The value text exactly as the item carried it.
     #[must_use]
-    pub const fn text(&self) -> &'a str {
-        self.text
+    pub fn text(&self) -> &str {
+        &self.text
     }
 
     /// Samples per channel to discard from the start of the programme.
@@ -124,7 +124,7 @@ impl Metadata {
     /// a value that is not valid hexadecimal text is ignored rather than
     /// failing the whole metadata read.
     #[must_use]
-    pub fn itunsmpb(&self) -> Option<Itunsmpb<'_>> {
+    pub fn itunsmpb(&self) -> Option<Itunsmpb> {
         self.items.iter().find_map(|item| match item {
             MetadataItem::Freeform { mean, name, values }
                 if mean == ITUNSMPB_MEAN && name == ITUNSMPB_NAME =>
