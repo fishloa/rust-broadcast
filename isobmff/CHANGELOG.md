@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `multiview`: the multiview view-attribute boxes with a defined syntax —
+  `ProfileLevelAttribute` (`prfl`/`levl`), `ViewArrayOrder` (`ilvi`/`elvi`),
+  `RectangularViewArray` (`rtvi`), `MultiviewSceneInfoBox` (`vwdi`) and
+  `MultiviewInformationBox` (`mvci`). `geom`, `plvi` and `spvi` are pinned as
+  not applicable: the attribute table states their syntax as Unspecified.
+
 - `nalu_sample_entry::NaluVideoSampleEntry`: the NAL-unit video sample entries
   (`mvc1`…`mvc4`, `svc1`, `svc2`, `svcM`, `mvd1`…`mvd4`, `a3d1`…`a3d4`,
   `hvc2`/`hev2`, `hvt1`, `lhv1`, `lht1`) as one type over the standard visual

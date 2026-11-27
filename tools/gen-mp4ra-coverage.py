@@ -40,7 +40,7 @@ def read_typed_boxes():
     return set(m.group(1).rstrip() for m in re.finditer(r'p_\w+: b"([ -~]{4})"',s))
 TB=read_typed_boxes()
 TYPED={
- 'Box': set(TB) | {'ftyp','styp','mvex','emsg','senc','pssh','tenc','sthd','ccst','md5i','url','wide','tran','!mov','!mof','!six','!ssx','ttyp','tfad','tfma','spdb','3gau','rtpo','sroc','tOD'},
+ 'Box': set(TB) | {'ftyp','styp','mvex','emsg','senc','pssh','tenc','sthd','ccst','md5i','url','wide','tran','!mov','!mof','!six','!ssx','ttyp','tfad','tfma','spdb','3gau','rtpo','sroc','tOD','prfl','levl','ilvi','elvi','rtvi','vwdi','mvci'},
  'QtAtom': {'albm','auth','cprt','elng','load'},
  'UdtaAtom': {'albm','alou','auth','cprt','dscp','gnre','hinf','hnti','kind','loci','ludt','perf','strk','titl','tlou','tsel','yrrc','clsf','coll','kywd','orie','rtng','thmb','urat'},
  'SampleEntry': {'avc1','avc2','avc3','avc4','avcp','hvc1','hev1','dvh1','dvhe','vvc1','vvi1','mp4v','mp4a','enca','encv','ac-3','ec-3','ac-4','stpp','wvtt','av01','vp09','Opus','fLaC','mha1','mha2','mhm1','mhm2','dtsc','dtsh','dtsl','dtse','tmcd','metx','mett','stxt','urim','mebx','rgan','avs3','lav3','c608','c708','lpcm','in24','in32','sowt','twos','raw','fl32','fl64','ima4','ulaw','alaw','NONE','rtp','srtp','rrtp','rsrp','rtcp','stcp','prtp','rm2t','sm2t','pm2t','fdp','PNTG','QDM2','QDMC','Qclp','SVQ1','SVQ3','WRLE','agsm','ap4h','ap4x','apch','apcn','apco','apcs','aprh','aprn','civd','dvh5','dvh6','dvhp','dvi','flic','gif','h261','h263','jpeg','mjpa','mjpb','png','rle','rpza','tga','tiff','vdva','samr','sawb','sawp','sevs','s263','3glo','3gor','3gvo','resv','resa','sbtt','mjpg','dav1','mvc1','mvc2','mvc3','mvc4','svc1','svc2','svcM','mvd1','mvd2','mvd3','mvd4','a3d1','a3d2','a3d3','a3d4','hvc2','hev2','hvt1','lhv1','lht1','dva1','dvav','enc3','encf','encm','encp','encs','enct','encu','icpa','icp3','icpm','icpp','icps','icpt','icpv'},
@@ -155,6 +155,11 @@ NA_EXTRA={
   'qvXt':'a registry example brand, not a real code',
   'stuf':'a registry example metadata space, not a real code',
  },
+}
+NA_EXTRA['multiview-attributes']={
+ 'geom':'the attribute table (14496-15:2010 F.8.4) states its syntax as Unspecified, so no box layout is defined',
+ 'plvi':'the attribute table (14496-15:2010 F.8.4) states its syntax as Unspecified, so no box layout is defined',
+ 'spvi':'the attribute table (14496-15:2010 F.8.4) states its syntax as Unspecified, so no box layout is defined',
 }
 NA_EXTRA['boxes'].pop('!mof')
 

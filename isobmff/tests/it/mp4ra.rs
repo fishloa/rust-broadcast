@@ -513,6 +513,9 @@ fn prove_box(code: &str) -> std::result::Result<(), String> {
         "rtpo" => boxed("rtpo", &[0; 4]),
         "sroc" => boxed("sroc", &[0, 0, 0, 1]),
         "tOD" => boxed("tOD ", &[0, 0]),
+        "prfl" | "levl" | "ilvi" | "elvi" | "rtvi" => boxed(code, &[0; 4]),
+        "vwdi" => boxed("vwdi", &[0]),
+        "mvci" => boxed("mvci", &full(0, 0, &[])),
         other => return Err(format!("no box proof for {other:?}")),
     };
     match code {
@@ -539,6 +542,11 @@ fn prove_box(code: &str) -> std::result::Result<(), String> {
         "rtpo" => isobmff::hint::RtpoOffsetBox::parse_box(&bytes).map(|_| ()),
         "sroc" => isobmff::hint::RolloverCounterBox::parse_box(&bytes).map(|_| ()),
         "tOD" => isobmff::hint::ObjectDescriptorBox::parse(&bytes).map(|_| ()),
+        "prfl" | "levl" => isobmff::multiview::ProfileLevelAttribute::parse_box(&bytes).map(|_| ()),
+        "ilvi" | "elvi" => isobmff::multiview::ViewArrayOrder::parse_box(&bytes).map(|_| ()),
+        "rtvi" => isobmff::multiview::RectangularViewArray::parse_box(&bytes).map(|_| ()),
+        "vwdi" => isobmff::multiview::MultiviewSceneInfoBox::parse_box(&bytes).map(|_| ()),
+        "mvci" => isobmff::multiview::MultiviewInformationBox::parse_box(&bytes).map(|_| ()),
         other => return Err(format!("no box proof for {other:?}")),
     }
     .map(|_| ())
