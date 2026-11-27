@@ -184,6 +184,7 @@ pub mod metadata;
 pub mod movie_fragment;
 pub mod mp4esds;
 pub mod mpegh;
+pub mod nalu_sample_entry;
 pub mod nalu_types;
 pub mod opus;
 pub mod plan;

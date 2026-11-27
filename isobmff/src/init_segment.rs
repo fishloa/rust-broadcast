@@ -3562,6 +3562,11 @@ pub enum SampleEntryVariant {
     Transform(Box<crate::transform::TransformSampleEntry>),
     /// The incomplete audio entry (`icpa`) — §13.6.2.
     IncompleteAudio(Box<crate::transform::IncompleteAudioSampleEntry>),
+    /// The JPEG image sequence entry (`mjpg`) — ISO/IEC 23008-12:2025 H.3.3.
+    Mjpeg(Box<crate::image_sequence::MjpegSampleEntry>),
+    /// A NAL-unit video entry (`mvc1`…, `svc1`, `mvd1`…, `a3d1`…, `hvc2`, …)
+    /// — ISO/IEC 14496-15:2017 clauses 5, 6, 8, 9, 10 and F.
+    NaluVideo(Box<crate::nalu_sample_entry::NaluVideoSampleEntry>),
     /// An RTP/SRTP/RTCP, MPEG-2 TS or FD hint sample entry (§9.1.2, §9.2.3,
     /// §9.3.3, §9.4.1–9.4.4).
     Hint(Box<crate::hint::HintSampleEntry>),
@@ -3680,6 +3685,8 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Sbtt(e) => e.serialized_len(),
             SampleEntryVariant::Transform(e) => e.serialized_len(),
             SampleEntryVariant::IncompleteAudio(e) => e.serialized_len(),
+            SampleEntryVariant::Mjpeg(e) => e.serialized_len(),
+            SampleEntryVariant::NaluVideo(e) => e.serialized_len(),
             SampleEntryVariant::Hint(e) => e.serialized_len(),
             SampleEntryVariant::Unknown(u) => u.serialized_len(),
         }
@@ -3721,6 +3728,8 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Sbtt(e) => e.serialize_into(buf),
             SampleEntryVariant::Transform(e) => e.serialize_into(buf),
             SampleEntryVariant::IncompleteAudio(e) => e.serialize_into(buf),
+            SampleEntryVariant::Mjpeg(e) => e.serialize_into(buf),
+            SampleEntryVariant::NaluVideo(e) => e.serialize_into(buf),
             SampleEntryVariant::Hint(e) => e.serialize_into(buf),
             SampleEntryVariant::Unknown(u) => Ok(u.serialize_into(buf)?),
         }
@@ -3776,7 +3785,7 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
     }
     let codec = &box_bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE];
     Ok(match codec {
-        b"avc1" | b"avc3" | b"avc2" | b"avc4" => SampleEntryVariant::Avc1(
+        b"avc1" | b"avc3" | b"avc2" | b"avc4" | b"dva1" | b"dvav" => SampleEntryVariant::Avc1(
             crate::sample_entries::AVCSampleEntry::bare_parse(box_bytes)?,
         ),
         b"avcp" => SampleEntryVariant::AvcParameterSet(Box::new(
@@ -3800,9 +3809,9 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
         b"wvtt" => SampleEntryVariant::Wvtt(Box::new(
             crate::subtitle_entries::WvttSampleEntry::bare_parse(box_bytes)?,
         )),
-        b"av01" => SampleEntryVariant::Av01(Box::new(crate::av1::Av1SampleEntry::parse_entry(
-            box_bytes,
-        )?)),
+        b"av01" | b"dav1" => SampleEntryVariant::Av01(Box::new(
+            crate::av1::Av1SampleEntry::parse_entry(box_bytes)?,
+        )),
         b"vp09" => SampleEntryVariant::Vp09(Box::new(crate::vp9::Vp9SampleEntry::parse_entry(
             box_bytes,
         )?)),
@@ -3874,6 +3883,14 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
         )),
         b"icpa" => SampleEntryVariant::IncompleteAudio(Box::new(
             crate::transform::IncompleteAudioSampleEntry::parse_box(box_bytes)?,
+        )),
+        b"mjpg" => SampleEntryVariant::Mjpeg(Box::new(
+            crate::image_sequence::MjpegSampleEntry::parse_box(box_bytes)?,
+        )),
+        b"mvc1" | b"mvc2" | b"mvc3" | b"mvc4" | b"svc1" | b"svc2" | b"svcM" | b"mvd1" | b"mvd2"
+        | b"mvd3" | b"mvd4" | b"a3d1" | b"a3d2" | b"a3d3" | b"a3d4" | b"hvc2" | b"hev2"
+        | b"hvt1" | b"lhv1" | b"lht1" => SampleEntryVariant::NaluVideo(Box::new(
+            crate::nalu_sample_entry::NaluVideoSampleEntry::parse_box(box_bytes)?,
         )),
         b"rtp " | b"srtp" | b"rrtp" | b"rsrp" | b"rtcp" | b"stcp" | b"prtp" | b"rm2t" | b"sm2t"
         | b"pm2t" | b"fdp " => SampleEntryVariant::Hint(Box::new(
@@ -5702,7 +5719,9 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
         | SampleEntryVariant::Vp09(_)
         | SampleEntryVariant::QuickTimeVideo(_)
         | SampleEntryVariant::ThreeGppH263(_)
-        | SampleEntryVariant::RestrictedVideo(_) => SampleEntryMediaKind::Video,
+        | SampleEntryVariant::RestrictedVideo(_)
+        | SampleEntryVariant::Mjpeg(_)
+        | SampleEntryVariant::NaluVideo(_) => SampleEntryMediaKind::Video,
         SampleEntryVariant::Mp4a(_)
         | SampleEntryVariant::Ac3(_)
         | SampleEntryVariant::Ec3(_)

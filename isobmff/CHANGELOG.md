@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `nalu_sample_entry::NaluVideoSampleEntry`: the NAL-unit video sample entries
+  (`mvc1`…`mvc4`, `svc1`, `svc2`, `svcM`, `mvd1`…`mvd4`, `a3d1`…`a3d4`,
+  `hvc2`/`hev2`, `hvt1`, `lhv1`, `lht1`) as one type over the standard visual
+  fixed fields, dispatched from `stsd`.
+- `image::JpegConfigurationProperty` (`jpgC`), typed both as an item property
+  and as a sample-entry box, and `image_sequence::MjpegSampleEntry` (`mjpg`)
+  with its `jpeg_configuration()` accessor. `image_sequence::
+  AuxiliaryTypeInfoBox` (`auxi`) and the `evir` item reference join the typed
+  tables.
+- `Av1SampleEntry::codec_type`: the AV1 entry records its four-CC so the Dolby
+  Vision `dav1` code can use it (`dva1`/`dvav` join the AVC entry's dispatch).
+
+### Breaking
+
+- `Av1SampleEntry` gains a public `codec_type` field; a struct literal must
+  name it (`av01`).
+
 - `scheme::RestrictedVideoSampleEntry` (`resv`) and
   `RestrictedAudioSampleEntry` (`resa`), and `subtitle_entries::
   TextSubtitleSampleEntry` (`sbtt`, §12.6.3): the restricted sample entries

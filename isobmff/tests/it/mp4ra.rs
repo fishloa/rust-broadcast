@@ -550,7 +550,9 @@ const VISUAL_ENTRIES: &[&str] = &[
     "av01", "vp09", "rgan", "avs3", "lav3", "PNTG", "SVQ1", "SVQ3", "WRLE", "ap4h", "ap4x", "apch",
     "apcn", "apco", "apcs", "aprh", "aprn", "civd", "dvh5", "dvh6", "dvhp", "dvi", "flic", "gif",
     "h261", "h263", "jpeg", "mjpa", "mjpb", "png", "rle", "rpza", "tga", "tiff", "s263", "resv",
-    "icpv",
+    "icpv", "dav1", "dva1", "dvav", "mvc1", "mvc2", "mvc3", "mvc4", "svc1", "svc2", "svcM", "mvd1",
+    "mvd2", "mvd3", "mvd4", "a3d1", "a3d2", "a3d3", "a3d4", "hvc2", "hev2", "hvt1", "lhv1", "lht1",
+    "mjpg",
 ];
 const AUDIO_ENTRIES: &[&str] = &[
     "mp4a", "enca", "ac-3", "ec-3", "ac-4", "Opus", "fLaC", "mha1", "mha2", "mhm1", "mhm2", "dtsc",
@@ -615,12 +617,12 @@ fn sample_entry_bytes(code: &str) -> Result<Vec<u8>, String> {
     body.extend_from_slice(extra);
     if VISUAL_ENTRIES.contains(&code) {
         let config = match code {
-            "avc1" | "avc2" | "avc3" | "avc4" | "avcp" => {
+            "avc1" | "avc2" | "avc3" | "avc4" | "avcp" | "dva1" | "dvav" => {
                 boxed("avcC", &[1, 66, 0, 30, 0xFF, 0xE0, 0])
             }
             "hvc1" | "hev1" | "dvh1" | "dvhe" => boxed("hvcC", &[0u8; 23]),
             "vvc1" | "vvi1" => boxed("vvcC", &[0u8; 32]),
-            "av01" => boxed("av1C", &[0x80, 0, 0, 0]),
+            "av01" | "dav1" => boxed("av1C", &[0x80, 0, 0, 0]),
             "vp09" => boxed("vpcC", &[1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
             "rgan" => bytes_of(&isobmff::region::RegionTrackConfigBox::new(1, 1)),
             _ => Vec::new(),
@@ -782,6 +784,7 @@ fn property_bytes(code: &str) -> Option<Vec<u8>> {
         "vvcC" => boxed("vvcC", &[0u8; 32]),
         "av1C" => boxed("av1C", &[0x80, 0, 0, 0]),
         "subs" => boxed("subs", &[0u8; 8]),
+        "jpgC" => boxed("jpgC", &[0xFF, 0xD8]),
         _ => return None,
     };
     Some(bytes)
@@ -852,6 +855,8 @@ fn config_bytes(code: &str) -> std::result::Result<Vec<u8>, String> {
         "clli" => boxed("clli", &[0u8; 4]),
         "mdcv" => boxed("mdcv", &[0u8; 24]),
         "damr" => boxed("damr", &[0u8; 9]),
+        "jpgC" => boxed("jpgC", &[0xFF, 0xD8]),
+        "auxi" => boxed("auxi", &full(0, 0, b"urn:x\0")),
         "d263" => boxed("d263", &[0u8; 7]),
         "dawp" => boxed("dawp", &[0u8; 5]),
         _ => boxed(code, &[0u8; 256]),
@@ -905,6 +910,7 @@ fn prove_sample_entry_box(code: &str) -> std::result::Result<(), String> {
         }
         "dawp" => isobmff::threegpp::AmrwbPlusDecoderSpecificBox::parse_body(config_body(&bytes))
             .map(|_| ()),
+        "auxi" => isobmff::image_sequence::AuxiliaryTypeInfoBox::parse(&bytes).map(|_| ()),
         "clli" => isobmff::hdr_boxes::ContentLightLevel::parse(config_body(&bytes)).map(|_| ()),
         "mdcv" => {
             isobmff::hdr_boxes::MasteringDisplayColourVolume::parse(config_body(&bytes)).map(|_| ())
