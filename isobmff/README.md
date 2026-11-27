@@ -75,7 +75,14 @@ types themselves are the one table in `src/coverage.rs`.
 | `metadata` | `udta` (with `cprt`/`strk`), `meta` (with `xml `/`bxml`), `hdlr`, `keys`, `ilst`, `data`, `mean`, `name`, `chpl`, `loci`; QuickTime user-data text and `©xyz` ISO 6709 |
 | `meta_track` | `urim` (`uri `/`uriI`), `metx`, `mett`/`stxt` (`txtC`), `mebx` (`keys`/`keyd`/`loca`/`setu`), `mime`, `xml `/`bxml`, `cprt` |
 | `item` | ISO/IEC 14496-12:2026 §8.11/§8.15 item boxes: `iloc`, `iinf`/`infe`, `pitm`, `iref` and its typed reference boxes, `iprp`/`ipco`/`ipma`, `idat`, `ipro`, `grpl` with `EntityToGroupBox`, and the `brnd`/`hdlp` properties |
-| `image` | ISO/IEC 23008-12:2017 clause 6 image properties (`ispe`, `pixi`, `rloc`, `auxC`, `irot`, `lsel`, `imir`), the derived bodies `grid`/`iovl`/`iden`, the AVIF `a1op`/`a1lx` properties and brands; `pasp`/`colr`/`clap`/`hvcC`/`avcC`/`av1C`/`mdcv`/`clli` are the crate's existing types |
+| `image` | ISO/IEC 23008-12:2025 clause 6 image properties (`ispe`, `pixi`, `rloc`, `auxC`, `irot`, `lsel`, `imir`), the derived bodies `grid`/`iovl`/`iden`, the AVIF `a1op`/`a1lx` properties and brands; `pasp`/`colr`/`clap`/`hvcC`/`avcC`/`av1C`/`mdcv`/`clli` are the crate's existing types |
+| `image_props` | the clause 6.5 properties the 2025 edition and Amendment 1 add (`iscl`, `rref`, `crtt`, `mdft`, `udes`, `altt`, the capture-information set, `tols`, the transitions and their timings, `prdi`, `sstr`, `cmex`, `cmin`, `cexg`, `dadj`, `stag`, `reve`, `ndwt`, `mskC`) |
+| `image_derived` | the `tmap` (tone map, ISO 21496-1 metadata typed on the open-implementation layout) and `cfen` (colour format enhancement) derived bodies |
+| `image_groups` | typed entity-group bodies: `pymd` tile sizes and `rgpa` area rectangles |
+| `image_brands` | clause 10 brands, reader-property tables and structurally checkable findings |
+| `image_sequence` | clause 7 boxes: `ccst`, `auxi`, the `refs` sample group |
+| `region` | clause 11 regions: `RegionGeometry`, `RegionItem`, mask configuration, region-track config/sample, `regm` and `udes` sample groups |
+| `integrity` | clause 8.4 `md5i` and the `mint` item body |
 | `item_reader` | sans-IO still-image reader: asks for the top-level headers, the file-level `meta` and the tiny derived-item bodies, then yields `StillImage` (brands, primary item, every item with properties/references/data ranges, entity groups) plus a re-emit plan |
 | `item_writer` | builds one still-image file from typed parts (brands, items, properties, references, primary item, entity groups); it chooses the `iloc` field widths and every offset |
 | `registry` | runtime registration of private boxes and sample entries (`BoxDef`, `BoxRegistry`, `RegisteredEntry`) |
@@ -148,7 +155,7 @@ let ftyp = FileTypeBox {
 let bytes = ftyp.try_to_bytes().unwrap();
 ```
 
-Eleven runnable examples ship with the crate:
+Twelve runnable examples ship with the crate:
 
 ```bash
 cargo run -p isobmff --example parse_boxes -- fixtures/mp4/h264-aac-prog.mp4
@@ -162,6 +169,7 @@ cargo run -p isobmff --example write_tags -- fixtures/mp4/progressive/av-prog.mp
 cargo run -p isobmff --example heif_info -- fixtures/heif/thumb.heic
 cargo run -p isobmff --example build_avif -- fixtures/avif/plain.avif
 cargo run -p isobmff --example list_metadata_tracks -- fixtures/mp4/boxes/hint-hmhd.mp4
+cargo run -p isobmff --example heif_2025 -- fixtures/heif/groups.mp4
 ```
 
 ## Still images (HEIF and AVIF)
@@ -171,27 +179,50 @@ with a type, properties and data addressed by byte ranges. `item_reader` reads
 that model without holding the file, and `item_writer` builds one.
 
 What this crate reads (and re-emits byte-exactly): the ISO/IEC 14496-12:2026
-§8.11 item boxes, and the image item layer of **ISO/IEC 23008-12:2017** with
-its 2020 corrigendum (the `auxC` spelling) — `ispe`, `pasp`, `colr`, `pixi`,
-`rloc`, `auxC`, `clap`, `irot`, `lsel`, `imir`, the HEVC/AVC configuration
-properties, and the `grid`/`iovl`/`iden` derived image item bodies. For AVIF
-(v1.2.0) it reads the `av01` item type, the `av01` configuration (`av1C`) and
-the `a1op`/`a1lx` properties, and recognises the AVIF brands. Every property
-whose syntax another clause already defines reuses that type; there is no
-second parser.
+§8.11 item boxes, and the image item layer of **ISO/IEC 23008-12:2025** (the
+third edition) with **Amendment 1** applied. That is every clause 6.5 property
+(including image scaling, the capture-information set, required reference
+types, creation/modification time, user description, accessibility text,
+sub-sample information, target output layer set, the four transition effects
+and their timings, progressive derived image information, single stream, the
+camera matrices, and Amendment 1's constrained extents grid, disparity
+adjustment, stereo aggressors, reference viewing environment and nominal
+diffuse white); the `grid`/`iovl`/`iden` derived bodies plus Amendment 1's
+`tmap` tone map and `cfen` colour format enhancement; the clause 6.8 entity
+groups (alternates, stereo pair and its monoscopic fallback, bursts, the five
+bracketing sets, user collections, panorama, slideshow, progressive rendering,
+image pyramid, region partition) with typed `pymd`/`rgpa` bodies; clause 11
+regions, mask items and region-track sample groups; clause 8.4 integrity
+boxes; clause 10 brands as a typed view with structurally checkable findings;
+and clause 7 image-sequence boxes (`ccst`, `auxi`, `refs`). For AVIF (v1.2.0)
+it reads the `av01` item type, its `av1C` configuration, the `a1op`/`a1lx`
+properties and the AVIF brands. Every property whose syntax another clause
+already defines reuses that type; there is no second parser.
 
 What it does not do: decode pixels. Coded item data is opaque and is reported
-as ordered byte ranges the caller fetches. Image sequences (tracks with the
-`pict` handler), MIAF conformance rules, the 2022/2025 HEIF editions, and
-anything those editions add are out of scope and not implemented from memory.
+as ordered byte ranges the caller fetches. The ISO 21496-1 gain-map metadata of
+a `tmap` item is typed on the layout open implementations agree on; a body
+outside that view stays opaque and round-trips. The ISO/IEC 23090-7 rotation
+struct of a version-1 camera extrinsic matrix is carried opaque in a typed
+wrapper and never interpreted from memory. The masked regions' pixel data and
+the constrained-extents grid's codec-specific per-extent configuration are
+likewise opaque. Clause 10's mandatory-box checks, the clause 7.2.1 matrix
+constraints and the clause 7.3 hidden-sample rule are listed as OPEN in the
+clause-by-clause coverage table kept in the private repo at
+`private/specs-verified/mpeg/heif/isobmff-coverage-2025.md`, which also carries
+the 2017-vs-2025 re-check.
 
 The item model carries only facts read from the file: brands, the primary
 item, each item's type/name/hidden flag/protection index, its properties in
 association order with the essential flag, its references in both directions,
-its resolved data ranges, and the entity groups. Image size, rotation,
-mirroring, thumbnails, auxiliary images, grid tiles/canvas, overlay layers and
-the Exif/XMP item ranges are conveniences derived from those facts.
-`StillImage::reemit_plan` re-emits a parsed file through the preserved
+its resolved data ranges, the typed region/integrity bodies, and the entity
+groups. Image size, rotation, mirroring, thumbnails, auxiliary images, grid
+tiles/canvas, overlay layers, the Exif/XMP item ranges, a tone map's
+base/gain-map pair, a stereo pair, the region items of an image, a group's
+entities and an item's capture information are conveniences derived from those
+facts. `StillImage::findings` and `StillImage::structure_findings` report
+structurally checkable requirements as typed findings; they never refuse a
+read. `StillImage::reemit_plan` re-emits a parsed file through the preserved
 structure (exact top-level headers, the `meta` body rebuilt from its typed
 children in wire order, and a copy for every payload the reader never read), so
 a parsed fixture round-trips byte for byte when the caller supplies its bytes.
@@ -201,6 +232,31 @@ the `meta` box and derived-item bodies; the count caps default to unlimited and
 are the caller's to set), a derived-item reference cycle is a typed error, an
 extent past the file is a typed error, and an `ipma` index past its `ipco` is a
 typed error.
+
+### Still-image evidence
+
+| Structure | Clause | Evidence | File |
+|---|---|---|---|
+| `udes`, `clli`, `irot`, `imir` | 6.5.20, 6.5.14, 6.5.10, 6.5.12 | real: `heif-enc` 1.23.1 | `heif/props.heic` |
+| `grid` derived item | 6.6.2.3 | real: `heif-enc --cut-tiles` | `heif/tiled.heic` |
+| `prem` reference, `auxC` | 10.2.3, 6.5.8 | real: `heif-enc --premultiplied-alpha` | `heif/premult.heic` |
+| `ster`, `pymd`, `slid`, `prgr` groups | 6.8.5, 6.8.12, 6.8.9, 6.8.10 | real: `MP4Box` entity groups | `heif/groups.mp4` |
+| `iscl`, `rref`, `crtt`, `mdft`, `altt` | 6.5.13, 6.5.17-6.5.21 | clause-assembled | — |
+| capture properties (`aebr` ... `pano`) | 6.5.22-6.5.27 | clause-assembled | — |
+| `tols`, transitions, `stpe`, `ssld`, `prdi`, `sstr` | 6.5.29-6.5.38 | clause-assembled | — |
+| `cmex`, `cmin` | 6.5.39, 6.5.40 | clause-assembled (v1 orientation opaque) | — |
+| `cexg`, `dadj`, `stag`, `reve`, `ndwt`, `mskC` | Amd 1 6.5.41-45, 11.2.2 | clause-assembled | — |
+| `tmap` | Amd 1 6.6.2.4 | real: `avifgainmaputil` 1.4.2 | `avif/gainmap-*.avif` |
+| `cfen` | Amd 1 6.6.2.5 | clause-assembled | — |
+| `rgan` item, `mski`, region geometry | 11.2-11.3 | clause-assembled | — |
+| `rgan` sample entry | 11.4.2.2.2 | clause-assembled (typed in the `stsd` dispatch) | — |
+| `eqiv`, `aebr`, `wbbr`, `fobr`, `afbr`, `dobr`, `pano`, `refs`, `regm`, `udes` | 6.8.1.2, 6.8.6, 6.8.8.2, 7.4.1, 11.4.3 | clause-assembled (dispatched from `sgpd`) | — |
+| `pymd` body, `rgpa` body | Amd 1 6.8.12-13 | clause-assembled | — |
+| `ccst`, `auxi`, `refs`, `md5i` | 7.2.3, 7.5.3, 7.4.1, 8.4 | clause-assembled | — |
+
+Every fixture's item payload range and its FNV-1a 64 hash are pinned in
+`tests/it/item_layer_2025.rs`, so a reader that resolves an `idat` extent to the
+wrong offset cannot pass.
 
 ## Drivers
 

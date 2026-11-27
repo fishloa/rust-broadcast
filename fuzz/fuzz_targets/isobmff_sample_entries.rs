@@ -13,7 +13,7 @@ use libfuzzer_sys::fuzz_target;
 const FOURCCS: &[&[u8; 4]] = &[
     b"avc1", b"avc3", b"hvc1", b"hev1", b"vvc1", b"mp4v", b"mp4a", b"enca", b"ac-3", b"ec-3",
     b"stpp", b"wvtt", b"av01", b"vp09", b"ac-4", b"Opus", b"fLaC", b"mha1", b"dtsc", b"avs3",
-    b"avst", b"lav3", b"lav2", b"xxxx",
+    b"avst", b"lav3", b"lav2", b"rgan", b"xxxx",
 ];
 
 fn stsd(entry: &[u8]) -> Vec<u8> {

@@ -125,3 +125,19 @@ fn udta_plain_text_atom_keeps_its_terminator_state() {
     let out = udta.try_to_bytes().expect("udta serializes");
     assert_eq!(out, wire, "a plain text atom keeps its terminator state");
 }
+
+#[test]
+fn item_boxes_crash_4ef54280_is_a_typed_error() {
+    // `isobmff_item_boxes` crash-4ef54280608affdbcae0f17c8c870e0d88614ba5: an
+    // `md5i` body that ends right after `input_4cc` (`sgpd`) left no bytes for
+    // the grouping type, and the parser indexed past the body.
+    let artifact = [
+        0u8, 0, 0, 15, 0, 0, 0, 0, 0, 0, 0, 194, 40, 1, 0, 0, 0, 0, 32, 109, 100, 53, 105, 100, 0,
+        2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 177, 0, 0, 0, 0, 0, 115, 103, 112, 100, 184, 40, 25,
+        25, 99, 109, 105, 110, 25, 25, 25, 128, 0, 114, 1, 0, 0, 0, 0, 32, 109, 100, 53, 105, 100,
+        0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 50, 177, 0, 0, 0, 0, 0, 184, 40, 1, 0, 0, 0, 0, 32,
+        109, 100, 53, 105, 100, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 184, 100, 0, 0, 0, 0, 0, 0,
+        0, 1, 0, 0, 0, 0, 0, 0, 184, 100,
+    ];
+    assert!(isobmff::integrity::IntegrityItem::parse(&artifact).is_err());
+}

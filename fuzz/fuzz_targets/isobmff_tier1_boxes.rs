@@ -18,7 +18,7 @@ fuzz_target!(|data: &[u8]| {
     let Some((&selector, body)) = data.split_first() else {
         return;
     };
-    match selector % 18 {
+    match selector % 19 {
         0 => {
             let _ = isobmff::ChannelLayoutBox::parse(&boxed(*b"chnl", body));
         }
@@ -69,6 +69,9 @@ fuzz_target!(|data: &[u8]| {
         }
         16 => {
             let _ = isobmff::SubTrackSampleGroupBox::parse(&boxed(*b"stsg", body));
+        }
+        17 => {
+            let _ = isobmff::sample_groups::SampleGroupDescriptionBox::parse(&boxed(*b"sgpd", body));
         }
         _ => {
             // A `ludt` child and the compact sample-to-group mapping: the
