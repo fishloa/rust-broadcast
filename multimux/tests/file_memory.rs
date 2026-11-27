@@ -10,8 +10,11 @@
 
 use std::sync::Arc;
 
-use media_plane::trunk::{SampleCursorItem, Trunk, TrunkConfig};
+use media_plane::trunk::{Trunk, TrunkConfig};
 use multimux::source::file_reader::{FileReader, FileReaderConfig};
+
+#[path = "support/trunk_drain.rs"]
+pub mod trunk_drain;
 
 #[global_allocator]
 static A: test_alloc::ProcessPeak = test_alloc::ProcessPeak::new();
@@ -59,29 +62,7 @@ async fn ts_file_playout_holds_less_than_the_budget() {
     let baseline = A.live();
     let handle = tokio::spawn(FileReader::new(config).run());
 
-    let mut published = 0u64;
-    let mut missed = 0u64;
-    let mut finished = false;
-    loop {
-        while let Some(item) = cursor.poll() {
-            match item {
-                SampleCursorItem::Timed { .. } => published += 1,
-                // A live trunk never backpressures its writer, so an unpaced
-                // reader may lawfully outrun this cursor: the ring tells the
-                // cursor what it evicted, and the count below accounts for it.
-                SampleCursorItem::Lagged { skipped } => missed += skipped,
-                SampleCursorItem::TracksChanged { .. } => {}
-                _ => panic!("unexpected sample-cursor item from the file reader"),
-            }
-        }
-        if finished {
-            break;
-        }
-        finished = handle.is_finished();
-        if !finished {
-            tokio::task::yield_now().await;
-        }
-    }
+    let drained = trunk_drain::drain(&mut cursor, || handle.is_finished(), |_, _| {}).await;
     handle
         .await
         .expect("the reader task must not panic")
@@ -89,14 +70,16 @@ async fn ts_file_playout_holds_less_than_the_budget() {
 
     let held = A.peak().saturating_sub(baseline);
     eprintln!(
-        "peak {held} bytes above baseline for a {FILE_BYTES}-byte TS capture, {published} samples"
+        "peak {held} bytes above baseline for a {FILE_BYTES}-byte TS capture, {} samples",
+        drained.delivered()
     );
     let _ = std::fs::remove_dir_all(&dir);
 
     assert_eq!(
-        published + missed,
+        drained.total(),
         expected,
-        "every sample of the capture must reach the trunk ({missed} evicted before the cursor)"
+        "every sample of the capture must reach the trunk ({} evicted before the cursor)",
+        drained.missed()
     );
     assert!(
         held < BUDGET,

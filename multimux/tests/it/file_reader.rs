@@ -20,24 +20,38 @@ use transmux::TrackId;
 
 use container_probe::{Probe, probe_with_budget};
 use media_plane::file_source::{DemuxerKind, FileReaderError, select_demuxer};
-use media_plane::trunk::{SampleCursorItem, Trunk, TrunkConfig};
+use media_plane::trunk::{Trunk, TrunkConfig};
 use multimux::source::file_reader::{FileReader, FileReaderConfig};
 use transmux::{DemuxEvent, StreamingTsDemux};
+
+use crate::support::trunk_drain::{self, Drained};
 
 /// Workspace-root fixture path for a `rel` path like `"fixtures/ts/h264-aac.ts"`.
 fn fixture(rel: &str) -> PathBuf {
     test_fixtures::path(rel.trim_start_matches("fixtures/"))
 }
 
-/// A per-test Trunk ready for the reader to write into, with generous ring
-/// capacities so the timeline tests never evict before draining.
+/// Timed samples a trunk built by [`trunk`] retains: above every fixture this
+/// file plays, so a drain that follows the writer is lossless.
+const TIMED_RING: usize = 4096;
+
+/// Passes a bounded loop fixture plays.
+const LOOP_PASSES: usize = 2;
+
+/// A per-test Trunk ready for the reader to write into.
 fn trunk() -> Arc<Trunk> {
+    trunk_sized(TIMED_RING)
+}
+
+/// A Trunk whose timed ring holds `timed` samples: a content test passes the
+/// stream's own sample count, so no sample can be evicted before it drains.
+fn trunk_sized(timed: usize) -> Arc<Trunk> {
     fn nz(n: usize) -> std::num::NonZeroUsize {
         std::num::NonZeroUsize::new(n).unwrap()
     }
     Trunk::new(
         TrunkConfig::default()
-            .with_timed_capacity(nz(4096))
+            .with_timed_capacity(nz(timed))
             .with_sparse_capacity(nz(1024))
             .with_segment_capacity(nz(128))
             .with_event_capacity(nz(1024))
@@ -216,32 +230,22 @@ fn source_track_dts(rel: &str, track_id: TrackId) -> Vec<i64> {
 }
 
 /// Drain a Trunk into a flat list of `(track_id, dts)` in publish order.
+///
+/// Lossless by construction: the caller sizes the ring above the stream, so
+/// the assertion bites only on a reader that really dropped a sample.
 fn drain_samples(trunk: &Arc<Trunk>) -> Vec<(TrackId, i64)> {
     let mut cursor = trunk.subscribe_from_backlog();
     let mut out = Vec::new();
-    loop {
-        match cursor.poll() {
-            Some(SampleCursorItem::Timed { track_id, sample }) => {
-                out.push((
-                    track_id,
-                    sample
-                        .timing
-                        .and_then(|t| t.dts())
-                        .expect("timed sample must carry a dts"),
-                ));
-            }
-            Some(SampleCursorItem::Sparse { .. })
-            | Some(SampleCursorItem::Lagged { .. })
-            | Some(SampleCursorItem::Degraded { .. }) => {
-                panic!("reader must not drop timed samples nor use the sparse ring")
-            }
-            Some(SampleCursorItem::TracksChanged { .. }) => {}
-            None => break,
-            // Any future cursor item is a loss/other report the reader never
-            // produces — treat it as a test failure, not silent data loss.
-            Some(_) => panic!("unexpected sample-cursor item from the file reader"),
-        }
-    }
+    let drained = trunk_drain::drain_now(&mut cursor, |track_id, sample| {
+        out.push((
+            track_id,
+            sample
+                .timing
+                .and_then(|t| t.dts())
+                .expect("timed sample must carry a dts"),
+        ));
+    });
+    drained.assert_lossless("the file reader's timeline");
     out
 }
 
@@ -276,7 +280,7 @@ async fn ts_with_a_silent_declared_pid_publishes_everything_at_end_of_input() {
     }
     assert!(!expected.is_empty(), "premise: the demux emits samples");
 
-    let trunk = trunk();
+    let trunk = trunk_sized(expected.values().sum());
     let t = trunk.clone();
     let handle = tokio::spawn(async move { reader(path, false, false, None, t).run().await });
     handle.await.unwrap().expect("reader must finish cleanly");
@@ -308,7 +312,7 @@ async fn flv_publishes_its_trailing_samples_at_end_of_input() {
     }
     assert!(expected > 0, "premise: the FLV yields samples");
 
-    let trunk = trunk();
+    let trunk = trunk_sized(expected);
     let t = trunk.clone();
     let handle =
         tokio::spawn(async move { reader(fixture(rel), false, false, None, t).run().await });
@@ -322,7 +326,7 @@ async fn flv_publishes_its_trailing_samples_at_end_of_input() {
 
 #[tokio::test]
 async fn timeline_dts_is_monotonic_and_matches_source_decode_order() {
-    let trunk = trunk();
+    let trunk = trunk_sized(source_sample_count("fixtures/ts/h264-aac.ts"));
     let t = trunk.clone();
     let handle = tokio::spawn(async move {
         reader(fixture("fixtures/ts/h264-aac.ts"), false, false, None, t)
@@ -399,7 +403,7 @@ async fn timeline_dts_is_monotonic_and_matches_source_decode_order() {
 
 #[tokio::test]
 async fn loop_preserves_dts_monotonicity_across_boundary() {
-    let trunk = trunk();
+    let trunk = trunk_sized(LOOP_PASSES * source_sample_count("fixtures/ts/h264-aac.ts"));
     let t = trunk.clone();
     let handle = tokio::spawn(async move {
         reader(fixture("fixtures/ts/h264-aac.ts"), true, false, Some(2), t)
@@ -475,6 +479,16 @@ fn source_sample_count(rel: &str) -> usize {
         }
     }
     n
+}
+
+/// Count every sample the progressive MP4 at `rel` carries (all tracks): the
+/// upper bound on what the reader can publish, used to size a lossless ring.
+fn mp4_sample_count(rel: &str) -> usize {
+    let bytes = std::fs::read(fixture(rel)).expect("fixture must exist");
+    let media =
+        test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
+            .expect("the fixture must demux");
+    media.tracks.iter().map(|track| track.samples.len()).sum()
 }
 
 /// With pacing on, a short bounded wait yields only a *prefix* of the file —
@@ -743,10 +757,14 @@ async fn a_matroska_file_streams_from_disk() {
     let config = FileReaderConfig::new(fixture("fixtures/mkv/h264-aac.mkv"), false, trunk.clone())
         .with_pace(false)
         .with_max_retries(0);
-    let published = count_published(trunk, FileReader::new(config))
+    let drained = count_published(trunk, FileReader::new(config))
         .await
         .expect("a Matroska file must stream, not be refused");
-    assert!(published > 0, "the Matroska fixture must publish samples");
+    drained.assert_lossless("the Matroska fixture");
+    assert!(
+        drained.delivered() > 0,
+        "the Matroska fixture must publish samples"
+    );
 }
 
 #[tokio::test]
@@ -792,7 +810,7 @@ async fn directory_path_yields_not_a_regular_file() {
 /// again.
 #[tokio::test]
 async fn b_frame_fixture_publishes_decode_order_dts() {
-    let trunk = trunk();
+    let trunk = trunk_sized(mp4_sample_count("fixtures/mp4/progressive/av-prog.mp4"));
     let t = trunk.clone();
     let handle = tokio::spawn(async move {
         reader(
@@ -861,37 +879,22 @@ fn total_samples(made: &test_harness::big_media::BigMedia) -> u64 {
     made.samples_per_track.iter().map(|(_, n)| *n).sum()
 }
 
-/// `true` for a timed sample, `false` for a track-set change; any other cursor
-/// item is a loss the reader must never produce.
-fn is_timed(item: SampleCursorItem) -> bool {
-    match item {
-        SampleCursorItem::Timed { .. } => true,
-        SampleCursorItem::TracksChanged { .. } => false,
-        _ => panic!("unexpected sample-cursor item from the file reader"),
-    }
-}
-
-/// Run `reader`, draining its trunk concurrently (so the ring never lags), and
-/// report how many timed samples it published.
-async fn count_published(trunk: Arc<Trunk>, reader: FileReader) -> Result<usize, FileReaderError> {
+/// Run `reader` while draining its trunk, and report what the cursor saw.
+///
+/// A live trunk never backpressures its writer, so the ring may lawfully
+/// evict before this drain reads; the caller asserts `total()` against what it
+/// generated, never that the cursor kept up.
+async fn count_published(
+    trunk: Arc<Trunk>,
+    reader: FileReader,
+) -> Result<Drained, FileReaderError> {
     let mut cursor = trunk.subscribe_from_backlog();
     let handle = tokio::spawn(reader.run());
-    let mut published = 0usize;
-    loop {
-        while let Some(item) = cursor.poll() {
-            if is_timed(item) {
-                published += 1;
-            }
-        }
-        if handle.is_finished() {
-            break;
-        }
-        tokio::task::yield_now().await;
-    }
+    let drained = trunk_drain::drain(&mut cursor, || handle.is_finished(), |_, _| {}).await;
     handle
         .await
         .expect("the reader task must not panic")
-        .map(|()| published)
+        .map(|()| drained)
 }
 
 /// Every timed (PTS-carrying) sample `bytes` demuxes into.
@@ -926,12 +929,14 @@ async fn a_ts_file_larger_than_the_cap_plays() {
     let config = FileReaderConfig::new(path, false, trunk.clone())
         .with_pace(false)
         .with_max_retries(0);
-    let published = count_published(trunk, FileReader::new(config))
+    let drained = count_published(trunk, FileReader::new(config))
         .await
         .expect("a TS file must stream, not be refused");
     assert_eq!(
-        published as u64, expected,
-        "every sample of the generated TS capture must play"
+        drained.total(),
+        expected,
+        "every sample of the generated TS capture must play ({} evicted before the cursor)",
+        drained.missed()
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -949,12 +954,14 @@ async fn an_flv_file_streams_from_disk() {
     let config = FileReaderConfig::new(path, false, trunk.clone())
         .with_pace(false)
         .with_max_retries(0);
-    let published = count_published(trunk, FileReader::new(config))
+    let drained = count_published(trunk, FileReader::new(config))
         .await
         .expect("an FLV file must stream, not be refused");
     assert_eq!(
-        published as u64, expected,
-        "every sample of the generated FLV capture must play"
+        drained.total(),
+        expected,
+        "every sample of the generated FLV capture must play ({} evicted before the cursor)",
+        drained.missed()
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -968,10 +975,14 @@ async fn an_mp4_file_streams_from_disk() {
             .with_pace(false)
             .with_max_retries(0),
     );
-    let published = count_published(trunk, reader)
+    let drained = count_published(trunk, reader)
         .await
         .expect("an MP4 must stream, not be refused");
-    assert!(published > 0, "the MP4 fixture must publish samples");
+    drained.assert_lossless("the MP4 fixture");
+    assert!(
+        drained.delivered() > 0,
+        "the MP4 fixture must publish samples"
+    );
 }
 
 #[tokio::test]
@@ -981,10 +992,14 @@ async fn a_ps_file_streams_from_disk() {
     let config = FileReaderConfig::new(fixture("fixtures/ps/h264-ac3.ps"), false, trunk.clone())
         .with_pace(false)
         .with_max_retries(0);
-    let published = count_published(trunk, FileReader::new(config))
+    let drained = count_published(trunk, FileReader::new(config))
         .await
         .expect("a PS file must stream, not be refused");
-    assert!(published > 0, "the PS fixture must publish samples");
+    drained.assert_lossless("the PS fixture");
+    assert!(
+        drained.delivered() > 0,
+        "the PS fixture must publish samples"
+    );
 }
 
 #[tokio::test]
@@ -1000,12 +1015,11 @@ async fn a_ts_file_replaced_by_an_mp4_between_passes_fails_with_file_changed_con
     let mut cursor = trunk.subscribe_from_backlog();
     let handle = tokio::spawn(reader(live.clone(), true, true, None, trunk).run());
 
-    let mut seen = 0usize;
-    while seen < 3 {
-        if is_timed(cursor.next().await) {
-            seen += 1;
-        }
+    let mut drained = Drained::default();
+    while drained.delivered() < 3 {
+        drained.observe(cursor.next().await);
     }
+    drained.assert_lossless("the file reader before the container swap");
     std::fs::rename(&replacement, &live).expect("replace the file between passes");
 
     let outcome = tokio::time::timeout(Duration::from_secs(60), handle)
@@ -1046,13 +1060,12 @@ async fn a_ts_file_that_grows_between_passes_plays_the_longer_file_on_the_next_p
 
     let trunk = trunk();
     let mut cursor = trunk.subscribe_from_backlog();
-    let handle = tokio::spawn(reader(live.clone(), true, true, Some(2), trunk).run());
+    let handle =
+        tokio::spawn(reader(live.clone(), true, true, Some(LOOP_PASSES as u32), trunk).run());
 
-    let mut published = 0usize;
-    while published < 3 {
-        if is_timed(cursor.next().await) {
-            published += 1;
-        }
+    let mut drained = Drained::default();
+    while drained.delivered() < 3 {
+        drained.observe(cursor.next().await);
     }
     let mut file = std::fs::OpenOptions::new()
         .append(true)
@@ -1067,12 +1080,11 @@ async fn a_ts_file_that_grows_between_passes_plays_the_longer_file_on_the_next_p
         .expect("the reader task must not panic");
     outcome.expect("a grown TS file must play cleanly");
     while let Some(item) = cursor.poll() {
-        if is_timed(item) {
-            published += 1;
-        }
+        drained.observe(item);
     }
+    let published = drained.total();
     assert!(
-        published > 2 * prefix_samples,
+        published > 2 * prefix_samples as u64,
         "the longer file must play: {published} samples vs {} for two passes of the original prefix",
         2 * prefix_samples
     );
