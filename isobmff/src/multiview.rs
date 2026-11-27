@@ -429,8 +429,9 @@ mod tests {
     use super::*;
     use alloc::vec;
 
-    fn round<T: Serialize<Error = Error>>(value: &T) -> T
+    fn round<T>(value: &T) -> T
     where
+        T: Serialize<Error = Error>,
         for<'a> T: Parse<'a, Error = Error>,
     {
         let mut out = vec![0u8; value.serialized_len()];
