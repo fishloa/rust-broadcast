@@ -3,9 +3,10 @@
 //! (`cfen`, Amd 1 6.6.2.5).
 //!
 //! The gain-map metadata of a `tmap` item is the `GainMapMetadata` structure of
-//! ISO 21496-1, which is not held, so it is carried as an opaque typed payload
-//! and never interpreted. The packed channel layout of a `cfen` input is
-//! bit-packed exactly as Amd 1 6.6.2.5.2 states.
+//! ISO 21496-1, which is not held: [`crate::image::GainMapMetadata`] models the
+//! layout the open implementations agree on and any other body is carried
+//! opaque. The packed channel layout of a `cfen` input is bit-packed exactly as
+//! Amd 1 6.6.2.5.2 states.
 //!
 //! Sources: `private/specs-verified/mpeg/heif/iso-iec-23008-12-2025-amd1-2025.md`
 //! 6.6.2.4 and 6.6.2.5; `private/specs-verified/mpeg/heif/iso-iec-23008-12-2025.md`
@@ -64,7 +65,7 @@ pub struct ToneMapImage {
 }
 
 impl ToneMapImage {
-    /// A version-0 body with the opaque ISO 21496-1 gain-map metadata.
+    /// A version-0 body from raw ISO 21496-1 gain-map metadata bytes.
     #[must_use]
     pub fn new(gain_map_metadata: Vec<u8>) -> Self {
         let typed_metadata = GainMapMetadata::parse(&gain_map_metadata).ok();
