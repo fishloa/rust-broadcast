@@ -262,6 +262,7 @@ fn assert_periods(name: &str, xml: &str) {
     );
     let mut expected_start = std::time::Duration::ZERO;
     let mut offsets = Vec::new();
+    let mut numbers = Vec::new();
     for (index, period) in mpd.periods.iter().enumerate() {
         assert_eq!(
             period.start,
@@ -277,6 +278,7 @@ fn assert_periods(name: &str, xml: &str) {
             ),
         }
         let mut period_offsets = Vec::new();
+        let mut period_number = None;
         for set in &period.adaptation_sets {
             for representation in &set.representations {
                 let template = representation
@@ -285,10 +287,16 @@ fn assert_periods(name: &str, xml: &str) {
                     .as_ref()
                     .expect("every Representation has a SegmentTemplate");
                 period_offsets.push(template.multi.base.presentation_time_offset.unwrap_or(0));
+                period_number = period_number.or(template.multi.start_number);
             }
         }
+        numbers.push(period_number.unwrap_or(0));
         offsets.push(period_offsets);
     }
+    assert!(
+        numbers.windows(2).all(|pair| pair[1] > pair[0]),
+        "{name}: @startNumber continues to count across the break: {numbers:?}"
+    );
     assert!(
         offsets[0].iter().all(|offset| *offset == 0),
         "{name}: the first Period starts at media zero: {offsets:?}"

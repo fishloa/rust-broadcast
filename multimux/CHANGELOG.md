@@ -20,6 +20,10 @@
   along with the track batch `PushTransportEgress::send` built. Every transport
   frames sample by sample through its per-connection `media_muxer`; a transport
   with no muxer is refused with `MuxError::NoMuxer`.
+- `MediaMuxer` gained `discontinuity`: a cursor hand-off is a break the
+  transport's own muxer must frame (a TS `discontinuity_indicator`, an RTMP
+  timestamp rebase). A third-party transport now states what it does with a
+  break instead of dropping it.
 
 ### Changed
 
