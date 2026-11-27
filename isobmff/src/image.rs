@@ -90,6 +90,8 @@ pub const PASP: [u8; BOX_TYPE_SIZE] = *b"pasp";
 pub const COLR: [u8; BOX_TYPE_SIZE] = *b"colr";
 /// Four-CC of the Pixel Information property (23008-12 6.5.6).
 pub const PIXI: [u8; BOX_TYPE_SIZE] = *b"pixi";
+/// `jpgC`: JPEG configuration prefix (ISO/IEC 23008-12:2025 H.2.2).
+pub const JPGC: [u8; BOX_TYPE_SIZE] = *b"jpgC";
 /// Four-CC of the Relative Location property (23008-12 6.5.7).
 pub const RLOC: [u8; BOX_TYPE_SIZE] = *b"rloc";
 /// Four-CC of the Auxiliary Type property (23008-12 6.5.8, as corrected).
@@ -1897,6 +1899,8 @@ pub enum ItemProperty {
     AvcC(AVCConfigurationBox),
     /// `av1C`: AV1 decoder configuration.
     Av1C(Av1ConfigurationBox),
+    /// `jpgC`: the JPEG configuration prefix (23008-12 H.2.2/H.3.2).
+    JpgC(JpegConfigurationProperty),
     /// `vvcC`: VVC decoder configuration (ISO/IEC 23008-12:2025).
     VvcC(crate::vvc_config::VvcConfigurationBox),
     /// `a1op`: AV1 operating point selector.
@@ -2001,6 +2005,7 @@ impl ItemProperty {
             Self::HvcC(_) => HVCC,
             Self::AvcC(_) => AVCC,
             Self::Av1C(_) => AV1C,
+            Self::JpgC(_) => JPGC,
             Self::VvcC(_) => *b"vvcC",
             Self::A1op(_) => A1OP,
             Self::A1lx(_) => A1LX,
@@ -2115,6 +2120,7 @@ impl ItemProperty {
             b"hvcC" => Ok(Self::HvcC(HEVCConfigurationBox::parse_body(body)?)),
             b"avcC" => Ok(Self::AvcC(AVCConfigurationBox::parse_body(body)?)),
             b"av1C" => Ok(Self::Av1C(Av1ConfigurationBox::parse(body)?)),
+            b"jpgC" => Ok(Self::JpgC(JpegConfigurationProperty::parse(item.bytes)?)),
             b"vvcC" => Ok(Self::VvcC(
                 crate::vvc_config::VvcConfigurationBox::parse_body(body)?,
             )),
@@ -2260,6 +2266,7 @@ impl Serialize for ItemProperty {
             Self::Colr(value) => box_len(BOX_HEADER_MIN_SIZE + value.serialized_len()),
             Self::Clap(value) => box_len(BOX_HEADER_MIN_SIZE + value.serialized_len()),
             Self::Av1C(value) => box_len(BOX_HEADER_MIN_SIZE + value.serialized_len()),
+            Self::JpgC(value) => box_len(BOX_HEADER_MIN_SIZE + value.prefix().len()),
             Self::Mdcv(_) => box_len(BOX_HEADER_MIN_SIZE + MDCV_PAYLOAD_LEN),
             Self::Clli(_) => box_len(BOX_HEADER_MIN_SIZE + CLLI_PAYLOAD_LEN),
             Self::Ispe(value) => value.serialized_len(),
@@ -2320,6 +2327,7 @@ impl Serialize for ItemProperty {
             Self::Colr(value) => Self::write_body_box(buf, &COLR, value.serialized_len(), value),
             Self::Clap(value) => Self::write_body_box(buf, &CLAP, value.serialized_len(), value),
             Self::Av1C(value) => Self::write_body_box(buf, &AV1C, value.serialized_len(), value),
+            Self::JpgC(value) => Self::write_body_box(buf, &JPGC, value.prefix().len(), value),
             Self::Mdcv(value) => Self::write_body_box(buf, &MDCV_FOURCC, MDCV_PAYLOAD_LEN, value),
             Self::Clli(value) => Self::write_body_box(buf, &CLLI_FOURCC, CLLI_PAYLOAD_LEN, value),
             Self::Ispe(value) => value.serialize_into(buf),
@@ -2465,5 +2473,65 @@ impl DerivedImage {
         let written = self.serialize_into(&mut out)?;
         out.truncate(written);
         Ok(out)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JpegConfigurationProperty — 'jpgC' (23008-12 H.2.2/H.3.2)
+// ---------------------------------------------------------------------------
+
+/// The JPEG configuration prefix (`jpgC`) — ISO/IEC 23008-12:2025 H.2.2.
+///
+/// One structure serves both roles the clause defines (an item property and a
+/// sample-entry box): the payload is the initial part of a JPEG image, starting
+/// with the SOI marker, to concatenate before the item's or sample's data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct JpegConfigurationProperty {
+    jpeg_prefix: Vec<u8>,
+}
+
+impl JpegConfigurationProperty {
+    /// Build one from the JPEG prefix bytes.
+    #[must_use]
+    pub fn new(jpeg_prefix: Vec<u8>) -> Self {
+        Self { jpeg_prefix }
+    }
+
+    /// The prefix bytes.
+    #[must_use]
+    pub fn prefix(&self) -> &[u8] {
+        &self.jpeg_prefix
+    }
+
+    /// Parse the whole box, box header included.
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        let item = crate::box_types::parse_box(bytes)?.0;
+        if !item.header.box_type.is(&JPGC) {
+            return Err(Error::UnexpectedBox { expected: "jpgC" });
+        }
+        Ok(Self {
+            jpeg_prefix: item.body.to_vec(),
+        })
+    }
+}
+
+impl<'a> Parse<'a> for JpegConfigurationProperty {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_box(bytes)
+    }
+}
+
+impl Serialize for JpegConfigurationProperty {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        self.jpeg_prefix.len()
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        broadcast_core::len::need_out(buf, self.jpeg_prefix.len())?;
+        buf[..self.jpeg_prefix.len()].copy_from_slice(&self.jpeg_prefix);
+        Ok(self.jpeg_prefix.len())
     }
 }

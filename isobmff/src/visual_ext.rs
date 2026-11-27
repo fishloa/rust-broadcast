@@ -213,6 +213,8 @@ impl Serialize for CleanApertureBox {
 #[non_exhaustive]
 pub enum ColourType {
     Nclx,
+    /// QuickTime `full` — the `nclx` parameters with the full-range flag set.
+    Full,
     RIcc,
     Prof,
     Unknown([u8; BOX_TYPE_SIZE]),
@@ -224,6 +226,7 @@ impl ColourType {
     pub const fn from_fourcc(code: [u8; BOX_TYPE_SIZE]) -> Self {
         match &code {
             b"nclx" => Self::Nclx,
+            b"full" => Self::Full,
             b"rICC" => Self::RIcc,
             b"prof" => Self::Prof,
             _ => Self::Unknown(code),
@@ -235,6 +238,7 @@ impl ColourType {
     pub const fn fourcc(self) -> [u8; BOX_TYPE_SIZE] {
         match self {
             Self::Nclx => *b"nclx",
+            Self::Full => *b"full",
             Self::RIcc => *b"rICC",
             Self::Prof => *b"prof",
             Self::Unknown(code) => code,
@@ -246,6 +250,7 @@ impl ColourType {
     pub fn name(&self) -> &'static str {
         match self {
             ColourType::Nclx => "nclx",
+            ColourType::Full => "full",
             ColourType::RIcc => "rICC",
             ColourType::Prof => "prof",
             ColourType::Unknown(_) => "reserved",
@@ -376,7 +381,7 @@ impl<'a> Parse<'a> for ColourInformationBox {
         let rest = &bytes[BOX_TYPE_SIZE..];
 
         match &colour_type {
-            b"nclx" => {
+            b"nclx" | b"full" => {
                 need_in(rest, NCLX_PARAMS_LEN, "colr nclx params")?;
                 let colour_primaries = be_u16(rest, 0, "colr nclx params")?;
                 let transfer_characteristics =

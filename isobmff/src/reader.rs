@@ -560,7 +560,11 @@ impl SampleEntryInfo {
                 VISUAL_FIXED
             }
             Some(V::Mp4a(_) | V::Ac3(_) | V::Ec3(_) | V::Ac4(_) | V::Opus(_) | V::Flac(_))
-            | Some(V::Mha(_) | V::Dts(_)) => AUDIO_FIXED,
+            | Some(V::Mha(_) | V::Dts(_) | V::RestrictedAudio(_) | V::IncompleteAudio(_)) => {
+                AUDIO_FIXED
+            }
+            Some(V::RestrictedVideo(_)) => VISUAL_FIXED,
+            Some(V::Transform(entry)) => entry.base().fixed_len(),
             Some(_) => SAMPLE_ENTRY_BASE,
             None => match &self.fourcc {
                 b"resv" | b"icpv" => VISUAL_FIXED,
@@ -614,6 +618,8 @@ pub struct TrackInfo {
     pub entries: Vec<SampleEntryInfo>,
     /// The QuickTime track aperture dimensions (`tapt`), when present.
     pub tapt: Option<crate::quicktime::TrackApertureModeDimensionsBox>,
+    /// The QuickTime track loading settings (`load`), when present.
+    pub preload: Option<crate::quicktime::PreloadBox>,
     /// The extended language tag (`elng`, §8.4.6), when present.
     pub extended_language: Option<crate::track_desc::ExtendedLanguageBox>,
     /// The track groups (`trgr`, §8.3.4), when present.
@@ -755,6 +761,11 @@ impl TrackInfo {
             .and_then(|b| {
                 crate::quicktime::TrackApertureModeDimensionsBox::parse_body(&b.data).ok()
             });
+        let preload = trak
+            .opaque
+            .iter()
+            .find(|b| b.box_type == crate::quicktime::preload::LOAD)
+            .and_then(|b| crate::quicktime::PreloadBox::parse_body(&b.data).ok());
         let desc = track_description(trak);
         Ok(Self {
             track_id: trak.tkhd.track_id,
@@ -769,6 +780,7 @@ impl TrackInfo {
             edits,
             entries,
             tapt,
+            preload,
             extended_language: desc.extended_language,
             track_groups: desc.track_groups,
             kinds: desc.kinds,
@@ -2983,6 +2995,11 @@ fn build_track_info(
         .iter()
         .find(|b| b.box_type == crate::quicktime::aperture::TAPT)
         .and_then(|b| crate::quicktime::TrackApertureModeDimensionsBox::parse_body(&b.data).ok());
+    let preload = trak
+        .opaque
+        .iter()
+        .find(|b| b.box_type == crate::quicktime::preload::LOAD)
+        .and_then(|b| crate::quicktime::PreloadBox::parse_body(&b.data).ok());
     let desc = track_description(trak);
     Ok(TrackInfo {
         track_id: trak.tkhd.track_id,
@@ -2994,6 +3011,7 @@ fn build_track_info(
         edits,
         entries,
         tapt,
+        preload,
         extended_language: desc.extended_language,
         track_groups: desc.track_groups,
         kinds: desc.kinds,

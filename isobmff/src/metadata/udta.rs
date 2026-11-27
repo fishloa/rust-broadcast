@@ -151,6 +151,20 @@ pub enum UdtaChild {
     HintInformation(Box<crate::hint::HintInformationBox>),
     /// Hint statistics (`hinf`, §9.1.5).
     HintStatistics(Box<crate::hint::HintStatisticsBox>),
+    /// A 3GPP media classification (`clsf`, TS 26.244 table 8.8).
+    Classification(crate::threegpp::MediaClassificationBox),
+    /// A 3GPP collection name (`coll`, TS 26.244 table 8.12a).
+    Collection(crate::threegpp::CollectionNameBox),
+    /// 3GPP media keywords (`kywd`, TS 26.244 table 8.9).
+    Keywords(crate::threegpp::KeywordsBox),
+    /// A 3GPP media rating (`rtng`, TS 26.244 table 8.7).
+    Rating(crate::threegpp::MediaRatingBox),
+    /// A 3GPP user rating (`urat`, TS 26.244 table 8.12b).
+    UserRating(crate::threegpp::UserRatingBox),
+    /// A 3GPP thumbnail (`thmb`, TS 26.244 table 8.12c).
+    Thumbnail(crate::threegpp::ThumbnailBox),
+    /// 3GPP orientation information (`orie`, TS 26.244 table 8.12d).
+    Orientation(crate::threegpp::OrientationInformationBox),
     /// Any other child, preserved verbatim.
     Opaque(OpaqueBox),
 }
@@ -172,6 +186,13 @@ impl Serialize for UdtaChild {
             Self::SubTrack(subtrack) => subtrack.serialized_len(),
             Self::HintInformation(hint) => hint.serialized_len(),
             Self::HintStatistics(statistics) => statistics.serialized_len(),
+            Self::Classification(classification) => classification.serialized_len(),
+            Self::Collection(collection) => collection.serialized_len(),
+            Self::Keywords(keywords) => keywords.serialized_len(),
+            Self::Rating(rating) => rating.serialized_len(),
+            Self::UserRating(rating) => rating.serialized_len(),
+            Self::Thumbnail(thumbnail) => thumbnail.serialized_len(),
+            Self::Orientation(orientation) => orientation.serialized_len(),
             Self::Opaque(opaque) => opaque.serialized_len(),
         }
     }
@@ -190,6 +211,13 @@ impl Serialize for UdtaChild {
             Self::SubTrack(subtrack) => subtrack.serialize_into(buf),
             Self::HintInformation(hint) => hint.serialize_into(buf),
             Self::HintStatistics(statistics) => statistics.serialize_into(buf),
+            Self::Classification(classification) => classification.serialize_into(buf),
+            Self::Collection(collection) => collection.serialize_into(buf),
+            Self::Keywords(keywords) => keywords.serialize_into(buf),
+            Self::Rating(rating) => rating.serialize_into(buf),
+            Self::UserRating(rating) => rating.serialize_into(buf),
+            Self::Thumbnail(thumbnail) => thumbnail.serialize_into(buf),
+            Self::Orientation(orientation) => orientation.serialize_into(buf),
             Self::Opaque(opaque) => opaque.serialize_into(buf),
         }
     }
@@ -280,6 +308,27 @@ impl Udta {
                 crate::hint::HINF => UdtaChild::HintStatistics(Box::new(
                     crate::hint::HintStatisticsBox::parse_body(child.body)?,
                 )),
+                crate::threegpp::CLSF => UdtaChild::Classification(
+                    crate::threegpp::MediaClassificationBox::parse_body(child.body)?,
+                ),
+                crate::threegpp::COLL => UdtaChild::Collection(
+                    crate::threegpp::CollectionNameBox::parse_body(child.body)?,
+                ),
+                crate::threegpp::KYWD => {
+                    UdtaChild::Keywords(crate::threegpp::KeywordsBox::parse_body(child.body)?)
+                }
+                crate::threegpp::RTNG => {
+                    UdtaChild::Rating(crate::threegpp::MediaRatingBox::parse_body(child.body)?)
+                }
+                crate::threegpp::URAT => {
+                    UdtaChild::UserRating(crate::threegpp::UserRatingBox::parse_body(child.body)?)
+                }
+                crate::threegpp::THMB => {
+                    UdtaChild::Thumbnail(crate::threegpp::ThumbnailBox::parse_body(child.body)?)
+                }
+                crate::threegpp::ORIE => UdtaChild::Orientation(
+                    crate::threegpp::OrientationInformationBox::parse_body(child.body)?,
+                ),
                 _ if super::is_text_key(&fourcc) => {
                     UdtaChild::Text(parse_text(fourcc, child.body)?)
                 }

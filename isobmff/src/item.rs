@@ -1123,6 +1123,9 @@ pub enum ReferenceType {
     Rpds,
     /// `anot`: the to item or track carries a region annotation (11.4.1).
     Anot,
+    /// `evir`: an EVC slice item references its EVC base item
+    /// (ISO/IEC 23008-12:2025 M.2.4.1).
+    Evir,
     /// Any other registered or private type.
     Other([u8; BOX_TYPE_SIZE]),
 }
@@ -1155,6 +1158,7 @@ impl ReferenceType {
             Self::Drgn => *b"drgn",
             Self::Rpds => *b"rpds",
             Self::Anot => *b"anot",
+            Self::Evir => *b"evir",
             Self::Fdel => *b"fdel",
             Self::Mint => *b"mint",
             Self::Other(fourcc) => fourcc,
@@ -1182,6 +1186,7 @@ impl ReferenceType {
             b"drgn" => Self::Drgn,
             b"rpds" => Self::Rpds,
             b"anot" => Self::Anot,
+            b"evir" => Self::Evir,
             b"fdel" => Self::Fdel,
             b"mint" => Self::Mint,
             _ => Self::Other(fourcc),
@@ -1209,6 +1214,7 @@ impl ReferenceType {
             Self::Drgn => "drgn",
             Self::Rpds => "rpds",
             Self::Anot => "anot",
+            Self::Evir => "evir",
             Self::Fdel => "fdel",
             Self::Mint => "mint",
             Self::Other(_) => "other",
