@@ -95,6 +95,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A truncated `aepp` coordinate triple is an error, not a panic (#4179).**
+  The audio element positioning box read its three azimuth values with an
+  unchecked reader, so a body that set the azimuth-present flag without
+  carrying the values panicked out of the parser (the `isobmff_tier34_boxes`
+  fuzz target found it in ten seconds). The parser now asks for the whole
+  triple first and returns the typed short-buffer error;
+  `tests/it/fuzz_regressions.rs` feeds the artifact's own bytes back through
+  the same entry point.
+
 - **A rewritten fragmented init keeps its empty `stsz`'s constant
   `sample_size` (#4148).** A source `stsz` with `sample_count == 0` and a
   non-zero constant `sample_size` (value 1 in a real MPEH-G init segment) was

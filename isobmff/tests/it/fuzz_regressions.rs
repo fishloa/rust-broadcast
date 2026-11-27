@@ -6,11 +6,11 @@
 //! returns.
 
 use broadcast_core::Parse;
+use isobmff::Error;
 use isobmff::audio_elements::{
     AudioElementBox, AudioElementPosInteractivityPolarBox, AudioElementProminenceInteractivityBox,
     AudioElementSelectionBox,
 };
-use isobmff::Error;
 
 fn boxed(fourcc: [u8; 4], body: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(8 + body.len());
