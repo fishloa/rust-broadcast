@@ -1133,6 +1133,9 @@ impl Stage for StreamingTsHlsSegmenter {
                     self.add_track(spec)
                 }
             }
+            MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(
+                "ts-hls: a track removed mid-stream is not in the muxer's program",
+            )),
             MuxInput::Sample { track, sample } => self.push_inner(track, sample),
             MuxInput::Discontinuity { .. } => {
                 self.mark_discontinuity();

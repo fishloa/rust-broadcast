@@ -51,9 +51,11 @@ sequence headers and MPEG-2 sequence headers, each an additive release).
 **Not waived:** real-fixture parse tests, the fuzz targets, spec-drift tests, the
 private-field rule, `#[non_exhaustive]` and the label convention. The stream-format
 converters that return bytes (`annexb_to_length_prefixed`,
-`length_prefixed_to_annexb`, `normalise_nal_length_size`) are a second recorded
-exception to the no-raw-byte rule, stated in each function's documentation: they
-convert bytes to bytes, and their round trip is asserted byte-identically.
+`length_prefixed_to_annexb`, `normalise_nal_length_size`, `build_adts_header`,
+`AudioSpecificConfig::to_adts_header`, `Hdr10PlusMetadata::to_hevc_prefix_sei_nal`
+and `hdr::to_hevc_declarative_sei_nal`) are a second recorded exception to the
+no-raw-byte rule, stated in each function's documentation: they convert bytes to
+bytes, and their round trip is asserted byte-identically.
 
 ### API conventions
 

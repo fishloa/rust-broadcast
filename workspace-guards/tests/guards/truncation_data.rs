@@ -203,17 +203,6 @@ pub const TABLE: &[Crate] = &[
     },
     Crate {
         name: "broadcast-bitstream",
-        allowlist: &[(
-            "src/annexb.rs",
-            "out.extend_from_slice(&(nal.len() as u32).to_be_bytes());",
-            "length_prefix, the one 4-byte NAL length writer: its NALs come from \
-                 TS demux (whose PES unit bound is caller-supplied, 4 MiB for every \
-                 network ingest) and RTP depacketisation (FU-A / STAP-A reassembler \
-                 caps), never near 4 GiB.",
-        )],
-    },
-    Crate {
-        name: "transmux",
         allowlist: &[
             (
                 "src/h262.rs",
@@ -224,6 +213,11 @@ pub const TABLE: &[Crate] = &[
                 "src/h262.rs",
                 "debug_assert_eq!(u8::try_from(id).unwrap_or(u8::MAX), SEQUENCE_EXTENSION_ID);",
                 "A debug assertion comparing against a constant, not a length write.",
+            ),
+            (
+                "src/h262.rs",
+                "u8::try_from(frame_rate).unwrap_or(u8::MAX),",
+                "frame_rate_code is a 4-bit Table 6-4 code copied through from a parsed sequence header; the clamp is unreachable.",
             ),
             (
                 "src/h262.rs",
@@ -248,9 +242,21 @@ pub const TABLE: &[Crate] = &[
             (
                 "src/h262.rs",
                 "video_format: u8::try_from(video_format).unwrap_or(u8::MAX),",
-                "video_format is a 3-bit Annex E code copied through from a parsed sequence header.",
+                "video_format is a 3-bit Annex E code copied through from a parsed sequence header; the clamp is unreachable.",
+            ),
+            (
+                "src/annexb.rs",
+                "out.extend_from_slice(&(nal.len() as u32).to_be_bytes());",
+                "length_prefix, the one 4-byte NAL length writer: its NALs come from \
+                 TS demux (whose PES unit bound is caller-supplied, 4 MiB for every \
+                 network ingest) and RTP depacketisation (FU-A / STAP-A reassembler \
+                 caps), never near 4 GiB.",
             ),
         ],
+    },
+    Crate {
+        name: "transmux",
+        allowlist: &[],
     },
     Crate {
         name: "dvr-runtime",

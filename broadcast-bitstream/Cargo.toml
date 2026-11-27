@@ -2,7 +2,7 @@
 name         = "broadcast-bitstream"
 version      = "0.1.0"
 edition      = "2024"
-description  = "Codec bitstream parsers for rust-broadcast: the exp-Golomb/RBSP bit reader, NAL classification, SPS/slice/interlace facts, AAC AudioSpecificConfig and ADTS, AC-3/E-AC-3, DTS core and MHAS framing. Parses facts only; holds no decoder. no_std + alloc."
+description  = "Codec bitstream parsers for rust-broadcast: the exp-Golomb/RBSP bit reader, NAL classification, SPS/slice/interlace facts, HDR metadata, AAC AudioSpecificConfig and ADTS, AC-3/E-AC-3, DTS core, MHAS framing, the MPEG-2 video sequence header and the MPEG-1/2/2.5 audio frame header, plus the AFD and bar data the video codecs carry. Parses facts only; holds no decoder. no_std + alloc."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords     = ["h264", "hevc", "nal", "bitstream", "no-std"]
@@ -29,7 +29,7 @@ serde      = { version = "1", default-features = false, features = ["derive", "a
 isobmff    = { path = "../isobmff", version = "0.1.0", default-features = false, optional = true }
 
 [features]
-default = ["std", "h264", "hevc", "vvc", "aac", "ac3", "dts", "mpegh"]
+default = ["std", "h264", "hevc", "vvc", "aac", "ac3", "dts", "mpegh", "mpeg2", "mpeg-audio"]
 std    = ["broadcast-core/std", "thiserror/std", "serde?/std", "isobmff?/std"]
 # H.264 / AVC NAL unit types.
 h264   = []
@@ -45,6 +45,10 @@ ac3    = []
 dts    = []
 # MPEG-H Audio Stream (MHAS) packet framing.
 mpegh  = []
+# MPEG-2 video sequence header and display extensions.
+mpeg2  = []
+# MPEG-1/2/2.5 audio (MP1/2/3) frame headers.
+mpeg-audio = []
 serde  = ["dep:serde", "broadcast-core/serde", "isobmff?/serde"]
 isobmff = ["dep:isobmff", "h264"]
 
@@ -54,6 +58,10 @@ workspace = true
 [[example]]
 name = "print_adts_headers"
 required-features = ["std", "aac"]
+
+[[example]]
+name = "print_mpeg_audio_headers"
+required-features = ["std", "mpeg-audio"]
 
 [[example]]
 name = "split_annexb"

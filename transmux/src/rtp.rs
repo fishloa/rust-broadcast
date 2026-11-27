@@ -593,6 +593,11 @@ impl Stage for RtpPacketiserStage {
             MuxInput::Track(spec) => return self.announce(*spec),
             MuxInput::Sample { track, sample } => (track, sample),
             MuxInput::Discontinuity { .. } | MuxInput::Flush => return Ok(()),
+            MuxInput::TrackRemoved { .. } => {
+                return Err(Error::UnsupportedFeature(
+                    "rtp: a track removed mid-stream is not re-signalled in SDP",
+                ));
+            }
         };
         let Some(index) = self.tracks.iter().position(|t| t.spec.track_id == track) else {
             return Err(Error::InvalidInput("rtp: sample for an unannounced track"));

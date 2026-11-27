@@ -14,8 +14,8 @@
 //!   or until a new AFD"; after `sequence_header()` the area of interest
 //!   reverts to the sequence's own aspect (`afd = None`, not
 //!   `SameAsCodedFrame`); a new AFD without bar data clears bar data.
-//! - H.262 §6.2.2.1 / §6.2.2.3 / §6.2.2.4 for the sequence syntax (see
-//!   [`crate::h262`]).
+//! - H.262 §6.2.2.1 / §6.2.2.3 / §6.2.2.4 for the sequence syntax (parsed by
+//!   [`broadcast_bitstream::h262`]).
 //!
 //! # Ordering (§6.5)
 //!
@@ -25,16 +25,21 @@
 //! `DisplayChanged` with `random_access = false`. The event and the
 //! [`Sample`](crate::Sample) tag share one `Arc<DisplayInfo>`.
 
-use crate::h262::{
-    afd_from_mpeg2_user_data, find_sequence_header, parse_sequence_at, picture_user_data_payloads,
-};
+use crate::error::{Error, Result};
 use crate::ir::{ActiveFormat, DisplayChangeSet, DisplayGeometry, DisplayInfo, UserDataCarriage};
-use broadcast_bitstream::facts::{ActiveFormatDescription, BarData};
+use broadcast_bitstream::facts::{
+    ActiveFormatDescription, AspectRatioIdc, BarData, ColourDescription, EXTENDED_SAR_IDC,
+    PictureRect, VideoFormat, VideoSignalType,
+};
+use broadcast_bitstream::h262::{
+    ASPECT_SQUARE, SequenceHeaderGeometry, afd_from_mpeg2_user_data, find_sequence_header,
+    parse_sequence_at, picture_user_data_payloads,
+};
 
-use crate::user_data::{
+use alloc::sync::Arc;
+use broadcast_bitstream::user_data::{
     BAR_DATA_USER_DATA_TYPE_CODE, DTG1_USER_IDENTIFIER, GA94_USER_IDENTIFIER, USER_IDENTIFIER_LEN,
 };
-use alloc::sync::Arc;
 
 /// The outcome of [`Mpeg2DisplayTracker::observe`] for one access unit.
 #[non_exhaustive]
@@ -132,7 +137,7 @@ impl Mpeg2DisplayTracker {
         if let Some(start) = find_sequence_header(au)
             && let Ok(parsed) = parse_sequence_at(au, start)
         {
-            self.geometry = Some(parsed.to_display_geometry());
+            self.geometry = Some(DisplayGeometry::from_mpeg2_sequence(&parsed));
             self.afd = None;
             self.bar_data = None;
         }
@@ -228,8 +233,71 @@ fn bar_data_from_dvb1(body: &[u8]) -> Option<Option<BarData>> {
     if type_code != BAR_DATA_USER_DATA_TYPE_CODE {
         return None;
     }
-    crate::user_data::bar_data_from_ga94_payload(body).map(Some)
+    broadcast_bitstream::user_data::bar_data_from_ga94_payload(body).map(Some)
 }
 
 #[cfg(test)]
 mod tests;
+
+impl DisplayGeometry {
+    /// Geometry of an MPEG-2 video elementary-stream prefix: the first
+    /// `sequence_header()` it contains (H.262 §6.2.2.1) plus the
+    /// `sequence_extension()` / `sequence_display_extension()` that follow it.
+    ///
+    /// The input may be a raw elementary-stream prefix or an `esds`
+    /// DecoderSpecificInfo that carries the sequence header
+    /// (`private/specs-verified/mpeg/transmux/codec/mpeg2-video-h262.md`). [`Error::InvalidInput`] when no
+    /// sequence header is present; nothing is fabricated for a truncated one.
+    ///
+    /// `aspect_ratio` is [`AspectRatioIdc::ExtendedSar`] carrying the reduced
+    /// SAR derived from Table 6-3 and H.262 §6.3.3 ([`AspectRatioIdc::Square`]
+    /// for square samples), or `None` for aspect codes 0 and 5..=15.
+    pub fn from_mpeg2_es(prefix: &[u8]) -> Result<Self> {
+        let start = find_sequence_header(prefix).ok_or(Error::InvalidInput(
+            "no MPEG-2 sequence_header (start code 0x000001B3) in elementary stream",
+        ))?;
+        let sequence = parse_sequence_at(prefix, start)?;
+        Ok(Self::from_mpeg2_sequence(&sequence))
+    }
+
+    /// Geometry for a parsed MPEG-2 sequence. The coded picture is the output
+    /// rectangle: H.262 has no crop syntax, and `display_*_size` describes the
+    /// intended display rectangle, never a decoder crop.
+    ///
+    /// Colour: `video_signal` records the `sequence_display_extension()` exactly
+    /// as signalled; the MPEG-2 inferred colour (BT.709, 1/1/1) is supplied by
+    /// [`colour_description`](Self::colour_description) through
+    /// [`is_mpeg2`](Self::is_mpeg2). MPEG-2 has no full-range flag, so
+    /// `full_range` is always `false`.
+    pub fn from_mpeg2_sequence(sequence: &SequenceHeaderGeometry) -> Self {
+        let video_signal = sequence.display().map(|d| {
+            VideoSignalType::new(
+                VideoFormat::from_wire(d.video_format()).unwrap_or(VideoFormat::Unspecified),
+                false,
+                d.colour_description()
+                    .map(|(p, t, m)| ColourDescription::from_wire(p, t, m)),
+            )
+        });
+        let (coded_width, coded_height) = (sequence.coded_width(), sequence.coded_height());
+        Self {
+            coded_width,
+            coded_height,
+            output_rect: PictureRect::new(0, 0, coded_width, coded_height),
+            default_display_rect: None,
+            aspect_ratio: match (
+                sequence.aspect_ratio_information(),
+                sequence.sample_aspect_ratio(),
+            ) {
+                (ASPECT_SQUARE, _) => Some(AspectRatioIdc::Square),
+                (_, Some((sar_width, sar_height))) => Some(AspectRatioIdc::from_wire(
+                    EXTENDED_SAR_IDC,
+                    Some((sar_width, sar_height)),
+                )),
+                _ => None,
+            },
+            overscan_appropriate: None,
+            video_signal,
+            mpeg2: true,
+        }
+    }
+}

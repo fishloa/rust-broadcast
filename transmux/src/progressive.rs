@@ -233,6 +233,9 @@ impl Stage for ProgressiveMuxStage {
             MuxInput::Discontinuity { .. } => Err(Error::UnsupportedFeature(
                 "progressive: a single-file MP4 cannot signal a discontinuity",
             )),
+            MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(
+                "progressive: a single-file MP4 header is written before its samples",
+            )),
             MuxInput::Flush => Ok(()),
         }
     }

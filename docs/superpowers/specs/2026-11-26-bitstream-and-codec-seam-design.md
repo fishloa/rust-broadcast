@@ -49,8 +49,10 @@ This design closes both, before the next release, so the workspace breaks once.
 
 ## 3. Constraints
 
-- `broadcast-bitstream`: `no_std` + `alloc`, depends on `broadcast-core` only (plus `thiserror`), optional
-  `serde`, optional `isobmff` (§5.4). MSRV as the workspace.
+- `broadcast-bitstream`: `no_std` + `alloc`, depends on `broadcast-core`, `thiserror` and `memchr` (the
+  Annex B start-code scan finds each `01` byte rather than testing every offset), optional `serde`,
+  optional `isobmff` (§5.4). MSRV as the workspace. Nothing was added to `broadcast-core` for this work:
+  the bit extraction it already had was enough, and `broadcast-common` is not a dependency.
 - `broadcast-codec`: `no_std` + `alloc`, depends on `broadcast-core` only.
 - Neither depends on the other, on `transmux`, or on `broadcast-common`.
 - Every existing golden and fixture round trip stays byte-identical. This is a move plus an API tidy; no
@@ -94,12 +96,18 @@ Moved out of `transmux/src/`, one feature per codec family, all on by default:
 | feature | from `transmux/src/` | what |
 |---|---|---|
 | (always) | `bitreader.rs`, `rbsp` | exp-Golomb, emulation-prevention removal, on top of `broadcast_core::bits` |
-| `h264`, `hevc` | `sps.rs`, `nal.rs`, `annexb.rs`, `au.rs`, `slice_header.rs`, `interlace.rs`, `hdr10plus.rs` | parameter sets, NAL unit types, Annex B and length-prefixed iteration and conversion, access-unit boundaries, slice-header facts, HDR10+ |
-| `aac` | `aac_asc.rs` | AudioSpecificConfig; ADTS header (from `container-probe`) |
+| `h264`, `hevc`, `vvc` | `sps.rs`, `nal.rs`, `annexb.rs`, `au.rs`, `slice_header.rs`, `interlace.rs`, `hdr10plus.rs`, `hdr.rs` | parameter sets, NAL unit types, Annex B and length-prefixed iteration and conversion, access-unit boundaries, slice-header facts, interlace facts, HDR10+ and the HDR10 static metadata |
+| `aac` | `aac_asc.rs` | AudioSpecificConfig; ADTS header (the header parser; `container-probe`'s ADTS *prober* stays) |
 | `ac3` | `ac3_syncframe.rs` | AC-3 / E-AC-3 syncframe |
 | `dts` | `dts_core.rs` | DTS core frame header |
-| `mpeg2` | `mpeg2_display.rs`, `user_data.rs`, `h262` | MPEG-2 video sequence/display, picture user data |
-| `mpeg-audio` | (from `container-probe`'s `mp3.rs`) | MPEG audio frame header |
+| `mpeg2` | `mpeg_legacy.rs` (sequence half), `h262.rs` | MPEG-2 video sequence header, sequence/display extensions, the picture user-data walk (`mpeg2_display.rs` is a per-access-unit tracker over `transmux`'s IR and stays) |
+| `mpeg-audio` | `mpeg_legacy.rs` (audio half) | MPEG-1/2/2.5 audio frame header |
+| (always) | `user_data.rs` | AFD and bar data, shared by the H.262, AVC and HEVC paths, so no codec feature gates it |
+
+The features as they exist: `h264`, `hevc`, `vvc`, `aac`, `ac3`, `dts`, `mpegh`, `mpeg2`, `mpeg-audio`,
+`isobmff`, `serde` and `std`, with all but `serde`, `isobmff` and `std` in `default`. The per-codec
+runtime dependencies (`memchr` for the start-code scan; `thiserror` for the error type) are the same in
+every feature combination.
 
 **Which types move.** A type moves if a codec specification defines it: a parameter set and what it
 states (picture size and cropping rectangle, VUI colour description, timing information, profile and
@@ -146,8 +154,18 @@ the waiver type by type. Real-fixture parse tests, fuzz targets and the spec-dri
 ### 5.4 Relationship to `isobmff`
 
 `isobmff` keeps its parameter sets as opaque typed wrappers and gains no dependency. The glue that needs
-both crates and nothing else (build an `avcC`/`hvcC` from parameter-set bytes: `avc_config_from_sps_pps`
-and its HEVC counterpart) moves to `broadcast-bitstream` behind an optional `isobmff` feature.
+both crates and nothing else moves to `broadcast-bitstream` behind an optional `isobmff` feature.
+
+More of the glue sits behind that feature than the two configuration builders: `nalu_ext` and
+`codec_config_ext` (the trait impls over `isobmff`'s parameter sets and decoder-configuration records),
+`avc_config_from_sps_pps` (whose HEVC counterpart turned out not to exist and was written, not moved), the
+`dac3`/`dec3`/`ddts` builders (`into_dac3`, `into_dec3`, `into_ddts`,
+`ec3_specific_box_from_syncframes`), and `HdrStaticMetadata` with its `mdcv`/`clli` codec. Parsing each
+of those codecs needs no `isobmff`; only the box builders do. The exception the crate records for the no-
+raw-byte rule is the converters: `annexb_to_length_prefixed`, `length_prefixed_to_annexb`,
+`normalise_nal_length_size`, `build_adts_header`, `AudioSpecificConfig::to_adts_header`,
+`Hdr10PlusMetadata::to_hevc_prefix_sei_nal` and `hdr::to_hevc_declarative_sei_nal` return bytes because
+bytes are the whole of what they produce.
 
 What does not move:
 - `avc_config_from_sprop` and `avc_config_from_fmtp` stay in `transmux` (`rtp_sdp.rs`). They are SDP
@@ -166,11 +184,14 @@ What does not move:
   today (`annexb_to_length_prefixed`, `iter_annexb_nals`, `iter_length_prefixed_nals`,
   `avc_config_from_sps_pps`, `NalCodec`) from the new crate; `avc_config_from_sprop` stays a `transmux`
   import. `NalCodec` is the bitstream crate's own enum and needs no feature.
-- `container-probe` depends on `broadcast-bitstream` (features `aac`, `mpeg-audio`) and deletes `adts.rs`
-  and `mp3.rs`. Its scoring logic and frame-chain walk stay; only the header parse moves.
-  This changes a standing rule: `container-probe` was kept to one runtime dependency and pinned to its
-  siblings by dev-only drift tests. It gains one more runtime dependency, itself `no_std` and on
-  `broadcast-core` only, and the ADTS/MP3 drift tests it no longer needs are deleted.
+- `container-probe` depends on `broadcast-bitstream` (features `aac`, `mpeg-audio`) and calls the shared
+  header parsers. It keeps `adts.rs` and `mp3.rs`: those files also hold the frame-chain walk, the scoring,
+  the ID3v2 skip and a synthetic fixture builder, which are the probe's own evidence, not a header parse.
+  Only `adts_frame_len` and `mp3_frame_len` change, to call the shared parser and re-apply the probe's own
+  acceptance (six readable ADTS header bytes, MPEG-1 Layer III only).
+  This changes a standing rule: `container-probe` was pinned to `broadcast-core` by dev-only drift tests.
+  It gains one more runtime dependency, itself `no_std` on `broadcast-core` + `thiserror` + `memchr`, and
+  the `transmux` drift test that pinned the two ADTS copies is deleted with the duplicate.
 - `media-doctor`'s `codec_common`/`codec_signalling` use the crate where they duplicate it.
 
 ## 6. `broadcast-codec` (the seam)
@@ -340,13 +361,98 @@ Owner (2026-11-26):
 - Parsers are facts-only in v1 behind a growth-safe API; lossless parse and writers are the roadmap.
 - Names: `broadcast-bitstream` (parsers and stream-format conversion) and `broadcast-codec` (the seam).
   Both free on crates.io on 2026-11-26.
-- `container-probe` takes `broadcast-bitstream` as a second runtime dependency and loses its own ADTS and
-  MP3 header parsers and their drift tests.
+- `container-probe` takes `broadcast-bitstream` as a second runtime dependency, loses its own ADTS and
+  MPEG audio header parses (keeping the prober files themselves) and the drift test that pinned them.
 
 Architect's calls, accepted by the owner with the names:
 - One bitstream crate with a feature per codec, not a crate per codec.
 - One bit reader; `transmux`'s private one merges into the bitstream crate.
-- `container-probe` and `media-doctor` lose their duplicate header parsers.
+- `container-probe` loses its duplicate header parses; `media-doctor` turned out to have none (it already
+  called the shared parser, so only its imports changed).
 - `isobmff` stays independent; the glue sits in `broadcast-bitstream` behind an optional feature.
 - Adapters are separate crates outside the main workspace graph, never features of the core crates.
 - Both crates land before the release; `broadcast-codec` ships at 0.x and is expected to change.
+
+## 13. As built (2026-11-27)
+
+The extraction landed as one PR per codec family; the crate is `publish = false` at `0.1.0` until the
+release that follows this work.
+
+| PR | what moved |
+|---|---|
+| #4164 | the bit reader, RBSP, NAL classification, Annex B conversion and the access-unit splitter |
+| #4169 | the SPS decoders, the coded picture facts and the per-codec RFC 6381 helpers |
+| #4174 | the slice-header layer, the interlace facts, the HDR10+ model, the HDR10 static metadata and the `isobmff` glue |
+| #4177 | AAC/ADTS, AC-3/E-AC-3, DTS core and MHAS framing |
+| the PR after #4177 | MPEG-2 video and MPEG audio, AFD and bar data, and the `container-probe` change |
+
+Where the code differs from the design above:
+
+- `memchr` is a dependency of `broadcast-bitstream` (the start-code scan), so the crate has four runtime
+  dependencies, not three.
+- More of the ISOBMFF glue sits behind the `isobmff` feature than §5.4 lists (see §5.4 above).
+- `container-probe` keeps `adts.rs` and `mp3.rs` and loses only the two header parses (§5.5 above).
+- The converters that return bytes are a recorded exception to the no-raw-byte API rule (§5.4 above).
+- Nothing was added to `broadcast-core`: its bit extraction was enough, and `broadcast-common` is not a
+  dependency of the crate at all.
+- Two things the design did not name: `PictureUserData` is `#[non_exhaustive]` with private fields and a
+  constructor, and the MPEG-2 sequence geometry gained `frame_rate_code()`/`frame_rate()` (Table 6-4) so a
+  consumer can state a frame rate from the same header rather than inferring it from sample timing.
+
+### Step 3, as built (2026-11-27)
+
+The transcode stage and the pipeline property landed in one PR. Where the
+properties above met the code:
+
+- **The mux vocabulary had no track removal.** `DemuxEvent::TrackRemoved`
+  existed; `MuxInput` did not name it, and the CLI dropped the event. It is now
+  `MuxInput::TrackRemoved` (additive: the enum is `#[non_exhaustive]`). The MPEG-2
+  TS muxer re-signals its PMT without the stream; every muxer whose output has a
+  fixed track set (CMAF/LL-HLS/LL-DASH segmenters, progressive MP4, Matroska,
+  Smooth, DASH, repackaging, RTP, FLV/RTMP) refuses it with a typed error rather
+  than describing a track it will never see again.
+- **A delayed announcement needed a seam of its own.** Every muxer builds its
+  init segment, PMT or file header from the announced set at its first sample,
+  and a segmenter refuses a `Track` after construction. A stage that announces a
+  track only once its encoder reports parameters therefore cannot feed a muxer
+  directly. `mux_stage::MuxChain` is the seam: it drives any
+  `Stage<In = MuxInput, Out = MuxInput, Error = Error>`, holds its output until
+  every track the upstream announced has been re-announced or removed, and
+  releases the held *track announcements first*, then the samples in arrival
+  order — a stage that delays one track's samples otherwise puts another
+  track's samples ahead of that track's announcement, which no muxer accepts.
+  The pre-settlement window is the caller's (`MuxChain::hold_limit`, unlimited
+  by default).
+- **Three assemblies, three answers.** `Repackage` had no insertion point:
+  `Repackage::run_transformed(fmp4, transform)` adds one with the transform per
+  call, so a configured `Repackage` stays `Clone`. The CLI's stages are private
+  and its mux stage is built from the demuxer's specs before any sample, so it
+  gained `cli::run_bytes_with(input, opts, transform)`, which builds the mux
+  stage from the chain's settled set; a progressive output replays the input
+  against a recorded plan and refuses a transform. `media-plane`'s ingest path
+  needed nothing: an `IngestSession` is a `Stage`, so a caller wraps it, and
+  the trunk and `ProgramSegmenter` already rebuild on a track-set change
+  (`TracksChanged`); both are proved by a test with a delayed, non-1:1 stage.
+- **The seam cannot rebuild a decoder mid-track.** The design's "a source
+  `TrackUpdated` goes to the decoder" has no method to go through:
+  `Decoder::parameters` is fixed at construction and `reset` only drops held
+  state. The stage absorbs a re-announcement that restates what the decoder was
+  built for and refuses one that changes it (`Error::TranscodeSourceChanged`),
+  naming why, rather than decoding with the wrong configuration. A later
+  addition to the seam (a parameter-update method, or a factory the stage can
+  call) is additive.
+- **The reverse conversion is total, not complete.** The seam carries no MPEG
+  audio layer, no DTS sample-entry type, no VP8/Vorbis identity and no
+  container provenance (`source_pid`, `program_number`, `es_info_descriptors`),
+  so `track_spec_from_codec_parameters` returns
+  `Error::TranscodeUnrepresentable` naming the missing fact for those, and a
+  forward conversion drops provenance. `CodecProfile` is not carried either:
+  the seam's profile key is the caller's to state.
+- **The spikes.** `spikes/codec-oxideav` offers no encoder at all.
+  `spikes/codec-libav` completes the whole loop for video (H.264 decoded,
+  MPEG-2 encoded, muxed to TS, demuxed, decoded back to the fixture's own
+  picture count). Its audio half stops at the binding: `ffmpeg-next` 8.1
+  exposes no extradata getter, so the adapter's encoder reports no
+  `AudioSpecificConfig` and a re-muxed AAC track cannot be decoded again. The
+  test drives the whole pipeline, checks the packets and the announced track,
+  and records this rather than pretending.

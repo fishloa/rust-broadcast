@@ -634,6 +634,9 @@ impl Stage for Segmenter {
                 "a Segmenter's track set is fixed at construction; start a new Segmenter \
                  for a changed track set",
             )),
+            MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(
+                "cmaf: a track removed mid-stream changes the init segment",
+            )),
         }
     }
 

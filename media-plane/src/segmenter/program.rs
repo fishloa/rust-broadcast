@@ -5491,3 +5491,360 @@ mod segmenter_gate_tests {
         assert!(segmenter.start_gate_open);
     }
 }
+
+/// The third insertion site the pipeline property names: `media-plane`'s ingest
+/// path (`IngestSession` → `TrunkWriter` → `Trunk` → `ProgramSegmenter`).
+///
+/// A caller inserts a stage there today by wrapping the [`IngestSession`]
+/// itself — the pipeline's own extension point, the shape every source
+/// implements — so no new API was needed in this crate. What this test proves
+/// is the other half of the property: that the trunk and `ProgramSegmenter`
+/// downstream of that stage cope with a track whose spec arrives late and
+/// whose sample count is not one-for-one.
+#[cfg(test)]
+mod transform_property_tests {
+    use std::collections::VecDeque;
+    use std::sync::Arc;
+
+    use broadcast_common::stage::{Stage, Timestamp};
+    use broadcast_core::timescale::{Rounding, Timescale, rescale_i64};
+    use transmux::TrackId;
+    use transmux::ir::SampleTiming;
+    use transmux::mux_stage::{MuxChain, MuxInput};
+    use transmux::pipeline::{Sample, TrackSpec};
+
+    use crate::ingress::{
+        HandshakePolicy, IngestConfig, IngestDriver, IngestSession, ProgramId, SessionEvent,
+    };
+    use crate::trunk::{RetentionClass, Trunk};
+
+    use super::ProgramSegmenter;
+    use super::segmenter_tests::{GOP, NO_SIBLINGS, fmp4_config, sample_at, track_spec};
+
+    /// Samples the source yields.
+    const SAMPLES: u32 = 120;
+    /// Inputs the inserted stage holds before it announces or emits.
+    const HOLD: usize = 3;
+
+    /// The media timescale the inserted stage announces: whole milliseconds,
+    /// plainly a different time base from the source's 90 kHz.
+    fn announced_timescale() -> Timescale {
+        Timescale::try_new(1000).expect("a non-zero timescale")
+    }
+
+    /// A source that announces one real H.264 track and yields one sample per
+    /// `feed`.
+    struct Source {
+        spec: TrackSpec,
+        next: u32,
+        pending: VecDeque<SessionEvent>,
+    }
+
+    impl Source {
+        fn new() -> Self {
+            Self {
+                spec: track_spec(TrackId::new(1)),
+                next: 0,
+                pending: VecDeque::new(),
+            }
+        }
+    }
+
+    impl Stage for Source {
+        type In<'a> = &'a [u8];
+        type Out = SessionEvent;
+        type Error = transmux::Error;
+
+        fn feed(&mut self, _input: &[u8], _now: Timestamp) -> transmux::Result<()> {
+            if self.next == 0 {
+                self.pending.push_back(SessionEvent::NewProgram {
+                    program: ProgramId(0),
+                    tracks: vec![self.spec.clone()],
+                });
+            }
+            if self.next >= SAMPLES {
+                return Ok(());
+            }
+            self.pending.push_back(SessionEvent::Sample {
+                program: ProgramId(0),
+                track_id: self.spec.track_id,
+                retention: RetentionClass::Timed,
+                sample: sample_at(self.next, self.next.is_multiple_of(GOP)),
+            });
+            self.next += 1;
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<SessionEvent> {
+            self.pending.pop_front()
+        }
+
+        fn finish(&mut self) -> transmux::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl IngestSession for Source {
+        type Request = bytes::Bytes;
+    }
+
+    /// The inserted stage: holds three inputs, announces the track with a
+    /// different media timescale, and emits one extra sample per batch — no
+    /// codec knowledge, no container knowledge.
+    struct Doubling {
+        spec: Option<TrackSpec>,
+        held: VecDeque<Sample>,
+        ready: VecDeque<MuxInput>,
+        announced: bool,
+    }
+
+    impl Doubling {
+        fn new() -> Self {
+            Self {
+                spec: None,
+                held: VecDeque::new(),
+                ready: VecDeque::new(),
+                announced: false,
+            }
+        }
+
+        fn rescale(sample: &Sample, from: Timescale) -> Sample {
+            let Some(timing) = sample.timing else {
+                return sample.clone();
+            };
+            let (Some(dts), Some(pts)) = (timing.dts(), timing.pts()) else {
+                return sample.clone();
+            };
+            let scale = |ticks: u32| {
+                u32::try_from(rescale_i64(
+                    i64::from(ticks),
+                    from,
+                    announced_timescale(),
+                    Rounding::Floor,
+                ))
+                .unwrap_or(1)
+                .max(1)
+            };
+            sample
+                .clone()
+                .with_timing(Some(SampleTiming::timed_with_duration(
+                    rescale_i64(dts, from, announced_timescale(), Rounding::Floor),
+                    rescale_i64(pts, from, announced_timescale(), Rounding::Floor),
+                    scale(timing.duration().unwrap_or(1)),
+                )))
+        }
+
+        fn release(&mut self) {
+            if !self.announced
+                && let Some(spec) = self.spec.as_ref()
+            {
+                self.announced = true;
+                self.ready
+                    .push_back(MuxInput::Track(Box::new(TrackSpec::new(
+                        spec.track_id,
+                        announced_timescale(),
+                        spec.config.clone(),
+                    ))));
+            }
+            let from = self
+                .spec
+                .as_ref()
+                .map_or(announced_timescale(), |spec| spec.timescale);
+            let held: Vec<Sample> = self.held.drain(..).collect();
+            for sample in held {
+                self.ready.push_back(MuxInput::Sample {
+                    track: TrackId::new(1),
+                    sample: Self::rescale(&sample, from),
+                });
+            }
+            if let Some(MuxInput::Sample { track, sample }) = self.ready.back().cloned() {
+                let dts = sample.timing.and_then(|timing| timing.dts()).unwrap_or(0);
+                let copy = sample.clone().with_timing(Some(SampleTiming::timed(
+                    dts.saturating_add(1),
+                    dts.saturating_add(1),
+                )));
+                self.ready.push_back(MuxInput::Sample {
+                    track,
+                    sample: copy,
+                });
+            }
+        }
+    }
+
+    impl Stage for Doubling {
+        type In<'a> = MuxInput;
+        type Out = MuxInput;
+        type Error = transmux::Error;
+
+        fn feed(&mut self, input: MuxInput, _now: Timestamp) -> transmux::Result<()> {
+            match input {
+                MuxInput::Track(spec) => {
+                    self.spec = Some(*spec);
+                    Ok(())
+                }
+                MuxInput::Sample { sample, .. } => {
+                    self.held.push_back(sample);
+                    if self.held.len() >= HOLD {
+                        self.release();
+                    }
+                    Ok(())
+                }
+                other => {
+                    self.ready.push_back(other);
+                    Ok(())
+                }
+            }
+        }
+
+        fn poll(&mut self) -> Option<MuxInput> {
+            self.ready.pop_front()
+        }
+
+        fn finish(&mut self) -> transmux::Result<()> {
+            if !self.held.is_empty() || !self.announced {
+                self.release();
+            }
+            Ok(())
+        }
+    }
+
+    /// The caller-side wrapper: the stage inserted into the ingest path. It
+    /// needs no change to the driver, the trunk or the segmenter.
+    struct Wrapping {
+        inner: Source,
+        chain: Option<MuxChain<Doubling>>,
+        announced: bool,
+        pending: VecDeque<SessionEvent>,
+    }
+
+    impl Wrapping {
+        fn new() -> Self {
+            Self {
+                inner: Source::new(),
+                chain: None,
+                announced: false,
+                pending: VecDeque::new(),
+            }
+        }
+
+        fn drain_chain(&mut self) {
+            let Some(chain) = self.chain.as_mut() else {
+                return;
+            };
+            if !self.announced && chain.is_open() {
+                self.announced = true;
+                self.pending.push_back(SessionEvent::NewProgram {
+                    program: ProgramId(0),
+                    tracks: chain.specs(),
+                });
+            }
+            if !self.announced {
+                return;
+            }
+            while let Some(input) = chain.poll() {
+                match input {
+                    MuxInput::Sample { track, sample } => {
+                        self.pending.push_back(SessionEvent::Sample {
+                            program: ProgramId(0),
+                            track_id: track,
+                            retention: RetentionClass::Timed,
+                            sample,
+                        });
+                    }
+                    MuxInput::Track(spec) => self.pending.push_back(SessionEvent::TracksChanged {
+                        program: ProgramId(0),
+                        tracks: vec![*spec],
+                    }),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    impl Stage for Wrapping {
+        type In<'a> = &'a [u8];
+        type Out = SessionEvent;
+        type Error = transmux::Error;
+
+        fn feed(&mut self, input: &[u8], now: Timestamp) -> transmux::Result<()> {
+            self.inner.feed(input, now)?;
+            while let Some(event) = self.inner.poll() {
+                if let SessionEvent::NewProgram { tracks, .. } = &event
+                    && self.chain.is_none()
+                {
+                    let expected: Vec<TrackId> = tracks.iter().map(|spec| spec.track_id).collect();
+                    let mut chain = MuxChain::new(Doubling::new(), expected);
+                    for spec in tracks {
+                        chain.feed(MuxInput::Track(Box::new(spec.clone())))?;
+                    }
+                    self.chain = Some(chain);
+                }
+                if let Some(chain) = self.chain.as_mut()
+                    && let SessionEvent::Sample {
+                        track_id, sample, ..
+                    } = &event
+                {
+                    chain.feed(MuxInput::Sample {
+                        track: *track_id,
+                        sample: sample.clone(),
+                    })?;
+                }
+                self.drain_chain();
+            }
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<SessionEvent> {
+            self.pending.pop_front()
+        }
+
+        fn finish(&mut self) -> transmux::Result<()> {
+            self.inner.finish()?;
+            if let Some(chain) = self.chain.as_mut() {
+                chain.finish()?;
+            }
+            self.drain_chain();
+            Ok(())
+        }
+    }
+
+    impl IngestSession for Wrapping {
+        type Request = bytes::Bytes;
+    }
+
+    #[test]
+    fn a_wrapping_ingest_session_reaches_the_trunk_and_its_segmenter() {
+        let mut driver = IngestDriver::new(
+            Wrapping::new(),
+            IngestConfig::new(HandshakePolicy::establish_by(Timestamp::from_micros(
+                u64::MAX,
+            ))),
+        );
+        for _ in 0..SAMPLES {
+            driver.feed(&[], Timestamp::ZERO);
+        }
+        driver.finish();
+
+        let trunk: Arc<Trunk> = driver
+            .trunk(ProgramId(0))
+            .expect("the wrapped session announced its program")
+            .clone();
+        let tracks = trunk.tracks();
+        assert_eq!(tracks.len(), 1, "one track reaches the trunk");
+        assert_eq!(
+            tracks[0].timescale,
+            announced_timescale(),
+            "the trunk carries the inserted stage's track, not the source's"
+        );
+
+        let mut segmenter: ProgramSegmenter =
+            super::segmenter_tests::segmenter_for(&trunk, fmp4_config());
+        let mut events = Vec::new();
+        segmenter.pump(ProgramId(0), &trunk, &mut events, &NO_SIBLINGS);
+        segmenter.flush();
+        assert!(
+            trunk.last_closed_segment().is_some(),
+            "the program segmenter segments the track the inserted stage announced and rescaled"
+        );
+    }
+}

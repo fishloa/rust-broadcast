@@ -8,6 +8,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Breaking
 
+- The MPEG-2 video sequence layer moved to `broadcast-bitstream`:
+  `transmux::{mpeg_legacy, h262}` are deleted with `Mpeg2SeqHeader`,
+  `SEQUENCE_HEADER_CODE`, `SequenceHeaderGeometry` and
+  `SequenceDisplayExtension`. Import `Mpeg2SeqHeader` and
+  `SEQUENCE_HEADER_CODE` from `broadcast_bitstream::mpeg2`, and the sequence
+  walk (`find_sequence_header`, `parse_sequence_at`,
+  `picture_user_data_payloads`, `afd_from_mpeg2_user_data`) and the geometry
+  types from `broadcast_bitstream::h262` (feature `mpeg2`).
+  `Mpeg2SeqHeader` keeps private fields with `width()`/`height()` accessors,
+  and the geometry types with accessors. `DisplayGeometry::from_mpeg2_es`
+  stays, and `DisplayGeometry::from_mpeg2_sequence` takes the moved type in
+  place of the deleted `SequenceHeaderGeometry::to_display_geometry`.
+- AFD and bar data moved to `broadcast-bitstream`: `transmux::user_data` is
+  deleted. Import `AfdSignal`, `PictureUserData`, the T.35 / GA94 constants
+  and the `afd_from_t35_payload` / `bar_data_from_t35_payload` /
+  `bar_data_from_ga94_payload` decoders from `broadcast_bitstream::user_data`
+  (`AfdSignal` and `PictureUserData` are also at the crate root).
+  `PictureUserData` keeps private fields with `afd()` / `bar_data()`
+  accessors and a `new` constructor. `UserDataCarriage`, `ActiveFormat` and
+  the display trackers stay.
+- The MPEG audio frame-header parsers moved to `broadcast-bitstream`:
+  `transmux::mpeg_legacy::{MpegAudioLayer, MpegAudioFrameHeader}` and the
+  `MPEG_AUDIO_SYNCWORD` / `MpegAudioLayer` root re-exports are deleted. Import
+  `MpegAudioLayer`, `MpegAudioFrameHeader`, `MpegAudioVersion` and
+  `MPEG_AUDIO_SYNCWORD` from `broadcast_bitstream` (feature `mpeg-audio`).
+  `MpegAudioFrameHeader` keeps private fields with accessors
+  (`hdr.frame_length` -> `hdr.frame_length()`), and `version()` names the MPEG
+  version the header already carried.
+
 - The H.264 slice-header layer moved to `broadcast-bitstream`: `transmux::slice_header` is deleted, and so is every root re-export of its items (`AvcSliceHeader`, `AvcSlicePps`, `AvcPicture`, `AvcFieldInfo`, `AvcParamSets`, `decode_avc_slice_pps`, `parse_avc_slice_header`). Import them from `broadcast_bitstream::slice_header`. Fields are private with accessors (`field_pic_flag` -> `field_pic_flag()`), and `AvcSlicePps` gains a constructor.
 - The coded interlace fact types moved to `broadcast_bitstream::interlace`: the crate root no longer re-exports `VideoScan`, `PicStruct`, `SourceScanType` or `PictureFacts`. `video_scan`, `video_picture_facts` and `CodecConfig::video_scan` stay, built on the moved decoders. `PictureFacts` fields are private with accessors (`field_pic` -> `field_pic()`).
 - The HDR10+ model moved to `broadcast_bitstream::hdr10plus`: `transmux::hdr10plus` and every root re-export of its items (`Hdr10PlusMetadata`, `WindowRegion`, `ColorVolumeTransform`, `PeakLuminanceTable`, `BezierToneMapping`, `DistributionPoint`, `AdditionalWindow`, `OverlapProcessOption`) are deleted. Fields are private: `Hdr10PlusMetadata::new` plus `with_*` setters and accessors, `WindowRegion::builder()`, and `new` constructors on the smaller types.
@@ -36,6 +65,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Segmenter::set_start_decode_time` is public: a caller feeding a segmenter directly must anchor each track's first `tfdt` (the streaming `Repackage::run` already did).
 
 ### Added
+- The `codec` feature (off by default, implied by no other feature) and
+  `transcode::TranscodeStage`: one track's samples through a caller-supplied
+  `broadcast_codec::Decoder` and `Encoder`, and on to a track described by the
+  encoder's parameters. It holds no codec knowledge — no codec id is matched,
+  no bitstream is parsed — and every other track passes through untouched. The
+  stage holds its output until the encoder reports the parameters that name the
+  new codec, announces the track once before its first sample, forwards a
+  source re-announcement only when it restates what the decoder was built for
+  (a change is `Error::TranscodeSourceChanged`), and flushes decoder then
+  encoder at end of stream or on `MuxInput::TrackRemoved`. The pre-announcement
+  window is the caller's (`TranscodeStage::pending_limit`, unlimited by
+  default). Errors are typed and carry the track (`Error::Transcode`).
+- `codec_parameters_from_track` and `track_spec_from_codec_parameters`, the two
+  conversions between `TrackSpec` and `broadcast_codec::CodecParameters`. Both
+  are total: a description the other side cannot carry (an MPEG audio layer, a
+  DTS sample entry, VP8/Vorbis, a subtitle or data track, PCM) is
+  `Error::TranscodeUnrepresentable` naming the missing fact. Container
+  provenance (`source_pid`, `program_number`, `es_info_descriptors`) is not the
+  seam's business and does not survive the round trip.
+- `MuxInput::TrackRemoved`: the mux vocabulary now names the track removal the
+  demux vocabulary already had. The MPEG-2 TS muxer re-signals its PMT without
+  the stream; a muxer whose output has a fixed track set (CMAF/LL-HLS/LL-DASH
+  segmenters, progressive MP4, Matroska, Smooth, DASH, repackaging) refuses it
+  with `Error::UnsupportedFeature` instead of describing a track it will never
+  see again, and FLV/RTMP refuse it with `FlvError::TrackRemovedAfterStart`.
+- `mux_stage::MuxChain`: the seam that lets a stage replace a track's
+  `TrackSpec`, emit a different number of samples, delay its output and flush.
+  It drives any `Stage<In = MuxInput, Out = MuxInput, Error = Error>` and
+  releases its output only once every track the upstream announced has been
+  re-announced or removed, track announcements first, so a muxer builds its
+  init segment, PMT or file header from the whole final set. `hold_limit` is
+  the caller's pre-settlement byte cap (unlimited by default).
+- `Repackage::run_transformed(fmp4, transform)` inserts such a stage between
+  the demux events and the resegmenter. The transform is per run, so a
+  configured `Repackage` stays `Clone`.
+- `cli::run_bytes_with(input, opts, transform)` is the CLI assembly's
+  insertion point, the stage-shaped counterpart of its own optional
+  `--decrypt` slot; a progressive output replays the input against a recorded
+  plan and refuses it (`CliError::TransformNeedsReplayableInput`).
+- `MuxInput::from_demux` is the one translation from a `DemuxEvent` to the mux
+  vocabulary, used by both insertion points.
 - `StreamingTsDemux::with_max_pes_unit_bytes` (with the `max_pes_unit_bytes` accessor) is the caller-supplied PES unit ceiling; `None`, the default, is unlimited. `PesAssembler` is created with that same ceiling (the unbounded form for `None`), so the demux's own overflow accounting and the assembler cannot disagree.
 - `matroska_demux::MatroskaDemux`, the streaming Matroska/WebM stage over
   `broadcast_matroska::reader::Reader`: it answers the reader's byte-range
@@ -92,6 +162,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-f ts` output therefore remuxes a capture whose timeline breaks, where it
   used to fail, and `-f dash` keeps refusing one (a single-period MPD cannot
   signal a break).
+- `DisplayGeometry::from_mpeg2_es` and the MPEG-2 geometry probes reject a
+  `sequence_header()` with a zero size value (`broadcast-bitstream` now enforces
+  H.262 §6.3.3), so an invalid stream recovers no geometry instead of a 0-pixel
+  one; the TS/PS path then leaves the codec undecided as it does for a stream
+  with no sequence header, and an MP4 sample refines nothing.
 
 ### Breaking
 - `TsDemux`, `FlvDemux`, `RtmpDemux` and `RtpDepacketiser` (and their
