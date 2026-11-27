@@ -11,6 +11,8 @@
 #![doc = include_str!("../examples/annexb_to_avcc.rs")]
 #![doc = "```\n\n### `print_adts_headers`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/print_adts_headers.rs")]
+#![doc = "```\n\n### `print_mpeg_audio_headers`\n\n```rust,ignore"]
+#![doc = include_str!("../examples/print_mpeg_audio_headers.rs")]
 #![doc = "```\n\n### `decode_capture_sps`\n\n```rust,ignore"]
 #![doc = include_str!("../examples/decode_capture_sps.rs")]
 #![doc = "```\n\n### `print_capture_slices`\n\n```rust,ignore"]

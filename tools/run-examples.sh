@@ -77,6 +77,8 @@ example_args() {
             echo "fixtures/ts/h264-aac.ts" ;;
         broadcast-bitstream/print_adts_headers)
             echo "fixtures/audio/aac.adts" ;;
+        broadcast-bitstream/print_mpeg_audio_headers)
+            echo "fixtures/audio/audio.mp3" ;;
         isobmff/heif_info) echo "fixtures/heif/thumb.heic" ;;
         isobmff/build_avif) echo "fixtures/avif/plain.avif" ;;
         atsc3/parse_lls)      echo "fixtures/atsc3/slt-lls-2019-01-07.bin" ;;

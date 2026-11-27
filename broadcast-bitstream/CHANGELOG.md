@@ -46,12 +46,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
   behind `isobmff`.
 - The MPEG-H Audio Stream framing (`mhas`, `mpegh` feature), moved from
   `transmux`: `walk_mhas_packets` and `find_mpegh3da_config`.
+- A `print_mpeg_audio_headers` example over `fixtures/audio/audio.mp3`: each
+  frame's version, layer, bitrate, sample rate and length, then the frame count.
+- A `legacy_fixtures` test over real captures: the committed MPEG-2 transport
+  stream's sequence header (320x240, 4:3, 25 Hz), a capture carrying two
+  sequence display descriptions plus AFD in MPEG-2 picture user data, and the
+  MP3 fixture as a 44-frame chain walked to its last byte.
 - A `print_adts_headers` example over `fixtures/audio/aac.adts`, an
   `audio_fixtures` test that walks that ADTS chain, a broadcast capture's AAC
   track and one committed AC-3 / E-AC-3 / DTS stream frame by frame, and the
   `broadcast_bitstream_aac_asc`, `broadcast_bitstream_adts`,
   `broadcast_bitstream_ac3`, `broadcast_bitstream_eac3`,
-  `broadcast_bitstream_dts_core` and `broadcast_bitstream_mhas` fuzz targets.
+  `broadcast_bitstream_dts_core` and `broadcast_bitstream_mhas` fuzz targets,
+  plus `broadcast_bitstream_mpeg2`, `broadcast_bitstream_mpeg_audio` and
+  `broadcast_bitstream_user_data`.
 
 - `annexb::start_code_positions` is crate-private: nothing outside the crate
   needs the allocation. `annexb::find_start_code_prefix` stays the one public

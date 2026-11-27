@@ -65,6 +65,26 @@ pub const ASPECT_DAR_2_21: u8 = 4;
 /// `aspect_ratio_information` values 5..=15 are "Reserved" (Table 6-3).
 pub const FIRST_RESERVED_ASPECT: u8 = 5;
 
+/// H.262 Table 6-4: `frame_rate_code` → frames per second, as an exact
+/// numerator/denominator pair (`30000/1001` is the 29.97 Hz broadcast rate).
+/// Index `code - 1`; code 0 and 9..=15 are "reserved".
+const FRAME_RATES: [(u32, u32); FRAME_RATE_CODES] = [
+    (24_000, 1001),
+    (24, 1),
+    (25, 1),
+    (30_000, 1001),
+    (30, 1),
+    (50, 1),
+    (60_000, 1001),
+    (60, 1),
+];
+
+/// Table 6-4 defines `frame_rate_code` 1..=8 (the `FRAME_RATES` rows).
+const FRAME_RATE_CODES: usize = 8;
+
+/// `frame_rate_code` is `u(4)` (§6.2.2.1).
+const FRAME_RATE_CODE_BITS: usize = 4;
+
 /// The 12-bit base size (`horizontal_size_value` / `vertical_size_value`).
 const SIZE_VALUE_BITS: usize = 12;
 /// The 2-bit size extension (`horizontal_size_extension` /
@@ -149,6 +169,7 @@ pub struct SequenceHeaderGeometry {
     coded_width: u32,
     coded_height: u32,
     aspect_ratio_information: u8,
+    frame_rate_code: u8,
     display: Option<SequenceDisplayExtension>,
 }
 
@@ -166,6 +187,20 @@ impl SequenceHeaderGeometry {
     /// Table 6-3 `aspect_ratio_information` as signalled.
     pub fn aspect_ratio_information(&self) -> u8 {
         self.aspect_ratio_information
+    }
+
+    /// Table 6-4 `frame_rate_code` as signalled (0 and 9..=15 are reserved).
+    pub fn frame_rate_code(&self) -> u8 {
+        self.frame_rate_code
+    }
+
+    /// The frame rate Table 6-4 gives for [`frame_rate_code`](Self::frame_rate_code),
+    /// as an exact frames-per-second numerator/denominator pair (so
+    /// `30_000/1001` stays exact). `None` for a reserved code.
+    pub fn frame_rate(&self) -> Option<(u32, u32)> {
+        FRAME_RATES
+            .get(usize::from(self.frame_rate_code).checked_sub(1)?)
+            .copied()
     }
 
     /// `sequence_display_extension()`, when present.
@@ -249,15 +284,17 @@ fn section_body(data: &[u8], start: usize) -> &[u8] {
 }
 
 /// Parse a `sequence_header()` body (the bytes after `0x000001B3`).
-fn parse_sequence_header_body(body: &[u8]) -> Result<(u32, u32, u8)> {
+fn parse_sequence_header_body(body: &[u8]) -> Result<(u32, u32, u8, u8)> {
     let mut r = BitReader::from_rbsp(body, "MPEG-2 sequence_header")?;
     let width = r.read_bits(SIZE_VALUE_BITS, "horizontal_size_value")?;
     let height = r.read_bits(SIZE_VALUE_BITS, "vertical_size_value")?;
     let aspect = r.read_bits(ASPECT_BITS, "aspect_ratio_information")?;
+    let frame_rate = r.read_bits(FRAME_RATE_CODE_BITS, "frame_rate_code")?;
     Ok((
         u32::try_from(width).unwrap_or(u32::MAX),
         u32::try_from(height).unwrap_or(u32::MAX),
         u8::try_from(aspect).unwrap_or(u8::MAX),
+        u8::try_from(frame_rate).unwrap_or(u8::MAX),
     ))
 }
 
@@ -319,12 +356,13 @@ fn parse_sequence_display_extension_body(body: &[u8]) -> Result<SequenceDisplayE
 pub fn parse_sequence_at(es: &[u8], start: usize) -> Result<SequenceHeaderGeometry> {
     let body_end = section_body(es, start).len();
     let header_end = start + SEQUENCE_HEADER_CODE.len() + body_end;
-    let (width, height, aspect) =
+    let (width, height, aspect, frame_rate) =
         parse_sequence_header_body(&es[start + SEQUENCE_HEADER_CODE.len()..header_end])?;
     let mut geometry = SequenceHeaderGeometry {
         coded_width: width,
         coded_height: height,
         aspect_ratio_information: aspect,
+        frame_rate_code: frame_rate,
         display: None,
     };
     // Walk the extensions up to `sequence_section_end`, following the
@@ -536,6 +574,38 @@ mod tests {
             Some((1, 1)),
             "reduced before the bound"
         );
+    }
+
+    #[test]
+    fn frame_rate_codes_map_to_the_table_6_4_rates() {
+        // `sequence_header()` writes `frame_rate_code` 3 (25 Hz).
+        let g = geometry(&[sequence_header(704, 480, 2)]);
+        assert_eq!(g.frame_rate_code(), 3);
+        assert_eq!(g.frame_rate(), Some((25, 1)));
+        // 29.97 stays exact rather than 29.97.
+        let g = geometry(&[sequence_header(704, 480, 2), sequence_extension(0, 0)]);
+        assert_eq!(g.frame_rate(), Some((25, 1)));
+    }
+
+    /// Table 6-4 codes 0 and 9..=15 are reserved: no rate is stated.
+    #[test]
+    fn reserved_frame_rate_codes_state_no_rate() {
+        let mut w = BitWriter::new();
+        w.u(12, 720)
+            .u(12, 576)
+            .u(4, 3)
+            .u(4, 9) // reserved frame_rate_code
+            .u(18, 0x3FFFF)
+            .u(1, 1)
+            .u(10, 112)
+            .u(1, 0)
+            .u(1, 0)
+            .u(1, 0);
+        let mut es = SEQUENCE_HEADER_CODE.to_vec();
+        es.extend_from_slice(&w.finish());
+        let g = parse_sequence_at(&es, 0).expect("geometry");
+        assert_eq!(g.frame_rate_code(), 9);
+        assert_eq!(g.frame_rate(), None);
     }
 
     #[test]

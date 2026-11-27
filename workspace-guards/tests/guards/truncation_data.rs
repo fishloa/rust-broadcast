@@ -216,6 +216,11 @@ pub const TABLE: &[Crate] = &[
             ),
             (
                 "src/h262.rs",
+                "u8::try_from(frame_rate).unwrap_or(u8::MAX),",
+                "frame_rate_code is a 4-bit Table 6-4 code copied through from a parsed sequence header; the clamp is unreachable.",
+            ),
+            (
+                "src/h262.rs",
                 "u8::try_from(id).unwrap_or(u8::MAX),",
                 "sequence_extension_id is the fixed 1-byte extension id copied through from a parsed value; the clamp is unreachable.",
             ),

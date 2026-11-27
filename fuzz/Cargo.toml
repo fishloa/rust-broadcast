@@ -19,7 +19,7 @@ broadcast-common = { path = "../broadcast-common" }
 dvb-si     = { path = "../dvb-si" }
 
 [dependencies]
-broadcast-bitstream = { path = "../broadcast-bitstream", version = "0.1.0", default-features = false, features = ["h264", "hevc", "vvc", "aac", "ac3", "dts", "mpegh", "isobmff"] }
+broadcast-bitstream = { path = "../broadcast-bitstream", version = "0.1.0", default-features = false, features = ["h264", "hevc", "vvc", "aac", "ac3", "dts", "mpegh", "mpeg2", "mpeg-audio", "isobmff"] }
 broadcast-common   = { path = "../broadcast-common" }
 broadcast-core = { path = "../broadcast-core" }
 broadcast-matroska = { path = "../broadcast-matroska" }
@@ -704,5 +704,23 @@ doc  = false
 [[bin]]
 name = "broadcast_bitstream_mhas"
 path = "fuzz_targets/broadcast_bitstream_mhas.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "broadcast_bitstream_mpeg2"
+path = "fuzz_targets/broadcast_bitstream_mpeg2.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "broadcast_bitstream_mpeg_audio"
+path = "fuzz_targets/broadcast_bitstream_mpeg_audio.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "broadcast_bitstream_user_data"
+path = "fuzz_targets/broadcast_bitstream_user_data.rs"
 test = false
 doc  = false
