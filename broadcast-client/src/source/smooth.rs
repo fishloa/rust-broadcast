@@ -73,6 +73,7 @@ fn variant_info(q: &QualityInfo) -> VariantInfo {
 fn engine_config(url: &Url, config: &Config, jitter_seed: u64) -> SmoothClientConfig {
     let policy = config.variant_policy.clone();
     SmoothClientConfig::new(url.as_str())
+        .with_damage_policy(config.damage_policy.clone())
         .with_max_fragment_failures(config.max_segment_failures)
         .with_max_manifest_failures(config.max_key_failures)
         .with_backoff(config.backoff.clone())
@@ -241,9 +242,19 @@ impl SmoothSource {
                 join: None,
             }),
             Output::Discontinuity => self.events.push_back(Event::Discontinuity),
+            Output::Damage(damage) => self.events.push_back(Event::Damage(damage)),
             Output::Dropped(dropped) => self.map_dropped(&dropped),
             Output::Ended => self.events.push_back(Event::Status(Status::Ended)),
             Output::Fatal(error) => {
+                if let SmoothError::Damage(ref refused) = error {
+                    self.events
+                        .push_back(Event::Damage(refused.damage().clone()));
+                    self.events.push_back(Event::Error {
+                        kind: ErrorKind::DamageRefused,
+                        fatal: true,
+                    });
+                    return;
+                }
                 let (kind, fatal) = fatal_error_kind(&error);
                 self.events.push_back(Event::Error { kind, fatal });
             }

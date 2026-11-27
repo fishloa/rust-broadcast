@@ -61,7 +61,7 @@ fn file_config(bind: SocketAddr, path: String, loop_file: bool) -> Config {
 /// that samples landed in a Trunk.
 ///
 /// MUTATION PROOF, recorded verbatim: removing the
-/// `crate::source::advance_route(&driver, route_handle, &mut progress)` call
+/// `crate::source::advance_route(&mut driver, route_handle, &mut progress)` call
 /// from `crate::source::file_reader::run_file_source` makes the file's samples
 /// still land in the Trunk but never become servable segments — no segmenter
 /// is pumped, so no closed segment is ever produced and this test FAILS with:

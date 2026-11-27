@@ -199,9 +199,9 @@ async fn run_instant(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     );
     let mut progress = DriverProgress::new();
     driver.feed(&[], Timestamp::from_nanos(0));
-    advance_route(&driver, &route_handle, &mut progress).await;
+    advance_route(&mut driver, &route_handle, &mut progress).await;
     driver.finish();
-    advance_route(&driver, &route_handle, &mut progress).await;
+    advance_route(&mut driver, &route_handle, &mut progress).await;
     Ok(())
 }
 
@@ -223,7 +223,7 @@ async fn run_hold(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     );
     let mut progress = DriverProgress::new();
     driver.feed(&[], Timestamp::from_nanos(0));
-    advance_route(&driver, &route_handle, &mut progress).await;
+    advance_route(&mut driver, &route_handle, &mut progress).await;
     std::future::pending::<()>().await;
     Ok(())
 }
@@ -315,7 +315,7 @@ async fn run_ticker_variant(route_handle: Arc<RouteHandle>, variant: u8) -> mult
     loop {
         ticker.tick().await;
         driver.feed(&[], Timestamp::from_nanos(0));
-        advance_route(&driver, &route_handle, &mut progress).await;
+        advance_route(&mut driver, &route_handle, &mut progress).await;
     }
 }
 

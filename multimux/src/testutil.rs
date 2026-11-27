@@ -184,7 +184,7 @@ pub(crate) async fn ingest_run(
         broadcast_common::Timestamp::ZERO,
     );
     let mut progress = crate::source::DriverProgress::new();
-    crate::source::advance_route(&driver, route, &mut progress).await;
+    crate::source::advance_route(&mut driver, route, &mut progress).await;
     driver
 }
 

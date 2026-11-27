@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+
+- Every damage report an input publishes is forwarded to the route's log and
+  the Prometheus facade as the new `multimux_source_damage_total` counter
+  (labels `route`, `kind`, `severity`). No protocol knowledge is added: the
+  report's own kind and severity are the labels.
+
 ### Breaking
 
 - `avc_access_unit_parameter_sets` now comes from `broadcast-bitstream` and returns that crate's typed parameter-set wrappers; the WHIP path converts them into the `isobmff` newtypes. `NalCodec`, `access_unit_is_idr` and the other NAL/Annex B helpers move there too, and the crate gains the `broadcast-bitstream` dependency.

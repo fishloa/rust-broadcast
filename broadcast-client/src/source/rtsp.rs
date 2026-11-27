@@ -112,6 +112,8 @@ pub(crate) struct RtspSource {
     tracks: Vec<TrackInit>,
     reported_drops: BTreeSet<(usize, Option<String>)>,
     plan: Option<PlayPlan>,
+    /// The session's damage policy, carried into every fresh client session.
+    damage_policy: broadcast_core::damage::DamagePolicy,
     depa: Option<RtpStreamDepacketiser>,
     aligner: TrackAligner,
     pre_sample: Vec<Event>,
@@ -201,7 +203,8 @@ impl RtspSource {
             conn: None,
             next_conn: FIRST_CONN_ID,
             connections: 0,
-            client: ClientSession::default(),
+            client: Self::new_client(cfg.damage_policy.clone()),
+            damage_policy: cfg.damage_policy.clone(),
             challenge: None,
             stale_replayed: false,
             auth_replays: 0,
@@ -329,7 +332,22 @@ impl RtspSource {
             }
             self.on_client_event(event, now, auth);
         }
-        if outcome.error.is_some() && self.conn == Some(conn) {
+        if let Some(error) = outcome.error
+            && self.conn == Some(conn)
+        {
+            // A policy refusal is the player's own decision coming back: the
+            // report (already published as `Event::Damage`) is the stop, so
+            // the session shows it as fatal rather than reconnecting.
+            if let rtsp_runtime::Error::Damage(refused) = error {
+                self.events
+                    .push_back(Event::Damage(refused.damage().clone()));
+                self.events.push_back(Event::Error {
+                    kind: ErrorKind::DamageRefused,
+                    fatal: true,
+                });
+                self.close();
+                return true;
+            }
             self.connection_lost(now);
             return self.discontinuity_pending;
         }
@@ -493,8 +511,15 @@ impl RtspSource {
         client
     }
 
+    fn new_client(damage_policy: broadcast_core::damage::DamagePolicy) -> ClientSession {
+        ClientSession::new(
+            rtsp_runtime::RtspClientConfig::default().with_damage_policy(damage_policy),
+        )
+        .unwrap_or_default()
+    }
+
     fn start_connect(&mut self, now: Timestamp, auth: Option<&AuthState>) {
-        let mut client = ClientSession::default();
+        let mut client = Self::new_client(self.damage_policy.clone());
         if let Some(creds) = auth
             .and_then(AuthState::credentials)
             .filter(|_| self.credentials_in_scope)
@@ -609,6 +634,7 @@ impl RtspSource {
                 ..
             } => self.on_response(&method, status, &body, now, auth),
             ClientEvent::MediaData { channel, data } => self.on_media(channel, &data, now),
+            ClientEvent::Damage(damage) => self.events.push_back(Event::Damage(*damage)),
             _ => {}
         }
     }

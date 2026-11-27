@@ -919,6 +919,9 @@ impl Session {
     }
 
     fn feed_released(&mut self, released: crate::source::datagram::Released, now_us: u64) {
+        for damage in released.damage {
+            self.publish_damage(damage);
+        }
         if released.discontinuity {
             self.drain_source();
             self.buffer_reconnected();
@@ -933,6 +936,27 @@ impl Session {
             let evs = self.buffer.drain();
             for e in evs {
                 self.events.push_back(e);
+            }
+        }
+    }
+
+    /// Hand one report to the caller's policy: publish it, or end the session
+    /// at it with a fatal [`Event::Error`] after the report itself.
+    fn publish_damage(&mut self, damage: broadcast_core::damage::Damage) {
+        let refused = self.config.damage_policy.admit(damage);
+        match refused {
+            Ok(damage) => self.emit(Event::Damage(damage)),
+            Err(error) => {
+                let now = Timestamp::from_micros(self.now_us);
+                // Closing discards whatever the queue still held, so the
+                // session closes first and the two events a host must see are
+                // queued after it: the report, then the stop.
+                self.close(now);
+                self.emit(Event::Damage(error.damage().clone()));
+                self.emit(Event::Error {
+                    kind: crate::events::ErrorKind::DamageRefused,
+                    fatal: true,
+                });
             }
         }
     }

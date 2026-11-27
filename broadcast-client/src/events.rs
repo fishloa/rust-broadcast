@@ -597,6 +597,10 @@ pub enum ErrorKind {
     /// inputs are being dropped (the count is [`crate::Session::dropped_buffer_inputs`]); a log
     /// with drops no longer replays faithfully. Non-fatal, reported once per session.
     BufferInputsDropped,
+    /// The session's damage policy refused a report: the session ended at it.
+    /// The report itself was published as [`Event::Damage`] first, so the
+    /// player has everything the policy stopped on.
+    DamageRefused,
 }
 
 impl ErrorKind {
@@ -678,6 +682,7 @@ impl ErrorKind {
             Self::SmoothManifest { .. } => "smooth_manifest",
             Self::RtmpStatus { .. } => "rtmp_status",
             Self::BufferInputsDropped => "buffer_inputs_dropped",
+            Self::DamageRefused => "damage_refused",
         }
     }
 }
@@ -1299,6 +1304,12 @@ pub struct Config {
     /// and counted by [`crate::Session::dropped_buffer_inputs`], and the first drop emits
     /// [`ErrorKind::BufferInputsDropped`]. Must be non-zero.
     pub max_recorded_buffer_inputs: usize,
+    /// What each damage report from any source means: `Report` (the default
+    /// for everything) publishes it as [`Event::Damage`] and keeps playing;
+    /// `Fail` ends the session at the report with a fatal [`Event::Error`]
+    /// carrying [`ErrorKind::DamageRefused`], after the report itself.
+    /// Every source's engine configuration is built from this one policy.
+    pub damage_policy: broadcast_core::damage::DamagePolicy,
     /// Timeline-jump detector thresholds; `None` disables the detector. A jump of the media
     /// timeline without a TS discontinuity flag emits [`Event::Discontinuity`] before the first
     /// sample of the new timeline and re-arms the join, buffering and playout state as a
@@ -1386,6 +1397,17 @@ impl Config {
             timeline_jump: None,
             ..Self::default()
         }
+    }
+
+    /// Set what each damage report from any source means (see
+    /// [`Config::damage_policy`]).
+    #[must_use]
+    pub fn with_damage_policy(
+        mut self,
+        damage_policy: broadcast_core::damage::DamagePolicy,
+    ) -> Self {
+        self.damage_policy = damage_policy;
+        self
     }
 
     /// Set the time bounds of the session's I/O from one [`Timeouts`], by
@@ -1553,6 +1575,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             kind: SourceKind::Auto,
+            damage_policy: broadcast_core::damage::DamagePolicy::new(),
             ts_http: crate::tshttp::TsHttpConfig::default(),
             max_redirects: DEFAULT_MAX_REDIRECTS,
             extra_headers: Vec::new(),

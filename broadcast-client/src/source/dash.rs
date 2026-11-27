@@ -200,6 +200,9 @@ pub(crate) struct DashSource {
     dash_config: dash_runtime::client::DashConfig,
     pull: PullLimits,
     body_limits: BodyLimits,
+    /// The session's damage policy, carried across a Representation rebuild
+    /// of the engine.
+    damage_policy: broadcast_core::damage::DamagePolicy,
     backoff: Backoff,
     max_redirects: u32,
     max_key_failures: u32,
@@ -277,6 +280,7 @@ impl DashSource {
         let client = DashClient::new(
             dash_runtime::client::DashClientConfig::new(url.clone())
                 .with_dash(config.dash)
+                .with_damage_policy(config.damage_policy.clone())
                 .with_limits(pull.clone()),
         );
         let backoff = Backoff::new(&config.backoff, seed)
@@ -290,6 +294,7 @@ impl DashSource {
                 manifest: config.max_manifest_bytes,
                 segment: config.max_segment_bytes,
             },
+            damage_policy: config.damage_policy.clone(),
             backoff,
             max_redirects: config.max_redirects,
             max_key_failures: config.max_key_failures,
@@ -458,6 +463,7 @@ impl DashSource {
         self.reset_in_flight();
         let mut client = DashClient::new(
             dash_runtime::client::DashClientConfig::new(self.mpd_url.clone())
+                .with_damage_policy(self.damage_policy.clone())
                 .with_dash(self.dash_config)
                 .with_limits(self.pull.clone()),
         );
@@ -1274,6 +1280,9 @@ impl DashSource {
                     self.skipped_kind.get_or_insert_with(|| kind.clone());
                     self.events.push_back(Event::Error { kind, fatal: false });
                 }
+            }
+            Output::Damage(damage) => {
+                self.events.push_back(Event::Damage(damage));
             }
             Output::FragmentDamaged { .. } if !self.damaged_reported => {
                 self.damaged_reported = true;

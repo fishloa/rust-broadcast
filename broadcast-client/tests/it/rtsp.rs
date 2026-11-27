@@ -1266,17 +1266,35 @@ fn rtsps_requests_tls_flag_and_sends_plaintext() {
 }
 
 #[test]
-fn garbage_bytes_before_rtsp_response_are_failure_not_panic() {
+fn garbage_bytes_before_rtsp_response_are_reported_and_the_response_still_parses() {
     let mut host = Host::new(BASE_URL, Config::default(), server());
     host.silent = true;
     host.connect();
     host.deliver(b"\x01\x02 definitely not RTSP\r\n\r\n");
     host.drain();
     let events = host.events();
-    assert_eq!(reconnecting_attempts(&events), [1]);
-    assert_eq!(closes(&host), 1);
-    assert_eq!(wakes(&host.actions).last(), Some(&(2 * SEC)));
+    // Junk where a message head was expected is scanned over and reported;
+    // the connection is not thrown away for it.
+    assert!(events.iter().any(|event| matches!(
+        event,
+        Event::Damage(damage)
+            if damage.kind() == broadcast_core::damage::DamageKind::Resynchronised
+    )));
+    assert_eq!(closes(&host), 0, "the connection survives the junk");
+    assert_eq!(tcp_connects(&host), 1);
     assert!(samples_of(&events).is_empty());
+
+    // And the response after it still parses: the session is not stuck.
+    host.deliver(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n");
+    host.drain();
+    let events = host.events();
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            Event::Status(Status::Live) | Event::Status(Status::Establishing)
+        )) || !reconnecting_attempts(&events).is_empty(),
+        "the session moved on after the response: {events:?}"
+    );
 }
 
 #[test]
@@ -1342,8 +1360,11 @@ fn a_protocol_error_inside_on_data_is_hinted_to_the_buffer() {
     host.deliver_all(&fixture().frames());
     let conn = host.conn.expect("live connection");
     let _ = host.session.drain_buffer_inputs();
-    host.session
-        .on_data(conn, b"\xff\xff\xff\xff\r\n\r\n", ts(host.now));
+    // A header block past the framing cap: the one protocol error a player
+    // cannot resynchronise past (junk between interleaved frames is reported
+    // and scanned over instead).
+    let terminal = vec![0xffu8; 70 * 1024];
+    host.session.on_data(conn, &terminal, ts(host.now));
     let inputs: Vec<BufferInput> = host.session.drain_buffer_inputs().collect();
     assert!(
         inputs.iter().any(

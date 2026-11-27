@@ -150,6 +150,12 @@ pub(crate) const DVR_PREDECESSOR_FLUSH_FAILED_TOTAL: &str =
 /// track that never resolves while others flow. Labels: none.
 pub(crate) const TS_BACKLOG_DROPPED_TOTAL: &str = "multimux_ts_backlog_dropped_total";
 
+/// Counter: one damage report an input's reader published — content the
+/// viewer lost (`severity="degraded"`) or metadata it did not interpret
+/// (`severity="informational"`), by the report's own kind. Labels: `route`,
+/// `kind`, `severity`.
+pub(crate) const SOURCE_DAMAGE_TOTAL: &str = "multimux_source_damage_total";
+
 /// Counter: a classic-TS (`ts_hls`) output passed its IDR-wait bound without an
 /// IDR picture, once per program. Labels: `route`, `mode` (`fell_back` = now
 /// cutting on non-IDR random-access points, `awaiting` = fallback disabled,

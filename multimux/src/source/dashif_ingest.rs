@@ -464,7 +464,8 @@ pub async fn run_dashif_ingest(
                             dash_runtime::ingest::IngestError::Internal,
                         )),
                     };
-                    crate::source::advance_route(&driver, &route_handle_pump, &mut progress).await;
+                    crate::source::advance_route(&mut driver, &route_handle_pump, &mut progress)
+                        .await;
                     let _ = resp.send(result);
                 }
                 Job::Begin { kind, resp } => {
@@ -510,7 +511,7 @@ pub async fn run_dashif_ingest(
                                 Timestamp::ZERO,
                             );
                             crate::source::advance_route(
-                                &driver,
+                                &mut driver,
                                 &route_handle_pump,
                                 &mut progress,
                             )
@@ -547,7 +548,8 @@ pub async fn run_dashif_ingest(
                         },
                         Timestamp::ZERO,
                     );
-                    crate::source::advance_route(&driver, &route_handle_pump, &mut progress).await;
+                    crate::source::advance_route(&mut driver, &route_handle_pump, &mut progress)
+                        .await;
                     let _ = resp.send(res);
                 }
                 Job::Finish { rep_id, resp } => {
@@ -568,7 +570,8 @@ pub async fn run_dashif_ingest(
                         },
                         Timestamp::ZERO,
                     );
-                    crate::source::advance_route(&driver, &route_handle_pump, &mut progress).await;
+                    crate::source::advance_route(&mut driver, &route_handle_pump, &mut progress)
+                        .await;
                     let _ = resp.send(res);
                 }
                 Job::Abort { rep_id } => {

@@ -211,7 +211,7 @@ where
         match outcome {
             StepOutcome::Received => {
                 last_rx = Instant::now();
-                advance_route(&driver, route_handle, &mut progress).await;
+                advance_route(&mut driver, route_handle, &mut progress).await;
             }
             StepOutcome::Idle => {}
             StepOutcome::Eof => {
@@ -228,7 +228,7 @@ where
             }
         }
     }
-    advance_route(&driver, route_handle, &mut progress).await;
+    advance_route(&mut driver, route_handle, &mut progress).await;
     // Release the publisher slot on EVERY exit path (I-E): the tail
     // `advance_route` above may republish, so the release must come after it —
     // otherwise a peer-ended or terminal-health session keeps

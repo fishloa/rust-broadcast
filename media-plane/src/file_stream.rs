@@ -477,6 +477,8 @@ pub struct StreamingFileSession {
     next_pass_wall_start: Option<Instant>,
     pass_first_due: Option<f64>,
     drained_this_feed: usize,
+    /// Reports the reader published, waiting to be handed out in order.
+    damage: VecDeque<SessionEvent>,
     loops_done: u32,
     loop_next: bool,
     done: bool,
@@ -517,6 +519,7 @@ impl StreamingFileSession {
             next_pass_wall_start: None,
             pass_first_due: None,
             drained_this_feed: 0,
+            damage: VecDeque::new(),
             loops_done: 0,
             loop_next: false,
             done: false,
@@ -660,6 +663,14 @@ impl StreamingFileSession {
                 DemuxEvent::Sample {
                     track_id, sample, ..
                 } => self.ingest_sample(track_id, sample)?,
+                // The reader's own report: kept in order with the samples it
+                // publishes (a file's damage is as real as a wire's).
+                DemuxEvent::Damage(damage) => {
+                    self.damage.push_back(SessionEvent::Damage {
+                        program: Some(self.program),
+                        damage,
+                    });
+                }
                 _ => {}
             }
         }
@@ -973,6 +984,9 @@ impl Stage for StreamingFileSession {
                     tracks: specs,
                 });
             }
+        }
+        if let Some(damage) = self.damage.pop_front() {
+            return Some(damage);
         }
         if let Some(event) = self.next_release() {
             return Some(event);

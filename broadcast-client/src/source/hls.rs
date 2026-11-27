@@ -146,6 +146,7 @@ impl HlsSource {
             HlsClientConfig::new(url.clone())
                 .with_variant_policy(config.variant_policy.clone())
                 .with_limits(config.hls_limits)
+                .with_damage_policy(config.damage_policy.clone())
                 .with_max_pes_unit_bytes(config.ts_http.max_pes_unit_bytes),
         );
         let backoff = Backoff::new(&config.backoff, seed)
@@ -1074,6 +1075,9 @@ impl HlsSource {
                         self.skipped_kind.get_or_insert_with(|| kind.clone());
                         self.events.push_back(Event::Error { kind, fatal: false });
                     }
+                }
+                Output::Damage(damage) => {
+                    self.events.push_back(Event::Damage(damage));
                 }
                 Output::FragmentDamaged { .. } if !self.damaged_reported => {
                     self.damaged_reported = true;

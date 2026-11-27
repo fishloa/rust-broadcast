@@ -352,7 +352,7 @@
 //! so a permanently-failing dialer cannot spin the attempt count or allocate
 //! per call, however many times it is polled.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -810,6 +810,15 @@ impl IngestConfig {
 /// loop" for a single dialed-out connection (see [`run_dial`]). [`ListenDriver`]
 /// embeds one of these per admitted session, so this is also where an
 /// accepted connection's per-program `Trunk` bookkeeping actually lives.
+/// The damage bookkeeping one driver keeps: the reports it has not handed the
+/// host yet, and the tracks it has already reported undeliverable (one report
+/// per track, however many samples of it arrive).
+#[derive(Default)]
+struct IngestDamage {
+    reports: VecDeque<SessionEvent>,
+    dropped_tracks: std::collections::HashSet<(ProgramId, TrackId)>,
+}
+
 pub struct IngestDriver<S: IngestSession> {
     session: S,
     trunk_config: TrunkConfig,
@@ -827,6 +836,10 @@ pub struct IngestDriver<S: IngestSession> {
     /// Counted rather than stored: the report is the session's own output, and
     /// a driver that kept every one would grow with a lossy input.
     damage_reports: u64,
+    /// The reports themselves and the (program, track) pairs already reported
+    /// undeliverable, boxed so a driver stays small enough to move (it is a
+    /// `DialAttempt` variant).
+    damage: Box<IngestDamage>,
     health: HealthState<S::Error>,
     /// Whether the last [`Self::feed`] delivered input from the peer. A
     /// transport-timer wake or a control signal leaves this `false`, which is
@@ -854,6 +867,7 @@ impl<S: IngestSession> IngestDriver<S> {
             writers: HashMap::new(),
             refused_programs: 0,
             damage_reports: 0,
+            damage: Box::default(),
             health: HealthState::Establishing,
             touched: false,
         }
@@ -883,6 +897,14 @@ impl<S: IngestSession> IngestDriver<S> {
     /// [`SessionEvent::Damage`]. Monotonically increasing; never resets.
     pub fn damage_report_count(&self) -> u64 {
         self.damage_reports
+    }
+
+    /// Take every damage report this session has published since the last
+    /// call, in the order it published them, each with the program its track
+    /// belongs to when it was known. A host drains this each poll: it is the
+    /// same report [`IngestDriver::damage_report_count`] counts.
+    pub fn take_damage(&mut self) -> Vec<SessionEvent> {
+        self.damage.reports.drain(..).collect()
     }
 
     /// Feed more input read from this session's connection — a handshake
@@ -1079,6 +1101,26 @@ impl<S: IngestSession> IngestDriver<S> {
     /// violation, not a panic — see [`SessionEvent::Sample`]'s docs); a
     /// `NewProgram` past `max_programs` is refused the exact same way — see
     /// [the module docs](self#max_programs-the-fifth-unbounded-allocation-vector-and-why-it-needs-its-own-bound-rather-than-reusing-max_sessions-or-a-trunk-capacity).
+    /// One report for a sample no admitted program can carry: a track the
+    /// host will not see, told once per track (a run of frames is one
+    /// report), with the program it named when it named one.
+    fn report_dropped_sample(&mut self, program: ProgramId, track_id: TrackId) {
+        if !self.damage.dropped_tracks.insert((program, track_id)) {
+            return;
+        }
+        let damage = broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::TrackDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "ingest sample (program not admitted)",
+        )
+        .for_track(track_id.value());
+        self.damage_reports = self.damage_reports.saturating_add(1);
+        self.damage.reports.push_back(SessionEvent::Damage {
+            program: Some(program),
+            damage,
+        });
+    }
+
     fn drain(&mut self) {
         while let Some(event) = self.session.poll() {
             match event {
@@ -1144,6 +1186,12 @@ impl<S: IngestSession> IngestDriver<S> {
                 } => {
                     if let Some(writer) = self.writers.get(&program) {
                         writer.publish(track_id, retention, sample);
+                    } else {
+                        // A track announced for a program that was never
+                        // admitted (a refused program, or a session confused
+                        // about which program it is): the sample is lost, so
+                        // the host is told which one and why.
+                        self.report_dropped_sample(program, track_id);
                     }
                 }
                 SessionEvent::TracksChanged { program, tracks } => {
@@ -1156,9 +1204,11 @@ impl<S: IngestSession> IngestDriver<S> {
                     }
                 }
                 SessionEvent::Damage { .. } => {
-                    // Counted, not interpreted: what a report means is the
-                    // host's decision (`docs/API-CONVENTIONS.md`).
+                    // Counted and kept: what a report means is the host's
+                    // decision (`docs/API-CONVENTIONS.md`), so the driver
+                    // neither interprets nor discards it.
                     self.damage_reports = self.damage_reports.saturating_add(1);
+                    self.damage.reports.push_back(event);
                 }
             }
         }
@@ -1778,8 +1828,11 @@ impl<L: Listener, P: Default> AdmittedDriver<L, P> {
     /// Session `id`'s driver and its own progress state, both borrowable
     /// across an `.await` (the publish-and-segment step is async) — the same
     /// pair as [`Self::with_session`], for a caller whose step must await.
-    pub fn session_parts(&mut self, id: SessionId) -> Option<(&IngestDriver<L::Session>, &mut P)> {
-        let driver = self.driver.driver(id)?;
+    pub fn session_parts(
+        &mut self,
+        id: SessionId,
+    ) -> Option<(&mut IngestDriver<L::Session>, &mut P)> {
+        let driver = self.driver.driver_mut(id)?;
         let state = self.progress.entry(id).or_default();
         Some((driver, state))
     }

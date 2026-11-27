@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `IngestDriver::take_damage` hands the host every `SessionEvent::Damage` the
+  session published since the last call, in order and with the program its
+  track belongs to, so a host can log or meter what an input lost instead of
+  only counting it. A sample for a program that was never admitted (a refused
+  program, or a session that named a program it never announced) is reported
+  once per track as a dropped track rather than dropped in silence, and the
+  streaming file session forwards the reader's own reports instead of
+  discarding them.
+
 ### Changed
 
 - `ProgramSegmenter` now records a source-clock break: the jump it already
