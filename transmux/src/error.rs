@@ -135,6 +135,16 @@ pub enum Error {
         track: TrackId,
     },
 
+    /// A [`MuxChain`](crate::mux_stage::MuxChain) held more sample bytes than
+    /// its caller's cap while it waited for a transform to settle the track
+    /// set. Raise the cap with
+    /// [`MuxChain::hold_limit`](crate::mux_stage::MuxChain::hold_limit).
+    #[error("a transform held more than {limit} bytes before the track set settled")]
+    TransformHoldExceeded {
+        /// The caller's cap, in bytes.
+        limit: u64,
+    },
+
     /// A [`RebaseStage`](crate::rebase::RebaseStage) start window chose an
     /// origin later than a sample it was then asked to rebase.
     #[error("rebase: sample {dts} of track {track} precedes the origin {origin}")]

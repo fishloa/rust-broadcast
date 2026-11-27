@@ -1623,6 +1623,9 @@ impl Stage for LlHlsSegmenter {
                 "an LlHlsSegmenter's track set is fixed at construction; start a new \
                  LlHlsSegmenter for a changed track set",
             )),
+            MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(
+                "ll-hls: a track removed mid-stream changes the init segment",
+            )),
         }
     }
 

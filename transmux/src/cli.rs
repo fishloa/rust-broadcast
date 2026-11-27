@@ -40,7 +40,7 @@ use crate::ir::{CodecConfig, DataCarriage, DataIdentity, DemuxEvent, Sample, Tra
 use crate::matroska_demux::{IR_TIMESCALE, MatroskaDemux, MatroskaDemuxConfig, MatroskaInput};
 use crate::media::{CmafMuxStage, FragmentCut};
 use crate::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
-use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, TrackPart};
+use crate::mux_stage::{MuxChain, MuxInput, MuxOutput, SegmentOut, TrackPart};
 use crate::pipeline::{FragmentTrackData, build_init_segment, build_media_segment};
 use crate::plan_pass::PlanPass;
 use crate::progressive::ProgressiveMuxStage;
@@ -511,6 +511,10 @@ pub enum CliError {
         /// The cap, in bytes.
         limit: u64,
     },
+    /// [`run_bytes_with`] was given a progressive output, which replays the
+    /// input against a recorded sample plan and so cannot take a transform.
+    #[error("progressive MP4 output replays the input and cannot take a transform")]
+    TransformNeedsReplayableInput,
     /// A `--data-identity` argument was malformed or named a bad track.
     #[error(
         "invalid --data-identity ({0}): expected <track>=ts:<stream_type>[:<descriptors-hex>] | mp4:<handler>:<sample-entry-hex> | matroska:<codec_id>[:<codec-private-hex>]"
@@ -1258,6 +1262,30 @@ impl CliStream {
         result
     }
 
+    /// Feed one input a caller's transform produced (see
+    /// [`run_bytes_with`]): samples interleave by decode time exactly as a
+    /// demuxer's do, and a track re-announcement reaches the mux stage only
+    /// when it differs from the track set the stage was built with.
+    fn transformed(&mut self, input: MuxInput, emit: &mut dyn Emit) -> CliResult<()> {
+        match input {
+            MuxInput::Sample { track, sample } => {
+                self.reorder.push(track, sample)?;
+                self.drain_order(false, emit)
+            }
+            MuxInput::Track(spec) => {
+                if self.specs.contains(&spec) {
+                    return Ok(());
+                }
+                self.input(MuxInput::Track(spec))?;
+                self.pump(emit)
+            }
+            other => {
+                self.input(other)?;
+                self.pump(emit)
+            }
+        }
+    }
+
     fn input(&mut self, input: MuxInput) -> CliResult<()> {
         match &mut self.kind {
             Kind::Cmaf(stage) => stage.feed(input, Timestamp::ZERO)?,
@@ -1476,6 +1504,10 @@ impl DashStream {
                 self.finish_tracks()
             }
             MuxInput::Track(_) => Ok(()),
+            MuxInput::TrackRemoved { .. } => Err(crate::Error::UnsupportedFeature(
+                "a single-period DASH MPD names a fixed set of Representations",
+            )
+            .into()),
         }
     }
 
@@ -2158,6 +2190,111 @@ pub fn run_bytes(input: &[u8], opts: &Opts) -> CliResult<Output> {
     Ok(emit.output())
 }
 
+/// [`run_bytes`] with `transform` inserted between the demuxer and the mux
+/// stage.
+///
+/// The caller supplies the stage; this assembly supplies the seam. The
+/// transform is fed every demux event for the tracks `opts` keeps, and its
+/// output is held until it has re-announced each of them, so the muxer's init
+/// segment, PMT or media playlist describes the transform's tracks rather than
+/// the source's. A track the caller dropped with [`Opts::tracks`] never reaches
+/// the transform.
+///
+/// It is the same assembly the binary uses for its own optional
+/// `--decrypt` stage: a stage the caller owns, standing between the demux
+/// events and the mux path. A progressive output replays the input twice
+/// against a recorded sample plan, so it cannot take a transform and says so.
+///
+/// # Errors
+/// [`CliError::TransformNeedsReplayableInput`] for a progressive output;
+/// otherwise as [`run_bytes`], plus the transform's own errors and
+/// [`crate::Error::TransformHoldExceeded`].
+pub fn run_bytes_with<T>(input: &[u8], opts: &Opts, transform: T) -> CliResult<Output>
+where
+    T: for<'a> Stage<In<'a> = MuxInput, Out = MuxInput, Error = crate::Error> + 'static,
+{
+    let container = detect_container(input)?;
+    let mut cursor = std::io::Cursor::new(input);
+    let mut emit = MemoryEmit::default();
+    run_seekable_with(
+        &mut cursor,
+        container,
+        u64::try_from(input.len()).ok(),
+        opts,
+        &mut emit,
+        no_keys(),
+        transform,
+    )?;
+    Ok(emit.output())
+}
+
+/// A demux-to-mux stage chain over one run: the caller's transform, the
+/// mux stage built from the transform's track set, and the decode-order
+/// interleave between them.
+struct Transformed<T> {
+    chain: MuxChain<T>,
+    stream: Option<CliStream>,
+    movie: Timescale,
+}
+
+impl<T> Transformed<T>
+where
+    T: for<'a> Stage<In<'a> = MuxInput, Out = MuxInput, Error = crate::Error>,
+{
+    /// Chain `transform`, expecting `specs` — the tracks `opts` keeps.
+    fn new(transform: T, specs: &[TrackSpec], movie: Timescale) -> CliResult<Self> {
+        let mut chain = MuxChain::new(transform, specs.iter().map(|spec| spec.track_id));
+        for spec in specs {
+            chain.feed(MuxInput::Track(Box::new(spec.clone())))?;
+        }
+        Ok(Self {
+            chain,
+            stream: None,
+            movie,
+        })
+    }
+
+    /// Feed one demux event through the transform and release what it allows.
+    fn event(&mut self, event: DemuxEvent, opts: &Opts, emit: &mut dyn Emit) -> CliResult<()> {
+        if let Some(input) = MuxInput::from_demux(event) {
+            self.chain.feed(input)?;
+        }
+        self.drain(opts, emit)
+    }
+
+    /// Build the mux stage once the track set has settled, then feed it the
+    /// transform's output in order.
+    fn drain(&mut self, opts: &Opts, emit: &mut dyn Emit) -> CliResult<()> {
+        if self.stream.is_none() && self.chain.is_open() {
+            self.stream = Some(CliStream::start(
+                self.chain.specs(),
+                self.movie,
+                opts,
+                emit,
+                None,
+                no_keys(),
+            )?);
+        }
+        let Some(stream) = self.stream.as_mut() else {
+            return Ok(());
+        };
+        while let Some(input) = self.chain.poll() {
+            stream.transformed(input, emit)?;
+        }
+        Ok(())
+    }
+
+    /// Flush the transform, release its tail, and finish the mux stage.
+    fn finish(&mut self, opts: &Opts, emit: &mut dyn Emit) -> CliResult<()> {
+        self.chain.finish()?;
+        self.drain(opts, emit)?;
+        match self.stream.as_mut() {
+            Some(stream) => stream.finish(emit),
+            None => Err(CliError::NoTracksSelected),
+        }
+    }
+}
+
 /// Run over a seekable input.
 fn run_seekable<R: Read + Seek>(
     reader: &mut R,
@@ -2187,6 +2324,40 @@ fn run_seekable<R: Read + Seek>(
         stream.event(event, emit)
     })?;
     stream.finish(emit)
+}
+
+/// [`run_seekable`] with the caller's transform in the path.
+fn run_seekable_with<R: Read + Seek, T>(
+    reader: &mut R,
+    container: Container,
+    total_len: Option<u64>,
+    opts: &Opts,
+    emit: &mut dyn Emit,
+    keys: DecryptKeys,
+    transform: T,
+) -> CliResult<()>
+where
+    T: for<'a> Stage<In<'a> = MuxInput, Out = MuxInput, Error = crate::Error>,
+{
+    #[cfg(feature = "cenc")]
+    if container == Container::WebM && keys.is_some() {
+        return Err(crate::Error::InvalidInput(
+            "--decrypt only applies to CENC-protected MP4/CMAF input",
+        )
+        .into());
+    }
+    #[cfg(not(feature = "cenc"))]
+    let _ = keys;
+    if opts.format == OutputFormat::Progressive {
+        return Err(CliError::TransformNeedsReplayableInput);
+    }
+    let (specs, movie) = discover_seekable(reader, container, total_len, opts)?;
+    rewind(reader)?;
+    let mut transformed = Transformed::new(transform, &specs, movie)?;
+    drive_seekable(reader, container, total_len, &mut |event, _| {
+        transformed.event(event, opts, emit)
+    })?;
+    transformed.finish(opts, emit)
 }
 
 /// Run over a forward-only input.

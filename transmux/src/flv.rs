@@ -307,6 +307,11 @@ pub enum FlvError {
     /// cannot name it retroactively.
     #[error("FLV track announced after the first tag was written")]
     TrackAfterStart,
+    /// A track was removed after the first tag was written: the header and
+    /// `onMetaData` already describe it and FLV carries no mid-stream
+    /// track-set update.
+    #[error("FLV track removed after the first tag was written")]
+    TrackRemovedAfterStart,
     /// The same track id was announced twice in one stream.
     #[error("FLV track {track} announced twice")]
     DuplicateTrack {
@@ -817,6 +822,7 @@ impl Stage for FlvMuxStage {
                 }
                 self.stream.announce(*spec)
             }
+            MuxInput::TrackRemoved { .. } => Err(FlvError::TrackRemovedAfterStart),
             MuxInput::Sample { track, sample } => {
                 self.start()?;
                 let tags = self.stream.push(track, sample)?;
