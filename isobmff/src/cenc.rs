@@ -990,6 +990,14 @@ pub struct SchemeTypeBox {
 }
 
 impl SchemeTypeBox {
+    /// The registered restricted scheme type, or `Other` for a protection
+    /// scheme ([`CencScheme`]) or a scheme from a document this crate does not
+    /// hold.
+    #[must_use]
+    pub fn restricted_scheme(&self) -> crate::registered::RestrictedSchemeType {
+        crate::registered::RestrictedSchemeType::from_fourcc(self.scheme_type)
+    }
+
     /// Parse a `schm` box from FullBox body bytes.
     pub fn parse_body(bytes: &[u8], _version: u8, flags: u32) -> Result<Self> {
         need_in(bytes, AUX_INFO_LEN, "schm body")?;

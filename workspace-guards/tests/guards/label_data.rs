@@ -2000,6 +2000,10 @@ pub const TABLE: &[Crate] = &[
             "Advance",
             "DriverError",
             "DriverStep",
+            // The MP4RA coverage selector: a category of registered code
+            // (box, sample entry, brand, handler, ...), not a four-CC or a
+            // field value decoded from the wire.
+            "TypedKind",
             // Typed metadata ADTs: every variant wraps a distinct structured
             // value (a text value and its locale, a chapter list, an unknown
             // box), so the variant *is* the label; `MetaFlavor` is a
