@@ -1,6 +1,7 @@
 pub mod ac3;
 pub mod big_media;
 pub mod collect;
+pub mod damage;
 pub mod dash;
 pub mod fmp4_split;
 pub mod rtmp_play_peer;
