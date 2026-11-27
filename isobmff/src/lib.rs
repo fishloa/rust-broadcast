@@ -199,6 +199,7 @@ pub mod sample_tables_extra;
 pub mod scheme;
 pub mod segments;
 pub mod subtitle_entries;
+pub mod threegpp;
 pub mod timing;
 pub mod track_desc;
 pub mod track_id;

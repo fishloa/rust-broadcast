@@ -3212,21 +3212,26 @@ const AUDIO_SAMPLE_ENTRY_SAMPLERATE_OFFSET: usize = 24;
 /// ones this crate does not interpret (QuickTime's `revision_level`/`vendor`
 /// and `compression_ID`/`packet_size`), so a real file round-trips
 /// byte-exactly.
-struct ParsedAudioSampleEntry {
-    reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
-    entry_version: u16,
-    reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
-    data_reference_index: u16,
-    channelcount: u16,
-    samplesize: u16,
-    compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
-    samplerate: u32,
-    quicktime: Option<QuickTimeSound>,
-    config_boxes: Vec<OpaqueBox>,
-    trailing: Vec<u8>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub(crate) struct ParsedAudioSampleEntry {
+    pub(crate) reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
+    pub(crate) entry_version: u16,
+    pub(crate) reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
+    pub(crate) data_reference_index: u16,
+    pub(crate) channelcount: u16,
+    pub(crate) samplesize: u16,
+    pub(crate) compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
+    pub(crate) samplerate: u32,
+    pub(crate) quicktime: Option<QuickTimeSound>,
+    pub(crate) config_boxes: Vec<OpaqueBox>,
+    pub(crate) trailing: Vec<u8>,
 }
 
-fn parse_audio_sample_entry(bytes: &[u8], what: &'static str) -> Result<ParsedAudioSampleEntry> {
+pub(crate) fn parse_audio_sample_entry(
+    bytes: &[u8],
+    what: &'static str,
+) -> Result<ParsedAudioSampleEntry> {
     let body = crate::box_types::box_body(bytes, AUDIO_SAMPLE_ENTRY_FIXED_LEN, what)?;
     let mut reserved = [0u8; SAMPLE_ENTRY_RESERVED_LEN];
     reserved.copy_from_slice(&body[..SAMPLE_ENTRY_RESERVED_LEN]);
@@ -3304,7 +3309,7 @@ impl<'a> Parse<'a> for Ec3SampleEntry {
     }
 }
 
-fn audio_sample_entry_serialized_len(
+pub(crate) fn audio_sample_entry_serialized_len(
     quicktime: &Option<QuickTimeSound>,
     config_boxes: &[OpaqueBox],
     trailing: &[u8],
@@ -3319,22 +3324,25 @@ fn audio_sample_entry_serialized_len(
 
 /// The shared fixed fields of an audio sample entry, grouped so the writer
 /// stays within the argument-count lint.
-struct AudioSampleEntryFields<'a> {
-    fourcc: &'a [u8; BOX_TYPE_SIZE],
-    reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
-    entry_version: u16,
-    reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
-    data_reference_index: u16,
-    channelcount: u16,
-    samplesize: u16,
-    compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
-    samplerate: u32,
-    quicktime: &'a Option<QuickTimeSound>,
-    config_boxes: &'a [OpaqueBox],
-    trailing: &'a [u8],
+pub(crate) struct AudioSampleEntryFields<'a> {
+    pub(crate) fourcc: &'a [u8; BOX_TYPE_SIZE],
+    pub(crate) reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
+    pub(crate) entry_version: u16,
+    pub(crate) reserved_1: [u8; AUDIO_SAMPLE_ENTRY_RESERVED_LEN],
+    pub(crate) data_reference_index: u16,
+    pub(crate) channelcount: u16,
+    pub(crate) samplesize: u16,
+    pub(crate) compression_id_and_packet_size: [u8; core::mem::size_of::<u32>()],
+    pub(crate) samplerate: u32,
+    pub(crate) quicktime: &'a Option<QuickTimeSound>,
+    pub(crate) config_boxes: &'a [OpaqueBox],
+    pub(crate) trailing: &'a [u8],
 }
 
-fn serialize_audio_sample_entry(buf: &mut [u8], f: AudioSampleEntryFields<'_>) -> Result<usize> {
+pub(crate) fn serialize_audio_sample_entry(
+    buf: &mut [u8],
+    f: AudioSampleEntryFields<'_>,
+) -> Result<usize> {
     let config_boxes = f.config_boxes;
     let need = audio_sample_entry_serialized_len(f.quicktime, config_boxes, f.trailing);
     need_out(buf, need)?;
@@ -3531,6 +3539,16 @@ pub enum SampleEntryVariant {
     /// A QuickTime-only video sample entry (`apch`, `SVQ1`, `jpeg`, …), whose
     /// codec code the entry records.
     QuickTimeVideo(Box<crate::quicktime::QuickTimeVideoEntry>),
+    /// A 3GPP audio sample entry (`samr`, `sawb`, `sawp`, `sevs`) —
+    /// 3GPP TS 26.244 §6.5, §6.9, §6.14.
+    ThreeGppAudio(Box<crate::threegpp::ThreeGppAudioEntry>),
+    /// The H.263 sample entry (`s263`) — 3GPP TS 26.244 §6.6.
+    ThreeGppH263(Box<crate::threegpp::H263SampleEntry>),
+    /// The CVO sample entry (`3gvo`) — 3GPP TS 26.244 §6.11.
+    ThreeGppCvo(Box<crate::threegpp::CvoSampleEntry>),
+    /// A 3GPP metadata sample entry (`3glo`, `3gor`) —
+    /// 3GPP TS 26.244 §6.12, §6.13.
+    ThreeGppMetadata(Box<crate::threegpp::ThreeGppSimpleEntry>),
     /// An RTP/SRTP/RTCP, MPEG-2 TS or FD hint sample entry (§9.1.2, §9.2.3,
     /// §9.3.3, §9.4.1–9.4.4).
     Hint(Box<crate::hint::HintSampleEntry>),
@@ -3640,6 +3658,10 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Mebx(e) => e.serialized_len(),
             SampleEntryVariant::QuickTimeSound(e) => e.serialized_len(),
             SampleEntryVariant::QuickTimeVideo(e) => e.serialized_len(),
+            SampleEntryVariant::ThreeGppAudio(e) => e.serialized_len(),
+            SampleEntryVariant::ThreeGppH263(e) => e.serialized_len(),
+            SampleEntryVariant::ThreeGppCvo(e) => e.serialized_len(),
+            SampleEntryVariant::ThreeGppMetadata(e) => e.serialized_len(),
             SampleEntryVariant::Hint(e) => e.serialized_len(),
             SampleEntryVariant::Unknown(u) => u.serialized_len(),
         }
@@ -3672,6 +3694,10 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Mebx(e) => e.serialize_into(buf),
             SampleEntryVariant::QuickTimeSound(e) => e.serialize_into(buf),
             SampleEntryVariant::QuickTimeVideo(e) => e.serialize_into(buf),
+            SampleEntryVariant::ThreeGppAudio(e) => e.serialize_into(buf),
+            SampleEntryVariant::ThreeGppH263(e) => e.serialize_into(buf),
+            SampleEntryVariant::ThreeGppCvo(e) => e.serialize_into(buf),
+            SampleEntryVariant::ThreeGppMetadata(e) => e.serialize_into(buf),
             SampleEntryVariant::Hint(e) => e.serialize_into(buf),
             SampleEntryVariant::Unknown(u) => Ok(u.serialize_into(buf)?),
         }
@@ -3797,6 +3823,18 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
         | b"flic" | b"gif " | b"h261" | b"h263" | b"jpeg" | b"mjpa" | b"mjpb" | b"png "
         | b"rle " | b"rpza" | b"tga " | b"tiff" => SampleEntryVariant::QuickTimeVideo(Box::new(
             crate::quicktime::QuickTimeVideoEntry::parse_box(box_bytes)?,
+        )),
+        b"samr" | b"sawb" | b"sawp" | b"sevs" => SampleEntryVariant::ThreeGppAudio(Box::new(
+            crate::threegpp::ThreeGppAudioEntry::parse_box(box_bytes)?,
+        )),
+        b"s263" => SampleEntryVariant::ThreeGppH263(Box::new(
+            crate::threegpp::H263SampleEntry::parse_box(box_bytes)?,
+        )),
+        b"3gvo" => SampleEntryVariant::ThreeGppCvo(Box::new(
+            crate::threegpp::CvoSampleEntry::parse_box(box_bytes)?,
+        )),
+        b"3glo" | b"3gor" => SampleEntryVariant::ThreeGppMetadata(Box::new(
+            crate::threegpp::ThreeGppSimpleEntry::parse_box(box_bytes)?,
         )),
         b"rtp " | b"srtp" | b"rrtp" | b"rsrp" | b"rtcp" | b"stcp" | b"prtp" | b"rm2t" | b"sm2t"
         | b"pm2t" | b"fdp " => SampleEntryVariant::Hint(Box::new(
@@ -5624,6 +5662,7 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
         | SampleEntryVariant::Av01(_)
         | SampleEntryVariant::Vp09(_)
         | SampleEntryVariant::QuickTimeVideo(_) => SampleEntryMediaKind::Video,
+        SampleEntryVariant::ThreeGppH263(_) => SampleEntryMediaKind::Video,
         SampleEntryVariant::Mp4a(_)
         | SampleEntryVariant::Ac3(_)
         | SampleEntryVariant::Ec3(_)
@@ -5631,7 +5670,8 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
         | SampleEntryVariant::Flac(_)
         | SampleEntryVariant::Mha(_)
         | SampleEntryVariant::Dts(_)
-        | SampleEntryVariant::Ac4(_) => SampleEntryMediaKind::Audio,
+        | SampleEntryVariant::Ac4(_)
+        | SampleEntryVariant::ThreeGppAudio(_) => SampleEntryMediaKind::Audio,
         SampleEntryVariant::AvcParameterSet(_)
         | SampleEntryVariant::Stpp(_)
         | SampleEntryVariant::Wvtt(_)
@@ -5644,6 +5684,8 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
         | SampleEntryVariant::QuickTimeSound(_)
         | SampleEntryVariant::ClosedCaption(_)
         | SampleEntryVariant::Hint(_)
+        | SampleEntryVariant::ThreeGppCvo(_)
+        | SampleEntryVariant::ThreeGppMetadata(_)
         | SampleEntryVariant::Unknown(_) => SampleEntryMediaKind::Unsupported,
     }
 }

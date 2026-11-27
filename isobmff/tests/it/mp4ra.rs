@@ -503,6 +503,13 @@ fn prove_box(code: &str) -> std::result::Result<(), String> {
         "tran" => boxed("tran", &[0]),
         "!mov" | "!mof" | "!six" | "!ssx" => boxed(code, &[1, 2, 3]),
         "ttyp" => boxed("ttyp", b"isom\0\0\0\0"),
+        "tfad" => boxed("tfad", &[]),
+        "tfma" => boxed("tfma", &full(0, 0, &[0, 0, 0, 0])),
+        "spdb" => boxed("spdb", &full(0, 0, b"<spd/>")),
+        "3gau" => boxed(
+            "3gau",
+            &[0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        ),
         other => return Err(format!("no box proof for {other:?}")),
     };
     match code {
@@ -522,6 +529,10 @@ fn prove_box(code: &str) -> std::result::Result<(), String> {
             isobmff::compressed::CompressedBox::parse_box(&bytes).map(|_| ())
         }
         "ttyp" => isobmff::segments::TrackTypeBox::parse_box(&bytes).map(|_| ()),
+        "tfad" => isobmff::threegpp::TrackFragmentAdjustmentBox::parse_box(&bytes).map(|_| ()),
+        "tfma" => isobmff::threegpp::TrackFragmentMediaAdjustmentBox::parse_box(&bytes).map(|_| ()),
+        "spdb" => isobmff::threegpp::ServiceProtectionDescriptionBox::parse_box(&bytes).map(|_| ()),
+        "3gau" => isobmff::threegpp::ApplicationDataUnitInfoBox::parse_box(&bytes).map(|_| ()),
         other => return Err(format!("no box proof for {other:?}")),
     }
     .map(|_| ())
@@ -532,12 +543,12 @@ const VISUAL_ENTRIES: &[&str] = &[
     "avc1", "avc2", "avc3", "avc4", "avcp", "hvc1", "hev1", "dvh1", "dvhe", "vvc1", "vvi1", "mp4v",
     "av01", "vp09", "rgan", "avs3", "lav3", "PNTG", "SVQ1", "SVQ3", "WRLE", "ap4h", "ap4x", "apch",
     "apcn", "apco", "apcs", "aprh", "aprn", "civd", "dvh5", "dvh6", "dvhp", "dvi", "flic", "gif",
-    "h261", "h263", "jpeg", "mjpa", "mjpb", "png", "rle", "rpza", "tga", "tiff",
+    "h261", "h263", "jpeg", "mjpa", "mjpb", "png", "rle", "rpza", "tga", "tiff", "s263",
 ];
 const AUDIO_ENTRIES: &[&str] = &[
     "mp4a", "enca", "ac-3", "ec-3", "ac-4", "Opus", "fLaC", "mha1", "mha2", "mhm1", "mhm2", "dtsc",
     "dtsh", "dtsl", "dtse", "lpcm", "in24", "in32", "sowt", "twos", "raw", "fl32", "fl64", "ima4",
-    "ulaw", "alaw", "NONE", "QDM2", "QDMC", "Qclp", "agsm", "vdva",
+    "ulaw", "alaw", "NONE", "QDM2", "QDMC", "Qclp", "agsm", "vdva", "samr", "sawb", "sawp", "sevs",
 ];
 const HINT_ENTRIES: &[&str] = &[
     "rtp", "srtp", "rrtp", "rsrp", "rtcp", "stcp", "prtp", "rm2t", "sm2t", "pm2t", "fdp",
@@ -576,6 +587,7 @@ fn sample_entry_bytes(code: &str) -> Result<Vec<u8>, String> {
             ));
         }
         "tmcd" => &[0u8; 25],
+        "3gvo" => &[0u8; 1],
         "c608" => &[],
         "mebx" => {
             return Ok(boxed(
@@ -828,6 +840,9 @@ fn config_bytes(code: &str) -> std::result::Result<Vec<u8>, String> {
         "dvcC" | "dvvC" => boxed(code, &[0u8; 24]),
         "clli" => boxed("clli", &[0u8; 4]),
         "mdcv" => boxed("mdcv", &[0u8; 24]),
+        "damr" => boxed("damr", &[0u8; 9]),
+        "d263" => boxed("d263", &[0u8; 7]),
+        "dawp" => boxed("dawp", &[0u8; 5]),
         _ => boxed(code, &[0u8; 256]),
     };
     Ok(bytes)
@@ -871,6 +886,14 @@ fn prove_sample_entry_box(code: &str) -> std::result::Result<(), String> {
         "dvcC" | "dvvC" => {
             isobmff::dovi::DoviDecoderConfigurationRecord::parse(config_body(&bytes)).map(|_| ())
         }
+        "damr" => {
+            isobmff::threegpp::AmrDecoderSpecificBox::parse_body(config_body(&bytes)).map(|_| ())
+        }
+        "d263" => {
+            isobmff::threegpp::H263DecoderSpecificBox::parse_body(config_body(&bytes)).map(|_| ())
+        }
+        "dawp" => isobmff::threegpp::AmrwbPlusDecoderSpecificBox::parse_body(config_body(&bytes))
+            .map(|_| ()),
         "clli" => isobmff::hdr_boxes::ContentLightLevel::parse(config_body(&bytes)).map(|_| ()),
         "mdcv" => {
             isobmff::hdr_boxes::MasteringDisplayColourVolume::parse(config_body(&bytes)).map(|_| ())
@@ -948,6 +971,26 @@ fn prove_atom(code: &str) -> std::result::Result<(), String> {
         "strk" => boxed("strk", &boxed("stri", &full(0, 0, &[0u8; 8]))),
         "albm" | "auth" | "cprt" | "titl" | "dscp" | "perf" | "gnre" | "yrrc" | "name" | "hinf"
         | "hnti" | "tsel" | "kind" => boxed(code, &[0u8; 64]),
+        "clsf" => bytes_of(&isobmff::threegpp::MediaClassificationBox::new(
+            *b"BBFC",
+            1,
+            b"PG".to_vec(),
+        )),
+        "coll" => bytes_of(&isobmff::threegpp::CollectionNameBox::new(b"Set".to_vec())),
+        "kywd" => bytes_of(&isobmff::threegpp::KeywordsBox::new(vec![b"one".to_vec()])),
+        "rtng" => bytes_of(&isobmff::threegpp::MediaRatingBox::new(
+            *b"BBFC",
+            *b"PG13",
+            b"12A".to_vec(),
+        )),
+        "urat" => bytes_of(&isobmff::threegpp::UserRatingBox::new(50)),
+        "thmb" => bytes_of(&isobmff::threegpp::ThumbnailBox::new(
+            *b"jpeg",
+            vec![0xFF, 0xD8],
+        )),
+        "orie" => bytes_of(&isobmff::threegpp::OrientationInformationBox::new(
+            1, 1, true, 0, 0, 0,
+        )),
         other => return Err(format!("no atom proof for {other:?}")),
     };
     let parsed = isobmff::metadata::Udta::parse(&boxed("udta", &child))

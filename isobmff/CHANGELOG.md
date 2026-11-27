@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `threegpp`: the 3GPP TS 26.244 code points — `ThreeGppAudioEntry`
+  (`samr`/`sawb`/`sawp`/`sevs`, with `AmrDecoderSpecificBox` and
+  `AmrwbPlusDecoderSpecificBox`), `H263SampleEntry` and
+  `H263DecoderSpecificBox` (`s263`/`d263`), `CvoSampleEntry` (`3gvo`),
+  `ThreeGppSimpleEntry` (`3glo`/`3gor`), the fragment adjustment boxes
+  `tfad`/`tfma`, `ServiceProtectionDescriptionBox` (`spdb`),
+  `ApplicationDataUnitInfoBox` (`3gau`), and the user-data boxes
+  `clsf`/`coll`/`kywd`/`rtng`/`urat`/`thmb`/`orie` (the last with the 1-bit
+  `Pan_indication` packed as the table states). All are reachable from
+  `sample_entry_variant` and `metadata::UdtaChild`.
+
 - `quicktime::QuickTimeVideoEntry`: every registered QuickTime video sample
   description (`apco`/`apcs`/`apcn`/`apch`/`ap4h`/`ap4x`, `jpeg`, `SVQ1`,
   `h263`, `png`, …) as one type over the standard 78-byte video description,

@@ -40,11 +40,11 @@ def read_typed_boxes():
     return set(m.group(1).rstrip() for m in re.finditer(r'p_\w+: b"([ -~]{4})"',s))
 TB=read_typed_boxes()
 TYPED={
- 'Box': set(TB) | {'ftyp','styp','mvex','emsg','senc','pssh','tenc','sthd','ccst','md5i','url','wide','tran','!mov','!mof','!six','!ssx','ttyp'},
+ 'Box': set(TB) | {'ftyp','styp','mvex','emsg','senc','pssh','tenc','sthd','ccst','md5i','url','wide','tran','!mov','!mof','!six','!ssx','ttyp','tfad','tfma','spdb','3gau'},
  'QtAtom': {'albm','auth','cprt','elng','load'},
- 'UdtaAtom': {'albm','alou','auth','cprt','dscp','gnre','hinf','hnti','kind','loci','ludt','perf','strk','titl','tlou','tsel','yrrc'},
- 'SampleEntry': {'avc1','avc2','avc3','avc4','avcp','hvc1','hev1','dvh1','dvhe','vvc1','vvi1','mp4v','mp4a','enca','encv','ac-3','ec-3','ac-4','stpp','wvtt','av01','vp09','Opus','fLaC','mha1','mha2','mhm1','mhm2','dtsc','dtsh','dtsl','dtse','tmcd','metx','mett','stxt','urim','mebx','rgan','avs3','lav3','c608','c708','lpcm','in24','in32','sowt','twos','raw','fl32','fl64','ima4','ulaw','alaw','NONE','rtp','srtp','rrtp','rsrp','rtcp','stcp','prtp','rm2t','sm2t','pm2t','fdp','PNTG','QDM2','QDMC','Qclp','SVQ1','SVQ3','WRLE','agsm','ap4h','ap4x','apch','apcn','apco','apcs','aprh','aprn','civd','dvh5','dvh6','dvhp','dvi','flic','gif','h261','h263','jpeg','mjpa','mjpb','png','rle','rpza','tga','tiff','vdva'},
- 'SampleEntryBox': {'avcC','hvcC','vvcC','av1C','vpcC','dac3','dec3','dac4','dOps','dfLa','ddts','mhaC','dca3','av2c','la2c','lavc','av3c','esds','btrt','pasp','clap','colr','clli','mdcv','chnl','dmix','amve','cclv','srat','dvcC','dvvC','txtC','uriI','vttC','scrb','ccst'},
+ 'UdtaAtom': {'albm','alou','auth','cprt','dscp','gnre','hinf','hnti','kind','loci','ludt','perf','strk','titl','tlou','tsel','yrrc','clsf','coll','kywd','orie','rtng','thmb','urat'},
+ 'SampleEntry': {'avc1','avc2','avc3','avc4','avcp','hvc1','hev1','dvh1','dvhe','vvc1','vvi1','mp4v','mp4a','enca','encv','ac-3','ec-3','ac-4','stpp','wvtt','av01','vp09','Opus','fLaC','mha1','mha2','mhm1','mhm2','dtsc','dtsh','dtsl','dtse','tmcd','metx','mett','stxt','urim','mebx','rgan','avs3','lav3','c608','c708','lpcm','in24','in32','sowt','twos','raw','fl32','fl64','ima4','ulaw','alaw','NONE','rtp','srtp','rrtp','rsrp','rtcp','stcp','prtp','rm2t','sm2t','pm2t','fdp','PNTG','QDM2','QDMC','Qclp','SVQ1','SVQ3','WRLE','agsm','ap4h','ap4x','apch','apcn','apco','apcs','aprh','aprn','civd','dvh5','dvh6','dvhp','dvi','flic','gif','h261','h263','jpeg','mjpa','mjpb','png','rle','rpza','tga','tiff','vdva','samr','sawb','sawp','sevs','s263','3glo','3gor','3gvo'},
+ 'SampleEntryBox': {'avcC','hvcC','vvcC','av1C','vpcC','dac3','dec3','dac4','dOps','dfLa','ddts','mhaC','dca3','av2c','la2c','lavc','av3c','esds','btrt','pasp','clap','colr','clli','mdcv','chnl','dmix','amve','cclv','srat','dvcC','dvvC','txtC','uriI','vttC','scrb','ccst','damr','d263','dawp'},
  'ItemProperty': {'vvcC','ispe','pasp','colr','pixi','rloc','auxC','clap','irot','lsel','imir','hvcC','avcC','av1C','a1op','a1lx','mdcv','clli','brnd','hdlp','scrb','amve','cclv','iscl','rref','crtt','mdft','udes','altt','aebr','wbbr','fobr','afbr','dobr','pano','tols','wipe','zoom','fade','splt','stpe','ssld','prdi','sstr','cmex','cmin','cexg','dadj','stag','reve','ndwt','mskC','subs','stvi'},
  'ItemType': {'hvc1','avc1','av01','vvc1','evc1','hvt1','lhv1','jpeg','auvd','grid','iovl','iden','tmap','cfen','sato','Exif','mime','uri','fdel','it35','mint','mski','rgan'},
  'Reference': {'thmb','auxl','dimg','cdsc','base','tbas','exbl','iloc','font','fdel','mint','pred','prem','dpnd','mask','eroi','drgn','rpds','anot'},
@@ -83,7 +83,7 @@ def held(code,spec):
 TYPED_KINDS={
  'aux-info-types':['AuxInfoType'],
  'boxes':['Box'],
- 'boxes-qt':['QtAtom','Box'],
+ 'boxes-qt':['QtAtom','Box','UdtaAtom'],
  'boxes-udta':['UdtaAtom'],
  'brands':['Brand'],
  'checksum-types':[],
@@ -162,7 +162,7 @@ all_codes=set()
 for t in TABLES:
     for c,_ in rows[t]: all_codes.add(c)
 
-FORCE_UNHELD={('boxes-qt','csgm')}
+FORCE_UNHELD={('boxes-qt','csgm'),('boxes-udta','diap'),('sample-entries','tx3g')}
 
 def classify(t):
     typed=set()
