@@ -9,6 +9,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `multiview`: the multiview view-attribute boxes with a defined syntax —
+  `ProfileLevelAttribute` (`prfl`/`levl`), `ViewArrayOrder` (`ilvi`/`elvi`),
+  `RectangularViewArray` (`rtvi`), `MultiviewSceneInfoBox` (`vwdi`) and
+  `MultiviewInformationBox` (`mvci`). `geom`, `plvi` and `spvi` are pinned as
+  not applicable: the attribute table states their syntax as Unspecified.
+
+- `nalu_sample_entry::NaluVideoSampleEntry`: the NAL-unit video sample entries
+  (`mvc1`…`mvc4`, `svc1`, `svc2`, `svcM`, `mvd1`…`mvd4`, `a3d1`…`a3d4`,
+  `hvc2`/`hev2`, `hvt1`, `lhv1`, `lht1`) as one type over the standard visual
+  fixed fields, dispatched from `stsd`.
+- `image::JpegConfigurationProperty` (`jpgC`), typed both as an item property
+  and as a sample-entry box, and `image_sequence::MjpegSampleEntry` (`mjpg`)
+  with its `jpeg_configuration()` accessor. `image_sequence::
+  AuxiliaryTypeInfoBox` (`auxi`) and the `evir` item reference join the typed
+  tables.
+- `Av1SampleEntry::codec_type`: the AV1 entry records its four-CC so the Dolby
+  Vision `dav1` code can use it (`dva1`/`dvav` join the AVC entry's dispatch).
+
+### Breaking
+
+- `Av1SampleEntry` gains a public `codec_type` field; a struct literal must
+  name it (`av01`).
+
+- `scheme::RestrictedVideoSampleEntry` (`resv`) and
+  `RestrictedAudioSampleEntry` (`resa`), and `subtitle_entries::
+  TextSubtitleSampleEntry` (`sbtt`, §12.6.3): the restricted sample entries
+  keep the base class and expose `restricted_scheme()`; `sbtt` carries its two
+  null-terminated MIME strings.
+- `transform::TransformSampleEntry` and `IncompleteAudioSampleEntry`: the
+  protected (`encf`/`encm`/`encp`/`encs`/`enc3`) and incomplete
+  (`icps`/`icpp`/`icpm`/`icp3`/`icpv`/`icpa`) entries, each keeping the base
+  class's fixed bytes and the appended `sinf`/`cinf` verbatim, with typed
+  accessors for the transform box. `TextMetaDataSampleEntry` accepts `enct`
+  and `icpt`, and `XmlSubtitleSampleEntry` records its four-CC so it can carry
+  `encu`.
+- `hint::RtpoOffsetBox` (`rtpo`), `hint::RolloverCounterBox` (`sroc`) and
+  `hint::ObjectDescriptorBox` (`tOD `), the last reusing the `tPAT`/`tPMT`
+  section-box definition and joining the MPEG-2 TS entry's typed children.
+
+### Breaking
+
+- `subtitle_entries::XmlSubtitleSampleEntry` gains a public `codec_type`
+  field: the entry's four-CC is now carried instead of being rewritten as
+  `stpp`, so a protected `encu` entry round-trips. A struct literal must name
+  it (or start from `new`).
+
+- `threegpp`: the 3GPP TS 26.244 code points — `ThreeGppAudioEntry`
+  (`samr`/`sawb`/`sawp`/`sevs`, with `AmrDecoderSpecificBox` and
+  `AmrwbPlusDecoderSpecificBox`), `H263SampleEntry` and
+  `H263DecoderSpecificBox` (`s263`/`d263`), `CvoSampleEntry` (`3gvo`),
+  `ThreeGppSimpleEntry` (`3glo`/`3gor`), the fragment adjustment boxes
+  `tfad`/`tfma`, `ServiceProtectionDescriptionBox` (`spdb`),
+  `ApplicationDataUnitInfoBox` (`3gau`), and the user-data boxes
+  `clsf`/`coll`/`kywd`/`rtng`/`urat`/`thmb`/`orie` (the last with the 1-bit
+  `Pan_indication` packed as the table states). All are reachable from
+  `sample_entry_variant` and `metadata::UdtaChild`.
+
+- `quicktime::QuickTimeVideoEntry`: every registered QuickTime video sample
+  description (`apco`/`apcs`/`apcn`/`apch`/`ap4h`/`ap4x`, `jpeg`, `SVQ1`,
+  `h263`, `png`, …) as one type over the standard 78-byte video description,
+  dispatched from `stsd`, with child atoms kept verbatim; the QuickTime sound
+  entries `QDM2`/`QDMC`/`Qclp`/`agsm`/`vdva` join `SoundEntry`'s dispatch.
+- `subtitle_entries::C708` and `ClosedCaptionSampleEntry::codec_type`/
+  `with_codec_type`: the CEA-708 closed-caption video sample description, the
+  same structure as `c608` (QuickTime File Format, "Closed captioning sample
+  description").
+- `visual_ext::ColourType::Full`: the QuickTime `full` colour type, whose body
+  is the `nclx` parameter block with the full-range flag set.
+- `quicktime::PreloadBox` (QuickTime track loading settings, `load`), surfaced
+  as `reader::TrackInfo::preload`.
+- `compressed::CompressedBox`: the four compressed top-level boxes `!mov`,
+  `!mof`, `!six` and `!ssx` (ISO/IEC 14496-12:2026 §8.16), one definition over
+  the replacement-type map, with the payload and header form kept verbatim.
+- `segments::TrackTypeBox` (`ttyp`, §8.3.5): the track brand list with
+  `FileTypeBox` payload syntax.
+
 - `metadata::Itunsmpb` and `Metadata::itunsmpb`: the iTunes `iTunSMPB`
   freeform item's priming, padding and original sample count, parsed from its
   hex text (a de-facto format, cited in the module). The typed view borrows

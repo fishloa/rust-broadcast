@@ -8,7 +8,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-
 - `DemuxEvent::Damage(broadcast_core::damage::Damage)`: every skip the
   streaming demuxers tolerate reaches the caller as the workspace's one
   damage report (see `broadcast_core::damage` and
@@ -29,6 +28,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dropped at end of input. `StreamingPsDemux` also reports the bytes an input
   leaves incomplete at end of stream as a truncation instead of dropping them
   silently.
+- `StreamingFlvDemux::strict()`, which keeps the pre-best-effort contract
+  (a damaged header, backwards timestamp or too-large span is an error).
+- `flv::OnMetadata` and `flv::parse_on_metadata`: the typed view of an FLV
+  script tag's `onMetaData` properties (duration, width, height, frame rate,
+  codec ids, audio sample rate and size, stereo, file size, encoder) with
+  every other property kept as the AMF0 value the file carried and the
+  original body retained for a byte-exact rewrite. `StreamingFlvDemux`
+  exposes the file's tag through `on_metadata()`, and
+  `FlvMuxStage::with_metadata_body` writes a caller's body back verbatim.
 
 ### Breaking
 
@@ -55,10 +63,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   survives, and a damaged gapless element (`CodecDelay`, `SeekPreRoll`,
   `DiscardPadding`) costs that field, reported, rather than the track. See
   `docs/demux-damage-matrix.md`.
-### Added
-- `StreamingFlvDemux::strict()`, which keeps the pre-best-effort contract
-  (a damaged header, backwards timestamp or too-large span is an error).
-
 - The MPEG-2 video sequence layer moved to `broadcast-bitstream`:
   `transmux::{mpeg_legacy, h262}` are deleted with `Mpeg2SeqHeader`,
   `SEQUENCE_HEADER_CODE`, `SequenceHeaderGeometry` and

@@ -64,7 +64,7 @@ use broadcast_core::error::BufferTooShort;
 #[cfg(test)]
 use broadcast_core::len::need_in;
 use rtmp_runtime::RtmpError;
-use rtmp_runtime::amf0::{Amf0Value, amf0_values};
+use rtmp_runtime::amf0::{Amf0Value, amf0_parse_values, amf0_values};
 use rtmp_runtime::flv::FlvHeader;
 use rtmp_runtime::flv::FlvTag as RtmpFlvTag;
 use rtmp_runtime::flv::TagType;
@@ -781,12 +781,24 @@ pub struct FlvMuxStage {
     out: VecDeque<MuxOutput>,
     started: bool,
     meta_patch: Option<u64>,
+    /// An `onMetaData` body written verbatim instead of the generated one,
+    /// so a remux keeps the source file's script tag byte for byte.
+    metadata_body: Option<Vec<u8>>,
 }
 
 impl FlvMuxStage {
     /// Create a new FLV muxer stage.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Write `body` as the `onMetaData` script tag instead of the body this
+    /// crate generates, so a remux of a file whose tag it read through
+    /// [`parse_on_metadata`] keeps that tag byte for byte.
+    #[must_use]
+    pub fn with_metadata_body(mut self, body: Vec<u8>) -> Self {
+        self.metadata_body = Some(body);
+        self
     }
 
     /// Write the FLV header, `onMetaData` and the sequence-header tags, once.
@@ -803,15 +815,23 @@ impl FlvMuxStage {
             .map_err(|e| Error::FieldOverflow(field_overflow(e)))?;
         let header_len = header.len();
         self.out.push_back(MuxOutput::Bytes(header.into()));
-        let tags = self
+        let mut tags = self
             .stream
             .opening_tags(Some(META_DURATION_PLACEHOLDER_SECONDS))?;
+        if let Some(body) = self.metadata_body.take() {
+            for tag in &mut tags {
+                if tag.tag_type == TagType::Script {
+                    tag.body = body.clone();
+                }
+            }
+        } else {
+            self.meta_patch = Some(u64::try_from(header_len + TAG_HEADER_LEN).unwrap_or(u64::MAX));
+        }
         for tag in &tags {
             let mut buf = Vec::new();
             tag.write_into(&mut buf)?;
             self.out.push_back(MuxOutput::Bytes(buf.into()));
         }
-        self.meta_patch = Some(u64::try_from(header_len + TAG_HEADER_LEN).unwrap_or(u64::MAX));
         self.started = true;
         Ok(())
     }
@@ -1491,6 +1511,26 @@ const META_VIDEOCODECID_AVC: f64 = 7.0;
 const META_AUDIOCODECID_AAC: f64 = 10.0;
 /// The handler name an `onMetaData` script body starts with (§E.4.1).
 const META_HANDLER_NAME: &str = "onMetaData";
+/// The `duration` property name.
+const META_DURATION: &str = "duration";
+/// The `width` property name.
+const META_WIDTH: &str = "width";
+/// The `height` property name.
+const META_HEIGHT: &str = "height";
+/// The `framerate` property name.
+const META_FRAME_RATE: &str = "framerate";
+/// The `videocodecid` property name.
+const META_VIDEO_CODEC_ID: &str = "videocodecid";
+/// The `audiosamplerate` property name.
+const META_AUDIO_SAMPLE_RATE: &str = "audiosamplerate";
+/// The `audiosamplesize` property name.
+const META_AUDIO_SAMPLE_SIZE: &str = "audiosamplesize";
+/// The `stereo` property name.
+const META_STEREO: &str = "stereo";
+/// The `audiocodecid` property name.
+const META_AUDIO_CODEC_ID: &str = "audiocodecid";
+/// The `filesize` property name.
+const META_FILE_SIZE: &str = "filesize";
 /// The AAC channel count `onMetaData`'s `stereo` flag stands for (§E.5: the
 /// same two-channel answer the FLV `SoundType` bit gives).
 const AAC_CHANNELS_STEREO: u32 = 2;
@@ -1597,6 +1637,222 @@ fn onmetadata_properties(
         ));
     }
     props
+}
+
+/// The handler name RTMP publishers put before `onMetaData` (Adobe FLV v10.1
+/// §E.4.1; the FLV file form starts with `onMetaData` directly).
+const META_HANDLER_SET_DATA_FRAME: &str = "@setDataFrame";
+
+/// The informational properties an `onMetaData` script tag states, typed.
+///
+/// Adobe FLV v10.1 §E.4.1 defines the script-data tag and the `onMetaData`
+/// handler but not the property list
+/// (`private/specs-verified/mpeg/transmux/codec/flv.md` §E.4.1). The
+/// property names are the de-facto set FFmpeg's `libavformat/flvdec.c` and
+/// ExifTool's Flash tag table agree on (`duration`, `width`, `height`, `framerate`,
+/// `videocodecid`, `audiosamplerate`, `audiosamplesize`, `stereo`,
+/// `audiocodecid`, `filesize`, `encoder`); a property the writer stated that
+/// this crate does not name stays in [`properties`](Self::properties) as the
+/// AMF0 value the file carried.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct OnMetadata {
+    body: Vec<u8>,
+    properties: Vec<(String, Amf0Value)>,
+    duration: Option<f64>,
+    width: Option<u16>,
+    height: Option<u16>,
+    frame_rate: Option<f64>,
+    video_codec_id: Option<f64>,
+    audio_sample_rate: Option<u32>,
+    audio_sample_size: Option<u16>,
+    stereo: Option<bool>,
+    audio_codec_id: Option<f64>,
+    file_size: Option<u64>,
+    encoder: Option<String>,
+}
+
+impl OnMetadata {
+    /// The whole-stream duration in seconds, when the writer stated it.
+    #[must_use]
+    pub const fn duration(&self) -> Option<f64> {
+        self.duration
+    }
+
+    /// The coded picture width in pixels.
+    #[must_use]
+    pub const fn width(&self) -> Option<u16> {
+        self.width
+    }
+
+    /// The coded picture height in pixels.
+    #[must_use]
+    pub const fn height(&self) -> Option<u16> {
+        self.height
+    }
+
+    /// The frame rate in frames per second.
+    #[must_use]
+    pub const fn frame_rate(&self) -> Option<f64> {
+        self.frame_rate
+    }
+
+    /// The `videocodecid` the writer stated.
+    #[must_use]
+    pub const fn video_codec_id(&self) -> Option<f64> {
+        self.video_codec_id
+    }
+
+    /// The audio sample rate in Hz.
+    #[must_use]
+    pub const fn audio_sample_rate(&self) -> Option<u32> {
+        self.audio_sample_rate
+    }
+
+    /// The audio sample size in bits.
+    #[must_use]
+    pub const fn audio_sample_size(&self) -> Option<u16> {
+        self.audio_sample_size
+    }
+
+    /// Whether the writer stated a two-channel stream.
+    #[must_use]
+    pub const fn stereo(&self) -> Option<bool> {
+        self.stereo
+    }
+
+    /// The `audiocodecid` the writer stated.
+    #[must_use]
+    pub const fn audio_codec_id(&self) -> Option<f64> {
+        self.audio_codec_id
+    }
+
+    /// The file size the writer stated, in bytes.
+    #[must_use]
+    pub const fn file_size(&self) -> Option<u64> {
+        self.file_size
+    }
+
+    /// The encoding application's name.
+    #[must_use]
+    pub fn encoder(&self) -> Option<&str> {
+        self.encoder.as_deref()
+    }
+
+    /// The script-data body exactly as the file carried it, so a remux can
+    /// write the same bytes back rather than re-encoding the properties.
+    #[must_use]
+    pub fn raw_body(&self) -> &[u8] {
+        &self.body
+    }
+
+    /// Every property the script tag carried, in the order it carried them.
+    #[must_use]
+    pub fn properties(&self) -> &[(String, Amf0Value)] {
+        &self.properties
+    }
+
+    /// One property by name, as the file carried it.
+    #[must_use]
+    pub fn property(&self, name: &str) -> Option<&Amf0Value> {
+        self.properties
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value)
+    }
+}
+
+impl OnMetadata {
+    /// Read the typed view out of a property list.
+    fn from_properties(body: &[u8], properties: Vec<(String, Amf0Value)>) -> Self {
+        let number = |name: &str| match find_property(&properties, name) {
+            Some(Amf0Value::Number(value)) => Some(*value),
+            _ => None,
+        };
+        let whole16 = |name: &str| {
+            number(name)
+                .and_then(whole_number)
+                .and_then(|n| u16::try_from(n).ok())
+        };
+        let whole32 = |name: &str| {
+            number(name)
+                .and_then(whole_number)
+                .and_then(|n| u32::try_from(n).ok())
+        };
+        let whole64 = |name: &str| number(name).and_then(whole_number);
+        let encoder = match find_property(&properties, "encoder") {
+            Some(Amf0Value::String(encoder) | Amf0Value::LongString(encoder)) => {
+                Some(encoder.clone())
+            }
+            _ => None,
+        };
+        Self {
+            body: body.to_vec(),
+            duration: number(META_DURATION),
+            width: whole16(META_WIDTH),
+            height: whole16(META_HEIGHT),
+            frame_rate: number(META_FRAME_RATE),
+            video_codec_id: number(META_VIDEO_CODEC_ID),
+            audio_sample_rate: whole32(META_AUDIO_SAMPLE_RATE),
+            audio_sample_size: whole16(META_AUDIO_SAMPLE_SIZE),
+            stereo: match find_property(&properties, META_STEREO) {
+                Some(Amf0Value::Boolean(stereo)) => Some(*stereo),
+                _ => None,
+            },
+            audio_codec_id: number(META_AUDIO_CODEC_ID),
+            file_size: whole64(META_FILE_SIZE),
+            encoder,
+            properties,
+        }
+    }
+}
+
+/// A property's value by name.
+fn find_property<'a>(properties: &'a [(String, Amf0Value)], name: &str) -> Option<&'a Amf0Value> {
+    properties
+        .iter()
+        .find(|(key, _)| key == name)
+        .map(|(_, value)| value)
+}
+
+/// A finite, non-negative number with no fractional part, as an integer.
+fn whole_number(value: f64) -> Option<u64> {
+    if !value.is_finite() || value < 0.0 || value.trunc() != value {
+        return None;
+    }
+    if value > u64::MAX as f64 {
+        return None;
+    }
+    Some(value as u64)
+}
+
+/// Read an `onMetaData` script-data body (Adobe FLV v10.1 §E.4.1, AMF0 §2).
+///
+/// The body is the handler name followed by one property object or ECMA
+/// array; an RTMP `@setDataFrame` wrapper is accepted. Anything else, or a
+/// body that does not parse as AMF0, is not interpretation: `None`.
+#[must_use]
+pub fn parse_on_metadata(body: &[u8]) -> Option<OnMetadata> {
+    let values = amf0_parse_values(body).ok()?;
+    let mut values = values.into_iter();
+    let mut handler = match values.next()? {
+        Amf0Value::String(handler) => handler,
+        _ => return None,
+    };
+    if handler == META_HANDLER_SET_DATA_FRAME {
+        handler = match values.next()? {
+            Amf0Value::String(handler) => handler,
+            _ => return None,
+        };
+    }
+    if handler != META_HANDLER_NAME {
+        return None;
+    }
+    let properties = match values.next()? {
+        Amf0Value::EcmaArray(properties) | Amf0Value::Object(properties) => properties,
+        _ => return None,
+    };
+    Some(OnMetadata::from_properties(body, properties))
 }
 
 #[cfg(test)]
