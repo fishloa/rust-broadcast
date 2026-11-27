@@ -14,6 +14,18 @@ fn compact(input: &[u8]) -> bool {
 }
 
 fuzz_target!(|data: &[u8]| {
+    // The `iTunSMPB` value is hex text, not a box; fuzz that parser on any
+    // input and require a successful parse to reproduce its own text.
+    if let Ok(text) = core::str::from_utf8(data)
+        && let Ok(itunsmpb) = isobmff::metadata::Itunsmpb::parse_text(text)
+    {
+        assert_eq!(itunsmpb.text(), text);
+        let _ = (
+            itunsmpb.priming(),
+            itunsmpb.padding(),
+            itunsmpb.original_samples(),
+        );
+    }
     if data.len() < 8 || !compact(data) {
         return;
     }

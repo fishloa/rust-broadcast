@@ -55,7 +55,7 @@ use crate::movie_fragment::{
     TrafChild, apply_trex_defaults,
 };
 use crate::plan::{BoxPosition, SamplePlan, TopLevelBox, sample_description, sample_table};
-use crate::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox};
+use crate::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox, SampleToGroupBox};
 use crate::sample_table::{CursorState, SampleRef};
 use crate::segments::FileTypeBox;
 use crate::timing::{
@@ -2771,8 +2771,12 @@ struct TrackDescription {
 }
 
 /// The track's decoder pre-roll from its `roll`/`prol` sample group (§10.1).
+///
+/// A description only applies when the sibling `sbgp` maps at least one sample
+/// to it (a description index is one-based; zero means no group).
 fn track_pre_roll(trak: &TrackBox) -> Option<u32> {
     let stbl = sample_table(trak)?;
+    let mut group: Option<(u32, u32)> = None;
     for child in &stbl.children {
         let StblChild::Opaque(bytes) = child else {
             continue;
@@ -2783,8 +2787,31 @@ fn track_pre_roll(trak: &TrackBox) -> Option<u32> {
             continue;
         }
         if let Ok(sgpd) = SampleGroupDescriptionBox::parse(bytes.as_slice())
-            && let Some(entry) = sgpd.entries.first()
-            && let Some(samples) = entry.pre_roll_samples()
+            && let Some(samples) = sgpd
+                .entries
+                .first()
+                .and_then(|entry| entry.pre_roll_samples())
+        {
+            group = Some((sgpd.grouping_type, samples));
+            break;
+        }
+    }
+    let (grouping_type, samples) = group?;
+    for child in &stbl.children {
+        let StblChild::Opaque(bytes) = child else {
+            continue;
+        };
+        if bytes.len() < BOX_HEADER_MIN_SIZE
+            || &bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != b"sbgp"
+        {
+            continue;
+        }
+        if let Ok(sbgp) = SampleToGroupBox::parse(bytes.as_slice())
+            && sbgp.grouping_type == grouping_type
+            && sbgp
+                .entries
+                .iter()
+                .any(|entry| entry.group_description_index > 0)
         {
             return Some(samples);
         }

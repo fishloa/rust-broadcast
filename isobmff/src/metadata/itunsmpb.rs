@@ -15,9 +15,8 @@
 //! observed in `private/fixtures/mp4/tags/afconvert-aac.m4a`. No published
 //! standard defines it, so this module names it a de-facto format.
 //!
-//! The typed view borrows the item's text, so [`Metadata`](super::Metadata)'s
-//! own serialization is untouched and a file that carries the item round-trips
-//! byte for byte.
+//! The typed view is read-only, so [`Metadata`]'s own serialization is
+//! untouched and a file that carries the item round-trips byte for byte.
 
 use crate::error::{Error, Result};
 

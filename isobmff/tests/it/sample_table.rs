@@ -186,6 +186,7 @@ fn cursor_matches_the_pre_move_digest_table() {
 }
 
 const DIGESTS: &[(&str, u32, u64)] = &[
+    ("public/aac-prol.mp4", 131, 0x9f808b3f4836a623),
     ("public/aac-sgpd.mp4", 131, 0x9f808b3f4836a623),
     ("public/av1.mp4", 12, 0xdabde3d714765d4d),
     ("public/boxes/chnl-ipcm.mp4", 14400, 0x2b1ad55bb77541e5),

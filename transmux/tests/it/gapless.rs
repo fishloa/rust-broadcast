@@ -222,7 +222,7 @@ fn a_disagreeing_codec_pre_skip_is_reported_and_the_edit_list_wins() {
         .windows(4)
         .position(|window| window == b"dOps")
         .expect("a dOps box");
-    // size(4) 'dOps'(4) version(1) channels(1) pre_skip(2 BE, ISO/IEC 14496-12 dOps)
+    // size(4) 'dOps'(4) version(1) channels(1) pre_skip(2 BE, ISO/IEC 14496-12:2026 dOps)
     bytes[at + 6..at + 8].copy_from_slice(&100u16.to_be_bytes());
     let media =
         test_harness::collect::media_from_mp4(&bytes, test_harness::collect::CollectMode::Seekable)
@@ -313,7 +313,7 @@ fn an_mp4_mp3_track_takes_its_padding_from_the_lame_tag() {
         CodecConfig::MpegAudio {
             esds,
             layer: MpegAudioLayer::LayerIII,
-            channel_count: u16::from(header.channels()),
+            channel_count: header.channels(),
             sample_rate: rate,
             sample_size: 16,
         },
