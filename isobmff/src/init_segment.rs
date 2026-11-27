@@ -3377,6 +3377,9 @@ pub enum SampleEntryVariant {
     Urim(Box<crate::meta_track::UriMetaDataSampleEntry>),
     /// Boxed metadata sample entry (`mebx`) — §12.8.4.1.
     Mebx(Box<crate::meta_track::BoxedMetaDataSampleEntry>),
+    /// Region-track sample entry (`rgan`) —
+    /// ISO/IEC 23008-12:2025 11.4.2.2.2.
+    Rgan(Box<crate::region::RegionSampleEntry>),
     /// A QuickTime-only sound sample entry (`lpcm`, `in24`, `sowt`, …).
     QuickTimeSound(Box<crate::quicktime::SoundEntry>),
     Unknown(OpaqueBox),
@@ -3478,6 +3481,7 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Dts(d) => d.serialized_len(),
             SampleEntryVariant::Tmcd(e) => e.serialized_len(),
             SampleEntryVariant::Metx(e) => e.serialized_len(),
+            SampleEntryVariant::Rgan(e) => e.serialized_len(),
             SampleEntryVariant::Text(e) => e.serialized_len(),
             SampleEntryVariant::Urim(e) => e.serialized_len(),
             SampleEntryVariant::Mebx(e) => e.serialized_len(),
@@ -3506,6 +3510,7 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Dts(d) => d.serialize_into(buf),
             SampleEntryVariant::Tmcd(e) => e.serialize_into(buf),
             SampleEntryVariant::Metx(e) => e.serialize_into(buf),
+            SampleEntryVariant::Rgan(e) => e.serialize_into(buf),
             SampleEntryVariant::Text(e) => e.serialize_into(buf),
             SampleEntryVariant::Urim(e) => e.serialize_into(buf),
             SampleEntryVariant::Mebx(e) => e.serialize_into(buf),
@@ -3590,6 +3595,9 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
         b"mebx" => SampleEntryVariant::Mebx(Box::new(
             crate::meta_track::BoxedMetaDataSampleEntry::parse_box(box_bytes)?,
         )),
+        b"rgan" => SampleEntryVariant::Rgan(Box::new(crate::region::RegionSampleEntry::parse_box(
+            box_bytes,
+        )?)),
         b"lpcm" | b"in24" | b"in32" | b"sowt" | b"twos" | b"raw " | b"fl32" | b"fl64" | b"ima4"
         | b"MAC3 " | b"MAC6 " | b"ulaw" | b"alaw" | b"NONE" => SampleEntryVariant::QuickTimeSound(
             Box::new(crate::quicktime::SoundEntry::parse(box_bytes)?),
@@ -5409,6 +5417,7 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
         | SampleEntryVariant::Text(_)
         | SampleEntryVariant::Urim(_)
         | SampleEntryVariant::Mebx(_)
+        | SampleEntryVariant::Rgan(_)
         | SampleEntryVariant::QuickTimeSound(_)
         | SampleEntryVariant::Unknown(_) => SampleEntryMediaKind::Unsupported,
     }

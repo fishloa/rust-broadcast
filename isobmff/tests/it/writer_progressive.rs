@@ -778,6 +778,21 @@ fn read_range(file: &mut std::fs::File, offset: u64, len: usize) -> Vec<u8> {
     buffer
 }
 
+/// Where a test scratch file lives: under the configured build target
+/// directory, so a run with `CARGO_TARGET_DIR` set writes there and the
+/// directory is created even when the checkout has no `target/` of its own.
+fn scratch_path(name: &str) -> std::path::PathBuf {
+    let base = match std::env::var_os("CARGO_TARGET_DIR") {
+        Some(dir) if std::path::Path::new(&dir).is_absolute() => std::path::PathBuf::from(dir),
+        Some(dir) => std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(dir),
+        None => std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target"),
+    };
+    std::fs::create_dir_all(&base).expect("create scratch dir");
+    base.join(name)
+}
+
 /// A plan whose samples total more than 4 GiB: the `mdat` needs `largesize`
 /// (§4.2) and a chunk that starts past `u32::MAX` needs the 64-bit `co64`
 /// (§8.7.5). The file is written sample by sample from one reusable buffer and
@@ -805,7 +820,7 @@ fn a_co64_layout_past_four_gigabytes_round_trips_through_the_reader() {
         Sink::Seekable,
     );
     let mut writer = new_writer(plan, &header, layout);
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../target/p2s7-co64.mp4");
+    let path = scratch_path("p2s7-co64.mp4");
     let mut file = std::fs::File::create(&path).expect("create sparse target");
     for write in writer.header() {
         file.seek(SeekFrom::Start(write.offset)).expect("seek");

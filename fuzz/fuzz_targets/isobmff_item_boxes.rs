@@ -7,6 +7,19 @@ use isobmff::item::{
     ItemInfoEntry, ItemLocationBox, ItemPropertiesBox, ItemProtectionBox, ItemReferenceBox,
     PrimaryItemBox,
 };
+use isobmff::image_derived::{ColourFormatEnhancement, ToneMapImage};
+use isobmff::image_props::{
+    AccessibilityTextProperty, AutoExposureProperty, CameraExtrinsicMatrixProperty,
+    CameraIntrinsicMatrixProperty, ConstrainedExtentsGridProperty, CreationTimeProperty,
+    DepthOfFieldProperty, DisparityAdjustmentProperty, FadeTransitionEffectProperty,
+    FlashExposureProperty, FocusProperty, ImageScaling, MaskConfigurationProperty,
+    ModificationTimeProperty, NominalDiffuseWhiteProperty, PanoramaProperty,
+    ProgressiveDerivedImageItemInformationProperty, ReferenceViewingEnvironmentProperty,
+    RequiredReferenceTypesProperty, SingleStreamProperty, SplitTransitionEffectProperty,
+    StereoAggressorsProperty, SuggestedTimeDisplayDurationProperty,
+    SuggestedTransitionPeriodProperty, TargetOutputLayerSetProperty, UserDescriptionProperty,
+    WhiteBalanceProperty, WipeTransitionEffectProperty, ZoomTransitionEffectProperty,
+};
 use isobmff::ItemType;
 use libfuzzer_sys::fuzz_target;
 
@@ -47,7 +60,48 @@ fuzz_target!(|data: &[u8]| {
         ItemType::Iovl,
         ItemType::Grid,
         ItemType::Av01,
+        ItemType::Tmap,
+        ItemType::Cfen,
+        ItemType::Rgan,
     ] {
         let _ = DerivedImage::parse(item_type, data, data.len() % 8);
+    }
+    round_trip!(ImageScaling, data);
+    round_trip!(RequiredReferenceTypesProperty, data);
+    round_trip!(CreationTimeProperty, data);
+    round_trip!(ModificationTimeProperty, data);
+    round_trip!(UserDescriptionProperty, data);
+    round_trip!(AccessibilityTextProperty, data);
+    round_trip!(AutoExposureProperty, data);
+    round_trip!(WhiteBalanceProperty, data);
+    round_trip!(FocusProperty, data);
+    round_trip!(FlashExposureProperty, data);
+    round_trip!(DepthOfFieldProperty, data);
+    round_trip!(PanoramaProperty, data);
+    round_trip!(TargetOutputLayerSetProperty, data);
+    round_trip!(WipeTransitionEffectProperty, data);
+    round_trip!(ZoomTransitionEffectProperty, data);
+    round_trip!(FadeTransitionEffectProperty, data);
+    round_trip!(SplitTransitionEffectProperty, data);
+    round_trip!(SuggestedTransitionPeriodProperty, data);
+    round_trip!(SuggestedTimeDisplayDurationProperty, data);
+    round_trip!(ProgressiveDerivedImageItemInformationProperty, data);
+    round_trip!(SingleStreamProperty, data);
+    round_trip!(CameraExtrinsicMatrixProperty, data);
+    round_trip!(CameraIntrinsicMatrixProperty, data);
+    round_trip!(ConstrainedExtentsGridProperty, data);
+    round_trip!(DisparityAdjustmentProperty, data);
+    round_trip!(StereoAggressorsProperty, data);
+    round_trip!(ReferenceViewingEnvironmentProperty, data);
+    round_trip!(NominalDiffuseWhiteProperty, data);
+    round_trip!(MaskConfigurationProperty, data);
+    round_trip!(ToneMapImage, data);
+    let _ = ColourFormatEnhancement::parse_with_reference_count(data, data.len() % 8);
+    let _ = isobmff::region::RegionItem::parse(data);
+    let _ = isobmff::integrity::IntegrityItem::parse(data);
+    round_trip!(isobmff::image_sequence::CodingConstraintsBox, data);
+    round_trip!(isobmff::image_sequence::AuxiliaryTypeInfoBox, data);
+    if let Ok(group) = EntityToGroupBox::parse(data) {
+        let _ = group.image_body();
     }
 });

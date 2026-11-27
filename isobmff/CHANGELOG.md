@@ -9,6 +9,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Gain map metadata typed (Amd 1 6.6.2.4.2).** `image` gains
+  `GainMapMetadata` with its `GainMapChannel`, `SignedRational` and
+  `UnsignedRational` values and the `GainMapField` names, read and written
+  byte-exactly. The layout is the one libavif, CrabbyAvif, Skia and libultrahdr
+  agree on; a body with a `minimum_version` above 0, a reserved flag bit set or
+  trailing bytes stays the opaque payload it was and round-trips.
+  `ToneMapImage::with_metadata` builds a `tmap` body from the typed value, and
+  a zero denominator is reported as `ImageFinding::GainMapZeroDenominator`
+  rather than refusing the read. Three real fixtures written by
+  `avifgainmaputil` 1.4.2 (multichannel, single-channel and swapped base)
+  cover it.
+
+- **Image-sequence and region sample group entries typed (Amd 1).** `sgpd`
+  now dispatches `eqiv`, the five bracketing entries (`aebr`, `wbbr`, `fobr`,
+  `afbr`, `dobr`), `pano`, and the `refs`, `regm` and `udes` entries to typed
+  `SgpdEntry` variants that read and write byte-exactly; the `rgan`
+  region-track sample entry joins the movie reader's typed sample-entry
+  dispatch as `SampleEntryVariant::Rgan`.
+
+- **Still images brought to the current HEIF edition (issue #4167).** The item
+  layer now reads and writes ISO/IEC 23008-12:2025 (third edition) with
+  Amendment 1 applied, not only the 2017 subset. New modules `image_props`
+  (every clause 6.5 property added since 2017: `iscl`, `rref`, `crtt`, `mdft`,
+  `udes`, `altt`, the capture-information set `aebr`/`wbbr`/`fobr`/`afbr`/
+  `dobr`/`pano`, `tols`, `wipe`/`zoom`/`fade`/`splt`, `stpe`, `ssld`, `prdi`,
+  `sstr`, `cmex`, `cmin`, and Amendment 1's `cexg`, `dadj`, `stag`, `reve`,
+  `ndwt` and the `mskC` mask configuration), `image_derived` (`tmap` tone-map
+  derivation with its ISO 21496-1 metadata typed, and `cfen` colour format
+  enhancement), `image_groups` (typed `pymd` tile data and `rgpa` areas),
+  `image_brands` (clause 10 typed brands, reader-property union and
+  structurally checkable findings), `image_sequence` (`ccst`, `auxi`, the
+  `refs` sample group), `region` (`RegionGeometry` for every geometry at both
+  field widths, `RegionItem`, region-track configuration/sample, the `regm`
+  and `udes` sample groups) and `integrity` (`md5i` and the `mint` item body).
+  `ItemProperty` gains all of them plus the reused `subs`; `DerivedImage` gains
+  `ToneMap`/`ColourFormatEnhancement`; `ItemType` gains `Tmap`, `Cfen`, `Mski`
+  and `Rgan`; `ReferenceType` gains `pred`, `prem`, `dpnd`, `mask`, `eroi`,
+  `drgn`, `rpds` and `anot`; `EntityGroupType` gains the clause 6.8 set and
+  `ImageGroupBody` types the `pymd`/`rgpa` bodies. `StillImage` reports typed
+  brand and structure findings and exposes a tone map's base/gain-map pair and
+  metadata, a stereo pair, a group's entities, an image's region items and an
+  item's capture information; `Item` carries typed region and integrity bodies;
+  `ItemWriter` can add derived, region and integrity items whole;
+  `TrackInfo::is_image_sequence`, `coding_constraints` and
+  `auxiliary_type_info` surface clause 7. The per-clause coverage table, the
+  2017-vs-2025 re-check and the OPEN list live in the private repo at
+  `private/specs-verified/mpeg/heif/isobmff-coverage-2025.md`.
+
+- Four new still-image fixtures (`heif/props.heic`, `heif/tiled.heic`,
+  `heif/premult.heic`, `heif/groups.mp4`) written by `heif-enc`/`MP4Box` and a
+  twelfth example, `heif_2025`.
+
+### Breaking
+
+- **`StillImage::tone_map_inputs` returns `ToneMapInputs`**: the base and gain
+  map items plus the typed gain map metadata when the body carries the modelled
+  layout. Callers that destructured the old pair use `ToneMapInputs::base` and
+  `ToneMapInputs::gain_map`.
+
+### Fixed
+
+- An `md5i` integrity box whose body ends right after an `sgpd` `input_4cc`
+  indexed past the body and panicked; the missing grouping type is now the
+  typed buffer error it should be. Found by the `isobmff_item_boxes` fuzz
+  target, with its artifact as the regression case.
+
+- The still-image reader resolved an item stored in `idat` (`construction_method`
+  1) to the wrong absolute offset whenever `idat` was not the `meta` box's first
+  child. The offset now accumulates the bytes consumed by preceding children,
+  so a real tiled HEIC's `grid` body is read from its own `idat` range.
+
+### Added
+
 - **Tier 3 and tier 4 box types: metadata tracks, file-level extras, schemes
   and the newer audio and colour signalling (issue #4167).** New modules
   `meta_track` (ISO/IEC 14496-12:2026 §12.3.3, §12.5.3, §12.8.4, §8.10.2,

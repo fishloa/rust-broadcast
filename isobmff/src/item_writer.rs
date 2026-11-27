@@ -14,7 +14,7 @@
 //! tool's layout.
 //!
 //! Sources: `private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`
-//! §8.11 and `private/specs-verified/mpeg/heif/iso-iec-23008-12-2017.md` 6.2.
+//! §8.11 and `private/specs-verified/mpeg/heif/iso-iec-23008-12-2025.md` 6.2.
 
 use alloc::vec::Vec;
 
@@ -125,6 +125,33 @@ impl ItemWriter {
             .get(start..start.saturating_add(len))
             .ok_or(Error::InvalidInput("item data range outside the source"))?;
         Ok(self.add_item(info, bytes.to_vec()))
+    }
+
+    /// Add a derived image item, writing its typed body.
+    pub fn add_derived_item(
+        &mut self,
+        info: ItemInfoEntry,
+        body: &crate::image::DerivedImage,
+    ) -> Result<ItemId> {
+        Ok(self.add_item(info, body.to_bytes()?))
+    }
+
+    /// Add a region item, writing its typed body.
+    pub fn add_region_item(
+        &mut self,
+        info: ItemInfoEntry,
+        body: &crate::region::RegionItem,
+    ) -> Result<ItemId> {
+        Ok(self.add_item(info, body.to_bytes()?))
+    }
+
+    /// Add a data-integrity item, writing its typed body.
+    pub fn add_integrity_item(
+        &mut self,
+        info: ItemInfoEntry,
+        body: &crate::integrity::IntegrityItem,
+    ) -> Result<ItemId> {
+        Ok(self.add_item(info, body.to_bytes()?))
     }
 
     /// Associate a property with an item (in call order), marking it
@@ -404,5 +431,8 @@ fn property_is_essential(property: &ItemProperty) -> bool {
             | ItemProperty::A1op(_)
             | ItemProperty::Lsel(_)
             | ItemProperty::AuxC(_)
+            | ItemProperty::Rref(_)
+            | ItemProperty::Tols(_)
+            | ItemProperty::MskC(_)
     )
 }

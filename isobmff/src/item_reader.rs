@@ -25,8 +25,10 @@
 //! `ipma` index past its container is [`Error::PropertyIndexOutOfRange`].
 //!
 //! Sources: `private/specs-verified/mpeg/isobmff/iso-iec-14496-12-2026.md`
-//! §8.11 and §8.15; `private/specs-verified/mpeg/heif/iso-iec-23008-12-2017.md`
-//! 6.3-6.7; `private/specs/aom_av1_avif_image_file_format.html` (AVIF v1.2.0).
+//! §8.11 and §8.15; `private/specs-verified/mpeg/heif/iso-iec-23008-12-2025.md`
+//! 6.3-6.8, 8.2 and 11; `private/specs-verified/mpeg/heif/iso-iec-23008-12-2025-amd1-2025.md`
+//! 6.6.2.4-6.6.2.5 and 11.3.4; `private/specs/aom_av1_avif_image_file_format.html`
+//! (AVIF v1.2.0).
 
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
@@ -41,15 +43,27 @@ use crate::box_types::{
 };
 use crate::error::{Error, Result};
 use crate::image::{DerivedImage, ImageMirror, ImageRotation, ItemProperty, is_still_image_brand};
+use crate::image_brands::{BrandFinding, ImageBrands, ImageFinding};
+use crate::integrity::IntegrityItem;
 use crate::item::{
-    GroupsListBox, ItemDataBox, ItemId, ItemInfoBox, ItemInfoEntry, ItemLocationBox,
-    ItemPropertiesBox, ItemReferenceBox, ItemType, PrimaryItemBox, PropertyIndex, ReferenceType,
+    EntityGroupType, GroupId, GroupsListBox, ItemDataBox, ItemId, ItemInfoBox, ItemInfoEntry,
+    ItemLocationBox, ItemPropertiesBox, ItemReferenceBox, ItemType, PrimaryItemBox, PropertyIndex,
+    ReferenceType,
 };
 use crate::limits::Limits;
 use crate::metadata::Hdlr;
 use crate::reader::ByteRange;
+use crate::region::RegionItem;
 use crate::segments::FileTypeBox;
 
+/// Entities a `ster` group carries (6.8.5).
+const STEREO_ENTITY_COUNT: usize = 2;
+/// Entities a `stem` group carries (Amd 1 6.8.11).
+const STEREO_FALLBACK_ENTITY_COUNT: usize = 3;
+/// Entities an `iaug` group carries (6.8.4).
+const AUDIO_IMAGE_ENTITY_COUNT: usize = 2;
+/// Inputs a `tmap` item carries (Amd 1 6.6.2.4.1).
+const TONE_MAP_INPUT_COUNT: usize = 2;
 /// Bytes of the `size` + `type` box header a read starts with.
 const TOP_HEADER_LEN: usize = BOX_HEADER_MIN_SIZE;
 /// Offset of the `size` field (ISO/IEC 14496-12:2026 §4.2).
@@ -68,9 +82,9 @@ pub const HDLR: [u8; BOX_TYPE_SIZE] = *b"hdlr";
 pub const IDAT: [u8; BOX_TYPE_SIZE] = *b"idat";
 /// Four-CC of the Groups List Box (§8.15.2).
 pub const GRPL: [u8; BOX_TYPE_SIZE] = *b"grpl";
-/// The `pict` handler type ISO/IEC 23008-12:2017 6.2 requires.
+/// The `pict` handler type ISO/IEC 23008-12:2025 6.2 requires.
 pub const PICT_HANDLER: [u8; BOX_TYPE_SIZE] = *b"pict";
-/// The XMP MIME type ISO/IEC 23008-12:2017 A.3 requires.
+/// The XMP MIME type ISO/IEC 23008-12:2025 A.3 requires.
 pub const XMP_CONTENT_TYPE: &[u8] = b"application/rdf+xml";
 /// One past the last byte of a range.
 fn end(offset: u64, length: u64) -> u64 {
@@ -366,6 +380,37 @@ impl ItemReferenceIn {
     }
 }
 
+/// The two inputs of a tone-map (`tmap`) item and its gain map metadata
+/// (Amd 1 6.6.2.4.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ToneMapInputs<'a> {
+    base: &'a Item,
+    gain_map: &'a Item,
+    metadata: Option<&'a crate::image::GainMapMetadata>,
+}
+
+impl<'a> ToneMapInputs<'a> {
+    /// The base image, the first `dimg` input.
+    #[must_use]
+    pub const fn base(&self) -> &'a Item {
+        self.base
+    }
+
+    /// The gain map image, the second `dimg` input.
+    #[must_use]
+    pub const fn gain_map(&self) -> &'a Item {
+        self.gain_map
+    }
+
+    /// The typed gain map metadata, when the item's body is the layout this
+    /// crate models; any other body stays opaque.
+    #[must_use]
+    pub const fn gain_map_metadata(&self) -> Option<&'a crate::image::GainMapMetadata> {
+        self.metadata
+    }
+}
+
 /// One item of a [`StillImage`]: its declared facts and its resolved data.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -384,6 +429,8 @@ pub struct Item {
     data: Vec<ByteRange>,
     location: Option<crate::item::ItemLocationEntry>,
     derived: Option<DerivedImage>,
+    region: Option<RegionItem>,
+    integrity: Option<IntegrityItem>,
 }
 
 impl Item {
@@ -471,6 +518,26 @@ impl Item {
     #[must_use]
     pub fn derived(&self) -> Option<&DerivedImage> {
         self.derived.as_ref()
+    }
+
+    /// The typed region item body, for an `rgan` item the reader fetched.
+    #[must_use]
+    pub fn region(&self) -> Option<&RegionItem> {
+        self.region.as_ref()
+    }
+
+    /// The typed data-integrity body, for a `mint` item the reader fetched.
+    #[must_use]
+    pub fn integrity(&self) -> Option<&IntegrityItem> {
+        self.integrity.as_ref()
+    }
+
+    /// The item's property whose four-CC is `fourcc`, when associated.
+    #[must_use]
+    pub fn associated_property(&self, fourcc: [u8; BOX_TYPE_SIZE]) -> Option<&AssociatedProperty> {
+        self.properties
+            .iter()
+            .find(|associated| associated.property().fourcc() == fourcc)
     }
 
     /// The total data length.
@@ -571,14 +638,14 @@ impl StillImage {
         self.handler_type
     }
 
-    /// Whether the file-level handler is `pict` (ISO/IEC 23008-12:2017 6.2).
+    /// Whether the file-level handler is `pict` (ISO/IEC 23008-12:2025 6.2).
     #[must_use]
     pub fn is_picture_handler(&self) -> bool {
         self.handler_type == Some(PICT_HANDLER)
     }
 
     /// The width and height of an item's reconstructed image, from its `ispe`
-    /// property (ISO/IEC 23008-12:2017 6.5.3).
+    /// property (ISO/IEC 23008-12:2025 6.5.3).
     #[must_use]
     pub fn image_size(&self, id: ItemId) -> Option<(u32, u32)> {
         self.item(id)?
@@ -660,7 +727,7 @@ impl StillImage {
     }
 
     /// A grid item's tiles, in row-major `dimg` order
-    /// (ISO/IEC 23008-12:2017 6.6.2.3).
+    /// (ISO/IEC 23008-12:2025 6.6.2.3).
     #[must_use]
     pub fn grid_tiles(&self, grid: ItemId) -> Vec<&Item> {
         match self.item(grid).and_then(Item::derived) {
@@ -670,7 +737,7 @@ impl StillImage {
     }
 
     /// An overlay item's layers with their offsets, bottom-most first
-    /// (ISO/IEC 23008-12:2017 6.6.2.2).
+    /// (ISO/IEC 23008-12:2025 6.6.2.2).
     #[must_use]
     pub fn overlay_layers(&self, overlay: ItemId) -> Vec<(&Item, (i32, i32))> {
         let Some(DerivedImage::Overlay(image_overlay)) = self.item(overlay).and_then(Item::derived)
@@ -707,6 +774,254 @@ impl StillImage {
             .filter(|item| {
                 item.item_type == ItemType::Mime
                     && item.content_type.as_deref() == Some(XMP_CONTENT_TYPE)
+            })
+            .collect()
+    }
+
+    /// The file's brands as a typed view, when the file carries an `ftyp`.
+    #[must_use]
+    pub fn image_brands(&self) -> Option<ImageBrands> {
+        self.brands
+            .as_ref()
+            .map(|brands| ImageBrands::new(brands.major_brand, brands.compatible_brands.clone()))
+    }
+
+    /// The brand-set findings, including the `tmap` brand's item requirement
+    /// (Amd 1 10.2.6).
+    #[must_use]
+    pub fn brand_findings(&self) -> Vec<BrandFinding> {
+        let Some(brands) = self.image_brands() else {
+            return Vec::new();
+        };
+        let mut findings = brands.findings();
+        if brands.has(crate::image_brands::BRAND_TMAP)
+            && !self
+                .items
+                .iter()
+                .any(|item| item.item_type == ItemType::Tmap)
+        {
+            findings.push(BrandFinding::TmapWithoutToneMapItem);
+        }
+        findings
+    }
+
+    /// The structurally checkable item-layer requirements of clauses 6.8 and
+    /// 11, reported without refusing the read.
+    #[must_use]
+    pub fn structure_findings(&self) -> Vec<ImageFinding> {
+        let mut findings = Vec::new();
+        for group in self.groups.groups() {
+            let group_id = group.group_id();
+            if group.grouping_type() == EntityGroupType::Ster
+                && group.entity_ids().len() != STEREO_ENTITY_COUNT
+            {
+                findings.push(ImageFinding::StereoGroupWrongEntityCount {
+                    group: group_id,
+                    count: group.entity_ids().len(),
+                });
+            }
+            if group.grouping_type() == EntityGroupType::Stem
+                && group.entity_ids().len() != STEREO_FALLBACK_ENTITY_COUNT
+            {
+                findings.push(ImageFinding::StereoFallbackGroupWrongEntityCount {
+                    group: group_id,
+                    count: group.entity_ids().len(),
+                });
+            }
+            if group.grouping_type() == EntityGroupType::Iaug
+                && group.entity_ids().len() != AUDIO_IMAGE_ENTITY_COUNT
+            {
+                findings.push(ImageFinding::AudioImageGroupWrongEntityCount {
+                    group: group_id,
+                    count: group.entity_ids().len(),
+                });
+            }
+            for entity in group.entity_ids() {
+                if self.item(ItemId::new(*entity)).is_none()
+                    && self
+                        .groups
+                        .groups()
+                        .iter()
+                        .all(|other| other.group_id().get() != *entity)
+                {
+                    findings.push(ImageFinding::GroupNamesMissingEntity {
+                        group: group_id,
+                        entity: *entity,
+                    });
+                }
+            }
+        }
+        for item in &self.items {
+            if item.item_type == ItemType::Tmap {
+                let count = item
+                    .references_out
+                    .iter()
+                    .filter(|reference| reference.reference_type == ReferenceType::Dimg)
+                    .count();
+                if count != TONE_MAP_INPUT_COUNT {
+                    findings.push(ImageFinding::ToneMapWrongInputCount {
+                        item: item.id,
+                        count,
+                    });
+                }
+                if let Some(DerivedImage::ToneMap(tone_map)) = item.derived()
+                    && let Some(metadata) = tone_map.gain_map_metadata_typed()
+                {
+                    for (channel, field) in metadata.zero_denominators() {
+                        findings.push(ImageFinding::GainMapZeroDenominator {
+                            item: item.id,
+                            channel,
+                            field,
+                        });
+                    }
+                }
+            }
+            if item.item_type == ItemType::Rgan {
+                for reference in &item.references_out {
+                    if reference.reference_type == ReferenceType::Cdsc
+                        && !self.is_declared_image(reference.to)
+                    {
+                        findings.push(ImageFinding::RegionNamesMissingImage {
+                            item: item.id,
+                            target: reference.to,
+                        });
+                    }
+                }
+                if let Some(region) = item.region() {
+                    let regions = region
+                        .regions()
+                        .iter()
+                        .filter(|geometry| {
+                            geometry.geometry_type() == crate::region::GEOMETRY_REFERENCED_MASK
+                        })
+                        .count();
+                    let references = item
+                        .references_out
+                        .iter()
+                        .filter(|reference| reference.reference_type == ReferenceType::Mask)
+                        .count();
+                    if regions != references {
+                        findings.push(ImageFinding::RegionMaskReferenceCount {
+                            item: item.id,
+                            regions,
+                            references,
+                        });
+                    }
+                }
+            }
+        }
+        findings
+    }
+
+    /// Whether `id` names an item the file's `iinf` declared with a real item
+    /// type (a reference target can synthesize an untermed placeholder).
+    fn is_declared_image(&self, id: ItemId) -> bool {
+        self.item(id)
+            .is_some_and(|item| item.item_type() != ItemType::Other([0; BOX_TYPE_SIZE]))
+    }
+
+    /// The base and gain-map inputs of a `tmap` item, in `dimg` order, with
+    /// the typed gain map metadata when the item's body carries the layout
+    /// this crate models.
+    #[must_use]
+    pub fn tone_map_inputs(&self, tmap: ItemId) -> Option<ToneMapInputs<'_>> {
+        let item = self.item(tmap)?;
+        if item.item_type() != ItemType::Tmap {
+            return None;
+        }
+        let mut inputs = item
+            .references_out
+            .iter()
+            .filter(|reference| reference.reference_type == ReferenceType::Dimg)
+            .filter_map(|reference| self.item(reference.to));
+        let base = inputs.next()?;
+        let gain_map = inputs.next()?;
+        if inputs.next().is_some() {
+            return None;
+        }
+        let metadata = match item.derived() {
+            Some(DerivedImage::ToneMap(tone_map)) => tone_map.gain_map_metadata_typed(),
+            _ => None,
+        };
+        Some(ToneMapInputs {
+            base,
+            gain_map,
+            metadata,
+        })
+    }
+
+    /// The two image items of an entity group, when it names exactly two that
+    /// exist.
+    #[must_use]
+    pub fn group_items(&self, group: GroupId) -> Vec<&Item> {
+        self.groups
+            .groups()
+            .iter()
+            .find(|entry| entry.group_id() == group)
+            .map(|entry| {
+                entry
+                    .entity_ids()
+                    .iter()
+                    .filter_map(|entity| self.item(ItemId::new(*entity)))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The left and right views of a stereo pair (`ster`, 6.8.5).
+    #[must_use]
+    pub fn stereo_pair(&self, group: GroupId) -> Option<(&Item, &Item)> {
+        let entry = self.groups.groups().iter().find(|entry| {
+            entry.group_id() == group && entry.grouping_type() == EntityGroupType::Ster
+        })?;
+        let mut entities = entry.entity_ids().iter();
+        let left = self.item(ItemId::new(*entities.next()?))?;
+        let right = self.item(ItemId::new(*entities.next()?))?;
+        if entities.next().is_some() {
+            return None;
+        }
+        Some((left, right))
+    }
+
+    /// The image items of an entity group (pyramid levels, a bracketing set, a
+    /// slideshow, ...) in the group's own order.
+    #[must_use]
+    pub fn group_entities(&self, group: GroupId) -> Vec<&Item> {
+        self.group_items(group)
+    }
+
+    /// The region items that describe `image` through a `cdsc` reference.
+    #[must_use]
+    pub fn regions_of(&self, image: ItemId) -> Vec<&Item> {
+        self.items
+            .iter()
+            .filter(|item| {
+                item.item_type == ItemType::Rgan
+                    && item.references_out.iter().any(|reference| {
+                        reference.reference_type == ReferenceType::Cdsc && reference.to == image
+                    })
+            })
+            .collect()
+    }
+
+    /// The capture-information properties associated with `item` (6.5.22-6.5.27).
+    #[must_use]
+    pub fn capture_info(&self, item: ItemId) -> Vec<&AssociatedProperty> {
+        let Some(item) = self.item(item) else {
+            return Vec::new();
+        };
+        item.properties
+            .iter()
+            .filter(|associated| {
+                matches!(
+                    associated.property().fourcc(),
+                    crate::image_props::AEBR
+                        | crate::image_props::WBBR
+                        | crate::image_props::FOBR
+                        | crate::image_props::AFBR
+                        | crate::image_props::DOBR
+                        | crate::image_props::PANO
+                )
             })
             .collect()
     }
@@ -946,6 +1261,8 @@ fn item_from_entry(
         data: Vec::new(),
         location: iloc.item(entry.item_id()).cloned(),
         derived: None,
+        region: None,
+        integrity: None,
     }
 }
 
@@ -967,6 +1284,8 @@ fn ensure_item(items: &mut Vec<Item>, id: ItemId, iloc: &ItemLocationBox) {
         data: Vec::new(),
         location: iloc.item(id).cloned(),
         derived: None,
+        region: None,
+        integrity: None,
     });
 }
 
@@ -1533,7 +1852,7 @@ impl ItemReader {
             &self.config.limits,
         )?;
         for (index, item) in image.items.iter().enumerate() {
-            if item.derived().is_none() && item.item_type().is_derived_image() {
+            if item_needs_body(item) {
                 self.derived_queue.push_back(index);
             }
         }
@@ -1599,9 +1918,19 @@ impl ItemReader {
             .iter()
             .filter(|reference| reference.reference_type == ReferenceType::Dimg)
             .count();
-        item.derived = Some(DerivedImage::parse(item.item_type, body, reference_count)?);
+        match item.item_type {
+            ItemType::Rgan => item.region = Some(RegionItem::parse(body)?),
+            ItemType::Mint => item.integrity = Some(IntegrityItem::parse(body)?),
+            _ => item.derived = Some(DerivedImage::parse(item.item_type, body, reference_count)?),
+        }
         Ok(())
     }
+}
+
+fn item_needs_body(item: &Item) -> bool {
+    item.derived().is_none()
+        && (item.item_type().is_derived_image()
+            || matches!(item.item_type(), ItemType::Rgan | ItemType::Mint))
 }
 
 fn fourcc_of(prefix: &[u8]) -> [u8; BOX_TYPE_SIZE] {
@@ -1629,6 +1958,7 @@ fn parse_meta(body: &[u8], payload_abs: u64) -> Result<(MetaRecord, Option<(u64,
     let mut idat = None;
     let mut rest = &body[FULLBOX_EXTRA_SIZE..];
     let children_start = payload_abs.saturating_add(FULLBOX_EXTRA_SIZE as u64);
+    let mut consumed_total = 0usize;
     while !rest.is_empty() {
         if rest.len() < BOX_HEADER_MIN_SIZE {
             return Err(Error::BufferTooShort(
@@ -1640,7 +1970,9 @@ fn parse_meta(body: &[u8], payload_abs: u64) -> Result<(MetaRecord, Option<(u64,
             ));
         }
         let (child, used) = parse_box(rest)?;
-        let absolute = children_start.saturating_add(child.start as u64);
+        let absolute = children_start
+            .saturating_add(consumed_total as u64)
+            .saturating_add(child.start as u64);
         let fourcc = child.four_cc();
         let parsed = match &fourcc {
             b"hdlr" => MetaChild::Hdlr(Hdlr::parse_box(child.bytes)?),
@@ -1668,6 +2000,7 @@ fn parse_meta(body: &[u8], payload_abs: u64) -> Result<(MetaRecord, Option<(u64,
         };
         children.push(parsed);
         rest = &rest[used..];
+        consumed_total = consumed_total.saturating_add(used);
     }
     Ok((
         MetaRecord {

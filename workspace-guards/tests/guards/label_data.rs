@@ -2027,6 +2027,14 @@ pub const TABLE: &[Crate] = &[
             "ItemStep",
             "ReemitOp",
             "MetaChild",
+            // The 2025 still-image additions: a data-carrying ADT over a
+            // quaternion or an opaque rotation struct, the region geometry
+            // variants, the typed group bodies and the integrity box variants
+            // are structured values, not flat spec/field codes.
+            "CameraOrientation",
+            "RegionGeometry",
+            "ImageGroupBody",
+            "IntegrityBox",
         ],
         expected: None,
         min_enums: None,
