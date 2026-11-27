@@ -642,28 +642,13 @@ mod tests {
         }
     }
 
-    /// Biting test for issue #957's headline defect: a wrong password
-    /// (`MultimuxError::Auth` on every attempt, verified against a real Axis
-    /// camera as `Failed(Auth { reason: "DESCRIBE: Unauthorized" })`) must
-    /// stop retrying after `MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT + 1` attempts
-    /// and mark the route `Failed`, rather than retrying forever — the task
-    /// itself must end with NO shutdown signal ever sent.
-    ///
-    /// MUTATION VERIFIED: removing the permanence block (`if let Err(e) =
-    /// &result && ... return;`) so the loop falls straight through to
-    /// the unconditional backoff+retry, i.e. the pre-fix behaviour) makes
-    /// this test fail: the `tokio::time::timeout(..., handle)` on the join
-    /// elapses (`Elapsed`) because the loop keeps retrying forever exactly
-    /// as issue #957 reports, rather than the task ending on its own.
-    /// Recompiled and re-ran to confirm that exact timeout, then restored
-    /// the permanence block.
-    /// A route whose `damage_policy` fails on a report ends *that input's*
-    /// run (the source returns an error), and the supervisor restarts it just
-    /// as it restarts any failed input — the route goes back to `Live` when a
-    /// later attempt succeeds. Nothing else on the origin is touched: the
-    /// supervisor owns one route.
+    /// A route whose input run ends in a failure — the end a route's
+    /// `damage_policy` gives an input at a refused report, proven end to end
+    /// in `tests/it/damage_policy.rs` — is restarted by the supervisor, and
+    /// the route goes back to `Live` when a later attempt succeeds. The
+    /// supervisor owns one route, so nothing else on the origin is touched.
     #[tokio::test]
-    async fn an_input_whose_run_ends_at_a_report_is_restarted() {
+    async fn an_input_whose_run_ends_at_a_failure_is_restarted() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration(Duration::from_secs(1))
@@ -676,9 +661,8 @@ mod tests {
             let n = attempts.fetch_add(1, Ordering::SeqCst);
             Box::pin(async move {
                 if n == 0 {
-                    // The first run is the one the route's `Fail` policy ends
-                    // at a report: the source returns Err, exactly as an error
-                    // from its run does.
+                    // The first run ends in a failure, as a refused report
+                    // ends a route's input run.
                     handle.set_health(HealthState::Live);
                     return Err(MultimuxError::Connect {
                         reason: "damage policy refused".to_string(),
@@ -707,6 +691,21 @@ mod tests {
         let _ = tokio::time::timeout(Duration::from_secs(5), handle).await;
     }
 
+    /// Biting test for issue #957's headline defect: a wrong password
+    /// (`MultimuxError::Auth` on every attempt, verified against a real Axis
+    /// camera as `Failed(Auth { reason: "DESCRIBE: Unauthorized" })`) must
+    /// stop retrying after `MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT + 1` attempts
+    /// and mark the route `Failed`, rather than retrying forever — the task
+    /// itself must end with NO shutdown signal ever sent.
+    ///
+    /// MUTATION VERIFIED: removing the permanence block (`if let Err(e) =
+    /// &result && ... return;`) so the loop falls straight through to
+    /// the unconditional backoff+retry, i.e. the pre-fix behaviour) makes
+    /// this test fail: the `tokio::time::timeout(..., handle)` on the join
+    /// elapses (`Elapsed`) because the loop keeps retrying forever exactly
+    /// as issue #957 reports, rather than the task ending on its own.
+    /// Recompiled and re-ran to confirm that exact timeout, then restored
+    /// the permanence block.
     #[tokio::test]
     async fn a_wrong_password_stops_retrying_after_the_bound_and_marks_the_route_failed() {
         let route = Arc::new(RouteHandle::new(

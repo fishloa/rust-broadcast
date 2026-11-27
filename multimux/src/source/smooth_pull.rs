@@ -589,6 +589,85 @@ mod tests {
         server.abort();
     }
 
+    /// The `smooth_pull` input kind's reader damage reaches the route's
+    /// damage metric: a stream the session cannot play is dropped and
+    /// reported, and the route renders the report labelled with the kind an
+    /// operator configured while the rest of the static manifest still plays.
+    #[tokio::test]
+    async fn a_dropped_stream_reaches_the_route_damage_metric() {
+        const ROUTE: &str = "smooth-pull-damage-probe";
+        const KIND: &str = "smooth_pull";
+        const DAMAGE_CEILING: Duration = Duration::from_secs(60);
+        crate::prometheus::install();
+        let (media, out, manifest_text) = build_smooth_output();
+        let video_id = video_track_id(&media);
+        let audio_id = audio_track_id(&media);
+        // A stream type the client does not play is passed over and reported;
+        // it is a manifest the reader can only partly interpret.
+        let manifest_text = manifest_text.replacen("Type=\"audio\"", "Type=\"text\"", 1);
+        let mut fragments = HashMap::new();
+        for frag in &out {
+            let kind = if frag.summary.track == TrackId::new(video_id.value()) {
+                "video"
+            } else if frag.summary.track == TrackId::new(audio_id.value()) {
+                "audio"
+            } else {
+                continue;
+            };
+            fragments.insert((kind.to_string(), frag.summary.start), frag.bytes.to_vec());
+        }
+        let state = FixtureState {
+            manifest: Arc::new(manifest_text),
+            fragments: Arc::new(fragments),
+            stall: None,
+            throttle_once: None,
+            throttled: Arc::default(),
+            fragment_hits: FragmentHits::default(),
+        };
+        let app = Router::new()
+            .route("/{*path}", get(fixture_handler))
+            .with_state(state);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral loopback port");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("axum server");
+        });
+        let route = SmoothPullRoute::new(ROUTE, format!("http://{addr}/Manifest"));
+        let route_handle = std::sync::Arc::new(
+            crate::route::RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration(std::time::Duration::from_secs(4))
+                    .with_part_target(std::time::Duration::from_millis(500))
+                    .with_window_segments(4),
+            )
+            .with_name(ROUTE)
+            .with_input_kind(KIND),
+        );
+        let _ = tokio::time::timeout(
+            DAMAGE_CEILING,
+            run_smooth_pull(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
+        )
+        .await
+        .expect("run_smooth_pull must not hang");
+        server.abort();
+        let line = crate::testutil::rendered_line(
+            "multimux_source_damage_total",
+            &[("route", ROUTE), ("source", KIND)],
+        );
+        assert!(
+            line.is_some(),
+            "a stream the session cannot play must reach the route's damage metric"
+        );
+    }
+
     #[tokio::test]
     async fn run_smooth_pull_honours_retry_after_on_a_503() {
         let (media, out, _manifest_text) = build_smooth_output();

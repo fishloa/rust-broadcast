@@ -6,6 +6,7 @@ mod catchup_e2e;
 mod client_host_concurrent;
 mod closed_captions;
 mod cold_playlist_hold;
+mod damage_policy;
 mod dash_pull_route;
 mod dash_sliding_window;
 mod dashif_ingest_bounds;
