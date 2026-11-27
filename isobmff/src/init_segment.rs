@@ -3445,6 +3445,9 @@ pub enum SampleEntryVariant {
     Rgan(Box<crate::region::RegionSampleEntry>),
     /// A QuickTime-only sound sample entry (`lpcm`, `in24`, `sowt`, …).
     QuickTimeSound(Box<crate::quicktime::SoundEntry>),
+    /// An RTP/SRTP/RTCP, MPEG-2 TS or FD hint sample entry (§9.1.2, §9.2.3,
+    /// §9.3.3, §9.4.1–9.4.4).
+    Hint(Box<crate::hint::HintSampleEntry>),
     Unknown(OpaqueBox),
 }
 
@@ -3549,6 +3552,7 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Urim(e) => e.serialized_len(),
             SampleEntryVariant::Mebx(e) => e.serialized_len(),
             SampleEntryVariant::QuickTimeSound(e) => e.serialized_len(),
+            SampleEntryVariant::Hint(e) => e.serialized_len(),
             SampleEntryVariant::Unknown(u) => u.serialized_len(),
         }
     }
@@ -3578,6 +3582,7 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::Urim(e) => e.serialize_into(buf),
             SampleEntryVariant::Mebx(e) => e.serialize_into(buf),
             SampleEntryVariant::QuickTimeSound(e) => e.serialize_into(buf),
+            SampleEntryVariant::Hint(e) => e.serialize_into(buf),
             SampleEntryVariant::Unknown(u) => Ok(u.serialize_into(buf)?),
         }
     }
@@ -3693,6 +3698,10 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
         | b"MAC3 " | b"MAC6 " | b"ulaw" | b"alaw" | b"NONE" => SampleEntryVariant::QuickTimeSound(
             Box::new(crate::quicktime::SoundEntry::parse(box_bytes)?),
         ),
+        b"rtp " | b"srtp" | b"rrtp" | b"rsrp" | b"rtcp" | b"stcp" | b"prtp" | b"rm2t" | b"sm2t"
+        | b"pm2t" | b"fdp " => SampleEntryVariant::Hint(Box::new(
+            crate::hint::HintSampleEntry::parse_box(box_bytes)?,
+        )),
         _ => {
             let mut c4 = [0u8; BOX_TYPE_SIZE];
             c4.copy_from_slice(&codec[..BOX_TYPE_SIZE.min(codec.len())]);
@@ -5511,6 +5520,7 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
         | SampleEntryVariant::Mebx(_)
         | SampleEntryVariant::Rgan(_)
         | SampleEntryVariant::QuickTimeSound(_)
+        | SampleEntryVariant::Hint(_)
         | SampleEntryVariant::Unknown(_) => SampleEntryMediaKind::Unsupported,
     }
 }

@@ -23,12 +23,7 @@ const UNTYPED_TIER_3: &[&str] = &[];
 const UNTYPED_TIER_4: &[&str] = &[];
 
 /// Tier 5: legacy delivery and hint tracks (lowest value).
-const UNTYPED_TIER_5: &[&str] = &[
-    "btrt", "dimm", "dmax", "dmed", "drep", "extr", "fdpa", "fdsa", "feci", "fecr", "fiin", "fire",
-    "fpar", "gitn", "hinf", "hnti", "istm", "maxr", "npck", "nump", "paen", "payt", "pmax", "rcsr",
-    "rsot", "rssr", "rtp ", "rtpx", "sdp ", "segr", "snro", "srpp", "stsh", "tPAT", "tPMT", "tims",
-    "tmax", "tmin", "totl", "tpay", "tpyl", "trpy", "tsro", "tssy", "tsti",
-];
+const UNTYPED_TIER_5: &[&str] = &[];
 
 const REGISTRY_ENTRY: &str = "mpeg/isobmff/box-registry-14496-12-2026.tsv";
 const WHO: &str = "isobmff coverage";

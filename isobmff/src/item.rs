@@ -1469,6 +1469,17 @@ impl ItemInfoEntry {
         })
     }
 
+    /// The file-delivery extension (`fdel`, §8.11.6.1) this version-1 entry
+    /// carries, when its `extension_type` names one.
+    pub fn fd_extension(&self) -> Result<Option<FdItemInfoExtension>> {
+        match self.extension_type {
+            Some(fourcc) if &fourcc == b"fdel" => {
+                Ok(Some(FdItemInfoExtension::parse(&self.trailing)?))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn payload_len(&self) -> usize {
         let mut len = FULLBOX_EXTRA_SIZE + self.id_width() + U16_LEN;
         if self.is_typed() {
@@ -3387,6 +3398,151 @@ impl Serialize for ItemPropertiesBox {
         cursor += self.container.serialize_into(&mut buf[cursor..])?;
         for associations in &self.associations {
             cursor += associations.serialize_into(&mut buf[cursor..])?;
+        }
+        Ok(cursor)
+    }
+}
+
+/// The FD item information extension (`fdel`) of a version-1
+/// [`ItemInfoEntry`] — ISO/IEC 14496-12:2026 §8.11.6.1.
+///
+/// It is not a box: it follows the entry's `extension_type` field, so its
+/// bytes are carried by [`ItemInfoEntry`] and typed on demand through
+/// [`ItemInfoEntry::fd_extension`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct FdItemInfoExtension {
+    content_location: Vec<u8>,
+    content_md5: Vec<u8>,
+    content_length: u64,
+    transfer_length: u64,
+    group_ids: Vec<u32>,
+}
+
+impl FdItemInfoExtension {
+    /// Build one from the file's identity and size.
+    #[must_use]
+    pub fn new(
+        content_location: &[u8],
+        content_md5: &[u8],
+        content_length: u64,
+        transfer_length: u64,
+    ) -> Self {
+        Self {
+            content_location: content_location.to_vec(),
+            content_md5: content_md5.to_vec(),
+            content_length,
+            transfer_length,
+            group_ids: Vec::new(),
+        }
+    }
+
+    /// `content_location`, the item's URI.
+    #[must_use]
+    pub fn content_location(&self) -> &[u8] {
+        &self.content_location
+    }
+
+    /// `content_MD5`, the file's MD5 digest.
+    #[must_use]
+    pub fn content_md5(&self) -> &[u8] {
+        &self.content_md5
+    }
+
+    /// `content_length`, the un-encoded file length.
+    #[must_use]
+    pub const fn content_length(&self) -> u64 {
+        self.content_length
+    }
+
+    /// `transfer_length`, the encoded file length.
+    #[must_use]
+    pub const fn transfer_length(&self) -> u64 {
+        self.transfer_length
+    }
+
+    /// The file group identifiers.
+    #[must_use]
+    pub fn group_ids(&self) -> &[u32] {
+        &self.group_ids
+    }
+
+    /// Append one file group identifier.
+    pub fn push_group_id(&mut self, group_id: u32) {
+        self.group_ids.push(group_id);
+    }
+
+    /// Parse the extension bytes that follow the `extension_type` field.
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        let mut cursor = 0usize;
+        let content_location =
+            crate::box_support::take_c_string(bytes, &mut cursor, "fdel content_location")?;
+        let content_md5 =
+            crate::box_support::take_c_string(bytes, &mut cursor, "fdel content_MD5")?;
+        let content_length = be_u64(bytes, cursor, "fdel content_length")?;
+        cursor += core::mem::size_of::<u64>();
+        let transfer_length = be_u64(bytes, cursor, "fdel transfer_length")?;
+        cursor += core::mem::size_of::<u64>();
+        need_in(bytes, cursor + 1, "fdel entry_count")?;
+        let entry_count = usize::from(bytes[cursor]);
+        cursor += 1;
+        crate::box_support::check_entry_count(
+            bytes.len().saturating_sub(cursor),
+            core::mem::size_of::<u32>(),
+            entry_count,
+            "fdel group_ids",
+        )?;
+        let mut group_ids = Vec::with_capacity(crate::box_support::bounded_entry_count(
+            bytes.len().saturating_sub(cursor),
+            core::mem::size_of::<u32>(),
+            entry_count,
+        ));
+        for _ in 0..entry_count {
+            group_ids.push(be_u32(bytes, cursor, "fdel group_id")?);
+            cursor += core::mem::size_of::<u32>();
+        }
+        Ok(Self {
+            content_location,
+            content_md5,
+            content_length,
+            transfer_length,
+            group_ids,
+        })
+    }
+}
+
+impl Serialize for FdItemInfoExtension {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        self.content_location.len()
+            + 1
+            + self.content_md5.len()
+            + 1
+            + 2 * core::mem::size_of::<u64>()
+            + 1
+            + self.group_ids.len() * core::mem::size_of::<u32>()
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor = 0usize;
+        cursor += crate::box_support::write_c_string(buf, cursor, &self.content_location)?;
+        cursor += crate::box_support::write_c_string(buf, cursor, &self.content_md5)?;
+        buf[cursor..cursor + core::mem::size_of::<u64>()]
+            .copy_from_slice(&self.content_length.to_be_bytes());
+        cursor += core::mem::size_of::<u64>();
+        buf[cursor..cursor + core::mem::size_of::<u64>()]
+            .copy_from_slice(&self.transfer_length.to_be_bytes());
+        cursor += core::mem::size_of::<u64>();
+        buf[cursor] = broadcast_core::len::fit_u8(self.group_ids.len(), "fdel entry_count")?;
+        cursor += 1;
+        for group_id in &self.group_ids {
+            buf[cursor..cursor + core::mem::size_of::<u32>()]
+                .copy_from_slice(&group_id.to_be_bytes());
+            cursor += core::mem::size_of::<u32>();
         }
         Ok(cursor)
     }

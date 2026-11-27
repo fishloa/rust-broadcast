@@ -13,7 +13,7 @@ It never knows the media IR or a codec bitstream.
 
 ## Coverage
 
-Typed 122 of 167 registry box types (ISO/IEC 14496-12:2026). The
+Typed 167 of 167 registry box types (ISO/IEC 14496-12:2026). The
 `tests/it/coverage.rs` test loads
 `private/specs-verified/mpeg/isobmff/box-registry-14496-12-2026.tsv` and pins
 every remaining type under its issue tier, so these counts cannot drift; the
