@@ -24,6 +24,9 @@ All notable changes to this crate are documented here. The format follows
 
 ### Added
 
+- `reader::TrackInfo::codec_delay_ns`: the track's `CodecDelay` (RFC 9559
+  §5.1.4.1.6), which Opus uses to state its pre-skip. The writer does not emit
+  it yet.
 - Initial crate: EBML (RFC 8794) element framing, the scalar payload codecs,
   the EBML header, `Void` and `CRC-32`.
 - The full Matroska (RFC 9559) element table with typed master and leaf

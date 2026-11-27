@@ -107,6 +107,14 @@ impl Decoder for FakeDecoder {
     fn reset(&mut self) {
         self.ready.clear();
     }
+
+    fn reconfigure(&mut self, parameters: CodecParameters) -> Result<(), CodecError> {
+        if !self.ready.is_empty() {
+            return Err(CodecError::Full);
+        }
+        self.parameters = parameters;
+        Ok(())
+    }
 }
 
 fn registry(trims: bool) -> (Registry, Arc<AtomicUsize>) {
@@ -177,6 +185,24 @@ fn decoder_alone_stays_untrimmed() {
     let frame = decoder.receive().expect("receive").expect("a frame");
     assert_eq!(samples(&frame), [1, 2, 3, 4]);
     assert_eq!(audio(&frame).trim_start(), 1);
+}
+
+#[test]
+fn the_wrapper_forwards_reconfiguration_and_applies_the_new_padding() {
+    let (registry, _) = registry(false);
+    let source = parameters(0, None);
+    let mut decoder = registry.trimmed_decoder(&source).expect("a decoder");
+    decoder
+        .reconfigure(parameters(2, None))
+        .expect("the inner decoder adopts the new parameters");
+    assert_eq!(
+        decoder.parameters().initial_padding(),
+        2,
+        "the wrapper reports the inner decoder's new parameters"
+    );
+    decoder.send(Packet::borrowed(&[])).expect("send");
+    let frame = decoder.receive().expect("receive").expect("a frame");
+    assert_eq!(samples(&frame), [3, 4], "the new padding is applied");
 }
 
 #[test]

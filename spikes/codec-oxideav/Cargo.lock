@@ -484,6 +484,7 @@ dependencies = [
 name = "test-fixtures"
 version = "0.1.0"
 dependencies = [
+ "broadcast-core",
  "headers",
  "hex",
  "http",

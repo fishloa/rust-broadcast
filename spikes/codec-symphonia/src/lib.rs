@@ -169,6 +169,12 @@ impl Decoder for SymphoniaAacDecoder {
         self.decoder.reset();
         self.timestamp = 0;
     }
+
+    fn reconfigure(&mut self, _parameters: CodecParameters) -> Result<(), CodecError> {
+        Err(CodecError::cannot_reconfigure(
+            "a symphonia AAC decoder built from one AudioSpecificConfig",
+        ))
+    }
 }
 
 /// Map a symphonia decoder failure onto the seam's one error type.

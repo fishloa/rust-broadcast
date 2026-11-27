@@ -65,6 +65,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Segmenter::set_start_decode_time` is public: a caller feeding a segmenter directly must anchor each track's first `tfdt` (the streaming `Repackage::run` already did).
 
 ### Added
+- `TrackSpec::padding` (`GaplessTrim`) and `Sample::trim` (`SampleTrim`): the
+  audio gapless trim in the IR, in samples per channel at the track's sample
+  rate, defaulting to "none stated". `Mp4Demux` fills it from an Opus `dOps`
+  `PreSkip` or an `elst` `media_time`, and `MatroskaDemux` from `CodecDelay`;
+  trailing padding (the MP4 `iTunSMPB` item) and MP3's LAME/Xing tag are not
+  read yet. The transcode conversions carry it into `CodecParameters` and back
+  out of the encoder's reported padding.
+- `TranscodeStage::factory`: when a source re-announcement changes the
+  parameters and the decoder cannot adopt them, a caller-supplied factory
+  builds a fresh decoder; without one the change stays
+  `Error::TranscodeSourceChanged`. The stage drains the decoder first and
+  keeps output order and accounting either way.
+- The stage derives an encoder's in-band configuration record
+  (`ConfigurationRecord::InBand`) from the first access unit: AAC from its ADTS
+  header, H.264 from its SPS and PPS. The derivation lives in
+  `transcode::bridge` and is the one place the stage reads a bitstream.
 - The `codec` feature (off by default, implied by no other feature) and
   `transcode::TranscodeStage`: one track's samples through a caller-supplied
   `broadcast_codec::Decoder` and `Encoder`, and on to a track described by the

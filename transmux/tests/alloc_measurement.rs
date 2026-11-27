@@ -136,11 +136,14 @@ const KEY: [u8; 16] = [
 ///   measurement now covers the stage queue (and drops the input `Media`
 ///   inside the window, hence more deallocs than allocs), while the whole-media
 ///   plan that used to copy every sample handle is gone.
+/// - 68 / 4_800 / 105 (2026-11-27) — `Sample` gained an 8-byte `SampleTrim`
+///   field (the IR's per-sample gapless trim), so the per-sample vectors the
+///   stage rebuilds are 8 bytes wider each.
 ///
 /// Re-measure and update these (with a fresh date) if a legitimate change
 /// moves them; do not widen a tolerance instead.
 const CENC_MEASURED_ALLOCS: usize = 68;
-const CENC_MEASURED_ALLOC_BYTES: usize = 4_760;
+const CENC_MEASURED_ALLOC_BYTES: usize = 4_800;
 const CENC_MEASURED_DEALLOCS: usize = 105;
 // NOTE: the three pinned metrics (allocs/alloc_bytes/deallocs) are asserted
 // with `assert_eq!` below, not a tolerance band. A tolerance multiple (e.g.
@@ -230,8 +233,11 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
 ///   `Arc<SampleProtection>` per sample, replacing the parallel entry list).
 /// - 65 / 3_680 / 102 (2026-11-26) — the per-sample encrypt stage (see the
 ///   `cenc` history above for why deallocs now exceed allocs).
+/// - 65 / 3_720 / 102 (2026-11-27) — `Sample` gained an 8-byte `SampleTrim`
+///   field (the IR's per-sample gapless trim), so the per-sample vectors the
+///   stage rebuilds are 8 bytes wider each.
 const CBCS_MEASURED_ALLOCS: usize = 65;
-const CBCS_MEASURED_ALLOC_BYTES: usize = 3_680;
+const CBCS_MEASURED_ALLOC_BYTES: usize = 3_720;
 const CBCS_MEASURED_DEALLOCS: usize = 102;
 
 /// Same measurement for `cbcs` (AES-CBC pattern) — a different code path

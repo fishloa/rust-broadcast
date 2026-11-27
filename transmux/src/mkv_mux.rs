@@ -921,6 +921,7 @@ mod tests {
                 provenance: None,
                 display: None,
                 protection: None,
+                trim: crate::ir::SampleTrim::NONE,
             })
             .collect();
         let media = Media::new(vec![Track::new(spec, samples)], timescale(1_000));

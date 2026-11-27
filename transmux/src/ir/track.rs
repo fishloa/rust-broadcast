@@ -6,7 +6,7 @@
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
-use super::{CodecConfig, DisplayGeometry, ProgramNumber, TrackId};
+use super::{CodecConfig, DisplayGeometry, GaplessTrim, ProgramNumber, TrackId};
 use broadcast_bitstream::HdrStaticMetadata;
 use isobmff::dovi::DoviDecoderConfigurationRecord;
 
@@ -58,6 +58,11 @@ pub struct TrackSpec {
     /// (ISO/IEC 23001-7 §12.2). Per-sample IVs and subsample maps live on
     /// [`Sample::protection`](super::Sample::protection) instead.
     pub protection: Option<TrackProtection>,
+    /// The track's gapless trim, in samples per channel at the track's sample
+    /// rate: the priming the encoder added before the first real sample and,
+    /// when the container states it, the end padding. Defaults to
+    /// [`GaplessTrim::NONE`] ("none stated"); see [`TrackSpec::with_padding`].
+    pub padding: GaplessTrim,
 }
 
 impl core::fmt::Debug for TrackSpec {
@@ -70,6 +75,9 @@ impl core::fmt::Debug for TrackSpec {
             .field("es_info_descriptors", &self.es_info_descriptors)
             .field("program_number", &self.program_number)
             .field("display", &self.display);
+        if !self.padding.is_none() {
+            d.field("padding", &self.padding);
+        }
         if let Some(hdr) = &self.hdr {
             d.field("hdr", hdr);
         }
@@ -111,6 +119,7 @@ impl TrackSpec {
             dovi: None,
             hdr10plus: false,
             protection: None,
+            padding: GaplessTrim::NONE,
         }
     }
 
@@ -161,6 +170,13 @@ impl TrackSpec {
     /// Attach the track's CENC/CBCS crypto metadata, returning `self`.
     pub fn with_protection(mut self, protection: TrackProtection) -> Self {
         self.protection = Some(protection);
+        self
+    }
+
+    /// State the track's gapless trim, returning `self`. It is audio-only;
+    /// pass [`GaplessTrim::NONE`] for a track that states none.
+    pub fn with_padding(mut self, padding: GaplessTrim) -> Self {
+        self.padding = padding;
         self
     }
 }

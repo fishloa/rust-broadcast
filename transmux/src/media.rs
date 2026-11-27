@@ -45,7 +45,7 @@ use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 use crate::display_track::{SpsTracker, TrackCodec};
 use crate::error::{Error, Result};
 use crate::ir::{
-    CodecConfig, DataIdentity, DisplayGeometry, DisplayInfo, Sample, SubtitleFormat,
+    CodecConfig, DataIdentity, DisplayGeometry, DisplayInfo, GaplessTrim, Sample, SubtitleFormat,
     SubtitleSampleEntry, TrackId, TrackSpec,
 };
 use broadcast_bitstream::facts::{
@@ -76,6 +76,10 @@ use isobmff::visual_ext::{CleanApertureBox, ColourInformationBox, PixelAspectRat
 /// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
 /// `crate::media::`/`transmux::media::` path keeps resolving unchanged.
 pub use crate::ir::{PcrSample, SkippedTrack, TrackProtection};
+
+/// The rate an Opus `PreSkip` is counted in, regardless of the track's
+/// declared sample rate (RFC 7845 §5.1).
+const OPUS_PRE_SKIP_RATE: u32 = 48_000;
 
 /// `#EXT-X-VERSION` for the fMP4 playlists [`HlsPackager`] writes (RFC 8216 §7).
 #[cfg(feature = "hls")]
@@ -772,7 +776,9 @@ pub(crate) fn track_spec_from_track_info(info: &TrackInfo) -> Result<TrackSpec> 
         },
         Some(Err(err)) => return Err(err),
     };
-    let mut spec = TrackSpec::new(info.track_id.into(), info.timescale, config);
+    let padding = gapless_padding(&config, &info.edits, info.timescale);
+    let mut spec =
+        TrackSpec::new(info.track_id.into(), info.timescale, config).with_padding(padding);
     if let Some(protection) = protection {
         spec = spec.with_protection(protection);
     }
@@ -786,6 +792,62 @@ pub(crate) fn track_spec_from_track_info(info: &TrackInfo) -> Result<TrackSpec> 
         _ => spec,
     };
     Ok(spec)
+}
+
+/// The track's gapless priming, in samples at its sample rate.
+///
+/// An Opus track states it in `dOps` `PreSkip`, counted at 48 kHz
+/// (RFC 7845 §5.1); any other audio track states it as the `elst`
+/// `media_time` of a non-empty edit, in the media timescale
+/// (ISO/IEC 14496-12:2026 §8.6.6). A video track, or one that states neither,
+/// gets [`GaplessTrim::NONE`]. Trailing padding is not carried by either
+/// signal (the iTunes `iTunSMPB` item states it, and this demuxer does not
+/// read it yet).
+fn gapless_padding(
+    config: &CodecConfig,
+    edits: &[isobmff::timing::EditListEntry],
+    timescale: Timescale,
+) -> GaplessTrim {
+    let Some(rate) = config.audio_sample_rate() else {
+        return GaplessTrim::NONE;
+    };
+    let (Some(rate), Some(opus_rate)) = (
+        core::num::NonZeroU32::new(rate),
+        core::num::NonZeroU32::new(OPUS_PRE_SKIP_RATE),
+    ) else {
+        return GaplessTrim::NONE;
+    };
+    if let CodecConfig::Opus { config, .. } = config {
+        let pre_skip = u32::from(config.pre_skip);
+        if pre_skip > 0 {
+            let samples = rescale_i64(
+                i64::from(pre_skip),
+                Timescale::from_nonzero(opus_rate),
+                Timescale::from_nonzero(rate),
+                Rounding::Floor,
+            );
+            if let Ok(initial) = u32::try_from(samples) {
+                return GaplessTrim::new(initial, None);
+            }
+        }
+    }
+    let Some(media_time) = edits
+        .iter()
+        .map(|edit| edit.media_time)
+        .find(|media_time| *media_time > 0)
+    else {
+        return GaplessTrim::NONE;
+    };
+    let samples = rescale_i64(
+        media_time,
+        timescale,
+        Timescale::from_nonzero(rate),
+        Rounding::Floor,
+    );
+    match u32::try_from(samples) {
+        Ok(initial) => GaplessTrim::new(initial, None),
+        Err(_) => GaplessTrim::NONE,
+    }
 }
 
 /// The CENC/CBCS defaults a sample entry's `sinf` states, or `None` for a
@@ -1857,6 +1919,7 @@ mod tests {
             provenance: None,
             display: None,
             protection: None,
+            trim: crate::ir::SampleTrim::NONE,
         };
         let init = build_init_segment(std::slice::from_ref(&spec), TIMESCALE).expect("init");
         // The init segment really declares the 2-byte size.
@@ -1954,6 +2017,7 @@ mod tests {
             provenance: None,
             display: None,
             protection: None,
+            trim: crate::ir::SampleTrim::NONE,
         };
         let init = build_init_segment(std::slice::from_ref(&spec), TIMESCALE).expect("init");
         let hdr = init

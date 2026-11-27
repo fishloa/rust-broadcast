@@ -24,12 +24,13 @@ use broadcast_codec::{
     Decoder, Encoder, Frame, Packet, SampleLayout, Timescale,
 };
 use broadcast_common::stage::{Stage, Timestamp};
+use broadcast_core::Serialize;
 use test_harness::collect::{CollectMode, Collected, media_from_mp4, media_from_ts};
 use transmux::ll_hls::{LlHlsSegmenter, LlHlsStageOutput};
 use transmux::mux_stage::{MuxInput, MuxOutput};
 use transmux::{
-    CmafMuxStage, CodecConfig, FragmentCut, Sample, TrackId, TrackSpec, TranscodeStage, TsMuxStage,
-    codec_parameters_from_track, track_spec_from_codec_parameters,
+    CmafMuxStage, CodecConfig, FragmentCut, Sample, SampleTrim, TrackId, TrackSpec, TranscodeStage,
+    TsMuxStage, codec_parameters_from_track, track_spec_from_codec_parameters,
 };
 
 /// Inputs the fake decoder holds before it emits a frame.
@@ -994,5 +995,597 @@ fn ll_hls_out_takes_the_encoder_track_and_loses_nothing() {
         counts.packets_out,
         counts.frames_in + 1,
         "the segmenter was fed every packet the encoder emitted"
+    );
+}
+
+// ── Reconfiguration ─────────────────────────────────────────────────────────
+
+/// A decoder that adopts new parameters unless a decoded frame is still
+/// waiting to be taken.
+struct AdoptingDecoder {
+    parameters: CodecParameters,
+    ready: VecDeque<Frame>,
+    adopted: Rc<RefCell<usize>>,
+    rate: NonZeroU32,
+    counts: Rc<RefCell<Counts>>,
+}
+
+impl AdoptingDecoder {
+    fn new(
+        parameters: CodecParameters,
+        adopted: Rc<RefCell<usize>>,
+        counts: Rc<RefCell<Counts>>,
+    ) -> Self {
+        let rate = parameters
+            .audio()
+            .map(|audio| audio.sample_rate())
+            .unwrap_or_else(|| rate(SOURCE_RATE));
+        Self {
+            parameters,
+            ready: VecDeque::new(),
+            adopted,
+            rate,
+            counts,
+        }
+    }
+}
+
+impl Decoder for AdoptingDecoder {
+    fn parameters(&self) -> &CodecParameters {
+        &self.parameters
+    }
+
+    fn send(&mut self, _packet: Packet<'_>) -> Result<(), CodecError> {
+        self.counts.borrow_mut().packets_in += 1;
+        let frame = AudioFrame::new(
+            self.rate,
+            ChannelLayout::Mono,
+            SampleLayout::Interleaved,
+            AudioSamples::S16(vec![1; FRAME_SAMPLES]),
+        )
+        .ok_or_else(|| CodecError::failed("a fake frame"))?;
+        self.ready.push_back(Frame::Audio(
+            frame.with_pts(self.counts.borrow().frames_out as i64),
+        ));
+        self.counts.borrow_mut().frames_out += 1;
+        Ok(())
+    }
+
+    fn receive(&mut self) -> Result<Option<Frame>, CodecError> {
+        Ok(self.ready.pop_front())
+    }
+
+    fn finish(&mut self) -> Result<(), CodecError> {
+        Ok(())
+    }
+
+    fn reset(&mut self) {
+        self.ready.clear();
+    }
+
+    fn reconfigure(&mut self, parameters: CodecParameters) -> Result<(), CodecError> {
+        if !self.ready.is_empty() {
+            return Err(CodecError::Full);
+        }
+        self.rate = parameters
+            .audio()
+            .map(|audio| audio.sample_rate())
+            .unwrap_or(self.rate);
+        self.parameters = parameters;
+        *self.adopted.borrow_mut() += 1;
+        Ok(())
+    }
+}
+
+/// An encoder that reports `parameters` only after `report_after` packets and
+/// emits `packets` in order, one per `receive`.
+struct ScriptedEncoder {
+    parameters: Option<CodecParameters>,
+    packets: VecDeque<Packet<'static>>,
+    report_after: usize,
+    seen: usize,
+}
+
+impl ScriptedEncoder {
+    fn new(parameters: CodecParameters, packets: VecDeque<Packet<'static>>) -> Self {
+        Self {
+            parameters: Some(parameters),
+            packets,
+            report_after: 1,
+            seen: 0,
+        }
+    }
+
+    fn reporting_late(parameters: CodecParameters, packets: VecDeque<Packet<'static>>) -> Self {
+        Self {
+            report_after: 2,
+            ..Self::new(parameters, packets)
+        }
+    }
+}
+
+impl Encoder for ScriptedEncoder {
+    fn send(&mut self, _frame: Frame) -> Result<(), CodecError> {
+        Ok(())
+    }
+
+    fn receive(&mut self) -> Result<Option<Packet<'static>>, CodecError> {
+        let packet = self.packets.pop_front();
+        if packet.is_some() {
+            self.seen += 1;
+        }
+        Ok(packet)
+    }
+
+    fn finish(&mut self) -> Result<(), CodecError> {
+        Ok(())
+    }
+
+    fn parameters(&self) -> Option<&CodecParameters> {
+        if self.seen >= self.report_after {
+            self.parameters.as_ref()
+        } else {
+            None
+        }
+    }
+}
+
+/// A source spec whose audio rate is `rate` and channel count is `channels`.
+fn changed_audio_spec(spec: &TrackSpec, sample_rate: u32, channels: u16) -> TrackSpec {
+    let CodecConfig::Aac { esds, .. } = &spec.config else {
+        panic!("the fixture's other track is not AAC");
+    };
+    let mut changed = spec.clone();
+    changed.config = CodecConfig::Aac {
+        esds: esds.clone(),
+        channel_count: channels,
+        sample_rate,
+        sample_size: 16,
+    };
+    changed
+}
+
+fn audio_samples(spec: &TrackSpec, samples: &[(TrackId, Sample)], take: usize) -> Vec<Sample> {
+    samples
+        .iter()
+        .filter(|(track, _)| *track == spec.track_id)
+        .map(|(_, sample)| sample.clone())
+        .take(take)
+        .collect()
+}
+
+#[test]
+fn a_source_change_is_drained_reconfigured_and_counted() {
+    let (specs, samples) = fixture();
+    let spec = audio_spec(&specs);
+    let adopted = Rc::new(RefCell::new(0));
+    let counts = Rc::new(RefCell::new(Counts::default()));
+    let decoder = AdoptingDecoder::new(
+        codec_parameters_from_track(&spec).expect("the source converts"),
+        Rc::clone(&adopted),
+        Rc::clone(&counts),
+    );
+    let mut stage = TranscodeStage::new(
+        spec.track_id,
+        Box::new(decoder),
+        Box::new(FakeEncoder::new(Rc::clone(&counts))),
+    );
+    let first = audio_samples(&spec, &samples, 3);
+    let changed = changed_audio_spec(&spec, 32_000, 5);
+    let second = audio_samples(&spec, &samples, 5)[3..].to_vec();
+
+    stage
+        .feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)
+        .expect("the source announcement");
+    for sample in &first {
+        stage
+            .feed(
+                MuxInput::Sample {
+                    track: spec.track_id,
+                    sample: sample.clone(),
+                },
+                Timestamp::ZERO,
+            )
+            .expect("a sample before the change");
+    }
+    stage
+        .feed(MuxInput::Track(Box::new(changed)), Timestamp::ZERO)
+        .expect("the decoder adopts the new parameters");
+    for sample in &second {
+        stage
+            .feed(
+                MuxInput::Sample {
+                    track: spec.track_id,
+                    sample: sample.clone(),
+                },
+                Timestamp::ZERO,
+            )
+            .expect("a sample after the change");
+    }
+    stage.finish().expect("finish");
+
+    assert_eq!(
+        *adopted.borrow(),
+        1,
+        "the decoder was reconfigured once, in place"
+    );
+    let counts = *counts.borrow();
+    assert_eq!(
+        counts.packets_in,
+        first.len() + second.len(),
+        "every packet reached the decoder across the change"
+    );
+    assert_eq!(
+        counts.frames_in, counts.frames_out,
+        "every decoded frame reached the encoder"
+    );
+    let mut times = Vec::new();
+    while let Some(output) = stage.poll() {
+        if let MuxInput::Sample { sample, .. } = output {
+            times.push(sample.timing.and_then(|timing| timing.dts()).unwrap_or(0));
+        }
+    }
+    assert!(monotonic(&times), "the change keeps the encoder's order");
+}
+
+#[test]
+fn a_refusing_decoder_is_rebuilt_through_the_factory_and_loses_nothing() {
+    let (specs, samples) = fixture();
+    let spec = audio_spec(&specs);
+    let counts = Rc::new(RefCell::new(Counts::default()));
+    let builds = Rc::new(RefCell::new(0));
+    let decoder = FakeDecoder::new(
+        codec_parameters_from_track(&spec).expect("the source converts"),
+        Rc::clone(&counts),
+    );
+    let factory_counts = Rc::clone(&counts);
+    let factory_builds = Rc::clone(&builds);
+    let factory = Box::new(move |parameters: &CodecParameters| {
+        *factory_builds.borrow_mut() += 1;
+        Ok(Box::new(AdoptingDecoder::new(
+            parameters.clone(),
+            Rc::new(RefCell::new(0)),
+            Rc::clone(&factory_counts),
+        )) as Box<dyn Decoder>)
+    });
+    let mut stage = TranscodeStage::new(
+        spec.track_id,
+        Box::new(decoder),
+        Box::new(FakeEncoder::new(Rc::clone(&counts))),
+    )
+    .factory(factory);
+    let audio = audio_samples(&spec, &samples, 5);
+    let changed = changed_audio_spec(&spec, 32_000, 5);
+
+    stage
+        .feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)
+        .expect("the source announcement");
+    for sample in &audio[..3] {
+        stage
+            .feed(
+                MuxInput::Sample {
+                    track: spec.track_id,
+                    sample: sample.clone(),
+                },
+                Timestamp::ZERO,
+            )
+            .expect("a sample before the change");
+    }
+    stage
+        .feed(MuxInput::Track(Box::new(changed)), Timestamp::ZERO)
+        .expect("the factory builds a fresh decoder");
+    for sample in &audio[3..] {
+        stage
+            .feed(
+                MuxInput::Sample {
+                    track: spec.track_id,
+                    sample: sample.clone(),
+                },
+                Timestamp::ZERO,
+            )
+            .expect("a sample after the change");
+    }
+    stage.finish().expect("finish");
+
+    assert_eq!(*builds.borrow(), 1, "one fresh decoder was built");
+    assert_eq!(
+        counts.borrow().packets_in,
+        audio.len(),
+        "no input was lost across the rebuild"
+    );
+}
+
+// ── In-band configuration records ───────────────────────────────────────────
+
+/// The AAC `AudioSpecificConfig` a track's `esds` carries.
+fn asc_of(spec: &TrackSpec) -> Vec<u8> {
+    let CodecConfig::Aac { esds, .. } = &spec.config else {
+        panic!("not an AAC track");
+    };
+    esds.decoder_specific_info_data()
+        .map(<[u8]>::to_vec)
+        .expect("the fixture's esds carries an AudioSpecificConfig")
+}
+
+/// An ADTS-wrapped access unit stating the fixture's own AAC configuration.
+fn adts_unit(first: &Sample, sfi: u8, channels: u8) -> Vec<u8> {
+    let header = broadcast_bitstream::build_adts_header(1, sfi, channels, first.data.len() as u16);
+    let mut unit = header.to_vec();
+    unit.extend_from_slice(&first.data);
+    unit
+}
+
+#[test]
+fn an_in_band_aac_record_is_derived_from_the_first_access_unit() {
+    let (specs, samples) = fixture();
+    let spec = audio_spec(&specs);
+    let expected = asc_of(&spec);
+    let first = audio_samples(&spec, &samples, 1)
+        .into_iter()
+        .next()
+        .expect("an audio sample");
+    // 44.1 kHz (index 4), mono (configuration 1), AAC LC (profile 1):
+    // ffprobe reports `profile=LC sample_rate=44100 channels=1` for the
+    // fixture.
+    let first_unit = adts_unit(&first, 4, 1);
+    // A second unit stating a different stream: deriving from it would
+    // announce 48 kHz and must not.
+    let second_unit = adts_unit(&first, 3, 1);
+
+    let parameters = CodecParameters::new(CodecId::Aac, timescale(OUTPUT_TIMESCALE))
+        .with_in_band_configuration()
+        .with_audio(AudioParameters::new(rate(OUTPUT_RATE), ChannelLayout::Mono));
+    let encoder = ScriptedEncoder::reporting_late(
+        parameters,
+        VecDeque::from([
+            Packet::owned(first_unit).with_dts(0).with_pts(0),
+            Packet::owned(second_unit).with_dts(1).with_pts(1),
+        ]),
+    );
+    let counts = Rc::new(RefCell::new(Counts::default()));
+    let decoder = AdoptingDecoder::new(
+        codec_parameters_from_track(&spec).expect("the source converts"),
+        Rc::new(RefCell::new(0)),
+        Rc::clone(&counts),
+    );
+    let mut stage = TranscodeStage::new(spec.track_id, Box::new(decoder), Box::new(encoder));
+    stage
+        .feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)
+        .expect("the source announcement");
+    let sample = first.clone();
+    stage
+        .feed(
+            MuxInput::Sample {
+                track: spec.track_id,
+                sample,
+            },
+            Timestamp::ZERO,
+        )
+        .expect("one input makes the encoder emit both units");
+    stage.finish().expect("finish");
+
+    let mut announced = None;
+    let mut packets = 0usize;
+    while let Some(output) = stage.poll() {
+        match output {
+            MuxInput::Track(spec) => announced = Some(*spec),
+            MuxInput::Sample { .. } => packets += 1,
+            _ => {}
+        }
+    }
+    let announced = announced.expect("the stage announced the output track");
+    assert_eq!(
+        asc_of(&announced),
+        expected,
+        "the record derived from the first access unit is the one the demuxer reports"
+    );
+    assert_eq!(
+        packets, 2,
+        "the first access unit is not consumed by deriving"
+    );
+}
+
+#[test]
+fn an_in_band_h264_record_is_derived_from_the_first_access_unit() {
+    let (specs, samples) = fixture();
+    let video = video_spec(&specs);
+    let CodecConfig::Avc { config, .. } = &video.config else {
+        panic!("not an AVC track");
+    };
+    let record = &config.config;
+    let sps = record
+        .sps
+        .first()
+        .expect("the fixture carries an SPS")
+        .0
+        .clone();
+    let pps = record
+        .pps
+        .first()
+        .expect("the fixture carries a PPS")
+        .0
+        .clone();
+    let first_unit =
+        broadcast_bitstream::annexb::length_prefix(4, [sps.as_slice(), pps.as_slice()]);
+    let parameters = CodecParameters::new(CodecId::H264, timescale(OUTPUT_TIMESCALE))
+        .with_in_band_configuration()
+        .with_video(broadcast_codec::VideoParameters::new(
+            std::num::NonZeroU32::new(320).expect("a width"),
+            std::num::NonZeroU32::new(240).expect("a height"),
+        ));
+    let encoder = ScriptedEncoder::new(
+        parameters,
+        VecDeque::from([Packet::owned(first_unit).with_dts(0).with_pts(0)]),
+    );
+    let counts = Rc::new(RefCell::new(Counts::default()));
+    let decoder = AdoptingDecoder::new(
+        codec_parameters_from_track(&video).expect("the source converts"),
+        Rc::new(RefCell::new(0)),
+        Rc::clone(&counts),
+    );
+    let mut stage = TranscodeStage::new(video.track_id, Box::new(decoder), Box::new(encoder));
+    stage
+        .feed(MuxInput::Track(Box::new(video.clone())), Timestamp::ZERO)
+        .expect("the source announcement");
+    let sample = samples
+        .iter()
+        .find(|(track, _)| *track == video.track_id)
+        .map(|(_, sample)| sample.clone())
+        .expect("a video sample");
+    stage
+        .feed(
+            MuxInput::Sample {
+                track: video.track_id,
+                sample,
+            },
+            Timestamp::ZERO,
+        )
+        .expect("the encoder emits its first access unit");
+    stage.finish().expect("finish");
+
+    let mut announced = None;
+    while let Some(output) = stage.poll() {
+        if let MuxInput::Track(spec) = output {
+            announced = Some(*spec);
+        }
+    }
+    let announced = announced.expect("the stage announced the output track");
+    let CodecConfig::Avc {
+        config: derived, ..
+    } = &announced.config
+    else {
+        panic!("the announced track is AVC");
+    };
+    assert_eq!(
+        derived.config.try_to_bytes().expect("serialize"),
+        record.try_to_bytes().expect("serialize"),
+        "the derived avcC is the record the demuxer reports for the same stream"
+    );
+}
+
+#[test]
+fn two_real_fixtures_with_different_parameters_concatenate_through_the_stage() {
+    let (specs, samples) = fixture();
+    let first = audio_spec(&specs);
+    let mut other = test_harness::collect::media_from_mp4(
+        &test_fixtures::read("mp4/boxes/loudness.m4a"),
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("demux the second fixture")
+    .tracks
+    .into_iter()
+    .map(|track| track.spec)
+    .find(|spec| spec.config.audio_sample_rate().is_some())
+    .expect("the second fixture carries AAC");
+    other.track_id = first.track_id;
+    assert_ne!(
+        codec_parameters_from_track(&first).expect("converts"),
+        codec_parameters_from_track(&other).expect("converts"),
+        "the two fixtures really describe different streams"
+    );
+
+    let adopted = Rc::new(RefCell::new(0));
+    let counts = Rc::new(RefCell::new(Counts::default()));
+    let decoder = AdoptingDecoder::new(
+        codec_parameters_from_track(&first).expect("the source converts"),
+        Rc::clone(&adopted),
+        Rc::clone(&counts),
+    );
+    let mut stage = TranscodeStage::new(
+        first.track_id,
+        Box::new(decoder),
+        Box::new(FakeEncoder::new(Rc::clone(&counts))),
+    );
+    let before = audio_samples(&first, &samples, 3);
+
+    stage
+        .feed(MuxInput::Track(Box::new(first.clone())), Timestamp::ZERO)
+        .expect("the first source");
+    for sample in &before {
+        stage
+            .feed(
+                MuxInput::Sample {
+                    track: first.track_id,
+                    sample: sample.clone(),
+                },
+                Timestamp::ZERO,
+            )
+            .expect("a sample of the first stream");
+    }
+    stage
+        .feed(MuxInput::Track(Box::new(other.clone())), Timestamp::ZERO)
+        .expect("the second stream is adopted");
+    for _ in 0..3 {
+        let sample = Sample::timed_raw(std::vec![0u8; 8], 0, 0, None);
+        stage
+            .feed(
+                MuxInput::Sample {
+                    track: first.track_id,
+                    sample,
+                },
+                Timestamp::ZERO,
+            )
+            .expect("a sample of the second stream");
+    }
+    stage.finish().expect("finish");
+
+    assert_eq!(*adopted.borrow(), 1, "one in-place reconfiguration");
+    assert_eq!(
+        counts.borrow().packets_in,
+        before.len() + 3,
+        "both streams' samples reached the decoder"
+    );
+}
+
+#[test]
+fn a_samples_own_trim_crosses_the_seam_both_ways() {
+    let (specs, samples) = fixture();
+    let spec = audio_spec(&specs);
+    let source = codec_parameters_from_track(&spec).expect("the source converts");
+    let encoder = ScriptedEncoder::new(
+        output_parameters(),
+        VecDeque::from([Packet::owned(vec![1u8, 2, 3, 4])
+            .with_dts(0)
+            .with_pts(0)
+            .with_key(true)
+            .with_trim_start(5)
+            .with_trim_end(7)]),
+    );
+    let decoder = AdoptingDecoder::new(
+        source,
+        Rc::new(RefCell::new(0)),
+        Rc::new(RefCell::new(Counts::default())),
+    );
+    let mut stage = TranscodeStage::new(spec.track_id, Box::new(decoder), Box::new(encoder));
+    stage
+        .feed(MuxInput::Track(Box::new(spec.clone())), Timestamp::ZERO)
+        .expect("the source announcement");
+    let mut sample = samples
+        .iter()
+        .find(|(track, _)| *track == spec.track_id)
+        .map(|(_, sample)| sample.clone())
+        .expect("an audio sample");
+    sample = sample.with_trim(SampleTrim::new(3, 2));
+    stage
+        .feed(
+            MuxInput::Sample {
+                track: spec.track_id,
+                sample,
+            },
+            Timestamp::ZERO,
+        )
+        .expect("a sample with its own trim");
+    stage.finish().expect("finish");
+    let mut out = None;
+    while let Some(output) = stage.poll() {
+        if let MuxInput::Sample { sample, .. } = output {
+            out = Some(sample);
+        }
+    }
+    let out = out.expect("one output sample");
+    assert_eq!(
+        out.trim,
+        SampleTrim::new(5, 7),
+        "the encoder's per-packet trim is carried onto the output sample"
     );
 }

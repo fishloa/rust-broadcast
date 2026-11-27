@@ -46,7 +46,7 @@ pub use availability::{Availability, Probe};
 // A consumer builds `CodecParameters::new` with this type, so re-export it
 // rather than make every adapter depend on `broadcast-core` for one name.
 pub use broadcast_core::timescale::Timescale;
-pub use codec::{AudioParameters, CodecId, CodecParameters, VideoParameters};
+pub use codec::{AudioParameters, CodecId, CodecParameters, ConfigurationRecord, VideoParameters};
 pub use descriptor::CodecDescriptor;
 pub use direction::Direction;
 pub use encoder_config::EncoderConfig;

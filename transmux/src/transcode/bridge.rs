@@ -17,13 +17,21 @@
 //!
 //! Neither direction carries a codec *profile*: the seam's `CodecProfile` is a
 //! typed variant key the caller states, and a `TrackSpec` does not hold one.
-//! The gapless trim the seam expresses is audio-only and this crate's IR has
-//! no field for it, so a track states none.
+//! The seam's audio-only gapless trim is carried through
+//! [`TrackSpec::padding`] in both directions.
+//!
+//! [`in_band_record`] is the one place this module reads a bitstream: it
+//! derives the configuration record an encoder wrote into its first access
+//! unit, dispatched on the codec the encoder declared.
 
 use alloc::vec::Vec;
 use core::num::{NonZeroU16, NonZeroU32};
 
-use broadcast_codec::{AudioParameters, ChannelLayout, CodecId, CodecParameters, VideoParameters};
+use broadcast_bitstream::aac_asc::{AudioSpecificConfig, parse_adts_header};
+use broadcast_bitstream::{annexb_to_length_prefixed, avc_access_unit_parameter_sets};
+use broadcast_codec::{
+    AudioParameters, ChannelLayout, CodecId, CodecParameters, ConfigurationRecord, VideoParameters,
+};
 use broadcast_core::{Parse, Serialize};
 use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox};
 use isobmff::ac4::Ac4SpecificBox;
@@ -42,7 +50,7 @@ use isobmff::vvc_config::VvcDecoderConfigurationRecord;
 
 use crate::TrackId;
 use crate::error::{Error, Result};
-use crate::ir::{CodecConfig, TrackSpec};
+use crate::ir::{CodecConfig, GaplessTrim, TrackSpec};
 
 /// The `esds` object type indication for MPEG-4 audio (ISO/IEC 14496-1 Table 5).
 const OTI_MPEG4_AUDIO: u8 = 0x40;
@@ -189,7 +197,7 @@ pub fn codec_parameters_from_track(spec: &TrackSpec) -> Result<CodecParameters> 
             return Err(unrepresentable("an opaque data track"));
         }
     };
-    Ok(parameters)
+    with_padding(parameters, spec.padding)
 }
 
 /// The [`TrackSpec`] `parameters` describe, for `track_id`.
@@ -204,8 +212,14 @@ pub fn track_spec_from_codec_parameters(
     track_id: TrackId,
     parameters: &CodecParameters,
 ) -> Result<TrackSpec> {
+    if parameters.configuration_record() == ConfigurationRecord::InBand {
+        return Err(unrepresentable(
+            "an in-band configuration record that has not been derived from an access unit",
+        ));
+    }
     let config = track_config(parameters)?;
-    Ok(TrackSpec::new(track_id, parameters.time_base(), config))
+    let padding = GaplessTrim::new(parameters.initial_padding(), parameters.trailing_padding());
+    Ok(TrackSpec::new(track_id, parameters.time_base(), config).with_padding(padding))
 }
 
 /// The codec identity of `config`, or the fact the seam cannot name.
@@ -482,4 +496,77 @@ fn aac_esds(asc: &[u8]) -> EsdsBox {
 
 fn unrepresentable(what: &'static str) -> Error {
     Error::TranscodeUnrepresentable { what }
+}
+
+/// The configuration record `codec` wrote into its first access unit, when
+/// this crate can derive it.
+///
+/// Dispatched on the codec the encoder declared: AAC from the ADTS header,
+/// H.264 from the access unit's SPS and PPS. A codec with no derivation here
+/// returns `Ok(None)`, and one whose access unit does not carry what the
+/// record needs does too; the caller reports the fact rather than announce a
+/// configuration it does not have.
+pub(crate) fn in_band_record(codec: CodecId, access_unit: &[u8]) -> Result<Option<Vec<u8>>> {
+    match codec {
+        CodecId::Aac => aac_record(access_unit),
+        CodecId::H264 => avc_record(access_unit),
+        _ => Ok(None),
+    }
+}
+
+/// An AAC `AudioSpecificConfig` from the ADTS header of `access_unit`.
+///
+/// The encoder must have written an ADTS header; a raw access unit states no
+/// object type or rate this crate could read, so it yields `None`.
+fn aac_record(access_unit: &[u8]) -> Result<Option<Vec<u8>>> {
+    let Ok(header) = parse_adts_header(access_unit) else {
+        return Ok(None);
+    };
+    Ok(Some(
+        AudioSpecificConfig::from_adts_header(&header).try_to_bytes()?,
+    ))
+}
+
+/// An `avcC` `AVCDecoderConfigurationRecord` body from the SPS and PPS in
+/// `access_unit`.
+///
+/// Accepts the IR's 4-byte length-prefixed form and an Annex B access unit,
+/// which is what an encoder's output carries before it is length-prefixed.
+fn avc_record(access_unit: &[u8]) -> Result<Option<Vec<u8>>> {
+    let prefixed;
+    let access_unit = if annexb_is_annex_b(access_unit) {
+        prefixed = annexb_to_length_prefixed(access_unit);
+        prefixed.as_slice()
+    } else {
+        access_unit
+    };
+    let (sps, pps) = avc_access_unit_parameter_sets(access_unit);
+    if sps.is_empty() || pps.is_empty() {
+        return Ok(None);
+    }
+    let sps = sps.into_iter().map(isobmff::AvcSps::from).collect();
+    let pps = pps.into_iter().map(isobmff::AvcPps::from).collect();
+    let config = broadcast_bitstream::avc_config_from_sps_pps(sps, pps)?;
+    Ok(Some(config.config.try_to_bytes()?))
+}
+
+/// Whether `access_unit` starts with an Annex B start code.
+fn annexb_is_annex_b(access_unit: &[u8]) -> bool {
+    access_unit.starts_with(&[0, 0, 1]) || access_unit.starts_with(&[0, 0, 0, 1])
+}
+
+/// `parameters` with `padding` stated, or the fact a video track cannot.
+fn with_padding(parameters: CodecParameters, padding: GaplessTrim) -> Result<CodecParameters> {
+    if padding.is_none() {
+        return Ok(parameters);
+    }
+    let parameters = parameters
+        .with_initial_padding(padding.initial())
+        .map_err(|_| unrepresentable("gapless trim on a video track"))?;
+    match padding.trailing() {
+        Some(trailing) => parameters
+            .with_trailing_padding(trailing)
+            .map_err(|_| unrepresentable("gapless trim on a video track")),
+        None => Ok(parameters),
+    }
 }

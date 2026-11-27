@@ -502,6 +502,7 @@ mod tests {
             provenance: None,
             display: None,
             protection: None,
+            trim: crate::ir::SampleTrim::NONE,
         }
     }
 
