@@ -29,7 +29,7 @@ serde      = { version = "1", default-features = false, features = ["derive", "a
 isobmff    = { path = "../isobmff", version = "0.1.0", default-features = false, optional = true }
 
 [features]
-default = ["std", "h264", "hevc", "vvc", "aac", "ac3", "dts", "mpegh"]
+default = ["std", "h264", "hevc", "vvc", "aac", "ac3", "dts", "mpegh", "mpeg-audio"]
 std    = ["broadcast-core/std", "thiserror/std", "serde?/std", "isobmff?/std"]
 # H.264 / AVC NAL unit types.
 h264   = []
@@ -45,6 +45,8 @@ ac3    = []
 dts    = []
 # MPEG-H Audio Stream (MHAS) packet framing.
 mpegh  = []
+# MPEG-1/2/2.5 audio (MP1/2/3) frame headers.
+mpeg-audio = []
 serde  = ["dep:serde", "broadcast-core/serde", "isobmff?/serde"]
 isobmff = ["dep:isobmff", "h264"]
 

@@ -313,9 +313,7 @@ pub use media::HlsPackager;
 pub use media::{CmafMuxStage, FragmentCut, PcrSample, SkippedTrack, TrackProtection};
 #[cfg(feature = "matroska")]
 pub use mkv_mux::MkvMuxStage;
-pub use mpeg_legacy::{
-    MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,
-};
+pub use mpeg_legacy::{Mpeg2SeqHeader, SEQUENCE_HEADER_CODE};
 pub use mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
 pub use nal_params::{avc_access_unit_dimensions, avc_sps_dimensions};
 pub use pipeline::{

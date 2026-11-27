@@ -40,6 +40,8 @@ pub mod hdr10plus;
 pub mod interlace;
 #[cfg(feature = "mpegh")]
 pub mod mhas;
+#[cfg(feature = "mpeg-audio")]
+pub mod mpeg_audio;
 pub mod nal;
 #[cfg(feature = "isobmff")]
 pub mod nalu_ext;
@@ -93,6 +95,8 @@ pub use interlace::hevc_facts;
 pub use interlace::{PicStruct, PictureFacts, SourceScanType, VideoScan};
 #[cfg(feature = "mpegh")]
 pub use mhas::{MhasPacket, find_mpegh3da_config, walk_mhas_packets};
+#[cfg(feature = "mpeg-audio")]
+pub use mpeg_audio::{MPEG_AUDIO_SYNCWORD, MpegAudioFrameHeader, MpegAudioLayer, MpegAudioVersion};
 #[cfg(feature = "h264")]
 pub use nal::AvcNalUnitType;
 #[cfg(feature = "hevc")]

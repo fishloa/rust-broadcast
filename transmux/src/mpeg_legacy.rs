@@ -1,31 +1,23 @@
-//! Legacy-codec elementary-stream headers: MPEG-2 video (H.262) sequence header
-//! and MPEG-1/2 audio (MP1/2/3) frame header.
+//! Legacy-codec elementary-stream headers: MPEG-2 video (H.262) sequence header.
 //!
-//! These are the *config-recovery* parsers for the two classic broadcast
-//! codecs, feeding the [`CodecConfig::Mpeg2Video`](crate::pipeline::CodecConfig)
-//! and [`CodecConfig::MpegAudio`](crate::pipeline::CodecConfig) hub variants.
-//! They read only the fixed header fields needed to describe the stream
-//! (picture geometry / sampling parameters); the rest of the elementary stream
-//! is carried opaquely as coded samples.
+//! This is the *config-recovery* parser for MPEG-2 video, feeding the
+//! [`CodecConfig::Mpeg2Video`](crate::pipeline::CodecConfig) hub variant. It
+//! reads only the fixed header fields needed to describe the stream (picture
+//! geometry); the rest of the elementary stream is carried opaquely as coded
+//! samples.
 //!
 //! # Spec
 //!
 //! - **MPEG-2 video sequence header**: ITU-T H.262 = ISO/IEC 13818-2 §6.2.2.1
 //!   (`sequence_header()`): start code `0x000001B3`, then
 //!   `horizontal_size_value` `[11:0]` and `vertical_size_value` `[11:0]`.
-//! - **MPEG-1/2 audio frame header**: ISO/IEC 11172-3 §2.4.1.3 / ISO/IEC
-//!   13818-3 §2.4.2.3 (`header`): 11-bit `syncword` (0x7FF), `ID` (MPEG
-//!   version), `layer`, `bitrate_index`, `sampling_frequency`, `padding_bit`,
-//!   `mode` (channel mode).
 //! - **`esds` object-type indications** for these codecs: ISO/IEC 14496-1
 //!   §7.2.6.6 Table 5 — 0x60–0x65 (MPEG-2 Visual profiles, 0x61 = Main),
 //!   0x6A (MPEG-1 Visual), 0x69 (MPEG-2 Audio), 0x6B (MPEG-1 Audio).
 
 use crate::error::{Error, Result};
-use crate::units::BITS_PER_KILOBIT;
 use broadcast_bitstream::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use broadcast_core::len::need_in;
-use broadcast_core::wire::be_u32;
 
 // ── MPEG-2 video sequence header — ISO/IEC 13818-2 §6.2.2.1 ─────────────────
 
@@ -102,273 +94,6 @@ fn find_start_code(data: &[u8], code: u8) -> Option<usize> {
     None
 }
 
-// ── MPEG-1/2 audio frame header — ISO/IEC 11172-3 / 13818-3 §2.4 ────────────
-
-/// Audio layer of an MPEG-1/2 audio frame — the `layer` field of the frame
-/// header (ISO/IEC 11172-3 §2.4.2.3, coded `11`=I, `10`=II, `01`=III).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum MpegAudioLayer {
-    /// Layer I (MP1).
-    LayerI,
-    /// Layer II (MP2).
-    LayerII,
-    /// Layer III (MP3).
-    LayerIII,
-}
-
-impl MpegAudioLayer {
-    /// The layer number (1, 2, or 3).
-    pub fn number(self) -> u8 {
-        match self {
-            MpegAudioLayer::LayerI => 1,
-            MpegAudioLayer::LayerII => 2,
-            MpegAudioLayer::LayerIII => 3,
-        }
-    }
-
-    /// Spec label for the layer.
-    pub fn name(&self) -> &'static str {
-        match self {
-            MpegAudioLayer::LayerI => "Layer I",
-            MpegAudioLayer::LayerII => "Layer II",
-            MpegAudioLayer::LayerIII => "Layer III",
-        }
-    }
-}
-
-broadcast_core::impl_spec_display!(MpegAudioLayer);
-
-/// MPEG audio version (the `ID` / `ID` + `MPEG-2.5 extension` bits) — selects
-/// the sampling-rate row and the coefficient tables (ISO/IEC 11172-3 §2.4.2.3;
-/// ISO/IEC 13818-3 for the LSF/MPEG-2 low-rate extension).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MpegAudioVersion {
-    /// MPEG-1 (`ID = 1`).
-    Mpeg1,
-    /// MPEG-2 LSF (`ID = 0`).
-    Mpeg2,
-    /// MPEG-2.5 (unofficial low-sampling-rate extension, `ID` prefix `00`).
-    Mpeg25,
-}
-
-/// The 11-bit `syncword` (all-ones) that opens an MPEG audio frame header
-/// (ISO/IEC 11172-3 §2.4.2.3).
-pub const MPEG_AUDIO_SYNCWORD: u16 = 0x07FF;
-
-/// MPEG audio frame header (ISO/IEC 11172-3 §2.4.1.3 / ISO/IEC 13818-3).
-///
-/// Only the fields needed to describe the stream + walk frame boundaries are
-/// decoded; the audio payload is carried opaquely.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MpegAudioFrameHeader {
-    /// Audio layer (I / II / III).
-    pub layer: MpegAudioLayer,
-    /// Sampling frequency in Hz (§2.4.2.3 `sampling_frequency` table).
-    pub sample_rate: u32,
-    /// Channel count: 1 for `single_channel` mode, else 2.
-    pub channels: u16,
-    /// Bitrate in bits per second from the header's `bitrate_index`
-    /// (ISO/IEC 11172-3 §2.4.2.3 bitrate table). Free-format and forbidden
-    /// indices are rejected at parse, so this is always non-zero.
-    pub bitrate_bps: u32,
-    /// Total frame length in bytes (header + payload), for frame splitting.
-    pub frame_length: usize,
-    /// Decoded samples per frame (384 for Layer I; 1152 for Layer II; 1152 for
-    /// MPEG-1 Layer III, 576 for MPEG-2/2.5 Layer III).
-    pub samples_per_frame: u32,
-}
-
-/// Bitrate index → kbit/s, per version+layer (ISO/IEC 11172-3 Table; 0 =
-/// "free", 15 = "forbidden" → both unsupported here). Index 0 and 15 map to 0.
-///
-/// Columns: `[version_group][layer_group]` where `version_group` is 0 for
-/// MPEG-1, 1 for MPEG-2/2.5 (LSF), and `layer_group` is 0=I, 1=II, 2=III.
-#[rustfmt::skip]
-const BITRATE_KBPS: [[[u16; 16]; 3]; 2] = [
-    // MPEG-1
-    [
-        // Layer I
-        [0, 32, 64, 96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 416, 448, 0],
-        // Layer II
-        [0, 32, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 0],
-        // Layer III
-        [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0],
-    ],
-    // MPEG-2 / 2.5 (LSF)
-    [
-        // Layer I
-        [0, 32, 48, 56, 64, 80, 96, 112, 128, 144, 160, 176, 192, 224, 256, 0],
-        // Layer II & III share the LSF table
-        [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0],
-        [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160, 0],
-    ],
-];
-
-/// Base MPEG-1 sampling frequencies (Hz) indexed by `sampling_frequency`
-/// (§2.4.2.3). MPEG-2 halves these; MPEG-2.5 quarters them.
-const SAMPLE_RATE_MPEG1: [u32; 3] = [44100, 48000, 32000];
-
-/// Layer coded values (`11`=I, `10`=II, `01`=III, `00`=reserved).
-const LAYER_III: u8 = 0b01;
-const LAYER_II: u8 = 0b10;
-const LAYER_I: u8 = 0b11;
-
-/// Channel `mode` value for `single_channel` (mono) — §2.4.2.3.
-const MODE_SINGLE_CHANNEL: u8 = 0b11;
-
-/// Bytes of the frame header fixed at the start of every frame (§2.4.1.3).
-const FRAME_HEADER_LEN: usize = 4;
-
-/// Bit position of `syncword` in the 32-bit frame header.
-const SYNCWORD_SHIFT: u32 = 21;
-/// Bit position of the 2-bit `ID` (MPEG version) field.
-const VERSION_ID_SHIFT: u32 = 19;
-/// Bit position of the 2-bit `layer` field.
-const LAYER_SHIFT: u32 = 17;
-/// Bit position of the 4-bit `bitrate_index` field.
-const BITRATE_INDEX_SHIFT: u32 = 12;
-/// Bit position of the 2-bit `sampling_frequency` field.
-const SAMPLE_RATE_INDEX_SHIFT: u32 = 10;
-/// Bit position of the 1-bit `padding_bit` field.
-const PADDING_SHIFT: u32 = 9;
-/// Bit position of the 2-bit `mode` field.
-const MODE_SHIFT: u32 = 6;
-/// Mask for a 2-bit field (`ID`, `layer`, `mode`).
-const BIT_PAIR_MASK: u32 = 0b11;
-/// Mask for the 4-bit `bitrate_index`.
-const BITRATE_INDEX_MASK: u32 = 0xF;
-/// Mask for the 1-bit `padding_bit`.
-const PADDING_MASK: u32 = 0x1;
-
-/// MPEG-2 sampling frequencies are half the MPEG-1 base rates (§2.4.2.3).
-const MPEG2_RATE_DIVISOR: u32 = 2;
-/// MPEG-2.5 sampling frequencies are a quarter of them.
-const MPEG25_RATE_DIVISOR: u32 = 4;
-/// Channels in a non-`single_channel` frame (stereo, or the two-channel
-/// joint/dual modes of §2.4.2.3).
-const STEREO_CHANNELS: u16 = 2;
-
-/// Slot count term of the Layer I frame length: `12 * bitrate / sample_rate`
-/// (§2.4.3.1).
-const LAYER1_SLOTS_PER_FRAME: usize = 12;
-/// Bytes per Layer I slot.
-const LAYER1_SLOT_BYTES: usize = 4;
-
-impl MpegAudioFrameHeader {
-    /// Parse the 4-byte MPEG audio frame header at the start of `data`.
-    ///
-    /// Validates the 11-bit syncword and rejects reserved layer / free /
-    /// forbidden bitrate / reserved sampling-frequency values with
-    /// [`Error::InvalidInput`] (so a false sync in the middle of a payload does
-    /// not masquerade as a frame boundary).
-    pub fn parse(data: &[u8]) -> Result<Self> {
-        need_in(data, FRAME_HEADER_LEN, "MPEG audio frame header")?;
-        let h = be_u32(data, 0, "MPEG audio frame header")?;
-
-        let syncword = ((h >> SYNCWORD_SHIFT) & u32::from(MPEG_AUDIO_SYNCWORD)) as u16;
-        if syncword != MPEG_AUDIO_SYNCWORD {
-            return Err(Error::InvalidInput(
-                "MPEG audio frame header: bad syncword (expected 11-bit 0x7FF)",
-            ));
-        }
-        // ID is 2 bits in MPEG-2.5: `00`=2.5, `10`=2, `11`=1 (`01` reserved).
-        let id = ((h >> VERSION_ID_SHIFT) & BIT_PAIR_MASK) as u8;
-        let version = match id {
-            0b11 => MpegAudioVersion::Mpeg1,
-            0b10 => MpegAudioVersion::Mpeg2,
-            0b00 => MpegAudioVersion::Mpeg25,
-            _ => {
-                return Err(Error::InvalidInput(
-                    "MPEG audio frame header: reserved version ID",
-                ));
-            }
-        };
-        let layer = match ((h >> LAYER_SHIFT) & BIT_PAIR_MASK) as u8 {
-            LAYER_I => MpegAudioLayer::LayerI,
-            LAYER_II => MpegAudioLayer::LayerII,
-            LAYER_III => MpegAudioLayer::LayerIII,
-            _ => {
-                return Err(Error::InvalidInput(
-                    "MPEG audio frame header: reserved layer",
-                ));
-            }
-        };
-        let bitrate_index = ((h >> BITRATE_INDEX_SHIFT) & BITRATE_INDEX_MASK) as usize;
-        let sample_rate_index = ((h >> SAMPLE_RATE_INDEX_SHIFT) & BIT_PAIR_MASK) as usize;
-        let padding = ((h >> PADDING_SHIFT) & PADDING_MASK) as usize;
-        let mode = ((h >> MODE_SHIFT) & BIT_PAIR_MASK) as u8;
-
-        if sample_rate_index >= SAMPLE_RATE_MPEG1.len() {
-            return Err(Error::InvalidInput(
-                "MPEG audio frame header: reserved sampling_frequency",
-            ));
-        }
-        let base_rate = SAMPLE_RATE_MPEG1[sample_rate_index];
-        let sample_rate = match version {
-            MpegAudioVersion::Mpeg1 => base_rate,
-            MpegAudioVersion::Mpeg2 => base_rate / MPEG2_RATE_DIVISOR,
-            MpegAudioVersion::Mpeg25 => base_rate / MPEG25_RATE_DIVISOR,
-        };
-
-        let version_group = matches!(version, MpegAudioVersion::Mpeg1) as usize ^ 1; // 0=MPEG1,1=LSF
-        let layer_group = match layer {
-            MpegAudioLayer::LayerI => 0,
-            MpegAudioLayer::LayerII => 1,
-            MpegAudioLayer::LayerIII => 2,
-        };
-        let bitrate_kbps = BITRATE_KBPS[version_group][layer_group][bitrate_index];
-        if bitrate_kbps == 0 {
-            // Index 0 (free-format) and 15 (forbidden) — not supported.
-            return Err(Error::InvalidInput(
-                "MPEG audio frame header: free-format or forbidden bitrate_index",
-            ));
-        }
-        let bitrate = bitrate_kbps as usize * BITS_PER_KILOBIT as usize;
-
-        let channels: u16 = if mode == MODE_SINGLE_CHANNEL {
-            1
-        } else {
-            STEREO_CHANNELS
-        };
-
-        // Frame length (bytes) and samples per frame — §2.4.3.1 (Layer I) /
-        // §2.4.2.3.  Layer I: (12 * br / sr + pad) * 4; Layers II/III:
-        // (coeff * br / sr) + pad, coeff = samples_per_frame / 8.
-        let samples_per_frame = match (layer, version) {
-            (MpegAudioLayer::LayerI, _) => 384,
-            (MpegAudioLayer::LayerII, _) => 1152,
-            (MpegAudioLayer::LayerIII, MpegAudioVersion::Mpeg1) => 1152,
-            (MpegAudioLayer::LayerIII, _) => 576,
-        };
-        let frame_length = match layer {
-            MpegAudioLayer::LayerI => {
-                (LAYER1_SLOTS_PER_FRAME * bitrate / sample_rate as usize + padding)
-                    * LAYER1_SLOT_BYTES
-            }
-            _ => {
-                (samples_per_frame as usize / u8::BITS as usize) * bitrate / sample_rate as usize
-                    + padding
-            }
-        };
-        if frame_length < FRAME_HEADER_LEN {
-            return Err(Error::InvalidInput(
-                "MPEG audio frame header: computed frame length shorter than header",
-            ));
-        }
-
-        Ok(Self {
-            layer,
-            sample_rate,
-            channels,
-            bitrate_bps: bitrate as u32,
-            frame_length,
-            samples_per_frame,
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,40 +125,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn mp2_frame_header_44100_mono() {
-        // FF FD E0 C4 — MPEG-1 Layer II, 44100 Hz, mono, 384 kbps.
-        let h = MpegAudioFrameHeader::parse(&[0xFF, 0xFD, 0xE0, 0xC4]).unwrap();
-        assert_eq!(h.layer, MpegAudioLayer::LayerII);
-        assert_eq!(h.layer.number(), 2);
-        assert_eq!(h.sample_rate, 44100);
-        assert_eq!(h.channels, 1);
-        assert_eq!(h.samples_per_frame, 1152);
-        assert_eq!(h.frame_length, 1253);
-    }
-
-    #[test]
-    fn mp3_frame_header_44100() {
-        // FF FB 50 C4 — MPEG-1 Layer III, 44100 Hz.
-        let h = MpegAudioFrameHeader::parse(&[0xFF, 0xFB, 0x50, 0xC4]).unwrap();
-        assert_eq!(h.layer, MpegAudioLayer::LayerIII);
-        assert_eq!(h.sample_rate, 44100);
-        assert_eq!(h.samples_per_frame, 1152);
-    }
-
-    #[test]
-    fn bad_syncword_rejected() {
-        assert!(matches!(
-            MpegAudioFrameHeader::parse(&[0x00, 0x00, 0x00, 0x00]),
-            Err(crate::error::Error::InvalidInput(..))
-        ));
-    }
-
-    #[test]
-    fn display_labels() {
-        assert_eq!(MpegAudioLayer::LayerII.to_string(), "Layer II");
-    }
-
     /// #3797: a sequence header ending inside its 3 size bytes is
     /// `BufferTooShort { need: 7 }`, never a slice panic.
     #[test]
@@ -453,29 +144,5 @@ mod tests {
         }
         let ok = Mpeg2SeqHeader::find(&[0x00, 0x00, 0x01, 0xB3, 0x28, 0x01, 0xE0]).unwrap();
         assert_eq!((ok.width, ok.height), (640, 480));
-    }
-
-    /// #3798: `ID = 00` is MPEG-2.5, not a reserved version.
-    #[test]
-    fn mpeg25_layer3_frame_header() {
-        let h = MpegAudioFrameHeader::parse(&[0xFF, 0xE3, 0x90, 0xC4]).unwrap();
-        assert_eq!(h.layer, MpegAudioLayer::LayerIII);
-        assert_eq!(h.sample_rate, 11025, "MPEG-2.5 quarters the base rate");
-        assert_eq!(h.samples_per_frame, 576);
-        assert_eq!(h.channels, 1);
-    }
-
-    /// #3798: Layer I has its own frame-length granule, `(12 * br / sr + pad) * 4`.
-    #[test]
-    fn layer1_frame_length_uses_the_4_byte_granule() {
-        let h = MpegAudioFrameHeader::parse(&[0xFF, 0xFF, 0x10, 0xC4]).unwrap();
-        assert_eq!(h.layer, MpegAudioLayer::LayerI);
-        assert_eq!(h.bitrate_bps, 32_000);
-        assert_eq!(h.sample_rate, 44100);
-        assert_eq!(h.samples_per_frame, 384);
-        assert_eq!(h.frame_length, 32, "(12 * 32000 / 44100 + 0) * 4");
-
-        let padded = MpegAudioFrameHeader::parse(&[0xFF, 0xFF, 0x12, 0xC4]).unwrap();
-        assert_eq!(padded.frame_length, 36, "one pad slot adds 4 bytes");
     }
 }

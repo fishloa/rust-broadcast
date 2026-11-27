@@ -187,6 +187,8 @@ pub const TABLE: &[Crate] = &[
             "HeAacProfile",
             "HevcNalUnitType",
             "MatrixCoefficients",
+            "MpegAudioLayer",
+            "MpegAudioVersion",
             "NalCodec",
             "OverlapProcessOption",
             "PicStruct",
@@ -196,7 +198,7 @@ pub const TABLE: &[Crate] = &[
             "VideoFormat",
             "VideoScan",
         ]),
-        min_enums: Some(17),
+        min_enums: Some(19),
     },
     Crate {
         name: "broadcast-codec",

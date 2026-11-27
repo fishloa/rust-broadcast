@@ -52,13 +52,14 @@ use broadcast_bitstream::facts::{
     AspectRatioIdc, ColourDescription, EXTENDED_SAR_IDC, PictureRect, VideoFormat, VideoSignalType,
 };
 
-use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
+use crate::mpeg_legacy::Mpeg2SeqHeader;
 use crate::mux_stage::{MuxInput, MuxOutput, SegmentOut, SegmentSummary};
 use crate::pipeline::build_init_segment;
 #[cfg(feature = "hls")]
 use crate::segment_log::{SegmentSummaryLog, TrackSummary};
 use crate::segmenter::{MediaClock, choose_anchor};
 use alloc::sync::Arc;
+use broadcast_bitstream::{MpegAudioFrameHeader, MpegAudioLayer};
 use bytes::Bytes;
 use isobmff::ac4::Ac4SpecificBox;
 use isobmff::box_support::OpaqueBox;
@@ -1349,7 +1350,7 @@ pub(crate) fn refine_legacy_config(config: &mut CodecConfig, first: &Sample) {
         CodecConfig::MpegAudio { layer, .. }
             if let Ok(hdr) = MpegAudioFrameHeader::parse(&first.data) =>
         {
-            *layer = hdr.layer;
+            *layer = hdr.layer();
         }
         _ => {}
     }

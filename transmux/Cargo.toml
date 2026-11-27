@@ -16,7 +16,7 @@ readme       = "README.md"
 broadcast-common = { path = "../broadcast-common", version = "14.0.0", default-features = false, features = ["base64"] }
 # The bitstream parsers that used to be private modules here (the bit reader,
 # NAL classification, Annex B conversion, access-unit splitting).
-broadcast-bitstream = { path = "../broadcast-bitstream", version = "0.1.0", default-features = false, features = ["h264", "hevc", "vvc", "aac", "ac3", "dts", "mpegh", "isobmff"] }
+broadcast-bitstream = { path = "../broadcast-bitstream", version = "0.1.0", default-features = false, features = ["h264", "hevc", "vvc", "aac", "ac3", "dts", "mpegh", "mpeg-audio", "isobmff"] }
 broadcast-core = { path = "../broadcast-core", version = "0.1.0", default-features = false }
 thiserror  = { version = "2", default-features = false }
 # Calendar and duration handling (SP5): CLI availabilityStartTime, xs:duration parse/build. `std`-only, so the no_std core is unaffected.

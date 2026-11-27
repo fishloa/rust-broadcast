@@ -9,6 +9,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 
 ### Added
 
+- The MPEG-1/2/2.5 audio layer (`mpeg_audio`, feature `mpeg-audio`), moved
+  from `transmux`'s `mpeg_legacy`: `MpegAudioLayer`, `MpegAudioFrameHeader`
+  (private fields with accessors) and `MpegAudioFrameHeader::parse`, plus
+  `MPEG_AUDIO_SYNCWORD`. The frame header now exposes the MPEG version it
+  already decoded as the typed `MpegAudioVersion` (MPEG-1 / MPEG-2 / MPEG-2.5,
+  spec labels with `name()` + `Display`).
 - The AAC layer (`aac_asc`, `aac` feature), moved from `transmux`:
   `AudioObjectType`, `SamplingFrequencyIndex`, `ChannelConfiguration` (spec
   labels with `name()` + `Display`), `AudioSpecificConfig` with its `Parse` /

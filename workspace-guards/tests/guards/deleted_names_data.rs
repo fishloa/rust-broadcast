@@ -707,4 +707,29 @@ pub const TABLE: &[Banned] = &[
         reason: "walk_mhas_packets lives in broadcast_bitstream::mhas",
         issue: "broadcast-bitstream bs3a",
     },
+    Banned {
+        name: "transmux::mpeg_legacy::MpegAudioLayer",
+        reason: "the MPEG audio frame header lives in broadcast_bitstream::mpeg_audio",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::mpeg_legacy::MpegAudioFrameHeader",
+        reason: "the MPEG audio frame header lives in broadcast_bitstream::mpeg_audio",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::MpegAudioLayer",
+        reason: "the MPEG audio frame header lives in broadcast_bitstream::mpeg_audio",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::MpegAudioFrameHeader",
+        reason: "the MPEG audio frame header lives in broadcast_bitstream::mpeg_audio",
+        issue: "broadcast-bitstream bs5",
+    },
+    Banned {
+        name: "transmux::MPEG_AUDIO_SYNCWORD",
+        reason: "the MPEG audio syncword lives in broadcast_bitstream::mpeg_audio",
+        issue: "broadcast-bitstream bs5",
+    },
 ];
