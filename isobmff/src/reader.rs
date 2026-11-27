@@ -117,6 +117,107 @@ impl ByteRange {
     }
 }
 
+/// One identified media data box (`imda`, §8.1.4) the walk has passed.
+///
+/// A `DataEntryImdaBox` (`imdt`) or `DataEntrySeqNumImdaBox` (`snim`) data
+/// reference addresses this box by [`identifier`](Self::identifier); the
+/// media-data offsets are relative to the first byte of
+/// [`payload`](Self::payload) (§6.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct IdentifiedMediaData {
+    identifier: u32,
+    payload: ByteRange,
+}
+
+impl IdentifiedMediaData {
+    /// `imda_identifier`.
+    #[must_use]
+    pub const fn identifier(&self) -> u32 {
+        self.identifier
+    }
+
+    /// The payload's byte range: where media-data offset 0 points.
+    #[must_use]
+    pub const fn payload(&self) -> ByteRange {
+        self.payload
+    }
+}
+
+/// What a sample entry's `data_reference_index` points at (§8.7.2.3, §6.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DataReferenceBase {
+    /// The data is in this file, addressed by absolute offsets (`url ` with
+    /// the self-contained flag, or no data reference).
+    SameFile,
+    /// The data is in the `imda` with this identifier (`imdt`).
+    Identified(u32),
+    /// The data is in the `imda` whose identifier is the fragment's sequence
+    /// number (`snim`).
+    SequenceNumber,
+}
+
+/// The `data_reference_index` at offset 14 of a sample entry's bytes
+/// (SampleEntry `reserved[6]` then the 16-bit index, §8.5.2.2).
+fn entry_data_reference_index(body: &[u8]) -> u16 {
+    const DATA_REFERENCE_INDEX_OFFSET: usize = core::mem::size_of::<u32>() * 2 + 6;
+    body.get(DATA_REFERENCE_INDEX_OFFSET..DATA_REFERENCE_INDEX_OFFSET + 2)
+        .map(|bytes| u16::from_be_bytes([bytes[0], bytes[1]]))
+        .unwrap_or(1)
+}
+
+/// The offsets a track's stsd entries are addressed relative to.
+fn track_data_references(
+    trak: &crate::init_segment::TrackBox,
+    entries: &[SampleEntryInfo],
+) -> Vec<DataReferenceBase> {
+    let dref = trak
+        .mdia
+        .as_ref()
+        .and_then(|mdia| mdia.minf.as_ref())
+        .and_then(|minf| minf.dinf.as_ref())
+        .and_then(|dinf| dinf.dref.as_ref());
+    entries
+        .iter()
+        .map(|entry| {
+            let index = usize::from(entry_data_reference_index(&entry.body));
+            let Some(dref) = dref else {
+                return DataReferenceBase::SameFile;
+            };
+            match index.checked_sub(1).and_then(|i| dref.entries.get(i)) {
+                Some(crate::init_segment::DataEntry::Imda(box_)) => {
+                    DataReferenceBase::Identified(box_.imda_ref_identifier)
+                }
+                Some(crate::init_segment::DataEntry::SeqNumImda(_)) => {
+                    DataReferenceBase::SequenceNumber
+                }
+                _ => DataReferenceBase::SameFile,
+            }
+        })
+        .collect()
+}
+
+/// The byte offset a sample referenced through `base` starts at, or `None`
+/// when the identified media data box it names has not been walked yet.
+fn data_reference_bias(
+    bases: &[DataReferenceBase],
+    imda: &[IdentifiedMediaData],
+    description_index: u32,
+) -> Option<u64> {
+    let index = usize::try_from(description_index.checked_sub(1)?).ok()?;
+    match bases
+        .get(index)
+        .copied()
+        .unwrap_or(DataReferenceBase::SameFile)
+    {
+        DataReferenceBase::SameFile | DataReferenceBase::SequenceNumber => Some(0),
+        DataReferenceBase::Identified(identifier) => imda
+            .iter()
+            .find(|m| m.identifier == identifier)
+            .map(|m| m.payload.offset),
+    }
+}
+
 /// The order [`Reader::step`] yields [`Step::Sample`] steps in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -419,6 +520,8 @@ pub struct TrackInfo {
     /// The media information header (`vmhd`/`smhd`/`nmhd`/`hmhd`/`vvhd`,
     /// §8.4.5), when the crate models it.
     pub media_header: Option<crate::init_segment::MediaInformationHeader>,
+    /// The track's sub-tracks (`strk`, §8.13.3), in wire order.
+    pub subtracks: Vec<crate::track_desc::SubTrackBox>,
 }
 
 impl TrackInfo {
@@ -520,6 +623,7 @@ impl TrackInfo {
             loudness: desc.loudness,
             track_selection: desc.track_selection,
             media_header: desc.media_header,
+            subtracks: desc.subtracks,
         })
     }
 }
@@ -669,6 +773,7 @@ enum Pending {
     Mfra(ByteRange),
     MfraForm(ByteRange),
     TopLevel(ByteRange),
+    Imda { head: ByteRange, payload_end: u64 },
 }
 
 impl Pending {
@@ -684,6 +789,7 @@ impl Pending {
             | Self::Mfra(range)
             | Self::MfraForm(range)
             | Self::TopLevel(range) => *range,
+            Self::Imda { head, .. } => *head,
         }
     }
 }
@@ -798,6 +904,10 @@ pub struct Reader {
     saw_mdat: bool,
     movie: Option<MovieBox>,
     brand: Option<FileTypeBox>,
+    extended_type: Option<crate::segments::ExtendedTypeBox>,
+    original_type: Option<crate::segments::OriginalFileTypeBox>,
+    identified_media: Vec<IdentifiedMediaData>,
+    sample_references: Vec<Vec<DataReferenceBase>>,
     warnings: Vec<Warning>,
     deferred_warning: Option<Warning>,
     mdat_truncation_reported: bool,
@@ -841,6 +951,10 @@ impl Reader {
             saw_mdat: false,
             movie: None,
             brand: None,
+            extended_type: None,
+            original_type: None,
+            identified_media: Vec::new(),
+            sample_references: Vec::new(),
             warnings: Vec::new(),
             deferred_warning: None,
             mdat_truncation_reported: false,
@@ -904,6 +1018,9 @@ impl Reader {
             Pending::Mfra(_) => self.accept_mfra(bytes),
             Pending::MfraForm(_) => self.accept_mfra_form(bytes),
             Pending::TopLevel(_) => self.accept_top_level(bytes),
+            Pending::Imda { head, payload_end } => {
+                self.accept_imda(head.offset, payload_end, bytes)
+            }
         }
     }
 
@@ -1086,6 +1203,39 @@ impl Reader {
             self.decode_times[index] = decode_time;
             self.sample_counts[index] = count;
         }
+    }
+
+    /// The file's extended type declarations (`etyp`, §5.3.2), once the walk
+    /// has passed one.
+    #[must_use]
+    pub fn extended_types(&self) -> Option<&crate::segments::ExtendedTypeBox> {
+        self.extended_type.as_ref()
+    }
+
+    /// The original file type (`otyp`, §8.16.5), once the walk has passed one.
+    #[must_use]
+    pub fn original_type(&self) -> Option<&crate::segments::OriginalFileTypeBox> {
+        self.original_type.as_ref()
+    }
+
+    /// Every identified media data box (`imda`, §8.1.4) the walk has passed,
+    /// with its identifier and payload byte range.
+    #[must_use]
+    pub fn identified_media(&self) -> &[IdentifiedMediaData] {
+        &self.identified_media
+    }
+
+    /// The movie's declared whole duration (`mehd.fragment_duration`,
+    /// §8.8.2), in the movie timescale, once `moov` is parsed.
+    #[must_use]
+    pub fn fragment_duration(&self) -> Option<u64> {
+        self.movie
+            .as_ref()?
+            .mvex
+            .as_ref()?
+            .mehd
+            .as_ref()
+            .map(crate::init_segment::MovieExtendsHeaderBox::fragment_duration)
     }
 
     /// The file's `ftyp` brand box, when the file carries one.
@@ -1770,6 +1920,26 @@ impl Reader {
             for fragment in &mut self.fragments {
                 fragment.mdats.push(MdatRange::new(payload, end));
             }
+        } else if header.box_type.is(&crate::segments::IMDA) {
+            self.saw_mdat = true;
+            let payload = offset.saturating_add(
+                (header.header_size() + crate::segments::IMDA_IDENTIFIER_LEN) as u64,
+            );
+            for fragment in &mut self.fragments {
+                fragment.mdats.push(MdatRange::new(payload, end));
+            }
+            let head = ByteRange {
+                offset,
+                len: ((header.header_size() + crate::segments::IMDA_IDENTIFIER_LEN) as u64)
+                    .min(size),
+            };
+            self.request(offset, head.len)?;
+            self.pos = end;
+            self.pending = Some(Pending::Imda {
+                head,
+                payload_end: end,
+            });
+            return Ok(());
         } else if self
             .fragments
             .front()
@@ -1808,8 +1978,31 @@ impl Reader {
 
     /// Keep one top-level box outside `ftyp`/`moov`/`mdat` so a rewrite can
     /// reproduce it in place.
+    fn accept_imda(&mut self, head_offset: u64, payload_end: u64, bytes: &[u8]) -> Result<()> {
+        let (identifier, payload_offset) =
+            crate::segments::IdentifiedMediaDataBox::parse_identification(bytes)?;
+        let start = head_offset.saturating_add(payload_offset as u64);
+        self.identified_media.push(IdentifiedMediaData {
+            identifier,
+            payload: ByteRange {
+                offset: start,
+                len: payload_end.saturating_sub(start),
+            },
+        });
+        Ok(())
+    }
+
     fn accept_top_level(&mut self, bytes: &[u8]) -> Result<()> {
         let (item, _) = parse_box(bytes)?;
+        match &item.four_cc() {
+            b"etyp" => {
+                self.extended_type = Some(crate::segments::ExtendedTypeBox::parse(bytes)?);
+            }
+            b"otyp" => {
+                self.original_type = Some(crate::segments::OriginalFileTypeBox::parse(bytes)?);
+            }
+            _ => {}
+        }
         let carried = OpaqueBox {
             box_type: item.four_cc(),
             data: item.payload().to_vec(),
@@ -1948,6 +2141,12 @@ impl Reader {
             }
         }
         self.emitted_metadata = false;
+        self.sample_references = movie
+            .tracks
+            .iter()
+            .zip(&tracks)
+            .map(|(trak, info)| track_data_references(trak, &info.entries))
+            .collect();
         self.movie = Some(movie);
         self.tracks = tracks;
         self.cursors = cursors;
@@ -2214,6 +2413,19 @@ impl Reader {
             let Some(sample) = slot.state.peek(stbl)? else {
                 continue;
             };
+            let Some(base) = data_reference_bias(
+                self.sample_references
+                    .get(slot.track_index)
+                    .map_or(&[], alloc::vec::Vec::as_slice),
+                &self.identified_media,
+                sample.description_index,
+            ) else {
+                // The identified media data box this entry addresses has not
+                // been walked yet; a later `Step::Need` pass will find it.
+                continue;
+            };
+            let mut sample = sample;
+            sample.offset = sample.offset.saturating_add(base);
             let replace = match &best {
                 None => true,
                 Some((_, best_index, best_timescale, best_sample)) => {
@@ -2425,6 +2637,7 @@ struct TrackDescription {
     loudness: Option<crate::audio_boxes::LoudnessBox>,
     track_selection: Option<crate::track_desc::TrackSelectionBox>,
     media_header: Option<crate::init_segment::MediaInformationHeader>,
+    subtracks: Vec<crate::track_desc::SubTrackBox>,
 }
 
 fn track_description(trak: &TrackBox) -> TrackDescription {
@@ -2451,6 +2664,7 @@ fn track_description(trak: &TrackBox) -> TrackDescription {
                 UdtaChild::Label(label) => out.labels.push(label),
                 UdtaChild::Loudness(loudness) => out.loudness = Some(loudness),
                 UdtaChild::TrackSelection(selection) => out.track_selection = Some(selection),
+                UdtaChild::SubTrack(subtrack) => out.subtracks.push(subtrack),
                 _ => {}
             }
         }
@@ -2547,6 +2761,7 @@ fn build_track_info(
         loudness: desc.loudness,
         track_selection: desc.track_selection,
         media_header: desc.media_header,
+        subtracks: desc.subtracks,
     })
 }
 

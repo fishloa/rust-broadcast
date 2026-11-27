@@ -304,3 +304,35 @@ fn the_reader_reports_a_subtitle_tracks_null_media_header() {
     }
     assert!(seen, "the WebVTT track reports its nmhd");
 }
+
+#[test]
+fn mehd_from_a_committed_dash_init_reads_back() {
+    use isobmff::init_segment::MovieExtendsHeaderBox;
+
+    let file = test_fixtures::read("dash/ondemand-gpac-pto-quirk/v_dashinit.mp4");
+    let moov = top_level(&file, *b"moov");
+    let movie = MovieBox::parse(&moov).expect("moov parses");
+    let mvex = movie.mvex.as_ref().expect("mvex");
+    let mehd = mvex.mehd.as_ref().expect("mehd");
+    // MP4Box -disox: Version="0" Flags="0" fragmentDuration="12000".
+    assert_eq!(mehd.version(), 0);
+    assert_eq!(mehd.flags(), 0);
+    assert_eq!(mehd.fragment_duration(), 12000);
+    let bytes = mehd.try_to_bytes().expect("mehd bytes");
+    assert_eq!(&bytes[4..8], b"mehd");
+    assert_eq!(
+        MovieExtendsHeaderBox::parse(&bytes).expect("reparse"),
+        *mehd
+    );
+}
+
+#[test]
+fn the_reader_reports_the_mehd_duration() {
+    use isobmff::driver::{DriverStep, FileReader};
+
+    let file = test_fixtures::read("dash/ondemand-gpac-pto-quirk/v_dashinit.mp4");
+    let mut reader = FileReader::new(std::io::Cursor::new(file), isobmff::ReaderConfig::default())
+        .expect("reader");
+    while !matches!(reader.step().expect("step"), DriverStep::Done) {}
+    assert_eq!(reader.reader().fragment_duration(), Some(12000));
+}

@@ -4910,9 +4910,141 @@ impl Serialize for TrackExtendsBox {
 /// Movie Extends Box (`mvex`) — ISO/IEC 14496-12:2026 §8.8.1.
 ///
 /// Signals that the movie is fragmented and carries the per-track [`TrackExtendsBox`]
-/// defaults. Any other children (e.g. `mehd`, which Table 2 (§6.2) orders *before* the
-/// `trex` list) are preserved verbatim in `opaque`, at the position they
-/// occupied on the wire — see [`MovieExtendsBox::order`].
+/// defaults. Any other children are preserved verbatim in `opaque`, at the
+/// position they occupied on the wire — see [`MovieExtendsBox::order`].
+///
+/// Movie Extends Header Box (`mehd`) — ISO/IEC 14496-12:2026 §8.8.2.
+///
+/// The presentation's whole duration, fragments included, in the movie
+/// timescale. Version 1 widens `fragment_duration` to 64 bits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct MovieExtendsHeaderBox {
+    version: u8,
+    flags: u32,
+    fragment_duration: u64,
+}
+
+impl MovieExtendsHeaderBox {
+    /// A version-0 header.
+    #[must_use]
+    pub const fn new(fragment_duration: u32) -> Self {
+        Self {
+            version: 0,
+            flags: 0,
+            fragment_duration: fragment_duration as u64,
+        }
+    }
+
+    /// A version-1 header with a 64-bit duration.
+    #[must_use]
+    pub const fn wide(fragment_duration: u64) -> Self {
+        Self {
+            version: 1,
+            flags: 0,
+            fragment_duration,
+        }
+    }
+
+    /// The FullBox version (0 or 1).
+    #[must_use]
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+
+    /// The FullBox flags.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// `fragment_duration`, in the movie timescale.
+    #[must_use]
+    pub const fn fragment_duration(&self) -> u64 {
+        self.fragment_duration
+    }
+
+    /// The width of `fragment_duration` this version uses.
+    const fn duration_len(version: u8) -> usize {
+        if version == 1 {
+            core::mem::size_of::<u64>()
+        } else {
+            core::mem::size_of::<u32>()
+        }
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(body, FULLBOX_EXTRA_SIZE, "mehd")?;
+        let version = body[0];
+        if version > 1 {
+            return Err(Error::UnsupportedVersion(
+                broadcast_core::error::UnsupportedVersion {
+                    what: "mehd",
+                    found: version,
+                },
+            ));
+        }
+        let len = Self::duration_len(version);
+        need_in(body, FULLBOX_EXTRA_SIZE + len, "mehd")?;
+        let fragment_duration = if version == 1 {
+            broadcast_core::wire::be_u64(body, FULLBOX_EXTRA_SIZE, "mehd fragment_duration")?
+        } else {
+            u64::from(broadcast_core::wire::be_u32(
+                body,
+                FULLBOX_EXTRA_SIZE,
+                "mehd fragment_duration",
+            )?)
+        };
+        Ok(Self {
+            version,
+            flags: u24_at(body, 1) & FULLBOX_FLAGS_MASK,
+            fragment_duration,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for MovieExtendsHeaderBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let item = parse_box(bytes)?.0;
+        if item.four_cc() != *b"mehd" {
+            return Err(Error::UnexpectedBox { expected: "mehd" });
+        }
+        Self::parse_body(item.body)
+    }
+}
+
+impl Serialize for MovieExtendsHeaderBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        BOX_HEADER_MIN_SIZE + FULLBOX_EXTRA_SIZE + Self::duration_len(self.version)
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor =
+            write_full_box_header(buf, b"mehd", need, self.version, self.flags, false)?;
+        let len = Self::duration_len(self.version);
+        if self.version == 1 {
+            buf[cursor..cursor + len].copy_from_slice(&self.fragment_duration.to_be_bytes());
+        } else {
+            let value = broadcast_core::len::fit_u32(
+                usize::try_from(self.fragment_duration)
+                    .map_err(|_| Error::InvalidInput("mehd duration exceeds u32"))?,
+                "mehd fragment_duration",
+            )?;
+            buf[cursor..cursor + len].copy_from_slice(&value.to_be_bytes());
+        }
+        cursor += len;
+        Ok(cursor)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MovieExtendsBox {
@@ -4922,6 +5054,8 @@ pub struct MovieExtendsBox {
     pub leva: Option<crate::index_boxes::LevelAssignmentBox>,
     /// The track extension properties (§8.8.15), in wire order.
     pub trep: Vec<crate::index_boxes::TrackExtensionPropertiesBox>,
+    /// The movie extends header (`mehd`, §8.8.2), when present.
+    pub mehd: Option<MovieExtendsHeaderBox>,
     /// Other `mvex` children preserved verbatim (e.g. `mehd`).
     pub opaque: Vec<OpaqueBox>,
     /// The wire order of this container's children (audit r05-W12).
@@ -4936,6 +5070,7 @@ impl MovieExtendsBox {
             trex,
             leva: None,
             trep: Vec::new(),
+            mehd: None,
             opaque,
             order: ChildOrder::default(),
         }
@@ -4965,6 +5100,9 @@ impl MovieExtendsBox {
         for trep in &self.trep {
             out.push(trep);
         }
+        if let Some(ref mehd) = self.mehd {
+            out.push(mehd);
+        }
         out
     }
 
@@ -4978,6 +5116,9 @@ impl MovieExtendsBox {
             b"trep" as &'static [u8; BOX_TYPE_SIZE],
             self.trep.len(),
         ));
+        if self.mehd.is_some() {
+            out.push(b"mehd");
+        }
         out
     }
 
@@ -4992,6 +5133,7 @@ impl<'a> Parse<'a> for MovieExtendsBox {
         let mut trex = Vec::new();
         let mut leva = None;
         let mut trep = Vec::new();
+        let mut mehd = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
         for child in parse_box(bytes)?.0.children() {
@@ -5011,7 +5153,11 @@ impl<'a> Parse<'a> for MovieExtendsBox {
                         child.bytes,
                     )?);
                 }
-                // `mehd` and any unmodelled child stay opaque, in place.
+                b"mehd" => {
+                    order.push(child.four_cc());
+                    mehd = Some(MovieExtendsHeaderBox::parse(child.bytes)?);
+                }
+                // Any unmodelled child stays opaque, in place.
                 _ => {
                     order.push_opaque(child.four_cc());
                     opaque.push(OpaqueBox {
@@ -5027,6 +5173,7 @@ impl<'a> Parse<'a> for MovieExtendsBox {
             trex,
             leva,
             trep,
+            mehd,
             opaque,
             order,
         })

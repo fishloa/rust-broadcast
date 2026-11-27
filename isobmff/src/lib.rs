@@ -287,14 +287,19 @@ pub use sample_table::{
 pub use sample_tables_extra::{
     DegradationPriorityBox, PADB, PaddingBitsBox, STDP, STSG, SubTrackSampleGroupBox,
 };
+pub use segments::{
+    ETYP, ExtendedTypeBox, IMDA, IdentifiedMediaDataBox, OTYP, OriginalFileTypeBox, TYCO,
+    TypeCombinationBox,
+};
 pub use subtitle_entries::{
     CueIdBox, CuePayloadBox, CueSettingsBox, VttAdditionalTextBox, VttCueBox, VttEmptyCueBox,
     WebVttConfigurationBox, WvttSampleBox, WvttSampleEntry, XmlSubtitleSampleEntry,
     parse_wvtt_sample,
 };
 pub use track_desc::{
-    ELNG, ExtendedLanguageBox, KIND, KindBox, STVI, StereoVideoBox, TRACK_GROUP_MSRC,
-    TRACK_GROUP_STER, TRGR, TSEL, TrackGroupBox, TrackGroupTypeBox, TrackSelectionBox,
+    ELNG, ExtendedLanguageBox, KIND, KindBox, STRD, STRI, STRK, STVI, StereoVideoBox, SubTrackBox,
+    SubTrackDefinitionBox, SubTrackInformationBox, TRACK_GROUP_MSRC, TRACK_GROUP_STER, TRGR, TSEL,
+    TrackGroupBox, TrackGroupTypeBox, TrackSelectionBox,
 };
 pub use track_id::TrackId;
 pub use track_reference::{AVCP_REFERENCE_TYPE, TrackReferenceBox, TrackReferenceTypeBox};

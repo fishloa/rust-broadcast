@@ -17,12 +17,12 @@ use std::collections::BTreeSet;
 use isobmff::coverage::TYPED_BOXES;
 
 /// Tier 3: metadata tracks.
-const UNTYPED_TIER_3: &[&str] = &["etyp", "imda", "otyp", "strd", "stri", "strk"];
+const UNTYPED_TIER_3: &[&str] = &[];
 
 /// Tier 4: newer signalling.
 const UNTYPED_TIER_4: &[&str] = &[
     "aedb", "aelm", "aepp", "aepr", "aesb", "aesd", "amve", "ardi", "assp", "cclv", "cinf", "csch",
-    "mehd", "rinf", "scrb", "spki", "vvhd",
+    "rinf", "scrb", "spki",
 ];
 
 /// Tier 5: legacy delivery and hint tracks (lowest value).
@@ -30,7 +30,7 @@ const UNTYPED_TIER_5: &[&str] = &[
     "btrt", "dimm", "dmax", "dmed", "drep", "extr", "fdpa", "fdsa", "feci", "fecr", "fiin", "fire",
     "fpar", "gitn", "hinf", "hnti", "istm", "maxr", "npck", "nump", "paen", "payt", "pmax", "rcsr",
     "rsot", "rssr", "rtp ", "rtpx", "sdp ", "segr", "snro", "srpp", "stsh", "tPAT", "tPMT", "tims",
-    "tmax", "tmin", "totl", "tpay", "tpyl", "trpy", "tsro", "tssy", "tsti", "tyco",
+    "tmax", "tmin", "totl", "tpay", "tpyl", "trpy", "tsro", "tssy", "tsti",
 ];
 
 const REGISTRY_ENTRY: &str = "mpeg/isobmff/box-registry-14496-12-2026.tsv";

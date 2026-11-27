@@ -760,4 +760,3 @@ fn a_malformed_opaque_stts_surfaces_its_real_parse_error() {
         Err(Error::BufferTooShort(_))
     ));
 }
-

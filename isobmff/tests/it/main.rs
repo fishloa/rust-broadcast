@@ -27,6 +27,7 @@ mod sample_table;
 mod short_buffers;
 mod tier1_boxes;
 mod tier1_fixtures;
+mod tier34_boxes;
 mod tier34_fixtures;
 mod timing;
 mod timing_groups;

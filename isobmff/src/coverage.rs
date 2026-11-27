@@ -152,6 +152,12 @@ leaf! {
     p_cprt: b"cprt", crate::meta_track::CopyrightBox, &MINIMAL_BODY;
     p_nmhd: b"nmhd", crate::init_segment::NullMediaHeaderBox, &MINIMAL_BODY;
     p_hmhd: b"hmhd", crate::init_segment::HintMediaHeaderBox, &MINIMAL_BODY;
+    p_tyco: b"tyco", crate::segments::TypeCombinationBox, &MINIMAL_BODY;
+    p_imda: b"imda", crate::segments::IdentifiedMediaDataBox, &MINIMAL_BODY;
+    p_stri: b"stri", crate::track_desc::SubTrackInformationBox, &MINIMAL_BODY;
+    p_strd: b"strd", crate::track_desc::SubTrackDefinitionBox, &[];
+    p_mehd: b"mehd", crate::init_segment::MovieExtendsHeaderBox, &MINIMAL_BODY;
+    p_vvhd: b"vvhd", crate::init_segment::VolumetricVisualMediaHeaderBox, &MINIMAL_BODY;
     p_brnd: b"brnd", crate::item::BrandProperty, &MINIMAL_BODY;
     p_grpl: b"grpl", crate::item::GroupsListBox, &[];
     p_idat: b"idat", crate::item::ItemDataBox, &MINIMAL_BODY;
@@ -275,6 +281,22 @@ fn p_traf() -> Result<()> {
     crate::movie_fragment::TrackFragmentBox::parse_body_budgeted(&body, &mut budget).map(|_| ())
 }
 
+fn p_etyp() -> Result<()> {
+    let body = boxed(*b"tyco", &MINIMAL_BODY);
+    crate::segments::ExtendedTypeBox::parse(&boxed(*b"etyp", &body)).map(|_| ())
+}
+
+fn p_otyp() -> Result<()> {
+    let mut body = boxed(*b"ftyp", &MINIMAL_BODY);
+    body.extend_from_slice(&boxed(*b"etyp", &boxed(*b"tyco", &MINIMAL_BODY)));
+    crate::segments::OriginalFileTypeBox::parse(&boxed(*b"otyp", &body)).map(|_| ())
+}
+
+fn p_strk() -> Result<()> {
+    let body = boxed(*b"stri", &MINIMAL_BODY);
+    crate::track_desc::SubTrackBox::parse(&boxed(*b"strk", &body)).map(|_| ())
+}
+
 macro_rules! typed {
     ($( $fn_name:ident : $fourcc:literal , $name:literal , $ty:literal ; )*) => {
         /// Every ISO/IEC 14496-12:2026 registry box type this crate parses.
@@ -390,6 +412,15 @@ typed! {
         p_cprt: b"cprt", "cprt", "CopyrightBox";
         p_nmhd: b"nmhd", "nmhd", "NullMediaHeaderBox";
         p_hmhd: b"hmhd", "hmhd", "HintMediaHeaderBox";
+        p_tyco: b"tyco", "tyco", "TypeCombinationBox";
+        p_imda: b"imda", "imda", "IdentifiedMediaDataBox";
+        p_stri: b"stri", "stri", "SubTrackInformationBox";
+        p_strd: b"strd", "strd", "SubTrackDefinitionBox";
+        p_mehd: b"mehd", "mehd", "MovieExtendsHeaderBox";
+        p_vvhd: b"vvhd", "vvhd", "VolumetricVisualMediaHeaderBox";
+        p_etyp: b"etyp", "etyp", "ExtendedTypeBox";
+        p_otyp: b"otyp", "otyp", "OriginalFileTypeBox";
+        p_strk: b"strk", "strk", "SubTrackBox";
 }
 
 #[cfg(test)]

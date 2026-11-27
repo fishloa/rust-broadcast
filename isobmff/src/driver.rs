@@ -250,6 +250,15 @@ impl<R: Read + Seek> FileReader<R> {
         Ok(())
     }
 
+    /// The sans-IO [`Reader`](crate::Reader) this driver supplies bytes to.
+    ///
+    /// For the facts a [`DriverStep`] does not carry: the file's extended
+    /// types, its identified media data, and the `mehd` duration.
+    #[must_use]
+    pub fn reader(&self) -> &crate::Reader {
+        &self.reader
+    }
+
     /// The progressive sample plan, once `moov` is parsed.
     #[must_use]
     pub fn plan(&self) -> Option<crate::plan::SamplePlan<'_>> {

@@ -658,7 +658,8 @@ fn push_udta_child(child: &UdtaChild, items: &mut Vec<MetadataItem>) {
         | UdtaChild::Label(_)
         | UdtaChild::Loudness(_)
         | UdtaChild::TrackSelection(_)
-        | UdtaChild::Copyright(_) => {}
+        | UdtaChild::Copyright(_)
+        | UdtaChild::SubTrack(_) => {}
         UdtaChild::Opaque(opaque) => items.push(MetadataItem::Opaque(opaque.clone())),
     }
 }
