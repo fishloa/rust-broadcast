@@ -759,6 +759,24 @@ impl TsMuxStage {
         Ok(())
     }
 
+    /// Drop `track` and re-signal the program without its elementary stream:
+    /// the next PAT/PMT carries the reduced set (ISO/IEC 13818-1 §2.4.4). Bytes
+    /// an already-accepted sample produced are not withdrawn — they are on the
+    /// wire — so only the track's future is removed.
+    fn remove_track(&mut self, track: TrackId) -> Result<()> {
+        let before = self.tracks.len();
+        self.tracks.retain(|t| t.spec.track_id != track);
+        if self.tracks.len() == before {
+            return Ok(());
+        }
+        if self.tracks.is_empty() {
+            return Err(Error::UnsupportedFeature(
+                "ts: the last track was removed, so there is no program left to signal",
+            ));
+        }
+        self.rebuild_plans()
+    }
+
     /// Re-derive each announced track's elementary stream, PID assignment, the
     /// PCR PID and the PAT/PMT sections. A track whose codec the TS layer
     /// cannot carry gets no plan.
@@ -1094,6 +1112,7 @@ impl Stage for TsMuxStage {
                 self.mark_discontinuity(track);
                 Ok(())
             }
+            MuxInput::TrackRemoved { track } => self.remove_track(track),
             MuxInput::Flush => self.release_all(),
         }
     }

@@ -135,6 +135,76 @@ pub enum Error {
         track: TrackId,
     },
 
+    /// A [`MuxChain`](crate::mux_stage::MuxChain) held more sample bytes than
+    /// its caller's cap while it waited for a transform to settle the track
+    /// set. Raise the cap with
+    /// [`MuxChain::hold_limit`](crate::mux_stage::MuxChain::hold_limit).
+    #[error("a transform held more than {limit} bytes before the track set settled")]
+    TransformHoldExceeded {
+        /// The caller's cap, in bytes.
+        limit: u64,
+    },
+
+    /// A codec seam call failed inside a
+    /// [`TranscodeStage`](crate::transcode::TranscodeStage). The seam's own
+    /// error is carried whole, naming the track it happened on.
+    #[cfg(feature = "codec")]
+    #[error("transcode: track {track}: {source}")]
+    Transcode {
+        /// The track being transcoded.
+        track: TrackId,
+        /// The seam's error, unchanged.
+        #[source]
+        source: broadcast_codec::CodecError,
+    },
+
+    /// A [`CodecParameters`](broadcast_codec::CodecParameters) or
+    /// [`TrackSpec`](crate::TrackSpec) has no counterpart on the other side of
+    /// the seam: the codec's parameters carry something this crate's track
+    /// description cannot state, or the reverse. Never guessed.
+    #[cfg(feature = "codec")]
+    #[error("transcode: {what} cannot be expressed across the codec seam")]
+    TranscodeUnrepresentable {
+        /// What could not be carried.
+        what: &'static str,
+    },
+
+    /// A [`TranscodeStage`](crate::transcode::TranscodeStage) reached end of
+    /// stream while its encoder still reports no output parameters, so no
+    /// track could be announced for its output.
+    #[cfg(feature = "codec")]
+    #[error("transcode: the encoder reported no parameters by end of stream for track {track}")]
+    TranscodeNoParameters {
+        /// The track being transcoded.
+        track: TrackId,
+    },
+
+    /// The source re-announced the track being transcoded with parameters the
+    /// decoder was not built for. The seam's [`Decoder`] cannot be rebuilt
+    /// mid-track, so the stage refuses rather than decode a stream with the
+    /// wrong configuration.
+    ///
+    /// [`Decoder`]: broadcast_codec::Decoder
+    #[cfg(feature = "codec")]
+    #[error(
+        "transcode: the source re-announced track {track} with parameters the decoder was not built for"
+    )]
+    TranscodeSourceChanged {
+        /// The re-announced track.
+        track: TrackId,
+    },
+
+    /// A [`TranscodeStage`](crate::transcode::TranscodeStage) held more sample
+    /// bytes than its caller's cap while it waited for the encoder to report
+    /// its parameters. Raise the cap with
+    /// [`TranscodeStage::pending_limit`](crate::transcode::TranscodeStage::pending_limit).
+    #[cfg(feature = "codec")]
+    #[error("transcode: held more than {limit} bytes before the encoder reported its parameters")]
+    TranscodePendingLimit {
+        /// The caller's cap, in bytes.
+        limit: u64,
+    },
+
     /// A [`RebaseStage`](crate::rebase::RebaseStage) start window chose an
     /// origin later than a sample it was then asked to rebase.
     #[error("rebase: sample {dts} of track {track} precedes the origin {origin}")]

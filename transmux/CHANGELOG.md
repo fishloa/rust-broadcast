@@ -65,6 +65,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Segmenter::set_start_decode_time` is public: a caller feeding a segmenter directly must anchor each track's first `tfdt` (the streaming `Repackage::run` already did).
 
 ### Added
+- The `codec` feature (off by default, implied by no other feature) and
+  `transcode::TranscodeStage`: one track's samples through a caller-supplied
+  `broadcast_codec::Decoder` and `Encoder`, and on to a track described by the
+  encoder's parameters. It holds no codec knowledge — no codec id is matched,
+  no bitstream is parsed — and every other track passes through untouched. The
+  stage holds its output until the encoder reports the parameters that name the
+  new codec, announces the track once before its first sample, forwards a
+  source re-announcement only when it restates what the decoder was built for
+  (a change is `Error::TranscodeSourceChanged`), and flushes decoder then
+  encoder at end of stream or on `MuxInput::TrackRemoved`. The pre-announcement
+  window is the caller's (`TranscodeStage::pending_limit`, unlimited by
+  default). Errors are typed and carry the track (`Error::Transcode`).
+- `codec_parameters_from_track` and `track_spec_from_codec_parameters`, the two
+  conversions between `TrackSpec` and `broadcast_codec::CodecParameters`. Both
+  are total: a description the other side cannot carry (an MPEG audio layer, a
+  DTS sample entry, VP8/Vorbis, a subtitle or data track, PCM) is
+  `Error::TranscodeUnrepresentable` naming the missing fact. Container
+  provenance (`source_pid`, `program_number`, `es_info_descriptors`) is not the
+  seam's business and does not survive the round trip.
+- `MuxInput::TrackRemoved`: the mux vocabulary now names the track removal the
+  demux vocabulary already had. The MPEG-2 TS muxer re-signals its PMT without
+  the stream; a muxer whose output has a fixed track set (CMAF/LL-HLS/LL-DASH
+  segmenters, progressive MP4, Matroska, Smooth, DASH, repackaging) refuses it
+  with `Error::UnsupportedFeature` instead of describing a track it will never
+  see again, and FLV/RTMP refuse it with `FlvError::TrackRemovedAfterStart`.
+- `mux_stage::MuxChain`: the seam that lets a stage replace a track's
+  `TrackSpec`, emit a different number of samples, delay its output and flush.
+  It drives any `Stage<In = MuxInput, Out = MuxInput, Error = Error>` and
+  releases its output only once every track the upstream announced has been
+  re-announced or removed, track announcements first, so a muxer builds its
+  init segment, PMT or file header from the whole final set. `hold_limit` is
+  the caller's pre-settlement byte cap (unlimited by default).
+- `Repackage::run_transformed(fmp4, transform)` inserts such a stage between
+  the demux events and the resegmenter. The transform is per run, so a
+  configured `Repackage` stays `Clone`.
+- `cli::run_bytes_with(input, opts, transform)` is the CLI assembly's
+  insertion point, the stage-shaped counterpart of its own optional
+  `--decrypt` slot; a progressive output replays the input against a recorded
+  plan and refuses it (`CliError::TransformNeedsReplayableInput`).
+- `MuxInput::from_demux` is the one translation from a `DemuxEvent` to the mux
+  vocabulary, used by both insertion points.
 - `StreamingTsDemux::with_max_pes_unit_bytes` (with the `max_pes_unit_bytes` accessor) is the caller-supplied PES unit ceiling; `None`, the default, is unlimited. `PesAssembler` is created with that same ceiling (the unbounded form for `None`), so the demux's own overflow accounting and the assembler cannot disagree.
 - `matroska_demux::MatroskaDemux`, the streaming Matroska/WebM stage over
   `broadcast_matroska::reader::Reader`: it answers the reader's byte-range

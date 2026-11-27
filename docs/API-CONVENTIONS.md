@@ -26,6 +26,7 @@ Binding for every public API in the workspace. New code follows them; a lane tha
 - Config: `Config::default()` + `with_*` setters (or `new(required..)` when fields are mandatory); struct `#[non_exhaustive]`.
 - One constructor per role (client/server/listener) taking that config.
 - One shared type per concept across crates (timeouts, backoff, UDP options).
+- A caller-owned stage inserted into an existing assembly is a **per-call parameter**, not a builder field (`Repackage::run_transformed(fmp4, transform)`, `cli::run_bytes_with(input, opts, transform)`), so the configured driver keeps `Clone` and one instance serves several inputs. The bound on what the stage may hold is the caller's (`*_limit`, unlimited by default), never a library-chosen number.
 
 ## Errors
 

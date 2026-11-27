@@ -448,6 +448,9 @@ impl Stage for CmafMuxStage {
                 self.pending_discontinuity = true;
                 Ok(())
             }
+            MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(
+                "cmaf: a track removed mid-stream changes the init segment",
+            )),
             MuxInput::Flush => {
                 self.ensure_writer()?;
                 self.flush_fragment()

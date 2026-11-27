@@ -398,3 +398,61 @@ Where the code differs from the design above:
 - Two things the design did not name: `PictureUserData` is `#[non_exhaustive]` with private fields and a
   constructor, and the MPEG-2 sequence geometry gained `frame_rate_code()`/`frame_rate()` (Table 6-4) so a
   consumer can state a frame rate from the same header rather than inferring it from sample timing.
+
+### Step 3, as built (2026-11-27)
+
+The transcode stage and the pipeline property landed in one PR. Where the
+properties above met the code:
+
+- **The mux vocabulary had no track removal.** `DemuxEvent::TrackRemoved`
+  existed; `MuxInput` did not name it, and the CLI dropped the event. It is now
+  `MuxInput::TrackRemoved` (additive: the enum is `#[non_exhaustive]`). The MPEG-2
+  TS muxer re-signals its PMT without the stream; every muxer whose output has a
+  fixed track set (CMAF/LL-HLS/LL-DASH segmenters, progressive MP4, Matroska,
+  Smooth, DASH, repackaging, RTP, FLV/RTMP) refuses it with a typed error rather
+  than describing a track it will never see again.
+- **A delayed announcement needed a seam of its own.** Every muxer builds its
+  init segment, PMT or file header from the announced set at its first sample,
+  and a segmenter refuses a `Track` after construction. A stage that announces a
+  track only once its encoder reports parameters therefore cannot feed a muxer
+  directly. `mux_stage::MuxChain` is the seam: it drives any
+  `Stage<In = MuxInput, Out = MuxInput, Error = Error>`, holds its output until
+  every track the upstream announced has been re-announced or removed, and
+  releases the held *track announcements first*, then the samples in arrival
+  order — a stage that delays one track's samples otherwise puts another
+  track's samples ahead of that track's announcement, which no muxer accepts.
+  The pre-settlement window is the caller's (`MuxChain::hold_limit`, unlimited
+  by default).
+- **Three assemblies, three answers.** `Repackage` had no insertion point:
+  `Repackage::run_transformed(fmp4, transform)` adds one with the transform per
+  call, so a configured `Repackage` stays `Clone`. The CLI's stages are private
+  and its mux stage is built from the demuxer's specs before any sample, so it
+  gained `cli::run_bytes_with(input, opts, transform)`, which builds the mux
+  stage from the chain's settled set; a progressive output replays the input
+  against a recorded plan and refuses a transform. `media-plane`'s ingest path
+  needed nothing: an `IngestSession` is a `Stage`, so a caller wraps it, and
+  the trunk and `ProgramSegmenter` already rebuild on a track-set change
+  (`TracksChanged`); both are proved by a test with a delayed, non-1:1 stage.
+- **The seam cannot rebuild a decoder mid-track.** The design's "a source
+  `TrackUpdated` goes to the decoder" has no method to go through:
+  `Decoder::parameters` is fixed at construction and `reset` only drops held
+  state. The stage absorbs a re-announcement that restates what the decoder was
+  built for and refuses one that changes it (`Error::TranscodeSourceChanged`),
+  naming why, rather than decoding with the wrong configuration. A later
+  addition to the seam (a parameter-update method, or a factory the stage can
+  call) is additive.
+- **The reverse conversion is total, not complete.** The seam carries no MPEG
+  audio layer, no DTS sample-entry type, no VP8/Vorbis identity and no
+  container provenance (`source_pid`, `program_number`, `es_info_descriptors`),
+  so `track_spec_from_codec_parameters` returns
+  `Error::TranscodeUnrepresentable` naming the missing fact for those, and a
+  forward conversion drops provenance. `CodecProfile` is not carried either:
+  the seam's profile key is the caller's to state.
+- **The spikes.** `spikes/codec-oxideav` offers no encoder at all.
+  `spikes/codec-libav` completes the whole loop for video (H.264 decoded,
+  MPEG-2 encoded, muxed to TS, demuxed, decoded back to the fixture's own
+  picture count). Its audio half stops at the binding: `ffmpeg-next` 8.1
+  exposes no extradata getter, so the adapter's encoder reports no
+  `AudioSpecificConfig` and a re-muxed AAC track cannot be decoded again. The
+  test drives the whole pipeline, checks the packets and the announced track,
+  and records this rather than pretending.

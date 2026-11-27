@@ -335,6 +335,9 @@ impl Stage for PlanPass {
             MuxInput::Discontinuity { .. } => Err(Error::UnsupportedFeature(
                 "progressive: a single-file MP4 cannot signal a discontinuity",
             )),
+            MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(
+                "progressive: the plan names every track the file header describes",
+            )),
             MuxInput::Flush => Ok(()),
         }
     }

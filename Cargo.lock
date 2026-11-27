@@ -4494,6 +4494,7 @@ version = "0.33.0"
 dependencies = [
  "aes 0.9.4",
  "broadcast-bitstream",
+ "broadcast-codec",
  "broadcast-common",
  "broadcast-core",
  "broadcast-dash",
