@@ -428,7 +428,9 @@ fn item_reader_zero_largesize_is_a_typed_error() {
             Ok(ItemStep::Need(range)) => {
                 let start = usize::try_from(range.offset).expect("offset");
                 let len = usize::try_from(range.len).expect("length");
-                if let Err(err) = reader.supply(range.offset, &data[start..start + len]) {
+                if let Err(err) =
+                    reader.supply(range.offset, data.get(start..start + len).unwrap_or(&[]))
+                {
                     assert!(
                         matches!(err, Error::BoxSizeUnderflow { .. }),
                         "expected BoxSizeUnderflow, got {err:?}"
@@ -436,8 +438,21 @@ fn item_reader_zero_largesize_is_a_typed_error() {
                     return;
                 }
             }
-            Ok(ItemStep::Loaded(_)) => panic!("a zero-largesize tail must not load"),
-            Ok(ItemStep::Done) => panic!("done without an error"),
+            Ok(ItemStep::Loaded(image)) => {
+                // Best effort carries the bytes the box cannot describe and
+                // reports them; nothing is dropped silently.
+                assert_eq!(
+                    image.reemit_into(data).expect("re-emit"),
+                    data,
+                    "a zero-largesize box's bytes are carried verbatim"
+                );
+                assert!(
+                    !image.structure_findings().is_empty(),
+                    "the carried bytes are reported"
+                );
+                return;
+            }
+            Ok(ItemStep::Done) => panic!("done without a model"),
             Ok(_) => {}
             Err(err) => {
                 assert!(
@@ -448,4 +463,157 @@ fn item_reader_zero_largesize_is_a_typed_error() {
             }
         }
     }
+}
+
+#[test]
+fn item_reader_carries_and_reports_a_truncated_largesize_tail() {
+    use isobmff::image_brands::ImageFinding;
+    use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
+
+    let data: &[u8] = &[
+        0, 0, 0, 8, 0xcf, 0x7a, 0x30, 0x5d, 0, 0, 0, 8, 0xcf, 0x7a, 0x30, 0x0a, 0, 0, 0, 8, 0xcf,
+        0x7a, 0x31, 0x0a, 0, 0, 0, 43, b'm', b'e', b't', b'a', b't', b'y', 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff,
+        0xff, 0xff, 0, 0, 0, 8, 0xcf, 0, 0, 0, 0, 0, 0, 0, 0x30, 0, 0, 0, 0x7a, 0, 2, 0x0a, 0x2b,
+        b'm', b'e', 7, b't', b'a', b't', b'y', 0, 0, 0, 0, 0, 8, b'@', 0xff, 0xff, b'?', 0, 0,
+        0xea, 0, 0, 0x7a, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0xff, 0x0a, 0xff, 0xff,
+    ];
+    let tail = u64::try_from(data.len() - 8).expect("offset");
+    let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
+    let mut reader = ItemReader::new(config);
+    let mut reports = Vec::new();
+    loop {
+        match reader.step().expect("step") {
+            ItemStep::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                let have = data.get(start..end).unwrap_or(&[]);
+                reader.supply(range.offset, have).expect("supply");
+            }
+            ItemStep::Damage(damage) => reports.push(damage),
+            ItemStep::Loaded(image) => {
+                assert_eq!(
+                    image.reemit_into(data).expect("re-emit"),
+                    data,
+                    "the unframable tail is carried verbatim"
+                );
+                assert!(
+                    image.structure_findings().iter().any(|finding| matches!(
+                        finding,
+                        ImageFinding::TrailingBytes { .. } | ImageFinding::TruncatedBox { .. }
+                    )),
+                    "the tail is reported: {:?}",
+                    image.structure_findings()
+                );
+                assert_eq!(image.items().len(), 0, "the cut boxes describe no item");
+                continue;
+            }
+            ItemStep::Done => break,
+            _ => {}
+        }
+    }
+    assert!(
+        reports.iter().any(|damage| {
+            damage.kind() == broadcast_core::damage::DamageKind::InputTruncated
+                && damage
+                    .location()
+                    .byte_range()
+                    .is_some_and(|range| range.start() == tail)
+        }),
+        "the tail reaches the caller as a report: {reports:?}"
+    );
+}
+
+#[test]
+fn item_reader_carries_and_reports_a_truncated_largesize_meta_child() {
+    use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
+
+    let mut data = boxed(*b"ftyp", b"avifmif1");
+    let mut meta_body = vec![0u8; 4];
+    meta_body.extend_from_slice(&[0, 0, 0, 12, b'f', b'r', b'e', b'e']);
+    meta_body.extend_from_slice(&[0, 0, 0, 1, b'i', b'x', b'x', b'x']);
+    let child_tail = u64::try_from(data.len() + 8 + meta_body.len()).expect("offset");
+    data.extend_from_slice(&boxed(*b"meta", &meta_body));
+    let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
+    let mut reader = ItemReader::new(config);
+    let mut reports = Vec::new();
+    loop {
+        match reader.step().expect("step") {
+            ItemStep::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                reader
+                    .supply(range.offset, data.get(start..end).unwrap_or(&[]))
+                    .expect("supply");
+            }
+            ItemStep::Damage(damage) => reports.push(damage),
+            ItemStep::Loaded(image) => {
+                assert_eq!(
+                    image.reemit_into(&data).expect("re-emit"),
+                    data,
+                    "the cut child is carried verbatim"
+                );
+                continue;
+            }
+            ItemStep::Done => break,
+            _ => {}
+        }
+    }
+    assert!(
+        reports.iter().any(|damage| damage
+            .location()
+            .byte_range()
+            .is_some_and(|range| range.start() == child_tail)),
+        "the cut child reaches the caller as a report: {reports:?}"
+    );
+}
+
+#[test]
+fn damage_crash_a7c557cf_reports_the_refused_moov_tail_instead_of_failing() {
+    use isobmff::reader::{Reader, ReaderConfig, Step};
+
+    // `isobmff_damage` crash-a7c557cfddb2d67ebd8d89da620431e6a0e456da: a
+    // truncated `moov` whose tail holds half a box header.
+    let mut file = boxed(*b"ftyp", b"isomiso6iso2avc1mp41");
+    let mut moov_body = boxed(*b"mvhd", &[0u8; 100]);
+    moov_body.extend_from_slice(&[0xeb; 8]);
+    let refusals = [
+        0x7du8, 0x93, 0xa9, 0xbf, 0xd5, 0xeb, 0x01, 0x17, 0x2d, 0x43, 0x59, 0x6f, 0x85, 0x9b, 0xb1,
+        0xc7, 0xdd, 0xf3, 0x09, 0x1f, 0x35, 0x4b, 0x61, 0x77, 0x8d, 0xa3, 0xb9, 0xcf, 0xe5, 0xfb,
+        0x11, 0x27, 0x3d, 0x53, 0x69, 0x7f, 0x95, 0xab, 0xc1, 0xd7, 0xed,
+    ];
+    let head = 8 + moov_body.len();
+    moov_body.extend_from_slice(&boxed(*b"trak", &refusals));
+    let moov_tail = u64::try_from(8 + moov_body.len()).expect("offset");
+    moov_body.extend_from_slice(&[0x00, 0x00, 0x00, 0x7a, 0x00, 0x02, 0x0a, 0x2b]);
+    let mut moov = ((head + 8 + refusals.len() + 8) as u32)
+        .to_be_bytes()
+        .to_vec();
+    moov.extend_from_slice(b"moov");
+    moov.extend_from_slice(&moov_body);
+    file.extend_from_slice(&moov);
+
+    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
+    let mut reports = Vec::new();
+    loop {
+        match reader.step().expect("step") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                reader
+                    .supply(range.offset, file.get(start..end).expect("supplied range"))
+                    .expect("a damaged side box is not a refusal");
+            }
+            Step::Damage(damage) => reports.push(damage),
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    assert!(
+        reports.iter().any(|damage| damage
+            .location()
+            .byte_range()
+            .is_some_and(|range| range.start() == moov_tail)),
+        "the refused moov tail reaches the caller as a report: {reports:?}"
+    );
 }
