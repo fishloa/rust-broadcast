@@ -95,6 +95,12 @@ fn session_basic_flow() {
             ts,
         )
         .unwrap();
+    assert!(matches!(
+        session.poll(),
+        Some(SessionEvent::Damage { damage, .. })
+            if damage.kind() == broadcast_core::damage::DamageKind::MetadataSkipped
+    ));
+    assert!(session.poll().is_none());
 
     // unknown rep
     let r = session.feed(

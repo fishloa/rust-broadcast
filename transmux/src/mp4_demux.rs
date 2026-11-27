@@ -27,6 +27,7 @@ use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use broadcast_common::stage::{Demand, Stage, Timestamp};
+use broadcast_core::damage::{Damage, DamageKind, Severity};
 use broadcast_core::timescale::Timescale;
 use bytes::{Buf, Bytes, BytesMut};
 use core::num::NonZeroUsize;
@@ -555,6 +556,17 @@ impl Mp4Demux {
     fn push_warning(&mut self, warning: Warning) {
         let position = warning.position();
         let kind = match warning {
+            Warning::UndeclaredTrack { track_id, .. } => {
+                self.events.push_back(DemuxEvent::damage(
+                    Damage::new(
+                        DamageKind::MediaUnitDropped,
+                        Severity::Degraded,
+                        "sample (track not in the init)",
+                    )
+                    .for_track(track_id.value()),
+                ));
+                return;
+            }
             Warning::TruncatedMdat { .. } => InputDegradation::TruncatedUnit { position },
             _ => InputDegradation::MalformedUnit { position },
         };

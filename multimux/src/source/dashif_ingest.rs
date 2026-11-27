@@ -576,7 +576,9 @@ pub async fn run_dashif_ingest(
                 }
                 Job::Abort { rep_id } => {
                     if let Some(h) = handles.remove(&rep_id) {
-                        driver.session_mut().inner.abort_segment(h);
+                        if let Err(error) = driver.session_mut().inner.abort_segment(h) {
+                            tracing::warn!(%error, "dashif-ingest: aborted segment refused");
+                        }
                     }
                 }
             }

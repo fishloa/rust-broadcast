@@ -21,17 +21,31 @@
 //! all returns `IngestError::SegmentWithoutHeader` (412) regardless of the
 //! presentation state. Nothing is buffered when the presentation is already
 //! live.
+//!
+//! ## What this session reports
+//!
+//! Each skip is a [`broadcast_core::damage::Damage`] on [`SessionEvent::Damage`]:
+//! an HLS manifest (`MetadataSkipped`); a segment that arrives out of order,
+//! delivered (`MediaUnitDamaged`); a segment or aborted segment body that ends
+//! inside a box group (`InputTruncated`); a track the init cannot set up or
+//! that is encrypted (`TrackDropped`); a track a segment carries that its init
+//! never declared (`MediaUnitDropped`, from the segment reader); and every
+//! report the segment reader publishes. Left unreported on purpose: an identical
+//! header or segment repeat and a re-sent manifest (DASH-IF §6.2.19 restarts,
+//! nothing lost). A malformed object is refused with its §5.3 status, not
+//! reported.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use broadcast_common::{Demand, Stage, Timestamp};
+use broadcast_core::damage::{Damage, DamageError, DamageKind, DamagePolicy, Severity};
 use media_plane::ingress::{IngestSession, ProgramId, SessionEvent};
 use media_plane::trunk::RetentionClass;
-use transmux::TrackId;
 use transmux::pipeline::TrackSpec;
+use transmux::{SkippedTrack, TrackId};
 
 use super::{IngestError, IngestState, ManifestGrouping, ObjectKind};
-use crate::client::demux::{self, SegmentStage};
+use crate::client::demux::{self, SegmentStage, Staged};
 
 use tracing::{debug, warn};
 
@@ -70,6 +84,9 @@ pub enum SessionError {
     /// A CMAF demux failure (init or segment).
     #[error("demux: {0}")]
     Demux(#[from] transmux::Error),
+    /// The caller's [`DamagePolicy`] failed a report; the error carries it.
+    #[error("damage: {0}")]
+    Damage(#[from] DamageError),
 }
 
 #[derive(Default)]
@@ -154,6 +171,7 @@ impl DashifIngestConfig {
 /// Sans-IO ingest session for one DASH-IF Interface-1 publishing point.
 pub struct DashifIngestSession {
     config: DashifIngestConfig,
+    damage_policy: DamagePolicy,
     grouping: Option<ManifestGrouping>,
     rep_order: Vec<String>,
     reps: HashMap<String, RepData>,
@@ -175,11 +193,41 @@ impl DashifIngestSession {
         self.config
     }
 
+    /// Replace the caller's [`DamagePolicy`]. The default reports everything;
+    /// a `Fail` disposition stops the request with [`SessionError::Damage`].
+    #[must_use]
+    pub fn with_damage_policy(mut self, damage_policy: DamagePolicy) -> Self {
+        self.damage_policy = damage_policy;
+        self
+    }
+
+    fn report(&mut self, damage: Damage) -> Result<(), SessionError> {
+        let damage = self
+            .damage_policy
+            .admit(damage)
+            .map_err(SessionError::Damage)?;
+        let program = self.new_program_emitted.then_some(ProgramId(0));
+        self.pending_events
+            .push_back(SessionEvent::damage(program, damage));
+        Ok(())
+    }
+
+    fn report_staged(&mut self, staged: &Staged) -> Result<(), SessionError> {
+        for damage in &staged.damage {
+            self.report(damage.clone())?;
+        }
+        for skipped in &staged.skipped {
+            self.report(skipped_track(skipped))?;
+        }
+        Ok(())
+    }
+
     /// Construct an empty session with `config`. No manifest has been
     /// received yet.
     pub fn new(config: DashifIngestConfig) -> Self {
         Self {
             config,
+            damage_policy: DamagePolicy::new(),
             grouping: None,
             rep_order: Vec::new(),
             reps: HashMap::new(),
@@ -227,7 +275,8 @@ impl DashifIngestSession {
         if info.specs.is_empty() {
             return Err(SessionError::Ingest(IngestError::BadRequest));
         }
-        let stage = SegmentStage::new(bytes).map_err(SessionError::Demux)?;
+        let mut stage = SegmentStage::new(bytes).map_err(SessionError::Demux)?;
+        let init_events = stage.take_init_events();
 
         let rep = self
             .reps
@@ -238,6 +287,7 @@ impl DashifIngestSession {
         rep.local_tracks = Some(info.specs);
         rep.demux = Some(stage);
 
+        self.report_staged(&init_events)?;
         self.ingest_state.on_header(rep_id);
 
         // Once every Representation has a header, announce the program.
@@ -318,8 +368,11 @@ impl DashifIngestSession {
             .reps
             .get_mut(rep_id)
             .ok_or(SessionError::Ingest(IngestError::Internal))?;
+        let mut reinit = None;
         if rep.demux.is_none() {
-            rep.demux = Some(SegmentStage::new(&init).map_err(SessionError::Demux)?);
+            let mut stage = SegmentStage::new(&init).map_err(SessionError::Demux)?;
+            reinit = Some(stage.take_init_events());
+            rep.demux = Some(stage);
         }
         let result = match rep.demux.as_mut() {
             Some(stage) => stage.demux(group),
@@ -327,6 +380,9 @@ impl DashifIngestSession {
         };
         if result.is_err() {
             rep.demux = None;
+        }
+        if let Some(init_events) = reinit {
+            self.report_staged(&init_events)?;
         }
         result.map_err(SessionError::Demux)
     }
@@ -374,6 +430,11 @@ impl DashifIngestSession {
 
         if disp == super::SegmentDisposition::Regression {
             warn!("dashif-ingest: segment regression for {rep_id}");
+            self.report(Damage::new(
+                DamageKind::MediaUnitDamaged,
+                Severity::Informational,
+                "segment (out of order)",
+            ))?;
         }
 
         self.active_segments.insert(rep_id.to_string());
@@ -432,6 +493,7 @@ impl DashifIngestSession {
             self.detect_styp_lmsg(&handle.rep_id, &group);
 
             let staged = self.demux_group(&handle.rep_id, &group)?;
+            self.report_staged(&staged)?;
 
             if self.new_program_emitted {
                 let l2g = self
@@ -489,6 +551,7 @@ impl DashifIngestSession {
 
         if !handle.buf.is_empty() {
             self.active_segments.remove(&rep_id);
+            self.report(truncated_segment("segment (incomplete box group)"))?;
             return Err(SessionError::Ingest(IngestError::BadRequest));
         }
         self.active_segments.remove(&rep_id);
@@ -497,9 +560,12 @@ impl DashifIngestSession {
 
     /// Discard a partially-streamed segment (P3b): drop any buffered remainder
     /// without emitting it. Chunks already published stay published.
-    pub fn abort_segment(&mut self, handle: SegmentHandle) {
+    pub fn abort_segment(&mut self, handle: SegmentHandle) -> Result<(), SessionError> {
         self.active_segments.remove(&handle.rep_id);
-        // handle dropped here
+        if handle.skip || handle.buf.is_empty() {
+            return Ok(());
+        }
+        self.report(truncated_segment("segment (aborted)"))
     }
 
     fn detect_styp_lmsg(&mut self, rep_id: &str, bytes: &[u8]) {
@@ -524,6 +590,18 @@ impl DashifIngestSession {
                 }
             }
         }
+    }
+}
+
+fn truncated_segment(what: &'static str) -> Damage {
+    Damage::new(DamageKind::InputTruncated, Severity::Degraded, what)
+}
+
+fn skipped_track(skipped: &SkippedTrack) -> Damage {
+    let damage = Damage::new(DamageKind::TrackDropped, Severity::Degraded, "track");
+    match skipped.track_id {
+        Some(track) => damage.for_track(track.value()),
+        None => damage,
     }
 }
 
@@ -554,7 +632,11 @@ impl Stage for DashifIngestSession {
             }
             ObjectKind::Manifest(super::ManifestFormat::Hls) => {
                 debug!("dashif-ingest: HLS manifest ignored (§6.2.17e)");
-                Ok(())
+                self.report(Damage::new(
+                    DamageKind::MetadataSkipped,
+                    Severity::Informational,
+                    "manifest (HLS)",
+                ))
             }
             ObjectKind::Header { representation_id } => {
                 self.on_header(&representation_id, input.bytes)
@@ -594,6 +676,7 @@ impl IngestSession for DashifIngestSession {
 mod tests {
     use super::{DashifIngestConfig, DashifIngestSession, IngestObject, ObjectKind};
     use broadcast_common::{Demand, Stage, Timestamp};
+    use broadcast_core::damage::{DamageKind, Severity};
     use transmux::FragmentTrackData;
     use transmux::dash::DashPackager;
     use transmux::pipeline::{build_init_segment, build_media_segment};
@@ -738,5 +821,131 @@ mod tests {
             ),
             "{r:?}"
         );
+    }
+
+    fn reports(s: &mut DashifIngestSession) -> Vec<broadcast_core::damage::Damage> {
+        std::iter::from_fn(|| s.poll())
+            .filter_map(|event| match event {
+                media_plane::ingress::SessionEvent::Damage { damage, .. } => Some(damage),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_clean_upload_reports_nothing() {
+        let (mut s, media) = session_with_one_header();
+        s.on_segment("1", Some(1), None, &segment_of(&media, 0, 1))
+            .expect("accepted");
+        assert!(reports(&mut s).is_empty());
+    }
+
+    #[test]
+    fn an_idempotent_restart_reports_nothing() {
+        let (mut s, media) = session_with_one_header();
+        let seg = segment_of(&media, 0, 1);
+        s.on_segment("1", Some(1), None, &seg).expect("accepted");
+        reports(&mut s);
+        s.feed(
+            IngestObject {
+                kind: ObjectKind::Header {
+                    representation_id: "1".into(),
+                },
+                bytes: &init_of(&media, 0),
+            },
+            Timestamp::from_nanos(0),
+        )
+        .expect("identical repeat accepted");
+        s.on_segment("1", Some(1), None, &seg)
+            .expect("duplicate swallowed");
+        assert!(reports(&mut s).is_empty());
+    }
+
+    #[test]
+    fn an_hls_manifest_is_reported_as_metadata_skipped() {
+        let mut s = DashifIngestSession::new(DashifIngestConfig::default());
+        s.feed(
+            IngestObject {
+                kind: ObjectKind::Manifest(super::super::ManifestFormat::Hls),
+                bytes: b"#EXTM3U\n",
+            },
+            Timestamp::from_nanos(0),
+        )
+        .expect("ignored, not refused");
+        let got = reports(&mut s);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].kind(), DamageKind::MetadataSkipped);
+        assert_eq!(got[0].severity(), Severity::Informational);
+    }
+
+    #[test]
+    fn an_out_of_order_segment_is_reported_as_damaged() {
+        let (mut s, media) = session_with_one_header();
+        s.on_segment("1", Some(2), None, &segment_of(&media, 0, 1))
+            .expect("accepted");
+        reports(&mut s);
+        s.on_segment("1", Some(1), None, &segment_of(&media, 0, 1))
+            .expect("delivered");
+        let got = reports(&mut s);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].kind(), DamageKind::MediaUnitDamaged);
+        assert_eq!(got[0].what(), "segment (out of order)");
+    }
+
+    #[test]
+    fn samples_of_an_undeclared_track_are_one_report_per_segment() {
+        let (mut s, media) = session_with_one_header();
+        s.on_segment("1", Some(1), None, &segment_of(&media, 1, 3))
+            .expect("accepted");
+        let got = reports(&mut s);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].kind(), DamageKind::MediaUnitDropped);
+        assert_eq!(got[0].severity(), Severity::Degraded);
+    }
+
+    #[test]
+    fn a_truncated_segment_is_reported_and_refused() {
+        let (mut s, media) = session_with_one_header();
+        let seg = segment_of(&media, 0, 1);
+        let mut handle = s.begin_segment("1", Some(1), None).expect("begun");
+        s.push_segment_bytes(&mut handle, &seg[..seg.len() - 1])
+            .expect("pushed");
+        assert!(s.finish_segment(handle).is_err(), "refused as before");
+        let got = reports(&mut s);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].kind(), DamageKind::InputTruncated);
+    }
+
+    #[test]
+    fn an_aborted_partial_segment_is_reported() {
+        let (mut s, media) = session_with_one_header();
+        let seg = segment_of(&media, 0, 1);
+        let mut handle = s.begin_segment("1", Some(1), None).expect("begun");
+        s.push_segment_bytes(&mut handle, &seg[..seg.len() - 1])
+            .expect("pushed");
+        s.abort_segment(handle).expect("aborted");
+        let got = reports(&mut s);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].kind(), DamageKind::InputTruncated);
+        assert_eq!(got[0].what(), "segment (aborted)");
+    }
+
+    #[test]
+    fn a_fail_policy_stops_the_request_with_the_report() {
+        let mut s = DashifIngestSession::new(DashifIngestConfig::default()).with_damage_policy(
+            broadcast_core::damage::DamagePolicy::new().fail_on(Severity::Informational),
+        );
+        match s.feed(
+            IngestObject {
+                kind: ObjectKind::Manifest(super::super::ManifestFormat::Hls),
+                bytes: b"#EXTM3U\n",
+            },
+            Timestamp::from_nanos(0),
+        ) {
+            Err(super::SessionError::Damage(error)) => {
+                assert_eq!(error.damage().kind(), DamageKind::MetadataSkipped);
+            }
+            other => panic!("expected the damage stop, got {other:?}"),
+        }
     }
 }

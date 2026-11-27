@@ -849,6 +849,14 @@ pub enum Warning {
         /// Absolute offset of the `wave` atom.
         offset: u64,
     },
+    /// A `moof` carried a `traf` for a track the `moov` never declared; its
+    /// samples were left out. One warning per such `traf`, at the fragment.
+    UndeclaredTrack {
+        /// The `tfhd` track identifier that no `trak` declares.
+        track_id: TrackId,
+        /// Absolute offset of the `moof`.
+        offset: u64,
+    },
     /// The movie header timescale was zero; it was treated as 1 so the walk can
     /// continue. Durations in the movie timescale are unknown.
     ZeroMovieTimescale {
@@ -910,6 +918,7 @@ impl Warning {
             Self::MalformedFragment { .. } => "malformed-fragment",
             Self::TrailingBytes { .. } => "trailing-bytes",
             Self::UnrepresentableBox { .. } => "unrepresentable-box",
+            Self::UndeclaredTrack { .. } => "undeclared-track",
         }
     }
 }
@@ -929,7 +938,8 @@ impl Warning {
             | Self::TruncatedFragment { offset }
             | Self::MalformedFragment { offset }
             | Self::TrailingBytes { offset, .. }
-            | Self::UnrepresentableBox { offset, .. } => *offset,
+            | Self::UnrepresentableBox { offset, .. }
+            | Self::UndeclaredTrack { offset, .. } => *offset,
         }
     }
 }
@@ -2522,6 +2532,15 @@ impl Reader {
                 return Err(err);
             }
         };
+        for traf in &moof.traf {
+            let track_id = traf.tfhd.track_id;
+            if !self.tracks.iter().any(|info| info.track_id == track_id) {
+                self.warn(Warning::UndeclaredTrack {
+                    track_id,
+                    offset: state.offset,
+                });
+            }
+        }
         if resolved.truncated {
             self.deferred_warning = Some(Warning::TruncatedFragment {
                 offset: state.offset,

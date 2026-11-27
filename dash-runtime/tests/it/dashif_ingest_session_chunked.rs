@@ -328,6 +328,6 @@ fn a_second_open_segment_for_the_same_representation_is_refused() {
     s.finish_segment(h1).unwrap();
     let h3 = s.begin_segment("1", Some(2), None).unwrap();
     // Aborting frees it too.
-    s.abort_segment(h3);
+    s.abort_segment(h3).expect("abort");
     s.begin_segment("1", Some(3), None).unwrap();
 }

@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `reader::Warning::UndeclaredTrack { track_id, offset }`: a `moof` carried a
+  `traf` for a track the `moov` never declared, so its samples are left out.
+  One warning per such `traf`, at the fragment. Previously a silent skip.
+
 - `multiview`: the multiview view-attribute boxes with a defined syntax —
   `ProfileLevelAttribute` (`prfl`/`levl`), `ViewArrayOrder` (`ilvi`/`elvi`),
   `RectangularViewArray` (`rtvi`), `MultiviewSceneInfoBox` (`vwdi`) and
