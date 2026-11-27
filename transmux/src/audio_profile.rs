@@ -151,7 +151,7 @@ pub fn apply_overrides(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::codec_config_ext::EsdsBoxCodecInfo;
+    use crate::aac_asc::EsdsBoxCodecInfo;
     use crate::ir::{CodecConfig, DataCarriage, DataIdentity};
     use crate::mpeg_legacy::MpegAudioLayer;
     use broadcast_core::timescale::Timescale;

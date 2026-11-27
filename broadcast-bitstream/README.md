@@ -25,11 +25,24 @@ What it holds today:
 - **Coded picture facts** ([`facts`]) — the sample aspect ratio tables, the
   cropping rectangle, the colour description and video signal type, and the
   active-format / bar-data codes as the specifications state them.
+- **H.264 slice headers** ([`slice_header`], `h264`) — the slice-header prefix,
+  the PPS fields it needs, and the field/frame classification of one access unit
+  that a demuxer pairs coded fields with.
+- **Interlace facts** ([`interlace`]) — the scan mode an SPS declares, the
+  `pic_struct`/`source_scan_type` timing facts, and the frame/field structure of
+  one access unit.
+- **HDR metadata** — the HDR10+ ST 2094-40 model with its parser and serializer
+  ([`hdr10plus`], `hevc`), and the HDR10 static metadata with its SEI codec
+  ([`hdr`], `hevc` + `isobmff`).
 - **RFC 6381 codec strings** ([`rfc6381`]) — `avc1.PPCCLL`, `hvc1.…`, `vvc1.…`
   and `mp4a.40.<AOT>` built from the fields the caller already decoded.
+- **ISOBMFF codec configuration** ([`nalu_ext`], [`codec_config_ext`],
+  `isobmff`) — decode a parameter set or a configuration record from its box
+  newtype, format its RFC 6381 string, and build an `avcC` from SPS/PPS NAL
+  units.
 
-Slice headers, AAC, AC-3, DTS, MPEG-2 and MPEG audio arrive as features on top
-of this, one family at a time.
+AAC, AC-3, DTS, MPEG-2 and MPEG audio arrive as features on top of this, one
+family at a time.
 
 ## The recorded exception
 
@@ -50,9 +63,9 @@ MPEG-2 sequence headers, each landing as an additive release.
 - `h264`, `hevc`, `vvc` (all default) — the per-codec NAL unit-type enums and
   sequence parameter set decoders.
 - `serde` — `Serialize` derives on the spec/field types.
-- `isobmff` — conversions between the crate's typed parameter-set wrappers and
-  `isobmff`'s decoder-configuration-record newtypes, for a caller that builds an
-  `avcC`/`hvcC`.
+- `isobmff` — the codec-configuration glue over `isobmff`'s box newtypes
+  (parameter-set decoding, RFC 6381 strings, `avcC` construction) and the HDR10
+  static metadata type, whose fields carry box types.
 
 It depends on `broadcast-core`, `thiserror` and `memchr` only. (`mpeg-ts` and
 `mpeg-pes` are dev-dependencies, used by one example and one test to reach a
@@ -67,3 +80,5 @@ Run with `cargo run -p broadcast-bitstream --example <name>`:
 - `decode_capture_sps` takes a transport-stream capture,
   e.g. `fixtures/ts/h264-aac.ts`, and prints the resolution, profile, level and
   RFC 6381 codec string of the SPS in force at its first IDR access unit.
+- `print_capture_slices` takes the same capture and prints each coded picture's
+  slice type and whether it is a frame or a field.

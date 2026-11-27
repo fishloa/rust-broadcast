@@ -799,7 +799,9 @@ impl Mp4Demux {
                 }
                 if fragmented && matches!(mapped.spec.config, CodecConfig::Hevc { .. }) {
                     mapped.spec.hdr10plus =
-                        crate::hdr10plus::Hdr10PlusMetadata::sample_carries_hdr10plus(&sample.data);
+                        broadcast_bitstream::Hdr10PlusMetadata::sample_carries_hdr10plus(
+                            &sample.data,
+                        );
                 }
                 mapped.live = true;
                 Some(mapped.spec.clone())

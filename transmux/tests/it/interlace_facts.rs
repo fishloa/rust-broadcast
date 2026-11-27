@@ -4,9 +4,10 @@
 //! observed from the real captures and cross-checked against the slice headers
 //! (`field_pic_flag`/`bottom_field_flag`) and SEI `pic_struct` those streams
 //! actually carry; the synthetic HEVC/HRD layouts live in `sps.rs`'s tests.
+use broadcast_bitstream::interlace::{PicStruct, PictureFacts, VideoScan};
 use std::path::PathBuf;
 use test_harness::collect::Collected as Media;
-use transmux::{PicStruct, PictureFacts, VideoScan, video_picture_facts};
+use transmux::video_picture_facts;
 
 fn fixture(rel: &str) -> PathBuf {
     test_fixtures::root().join("..").join(rel)
@@ -44,8 +45,12 @@ fn progressive_streams_are_progressive_frames() {
         assert_eq!(scan, VideoScan::Progressive, "{rel}");
         assert!(!facts.is_empty());
         for f in &facts {
-            assert!(!f.field_pic && f.fields == 0, "{rel}: {f:?}");
-            assert_eq!((f.bottom_field_first, f.pic_struct), (None, None), "{rel}");
+            assert!(!f.field_pic() && f.fields() == 0, "{rel}: {f:?}");
+            assert_eq!(
+                (f.bottom_field_first(), f.pic_struct()),
+                (None, None),
+                "{rel}"
+            );
         }
     }
 }
@@ -58,9 +63,9 @@ fn mbaff_stream_reports_frames_with_pic_struct_top_bottom() {
     for f in &facts {
         // MBAFF pictures are frames (field_pic_flag 0); the stream's picture
         // timing SEI says top field first.
-        assert!(!f.field_pic && f.fields == 0);
-        assert_eq!(f.pic_struct, Some(PicStruct::TopBottom));
-        assert_eq!(f.bottom_field_first, Some(false));
+        assert!(!f.field_pic() && f.fields() == 0);
+        assert_eq!(f.pic_struct(), Some(PicStruct::TopBottom));
+        assert_eq!(f.bottom_field_first(), Some(false));
     }
 }
 
@@ -70,15 +75,15 @@ fn mbaff_capable_stream_may_still_code_field_pairs() {
     // MBAFF frames and field pairs ("mixed").
     let (scan, facts) = facts_of("fixtures/ts/france2.ts");
     assert_eq!(scan, VideoScan::Mbaff);
-    let frames = facts.iter().filter(|f| !f.field_pic).count();
+    let frames = facts.iter().filter(|f| !f.field_pic()).count();
     let pairs = facts
         .iter()
-        .filter(|f| f.field_pic && f.fields == 2)
+        .filter(|f| f.field_pic() && f.fields() == 2)
         .count();
     assert_eq!((frames, pairs, facts.len()), (18, 48, 66));
-    for f in facts.iter().filter(|f| f.field_pic) {
-        assert_eq!(f.pic_struct, Some(PicStruct::TopField));
-        assert_eq!(f.bottom_field_first, Some(false));
+    for f in facts.iter().filter(|f| f.field_pic()) {
+        assert_eq!(f.pic_struct(), Some(PicStruct::TopField));
+        assert_eq!(f.bottom_field_first(), Some(false));
     }
 }
 
@@ -89,10 +94,10 @@ fn real_paff_capture_reports_field_pairs() {
     assert_eq!(facts.len(), 147);
     // 146 complementary pairs (top field first) plus the lone leading field of
     // the capture that the pairing could not complete.
-    assert_eq!(facts.iter().filter(|f| f.fields == 2).count(), 146);
-    assert_eq!(facts.iter().filter(|f| f.fields == 1).count(), 1);
-    assert!(facts.iter().all(|f| f.field_pic));
-    assert!(facts.iter().all(|f| f.bottom_field_first == Some(false)));
+    assert_eq!(facts.iter().filter(|f| f.fields() == 2).count(), 146);
+    assert_eq!(facts.iter().filter(|f| f.fields() == 1).count(), 1);
+    assert!(facts.iter().all(|f| f.field_pic()));
+    assert!(facts.iter().all(|f| f.bottom_field_first() == Some(false)));
 }
 
 #[test]
@@ -102,15 +107,15 @@ fn synthetic_paff_reports_parity_of_the_first_field() {
     assert_eq!(tff.len(), 12);
     assert!(
         tff.iter()
-            .all(|f| f.field_pic && f.fields == 2 && f.bottom_field_first == Some(false))
+            .all(|f| f.field_pic() && f.fields() == 2 && f.bottom_field_first() == Some(false))
     );
     let (_, bff) = facts_of("fixtures/video/paff/paff-bff-12f-64x64.ts");
     assert!(
         bff.iter()
-            .all(|f| f.field_pic && f.fields == 2 && f.bottom_field_first == Some(true))
+            .all(|f| f.field_pic() && f.fields() == 2 && f.bottom_field_first() == Some(true))
     );
     // No SEI in the synthetic streams: nothing is invented.
-    assert!(tff.iter().chain(&bff).all(|f| f.pic_struct.is_none()));
+    assert!(tff.iter().chain(&bff).all(|f| f.pic_struct().is_none()));
 }
 
 #[test]

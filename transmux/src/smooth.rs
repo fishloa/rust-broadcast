@@ -39,11 +39,11 @@
 //! escaped by quick-xml). Integer arithmetic only.
 
 use crate::TrackId;
-use crate::nalu_ext::AvcSpsCodecInfo;
 use crate::units::ROUNDING_DIVISOR;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use broadcast_bitstream::nalu_ext::AvcSpsCodecInfo;
 use broadcast_core::error::InvalidValue;
 use broadcast_core::len::{need_in, need_out};
 

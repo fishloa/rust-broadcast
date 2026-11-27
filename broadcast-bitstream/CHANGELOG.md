@@ -22,6 +22,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 
 ### Added
 
+- The H.264 slice-header layer (`slice_header`, `h264` feature), moved from
+  `transmux`: `AvcSliceHeader`, `AvcSlicePps`, `AvcPicture`, `AvcFieldInfo` and
+  the `AvcParamSets` SPS/PPS cache with `decode_avc_slice_pps`,
+  `parse_avc_slice_header`, `classify_au`/`classify_nals` and `parse_slice`.
+  Private fields with accessors and `#[non_exhaustive]` throughout.
+- The coded interlace facts (`interlace`, `h264`/`hevc`): `VideoScan`,
+  `PicStruct`, `SourceScanType` and `PictureFacts`, and the public
+  `avc_facts`/`hevc_facts` decoders over one access unit's NAL units.
+- The HDR10+ dynamic metadata model (`hdr10plus`, `hevc`), moved from
+  `transmux`: the ST 2094-40 Application #4 types with their `Parse`/
+  `Serialize` round trip, `Hdr10PlusMetadata` (constructor plus `with_*`
+  setters), a `WindowRegion` builder, and the SEI/T.35 walkers.
+- The HDR10 static metadata type (`hdr`, `hevc` + `isobmff`), moved from
+  `transmux`: `HdrStaticMetadata` with constructor and accessors, the prefix
+  SEI absorb/emit codec, and the `mdcv`/`clli` sample-entry glue.
+- The ISOBMFF codec-configuration glue (`isobmff`): `nalu_ext`
+  (`AvcSpsCodecInfo`, `HevcNalUnitCodecInfo`), `codec_config_ext`
+  (`HevcRecordCodecInfo`, `VvcRecordCodecInfo`) and
+  `avc_config_from_sps_pps`, all moved from `transmux`.
+- `nal` gains `AVC_NAL_SLICE`, `AVC_NAL_AUD` and `AVC_NAL_HEADER_LEN`.
+- `Error::OutputBufferTooSmall` (a serialization target too small) and, behind
+  `isobmff`, `Error::Isobmff`.
+- A `print_capture_slices` example and `h264_capture_slices` real-fixture test
+  that read every coded picture's slice type and frame/field flag out of
+  `fixtures/ts/h264-aac.ts`; `broadcast_bitstream_slice_header` and
+  `broadcast_bitstream_hdr10plus` fuzz targets.
+
+### Changed
+
+- `Error` drops the `Eq` derive (it keeps `PartialEq`): the optional `isobmff`
+  glue wraps the box layer's error, which carries none.
+
 - Initial contents: the exp-Golomb/RBSP bit reader (`bitreader`), RBSP
   emulation-prevention handling (`rbsp`), `NalCodec`, `AvcNalUnitType`,
   `HevcNalUnitType`, key-frame/IRAP and random-access-point classification, the

@@ -3,8 +3,8 @@
 //! agree with `classify_au` on every sample, reproduce the capture's known
 //! 146 frame-pairs + 1 lone field split, and report `Unknown` for no slice.
 use broadcast_bitstream::iter_length_prefixed_nals;
+use broadcast_bitstream::slice_header::{AvcParamSets, AvcPicture};
 use transmux::pipeline::CodecConfig;
-use transmux::slice_header::{AvcParamSets, AvcPicture};
 
 #[test]
 fn classify_nals_agrees_with_classify_au_on_a_real_paff_capture() {

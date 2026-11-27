@@ -7,7 +7,7 @@ use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
 use super::{CodecConfig, DisplayGeometry, ProgramNumber, TrackId};
-use crate::hdr::HdrStaticMetadata;
+use broadcast_bitstream::HdrStaticMetadata;
 use isobmff::dovi::DoviDecoderConfigurationRecord;
 
 /// A track's identity + codec config, used to build the init segment.

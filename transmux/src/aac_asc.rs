@@ -1234,6 +1234,18 @@ fn extension_index_for(hz: u32) -> Option<SamplingFrequencyIndex> {
         .find(|i| i.table_hz() == Some(hz))
 }
 
+/// AudioSpecificConfig lookup for an `esds` box.
+pub trait EsdsBoxCodecInfo {
+    /// Parse the `AudioSpecificConfig` carried in the `DecoderSpecificInfo`.
+    fn audio_specific_config(&self) -> Result<AudioSpecificConfig>;
+}
+
+impl EsdsBoxCodecInfo for isobmff::mp4esds::EsdsBox {
+    fn audio_specific_config(&self) -> Result<AudioSpecificConfig> {
+        AudioSpecificConfig::parse(self.require_decoder_specific_info()?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1891,5 +1903,32 @@ mod drift_agreement {
         assert!(
             matches!(err, crate::error::Error::InvalidValue(v) if v.field == "adts_frame_length")
         );
+    }
+}
+
+#[cfg(test)]
+mod esds_glue {
+    use super::*;
+    use alloc::vec;
+    use isobmff::mp4esds::EsdsBox;
+
+    #[test]
+    fn esds_audio_specific_config_reads_the_decoder_specific_info() {
+        let esds = EsdsBox::new(isobmff::mp4esds::ESDescriptor::new(
+            1,
+            0,
+            Some(isobmff::mp4esds::DecoderConfigDescriptor::new(
+                0x40,
+                5,
+                false,
+                0,
+                0,
+                0,
+                Some(isobmff::mp4esds::DecoderSpecificInfo::new(vec![0x12, 0x10])),
+            )),
+            Some(isobmff::mp4esds::SLConfigDescriptor::predefined_two()),
+        ));
+        assert_eq!(esds.decoder_specific_info_data(), Some(&[0x12u8, 0x10][..]));
+        assert!(esds.audio_specific_config().is_ok());
     }
 }

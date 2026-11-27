@@ -9,11 +9,11 @@
 //! The committed captures carry one PPS and no FMO slice groups, so the
 //! boundaries and every map type have to be constructed.
 
-use crate::bit_writer::BitWriter;
-use broadcast_bitstream::sps::decode_avc_slice_sps;
-use transmux::slice_header::{
+use broadcast_bitstream::slice_header::{
     AvcFieldInfo, AvcParamSets, AvcPicture, decode_avc_slice_pps, parse_avc_slice_header,
 };
+use broadcast_bitstream::sps::decode_avc_slice_sps;
+use test_fixtures::bits::BitWriter;
 
 fn nal(ref_idc: u8, t: u8, rbsp: Vec<u8>) -> Vec<u8> {
     let mut v = vec![(ref_idc << 5) | t];
@@ -109,8 +109,8 @@ fn pps_nal(
 fn pps_and_sps_ids_are_bounded_inclusively() {
     let max =
         decode_avc_slice_pps(&pps_nal(255, 31, false, 0, 0, 0, true)).expect("255/31 allowed");
-    assert_eq!((max.pps_id, max.sps_id), (255, 31));
-    assert!(max.redundant_pic_cnt_present);
+    assert_eq!((max.pps_id(), max.sps_id()), (255, 31));
+    assert!(max.redundant_pic_cnt_present());
 
     for (pps_id, sps_id) in [(256, 0), (0, 32), (300, 0), (0, 40)] {
         assert!(
@@ -124,7 +124,7 @@ fn pps_and_sps_ids_are_bounded_inclusively() {
 #[test]
 fn num_slice_groups_minus1_is_bounded_inclusively() {
     let max = decode_avc_slice_pps(&pps_nal(0, 0, false, 7, 6, 0, true)).expect("7 groups allowed");
-    assert!(max.redundant_pic_cnt_present);
+    assert!(max.redundant_pic_cnt_present());
     let err = decode_avc_slice_pps(&pps_nal(0, 0, false, 8, 6, 0, false)).expect_err("8 groups");
     assert!(
         format!("{err:?}").contains("num_slice_groups_minus1"),
@@ -141,11 +141,14 @@ fn every_slice_group_map_type_reaches_the_same_later_fields() {
         let nrl0 = if matches!(map_type, 3 | 5) { 1 } else { 0 };
         let pps = decode_avc_slice_pps(&pps_nal(0, 0, true, 2, map_type, nrl0, true))
             .unwrap_or_else(|e| panic!("map_type {map_type}: {e:?}"));
-        assert_eq!(pps.pps_id, 0);
-        assert_eq!(pps.sps_id, 0);
-        assert!(pps.entropy_coding_mode, "map_type {map_type}: entropy mode");
+        assert_eq!(pps.pps_id(), 0);
+        assert_eq!(pps.sps_id(), 0);
         assert!(
-            pps.redundant_pic_cnt_present,
+            pps.entropy_coding_mode(),
+            "map_type {map_type}: entropy mode"
+        );
+        assert!(
+            pps.redundant_pic_cnt_present(),
             "map_type {map_type}: redundant_pic_cnt_present_flag misread"
         );
     }
@@ -199,7 +202,7 @@ fn slice_type_is_bounded_at_nine() {
         let n = slice_nal(2, false, slice_type, 0, 0, None, 0);
         let h = parse_avc_slice_header(&n, &sps, &pps)
             .unwrap_or_else(|e| panic!("slice_type {slice_type}: {e:?}"));
-        assert_eq!(h.slice_type, slice_type as u8);
+        assert_eq!(h.slice_type(), slice_type as u8);
     }
     let n = slice_nal(2, false, 10, 0, 0, None, 0);
     let err = parse_avc_slice_header(&n, &sps, &pps).expect_err("slice_type 10");

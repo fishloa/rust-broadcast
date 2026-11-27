@@ -3,7 +3,7 @@
 //!
 //! The same byte layouts are the H.265 `mastering_display_colour_volume`
 //! (D.2.28) and `content_light_level_info` (D.2.35) SEI payloads. The SEI
-//! carrier that absorbs and emits them lives in `transmux::hdr`.
+//! carrier that absorbs and emits them lives in `broadcast_bitstream::hdr`.
 
 use crate::error::{Error, Result};
 use broadcast_core::error::{BufferTooShort, InvalidValue};

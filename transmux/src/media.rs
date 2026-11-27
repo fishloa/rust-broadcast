@@ -37,7 +37,7 @@ use broadcast_common::{Stage, Timestamp};
 use broadcast_core::Parse;
 use broadcast_core::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 
-use crate::codec_config_ext::VvcRecordCodecInfo;
+use broadcast_bitstream::codec_config_ext::VvcRecordCodecInfo;
 #[cfg(feature = "hls")]
 use broadcast_hls::{ByteRange, DecimalSeconds, MapTag, MediaPlaylist, MediaSegment};
 use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox};
@@ -950,7 +950,7 @@ fn overlay_sample_entry_display(
 ) -> TrackSpec {
     let config = spec.config.clone();
     spec.display = overlay_sample_entry_geometry(spec.display, &config, extra_boxes);
-    if let Some(hdr) = crate::hdr::HdrStaticMetadata::from_sample_entry_boxes(
+    if let Some(hdr) = broadcast_bitstream::HdrStaticMetadata::from_sample_entry_boxes(
         extra_boxes.iter().map(|b| (&b.box_type, b.data.as_slice())),
     ) {
         spec.hdr = Some(hdr);

@@ -174,8 +174,9 @@ pub const TABLE: &[Crate] = &[
         matcher: Matcher::Strict,
         // `Error` is a structured error. The NAL unit-type enums, `NalCodec`
         // and the coded-fact tables moved from `transmux`'s display module are
-        // the spec labels, pinned.
-        skip: &["Error"],
+        // the spec labels, pinned. `AvcPicture` is a data-carrying
+        // classification ADT (`Field(AvcFieldInfo)`), not a spec-token label.
+        skip: &["Error", "AvcPicture"],
         expected: Some(&[
             "ActiveFormatDescription",
             "AspectRatioIdc",
@@ -184,10 +185,14 @@ pub const TABLE: &[Crate] = &[
             "HevcNalUnitType",
             "MatrixCoefficients",
             "NalCodec",
+            "OverlapProcessOption",
+            "PicStruct",
+            "SourceScanType",
             "TransferCharacteristics",
             "VideoFormat",
+            "VideoScan",
         ]),
-        min_enums: Some(9),
+        min_enums: Some(13),
     },
     Crate {
         name: "broadcast-codec",
@@ -1850,9 +1855,6 @@ pub const TABLE: &[Crate] = &[
             // `rtp_align::AlignOut` (#2380): a data-carrying ADT (`Sample(TrackId, Sample)`),
             // the result of placing one sample, not a spec code.
             "AlignOut",
-            // `slice_header::AvcPicture` (issue #1161): a data-carrying classification
-            // ADT (`Field(AvcFieldInfo)`), not a spec-token label.
-            "AvcPicture",
             // `display_track::ActivationOutcome` (display-geometry Phase 2): what one
             // access unit did to the tracker (a data-carrying ADT, `Changed { .. }`);
             // not a spec code and never rendered to a user.

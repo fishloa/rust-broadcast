@@ -21,7 +21,7 @@
 use broadcast_common::{Stage, Timestamp};
 use broadcast_core::Parse;
 use serde::Serialize;
-use transmux::codec_config_ext::{HevcRecordCodecInfo, VvcRecordCodecInfo};
+use broadcast_bitstream::codec_config_ext::{HevcRecordCodecInfo, VvcRecordCodecInfo};
 use transmux::ir::{AbandonReason, CodecConfig, SkippedTrack, TrackSpec};
 use transmux::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
 use broadcast_bitstream::rfc6381::rfc6381_avc1;

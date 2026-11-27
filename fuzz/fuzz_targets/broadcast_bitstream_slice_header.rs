@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use transmux::slice_header::AvcParamSets;
+use broadcast_bitstream::slice_header::AvcParamSets;
 
 // Fuzz the H.264 slice-header / PPS / SPS prefix parsers and the PAFF field
 // classifier (#1161) on arbitrary Annex B bytes. They run on every video access
