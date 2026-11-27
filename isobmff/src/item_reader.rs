@@ -566,6 +566,7 @@ pub struct StillImage {
     groups: GroupsListBox,
     handler_type: Option<[u8; BOX_TYPE_SIZE]>,
     total_len: Option<u64>,
+    degraded: Vec<ImageFinding>,
 }
 
 impl StillImage {
@@ -809,7 +810,7 @@ impl StillImage {
     /// 11, reported without refusing the read.
     #[must_use]
     pub fn structure_findings(&self) -> Vec<ImageFinding> {
-        let mut findings = Vec::new();
+        let mut findings = self.degraded.clone();
         for group in self.groups.groups() {
             let group_id = group.group_id();
             if group.grouping_type() == EntityGroupType::Ster
@@ -1103,7 +1104,18 @@ fn declared_size(header: &[u8]) -> Result<Option<u64>> {
     match u32_at(header, SIZE_OFFSET) {
         SIZE_TO_EOF => Ok(None),
         SIZE_INDICATES_LARGESIZE => {
-            Ok(Some(broadcast_core::wire::u64_at(header, LARGESIZE_OFFSET)))
+            let large = broadcast_core::wire::u64_at(header, LARGESIZE_OFFSET);
+            if large < (TOP_HEADER_LEN + LARGESIZE_SIZE) as u64 {
+                // A `largesize` shorter than its own 16-byte header cannot
+                // describe a box (§4.2); treating it as an empty payload would
+                // drop every byte it claims.
+                return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
+                    field: "largesize",
+                    value: large,
+                    reason: "shorter than the 16-byte header it belongs to",
+                }));
+            }
+            Ok(Some(large))
         }
         size => Ok(Some(u64::from(size))),
     }
@@ -1117,6 +1129,7 @@ impl StillImage {
         idat: Option<(u64, usize)>,
         total_len: Option<u64>,
         limits: &Limits,
+        degraded: Vec<ImageFinding>,
     ) -> Result<Self> {
         let mut iloc: Option<ItemLocationBox> = None;
         let mut iinf: Option<ItemInfoBox> = None;
@@ -1216,6 +1229,7 @@ impl StillImage {
             groups,
             handler_type,
             total_len,
+            degraded,
         })
     }
 }
@@ -1523,6 +1537,7 @@ pub struct ItemReader {
     reported_loaded: bool,
     derived_queue: VecDeque<usize>,
     derived_current: Option<DerivedFetch>,
+    degraded: Vec<ImageFinding>,
 }
 
 impl ItemReader {
@@ -1545,6 +1560,7 @@ impl ItemReader {
             reported_loaded: false,
             derived_queue: VecDeque::new(),
             derived_current: None,
+            degraded: Vec::new(),
         }
     }
 
@@ -1718,19 +1734,25 @@ impl ItemReader {
         let size32 = u32_at(prefix, SIZE_OFFSET);
         let fourcc = fourcc_of(prefix);
         let header_len = prefix.len();
-        let size = match size32 {
-            SIZE_TO_EOF => match self.config.total_len {
-                Some(total) => total.saturating_sub(*offset),
-                None => {
-                    return Err(Error::InvalidInput(
-                        "a size-0 box needs the file length; call with_total_len",
-                    ));
-                }
-            },
-            SIZE_INDICATES_LARGESIZE => broadcast_core::wire::u64_at(prefix, LARGESIZE_OFFSET),
-            size => u64::from(size),
+        let (size, to_end) = match size32 {
+            SIZE_TO_EOF => (
+                match self.config.total_len {
+                    Some(total) => total.saturating_sub(*offset),
+                    None => {
+                        return Err(Error::InvalidInput(
+                            "a size-0 box needs the file length; call with_total_len",
+                        ));
+                    }
+                },
+                true,
+            ),
+            SIZE_INDICATES_LARGESIZE => (
+                broadcast_core::wire::u64_at(prefix, LARGESIZE_OFFSET),
+                false,
+            ),
+            size => (u64::from(size), false),
         };
-        if size != 0 && size < header_len as u64 {
+        if size < header_len as u64 {
             return Err(Error::BoxSizeUnderflow {
                 size,
                 header_size: header_len,
@@ -1769,7 +1791,7 @@ impl ItemReader {
                     prefix: Vec::new(),
                     target: TOP_HEADER_LEN,
                 };
-                if self.config.total_len == Some(next_offset) || size == 0 {
+                if self.config.total_len == Some(next_offset) || to_end {
                     self.finalize()?;
                 }
             }
@@ -1811,8 +1833,18 @@ impl ItemReader {
                         limit: self.config.limits.max_moov_bytes(),
                     });
                 }
+                if self.meta.is_some() {
+                    // One file-level `meta` describes the item model (§8.11.1);
+                    // a second cannot be re-emitted, because only one body is
+                    // the model's.
+                    return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
+                        field: "file-level meta box",
+                        value: u64::from(self.meta.is_some()) + 1,
+                        reason: "more than one meta box at the top level",
+                    }));
+                }
                 let payload_abs = box_start.saturating_add(header.len() as u64);
-                let (record, idat) = parse_meta(bytes, payload_abs)?;
+                let (record, idat) = parse_meta(bytes, payload_abs, &mut self.degraded)?;
                 if let Some(idat) = idat {
                     self.idat = Some(idat);
                 }
@@ -1850,6 +1882,7 @@ impl ItemReader {
             self.idat,
             self.config.total_len,
             &self.config.limits,
+            core::mem::take(&mut self.degraded),
         )?;
         for (index, item) in image.items.iter().enumerate() {
             if item_needs_body(item) {
@@ -1941,7 +1974,11 @@ fn fourcc_of(prefix: &[u8]) -> [u8; BOX_TYPE_SIZE] {
     fourcc
 }
 
-fn parse_meta(body: &[u8], payload_abs: u64) -> Result<(MetaRecord, Option<(u64, usize)>)> {
+fn parse_meta(
+    body: &[u8],
+    payload_abs: u64,
+    degraded: &mut Vec<ImageFinding>,
+) -> Result<(MetaRecord, Option<(u64, usize)>)> {
     if body.len() < FULLBOX_EXTRA_SIZE {
         return Err(Error::BufferTooShort(
             broadcast_core::error::BufferTooShort {
@@ -1974,30 +2011,42 @@ fn parse_meta(body: &[u8], payload_abs: u64) -> Result<(MetaRecord, Option<(u64,
             .saturating_add(consumed_total as u64)
             .saturating_add(child.start as u64);
         let fourcc = child.four_cc();
-        let parsed = match &fourcc {
-            b"hdlr" => MetaChild::Hdlr(Hdlr::parse_box(child.bytes)?),
-            b"pitm" => MetaChild::Pitm(PrimaryItemBox::parse(child.bytes)?),
-            b"iloc" => MetaChild::Iloc(ItemLocationBox::parse(child.bytes)?),
-            b"iinf" => MetaChild::Iinf(ItemInfoBox::parse(child.bytes)?),
-            b"iref" => MetaChild::Iref(ItemReferenceBox::parse(child.bytes)?),
-            b"iprp" => MetaChild::Iprp(ItemPropertiesBox::parse(child.bytes)?),
-            b"idat" => {
-                let box_value = ItemDataBox::parse(child.bytes)?;
-                idat = Some((
-                    absolute.saturating_add(child.header.header_size() as u64),
-                    box_value.data().len(),
-                ));
-                MetaChild::Idat(box_value)
-            }
-            b"ipro" => MetaChild::Ipro(crate::item::ItemProtectionBox::parse(child.bytes)?),
-            b"grpl" => MetaChild::Grpl(GroupsListBox::parse(child.bytes)?),
-            _ => {
-                let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
-                opaque.to_end = child.to_end();
-                opaque.largesize = child.has_largesize();
-                MetaChild::Opaque(opaque)
-            }
-        };
+        let parsed =
+            match &fourcc {
+                b"hdlr" => MetaChild::Hdlr(Hdlr::parse_box(child.bytes)?),
+                b"pitm" => MetaChild::Pitm(PrimaryItemBox::parse(child.bytes)?),
+                b"iloc" => MetaChild::Iloc(ItemLocationBox::parse(child.bytes)?),
+                b"iinf" => MetaChild::Iinf(ItemInfoBox::parse(child.bytes)?),
+                b"iref" => MetaChild::Iref(ItemReferenceBox::parse(child.bytes)?),
+                b"iprp" => {
+                    let (properties, opaque) =
+                        ItemPropertiesBox::parse_degrading(child.bytes, absolute)?;
+                    degraded.extend(opaque.into_iter().map(|child| {
+                        ImageFinding::UnrepresentableBox {
+                            box_type: child.box_type(),
+                            offset: child.offset(),
+                            reason: child.reason(),
+                        }
+                    }));
+                    MetaChild::Iprp(properties)
+                }
+                b"idat" => {
+                    let box_value = ItemDataBox::parse(child.bytes)?;
+                    idat = Some((
+                        absolute.saturating_add(child.header.header_size() as u64),
+                        box_value.data().len(),
+                    ));
+                    MetaChild::Idat(box_value)
+                }
+                b"ipro" => MetaChild::Ipro(crate::item::ItemProtectionBox::parse(child.bytes)?),
+                b"grpl" => MetaChild::Grpl(GroupsListBox::parse(child.bytes)?),
+                _ => {
+                    let mut opaque = OpaqueBox::new(fourcc, child.payload().to_vec());
+                    opaque.to_end = child.to_end();
+                    opaque.largesize = child.has_largesize();
+                    MetaChild::Opaque(opaque)
+                }
+            };
         children.push(parsed);
         rest = &rest[used..];
         consumed_total = consumed_total.saturating_add(used);

@@ -622,6 +622,7 @@ fn moof_size_zero_child_written_explicitly_when_not_last() {
     let tfhd = TrackFragmentHeaderBox {
         flags: 0,
         track_id: TrackId::new(1),
+        version: Default::default(),
         base_data_offset: None,
         sample_description_index: None,
         default_sample_duration: None,

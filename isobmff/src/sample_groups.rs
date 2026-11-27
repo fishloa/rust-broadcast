@@ -81,10 +81,17 @@ const PROP_HAS_PRIORITY_BIT: u8 = 0x20;
 const PROP_HAS_CSP_BIT: u8 = 0x10;
 const PROP_CSP_LEN_SHIFT: u32 = 2;
 const PROP_CSP_LEN_MASK: u8 = 0x03;
+/// The six reserved bits of a version-2 `subs` byte after `entry_count` —
+/// ISO/IEC 14496-12:2026 §8.7.7.3.
+const SUBS_CFG_RESERVED_MASK: u8 = 0x3F;
+/// The two reserved bits closing a version-2 `subs` property byte — §8.7.7.3.
+const PROP_RESERVED_MASK: u8 = 0x03;
 const SSRT_PROP_DISCARDABLE_BIT: u8 = 0x80;
 const SSRT_PROP_HAS_PRIORITY_BIT: u8 = 0x40;
 const SSRT_PROP_HAS_CSP_BIT: u8 = 0x20;
 const SSRT_PROP_CSP_LEN_SHIFT: u32 = 3;
+/// The three reserved bits closing an `ssrt` entry byte — §8.7.10.
+const SSRT_PROP_RESERVED_MASK: u8 = 0x07;
 const SHORT_REF_BITS: u32 = 7;
 const LONG_REF_BITS: u32 = 15;
 const MAX_CSP_LEN: usize = 4;
@@ -537,11 +544,9 @@ pub struct SampleGroupDescriptionBox {
     pub flags: u32,
     /// Four-CC grouping type (e.g. `GROUPING_TYPE_ROLL`).
     pub grouping_type: u32,
-    /// `default_length` (version >= 1); 0 means variable-length entries.
-    ///
-    /// On serialization this is recomputed from entries: if all entries have the
-    /// same `wire_len`, `default_length` is set to that value; otherwise 0
-    /// (each entry gets an explicit `description_length` prefix).
+    /// `default_length` (version >= 1). Zero means every entry carries its own
+    /// 4-byte `description_length` prefix; a non-zero value is the shared
+    /// length of every entry. Written back as the file stated it.
     pub default_length: u32,
     /// `default_group_description_index` (version >= 2, §8.9.3.2; the 2015
     /// edition called it `default_sample_description_index`): `None` for
@@ -714,8 +719,7 @@ impl<'a> Parse<'a> for SampleGroupDescriptionBox {
 impl Serialize for SampleGroupDescriptionBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let (use_default_len, per_entry_prefix) = self.effective_default_length();
-        let entry_overhead = if per_entry_prefix {
+        let entry_overhead = if self.per_entry_length() {
             SGPD_ENTRY_PREFIX_LEN
         } else {
             0
@@ -735,7 +739,6 @@ impl Serialize for SampleGroupDescriptionBox {
         } else {
             0
         };
-        let _ = use_default_len;
         crate::box_types::box_len(
             BOX_HEADER_MIN_SIZE
                 + FULLBOX_EXTRA_SIZE
@@ -750,7 +753,8 @@ impl Serialize for SampleGroupDescriptionBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let (effective_dl, per_entry_prefix) = self.effective_default_length();
+        let per_entry_prefix = self.per_entry_length();
+        self.validate_default_length()?;
         let mut c = 0;
         c += crate::box_types::write_full_box_header(
             buf,
@@ -763,7 +767,8 @@ impl Serialize for SampleGroupDescriptionBox {
         buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.grouping_type.to_be_bytes());
         c += core::mem::size_of::<u32>();
         if self.version >= SGPD_VERSION_DEFAULT_LENGTH {
-            buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&effective_dl.to_be_bytes());
+            buf[c..c + core::mem::size_of::<u32>()]
+                .copy_from_slice(&self.default_length.to_be_bytes());
             c += core::mem::size_of::<u32>();
         }
         if self.version >= SGPD_VERSION_GROUP_INDEX {
@@ -791,21 +796,28 @@ impl Serialize for SampleGroupDescriptionBox {
 }
 
 impl SampleGroupDescriptionBox {
-    /// Compute the `default_length` to write and whether per-entry length
-    /// prefixes are needed.
-    ///
-    /// Returns `(effective_default_length, per_entry_prefix_needed)`.
-    fn effective_default_length(&self) -> (u32, bool) {
-        if self.version < SGPD_VERSION_DEFAULT_LENGTH || self.entries.is_empty() {
-            return (0, false);
+    /// Whether every entry carries its own `description_length` prefix:
+    /// version 1 and later only, and only when the box states
+    /// `default_length == 0` (ISO/IEC 14496-12:2026 §8.9.3.2).
+    fn per_entry_length(&self) -> bool {
+        self.version >= SGPD_VERSION_DEFAULT_LENGTH && self.default_length == 0
+    }
+
+    /// A shared `default_length` is the width of every entry (§8.9.3.2), so a
+    /// box whose entries disagree with it cannot be written.
+    fn validate_default_length(&self) -> Result<()> {
+        if self.version < SGPD_VERSION_DEFAULT_LENGTH
+            || self.default_length == 0
+            || self
+                .entries
+                .iter()
+                .all(|e| e.wire_len() == self.default_length as usize)
+        {
+            return Ok(());
         }
-        let first = self.entries[0].wire_len();
-        let uniform = self.entries.iter().all(|e| e.wire_len() == first);
-        if uniform {
-            (first as u32, false)
-        } else {
-            (0, true)
-        }
+        Err(Error::InvalidInput(
+            "sgpd default_length must equal every entry's width (ISO/IEC 14496-12:2026 §8.9.3.2)",
+        ))
     }
 }
 
@@ -1240,6 +1252,9 @@ pub struct SubsampleProperties {
     /// `codec_specific_parameters` when `is_csp_present` is set, else `None`
     /// (inferred 0).
     pub codec_specific_parameters: Option<CodecSpecificParameters>,
+    /// The reserved bits closing the property byte: two in a version-2 `subs`
+    /// (§8.7.7.3), three in an `ssrt` entry (§8.7.10). Carried verbatim.
+    pub reserved: u8,
 }
 
 impl SubsampleProperties {
@@ -1280,6 +1295,11 @@ impl SubsampleProperties {
             }
             b |= csp | ((c.len - 1) << shift);
         }
+        let reserved = match layout {
+            PropertyLayout::Subs => PROP_RESERVED_MASK,
+            PropertyLayout::Ssrt => SSRT_PROP_RESERVED_MASK,
+        };
+        b |= self.reserved & reserved;
         Ok(b)
     }
 
@@ -1338,10 +1358,15 @@ impl SubsampleProperties {
         } else {
             None
         };
+        let reserved = match layout {
+            PropertyLayout::Subs => PROP_RESERVED_MASK,
+            PropertyLayout::Ssrt => SSRT_PROP_RESERVED_MASK,
+        };
         Ok(Self {
             discardable: flags & disc != 0,
             subsample_priority,
             codec_specific_parameters,
+            reserved: flags & reserved,
         })
     }
 }
@@ -1401,6 +1426,8 @@ pub struct SubSampleInformationBoxV2 {
     pub is_size_16_bits: bool,
     /// `is_short_ref`: `reference_idx` is 7 bits when set, else 15.
     pub is_short_ref: bool,
+    /// The six reserved bits after `is_short_ref` (§8.7.7.3).
+    pub reserved: u8,
     /// Entries.
     pub entries: Vec<SubsV2Entry>,
 }
@@ -1448,13 +1475,16 @@ impl SubSampleInformationBoxV2 {
         let mut c = FULLBOX_EXTRA_SIZE;
         let entry_count = be_u32(body, c, "sample group field")? as usize;
         c += core::mem::size_of::<u32>();
-        let is_size_16_bits = body[c] & SUBS_SIZE16_BIT != 0;
-        let is_short_ref = body[c] & SUBS_SHORT_REF_BIT != 0;
+        let config = body[c];
+        let is_size_16_bits = config & SUBS_SIZE16_BIT != 0;
+        let is_short_ref = config & SUBS_SHORT_REF_BIT != 0;
+        let reserved = config & SUBS_CFG_RESERVED_MASK;
         c += 1;
         let mut out = Self {
             flags,
             is_size_16_bits,
             is_short_ref,
+            reserved,
             entries: Vec::new(),
         };
         let size_len = out.size_len();
@@ -1578,7 +1608,7 @@ impl Serialize for SubSampleInformationBoxV2 {
         let entry_count = broadcast_core::len::fit_u32(self.entries.len(), "entry_count")?;
         buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&entry_count.to_be_bytes());
         c += core::mem::size_of::<u32>();
-        let mut cfg = 0u8;
+        let mut cfg = self.reserved & SUBS_CFG_RESERVED_MASK;
         if self.is_size_16_bits {
             cfg |= SUBS_SIZE16_BIT;
         }
@@ -1642,6 +1672,8 @@ impl Serialize for SubSampleInformationBoxV2 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SubSampleReferenceTableBox {
+    /// FullBox version.
+    pub version: u8,
     /// FullBox flags `[23:0]`.
     pub flags: u32,
     /// `is_short_ref`: `entry_count` is 7 bits when set, else 15.
@@ -1668,6 +1700,7 @@ impl<'a> Parse<'a> for SubSampleReferenceTableBox {
         }
         let body = crate::box_types::parse_box(bytes)?.0.body;
         need_in(body, FULLBOX_EXTRA_SIZE + 1, "ssrt body")?;
+        let version = body[0];
         let flags = be_u32(body, 0, "full box header")? & FULLBOX_FLAGS_MASK;
         let mut c = FULLBOX_EXTRA_SIZE;
         let is_short_ref = body[c] & HAS_REFERENCE_BIT != 0;
@@ -1701,6 +1734,7 @@ impl<'a> Parse<'a> for SubSampleReferenceTableBox {
             )?);
         }
         Ok(Self {
+            version,
             flags,
             is_short_ref,
             entries,
@@ -1727,8 +1761,14 @@ impl Serialize for SubSampleReferenceTableBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let mut c =
-            crate::box_types::write_full_box_header(buf, b"ssrt", need, 0, self.flags, false)?;
+        let mut c = crate::box_types::write_full_box_header(
+            buf,
+            b"ssrt",
+            need,
+            self.version,
+            self.flags,
+            false,
+        )?;
         let bits = if self.is_short_ref {
             SHORT_REF_BITS
         } else {
@@ -2338,7 +2378,7 @@ mod tests {
             version: 2,
             flags: 0,
             grouping_type: GROUPING_TYPE_ROLL,
-            default_length: 0,
+            default_length: 2,
             default_group_description_index: Some(3),
             entries: alloc::vec![SgpdEntry::Roll { roll_distance: -1 }],
         };
@@ -2916,6 +2956,7 @@ mod tests {
                         len: 4,
                         value: 0xAABB_CCDD
                     }),
+                    reserved: 0,
                 }),
             }]
         );
@@ -2931,6 +2972,7 @@ mod tests {
             flags: 5,
             is_size_16_bits: false,
             is_short_ref: false,
+            reserved: 0,
             entries: alloc::vec![SubsV2Entry {
                 sample_delta: 3,
                 subsamples: alloc::vec![
@@ -2949,6 +2991,7 @@ mod tests {
                                 len: 1,
                                 value: 0x42
                             }),
+                            reserved: 0,
                         }),
                     },
                 ],
@@ -2982,6 +3025,7 @@ mod tests {
                 discardable: true,
                 subsample_priority: Some(9),
                 codec_specific_parameters: None,
+                reserved: 0,
             },
             SubsampleProperties {
                 discardable: false,
@@ -2990,10 +3034,12 @@ mod tests {
                     len: 3,
                     value: 0x0012_3456
                 }),
+                reserved: 0,
             },
         ];
         for is_short_ref in [true, false] {
             let b = SubSampleReferenceTableBox {
+                version: 0,
                 flags: 1,
                 is_short_ref,
                 entries: entries.clone(),
@@ -3002,6 +3048,7 @@ mod tests {
             assert_eq!(SubSampleReferenceTableBox::parse(&bytes).unwrap(), b);
         }
         let short = SubSampleReferenceTableBox {
+            version: 0,
             flags: 0,
             is_short_ref: true,
             entries: entries.clone(),
@@ -3113,6 +3160,7 @@ mod tests {
             flags: 0,
             is_size_16_bits: true,
             is_short_ref: true,
+            reserved: 0,
             entries: alloc::vec![SubsV2Entry {
                 sample_delta: 1,
                 subsamples: alloc::vec![SubsV2Subsample {
@@ -3121,6 +3169,7 @@ mod tests {
                         discardable: false,
                         subsample_priority: None,
                         codec_specific_parameters: Some(CodecSpecificParameters { len, value: 0 }),
+                        reserved: 0,
                     }),
                 }],
             }],
@@ -3138,12 +3187,14 @@ mod tests {
                 "subs csp len {len}: expected InvalidInput, got {err:?}"
             );
             let ssrt = SubSampleReferenceTableBox {
+                version: 0,
                 flags: 0,
                 is_short_ref: true,
                 entries: alloc::vec![SubsampleProperties {
                     discardable: false,
                     subsample_priority: None,
                     codec_specific_parameters: Some(CodecSpecificParameters { len, value: 0 }),
+                    reserved: 0,
                 }],
             };
             let err = ssrt.try_to_bytes().unwrap_err();

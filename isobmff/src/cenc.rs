@@ -28,7 +28,7 @@ use crate::box_types::{
 };
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
-use broadcast_core::error::BufferTooShort;
+use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::{need_in, need_out};
 use broadcast_core::wire::{u16_at, u32_at, u64_at};
 use broadcast_core::{Parse, Serialize};
@@ -661,7 +661,8 @@ pub struct SampleAuxInfoSizesBox {
 impl SampleAuxInfoSizesBox {
     /// Parse a `saiz` box from full box bytes (including 8-byte box header + FullBox).
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(
             bytes,
@@ -705,11 +706,25 @@ impl SampleAuxInfoSizesBox {
                 .checked_mul(width)
                 .ok_or(Error::InvalidInput("saiz sample_count overflows the body"))?;
             need_in(bytes, offset + table, "saiz sample_info_size")?;
+            if bytes.len() != offset + table {
+                return Err(Error::InvalidValue(InvalidValue {
+                    field: "saiz size",
+                    value: bytes.len() as u64,
+                    reason: "bytes after the last sample_info_size",
+                }));
+            }
             bytes[offset..offset + table]
                 .chunks_exact(width)
                 .map(read_be)
                 .collect()
         } else {
+            if bytes.len() != offset {
+                return Err(Error::InvalidValue(InvalidValue {
+                    field: "saiz default_sample_info_size",
+                    value: bytes.len() as u64,
+                    reason: "a non-zero default_sample_info_size states there is no table",
+                }));
+            }
             Vec::new()
         };
         Ok(Self {
@@ -807,7 +822,8 @@ pub struct SampleAuxInfoOffsetsBox {
 impl SampleAuxInfoOffsetsBox {
     /// Parse a `saio` box from full box bytes (including 8-byte box header + FullBox).
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(
             bytes,

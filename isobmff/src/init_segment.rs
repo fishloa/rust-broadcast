@@ -18,7 +18,7 @@ use crate::error::{Error, Result};
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
-use broadcast_core::error::BufferTooShort;
+use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::{need_in, need_out};
 use broadcast_core::timescale::Timescale;
 use broadcast_core::wire::{fourcc_at, i16_at, u16_at, u24_at, u32_at, u64_at};
@@ -86,8 +86,24 @@ const MVHD_V1_NEXT_TRACK_ID_OFFSET: usize = 116;
 const MVHD_V1_LEN: usize = 120;
 /// Reserved bytes between `volume` and `matrix` (§8.2.2.2).
 const MVHD_RESERVED_LEN: usize = 10;
+/// `mvhd` v0 reserved-bytes offset, right after `volume` (§8.2.2.2).
+const MVHD_V0_RESERVED_OFFSET: usize = MVHD_V0_VOLUME_OFFSET + core::mem::size_of::<u16>();
+/// `mvhd` v0 `pre_defined` offset, right after the matrix (§8.2.2.2).
+const MVHD_V0_PRE_DEFINED_OFFSET: usize = MVHD_V0_MATRIX_OFFSET + MATRIX_WIRE_LEN;
+/// `mvhd` v1 reserved-bytes offset, right after `volume` (§8.2.2.2).
+const MVHD_V1_RESERVED_OFFSET: usize = MVHD_V1_VOLUME_OFFSET + core::mem::size_of::<u16>();
+/// `mvhd` v1 `pre_defined` offset, right after the matrix (§8.2.2.2).
+const MVHD_V1_PRE_DEFINED_OFFSET: usize = MVHD_V1_MATRIX_OFFSET + MATRIX_WIRE_LEN;
 /// `pre_defined` bytes at the end of `mvhd` (§8.2.2.2).
 const MVHD_PRE_DEFINED_LEN: usize = 24;
+
+/// A fixed run of reserved bytes at `offset`, carried verbatim.
+fn bytes_for<const N: usize>(bytes: &[u8], offset: usize, what: &'static str) -> Result<[u8; N]> {
+    need_in(bytes, offset + N, what)?;
+    let mut out = [0u8; N];
+    out.copy_from_slice(&bytes[offset..offset + N]);
+    Ok(out)
+}
 
 /// Four-CC of the Movie Header Box (`mvhd`, ISO/IEC 14496-12:2026 §8.2.2).
 pub const MVHD: [u8; 4] = *b"mvhd";
@@ -107,7 +123,11 @@ pub struct MovieHeaderBox {
     pub duration: u64,
     pub rate: u32,
     pub volume: u16,
+    /// The reserved bytes after `volume` (§8.2.2.2), carried verbatim.
+    pub reserved: [u8; MVHD_RESERVED_LEN],
     pub matrix: [i32; MATRIX_VALUES],
+    /// `pre_defined[6]` after the matrix (§8.2.2.2), carried verbatim.
+    pub pre_defined: [u8; MVHD_PRE_DEFINED_LEN],
     pub next_track_id: TrackId,
 }
 
@@ -120,7 +140,7 @@ impl<'a> Parse<'a> for MovieHeaderBox {
         if ver == 0 {
             need_in(bytes, MVHD_V0_LEN, "mvhd v0")?;
             Ok(Self {
-                version: 0,
+                version: ver,
                 flags,
                 creation_time: u64::from(u32_at(bytes, MVHD_V0_CREATION_TIME_OFFSET)),
                 modification_time: u64::from(u32_at(bytes, MVHD_V0_MODIFICATION_TIME_OFFSET)),
@@ -128,9 +148,19 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                 duration: u64::from(u32_at(bytes, MVHD_V0_DURATION_OFFSET)),
                 rate: u32_at(bytes, MVHD_V0_RATE_OFFSET),
                 volume: u16_at(bytes, MVHD_V0_VOLUME_OFFSET),
+                reserved: bytes_for::<MVHD_RESERVED_LEN>(
+                    bytes,
+                    MVHD_V0_RESERVED_OFFSET,
+                    "mvhd reserved",
+                )?,
                 matrix: matrix_from_bytes(
                     &bytes[MVHD_V0_MATRIX_OFFSET..MVHD_V0_MATRIX_OFFSET + MATRIX_WIRE_LEN],
                 ),
+                pre_defined: bytes_for::<MVHD_PRE_DEFINED_LEN>(
+                    bytes,
+                    MVHD_V0_PRE_DEFINED_OFFSET,
+                    "mvhd pre_defined",
+                )?,
                 next_track_id: TrackId::new(u32_at(bytes, MVHD_V0_NEXT_TRACK_ID_OFFSET)),
             })
         } else {
@@ -141,7 +171,7 @@ impl<'a> Parse<'a> for MovieHeaderBox {
             // **120** bytes, not 124 (issue #1015).
             need_in(bytes, MVHD_V1_LEN, "mvhd v1")?;
             Ok(Self {
-                version: 1,
+                version: ver,
                 flags,
                 creation_time: broadcast_core::wire::be_u64(
                     bytes,
@@ -157,9 +187,19 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                 duration: broadcast_core::wire::be_u64(bytes, MVHD_V1_DURATION_OFFSET, "mvhd v1")?,
                 rate: u32_at(bytes, MVHD_V1_RATE_OFFSET),
                 volume: u16_at(bytes, MVHD_V1_VOLUME_OFFSET),
+                reserved: bytes_for::<MVHD_RESERVED_LEN>(
+                    bytes,
+                    MVHD_V1_RESERVED_OFFSET,
+                    "mvhd reserved",
+                )?,
                 matrix: matrix_from_bytes(
                     &bytes[MVHD_V1_MATRIX_OFFSET..MVHD_V1_MATRIX_OFFSET + MATRIX_WIRE_LEN],
                 ),
+                pre_defined: bytes_for::<MVHD_PRE_DEFINED_LEN>(
+                    bytes,
+                    MVHD_V1_PRE_DEFINED_OFFSET,
+                    "mvhd pre_defined",
+                )?,
                 next_track_id: TrackId::new(u32_at(bytes, MVHD_V1_NEXT_TRACK_ID_OFFSET)),
             })
         }
@@ -225,14 +265,14 @@ impl Serialize for MovieHeaderBox {
         let u16_len = core::mem::size_of::<u16>();
         buf[c..c + u16_len].copy_from_slice(&self.volume.to_be_bytes());
         c += u16_len;
-        buf[c..c + MVHD_RESERVED_LEN].fill(0);
-        c += MVHD_RESERVED_LEN; // reserved
+        buf[c..c + MVHD_RESERVED_LEN].copy_from_slice(&self.reserved);
+        c += MVHD_RESERVED_LEN;
         for &m in &self.matrix {
             buf[c..c + MATRIX_VALUE_LEN].copy_from_slice(&m.to_be_bytes());
             c += MATRIX_VALUE_LEN;
         }
-        buf[c..c + MVHD_PRE_DEFINED_LEN].fill(0);
-        c += MVHD_PRE_DEFINED_LEN; // pre_defined
+        buf[c..c + MVHD_PRE_DEFINED_LEN].copy_from_slice(&self.pre_defined);
+        c += MVHD_PRE_DEFINED_LEN;
         buf[c..c + u32_len].copy_from_slice(&self.next_track_id.value().to_be_bytes());
         c += u32_len;
         Ok(c)
@@ -295,6 +335,18 @@ const TKHD_RESERVED_LEN: usize = 4;
 const TKHD_RESERVED_PAIR_LEN: usize = 8;
 /// The reserved field after `volume` in `tkhd` (§8.3.2.2).
 const TKHD_TRAILING_RESERVED_LEN: usize = 2;
+/// `tkhd` v0 reserved-word offset, right after `track_ID` (§8.3.2.2).
+const TKHD_V0_RESERVED_OFFSET: usize = TKHD_V0_TRACK_ID_OFFSET + core::mem::size_of::<u32>();
+/// `tkhd` v0 reserved-pair offset, right after `duration` (§8.3.2.2).
+const TKHD_V0_RESERVED_PAIR_OFFSET: usize = TKHD_V0_DURATION_OFFSET + core::mem::size_of::<u32>();
+/// `tkhd` v0 trailing-reserved offset, right after `volume` (§8.3.2.2).
+const TKHD_V0_TRAILING_RESERVED_OFFSET: usize = TKHD_V0_VOLUME_OFFSET + core::mem::size_of::<i16>();
+/// `tkhd` v1 reserved-word offset, right after `track_ID` (§8.3.2.2).
+const TKHD_V1_RESERVED_OFFSET: usize = TKHD_V1_TRACK_ID_OFFSET + core::mem::size_of::<u32>();
+/// `tkhd` v1 reserved-pair offset, right after `duration` (§8.3.2.2).
+const TKHD_V1_RESERVED_PAIR_OFFSET: usize = TKHD_V1_DURATION_OFFSET + core::mem::size_of::<u64>();
+/// `tkhd` v1 trailing-reserved offset, right after `volume` (§8.3.2.2).
+const TKHD_V1_TRAILING_RESERVED_OFFSET: usize = TKHD_V1_VOLUME_OFFSET + core::mem::size_of::<i16>();
 
 /// Four-CC of the Track Header Box (`tkhd`, ISO/IEC 14496-12:2026 §8.3.2).
 pub const TKHD: [u8; 4] = *b"tkhd";
@@ -310,10 +362,16 @@ pub struct TrackHeaderBox {
     pub creation_time: u64,
     pub modification_time: u64,
     pub track_id: TrackId,
+    /// The reserved word after `track_ID` (§8.3.2.2), carried verbatim.
+    pub reserved: [u8; TKHD_RESERVED_LEN],
     pub duration: u64,
+    /// The two reserved words after `duration` (§8.3.2.2), carried verbatim.
+    pub reserved_2: [u8; TKHD_RESERVED_PAIR_LEN],
     pub layer: i16,
     pub alternate_group: i16,
     pub volume: i16,
+    /// The reserved field after `volume` (§8.3.2.2), carried verbatim.
+    pub reserved_3: [u8; TKHD_TRAILING_RESERVED_LEN],
     pub matrix: [i32; MATRIX_VALUES],
     pub width: u32,
     pub height: u32,
@@ -332,15 +390,30 @@ impl<'a> Parse<'a> for TrackHeaderBox {
             let tid = u32_at(bytes, TKHD_V0_TRACK_ID_OFFSET);
             let dur = u64::from(u32_at(bytes, TKHD_V0_DURATION_OFFSET));
             Ok(Self {
-                version: 0,
+                version: ver,
                 flags,
                 creation_time: ct,
                 modification_time: mt,
                 track_id: TrackId::new(tid),
+                reserved: bytes_for::<TKHD_RESERVED_LEN>(
+                    bytes,
+                    TKHD_V0_RESERVED_OFFSET,
+                    "tkhd reserved",
+                )?,
                 duration: dur,
+                reserved_2: bytes_for::<TKHD_RESERVED_PAIR_LEN>(
+                    bytes,
+                    TKHD_V0_RESERVED_PAIR_OFFSET,
+                    "tkhd reserved_2",
+                )?,
                 layer: i16_at(bytes, TKHD_V0_LAYER_OFFSET),
                 alternate_group: i16_at(bytes, TKHD_V0_ALTERNATE_GROUP_OFFSET),
                 volume: i16_at(bytes, TKHD_V0_VOLUME_OFFSET),
+                reserved_3: bytes_for::<TKHD_TRAILING_RESERVED_LEN>(
+                    bytes,
+                    TKHD_V0_TRAILING_RESERVED_OFFSET,
+                    "tkhd reserved_3",
+                )?,
                 matrix: matrix_from_bytes(
                     &bytes[TKHD_V0_MATRIX_OFFSET..TKHD_V0_MATRIX_OFFSET + MATRIX_WIRE_LEN],
                 ),
@@ -360,15 +433,30 @@ impl<'a> Parse<'a> for TrackHeaderBox {
             let tid = u32_at(bytes, TKHD_V1_TRACK_ID_OFFSET);
             let dur = broadcast_core::wire::be_u64(bytes, TKHD_V1_DURATION_OFFSET, "tkhd v1")?;
             Ok(Self {
-                version: 1,
+                version: ver,
                 flags,
                 creation_time: ct,
                 modification_time: mt,
                 track_id: TrackId::new(tid),
+                reserved: bytes_for::<TKHD_RESERVED_LEN>(
+                    bytes,
+                    TKHD_V1_RESERVED_OFFSET,
+                    "tkhd reserved",
+                )?,
                 duration: dur,
+                reserved_2: bytes_for::<TKHD_RESERVED_PAIR_LEN>(
+                    bytes,
+                    TKHD_V1_RESERVED_PAIR_OFFSET,
+                    "tkhd reserved_2",
+                )?,
                 layer: i16_at(bytes, TKHD_V1_LAYER_OFFSET),
                 alternate_group: i16_at(bytes, TKHD_V1_ALTERNATE_GROUP_OFFSET),
                 volume: i16_at(bytes, TKHD_V1_VOLUME_OFFSET),
+                reserved_3: bytes_for::<TKHD_TRAILING_RESERVED_LEN>(
+                    bytes,
+                    TKHD_V1_TRAILING_RESERVED_OFFSET,
+                    "tkhd reserved_3",
+                )?,
                 matrix: matrix_from_bytes(
                     &bytes[TKHD_V1_MATRIX_OFFSET..TKHD_V1_MATRIX_OFFSET + MATRIX_WIRE_LEN],
                 ),
@@ -432,23 +520,23 @@ impl Serialize for TrackHeaderBox {
             c += u32_len;
             buf[c..c + u32_len].copy_from_slice(&self.track_id.value().to_be_bytes());
             c += u32_len;
-            buf[c..c + TKHD_RESERVED_LEN].fill(0);
-            c += TKHD_RESERVED_LEN; // reserved
+            buf[c..c + TKHD_RESERVED_LEN].copy_from_slice(&self.reserved);
+            c += TKHD_RESERVED_LEN;
             buf[c..c + u32_len].copy_from_slice(
                 &(broadcast_core::len::fit_bits(self.duration, u32::BITS, "tkhd duration")? as u32)
                     .to_be_bytes(),
             );
             c += u32_len;
-            buf[c..c + TKHD_RESERVED_PAIR_LEN].fill(0);
-            c += TKHD_RESERVED_PAIR_LEN; // reserved * 2
+            buf[c..c + TKHD_RESERVED_PAIR_LEN].copy_from_slice(&self.reserved_2);
+            c += TKHD_RESERVED_PAIR_LEN;
             buf[c..c + i16_len].copy_from_slice(&self.layer.to_be_bytes());
             c += i16_len;
             buf[c..c + i16_len].copy_from_slice(&self.alternate_group.to_be_bytes());
             c += i16_len;
             buf[c..c + i16_len].copy_from_slice(&self.volume.to_be_bytes());
             c += i16_len;
-            buf[c..c + TKHD_TRAILING_RESERVED_LEN].fill(0);
-            c += TKHD_TRAILING_RESERVED_LEN; // reserved
+            buf[c..c + TKHD_TRAILING_RESERVED_LEN].copy_from_slice(&self.reserved_3);
+            c += TKHD_TRAILING_RESERVED_LEN;
         } else {
             buf[c..c + u64_len].copy_from_slice(&self.creation_time.to_be_bytes());
             c += u64_len;
@@ -456,20 +544,20 @@ impl Serialize for TrackHeaderBox {
             c += u64_len;
             buf[c..c + u32_len].copy_from_slice(&self.track_id.value().to_be_bytes());
             c += u32_len;
-            buf[c..c + TKHD_RESERVED_LEN].fill(0);
-            c += TKHD_RESERVED_LEN; // reserved
+            buf[c..c + TKHD_RESERVED_LEN].copy_from_slice(&self.reserved);
+            c += TKHD_RESERVED_LEN;
             buf[c..c + u64_len].copy_from_slice(&self.duration.to_be_bytes());
             c += u64_len;
-            buf[c..c + TKHD_RESERVED_PAIR_LEN].fill(0);
-            c += TKHD_RESERVED_PAIR_LEN; // reserved * 2
+            buf[c..c + TKHD_RESERVED_PAIR_LEN].copy_from_slice(&self.reserved_2);
+            c += TKHD_RESERVED_PAIR_LEN;
             buf[c..c + i16_len].copy_from_slice(&self.layer.to_be_bytes());
             c += i16_len;
             buf[c..c + i16_len].copy_from_slice(&self.alternate_group.to_be_bytes());
             c += i16_len;
             buf[c..c + i16_len].copy_from_slice(&self.volume.to_be_bytes());
             c += i16_len;
-            buf[c..c + TKHD_TRAILING_RESERVED_LEN].fill(0);
-            c += TKHD_TRAILING_RESERVED_LEN; // reserved
+            buf[c..c + TKHD_TRAILING_RESERVED_LEN].copy_from_slice(&self.reserved_3);
+            c += TKHD_TRAILING_RESERVED_LEN;
         }
         for &m in &self.matrix {
             buf[c..c + MATRIX_VALUE_LEN].copy_from_slice(&m.to_be_bytes());
@@ -501,6 +589,8 @@ const MDHD_V0_DURATION_OFFSET: usize = 24;
 const MDHD_V0_LANGUAGE_OFFSET: usize = 28;
 /// `mdhd` v0 box length (§8.4.2.2).
 const MDHD_V0_LEN: usize = 32;
+/// `mdhd` v0 `quality` offset, right after `language` (§8.4.2.2).
+const MDHD_V0_QUALITY_OFFSET: usize = MDHD_V0_LANGUAGE_OFFSET + core::mem::size_of::<u16>();
 /// `mdhd` v1 creation_time offset (§8.4.2.2).
 const MDHD_V1_CREATION_TIME_OFFSET: usize = 12;
 /// `mdhd` v1 modification_time offset (§8.4.2.2).
@@ -513,6 +603,8 @@ const MDHD_V1_DURATION_OFFSET: usize = 32;
 const MDHD_V1_LANGUAGE_OFFSET: usize = 40;
 /// `mdhd` v1 box length (§8.4.2.2).
 const MDHD_V1_LEN: usize = 44;
+/// `mdhd` v1 `quality` offset, right after `language` (§8.4.2.2).
+const MDHD_V1_QUALITY_OFFSET: usize = MDHD_V1_LANGUAGE_OFFSET + core::mem::size_of::<u16>();
 /// `quality` and reserved fields after `language` (§8.4.2.2).
 const MDHD_QUALITY_RESERVED_LEN: usize = 2;
 
@@ -529,6 +621,9 @@ pub struct MediaHeaderBox {
     pub timescale: Timescale,
     pub duration: u64,
     pub language: u16,
+    /// The trailing `quality`/`pre_defined` field (§8.4.2.2), carried
+    /// verbatim.
+    pub quality: u16,
 }
 
 impl<'a> Parse<'a> for MediaHeaderBox {
@@ -540,18 +635,19 @@ impl<'a> Parse<'a> for MediaHeaderBox {
         if ver == 0 {
             need_in(bytes, MDHD_V0_LEN, "mdhd v0")?;
             Ok(Self {
-                version: 0,
+                version: ver,
                 flags,
                 creation_time: u64::from(u32_at(bytes, MDHD_V0_CREATION_TIME_OFFSET)),
                 modification_time: u64::from(u32_at(bytes, MDHD_V0_MODIFICATION_TIME_OFFSET)),
                 timescale: Timescale::try_new(u32_at(bytes, MDHD_V0_TIMESCALE_OFFSET))?,
                 duration: u64::from(u32_at(bytes, MDHD_V0_DURATION_OFFSET)),
                 language: u16_at(bytes, MDHD_V0_LANGUAGE_OFFSET),
+                quality: u16_at(bytes, MDHD_V0_QUALITY_OFFSET),
             })
         } else {
             need_in(bytes, MDHD_V1_LEN, "mdhd v1")?;
             Ok(Self {
-                version: 1,
+                version: ver,
                 flags,
                 creation_time: broadcast_core::wire::be_u64(
                     bytes,
@@ -566,6 +662,7 @@ impl<'a> Parse<'a> for MediaHeaderBox {
                 timescale: Timescale::try_new(u32_at(bytes, MDHD_V1_TIMESCALE_OFFSET))?,
                 duration: broadcast_core::wire::be_u64(bytes, MDHD_V1_DURATION_OFFSET, "mdhd v1")?,
                 language: u16_at(bytes, MDHD_V1_LANGUAGE_OFFSET),
+                quality: u16_at(bytes, MDHD_V1_QUALITY_OFFSET),
             })
         }
     }
@@ -635,9 +732,7 @@ impl Serialize for MediaHeaderBox {
             buf[c..c + u16_len].copy_from_slice(&self.language.to_be_bytes());
             c += u16_len;
         }
-        // quality(16), reserved = 0 — written, not just counted, so a reused
-        // caller buffer cannot keep garbage there (r04-W45).
-        buf[c..c + MDHD_QUALITY_RESERVED_LEN].fill(0);
+        buf[c..c + MDHD_QUALITY_RESERVED_LEN].copy_from_slice(&self.quality.to_be_bytes());
         Ok(c + MDHD_QUALITY_RESERVED_LEN)
     }
 }
@@ -682,7 +777,8 @@ pub struct HandlerBox {
 impl<'a> Parse<'a> for HandlerBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, HDLR_MIN_LEN, "hdlr")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
@@ -835,6 +931,8 @@ const SMHD_BALANCE_OFFSET: usize = 12;
 const SMHD_BODY_LEN: usize = 4;
 /// Reserved field after `balance` (§12.2.2).
 const SMHD_RESERVED_LEN: usize = 2;
+/// `smhd` reserved-field offset, right after `balance` (§12.2.2).
+const SMHD_RESERVED_OFFSET: usize = SMHD_BALANCE_OFFSET + core::mem::size_of::<i16>();
 
 /// Sound Media Header Box (`smhd`) — §12.2.2.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -843,6 +941,8 @@ pub struct SoundMediaHeaderBox {
     pub version: u8,
     pub flags: u32,
     pub balance: i16,
+    /// The reserved field after `balance` (§12.2.2), carried verbatim.
+    pub reserved: [u8; SMHD_RESERVED_LEN],
 }
 
 impl<'a> Parse<'a> for SoundMediaHeaderBox {
@@ -855,6 +955,7 @@ impl<'a> Parse<'a> for SoundMediaHeaderBox {
             version: ver,
             flags,
             balance: i16_at(bytes, SMHD_BALANCE_OFFSET),
+            reserved: bytes_for::<SMHD_RESERVED_LEN>(bytes, SMHD_RESERVED_OFFSET, "smhd reserved")?,
         })
     }
 }
@@ -879,8 +980,7 @@ impl Serialize for SoundMediaHeaderBox {
         let i16_len = core::mem::size_of::<i16>();
         buf[c..c + i16_len].copy_from_slice(&self.balance.to_be_bytes());
         c += i16_len;
-        // reserved(16) = 0, written rather than skipped (r04-W45).
-        buf[c..c + SMHD_RESERVED_LEN].fill(0);
+        buf[c..c + SMHD_RESERVED_LEN].copy_from_slice(&self.reserved);
         c += SMHD_RESERVED_LEN;
         Ok(c)
     }
@@ -1301,7 +1401,8 @@ impl Serialize for DataEntry {
 impl<'a> Parse<'a> for DataReferenceBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, FLAT_TABLE_HEADER_LEN, "dref")?;
         let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
@@ -1318,11 +1419,18 @@ impl<'a> Parse<'a> for DataReferenceBox {
             BOX_HEADER_MIN_SIZE,
             count,
         ));
-        for item in BoxIter::clamped(&bytes[FLAT_TABLE_HEADER_LEN..]).take(count) {
-            let Ok(item) = item else {
-                break;
-            };
+        let mut rest = &bytes[FLAT_TABLE_HEADER_LEN..];
+        for _ in 0..count {
+            let (item, used) = crate::box_types::parse_box(rest)?;
             entries.push(DataEntry::parse(item.bytes)?);
+            rest = &rest[used..];
+        }
+        if !rest.is_empty() {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: "dref entry table",
+                value: rest.len() as u64,
+                reason: "bytes after the last entry",
+            }));
         }
         Ok(Self {
             version: ver,
@@ -1381,7 +1489,8 @@ pub struct DataEntryUrlBox {
 impl<'a> Parse<'a> for DataEntryUrlBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, FULLBOX_BODY_OFFSET, "url")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
@@ -1641,7 +1750,8 @@ pub struct SampleToChunkBox {
 impl<'a> Parse<'a> for SampleToChunkBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, FLAT_TABLE_HEADER_LEN, "stsc")?;
         let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
@@ -1747,7 +1857,8 @@ pub struct SampleSizeBox {
 impl<'a> Parse<'a> for SampleSizeBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, STSZ_PREFIX_LEN, "stsz")?;
         let ver = bytes[FULLBOX_VERSION_OFFSET];
@@ -1786,6 +1897,19 @@ impl<'a> Parse<'a> for SampleSizeBox {
                 entries.push(u32_at(bytes, off));
                 off += entry_len;
             }
+            if off != bytes.len() {
+                return Err(Error::InvalidValue(InvalidValue {
+                    field: "stsz entry table",
+                    value: (bytes.len() - off) as u64,
+                    reason: "bytes after the last sample size",
+                }));
+            }
+        } else if bytes.len() > STSZ_PREFIX_LEN {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: "stsz sample_size",
+                value: u64::from(sample_size),
+                reason: "a non-zero sample_size states there is no per-sample table",
+            }));
         }
         Ok(Self {
             version: ver,
@@ -2082,7 +2206,8 @@ pub struct CompactSampleSizeBox {
 impl<'a> Parse<'a> for CompactSampleSizeBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, STZ2_PREFIX_LEN, "stz2")?;
         let version = bytes[FLAT_TABLE_VERSION_OFFSET];
@@ -2277,7 +2402,8 @@ impl SampleDependencyTypeBox {
 impl<'a> Parse<'a> for SampleDependencyTypeBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, SDTP_MIN_LEN, "sdtp")?;
         Ok(Self {
@@ -2978,7 +3104,8 @@ impl Serialize for DtsSampleEntry {
 impl<'a> Parse<'a> for DtsSampleEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, BOX_HEADER_MIN_SIZE, "DtsSampleEntry")?;
         let mut codec_type = [0u8; BOX_TYPE_SIZE];
@@ -3074,7 +3201,8 @@ impl Serialize for MhaSampleEntry {
 impl<'a> Parse<'a> for MhaSampleEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, BOX_HEADER_MIN_SIZE, "MhaSampleEntry")?;
         let mut codec_type = [0u8; BOX_TYPE_SIZE];
@@ -3319,7 +3447,8 @@ fn write_audio_fixed_fields(buf: &mut [u8], c: &mut usize, f: &AudioSampleEntryF
 impl<'a> Parse<'a> for Mp4aSampleEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         // bytes is a full box with 8-byte header; fields start at bytes[8]
         need_in(
@@ -3708,7 +3837,8 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
 impl<'a> Parse<'a> for SampleDescriptionBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let compact = crate::box_types::compact_form(bytes)?;
+        let box_bytes = crate::box_types::parse_box(bytes)?.0.bytes;
+        let compact = crate::box_types::compact_form(box_bytes)?;
         let bytes: &[u8] = &compact;
         need_in(bytes, FLAT_TABLE_HEADER_LEN, "stsd")?;
         let ver = bytes[FLAT_TABLE_VERSION_OFFSET];
@@ -3725,13 +3855,18 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
             BOX_HEADER_MIN_SIZE,
             count,
         ));
-        for item in BoxIter::clamped(&bytes[FLAT_TABLE_HEADER_LEN..]).take(count) {
-            let Ok(item) = item else {
-                break;
-            };
-            let box_bytes = item.bytes;
-            let entry = sample_entry_variant(box_bytes)?;
-            entries.push(entry);
+        let mut rest = &bytes[FLAT_TABLE_HEADER_LEN..];
+        for _ in 0..count {
+            let (item, used) = crate::box_types::parse_box(rest)?;
+            entries.push(sample_entry_variant(item.bytes)?);
+            rest = &rest[used..];
+        }
+        if !rest.is_empty() {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: "stsd entry table",
+                value: rest.len() as u64,
+                reason: "bytes after the last entry",
+            }));
         }
         Ok(Self {
             version: ver,
@@ -5621,7 +5756,9 @@ mod tests {
             duration: 2000,
             rate: 0x00010000,
             volume: 0x0100,
+            reserved: Default::default(),
             matrix: [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000],
+            pre_defined: Default::default(),
             next_track_id: TrackId::new(3),
         }
     }
@@ -5654,10 +5791,13 @@ mod tests {
             creation_time: 0,
             modification_time: 0,
             track_id: TrackId::new(1),
+            reserved: Default::default(),
             duration: 2000,
+            reserved_2: Default::default(),
             layer: 0,
             alternate_group: 0,
             volume: 0,
+            reserved_3: Default::default(),
             matrix: [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000],
             width: 0,
             height: 0,
@@ -5700,10 +5840,13 @@ mod tests {
             creation_time: 0,
             modification_time: 0,
             track_id: TrackId::new(1),
+            reserved: Default::default(),
             duration: 0,
+            reserved_2: Default::default(),
             layer: 0,
             alternate_group: 0,
             volume: 0,
+            reserved_3: Default::default(),
             matrix,
             width: 0,
             height: 0,
@@ -6249,6 +6392,7 @@ mod tests {
                 timescale: timescale(90_000),
                 duration: 180_000,
                 language: 0x55C4,
+                quality: Default::default(),
             },
             "mdhd",
         );
@@ -6268,6 +6412,7 @@ mod tests {
                 version: 0,
                 flags: 0,
                 balance: 0,
+                reserved: Default::default(),
             },
             "smhd",
         );
@@ -6289,10 +6434,13 @@ mod tests {
                     creation_time: 1,
                     modification_time: 2,
                     track_id: TrackId::new(1),
+                    reserved: Default::default(),
                     duration: 1000,
+                    reserved_2: Default::default(),
                     layer: 0,
                     alternate_group: 0,
                     volume: 0x0100,
+                    reserved_3: Default::default(),
                     matrix: [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000],
                     width: 640 << 16,
                     height: 360 << 16,

@@ -239,9 +239,42 @@ impl Serialize for SegmentTypeBox {
 pub struct MediaDataBox {
     /// The coded sample payload.
     pub data: Vec<u8>,
+    /// Whether the wire used `size == 1` + 64-bit `largesize`
+    /// (ISO/IEC 14496-12:2026 §4.2). A box that states its own 32-bit length
+    /// and one that states a 64-bit length carry the same payload, so the form
+    /// is kept rather than normalised.
+    pub largesize: bool,
+    /// Whether the wire used `size == 0` ("extends to the end of the enclosing
+    /// container", §4.2).
+    pub to_end: bool,
 }
 
 impl MediaDataBox {
+    /// A box stating its own 32-bit length.
+    #[must_use]
+    pub fn new(data: Vec<u8>) -> Self {
+        Self {
+            data,
+            largesize: false,
+            to_end: false,
+        }
+    }
+
+    /// The header width this box writes.
+    fn header_len(&self) -> usize {
+        if self.wide() {
+            BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE
+        } else {
+            BOX_HEADER_MIN_SIZE
+        }
+    }
+
+    /// Whether the 64-bit `largesize` form is written: either the wire had it
+    /// or the payload needs it (§4.2, #1147).
+    fn wide(&self) -> bool {
+        self.largesize || self.needs_large()
+    }
+
     /// Whether this box must use the 64-bit `largesize` form.
     fn needs_large(&self) -> bool {
         BOX_HEADER_MIN_SIZE + self.data.len() > u32::MAX as usize
@@ -283,6 +316,8 @@ impl MediaDataBox {
         }
         Ok(Self {
             data: bytes[hdr..size].to_vec(),
+            largesize: size32 == 1,
+            to_end: size32 == 0,
         })
     }
 }
@@ -290,23 +325,24 @@ impl MediaDataBox {
 impl Serialize for MediaDataBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        if self.needs_large() {
-            BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE + self.data.len()
-        } else {
-            BOX_HEADER_MIN_SIZE + self.data.len()
-        }
+        self.header_len() + self.data.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let hdr = if self.needs_large() {
+        let hdr = if self.wide() {
             buf[..core::mem::size_of::<u32>()].copy_from_slice(&1u32.to_be_bytes());
             buf[core::mem::size_of::<u32>()..BOX_HEADER_MIN_SIZE].copy_from_slice(&MDAT);
             let large_header = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
             buf[BOX_HEADER_MIN_SIZE..large_header].copy_from_slice(&(need as u64).to_be_bytes());
             large_header
         } else {
-            buf[..core::mem::size_of::<u32>()].copy_from_slice(&(need as u32).to_be_bytes());
+            let size = if self.to_end {
+                0u32
+            } else {
+                broadcast_core::len::fit_u32(need, "mdat size")?
+            };
+            buf[..core::mem::size_of::<u32>()].copy_from_slice(&size.to_be_bytes());
             buf[core::mem::size_of::<u32>()..BOX_HEADER_MIN_SIZE].copy_from_slice(&MDAT);
             BOX_HEADER_MIN_SIZE
         };
@@ -458,6 +494,8 @@ mod tests {
     fn mdat_round_trip() {
         let m = MediaDataBox {
             data: alloc::vec![1, 2, 3, 4, 5],
+            largesize: false,
+            to_end: false,
         };
         let mut out = alloc::vec![0u8; m.serialized_len()];
         let n = m.serialize_into(&mut out).unwrap();
@@ -471,11 +509,15 @@ mod tests {
     fn mdat_mutation_changes_bytes() {
         let m = MediaDataBox {
             data: alloc::vec![1, 2, 3],
+            largesize: false,
+            to_end: false,
         };
         let mut a = alloc::vec![0u8; m.serialized_len()];
         m.serialize_into(&mut a).unwrap();
         let m2 = MediaDataBox {
             data: alloc::vec![1, 2, 4],
+            largesize: false,
+            to_end: false,
         };
         let mut b = alloc::vec![0u8; m2.serialized_len()];
         m2.serialize_into(&mut b).unwrap();

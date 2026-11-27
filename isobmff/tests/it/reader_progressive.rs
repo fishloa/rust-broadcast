@@ -466,6 +466,7 @@ fn tiny_mp4() -> Vec<u8> {
             timescale,
             duration: 120,
             language: 0x55c4,
+            quality: Default::default(),
         }),
         Some(HandlerBox {
             version: 0,
@@ -485,10 +486,13 @@ fn tiny_mp4() -> Vec<u8> {
             creation_time: 0,
             modification_time: 0,
             track_id: TrackId::new(1),
+            reserved: Default::default(),
             duration: 120,
+            reserved_2: Default::default(),
             layer: 0,
             alternate_group: 0,
             volume: 0,
+            reserved_3: Default::default(),
             matrix: identity_matrix(),
             width: 0,
             height: 0,
@@ -506,7 +510,9 @@ fn tiny_mp4() -> Vec<u8> {
         duration: 120,
         rate: 0x0001_0000,
         volume: 0x0100,
+        reserved: Default::default(),
         matrix: identity_matrix(),
+        pre_defined: Default::default(),
         next_track_id: TrackId::new(2),
     };
     let ftyp = FileTypeBox {

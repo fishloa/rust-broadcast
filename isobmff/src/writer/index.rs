@@ -107,6 +107,7 @@ pub(crate) fn segment_index(
         timescale: form.timescale,
         earliest_presentation_time: form.earliest_presentation_time,
         first_offset: 0,
+        reserved: Default::default(),
         references,
     };
     Ok(Some(boxed.try_to_bytes()?))
@@ -182,6 +183,7 @@ fn tfra(
         length_size_of_traf_num: track.lengths.traf,
         length_size_of_trun_num: track.lengths.trun,
         length_size_of_sample_num: track.lengths.sample,
+        reserved_widths: Default::default(),
         entries,
     }
 }

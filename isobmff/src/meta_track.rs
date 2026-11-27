@@ -762,7 +762,7 @@ impl CopyrightBox {
         Ok(Self {
             version: body[0],
             flags: u24_at(body, 1) & FULLBOX_FLAGS_MASK,
-            language: be_u16(body, offset, "cprt language")? & CPRT_LANGUAGE_MASK,
+            language: be_u16(body, offset, "cprt language")?,
             notice,
             terminator,
         })

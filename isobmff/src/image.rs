@@ -653,13 +653,16 @@ impl Serialize for AuxiliaryTypeProperty {
 #[non_exhaustive]
 pub struct ImageRotation {
     angle: u8,
+    /// The six reserved bits of the property byte (23008-12 6.5.10),
+    /// carried verbatim.
+    reserved: u8,
 }
 
 impl ImageRotation {
     /// A rotation of `angle * 90` degrees anti-clockwise (0..=3).
     #[must_use]
     pub const fn new(angle: u8) -> Self {
-        Self { angle }
+        Self { angle, reserved: 0 }
     }
 
     /// `angle` (0..=3).
@@ -683,6 +686,7 @@ impl<'a> Parse<'a> for ImageRotation {
         let body = body_of(bytes, 1, "irot")?;
         Ok(Self {
             angle: body[0] & ((1u8 << IROT_ANGLE_BITS) - 1),
+            reserved: body[0] & !((1u8 << IROT_ANGLE_BITS) - 1),
         })
     }
 }
@@ -700,7 +704,8 @@ impl Serialize for ImageRotation {
         let mut cursor = write_box_header(buf, &IROT, need)?;
         let angle =
             broadcast_core::len::fit_bits(u64::from(self.angle), IROT_ANGLE_BITS, "irot angle")?;
-        buf[cursor] = u8::try_from(angle).map_err(|_| Error::InvalidInput("irot angle"))?;
+        buf[cursor] =
+            self.reserved | u8::try_from(angle).map_err(|_| Error::InvalidInput("irot angle"))?;
         cursor += 1;
         Ok(cursor)
     }
@@ -807,13 +812,16 @@ broadcast_core::impl_spec_display!(ImageMirrorAxis);
 #[non_exhaustive]
 pub struct ImageMirror {
     axis: ImageMirrorAxis,
+    /// The seven reserved bits of the property byte (23008-12 6.5.12),
+    /// carried verbatim.
+    reserved: u8,
 }
 
 impl ImageMirror {
     /// A mirror about `axis`.
     #[must_use]
     pub const fn new(axis: ImageMirrorAxis) -> Self {
-        Self { axis }
+        Self { axis, reserved: 0 }
     }
 
     /// The mirroring axis.
@@ -831,6 +839,7 @@ impl<'a> Parse<'a> for ImageMirror {
         let body = body_of(bytes, 1, "imir")?;
         Ok(Self {
             axis: ImageMirrorAxis::from_value(body[0] & ((1u8 << IMIR_AXIS_BITS) - 1)),
+            reserved: body[0] & !((1u8 << IMIR_AXIS_BITS) - 1),
         })
     }
 }
@@ -846,7 +855,7 @@ impl Serialize for ImageMirror {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut cursor = write_box_header(buf, &IMIR, need)?;
-        buf[cursor] = self.axis.value();
+        buf[cursor] = self.reserved | self.axis.value();
         cursor += 1;
         Ok(cursor)
     }

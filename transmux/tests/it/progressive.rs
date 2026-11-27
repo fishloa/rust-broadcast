@@ -889,7 +889,9 @@ fn duration_version_boundary_is_exact() {
         duration: u64::from(u32::MAX),
         rate: 0x0001_0000,
         volume: 0x0100,
+        reserved: Default::default(),
         matrix: [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000],
+        pre_defined: Default::default(),
         next_track_id: TrackId::new(2).into(),
     };
     let b = at_limit.try_to_bytes().expect("serialize at the limit");

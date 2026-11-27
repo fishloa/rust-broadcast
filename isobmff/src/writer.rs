@@ -336,7 +336,9 @@ pub(crate) fn build_init_segment(
             duration: 0,
             rate: MVHD_RATE_UNITY,
             volume: MVHD_VOLUME_UNITY,
+            reserved: Default::default(),
             matrix: IDENTITY_MATRIX,
+            pre_defined: Default::default(),
             next_track_id,
         },
     };
@@ -586,6 +588,7 @@ fn track_media_information(
         version: 0,
         flags: 0,
         balance: 0,
+        reserved: Default::default(),
     });
     let mut minf = MediaInformationBox::new(
         vmhd,
@@ -618,6 +621,7 @@ fn track_media_header(timescale: Timescale, language: u16) -> MediaHeaderBox {
         timescale,
         duration: 0,
         language,
+        quality: 0,
     }
 }
 
@@ -642,10 +646,13 @@ fn track_header(t: &TrackSetup) -> TrackHeaderBox {
         creation_time: 0,
         modification_time: 0,
         track_id: t.track_id,
+        reserved: Default::default(),
         duration: 0,
+        reserved_2: Default::default(),
         layer: 0,
         alternate_group: 0,
         volume: t.volume,
+        reserved_3: Default::default(),
         matrix: IDENTITY_MATRIX,
         width: t.width,
         height: t.height,

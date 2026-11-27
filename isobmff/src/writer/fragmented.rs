@@ -542,7 +542,11 @@ pub fn fragmented_segment(
     let mut mdat_data = Vec::new();
     fill_mdat(&moof, tracks, &mut mdat_data)?;
 
-    let mdat = MediaDataBox { data: mdat_data };
+    let mdat = MediaDataBox {
+        data: mdat_data,
+        largesize: false,
+        to_end: false,
+    };
     let mut body = vec![0u8; moof.serialized_len()];
     let written = moof.serialize_into(&mut body)?;
     body.truncate(written);
@@ -675,6 +679,7 @@ fn layout_track_fragment(
     let tfhd = TrackFragmentHeaderBox {
         flags: track_layout.tfhd.flags,
         track_id: ft.track_id,
+        version: Default::default(),
         base_data_offset: track_layout.tfhd.base_data_offset.map(|_| 0),
         sample_description_index: track_layout.tfhd.sample_description_index,
         default_sample_duration: track_layout.tfhd.default_sample_duration,
@@ -1086,6 +1091,7 @@ pub fn media_fragment_run(
         samples: run_samples,
     };
     let tfhd = TrackFragmentHeaderBox {
+        version: 0,
         flags: TFHD_DEFAULT_BASE_IS_MOOF,
         track_id,
         base_data_offset: None,
@@ -1544,6 +1550,7 @@ mod tests {
         let tfhd = TrackFragmentHeaderBox {
             flags: 0,
             track_id: TrackId::new(TRACK_ID),
+            version: Default::default(),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: None,

@@ -47,10 +47,13 @@ const TIMESCALE_AT_12: [u8; MINIMAL_BODY_LEN] = {
     body[MVHD_TIMESCALE_LOW_BYTE] = 1;
     body
 };
-/// A zero body with the `sidx` `timescale` (body offset 8) set to 1.
+/// A minimal version-0 `sidx` body: its fixed fields and an empty reference
+/// table.
+const SIDX_MIN_BODY_LEN: usize = 24;
+/// Low byte of the `sidx` `timescale` (body offset 8).
 const SIDX_TIMESCALE_LOW_BYTE: usize = 8 + core::mem::size_of::<u32>() - 1;
-const TIMESCALE_AT_8: [u8; MINIMAL_BODY_LEN] = {
-    let mut body = [0u8; MINIMAL_BODY_LEN];
+const SIDX_BODY: [u8; SIDX_MIN_BODY_LEN] = {
+    let mut body = [0u8; SIDX_MIN_BODY_LEN];
     body[SIDX_TIMESCALE_LOW_BYTE] = 1;
     body
 };
@@ -91,7 +94,7 @@ leaf! {
     p_cslg: b"cslg", crate::timing::CompositionToDecodeBox, &MINIMAL_BODY;
     p_ctts: b"ctts", crate::timing::CompositionOffsetBox, &MINIMAL_BODY;
     p_dinf: b"dinf", crate::init_segment::DataInformationBox, &[];
-    p_dref: b"dref", crate::init_segment::DataReferenceBox, &MINIMAL_BODY;
+    p_dref: b"dref", crate::init_segment::DataReferenceBox, &MINIMAL_BODY[..8];
     p_elst: b"elst", crate::timing::EditListBox, &MINIMAL_BODY;
     p_frma: b"frma", crate::cenc::OriginalFormatBox, &MINIMAL_BODY;
     p_hdlr: b"hdlr", crate::init_segment::HandlerBox, &MINIMAL_BODY;
@@ -107,25 +110,25 @@ leaf! {
     p_schi: b"schi", crate::cenc::SchemeInformationBox, &[];
     p_sdtp: b"sdtp", crate::init_segment::SampleDependencyTypeBox, &MINIMAL_BODY;
     p_sgpd: b"sgpd", crate::sample_groups::SampleGroupDescriptionBox, &MINIMAL_BODY;
-    p_sidx: b"sidx", crate::timing::SegmentIndexBox, &TIMESCALE_AT_8;
+    p_sidx: b"sidx", crate::timing::SegmentIndexBox, &SIDX_BODY;
     p_smhd: b"smhd", crate::init_segment::SoundMediaHeaderBox, &MINIMAL_BODY;
     p_srat: b"srat", crate::init_segment::SamplingRateBox, &MINIMAL_BODY;
     p_stbl: b"stbl", crate::init_segment::SampleTableBox, &[];
     p_stco: b"stco", crate::init_segment::ChunkOffsetBox, &MINIMAL_BODY;
     p_stsc: b"stsc", crate::init_segment::SampleToChunkBox, &MINIMAL_BODY;
-    p_stsd: b"stsd", crate::init_segment::SampleDescriptionBox, &MINIMAL_BODY;
+    p_stsd: b"stsd", crate::init_segment::SampleDescriptionBox, &MINIMAL_BODY[..8];
     p_stss: b"stss", crate::init_segment::SyncSampleBox, &MINIMAL_BODY;
-    p_stsz: b"stsz", crate::init_segment::SampleSizeBox, &MINIMAL_BODY;
+    p_stsz: b"stsz", crate::init_segment::SampleSizeBox, &MINIMAL_BODY[..12];
     p_stts: b"stts", crate::timing::TimeToSampleBox, &MINIMAL_BODY;
     p_stz2: b"stz2", crate::init_segment::CompactSampleSizeBox, &STZ2_BODY;
     p_subs: b"subs", crate::sample_groups::SubSampleInformationBox, &MINIMAL_BODY;
     p_ssrt: b"ssrt", crate::sample_groups::SubSampleReferenceTableBox, &MINIMAL_BODY;
-    p_tfra: b"tfra", crate::timing::TrackFragmentRandomAccessBox, &MINIMAL_BODY;
+    p_tfra: b"tfra", crate::timing::TrackFragmentRandomAccessBox, &MINIMAL_BODY[..16];
     p_tkhd: b"tkhd", crate::init_segment::TrackHeaderBox, &MINIMAL_BODY;
     p_trex: b"trex", crate::init_segment::TrackExtendsBox, &MINIMAL_BODY;
     p_udta: b"udta", crate::metadata::Udta, &[];
     p_vmhd: b"vmhd", crate::init_segment::VideoMediaHeaderBox, &MINIMAL_BODY;
-    p_chnl: b"chnl", crate::audio_boxes::ChannelLayoutBox, &MINIMAL_BODY;
+    p_chnl: b"chnl", crate::audio_boxes::ChannelLayoutBox, &MINIMAL_BODY[..5];
     p_dmix: b"dmix", crate::audio_boxes::DownMixInstructionsBox, &MINIMAL_BODY;
     p_ludt: b"ludt", crate::audio_boxes::LoudnessBox, &[];
     p_labl: b"labl", crate::audio_boxes::LabelBox, &MINIMAL_BODY;
@@ -174,7 +177,7 @@ leaf! {
     p_iinf: b"iinf", crate::item::ItemInfoBox, &MINIMAL_BODY;
     p_iloc: b"iloc", crate::item::ItemLocationBox, &MINIMAL_BODY;
     p_infe: b"infe", crate::item::ItemInfoEntry, &MINIMAL_BODY;
-    p_ipma: b"ipma", crate::item::ItemPropertyAssociationBox, &MINIMAL_BODY;
+    p_ipma: b"ipma", crate::item::ItemPropertyAssociationBox, &MINIMAL_BODY[..8];
     p_ipro: b"ipro", crate::item::ItemProtectionBox, &MINIMAL_BODY;
     p_iref: b"iref", crate::item::ItemReferenceBox, &MINIMAL_BODY;
     p_pitm: b"pitm", crate::item::PrimaryItemBox, &MINIMAL_BODY;
@@ -187,11 +190,12 @@ fn p_mdat() -> Result<()> {
 }
 
 fn p_saio() -> Result<()> {
-    crate::cenc::SampleAuxInfoOffsetsBox::parse_box(&boxed(*b"saio", &MINIMAL_BODY)).map(|_| ())
+    crate::cenc::SampleAuxInfoOffsetsBox::parse_box(&boxed(*b"saio", &MINIMAL_BODY[..8]))
+        .map(|_| ())
 }
 
 fn p_saiz() -> Result<()> {
-    crate::cenc::SampleAuxInfoSizesBox::parse_box(&boxed(*b"saiz", &MINIMAL_BODY)).map(|_| ())
+    crate::cenc::SampleAuxInfoSizesBox::parse_box(&boxed(*b"saiz", &MINIMAL_BODY[..9])).map(|_| ())
 }
 
 fn p_schm() -> Result<()> {
@@ -262,31 +266,31 @@ fn p_sinf() -> Result<()> {
 }
 
 fn p_mfhd() -> Result<()> {
-    crate::movie_fragment::MovieFragmentHeaderBox::parse_body(&MINIMAL_BODY).map(|_| ())
+    crate::movie_fragment::MovieFragmentHeaderBox::parse_body(&MINIMAL_BODY[..8]).map(|_| ())
 }
 
 fn p_tfhd() -> Result<()> {
-    crate::movie_fragment::TrackFragmentHeaderBox::parse_body(&MINIMAL_BODY).map(|_| ())
+    crate::movie_fragment::TrackFragmentHeaderBox::parse_body(&MINIMAL_BODY[..8]).map(|_| ())
 }
 
 fn p_tfdt() -> Result<()> {
-    crate::movie_fragment::TrackFragmentBaseMediaDecodeTimeBox::parse_body(&MINIMAL_BODY)
+    crate::movie_fragment::TrackFragmentBaseMediaDecodeTimeBox::parse_body(&MINIMAL_BODY[..8])
         .map(|_| ())
 }
 
 fn p_trun() -> Result<()> {
-    crate::movie_fragment::TrackFragmentRunBox::parse_body(&MINIMAL_BODY).map(|_| ())
+    crate::movie_fragment::TrackFragmentRunBox::parse_body(&MINIMAL_BODY[..8]).map(|_| ())
 }
 
 fn p_moof() -> Result<()> {
     let mut body = boxed(*b"mfhd", &MINIMAL_BODY);
-    body.extend_from_slice(&boxed(*b"traf", &boxed(*b"tfhd", &MINIMAL_BODY)));
+    body.extend_from_slice(&boxed(*b"traf", &boxed(*b"tfhd", &MINIMAL_BODY[..8])));
     let mut budget = crate::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
     crate::movie_fragment::MovieFragmentBox::parse_body_budgeted(&body, &mut budget).map(|_| ())
 }
 
 fn p_traf() -> Result<()> {
-    let body = boxed(*b"tfhd", &MINIMAL_BODY);
+    let body = boxed(*b"tfhd", &MINIMAL_BODY[..8]);
     let mut budget = crate::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
     crate::movie_fragment::TrackFragmentBox::parse_body_budgeted(&body, &mut budget).map(|_| ())
 }

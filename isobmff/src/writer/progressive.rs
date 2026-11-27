@@ -1027,6 +1027,8 @@ fn build_moov(
                 duration: max_presentation,
                 rate: MVHD_RATE_UNITY,
                 volume: MVHD_VOLUME_UNITY,
+                reserved: Default::default(),
+                pre_defined: Default::default(),
                 matrix: IDENTITY_MATRIX,
                 next_track_id,
             };

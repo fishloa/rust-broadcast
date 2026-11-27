@@ -353,6 +353,16 @@ pub enum ImageFinding {
         /// The `mask` item references.
         references: usize,
     },
+    /// A box the reader types was in a form the crate cannot reproduce, so it
+    /// was kept opaque, byte-exact, and reading continued.
+    UnrepresentableBox {
+        /// The box four-CC.
+        box_type: [u8; crate::box_types::BOX_TYPE_SIZE],
+        /// The box's absolute byte offset in the file.
+        offset: u64,
+        /// Why the typed parse did not represent it.
+        reason: crate::error::OpaqueReason,
+    },
     /// A gain map metadata rational has a zero denominator, which no value can
     /// be divided by.
     GainMapZeroDenominator {
@@ -378,6 +388,7 @@ impl ImageFinding {
             Self::RegionNamesMissingImage { .. } => "region-names-missing-image",
             Self::RegionMaskReferenceCount { .. } => "region-mask-reference-count",
             Self::GainMapZeroDenominator { .. } => "tmap-zero-denominator",
+            Self::UnrepresentableBox { .. } => "unrepresentable-box",
         }
     }
 }

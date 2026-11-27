@@ -1183,6 +1183,20 @@ impl ReferenceType {
 
 broadcast_core::impl_spec_display!(ReferenceType);
 
+/// One of an `infe` entry's trailing strings, in the order the payload writes
+/// them: only the last can lack its NUL terminator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InfeString {
+    /// `item_name`.
+    Name,
+    /// `content_type`.
+    ContentType,
+    /// `content_encoding`.
+    ContentEncoding,
+    /// `item_URI_type`.
+    UriType,
+}
+
 /// One entry of the [`ItemInfoBox`] (`infe`) — ISO/IEC 14496-12:2026 §8.11.6.
 ///
 /// Versions 0 and 1 carry symbolic names and MIME types; versions 2 and 3
@@ -1204,6 +1218,7 @@ pub struct ItemInfoEntry {
     item_uri_type: Option<Vec<u8>>,
     extension_type: Option<[u8; BOX_TYPE_SIZE]>,
     trailing: Vec<u8>,
+    last_string_unterminated: bool,
 }
 
 impl ItemInfoEntry {
@@ -1222,6 +1237,7 @@ impl ItemInfoEntry {
             item_uri_type: None,
             extension_type: None,
             trailing: Vec::new(),
+            last_string_unterminated: false,
         }
     }
 
@@ -1392,15 +1408,21 @@ impl ItemInfoEntry {
         let item_protection_index = be_u16(body, cursor, "infe item_protection_index")?;
         cursor += U16_LEN;
         if version < INFE_VERSION_TYPED {
-            let item_name = crate::box_support::take_c_string(body, &mut cursor, "infe item_name")?;
-            let content_type =
-                crate::box_support::take_c_string(body, &mut cursor, "infe content_type")?;
+            let (item_name, _) =
+                crate::box_support::take_c_string_terminated(body, &mut cursor, "infe item_name")?;
+            let (content_type, mut terminated) = crate::box_support::take_c_string_terminated(
+                body,
+                &mut cursor,
+                "infe content_type",
+            )?;
             let content_encoding = if cursor < body.len() {
-                Some(crate::box_support::take_c_string(
+                let (encoding, encoding_terminated) = crate::box_support::take_c_string_terminated(
                     body,
                     &mut cursor,
                     "infe content_encoding",
-                )?)
+                )?;
+                terminated = encoding_terminated;
+                Some(encoding)
             } else {
                 None
             };
@@ -1424,35 +1446,43 @@ impl ItemInfoEntry {
                 item_uri_type: None,
                 extension_type,
                 trailing,
+                last_string_unterminated: !terminated && cursor == body.len(),
             });
         }
         let mut item_type_fourcc = [0u8; BOX_TYPE_SIZE];
         item_type_fourcc.copy_from_slice(&body[cursor..cursor + BOX_TYPE_SIZE]);
         let item_type = ItemType::from_fourcc(item_type_fourcc);
         cursor += BOX_TYPE_SIZE;
-        let item_name = crate::box_support::take_c_string(body, &mut cursor, "infe item_name")?;
+        let (item_name, mut terminated) =
+            crate::box_support::take_c_string_terminated(body, &mut cursor, "infe item_name")?;
         let mut content_type = None;
         let mut content_encoding = None;
         let mut item_uri_type = None;
         if item_type.fourcc() == ITEM_TYPE_MIME {
-            content_type = Some(crate::box_support::take_c_string(
+            let (value, value_terminated) = crate::box_support::take_c_string_terminated(
                 body,
                 &mut cursor,
                 "infe content_type",
-            )?);
+            )?;
+            terminated = value_terminated;
+            content_type = Some(value);
             if cursor < body.len() {
-                content_encoding = Some(crate::box_support::take_c_string(
+                let (encoding, encoding_terminated) = crate::box_support::take_c_string_terminated(
                     body,
                     &mut cursor,
                     "infe content_encoding",
-                )?);
+                )?;
+                terminated = encoding_terminated;
+                content_encoding = Some(encoding);
             }
         } else if item_type.fourcc() == ITEM_TYPE_URI {
-            item_uri_type = Some(crate::box_support::take_c_string(
+            let (value, value_terminated) = crate::box_support::take_c_string_terminated(
                 body,
                 &mut cursor,
                 "infe item_uri_type",
-            )?);
+            )?;
+            terminated = value_terminated;
+            item_uri_type = Some(value);
         }
         Ok(Self {
             version,
@@ -1466,7 +1496,35 @@ impl ItemInfoEntry {
             item_uri_type,
             extension_type: None,
             trailing: body[cursor..].to_vec(),
+            last_string_unterminated: !terminated && cursor == body.len(),
         })
+    }
+
+    /// Which string this entry writes last: the only one whose NUL terminator
+    /// a source may have omitted.
+    fn last_string(&self) -> InfeString {
+        if self.is_typed() {
+            match self.item_type.fourcc() {
+                ITEM_TYPE_MIME if self.content_encoding.is_some() => InfeString::ContentEncoding,
+                ITEM_TYPE_MIME => InfeString::ContentType,
+                ITEM_TYPE_URI => InfeString::UriType,
+                _ => InfeString::Name,
+            }
+        } else if self.content_encoding.is_some() {
+            InfeString::ContentEncoding
+        } else {
+            InfeString::ContentType
+        }
+    }
+
+    /// Whether the NUL after `which` is written.
+    fn string_terminated(&self, which: InfeString) -> bool {
+        !(self.last_string_unterminated && self.last_string() == which)
+    }
+
+    /// The bytes one string field occupies, terminator included when written.
+    fn string_len(&self, value: Option<&Vec<u8>>, which: InfeString) -> usize {
+        value.map_or(0, Vec::len) + usize::from(self.string_terminated(which))
     }
 
     fn payload_len(&self) -> usize {
@@ -1474,29 +1532,21 @@ impl ItemInfoEntry {
         if self.is_typed() {
             len += BOX_TYPE_SIZE;
         }
-        len += self.item_name.len() + 1;
+        len += self.string_len(Some(&self.item_name), InfeString::Name);
         if self.is_typed() {
             if self.item_type.fourcc() == ITEM_TYPE_MIME {
-                len += self
-                    .content_type
-                    .as_ref()
-                    .map_or(1, |value| value.len() + 1);
-                if let Some(encoding) = &self.content_encoding {
-                    len += encoding.len() + 1;
+                len += self.string_len(self.content_type.as_ref(), InfeString::ContentType);
+                if self.content_encoding.is_some() {
+                    len += self
+                        .string_len(self.content_encoding.as_ref(), InfeString::ContentEncoding);
                 }
             } else if self.item_type.fourcc() == ITEM_TYPE_URI {
-                len += self
-                    .item_uri_type
-                    .as_ref()
-                    .map_or(1, |value| value.len() + 1);
+                len += self.string_len(self.item_uri_type.as_ref(), InfeString::UriType);
             }
         } else {
-            len += self
-                .content_type
-                .as_ref()
-                .map_or(1, |value| value.len() + 1);
-            if let Some(encoding) = &self.content_encoding {
-                len += encoding.len() + 1;
+            len += self.string_len(self.content_type.as_ref(), InfeString::ContentType);
+            if self.content_encoding.is_some() {
+                len += self.string_len(self.content_encoding.as_ref(), InfeString::ContentEncoding);
             }
             if self.extension_type.is_some() {
                 len += U32_LEN;
@@ -1527,23 +1577,53 @@ impl ItemInfoEntry {
             buf[cursor..cursor + BOX_TYPE_SIZE].copy_from_slice(&self.item_type.fourcc());
             cursor += BOX_TYPE_SIZE;
         }
-        cursor += crate::box_support::write_c_string(buf, cursor, &self.item_name)?;
+        cursor += crate::box_support::write_c_string_terminated(
+            buf,
+            cursor,
+            &self.item_name,
+            self.string_terminated(InfeString::Name),
+        )?;
         if self.is_typed() {
             if self.item_type.fourcc() == ITEM_TYPE_MIME {
                 let content_type = self.content_type.as_deref().unwrap_or(&[]);
-                cursor += crate::box_support::write_c_string(buf, cursor, content_type)?;
+                cursor += crate::box_support::write_c_string_terminated(
+                    buf,
+                    cursor,
+                    content_type,
+                    self.string_terminated(InfeString::ContentType),
+                )?;
                 if let Some(encoding) = &self.content_encoding {
-                    cursor += crate::box_support::write_c_string(buf, cursor, encoding)?;
+                    cursor += crate::box_support::write_c_string_terminated(
+                        buf,
+                        cursor,
+                        encoding,
+                        self.string_terminated(InfeString::ContentEncoding),
+                    )?;
                 }
             } else if self.item_type.fourcc() == ITEM_TYPE_URI {
                 let uri = self.item_uri_type.as_deref().unwrap_or(&[]);
-                cursor += crate::box_support::write_c_string(buf, cursor, uri)?;
+                cursor += crate::box_support::write_c_string_terminated(
+                    buf,
+                    cursor,
+                    uri,
+                    self.string_terminated(InfeString::UriType),
+                )?;
             }
         } else {
             let content_type = self.content_type.as_deref().unwrap_or(&[]);
-            cursor += crate::box_support::write_c_string(buf, cursor, content_type)?;
+            cursor += crate::box_support::write_c_string_terminated(
+                buf,
+                cursor,
+                content_type,
+                self.string_terminated(InfeString::ContentType),
+            )?;
             if let Some(encoding) = &self.content_encoding {
-                cursor += crate::box_support::write_c_string(buf, cursor, encoding)?;
+                cursor += crate::box_support::write_c_string_terminated(
+                    buf,
+                    cursor,
+                    encoding,
+                    self.string_terminated(InfeString::ContentEncoding),
+                )?;
             }
             if let Some(extension) = self.extension_type {
                 buf[cursor..cursor + BOX_TYPE_SIZE].copy_from_slice(&extension);
@@ -3099,6 +3179,13 @@ impl<'a> Parse<'a> for ItemPropertyAssociationBox {
                 associations,
             });
         }
+        if cursor != body.len() {
+            return Err(Error::InvalidValue(broadcast_core::error::InvalidValue {
+                field: "ipma size",
+                value: body.len() as u64,
+                reason: "bytes after the last association record",
+            }));
+        }
         Ok(this)
     }
 }
@@ -3161,6 +3248,37 @@ impl Serialize for ItemPropertyAssociationBox {
     }
 }
 
+/// One container child kept opaque because the crate's typed parse of it
+/// failed: the reader reports it rather than failing the whole file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct DegradedChild {
+    box_type: [u8; BOX_TYPE_SIZE],
+    offset: u64,
+    reason: crate::error::OpaqueReason,
+}
+
+impl DegradedChild {
+    /// The child's four-CC.
+    #[must_use]
+    pub const fn box_type(&self) -> [u8; BOX_TYPE_SIZE] {
+        self.box_type
+    }
+
+    /// The child's absolute byte offset in the file.
+    #[must_use]
+    pub const fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    /// Why the typed parse did not represent it.
+    #[must_use]
+    pub const fn reason(&self) -> crate::error::OpaqueReason {
+        self.reason
+    }
+}
+
 /// Item Property Container Box (`ipco`) — ISO/IEC 14496-12:2026 §8.11.14.
 ///
 /// The implicitly indexed list of properties. A property this crate does not
@@ -3210,8 +3328,22 @@ impl ItemPropertyContainerBox {
 
     /// Parse the container's children from the payload after its header.
     pub fn parse_body(body: &[u8]) -> Result<Self> {
+        Ok(Self::walk(body, 0, false)?.0)
+    }
+
+    /// [`ItemPropertyContainerBox::parse_body`], keeping a property whose typed
+    /// parse fails as an opaque one of its own kind and reporting it, so a file
+    /// with one property in a form the crate cannot reproduce still reads.
+    /// `base` is the body's absolute file offset, for the report.
+    pub fn parse_body_degrading(body: &[u8], base: u64) -> Result<(Self, Vec<DegradedChild>)> {
+        Self::walk(body, base, true)
+    }
+
+    fn walk(body: &[u8], base: u64, degrade: bool) -> Result<(Self, Vec<DegradedChild>)> {
         let mut properties = Vec::new();
+        let mut degraded = Vec::new();
         let mut rest = body;
+        let mut at = 0usize;
         while !rest.is_empty() {
             if rest.len() < BOX_HEADER_MIN_SIZE {
                 return Err(Error::BufferTooShort(BufferTooShort {
@@ -3221,10 +3353,26 @@ impl ItemPropertyContainerBox {
                 }));
             }
             let (item, used) = crate::box_types::parse_box(rest)?;
-            properties.push(crate::image::ItemProperty::parse_box(item.bytes)?);
+            match crate::image::ItemProperty::parse_box(item.bytes) {
+                Ok(property) => properties.push(property),
+                Err(err) if !degrade => return Err(err),
+                Err(err) => {
+                    let mut opaque =
+                        crate::box_support::OpaqueBox::new(item.four_cc(), item.payload().to_vec());
+                    opaque.to_end = item.to_end();
+                    opaque.largesize = item.has_largesize();
+                    properties.push(crate::image::ItemProperty::Opaque(opaque));
+                    degraded.push(DegradedChild {
+                        box_type: item.four_cc(),
+                        offset: base.saturating_add(at as u64),
+                        reason: crate::error::OpaqueReason::of(&err),
+                    });
+                }
+            }
             rest = &rest[used..];
+            at = at.saturating_add(used);
         }
-        Ok(Self { properties })
+        Ok((Self { properties }, degraded))
     }
 }
 
@@ -3335,6 +3483,43 @@ impl ItemPropertiesBox {
             associations.validate(self.container.properties().len())?;
         }
         Ok(())
+    }
+}
+
+impl ItemPropertiesBox {
+    /// [`ItemPropertiesBox`]'s parse, keeping a property whose typed parse fails
+    /// as an opaque one and reporting it. The association tables stay
+    /// structural: an `ipma` this crate cannot walk is still an error.
+    pub fn parse_degrading(bytes: &[u8], base: u64) -> Result<(Self, Vec<DegradedChild>)> {
+        expect_type(bytes, &IPRP, "expected iprp")?;
+        let body = body_of(bytes, BOX_HEADER_MIN_SIZE, "iprp")?;
+        let (first, used) = crate::box_types::parse_box(body)?;
+        let ipco_body = body_of(first.bytes, BOX_HEADER_MIN_SIZE, "ipco")?;
+        let ipco_offset = base
+            .saturating_add(BOX_HEADER_MIN_SIZE as u64)
+            .saturating_add(first.header.header_size() as u64);
+        let (container, degraded) =
+            ItemPropertyContainerBox::parse_body_degrading(ipco_body, ipco_offset)?;
+        let mut associations = Vec::new();
+        let mut rest = &body[used..];
+        while !rest.is_empty() {
+            if rest.len() < BOX_HEADER_MIN_SIZE {
+                return Err(Error::BufferTooShort(BufferTooShort {
+                    need: BOX_HEADER_MIN_SIZE,
+                    have: rest.len(),
+                    what: "iprp child header",
+                }));
+            }
+            let (item, used) = crate::box_types::parse_box(rest)?;
+            associations.push(ItemPropertyAssociationBox::parse(item.bytes)?);
+            rest = &rest[used..];
+        }
+        let this = Self {
+            container,
+            associations,
+        };
+        this.validate()?;
+        Ok((this, degraded))
     }
 }
 

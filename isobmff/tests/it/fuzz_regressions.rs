@@ -141,3 +141,103 @@ fn item_boxes_crash_4ef54280_is_a_typed_error() {
     ];
     assert!(isobmff::integrity::IntegrityItem::parse(&artifact).is_err());
 }
+
+/// The exact 345-byte input `isobmff_item_reader` failed on: a file carrying
+/// two top-level `meta` boxes. The reader kept only one body, so a re-emit
+/// wrote the second body under both headers — the whole-file round trip now
+/// asserted by that target caught it, and a second `meta` is a typed error
+/// because only one describes the item model (ISO/IEC 14496-12:2026 §8.11.1).
+const TWO_META_FILES: [u8; 345] = [
+    0, 0, 0, 17, 4, 42, 0, 4, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 8, 255, 255, 255, 255, 0, 0, 0,
+    15, 255, 1, 207, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 4, 42, 0, 4, 0, 0, 0, 0, 0, 66, 239, 1,
+    0, 0, 0, 0, 17, 4, 42, 0, 4, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 8, 255, 255, 255, 129, 0, 0,
+    0, 15, 255, 1, 207, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 4, 42, 0, 4, 0, 0, 0, 0, 1, 66, 239,
+    0, 0, 0, 0, 0, 64, 109, 101, 116, 97, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 15, 255, 1, 207, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 4, 42, 0, 4, 0,
+    0, 0, 0, 0, 66, 239, 1, 0, 0, 0, 0, 17, 4, 42, 0, 4, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 8,
+    255, 255, 255, 129, 0, 0, 0, 15, 255, 1, 207, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 4, 42, 0,
+    4, 0, 0, 0, 0, 1, 66, 239, 0, 0, 0, 0, 0, 64, 109, 101, 116, 97, 0, 0, 0, 0, 0, 0, 0, 0, 15, 0,
+    0, 0, 0, 0, 0, 0, 0, 15, 255, 1, 207, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 4, 42, 0, 4, 0, 0,
+    0, 0, 1, 66, 239, 0, 0, 0, 0, 0, 64, 109, 101, 116, 97, 0, 0, 0, 0, 0, 0, 0, 0, 8, 0, 0, 0, 1,
+    0, 0, 0,
+];
+
+#[test]
+fn item_reader_two_meta_boxes_is_a_typed_error() {
+    use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
+
+    let data = &TWO_META_FILES;
+    let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
+    let mut reader = ItemReader::new(config);
+    loop {
+        match reader.step() {
+            Ok(ItemStep::Need(range)) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let len = usize::try_from(range.len).expect("length");
+                if let Err(err) = reader.supply(range.offset, &data[start..start + len]) {
+                    assert!(
+                        matches!(err, Error::InvalidValue(_)),
+                        "expected InvalidValue, got {err:?}"
+                    );
+                    return;
+                }
+            }
+            Ok(ItemStep::Loaded(_)) => panic!("a two-meta file must not load"),
+            Ok(ItemStep::Done) => panic!("done without an error"),
+            Ok(_) => {}
+            Err(err) => {
+                assert!(
+                    matches!(err, Error::InvalidValue(_)),
+                    "expected InvalidValue, got {err:?}"
+                );
+                return;
+            }
+        }
+    }
+}
+
+/// The exact 100-byte input `isobmff_item_reader` failed on next: a top-level
+/// box written with `size == 1` and a `largesize` of 0. It described no bytes,
+/// so the re-emit dropped the 55 the input still held; a `largesize` shorter
+/// than its own 16-byte header is now a typed error (§4.2).
+const ZERO_LARGESIZE_TAIL: [u8; 100] = [
+    0, 0, 0, 29, 109, 101, 116, 97, 0, 0, 0, 0, 0, 0, 0, 17, 4, 42, 0, 4, 0, 0, 0, 0, 0, 210, 255,
+    1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 49, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    36, 0, 0, 0, 36, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 198, 207, 207, 210, 0, 0,
+];
+
+#[test]
+fn item_reader_zero_largesize_is_a_typed_error() {
+    use isobmff::item_reader::{ItemReader, ItemReaderConfig, ItemStep};
+
+    let data = &ZERO_LARGESIZE_TAIL;
+    let config = ItemReaderConfig::default().with_total_len(Some(data.len() as u64));
+    let mut reader = ItemReader::new(config);
+    loop {
+        match reader.step() {
+            Ok(ItemStep::Need(range)) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let len = usize::try_from(range.len).expect("length");
+                if let Err(err) = reader.supply(range.offset, &data[start..start + len]) {
+                    assert!(
+                        matches!(err, Error::BoxSizeUnderflow { .. }),
+                        "expected BoxSizeUnderflow, got {err:?}"
+                    );
+                    return;
+                }
+            }
+            Ok(ItemStep::Loaded(_)) => panic!("a zero-largesize tail must not load"),
+            Ok(ItemStep::Done) => panic!("done without an error"),
+            Ok(_) => {}
+            Err(err) => {
+                assert!(
+                    matches!(err, Error::BoxSizeUnderflow { .. }),
+                    "expected BoxSizeUnderflow, got {err:?}"
+                );
+                return;
+            }
+        }
+    }
+}

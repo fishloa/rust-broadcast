@@ -28,6 +28,7 @@ use crate::box_types::{
     box_len, write_full_box_header,
 };
 use crate::error::{Error, Result};
+use broadcast_core::error::UnsupportedVersion;
 
 /// Four-CC of the Channel Layout Box (`chnl`, ISO/IEC 14496-12:2026 §12.2.4).
 pub const CHNL: [u8; BOX_TYPE_SIZE] = *b"chnl";
@@ -48,6 +49,8 @@ pub const STREAM_STRUCTURE_CHANNEL: u8 = 0x01;
 pub const STREAM_STRUCTURE_OBJECT: u8 = 0x02;
 /// Version of the channel layout whose `stream_structure` is one byte.
 const CHNL_VERSION_BYTE: u8 = 0;
+/// Highest `chnl` FullBox version this crate models.
+const CHNL_VERSION_MAX: u8 = 1;
 /// `speaker_position` value that carries an explicit azimuth/elevation.
 const SPEAKER_POSITION_EXPLICIT: u8 = 126;
 /// Width of `omittedChannelsMap` in bytes (`unsigned int(64)`).
@@ -418,6 +421,12 @@ impl ChannelLayoutBox {
             speaker_positions: Vec::new(),
             object_count: None,
         };
+        if version > CHNL_VERSION_MAX {
+            return Err(Error::UnsupportedVersion(UnsupportedVersion {
+                what: "chnl",
+                found: version,
+            }));
+        }
         if version == CHNL_VERSION_BYTE {
             layout.stream_structure = wire_bits(
                 &mut reader,
@@ -439,6 +448,9 @@ impl ChannelLayoutBox {
             layout.base_channel_count =
                 Some(wire_bits(&mut reader, u8::BITS, "chnl baseChannelCount")? as u8);
             Self::parse_structure(&mut layout, &mut reader, Some(version))?;
+        }
+        if reader.bits_remaining() >= u8::BITS as usize {
+            return Err(invalid("chnl holds bytes its structure does not describe"));
         }
         Ok(layout)
     }

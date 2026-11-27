@@ -482,6 +482,7 @@ mod tests {
         let tfhd = TrackFragmentHeaderBox {
             flags: 0,
             track_id: TrackId::new(1),
+            version: Default::default(),
             base_data_offset: Some(5_000),
             sample_description_index: None,
             default_sample_duration: Some(40),

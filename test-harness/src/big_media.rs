@@ -548,7 +548,9 @@ pub fn write_big_mp4(path: &Path, opts: &BigMp4Options) -> BigMp4 {
         duration: mvhd_duration,
         rate: BIG_MP4_RATE_UNITY,
         volume: BIG_MP4_VOLUME_UNITY,
+        reserved: Default::default(),
         matrix: BIG_MP4_IDENTITY_MATRIX,
+        pre_defined: Default::default(),
         next_track_id: TrackId::new(BIG_MP4_NEXT_TRACK_ID),
     };
     let ftyp = FileTypeBox {
@@ -702,6 +704,7 @@ fn big_mp4_track(spec: BigMp4Track<'_>) -> isobmff::init_segment::TrackBox {
                 version: 0,
                 flags: 0,
                 balance: 0,
+                reserved: Default::default(),
             }),
             Some(dinf),
             Some(stbl),
@@ -730,6 +733,7 @@ fn big_mp4_track(spec: BigMp4Track<'_>) -> isobmff::init_segment::TrackBox {
             timescale: expect("track timescale", Timescale::try_new(spec.timescale)),
             duration: spec.delta,
             language: BIG_MP4_LANGUAGE_UNDETERMINED,
+            quality: Default::default(),
         }),
         Some(HandlerBox {
             version: 0,
@@ -749,7 +753,9 @@ fn big_mp4_track(spec: BigMp4Track<'_>) -> isobmff::init_segment::TrackBox {
             creation_time: 0,
             modification_time: 0,
             track_id: TrackId::new(spec.track_id),
+            reserved: Default::default(),
             duration: spec.delta,
+            reserved_2: Default::default(),
             layer: 0,
             alternate_group: 0,
             volume: if spec.audio {
@@ -757,6 +763,7 @@ fn big_mp4_track(spec: BigMp4Track<'_>) -> isobmff::init_segment::TrackBox {
             } else {
                 0
             },
+            reserved_3: Default::default(),
             matrix: BIG_MP4_IDENTITY_MATRIX,
             width: if spec.audio { 0 } else { BIG_MP4_VIDEO_WIDTH },
             height: if spec.audio { 0 } else { BIG_MP4_VIDEO_HEIGHT },
@@ -976,7 +983,9 @@ fn write_big_fmp4_sparse(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
         duration: rescale_ceil(total_duration, 90_000, BIG_MP4_MOVIE_TIMESCALE),
         rate: BIG_MP4_RATE_UNITY,
         volume: BIG_MP4_VOLUME_UNITY,
+        reserved: Default::default(),
         matrix: BIG_MP4_IDENTITY_MATRIX,
+        pre_defined: Default::default(),
         next_track_id: TrackId::new(BIG_MP4_VIDEO_TRACK + 1),
     };
     let empty_stts = build_stts(&[]);
@@ -1021,6 +1030,7 @@ fn write_big_fmp4_sparse(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
             TrackFragmentHeaderBox {
                 flags: TFHD_DEFAULT_BASE_IS_MOOF,
                 track_id: TrackId::new(BIG_MP4_VIDEO_TRACK),
+                version: Default::default(),
                 base_data_offset: None,
                 sample_description_index: None,
                 default_sample_duration: None,
@@ -1107,6 +1117,7 @@ fn write_big_fmp4_sparse(path: &Path, opts: &BigFmp4Options) -> BigFmp4 {
             length_size_of_traf_num: 0,
             length_size_of_trun_num: 0,
             length_size_of_sample_num: 0,
+            reserved_widths: Default::default(),
             entries,
         };
         let mfra_len = 8

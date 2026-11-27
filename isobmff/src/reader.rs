@@ -1012,6 +1012,23 @@ struct ReadyFragment {
 }
 
 /// The sans-IO MP4 reader. See the [module docs](self).
+///
+/// # What a box the crate cannot type does
+///
+/// A sample entry (`stsd` child) whose known four-CC fails to parse is kept as
+/// raw bytes with its parse error in
+/// [`SampleEntryInfo::error`](crate::reader::SampleEntryInfo) and, in
+/// [`Mode::Permissive`], reported as [`Warning::UnparseableSampleEntry`];
+/// the file still reads. Every other box inside a track keeps its bytes and is
+/// typed on demand by an accessor that returns `Option`, so a form it cannot
+/// reproduce costs that one view rather than the file. What is still an error
+/// is the box tree itself: a `tkhd`/`mdia`/`minf`/`stbl` whose own syntax
+/// fails, or a non-structural child this crate types inside `trak` (`edts`,
+/// `trgr`), inside `mdia` (`elng`) or inside `minf` (`gmhd`) — those are parsed
+/// strictly, so a file carrying one in an unrepresentable form does not read
+/// yet. The item reader's degrade-to-opaque policy
+/// ([`ImageFinding::UnrepresentableBox`](crate::image_brands::ImageFinding))
+/// covers the still-image layer, not this one.
 #[derive(Debug)]
 pub struct Reader {
     config: ReaderConfig,

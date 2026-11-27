@@ -57,6 +57,10 @@ const CHROMA_SAMPLE_POSITION_MASK: u8 = 0x03;
 /// Bit and mask of `initial_presentation_delay_present`/`_minus_one`.
 const IPD_PRESENT_MASK: u8 = 0x10;
 const IPD_DELAY_MASK: u8 = 0x0F;
+/// The three reserved bits at the top of byte 3, and the four that stand in
+/// for `initial_presentation_delay_minus_one` when it is absent.
+const IPD_RESERVED_MASK: u8 = 0xE0;
+const IPD_ABSENT_RESERVED_MASK: u8 = 0x0F;
 
 /// AV1CodecConfigurationRecord (`av1C` box body) — AV1-ISOBMFF §2.3.
 ///
@@ -94,6 +98,9 @@ pub struct Av1ConfigurationBox {
     /// `initial_presentation_delay_minus_one` (4 bits), present iff the
     /// `initial_presentation_delay_present` flag is set.
     pub initial_presentation_delay_minus_one: Option<u8>,
+    /// The reserved bits of byte 3: `[7:5]` always, plus `[3:0]` when no
+    /// initial presentation delay is present. Carried verbatim.
+    pub reserved: u8,
     /// Trailing `configOBUs` (≤1 Sequence Header OBU), preserved verbatim.
     pub config_obus: Vec<u8>,
 }
@@ -157,6 +164,11 @@ impl<'a> Parse<'a> for Av1ConfigurationBox {
         } else {
             None
         };
+        let reserved = if ipd_present {
+            b3 & IPD_RESERVED_MASK
+        } else {
+            b3 & (IPD_RESERVED_MASK | IPD_ABSENT_RESERVED_MASK)
+        };
         let config_obus = bytes[AV1C_FIXED_LEN..].to_vec();
         Ok(Self {
             version,
@@ -170,6 +182,7 @@ impl<'a> Parse<'a> for Av1ConfigurationBox {
             chroma_subsampling_y,
             chroma_sample_position,
             initial_presentation_delay_minus_one,
+            reserved,
             config_obus,
         })
     }
@@ -194,8 +207,10 @@ impl Serialize for Av1ConfigurationBox {
             | ((self.chroma_subsampling_y as u8) << CHROMA_SUBSAMPLING_Y_SHIFT)
             | (self.chroma_sample_position & CHROMA_SAMPLE_POSITION_MASK);
         buf[IPD_OFFSET] = match self.initial_presentation_delay_minus_one {
-            Some(d) => IPD_PRESENT_MASK | (d & IPD_DELAY_MASK),
-            None => 0,
+            Some(d) => {
+                (self.reserved & IPD_RESERVED_MASK) | IPD_PRESENT_MASK | (d & IPD_DELAY_MASK)
+            }
+            None => self.reserved & (IPD_RESERVED_MASK | IPD_ABSENT_RESERVED_MASK),
         };
         buf[AV1C_FIXED_LEN..need].copy_from_slice(&self.config_obus);
         Ok(need)

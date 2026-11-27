@@ -970,6 +970,7 @@ fn flagged_segment(
     let tfhd = TrackFragmentHeaderBox {
         flags: tfhd_flags,
         track_id: TrackId::new(1).into(),
+        version: Default::default(),
         base_data_offset: None,
         sample_description_index: None,
         default_sample_duration: None,
@@ -989,7 +990,11 @@ fn flagged_segment(
         minor_version: 0,
         compatible_brands: vec![*b"msdh", *b"msix"],
     };
-    let mdat = MediaDataBox { data: vec![0u8, 0] };
+    let mdat = MediaDataBox {
+        data: vec![0u8, 0],
+        largesize: false,
+        to_end: false,
+    };
     let mut out = vec![0u8; styp.serialized_len() + moof.serialized_len() + mdat.serialized_len()];
     let mut c = 0;
     c += styp.serialize_into(&mut out[c..]).expect("styp");

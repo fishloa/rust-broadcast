@@ -1,5 +1,6 @@
 mod avc_parameter_set_stream;
 mod bit_shortfall_units;
+mod box_audit;
 mod box_walk_untrusted_sizes;
 mod captions;
 mod cenc;
@@ -15,6 +16,7 @@ mod init_segment;
 mod init_segment_sweep;
 mod item_layer;
 mod item_layer_2025;
+mod item_reader_degrade;
 mod largesize_truncation;
 mod meta_track;
 mod metadata;

@@ -237,31 +237,6 @@ impl VisualSampleEntryFields {
     }
 }
 
-/// An opaque box captured verbatim for round-trip.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct OpaqueBox {
-    pub box_type: [u8; BOX_TYPE_SIZE],
-    pub data: Vec<u8>,
-}
-
-impl OpaqueBox {
-    fn serialized_len(&self) -> usize {
-        BOX_HEADER_MIN_SIZE + self.data.len()
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        need_out(buf, need)?;
-        // This opaque child is compact-form only (its reader is too): a size
-        // past 32 bits is a typed error, never a wrap (#1147).
-        let size = broadcast_core::len::fit_u32(need, "opaque child size")?;
-        buf[..core::mem::size_of::<u32>()].copy_from_slice(&size.to_be_bytes());
-        buf[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE].copy_from_slice(&self.box_type);
-        buf[BOX_HEADER_MIN_SIZE..BOX_HEADER_MIN_SIZE + self.data.len()].copy_from_slice(&self.data);
-        Ok(need)
-    }
-}
-
 /// Write one visual sample entry: its box header, the fixed
 /// `VisualSampleEntry` fields (ISO/IEC 14496-12:2026 §12.1.3), the codec
 /// configuration box `config`, then every `extra_boxes` child. Shared by the
@@ -272,7 +247,7 @@ pub(crate) fn serialize_visual_sample_entry(
     need: usize,
     visual: &VisualSampleEntryFields,
     config: &[u8],
-    extra_boxes: &[OpaqueBox],
+    extra_boxes: &[crate::box_support::OpaqueBox],
     config_position: usize,
 ) -> Result<usize> {
     need_out(buf, need)?;
@@ -280,14 +255,18 @@ pub(crate) fn serialize_visual_sample_entry(
     cursor += visual.serialize_into(&mut buf[cursor..])?;
     let split = config_position.min(extra_boxes.len());
     for eb in &extra_boxes[..split] {
-        cursor += eb.serialize_into(&mut buf[cursor..])?;
+        cursor += eb.serialize_child_into(&mut buf[cursor..], false)?;
     }
     let end = cursor + config.len();
     need_out(buf, end)?;
     buf[cursor..end].copy_from_slice(config);
     cursor = end;
-    for eb in &extra_boxes[split..] {
-        cursor += eb.serialize_into(&mut buf[cursor..])?;
+    let after = &extra_boxes[split..];
+    for (index, eb) in after.iter().enumerate() {
+        // A `size == 0` child may only use that form when nothing follows it
+        // in the entry (§4.2), so the tail decides.
+        let is_last = index + 1 == after.len() && visual.trailing.is_empty();
+        cursor += eb.serialize_child_into(&mut buf[cursor..], is_last)?;
     }
     if !visual.trailing.is_empty() {
         let end = cursor + visual.trailing.len();
@@ -436,7 +415,7 @@ pub struct AVCSampleEntry {
     /// AVC configuration box (avcC).
     pub config: AVCConfigurationBox,
     /// Additional config boxes (e.g. `pasp`, `btrt`) preserved verbatim.
-    pub extra_boxes: Vec<OpaqueBox>,
+    pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
     /// How many `extra_boxes` precede the `avcC` box on the wire.
     pub config_position: usize,
 }
@@ -550,7 +529,7 @@ impl Serialize for AVCSampleEntry {
 ///
 /// Used to carry MPEG-2 video (H.262) with an `esds` whose ObjectTypeIndication
 /// is 0x60–0x65 (ISO/IEC 14496-1 §7.2.6.6). Every trailing child box (starting
-/// with `esds`) is preserved verbatim as an [`OpaqueBox`] so the sample entry
+/// with `esds`) is preserved verbatim as an [`OpaqueBox`](crate::box_support::OpaqueBox) so the sample entry
 /// round-trips byte-identically.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -624,16 +603,15 @@ impl Serialize for Mp4vSampleEntry {
 /// before the damage rather than losing all of them or panicking. (The entry's
 /// config box is located by [`find_config_box`] independently, so a truncated
 /// tail never costs the codec config.)
-fn capture_extra_boxes(region: &[u8], skip: &[&[u8; BOX_TYPE_SIZE]]) -> Vec<OpaqueBox> {
+fn capture_extra_boxes(
+    region: &[u8],
+    skip: &[&[u8; BOX_TYPE_SIZE]],
+) -> Vec<crate::box_support::OpaqueBox> {
     crate::box_support::capture_children(region)
         .into_parts()
         .0
         .into_iter()
         .filter(|box_| !skip.iter().any(|k| **k == box_.box_type))
-        .map(|box_| OpaqueBox {
-            box_type: box_.box_type,
-            data: box_.data,
-        })
         .collect()
 }
 
@@ -664,7 +642,7 @@ pub struct HEVCSampleEntry {
     /// HEVC configuration box (hvcC).
     pub config: HEVCConfigurationBox,
     /// Additional config boxes preserved verbatim.
-    pub extra_boxes: Vec<OpaqueBox>,
+    pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
     /// How many `extra_boxes` precede the `hvcC` box on the wire.
     pub config_position: usize,
 }
@@ -804,7 +782,7 @@ pub struct VVCSampleEntry {
     /// VVC configuration box (`vvcC`).
     pub config: crate::vvc_config::VvcConfigurationBox,
     /// Additional config boxes preserved verbatim.
-    pub extra_boxes: Vec<OpaqueBox>,
+    pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
     /// How many `extra_boxes` precede the `vvcC` box on the wire.
     pub config_position: usize,
 }

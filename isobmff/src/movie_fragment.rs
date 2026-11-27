@@ -19,7 +19,7 @@ use crate::error::{Error, Result};
 use crate::init_segment::TrackExtendsBox;
 use alloc::vec::Vec;
 use broadcast_core::Serialize;
-use broadcast_core::error::BufferTooShort;
+use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::{need_in, need_out};
 use broadcast_core::wire::{be_u32, be_u64, read_u32};
 
@@ -82,18 +82,26 @@ fn read_ver_flags(body: &[u8]) -> Result<(u8, u32)> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MovieFragmentHeaderBox {
+    pub version: u8,
+    pub flags: u32,
     pub sequence_number: u32,
 }
 
 impl MovieFragmentHeaderBox {
     pub fn new(sequence_number: u32) -> Self {
-        Self { sequence_number }
+        Self {
+            version: 0,
+            flags: 0,
+            sequence_number,
+        }
     }
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        let (_ver, _flags) = read_ver_flags(body)?;
+        let (version, flags) = read_ver_flags(body)?;
         let payload = &body[FULLBOX_EXTRA_SIZE..];
         need_in(payload, core::mem::size_of::<u32>(), "mfhd.seq")?;
         Ok(Self {
+            version,
+            flags,
             sequence_number: be_u32(payload, 0, "mfhd.seq")?,
         })
     }
@@ -107,7 +115,14 @@ impl Serialize for MovieFragmentHeaderBox {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let c = crate::box_types::write_full_box_header(buf, b"mfhd", need, 0, 0, true)?;
+        let c = crate::box_types::write_full_box_header(
+            buf,
+            b"mfhd",
+            need,
+            self.version,
+            self.flags,
+            true,
+        )?;
         buf[c..c + core::mem::size_of::<u32>()]
             .copy_from_slice(&self.sequence_number.to_be_bytes());
         Ok(c + core::mem::size_of::<u32>())
@@ -120,6 +135,7 @@ pub const TFHD: [u8; 4] = *b"tfhd";
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TrackFragmentHeaderBox {
+    pub version: u8,
     pub flags: u32,
     pub track_id: TrackId,
     pub base_data_offset: Option<u64>,
@@ -131,7 +147,7 @@ pub struct TrackFragmentHeaderBox {
 
 impl TrackFragmentHeaderBox {
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        let (_ver, flags) = read_ver_flags(body)?;
+        let (version, flags) = read_ver_flags(body)?;
         let mut c = FULLBOX_EXTRA_SIZE;
         need_in(body, c + core::mem::size_of::<u32>(), "tfhd.track_id")?;
         let tid = read_u32(body, &mut c, "tfhd.track_id")?;
@@ -167,12 +183,19 @@ impl TrackFragmentHeaderBox {
         };
         let v_dsf = if flags & TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT != 0 {
             need_in(body, c + core::mem::size_of::<u32>(), "tfhd.dsf")?;
-            // last tfhd field — no further cursor use
             Some(read_u32(body, &mut c, "tfhd.dsf")?)
         } else {
             None
         };
+        if c != body.len() {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: "tfhd size",
+                value: body.len() as u64,
+                reason: "bytes after the last field the flags name",
+            }));
+        }
         Ok(TrackFragmentHeaderBox {
+            version,
             flags,
             track_id: TrackId::new(tid),
             base_data_offset: v_bdo,
@@ -256,7 +279,8 @@ impl Serialize for TrackFragmentHeaderBox {
         let flags = self.effective_flags();
         let need = self.serialized_len();
         need_out(buf, need)?;
-        let mut c = crate::box_types::write_full_box_header(buf, b"tfhd", need, 0, flags, true)?;
+        let mut c =
+            crate::box_types::write_full_box_header(buf, b"tfhd", need, self.version, flags, true)?;
         buf[c..c + core::mem::size_of::<u32>()]
             .copy_from_slice(&self.track_id.value().to_be_bytes());
         c += core::mem::size_of::<u32>();
@@ -291,6 +315,7 @@ pub const TFDT: [u8; 4] = *b"tfdt";
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TrackFragmentBaseMediaDecodeTimeBox {
     version: u8,
+    flags: u32,
     v0: u32,
     v1: u64,
 }
@@ -299,6 +324,7 @@ impl TrackFragmentBaseMediaDecodeTimeBox {
     pub fn new_v0(t: u32) -> Self {
         Self {
             version: 0,
+            flags: 0,
             v0: t,
             v1: t as u64,
         }
@@ -306,6 +332,7 @@ impl TrackFragmentBaseMediaDecodeTimeBox {
     pub fn new_v1(t: u64) -> Self {
         Self {
             version: 1,
+            flags: 0,
             v0: t as u32,
             v1: t,
         }
@@ -318,13 +345,14 @@ impl TrackFragmentBaseMediaDecodeTimeBox {
     }
 
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        let (ver, _flags) = read_ver_flags(body)?;
+        let (ver, flags) = read_ver_flags(body)?;
         let payload = &body[FULLBOX_EXTRA_SIZE..];
         if ver == 0 {
             need_in(payload, core::mem::size_of::<u32>(), "tfdt.v0")?;
             let v = be_u32(payload, 0, "tfdt.v0")?;
             Ok(Self {
                 version: ver,
+                flags,
                 v0: v,
                 v1: v as u64,
             })
@@ -333,6 +361,7 @@ impl TrackFragmentBaseMediaDecodeTimeBox {
             let v = be_u64(payload, 0, "tfdt.v1")?;
             Ok(Self {
                 version: ver,
+                flags,
                 v0: v as u32,
                 v1: v,
             })
@@ -361,7 +390,14 @@ impl Serialize for TrackFragmentBaseMediaDecodeTimeBox {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let mut c = 0;
-        c += crate::box_types::write_full_box_header(buf, b"tfdt", need, self.version, 0, true)?;
+        c += crate::box_types::write_full_box_header(
+            buf,
+            b"tfdt",
+            need,
+            self.version,
+            self.flags,
+            true,
+        )?;
         if self.version == 0 {
             buf[c..c + core::mem::size_of::<u32>()].copy_from_slice(&self.v0.to_be_bytes());
             c += core::mem::size_of::<u32>();
@@ -507,6 +543,13 @@ impl TrackFragmentRunBox {
                 });
             }
             samples.push(s);
+        }
+        if c != payload.len() {
+            return Err(Error::InvalidValue(InvalidValue {
+                field: "trun size",
+                value: payload.len() as u64,
+                reason: "bytes after the last sample record",
+            }));
         }
         Ok(TrackFragmentRunBox {
             version: ver,
@@ -1272,6 +1315,7 @@ mod tests {
         let t = TrackFragmentHeaderBox {
             flags: 0,
             track_id: TrackId::new(1),
+            version: Default::default(),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: None,
@@ -1288,6 +1332,7 @@ mod tests {
         let t = TrackFragmentHeaderBox {
             flags: TFHD_DEFAULT_SAMPLE_DURATION_PRESENT | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT,
             track_id: TrackId::new(7),
+            version: Default::default(),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: Some(512),
@@ -1312,6 +1357,7 @@ mod tests {
         let t = TrackFragmentHeaderBox {
             flags,
             track_id: TrackId::new(2),
+            version: Default::default(),
             base_data_offset: Some(0x1234567890ABCDEF),
             sample_description_index: Some(1),
             default_sample_duration: Some(1024),
@@ -1369,6 +1415,7 @@ mod tests {
             // No presence bits at all, but every value is present.
             flags: 0,
             track_id: TrackId::new(4),
+            version: Default::default(),
             base_data_offset: Some(0x1000),
             sample_description_index: Some(1),
             default_sample_duration: Some(512),
@@ -1395,6 +1442,7 @@ mod tests {
         let t = TrackFragmentHeaderBox {
             flags: TFHD_SAMPLE_DESCRIPTION_INDEX_PRESENT,
             track_id: TrackId::new(4),
+            version: Default::default(),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: None,
@@ -1421,6 +1469,7 @@ mod tests {
                 | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT
                 | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT,
             track_id: TrackId::new(9),
+            version: Default::default(),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: None,
@@ -1441,6 +1490,7 @@ mod tests {
                 | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT
                 | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT,
             track_id: TrackId::new(9),
+            version: Default::default(),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: None,
@@ -1703,6 +1753,7 @@ mod tests {
         let t = TrackFragmentHeaderBox {
             flags,
             track_id: TrackId::new(1),
+            version: Default::default(),
             base_data_offset: Some(0x40),
             sample_description_index: None,
             default_sample_duration: None,
@@ -1945,6 +1996,7 @@ mod tests {
                 | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT
                 | TFHD_DEFAULT_BASE_IS_MOOF,
             track_id: TrackId::new(1),
+            version: Default::default(),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: Some(512),
@@ -1985,6 +2037,7 @@ mod tests {
                 | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT
                 | TFHD_DEFAULT_BASE_IS_MOOF,
             track_id: TrackId::new(1),
+            version: Default::default(),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: Some(512),

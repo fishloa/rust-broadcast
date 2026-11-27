@@ -254,3 +254,64 @@ fn image_sequence_fixture_entries_are_byte_exact() {
         "every visual fixed byte of both sequence entries is exercised"
     );
 }
+
+/// A child of a visual sample entry written with the `size == 0` form ("extends
+/// to the end of the enclosing container", ISO/IEC 14496-12:2026 §4.2) or the
+/// `size == 1` + 64-bit `largesize` form keeps that form on a rewrite; a
+/// compact-only carrier normalises both. The bytes are
+/// `fixtures/mp4/h264-aac-prog.mp4`'s `avc1` entry (at file offset 457) with
+/// its last child, `btrt` (entry offset 156, file offset 613), rewritten in
+/// each form.
+#[test]
+fn visual_entry_child_header_forms_are_carried() {
+    let data = fixtures::read("mp4/h264-aac-prog.mp4");
+    let entry = sample_entries(&data)
+        .into_iter()
+        .find(|bytes| &bytes[4..8] == b"avc1")
+        .expect("an avc1 entry");
+    let child = last_child_offset(&entry, b"btrt");
+    let child_size =
+        u32::from_be_bytes(entry[child..child + 4].try_into().expect("four size bytes")) as usize;
+
+    let mut to_end = entry.clone();
+    to_end[child..child + 4].copy_from_slice(&0u32.to_be_bytes());
+    let parsed = sample_entry_variant(&to_end).expect("parse a size-0 child");
+    assert_eq!(
+        parsed.try_to_bytes().expect("serialize a size-0 child"),
+        to_end,
+        "the size == 0 child form"
+    );
+
+    let mut wide = entry[..child].to_vec();
+    wide.extend_from_slice(&1u32.to_be_bytes());
+    wide.extend_from_slice(b"btrt");
+    let wide_child = u64::try_from(child_size + BOX_HEADER_MIN_SIZE).expect("child length");
+    wide.extend_from_slice(&wide_child.to_be_bytes());
+    wide.extend_from_slice(&entry[child + BOX_HEADER_MIN_SIZE..child + child_size]);
+    let entry_len = u32::try_from(wide.len()).expect("entry length");
+    wide[..4].copy_from_slice(&entry_len.to_be_bytes());
+    let parsed = sample_entry_variant(&wide).expect("parse a largesize child");
+    assert_eq!(
+        parsed.try_to_bytes().expect("serialize a largesize child"),
+        wide,
+        "the size == 1 + largesize child form"
+    );
+}
+
+/// Byte offset of the last child with `fourcc` in a visual sample entry.
+fn last_child_offset(entry: &[u8], fourcc: &[u8; 4]) -> usize {
+    let mut at = BOX_HEADER_MIN_SIZE + VISUAL_FIXED_LEN;
+    let mut found = None;
+    while at + BOX_HEADER_MIN_SIZE <= entry.len() {
+        let size =
+            u32::from_be_bytes(entry[at..at + 4].try_into().expect("four size bytes")) as usize;
+        if size < BOX_HEADER_MIN_SIZE || at + size > entry.len() {
+            break;
+        }
+        if &entry[at + 4..at + BOX_HEADER_MIN_SIZE] == fourcc {
+            found = Some(at);
+        }
+        at += size;
+    }
+    found.expect("the child is present")
+}

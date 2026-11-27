@@ -485,7 +485,7 @@ impl Serialize for OpaqueBox {
 impl OpaqueBox {
     /// Serialize as a child of a container, telling the writer whether it is
     /// the container's last child (see [`OpaqueBox::declared_size`]).
-    fn serialize_child_into(&self, buf: &mut [u8], is_last: bool) -> Result<usize> {
+    pub(crate) fn serialize_child_into(&self, buf: &mut [u8], is_last: bool) -> Result<usize> {
         let need = self.serialized_len();
         need_out(buf, need)?;
         let size = self.declared_size(is_last)?;
@@ -525,20 +525,46 @@ pub(crate) fn take_c_string(
     cursor: &mut usize,
     what: &'static str,
 ) -> Result<Vec<u8>> {
+    Ok(take_c_string_terminated(bytes, cursor, what)?.0)
+}
+
+/// [`take_c_string`], also reporting whether the string ended in the NUL a
+/// writer is supposed to append, so a box whose last string omitted it can
+/// re-emit the payload it parsed.
+pub(crate) fn take_c_string_terminated(
+    bytes: &[u8],
+    cursor: &mut usize,
+    what: &'static str,
+) -> Result<(Vec<u8>, bool)> {
     let rest = bytes.get(*cursor..).ok_or(Error::InvalidInput(what))?;
     let end = rest.iter().position(|&b| b == 0).unwrap_or(rest.len());
     let value = rest[..end].to_vec();
+    let terminated = end < rest.len();
     *cursor += end;
-    if *cursor < bytes.len() {
+    if terminated {
         *cursor += 1;
     }
-    Ok(value)
+    Ok((value, terminated))
 }
 
 /// Write one NUL-terminated string at `offset`, returning the bytes written.
 pub(crate) fn write_c_string(buf: &mut [u8], offset: usize, value: &[u8]) -> Result<usize> {
-    need_out(buf, offset + value.len() + 1)?;
+    write_c_string_terminated(buf, offset, value, true)
+}
+
+/// [`write_c_string`], optionally omitting the NUL terminator so a payload
+/// whose last string had none is re-emitted as parsed.
+pub(crate) fn write_c_string_terminated(
+    buf: &mut [u8],
+    offset: usize,
+    value: &[u8],
+    terminated: bool,
+) -> Result<usize> {
+    let terminator = usize::from(terminated);
+    need_out(buf, offset + value.len() + terminator)?;
     buf[offset..offset + value.len()].copy_from_slice(value);
-    buf[offset + value.len()] = 0;
-    Ok(value.len() + 1)
+    if terminated {
+        buf[offset + value.len()] = 0;
+    }
+    Ok(value.len() + terminator)
 }
