@@ -609,3 +609,108 @@ fn same_type_tracks_get_distinct_stream_names_and_urls() {
     assert_eq!(second.name.as_deref(), Some("audio_2"));
     assert!(second.url.contains("Fragments(audio_2="), "{}", second.url);
 }
+
+// ── Issue #4154: a break is stated in tfxd and the Manifest's c@t ──────────
+
+/// Smooth has no discontinuity element: a break closes the open fragment and
+/// the next fragment states its new start in `tfxd` (MS-SSTR §2.2.4.4) and in
+/// the Manifest's `c@t` (§2.2.2.6). Both are read back independently here.
+#[test]
+fn a_forward_break_states_the_jump_in_tfxd_and_the_manifest() {
+    use transmux::SmoothOrigin;
+    use transmux::mux_stage::{MuxOutput, SegmentOut};
+    use transmux::smooth::SmoothSegmenter;
+    use transmux::smooth_fragment::fragment_tfxd;
+
+    let two = crate::discontinuity::forward();
+    let specs: Vec<_> = two.media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let origin = SmoothOrigin::from_tracks(
+        two.media
+            .tracks
+            .iter()
+            .map(|track| (track.spec.timescale, track.samples.as_slice())),
+    );
+    let mut stage = SmoothSegmenter::new(specs.clone(), origin, core::time::Duration::from_secs(2))
+        .expect("Smooth segmenter");
+    let outputs =
+        crate::discontinuity::drive(&mut stage, &two, None).expect("Smooth states a forward break");
+    let mut log = transmux::segment_log::SegmentSummaryLog::new();
+    let mut broken: Vec<SegmentOut> = Vec::new();
+    for output in outputs {
+        if let MuxOutput::Segment(segment) = output {
+            log.push(&segment).expect("summary");
+            if segment.summary.discontinuous {
+                broken.push(*segment);
+            }
+        }
+    }
+    assert!(
+        !broken.is_empty(),
+        "at least the video track's next fragment is marked discontinuous"
+    );
+    for segment in &broken {
+        let tfxd = fragment_tfxd(&segment.bytes).expect("every Smooth fragment carries tfxd");
+        assert_eq!(
+            tfxd.fragment_absolute_time, segment.summary.start,
+            "the fragment's tfxd states the same post-break start as its summary"
+        );
+        assert_eq!(tfxd.fragment_duration, segment.summary.duration);
+    }
+
+    let manifest = SmoothPackager.render(&specs, &log).expect("manifest");
+    let parsed = SmoothManifest::parse(&manifest).expect("the manifest parses");
+    for segment in &broken {
+        let spec = specs
+            .iter()
+            .find(|spec| spec.track_id == segment.summary.track)
+            .expect("the fragment names an announced track");
+        let kind = match spec.config {
+            CodecConfig::Avc { .. } => StreamType::Video,
+            _ => StreamType::Audio,
+        };
+        let stream = parsed
+            .streams
+            .iter()
+            .find(|stream| stream.stream_type == kind)
+            .expect("the fragment's StreamIndex is in the manifest");
+        let index = usize::try_from(segment.summary.sequence.saturating_sub(1))
+            .expect("a small fragment ordinal");
+        let chunk = stream
+            .chunks_list
+            .get(index)
+            .expect("the break's chunk is in the manifest");
+        assert_eq!(
+            chunk.t,
+            Some(segment.summary.start),
+            "c@t states the post-break start instead of letting a client accumulate the old d"
+        );
+    }
+}
+
+/// Smooth's chunk timeline only moves forward, so a break that moves a track's
+/// time backwards is refused with a typed error naming the stage.
+#[test]
+fn a_backward_break_is_refused_with_a_typed_error() {
+    use transmux::SmoothOrigin;
+    use transmux::smooth::SmoothSegmenter;
+
+    let two = crate::discontinuity::backwards();
+    let specs: Vec<_> = two.media.tracks.iter().map(|t| t.spec.clone()).collect();
+    let origin = SmoothOrigin::from_tracks(
+        two.media
+            .tracks
+            .iter()
+            .map(|track| (track.spec.timescale, track.samples.as_slice())),
+    );
+    let mut stage = SmoothSegmenter::new(specs, origin, core::time::Duration::from_secs(2))
+        .expect("Smooth segmenter");
+    let error = crate::discontinuity::drive(&mut stage, &two, None)
+        .expect_err("a backward break cannot be expressed");
+    match error {
+        transmux::error::Error::UnsupportedFeature(reason) => assert!(
+            reason.starts_with("smooth:"),
+            "the refusal names the stage and the reason: {reason}"
+        ),
+        other => panic!("expected a typed unsupported-feature refusal, got {other:?}"),
+    }
+}

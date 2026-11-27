@@ -34,6 +34,16 @@
 //! - Audio `FourCC="AACL"`: `CodecPrivateData` = the hex of the
 //!   AudioSpecificConfig; `AudioTag="255"` (raw AAC).
 //!
+//! # Timeline discontinuity
+//!
+//! MS-SSTR has no discontinuity element; the fragment timeline is explicit.
+//! [`MuxInput::Discontinuity`] closes the open fragment, and the next one
+//! carries its new start in `tfxd` (§2.2.4.4) and in the Manifest's `c@t`
+//! (§2.2.2.6), so the jump is stated rather than hidden inside one fragment's
+//! durations. A break that moves a track's time **backwards** is refused with
+//! [`Error::UnsupportedFeature`]: the Manifest's chunk times are a forward
+//! timeline a client accumulates `d` over.
+//!
 //! Like the DASH / HLS packagers, the manifest is emitted with a tiny
 //! [`quick_xml::Writer`] (`std` feature; every attribute value and text node is
 //! escaped by quick-xml). Integer arithmetic only.
@@ -497,9 +507,10 @@ fn quality_level(stream: &StreamInfo) -> QualityLevel {
     .without_packet_size()
 }
 
-/// One `c` per fragment, numbered from 0 (`c@n`); `t` on the first only, `d`
-/// always.
+/// One `c` per fragment, numbered from 0 (`c@n`); `t` on the first and on
+/// every fragment whose start is not the previous `t + d`, `d` always.
 fn manifest_chunks(stream: &StreamInfo) -> Vec<C> {
+    let mut expected: Option<u64> = None;
     stream
         .fragments
         .iter()
@@ -507,7 +518,12 @@ fn manifest_chunks(stream: &StreamInfo) -> Vec<C> {
         .map(|(i, fragment)| {
             let ordinal = u32::try_from(i).unwrap_or(u32::MAX);
             let chunk = C::new(fragment.duration).numbered(ordinal);
-            if i == 0 {
+            // `c@t` states the absolute start of the first fragment and of
+            // every fragment whose start is not the previous `t + d` — a
+            // timeline break, which Smooth has no separate marker for.
+            let explicit = i == 0 || expected != Some(fragment.start_time);
+            expected = Some(fragment.start_time.saturating_add(fragment.duration));
+            if explicit {
                 chunk.at(fragment.start_time)
             } else {
                 chunk
@@ -817,6 +833,11 @@ struct SmoothTrackState {
     next_sequence: u32,
     /// Rounded-up target duration in this track's timescale.
     target_ticks: u64,
+    /// The next fragment cut for this track is marked discontinuous.
+    discontinuous: bool,
+    /// The end of this track's last cut fragment, in [`SMOOTH_TIMESCALE`]
+    /// ticks: the point a post-break fragment must not start before.
+    last_end: Option<u64>,
 }
 
 /// Cut a track stream into keyframe-aligned Smooth fragments, each a
@@ -842,6 +863,9 @@ pub struct SmoothSegmenter {
     origin: SmoothOrigin,
     /// Fragments finished but not yet polled, in emission order.
     ready: alloc::collections::VecDeque<MuxOutput>,
+    /// A discontinuity awaits the sample that follows it: `Some(None)` for
+    /// every track, `Some(Some(track))` for one.
+    pending_discontinuity: Option<Option<TrackId>>,
 }
 
 impl SmoothSegmenter {
@@ -879,10 +903,13 @@ impl SmoothSegmenter {
                     pending: Vec::new(),
                     pending_duration: 0,
                     next_sequence: 1,
+                    discontinuous: false,
+                    last_end: None,
                 })
                 .collect(),
             origin,
             ready: alloc::collections::VecDeque::new(),
+            pending_discontinuity: None,
         })
     }
 
@@ -900,6 +927,25 @@ impl SmoothSegmenter {
             .iter()
             .position(|t| t.spec.track_id == track)
             .ok_or(Error::InvalidInput("smooth: unknown track_id"))?;
+        if let Some(pending) = self.pending_discontinuity
+            && pending.is_none_or(|broken| broken == track)
+        {
+            let start = to_smooth_ticks(
+                self.relative_ticks(index, &sample),
+                self.tracks[index].spec.timescale,
+            );
+            if self.tracks[index]
+                .last_end
+                .is_some_and(|last_end| start < last_end)
+            {
+                return Err(Error::UnsupportedFeature(
+                    "smooth: a discontinuity that moves the timeline backwards cannot be \
+                     expressed; the client Manifest's chunk times only move forward",
+                ));
+            }
+            self.pending_discontinuity = None;
+            self.tracks[index].discontinuous = true;
+        }
         if sample.flags.is_sync
             && self.tracks[index].pending_duration >= self.tracks[index].target_ticks
             && !self.tracks[index].pending.is_empty()
@@ -966,11 +1012,12 @@ impl SmoothSegmenter {
             timescale: SMOOTH_DEFAULT_TIMESCALE.get(),
             bytes: state.pending.iter().map(|s| s.data.len() as u64).sum(),
             independent: state.pending.first().is_some_and(|s| s.flags.is_sync),
-            discontinuous: false,
+            discontinuous: core::mem::take(&mut state.discontinuous),
         };
         state.next_sequence += 1;
         state.pending.clear();
         state.pending_duration = 0;
+        state.last_end = Some(start_smooth.saturating_add(duration));
         self.ready
             .push_back(MuxOutput::Segment(Box::new(SegmentOut {
                 bytes: bytes::Bytes::from(data),
@@ -1010,9 +1057,18 @@ impl Stage for SmoothSegmenter {
                 "smooth: the manifest's StreamIndex list is fixed for the session",
             )),
             MuxInput::Sample { track, sample } => self.push_sample(track, sample),
-            // A Smooth fragment states its own absolute start in `tfxd`, so a
-            // decode-time jump needs no separate signalling.
-            MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::Discontinuity { track } => {
+                // Close the open fragment now: a time jump belongs between two
+                // fragments, not inside one (whose `trun` durations would then
+                // describe it as a very long sample).
+                for index in 0..self.tracks.len() {
+                    if track.is_none_or(|broken| self.tracks[index].spec.track_id == broken) {
+                        self.cut(index, None)?;
+                    }
+                }
+                self.pending_discontinuity = Some(track);
+                Ok(())
+            }
             MuxInput::Flush => {
                 for index in 0..self.tracks.len() {
                     self.cut(index, None)?;
