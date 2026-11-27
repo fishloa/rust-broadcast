@@ -97,6 +97,10 @@ required-features = ["std"]
 name = "transmux_any_to_any"
 required-features = ["std", "matroska"]
 
+[[example]]
+name = "transcode_pass_through"
+required-features = ["codec", "std"]
+
 [features]
 default = ["std", "cenc", "flv", "rtp", "ps", "matroska", "hls", "captions"]
 std    = ["broadcast-bitstream/std", "cc-data?/std", "dvb-si/std", "broadcast-common/std", "broadcast-core/std", "broadcast-common/xml", "broadcast-common/lang", "thiserror/std", "serde?/std", "broadcast-hls?/std", "isobmff/std", "broadcast-matroska?/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps?/std", "rtp-packet?/std", "dep:quick-xml", "dep:jiff", "dep:sdp-types", "dep:broadcast-smooth", "broadcast-smooth/manifest", "dep:broadcast-dash"]
