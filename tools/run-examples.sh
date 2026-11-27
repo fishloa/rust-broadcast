@@ -105,6 +105,7 @@ example_args() {
         isobmff/list_samples) echo "fixtures/mp4/progressive/av-prog.mp4" ;;
         isobmff/list_metadata_tracks) echo "fixtures/mp4/boxes/hint-hmhd.mp4" ;;
         isobmff/print_audio_tracks) echo "fixtures/mp4/boxes/track-description.mp4" ;;
+        isobmff/print_hint_tracks) echo "fixtures/mp4/boxes/hint-offsets.mp4" ;;
         isobmff-tokio/list_samples) echo "fixtures/mp4/progressive/av-prog.mp4" ;;
         isobmff-tokio/read_sample) echo "fixtures/mp4/progressive/av-prog.mp4" ;;
         isobmff/read_tags)    echo "fixtures/mp4/progressive/av-prog.mp4" ;;

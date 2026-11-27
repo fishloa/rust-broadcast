@@ -85,11 +85,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   non-test `MuxOutput` consumer that does not name it.
 - `TrackSpec::padding` (`GaplessTrim`) and `Sample::trim` (`SampleTrim`): the
   audio gapless trim in the IR, in samples per channel at the track's sample
-  rate, defaulting to "none stated". `Mp4Demux` fills it from an Opus `dOps`
-  `PreSkip` or an `elst` `media_time`, and `MatroskaDemux` from `CodecDelay`;
-  trailing padding (the MP4 `iTunSMPB` item) and MP3's LAME/Xing tag are not
-  read yet. The transcode conversions carry it into `CodecParameters` and back
-  out of the encoder's reported padding.
+  rate, defaulting to "none stated". `Mp4Demux` states it from the edit list,
+  then the codec's own pre-skip (Opus `dOps`), then the iTunes `iTunSMPB`
+  item, in one precedence function; a disagreement is reported as
+  `DemuxEvent::GaplessSignalConflict` (`GaplessSignal`, `GaplessTrimFinding`)
+  rather than resolved silently. `MatroskaDemux` states the track priming from
+  `CodecDelay` and each Block's `DiscardPadding` as that sample's
+  `Sample::trim` (nanoseconds to samples, rounded to nearest). An MP3 track's
+  LAME/Xing tag states its padding (TS and MP4 `mp3 ` tracks), with the tag
+  frame passed through unchanged. The transcode conversions carry the trim
+  into `CodecParameters` and back out of the encoder's reported padding.
+- `TrackSpec::pre_roll` (`DecoderPreRoll`): the samples a decoder must decode
+  after a seek before its output is correct. `Mp4Demux` reads it from a
+  `prol` or negative `roll` sample group (§10.1) and `MatroskaDemux` from
+  `SeekPreRoll` (RFC 9559 §5.1.4.1.26). It is a decoder requirement, not a
+  gapless trim, and is not folded into `padding`.
 - `TranscodeStage::factory`: when a source re-announcement changes the
   parameters and the decoder cannot adopt them, a caller-supplied factory
   builds a fresh decoder; without one the change stays

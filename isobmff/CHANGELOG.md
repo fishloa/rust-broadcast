@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `metadata::Itunsmpb` and `Metadata::itunsmpb`: the iTunes `iTunSMPB`
+  freeform item's priming, padding and original sample count, parsed from its
+  hex text (a de-facto format, cited in the module). The typed view borrows
+  nothing; the item itself still round-trips byte for byte.
+- `sample_groups::GROUPING_TYPE_PROL` and `SgpdEntry::Prol`: the audio
+  pre-roll sample group description (§10.1), with `SgpdEntry::pre_roll_samples`
+  reporting a negative `roll` or positive `prol` distance as the decoder
+  pre-roll it states.
+- `reader::TrackInfo::pre_roll`: the track's decoder pre-roll requirement in
+  samples, from its `roll`/`prol` sample group (§10.1); and
+  `reader::TrackInfo::itunsmpb`: the file's iTunes gapless facts, a per-track
+  item taking precedence over a movie-level one that applies only when the
+  file has one audio track.
+
 ### Breaking
 
 - **Sample entries keep every parsed byte on a rewrite.** The audio sample
@@ -54,6 +70,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ColourFormatEnhancement` also refuses a body with bytes past its last input.
 
 ### Added
+
+- **Every ISO/IEC 14496-12:2026 box type is typed.** The hint-track family
+  joins the crate: `hnti`/`rtp `/`sdp `, the `hinf` counters, the sample-entry
+  children `tims`/`tsro`/`snro`/`tssy`/`rssr`/`srpp`/`rtpx`/`rcsr`, the MPEG-2
+  TS entry metadata `tPAT`/`tPMT`/`tsti`/`istm`, the RTP and MPEG-2 TS hint
+  sample entries, and the RTP sample format. The FLUTE file-delivery family
+  follows: `fiin`/`paen`/`fpar`/`fecr`/`fire`/`segr`/`gitn`, the FD hint sample
+  entry, `fdsa`/`fdpa`/`extr`/`feci`, the FD sample format, and the `fdel` item
+  information extension. `btrt`, `stsh` and `rsot` complete the set;
+  `SampleEntryInfo` gains `hint` and `bit_rate`, `TrackInfo` gains
+  `hint_information` and `hint_statistics`, and `Metadata` gains
+  `fd_item_information`. The coverage test now reports 167 of 167 registry box
+  types.
 
 - **Gain map metadata typed (Amd 1 6.6.2.4.2).** `image` gains
   `GainMapMetadata` with its `GainMapChannel`, `SignedRational` and

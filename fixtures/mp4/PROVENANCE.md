@@ -63,6 +63,15 @@ system-specific init data, hand-built from a spec vector.)
 | `sgpd` | `aac-sgpd.mp4` / `opus.mp4` | 26 | `01 000000 726f6c6c 00000002 00000001 ffff` | grouping='roll', roll_distance=-1 |
 | `sbgp` | (same) | — | present | sample→group map |
 
+### `aac-prol.mp4` (derived from `aac-sgpd.mp4`)
+
+No encoder writes an audio pre-roll (`prol`) sample group, so this fixture is
+`aac-sgpd.mp4` with only the grouping type changed from `roll` to `prol` in
+both `sgpd` and `sbgp`, and the description's `roll_distance` changed from
+`ffff` (-1, pre-roll by one sample) to `0050` (+80 samples), the positive form
+§10.1 requires for `prol`. Every other box and byte is unchanged. It exercises
+the reader's `prol` → decoder-pre-roll path.
+
 ## #436 AV1 (`av1.mp4`)
 
 | box | len | body (hex) |

@@ -171,6 +171,8 @@ pub enum MetaChild {
     Xml(crate::meta_track::XmlBox),
     /// The binarized XML document of the meta box (`bxml`, §8.11.2).
     BinaryXml(crate::meta_track::BinaryXmlBox),
+    /// The file-delivery item information box (`fiin`, §8.12.2).
+    FdItemInformation(crate::file_delivery::FdItemInformationBox),
     /// Any other child, preserved verbatim.
     Opaque(OpaqueBox),
 }
@@ -185,6 +187,7 @@ impl Serialize for MetaChild {
             Self::Ilst(ilst) => ilst.serialized_len(),
             Self::Xml(xml) => xml.serialized_len(),
             Self::BinaryXml(bxml) => bxml.serialized_len(),
+            Self::FdItemInformation(fiin) => fiin.serialized_len(),
             Self::Opaque(opaque) => opaque.serialized_len(),
         }
     }
@@ -196,6 +199,7 @@ impl Serialize for MetaChild {
             Self::Ilst(ilst) => ilst.serialize_into(buf),
             Self::Xml(xml) => xml.serialize_into(buf),
             Self::BinaryXml(bxml) => bxml.serialize_into(buf),
+            Self::FdItemInformation(fiin) => fiin.serialize_into(buf),
             Self::Opaque(opaque) => opaque.serialize_into(buf),
         }
     }
@@ -242,6 +246,15 @@ impl Meta {
     pub fn keys(&self) -> Option<&Keys> {
         self.children.iter().find_map(|child| match child {
             MetaChild::Keys(keys) => Some(keys),
+            _ => None,
+        })
+    }
+
+    /// The file-delivery item information box (`fiin`), when present.
+    #[must_use]
+    pub fn fd_item_information(&self) -> Option<&crate::file_delivery::FdItemInformationBox> {
+        self.children.iter().find_map(|child| match child {
+            MetaChild::FdItemInformation(fiin) => Some(fiin),
             _ => None,
         })
     }
@@ -322,6 +335,9 @@ impl Meta {
                 crate::meta_track::BXML => {
                     MetaChild::BinaryXml(crate::meta_track::BinaryXmlBox::parse_body(child.body)?)
                 }
+                crate::file_delivery::FIIN => MetaChild::FdItemInformation(
+                    crate::file_delivery::FdItemInformationBox::parse_body(child.body)?,
+                ),
                 super::ilst::ILST => MetaChild::Ilst(Ilst::parse_body(child.body, limits)?),
                 _ => {
                     let mut opaque = OpaqueBox::new(child.four_cc(), child.payload().to_vec());

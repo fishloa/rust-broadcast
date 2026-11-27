@@ -139,11 +139,14 @@ const KEY: [u8; 16] = [
 /// - 68 / 4_800 / 105 (2026-11-27) — `Sample` gained an 8-byte `SampleTrim`
 ///   field (the IR's per-sample gapless trim), so the per-sample vectors the
 ///   stage rebuilds are 8 bytes wider each.
+/// - 68 / 4_808 / 105 (2026-11-27) — `TrackSpec` gained an
+///   `Option<DecoderPreRoll>` (the container's decoder pre-roll requirement),
+///   so the one spec clone is 8 bytes wider.
 ///
 /// Re-measure and update these (with a fresh date) if a legitimate change
 /// moves them; do not widen a tolerance instead.
 const CENC_MEASURED_ALLOCS: usize = 68;
-const CENC_MEASURED_ALLOC_BYTES: usize = 4_800;
+const CENC_MEASURED_ALLOC_BYTES: usize = 4_808;
 const CENC_MEASURED_DEALLOCS: usize = 105;
 // NOTE: the three pinned metrics (allocs/alloc_bytes/deallocs) are asserted
 // with `assert_eq!` below, not a tolerance band. A tolerance multiple (e.g.
@@ -236,8 +239,9 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
 /// - 65 / 3_720 / 102 (2026-11-27) — `Sample` gained an 8-byte `SampleTrim`
 ///   field (the IR's per-sample gapless trim), so the per-sample vectors the
 ///   stage rebuilds are 8 bytes wider each.
+/// - 65 / 3_728 / 102 (2026-11-27) — the `TrackSpec` pre-roll field (above).
 const CBCS_MEASURED_ALLOCS: usize = 65;
-const CBCS_MEASURED_ALLOC_BYTES: usize = 3_720;
+const CBCS_MEASURED_ALLOC_BYTES: usize = 3_728;
 const CBCS_MEASURED_DEALLOCS: usize = 102;
 
 /// Same measurement for `cbcs` (AES-CBC pattern) — a different code path

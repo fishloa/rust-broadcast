@@ -14,8 +14,8 @@ use broadcast_common::Stage;
 use broadcast_common::stage::Timestamp;
 use broadcast_core::timescale::Timescale;
 use transmux::{
-    AbandonReason, AfdPersistence, DegradationRecord, DemuxEvent, InputDegradation, PcrSample,
-    Sample, SkippedTrack, SplicePlan, SplicePoint, SpliceStage, StreamingFlvDemux,
+    AbandonReason, AfdPersistence, DegradationRecord, DemuxEvent, GaplessSignal, InputDegradation,
+    PcrSample, Sample, SkippedTrack, SplicePlan, SplicePoint, SpliceStage, StreamingFlvDemux,
     StreamingTsDemux, TrackId, TrackSpec, TrickPlayStage,
 };
 
@@ -126,6 +126,9 @@ pub struct Collected {
     pub degraded: Vec<InputDegradation>,
     /// Where each `degraded` entry was observed.
     pub degraded_at: Vec<DegradationRecord>,
+    /// Gapless-signal disagreements the demuxer reported:
+    /// `(track, used signal, ignored signal)`.
+    pub gapless_conflicts: Vec<(TrackId, GaplessSignal, GaplessSignal)>,
 }
 
 impl Collected {
@@ -138,6 +141,7 @@ impl Collected {
             skipped: Vec::new(),
             degraded: Vec::new(),
             degraded_at: Vec::new(),
+            gapless_conflicts: Vec::new(),
         }
     }
 
@@ -324,6 +328,7 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Collected {
     let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
     let mut skipped = Vec::new();
     let mut degraded = Vec::new();
+    let mut gapless_conflicts = Vec::new();
     for event in events {
         match event {
             DemuxEvent::TrackAdded(spec) => {
@@ -352,6 +357,11 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Collected {
                 track_id, reason, ..
             } => skipped.push(skipped_from_reason(reason, track_id)),
             DemuxEvent::InputDegraded { kind, .. } => degraded.push(kind),
+            DemuxEvent::GaplessSignalConflict {
+                track_id,
+                used,
+                ignored,
+            } => gapless_conflicts.push((track_id, used, ignored)),
             DemuxEvent::DamagedSpan { offset, .. } => {
                 degraded.push(InputDegradation::MalformedUnit { position: offset })
             }
@@ -364,6 +374,7 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Collected {
     );
     media.skipped = skipped;
     media.degraded = degraded;
+    media.gapless_conflicts = gapless_conflicts;
     media
 }
 
@@ -1738,6 +1749,7 @@ mod equality_tests {
             skipped: a_skipped,
             degraded: a_degraded,
             degraded_at: a_degraded_at,
+            gapless_conflicts: a_conflicts,
         } = a;
         let Collected {
             tracks: b_tracks,
@@ -1746,6 +1758,7 @@ mod equality_tests {
             skipped: b_skipped,
             degraded: b_degraded,
             degraded_at: b_degraded_at,
+            gapless_conflicts: b_conflicts,
         } = b;
         a_tracks.len() == b_tracks.len()
             && a_tracks.iter().zip(b_tracks).all(|(x, y)| same_track(x, y))
@@ -1754,6 +1767,7 @@ mod equality_tests {
             && a_skipped == b_skipped
             && a_degraded == b_degraded
             && a_degraded_at == b_degraded_at
+            && a_conflicts == b_conflicts
     }
 
     #[test]
@@ -1780,6 +1794,14 @@ mod equality_tests {
         let mut m = base.clone();
         m.degraded.clear();
         assert!(!same(&base, &m), "degraded");
+
+        let mut m = base.clone();
+        m.gapless_conflicts.push((
+            TrackId::new(1),
+            GaplessSignal::EditList,
+            GaplessSignal::ITunesSmpb,
+        ));
+        assert!(!same(&base, &m), "gapless_conflicts");
 
         let mut m = base.clone();
         m.degraded_at[0].track = None;

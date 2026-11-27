@@ -105,7 +105,10 @@ pub use interlace::{PicStruct, PictureFacts, SourceScanType, VideoScan};
 #[cfg(feature = "mpegh")]
 pub use mhas::{MhasPacket, find_mpegh3da_config, walk_mhas_packets};
 #[cfg(feature = "mpeg-audio")]
-pub use mpeg_audio::{MPEG_AUDIO_SYNCWORD, MpegAudioFrameHeader, MpegAudioLayer, MpegAudioVersion};
+pub use mpeg_audio::{
+    LameTag, MPEG_AUDIO_SYNCWORD, MpegAudioFrameHeader, MpegAudioLayer, MpegAudioVersion,
+    parse_lame_tag,
+};
 #[cfg(feature = "mpeg2")]
 pub use mpeg2::{Mpeg2SeqHeader, SEQUENCE_HEADER_CODE};
 #[cfg(feature = "h264")]

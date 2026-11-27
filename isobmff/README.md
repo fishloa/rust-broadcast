@@ -13,7 +13,7 @@ It never knows the media IR or a codec bitstream.
 
 ## Coverage
 
-Typed 122 of 167 registry box types (ISO/IEC 14496-12:2026). The
+Typed 167 of 167 registry box types (ISO/IEC 14496-12:2026). The
 `tests/it/coverage.rs` test loads
 `private/specs-verified/mpeg/isobmff/box-registry-14496-12-2026.tsv` and pins
 every remaining type under its issue tier, so these counts cannot drift; the
@@ -25,7 +25,7 @@ types themselves are the one table in `src/coverage.rs`.
 | `box_support` | shared opaque-child and container building helpers |
 | `segments` | `ftyp`, `styp`, `mdat`, `imda`, `tyco`, `etyp`, `otyp` |
 | `init_segment` | `moov`, `mvhd`, `trak`, `tkhd`, `mdia`, `mdhd`, `hdlr`, `minf`, `vmhd`/`smhd`/`nmhd`/`hmhd`/`vvhd`, `dinf`/`dref`, `stbl` (`stts`/`ctts`/`stsc`/`stsz`/`stz2`/`sdtp`/`stco`/`co64`/`stss`), `stsd`, `edts`/`elst`, `mvex`/`trex`/`mehd`, the audio sample entries |
-| `sample_entries` | `avc1`/`avc3`, `hvc1`/`hev1`, `vvc1`/`vvi1`, `mp4v`, `VisualSampleEntry` |
+| `sample_entries` | `avc1`/`avc3`, `hvc1`/`hev1`, `vvc1`/`vvi1`, `mp4v`, `btrt`, `VisualSampleEntry` |
 | `subtitle_entries` | `stpp`, `wvtt`, `vttc`/`vtte`/`vtta`/`payl`/`sttg`/`iden` |
 | `avc_parameter_set` | `avcp` sample entry and parameter set sample |
 | `track_reference` | `tref` |
@@ -54,11 +54,11 @@ types themselves are the one table in `src/coverage.rs`.
 | `audio_elements` | `ardi`, `aelm`/`aedb`/`aepp`/`aepr`, `aesb`/`aesd` |
 | `track_desc` | `elng`, `kind`, `trgr` (`msrc`/`ster`), `tsel`, `stvi`, `strk` (`stri`/`strd`) |
 | `index_boxes` | `ssix`, `leva`, `pdin`, `trep`, `assp` |
-| `sample_tables_extra` | `stdp`, `padb`, `stsg` |
+| `sample_tables_extra` | `stdp`, `padb`, `stsg`, `stsh` |
 | `cenc` | `tenc`, `senc`, `pssh`, `saiz`, `saio`, `sinf`, `frma`, `schm`, `schi` (with `spki`) |
 | `scheme` | `rinf`, `csch`, `spki`, `scrb`, `cinf` |
 | `sample_groups` | `prft`, `sgpd`, `sbgp`, `csgp`, `subs`, `ssrt` |
-| `movie_fragment` | `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun` |
+| `movie_fragment` | `moof`, `mfhd`, `traf`, `tfhd`, `tfdt`, `trun`, `rsot` |
 | `limits` | hostile-input caps (`Limits`) for the Phase 2 reader |
 | `writer` | sans-IO fragmented writer (init segment, `moof`+`mdat`, CENC media-segment protection, recorded/compact fragment layouts, regenerated `sidx`/`mfra`) and progressive writer (`Writer::progressive`: whole-file layout from a plan, `stco`/`co64`, seekable or append-only sink) |
 | `sample_table` | lazy per-track sample cursor (`TrackCursor`/`CursorState`) and the run-length table builders |
@@ -72,7 +72,7 @@ types themselves are the one table in `src/coverage.rs`.
 | `driver` | blocking drivers over the reader: `FileReader` (`Read + Seek`) and `ForwardReader` (`Read` only), with a bounded reusable buffer |
 | `timing` (random access) | `tfra`, `mfra`, `mfro` |
 | `emsg` | `emsg` (versions 0 and 1, ISO/IEC 23009-1 §5.10.3.3) |
-| `metadata` | `udta` (with `cprt`/`strk`), `meta` (with `xml `/`bxml`), `hdlr`, `keys`, `ilst`, `data`, `mean`, `name`, `chpl`, `loci`; QuickTime user-data text and `©xyz` ISO 6709 |
+| `metadata` | `udta` (with `cprt`/`strk`/`hnti`/`hinf`), `meta` (with `xml `/`bxml`/`fiin`), `hdlr`, `keys`, `ilst`, `data`, `mean`, `name`, `chpl`, `loci`; QuickTime user-data text and `©xyz` ISO 6709 |
 | `meta_track` | `urim` (`uri `/`uriI`), `metx`, `mett`/`stxt` (`txtC`), `mebx` (`keys`/`keyd`/`loca`/`setu`), `mime`, `xml `/`bxml`, `cprt` |
 | `item` | ISO/IEC 14496-12:2026 §8.11/§8.15 item boxes: `iloc`, `iinf`/`infe`, `pitm`, `iref` and its typed reference boxes, `iprp`/`ipco`/`ipma`, `idat`, `ipro`, `grpl` with `EntityToGroupBox`, and the `brnd`/`hdlp` properties |
 | `image` | ISO/IEC 23008-12:2025 clause 6 image properties (`ispe`, `pixi`, `rloc`, `auxC`, `irot`, `lsel`, `imir`), the derived bodies `grid`/`iovl`/`iden`, the AVIF `a1op`/`a1lx` properties and brands; `pasp`/`colr`/`clap`/`hvcC`/`avcC`/`av1C`/`mdcv`/`clli` are the crate's existing types |
@@ -85,6 +85,8 @@ types themselves are the one table in `src/coverage.rs`.
 | `integrity` | clause 8.4 `md5i` and the `mint` item body |
 | `item_reader` | sans-IO still-image reader: asks for the top-level headers, the file-level `meta` and the tiny derived-item bodies, then yields `StillImage` (brands, primary item, every item with properties/references/data ranges, entity groups) plus a re-emit plan |
 | `item_writer` | builds one still-image file from typed parts (brands, items, properties, references, primary item, entity groups); it chooses the `iloc` field widths and every offset |
+| `hint` | `hnti`/`rtp `/`sdp `, `hinf` counters, `tims`/`tsro`/`snro`/`tssy`/`rssr`/`srpp`/`rtpx`/`rcsr`, `tPAT`/`tPMT`/`tsti`/`istm`, the RTP/MPEG-2 TS hint sample entries and the RTP sample format |
+| `file_delivery` | `fiin`/`paen`/`fpar`/`fecr`/`fire`/`segr`/`gitn`, `fdsa`/`fdpa`/`extr`/`feci`, the FD hint sample entry and the FD sample format; the `fdel` item information extension lives in `item` |
 | `registry` | runtime registration of private boxes and sample entries (`BoxDef`, `BoxRegistry`, `RegisteredEntry`) |
 
 Every type implements the workspace `Parse` / `Serialize` pair, so a parse →
@@ -122,6 +124,40 @@ that no installed tool writes.
 | `padb` | §8.7.6 | clause-assembled | — |
 | `stsg` | §8.13.6 | clause-assembled | — |
 
+## Tier 5 box evidence
+
+The last tier of issue #4167 closes the hint-track and file-delivery families.
+`tests/it/tier5_fixtures.rs` asserts the boxes a real tool wrote against that
+tool's dump and re-serializes each byte-exact; `tests/it/tier5_boxes.rs` holds
+the clause-assembled ones. `fixtures/mp4/boxes/PROVENANCE.md` records the
+commands and dumps, and the walk of all 252 committed MP4-family files.
+
+| Box | Clause | Evidence | File |
+|---|---|---|---|
+| `btrt` | §8.5.2 | real: libavformat 8.1.2 (91 fixtures carry it) | `mp4/h264-aac-prog.mp4` |
+| `hnti`, `rtp `, `sdp ` | §9.1.4 | real: MP4Box 26.07 and ffmpeg 8.1.2 `-movflags rtphint` | `mp4/boxes/hint-*.mp4` |
+| `tims`, `tsro`, `snro` | §9.1.2 | real: MP4Box 26.07 `-hint -static -no-offset` | `mp4/boxes/hint-offsets.mp4` |
+| `hinf` and its 15 counters | §9.1.5 | clause-assembled | — |
+| `tPAT`, `tPMT`, `tsti`, `istm` | §9.3.3.2 | clause-assembled | — |
+| `tssy`, `rssr`, `srpp`, `rtpx`, `rcsr` | §9.4.1, §9.1.2.2 | clause-assembled | — |
+| `rtp ` sample entry, RTP sample format | §9.1.2, §9.1.3 | real entry + clause sample | `mp4/boxes/hint-*.mp4` |
+| `srtp`, `rrtp`, `rsrp`, `rtcp`, `stcp`, `prtp` entries | §9.1.2, §9.4 | clause-assembled | — |
+| `rm2t`, `sm2t`, `pm2t` entries | §9.3.3, §9.3.5 | clause-assembled | — |
+| `fiin`, `paen`, `fpar`, `fecr`, `fire`, `segr`, `gitn` | §8.12 | clause-assembled | — |
+| `fdp ` entry, `fdsa`, `fdpa`, `extr`, `feci`, FD sample format | §9.2 | clause-assembled | — |
+| `fdel` item extension | §8.11.6.1 | clause-assembled | — |
+| `stsh` | §8.6.3.2 | clause-assembled | — |
+| `rsot` | §8.8.18 | clause-assembled | — |
+
+No registry type is outside a box, so there is no `NOT_A_BOX` list: all 167
+registry entries are boxes and all 167 are typed.
+
+OPEN (§9.2.4.5): the `FDitemconstructorLarge` (constructor type 5) syntax sums
+to 20 bytes (1 + 4 + 4 + 8 + 3) while the same clause states every constructor
+is 16 bytes, so the two statements cannot both hold. That one constructor is
+left untyped and an FD packet carrying it is a typed parse error, rather than
+inventing a field layout the clause does not fix.
+
 ## Example
 
 Open a file and iterate its samples in five lines:
@@ -155,7 +191,7 @@ let ftyp = FileTypeBox {
 let bytes = ftyp.try_to_bytes().unwrap();
 ```
 
-Twelve runnable examples ship with the crate:
+Thirteen runnable examples ship with the crate:
 
 ```bash
 cargo run -p isobmff --example parse_boxes -- fixtures/mp4/h264-aac-prog.mp4
@@ -170,6 +206,7 @@ cargo run -p isobmff --example heif_info -- fixtures/heif/thumb.heic
 cargo run -p isobmff --example build_avif -- fixtures/avif/plain.avif
 cargo run -p isobmff --example list_metadata_tracks -- fixtures/mp4/boxes/hint-hmhd.mp4
 cargo run -p isobmff --example heif_2025 -- fixtures/heif/groups.mp4
+cargo run -p isobmff --example print_hint_tracks -- fixtures/mp4/boxes/hint-offsets.mp4
 ```
 
 ## Still images (HEIF and AVIF)

@@ -388,3 +388,167 @@ impl Serialize for SubTrackSampleGroupBox {
         Ok(c)
     }
 }
+
+// ---------------------------------------------------------------------------
+// stsh — Shadow Sync Sample Box (§8.6.3.2)
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the Shadow Sync Sample Box (`stsh`, ISO/IEC 14496-12:2026 §8.6.3.2).
+pub const STSH: [u8; BOX_TYPE_SIZE] = *b"stsh";
+const STSH_ENTRY_LEN: usize = 2 * core::mem::size_of::<u32>();
+
+/// One shadow-sync pair (`shadowed_sample_number`, `sync_sample_number`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ShadowSyncEntry {
+    shadowed_sample_number: u32,
+    sync_sample_number: u32,
+}
+
+impl ShadowSyncEntry {
+    /// Build one from its two sample numbers.
+    #[must_use]
+    pub const fn new(shadowed_sample_number: u32, sync_sample_number: u32) -> Self {
+        Self {
+            shadowed_sample_number,
+            sync_sample_number,
+        }
+    }
+
+    /// The sample a shadow sync is defined for.
+    #[must_use]
+    pub const fn shadowed_sample_number(&self) -> u32 {
+        self.shadowed_sample_number
+    }
+
+    /// The alternative sync sample.
+    #[must_use]
+    pub const fn sync_sample_number(&self) -> u32 {
+        self.sync_sample_number
+    }
+}
+
+/// The Shadow Sync Sample Box (`stsh`, §8.6.3.2).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ShadowSyncSampleBox {
+    version: u8,
+    flags: u32,
+    entries: Vec<ShadowSyncEntry>,
+}
+
+impl ShadowSyncSampleBox {
+    /// An empty table.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The FullBox version.
+    #[must_use]
+    pub const fn version(&self) -> u8 {
+        self.version
+    }
+
+    /// The FullBox flags.
+    #[must_use]
+    pub const fn flags(&self) -> u32 {
+        self.flags
+    }
+
+    /// The `(shadowed_sample_number, sync_sample_number)` pairs.
+    #[must_use]
+    pub fn entries(&self) -> &[ShadowSyncEntry] {
+        &self.entries
+    }
+
+    /// Append one pair.
+    pub fn push_entry(&mut self, entry: ShadowSyncEntry) {
+        self.entries.push(entry);
+    }
+
+    /// Parse the payload after the 8-byte box header.
+    pub fn parse_body(body: &[u8]) -> Result<Self> {
+        need_in(
+            body,
+            FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>(),
+            "stsh",
+        )?;
+        let version = body[0];
+        let flags = u24_at(body, 1) & FULLBOX_FLAGS_MASK;
+        let count = be_u32(body, FULLBOX_EXTRA_SIZE, "stsh entry_count")? as usize;
+        let body_start = FULLBOX_EXTRA_SIZE + core::mem::size_of::<u32>();
+        crate::box_support::check_entry_count(
+            body.len().saturating_sub(body_start),
+            STSH_ENTRY_LEN,
+            count,
+            "stsh entries",
+        )?;
+        let mut cursor = body_start;
+        let mut entries = Vec::with_capacity(crate::box_support::bounded_entry_count(
+            body.len().saturating_sub(body_start),
+            STSH_ENTRY_LEN,
+            count,
+        ));
+        for _ in 0..count {
+            let shadowed_sample_number = be_u32(body, cursor, "stsh shadowed_sample_number")?;
+            cursor += core::mem::size_of::<u32>();
+            let sync_sample_number = be_u32(body, cursor, "stsh sync_sample_number")?;
+            cursor += core::mem::size_of::<u32>();
+            entries.push(ShadowSyncEntry {
+                shadowed_sample_number,
+                sync_sample_number,
+            });
+        }
+        Ok(Self {
+            version,
+            flags,
+            entries,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for ShadowSyncSampleBox {
+    type Error = Error;
+
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let item = crate::box_types::parse_box(bytes)?.0;
+        if item.four_cc() != STSH {
+            return Err(Error::InvalidInput("expected stsh"));
+        }
+        Self::parse_body(item.payload())
+    }
+}
+
+impl Serialize for ShadowSyncSampleBox {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        crate::box_types::box_len(
+            BOX_HEADER_MIN_SIZE
+                + FULLBOX_EXTRA_SIZE
+                + core::mem::size_of::<u32>()
+                + self.entries.len() * STSH_ENTRY_LEN,
+        )
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut cursor = write_full_box_header(buf, &STSH, need, self.version, self.flags, false)?;
+        let count = fit_u32(self.entries.len(), "stsh entry_count")?;
+        buf[cursor..cursor + core::mem::size_of::<u32>()].copy_from_slice(&count.to_be_bytes());
+        cursor += core::mem::size_of::<u32>();
+        for entry in &self.entries {
+            buf[cursor..cursor + core::mem::size_of::<u32>()]
+                .copy_from_slice(&entry.shadowed_sample_number.to_be_bytes());
+            cursor += core::mem::size_of::<u32>();
+            buf[cursor..cursor + core::mem::size_of::<u32>()]
+                .copy_from_slice(&entry.sync_sample_number.to_be_bytes());
+            cursor += core::mem::size_of::<u32>();
+        }
+        Ok(cursor)
+    }
+}

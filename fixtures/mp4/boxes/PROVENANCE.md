@@ -282,3 +282,75 @@ parses the track-level `keys` as its Apple full-box form and reports
 `Key ns="keyd" name="mdtacom.apple.quicktime.live-photo-info"`, so the test
 asserts the clause's reading (§12.8.4.2: a plain box of local-key boxes) of the
 file's own bytes rather than GPAC's.
+
+## Tier 5 hint-track fixtures
+
+Four files cover the hint-track sample entries and their children. MP4Box and
+ffmpeg both write `rtp `/`tims`/`hnti`/`sdp `; `-static -no-offset` adds the
+optional `tsro`/`snro` offset boxes. No installed tool writes `hinf`, the
+MPEG-2 TS hint entries (`rm2t`/`sm2t`/`pm2t`), the reception extras
+(`tssy`/`rssr`/`rtpx`/`rcsr`) or any FLUTE file-delivery box; those stay
+hand-assembled from the clause in `tests/it/tier5_boxes.rs`.
+
+### `hint-offsets.mp4`
+
+```sh
+MP4Box -hint -static -no-offset \
+       -out fixtures/mp4/boxes/hint-offsets.mp4 fixtures/mp4/h264-aac-prog.mp4
+```
+
+`MP4Box -disox` prints, per hint track:
+
+```
+<RTPHintSampleEntryBox ... HintTrackVersion="1" LastCompatibleVersion="1" MaxPacketSize="1450">
+<RTPTimeScaleBox ... TimeScale="90000">
+<TimeStampOffsetBox ... TimeStampOffset="0">
+<PacketSequenceOffsetBox ... SeqNumOffset="0">
+...
+<RTPHintSampleEntryBox ... MaxPacketSize="1442">
+<RTPTimeScaleBox ... TimeScale="44100">
+<TimeStampOffsetBox ... TimeStampOffset="0">
+<PacketSequenceOffsetBox ... SeqNumOffset="0">
+```
+
+and, at the movie level, `<RTPMovieHintInformationBox ... descriptionformat="sdp ">`.
+
+### `hint-mtu-copy.mp4`
+
+```sh
+MP4Box -hint -mtu 800 -copy \
+       -out fixtures/mp4/boxes/hint-mtu-copy.mp4 fixtures/mp4/h264-aac-prog.mp4
+```
+
+`MP4Box -disox` prints `MaxPacketSize="800"` for the video entry and
+`MaxPacketSize="794"` for the audio entry, with `TimeScale="90000"` and
+`TimeScale="44100"`.
+
+### `hint-latm.mp4`
+
+```sh
+ffmpeg -y -f lavfi -i "sine=frequency=440:duration=0.4" \
+       -c:a aac -b:a 32k -f mp4 audio.mp4
+MP4Box -hint -latm -out fixtures/mp4/boxes/hint-latm.mp4 audio.mp4
+```
+
+`MP4Box -disox` prints one `RTPHintSampleEntryBox` with `MaxPacketSize="175"`
+and `RTPTimeScaleBox TimeScale="44100"`.
+
+### `hint-hmhd.mp4` (round 1)
+
+Already carries two `rtp ` hint entries with `hinttrackversion` 1,
+`highestcompatibleversion` 1 and `tims` timescales 90000 and 44100, plus a
+track-level `hnti`/`sdp ` and a movie-level `hnti`/`rtp `.
+
+## Tier 5 fixture walk
+
+Every committed MP4-family file under `fixtures/` and `private/fixtures/` was
+dumped with `mp4dump --verbosity 3` and searched for the tier 5 four-CCs. The
+only ones present anywhere are `btrt` (91 files), and `hnti`, `rtp `, `sdp `, `tims`,
+`tsro` and `snro` in the four hint fixtures above (`tsro`/`snro` only in
+`hint-offsets.mp4`): 252 files were walked. No committed file carries `hinf`, `tPAT`/`tPMT`/`tsti`/`istm`,
+`rssr`/`rtpx`/`rcsr`/`srpp`, `stsh`, or any `fiin`/`paen`/`fpar`/`fecr`/
+`fire`/`segr`/`gitn`/`extr`/`feci`/`fdpa`/`fdsa` box; `rsot` appears in no
+fixture either. Those parsers are proven by the clause-assembled tests and by
+the coverage table's per-type parse proof.
