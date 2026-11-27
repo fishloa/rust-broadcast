@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `scheme::RestrictedVideoSampleEntry` (`resv`) and
+  `RestrictedAudioSampleEntry` (`resa`), and `subtitle_entries::
+  TextSubtitleSampleEntry` (`sbtt`, §12.6.3): the restricted sample entries
+  keep the base class and expose `restricted_scheme()`; `sbtt` carries its two
+  null-terminated MIME strings.
+- `transform::TransformSampleEntry` and `IncompleteAudioSampleEntry`: the
+  protected (`encf`/`encm`/`encp`/`encs`/`enc3`) and incomplete
+  (`icps`/`icpp`/`icpm`/`icp3`/`icpv`/`icpa`) entries, each keeping the base
+  class's fixed bytes and the appended `sinf`/`cinf` verbatim, with typed
+  accessors for the transform box. `TextMetaDataSampleEntry` accepts `enct`
+  and `icpt`, and `XmlSubtitleSampleEntry` records its four-CC so it can carry
+  `encu`.
+- `hint::RtpoOffsetBox` (`rtpo`), `hint::RolloverCounterBox` (`sroc`) and
+  `hint::ObjectDescriptorBox` (`tOD `), the last reusing the `tPAT`/`tPMT`
+  section-box definition and joining the MPEG-2 TS entry's typed children.
+
+### Breaking
+
+- `subtitle_entries::XmlSubtitleSampleEntry` gains a public `codec_type`
+  field: the entry's four-CC is now carried instead of being rewritten as
+  `stpp`, so a protected `encu` entry round-trips. A struct literal must name
+  it (or start from `new`).
+
 - `threegpp`: the 3GPP TS 26.244 code points — `ThreeGppAudioEntry`
   (`samr`/`sawb`/`sawp`/`sevs`, with `AmrDecoderSpecificBox` and
   `AmrwbPlusDecoderSpecificBox`), `H263SampleEntry` and

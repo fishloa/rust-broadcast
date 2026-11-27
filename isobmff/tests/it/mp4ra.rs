@@ -510,6 +510,9 @@ fn prove_box(code: &str) -> std::result::Result<(), String> {
             "3gau",
             &[0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
         ),
+        "rtpo" => boxed("rtpo", &[0; 4]),
+        "sroc" => boxed("sroc", &[0, 0, 0, 1]),
+        "tOD" => boxed("tOD ", &[0, 0]),
         other => return Err(format!("no box proof for {other:?}")),
     };
     match code {
@@ -533,6 +536,9 @@ fn prove_box(code: &str) -> std::result::Result<(), String> {
         "tfma" => isobmff::threegpp::TrackFragmentMediaAdjustmentBox::parse_box(&bytes).map(|_| ()),
         "spdb" => isobmff::threegpp::ServiceProtectionDescriptionBox::parse_box(&bytes).map(|_| ()),
         "3gau" => isobmff::threegpp::ApplicationDataUnitInfoBox::parse_box(&bytes).map(|_| ()),
+        "rtpo" => isobmff::hint::RtpoOffsetBox::parse_box(&bytes).map(|_| ()),
+        "sroc" => isobmff::hint::RolloverCounterBox::parse_box(&bytes).map(|_| ()),
+        "tOD" => isobmff::hint::ObjectDescriptorBox::parse(&bytes).map(|_| ()),
         other => return Err(format!("no box proof for {other:?}")),
     }
     .map(|_| ())
@@ -543,12 +549,14 @@ const VISUAL_ENTRIES: &[&str] = &[
     "avc1", "avc2", "avc3", "avc4", "avcp", "hvc1", "hev1", "dvh1", "dvhe", "vvc1", "vvi1", "mp4v",
     "av01", "vp09", "rgan", "avs3", "lav3", "PNTG", "SVQ1", "SVQ3", "WRLE", "ap4h", "ap4x", "apch",
     "apcn", "apco", "apcs", "aprh", "aprn", "civd", "dvh5", "dvh6", "dvhp", "dvi", "flic", "gif",
-    "h261", "h263", "jpeg", "mjpa", "mjpb", "png", "rle", "rpza", "tga", "tiff", "s263",
+    "h261", "h263", "jpeg", "mjpa", "mjpb", "png", "rle", "rpza", "tga", "tiff", "s263", "resv",
+    "icpv",
 ];
 const AUDIO_ENTRIES: &[&str] = &[
     "mp4a", "enca", "ac-3", "ec-3", "ac-4", "Opus", "fLaC", "mha1", "mha2", "mhm1", "mhm2", "dtsc",
     "dtsh", "dtsl", "dtse", "lpcm", "in24", "in32", "sowt", "twos", "raw", "fl32", "fl64", "ima4",
     "ulaw", "alaw", "NONE", "QDM2", "QDMC", "Qclp", "agsm", "vdva", "samr", "sawb", "sawp", "sevs",
+    "resa", "icpa",
 ];
 const HINT_ENTRIES: &[&str] = &[
     "rtp", "srtp", "rrtp", "rsrp", "rtcp", "stcp", "prtp", "rm2t", "sm2t", "pm2t", "fdp",
@@ -588,6 +596,9 @@ fn sample_entry_bytes(code: &str) -> Result<Vec<u8>, String> {
         }
         "tmcd" => &[0u8; 25],
         "3gvo" => &[0u8; 1],
+        "sbtt" | "enct" | "icpt" => b"\0\0",
+        "encu" => b"\0\0\0",
+        "enc3" | "icp3" => &[0u8; 40],
         "c608" => &[],
         "mebx" => {
             return Ok(boxed(

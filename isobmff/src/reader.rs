@@ -560,7 +560,11 @@ impl SampleEntryInfo {
                 VISUAL_FIXED
             }
             Some(V::Mp4a(_) | V::Ac3(_) | V::Ec3(_) | V::Ac4(_) | V::Opus(_) | V::Flac(_))
-            | Some(V::Mha(_) | V::Dts(_)) => AUDIO_FIXED,
+            | Some(V::Mha(_) | V::Dts(_) | V::RestrictedAudio(_) | V::IncompleteAudio(_)) => {
+                AUDIO_FIXED
+            }
+            Some(V::RestrictedVideo(_)) => VISUAL_FIXED,
+            Some(V::Transform(entry)) => entry.base().fixed_len(),
             Some(_) => SAMPLE_ENTRY_BASE,
             None => match &self.fourcc {
                 b"resv" | b"icpv" => VISUAL_FIXED,

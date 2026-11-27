@@ -182,7 +182,7 @@ structure this crate parses). A code in no list, or in two, fails the test.
 | `knownduplicates.csv` | 0 | 0 | 0 | 0 | 0 |
 | `multiview-attributes.csv` | 14 | 4 | 10 | 0 | 0 |
 | `oti.csv` | 55 | 0 | 0 | 0 | 55 |
-| `sample-entries.csv` | 191 | 62 | 52 | 77 | 0 |
+| `sample-entries.csv` | 191 | 79 | 35 | 77 | 0 |
 | `sample-entries-boxes.csv` | 100 | 30 | 24 | 46 | 0 |
 | `sample-entries-qt.csv` | 59 | 45 | 0 | 14 | 0 |
 | `sample-groups.csv` | 67 | 44 | 0 | 23 | 0 |
@@ -194,8 +194,8 @@ structure this crate parses). A code in no list, or in two, fails the test.
 | `track-references-qt.csv` | 5 | 5 | 0 | 0 | 0 |
 | `track-selection.csv` | 18 | 17 | 0 | 1 | 0 |
 | `uncv-profiles.csv` | 17 | 0 | 0 | 0 | 17 |
-| `unlisted.csv` | 61 | 42 | 4 | 9 | 6 |
-| **Total** | 1566 | 671 | 119 | 633 | 143 |
+| `unlisted.csv` | 61 | 45 | 1 | 9 | 6 |
+| **Total** | 1566 | 691 | 99 | 633 | 143 |
 
 Trailing spaces are trimmed in these tables: a four-CC such as `rap ` is shown as
 `rap` and space-padded back to four bytes for its proof. Duplicate CSV rows (one code

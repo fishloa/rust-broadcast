@@ -3549,6 +3549,19 @@ pub enum SampleEntryVariant {
     /// A 3GPP metadata sample entry (`3glo`, `3gor`) —
     /// 3GPP TS 26.244 §6.12, §6.13.
     ThreeGppMetadata(Box<crate::threegpp::ThreeGppSimpleEntry>),
+    /// A restricted video sample entry (`resv`) — ISO/IEC 14496-12:2026
+    /// §13.5.2.
+    RestrictedVideo(Box<crate::scheme::RestrictedVideoSampleEntry>),
+    /// A restricted audio sample entry (`resa`) — §13.5.2.
+    RestrictedAudio(Box<crate::scheme::RestrictedAudioSampleEntry>),
+    /// A text subtitle sample entry (`sbtt`) — §12.6.3.
+    Sbtt(Box<crate::subtitle_entries::TextSubtitleSampleEntry>),
+    /// A protected or incomplete entry whose base adds no typed field
+    /// (`encf`/`encm`/`encp`/`encs`/`enc3`, `icps`/`icpp`/`icpm`/`icp3`/`icpv`)
+    /// — §13.4.2, §13.6.2.
+    Transform(Box<crate::transform::TransformSampleEntry>),
+    /// The incomplete audio entry (`icpa`) — §13.6.2.
+    IncompleteAudio(Box<crate::transform::IncompleteAudioSampleEntry>),
     /// An RTP/SRTP/RTCP, MPEG-2 TS or FD hint sample entry (§9.1.2, §9.2.3,
     /// §9.3.3, §9.4.1–9.4.4).
     Hint(Box<crate::hint::HintSampleEntry>),
@@ -3662,6 +3675,11 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::ThreeGppH263(e) => e.serialized_len(),
             SampleEntryVariant::ThreeGppCvo(e) => e.serialized_len(),
             SampleEntryVariant::ThreeGppMetadata(e) => e.serialized_len(),
+            SampleEntryVariant::RestrictedVideo(e) => e.serialized_len(),
+            SampleEntryVariant::RestrictedAudio(e) => e.serialized_len(),
+            SampleEntryVariant::Sbtt(e) => e.serialized_len(),
+            SampleEntryVariant::Transform(e) => e.serialized_len(),
+            SampleEntryVariant::IncompleteAudio(e) => e.serialized_len(),
             SampleEntryVariant::Hint(e) => e.serialized_len(),
             SampleEntryVariant::Unknown(u) => u.serialized_len(),
         }
@@ -3698,6 +3716,11 @@ impl Serialize for SampleEntryVariant {
             SampleEntryVariant::ThreeGppH263(e) => e.serialize_into(buf),
             SampleEntryVariant::ThreeGppCvo(e) => e.serialize_into(buf),
             SampleEntryVariant::ThreeGppMetadata(e) => e.serialize_into(buf),
+            SampleEntryVariant::RestrictedVideo(e) => e.serialize_into(buf),
+            SampleEntryVariant::RestrictedAudio(e) => e.serialize_into(buf),
+            SampleEntryVariant::Sbtt(e) => e.serialize_into(buf),
+            SampleEntryVariant::Transform(e) => e.serialize_into(buf),
+            SampleEntryVariant::IncompleteAudio(e) => e.serialize_into(buf),
             SampleEntryVariant::Hint(e) => e.serialize_into(buf),
             SampleEntryVariant::Unknown(u) => Ok(u.serialize_into(buf)?),
         }
@@ -3771,7 +3794,7 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
         b"mp4a" | b"enca" => SampleEntryVariant::Mp4a(Box::new(Mp4aSampleEntry::parse(box_bytes)?)),
         b"ac-3" => SampleEntryVariant::Ac3(Box::new(Ac3SampleEntry::parse(box_bytes)?)),
         b"ec-3" => SampleEntryVariant::Ec3(Box::new(Ec3SampleEntry::parse(box_bytes)?)),
-        b"stpp" => SampleEntryVariant::Stpp(Box::new(
+        b"stpp" | b"encu" => SampleEntryVariant::Stpp(Box::new(
             crate::subtitle_entries::XmlSubtitleSampleEntry::bare_parse(box_bytes)?,
         )),
         b"wvtt" => SampleEntryVariant::Wvtt(Box::new(
@@ -3801,7 +3824,7 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
         b"metx" => SampleEntryVariant::Metx(Box::new(
             crate::meta_track::XmlMetaDataSampleEntry::parse_box(box_bytes)?,
         )),
-        b"mett" | b"stxt" => SampleEntryVariant::Text(Box::new(
+        b"mett" | b"stxt" | b"enct" | b"icpt" => SampleEntryVariant::Text(Box::new(
             crate::meta_track::TextMetaDataSampleEntry::parse_box(box_bytes)?,
         )),
         b"urim" => SampleEntryVariant::Urim(Box::new(
@@ -3835,6 +3858,22 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
         )),
         b"3glo" | b"3gor" => SampleEntryVariant::ThreeGppMetadata(Box::new(
             crate::threegpp::ThreeGppSimpleEntry::parse_box(box_bytes)?,
+        )),
+        b"resv" => SampleEntryVariant::RestrictedVideo(Box::new(
+            crate::scheme::RestrictedVideoSampleEntry::parse_box(box_bytes)?,
+        )),
+        b"resa" => SampleEntryVariant::RestrictedAudio(Box::new(
+            crate::scheme::RestrictedAudioSampleEntry::parse_box(box_bytes)?,
+        )),
+        b"sbtt" => SampleEntryVariant::Sbtt(Box::new(
+            crate::subtitle_entries::TextSubtitleSampleEntry::parse_box(box_bytes)?,
+        )),
+        b"encf" | b"encm" | b"encp" | b"encs" | b"enc3" | b"icps" | b"icpp" | b"icpm" | b"icp3"
+        | b"icpv" => SampleEntryVariant::Transform(Box::new(
+            crate::transform::TransformSampleEntry::parse_box(box_bytes)?,
+        )),
+        b"icpa" => SampleEntryVariant::IncompleteAudio(Box::new(
+            crate::transform::IncompleteAudioSampleEntry::parse_box(box_bytes)?,
         )),
         b"rtp " | b"srtp" | b"rrtp" | b"rsrp" | b"rtcp" | b"stcp" | b"prtp" | b"rm2t" | b"sm2t"
         | b"pm2t" | b"fdp " => SampleEntryVariant::Hint(Box::new(
@@ -5661,8 +5700,9 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
         | SampleEntryVariant::Mp4v(_)
         | SampleEntryVariant::Av01(_)
         | SampleEntryVariant::Vp09(_)
-        | SampleEntryVariant::QuickTimeVideo(_) => SampleEntryMediaKind::Video,
-        SampleEntryVariant::ThreeGppH263(_) => SampleEntryMediaKind::Video,
+        | SampleEntryVariant::QuickTimeVideo(_)
+        | SampleEntryVariant::ThreeGppH263(_)
+        | SampleEntryVariant::RestrictedVideo(_) => SampleEntryMediaKind::Video,
         SampleEntryVariant::Mp4a(_)
         | SampleEntryVariant::Ac3(_)
         | SampleEntryVariant::Ec3(_)
@@ -5671,7 +5711,9 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
         | SampleEntryVariant::Mha(_)
         | SampleEntryVariant::Dts(_)
         | SampleEntryVariant::Ac4(_)
-        | SampleEntryVariant::ThreeGppAudio(_) => SampleEntryMediaKind::Audio,
+        | SampleEntryVariant::ThreeGppAudio(_)
+        | SampleEntryVariant::RestrictedAudio(_)
+        | SampleEntryVariant::IncompleteAudio(_) => SampleEntryMediaKind::Audio,
         SampleEntryVariant::AvcParameterSet(_)
         | SampleEntryVariant::Stpp(_)
         | SampleEntryVariant::Wvtt(_)
@@ -5686,6 +5728,8 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
         | SampleEntryVariant::Hint(_)
         | SampleEntryVariant::ThreeGppCvo(_)
         | SampleEntryVariant::ThreeGppMetadata(_)
+        | SampleEntryVariant::Sbtt(_)
+        | SampleEntryVariant::Transform(_)
         | SampleEntryVariant::Unknown(_) => SampleEntryMediaKind::Unsupported,
     }
 }

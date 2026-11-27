@@ -658,3 +658,231 @@ impl Serialize for CompleteTrackInfoBox {
         Ok(cursor)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Restricted sample entries — §13.5.2 (Table 14)
+// ---------------------------------------------------------------------------
+
+/// `revision_level` + `vendor` width in an audio sample entry's fixed part.
+const AUDIO_VENDOR_BLOCK_LEN: usize = 6;
+/// `samplesize` a default audio entry states.
+const DEFAULT_SAMPLESIZE: u16 = 16;
+
+/// Parse a `rinf` child out of a captured child list (§13.5.3).
+fn parse_rinf(children: &[crate::box_support::OpaqueBox]) -> Option<RestrictedSchemeInfoBox> {
+    let bytes = find_child(children, RINF)?;
+    let mut whole = alloc::vec![0u8; BOX_HEADER_MIN_SIZE + bytes.len()];
+    let size = broadcast_core::len::fit_u32(whole.len(), "rinf").ok()?;
+    whole[..core::mem::size_of::<u32>()].copy_from_slice(&size.to_be_bytes());
+    whole[core::mem::size_of::<u32>()..BOX_HEADER_MIN_SIZE].copy_from_slice(&RINF);
+    whole[BOX_HEADER_MIN_SIZE..].copy_from_slice(bytes);
+    RestrictedSchemeInfoBox::parse(&whole).ok()
+}
+
+/// Four-CC of the restricted video sample entry (`resv`, §13.5.2).
+pub const RESV: [u8; BOX_TYPE_SIZE] = *b"resv";
+/// Four-CC of the restricted audio sample entry (`resa`, §13.5.2).
+pub const RESA: [u8; BOX_TYPE_SIZE] = *b"resa";
+
+fn find_child(
+    children: &[crate::box_support::OpaqueBox],
+    fourcc: [u8; BOX_TYPE_SIZE],
+) -> Option<&[u8]> {
+    children
+        .iter()
+        .find(|child| child.box_type == fourcc)
+        .map(|child| child.data.as_slice())
+}
+
+/// The restricted video sample entry (`resv`) — §13.5.2 Table 14.
+///
+/// A `VisualSampleEntry` whose four-CC is replaced and a `rinf` added; every
+/// other box is left unmodified, so the children are kept verbatim in wire
+/// order and `rinf` is parsed out of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct RestrictedVideoSampleEntry {
+    visual: crate::sample_entries::VisualSampleEntryFields,
+    children: Vec<crate::box_support::OpaqueBox>,
+}
+
+impl RestrictedVideoSampleEntry {
+    /// The entry's four-CC.
+    pub const FOURCC: [u8; BOX_TYPE_SIZE] = RESV;
+
+    /// Build an empty entry with default fixed fields.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            visual: crate::sample_entries::VisualSampleEntryFields::default(),
+            children: Vec::new(),
+        }
+    }
+
+    /// The fixed sample description fields.
+    #[must_use]
+    pub const fn visual(&self) -> &crate::sample_entries::VisualSampleEntryFields {
+        &self.visual
+    }
+
+    /// The children after the fixed part, `rinf` included, verbatim.
+    #[must_use]
+    pub fn children(&self) -> &[crate::box_support::OpaqueBox] {
+        &self.children
+    }
+
+    /// The restriction scheme info (`rinf`, §13.5.3), when present.
+    #[must_use]
+    pub fn restricted_scheme(&self) -> Option<RestrictedSchemeInfoBox> {
+        parse_rinf(&self.children)
+    }
+
+    /// Parse a whole entry, box header included.
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
+        let item = crate::box_types::parse_box(bytes)?.0;
+        if !item.header.box_type.is(&RESV) {
+            return Err(Error::UnexpectedBox { expected: "resv" });
+        }
+        let mut visual = crate::sample_entries::VisualSampleEntryFields::parse_body(bytes, "resv")?;
+        let region =
+            crate::sample_entries::VisualSampleEntryFields::children_region(bytes, "resv")?;
+        let (children, trailing) = crate::box_support::capture_children(region).into_parts();
+        visual.trailing = trailing.into_boxed_slice();
+        Ok(Self { visual, children })
+    }
+}
+
+impl Default for RestrictedVideoSampleEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Serialize for RestrictedVideoSampleEntry {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        let mut n = BOX_HEADER_MIN_SIZE
+            + crate::sample_entries::VisualSampleEntryFields::serialized_len()
+            + self.visual.trailing.len();
+        for child in &self.children {
+            n += child.serialized_len();
+        }
+        crate::box_types::box_len(n)
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_box_header(buf, &RESV, need)?;
+        c += self.visual.serialize_body_into(&mut buf[c..])?;
+        for child in &self.children {
+            c += child.serialize_into(&mut buf[c..])?;
+        }
+        let end = c + self.visual.trailing.len();
+        need_out(buf, end)?;
+        buf[c..end].copy_from_slice(&self.visual.trailing);
+        Ok(end)
+    }
+}
+
+/// The restricted audio sample entry (`resa`) — §13.5.2 Table 14.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct RestrictedAudioSampleEntry {
+    entry: crate::init_segment::ParsedAudioSampleEntry,
+}
+
+impl RestrictedAudioSampleEntry {
+    /// The entry's four-CC.
+    pub const FOURCC: [u8; BOX_TYPE_SIZE] = RESA;
+
+    /// Build an empty entry with default fixed fields.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            entry: crate::init_segment::ParsedAudioSampleEntry {
+                reserved: [0; crate::sample_entries::SAMPLE_ENTRY_RESERVED_LEN],
+                entry_version: 0,
+                reserved_1: [0; AUDIO_VENDOR_BLOCK_LEN],
+                data_reference_index: 1,
+                channelcount: 1,
+                samplesize: DEFAULT_SAMPLESIZE,
+                compression_id_and_packet_size: [0; core::mem::size_of::<u32>()],
+                samplerate: 0,
+                quicktime: None,
+                config_boxes: Vec::new(),
+                trailing: Vec::new(),
+            },
+        }
+    }
+
+    /// `channelcount`.
+    #[must_use]
+    pub const fn channelcount(&self) -> u16 {
+        self.entry.channelcount
+    }
+
+    /// The children after the fixed part, `rinf` included, verbatim.
+    #[must_use]
+    pub fn children(&self) -> &[crate::box_support::OpaqueBox] {
+        &self.entry.config_boxes
+    }
+
+    /// The restriction scheme info (`rinf`, §13.5.3), when present.
+    #[must_use]
+    pub fn restricted_scheme(&self) -> Option<RestrictedSchemeInfoBox> {
+        parse_rinf(&self.entry.config_boxes)
+    }
+
+    /// Parse a whole entry, box header included.
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
+        let item = crate::box_types::parse_box(bytes)?.0;
+        if !item.header.box_type.is(&RESA) {
+            return Err(Error::UnexpectedBox { expected: "resa" });
+        }
+        Ok(Self {
+            entry: crate::init_segment::parse_audio_sample_entry(bytes, "resa")?,
+        })
+    }
+}
+
+impl Default for RestrictedAudioSampleEntry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Serialize for RestrictedAudioSampleEntry {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        crate::init_segment::audio_sample_entry_serialized_len(
+            &self.entry.quicktime,
+            &self.entry.config_boxes,
+            &self.entry.trailing,
+        )
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        crate::init_segment::serialize_audio_sample_entry(
+            buf,
+            crate::init_segment::AudioSampleEntryFields {
+                fourcc: &RESA,
+                reserved: self.entry.reserved,
+                entry_version: self.entry.entry_version,
+                reserved_1: self.entry.reserved_1,
+                data_reference_index: self.entry.data_reference_index,
+                channelcount: self.entry.channelcount,
+                samplesize: self.entry.samplesize,
+                compression_id_and_packet_size: self.entry.compression_id_and_packet_size,
+                samplerate: self.entry.samplerate,
+                quicktime: &self.entry.quicktime,
+                config_boxes: &self.entry.config_boxes,
+                trailing: &self.entry.trailing,
+            },
+        )
+    }
+}

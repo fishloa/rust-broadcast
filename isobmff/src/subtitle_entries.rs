@@ -101,6 +101,8 @@ pub struct XmlSubtitleSampleEntry {
     pub schema_location: String,
     /// Auxiliary MIME types, null-terminated (may be empty).
     pub auxiliary_mime_types: String,
+    /// The entry's four-CC: `stpp`, or `encu` for the protected subtitle entry.
+    pub codec_type: [u8; BOX_TYPE_SIZE],
     /// Optional trailing boxes (e.g. `btrt`) preserved verbatim for round-trip.
     pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
 }
@@ -114,12 +116,21 @@ impl XmlSubtitleSampleEntry {
             namespace: namespace.into(),
             schema_location: String::new(),
             auxiliary_mime_types: String::new(),
+            codec_type: STPP,
             extra_boxes: Vec::new(),
         }
     }
 
     /// Parse from full box bytes (including the 8-byte box header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
+        let mut codec_type = [0u8; BOX_TYPE_SIZE];
+        codec_type.copy_from_slice(bytes.get(BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE).ok_or(
+            Error::BufferTooShort(BufferTooShort {
+                need: BOX_HEADER_MIN_SIZE,
+                have: bytes.len(),
+                what: "stpp header",
+            }),
+        )?);
         // Minimum body: SampleEntry reserved+dri (8) + 3 NUL bytes = 11
         let body = crate::box_types::box_body(
             bytes,
@@ -163,6 +174,7 @@ impl XmlSubtitleSampleEntry {
             namespace,
             schema_location,
             auxiliary_mime_types,
+            codec_type,
             extra_boxes,
         })
     }
@@ -198,7 +210,7 @@ impl Serialize for XmlSubtitleSampleEntry {
         need_out(buf, need)?;
         let mut c = 0usize;
         // box header: size(32) + fourcc(32)
-        c += crate::box_types::write_box_header(buf, b"stpp", need)?;
+        c += crate::box_types::write_box_header(buf, &self.codec_type, need)?;
         // SampleEntry: reserved(6) + data_reference_index(16).
         buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].copy_from_slice(&self.reserved);
         c += SAMPLE_ENTRY_RESERVED_LEN;
@@ -1161,6 +1173,140 @@ impl Serialize for ClosedCaptionSampleEntry {
         buf[c..c + core::mem::size_of::<u16>()]
             .copy_from_slice(&self.data_reference_index.to_be_bytes());
         c += core::mem::size_of::<u16>();
+        for child in &self.config_boxes {
+            c += child.serialize_into(&mut buf[c..])?;
+        }
+        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
+        c += self.trailing.len();
+        Ok(c)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TextSubtitleSampleEntry — 'sbtt' (§12.6.3)
+// ---------------------------------------------------------------------------
+
+/// Four-CC of the XML subtitle sample entry (`stpp`).
+pub const STPP: [u8; BOX_TYPE_SIZE] = *b"stpp";
+/// Four-CC of the protected XML subtitle entry (`encu`, §13.4.2 Table 13).
+pub const ENCU: [u8; BOX_TYPE_SIZE] = *b"encu";
+/// Four-CC of the text subtitle sample entry (`sbtt`).
+pub const SBTT: [u8; BOX_TYPE_SIZE] = *b"sbtt";
+
+/// The text subtitle sample entry (`sbtt`) — ISO/IEC 14496-12:2026 §12.6.3.
+///
+/// `TextSubtitleSampleEntry extends SubtitleSampleEntry('sbtt')` with two
+/// null-terminated strings (`content_encoding`, `mime_format`) and an optional
+/// `TextConfigBox`; every later box is kept verbatim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct TextSubtitleSampleEntry {
+    reserved: [u8; SAMPLE_ENTRY_RESERVED_LEN],
+    data_reference_index: u16,
+    content_encoding: Vec<u8>,
+    mime_format: Vec<u8>,
+    config_boxes: Vec<OpaqueBox>,
+    trailing: Vec<u8>,
+}
+
+impl TextSubtitleSampleEntry {
+    /// Build one from its two MIME strings.
+    #[must_use]
+    pub fn new(content_encoding: &[u8], mime_format: &[u8]) -> Self {
+        Self {
+            reserved: [0; SAMPLE_ENTRY_RESERVED_LEN],
+            data_reference_index: 1,
+            content_encoding: content_encoding.to_vec(),
+            mime_format: mime_format.to_vec(),
+            config_boxes: Vec::new(),
+            trailing: Vec::new(),
+        }
+    }
+
+    /// The `content_encoding` string (empty when the samples are not encoded).
+    #[must_use]
+    pub fn content_encoding(&self) -> &[u8] {
+        &self.content_encoding
+    }
+
+    /// The `mime_format` string.
+    #[must_use]
+    pub fn mime_format(&self) -> &[u8] {
+        &self.mime_format
+    }
+
+    /// The `TextConfigBox` and any later box, verbatim.
+    #[must_use]
+    pub fn config_boxes(&self) -> &[OpaqueBox] {
+        &self.config_boxes
+    }
+
+    /// Parse a whole entry, box header included.
+    pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        need_in(bytes, BOX_HEADER_MIN_SIZE + SAMPLE_ENTRY_FIXED_LEN, "sbtt")?;
+        if bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE] != SBTT {
+            return Err(Error::UnexpectedBox { expected: "sbtt" });
+        }
+        let body = &bytes[BOX_HEADER_MIN_SIZE..];
+        let mut reserved = [0u8; SAMPLE_ENTRY_RESERVED_LEN];
+        reserved.copy_from_slice(&body[..SAMPLE_ENTRY_RESERVED_LEN]);
+        let data_reference_index = be_u16(body, DATA_REFERENCE_INDEX_OFFSET, "sbtt")?;
+        let (content_encoding, at) = parse_cstring(body, SAMPLE_ENTRY_FIXED_LEN)?;
+        let (mime_format, at) = parse_cstring(body, at)?;
+        let (config_boxes, trailing) = capture_children(&body[at..]).into_parts();
+        Ok(Self {
+            reserved,
+            data_reference_index,
+            content_encoding: content_encoding.into_bytes(),
+            mime_format: mime_format.into_bytes(),
+            config_boxes,
+            trailing,
+        })
+    }
+}
+
+impl<'a> Parse<'a> for TextSubtitleSampleEntry {
+    type Error = Error;
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        Self::parse_box(bytes)
+    }
+}
+
+impl Serialize for TextSubtitleSampleEntry {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        let children: usize = self
+            .config_boxes
+            .iter()
+            .map(Serialize::serialized_len)
+            .sum();
+        crate::box_types::box_len(
+            BOX_HEADER_MIN_SIZE
+                + SAMPLE_ENTRY_FIXED_LEN
+                + self.content_encoding.len()
+                + 1
+                + self.mime_format.len()
+                + 1
+                + children
+                + self.trailing.len(),
+        )
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let need = self.serialized_len();
+        need_out(buf, need)?;
+        let mut c = crate::box_types::write_box_header(buf, &SBTT, need)?;
+        buf[c..c + SAMPLE_ENTRY_RESERVED_LEN].copy_from_slice(&self.reserved);
+        c += SAMPLE_ENTRY_RESERVED_LEN;
+        buf[c..c + core::mem::size_of::<u16>()]
+            .copy_from_slice(&self.data_reference_index.to_be_bytes());
+        c += core::mem::size_of::<u16>();
+        for text in [&self.content_encoding, &self.mime_format] {
+            buf[c..c + text.len()].copy_from_slice(text);
+            c += text.len();
+            buf[c] = 0;
+            c += 1;
+        }
         for child in &self.config_boxes {
             c += child.serialize_into(&mut buf[c..])?;
         }
