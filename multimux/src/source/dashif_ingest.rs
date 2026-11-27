@@ -1130,4 +1130,68 @@ mod tests {
         };
         assert_eq!(rep_id, "v1");
     }
+
+    const DAMAGE_ROUTE: &str = "dashif-ingest-damage-probe";
+    const DAMAGE_KIND: &str = "dashif_ingest";
+    const METRIC_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+    const METRIC_CEILING: std::time::Duration = std::time::Duration::from_secs(10);
+
+    fn ingest_trunk_config() -> TrunkConfig {
+        let nz = |n: usize| std::num::NonZeroUsize::new(n).expect("a non-zero capacity");
+        TrunkConfig::default()
+            .with_timed_capacity(nz(64))
+            .with_sparse_capacity(nz(16))
+            .with_segment_capacity(nz(8))
+            .with_event_capacity(nz(8))
+            .with_part_capacity(nz(8))
+    }
+
+    /// A skip the session makes (an HLS manifest it does not use) is handed
+    /// up through the route to its damage metric.
+    #[tokio::test]
+    async fn a_skipped_hls_manifest_reaches_the_route_damage_metric() {
+        crate::prometheus::install();
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let route = DashifIngestRoute::with_listener(DAMAGE_ROUTE, listener, "/live");
+        let route_handle = Arc::new(
+            RouteHandle::new(crate::route::RouteConfig::default())
+                .with_name(DAMAGE_ROUTE)
+                .with_input_kind(DAMAGE_KIND),
+        );
+        let runner = tokio::spawn(async move {
+            run_dashif_ingest(
+                &route,
+                ingest_trunk_config(),
+                HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX)),
+                &route_handle,
+            )
+            .await
+        });
+        let client = crate::source::client_host::http_client().expect("client");
+        let posted = client
+            .post(format!("http://{addr}/live/index.m3u8"))
+            .body("#EXTM3U\n")
+            .send()
+            .await
+            .expect("the manifest is posted");
+        assert!(posted.status().is_success(), "{}", posted.status());
+
+        let deadline = tokio::time::Instant::now() + METRIC_CEILING;
+        let line = loop {
+            if let Some(line) = crate::testutil::rendered_line(
+                "multimux_source_damage_total",
+                &[("route", DAMAGE_ROUTE), ("source", DAMAGE_KIND)],
+            ) {
+                break line;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "a skipped manifest must reach the route's damage metric"
+            );
+            tokio::time::sleep(METRIC_POLL).await;
+        };
+        assert!(line.contains(r#"kind="metadata skipped""#), "{line}");
+        runner.abort();
+    }
 }
