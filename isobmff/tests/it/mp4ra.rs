@@ -449,6 +449,16 @@ fn prove_data_reference(code: &str) -> std::result::Result<(), String> {
 }
 
 fn prove_box(code: &str) -> std::result::Result<(), String> {
+    if code == "tran" {
+        let bytes = boxed("tran", &[0]);
+        let parsed = isobmff::avc_config::TranscodingInfoBox::parse(&bytes)
+            .map_err(|e| format!("tran: {e:?}"))?;
+        let again = parsed.try_to_bytes().map_err(|e| format!("tran: {e:?}"))?;
+        if again != bytes {
+            return Err("tran round trip differs".to_string());
+        }
+        return Ok(());
+    }
     if let Some(row) = TYPED_BOXES.iter().find(|r| r.name.trim_end() == code) {
         return (row.proves)().map_err(|e| format!("{}: {e:?}", row.name));
     }
@@ -506,7 +516,6 @@ fn prove_box(code: &str) -> std::result::Result<(), String> {
         "md5i" => isobmff::integrity::Md5IntegrityBox::parse(&bytes).map(|_| ()),
         "url" => isobmff::init_segment::DataEntryUrlBox::parse(&bytes).map(|_| ()),
         "wide" => isobmff::segments::WideAtom::parse(&bytes).map(|_| ()),
-        "tran" => isobmff::avc_config::TranscodingInfoBox::parse(&bytes).map(|_| ()),
         other => return Err(format!("no box proof for {other:?}")),
     }
     .map(|_| ())
