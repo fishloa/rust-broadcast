@@ -6,12 +6,13 @@ use core::fmt;
 
 use crate::availability::Probe;
 use crate::codec::token;
+use crate::delay::{DecoderDelay, DecoderTrim};
 use crate::descriptor::CodecDescriptor;
 use crate::profile::CodecProfile;
 use crate::provider_info::ProviderInfo;
 
 /// The number of columns the table writes.
-const COLUMNS: usize = 9;
+const COLUMNS: usize = 10;
 /// What separates two table columns.
 const COLUMN_SEPARATOR: &str = "  ";
 /// What a cell holds when the descriptor or provider states nothing.
@@ -24,6 +25,7 @@ const HEADER: [&str; COLUMNS] = [
     "implementation",
     "kind",
     "lossless",
+    "delay",
     "profiles",
     "availability",
     "licence",
@@ -133,6 +135,7 @@ fn row(entry: &InventoryEntry) -> [String; COLUMNS] {
         descriptor.implementation().into(),
         kind(descriptor).into(),
         lossless(descriptor).into(),
+        delay(descriptor),
         profiles(descriptor),
         entry.probe().availability().name().into(),
         entry.provider().licence().unwrap_or(ABSENT).into(),
@@ -166,6 +169,18 @@ fn kind(descriptor: &CodecDescriptor) -> &'static str {
 /// `yes` for a lossless implementation, [`ABSENT`] otherwise.
 fn lossless(descriptor: &CodecDescriptor) -> &'static str {
     if descriptor.lossless() { "yes" } else { ABSENT }
+}
+
+/// What the implementation states about its own output delay.
+fn delay(descriptor: &CodecDescriptor) -> String {
+    match descriptor.trim() {
+        DecoderTrim::Caller(delay) => match delay {
+            DecoderDelay::Declared(samples) => alloc::format!("{samples}"),
+            DecoderDelay::PerStream => "per stream".into(),
+            DecoderDelay::Unknown => "unknown".into(),
+        },
+        DecoderTrim::Implementation => "applies trim".into(),
+    }
 }
 
 /// The profile tokens joined by `/`, or [`ABSENT`].
