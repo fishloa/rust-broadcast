@@ -133,11 +133,29 @@ async fn a_skipped_packet_run_reaches_the_player_as_one_report_and_playback_cont
         // The receiver keeps reading while the sender runs, exactly as a
         // player does.
         let mut rig = send.await.expect("join sender");
+        let expected = NUM_PAYLOADS - DROPPED_RUN.len();
         let mut damages = Vec::new();
         let mut payloads = 0usize;
-        while payloads < NUM_PAYLOADS - DROPPED_RUN.len() {
+        let mut after_gap: Option<usize> = None;
+        while payloads < expected || damages.is_empty() {
             match rig.receiver.recv_event().await.expect("recv") {
-                Some(SrtEvent::Payload(_)) => payloads = payloads.saturating_add(1),
+                Some(SrtEvent::Payload(bytes)) => {
+                    payloads = payloads.saturating_add(1);
+                    let index = usize::from(bytes[0]);
+                    assert!(
+                        !DROPPED_RUN.contains(&index),
+                        "a payload the relay never forwarded was delivered: {index}"
+                    );
+                    if DROPPED_RUN.end <= index && after_gap.is_none() {
+                        assert_eq!(
+                            damages.len(),
+                            1,
+                            "the report for the gap must come before payload {index}, \
+                             the first one past it"
+                        );
+                        after_gap = Some(index);
+                    }
+                }
                 Some(SrtEvent::Damage(damage)) => damages.push(damage),
                 Some(other) => panic!("unexpected event: {other:?}"),
                 None => break,
@@ -160,6 +178,11 @@ async fn a_skipped_packet_run_reaches_the_player_as_one_report_and_playback_cont
         assert!(
             payloads > DROPPED_RUN.len(),
             "playback continued past the skipped run ({payloads} payloads)"
+        );
+        assert_eq!(
+            after_gap,
+            Some(DROPPED_RUN.end),
+            "the first payload past the run arrived right after it"
         );
     })
     .await
