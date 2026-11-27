@@ -16,7 +16,11 @@
 //! - for damage inside media bytes, every sample whose bytes the damage did
 //!   not touch is delivered;
 //! - every damaged cell publishes at least one report;
-//! - per-track decode times stay monotonic;
+//! - per-track decode times stay monotonic, except where the damage is inside a
+//!   box that states a fragment's own clock (`tfdt`, `trun`, `tfhd`, `tfra`,
+//!   `mehd`): that clock is what the source says, and a reader that rewrote it
+//!   would alter a legitimate timeline restart (a new DASH period does exactly
+//!   that);
 //! - a clean input publishes nothing and delivers exactly the clean samples.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -465,6 +469,23 @@ fn still_shape(image: &StillImage) -> Vec<ItemShape> {
         .collect()
 }
 
+/// Whether a cell's damage touched a box that states a fragment's clock: the
+/// file's own timeline is then what the reader hands out, and a rewind is the
+/// source's statement, not the reader's.
+fn timing_box(original: &[u8], damage: &Damage_) -> bool {
+    let touched = damage.touched(original.len());
+    boxes(original).iter().any(|item| {
+        matches!(
+            &item.fourcc,
+            b"trun" | b"tfhd" | b"tfdt" | b"tfra" | b"mehd"
+        ) && touched.iter().any(|(offset, len)| {
+            let start = item.offset;
+            let end = item.offset.saturating_add(item.size);
+            *offset < end && start < offset.saturating_add(*len)
+        })
+    })
+}
+
 fn monotonic(drive: &Drive) -> bool {
     let mut per_track: BTreeMap<u32, Vec<u64>> = BTreeMap::new();
     for sample in &drive.samples {
@@ -611,7 +632,12 @@ fn a_damaged_fixture_plays_what_is_addressable_and_reports_the_rest() {
                     }
                 }
             }
-            if !monotonic(&result) {
+            // Progressive files are this reader's own timeline, so it never
+            // hands one out backwards. A fragmented file's clock is the
+            // file's: damage inside a box that states it (a `tfdt`, a `trun`
+            // duration, a `tfhd` default) is what the source says, and the
+            // reader does not rewrite what the source states.
+            if !timing_box(&original, &damage) && !monotonic(&result) {
                 failures.push(format!("{label}: decode times are not monotonic"));
             }
         }

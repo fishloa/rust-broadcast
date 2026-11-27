@@ -579,11 +579,12 @@ impl Mp4Demux {
             .location()
             .byte_range()
             .map_or(0, broadcast_core::damage::ByteRange::start);
-        let kind = match damage.kind() {
-            broadcast_core::damage::DamageKind::InputTruncated => {
-                InputDegradation::TruncatedUnit { position }
-            }
-            _ => InputDegradation::MalformedUnit { position },
+        // The crate's own vocabulary keeps its meaning: only a cut media tail
+        // is a truncated unit, a fault in a fragment's structure is malformed.
+        let kind = if damage.what() == "truncated-mdat" {
+            InputDegradation::TruncatedUnit { position }
+        } else {
+            InputDegradation::MalformedUnit { position }
         };
         self.events.push_back(DemuxEvent::InputDegraded {
             track: None,

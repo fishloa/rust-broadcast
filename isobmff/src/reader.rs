@@ -1094,12 +1094,6 @@ pub enum Warning {
         /// Absolute offset of the box whose size was impossible.
         offset: u64,
     },
-    /// A fragment's stated timeline began before what had already played; its
-    /// samples were moved forward to keep the track monotonic.
-    RebasedFragment {
-        /// Absolute offset of the fragment's `moof`.
-        offset: u64,
-    },
     /// A header the walk needs was missing or unreadable and a default was
     /// synthesized so the rest of the file could still be read.
     SynthesizedBox {
@@ -1135,7 +1129,6 @@ impl Warning {
             Self::MalformedFragment { .. } => "malformed-fragment",
             Self::TrailingBytes { .. } => "trailing-bytes",
             Self::Resynchronised { .. } => "resynchronised",
-            Self::RebasedFragment { .. } => "rebased-fragment",
             Self::SynthesizedBox { .. } => "synthesized-box",
             Self::UnrepresentableBox { .. } => "unrepresentable-box",
         }
@@ -1158,7 +1151,6 @@ impl Warning {
             | Self::MalformedFragment { offset }
             | Self::TrailingBytes { offset, .. }
             | Self::Resynchronised { offset }
-            | Self::RebasedFragment { offset }
             | Self::SynthesizedBox { offset, .. }
             | Self::UnrepresentableBox { offset, .. } => *offset,
         }
@@ -1309,9 +1301,6 @@ struct ResolvedFragment {
     info: FragmentInfo,
     samples: Vec<SampleRef>,
     truncated: bool,
-    /// Whether a track's stated timeline began before what had already played
-    /// and was moved forward.
-    rebased: bool,
     /// Per track: the `moov` track index, the decode time after the fragment
     /// and the sample count after it.
     cursors: Vec<(usize, u64, u32)>,
@@ -2218,7 +2207,10 @@ fn opaque_stsd_has_body(stsd: &[u8]) -> bool {
 fn tolerable_fragment_error(error: &Error) -> bool {
     matches!(
         error,
-        Error::BufferTooShort(_) | Error::InvalidInput(_) | Error::SampleDataBudgetExceeded { .. }
+        Error::BufferTooShort(_)
+            | Error::InvalidInput(_)
+            | Error::SampleDataBudgetExceeded { .. }
+            | Error::ZeroWidthTrunBudgetExceeded { .. }
     )
 }
 
@@ -2405,7 +2397,17 @@ impl Reader {
     fn accept_header(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
         let offset = range.offset;
         if bytes.len() < BOX_HEADER_MIN_SIZE {
-            if bytes.is_empty() && self.at_end(offset) {
+            // The input ends inside a box header: the bytes cannot describe a
+            // box, so the walk stops and reports the tail.
+            let end = offset.saturating_add(u64::try_from(bytes.len()).unwrap_or(u64::MAX));
+            if self.at_end(end) {
+                if !bytes.is_empty() {
+                    self.warn(Warning::TrailingBytes {
+                        box_type: [0u8; BOX_TYPE_SIZE],
+                        offset,
+                        carried: u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+                    });
+                }
                 self.done = true;
                 return Ok(());
             }
@@ -2879,6 +2881,15 @@ impl Reader {
     }
 
     fn accept_moov(&mut self, range: ByteRange, bytes: &[u8]) -> Result<()> {
+        if self.movie.is_some() {
+            // A second track table is a new presentation: the samples already
+            // handed out cannot be combined with it, so the caller must start
+            // a new stage (this predates the damage lane and is a contract,
+            // not a fault).
+            return Err(Error::InvalidInput(
+                "a second moov box starts a new presentation; start a new stage",
+            ));
+        }
         // The source's own bytes first: a `moov` that parses as it stands is
         // read from them unchanged, so a clean file re-emits byte for byte.
         let mut repaired = Vec::new();
@@ -3129,10 +3140,6 @@ impl Reader {
             self.deferred_warning = Some(Warning::TruncatedFragment {
                 offset: state.offset,
             });
-        } else if resolved.rebased {
-            self.deferred_warning = Some(Warning::RebasedFragment {
-                offset: state.offset,
-            });
         }
         for (index, decode_time, count) in resolved.cursors {
             self.decode_times[index] = decode_time;
@@ -3166,7 +3173,6 @@ impl Reader {
             total.saturating_add(range.end().saturating_sub(range.start()))
         });
         let mut copied_bytes = 0u64;
-        let mut rebased = false;
         let mut rows: Vec<(usize, SampleRef)> = Vec::new();
         let mut truncated = false;
         let mut present: Vec<TrackId> = Vec::new();
@@ -3191,12 +3197,7 @@ impl Reader {
             // A fragment whose timeline starts before what already played
             // (a damaged duration upstream, a wrong `tfdt`) is moved forward
             // instead of handing out a sample that goes backwards.
-            let base = if stated < self.decode_times[index] {
-                rebased = true;
-                self.decode_times[index]
-            } else {
-                stated
-            };
+            let base = stated;
             let (ranges, cut) = if partial {
                 sample_ranges_in_run_until(
                     state.offset,
@@ -3296,7 +3297,6 @@ impl Reader {
             },
             samples: rows.into_iter().map(|(_, sample)| sample).collect(),
             truncated,
-            rebased,
             cursors,
         })
     }

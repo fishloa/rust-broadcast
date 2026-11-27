@@ -99,13 +99,6 @@ impl Warning {
                 Some(DamageByteRange::new(offset, 0)),
                 false,
             ),
-            Self::RebasedFragment { offset } => (
-                DamageKind::TimelineRepaired,
-                Severity::Degraded,
-                None,
-                Some(DamageByteRange::new(offset, 0)),
-                false,
-            ),
             Self::SynthesizedBox { box_type, offset } => (
                 DamageKind::MetadataSkipped,
                 Severity::Degraded,

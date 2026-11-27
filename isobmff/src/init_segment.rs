@@ -6044,6 +6044,7 @@ impl MovieBox {
         let mut mvex = None;
         let mut opaque = Vec::new();
         let mut order = ChildOrder::default();
+        let mut saw_child = false;
         let parsed = parse_box(bytes)?.0;
         let degrade = notes.as_deref().is_some_and(|notes| notes.degrades());
         let (children, tail) = crate::box_support::container_children(parsed.body, degrade)?;
@@ -6051,6 +6052,7 @@ impl MovieBox {
             notes.trailing(tail, tail.len());
         }
         for child in children {
+            saw_child = true;
             match &child.four_cc() {
                 b"mvhd" => match MovieHeaderBox::parse(child.bytes) {
                     Ok(header) => {
@@ -6126,7 +6128,9 @@ impl MovieBox {
         }
         let mvhd = match mvhd {
             Some(mvhd) => mvhd,
-            None if notes.as_deref().is_some_and(|notes| notes.degrades()) => {
+            // A moov with children but no readable header is a damaged
+            // header; an empty moov states nothing to replace.
+            None if saw_child && notes.as_deref().is_some_and(|notes| notes.degrades()) => {
                 if let Some(notes) = &mut notes {
                     notes.missing(bytes, *b"mvhd");
                 }

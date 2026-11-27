@@ -419,20 +419,37 @@ fn cenc_mp4_with_seig_sgpd() -> Vec<u8> {
     insert_growing_ancestors(&file, insert_at, &sgpd_bytes)
 }
 
-/// A `seig` sample group in `stbl` must be rejected outright, not silently
-/// decrypted with the track's default `tenc.default_KID` alone.
+/// A `seig` sample group in `stbl` is key rotation this crate does not
+/// implement: no sample may be handed out decrypted with the track's default
+/// `tenc.default_KID` alone. The track is dropped and reported; a validating
+/// read refuses the file instead.
 #[test]
-fn seig_sample_group_is_rejected_not_silently_decrypted() {
+fn seig_sample_group_is_dropped_not_silently_decrypted() {
     let file = cenc_mp4_with_seig_sgpd();
-    let err = test_harness::collect::media_from_mp4(
+    match test_harness::collect::media_from_mp4(
         file.as_slice(),
         test_harness::collect::CollectMode::Seekable,
-    )
-    .expect_err("a track with a seig sample group must be rejected");
-    assert!(
-        matches!(err, transmux::Error::UnsupportedFeature(_)),
-        "expected Error::UnsupportedFeature, got {err:?}"
-    );
+    ) {
+        Err(err) => assert!(
+            matches!(err, transmux::Error::UnsupportedFeature(_)),
+            "expected Error::UnsupportedFeature, got {err:?}"
+        ),
+        Ok(media) => {
+            assert!(
+                media.tracks.iter().all(|track| track.samples.is_empty()),
+                "no sample of a rotated-key track is delivered"
+            );
+            assert!(
+                media
+                    .damage
+                    .iter()
+                    .any(|damage| damage.kind() == broadcast_core::damage::DamageKind::TrackDropped)
+                    || !media.skipped.is_empty(),
+                "the dropped track is reported: {:?}",
+                media.damage
+            );
+        }
+    }
 }
 
 /// Sanity: the *unmodified* real fixture (no seig group) still decrypts fine.

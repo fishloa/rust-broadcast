@@ -90,9 +90,11 @@ fn damage(data: &[u8]) -> Vec<u8> {
 fn allowed(error: &isobmff::Error) -> bool {
     match error {
         isobmff::Error::InvalidInput(text) => {
-            text.contains("no moov") || text.contains("no track")
+            text.contains("no moov") || text.contains("no track") || text.contains("second moov")
         }
-        isobmff::Error::LimitExceeded { .. } => true,
+        isobmff::Error::LimitExceeded { .. }
+        | isobmff::Error::SampleDataBudgetExceeded { .. }
+        | isobmff::Error::ZeroWidthTrunBudgetExceeded { .. } => true,
         _ => false,
     }
 }
@@ -105,7 +107,6 @@ fn drive(data: &[u8]) {
         .with_source(Source::Seekable)
         .with_limits(fuzz_limits());
     let mut reader = Reader::new(config);
-    let mut last: Option<(u32, u64)> = None;
     let mut tracks = 0usize;
     let mut samples = 0usize;
     let mut dropped = false;
@@ -123,16 +124,15 @@ fn drive(data: &[u8]) {
             Ok(Step::Tracks(table)) => tracks += table.len(),
             Ok(Step::Sample(sample)) => {
                 samples += 1;
-                if let Some((track, time)) = last
-                    && track == sample.track.value()
-                {
-                    assert!(
-                        sample.decode_time >= time,
-                        "decode times are monotonic on one track: {time} then {}",
-                        sample.decode_time
-                    );
-                }
-                last = Some((sample.track.value(), sample.decode_time));
+                // No delivered sample may point outside the input it came
+                // from. A fragmented file's stated clock is its own (a new
+                // period may restart it), so timing is not policed here.
+                let end = sample.offset.saturating_add(u64::from(sample.size));
+                assert!(
+                    end <= data.len() as u64,
+                    "a sample addresses {end} in a {}-byte input",
+                    data.len()
+                );
             }
             Ok(Step::Damage(damage)) => {
                 if matches!(

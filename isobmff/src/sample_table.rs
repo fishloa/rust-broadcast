@@ -402,6 +402,11 @@ impl Layout {
             (none, compact) => (none, compact),
         };
         if stsz.is_none() && stz2.is_none() {
+            defects.push(SampleTableDefect {
+                fourcc: *b"stsz",
+                kind: SampleTableDefectKind::Unusable,
+                dropped: 0,
+            });
             return None;
         }
         let (stsc, _) = match find_child(children, b"stsc", stsc_of, |b| SampleToChunkBox::parse(b))
@@ -409,7 +414,14 @@ impl Layout {
             Ok(found) => (found, false),
             Err(_) => (None, true),
         };
-        let stsc = stsc?;
+        let Some(stsc) = stsc else {
+            defects.push(SampleTableDefect {
+                fourcc: *b"stsc",
+                kind: SampleTableDefectKind::Unusable,
+                dropped: 0,
+            });
+            return None;
+        };
         let (co64, _) = match find_child(children, b"co64", co64_of, |b| {
             ChunkLargeOffsetBox::parse(b)
         }) {
@@ -421,6 +433,11 @@ impl Layout {
             Err(_) => (None, true),
         };
         if co64.is_none() && stco.is_none() {
+            defects.push(SampleTableDefect {
+                fourcc: *b"stco",
+                kind: SampleTableDefectKind::Unusable,
+                dropped: 0,
+            });
             return None;
         }
         Some(Self {

@@ -129,6 +129,9 @@ pub struct Collected {
     /// Gapless-signal disagreements the demuxer reported:
     /// `(track, used signal, ignored signal)`.
     pub gapless_conflicts: Vec<(TrackId, GaplessSignal, GaplessSignal)>,
+    /// The workspace's one damage report, in the order the demuxer published
+    /// them: what a table the reader had to do without cost the media.
+    pub damage: Vec<broadcast_core::damage::Damage>,
 }
 
 impl Collected {
@@ -142,6 +145,7 @@ impl Collected {
             degraded: Vec::new(),
             degraded_at: Vec::new(),
             gapless_conflicts: Vec::new(),
+            damage: Vec::new(),
         }
     }
 
@@ -329,6 +333,7 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Collected {
     let mut skipped = Vec::new();
     let mut degraded = Vec::new();
     let mut gapless_conflicts = Vec::new();
+    let mut damage_reports = Vec::new();
     for event in events {
         match event {
             DemuxEvent::TrackAdded(spec) => {
@@ -357,6 +362,7 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Collected {
                 track_id, reason, ..
             } => skipped.push(skipped_from_reason(reason, track_id)),
             DemuxEvent::InputDegraded { kind, .. } => degraded.push(kind),
+            DemuxEvent::Damage(damage) => damage_reports.push(damage),
             DemuxEvent::GaplessSignalConflict {
                 track_id,
                 used,
@@ -375,6 +381,7 @@ pub fn media_from_events(events: Vec<DemuxEvent>) -> Collected {
     media.skipped = skipped;
     media.degraded = degraded;
     media.gapless_conflicts = gapless_conflicts;
+    media.damage = damage_reports;
     media
 }
 
@@ -1750,6 +1757,7 @@ mod equality_tests {
             degraded: a_degraded,
             degraded_at: a_degraded_at,
             gapless_conflicts: a_conflicts,
+            damage: a_damage,
         } = a;
         let Collected {
             tracks: b_tracks,
@@ -1759,6 +1767,7 @@ mod equality_tests {
             degraded: b_degraded,
             degraded_at: b_degraded_at,
             gapless_conflicts: b_conflicts,
+            damage: b_damage,
         } = b;
         a_tracks.len() == b_tracks.len()
             && a_tracks.iter().zip(b_tracks).all(|(x, y)| same_track(x, y))
@@ -1768,6 +1777,7 @@ mod equality_tests {
             && a_degraded == b_degraded
             && a_degraded_at == b_degraded_at
             && a_conflicts == b_conflicts
+            && a_damage == b_damage
     }
 
     #[test]
@@ -1790,6 +1800,14 @@ mod equality_tests {
         let mut m = base.clone();
         m.skipped[0].reason.push('!');
         assert!(!same(&base, &m), "skipped");
+
+        let mut m = base.clone();
+        m.damage.push(broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::MediaUnitDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "unit",
+        ));
+        assert!(!same(&base, &m), "damage");
 
         let mut m = base.clone();
         m.degraded.clear();

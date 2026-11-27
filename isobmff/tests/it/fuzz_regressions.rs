@@ -32,6 +32,47 @@ fn boxed(fourcc: [u8; 4], body: &[u8]) -> Vec<u8> {
 }
 
 #[test]
+fn damage_crash_089c1c5f_reports_the_tail_instead_of_refusing() {
+    use isobmff::reader::{Reader, ReaderConfig, Step};
+    // `isobmff_damage` crash-089c1c5f07e0bb82818801ae0ec832b2301cbc05: a real
+    // AVIF image whose damage left one byte past its last box. The artifact is
+    // that image plus the tail; the tail alone is what reaches the failing
+    // path, so the shape is built here instead of inlining 5 KiB of image.
+    let mut file = boxed(*b"ftyp", b"avifavismsf1mif1miaf");
+    file.push(0x00);
+    let tail = u64::try_from(file.len() - 1).expect("offset");
+    let mut reader = Reader::new(ReaderConfig::default().with_total_len(Some(file.len() as u64)));
+    let mut reports = Vec::new();
+    loop {
+        match reader.step().expect("step") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).expect("offset");
+                let end = usize::try_from(range.end()).expect("end");
+                reader
+                    .supply(range.offset, file.get(start..end).expect("supplied range"))
+                    .expect("supply");
+            }
+            Step::Damage(damage) => reports.push(damage),
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    let reported: Vec<&broadcast_core::damage::Damage> = reports
+        .iter()
+        .filter(|damage| damage.what() == "trailing-bytes")
+        .collect();
+    assert_eq!(reported.len(), 1, "one report for the tail: {reports:?}");
+    assert_eq!(
+        reported[0]
+            .location()
+            .byte_range()
+            .map(|range| range.start()),
+        Some(tail),
+        "the report names the tail"
+    );
+}
+
+#[test]
 fn tier34_boxes_crash_9562f956_is_a_typed_error() {
     // `isobmff_tier34_boxes` crash-9562f956b504ba425d7a3788f9123182222b82f0.
     let artifact = [187u8, 255, 16, 255, 255, 79];

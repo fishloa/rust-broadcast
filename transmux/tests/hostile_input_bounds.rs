@@ -97,11 +97,16 @@ fn hostile_stts_run_count_is_rejected() {
     ) {
         Err(_) => {}
         Ok(media) => assert!(
-            media.skipped.iter().any(|s| s.reason.contains("stts")),
+            media.skipped.iter().any(|s| s.reason.contains("stts"))
+                || media
+                    .damage
+                    .iter()
+                    .any(|damage| damage.what() == "samples-dropped"),
             "a stts declaring a 0xFFFFFFFF run must not be silently accepted: \
-             tracks={:?} skipped={:?}",
+             tracks={:?} skipped={:?} damage={:?}",
             media.tracks.len(),
-            media.skipped
+            media.skipped,
+            media.damage
         ),
     }
 }
@@ -117,11 +122,16 @@ fn hostile_ctts_run_count_is_rejected() {
     ) {
         Err(_) => {}
         Ok(media) => assert!(
-            media.skipped.iter().any(|s| s.reason.contains("ctts")),
+            media.skipped.iter().any(|s| s.reason.contains("ctts"))
+                || media
+                    .damage
+                    .iter()
+                    .any(|damage| damage.what() == "samples-dropped"),
             "a ctts declaring a 0xFFFFFFFF run must not be silently accepted: \
-             tracks={:?} skipped={:?}",
+             tracks={:?} skipped={:?} damage={:?}",
             media.tracks.len(),
-            media.skipped
+            media.skipped,
+            media.damage
         ),
     }
 }
@@ -153,12 +163,24 @@ fn hostile_stsz_sample_count_is_rejected() {
     match res {
         Err(_) => {}
         Ok(media) => assert!(
-            media.tracks.is_empty() && (!media.skipped.is_empty() || !media.degraded.is_empty()),
-            "a ~24 KB file whose stsz declares 0xFFFFFFFF samples must be rejected, got {} \
-             track(s), skipped {:?}, degraded {:?}",
+            // The addressable prefix may play, but a 24 KB file cannot
+            // describe four billion samples: the rest is reported, never
+            // silently materialised.
+            media
+                .tracks
+                .iter()
+                .map(|track| track.samples.len())
+                .sum::<usize>()
+                <= u32::try_from(file.len()).unwrap_or(u32::MAX) as usize
+                && (!media.skipped.is_empty()
+                    || !media.degraded.is_empty()
+                    || !media.damage.is_empty()),
+            "a ~24 KB file whose stsz declares 0xFFFFFFFF samples must be reported, got {} \
+             track(s), skipped {:?}, degraded {:?}, damage {:?}",
             media.tracks.len(),
             media.skipped,
-            media.degraded
+            media.degraded,
+            media.damage
         ),
     }
 }
@@ -175,12 +197,16 @@ fn hostile_stco_entry_count_is_rejected() {
     match res {
         Err(_) => {}
         Ok(media) => assert!(
-            media.tracks.is_empty() && (!media.skipped.is_empty() || !media.degraded.is_empty()),
+            media.tracks.iter().all(|track| track.samples.is_empty())
+                && (!media.skipped.is_empty()
+                    || !media.degraded.is_empty()
+                    || !media.damage.is_empty()),
             "a stco declaring 0xFFFFFFFF chunk offsets must be rejected, got {} track(s), \
-             skipped {:?}, degraded {:?}",
+             skipped {:?}, degraded {:?}, damage {:?}",
             media.tracks.len(),
             media.skipped,
-            media.degraded
+            media.degraded,
+            media.damage
         ),
     }
 }

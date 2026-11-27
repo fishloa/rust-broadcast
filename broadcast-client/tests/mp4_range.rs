@@ -246,7 +246,7 @@ fn a_range_driver_reports_the_movie_metadata() {
 
 #[test]
 fn the_range_driver_passes_a_warning_through() {
-    use isobmff::reader::{Mode, Warning};
+    use isobmff::reader::Mode;
     let path = test_fixtures::path("mp4/progressive/av-faststart.mp4");
     let mut bytes = std::fs::read(&path).expect("read fixture");
     let mvhd = bytes.windows(4).position(|w| w == b"mvhd").expect("mvhd") - 4;
@@ -272,7 +272,11 @@ fn the_range_driver_passes_a_warning_through() {
                     .on_range(fetch.offset, &body, total)
                     .expect("range body");
             }
-            RangeAction::Step(DriverStep::Warning(Warning::ZeroMovieTimescale { .. })) => return,
+            RangeAction::Step(DriverStep::Damage(damage))
+                if matches!(damage.what(), "zero-movie-timescale" | "synthesized-box") =>
+            {
+                return;
+            }
             RangeAction::Done => panic!("no warning"),
             RangeAction::Step(_) => {}
             _ => {}
