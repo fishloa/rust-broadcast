@@ -358,6 +358,7 @@ fn quicktime_v1_fixture_has_a_non_zero_compression_id() {
     );
     // A typed entry round-trips those bytes instead of zeroing them.
     let typed = FlacSampleEntry {
+        reserved: [0u8; 6],
         entry_version: 1,
         reserved_1: entry[18..24].try_into().unwrap(),
         data_reference_index: 1,
@@ -367,6 +368,7 @@ fn quicktime_v1_fixture_has_a_non_zero_compression_id() {
         samplerate: 44_100 << 16,
         quicktime: None,
         config_boxes: vec![],
+        trailing: vec![],
     };
     let mut buf = vec![0u8; typed.serialized_len()];
     typed.serialize_into(&mut buf).expect("serialize");
@@ -389,6 +391,7 @@ fn quicktime_v2_entry_version_round_trips_verbatim() {
     assert_eq!(u16::from_be_bytes(entry[16..18].try_into().unwrap()), 2);
 
     let typed = FlacSampleEntry {
+        reserved: [0u8; 6],
         entry_version: 2,
         reserved_1: [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF],
         data_reference_index: 1,
@@ -398,6 +401,7 @@ fn quicktime_v2_entry_version_round_trips_verbatim() {
         samplerate: 44_100 << 16,
         quicktime: None,
         config_boxes: vec![],
+        trailing: vec![],
     };
     let mut buf = vec![0u8; typed.serialized_len()];
     let n = typed.serialize_into(&mut buf).expect("serialize");
@@ -599,6 +603,7 @@ fn a_zero_or_malformed_srat_falls_back_to_the_16_16_field() {
     // a 48 kHz 16.16 field with a zero `srat` reads back as 48000, not 0.
     let entry = Mp4aSampleEntry {
         codec_type: *b"mp4a",
+        reserved: [0u8; 6],
         entry_version: 1,
         reserved_1: [0u8; 6],
         data_reference_index: 1,
@@ -611,6 +616,7 @@ fn a_zero_or_malformed_srat_falls_back_to_the_16_16_field() {
             *b"srat",
             vec![0, 0, 0, 0, 0, 0, 0, 0],
         )],
+        trailing: vec![],
     };
     let mut buf = vec![0u8; entry.serialized_len()];
     entry.serialize_into(&mut buf).unwrap();
@@ -625,6 +631,7 @@ fn a_zero_or_malformed_srat_falls_back_to_the_16_16_field() {
 fn mp4a_v0_entry_round_trips() {
     let entry = Mp4aSampleEntry {
         codec_type: *b"mp4a",
+        reserved: [0u8; 6],
         entry_version: 0,
         reserved_1: [0u8; 6],
         data_reference_index: 1,
@@ -634,6 +641,7 @@ fn mp4a_v0_entry_round_trips() {
         samplerate: 48_000 << 16,
         quicktime: None,
         config_boxes: vec![],
+        trailing: vec![],
     };
     assert_eq!(entry.serialized_len(), 36);
     let mut buf = vec![0u8; entry.serialized_len()];

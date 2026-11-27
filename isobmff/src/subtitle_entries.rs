@@ -101,8 +101,6 @@ pub struct XmlSubtitleSampleEntry {
     pub auxiliary_mime_types: String,
     /// Optional trailing boxes (e.g. `btrt`) preserved verbatim for round-trip.
     pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
-    /// Bytes after the last complete child box, kept verbatim.
-    pub trailing: Vec<u8>,
 }
 
 impl XmlSubtitleSampleEntry {
@@ -115,7 +113,6 @@ impl XmlSubtitleSampleEntry {
             schema_location: String::new(),
             auxiliary_mime_types: String::new(),
             extra_boxes: Vec::new(),
-            trailing: Vec::new(),
         }
     }
 
@@ -136,8 +133,27 @@ impl XmlSubtitleSampleEntry {
         let (schema_location, pos) = parse_cstring(body, pos)?;
         let (auxiliary_mime_types, pos) = parse_cstring(body, pos)?;
 
-        let (extra_boxes, trailing) =
-            crate::box_support::capture_children(&body[pos..]).into_parts();
+        let mut extra_boxes = Vec::new();
+        let mut at = pos;
+        while at + BOX_HEADER_MIN_SIZE <= body.len() {
+            let sz = be_u32(body, at, "child box size")? as usize;
+            if sz < BOX_HEADER_MIN_SIZE {
+                break;
+            }
+            let end = at.saturating_add(sz);
+            if end > body.len() {
+                return Err(Error::BufferTooShort(BufferTooShort {
+                    need: end,
+                    have: body.len(),
+                    what: "stpp child box",
+                }));
+            }
+            let mut bt = [0u8; BOX_TYPE_SIZE];
+            bt.copy_from_slice(&body[at + BOX_TYPE_OFFSET..at + BOX_HEADER_MIN_SIZE]);
+            let data = body[at + BOX_HEADER_MIN_SIZE..end].to_vec();
+            extra_boxes.push(crate::box_support::OpaqueBox::new(bt, data));
+            at = end;
+        }
 
         Ok(Self {
             reserved,
@@ -146,7 +162,6 @@ impl XmlSubtitleSampleEntry {
             schema_location,
             auxiliary_mime_types,
             extra_boxes,
-            trailing,
         })
     }
 }
@@ -173,7 +188,6 @@ impl Serialize for XmlSubtitleSampleEntry {
         for eb in &self.extra_boxes {
             n += eb.serialized_len();
         }
-        n += self.trailing.len();
         crate::box_types::box_len(n)
     }
 
@@ -209,8 +223,6 @@ impl Serialize for XmlSubtitleSampleEntry {
         for eb in &self.extra_boxes {
             c += eb.serialize_into(&mut buf[c..])?;
         }
-        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
-        c += self.trailing.len();
         Ok(c)
     }
 }
@@ -706,8 +718,6 @@ pub struct WvttSampleEntry {
     pub config: WebVttConfigurationBox,
     /// Optional trailing boxes preserved verbatim for round-trip.
     pub extra_boxes: Vec<crate::box_support::OpaqueBox>,
-    /// Bytes after the last complete child box, kept verbatim.
-    pub trailing: Vec<u8>,
 }
 
 impl WvttSampleEntry {
@@ -718,7 +728,6 @@ impl WvttSampleEntry {
             data_reference_index: 1,
             config: WebVttConfigurationBox::new(config),
             extra_boxes: Vec::new(),
-            trailing: Vec::new(),
         }
     }
 
@@ -741,16 +750,16 @@ impl WvttSampleEntry {
 
         while pos + BOX_HEADER_MIN_SIZE <= body.len() {
             let sz = be_u32(body, pos, "child box size")? as usize;
-            if sz != 0 && sz < BOX_HEADER_MIN_SIZE {
+            if sz < BOX_HEADER_MIN_SIZE {
                 break;
             }
-            let end = if sz == 0 {
-                body.len()
-            } else {
-                pos.saturating_add(sz)
-            };
+            let end = pos.saturating_add(sz);
             if end > body.len() {
-                break;
+                return Err(Error::BufferTooShort(BufferTooShort {
+                    need: end,
+                    have: body.len(),
+                    what: "wvtt child box",
+                }));
             }
             let child = &body[pos..end];
             let fourcc = &child[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE];
@@ -759,17 +768,14 @@ impl WvttSampleEntry {
                 _ => {
                     let mut bt = [0u8; BOX_TYPE_SIZE];
                     bt.copy_from_slice(fourcc);
-                    let mut other = crate::box_support::OpaqueBox::new(
+                    extra_boxes.push(crate::box_support::OpaqueBox::new(
                         bt,
                         crate::box_types::parse_box(child)?.0.payload().to_vec(),
-                    );
-                    other.to_end = sz == 0;
-                    extra_boxes.push(other);
+                    ));
                 }
             }
             pos = end;
         }
-        let trailing = body.get(pos..).unwrap_or_default().to_vec();
 
         let config = config.ok_or(Error::BufferTooShort(BufferTooShort {
             need: 0,
@@ -782,7 +788,6 @@ impl WvttSampleEntry {
             data_reference_index,
             config,
             extra_boxes,
-            trailing,
         })
     }
 }
@@ -803,7 +808,6 @@ impl Serialize for WvttSampleEntry {
         for eb in &self.extra_boxes {
             n += eb.serialized_len();
         }
-        n += self.trailing.len();
         crate::box_types::box_len(n)
     }
 
@@ -824,8 +828,6 @@ impl Serialize for WvttSampleEntry {
         for eb in &self.extra_boxes {
             c += eb.serialize_into(&mut buf[c..])?;
         }
-        buf[c..c + self.trailing.len()].copy_from_slice(&self.trailing);
-        c += self.trailing.len();
         Ok(c)
     }
 }

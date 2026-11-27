@@ -3600,19 +3600,30 @@ pub fn sample_entry_variant(box_bytes: &[u8]) -> Result<SampleEntryVariant> {
     // A typed entry's serialiser writes the compact header form. An entry the
     // source stated with `size == 0` (§4.2) cannot be represented that way, so
     // it stays opaque and keeps its own header.
-    if let Ok(header) = crate::box_types::BoxHeader::parse(box_bytes)
-        && header.size == 0
-    {
-        let mut opaque = OpaqueBox::new(
-            header.box_type.0,
-            box_bytes
-                .get(header.header_size()..)
-                .unwrap_or_default()
-                .to_vec(),
-        );
-        opaque.to_end = header.size == 0;
-        opaque.largesize = header.has_largesize();
-        return Ok(SampleEntryVariant::Unknown(opaque));
+    if let Ok(header) = crate::box_types::BoxHeader::parse(box_bytes) {
+        if header.size == 0 {
+            let mut opaque = OpaqueBox::new(
+                header.box_type.0,
+                box_bytes
+                    .get(header.header_size()..)
+                    .unwrap_or_default()
+                    .to_vec(),
+            );
+            opaque.to_end = true;
+            return Ok(SampleEntryVariant::Unknown(opaque));
+        }
+        if usize::try_from(header.size)
+            .ok()
+            .is_some_and(|size| size > box_bytes.len())
+        {
+            return Err(Error::BufferTooShort(
+                broadcast_core::error::BufferTooShort {
+                    need: usize::try_from(header.size).unwrap_or(usize::MAX),
+                    have: box_bytes.len(),
+                    what: "sample entry",
+                },
+            ));
+        }
     }
     let codec = &box_bytes[BOX_TYPE_OFFSET..BOX_HEADER_MIN_SIZE];
     Ok(match codec {

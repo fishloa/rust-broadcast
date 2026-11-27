@@ -14,14 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Ac4SampleEntry`, `OpusSampleEntry`, `FlacSampleEntry`, `MhaSampleEntry`,
   `DtsSampleEntry`) and the `stpp`/`wvtt` subtitle entries gain a
   `reserved: [u8; 6]` field carrying the `SampleEntry` `reserved[6]` block
-  instead of rewriting it as zeros, and every entry that captures child boxes
-  (`SoundEntry`, the audio entries, the subtitle entries and `TimecodeEntry`)
-  gains a `trailing: Vec<u8>` field. A child whose declared size runs past the
-  entry is now kept verbatim in `trailing` rather than being shortened and
+  instead of rewriting it as zeros. `SoundEntry`, the audio entries and
+  `TimecodeEntry` gain a `trailing: Vec<u8>` field: a child whose declared size
+  runs past the entry is kept verbatim there rather than being shortened and
   re-emitted with the clamped length. A sample entry written with `size == 0`
-  stays an opaque entry so its own header form is preserved. Construct a new
-  entry with the type's `new`/builder (or set `reserved` to zeros and
-  `trailing` to empty), not a struct literal.
+  stays opaque, and a stub shorter than its declared size is a typed error.
+  Construct a new entry with the type's `new`/builder (or set `reserved` to
+  zeros and `trailing` to empty), not a struct literal.
 
 ### Added
 
