@@ -1266,11 +1266,11 @@ impl DataEntry {
             IMDA_ENTRY_TYPE => Ok(Self::Imda(DataEntryImdaBox::parse(bytes)?)),
             SEQ_NUM_IMDA_ENTRY_TYPE => Ok(Self::SeqNumImda(DataEntrySeqNumImdaBox::parse(bytes)?)),
             _ => {
-                let compact = crate::box_types::compact_form(bytes)?;
-                Ok(Self::Other(OpaqueBox::new(
-                    ty,
-                    compact[BOX_HEADER_MIN_SIZE..].to_vec(),
-                )))
+                let item = crate::box_types::parse_box(bytes)?.0;
+                let mut opaque = OpaqueBox::new(ty, item.payload().to_vec());
+                opaque.to_end = item.to_end();
+                opaque.largesize = item.has_largesize();
+                Ok(Self::Other(opaque))
             }
         }
     }
