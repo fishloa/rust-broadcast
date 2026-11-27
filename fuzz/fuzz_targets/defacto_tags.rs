@@ -32,9 +32,9 @@ fuzz_target!(|data: &[u8]| {
         }
     }
     if let Ok(text) = core::str::from_utf8(data) {
-        if let Some(trim) = isobmff::metadata::parse_gapless_playback(text) {
-            let _ = trim.priming_samples();
-            let _ = trim.padding_samples();
+        if let Ok(trim) = isobmff::metadata::Itunsmpb::parse_text(text) {
+            let _ = trim.priming();
+            let _ = trim.padding();
             let _ = trim.original_samples();
         }
     }
