@@ -297,7 +297,8 @@ mkv	mid	field-past	at=40048	err=None	del=133	before=133	after=0	lost=73	dropped_
 no error unless playback is impossible, every delivered sample byte-identical
 to the clean run apart from the damaged unit, the tail after a mid-stream
 damage preserved, timestamps monotonic wherever the clean input's are, and a
-finding for a delete/insert that lost samples. All 232 cells pass.
+finding for a delete/insert that lost samples. All 232 cells pass, measured
+again after `origin/main` was merged into the lane.
 
 `metadata_damage_does_not_stop_the_media` adds three Matroska cells that the
 positional matrix cannot reach (they need a file that carries the elements):
