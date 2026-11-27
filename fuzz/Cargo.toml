@@ -68,6 +68,7 @@ smooth-runtime = { path = "../smooth-runtime" }
 url            = "2"
 broadcast-dash = { path = "../broadcast-dash" }
 test-fixtures  = { path = "../test-fixtures" }
+test-alloc     = { path = "../test-alloc" }
 jiff           = { version = "1", default-features = false, features = ["std"] }
 ule            = { path = "../ule" }
 caption-convert = { path = "../caption-convert" }
@@ -327,6 +328,12 @@ doc  = false
 [[bin]]
 name = "transmux_flv_stream"
 path = "fuzz_targets/transmux_flv_stream.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "demux_damage"
+path = "fuzz_targets/demux_damage.rs"
 test = false
 doc  = false
 

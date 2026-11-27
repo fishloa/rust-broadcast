@@ -13,6 +13,7 @@ mod client_static;
 mod client_url_policy;
 mod clock;
 mod common;
+mod damage_report;
 mod dash_mpd_reader;
 mod dashif_ingest_core;
 mod dashif_ingest_gaps;

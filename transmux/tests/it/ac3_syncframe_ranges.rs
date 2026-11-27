@@ -15,7 +15,7 @@ fn stream() -> Vec<u8> {
 #[test]
 fn a_clean_stream_is_split_into_contiguous_frames_covering_every_byte() {
     let es = stream();
-    let ranges = split_ac3_syncframe_ranges(&es, false);
+    let ranges = split_ac3_syncframe_ranges(&es, false, &mut broadcast_bitstream::Findings::new());
     assert!(ranges.len() > 10, "{} frames", ranges.len());
     assert_eq!(ranges[0].0, 0);
     for pair in ranges.windows(2) {
@@ -26,8 +26,12 @@ fn a_clean_stream_is_split_into_contiguous_frames_covering_every_byte() {
         assert_eq!(es[start..start + 2], SYNCWORD);
         assert!(end > start);
     }
-    assert_eq!(split_ac3_syncframe_ranges(&es, true), ranges);
-    let slices = split_ac3_syncframes_resyncing(&es, false);
+    assert_eq!(
+        split_ac3_syncframe_ranges(&es, true, &mut broadcast_bitstream::Findings::new()),
+        ranges
+    );
+    let slices =
+        split_ac3_syncframes_resyncing(&es, false, &mut broadcast_bitstream::Findings::new());
     assert_eq!(slices.len(), ranges.len());
     assert_eq!(slices[3], &es[ranges[3].0..ranges[3].1]);
 }
@@ -35,12 +39,16 @@ fn a_clean_stream_is_split_into_contiguous_frames_covering_every_byte() {
 #[test]
 fn junk_before_the_first_frame_stops_a_strict_scan_and_is_skipped_by_a_resyncing_one() {
     let es = stream();
-    let clean = split_ac3_syncframe_ranges(&es, false);
+    let clean = split_ac3_syncframe_ranges(&es, false, &mut broadcast_bitstream::Findings::new());
     let junk = [0x00, 0x11, 0x22, 0x33, 0x44];
     let prefixed = [junk.as_slice(), &es].concat();
 
-    assert!(split_ac3_syncframe_ranges(&prefixed, false).is_empty());
-    let resynced = split_ac3_syncframe_ranges(&prefixed, true);
+    assert!(
+        split_ac3_syncframe_ranges(&prefixed, false, &mut broadcast_bitstream::Findings::new())
+            .is_empty()
+    );
+    let resynced =
+        split_ac3_syncframe_ranges(&prefixed, true, &mut broadcast_bitstream::Findings::new());
     let shifted: Vec<(usize, usize)> = clean
         .iter()
         .map(|&(s, e)| (s + junk.len(), e + junk.len()))
@@ -55,19 +63,21 @@ fn junk_before_the_first_frame_stops_a_strict_scan_and_is_skipped_by_a_resyncing
 #[test]
 fn a_damaged_frame_loses_only_that_frame_when_resyncing() {
     let es = stream();
-    let clean = split_ac3_syncframe_ranges(&es, false);
+    let clean = split_ac3_syncframe_ranges(&es, false, &mut broadcast_bitstream::Findings::new());
     let victim = 4;
     let mut damaged = es.clone();
     damaged[clean[victim].0] = 0x00;
 
-    let strict = split_ac3_syncframe_ranges(&damaged, false);
+    let strict =
+        split_ac3_syncframe_ranges(&damaged, false, &mut broadcast_bitstream::Findings::new());
     assert_eq!(
         strict,
         clean[..victim].to_vec(),
         "a strict scan stops at the damage"
     );
 
-    let resynced = split_ac3_syncframe_ranges(&damaged, true);
+    let resynced =
+        split_ac3_syncframe_ranges(&damaged, true, &mut broadcast_bitstream::Findings::new());
     let mut expected = clean.clone();
     expected.remove(victim);
     assert_eq!(resynced, expected);
@@ -76,11 +86,11 @@ fn a_damaged_frame_loses_only_that_frame_when_resyncing() {
 #[test]
 fn a_truncated_last_frame_is_dropped() {
     let es = stream();
-    let clean = split_ac3_syncframe_ranges(&es, false);
+    let clean = split_ac3_syncframe_ranges(&es, false, &mut broadcast_bitstream::Findings::new());
     let cut = &es[..es.len() - 1];
     for resync in [false, true] {
         assert_eq!(
-            split_ac3_syncframe_ranges(cut, resync),
+            split_ac3_syncframe_ranges(cut, resync, &mut broadcast_bitstream::Findings::new()),
             clean[..clean.len() - 1].to_vec(),
             "resync={resync}"
         );
@@ -93,14 +103,14 @@ fn a_truncated_last_frame_is_dropped() {
 #[test]
 fn a_false_sync_is_skipped_only_when_resyncing() {
     let es = stream();
-    let clean = split_ac3_syncframe_ranges(&es, false);
+    let clean = split_ac3_syncframe_ranges(&es, false, &mut broadcast_bitstream::Findings::new());
     let first_two = &clean[..2];
     // fscod 0b11 is reserved (Table 4.1), so this header declares no length.
     let false_sync = [0x0B, 0x77, 0xFF, 0xFF, 0xFF, 0xFF];
     let payload = [&es[..first_two[1].1], &false_sync, &es[first_two[1].1..]].concat();
 
     assert_eq!(
-        split_ac3_syncframe_ranges(&payload, false),
+        split_ac3_syncframe_ranges(&payload, false, &mut broadcast_bitstream::Findings::new()),
         first_two.to_vec(),
         "a strict scan stops at the false sync"
     );
@@ -110,7 +120,7 @@ fn a_false_sync_is_skipped_only_when_resyncing() {
         expected.push((s + false_sync.len(), e + false_sync.len()));
     }
     assert_eq!(
-        split_ac3_syncframe_ranges(&payload, true),
+        split_ac3_syncframe_ranges(&payload, true, &mut broadcast_bitstream::Findings::new()),
         expected,
         "a resyncing scan recovers the frames after the false sync"
     );

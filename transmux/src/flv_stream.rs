@@ -85,12 +85,14 @@
 use crate::TrackId;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
-use core::num::NonZeroU32;
+use core::num::{NonZeroU32, NonZeroUsize};
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use broadcast_core::Parse;
+use broadcast_core::damage::{ByteRange, Damage, DamageKind, DamagePolicy, Severity};
 use rtmp_runtime::RtmpError;
 
+use crate::demux_damage;
 use crate::flv::{
     CODEC_ID_AVC, FLV_HEADER_LEN, FLV_TIMESCALE, FRAME_TYPE_KEYFRAME, FlvError, MAX_FLV_HEADER_LEN,
     OnMetadata, PREV_TAG_SIZE_LEN, TAG_HEADER_LEN, aac_packet_type, asc_rate_hz, avc_dimensions,
@@ -311,6 +313,16 @@ pub struct StreamingFlvDemux {
     /// Whether a damaged span was reported; an input that is damaged but had
     /// no complete tag is still diagnosed, not silently accepted.
     damaged: bool,
+    /// Strict mode keeps the pre-best-effort contract: a damaged header, a
+    /// backwards timestamp or a too-large span is an error instead of a
+    /// reported finding. [`StreamingFlvDemux::new`] is best-effort.
+    strict: bool,
+    /// What each [`Damage`] this demuxer publishes means to the caller.
+    damage_policy: DamagePolicy,
+    /// How many bytes a damaged header's rescue may examine before this feed
+    /// stops looking for a tag chain. `None` (the default) examines the bytes
+    /// present; a caller bounds its work by supplying a window.
+    header_resync_window: Option<NonZeroUsize>,
     /// The first `onMetaData` script tag's typed properties, once one has
     /// been read; a later one never replaces it.
     on_metadata: Option<OnMetadata>,
@@ -353,12 +365,66 @@ impl StreamingFlvDemux {
             tags_seen: false,
             announced: false,
             damaged: false,
+            strict: false,
+            damage_policy: DamagePolicy::new(),
+            header_resync_window: None,
             on_metadata: None,
             damage_start: None,
             damage_len: 0,
             ended_inside_a_tag: false,
             #[cfg(test)]
             bytes_moved: 0,
+        }
+    }
+
+    /// A demuxer that refuses a damaged header, a backwards timestamp and a
+    /// too-large sample span instead of reporting them and carrying on. The
+    /// default ([`new`](Self::new)) is best-effort.
+    #[must_use]
+    pub fn strict() -> Self {
+        Self {
+            strict: true,
+            ..Self::new()
+        }
+    }
+
+    /// Set what each damage report this demuxer publishes means: the default
+    /// reports everything and fails on nothing.
+    #[must_use]
+    pub fn with_damage_policy(mut self, damage_policy: DamagePolicy) -> Self {
+        self.damage_policy = damage_policy;
+        self
+    }
+
+    /// Bound the search for a tag chain behind a damaged header: at most
+    /// `window` bytes are examined per [`feed`](Self::feed). `None` (the
+    /// default) examines the bytes present. The window never decides a
+    /// header's accepted `DataOffset`; it only limits the recovery scan.
+    #[must_use]
+    pub fn with_max_resync_bytes(mut self, window: Option<NonZeroUsize>) -> Self {
+        self.header_resync_window = window;
+        self
+    }
+
+    /// The offset of the first tag chain a damaged FLV header hides, when the
+    /// bytes after the header are a playable tag stream. The scan stops at
+    /// `window` bytes (and never looks past `bytes`), so a declared header
+    /// length can never make it examine bytes the caller did not supply.
+    fn first_tag(bytes: &[u8], at_eof: bool, window: Option<NonZeroUsize>) -> Option<usize> {
+        use rtmp_runtime::flv::ResyncDecision;
+        let (scan, at_eof) = match window {
+            Some(limit) if bytes.len() > limit.get() => (&bytes[..limit.get()], false),
+            _ => (bytes, at_eof),
+        };
+        match rtmp_runtime::flv::resync_decision(scan, at_eof) {
+            ResyncDecision::Tag => Some(0),
+            ResyncDecision::Skip(len) if len > 0 && len < scan.len() => {
+                match rtmp_runtime::flv::resync_decision(&scan[len..], at_eof) {
+                    ResyncDecision::Tag => Some(len),
+                    _ => None,
+                }
+            }
+            _ => None,
         }
     }
 
@@ -370,13 +436,16 @@ impl StreamingFlvDemux {
     /// trailing tag is retained internally for the next `feed` call (see the
     /// module `# Memory` note).
     ///
-    /// Returns [`FlvError::BadSignature`] if the first bytes are not the
+    /// A damaged header never fails the stream when a tag chain follows it:
+    /// the header bytes are reported as damage and the walk resumes at the
+    /// first tag. [`strict`](Self::strict) keeps the refusing contract and
+    /// returns [`FlvError::BadSignature`] if the first bytes are not the
     /// `"FLV"` signature, [`FlvError::HeaderTooLarge`] if the header's
-    /// `DataOffset` exceeds this crate's maximum accepted header size (a
-    /// malicious value could otherwise force the pre-header buffer to grow
-    /// without bound), or a codec-config parse error ([`FlvError::Codec`])
-    /// if a sequence-header tag's payload is corrupt. Never panics on
-    /// truncated or garbage input.
+    /// `DataOffset` exceeds this crate's maximum accepted header size, or
+    /// [`FlvError::Header`] for a `DataOffset` below the fixed header.
+    ///
+    /// A codec-config parse error ([`FlvError::Codec`]) is still an error.
+    /// Never panics on truncated or garbage input.
     pub fn feed(&mut self, input: &[u8]) -> Result<(), FlvError> {
         self.pending.extend_from_slice(input);
 
@@ -386,6 +455,7 @@ impl StreamingFlvDemux {
         // `feed` of one large chunk quadratic — 8 MiB of small audio tags
         // (~20 000 of them) memmoved ~80 GB.
         let mut cursor = 0usize;
+        let from = self.events.len();
         let result = self.consume(&mut cursor, false);
 
         if let Err(err) = result {
@@ -401,7 +471,7 @@ impl StreamingFlvDemux {
         }
         self.drain_pending(cursor);
         self.flush_damage();
-        Ok(())
+        demux_damage::admit_new(&self.events, &self.damage_policy, from)
     }
 
     /// Drop the first `n` consumed bytes from `pending` (one memmove of the
@@ -422,67 +492,98 @@ impl StreamingFlvDemux {
     /// complete unit in `self.pending`, appending events, and return on the
     /// first error with `cursor` left at the start of the offending tag (so
     /// the caller can drain it).
+    /// The first tag's offset from a valid FLV header, `Ok(None)` while the
+    /// declared header has not fully arrived.
+    ///
+    /// DataOffset (bytes [5:9]) points past the header to the first
+    /// PreviousTagSize0. It is validated against `MAX_FLV_HEADER_LEN` *before*
+    /// it sizes a skip: a malicious value (e.g. 0xFFFF_FFFF) would otherwise
+    /// never satisfy the `pending.len() < skip` check, so every `feed` call
+    /// would keep appending to `pending` forever waiting for a "header" that
+    /// never completes (#738 T11a review, Important — remote OOM/DoS).
+    fn header_offset(&self) -> Result<Option<usize>, FlvError> {
+        let declared = match rtmp_runtime::flv::FlvHeader::declared_data_offset(&self.pending) {
+            Ok(declared) => declared,
+            Err(_) => {
+                return Err(FlvError::BadSignature([
+                    self.pending[SIGNATURE_F_OFFSET],
+                    self.pending[SIGNATURE_L_OFFSET],
+                    self.pending[SIGNATURE_V_OFFSET],
+                ]));
+            }
+        };
+        if usize::try_from(declared).unwrap_or(usize::MAX) > MAX_FLV_HEADER_LEN {
+            return Err(FlvError::HeaderTooLarge {
+                declared,
+                max: MAX_FLV_HEADER_LEN,
+            });
+        }
+        if usize::try_from(declared).map_or(true, |d| self.pending.len() < d + PREV_TAG_SIZE_LEN) {
+            return Ok(None);
+        }
+        let header = match rtmp_runtime::flv::FlvHeader::parse(&self.pending) {
+            Ok(header) => header,
+            Err(RtmpError::Malformed {
+                what: crate::flv::FLV_DATA_OFFSET,
+            }) => {
+                return Err(FlvError::Header(RtmpError::Malformed {
+                    what: crate::flv::FLV_DATA_OFFSET,
+                }));
+            }
+            Err(err @ RtmpError::FieldOverflow(_)) => return Err(FlvError::Header(err)),
+            Err(_) => {
+                return Err(FlvError::BadSignature([
+                    self.pending[SIGNATURE_F_OFFSET],
+                    self.pending[SIGNATURE_L_OFFSET],
+                    self.pending[SIGNATURE_V_OFFSET],
+                ]));
+            }
+        };
+        Ok(Some(header.first_tag_offset()))
+    }
+
     fn consume(&mut self, cursor: &mut usize, at_eof: bool) -> Result<(), FlvError> {
         loop {
             if !self.header_seen {
                 if self.pending.len() < FLV_HEADER_LEN + PREV_TAG_SIZE_LEN {
                     break; // header (+ PreviousTagSize0) not fully arrived yet
                 }
-                // DataOffset (bytes [5:9]) points past the header to the
-                // first PreviousTagSize0. It is validated against
-                // `MAX_FLV_HEADER_LEN` *before* it sizes a skip: a malicious
-                // value (e.g. 0xFFFF_FFFF) would otherwise never satisfy the
-                // `pending.len() < skip` check below, so every `feed` call
-                // would keep appending to `pending` forever waiting for a
-                // "header" that never completes (#738 T11a review, Important —
-                // remote OOM/DoS).
-                let declared =
-                    match rtmp_runtime::flv::FlvHeader::declared_data_offset(&self.pending) {
-                        Ok(declared) => declared,
-                        Err(_) => {
-                            return Err(FlvError::BadSignature([
-                                self.pending[SIGNATURE_F_OFFSET],
-                                self.pending[SIGNATURE_L_OFFSET],
-                                self.pending[SIGNATURE_V_OFFSET],
-                            ]));
+                match self.header_offset() {
+                    Ok(Some(skip)) => {
+                        if self.pending.len() < skip {
+                            break; // a non-standard larger header hasn't fully arrived
                         }
-                    };
-                if usize::try_from(declared).unwrap_or(usize::MAX) > MAX_FLV_HEADER_LEN {
-                    return Err(FlvError::HeaderTooLarge {
-                        declared,
-                        max: MAX_FLV_HEADER_LEN,
-                    });
-                }
-                if usize::try_from(declared)
-                    .map_or(true, |d| self.pending.len() < d + PREV_TAG_SIZE_LEN)
-                {
-                    break;
-                }
-                let header = match rtmp_runtime::flv::FlvHeader::parse(&self.pending) {
-                    Ok(header) => header,
-                    Err(RtmpError::Malformed {
-                        what: crate::flv::FLV_DATA_OFFSET,
-                    }) => {
-                        return Err(FlvError::Header(RtmpError::Malformed {
-                            what: crate::flv::FLV_DATA_OFFSET,
-                        }));
+                        *cursor = skip;
+                        self.header_seen = true;
+                        continue;
                     }
-                    Err(err @ RtmpError::FieldOverflow(_)) => return Err(FlvError::Header(err)),
-                    Err(_) => {
-                        return Err(FlvError::BadSignature([
-                            self.pending[SIGNATURE_F_OFFSET],
-                            self.pending[SIGNATURE_L_OFFSET],
-                            self.pending[SIGNATURE_V_OFFSET],
-                        ]));
+                    Ok(None) => break,
+                    Err(error) => {
+                        // A damaged header: if a tag chain survives it, the
+                        // media is playable, so skip to it and report instead
+                        // of refusing the input.
+                        if self.strict {
+                            return Err(error);
+                        }
+                        let fixed = FLV_HEADER_LEN.min(self.pending.len());
+                        match Self::first_tag(&self.pending, at_eof, self.header_resync_window) {
+                            Some(skip) => {
+                                self.report_damage(0, skip);
+                                *cursor = skip;
+                            }
+                            None => {
+                                // No chain in the bytes so far: the fixed
+                                // header is the damaged span, and the tag walk
+                                // resumes after it. Nothing waits for the
+                                // declared `DataOffset`.
+                                self.report_damage(0, fixed);
+                                *cursor = fixed;
+                            }
+                        }
+                        self.header_seen = true;
+                        continue;
                     }
-                };
-                let skip = header.first_tag_offset();
-                if self.pending.len() < skip {
-                    break; // a non-standard larger header hasn't fully arrived
                 }
-                *cursor = skip;
-                self.header_seen = true;
-                continue;
             }
 
             let remaining = &self.pending[*cursor..];
@@ -491,6 +592,12 @@ impl StreamingFlvDemux {
                 rtmp_runtime::flv::ResyncDecision::Tag => {}
                 rtmp_runtime::flv::ResyncDecision::Need(_) => break,
                 rtmp_runtime::flv::ResyncDecision::Skip(len) => {
+                    if at_eof && !self.tags_seen && !self.damaged && *cursor == 0 {
+                        // Nothing complete was ever parsed: the end-of-input
+                        // diagnosis reports the missing first tag, not a
+                        // silently discarded tail.
+                        break;
+                    }
                     let len = len.min(remaining.len());
                     self.report_damage(*cursor, len);
                     *cursor += len;
@@ -578,6 +685,7 @@ impl StreamingFlvDemux {
         // ever be, so decide the resync points with the whole buffer (the
         // streaming scan's `Need` answers existed only to wait for more).
         let mut cursor = 0usize;
+        let from = self.events.len();
         let result = self.consume(&mut cursor, true);
         self.drain_pending(cursor);
         self.flush_damage();
@@ -589,7 +697,7 @@ impl StreamingFlvDemux {
         if !self.announced {
             return Err(FlvError::NoSupportedTrack);
         }
-        Ok(())
+        demux_damage::admit_new(&self.events, &self.damage_policy, from)
     }
 
     /// After [`finish`](Self::finish), whether the input ended inside a tag
@@ -633,6 +741,10 @@ impl StreamingFlvDemux {
         if let Some(offset) = self.damage_start.take() {
             let len = core::mem::take(&mut self.damage_len);
             self.events.push_back(DemuxEvent::damaged_span(offset, len));
+            self.events.push_back(DemuxEvent::damage(
+                Damage::new(DamageKind::Resynchronised, Severity::Degraded, "FLV tag")
+                    .at_byte_range(ByteRange::new(offset, len)),
+            ));
         }
     }
 
@@ -782,9 +894,9 @@ impl StreamingFlvDemux {
                 return minimum - have;
             }
             // `DataOffset` (bytes [5:9]) may declare a larger non-standard
-            // header; `feed` validates it against `MAX_FLV_HEADER_LEN` before
-            // trusting it, and rejects an over-large one, so the worst this
-            // can over-ask for is that already-rejected bound.
+            // header. `feed` never trusts a value past `MAX_FLV_HEADER_LEN`:
+            // the header is damaged, so the parse below fails and the request
+            // falls back to the fixed header instead of the declared length.
             let skip = rtmp_runtime::flv::FlvHeader::parse(&self.pending)
                 .map_or(FLV_HEADER_LEN + PREV_TAG_SIZE_LEN, |header| {
                     header.first_tag_offset()
@@ -812,10 +924,18 @@ impl StreamingFlvDemux {
 
     /// Report a complete tag whose payload this demuxer cannot use, and carry
     /// on with the following tags (the batch demuxer's behaviour).
-    fn report_tag_damage(events: &mut VecDeque<DemuxEvent>, offset: u64, len: usize) {
-        events.push_back(DemuxEvent::damaged_span(
-            offset,
-            u64::try_from(len).unwrap_or(u64::MAX),
+    fn report_tag_damage(
+        events: &mut VecDeque<DemuxEvent>,
+        offset: u64,
+        len: usize,
+        kind: DamageKind,
+        severity: Severity,
+        what: &'static str,
+    ) {
+        let len = u64::try_from(len).unwrap_or(u64::MAX);
+        events.push_back(DemuxEvent::damaged_span(offset, len));
+        events.push_back(DemuxEvent::damage(
+            Damage::new(kind, severity, what).at_byte_range(ByteRange::new(offset, len)),
         ));
     }
 
@@ -891,11 +1011,25 @@ impl StreamingFlvDemux {
         match avc_packet_type_byte {
             avc_packet_type::SEQUENCE_HEADER if !data.is_empty() => {
                 let Ok(mut record) = AVCDecoderConfigurationRecord::parse(data) else {
-                    Self::report_tag_damage(events, offset, tag_len);
+                    Self::report_tag_damage(
+                        events,
+                        offset,
+                        tag_len,
+                        DamageKind::MetadataSkipped,
+                        Severity::Informational,
+                        "FLV sequence header",
+                    );
                     return Ok(());
                 };
                 if record.require_sps().is_err() {
-                    Self::report_tag_damage(events, offset, tag_len);
+                    Self::report_tag_damage(
+                        events,
+                        offset,
+                        tag_len,
+                        DamageKind::MetadataSkipped,
+                        Severity::Informational,
+                        "FLV sequence header",
+                    );
                     return Ok(());
                 }
                 let length_size = usize::from(record.length_size_minus_one) + 1;
@@ -971,7 +1105,14 @@ impl StreamingFlvDemux {
                     data,
                     video.nal_length_size.unwrap_or(NAL_LENGTH_SIZE),
                 ) else {
-                    Self::report_tag_damage(events, offset, tag_len);
+                    Self::report_tag_damage(
+                        events,
+                        offset,
+                        tag_len,
+                        DamageKind::MediaUnitDropped,
+                        Severity::Degraded,
+                        "FLV video payload",
+                    );
                     return Ok(());
                 };
                 let sample = Sample {
@@ -1024,7 +1165,14 @@ impl StreamingFlvDemux {
         match aac_pkt_type {
             aac_packet_type::SEQUENCE_HEADER if !data.is_empty() => {
                 let Ok(asc) = AudioSpecificConfig::parse(data) else {
-                    Self::report_tag_damage(events, offset, tag_len);
+                    Self::report_tag_damage(
+                        events,
+                        offset,
+                        tag_len,
+                        DamageKind::MetadataSkipped,
+                        Severity::Informational,
+                        "FLV sequence header",
+                    );
                     return Ok(());
                 };
                 // ISO/IEC 14496-3 Table 1.19: the field is a configuration
@@ -1146,9 +1294,9 @@ impl Stage for StreamingFlvDemux {
     /// field (Adobe FLV v10.1 Annex E), so the buffer is *structurally*
     /// bounded at ~16 MiB — more bytes always make progress, and there is no
     /// state in which this demuxer would rather not be fed. (The pre-header
-    /// prefix is separately capped by `MAX_FLV_HEADER_LEN`, and a header
-    /// declaring more is surfaced as an `Err` rather than a steady buffered
-    /// state a driver would observe here.)
+    /// prefix is capped by `MAX_FLV_HEADER_LEN`; a header declaring more is a
+    /// damaged header, reported and abandoned rather than waited for, so no
+    /// request derived from it reaches a driver here.)
     fn demand(&self) -> Demand {
         Demand::new(self.bytes_wanted())
     }
@@ -1216,6 +1364,17 @@ mod tests {
         let mut header = rtmp_runtime::flv::FlvHeader::new(false, true);
         header.extra = &extra;
         let mut bytes = header.try_to_bytes().expect("header framing");
+        bytes[5..FLV_HEADER_LEN].copy_from_slice(&data_offset.to_be_bytes());
+        bytes
+    }
+
+    /// The nine fixed header bytes declaring `data_offset`, carrying none of
+    /// the bytes it names: the shape a hostile peer sends. Never allocates the
+    /// declared length.
+    fn header_declaring(data_offset: u32) -> Vec<u8> {
+        let header = rtmp_runtime::flv::FlvHeader::new(false, true);
+        let mut bytes = header.try_to_bytes().expect("header framing");
+        bytes.truncate(FLV_HEADER_LEN);
         bytes[5..FLV_HEADER_LEN].copy_from_slice(&data_offset.to_be_bytes());
         bytes
     }
@@ -1492,7 +1651,7 @@ mod tests {
     fn bad_signature_is_an_error_not_a_panic() {
         let mut bad = flv_header();
         bad[0] = b'X'; // corrupt the "FLV" signature
-        let mut demux = StreamingFlvDemux::new();
+        let mut demux = StreamingFlvDemux::strict();
         let err = demux.feed(&bad).unwrap_err();
         assert!(matches!(err, FlvError::BadSignature(_)));
     }
@@ -1573,12 +1732,15 @@ mod tests {
         // claiming a ~4 GiB header) must be rejected the moment enough
         // bytes have arrived to read it, not silently buffered while `feed`
         // waits forever for a "header" that will never complete — the
-        // remote-OOM/DoS this guards against.
-        let mut header = header_with_data_offset(0xFFFF_FFFF);
+        // remote-OOM/DoS this guards against. `strict` keeps that contract;
+        // the default reports the header as damage instead (see the
+        // reported-and-recovered test below).
+        let mut header = header_declaring(0xFFFF_FFFF);
         header.extend_from_slice(&[0, 0, 0, 0]); // "and a little data" per the brief
         let fed_len = header.len();
+        assert_eq!(fed_len, FLV_HEADER_LEN + PREV_TAG_SIZE_LEN);
 
-        let mut demux = StreamingFlvDemux::new();
+        let mut demux = StreamingFlvDemux::strict();
         let err = demux.feed(&header).unwrap_err();
         assert!(
             matches!(
@@ -1593,6 +1755,93 @@ mod tests {
             fed_len,
             "pending must hold only what was actually fed ({fed_len} bytes) — the demux \
              must not attempt to wait for the malicious DataOffset's implied ~4 GiB header"
+        );
+    }
+
+    /// The tolerant contract for the same header: the declared offset is never
+    /// waited for, the fixed header is reported as damage, and a tag chain
+    /// that follows it plays.
+    #[test]
+    fn absurd_data_offset_is_reported_and_the_following_tag_plays() {
+        let mut out = header_declaring(0xFFFF_FFFF);
+        write_tag(&mut out, tag_type::SCRIPT, 0, &[0, 0, 0, 0]);
+
+        let mut demux = StreamingFlvDemux::new();
+        let events = feed_and_drain(&mut demux, &out).expect("a damaged header is not fatal");
+        assert!(
+            events.iter().any(|ev| matches!(
+                ev,
+                DemuxEvent::Damage(damage)
+                    if damage.kind() == DamageKind::Resynchronised
+                        && damage.location().byte_range().map(|range| range.start())
+                            == Some(0)
+            )),
+            "the damaged header must be reported: {events:?}"
+        );
+        assert!(demux.tags_seen, "the tag after the damaged header plays");
+        assert_eq!(
+            demux.pending.len(),
+            0,
+            "nothing is retained: work was bounded by the bytes fed"
+        );
+    }
+
+    /// A caller-supplied resync window bounds the search behind a damaged
+    /// header: a tag past the window is found by a later feed, not scanned for
+    /// in this one.
+    #[test]
+    fn a_resync_window_bounds_the_search_behind_a_damaged_header() {
+        let mut out = header_declaring(0xFFFF_FFFF);
+        out.extend_from_slice(&[0xAAu8; 32]);
+        let window = out.len();
+        write_tag(&mut out, tag_type::SCRIPT, 0, &[0, 0, 0, 0]);
+        write_tag(&mut out, tag_type::SCRIPT, 0, &[0, 0, 0, 0]);
+
+        let mut demux = StreamingFlvDemux::new()
+            .with_max_resync_bytes(Some(NonZeroUsize::new(window).expect("a non-zero window")));
+        let events = feed_and_drain(&mut demux, &out[..window]).expect("a damaged header");
+        assert!(
+            events.iter().any(|ev| matches!(ev, DemuxEvent::Damage(_))),
+            "the damaged header must be reported: {events:?}"
+        );
+        assert_eq!(
+            demux.pending.len(),
+            window - FLV_HEADER_LEN,
+            "the walk examined only the window and retained only what followed the header"
+        );
+        assert!(!demux.tags_seen, "the tag is past the window");
+
+        feed_and_drain(&mut demux, &out[window..]).expect("a later feed finds the tags");
+        assert!(demux.tags_seen, "the tags after the window play");
+        assert_eq!(demux.pending.len(), 0);
+    }
+
+    /// A tag header declaring the largest 24-bit body may not make the demuxer
+    /// buffer anything beyond the bytes supplied while it waits.
+    #[test]
+    fn a_tag_declaring_a_huge_body_retains_only_the_bytes_supplied() {
+        let mut out = flv_header();
+        let tag = rtmp_runtime::flv::FlvTag::new(
+            rtmp_runtime::flv::TagType::from_byte(tag_type::SCRIPT),
+            0,
+            &[],
+        );
+        let mut header = tag.try_to_bytes().expect("tag framing");
+        header.truncate(TAG_HEADER_LEN);
+        header[1..4].copy_from_slice(&[0xFF, 0xFF, 0xFF]); // DataSize = 0xFFFFFF
+        out.extend_from_slice(&header);
+        assert_eq!(
+            out.len(),
+            FLV_HEADER_LEN + PREV_TAG_SIZE_LEN + TAG_HEADER_LEN
+        );
+
+        let mut demux = StreamingFlvDemux::new();
+        demux.feed(&out).expect("a declared body is not an error");
+        assert_eq!(
+            demux.pending.len(),
+            TAG_HEADER_LEN,
+            "pending holds exactly the {TAG_HEADER_LEN} tag-header bytes fed, never the \
+             declared body"
         );
     }
 
@@ -1918,7 +2167,7 @@ mod tests {
     #[test]
     fn a_header_past_the_maximum_data_offset_is_refused() {
         let flv = header_with_data_offset(u32::try_from(MAX_FLV_HEADER_LEN + 1).unwrap());
-        let mut demux = StreamingFlvDemux::new();
+        let mut demux = StreamingFlvDemux::strict();
         let err = demux.feed(&flv).expect_err("1025 bytes is past the bound");
         assert!(
             matches!(

@@ -43,6 +43,9 @@ pub(crate) struct TrackInit {
     pub(crate) setup_uri: String,
     pub(crate) channel: u8,
     pub(crate) rtcp_channel: u8,
+    /// The server refused this media section's `SETUP`: the track is dropped
+    /// and the others play, so its channels are never routed.
+    pub(crate) dropped: bool,
 }
 
 /// Parses the SDP into the supported (H.264 video, AAC audio) tracks in media order, at most
@@ -114,6 +117,7 @@ pub(crate) fn parse_tracks(
             config: candidate.track.config.clone(),
             clock_rate: candidate.track.clock_rate,
             setup_uri: setup.control.clone(),
+            dropped: false,
             channel,
             rtcp_channel,
         });

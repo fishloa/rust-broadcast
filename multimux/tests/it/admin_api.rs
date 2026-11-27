@@ -199,9 +199,9 @@ async fn run_instant(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     );
     let mut progress = DriverProgress::new();
     driver.feed(&[], Timestamp::from_nanos(0));
-    advance_route(&driver, &route_handle, &mut progress).await;
+    advance_route(&mut driver, &route_handle, &mut progress).await;
     driver.finish();
-    advance_route(&driver, &route_handle, &mut progress).await;
+    advance_route(&mut driver, &route_handle, &mut progress).await;
     Ok(())
 }
 
@@ -223,7 +223,7 @@ async fn run_hold(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     );
     let mut progress = DriverProgress::new();
     driver.feed(&[], Timestamp::from_nanos(0));
-    advance_route(&driver, &route_handle, &mut progress).await;
+    advance_route(&mut driver, &route_handle, &mut progress).await;
     std::future::pending::<()>().await;
     Ok(())
 }
@@ -315,7 +315,7 @@ async fn run_ticker_variant(route_handle: Arc<RouteHandle>, variant: u8) -> mult
     loop {
         ticker.tick().await;
         driver.feed(&[], Timestamp::from_nanos(0));
-        advance_route(&driver, &route_handle, &mut progress).await;
+        advance_route(&mut driver, &route_handle, &mut progress).await;
     }
 }
 
@@ -379,6 +379,7 @@ fn instant_registry() -> SchemeRegistry {
 /// A route that reaches `Live` and stays there (see [`run_hold`]).
 fn hold_route(name: &str) -> Route {
     Route {
+        damage_policy: Default::default(),
         input: InputSpec::Custom {
             type_tag: "hold".to_string(),
             params: serde_json::Value::Null,
@@ -389,6 +390,7 @@ fn hold_route(name: &str) -> Route {
 
 fn instant_route(name: &str) -> Route {
     Route {
+        damage_policy: Default::default(),
         name: name.to_string(),
         input: InputSpec::Custom {
             type_tag: "instant".to_string(),
@@ -413,6 +415,7 @@ fn instant_route(name: &str) -> Route {
 /// media. `unique` keeps two such routes from comparing `PartialEq`-equal.
 fn unreachable_rtsp_route(name: &str, unique: &str) -> Route {
     Route {
+        damage_policy: Default::default(),
         name: name.to_string(),
         input: InputSpec::Rtsp {
             url: format!("rtsp://127.0.0.1:1/{unique}"),

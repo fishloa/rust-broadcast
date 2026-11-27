@@ -253,7 +253,7 @@ fn a_packet_that_never_arrives_is_dropped_at_its_deadline_and_counted() {
 }
 
 #[test]
-fn a_drop_request_skips_the_gap_without_counting_a_loss() {
+fn a_drop_request_skips_the_gap_and_reports_what_it_lost() {
     let ts = small();
     let missing = PEER_ISN + 12;
     let mut sim = clear_sim();
@@ -276,7 +276,27 @@ fn a_drop_request_skips_the_gap_without_counting_a_loss() {
         sim.advance_by(DATA_INTERVAL_US);
     }
     finish(&mut sim);
-    assert_eq!(sim.session.datagram_stats().lost, 0);
+    // The peer will never send it, so the viewer lost that frame: it is
+    // counted, and named, rather than disappearing between the gaps.
+    assert_eq!(sim.session.datagram_stats().lost, 1);
+    let reports: Vec<broadcast_core::damage::Damage> = sim
+        .replay()
+        .events
+        .into_iter()
+        .filter_map(|e| match e.event {
+            Event::Damage(damage) => Some(damage),
+            _ => None,
+        })
+        .collect();
+    let report = reports
+        .iter()
+        .find(|d| d.what().contains("peer drop request"))
+        .expect("the drop request's own report");
+    assert_eq!(
+        report.location().ordinal(),
+        Some(u64::from(missing)),
+        "the report names the first sequence the peer gave up"
+    );
     assert!(sim.count(|e| matches!(e, Event::Sample { .. })) > 40);
     let acked = sim.peer().max_acked.expect("the peer was acknowledged");
     assert!(srt_runtime::arq::seq::seq_lt(missing, acked));

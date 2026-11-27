@@ -44,6 +44,23 @@ cargo run -p smooth-runtime --example play_static
 cargo run -p smooth-runtime --example play_live -- --look-ahead 0
 ```
 
+## Damage reports
+
+Every drop reaches the caller as `client::Output::Damage`, beside the
+`Output::Dropped`/`Output::Discontinuity` it already produced, and
+`SmoothClientConfig::damage_policy` decides whether a report also ends the
+session (`SmoothError::Damage`).
+
+Reported: a manifest that failed to fetch or parse (and will be retried), a
+fragment skipped after its retries, an unresolvable fragment URL, a stream that
+vanished from the refreshed manifest, a stream skipped because it is neither
+video nor audio or has no quality level, a stream timeline that could not be
+enumerated on a refresh, and a track that could not be set up. A fragment whose
+demux damage was already reported is not reported twice.
+
+What stays fatal: `<Protection>` (content this crate does not decrypt) and a
+manifest with no usable video or audio stream.
+
 ## Verification
 
 Behaviour goldens of both former clients (`fixtures/golden/smooth/pull-*.txt`), engine tests over the committed `fixtures/smooth` fixtures, a no-clock source guard and a fuzz target (`smooth_client`).

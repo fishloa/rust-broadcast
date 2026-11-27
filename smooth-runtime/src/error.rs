@@ -8,6 +8,10 @@ use crate::client::ManifestFault;
 #[derive(Debug, Clone, PartialEq, Error)]
 #[non_exhaustive]
 pub enum SmoothError {
+    /// The caller's damage policy refused a report: the session ends with the
+    /// same report inside this error.
+    #[error(transparent)]
+    Damage(#[from] broadcast_core::damage::DamageError),
     /// The manifest declares a `Protection` element (PlayReady/PIFF sample
     /// encryption); decrypting it is out of scope (MS-SSTR §2.2.2.2).
     #[error("manifest declares a Protection element; protected content is not supported")]

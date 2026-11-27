@@ -31,6 +31,11 @@ pub(crate) fn header_value(value: &str, header: &'static str) -> Result<String> 
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The caller's [`broadcast_core::damage::DamagePolicy`] refused a damage
+    /// report: the session ends with the same report inside this error.
+    #[error(transparent)]
+    Damage(#[from] broadcast_core::damage::DamageError),
+
     /// The OS random source failed while a `Session` id was being allocated; the request is not
     /// answered, since a predictable id would let another client take the session over.
     #[error("the OS random source is unavailable")]

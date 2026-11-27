@@ -3514,6 +3514,7 @@ version = "0.14.0"
 dependencies = [
  "broadcast-auth",
  "broadcast-common",
+ "broadcast-core",
  "bytes",
  "futures-util",
  "getrandom 0.4.3",

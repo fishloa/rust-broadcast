@@ -194,6 +194,12 @@ pub enum RtmpError {
     /// `serialized_len()`.
     #[error(transparent)]
     OutputBufferTooSmall(#[from] broadcast_core::error::OutputBufferTooSmall),
+
+    /// The caller's [`broadcast_core::damage::DamagePolicy`] refused a report
+    /// the session was about to publish: the session ends with the same
+    /// report inside this error.
+    #[error(transparent)]
+    Damage(#[from] broadcast_core::damage::DamageError),
 }
 
 /// Render one AMF0 value for an error message; the value's `Debug` form is

@@ -60,6 +60,7 @@ async fn main() {
     let outputs = parse_outputs(&args[1..]);
 
     let config = Config::default().with_routes(vec![Route {
+        damage_policy: Default::default(),
         name: STREAM_NAME.to_string(),
         input: InputSpec::Rtsp {
             url: rtsp_url,

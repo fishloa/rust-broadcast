@@ -7,6 +7,7 @@ mod handshake_round_trip;
 mod handshake_timestamps;
 mod io_concurrent_listener;
 mod io_config;
+mod io_damage;
 mod io_forwarder_abort_on_drop;
 mod io_handshake;
 mod io_isn_socket_id_randomization;

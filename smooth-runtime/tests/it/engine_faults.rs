@@ -307,6 +307,56 @@ fn a_damaged_fragment_is_dropped_and_the_next_one_still_demuxes() {
     assert!(host.has(is_ended), "playback continued past the damage");
     assert_eq!(host.count_requests(THIRD_VIDEO), 1);
     assert_eq!(video_dts(&host), expected);
+
+    // The player is told what it lost: one damage report for the damaged
+    // fragment, in order with the samples that continue past it.
+    let reports: Vec<&broadcast_core::damage::Damage> = host
+        .outputs()
+        .iter()
+        .filter_map(|o| match o {
+            Output::Damage(damage) => Some(damage),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(reports.len(), 1, "{reports:?}");
+    assert_eq!(
+        reports[0].kind(),
+        broadcast_core::damage::DamageKind::MediaUnitDropped
+    );
+    assert_eq!(
+        reports[0].severity(),
+        broadcast_core::damage::Severity::Degraded
+    );
+}
+
+/// The same damage, with `Fail`: the session stops there with the report.
+#[test]
+fn the_fail_policy_ends_the_damaged_fragment_session_with_the_same_report() {
+    let mut damaged = fixture(&format!("av/{SECOND_VIDEO}"));
+    damaged[SAMPLE_COUNT].copy_from_slice(&0x00ff_ffffu32.to_be_bytes());
+    let config = SmoothClientConfig::default().with_damage_policy(
+        broadcast_core::damage::DamagePolicy::new()
+            .fail_on(broadcast_core::damage::Severity::Degraded),
+    );
+    let mut host = av_host(config);
+    host.route(SECOND_VIDEO, vec![Reply::Body(damaged)]);
+    host.run_until(|o| o.iter().any(is_fatal));
+    let fatal = host
+        .outputs()
+        .iter()
+        .find_map(|o| match o {
+            Output::Fatal(SmoothError::Damage(error)) => Some(error.damage().clone()),
+            _ => None,
+        })
+        .expect("the policy stop carries the report");
+    assert_eq!(
+        fatal.kind(),
+        broadcast_core::damage::DamageKind::MediaUnitDropped
+    );
+    assert!(
+        !host.has(|o| matches!(o, Output::Damage(_))),
+        "a refused report is not published too"
+    );
 }
 
 fn av_manifest_with_audio_chunks(chunks: &str) -> Vec<u8> {
@@ -390,5 +440,56 @@ fn a_fragment_body_one_byte_past_the_cap_ends_the_session() {
     assert!(
         host.samples().iter().all(|(track, _)| track.value() != 2),
         "the refused fragment produces no samples"
+    );
+}
+
+// ── The drop reports of this session ───────────────────────────────────
+
+fn reports(host: &Host) -> Vec<broadcast_core::damage::Damage> {
+    host.outputs()
+        .iter()
+        .filter_map(|o| match o {
+            Output::Damage(damage) => Some(damage.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_manifest_that_fails_to_fetch_is_reported_and_retried() {
+    let mut host = av_host(SmoothClientConfig::default());
+    host.route(
+        "Manifest",
+        vec![Reply::Status(503), Reply::Body(fixture("av/Manifest"))],
+    );
+    host.run_until(|o| o.iter().any(is_ended));
+    let reported = reports(&host);
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert_eq!(
+        reported[0].kind(),
+        broadcast_core::damage::DamageKind::MetadataSkipped
+    );
+    assert_eq!(reported[0].what(), "Smooth manifest");
+    assert!(host.has(is_ended), "the retry still plays the session");
+}
+
+#[test]
+fn a_stream_with_no_quality_level_is_reported_as_a_lost_track() {
+    // A manifest naming a stream with no QualityLevel cannot be played from
+    // that stream, so it is lost — reported before the session's own answer.
+    let manifest = String::from_utf8(fixture("av/Manifest")).expect("utf8");
+    let broken = manifest
+        .replace("<QualityLevel", "<Unknown")
+        .replace("</QualityLevel>", "</Unknown>");
+    let mut host = Host::new(SmoothClientConfig::default());
+    host.route("Manifest", vec![Reply::Body(broken.into_bytes())]);
+    host.run();
+    let reported = reports(&host);
+    assert!(
+        reported.iter().any(|damage| {
+            damage.kind() == broadcast_core::damage::DamageKind::TrackDropped
+                && damage.what() == "Smooth stream (no quality level)"
+        }),
+        "{reported:?}"
     );
 }

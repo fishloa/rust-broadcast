@@ -1812,6 +1812,8 @@ impl Trunk {
             track_changes_consumed: state.track_changes.published,
             subscribe_timed_at: state.timed.published,
             subscribe_sparse_at: state.sparse.published,
+            last_timed: None,
+            damage: Vec::new(),
         }
     }
 
@@ -1893,6 +1895,8 @@ impl Trunk {
             },
             subscribe_timed_at: state.timed.base,
             subscribe_sparse_at: state.sparse.base,
+            last_timed: None,
+            damage: Vec::new(),
         };
         (cursor, state.track_generation, Arc::clone(&state.tracks))
     }
@@ -3093,6 +3097,39 @@ pub enum SampleCursorItem {
     },
 }
 
+impl SampleCursorItem {
+    /// The one damage report this item announces, when it announces a loss a
+    /// consumer suffered: `None` for data and markers, `Some` for every lag
+    /// variant.
+    ///
+    /// The item keeps its exact count (`skipped`); the report is the same loss
+    /// in the workspace's one vocabulary, so a host that counts losses needs
+    /// only one channel. Location carries the sample count as the ordinal of
+    /// the first lost unit when the ring position is known.
+    #[must_use]
+    pub fn damage(&self) -> Option<broadcast_core::damage::Damage> {
+        use broadcast_core::damage::{Damage, DamageKind, Severity};
+        let (what, skipped) = match self {
+            Self::Lagged { skipped } => ("trunk timed ring", *skipped),
+            Self::Degraded { skipped } => ("trunk sparse ring", *skipped),
+            Self::HandoversLagged { skipped } => ("trunk writer handovers", *skipped),
+            Self::TracksLagged { skipped, .. } => ("trunk track markers", *skipped),
+            Self::Timed { .. }
+            | Self::Sparse { .. }
+            | Self::Discontinuity
+            | Self::TracksChanged { .. } => {
+                return None;
+            }
+        };
+        // The variants announce a loss of `skipped` units; the count is what
+        // the ordinal records, since the report has no separate count field.
+        Some(
+            Damage::new(DamageKind::MediaUnitDropped, Severity::Degraded, what)
+                .with_ordinal(skipped),
+        )
+    }
+}
+
 /// A subscribed reader of a [`Trunk`]'s sample ring. Obtained via
 /// [`Trunk::subscribe`] — **read that method's docs before creating more
 /// than a handful of these.**
@@ -3124,6 +3161,12 @@ pub struct SampleCursor {
     subscribe_timed_at: u64,
     /// The `Sparse`-class equivalent of `subscribe_timed_at`.
     subscribe_sparse_at: u64,
+    /// The presentation time and timescale of the last `Timed`/`Sparse` sample
+    /// this cursor handed out, so a loss it announces can name the span of
+    /// media that never reached the consumer.
+    last_timed: Option<(TrackId, i64, broadcast_core::timescale::Timescale)>,
+    /// One report per loss announced since the last [`Self::take_damage`].
+    damage: Vec<broadcast_core::damage::Damage>,
 }
 
 impl SampleCursor {
@@ -3131,6 +3174,54 @@ impl SampleCursor {
     /// parks until a publish if nothing is ready. An idle cursor takes no
     /// trunk lock while parked. Cancel-safe: dropping the future loses
     /// nothing, the next call polls the same position.
+    /// Reports for the losses this cursor announced since the last call, each
+    /// with the media-time span the loss covers when both ends are known
+    /// (from the last sample handed out to the oldest one still resident, on
+    /// the same track and timescale).
+    ///
+    /// The in-band item keeps its exact count; this is the same loss in the
+    /// workspace's one report vocabulary, so a host that counts what its
+    /// viewers missed reads one channel.
+    pub fn take_damage(&mut self) -> Vec<broadcast_core::damage::Damage> {
+        core::mem::take(&mut self.damage)
+    }
+
+    /// Remember the presentation time of the sample just handed out, so the
+    /// next loss can name the span it opens.
+    fn note_delivered(&mut self, track_id: TrackId, sample: &Sample, state: &TrunkState) {
+        let Some(pts) = sample.timing.and_then(|timing| timing.pts()) else {
+            return;
+        };
+        let Some(spec) = state.tracks.iter().find(|spec| spec.track_id == track_id) else {
+            return;
+        };
+        let end = match sample.timing.and_then(|timing| timing.duration()) {
+            Some(duration) => pts.saturating_add(i64::from(duration)),
+            None => pts,
+        };
+        self.last_timed = Some((track_id, end, spec.timescale));
+    }
+
+    /// Queue the report for a loss item, with the span when the ring can name
+    /// both ends.
+    fn note_loss(&mut self, item: &SampleCursorItem, state: &TrunkState) {
+        let Some(mut damage) = item.damage() else {
+            return;
+        };
+        if let (Some((track, end, scale)), Some((next_track, next_sample))) =
+            (self.last_timed, state.timed.entries.front())
+            && *next_track == track
+            && let Some(start) = next_sample.timing.and_then(|timing| timing.pts())
+        {
+            damage = damage.at_media_time(broadcast_core::damage::MediaTimeRange::new(
+                scale,
+                end,
+                start.max(end),
+            ));
+        }
+        self.damage.push(damage);
+    }
+
     pub async fn next(&mut self) -> SampleCursorItem {
         loop {
             let listener = self.trunk.data_listener();
@@ -3175,17 +3266,24 @@ impl SampleCursor {
     /// itself, handing a consumer post-handover data before it had even
     /// been told the handover happened.
     pub fn poll(&mut self) -> Option<SampleCursorItem> {
-        let state = self.trunk.lock_state();
+        // Owned handle so the guard does not borrow `self`: a loss report is
+        // queued on `self` while the state is read.
+        let trunk = Arc::clone(&self.trunk);
+        let state = trunk.lock_state();
 
         if self.timed_consumed < state.timed.base {
             let skipped = state.timed.base - self.timed_consumed;
             self.timed_consumed = state.timed.base;
-            return Some(SampleCursorItem::Lagged { skipped });
+            let item = SampleCursorItem::Lagged { skipped };
+            self.note_loss(&item, &state);
+            return Some(item);
         }
         if self.sparse_consumed < state.sparse.base {
             let skipped = state.sparse.base - self.sparse_consumed;
             self.sparse_consumed = state.sparse.base;
-            return Some(SampleCursorItem::Degraded { skipped });
+            let item = SampleCursorItem::Degraded { skipped };
+            self.note_loss(&item, &state);
+            return Some(item);
         }
         if self.handovers_consumed < state.handovers.base {
             // Fell behind the (small, fixed) handover backlog itself: the
@@ -3198,7 +3296,9 @@ impl SampleCursor {
             // `WRITER_HANDOVER_LOG_CAPACITY`'s doc.
             let skipped = state.handovers.base - self.handovers_consumed;
             self.handovers_consumed = state.handovers.base;
-            return Some(SampleCursorItem::HandoversLagged { skipped });
+            let item = SampleCursorItem::HandoversLagged { skipped };
+            self.note_loss(&item, &state);
+            return Some(item);
         }
 
         // The oldest still-unreported handover, if any — used both to
@@ -3250,11 +3350,13 @@ impl SampleCursor {
             if self.timed_consumed < first.timed_at {
                 let skipped = first.timed_at.min(state.timed.published) - self.timed_consumed;
                 self.timed_consumed += skipped;
-                return Some(SampleCursorItem::TracksLagged {
+                let item = SampleCursorItem::TracksLagged {
                     skipped,
                     generation: state.track_generation,
                     tracks: Arc::clone(&state.tracks),
-                });
+                };
+                self.note_loss(&item, &state);
+                return Some(item);
             }
         }
         if !timed_blocked
@@ -3275,6 +3377,7 @@ impl SampleCursor {
                 ring_offset(self.sparse_consumed, state.sparse.base).unwrap_or(usize::MAX);
             if let Some((track_id, sample)) = state.sparse.entries.get(sparse_idx) {
                 self.sparse_consumed += 1;
+                self.note_delivered(*track_id, sample, &state);
                 return Some(SampleCursorItem::Sparse {
                     track_id: *track_id,
                     sample: sample.clone(),
@@ -3287,6 +3390,7 @@ impl SampleCursor {
                 ring_offset(self.timed_consumed, state.timed.base).unwrap_or(usize::MAX);
             if let Some((track_id, sample)) = state.timed.entries.get(timed_idx) {
                 self.timed_consumed += 1;
+                self.note_delivered(*track_id, sample, &state);
                 return Some(SampleCursorItem::Timed {
                     track_id: *track_id,
                     sample: sample.clone(),
@@ -3335,6 +3439,25 @@ pub enum SegmentCursorItem {
     /// stalling ingest. This is the last item this cursor will ever yield —
     /// every `poll` after this one returns `None`.
     Terminated,
+}
+
+impl SegmentCursorItem {
+    /// The one damage report this item announces, when it announces one.
+    /// `Segment` and `Terminated` are not losses of the data itself — a
+    /// terminated pin is policy, and the host is told in-band — so they
+    /// return `None`.
+    #[must_use]
+    pub fn damage(&self) -> Option<broadcast_core::damage::Damage> {
+        use broadcast_core::damage::{Damage, DamageKind, Severity};
+        let (kind, what, skipped) = match self {
+            Self::Lagged { skipped } => {
+                (DamageKind::MediaUnitDropped, "trunk segment log", *skipped)
+            }
+            Self::Gap { skipped } => (DamageKind::MediaUnitDropped, "trunk archive pin", *skipped),
+            Self::Segment(_) | Self::Terminated => return None,
+        };
+        Some(Damage::new(kind, Severity::Degraded, what).with_ordinal(skipped))
+    }
 }
 
 /// A subscribed reader of a [`Trunk`]'s segment log. Obtained via
@@ -4174,6 +4297,122 @@ mod tests {
     /// }` (`12 - 6`, only the 6 evictions that happened *after* this cursor
     /// subscribed). Recompiled and re-run to confirm this exact failure,
     /// then reverted.
+    /// A cursor that falls behind names the span of media it lost: from the
+    /// end of the last sample it was handed to the start of the oldest one the
+    /// ring still holds.
+    #[test]
+    fn a_lagged_cursor_reports_the_span_of_media_it_lost() {
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(2))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(4))
+                .with_part_capacity(nz(4)),
+        );
+        let writer = trunk.writer().unwrap();
+        // Two samples at 1 kHz, 100 ticks each: pts 0 and 100.
+        writer.set_tracks(vec![TrackSpec::new(
+            TrackId::new(1),
+            broadcast_core::timescale::Timescale::try_new(1_000).expect("1 kHz"),
+            CodecConfig::Data {
+                identity: DataIdentity::Ts {
+                    stream_type: 0x06,
+                    descriptors: Vec::new(),
+                    carriage: DataCarriage::Pes,
+                },
+            },
+        )]);
+        let mut cursor = trunk.subscribe();
+        writer.publish(
+            TrackId::new(1),
+            RetentionClass::Timed,
+            timed_sample(0, 100, 1),
+        );
+        let first = cursor.poll().expect("the first sample");
+        assert!(matches!(first, SampleCursorItem::Timed { .. }));
+        // Publish three more; capacity 2 evicts the two the cursor has not read.
+        for pts in [100, 200, 300] {
+            writer.publish(
+                TrackId::new(1),
+                RetentionClass::Timed,
+                timed_sample(pts, 100, 1),
+            );
+        }
+        let lagged = cursor.poll().expect("the loss");
+        assert!(matches!(lagged, SampleCursorItem::Lagged { .. }));
+        let reports = cursor.take_damage();
+        assert_eq!(reports.len(), 1, "{reports:?}");
+        let span = reports[0].location().media_time().expect("a span");
+        assert_eq!(span.start(), 100, "from the end of the last sample read");
+        assert_eq!(span.end(), 200, "to the oldest one still resident");
+        assert_eq!(span.timescale().get(), 1_000);
+        assert!(cursor.take_damage().is_empty(), "reported once");
+    }
+
+    fn timed_sample(pts: i64, duration: u32, tag: u8) -> Sample {
+        let mut sample = sample(tag, 4);
+        sample.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
+            pts, pts, duration,
+        ));
+        sample
+    }
+
+    /// Every lag item converts to the one damage report, and the data and
+    /// marker items convert to none: a host counting losses needs one channel
+    /// and one vocabulary.
+    #[test]
+    fn every_lag_item_states_the_report_it_stands_for() {
+        use broadcast_core::damage::{DamageKind, Severity};
+        let cases = [
+            SampleCursorItem::Lagged { skipped: 6 },
+            SampleCursorItem::Degraded { skipped: 2 },
+            SampleCursorItem::HandoversLagged { skipped: 1 },
+            SampleCursorItem::TracksLagged {
+                skipped: 3,
+                generation: 1,
+                tracks: Arc::from(Vec::new()),
+            },
+        ];
+        for item in &cases {
+            let damage = item.damage().expect("a lag states a loss");
+            assert_eq!(damage.kind(), DamageKind::MediaUnitDropped);
+            assert_eq!(damage.severity(), Severity::Degraded);
+            assert!(!damage.what().is_empty());
+        }
+        assert!(SampleCursorItem::Discontinuity.damage().is_none());
+        assert!(
+            SampleCursorItem::Timed {
+                track_id: TrackId::new(1),
+                sample: sample(0, 4),
+            }
+            .damage()
+            .is_none()
+        );
+    }
+
+    /// The segment cursor's loss items convert too, and a delivered segment or
+    /// a terminated pin does not.
+    #[test]
+    fn every_segment_loss_item_states_the_report_it_stands_for() {
+        use broadcast_core::damage::DamageKind;
+        assert_eq!(
+            SegmentCursorItem::Lagged { skipped: 2 }
+                .damage()
+                .expect("a lag is a loss")
+                .kind(),
+            DamageKind::MediaUnitDropped
+        );
+        assert_eq!(
+            SegmentCursorItem::Gap { skipped: 4 }
+                .damage()
+                .expect("an archive gap is a loss")
+                .what(),
+            "trunk archive pin"
+        );
+        assert!(SegmentCursorItem::Terminated.damage().is_none());
+    }
+
     #[test]
     fn subscribe_from_backlog_reports_lagged_when_backlog_already_overwritten() {
         let trunk = Trunk::new(

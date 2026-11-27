@@ -63,7 +63,9 @@ fn all_259_seis_match_the_x265_json_in_display_order() {
             .collect()
     };
     for (i, (nal, scene)) in nals.iter().zip(scenes).enumerate() {
-        let meta = Hdr10PlusMetadata::from_hevc_sei_nal(nal).unwrap().unwrap();
+        let meta =
+            Hdr10PlusMetadata::from_hevc_sei_nal(nal, &mut broadcast_bitstream::Findings::new())
+                .unwrap();
         let lum = &scene["LuminanceParameters"];
         let w = meta.primary_window();
         assert_eq!(

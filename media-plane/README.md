@@ -124,6 +124,23 @@ The full ingress to `Trunk` to cursor pipeline, driven by `IngestDriver` against
 
 Sans-IO and bounded: no thread or socket is created here, every queue has a cap, and over-capacity is an explicit event (`Lagged`, `Degraded`, `Discontinuity`), never silent loss. The event log never fabricates a media time for a segment-relative (`emsg` v0) or wall-clock-only (SCTE 35 `splice_schedule`) event until the anchor it needs exists. `#[non_exhaustive]` on policies and errors; a lexical no-hand-roll guard and label-coverage tests apply.
 
+## Damage reports
+
+A `Trunk` keeps the in-band loss items its cursors always had
+(`SampleCursorItem::Lagged`/`Degraded`/`HandoversLagged`/`TracksLagged`,
+`SegmentCursorItem::Lagged`/`Gap`) and gives the same loss in the workspace's one
+vocabulary: `SampleCursor::take_damage()` and
+`SampleCursorItem::damage`/`SegmentCursorItem::damage`, with the media-time span
+the loss covers when the ring can name both ends. `SessionEvent::Damage` carries
+what an input's reader reported (the ingest driver holds each report for its host
+until `take_damage`), and the segmenter publishes `SegmenterEvent::Damage` for a
+cursor it fell behind and a source-clock break it re-anchored on. The whole-file
+path keeps the reader's reports in `ParsedFile::damage` and publishes them before
+the content they describe.
+
+What stays an error: a non-monotonic segment sequence number (the segment index
+would be corrupted) and a program with no admitted tracks.
+
 ## Related crates
 
 Depends on `broadcast-common` (`Stage`, `Timestamp`, `Demand`), `transmux` (the neutral IR and `TrackId`) and `timed-metadata` (event model). Consumed by `hls-runtime` (`HlsOrigin` as a `ServedEgress`) and `multimux` (origins and the DVR recorder), and by `compliance-probe` (a `Trunk`/`ByteTap` consumer). The design document is `docs/superpowers/specs/2026-07-26-media-plane-architecture.md` in the workspace.

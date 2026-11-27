@@ -38,10 +38,10 @@ fuzz_target!(|data: &[u8]| {
             let _ = access_unit_is_idr(codec, data);
             let _ = access_unit_is_keyframe(codec, data, length_prefixed);
             let _ = access_unit_is_rap(codec, data, length_prefixed);
-            let _ = caption_cc_data(codec, data, length_prefixed);
+            let _ = caption_cc_data(codec, data, length_prefixed, &mut broadcast_bitstream::Findings::new());
         }
 
-        let _ = split_access_units(codec, data);
+        let _ = split_access_units(codec, data, &mut broadcast_bitstream::Findings::new());
         // A small caller-supplied bound: a hostile stream that never closes a
         // NAL must be rejected, not buffered without limit.
         let mut splitter = AccessUnitSplitter::with_max_open_nal_bytes(codec, 1 << 20);

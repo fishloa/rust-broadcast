@@ -19,6 +19,7 @@
 //! H.265 §7.3.7, §D.2.3/D.3.3 + Table D.2, §E.2.1-E.3.1.
 
 use crate::bitreader::BitReader;
+use crate::findings::Findings;
 use crate::nal::sei_messages;
 #[cfg(feature = "h264")]
 use crate::nal::{AVC_NAL_HEADER_LEN, AVC_NAL_IDR, AVC_NAL_SEI, AVC_NAL_SLICE, NAL_TYPE_MASK};
@@ -368,7 +369,7 @@ pub fn avc_facts(ps: &AvcParamSets, nals: &[&[u8]]) -> Option<PictureFacts> {
     let pic_struct = sps.pic_timing().and_then(|layout| {
         nals.iter()
             .filter(|n| n.first().map(|b| b & NAL_TYPE_MASK) == Some(AVC_NAL_SEI))
-            .flat_map(|n| sei_messages(&n[AVC_NAL_HEADER_LEN..]))
+            .flat_map(|n| sei_messages(&n[AVC_NAL_HEADER_LEN..], &mut Findings::new()))
             .find(|(t, _)| *t == SEI_PAYLOAD_PIC_TIMING)
             .and_then(|(_, p)| avc_pic_struct(&p, layout))
     });
@@ -410,7 +411,7 @@ pub fn hevc_facts(sps_nal: &[u8], nals: &[&[u8]]) -> Option<PictureFacts> {
         let payload = nals
             .iter()
             .filter(|n| nal_type(n) == Some(HEVC_PREFIX_SEI_NUT) && n.len() > HEVC_NAL_HEADER_LEN)
-            .flat_map(|n| sei_messages(&n[HEVC_NAL_HEADER_LEN..]))
+            .flat_map(|n| sei_messages(&n[HEVC_NAL_HEADER_LEN..], &mut Findings::new()))
             .find(|(t, _)| *t == SEI_PAYLOAD_PIC_TIMING);
         if let Some((_, p)) = payload
             && let Ok(mut r) = BitReader::from_rbsp(&p, "H.265 pic_timing")

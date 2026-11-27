@@ -43,6 +43,24 @@ struct Run {
     tail: u64,
 }
 
+/// A gap between two `S` runs of a `SegmentTimeline`: the second run starts
+/// later than the first one ends.
+///
+/// DASH 5.3.9.6.1 lets `@t` start a new run at or after the previous run's
+/// end. Later is a declared gap — media the MPD describes but no segment
+/// addresses — which the client bridges by carrying on at the new run's start;
+/// earlier (beyond one tick of tolerance) is rejected as
+/// [`AddressError::TimelineNotIncreasing`], so an *overlap* never reaches a
+/// plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct TimelineBoundary {
+    /// The segment index the second run starts at.
+    pub index: u64,
+    /// `@timescale` ticks of the gap.
+    pub ticks: u64,
+}
+
 /// The lazily expanded timeline.
 #[derive(Debug, Clone, Default)]
 pub struct TimelineIndex {
@@ -56,6 +74,9 @@ pub struct TimelineIndex {
 /// Segment of a run can overshoot the real boundary by one tick, so a
 /// one-tick shortfall is trusted rather than rejected.
 const TIMELINE_T_TOLERANCE_TICKS: u64 = 1;
+
+/// Adjacent runs are compared in pairs: a break is between exactly two runs.
+const ADJACENT_RUNS: usize = 2;
 
 impl TimelineIndex {
     /// Build the run table.
@@ -152,6 +173,27 @@ impl TimelineIndex {
             total += count;
         }
         Ok(Self { runs, total })
+    }
+
+    /// Every gap between two runs, in plan order: media DASH declares but no
+    /// segment addresses, which the client bridges when it builds a plan.
+    #[must_use]
+    pub fn boundaries(&self) -> Vec<TimelineBoundary> {
+        let mut out = Vec::new();
+        for pair in self.runs.windows(ADJACENT_RUNS) {
+            let (left, right) = (pair[0], pair[1]);
+            let last_start = left
+                .time
+                .saturating_add(left.d.saturating_mul(left.count - 1));
+            let end = last_start.saturating_add(left.tail);
+            if right.time > end {
+                out.push(TimelineBoundary {
+                    index: right.first_index,
+                    ticks: right.time - end,
+                });
+            }
+        }
+        out
     }
 
     /// Number of segments.

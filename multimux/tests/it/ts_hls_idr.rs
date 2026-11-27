@@ -97,6 +97,7 @@ fn write_ts(tag: &str) -> PathBuf {
 
 fn route(path: &std::path::Path, outputs: Vec<OutputKind>, cut: TsHlsCutPolicy) -> Route {
     Route {
+        damage_policy: Default::default(),
         name: "cam".to_string(),
         input: InputSpec::File {
             path: path.to_string_lossy().into_owned(),

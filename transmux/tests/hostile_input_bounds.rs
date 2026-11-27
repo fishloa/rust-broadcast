@@ -99,14 +99,14 @@ fn hostile_stts_run_count_is_rejected() {
         Ok(media) => assert!(
             media.skipped.iter().any(|s| s.reason.contains("stts"))
                 || media
-                    .damage
+                    .damages
                     .iter()
                     .any(|damage| damage.what() == "samples-dropped"),
             "a stts declaring a 0xFFFFFFFF run must not be silently accepted: \
              tracks={:?} skipped={:?} damage={:?}",
             media.tracks.len(),
             media.skipped,
-            media.damage
+            media.damages
         ),
     }
 }
@@ -124,14 +124,14 @@ fn hostile_ctts_run_count_is_rejected() {
         Ok(media) => assert!(
             media.skipped.iter().any(|s| s.reason.contains("ctts"))
                 || media
-                    .damage
+                    .damages
                     .iter()
                     .any(|damage| damage.what() == "samples-dropped"),
             "a ctts declaring a 0xFFFFFFFF run must not be silently accepted: \
              tracks={:?} skipped={:?} damage={:?}",
             media.tracks.len(),
             media.skipped,
-            media.damage
+            media.damages
         ),
     }
 }
@@ -174,13 +174,13 @@ fn hostile_stsz_sample_count_is_rejected() {
                 <= u32::try_from(file.len()).unwrap_or(u32::MAX) as usize
                 && (!media.skipped.is_empty()
                     || !media.degraded.is_empty()
-                    || !media.damage.is_empty()),
+                    || !media.damages.is_empty()),
             "a ~24 KB file whose stsz declares 0xFFFFFFFF samples must be reported, got {} \
              track(s), skipped {:?}, degraded {:?}, damage {:?}",
             media.tracks.len(),
             media.skipped,
             media.degraded,
-            media.damage
+            media.damages
         ),
     }
 }
@@ -200,13 +200,13 @@ fn hostile_stco_entry_count_is_rejected() {
             media.tracks.iter().all(|track| track.samples.is_empty())
                 && (!media.skipped.is_empty()
                     || !media.degraded.is_empty()
-                    || !media.damage.is_empty()),
+                    || !media.damages.is_empty()),
             "a stco declaring 0xFFFFFFFF chunk offsets must be rejected, got {} track(s), \
              skipped {:?}, degraded {:?}, damage {:?}",
             media.tracks.len(),
             media.skipped,
             media.degraded,
-            media.damage
+            media.damages
         ),
     }
 }

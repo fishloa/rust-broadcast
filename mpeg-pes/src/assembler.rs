@@ -134,4 +134,15 @@ mod tests {
         assert_eq!(a.feed(false, &[0xDE, 0xAD]), None); // mid-stream join
         assert!(a.flush().is_none());
     }
+
+    /// The assembler never reads `PES_packet_length`, so a header declaring the
+    /// 16-bit maximum buffers only the bytes actually supplied.
+    #[test]
+    fn a_header_declaring_the_maximum_length_buffers_only_the_bytes_fed() {
+        let mut a = PesAssembler::new();
+        let header = [0x00u8, 0x00, 0x01, 0xE0, 0xFF, 0xFF, 0x80, 0x00, 0x00];
+        assert_eq!(a.feed(true, &header), None);
+        assert_eq!(a.len(), header.len());
+        assert!(a.is_started());
+    }
 }

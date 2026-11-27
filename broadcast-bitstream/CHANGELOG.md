@@ -9,6 +9,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 
 ### Added
 
+- `findings`: the report of what a tolerant parser skipped, in the workspace's
+  one damage vocabulary. `ParseFinding` names the class (a rejected parameter
+  set, a malformed SEI, unparsable HDR metadata, an access unit the splitter
+  cannot delimit, an audio frame header, a LAME tag) with the offset the parser
+  knows, and `From<ParseFinding> for Damage` converts it into
+  `broadcast_core::damage::Damage`. `Findings` is the collector a parser is
+  handed. The parsers that can continue past a broken structure now record one
+  finding per skip instead of dropping it silently: `nal::sei_messages`,
+  `nal::caption_cc_data`, `hdr::HdrStaticMetadata::absorb_hevc_sei_nal`/
+  `from_hevc_record`, `hdr10plus::{Hdr10PlusMetadata::hevc_sei_nal_payloads,
+  from_hevc_sei_nal}`, the AC-3/E-AC-3 splitters, and `au::split_access_units`/
+  `AccessUnitSplitter::take_findings`.
+
+
 - `mpeg_audio::{LameTag, parse_lame_tag}`: the LAME/Xing `Info` tag in the
   first MPEG Layer III frame, with the 9-byte encoder version string and, for a
   LAME-family encoder (`LAME`/`Lavf`/`Lavc`), the 12-bit encoder delay and
@@ -71,6 +85,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 - `annexb::start_code_positions` is crate-private: nothing outside the crate
   needs the allocation. `annexb::find_start_code_prefix` stays the one public
   scan primitive, so external callers lose no capability.
+
+### Breaking
+
+- The tolerant parsers take the `Findings` collector their findings go into:
+  `nal::sei_messages`, `nal::caption_cc_data`,
+  `hdr::HdrStaticMetadata::absorb_hevc_sei_nal`/`from_hevc_record`,
+  `hdr10plus::{Hdr10PlusMetadata::hevc_sei_nal_payloads, from_hevc_sei_nal}`,
+  `ac3_syncframe::{split_ac3_syncframes, split_ac3_syncframes_resyncing,
+  split_ac3_syncframe_ranges, split_eac3_syncframes,
+  split_eac3_syncframe_ranges}` and `au::split_access_units`. A caller with no
+  channel for the reports passes a `Findings` it drops.
+- `Hdr10PlusMetadata::from_hevc_sei_nal` returns `Option<Self>`: a message
+  whose body does not parse is recorded in its `Findings` argument instead of
+  being returned as an inner `Err`.
 
 ### Fixed
 

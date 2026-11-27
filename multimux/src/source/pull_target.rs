@@ -22,6 +22,9 @@ pub(crate) struct PullTarget {
     pub(crate) timeouts: Timeouts,
     pub(crate) auth: Option<Credentials>,
     pub(crate) max_pes_unit_bytes: Option<NonZeroUsize>,
+    /// What each damage report from this route's input means (set from the
+    /// route's config; the default reports everything and fails on nothing).
+    pub(crate) damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 impl PullTarget {
@@ -32,6 +35,7 @@ impl PullTarget {
             timeouts: Timeouts::default(),
             auth: None,
             max_pes_unit_bytes: None,
+            damage_policy: broadcast_core::damage::DamagePolicy::new(),
         }
     }
 
@@ -42,6 +46,14 @@ impl PullTarget {
 
     pub(crate) fn with_auth(mut self, auth: Option<Credentials>) -> Self {
         self.auth = auth;
+        self
+    }
+
+    pub(crate) fn with_damage_policy(
+        mut self,
+        damage_policy: broadcast_core::damage::DamagePolicy,
+    ) -> Self {
+        self.damage_policy = damage_policy;
         self
     }
 
@@ -140,6 +152,18 @@ impl<K: PullKind> PullRoute<K> {
     #[must_use]
     pub fn with_max_pes_unit_bytes(mut self, max: Option<NonZeroUsize>) -> Self {
         self.target = self.target.with_max_pes_unit_bytes(max);
+        self
+    }
+
+    /// Sets what each damage report from this route's input means, from the
+    /// route's configuration. A `Fail` policy ends this input's run; the
+    /// supervisor then restarts it as it does after any input failure.
+    #[must_use]
+    pub fn with_damage_policy(
+        mut self,
+        damage_policy: broadcast_core::damage::DamagePolicy,
+    ) -> Self {
+        self.target = self.target.with_damage_policy(damage_policy);
         self
     }
 }

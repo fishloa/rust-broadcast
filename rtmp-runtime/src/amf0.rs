@@ -228,6 +228,7 @@ fn parse_pairs(
     bytes: &[u8],
     depth: usize,
     values: &mut usize,
+    diagnostics: &mut Vec<broadcast_core::damage::Damage>,
 ) -> Result<(Vec<(String, Amf0Value)>, usize)> {
     let mut consumed = 0;
     let mut pairs = Vec::new();
@@ -246,7 +247,7 @@ fn parse_pairs(
                 return Ok((pairs, after_key + MARKER_LEN));
             }
         }
-        let (value, value_len) = parse_value(&bytes[after_key..], depth, values)?;
+        let (value, value_len) = parse_value(&bytes[after_key..], depth, values, diagnostics)?;
         pairs.push((key, value));
         consumed = after_key
             .checked_add(value_len)
@@ -271,8 +272,16 @@ fn parse_pairs(
 /// Object/ECMA-Array/Strict-Array so recursion is bounded by
 /// [`MAX_AMF0_DEPTH`] regardless of how deeply the input is (adversarially)
 /// nested. `values` counts every value decoded across the whole top-level
-/// sequence, bounded by [`MAX_AMF0_VALUES`].
-fn parse_value(bytes: &[u8], depth: usize, values: &mut usize) -> Result<(Amf0Value, usize)> {
+/// sequence, bounded by [`MAX_AMF0_VALUES`]. `diagnostics` collects one
+/// report per AMF0 metadata defect the value carries but that does not stop
+/// it being usable (an ECMA-Array whose declared count disagrees with its
+/// contents).
+fn parse_value(
+    bytes: &[u8],
+    depth: usize,
+    values: &mut usize,
+    diagnostics: &mut Vec<broadcast_core::damage::Damage>,
+) -> Result<(Amf0Value, usize)> {
     if bytes.is_empty() {
         return Err(buffer_too_short(MARKER_LEN, 0, "amf0 value marker"));
     }
@@ -306,7 +315,7 @@ fn parse_value(bytes: &[u8], depth: usize, values: &mut usize) -> Result<(Amf0Va
                     max: MAX_AMF0_DEPTH,
                 });
             }
-            let (pairs, len) = parse_pairs(body, depth + 1, values)?;
+            let (pairs, len) = parse_pairs(body, depth + 1, values, diagnostics)?;
             Ok((Amf0Value::Object(pairs), MARKER_LEN + len))
         }
         marker::NULL => Ok((Amf0Value::Null, MARKER_LEN)),
@@ -324,11 +333,16 @@ fn parse_value(bytes: &[u8], depth: usize, values: &mut usize) -> Result<(Amf0Va
                     "amf0 ecma array count",
                 ));
             }
-            // The associative-count is informational only (§2.10); the
-            // object-end terminator is authoritative, so it is read and
-            // discarded rather than cross-checked against the parsed pair
-            // count.
-            let (pairs, len) = parse_pairs(&body[U32_LEN..], depth + 1, values)?;
+            // The object-end terminator is authoritative (§2.10), so the
+            // associative count never bounds the walk. It is still a claim
+            // about the content: a non-zero count that disagrees with what
+            // the terminator closes is reported, and a zero count states
+            // nothing (several encoders write it that way).
+            let declared = crate::be_u32(body, 0) as usize;
+            let (pairs, len) = parse_pairs(&body[U32_LEN..], depth + 1, values, diagnostics)?;
+            if declared != 0 && declared != pairs.len() {
+                diagnostics.push(crate::damage::uninterpreted("AMF0 ECMA-Array count"));
+            }
             Ok((Amf0Value::EcmaArray(pairs), MARKER_LEN + U32_LEN + len))
         }
         marker::STRICT_ARRAY => {
@@ -348,7 +362,7 @@ fn parse_value(bytes: &[u8], depth: usize, values: &mut usize) -> Result<(Amf0Va
             let mut rest = &body[U32_LEN..];
             let mut elements = Vec::new();
             for _ in 0..count {
-                let (value, consumed) = parse_value(rest, depth + 1, values)?;
+                let (value, consumed) = parse_value(rest, depth + 1, values, diagnostics)?;
                 elements.push(value);
                 rest = rest.get(consumed..).ok_or(RtmpError::FieldOverflow(
                     broadcast_core::len::FieldOverflow {
@@ -451,7 +465,8 @@ impl<'a> Parse<'a> for Amf0Value {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let mut values = 0usize;
-        let (value, _) = parse_value(bytes, 0, &mut values)?;
+        let mut diagnostics = Vec::new();
+        let (value, _) = parse_value(bytes, 0, &mut values, &mut diagnostics)?;
         Ok(value)
     }
 }
@@ -572,16 +587,34 @@ impl Command {
     /// not a Number; the remaining variants are propagated from
     /// [`Amf0Value::parse`].
     pub fn parse(payload: &[u8]) -> Result<Self> {
+        Self::parse_with_diagnostics(payload).map(|(command, _)| command)
+    }
+
+    /// Parse a Command Message body, also returning every AMF0 metadata
+    /// defect it carried but that did not stop it being usable — the same
+    /// values [`Command::parse`] accepts, with the reports a caller needs to
+    /// publish them.
+    ///
+    /// # Errors
+    /// Exactly as [`Command::parse`].
+    pub fn parse_with_diagnostics(
+        payload: &[u8],
+    ) -> Result<(Self, Vec<broadcast_core::damage::Damage>)> {
         let mut values = 0usize;
-        let (name_value, name_len) = parse_value(payload, 0, &mut values)?;
+        let mut diagnostics = Vec::new();
+        let (name_value, name_len) = parse_value(payload, 0, &mut values, &mut diagnostics)?;
         let mut offset = name_len;
         let name = match name_value {
             Amf0Value::String(s) => s,
             value => return Err(RtmpError::CommandNameNotString { value }),
         };
 
-        let (txn_value, txn_len) =
-            parse_value(payload.get(offset..).unwrap_or_default(), 0, &mut values)?;
+        let (txn_value, txn_len) = parse_value(
+            payload.get(offset..).unwrap_or_default(),
+            0,
+            &mut values,
+            &mut diagnostics,
+        )?;
         offset = offset.checked_add(txn_len).ok_or(RtmpError::FieldOverflow(
             broadcast_core::len::FieldOverflow {
                 field: "RTMP command transaction id offset",
@@ -596,7 +629,7 @@ impl Command {
 
         let mut arguments = Vec::new();
         while offset < payload.len() {
-            let (value, len) = parse_value(&payload[offset..], 0, &mut values)?;
+            let (value, len) = parse_value(&payload[offset..], 0, &mut values, &mut diagnostics)?;
             offset = offset.checked_add(len).ok_or(RtmpError::FieldOverflow(
                 broadcast_core::len::FieldOverflow {
                     field: "RTMP command argument offset",
@@ -607,11 +640,14 @@ impl Command {
             arguments.push(value);
         }
 
-        Ok(Command {
-            name,
-            transaction_id,
-            arguments,
-        })
+        Ok((
+            Command {
+                name,
+                transaction_id,
+                arguments,
+            },
+            diagnostics,
+        ))
     }
 
     /// Serialize this command back to an AMF0 command payload: `name` +
@@ -645,8 +681,9 @@ pub fn amf0_parse_values(body: &[u8]) -> Result<Vec<Amf0Value>> {
     let mut values_out = Vec::new();
     let mut offset = 0usize;
     let mut count = 0usize;
+    let mut diagnostics = Vec::new();
     while offset < body.len() {
-        let (value, used) = parse_value(&body[offset..], 0, &mut count)?;
+        let (value, used) = parse_value(&body[offset..], 0, &mut count, &mut diagnostics)?;
         values_out.push(value);
         offset = offset.checked_add(used).ok_or(RtmpError::FieldOverflow(
             broadcast_core::len::FieldOverflow {
@@ -1250,7 +1287,9 @@ mod tests {
         assert_eq!(bytes.len(), long_end + 24);
 
         let mut values = 0usize;
-        let (parsed, consumed) = parse_value(&bytes, 0, &mut values).expect("parse");
+        let mut diagnostics = Vec::new();
+        let (parsed, consumed) =
+            parse_value(&bytes, 0, &mut values, &mut diagnostics).expect("parse");
         assert_eq!(parsed, nested);
         assert_eq!(consumed, bytes.len());
     }
@@ -1277,7 +1316,8 @@ mod tests {
                 value.serialized_len()
             );
             let mut values = 0usize;
-            let (parsed, consumed) = parse_value(&buf, 0, &mut values).unwrap();
+            let mut diagnostics = Vec::new();
+            let (parsed, consumed) = parse_value(&buf, 0, &mut values, &mut diagnostics).unwrap();
             assert_eq!(consumed, buf.len());
             assert_eq!(parsed, value);
         }

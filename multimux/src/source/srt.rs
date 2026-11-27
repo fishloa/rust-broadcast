@@ -585,6 +585,86 @@ mod tests {
         client.abort();
     }
 
+    /// The `srt` input kind's reader damage reaches the route's damage
+    /// metric: a continuity gap in the published TS is lost media, and the
+    /// route renders the report labelled with the kind an operator configured.
+    #[tokio::test]
+    async fn a_damaged_payload_reaches_the_route_damage_metric() {
+        const ROUTE: &str = "srt-damage-probe";
+        const KIND: &str = "srt";
+        const READ_IDLE: Duration = Duration::from_secs(2);
+        crate::prometheus::install();
+        let route = SrtRoute::new_listener(ROUTE, "127.0.0.1:0").with_timeouts(
+            broadcast_common::timeouts::Timeouts::default()
+                .with_connect(Timeouts::default().connect)
+                .with_read_idle(READ_IDLE),
+        );
+        let addr = route.bound_addr().await.expect("bind the SRT listener");
+        let mut ts_bytes = build_ts_bytes(TrackId::new(1), 0xAA, 40);
+        // A whole packet missing leaves the stream aligned and skips one
+        // continuity counter, the loss a live SRT ingest actually sees.
+        let packet = mpeg_ts::ts::TS_PACKET_SIZE;
+        let victim = ts_bytes.len() / 2 / packet * packet;
+        ts_bytes.drain(victim..victim + packet);
+
+        let client = tokio::spawn(async move {
+            let cfg = HandshakeConfig::default();
+            let mut sock = None;
+            for _ in 0..200 {
+                match SrtSocket::connect(addr, SrtSocketConfig::new(cfg.clone())).await {
+                    Ok(s) => {
+                        sock = Some(s);
+                        break;
+                    }
+                    Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+                }
+            }
+            let mut sock = sock.expect("connect to SrtRoute's listener");
+            for chunk in ts_bytes.chunks(7 * packet) {
+                sock.send(chunk).await.expect("send TS payload");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        });
+
+        let sock = tokio::time::timeout(Duration::from_secs(60), accept_listener(&route))
+            .await
+            .expect("accept must not hang")
+            .expect("accept");
+        let route_handle = Arc::new(
+            crate::route::RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration(std::time::Duration::from_secs(4))
+                    .with_part_target(std::time::Duration::from_millis(500))
+                    .with_window_segments(4),
+            )
+            .with_name(ROUTE)
+            .with_input_kind(KIND),
+        );
+        let _ = tokio::time::timeout(
+            Duration::from_secs(60),
+            drive_socket(
+                sock,
+                READ_IDLE,
+                None,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                |_driver| {},
+            ),
+        )
+        .await;
+        client.abort();
+        let line = crate::testutil::rendered_line(
+            "multimux_source_damage_total",
+            &[("route", ROUTE), ("source", KIND)],
+        );
+        assert!(
+            line.is_some(),
+            "a continuity gap must reach the route's damage metric"
+        );
+    }
+
     /// Loopback test for caller mode (issue #739): a real test-owned
     /// `SrtListener` accepts, and a caller-mode `SrtRoute` dials out to it —
     /// proving the caller-mode dial path also resolves real tracks and

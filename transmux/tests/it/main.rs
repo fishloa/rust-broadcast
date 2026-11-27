@@ -39,6 +39,7 @@ mod codec_tail;
 mod codecs_new;
 #[cfg(feature = "cli")]
 mod common;
+mod damage_matrix;
 #[cfg(feature = "rtp")]
 mod damage_report;
 mod damaged_unit_resync;
@@ -336,4 +337,6 @@ mod webm_timestamp_scale;
 mod xml;
 mod xml_escaping;
 
+mod bitstream_damage;
 mod cli_stream;
+mod demux_timeline_break;

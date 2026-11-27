@@ -602,6 +602,7 @@ crate::impl_spec_display!(Disposition);
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(default))]
 pub struct DamagePolicy {
     informational: Disposition,
     degraded: Disposition,

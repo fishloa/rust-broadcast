@@ -441,12 +441,12 @@ fn seig_sample_group_is_dropped_not_silently_decrypted() {
             );
             assert!(
                 media
-                    .damage
+                    .damages
                     .iter()
                     .any(|damage| damage.kind() == broadcast_core::damage::DamageKind::TrackDropped)
                     || !media.skipped.is_empty(),
                 "the dropped track is reported: {:?}",
-                media.damage
+                media.damages
             );
         }
     }

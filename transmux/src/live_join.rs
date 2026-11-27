@@ -384,9 +384,12 @@ fn avc_recovery_point(nal: &[u8]) -> Option<RapKind> {
     if nal_unit_type(NalCodec::Avc, nal) != Some(AVC_NAL_SEI) {
         return None;
     }
-    let (_, payload) = sei_messages(&nal[AVC_NAL_HEADER_LEN..])
-        .into_iter()
-        .find(|(t, _)| *t == AVC_SEI_RECOVERY_POINT)?;
+    let (_, payload) = sei_messages(
+        &nal[AVC_NAL_HEADER_LEN..],
+        &mut broadcast_bitstream::Findings::new(),
+    )
+    .into_iter()
+    .find(|(t, _)| *t == AVC_SEI_RECOVERY_POINT)?;
     let mut r = BitReader::from_rbsp(&payload, "recovery_point").ok()?;
     let recovery_frame_cnt = u32::try_from(r.read_ue("recovery_frame_cnt").ok()?).ok()?;
     let exact_match = r.read_flag("exact_match_flag").ok()?;

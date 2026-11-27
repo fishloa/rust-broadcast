@@ -272,6 +272,8 @@ pub struct SpsTracker {
     pps: BTreeMap<u8, PpsBinding>,
     /// The state every sample carries until a new change is raised.
     state: Option<Arc<DisplayInfo>>,
+    /// SEI structures the walk could not parse, for the caller to report.
+    findings: broadcast_bitstream::Findings,
 }
 
 impl SpsTracker {
@@ -283,6 +285,7 @@ impl SpsTracker {
             sps: BTreeMap::new(),
             pps: BTreeMap::new(),
             state: None,
+            findings: broadcast_bitstream::Findings::new(),
         }
     }
 
@@ -337,6 +340,11 @@ impl SpsTracker {
         self.finish(activation)
     }
 
+    /// The SEI structures the walk could not parse since the last call.
+    pub fn take_findings(&mut self) -> broadcast_bitstream::Findings {
+        core::mem::take(&mut self.findings)
+    }
+
     fn observe_avc_nal(
         &mut self,
         nal: &[u8],
@@ -363,7 +371,7 @@ impl SpsTracker {
             }
             // SEI: collect AFD / bar data (first wins).
             6 => {
-                Self::parse_sei_afd(NalCodec::Avc, nal, activation);
+                self.parse_sei_afd(NalCodec::Avc, nal, activation);
             }
             _ => {}
         }
@@ -393,7 +401,7 @@ impl SpsTracker {
                 }
             }
             39 => {
-                Self::parse_sei_afd(NalCodec::Hevc, nal, activation);
+                self.parse_sei_afd(NalCodec::Hevc, nal, activation);
             }
             0..=HEVC_LAST_VCL => {
                 // IDR and BLA always begin a coded video sequence. A CRA does
@@ -439,13 +447,13 @@ impl SpsTracker {
     }
 
     /// Parse AFD / bar data from a single SEI NAL into `activation` (first wins).
-    fn parse_sei_afd(codec: NalCodec, nal: &[u8], activation: &mut Activation) {
+    fn parse_sei_afd(&mut self, codec: NalCodec, nal: &[u8], activation: &mut Activation) {
         let body = match codec {
             NalCodec::Avc => &nal[1..],
             NalCodec::Hevc => &nal[2..],
             _ => return,
         };
-        let msgs = broadcast_bitstream::nal::sei_messages(body);
+        let msgs = broadcast_bitstream::nal::sei_messages(body, &mut self.findings);
         for (payload_type, payload) in msgs {
             if payload_type != user_data::SEI_PAYLOAD_TYPE_USER_DATA_REGISTERED_ITU_T_T35 {
                 continue;

@@ -176,6 +176,7 @@ fn build_config(cli: Cli) -> Result<Config> {
         .with_part_target(std::time::Duration::from_millis(u64::from(cli.part_ms)))
         .with_window_segments(cli.window)
         .with_routes(vec![Route {
+            damage_policy: Default::default(),
             name,
             input: InputSpec::Rtsp {
                 url: rtsp_url,

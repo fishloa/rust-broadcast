@@ -49,6 +49,29 @@
 //!   consumed while still inside the C0/C1/C2 ↔ S0/S1/S2 handshake exchange
 //!   never reach the counter.
 //!
+//! # Damage reports
+//!
+//! This session never skips content silently. It publishes a
+//! `broadcast_core::damage::Damage` as [`ServerEvent::Damage`] for:
+//!
+//! - a message header that interrupts an in-progress message on the same
+//!   chunk stream, and an `Abort` that discards one (`MediaUnitDropped`);
+//! - a message whose declared length exceeds what this session will buffer,
+//!   consumed without ever being held (`LimitReached`);
+//! - media on a stream id `publish` was not accepted on, or before `publish`
+//!   (`MediaUnitDropped`, informational);
+//! - a message type, user control event or command name this engine does not
+//!   decode, and an AMF0 ECMA-Array whose declared count disagrees with its
+//!   contents (`MetadataUninterpreted`);
+//! - an aggregate sub-message whose framing does not hold, after the good ones
+//!   before it were delivered (`MediaUnitDropped`).
+//!
+//! What stays an error, and why: a chunk stream that cannot be framed at all
+//! (there is no later message to find), a chunk size outside the protocol's
+//! range, a handshake this engine does not speak, and the unparsed-input
+//! backstop. The caller's `RtmpServerConfig::damage_policy` decides whether a
+//! report also ends the session (`RtmpError::Damage`).
+//!
 //! # Reply csid convention
 //!
 //! Protocol control and User Control messages MUST/SHOULD use chunk stream
@@ -68,8 +91,9 @@ use crate::amf0::{Amf0Value, Command};
 use crate::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_MAX_IN_PROGRESS_BYTES, Message};
 use crate::flv::{FlvTagWriter, unpack_aggregate};
 use crate::handshake::Handshake;
-use crate::ids::{ChunkStreamId, SequenceNumber, Timestamp};
+use crate::ids::{ChunkStreamId, MessageStreamId, SequenceNumber, Timestamp};
 use crate::message::{ChunkSize, LimitType, MessageTypeId, ProtocolControl, UserControl};
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
@@ -159,6 +183,10 @@ pub struct RtmpServerConfig {
     /// allowed `MAX_MESSAGE_LEN × MAX_CSIDS` (512 MiB) of incomplete,
     /// never-completing bytes per connection; this bounds the product.
     pub max_in_progress_bytes: usize,
+    /// What each [`ServerEvent::Damage`] report means: `Report` (the default
+    /// for everything) publishes it and keeps reading; `Fail` ends the
+    /// session with [`RtmpError::Damage`] carrying the same report.
+    pub damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 /// Manual `Debug`: the expected stream key is the ingest secret and never
@@ -174,6 +202,7 @@ impl core::fmt::Debug for RtmpServerConfig {
                 &self.expected_stream_key.as_ref().map(|_| "<redacted>"),
             )
             .field("max_in_progress_bytes", &self.max_in_progress_bytes)
+            .field("damage_policy", &self.damage_policy)
             .finish()
     }
 }
@@ -186,6 +215,7 @@ impl Default for RtmpServerConfig {
             peer_bandwidth: DEFAULT_PEER_BANDWIDTH,
             expected_stream_key: None,
             max_in_progress_bytes: DEFAULT_MAX_IN_PROGRESS_BYTES,
+            damage_policy: broadcast_core::damage::DamagePolicy::new(),
         }
     }
 }
@@ -214,12 +244,27 @@ impl RtmpServerConfig {
         self.max_in_progress_bytes = max_in_progress_bytes;
         self
     }
+
+    /// Set [`RtmpServerConfig::damage_policy`].
+    #[must_use]
+    pub fn with_damage_policy(
+        mut self,
+        damage_policy: broadcast_core::damage::DamagePolicy,
+    ) -> Self {
+        self.damage_policy = damage_policy;
+        self
+    }
 }
 
 /// Typed events [`ServerSession::handle_data`] surfaces to the caller.
+///
+/// Serde-serializable only: a [`ServerEvent::Damage`] carries a
+/// [`broadcast_core::damage::Damage`], whose typed cause wraps the workspace's
+/// shared error kinds and is therefore write-only, so the enum cannot be
+/// reconstructed from JSON.
 #[non_exhaustive]
 #[derive(Clone, PartialEq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub enum ServerEvent {
     /// `connect` completed: the publisher's requested `app` name (§7.2.1).
     Connected {
@@ -260,6 +305,15 @@ pub enum ServerEvent {
         /// The message type id that was dropped (§6/§7.1).
         message_type_id: MessageTypeId,
     },
+    /// Content this session skipped or repaired — the one
+    /// [`broadcast_core::damage::Damage`] report, in wire order with the
+    /// events around it. [`ServerEvent::Unsupported`] names the message type
+    /// of the same drop; this carries the severity and is what the caller's
+    /// [`RtmpServerConfig::damage_policy`] decides on.
+    ///
+    /// Boxed because an unboxed report would enlarge every event and every
+    /// `Result` in the crate.
+    Damage(Box<broadcast_core::damage::Damage>),
 }
 
 /// Manual `Debug`: `Publish` carries the publisher's stream key (the ingest
@@ -286,6 +340,7 @@ impl core::fmt::Debug for ServerEvent {
                 .debug_struct("Unsupported")
                 .field("message_type_id", message_type_id)
                 .finish(),
+            ServerEvent::Damage(damage) => f.debug_tuple("Damage").field(damage).finish(),
         }
     }
 }
@@ -350,6 +405,10 @@ pub struct ServerSession {
     /// key did not match `config.expected_stream_key`. Once this reaches
     /// [`MAX_FAILED_PUBLISH_ATTEMPTS`], the session is closed.
     failed_publish_attempts: u32,
+    /// The message stream id the accepted `publish` was invoked on. Media on
+    /// any other stream id belongs to no published stream and is reported
+    /// rather than delivered.
+    publish_stream_id: Option<u32>,
 }
 
 /// Constant-time byte-slice equality for the `publish` stream-key check.
@@ -387,6 +446,7 @@ impl ServerSession {
             bytes_acked: 0,
             flv: FlvTagWriter::default(),
             failed_publish_attempts: 0,
+            publish_stream_id: None,
         }
     }
 
@@ -432,12 +492,25 @@ impl ServerSession {
         // misparse them.
         self.assembler.feed(&chunk_input);
         while let Some(msg) = self.assembler.next_message()? {
+            self.publish_chunk_damage(&mut events)?;
             self.dispatch_message(&msg, &mut out, &mut events)?;
         }
+        self.publish_chunk_damage(&mut events)?;
 
         self.maybe_ack(&mut out)?;
 
         Ok((out, events))
+    }
+
+    /// Bytes buffered from the peer that have not yet formed a complete
+    /// message — a non-zero value at end of input means the stream was cut
+    /// mid-handshake or mid-message, which the session reports as
+    /// `DamageKind::InputTruncated`.
+    #[must_use]
+    pub fn pending_len(&self) -> usize {
+        self.handshake_buf
+            .len()
+            .saturating_add(self.assembler.pending_len())
     }
 
     /// Drive the handshake sub-FSM with `input`, appending any handshake
@@ -524,15 +597,26 @@ impl ServerSession {
                 // a reply from us. An event type this engine does not
                 // decode (including a newer one a player may send) is
                 // tolerated rather than aborting the whole session over a
-                // benign/unknown control event; a structurally malformed
-                // one still fails.
+                // benign/unknown control event; it is reported so a host is
+                // not left guessing, and a structurally malformed one still
+                // fails.
                 match UserControl::parse(&msg.payload) {
-                    Ok(_) | Err(RtmpError::UnsupportedUserControlEvent { .. }) => Ok(()),
+                    Ok(_) => Ok(()),
+                    Err(RtmpError::UnsupportedUserControlEvent { .. }) => {
+                        let damage = crate::damage::uninterpreted("RTMP user control event");
+                        crate::damage::publish(
+                            &self.config.damage_policy,
+                            damage,
+                            events,
+                            ServerEvent::Damage,
+                        )
+                    }
                     Err(e) => Err(e),
                 }
             }
             MessageTypeId::CommandAmf0 => {
-                let command = Command::parse(&msg.payload)?;
+                let (command, diagnostics) = Command::parse_with_diagnostics(&msg.payload)?;
+                self.publish_amf0_diagnostics(diagnostics, events)?;
                 self.handle_command(&command, msg, out, events)
             }
             // #1108/RTMP-W6: an AMF3-encoded command (§7.1, message type
@@ -550,13 +634,15 @@ impl ServerSession {
                             have: msg.payload.len(),
                             what: "AMF3 command encoding marker byte",
                         }))?;
-                let command = Command::parse(body)?;
+                let (command, diagnostics) = Command::parse_with_diagnostics(body)?;
+                self.publish_amf0_diagnostics(diagnostics, events)?;
                 self.handle_command(&command, msg, out, events)
             }
             MessageTypeId::Audio | MessageTypeId::Video | MessageTypeId::DataAmf0 => self
                 .emit_media_if_publishing(
                     msg.message_type_id,
                     msg.timestamp.millis(),
+                    msg.message_stream_id,
                     &msg.payload,
                     events,
                 ),
@@ -569,16 +655,54 @@ impl ServerSession {
             MessageTypeId::Aggregate => self.deliver_aggregate(msg, events),
             // Data-AMF3(15), Shared Object(16/19), and anything
             // unrecognised: out of scope for this ingest engine (see the
-            // crate's non-goals) — accepted, not fatal, but surfaced to
+            // crate's non-goals) — accepted, not fatal, and surfaced to
             // the caller instead of silently dropped with no signal at
-            // all.
+            // all. `Unsupported` names the type; the report is what the
+            // caller's policy decides on.
             other => {
                 events.push(ServerEvent::Unsupported {
                     message_type_id: other,
                 });
-                Ok(())
+                let damage = crate::damage::uninterpreted("RTMP message type");
+                crate::damage::publish(
+                    &self.config.damage_policy,
+                    damage,
+                    events,
+                    ServerEvent::Damage,
+                )
             }
         }
+    }
+
+    /// Hand every report the chunk assembler collected to the caller's
+    /// policy, in wire order ahead of the message they preceded.
+    fn publish_chunk_damage(&mut self, events: &mut Vec<ServerEvent>) -> Result<()> {
+        for damage in self.assembler.take_damage() {
+            crate::damage::publish(
+                &self.config.damage_policy,
+                damage,
+                events,
+                ServerEvent::Damage,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Hand the AMF0 reports a command body produced to the caller's policy.
+    fn publish_amf0_diagnostics(
+        &self,
+        diagnostics: Vec<broadcast_core::damage::Damage>,
+        events: &mut Vec<ServerEvent>,
+    ) -> Result<()> {
+        for damage in diagnostics {
+            crate::damage::publish(
+                &self.config.damage_policy,
+                damage,
+                events,
+                ServerEvent::Damage,
+            )?;
+        }
+        Ok(())
     }
 
     /// Apply a protocol control message's effect (§5.4). Never errors: a
@@ -623,8 +747,18 @@ impl ServerSession {
                 Ok(())
             }
             // Unrecognised command name: ignore rather than error, per the
-            // "never error on OBS/extra commands" design goal.
-            _ => Ok(()),
+            // "never error on OBS/extra commands" design goal — and report
+            // it, so a publisher whose command this engine did not act on is
+            // not left believing it was.
+            _ => {
+                let damage = crate::damage::uninterpreted("RTMP command");
+                crate::damage::publish(
+                    &self.config.damage_policy,
+                    damage,
+                    events,
+                    ServerEvent::Damage,
+                )
+            }
         }
     }
 
@@ -857,6 +991,7 @@ impl ServerSession {
         out.extend_from_slice(&self.writer.write(&self.command_message(msg, &on_status)?)?);
 
         self.state = State::Publishing;
+        self.publish_stream_id = Some(stream_id);
         events.push(ServerEvent::Publish {
             app,
             stream_key,
@@ -899,17 +1034,34 @@ impl ServerSession {
 
     /// Convert an Audio(8)/Video(9)/Data-AMF0(18) message to an FLV tag and
     /// emit it as [`ServerEvent::Media`], but only while
-    /// [`State::Publishing`] (messages arriving before `publish` succeeds,
-    /// or after a stream-key mismatch, are silently dropped — no event).
+    /// [`State::Publishing`] and only on the stream id `publish` was accepted
+    /// on (§7.2.2.6). Media outside a published stream belongs to no output
+    /// and is dropped, which is reported rather than done silently: a
+    /// publisher whose stream id is wrong would otherwise look healthy while
+    /// producing nothing.
     fn emit_media_if_publishing(
         &mut self,
         tag_type: MessageTypeId,
         timestamp: u32,
+        message_stream_id: MessageStreamId,
         payload: &[u8],
         events: &mut Vec<ServerEvent>,
     ) -> Result<()> {
-        if self.state != State::Publishing {
-            return Ok(());
+        let inside_stream = self.state == State::Publishing
+            && self.publish_stream_id == Some(message_stream_id.get());
+        if !inside_stream {
+            let what = if self.state == State::Publishing {
+                "RTMP media on an unknown stream id"
+            } else {
+                "RTMP media before publish"
+            };
+            let damage = crate::damage::outside_stream(what, timestamp);
+            return crate::damage::publish(
+                &self.config.damage_policy,
+                damage,
+                events,
+                ServerEvent::Damage,
+            );
         }
 
         let flv = self.flv.tag(tag_type, timestamp, payload)?;
@@ -921,15 +1073,24 @@ impl ServerSession {
     /// sub-message exactly as an ordinary Audio/Video/Data-AMF0 message
     /// would be delivered; see [`crate::flv::unpack_aggregate`].
     ///
-    /// # Errors
-    /// [`RtmpError::Malformed`] on a truncated header/data/`Back Pointer`,
-    /// or a `Back Pointer` that disagrees with the sub-message's actual
-    /// size. [`RtmpError::Unsupported`] for a sub-message payload too large
-    /// for the FLV tag's 24-bit `DataSize`.
+    /// A sub-message whose framing does not hold ends the aggregate (the
+    /// good ones before it are already delivered) and is reported; the
+    /// connection continues.
     fn deliver_aggregate(&mut self, msg: &Message, events: &mut Vec<ServerEvent>) -> Result<()> {
-        unpack_aggregate(msg, |tag_type, timestamp, payload| {
-            self.emit_media_if_publishing(tag_type, timestamp, payload, events)
-        })
+        let message_stream_id = msg.message_stream_id;
+        let mut damage = Vec::new();
+        unpack_aggregate(msg, &mut damage, |tag_type, timestamp, payload| {
+            self.emit_media_if_publishing(tag_type, timestamp, message_stream_id, payload, events)
+        })?;
+        for report in damage {
+            crate::damage::publish(
+                &self.config.damage_policy,
+                report,
+                events,
+                ServerEvent::Damage,
+            )?;
+        }
+        Ok(())
     }
 }
 
@@ -1260,10 +1421,15 @@ mod tests {
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();
 
-        let err = session.handle_data(&bytes).unwrap_err();
+        let (_out, events) = session
+            .handle_data(&bytes)
+            .expect("a garbage aggregate body must not end the session");
         assert!(
-            matches!(err, RtmpError::Malformed { .. }),
-            "a garbage aggregate body must now be a Malformed error, got {err:?}"
+            events.iter().any(|e| matches!(
+                e,
+                ServerEvent::Damage(d) if d.kind() == broadcast_core::damage::DamageKind::MediaUnitDropped
+            )),
+            "a garbage aggregate body must be reported, got {events:?}"
         );
     }
 
@@ -1406,10 +1572,15 @@ mod tests {
             payload: body,
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();
-        let err = session.handle_data(&bytes).unwrap_err();
+        let (_out, events) = session
+            .handle_data(&bytes)
+            .expect("a truncated aggregate must not end the session");
         assert!(
-            matches!(err, RtmpError::Malformed { .. }),
-            "a truncated aggregate must be Malformed, got {err:?}"
+            events.iter().any(|e| matches!(
+                e,
+                ServerEvent::Damage(d) if d.kind() == broadcast_core::damage::DamageKind::MediaUnitDropped
+            )),
+            "a truncated aggregate must be reported, got {events:?}"
         );
     }
 
@@ -1429,10 +1600,15 @@ mod tests {
             payload: body,
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();
-        let err = session.handle_data(&bytes).unwrap_err();
+        let (_out, events) = session
+            .handle_data(&bytes)
+            .expect("a lying Back Pointer must not end the session");
         assert!(
-            matches!(err, RtmpError::Malformed { .. }),
-            "a lying Back Pointer must be Malformed, got {err:?}"
+            events.iter().any(|e| matches!(
+                e,
+                ServerEvent::Damage(d) if d.kind() == broadcast_core::damage::DamageKind::MediaUnitDropped
+            )),
+            "a lying Back Pointer must be reported, got {events:?}"
         );
     }
 
@@ -1862,11 +2038,19 @@ mod tests {
         session.handle_data(&connect_bytes("live")).unwrap();
         session.handle_data(&create_stream_bytes()).unwrap();
 
-        // publish never called: state is Connected, not Publishing.
+        // publish never called: state is Connected, not Publishing. The
+        // media belongs to no published stream, so it is dropped — and
+        // reported, so a publisher is not left believing it went out.
         let (_out, events) = session
             .handle_data(&av_bytes(1, MessageTypeId::Audio, 4, 0, vec![0xAF, 0x01]))
             .unwrap();
-        assert!(events.is_empty());
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert!(matches!(
+            &events[0],
+            ServerEvent::Damage(d)
+                if d.kind() == broadcast_core::damage::DamageKind::MediaUnitDropped
+                    && d.severity() == broadcast_core::damage::Severity::Informational
+        ));
     }
 
     // ── expected_stream_key mismatch ──────────────────────────────────────
@@ -1896,14 +2080,19 @@ mod tests {
             Some("NetStream.Publish.BadName")
         );
 
-        // Session never entered Publishing: subsequent A/V produces no Media.
+        // Session never entered Publishing: subsequent A/V produces no Media,
+        // only the report that it was dropped.
         let (_out2, events2) = session
             .handle_data(&av_bytes(1, MessageTypeId::Audio, 4, 0, vec![0xAF, 0x01]))
             .unwrap();
         assert!(
-            events2.is_empty(),
+            !events2
+                .iter()
+                .any(|e| matches!(e, ServerEvent::Media { .. })),
             "no Media may be emitted after a rejected publish"
         );
+        assert_eq!(events2.len(), 1, "{events2:?}");
+        assert!(matches!(&events2[0], ServerEvent::Damage(_)));
     }
 
     #[test]
@@ -2316,13 +2505,17 @@ mod tests {
         assert_eq!(back.chunk_size, config.chunk_size);
         assert_eq!(back.expected_stream_key, config.expected_stream_key);
 
+        // The event itself is write-only (see `ServerEvent`'s doc): its
+        // `Damage` arm cannot be reconstructed, so the shape is what is
+        // asserted rather than a round trip.
         let event = ServerEvent::Publish {
             app: "live".to_string(),
             stream_key: "testkey".to_string(),
             stream_id: 1,
         };
         let json = serde_json::to_string(&event).expect("serialize ServerEvent");
-        let back: ServerEvent = serde_json::from_str(&json).expect("deserialize ServerEvent");
-        assert_eq!(back, event);
+        let shape: serde_json::Value = serde_json::from_str(&json).expect("valid JSON");
+        assert_eq!(shape["Publish"]["app"], serde_json::json!("live"));
+        assert_eq!(shape["Publish"]["stream_id"], serde_json::json!(1));
     }
 }

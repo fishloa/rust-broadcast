@@ -211,7 +211,7 @@ where
         match outcome {
             StepOutcome::Received => {
                 last_rx = Instant::now();
-                advance_route(&driver, route_handle, &mut progress).await;
+                advance_route(&mut driver, route_handle, &mut progress).await;
             }
             StepOutcome::Idle => {}
             StepOutcome::Eof => {
@@ -219,6 +219,10 @@ where
                 break;
             }
             StepOutcome::Failed(e) => {
+                // The step that failed still delivered events: the report of
+                // the damage that ended the run (a route's `Fail` policy) is
+                // one of them, so hand them to the route before releasing it.
+                advance_route(&mut driver, route_handle, &mut progress).await;
                 // Release the publisher slot before returning a terminal
                 // error (M1), so the supervisor's reconnect is not rejected
                 // as a second concurrent publisher.
@@ -228,7 +232,7 @@ where
             }
         }
     }
-    advance_route(&driver, route_handle, &mut progress).await;
+    advance_route(&mut driver, route_handle, &mut progress).await;
     // Release the publisher slot on EVERY exit path (I-E): the tail
     // `advance_route` above may republish, so the release must come after it —
     // otherwise a peer-ended or terminal-health session keeps

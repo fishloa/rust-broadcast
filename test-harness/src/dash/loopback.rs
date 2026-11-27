@@ -204,6 +204,8 @@ pub type Hook = Box<dyn FnMut(&mut DashClient, usize)>;
 
 pub struct Drive {
     pub dash: DashConfig,
+    /// What each damage report means, exactly as the application would set it.
+    pub damage_policy: broadcast_core::damage::DamagePolicy,
     pub order: Order,
     pub max_steps: usize,
     pub retry: bool,
@@ -214,6 +216,7 @@ pub struct Drive {
 impl Default for Drive {
     fn default() -> Self {
         Self {
+            damage_policy: broadcast_core::damage::DamagePolicy::new(),
             order: Order::Fifo,
             dash: DashConfig::default(),
             max_steps: 20_000,
@@ -264,6 +267,7 @@ pub fn drive(url: &str, cfg: PullLimits, origin: &mut Origin, opts: &mut Drive) 
     let mut client = DashClient::new(
         dash_runtime::client::DashClientConfig::new(Url::parse(url).expect("URL"))
             .with_dash(opts.dash)
+            .with_damage_policy(opts.damage_policy.clone())
             .with_limits(cfg),
     );
     let mut run = Run {

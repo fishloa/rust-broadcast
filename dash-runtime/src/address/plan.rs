@@ -762,6 +762,18 @@ impl SegmentPlan {
         Ok(lo.checked_sub(1))
     }
 
+    /// Every break between two `SegmentTimeline` runs this plan bridged, in
+    /// media order (empty for a plan that has no timeline). The ticks are
+    /// `@timescale` ticks of this representation — see
+    /// [`TimelineBoundary`](super::timeline::TimelineBoundary).
+    #[must_use]
+    pub fn timeline_boundaries(&self) -> Vec<super::timeline::TimelineBoundary> {
+        match &self.kind {
+            Kind::Timeline(idx) => idx.boundaries(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Availability start of the segment at `index`.
     pub fn available_from(&self, index: u64) -> Result<Option<Timestamp>, AddressError> {
         Ok(self.get(index)?.and_then(|s| s.available_from))

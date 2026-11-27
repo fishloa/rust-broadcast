@@ -135,6 +135,70 @@ pub enum Notice {
 }
 
 impl Notice {
+    /// The one damage report this notice stands for: what the session left
+    /// out, and how much it costs the viewer.
+    ///
+    /// The notice names the structure in DASH's own terms; the report carries
+    /// the severity, the [`DamageKind`](broadcast_core::damage::DamageKind)
+    /// and is what a [`DamagePolicy`](broadcast_core::damage::DamagePolicy)
+    /// decides on. A structure the client merely does not interpret
+    /// (`EventStream`, `Preselection`, `PatchLocation`, low-latency
+    /// addressing, a `UTCTiming` scheme) is informational; content it has to
+    /// leave out (encrypted representations, a skipped Period, segments that
+    /// expired) is degraded.
+    #[must_use]
+    pub fn damage(&self) -> broadcast_core::damage::Damage {
+        use broadcast_core::damage::{Damage, DamageKind, Severity};
+        let (kind, severity, what) = match self {
+            Self::UnsupportedEncryption => (
+                DamageKind::MetadataSkipped,
+                Severity::Degraded,
+                "DASH ContentProtection",
+            ),
+            Self::EventStreamIgnored => (
+                DamageKind::MetadataUninterpreted,
+                Severity::Informational,
+                "DASH EventStream",
+            ),
+            Self::PreselectionIgnored => (
+                DamageKind::MetadataUninterpreted,
+                Severity::Informational,
+                "DASH Preselection",
+            ),
+            Self::XlinkSkipped => (
+                DamageKind::MetadataSkipped,
+                Severity::Degraded,
+                "DASH xlink",
+            ),
+            Self::PatchIgnored => (
+                DamageKind::MetadataUninterpreted,
+                Severity::Informational,
+                "DASH PatchLocation",
+            ),
+            Self::LowLatencyIgnored => (
+                DamageKind::MetadataUninterpreted,
+                Severity::Informational,
+                "DASH low-latency addressing",
+            ),
+            Self::FellBehind => (
+                DamageKind::MediaUnitDropped,
+                Severity::Degraded,
+                "DASH segment window",
+            ),
+            Self::UtcSchemeUnsupported => (
+                DamageKind::MetadataUninterpreted,
+                Severity::Informational,
+                "DASH UTCTiming",
+            ),
+            Self::UtcCrossOrigin => (
+                DamageKind::MetadataUninterpreted,
+                Severity::Informational,
+                "DASH UTCTiming URL",
+            ),
+        };
+        Damage::new(kind, severity, what)
+    }
+
     /// Stable snake_case label.
     #[must_use]
     pub fn name(&self) -> &'static str {
@@ -225,6 +289,12 @@ pub enum Output {
         /// How many fragments were skipped.
         skipped: usize,
     },
+    /// Content the reader skipped, altered, resynchronised past or truncated —
+    /// the one [`broadcast_core::damage::Damage`] report, delivered in order
+    /// with the outputs around it. What it means is the caller's
+    /// [`DashClientConfig::damage_policy`](crate::client::DashClientConfig::damage_policy);
+    /// with `Fail` the presentation ends with `Fatal(FatalKind::Damage)`.
+    Damage(broadcast_core::damage::Damage),
     /// A non-fatal observation.
     Notice(Notice),
     /// The UTC clock has its first anchor, or its source changed (23009-1

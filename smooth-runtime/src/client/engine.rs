@@ -95,6 +95,8 @@ pub struct SmoothClient {
     next_request: u64,
     actions: VecDeque<Action>,
     outputs: VecDeque<Output>,
+    /// What each damage report means for this session.
+    damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 impl SmoothClient {
@@ -115,8 +117,10 @@ impl SmoothClient {
             Ok(retry) => (retry, None),
             Err(error) => (Self::plain_schedule(), Some(error)),
         };
+        let damage_policy = config.damage_policy.clone();
         let mut client = Self {
             config,
+            damage_policy,
             streams: Vec::new(),
             started: false,
             announced: false,
@@ -428,6 +432,12 @@ impl SmoothClient {
                 .push_back(Output::Dropped(Dropped::FragmentUrl {
                     stream: StreamId(si),
                 }));
+            self.publish_damage(
+                Dropped::FragmentUrl {
+                    stream: StreamId(si),
+                }
+                .damage(),
+            );
             return;
         };
         let id = self.mint();
@@ -447,8 +457,7 @@ impl SmoothClient {
         if self.manifest_failures >= self.config.max_manifest_failures {
             return self.fail(SmoothError::Manifest(fault));
         }
-        self.outputs
-            .push_back(Output::Dropped(Dropped::Manifest(fault)));
+        self.dropped(Dropped::Manifest(fault));
         self.manifest_at =
             Some(now.saturating_add(self.backoff_us(self.manifest_failures).max(wait_us)));
     }
@@ -468,10 +477,12 @@ impl SmoothClient {
             }
             self.streams[si].failures = 0;
             self.streams[si].cursor = Cursor::Idle;
-            self.outputs.push_back(Output::Dropped(Dropped::Fragment {
+            if !self.dropped(Dropped::Fragment {
                 stream: StreamId(si),
                 status,
-            }));
+            }) {
+                return;
+            }
             self.outputs.push_back(Output::Discontinuity);
             return;
         }
@@ -506,6 +517,17 @@ impl SmoothClient {
     fn build_streams(&mut self, manifest: &SmoothManifest) -> Result<bool, SmoothError> {
         for index in &manifest.streams {
             if !matches!(index.stream_type, StreamType::Video | StreamType::Audio) {
+                // A stream of another type (text, an unknown one) is not part
+                // of what this client plays: reported, so a manifest that is
+                // richer than the session is not silently narrowed.
+                let damage = broadcast_core::damage::Damage::new(
+                    broadcast_core::damage::DamageKind::MetadataUninterpreted,
+                    broadcast_core::damage::Severity::Informational,
+                    "Smooth stream type",
+                );
+                if !self.publish_damage(damage) {
+                    return Ok(false);
+                }
                 continue;
             }
             let pick = if primary_video(manifest).is_some_and(|v| std::ptr::eq(v, index)) {
@@ -514,6 +536,16 @@ impl SmoothClient {
                 0
             };
             let Some(quality) = index.qualities.get(pick).cloned() else {
+                // The manifest names a stream with no quality level this
+                // client can play, so the stream is lost.
+                let damage = broadcast_core::damage::Damage::new(
+                    broadcast_core::damage::DamageKind::TrackDropped,
+                    broadcast_core::damage::Severity::Degraded,
+                    "Smooth stream (no quality level)",
+                );
+                if !self.publish_damage(damage) {
+                    return Ok(false);
+                }
                 continue;
             };
             let timescale = timescale_of(manifest, index);
@@ -589,9 +621,9 @@ impl SmoothClient {
                 if self.streams[si].refresh_misses >= self.config.max_refresh_misses {
                     self.streams[si].abandoned = true;
                     self.streams[si].plan.clear();
-                    self.outputs.push_back(Output::Dropped(Dropped::StreamLost {
+                    self.dropped(Dropped::StreamLost {
                         stream: StreamId(si),
-                    }));
+                    });
                 }
                 continue;
             };
@@ -602,8 +634,15 @@ impl SmoothClient {
                         self.streams[si].merge_refresh(chunks, self.config.max_plan_len);
                 }
                 Err(_) => {
-                    self.outputs
-                        .push_back(Output::Dropped(Dropped::Manifest(ManifestFault::Timeline)));
+                    let stream = self.streams[si].index.name.clone();
+                    self.dropped(Dropped::Manifest(ManifestFault::Timeline));
+                    let damage = broadcast_core::damage::Damage::new(
+                        broadcast_core::damage::DamageKind::TimelineRepaired,
+                        broadcast_core::damage::Severity::Degraded,
+                        "Smooth stream timeline",
+                    );
+                    self.publish_damage(damage);
+                    let _ = stream;
                 }
             }
             self.streams[si].index = found.clone();
@@ -644,7 +683,21 @@ impl SmoothClient {
                     self.streams[si].spec = Some(spec.clone());
                     specs.push(spec);
                 }
-                Err(reason) => return self.fail(SmoothError::TrackSetup { reason }),
+                Err(reason) => {
+                    // The track cannot be described to the host at all. The
+                    // report comes first (so a failing policy stops there with
+                    // it), then the session ends: the announcement covers every
+                    // live stream at once, so it cannot go out without this.
+                    let damage = broadcast_core::damage::Damage::new(
+                        broadcast_core::damage::DamageKind::TrackDropped,
+                        broadcast_core::damage::Severity::Degraded,
+                        "Smooth track",
+                    );
+                    if !self.publish_damage(damage) {
+                        return;
+                    }
+                    return self.fail(SmoothError::TrackSetup { reason });
+                }
             }
         }
         self.announced = true;
@@ -671,9 +724,9 @@ impl SmoothClient {
             self.streams[si].plan.clear();
             self.streams[si].held.clear();
             abandoned = true;
-            self.outputs.push_back(Output::Dropped(Dropped::StreamLost {
+            self.dropped(Dropped::StreamLost {
                 stream: StreamId(si),
-            }));
+            });
         }
         if !abandoned || !self.streams.iter().any(|s| !s.abandoned) {
             return self.fail(SmoothError::AnnounceStalled {
@@ -718,10 +771,11 @@ impl SmoothClient {
         quality: &broadcast_smooth::QualityLevel,
     ) {
         if self.streams[si].applied != *quality && !self.reconfigure(si, quality) {
-            return self.outputs.push_back(Output::Dropped(Dropped::Fragment {
+            self.dropped(Dropped::Fragment {
                 stream: StreamId(si),
                 status: None,
-            }));
+            });
+            return;
         }
         self.emit_samples(si, start, body);
     }
@@ -746,16 +800,60 @@ impl SmoothClient {
         let Some(track) = self.streams[si].track else {
             return;
         };
-        match self.streams[si].fragment_samples(body, start) {
+        let result = self.streams[si].fragment_samples(body, start);
+        let damage = self.streams[si].take_damage();
+        let reported = !damage.is_empty();
+        for report in damage {
+            if !self.publish_damage(report) {
+                return;
+            }
+        }
+        match result {
             Ok(samples) => {
                 for sample in samples {
                     self.outputs.push_back(Output::Sample { track, sample });
                 }
             }
-            Err(_) => self.outputs.push_back(Output::Dropped(Dropped::Fragment {
+            Err(_) if reported => self.dropped_already_reported(Dropped::Fragment {
                 stream: StreamId(si),
                 status: None,
-            })),
+            }),
+            Err(_) => {
+                self.dropped(Dropped::Fragment {
+                    stream: StreamId(si),
+                    status: None,
+                });
+            }
+        }
+    }
+
+    /// Publish one drop and the report it stands for. Returns `false` when the
+    /// policy refused the report: the session has ended with it.
+    fn dropped(&mut self, dropped: Dropped) -> bool {
+        let damage = dropped.damage();
+        self.outputs.push_back(Output::Dropped(dropped));
+        self.publish_damage(damage)
+    }
+
+    /// Publish one drop whose loss the reader has already reported: the
+    /// fragment's own demux damage was told first, so the drop adds no second
+    /// report for the same content.
+    fn dropped_already_reported(&mut self, dropped: Dropped) {
+        self.outputs.push_back(Output::Dropped(dropped));
+    }
+
+    /// Hand one report to the caller's policy. Returns `false` when the
+    /// policy refused it: the session ends with the same report.
+    fn publish_damage(&mut self, damage: broadcast_core::damage::Damage) -> bool {
+        match self.damage_policy.admit(damage) {
+            Ok(damage) => {
+                self.outputs.push_back(Output::Damage(damage));
+                true
+            }
+            Err(error) => {
+                self.fail(SmoothError::Damage(error));
+                false
+            }
         }
     }
 

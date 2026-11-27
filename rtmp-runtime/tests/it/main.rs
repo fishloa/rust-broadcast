@@ -1,5 +1,6 @@
 mod chunk_size_ceiling;
 mod client_adapter;
+mod damage_report;
 mod error_variants;
 mod ffmpeg_publish;
 mod flv_tags;

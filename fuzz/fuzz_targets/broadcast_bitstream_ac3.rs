@@ -17,9 +17,9 @@ fuzz_target!(|data: &[u8]| {
             let _ = info.into_dac3();
         }
     }
-    let frames = split_ac3_syncframes(data);
-    let ranges = split_ac3_syncframe_ranges(data, false);
-    let resynced = split_ac3_syncframe_ranges(data, true);
+    let frames = split_ac3_syncframes(data, &mut broadcast_bitstream::Findings::new());
+    let ranges = split_ac3_syncframe_ranges(data, false, &mut broadcast_bitstream::Findings::new());
+    let resynced = split_ac3_syncframe_ranges(data, true, &mut broadcast_bitstream::Findings::new());
     assert_eq!(frames.len(), ranges.len());
     for (start, end) in ranges.iter().chain(resynced.iter()) {
         assert!(start <= end && *end <= data.len());

@@ -183,13 +183,47 @@ struct Pull {
 
 impl Pull {
     fn start(route: DashPullRoute, clock: Arc<dyn HostClock>) -> Self {
+        Self::start_on(
+            route,
+            clock,
+            crate::route::RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration(std::time::Duration::from_secs(4))
+                    .with_part_target(std::time::Duration::from_millis(500))
+                    .with_window_segments(4),
+            ),
+        )
+    }
+
+    /// [`Self::start`], on a route the caller names and labels with its input
+    /// kind, so a test can find what that input reported in the metrics.
+    fn start_named(
+        route: DashPullRoute,
+        clock: Arc<dyn HostClock>,
+        name: &'static str,
+        kind: &'static str,
+    ) -> Self {
+        Self::start_on(
+            route,
+            clock,
+            crate::route::RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration(std::time::Duration::from_secs(4))
+                    .with_part_target(std::time::Duration::from_millis(500))
+                    .with_window_segments(4),
+            )
+            .with_name(name)
+            .with_input_kind(kind),
+        )
+    }
+
+    fn start_on(
+        route: DashPullRoute,
+        clock: Arc<dyn HostClock>,
+        route_handle: crate::route::RouteHandle,
+    ) -> Self {
         let delivered = Arc::new(Mutex::new(Delivered::default()));
-        let route_handle = Arc::new(crate::route::RouteHandle::new(
-            RouteConfig::default()
-                .with_target_duration(std::time::Duration::from_secs(4))
-                .with_part_target(std::time::Duration::from_millis(500))
-                .with_window_segments(4),
-        ));
+        let route_handle = Arc::new(route_handle);
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let cancel = CancellationToken::new();
         let task = tokio::spawn({
@@ -1851,5 +1885,45 @@ fn the_segment_window_is_half_the_inflight_budget() {
     assert_eq!(
         super::SEGMENT_WINDOW * 2,
         crate::source::MAX_INFLIGHT_FETCHES
+    );
+}
+
+/// The `dash_pull` input kind's reader damage reaches the route's damage
+/// metric: a segment the origin never serves is given up on and reported as
+/// lost media, labelled with the kind an operator configured.
+#[tokio::test]
+async fn a_dropped_segment_reaches_the_route_damage_metric() {
+    const ROUTE: &str = "dash-pull-damage-probe";
+    const KIND: &str = "dash_pull";
+    const MISSING_AHEAD: u64 = 4;
+    const PLAYED_PAST_THE_GAP: u64 = 3;
+    crate::prometheus::install();
+    let live = serve_live(LiveShape {
+        tsb_us: STALL_TOLERANT_TSB_US,
+        missing_ahead: Some(MISSING_AHEAD),
+        ..LiveShape::default()
+    })
+    .await;
+    let mut pull = Pull::start_named(route(live.url()), SkewedClock::new(0), ROUTE, KIND);
+    let ended = pull
+        .until(|_| {
+            live.origin.missing.get().is_some_and(|m| {
+                live.origin
+                    .served(0)
+                    .iter()
+                    .any(|n| *n > m + PLAYED_PAST_THE_GAP)
+            })
+        })
+        .await;
+    assert!(ended.is_none(), "{ended:?}");
+    drop(pull.stop());
+    let line = crate::testutil::rendered_line(
+        "multimux_source_damage_total",
+        &[("route", ROUTE), ("source", KIND)],
+    );
+    assert!(
+        line.is_some(),
+        "a segment the origin never serves is lost media: the reader's report \
+         must reach the route's damage metric"
     );
 }

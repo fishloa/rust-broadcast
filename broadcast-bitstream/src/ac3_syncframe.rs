@@ -18,6 +18,7 @@
 
 use crate::bitreader::read_bits_checked as read_bits;
 use crate::error::{Error, Result};
+use crate::findings::{Findings, ParseFinding};
 use alloc::vec::Vec;
 use broadcast_core::error::{BufferTooShort, InvalidValue};
 use broadcast_core::len::need_in;
@@ -401,8 +402,8 @@ impl Ac3SyncframeInfo {
 /// rather than assuming one PES payload equals one syncframe. Stops at the
 /// first bad sync word / truncated tail so a partial trailing frame does not
 /// lose the earlier ones (mirrors `ts_demux::split_adts_frames`).
-pub fn split_ac3_syncframes(payload: &[u8]) -> Vec<&[u8]> {
-    split_ac3_syncframes_resyncing(payload, false)
+pub fn split_ac3_syncframes<'a>(payload: &'a [u8], findings: &mut Findings) -> Vec<&'a [u8]> {
+    split_ac3_syncframes_resyncing(payload, false, findings)
 }
 
 /// As [`split_ac3_syncframes`], but **resynchronises** after a frame that does
@@ -414,8 +415,12 @@ pub fn split_ac3_syncframes(payload: &[u8]) -> Vec<&[u8]> {
 /// remainder of the stream. Resynchronising costs a rescan of at most one
 /// frame's worth of bytes per corruption, and is what a demuxer recovering from
 /// a damaged payload must do.
-pub fn split_ac3_syncframes_resyncing(payload: &[u8], resync: bool) -> Vec<&[u8]> {
-    split_ac3_syncframe_ranges(payload, resync)
+pub fn split_ac3_syncframes_resyncing<'a>(
+    payload: &'a [u8],
+    resync: bool,
+    findings: &mut Findings,
+) -> Vec<&'a [u8]> {
+    split_ac3_syncframe_ranges(payload, resync, findings)
         .into_iter()
         .map(|(start, end)| &payload[start..end])
         .collect()
@@ -429,14 +434,20 @@ pub fn split_ac3_syncframes_resyncing(payload: &[u8], resync: bool) -> Vec<&[u8]
 /// offsets by summing frame lengths would slice at the wrong places and emit
 /// samples that start mid-frame (which is exactly what the PS demuxer did until
 /// it was given these ranges).
-pub fn split_ac3_syncframe_ranges(payload: &[u8], resync: bool) -> Vec<(usize, usize)> {
+pub fn split_ac3_syncframe_ranges(
+    payload: &[u8],
+    resync: bool,
+    findings: &mut Findings,
+) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut off = 0usize;
+    let mut skipped_from: Option<usize> = None;
     while off + AC3_SYNCWORD_BYTES <= payload.len() {
         if u16_at(payload, off) != AC3_SYNCWORD {
             if !resync {
                 break;
             }
+            skipped_from.get_or_insert(off);
             off += 1;
             continue;
         }
@@ -448,12 +459,24 @@ pub fn split_ac3_syncframe_ranges(payload: &[u8], resync: bool) -> Vec<(usize, u
             .filter(|&len| len != 0 && off + len <= payload.len());
         match ok {
             Some(len) => {
+                if let Some(from) = skipped_from.take() {
+                    findings.push(ParseFinding::audio_frame_header(from));
+                }
                 ranges.push((off, off + len));
                 off += len;
             }
-            None if resync => off += 1,
-            None => break,
+            None if resync => {
+                skipped_from.get_or_insert(off);
+                off += 1;
+            }
+            None => {
+                findings.push(ParseFinding::audio_frame_header(off));
+                break;
+            }
         }
+    }
+    if let Some(from) = skipped_from {
+        findings.push(ParseFinding::audio_frame_header(from));
     }
     ranges
 }
@@ -973,14 +996,16 @@ impl Ec3SplitFrame {
 /// Multi-program E-AC-3 (independent substreams with `substreamid` 1..=7,
 /// §E.1.3.1.2) is not disentangled: every independent frame starts a new
 /// access unit in stream order (single-program streams are unaffected).
-pub fn split_eac3_syncframes(payload: &[u8]) -> Vec<Ec3SplitFrame> {
+pub fn split_eac3_syncframes(payload: &[u8], findings: &mut Findings) -> Vec<Ec3SplitFrame> {
     let mut out: Vec<Ec3SplitFrame> = Vec::new();
     let mut off = 0usize;
     while off + AC3_SYNCWORD_BYTES <= payload.len() {
         if u16_at(payload, off) != AC3_SYNCWORD {
+            findings.push(ParseFinding::audio_frame_header(off));
             break;
         }
         let Ok(info) = Ec3SyncframeInfo::parse_at(payload, off) else {
+            findings.push(ParseFinding::audio_frame_header(off));
             break;
         };
         let len = (info.frmsiz as usize + 1) * BYTES_PER_WORD;
@@ -1019,14 +1044,16 @@ pub fn split_eac3_syncframes(payload: &[u8]) -> Vec<Ec3SplitFrame> {
 ///
 /// Stops at the first bad sync word / truncated tail (mirrors
 /// [`split_ac3_syncframes`]); the caller then treats the payload as unwalkable.
-pub fn split_eac3_syncframe_ranges(payload: &[u8]) -> Vec<(usize, usize)> {
+pub fn split_eac3_syncframe_ranges(payload: &[u8], findings: &mut Findings) -> Vec<(usize, usize)> {
     let mut ranges = Vec::new();
     let mut off = 0usize;
     while off + AC3_SYNCWORD_BYTES <= payload.len() {
         if u16_at(payload, off) != AC3_SYNCWORD {
+            findings.push(ParseFinding::audio_frame_header(off));
             break;
         }
         let Ok(info) = Ec3SyncframeInfo::parse_at(payload, off) else {
+            findings.push(ParseFinding::audio_frame_header(off));
             break;
         };
         let len = (info.frmsiz as usize + 1) * BYTES_PER_WORD;
@@ -1518,6 +1545,24 @@ mod tests {
     use test_fixtures::bits::BitWriter;
     use test_harness::ac3::{damaged_for_tests, eac3_bsi, seven_one_eac3_es, wire_chanmap};
 
+    /// A hostile garbage payload costs one finding for the skipped run, never
+    /// one per byte, and the walk stays linear in the bytes supplied.
+    #[test]
+    fn a_garbage_payload_costs_one_finding_per_run() {
+        let garbage = vec![0u8; 1 << 20];
+        let mut findings = Findings::new();
+        assert!(split_ac3_syncframe_ranges(&garbage, true, &mut findings).is_empty());
+        assert_eq!(findings.len(), 1, "one skipped run, one finding");
+
+        let mut findings = Findings::new();
+        assert!(split_eac3_syncframes(&garbage, &mut findings).is_empty());
+        assert_eq!(findings.len(), 1);
+
+        let mut findings = Findings::new();
+        assert!(split_eac3_syncframe_ranges(&garbage, &mut findings).is_empty());
+        assert_eq!(findings.len(), 1);
+    }
+
     #[test]
     fn ec3_channels_with_lfe_counts_chan_loc_dependents() {
         // acmod 7 (3/2) + lfeon = 6; chan_loc bit 1 (Lrs/Rrs pair, Table
@@ -1826,7 +1871,7 @@ mod tests {
     /// Every syncframe of an elementary stream, in order: the independent frame
     /// plus the dependent frames an access unit carries.
     fn scan_eac3_frames(es: &[u8]) -> Vec<Ec3SyncframeInfo> {
-        split_eac3_syncframes(es)
+        split_eac3_syncframes(es, &mut Findings::new())
             .iter()
             .flat_map(|au| {
                 let mut off = 0usize;
@@ -1885,7 +1930,7 @@ mod tests {
         let independent = eac3_bsi(0, 0, 64, 1, false, 0, 3, None, None);
         let dependent = eac3_bsi(1, 0, 64, 1, false, 0, 3, Some(0x0100), None);
         let es = [orphan.clone(), independent.clone(), dependent.clone()].concat();
-        let units = split_eac3_syncframes(&es);
+        let units = split_eac3_syncframes(&es, &mut Findings::new());
         assert_eq!(units.len(), 1, "the orphan is not its own access unit");
         assert_eq!(
             units[0].info.strmtyp, 0,
@@ -1897,7 +1942,7 @@ mod tests {
             "the independent frame keeps its own dependent"
         );
         // A payload that is nothing but an orphan yields no access unit.
-        assert!(split_eac3_syncframes(&orphan).is_empty());
+        assert!(split_eac3_syncframes(&orphan, &mut Findings::new()).is_empty());
     }
 
     /// `num_dep_sub` counts the dependent substreams (highest `substreamid` + 1,
@@ -1957,7 +2002,8 @@ mod tests {
             Some(wire_chanmap(&[3, 4, 6])),
             None,
         );
-        let units = split_eac3_syncframes(&[core.clone(), dep.clone()].concat());
+        let units =
+            split_eac3_syncframes(&[core.clone(), dep.clone()].concat(), &mut Findings::new());
         assert_eq!(units.len(), 1);
         assert_eq!(units[0].data, [core.clone(), dep].concat());
 

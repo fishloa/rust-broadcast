@@ -714,7 +714,7 @@ fn zero_data_offset_header_and_tag() -> Vec<u8> {
 #[test]
 fn a_header_rejected_for_its_data_offset_is_a_header_error() {
     let input = zero_data_offset_header_and_tag();
-    let mut demux = StreamingFlvDemux::new();
+    let mut demux = StreamingFlvDemux::strict();
     let err = demux
         .feed(&input)
         .expect_err("DataOffset 0 is not a valid header");
@@ -732,7 +732,7 @@ fn a_header_rejected_for_its_data_offset_is_a_header_error() {
 fn a_bad_signature_is_still_a_bad_signature() {
     let mut input = zero_data_offset_header_and_tag();
     input[..3].copy_from_slice(b"XLV");
-    let mut demux = StreamingFlvDemux::new();
+    let mut demux = StreamingFlvDemux::strict();
     assert!(matches!(
         demux.feed(&input).expect_err("not FLV"),
         FlvError::BadSignature([b'X', b'L', b'V'])

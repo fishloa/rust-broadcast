@@ -171,7 +171,7 @@ The stable floor every wire crate builds on: the symmetric `Parse<'a>` / `Serial
 - **Cargo description:** Frozen wire-format contract for the rust-broadcast crates: symmetric Parse/Serialize traits, checked field-width helpers, MSB-first bit I/O, reserved-bit fields, media timescales, the shared error kinds and the CENC scheme identity. no_std + alloc.
 - **Version (in-tree):** 0.1.0 · **Status:** internal, `publish = false` · **`no_std` proven in CI:** no · **Layer:** 0
 - **Depends on (workspace):** none
-- **Used by (workspace):** 64 workspace crates
+- **Used by (workspace):** 65 workspace crates
 - **Links:** [README](../broadcast-core/README.md) · [CHANGELOG](../broadcast-core/CHANGELOG.md)
 
 #### broadcast-codec
@@ -649,7 +649,7 @@ Driveable client and server state machines with CSeq correlation, Transport nego
 - **Standards:** RFC 2326 (RTSP 1.0) incl. Appendix A state machines, §10.12 interleaving, §12.39 Transport, §14 auth
 - **Cargo description:** Sans-IO RTSP 1.0 (RFC 2326) session engine — driveable client + server state machines, interleaved RTP/RTCP framing, Basic/Digest/Bearer auth (via broadcast-auth), over the rtsp-types codec; optional tokio (+ rustls) socket adapter.
 - **Version (in-tree):** 0.14.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 3
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`broadcast-core`](#broadcast-core)
 - **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux)
 - **Links:** [README](../rtsp-runtime/README.md) · [CHANGELOG](../rtsp-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/rtsp-runtime) · [docs.rs](https://docs.rs/rtsp-runtime)
 

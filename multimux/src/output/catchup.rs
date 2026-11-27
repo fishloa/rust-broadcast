@@ -785,7 +785,7 @@ mod tests {
                 broadcast_common::Timestamp::ZERO,
             );
 
-            crate::source::advance_route(&driver, &route, &mut progress).await;
+            crate::source::advance_route(&mut driver, &route, &mut progress).await;
 
             // The drain persisted the segment: the init prelude is INIT_LEN bytes
             // (a real fMP4 init for the synthetic track), then SEG_LEN bytes

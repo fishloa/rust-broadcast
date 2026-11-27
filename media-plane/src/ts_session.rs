@@ -177,16 +177,22 @@ impl ProgramTracker {
             DemuxEvent::TrackRemoved { track_id, .. } => self.track_removed(track_id),
             DemuxEvent::TrackUpdated(spec) => self.track_updated(spec),
             DemuxEvent::TrackAbandoned { .. } => {}
-            DemuxEvent::Damage(damage) => {
-                let program = damage
-                    .location()
-                    .track()
-                    .and_then(|track| self.track_program.get(&TrackId::new(track)).copied());
-                self.pending
-                    .push_back(SessionEvent::Damage { program, damage });
-            }
+            DemuxEvent::Damage(damage) => self.damage(damage),
             _ => {}
         }
+    }
+
+    /// Queue one [`SessionEvent::Damage`], attributed to the programme that
+    /// owns the track the report names. A report whose track belongs to no
+    /// programme (or that names none) is queued for the whole session, so the
+    /// host always sees it.
+    pub fn damage(&mut self, damage: broadcast_core::damage::Damage) {
+        let program = damage
+            .location()
+            .track()
+            .and_then(|track| self.track_program.get(&TrackId::new(track)).copied());
+        self.pending
+            .push_back(SessionEvent::Damage { program, damage });
     }
 
     pub fn track_added(&mut self, spec: TrackSpec) {

@@ -240,6 +240,12 @@ pub enum SegmenterEvent {
     },
     TsIdrMissing(TsHlsIdrStatus),
     OutputFailed(TsHlsRejection),
+    /// Content the segmenter lost: a cursor that fell behind the trunk's rings,
+    /// a retention eviction, or a timeline it re-anchored. The in-band
+    /// [`Self::TracksActive`]/segment output still says what was produced; this
+    /// is the same loss in the workspace's one report vocabulary, for a host
+    /// that counts what its viewers did not see.
+    Damage(broadcast_core::damage::Damage),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -750,6 +756,10 @@ pub struct ProgramSegmenter {
     pub(crate) start_gate_video_dropped: u64,
     /// Whether the one-shot `tracing::info!` on gate open has fired.
     pub(crate) start_gate_opened_logged: bool,
+    /// A source-clock break was recorded and still has to be reported through
+    /// [`SegmenterEvent::Damage`] (the break itself is recorded where the
+    /// manifest mark is, which has no event channel).
+    timeline_reanchor_pending: bool,
     /// How long the start gate has dropped IDR-less video while an `idr_only`
     /// classic-TS route waits for its first IDR.
     pub(crate) idr_wait: transmux::IdrWait,
@@ -1103,6 +1113,7 @@ impl ProgramSegmenter {
             start_gate_dropped: 0,
             start_gate_video_dropped: 0,
             start_gate_opened_logged: false,
+            timeline_reanchor_pending: false,
             idr_wait: transmux::IdrWait::new(config.ts_idr_fallback.bound(target_duration)),
             idr_fallback_active: false,
             idr_hold: VecDeque::new(),
@@ -1381,12 +1392,23 @@ impl ProgramSegmenter {
                     }
                 }
                 self.ingest_sample(track_id, sample);
+                if self.timeline_reanchor_pending {
+                    self.timeline_reanchor_pending = false;
+                    events.push(SegmenterEvent::Damage(broadcast_core::damage::Damage::new(
+                        broadcast_core::damage::DamageKind::TimelineRepaired,
+                        broadcast_core::damage::Severity::Informational,
+                        "segmenter timeline",
+                    )));
+                }
             } else if let SampleCursorItem::Lagged { skipped } = item {
                 tracing::warn!(
                     program = program.0,
                     skipped,
                     "segmenter fell behind the trunk's timed ring; those samples are lost"
                 );
+                if let Some(damage) = item.damage() {
+                    events.push(SegmenterEvent::Damage(damage));
+                }
             }
             // `Sparse`/`Degraded` items: a section-carried (sparse) track has
             // no place in either segmenter's media segment (fMP4 or classic
@@ -1540,6 +1562,10 @@ impl ProgramSegmenter {
         if let Err(e) = self.seg.discontinuity() {
             tracing::warn!(error = %e, "segmenter refused the timeline discontinuity");
         }
+        // The manifest discontinuity the players see is the same event in the
+        // segmenter's own vocabulary; `pump` turns this into the report a host
+        // that counts what viewers missed reads.
+        self.timeline_reanchor_pending = true;
     }
 
     /// Keep `sample` for the IDR-fallback replay: collection starts at the
@@ -2245,6 +2271,7 @@ mod segmenter_tests {
             start_gate_dropped: 0,
             start_gate_video_dropped: 0,
             start_gate_opened_logged: false,
+            timeline_reanchor_pending: false,
             idr_wait: transmux::IdrWait::new(std::time::Duration::from_secs(6)),
             idr_fallback_active: false,
             idr_hold: VecDeque::new(),

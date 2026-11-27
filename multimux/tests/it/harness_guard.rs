@@ -58,6 +58,9 @@ const SLEEP_ALLOW: &[&str] = &[
     // followed; there is no condition to poll on the client side.
     "push_rtsp_wire.rs",
     "rtsp_ingest.rs",
+    // Polls the process-wide Prometheus facade: a report has no observable
+    // event to await, and rendering is a snapshot.
+    "damage_policy.rs",
     "server_timeouts.rs",
     "smooth_oracle.rs",
     // Retries a UDP SRT handshake until the route's listener has bound (no

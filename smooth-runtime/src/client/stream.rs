@@ -42,6 +42,9 @@ pub(crate) struct Stream {
     pub(crate) failures: u32,
     pub(crate) refresh_misses: u32,
     pub(crate) abandoned: bool,
+    /// Damage reports the last fragment's demux published, waiting for the
+    /// engine to hand them to the caller's policy.
+    pub(crate) damage: Vec<broadcast_core::damage::Damage>,
 }
 
 impl Stream {
@@ -63,6 +66,7 @@ impl Stream {
             failures: 0,
             refresh_misses: 0,
             abandoned: false,
+            damage: Vec::new(),
         }
     }
 
@@ -96,6 +100,12 @@ impl Stream {
         true
     }
 
+    /// The reports the last [`Self::fragment_samples`] call's demux
+    /// published, in order.
+    pub(crate) fn take_damage(&mut self) -> Vec<broadcast_core::damage::Damage> {
+        core::mem::take(&mut self.damage)
+    }
+
     /// Feed one fragment body to this stream's demux stage and return its
     /// samples rebased so the fragment starts at its `tfxd` time, or at `start`
     /// when it carries none.
@@ -111,6 +121,7 @@ impl Stream {
             .ok_or(FragmentFault::Demux)?
             .segment(body)
             .map_err(|_| FragmentFault::Demux)?;
+        self.damage.extend(segment.damage);
         if segment.damaged {
             return Err(FragmentFault::Demux);
         }

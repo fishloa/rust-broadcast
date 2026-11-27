@@ -50,8 +50,8 @@ pub const MAX_CHUNK_SIZE: u32 = 16 * 1024 * 1024;
 /// compressed video frame, even a keyframe, is normally well under 1 MiB),
 /// so this is a generous ceiling that still bounds worst-case allocation
 /// per in-progress message. A Type 0/1 header declaring a larger
-/// `message_length` is rejected by [`ChunkAssembler`] before any buffer for
-/// it is allocated.
+/// `message_length` has its bytes consumed without ever being buffered, and
+/// is reported through [`ChunkAssembler::take_damage`].
 pub const MAX_MESSAGE_LEN: u32 = 8 * 1024 * 1024;
 
 /// Largest number of distinct chunk stream ids [`ChunkAssembler`] will track
@@ -707,6 +707,12 @@ struct CsidState {
     /// message completed, or there never was one). The authoritative copy
     /// of the amount to credit back on completion, overwrite, or abort.
     reserved: Option<u32>,
+    /// Bytes still to consume of an over-limit message being discarded
+    /// rather than buffered (see [`ChunkAssembler::take_damage`]). Non-zero
+    /// only while such a message is in flight; its payload bytes are never
+    /// accumulated, so a peer cannot hold this session's buffer open with a
+    /// header it will not fill.
+    discarding: u32,
 }
 
 /// Stateful inbound chunk reassembler (§5.3): feed inbound bytes, get back
@@ -742,6 +748,11 @@ pub struct ChunkAssembler {
     /// Ceiling for `in_progress_bytes` — see
     /// [`DEFAULT_MAX_IN_PROGRESS_BYTES`].
     max_in_progress_bytes: usize,
+    /// Reports for content this assembler skipped, in the order the skips
+    /// happened. The caller drains them with [`Self::take_damage`] after
+    /// each parse and hands each to its own policy: reassembly itself never
+    /// decides what a skip means.
+    damage: Vec<broadcast_core::damage::Damage>,
 }
 
 impl Default for ChunkAssembler {
@@ -761,7 +772,27 @@ impl ChunkAssembler {
             cursor: 0,
             in_progress_bytes: 0,
             max_in_progress_bytes: DEFAULT_MAX_IN_PROGRESS_BYTES,
+            damage: Vec::new(),
         }
+    }
+
+    /// Reports for the content skipped since the last call: a message an
+    /// interrupting header or an `Abort` discarded, a message above the
+    /// length ceiling consumed without being buffered, and a message the
+    /// caller's in-progress budget refused. Each is a
+    /// [`broadcast_core::damage::Damage`] for the session to publish through
+    /// its event channel.
+    pub fn take_damage(&mut self) -> Vec<broadcast_core::damage::Damage> {
+        core::mem::take(&mut self.damage)
+    }
+
+    /// The timestamp of the message in progress on `csid`, if any — the
+    /// media time a report about that message names.
+    fn in_progress_timestamp(&self, csid: ChunkStreamId) -> Option<u32> {
+        self.csids
+            .get(&csid)
+            .filter(|state| state.in_progress)
+            .map(|state| state.timestamp.millis())
     }
 
     /// Set the ceiling on total payload bytes buffered across all
@@ -803,7 +834,13 @@ impl ChunkAssembler {
     /// that actually starts a *new* message on that csid was instead
     /// appended to the aborted payload as a continuation — `message_length`
     /// bytes later, a corrupted merged message came out.
+    ///
+    /// The discarded message is reported through [`Self::take_damage`]: the
+    /// sender told the session to drop it, so the report is informational,
+    /// but a viewer never sees that content and a host that counts losses
+    /// must be able to count this one.
     pub fn abort(&mut self, csid: ChunkStreamId) {
+        let aborted = self.in_progress_timestamp(csid);
         if let Some(state) = self.csids.get_mut(&csid) {
             if state.in_progress {
                 let released = state.reserved.take().unwrap_or(0) as usize;
@@ -811,6 +848,10 @@ impl ChunkAssembler {
             }
             state.payload.clear();
             state.in_progress = false;
+            state.discarding = 0;
+        }
+        if let Some(timestamp) = aborted {
+            self.damage.push(crate::damage::message_aborted(timestamp));
         }
     }
 
@@ -958,13 +999,13 @@ impl ChunkAssembler {
     pub fn next_message(&mut self) -> Result<Option<Message>> {
         let max_in_progress_bytes = self.max_in_progress_bytes;
         // #1108/RTMP-W1 defence-in-depth: cap the not-yet-parsed `pending`
-        // receive buffer at twice the in-progress budget. The primary
-        // bound is the declared-length reservation enforced in
-        // `try_parse_one` below (which holds whether or not the message's
-        // bytes have committed); this backstop covers the residual slack
-        // of bytes that belong to no reserved message (a caller that keeps
-        // feeding unparsed input despite errors) plus at most one
-        // unreserved in-flight header's worth.
+        // receive buffer at twice the in-progress budget. The primary bound
+        // is in `try_parse_one` below, which never buffers more than the
+        // budget for a message and consumes an over-limit one without
+        // holding it; this backstop covers the residual slack of bytes that
+        // belong to no reserved message (a caller that keeps feeding
+        // unparsed input despite errors) plus at most one unreserved
+        // in-flight header's worth.
         if self.pending.len() - self.cursor > max_in_progress_bytes * PENDING_BUDGET_FACTOR {
             return Err(RtmpError::InputBudgetExceeded {
                 max: max_in_progress_bytes * PENDING_BUDGET_FACTOR,
@@ -987,9 +1028,16 @@ impl ChunkAssembler {
                     self.chunk_size,
                     &mut self.in_progress_bytes,
                     max_in_progress_bytes,
+                    &mut self.damage,
                 ) {
                     Ok(Some(parsed)) => {
                         cursor += parsed.consumed;
+                        if parsed.discarded {
+                            // A chunk of a message consumed without being
+                            // buffered: there is no message to hand back,
+                            // so keep looking for one that can be.
+                            continue;
+                        }
                         // `try_parse_one` commits (inserts or updates)
                         // `parsed.csid`'s entry before returning `Ok(Some(_))`,
                         // so the entry exists; guard the borrow the same way
@@ -1044,12 +1092,12 @@ impl ChunkAssembler {
                     Ok(None)
                 }
                 Err(e) => {
-                    // A budget error was produced by a header that
-                    // validated but whose chunk did not commit: re-parsing
-                    // the same bytes would count the declaration again, so
-                    // never resume consuming after one — the caller must
-                    // treat it as terminal (the error is unrecoverable for
-                    // this connection anyway).
+                    // A framing error leaves the parse cursor exactly where
+                    // the failing chunk began: re-parsing the same bytes
+                    // would fail identically, so never resume consuming
+                    // after one — the caller must treat it as terminal (the
+                    // chunk stream can no longer be framed, so no later
+                    // message can be located).
                     self.compact();
                     Err(e)
                 }
@@ -1094,6 +1142,7 @@ impl ChunkAssembler {
         chunk_size: ChunkSize,
         in_progress_bytes: &mut usize,
         max_in_progress_bytes: usize,
+        damage: &mut Vec<broadcast_core::damage::Damage>,
     ) -> Result<Option<ParsedChunk>> {
         let bh = match BasicHeader::parse(buf) {
             Ok(bh) => bh,
@@ -1126,6 +1175,7 @@ impl ChunkAssembler {
             extended: s.extended,
             in_progress: s.in_progress,
             accumulated_len: s.payload.len(),
+            discarding: s.discarding,
         });
 
         // Remote-DoS guard: a flood of chunks opening distinct, previously
@@ -1193,12 +1243,6 @@ impl ChunkAssembler {
                     chunk_stream_id: bh.chunk_stream_id.get(),
                     what: "type 1 header with no prior chunk to inherit from",
                 })?;
-                if existing.in_progress {
-                    return Err(RtmpError::ChunkStreamState {
-                        chunk_stream_id: bh.chunk_stream_id.get(),
-                        what: "type 1 header mid-message",
-                    });
-                }
                 let used_extended = mh_consumed > TYPE1_LEN;
                 (
                     ResolvedHeader {
@@ -1224,12 +1268,6 @@ impl ChunkAssembler {
                     chunk_stream_id: bh.chunk_stream_id.get(),
                     what: "type 2 header with no prior chunk to inherit from",
                 })?;
-                if existing.in_progress {
-                    return Err(RtmpError::ChunkStreamState {
-                        chunk_stream_id: bh.chunk_stream_id.get(),
-                        what: "type 2 header mid-message",
-                    });
-                }
                 let used_extended = mh_consumed > TYPE2_LEN;
                 let message_type_id =
                     existing
@@ -1330,19 +1368,78 @@ impl ChunkAssembler {
             }
         };
 
-        // Remote-DoS guard: `message_length` is a fully peer-supplied
-        // 24-bit wire field (Type 0/1 headers set it directly; Type 2/3
-        // inherit an already-checked value). Reject before any payload
-        // buffer for this message is allocated — see `MAX_MESSAGE_LEN`'s
-        // doc for why this bound is safe for real RTMP traffic.
-        if resolved.message_length > MAX_MESSAGE_LEN {
-            return Err(RtmpError::FieldOverflow(
-                broadcast_core::len::FieldOverflow {
-                    field: "message_length",
-                    value: u64::from(resolved.message_length),
-                    max: u64::from(MAX_MESSAGE_LEN),
-                },
+        // A header that starts a new message while one is still in progress
+        // on this csid abandons the accumulated bytes: the interrupted
+        // message can never complete, so it is dropped and reported. This is
+        // never fatal — the new header frames every later chunk correctly,
+        // so a single bad message costs only itself.
+        if let Some(interrupted) = existing.filter(|s| starts_new && s.in_progress) {
+            if let Some(state) = states.get_mut(&bh.chunk_stream_id) {
+                let released = state.reserved.take().unwrap_or(0) as usize;
+                *in_progress_bytes = in_progress_bytes.saturating_sub(released);
+                state.payload.clear();
+                state.in_progress = false;
+                state.discarding = 0;
+            }
+            damage.push(crate::damage::message_dropped(
+                interrupted.timestamp.millis(),
             ));
+        }
+
+        // A message whose declared length this session will not buffer — the
+        // per-message ceiling, or the caller's in-progress budget — is
+        // consumed without ever being held: it is framed by the same
+        // chunk-size rule as any other message, so the next message is still
+        // located, and a peer cannot hold this session's buffer open with a
+        // declaration it never fills. Reported once, when its header opens.
+        let prior_reservation = states
+            .get(&bh.chunk_stream_id)
+            .and_then(|s| s.reserved)
+            .unwrap_or(0) as usize;
+        let over_budget = starts_new
+            && in_progress_bytes
+                .saturating_sub(prior_reservation)
+                .saturating_add(resolved.message_length as usize)
+                > max_in_progress_bytes;
+        let opens_discard =
+            starts_new && (resolved.message_length > MAX_MESSAGE_LEN || over_budget);
+        let continuing_discard = !starts_new && existing.is_some_and(|s| s.discarding != 0);
+        if opens_discard || continuing_discard {
+            let remaining = if opens_discard {
+                resolved.message_length
+            } else {
+                existing.map(|s| s.discarding).unwrap_or(0)
+            };
+            let take = usize::try_from(chunk_size.value())
+                .unwrap_or(usize::MAX)
+                .min(remaining as usize);
+            if buf.len() < consumed + take {
+                return Ok(None);
+            }
+            let state = states.entry(bh.chunk_stream_id).or_default();
+            if let Some(released) = state.reserved.take() {
+                *in_progress_bytes = in_progress_bytes.saturating_sub(released as usize);
+            }
+            state.timestamp = resolved.timestamp;
+            state.timestamp_delta = resolved.timestamp_delta;
+            state.message_length = resolved.message_length;
+            state.message_type_id = Some(resolved.message_type_id);
+            state.message_stream_id = resolved.message_stream_id;
+            state.extended = resolved.extended;
+            state.initialized = true;
+            state.payload.clear();
+            state.discarding = remaining.saturating_sub(take as u32);
+            state.in_progress = state.discarding != 0;
+            if opens_discard {
+                damage.push(crate::damage::message_over_limit(
+                    resolved.timestamp.millis(),
+                ));
+            }
+            return Ok(Some(ParsedChunk {
+                csid: bh.chunk_stream_id,
+                consumed: consumed.saturating_add(take),
+                discarded: true,
+            }));
         }
 
         let already_accumulated = if starts_new {
@@ -1362,21 +1459,11 @@ impl ChunkAssembler {
         // reservation is released on completion or abort. Continuation
         // chunks never re-reserve. Idempotent: a header re-parsed because
         // its payload was incomplete finds `reserved` equal to its own
-        // declaration and nets zero. A rejected header records nothing.
+        // declaration and nets zero.
         if starts_new {
-            let prior = states
-                .get(&bh.chunk_stream_id)
-                .and_then(|s| s.reserved)
-                .unwrap_or(0) as usize;
-            let new_total = in_progress_bytes
-                .saturating_sub(prior)
+            *in_progress_bytes = in_progress_bytes
+                .saturating_sub(prior_reservation)
                 .saturating_add(resolved.message_length as usize);
-            if new_total > max_in_progress_bytes {
-                return Err(RtmpError::InputBudgetExceeded {
-                    max: max_in_progress_bytes,
-                });
-            }
-            *in_progress_bytes = new_total;
             states.entry(bh.chunk_stream_id).or_default().reserved = Some(resolved.message_length);
         }
 
@@ -1416,6 +1503,7 @@ impl ChunkAssembler {
         Ok(Some(ParsedChunk {
             csid: bh.chunk_stream_id,
             consumed,
+            discarded: false,
         }))
     }
 }
@@ -1434,6 +1522,7 @@ struct ExistingHeader {
     extended: bool,
     in_progress: bool,
     accumulated_len: usize,
+    discarding: u32,
 }
 
 /// Header fields resolved for one chunk, after applying `fmt`-specific
@@ -1455,6 +1544,9 @@ struct ResolvedHeader {
 struct ParsedChunk {
     csid: ChunkStreamId,
     consumed: usize,
+    /// This chunk belonged to a message consumed without being buffered, so
+    /// there is no [`Message`] to hand back when it ends.
+    discarded: bool,
 }
 
 // ── ChunkWriter (outbound, §5.3) ─────────────────────────────────────────
@@ -2636,9 +2728,9 @@ mod tests {
     }
 
     /// RTMP-W3 (#1108): a Type 1 chunk header arriving mid-message (the
-    /// csid already has an in-progress, incomplete message) must be
-    /// rejected, not silently reset the csid's state and discard the
-    /// in-flight bytes.
+    /// csid already has an in-progress, incomplete message) abandons the
+    /// in-flight bytes — the interrupted message can never complete — and
+    /// says so, rather than silently resetting the csid's state.
     #[test]
     fn type1_header_mid_message_is_rejected() {
         let in_progress = msg(12, 1, MessageTypeId::Audio, 3, vec![0xAA; 300]); // 3 chunks at default 128
@@ -2659,14 +2751,21 @@ mod tests {
             0x00, 0x00, 0x32, // message_length = 50
             0x08, // message_type_id
         ];
-        let err = assembler.push(&type1_chunk).unwrap_err();
-        assert!(matches!(
-            err,
-            RtmpError::ChunkStreamState {
-                chunk_stream_id: 12,
-                ..
-            }
-        ));
+        let out = assembler
+            .push(&type1_chunk)
+            .expect("a header mid-message must not end the session");
+        assert!(out.is_empty(), "the interrupted message is not delivered");
+        let reports = assembler.take_damage();
+        assert_eq!(reports.len(), 1, "the interrupted message is reported");
+        assert_eq!(
+            reports[0].kind(),
+            broadcast_core::damage::DamageKind::MediaUnitDropped
+        );
+        assert_eq!(
+            assembler.in_progress_bytes, 50,
+            "the interrupted message's reservation is freed and the new \
+             50-byte message takes one"
+        );
     }
 
     #[test]
@@ -2983,11 +3082,10 @@ mod tests {
         // (the max a 24-bit field can encode) but only ever supplies a
         // single default-chunk-size (128-byte) slice of payload after it —
         // exactly the shape of the excessive-allocation DoS (the peer never
-        // has to send anywhere near the claimed length). Without the
-        // MAX_MESSAGE_LEN cap this used to `Vec::with_capacity(message_length)`
-        // (~16 MiB) right here and return `Ok(vec![])` (message merely
-        // in-progress, no error) — this test would then fail, since it
-        // asserts an `Err` instead.
+        // has to send anywhere near the claimed length). The message is
+        // consumed without being buffered: no reservation is taken (so no
+        // `message_length`-sized allocation can happen), it is reported once,
+        // and a later complete message on another chunk stream still frames.
         let mut assembler = ChunkAssembler::new();
         let mut input = Vec::new();
         write_serialized_ok(
@@ -3008,17 +3106,28 @@ mod tests {
         );
         input.extend(core::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE_VALUE as usize));
 
-        let err = assembler.push(&input).expect_err(
-            "a message_length beyond MAX_MESSAGE_LEN must be rejected before any \
-             message_length-sized buffer is allocated",
+        let out = assembler
+            .push(&input)
+            .expect("an over-length message is skipped, not fatal");
+        assert!(out.is_empty(), "a skipped message is never delivered");
+        assert_eq!(
+            assembler.in_progress_bytes, 0,
+            "a skipped message reserves no budget, so it can allocate nothing"
         );
-        assert!(matches!(
-            err,
-            RtmpError::FieldOverflow(broadcast_core::len::FieldOverflow {
-                field: "message_length",
-                ..
-            })
-        ));
+        assert_eq!(assembler.pending_len(), 0, "its bytes are consumed");
+        let reports = assembler.take_damage();
+        assert_eq!(reports.len(), 1, "the skipped message is reported");
+        assert_eq!(
+            reports[0].kind(),
+            broadcast_core::damage::DamageKind::LimitReached
+        );
+
+        // The chunk stream is still framed: a complete message on another
+        // csid still parses.
+        let out = assembler
+            .push(&single_chunk(BASIC_HEADER_1BYTE_MIN_CSID, &[0x5Au8; 4]))
+            .expect("framing survives a skipped message");
+        assert_eq!(out.len(), 1);
     }
 
     #[test]
@@ -3172,33 +3281,36 @@ mod tests {
         // payload fragment. 64 KiB / 24 KiB = 2 fit, so the budget must
         // trip on the third push.
         let mut hoarded = 0;
+        let mut skipped = 0;
         for i in 0..MAX_CSIDS as u32 {
             let csid = BASIC_HEADER_1BYTE_MIN_CSID + i;
-            match assembler.push(&open_partial_chunk(csid, DECL)) {
-                Ok(msgs) => {
-                    assert!(msgs.is_empty(), "a partial message must not complete");
-                    assert_eq!(
-                        assembler.in_progress_bytes,
-                        (hoarded + 1) * DECL as usize,
-                        "each accepted declaration must reserve its full length"
-                    );
-                    hoarded += 1;
-                }
-                Err(err) => {
-                    assert!(
-                        matches!(&err, RtmpError::InputBudgetExceeded { .. }),
-                        "budget overrun must be InputBudgetExceeded (push #{hoarded}), got {err:?}"
-                    );
-                    break;
-                }
+            let msgs = assembler
+                .push(&open_partial_chunk(csid, DECL))
+                .expect("an over-budget declaration is skipped, not fatal");
+            assert!(msgs.is_empty(), "a partial message must not complete");
+            if assembler.take_damage().is_empty() {
+                assert_eq!(
+                    assembler.in_progress_bytes,
+                    (hoarded + 1) * DECL as usize,
+                    "each accepted declaration must reserve its full length"
+                );
+                hoarded += 1;
+            } else {
+                skipped += 1;
             }
         }
-        // 64 KiB / 24 KiB = 2 partials fit: the budget trips on the third
-        // push — long before the MAX_CSIDS cap could (only 3 csids exist
-        // on this connection, far below the 64-csid ceiling).
+        // 64 KiB / 24 KiB = 2 partials fit: every later declaration is
+        // consumed without being buffered, so nothing accumulates and the
+        // connection still frames — long before the MAX_CSIDS cap could
+        // stop the flood (far below the 64-csid ceiling).
         assert_eq!(
             hoarded, 2,
-            "the budget must be what stops the flood, not the csid cap"
+            "the budget must be what bounds the flood, not the csid cap"
+        );
+        assert_eq!(
+            skipped,
+            MAX_CSIDS - hoarded,
+            "every declaration past the budget is reported"
         );
         assert!(
             assembler.in_progress_bytes <= BUDGET,
@@ -3217,14 +3329,20 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(assembler.in_progress_bytes, DECL as usize);
-        // A second declaration would need 2x DECL: fatal, and the rejected
-        // message leaves no reservation behind.
+        // A second declaration would need 2x DECL: it is consumed without
+        // being held and reported, leaving the first message's reservation
+        // and the connection intact.
         assembler
             .push(&open_partial_chunk(4, DECL))
-            .expect_err("a second declaration trips the cap");
+            .expect("an over-budget declaration is skipped, not fatal");
         assert_eq!(assembler.in_progress_bytes, DECL as usize);
-        // Recovery is checked on a fresh assembler (the error is fatal for
-        // the connection): completing the message releases its reservation.
+        let reports = assembler.take_damage();
+        assert_eq!(reports.len(), 1, "the skipped message is reported");
+        assert_eq!(
+            reports[0].kind(),
+            broadcast_core::damage::DamageKind::LimitReached
+        );
+        // Completing the first message still releases its reservation.
         let mut assembler = ChunkAssembler::new().with_max_in_progress_bytes(DECL as usize);
         assembler.push(&open_partial_chunk(3, DECL)).unwrap();
         let mut tail = Vec::new();

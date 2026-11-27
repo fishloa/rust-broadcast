@@ -419,12 +419,12 @@ fn mid_file_size_underflow_box_is_an_error() {
         "the fragments after the damage play: {media:?}"
     );
     assert!(
-        media.damage.iter().any(|damage| {
+        media.damages.iter().any(|damage| {
             damage.what() == "resynchronised"
                 && damage.location().byte_range().map(|range| range.start()) == Some(moof_at as u64)
         }),
         "the skipped box is reported at its offset: {:?}",
-        media.damage
+        media.damages
     );
 }
 

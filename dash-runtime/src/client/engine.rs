@@ -181,6 +181,9 @@ struct PeriodRun {
     lanes: Vec<Lane>,
     selection: Selection,
     notices: Vec<Output>,
+    /// Reports for the notices above, published with them so a policy sees
+    /// the loss at the same point in the output order.
+    damage: Vec<broadcast_core::damage::Damage>,
     started: bool,
     issue_done: bool,
     finished: bool,
@@ -261,11 +264,15 @@ pub struct DashClient {
     inits: BTreeMap<InitKey, InitEntry>,
     rep_loc: BTreeMap<RepId, (usize, usize, usize)>,
     outputs: VecDeque<Output>,
+    /// What each damage report means for this presentation.
+    damage_policy: broadcast_core::damage::DamagePolicy,
     announced_tracks: Option<String>,
     prev: Option<PrevPeriod>,
     any_started: bool,
     outstanding: usize,
     notices_sent: Vec<Notice>,
+    /// Timeline run breaks already reported, by representation and break.
+    reported_boundaries: std::collections::BTreeSet<(usize, usize, usize, u64, u64)>,
     clock: UtcClock,
     mpd_failures: u32,
     live: Option<live::Live>,
@@ -359,6 +366,10 @@ pub struct DashClientConfig {
     pub dash: DashConfig,
     /// Bounds on what the client pulls.
     pub limits: PullLimits,
+    /// What each damage report means: `Report` (the default for everything)
+    /// publishes it as [`Output::Damage`] and keeps playing; `Fail` ends the
+    /// presentation with `Fatal(FatalKind::Damage)` carrying the same report.
+    pub damage_policy: broadcast_core::damage::DamagePolicy,
 }
 
 impl DashClientConfig {
@@ -369,6 +380,7 @@ impl DashClientConfig {
             mpd_url,
             dash: DashConfig::default(),
             limits: PullLimits::default(),
+            damage_policy: broadcast_core::damage::DamagePolicy::new(),
         }
     }
 
@@ -385,6 +397,16 @@ impl DashClientConfig {
         self.limits = limits;
         self
     }
+
+    /// Set what each damage report means (see [`DashClientConfig::damage_policy`]).
+    #[must_use]
+    pub fn with_damage_policy(
+        mut self,
+        damage_policy: broadcast_core::damage::DamagePolicy,
+    ) -> Self {
+        self.damage_policy = damage_policy;
+        self
+    }
 }
 
 impl DashClient {
@@ -395,6 +417,7 @@ impl DashClient {
             mpd_url,
             dash,
             limits,
+            damage_policy,
         } = config;
         let doc_url = Some(mpd_url.clone());
         let mpd_query = mpd_url.query().map(str::to_owned);
@@ -424,11 +447,13 @@ impl DashClient {
             inits: BTreeMap::new(),
             rep_loc: BTreeMap::new(),
             outputs: VecDeque::new(),
+            damage_policy,
             announced_tracks: None,
             prev: None,
             any_started: false,
             outstanding: 0,
             notices_sent: Vec::new(),
+            reported_boundaries: std::collections::BTreeSet::new(),
             clock: UtcClock::new(),
             mpd_failures: 0,
             live: None,
@@ -520,6 +545,67 @@ impl DashClient {
         }
     }
 
+    /// Hand one report to the caller's policy: publish it, or end the
+    /// presentation with it when the policy says `Fail`.
+    fn publish_damage(&mut self, damage: broadcast_core::damage::Damage) {
+        // Nothing follows the presentation's terminal output: a loss noticed
+        // while tearing down (a skip that never had media to lose, a report
+        // the caller's policy raises after the end) has no player left to
+        // tell.
+        if self.stopped() {
+            return;
+        }
+        match self.damage_policy.admit(damage) {
+            Ok(damage) => self.outputs.push_back(Output::Damage(damage)),
+            Err(error) => self.go_fatal(FatalKind::Damage(error)),
+        }
+    }
+
+    /// The report for a segment the session will never deliver: its number is
+    /// the only location the plan gives it (the media time is the plan's, not
+    /// the segment's own).
+    fn report_segment_lost(&mut self, id: ResourceId) {
+        let damage = broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::MediaUnitDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "DASH segment",
+        );
+        let damage = match id {
+            ResourceId::Segment { number, .. } => damage.with_ordinal(number),
+            ResourceId::Init { .. } | ResourceId::Index { .. } => damage,
+        };
+        self.publish_damage(damage);
+    }
+
+    /// Report each `SegmentTimeline` gap this plan bridged, once per
+    /// representation and gap: media DASH declares but no segment addresses,
+    /// which nothing can fetch, so the plan carries on at the next run.)
+    fn report_timeline_boundaries(&mut self, at: RepRef, plan: &SegmentPlan) {
+        for boundary in plan.timeline_boundaries() {
+            let key = (at.period, at.set, at.rep, boundary.index, boundary.ticks);
+            if !self.reported_boundaries.insert(key) {
+                continue;
+            }
+            let Ok(Some(segment)) = plan.get(boundary.index) else {
+                continue;
+            };
+            let start = i64::try_from(segment.time_ticks).unwrap_or(i64::MAX);
+            let span = i64::try_from(boundary.ticks).unwrap_or(i64::MAX);
+            let damage = broadcast_core::damage::Damage::new(
+                broadcast_core::damage::DamageKind::TimelineRepaired,
+                broadcast_core::damage::Severity::Degraded,
+                "DASH timeline gap",
+            )
+            .at_media_time(broadcast_core::damage::MediaTimeRange::new(
+                segment.timescale,
+                start,
+                start.saturating_add(span),
+            ))
+            .with_ordinal(boundary.index);
+            self.publish_damage(damage);
+        }
+    }
+
     fn go_fatal(&mut self, kind: FatalKind) {
         if self.phase == Phase::Fatal {
             return;
@@ -548,10 +634,14 @@ impl DashClient {
         }
     }
 
+    /// Publish a notice once, with the report it stands for: the notice names
+    /// the structure, the report is what a caller's policy decides on and what
+    /// a host counting losses sees.
     fn notice_once(&mut self, n: Notice) {
         if !self.notices_sent.contains(&n) {
             self.notices_sent.push(n);
             self.outputs.push_back(Output::Notice(n));
+            self.publish_damage(n.damage());
         }
     }
 
@@ -1086,8 +1176,10 @@ impl DashClient {
                 cause: DropCause::Selection(d.reason),
             });
         }
+        let mut damage = Vec::new();
         if encryption {
             notices.push(Output::Notice(Notice::UnsupportedEncryption));
+            damage.push(Notice::UnsupportedEncryption.damage());
         }
         if selection
             .dropped
@@ -1095,6 +1187,7 @@ impl DashClient {
             .any(|d| d.reason == crate::selection::DropReason::UnresolvedXlink)
         {
             notices.push(Output::Notice(Notice::XlinkSkipped));
+            damage.push(Notice::XlinkSkipped.damage());
         }
         let video = selection
             .chosen_variant
@@ -1107,6 +1200,7 @@ impl DashClient {
             lanes: Vec::new(),
             selection,
             notices,
+            damage,
             started: false,
             issue_done: false,
             finished: false,
@@ -1116,6 +1210,9 @@ impl DashClient {
             let Some(at) = at else { continue };
             match self.build_rep(at) {
                 Ok(rep) => {
+                    if let Some(plan) = &rep.plan {
+                        self.report_timeline_boundaries(at, plan);
+                    }
                     let resolved = at.resolve(self.mpd.as_ref().expect("mpd present"));
                     let set_id = resolved.and_then(|(_, s, _)| s.id);
                     let identity = resolved.map_or_else(
@@ -1693,6 +1790,7 @@ impl DashClient {
             if let Some(slot) = self.slot_mut(id) {
                 slot.state = SlotState::Skipped { marker: false };
             }
+            self.report_segment_lost(id);
             self.drain();
             return Ok(FailureClass::EndTail);
         }
@@ -1750,6 +1848,7 @@ impl DashClient {
         if let Some(slot) = self.slot_mut(id) {
             slot.state = SlotState::Skipped { marker: true };
         }
+        self.report_segment_lost(id);
         self.drain();
         true
     }
@@ -1871,6 +1970,10 @@ impl DashClient {
         self.previous_identities = current;
         let notices = std::mem::take(&mut self.periods[pi].notices);
         self.outputs.extend(notices);
+        let damage = std::mem::take(&mut self.periods[pi].damage);
+        for report in damage {
+            self.publish_damage(report);
+        }
         let live: Vec<usize> = (0..self.periods[pi].lanes.len())
             .filter(|&li| self.periods[pi].lanes[li].current().is_some())
             .collect();
@@ -2031,6 +2134,9 @@ impl DashClient {
             let pos = u32::try_from(pos).ok()?;
             (pos < count).then(|| TrackId::new(base.saturating_add(pos)))
         };
+        for damage in staged.damage {
+            self.publish_damage(damage);
+        }
         if staged.damaged > 0
             && let Some(id) = id
         {

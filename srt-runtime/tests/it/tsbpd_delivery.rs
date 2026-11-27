@@ -34,6 +34,10 @@ struct PacketInput {
 }
 
 /// Advance the clock to `now_us` and collect all output.
+fn dropped_seqs(outcome: &TickOutcome) -> Vec<u32> {
+    outcome.dropped.iter().map(|d| d.seq_number).collect()
+}
+
 fn tick_to(sched: &mut TsbpdScheduler, now_us: u64) -> TickOutcome {
     sched.tick(Timestamp::from_micros(now_us))
 }
@@ -201,7 +205,7 @@ fn too_late_packet_dropped_on_arrival() {
         "too-late packet must not be delivered"
     );
     assert_eq!(
-        out.dropped,
+        dropped_seqs(&out),
         vec![0],
         "too-late packet must be listed as dropped"
     );
@@ -420,7 +424,7 @@ fn custom_drop_threshold() {
         out.delivered.is_empty(),
         "must not deliver when past custom threshold"
     );
-    assert_eq!(out.dropped, vec![0]);
+    assert_eq!(dropped_seqs(&out), vec![0]);
 }
 
 // ---------------------------------------------------------------------------

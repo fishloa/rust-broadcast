@@ -138,7 +138,12 @@ fn caption_cc_data_round_trips_every_synthetic_frame() {
     assert_eq!(frames.len(), 13, "fixture frame count changed unexpectedly");
     for (pts, cc_data) in &frames {
         let au = wrap_a53_sei(cc_data);
-        let extracted = caption_cc_data(NalCodec::Avc, &au, false);
+        let extracted = caption_cc_data(
+            NalCodec::Avc,
+            &au,
+            false,
+            &mut broadcast_bitstream::Findings::new(),
+        );
         assert_eq!(&extracted, cc_data, "frame at pts {pts} round-trip");
     }
 }
@@ -153,7 +158,12 @@ fn sei_path_matches_pes_path_expected_cues() {
     let mut ex = Cea608CueExtractor::new(Cea608Channel::Cc1);
     for (pts, cc_data) in &frames {
         let au = wrap_a53_sei(cc_data);
-        let extracted = caption_cc_data(NalCodec::Avc, &au, false);
+        let extracted = caption_cc_data(
+            NalCodec::Avc,
+            &au,
+            false,
+            &mut broadcast_bitstream::Findings::new(),
+        );
         let cc = CcData::parse(&extracted).expect("valid cc_data() Table B.9 bytes");
         ex.push_frame(*pts, &cc.triplets);
     }
@@ -191,7 +201,12 @@ fn non_caption_sei_produces_no_cues() {
         0x00, 0x00, 0x01, 0x06, 0x06, 0x00, 0x80, // recovery_point SEI (payloadType 6)
         0x00, 0x00, 0x01, 0x41, 0x9A, // non-IDR slice
     ];
-    let extracted = caption_cc_data(NalCodec::Avc, &au, false);
+    let extracted = caption_cc_data(
+        NalCodec::Avc,
+        &au,
+        false,
+        &mut broadcast_bitstream::Findings::new(),
+    );
     assert!(extracted.is_empty());
 
     let mut ex = Cea608CueExtractor::new(Cea608Channel::Cc1);
@@ -228,7 +243,12 @@ fn extract_sei_frames_from_ts(data: &[u8]) -> Vec<(u64, Vec<u8>)> {
             .and_then(|t| t.pts())
             .expect("a demuxed H.264 video sample always carries an absolute pts")
             .max(0) as u64;
-        let cc = caption_cc_data(NalCodec::Avc, &sample.data, true);
+        let cc = caption_cc_data(
+            NalCodec::Avc,
+            &sample.data,
+            true,
+            &mut broadcast_bitstream::Findings::new(),
+        );
         if !cc.is_empty() {
             frames.push((pts, cc));
         }

@@ -352,7 +352,7 @@
 //! so a permanently-failing dialer cannot spin the attempt count or allocate
 //! per call, however many times it is polled.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -545,6 +545,16 @@ pub enum SessionEvent {
         /// The report itself.
         damage: broadcast_core::damage::Damage,
     },
+}
+
+impl SessionEvent {
+    /// A damage report attributed to `program` when it was known — the
+    /// constructor a session implemented outside this crate uses, since
+    /// `SessionEvent` is `#[non_exhaustive]`.
+    #[must_use]
+    pub fn damage(program: Option<ProgramId>, damage: broadcast_core::damage::Damage) -> Self {
+        SessionEvent::Damage { program, damage }
+    }
 }
 
 /// The sans-IO ingress drive contract: a specialisation of [`Stage`] whose
@@ -810,6 +820,15 @@ impl IngestConfig {
 /// loop" for a single dialed-out connection (see [`run_dial`]). [`ListenDriver`]
 /// embeds one of these per admitted session, so this is also where an
 /// accepted connection's per-program `Trunk` bookkeeping actually lives.
+/// The damage bookkeeping one driver keeps: the reports it has not handed the
+/// host yet, and the tracks it has already reported undeliverable (one report
+/// per track, however many samples of it arrive).
+#[derive(Default)]
+struct IngestDamage {
+    reports: VecDeque<SessionEvent>,
+    dropped_tracks: std::collections::HashSet<(ProgramId, TrackId)>,
+}
+
 pub struct IngestDriver<S: IngestSession> {
     session: S,
     trunk_config: TrunkConfig,
@@ -827,6 +846,10 @@ pub struct IngestDriver<S: IngestSession> {
     /// Counted rather than stored: the report is the session's own output, and
     /// a driver that kept every one would grow with a lossy input.
     damage_reports: u64,
+    /// The reports themselves and the (program, track) pairs already reported
+    /// undeliverable, boxed so a driver stays small enough to move (it is a
+    /// `DialAttempt` variant).
+    damage: Box<IngestDamage>,
     health: HealthState<S::Error>,
     /// Whether the last [`Self::feed`] delivered input from the peer. A
     /// transport-timer wake or a control signal leaves this `false`, which is
@@ -854,6 +877,7 @@ impl<S: IngestSession> IngestDriver<S> {
             writers: HashMap::new(),
             refused_programs: 0,
             damage_reports: 0,
+            damage: Box::default(),
             health: HealthState::Establishing,
             touched: false,
         }
@@ -883,6 +907,14 @@ impl<S: IngestSession> IngestDriver<S> {
     /// [`SessionEvent::Damage`]. Monotonically increasing; never resets.
     pub fn damage_report_count(&self) -> u64 {
         self.damage_reports
+    }
+
+    /// Take every damage report this session has published since the last
+    /// call, in the order it published them, each with the program its track
+    /// belongs to when it was known. A host drains this each poll: it is the
+    /// same report [`IngestDriver::damage_report_count`] counts.
+    pub fn take_damage(&mut self) -> Vec<SessionEvent> {
+        self.damage.reports.drain(..).collect()
     }
 
     /// Feed more input read from this session's connection — a handshake
@@ -1079,6 +1111,26 @@ impl<S: IngestSession> IngestDriver<S> {
     /// violation, not a panic — see [`SessionEvent::Sample`]'s docs); a
     /// `NewProgram` past `max_programs` is refused the exact same way — see
     /// [the module docs](self#max_programs-the-fifth-unbounded-allocation-vector-and-why-it-needs-its-own-bound-rather-than-reusing-max_sessions-or-a-trunk-capacity).
+    /// One report for a sample no admitted program can carry: a track the
+    /// host will not see, told once per track (a run of frames is one
+    /// report), with the program it named when it named one.
+    fn report_dropped_sample(&mut self, program: ProgramId, track_id: TrackId) {
+        if !self.damage.dropped_tracks.insert((program, track_id)) {
+            return;
+        }
+        let damage = broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::TrackDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "ingest sample (program not admitted)",
+        )
+        .for_track(track_id.value());
+        self.damage_reports = self.damage_reports.saturating_add(1);
+        self.damage.reports.push_back(SessionEvent::Damage {
+            program: Some(program),
+            damage,
+        });
+    }
+
     fn drain(&mut self) {
         while let Some(event) = self.session.poll() {
             match event {
@@ -1144,6 +1196,12 @@ impl<S: IngestSession> IngestDriver<S> {
                 } => {
                     if let Some(writer) = self.writers.get(&program) {
                         writer.publish(track_id, retention, sample);
+                    } else {
+                        // A track announced for a program that was never
+                        // admitted (a refused program, or a session confused
+                        // about which program it is): the sample is lost, so
+                        // the host is told which one and why.
+                        self.report_dropped_sample(program, track_id);
                     }
                 }
                 SessionEvent::TracksChanged { program, tracks } => {
@@ -1156,9 +1214,11 @@ impl<S: IngestSession> IngestDriver<S> {
                     }
                 }
                 SessionEvent::Damage { .. } => {
-                    // Counted, not interpreted: what a report means is the
-                    // host's decision (`docs/API-CONVENTIONS.md`).
+                    // Counted and kept: what a report means is the host's
+                    // decision (`docs/API-CONVENTIONS.md`), so the driver
+                    // neither interprets nor discards it.
                     self.damage_reports = self.damage_reports.saturating_add(1);
+                    self.damage.reports.push_back(event);
                 }
             }
         }
@@ -1778,8 +1838,11 @@ impl<L: Listener, P: Default> AdmittedDriver<L, P> {
     /// Session `id`'s driver and its own progress state, both borrowable
     /// across an `.await` (the publish-and-segment step is async) — the same
     /// pair as [`Self::with_session`], for a caller whose step must await.
-    pub fn session_parts(&mut self, id: SessionId) -> Option<(&IngestDriver<L::Session>, &mut P)> {
-        let driver = self.driver.driver(id)?;
+    pub fn session_parts(
+        &mut self,
+        id: SessionId,
+    ) -> Option<(&mut IngestDriver<L::Session>, &mut P)> {
+        let driver = self.driver.driver_mut(id)?;
         let state = self.progress.entry(id).or_default();
         Some((driver, state))
     }
@@ -2132,6 +2195,93 @@ mod tests {
     /// fail — `track_ids` still reads back `[1]` instead of `[1, 2]`, and
     /// `track_generation()` stays at `1` instead of advancing to `2`.
     /// Recompiled and re-run to confirm the failure, then reverted.
+    /// The reports a session publishes are kept for the host, in order and
+    /// with their program, not merely counted.
+    ///
+    /// MUTATION VERIFIED: replacing `self.damage.reports.push_back(event)` in
+    /// `drain` with nothing (counting only) makes `take_damage` return an
+    /// empty list and both assertions below fail; reverted.
+    #[test]
+    fn a_damage_report_is_kept_for_the_host_and_counted() {
+        let report = broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::MediaUnitDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "PES packet",
+        )
+        .for_track(3)
+        .with_ordinal(7);
+        let session = ScriptedSession::new(vec![FeedOutcome::Events(vec![
+            SessionEvent::NewProgram {
+                program: ProgramId(1),
+                tracks: vec![opaque_track(TrackId::new(3))],
+            },
+            SessionEvent::damage(Some(ProgramId(1)), report.clone()),
+        ])]);
+        let mut dialer = ScriptedDialer {
+            sessions: VecDeque::from(vec![session]),
+            fail_with: FakeError("unused"),
+        };
+        let mut driver = run_dial(&mut dialer, trunk_config(), handshake(), max_programs())
+            .expect("fake dial succeeds");
+        driver.feed(b"x", Timestamp::from_nanos(0));
+        assert_eq!(driver.damage_report_count(), 1);
+        let kept = driver.take_damage();
+        assert_eq!(kept.len(), 1, "the report itself, not only its count");
+        match &kept[0] {
+            SessionEvent::Damage { program, damage } => {
+                assert_eq!(*program, Some(ProgramId(1)));
+                assert_eq!(damage, &report);
+                assert_eq!(damage.location().track(), Some(3));
+                assert_eq!(damage.location().ordinal(), Some(7));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+        assert!(
+            driver.take_damage().is_empty(),
+            "draining empties the queue"
+        );
+    }
+
+    /// A sample for a program that was never admitted is reported once per
+    /// track: the run of frames is one report, not one per sample.
+    #[test]
+    fn a_sample_for_an_unadmitted_program_is_reported_once_per_track() {
+        let session = ScriptedSession::new(vec![FeedOutcome::Events(vec![
+            SessionEvent::Sample {
+                program: ProgramId(9),
+                track_id: TrackId::new(4),
+                retention: RetentionClass::Timed,
+                sample: sample(0x11),
+            },
+            SessionEvent::Sample {
+                program: ProgramId(9),
+                track_id: TrackId::new(4),
+                retention: RetentionClass::Timed,
+                sample: sample(0x11),
+            },
+        ])]);
+        let mut dialer = ScriptedDialer {
+            sessions: VecDeque::from(vec![session]),
+            fail_with: FakeError("unused"),
+        };
+        let mut driver = run_dial(&mut dialer, trunk_config(), handshake(), max_programs())
+            .expect("fake dial succeeds");
+        driver.feed(b"x", Timestamp::from_nanos(0));
+        let kept = driver.take_damage();
+        assert_eq!(kept.len(), 1, "coalesced by (program, track)");
+        match &kept[0] {
+            SessionEvent::Damage { program, damage } => {
+                assert_eq!(*program, Some(ProgramId(9)));
+                assert_eq!(
+                    damage.kind(),
+                    broadcast_core::damage::DamageKind::TrackDropped
+                );
+                assert_eq!(damage.location().track(), Some(4));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
     #[test]
     fn tracks_changed_replaces_the_set_and_bumps_generation() {
         let session = ScriptedSession::new(vec![

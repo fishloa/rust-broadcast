@@ -22,6 +22,8 @@ pub(crate) struct Staged {
     pub(crate) tracks: Vec<(u32, Vec<Sample>)>,
     pub(crate) damaged: usize,
     pub(crate) skipped: Vec<SkippedTrack>,
+    /// Every damage report the reader published for this segment, in order.
+    pub(crate) damage: Vec<broadcast_core::damage::Damage>,
 }
 
 /// The modelled tracks of an Initialization Segment, and what the demuxer
@@ -37,9 +39,20 @@ struct Collected {
     tracks: Vec<(u32, Vec<Sample>)>,
     skipped: Vec<SkippedTrack>,
     damaged: usize,
+    damage: Vec<broadcast_core::damage::Damage>,
 }
 
 impl Collected {
+    /// Coalesce by kind: one segment with a thousand damaged units yields one
+    /// report per way it was damaged, not a thousand, and the first report's
+    /// location stands for the run.
+    fn push_report(&mut self, damage: broadcast_core::damage::Damage) {
+        if self.damage.iter().any(|kept| kept.kind() == damage.kind()) {
+            return;
+        }
+        self.damage.push(damage);
+    }
+
     fn drain(&mut self, demux: &mut Mp4Demux, skip: &BTreeSet<u32>) {
         while let Some(event) = demux.poll() {
             self.on_event(event, skip);
@@ -63,11 +76,23 @@ impl Collected {
             DemuxEvent::TrackAbandoned {
                 track_id, reason, ..
             } => self.skipped.push(skipped_from_reason(reason, track_id)),
-            DemuxEvent::InputDegraded { kind, .. } => {
-                if matches!(kind, InputDegradation::MalformedUnit { .. }) {
+            DemuxEvent::InputDegraded {
+                track,
+                kind,
+                provenance,
+                ..
+            } => {
+                if matches!(
+                    kind,
+                    InputDegradation::MalformedUnit { .. } | InputDegradation::TruncatedUnit { .. }
+                ) {
                     self.damaged = self.damaged.saturating_add(1);
                 }
+                self.push_report(kind.to_damage(track, None, provenance));
             }
+            // The one report the reader publishes; forwarded as it arrived so
+            // the player sees the location, track and cause the reader knew.
+            DemuxEvent::Damage(damage) => self.damage.push(damage),
             _ => {}
         }
     }
@@ -158,10 +183,13 @@ impl SegmentStage {
         self.demux.feed(Mp4Input::SegmentEnd, Timestamp::ZERO)?;
         let mut collected = Collected::default();
         collected.drain(&mut self.demux, &self.skipped_tracks);
+        let mut damage = self.init_events.damage.clone();
+        damage.extend(collected.damage);
         Ok(Staged {
             tracks: collected.tracks,
             damaged: self.init_events.damaged.saturating_add(collected.damaged),
             skipped: self.init_events.skipped.clone(),
+            damage,
         })
     }
 }
@@ -191,4 +219,58 @@ fn skipped_from_reason(reason: AbandonReason, track_id: Option<transmux::TrackId
     let mut skipped = SkippedTrack::new(fourcc, text);
     skipped.track_id = track_id;
     skipped
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use broadcast_core::damage::{Damage, DamageKind, Severity};
+    use transmux::ir::EventProvenance;
+
+    fn degraded(kind: InputDegradation) -> DemuxEvent {
+        DemuxEvent::input_degraded(None, kind, EventProvenance::default())
+    }
+
+    #[test]
+    fn a_degraded_unit_becomes_one_damage_report() {
+        let mut collected = Collected::default();
+        collected.on_event(
+            degraded(InputDegradation::TruncatedUnit { position: 640 }),
+            &BTreeSet::new(),
+        );
+        assert_eq!(collected.damage.len(), 1);
+        assert_eq!(collected.damage[0].kind(), DamageKind::InputTruncated);
+        assert_eq!(collected.damage[0].severity(), Severity::Degraded);
+        assert_eq!(collected.damaged, 1);
+    }
+
+    #[test]
+    fn a_run_of_the_same_damage_is_one_report_but_the_count_stands() {
+        let mut collected = Collected::default();
+        for position in 0..8u64 {
+            collected.on_event(
+                degraded(InputDegradation::MalformedUnit { position }),
+                &BTreeSet::new(),
+            );
+        }
+        assert_eq!(collected.damage.len(), 1, "coalesced by kind");
+        assert_eq!(collected.damage[0].what(), "container unit");
+        assert_eq!(collected.damaged, 8, "the extent survives as the count");
+    }
+
+    #[test]
+    fn the_readers_own_report_is_forwarded_verbatim() {
+        let report = Damage::new(DamageKind::Resynchronised, Severity::Degraded, "box")
+            .at_byte_range(broadcast_core::damage::ByteRange::new(16, 4));
+        let mut collected = Collected::default();
+        collected.on_event(DemuxEvent::damage(report.clone()), &BTreeSet::new());
+        assert_eq!(collected.damage, vec![report]);
+    }
+
+    #[test]
+    fn a_clean_segment_reports_nothing() {
+        let collected = Collected::default();
+        assert!(collected.damage.is_empty());
+        assert_eq!(collected.damaged, 0);
+    }
 }

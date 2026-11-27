@@ -52,6 +52,15 @@ Binding for every public API in the workspace. New code follows them; a lane tha
   the tolerant one; a caller that validates (a conformance checker, `media-doctor`) asks for strictness
   explicitly. A caller-supplied hostile-input cap binds in both modes — a limit hit is an error, not a
   report — and a limit is always the caller's number, never a policy the library picks.
+- Every crate that publishes reports states, in its crate documentation (README or module docs), a
+  short "what this session reports" list: what a reader reports and what it deliberately leaves an
+  error, with the reason. The list is the crate's contract, so a later change that silences a skip is
+  a change to that list, not a local decision. `broadcast-core`'s `damage` module states the shared
+  vocabulary; each reader states its own use of it.
+- A loss a reader already announces in-band (a cursor's `Lagged { skipped }`, a notice that names the
+  structure) is also available as a `Damage`, never *instead* of the in-band signal: the in-band item
+  keeps its exact count and the report adds the severity, the location and the caller's policy. One
+  loss is one report — a drop that a lower layer already reported is not reported again.
 
 ## Errors
 

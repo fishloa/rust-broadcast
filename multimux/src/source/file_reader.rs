@@ -732,14 +732,14 @@ async fn run_streaming_file_route(
             }
             _ => {}
         }
-        crate::source::advance_route(&driver, route_handle, &mut progress).await;
+        crate::source::advance_route(&mut driver, route_handle, &mut progress).await;
 
         if driver.session().drained() {
             // The finite, non-looping file has fully run: flush the
             // segmenter's tail and park (zero CPU) holding the trunk, so the
             // served segments stay servable until shutdown.
             driver.finish();
-            crate::source::advance_route(&driver, route_handle, &mut progress).await;
+            crate::source::advance_route(&mut driver, route_handle, &mut progress).await;
             std::future::pending::<()>().await;
         }
 

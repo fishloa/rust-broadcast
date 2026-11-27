@@ -163,6 +163,26 @@ The decision log, including every point where the standard is silent or contradi
 
 None. The crate is `std` (the XML reader, `quick-xml`, needs it).
 
+## Damage reports
+
+Every skip reaches the caller as `client::Output::Damage`, alongside the typed
+`Output::Notice` that names the structure it stands for, and
+`DashClientConfig::damage_policy` decides whether a report also ends the
+presentation (`client::FatalKind::Damage`). Nothing follows a terminal output.
+
+Reported: a structure the client does not interpret (`EventStream`,
+`Preselection`, `PatchLocation`, low-latency addressing, a `UTCTiming` scheme —
+informational), content it has to leave out (encrypted representations, a
+skipped Period, segments that expired or were given up on — degraded), a failed
+MPD refresh (once per run of failures), a segment it skips with its number, a
+`SegmentTimeline` gap between two `S` runs (`TimelineRepaired`, with the media
+time the gap covers), and every degradation the MP4 reader inside a segment
+reported.
+
+What stays fatal: an MPD that cannot start a presentation, a dynamic MPD with no
+availability window or no usable clock, an unsupported presentation type, and a
+static presentation that exhausts the caller's segment retry budget.
+
 ## Related crates
 
 `transmux` (the DASH generator this crate is tested against, `Mp4Demux`, `sidx` and duration parsers it reuses), `container-probe` (the structural "is this body a media segment" check), `hls-runtime` (the HLS counterpart), `broadcast-client` (the client session that drives this client).

@@ -274,6 +274,74 @@ mod tests {
         assert!(matches!(ended, MultimuxError::Connect { .. }), "{ended:?}");
     }
 
+    /// The `ts_udp` input kind's reader damage reaches the route's damage
+    /// metric: a continuity gap in the datagrams is lost media, and the route
+    /// renders the report labelled with the kind an operator configured.
+    #[tokio::test]
+    async fn a_continuity_gap_reaches_the_route_damage_metric() {
+        const ROUTE: &str = "ts-udp-damage-probe";
+        const KIND: &str = "ts_udp";
+        const DAMAGE_WAIT: Duration = Duration::from_secs(10);
+        crate::prometheus::install();
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let addr = socket.local_addr().expect("local addr");
+        let route = TsUdpRoute::with_socket(ROUTE, socket);
+        let mut ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 60);
+        // A whole packet missing leaves the stream aligned and skips one
+        // continuity counter, the loss a UDP ingest actually sees.
+        let packet = mpeg_ts::ts::TS_PACKET_SIZE;
+        let victim = ts_bytes.len() / 2 / packet * packet;
+        ts_bytes.drain(victim..victim + packet);
+        let handle = std::sync::Arc::new(
+            crate::route::RouteHandle::new(
+                RouteConfig::default()
+                    .with_target_duration(std::time::Duration::from_secs(4))
+                    .with_part_target(std::time::Duration::from_millis(500))
+                    .with_window_segments(4),
+            )
+            .with_name(ROUTE)
+            .with_input_kind(KIND),
+        );
+        let cancel = CancellationToken::new();
+        let run = tokio::spawn({
+            let handle = std::sync::Arc::clone(&handle);
+            let cancel = cancel.clone();
+            async move { run_ts_udp(&route, trunk_config(), handshake(), &handle, cancel).await }
+        });
+        let sender = UdpSocket::bind("127.0.0.1:0").await.expect("bind sender");
+        let datagrams: Vec<Vec<u8>> = ts_bytes
+            .chunks(7 * mpeg_ts::ts::TS_PACKET_SIZE)
+            .map(<[u8]>::to_vec)
+            .collect();
+        for _ in 0..10 {
+            for datagram in &datagrams {
+                sender
+                    .send_to(datagram, addr)
+                    .await
+                    .expect("send TS datagram");
+            }
+            tokio::task::yield_now().await;
+        }
+        let deadline = tokio::time::Instant::now() + DAMAGE_WAIT;
+        let mut line = crate::testutil::rendered_line(
+            "multimux_source_damage_total",
+            &[("route", ROUTE), ("source", KIND)],
+        );
+        while line.is_none() && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            line = crate::testutil::rendered_line(
+                "multimux_source_damage_total",
+                &[("route", ROUTE), ("source", KIND)],
+            );
+        }
+        cancel.cancel();
+        let _ = tokio::time::timeout(TRUNK_WAIT, run).await;
+        assert!(
+            line.is_some(),
+            "a continuity gap must reach the route's damage metric"
+        );
+    }
+
     #[tokio::test]
     async fn a_source_that_goes_silent_fails_at_the_read_timeout() {
         const READ_TIMEOUT: Duration = Duration::from_secs(2);
