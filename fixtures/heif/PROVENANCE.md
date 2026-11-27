@@ -233,3 +233,32 @@ No tool installed writes `tmap`, `cfen`, a region item, a mask item, a
 capture-information property or a group body (`pymd` tile sizes, `rgpa` area);
 those fixtures are clause-assembled in `isobmff/tests/it/item_layer_2025.rs`
 and labelled there.
+
+## `sequence.heic`
+
+An image sequence (clause 7) written by libheif's sequence mode from four
+48x48 frames of `testsrc2` with a 90-degree hue step, a 10 Hz timebase:
+
+```sh
+for i in 0 1 2 3; do
+  ffmpeg -y -v error -f lavfi -i "testsrc2=s=48x48" -frames:v 1 \
+         -vf "hue=h=$((i*90))" -pix_fmt yuv420p s$i.png
+done
+heif-enc -S -q 60 --timebase 10 -o fixtures/heif/sequence.heic s0.png s1.png s2.png s3.png
+```
+
+`MP4Box -info sequence.heic`:
+
+```
+Major Brand hevc - version 0 - compatible brands: mif1 heic miaf msf1 isom hevc
+# Track 1 Info - ID 1 - TimeScale 10
+Media Duration 00:00:00.400
+Media Samples: 4 - CFR 10/sec
+Media Type: pict:hvc1
+```
+
+The sample entry's `ccst` (`00 00 00 10 63 63 73 74 00 00 00 00 c0 00 00 00`)
+states `all_ref_pics_intra` 1, `intra_pred_used` 1 and `max_ref_per_pic` 0.
+The test asserts the brands, the `pict` handler, those three constraints, four
+samples at one tick each in a timescale of 10 (summing to 2880 bytes) and that
+every sample lies inside the file.

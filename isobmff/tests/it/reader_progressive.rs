@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use isobmff::sample_table::{SampleRef, TrackCursor};
+use isobmff::segments::FileTypeBox;
 use isobmff::{ByteRange, Limits, Reader, ReaderConfig, SampleOrder, Source, Step, TrackInfo};
 
 /// Progressive fixtures the walk must exercise: enough that a checkout with
@@ -661,4 +662,123 @@ fn fragment_and_metadata_caps_do_not_constrain_a_progressive_file() {
     let config = base_config(&bytes, SampleOrder::File).with_limits(limits);
     let outcome = drive(&bytes, config).expect("progressive read");
     assert_eq!(outcome.samples.len(), 3);
+}
+
+struct SequenceOutcome {
+    brand: FileTypeBox,
+    tracks: Vec<TrackInfo>,
+    samples: Vec<SampleRef>,
+    len: u64,
+}
+
+fn drive_sequence(name: &str) -> SequenceOutcome {
+    let bytes = test_fixtures::read(name);
+    let mut reader = Reader::new(base_config(&bytes, SampleOrder::File));
+    let mut tracks = Vec::new();
+    let mut samples = Vec::new();
+    loop {
+        match reader.step().expect("step") {
+            Step::Need(range) => {
+                let start = usize::try_from(range.offset).unwrap_or(usize::MAX);
+                let end = usize::try_from(range.end()).unwrap_or(usize::MAX);
+                let slice = bytes.get(start..end).unwrap_or(&[]);
+                reader.supply(range.offset, slice).expect("supply");
+            }
+            Step::Tracks(found) => tracks = found.to_vec(),
+            Step::Sample(sample) => samples.push(sample),
+            Step::Done => break,
+            _ => {}
+        }
+    }
+    let brand = reader.brand().expect("ftyp").clone();
+    SequenceOutcome {
+        brand,
+        tracks,
+        samples,
+        len: bytes.len() as u64,
+    }
+}
+
+#[test]
+fn avif_image_sequence_fixture_reads_its_track() {
+    let outcome = drive_sequence("avif/sequence.avif");
+    assert_eq!(&outcome.brand.major_brand, b"avis");
+    for brand in [
+        b"avif", b"avis", b"msf1", b"iso8", b"mif1", b"miaf", b"MA1A",
+    ] {
+        assert!(
+            outcome
+                .brand
+                .compatible_brands
+                .iter()
+                .any(|compatible| compatible == brand),
+            "missing brand {:?}",
+            core::str::from_utf8(brand)
+        );
+    }
+    assert_eq!(outcome.tracks.len(), 1);
+    let track = &outcome.tracks[0];
+    assert_eq!(&track.handler, b"pict");
+    assert!(track.is_image_sequence());
+    assert_eq!(track.timescale.get(), 10);
+    assert_eq!(track.duration, 4);
+    let constraints = track.coding_constraints().expect("ccst");
+    assert!(!constraints.all_ref_pics_intra());
+    assert!(constraints.intra_pred_used());
+    assert_eq!(constraints.max_ref_per_pic(), 15);
+    assert_eq!(outcome.samples.len(), 4);
+    for (index, sample) in outcome.samples.iter().enumerate() {
+        let index = index as u64;
+        assert_eq!(u64::from(sample.index), index);
+        assert_eq!(sample.decode_time, index);
+        assert_eq!(sample.duration, 1);
+        assert!(sample.offset + u64::from(sample.size) <= outcome.len);
+    }
+    let total: u64 = outcome
+        .samples
+        .iter()
+        .map(|sample| u64::from(sample.size))
+        .sum();
+    assert_eq!(total, 4059);
+}
+
+#[test]
+fn heic_image_sequence_fixture_reads_its_track() {
+    let outcome = drive_sequence("heif/sequence.heic");
+    assert_eq!(&outcome.brand.major_brand, b"hevc");
+    for brand in [b"mif1", b"heic", b"miaf", b"msf1", b"isom", b"hevc"] {
+        assert!(
+            outcome
+                .brand
+                .compatible_brands
+                .iter()
+                .any(|compatible| compatible == brand),
+            "missing brand {:?}",
+            core::str::from_utf8(brand)
+        );
+    }
+    assert_eq!(outcome.tracks.len(), 1);
+    let track = &outcome.tracks[0];
+    assert_eq!(&track.handler, b"pict");
+    assert!(track.is_image_sequence());
+    assert_eq!(track.timescale.get(), 10);
+    assert_eq!(track.duration, 4);
+    let constraints = track.coding_constraints().expect("ccst");
+    assert!(constraints.all_ref_pics_intra());
+    assert!(constraints.intra_pred_used());
+    assert_eq!(constraints.max_ref_per_pic(), 0);
+    assert_eq!(outcome.samples.len(), 4);
+    for (index, sample) in outcome.samples.iter().enumerate() {
+        let index = index as u64;
+        assert_eq!(u64::from(sample.index), index);
+        assert_eq!(sample.decode_time, index);
+        assert_eq!(sample.duration, 1);
+        assert!(sample.offset + u64::from(sample.size) <= outcome.len);
+    }
+    let total: u64 = outcome
+        .samples
+        .iter()
+        .map(|sample| u64::from(sample.size))
+        .sum();
+    assert_eq!(total, 2880);
 }

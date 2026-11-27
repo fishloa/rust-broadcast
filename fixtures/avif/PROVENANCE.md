@@ -146,3 +146,30 @@ independent decoder-side check of dimensions, bit depth, alpha and CLLI.
 No fixture committed before this directory carries a file-level `meta` with
 `iloc`/`iinf` item boxes: a walk of `fixtures/` found the eleven item files in
 `fixtures/heif/` and `fixtures/avif/` only.
+
+## `sequence.avif`
+
+An AVIF image sequence (`avis`, clause 7) written by `avifenc` from four frames
+with a 10 Hz timescale:
+
+```sh
+avifenc -s 10 --timescale 10 f0.png f1.png f2.png f3.png fixtures/avif/sequence.avif
+```
+
+`MP4Box -info sequence.avif`:
+
+```
+Major Brand avis - version 0 - compatible brands: avif avis msf1 iso8 mif1 miaf MA1A
+Movie Info - 1 track - TimeScale 10
+# Track 1 Info - ID 1 - TimeScale 10
+Media Duration 00:00:00.400
+Media Samples: 4 - CFR 10/sec
+Media Type: pict:av01
+```
+
+The sample entry's `ccst` (`00 00 00 10 63 63 73 74 00 00 00 00 7c 00 00 00`)
+states `all_ref_pics_intra` 0, `intra_pred_used` 1 and `max_ref_per_pic` 15.
+`avifenc` reports the colour payload as 4059 bytes; the test asserts the
+brands, the `pict` handler, those three constraints, four samples at one tick
+each in a timescale of 10 summing to 4059 bytes, and that every sample lies
+inside the file.
