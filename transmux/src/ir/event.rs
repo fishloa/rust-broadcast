@@ -65,12 +65,18 @@ pub enum DiscontinuityKind {
     /// continuity-counter gap on the same PID a separate, undecided kind, not
     /// folded into this one).
     Signalled,
-    /// A live audio track's frame-exact dts/pts anchor drifted from the wire
-    /// PES clock past the re-anchor threshold and was re-anchored — a genuine
-    /// gap (splice, encoder restart), not the 90 kHz/sample-rate rounding
-    /// drift a real muxer accrues by construction, which the anchor absorbs
-    /// silently. See `ts_demux`'s `audio_discontinuity_threshold_90k` for the
-    /// threshold and its derivation.
+    /// One track's timeline was re-anchored, so its timestamps jump here: a
+    /// live audio track's frame-exact dts/pts anchor drifted from the wire
+    /// PES clock past the re-anchor threshold (a genuine splice/encoder
+    /// restart, not the 90 kHz/sample-rate rounding drift a real muxer accrues
+    /// by construction, which the anchor absorbs silently — see `ts_demux`'s
+    /// `audio_discontinuity_threshold_90k` for the threshold and its
+    /// derivation), or a track's decode timestamp stepped backwards. The
+    /// report is **per track**: `track` names the one that stepped, so a
+    /// multi-track break publishes one event for every track it affected
+    /// (issue #4196), and the reader also publishes the matching
+    /// [`DamageKind::TimelineRepaired`](broadcast_core::damage::DamageKind::TimelineRepaired)
+    /// report for the same track.
     TimelineReanchored,
     /// A per-PID buffer cap was exceeded and the in-flight payload was
     /// dropped to keep memory bounded (e.g. [`crate::ts_demux::StreamingTsDemux`]'s

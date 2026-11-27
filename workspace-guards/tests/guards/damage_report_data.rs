@@ -40,6 +40,14 @@ pub const READERS: &[Reader] = &[
         status: Status::Converted,
         reports: &["Event"],
     },
+    // Converted with the TS/PS demuxer forwarding: every tolerant bitstream
+    // parser is handed a `Findings` collector and records one `ParseFinding`
+    // per skip, and `ParseFinding` converts into the one `Damage` report.
+    Reader {
+        name: "broadcast-bitstream",
+        status: Status::Converted,
+        reports: &["ParseFinding"],
+    },
     // Pending: #4191 converts the remaining readers to the one report.
     Reader {
         name: "isobmff",

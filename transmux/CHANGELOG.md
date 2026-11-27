@@ -43,6 +43,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exposes the file's tag through `on_metadata()`, and
   `FlvMuxStage::with_metadata_body` writes a caller's body back verbatim.
 
+### Fixed
+- `StreamingTsDemux` reports a timeline break for **every** track whose
+  decode timestamps stepped, not only the audio one (issue #4196). The
+  `DiscontinuityKind::TimelineReanchored` event is per track by its own
+  contract (`DemuxEvent::Discontinuity::track`), so a video or data track's
+  backward `dts` now raises it too, immediately after that track's last
+  old-base sample, carrying the pid and packet index that began the new time
+  base. Only a step between two **wire** decode stamps is a break: a value
+  interpolated forward for an unstamped PES (§2.4.2.6) that overshoots the
+  next real stamp is a guess being corrected, and a wire stamp still behind
+  the program's running PCR is a track-local shift, not a program timeline
+  break. Each break also publishes the `DamageKind::TimelineRepaired` report
+  the best-effort rule requires for a repaired timeline, with the track, the
+  new media time and the packet's byte offset — and a signalled discontinuity
+  whose rebase lifts a track's timeline now publishes that report as well.
+- The streaming demuxers forward every parse failure `broadcast-bitstream`
+  tolerates as `DemuxEvent::Damage` (issue #4196): a rejected parameter set
+  (already reported), a malformed SEI in the display walk, HDR metadata that
+  does not parse, an audio frame whose header fails, and an access unit the
+  Program Stream splitter cannot delimit. Each report names the structure, the
+  track (when resolved), the media time and the byte offset. A caller that
+  fails on the report stops there with the same `Damage` inside the error.
+
 ### Breaking
 
 - An MP3 track's `TrackSpec::padding` is now the LAME tag's own encoder delay

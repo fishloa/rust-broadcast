@@ -42,7 +42,11 @@ fn real_stream_splits_into_nals_and_round_trips_byte_identically() {
 fn real_stream_splits_into_access_units() {
     let annexb = real_annexb();
     let first = first_nal_start(&annexb).expect("the fixture opens with a start code");
-    let units = split_access_units(NalCodec::Avc, &annexb);
+    let units = split_access_units(
+        NalCodec::Avc,
+        &annexb,
+        &mut broadcast_bitstream::Findings::new(),
+    );
     assert!(units.len() > 1, "a real stream carries several pictures");
     let concatenated: Vec<u8> = units.iter().flatten().copied().collect();
     assert_eq!(

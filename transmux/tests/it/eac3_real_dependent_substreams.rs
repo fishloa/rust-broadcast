@@ -82,7 +82,7 @@ fn dec3_of(t: &test_harness::collect::CollectedTrack) -> &Ec3SpecificBox {
 #[test]
 fn the_real_stream_splits_into_ac3_core_plus_dependent_access_units() {
     let es = need!("the-great-wall-7.1.eac3");
-    let units = split_eac3_syncframes(&es);
+    let units = split_eac3_syncframes(&es, &mut broadcast_bitstream::Findings::new());
     assert_eq!(units.len(), AU_COUNT);
     let mut rebuilt = Vec::new();
     for u in &units {
@@ -108,7 +108,7 @@ fn the_real_stream_splits_into_ac3_core_plus_dependent_access_units() {
 fn access_units_equal_gpacs_own_samples_of_mp4boxs_file() {
     let es = need!("the-great-wall-7.1.eac3");
     let oracle = need!("gw-mp4box.gpac_inspect.txt");
-    let units = split_eac3_syncframes(&es);
+    let units = split_eac3_syncframes(&es, &mut broadcast_bitstream::Findings::new());
     let text = String::from_utf8(oracle).unwrap();
     let lines: Vec<&str> = text.lines().filter(|l| !l.is_empty()).collect();
     assert_eq!(
@@ -145,7 +145,7 @@ fn dec3_for_the_real_access_unit_matches_mp4box() {
     let es = need!("the-great-wall-7.1.eac3");
     let mp4box = need!("gw-mp4box.mp4");
     let ffmpeg = need!("gw-ffmpeg.mp4");
-    let first = split_eac3_syncframes(&es).remove(0);
+    let first = split_eac3_syncframes(&es, &mut broadcast_bitstream::Findings::new()).remove(0);
     let frames = Ec3SyncframeInfo::from_es_all(first.data());
     let ours = ec3_specific_box_from_syncframes(&frames)
         .expect("dec3")
@@ -175,7 +175,7 @@ fn dec3_for_the_real_access_unit_matches_mp4box() {
 fn assert_ts_recovers_the_stream(name: &str) {
     let ts = need_ts(name);
     let es = es().expect("es");
-    let want: Vec<Vec<u8>> = split_eac3_syncframes(&es)
+    let want: Vec<Vec<u8>> = split_eac3_syncframes(&es, &mut broadcast_bitstream::Findings::new())
         .into_iter()
         .map(|u| u.data().to_vec())
         .collect();
@@ -249,7 +249,7 @@ fn gpac_ts_with_pes_boundaries_inside_access_units_recovers_every_access_unit() 
 #[test]
 fn mp4s_from_both_producers_demux_and_remux_unchanged() {
     let es = need!("the-great-wall-7.1.eac3");
-    let want: Vec<Vec<u8>> = split_eac3_syncframes(&es)
+    let want: Vec<Vec<u8>> = split_eac3_syncframes(&es, &mut broadcast_bitstream::Findings::new())
         .into_iter()
         .map(|u| u.data().to_vec())
         .collect();
@@ -287,7 +287,10 @@ fn a_real_orphan_dependent_frame_is_dropped() {
     let es = need!("the-great-wall-7.1.eac3");
     // Start the stream on the first access unit's DEPENDENT frame: its core was
     // "lost". The orphan must not become an access unit of its own.
-    let units = split_eac3_syncframes(&es[AC3_CORE_LEN..]);
+    let units = split_eac3_syncframes(
+        &es[AC3_CORE_LEN..],
+        &mut broadcast_bitstream::Findings::new(),
+    );
     assert_eq!(units.len(), AU_COUNT - 1);
     assert_eq!(units[0].data(), &es[AU_LEN..2 * AU_LEN]);
     assert_eq!(

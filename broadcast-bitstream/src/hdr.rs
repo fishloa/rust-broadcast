@@ -11,6 +11,7 @@
 //!   both and the box header is added by the sample-entry writer.
 
 use crate::error::Result;
+use crate::findings::{Findings, ParseFinding};
 use crate::nal::{
     HEVC_NAL_HEADER_LEN, HEVC_PREFIX_SEI_NUT, NalCodec, hevc_prefix_sei_nal, nal_unit_type,
     sei_messages,
@@ -68,20 +69,27 @@ impl HdrStaticMetadata {
     }
 
     /// Fold the messages of one HEVC prefix SEI NAL unit (2-byte NAL header
-    /// included) into `self`, keeping any value already present.
-    pub fn absorb_hevc_sei_nal(&mut self, nal: &[u8]) {
+    /// included) into `self`, keeping any value already present. A message
+    /// whose payload does not parse is recorded in `findings`.
+    pub fn absorb_hevc_sei_nal(&mut self, nal: &[u8], findings: &mut Findings) {
         if nal.len() <= HEVC_NAL_HEADER_LEN
             || nal_unit_type(NalCodec::Hevc, nal) != Some(HEVC_PREFIX_SEI_NUT)
         {
             return;
         }
-        for (payload_type, payload) in sei_messages(&nal[HEVC_NAL_HEADER_LEN..]) {
+        for (payload_type, payload) in sei_messages(&nal[HEVC_NAL_HEADER_LEN..], findings) {
             match payload_type {
                 SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME if self.mastering_display.is_none() => {
-                    self.mastering_display = MasteringDisplayColourVolume::parse(&payload).ok();
+                    match MasteringDisplayColourVolume::parse(&payload) {
+                        Ok(value) => self.mastering_display = Some(value),
+                        Err(_) => findings.push(ParseFinding::hdr_metadata(HEVC_NAL_HEADER_LEN)),
+                    }
                 }
                 SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO if self.content_light_level.is_none() => {
-                    self.content_light_level = ContentLightLevel::parse(&payload).ok();
+                    match ContentLightLevel::parse(&payload) {
+                        Ok(value) => self.content_light_level = Some(value),
+                        Err(_) => findings.push(ParseFinding::hdr_metadata(HEVC_NAL_HEADER_LEN)),
+                    }
                 }
                 _ => {}
             }
@@ -114,20 +122,24 @@ impl HdrStaticMetadata {
     #[cfg(test)]
     pub(crate) fn hevc_sei_nal_carries_hdr(nal: &[u8]) -> bool {
         let mut m = Self::default();
-        m.absorb_hevc_sei_nal(nal);
+        m.absorb_hevc_sei_nal(nal, &mut Findings::new());
         !m.is_empty()
     }
 
     /// Metadata found in the prefix SEI NAL units of an `hvcC` record; `None`
-    /// when there are none.
-    pub fn from_hevc_record(record: &HEVCDecoderConfigurationRecord) -> Option<Self> {
+    /// when there are none. A message whose payload does not parse is recorded
+    /// in `findings`.
+    pub fn from_hevc_record(
+        record: &HEVCDecoderConfigurationRecord,
+        findings: &mut Findings,
+    ) -> Option<Self> {
         let mut m = Self::default();
         for array in &record.arrays {
             if array.nal_unit_type != HEVC_PREFIX_SEI_NUT {
                 continue;
             }
             for nal in &array.nalus {
-                m.absorb_hevc_sei_nal(&nal.0);
+                m.absorb_hevc_sei_nal(&nal.0, findings);
             }
         }
         (!m.is_empty()).then_some(m)
@@ -243,7 +255,7 @@ mod tests {
         nal.extend_from_slice(&CLLI_BODY);
         nal.push(0x80);
         let mut m = HdrStaticMetadata::default();
-        m.absorb_hevc_sei_nal(&nal);
+        m.absorb_hevc_sei_nal(&nal, &mut Findings::new());
         assert_eq!(
             m.mastering_display.unwrap().try_to_bytes().unwrap(),
             MDCV_BODY
@@ -272,10 +284,10 @@ mod tests {
             (SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO, &clli),
         ]);
         let mut m = HdrStaticMetadata::default();
-        m.absorb_hevc_sei_nal(&bundled);
+        m.absorb_hevc_sei_nal(&bundled, &mut Findings::new());
         assert!(m.mastering_display.is_some() && m.content_light_level.is_some());
         let rebuilt = m.to_hevc_declarative_sei_nal().unwrap().unwrap();
-        let types: Vec<u32> = sei_messages(&rebuilt[HEVC_NAL_HEADER_LEN..])
+        let types: Vec<u32> = sei_messages(&rebuilt[HEVC_NAL_HEADER_LEN..], &mut Findings::new())
             .into_iter()
             .map(|(t, _)| t)
             .collect();
@@ -334,11 +346,11 @@ mod tests {
             hevc_prefix_sei_nal(&[(SEI_PAYLOAD_MASTERING_DISPLAY_COLOUR_VOLUME, &mdcv)]);
         suffix[0] = HEVC_SUFFIX_SEI_NUT << 1;
         let mut m = HdrStaticMetadata::default();
-        m.absorb_hevc_sei_nal(&suffix);
+        m.absorb_hevc_sei_nal(&suffix, &mut Findings::new());
         assert!(m.is_empty(), "a suffix SEI NAL carries no prefix message");
 
         let mut m = HdrStaticMetadata::default();
-        m.absorb_hevc_sei_nal(&[HEVC_PREFIX_SEI_NUT << 1, 1]);
+        m.absorb_hevc_sei_nal(&[HEVC_PREFIX_SEI_NUT << 1, 1], &mut Findings::new());
         assert!(m.is_empty(), "a bare 2-byte NAL has no SEI body");
     }
 
@@ -355,8 +367,8 @@ mod tests {
             (SEI_PAYLOAD_CONTENT_LIGHT_LEVEL_INFO, &CLLI_OTHER),
         ]);
         let mut m = HdrStaticMetadata::default();
-        m.absorb_hevc_sei_nal(&first);
-        m.absorb_hevc_sei_nal(&second);
+        m.absorb_hevc_sei_nal(&first, &mut Findings::new());
+        m.absorb_hevc_sei_nal(&second, &mut Findings::new());
         assert_eq!(
             m.mastering_display.unwrap().try_to_bytes().unwrap(),
             MDCV_BODY,
