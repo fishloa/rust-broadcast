@@ -64,13 +64,16 @@ pub(crate) const AGG_TIMESTAMP_EXTENDED_SHIFT: u32 = 24;
 /// aggregate ts - first sub-message ts` added to each sub-message timestamp.
 ///
 /// A sub-message header or `DataSize`-claimed data run reaching past the end of the aggregate
-/// body, or a `Back Pointer` that disagrees with the sub-message's actual size, is rejected with
-/// `Malformed`; sub-messages before the malformed one were already delivered.
+/// body, or a `Back Pointer` that disagrees with the sub-message's actual size, ends the
+/// aggregate: the sub-messages before the malformed one were already delivered, and one is
+/// pushed onto `damage` for the rest. The connection itself is unaffected — the aggregate's
+/// own framing arrived intact, so the next message is still locatable.
 ///
 /// # Errors
-/// [`RtmpError::Malformed`] as above, or whatever `deliver` returns.
+/// Whatever `deliver` returns.
 pub(crate) fn unpack_aggregate(
     msg: &Message,
+    damage: &mut Vec<broadcast_core::damage::Damage>,
     mut deliver: impl FnMut(MessageTypeId, u32, &[u8]) -> FlvResult<()>,
 ) -> FlvResult<()> {
     let body = &msg.payload;
@@ -78,9 +81,8 @@ pub(crate) fn unpack_aggregate(
     let mut offset = 0usize;
     while offset < body.len() {
         if body.len() - offset < AGG_SUB_MESSAGE_HEADER_LEN {
-            return Err(RtmpError::Malformed {
-                what: "aggregate sub-message header truncated",
-            });
+            damage.push(crate::damage::message_dropped(msg.timestamp.millis()));
+            return Ok(());
         }
         let header = &body[offset..offset + AGG_SUB_MESSAGE_HEADER_LEN];
         let tag_type = MessageTypeId::from_u8(header[0]);
@@ -96,16 +98,14 @@ pub(crate) fn unpack_aggregate(
         // every sub-message's stream id anyway, so it is ignored.
         let data_start = offset + AGG_SUB_MESSAGE_HEADER_LEN;
         let Some(data_end) = data_size.checked_add(data_start) else {
-            return Err(RtmpError::Malformed {
-                what: "aggregate sub-message DataSize overflows",
-            });
+            damage.push(crate::damage::message_dropped(msg.timestamp.millis()));
+            return Ok(());
         };
         let back_end = match data_end.checked_add(AGG_BACK_POINTER_LEN) {
             Some(end) if end <= body.len() => end,
             _ => {
-                return Err(RtmpError::Malformed {
-                    what: "aggregate sub-message data or Back Pointer runs past the end",
-                });
+                damage.push(crate::damage::message_dropped(msg.timestamp.millis()));
+                return Ok(());
             }
         };
         let back_pointer = crate::be_u32(body, back_end - AGG_BACK_POINTER_LEN);
@@ -115,15 +115,13 @@ pub(crate) fn unpack_aggregate(
         ) {
             Ok(v) => v,
             Err(_) => {
-                return Err(RtmpError::Malformed {
-                    what: "aggregate sub-message exceeds the 32-bit Back Pointer field",
-                });
+                damage.push(crate::damage::message_dropped(msg.timestamp.millis()));
+                return Ok(());
             }
         };
         if back_pointer != expected_back_pointer {
-            return Err(RtmpError::Malformed {
-                what: "aggregate sub-message Back Pointer disagrees with its actual size",
-            });
+            damage.push(crate::damage::message_dropped(msg.timestamp.millis()));
+            return Ok(());
         }
 
         let ts_offset = *first_ts.get_or_insert(raw_ts);
@@ -756,6 +754,51 @@ pub struct ResyncWalk<'a> {
     pub truncated_tail: Option<(usize, usize, usize)>,
 }
 
+impl ResyncWalk<'_> {
+    /// One report per skip this walk made: a damaged span
+    /// ([`broadcast_core::damage::DamageKind::Resynchronised`] over the bytes
+    /// jumped) and a truncated tail
+    /// ([`broadcast_core::damage::DamageKind::InputTruncated`]). A caller that
+    /// publishes damage reports hands these on rather than leaving
+    /// [`Self::damaged`] and [`Self::truncated_tail`] unread.
+    #[must_use]
+    pub fn damage(&self) -> Vec<broadcast_core::damage::Damage> {
+        let mut reports = Vec::with_capacity(self.damaged.len() + 1);
+        for (index, start) in self.damaged.iter().enumerate() {
+            let end = self
+                .damaged
+                .get(index + 1)
+                .copied()
+                .or_else(|| self.tags.get(index).map(|(offset, _)| *offset))
+                .unwrap_or(*start);
+            let len = end.saturating_sub(*start) as u64;
+            reports.push(
+                broadcast_core::damage::Damage::new(
+                    broadcast_core::damage::DamageKind::Resynchronised,
+                    broadcast_core::damage::Severity::Degraded,
+                    "FLV tag",
+                )
+                .at_byte_range(broadcast_core::damage::ByteRange::new(*start as u64, len)),
+            );
+        }
+        if let Some((start, need, have)) = self.truncated_tail {
+            let missing = need.saturating_sub(have) as u64;
+            reports.push(
+                broadcast_core::damage::Damage::new(
+                    broadcast_core::damage::DamageKind::InputTruncated,
+                    broadcast_core::damage::Severity::Degraded,
+                    "FLV tag",
+                )
+                .at_byte_range(broadcast_core::damage::ByteRange::new(
+                    start as u64,
+                    missing,
+                )),
+            );
+        }
+        reports
+    }
+}
+
 /// What an incremental caller should do with the bytes at the front of its
 /// buffer — see [`resync_decision`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1046,11 +1089,17 @@ mod tests {
         payload.extend_from_slice(&sub_message(MessageTypeId::DataAmf0, 0x0000_0030, &[0xC1]));
 
         let mut delivered = Vec::new();
-        unpack_aggregate(&aggregate_msg(0x0100_0100, payload), |tt, ts, body| {
-            delivered.push((tt, ts, body.to_vec()));
-            Ok(())
-        })
+        let mut damage = Vec::new();
+        unpack_aggregate(
+            &aggregate_msg(0x0100_0100, payload),
+            &mut damage,
+            |tt, ts, body| {
+                delivered.push((tt, ts, body.to_vec()));
+                Ok(())
+            },
+        )
         .expect("well-formed aggregate");
+        assert!(damage.is_empty(), "a well-formed aggregate reports nothing");
         assert_eq!(delivered.len(), 3);
         assert_eq!(
             delivered[0],
@@ -1066,17 +1115,26 @@ mod tests {
         );
     }
 
+    /// The sub-message run past the aggregate's end is malformed, but it no
+    /// longer ends the session: the good sub-messages before it were already
+    /// delivered and the rest is reported.
     #[test]
     fn aggregate_header_exactly_at_the_end_is_malformed_as_data_overrun() {
         let mut payload = sub_message(MessageTypeId::Audio, 0, &[1]);
         payload.extend_from_slice(&[0u8; AGG_SUB_MESSAGE_HEADER_LEN]);
-        match unpack_aggregate(&aggregate_msg(0, payload), |_, _, _| Ok(())) {
-            Err(RtmpError::Malformed { what }) => assert_eq!(
-                what,
-                "aggregate sub-message data or Back Pointer runs past the end"
-            ),
-            other => panic!("expected Malformed, got {other:?}"),
-        }
+        let mut damage = Vec::new();
+        let mut delivered = 0usize;
+        unpack_aggregate(&aggregate_msg(0, payload), &mut damage, |_, _, _| {
+            delivered += 1;
+            Ok(())
+        })
+        .expect("a malformed sub-message must not end the session");
+        assert_eq!(delivered, 1, "the good sub-message before it is delivered");
+        assert_eq!(damage.len(), 1, "the overrunning sub-message is reported");
+        assert_eq!(
+            damage[0].kind(),
+            broadcast_core::damage::DamageKind::MediaUnitDropped
+        );
     }
 
     #[test]
@@ -1084,17 +1142,19 @@ mod tests {
         let mut payload = sub_message(MessageTypeId::Audio, 0, &[1, 2, 3]);
         let full_len = payload.len();
         payload.truncate(full_len - 1);
-        assert!(matches!(
-            unpack_aggregate(&aggregate_msg(0, payload), |_, _, _| Ok(())),
-            Err(RtmpError::Malformed { .. })
-        ));
+        let mut damage = Vec::new();
+        assert!(
+            unpack_aggregate(&aggregate_msg(0, payload), &mut damage, |_, _, _| Ok(())).is_ok()
+        );
+        assert_eq!(damage.len(), 1);
 
         let mut payload = sub_message(MessageTypeId::Audio, 0, &[1, 2, 3]);
         payload.extend_from_slice(&[0xFF, 0xFF, 0xFF]);
-        assert!(matches!(
-            unpack_aggregate(&aggregate_msg(0, payload), |_, _, _| Ok(())),
-            Err(RtmpError::Malformed { .. })
-        ));
+        let mut damage = Vec::new();
+        assert!(
+            unpack_aggregate(&aggregate_msg(0, payload), &mut damage, |_, _, _| Ok(())).is_ok()
+        );
+        assert_eq!(damage.len(), 1);
     }
 
     #[test]

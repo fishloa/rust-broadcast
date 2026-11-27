@@ -741,6 +741,14 @@ impl Stage for RtmpIngestSession {
                 ServerEvent::Media { flv } => {
                     self.demux.feed(flv)?;
                 }
+                // The RTMP session's own report reaches the origin through
+                // the same channel every other source uses, so a host sees
+                // one vocabulary whatever the input protocol.
+                ServerEvent::Damage(damage) => {
+                    self.events
+                        .pending
+                        .push_back(SessionEvent::damage(Some(ProgramId(0)), (**damage).clone()));
+                }
                 // `ServerEvent` is `#[non_exhaustive]`; `Publish`/`Eof` need
                 // no reaction here — `Eof` is observed at the transport
                 // level (`RtmpConnection::next_events` returning `Ok(None)`)

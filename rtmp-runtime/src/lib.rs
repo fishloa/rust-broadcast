@@ -11,6 +11,7 @@ pub mod chunk;
 pub mod client;
 #[cfg(feature = "tokio")]
 mod codec;
+mod damage;
 pub mod error;
 pub mod flv;
 pub mod handshake;

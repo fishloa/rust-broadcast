@@ -108,16 +108,17 @@ fn one_byte_past_the_cap_is_rejected() {
 }
 
 /// A single chunk declaring a message body of `len` bytes and carrying one
-/// payload byte: the assembler reserves the declaration on the first push and
-/// waits for the rest.
+/// whole default-size (128-byte) chunk of it: the assembler reserves the
+/// declaration on the first push and waits for the rest.
 fn chunk_declaring(len: u32) -> Vec<u8> {
+    const DEFAULT_CHUNK: usize = 128;
     let mut wire = vec![CLIENT_CSID as u8];
     wire.extend_from_slice(&[0, 0, 0]);
     let len_bytes = len.to_be_bytes();
     wire.extend_from_slice(&len_bytes[1..]);
     wire.push(0x09);
     wire.extend_from_slice(&[0, 0, 0, 1]);
-    wire.push(0xAA);
+    wire.extend(core::iter::repeat_n(0xAAu8, DEFAULT_CHUNK));
     wire
 }
 
@@ -129,13 +130,22 @@ fn the_configured_receive_budget_is_honoured() {
     session
         .handle_data(&vec![0u8; HANDSHAKE_PACKET_LEN])
         .expect("C2");
-    let err = session
+    // A declaration past the configured budget is consumed without being
+    // buffered and reported: the connection keeps framing instead of ending.
+    let (out, events) = session
         .handle_data(&chunk_declaring(2000))
-        .expect_err("a declaration past the configured budget is refused");
-    assert!(
-        matches!(err, RtmpError::InputBudgetExceeded { max } if max == 1234),
-        "{err:?}"
+        .expect("a declaration past the configured budget is skipped");
+    assert!(out.is_empty());
+    assert_eq!(
+        events.len(),
+        1,
+        "the skipped message is reported: {events:?}"
     );
+    assert!(matches!(
+        &events[0],
+        ServerEvent::Damage(d)
+            if d.kind() == broadcast_core::damage::DamageKind::LimitReached
+    ));
 
     let mut default_session = handshaken_session();
     let (out, events) = default_session

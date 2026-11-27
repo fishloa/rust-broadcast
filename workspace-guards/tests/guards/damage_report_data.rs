@@ -74,14 +74,16 @@ pub const READERS: &[Reader] = &[
         status: Status::Converted,
         reports: &["SrtEvent"],
     },
-    // Lane dm3 did NOT reach this one: its chunk-stream, AMF0 and FLV skips
-    // still report nothing, so `broadcast-client`'s RTMP source publishes no
-    // damage report yet. Listed so the gap is visible and the guard enforces
-    // it the moment it is converted.
+    // Lane dm3: the chunk reassembler reports every message an interrupting
+    // header, an `Abort` or a length ceiling discarded; each session reports
+    // the messages, commands, user control events and AMF0 values it passed
+    // over and the media that belonged to no published stream, and the FLV
+    // reader's tolerant walk reports the spans it jumped and the tail it
+    // lost. `ServerEvent` and `ClientEvent` carry the report.
     Reader {
         name: "rtmp-runtime",
-        status: Status::Pending(4191),
-        reports: &[],
+        status: Status::Converted,
+        reports: &["ServerEvent", "ClientEvent"],
     },
     // Pending: #4191 converts the remaining readers to the one report.
     Reader {
