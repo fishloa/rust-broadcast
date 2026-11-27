@@ -207,6 +207,10 @@ fn collect(outputs: &[MuxOutput]) -> RepackageOutput {
         match output {
             MuxOutput::Init(bytes) => init_segment = bytes.to_vec(),
             MuxOutput::Segment(segment) => media_segments.push(segment.bytes.to_vec()),
+            // The output is a bare CMAF byte stream: a break is already stated
+            // by each fragment's own `tfdt`, with no manifest to open a period
+            // in. There is nothing here to put an out-of-band marker into.
+            MuxOutput::Discontinuity { .. } => {}
             _ => {}
         }
     }

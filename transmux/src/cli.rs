@@ -1352,6 +1352,16 @@ impl CliStream {
                     emit.patch(*offset, bytes)?
                 }
                 (_, MuxOutput::Text(text)) => emit.text(text)?,
+                // No CLI output format carries an out-of-band timeline marker:
+                // every one either states the break in-band (a TS
+                // `discontinuity_indicator`) or in its manifest. Refuse rather
+                // than drop it.
+                (_, MuxOutput::Discontinuity { .. }) => {
+                    return Err(crate::Error::UnsupportedFeature(
+                        "the CLI's byte output has no out-of-band timeline marker",
+                    )
+                    .into());
+                }
                 _ => {}
             }
         }
@@ -1433,6 +1443,9 @@ struct DashStream {
     tracks: Vec<DashTrack>,
     log: SegmentSummaryLog,
     files: Vec<(String, Vec<u8>)>,
+    /// A break reached the writer as an out-of-band output: the next segment
+    /// opens a new presentation period.
+    pending_boundary: bool,
 }
 
 impl DashStream {
@@ -1469,6 +1482,7 @@ impl DashStream {
             tracks,
             log: SegmentSummaryLog::new(),
             files,
+            pending_boundary: false,
         })
     }
 
@@ -1514,8 +1528,13 @@ impl DashStream {
 
     fn process_segments(&mut self) -> CliResult<()> {
         while let Some(output) = self.segmenter.poll() {
-            if let MuxOutput::Segment(segment) = output {
-                self.boundary(&segment)?;
+            match output {
+                MuxOutput::Segment(segment) => self.boundary(&segment)?,
+                // A segmenter whose break is out of band (LL-DASH chunks carry
+                // their own `tfdt`) names it here instead of on the summary;
+                // the next segment opens the new period.
+                MuxOutput::Discontinuity { .. } => self.pending_boundary = true,
+                _ => {}
             }
         }
         Ok(())
@@ -1546,7 +1565,7 @@ impl DashStream {
             let scale = u64::from(state.spec.timescale.get());
             let start = self.prev_end.saturating_mul(scale) / self.anchor_scale;
             let end_ticks = end.saturating_mul(scale) / self.anchor_scale;
-            if segment.summary.discontinuous {
+            if segment.summary.discontinuous || core::mem::take(&mut self.pending_boundary) {
                 self.log.push_boundary(PeriodBoundary {
                     sequence: segment.summary.sequence,
                     track: state.spec.track_id,

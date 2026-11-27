@@ -76,6 +76,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Cluster` (refusing a backwards break), and `FlvMuxStage`/`RtmpMuxStage`
   rebase their one millisecond timeline. `RtpPacketiserStage` marks the next
   audio talkspurt (RFC 3551 §4.1) and adds no H.264 marker.
+- `LlSegmenter::segment_log` (`with_log_capacity`): a chunked LL-DASH
+  segmenter closes the open segment at a break and records the following
+  segment's period opening, so `LlDashPackager::render(tracks,
+  segmenter.segment_log())` renders the new `Period` a chunk stream cannot
+  state itself. The same break is still emitted in place as
+  `MuxOutput::Discontinuity`, and a guard in the integration suite fails a
+  non-test `MuxOutput` consumer that does not name it.
 - `TrackSpec::padding` (`GaplessTrim`) and `Sample::trim` (`SampleTrim`): the
   audio gapless trim in the IR, in samples per channel at the track's sample
   rate, defaulting to "none stated". `Mp4Demux` fills it from an Opus `dOps`

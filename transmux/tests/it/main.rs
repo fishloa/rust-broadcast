@@ -153,6 +153,7 @@ mod mpegh_ts;
 #[cfg(feature = "std")]
 #[path = "support/mux_bytes.rs"]
 mod mux_bytes;
+mod mux_output_arms;
 mod nal_keyframe;
 mod opengop_anchor;
 #[cfg(feature = "std")]

@@ -65,11 +65,13 @@
 //! (ISO/IEC 23009-1 §5.3.2) whose `SegmentTemplate@presentationTimeOffset`
 //! maps the continuing media clock onto the presentation timeline
 //! (`private/specs/iso_iec_23009-1_dash_2022_ed5.pdf`).
-//! [`MuxInput::Discontinuity`] therefore emits
-//! [`MuxOutput::Discontinuity`],
-//! which the caller records as a period boundary in
-//! [`SegmentSummaryLog`](crate::segment_log::SegmentSummaryLog); the packager
-//! renders the periods from it.
+//!
+//! A break therefore closes the open segment and records the following one's
+//! period opening in [`LlSegmenter::segment_log`], the same timing an MPD
+//! renderer already reads from a whole-segment stage's `SegmentSummary`.
+//! [`LlDashPackager`] renders the new `Period` from that log. A caller that
+//! serves chunks as they land still sees the break in place as
+//! [`MuxOutput::Discontinuity`], so nothing silently drops it.
 
 use crate::TrackId;
 use alloc::collections::VecDeque;
@@ -80,6 +82,7 @@ use broadcast_common::{Demand, Stage, Timestamp};
 use crate::error::{Error, Result};
 use crate::mux_stage::{MuxInput, MuxOutput};
 use crate::pipeline::{FragmentTrackData, Sample, TrackSpec, build_chunk, build_init_segment};
+use crate::segment_log::{PeriodBoundary, SegmentSummaryLog};
 use crate::segmenter::{MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor};
 
 // ===========================================================================
@@ -91,6 +94,10 @@ struct TrackState {
     spec: TrackSpec,
     /// Samples buffered for the current (not-yet-cut) segment, in decode order.
     pending: Vec<Sample>,
+    /// Decode time this track's current segment opens at.
+    segment_start: u64,
+    /// Samples this track has drained into the current segment.
+    segment_samples: u32,
     /// Decode time of the first *pending* sample (media-timescale ticks) — the
     /// `tfdt.baseMediaDecodeTime` of this track's next chunk.
     base_decode: u64,
@@ -182,6 +189,13 @@ pub struct LlSegmenter {
     /// a fragment, not a whole segment, so it carries no
     /// [`SegmentSummary`](crate::mux_stage::SegmentSummary).
     ready: VecDeque<MuxOutput>,
+    /// The next segment opens a new media timeline.
+    pending_discontinuity: bool,
+    /// Whether the current segment opens on an anchor sync sample.
+    segment_independent: bool,
+    /// Per-segment timing the MPD renderers read, recorded as each segment
+    /// closes; see [`Self::segment_log`].
+    log: SegmentSummaryLog,
 }
 
 impl LlSegmenter {
@@ -248,6 +262,8 @@ impl LlSegmenter {
             .map(|spec| TrackState {
                 spec,
                 pending: Vec::new(),
+                segment_start: 0,
+                segment_samples: 0,
                 base_decode: 0,
                 flush_clock: MediaClock::new(),
             })
@@ -265,6 +281,9 @@ impl LlSegmenter {
             current_segment: 1,
             segment_open: false,
             ready: VecDeque::new(),
+            pending_discontinuity: false,
+            segment_independent: false,
+            log: SegmentSummaryLog::new(),
         })
     }
 
@@ -341,15 +360,67 @@ impl LlSegmenter {
         Ok(())
     }
 
+    /// Keep at most `capacity` segments of [`Self::segment_log`].
+    ///
+    /// The default is [`LogCapacity::Unbounded`](crate::segment_log::LogCapacity::Unbounded);
+    /// a live presentation bounds its manifest window by choosing a
+    /// [`LogCapacity::Window`](crate::segment_log::LogCapacity::Window).
+    #[must_use]
+    pub fn with_log_capacity(mut self, capacity: crate::segment_log::LogCapacity) -> Self {
+        let mut log = SegmentSummaryLog::with_capacity(capacity);
+        core::mem::swap(&mut self.log, &mut log);
+        self
+    }
+
+    /// The per-segment timing this segmenter has closed so far, in the shape
+    /// an MPD renderer reads.
+    ///
+    /// A chunk carries no `SegmentSummary` (it is a fragment, not a whole
+    /// segment), so [`LlDashPackager`](crate::ll_dash::LlDashPackager) cannot
+    /// be fed from this stage's output alone. Rendering from this log is the
+    /// supported path, and it is what opens a new `Period` at a timeline
+    /// break: [`MuxInput::Discontinuity`] closes the open segment and records
+    /// the following one's period boundary here, exactly as the whole-segment
+    /// packagers' `SegmentSummary` does.
+    pub fn segment_log(&self) -> &SegmentSummaryLog {
+        &self.log
+    }
+
     /// Flush the whole current segment: emit all remaining buffered anchor
     /// samples (and every non-anchor sample) as chunks, then open the next
     /// segment. The final chunk of a segment carries any trailing samples.
     fn finish_segment(&mut self) -> Result<()> {
+        let sequence = self.current_segment;
+        let discontinuous = core::mem::take(&mut self.pending_discontinuity);
         while self.tracks[self.anchor].pending.len() > self.chunk_samples {
             self.emit_chunk(false)?;
         }
         // Final chunk of the segment (anchor remainder + all other tracks).
         self.emit_chunk(true)?;
+
+        let independent = self.segment_independent;
+        for track in &self.tracks {
+            if track.segment_samples == 0 {
+                continue;
+            }
+            let part = crate::mux_stage::TrackPart {
+                track: track.spec.track_id,
+                start: track.segment_start,
+                duration: track.base_decode.saturating_sub(track.segment_start),
+                timescale: track.spec.timescale.get(),
+                bytes: 0,
+                samples: track.segment_samples,
+            };
+            self.log.push_part(&part, independent)?;
+            if discontinuous {
+                self.log.push_boundary(PeriodBoundary {
+                    sequence,
+                    track: track.spec.track_id,
+                    start: part.start,
+                    timescale: part.timescale,
+                });
+            }
+        }
 
         self.current_segment += 1;
         self.segment_open = false;
@@ -413,6 +484,17 @@ impl LlSegmenter {
             return Ok(());
         }
 
+        if is_start {
+            self.segment_independent = self.tracks[anchor]
+                .pending
+                .first()
+                .is_some_and(|sample| sample.flags.is_sync);
+            for track in &mut self.tracks {
+                track.segment_start = track.base_decode;
+                track.segment_samples = 0;
+            }
+        }
+
         let seq = self.next_seq;
         let chunk_bytes = {
             let frags: Vec<FragmentTrackData<'_>> = self
@@ -437,6 +519,9 @@ impl LlSegmenter {
             let clock = &mut t.flush_clock;
             let dur: u64 = t.pending[..n].iter().map(|s| clock.tick(s)).sum();
             t.base_decode += dur;
+            t.segment_samples = t
+                .segment_samples
+                .saturating_add(u32::try_from(n).unwrap_or(u32::MAX));
             t.pending.drain(..n);
         }
 
@@ -487,9 +572,13 @@ impl Stage for LlSegmenter {
         match input {
             MuxInput::Sample { track, sample } => self.push(track, sample),
             // A chunk carries its own `tfdt`, but the break is a new `Period`
-            // in the MPD, which only the caller can render: hand it on rather
-            // than dropping it.
+            // in the MPD, which only the caller can render. Close the open
+            // segment so the break falls between two segments, record the
+            // following one as the period's opening in [`Self::segment_log`],
+            // and hand the mark to a caller that serves chunks as they land.
             MuxInput::Discontinuity { track } => {
+                self.flush()?;
+                self.pending_discontinuity = true;
                 self.ready.push_back(MuxOutput::Discontinuity { track });
                 Ok(())
             }
