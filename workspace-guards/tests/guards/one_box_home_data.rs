@@ -44,64 +44,65 @@ pub const TABLE: &[Crate] = &[
     plain("compliance-probe"),
     Crate {
         name: "container-probe",
-        // The one crate that keeps its own header walk: it must depend only on
-        // `broadcast-common` at runtime. Its dev-only drift tests pin these
-        // constants and the walk to `isobmff` on every ISO BMFF fixture.
+        // The one crate that keeps its own header walk: its runtime deps are
+        // `broadcast-core` and `broadcast-bitstream` (the parsers), never the
+        // box layer. Its dev-only drift tests pin these constants and the walk
+        // to `isobmff` on every ISO BMFF fixture.
         allow: &[
             (
                 "src/isobmff.rs",
                 "pub(crate) const BOX_HEADER_MIN_SIZE: usize = 8;",
-                "container-probe keeps its own walk (broadcast-common only at runtime), pinned by the isobmff drift tests",
+                "container-probe keeps its own walk (no box-layer dependency at runtime), pinned by the isobmff drift tests",
             ),
             (
                 "src/isobmff.rs",
                 "pub(crate) const SIZE_TO_EOF: u32 = 0;",
-                "container-probe keeps its own walk (broadcast-common only at runtime), pinned by the isobmff drift tests",
+                "container-probe keeps its own walk (no box-layer dependency at runtime), pinned by the isobmff drift tests",
             ),
             (
                 "src/isobmff.rs",
                 "pub(crate) const SIZE_INDICATES_LARGESIZE: u32 = 1;",
-                "container-probe keeps its own walk (broadcast-common only at runtime), pinned by the isobmff drift tests",
+                "container-probe keeps its own walk (no box-layer dependency at runtime), pinned by the isobmff drift tests",
             ),
             (
                 "src/isobmff.rs",
                 "const TYPE_FTYP: [u8; 4] = *b\"ftyp\";",
-                "container-probe keeps its own box-type constants (broadcast-common only at runtime), pinned by the isobmff drift tests",
+                "container-probe keeps its own box-type constants (no box-layer dependency at runtime), pinned by the isobmff drift tests",
             ),
             (
                 "src/isobmff.rs",
                 "const TYPE_STYP: [u8; 4] = *b\"styp\";",
-                "container-probe keeps its own box-type constants (broadcast-common only at runtime), pinned by the isobmff drift tests",
+                "container-probe keeps its own box-type constants (no box-layer dependency at runtime), pinned by the isobmff drift tests",
             ),
             (
                 "src/isobmff.rs",
                 "pub(crate) const TYPE_MOOV: [u8; 4] = *b\"moov\";",
-                "container-probe keeps its own box-type constants (broadcast-common only at runtime), pinned by the isobmff drift tests",
+                "container-probe keeps its own box-type constants (no box-layer dependency at runtime), pinned by the isobmff drift tests",
             ),
             (
                 "src/isobmff.rs",
                 "pub(crate) const TYPE_MOOF: [u8; 4] = *b\"moof\";",
-                "container-probe keeps its own box-type constants (broadcast-common only at runtime), pinned by the isobmff drift tests",
+                "container-probe keeps its own box-type constants (no box-layer dependency at runtime), pinned by the isobmff drift tests",
             ),
             (
                 "src/isobmff.rs",
                 "const TYPE_SKIP: [u8; 4] = *b\"skip\";",
-                "container-probe keeps its own box-type constants (broadcast-common only at runtime), pinned by the isobmff drift tests",
+                "container-probe keeps its own box-type constants (no box-layer dependency at runtime), pinned by the isobmff drift tests",
             ),
             (
                 "src/isobmff.rs",
                 "const TYPE_FREE: [u8; 4] = *b\"free\";",
-                "container-probe keeps its own box-type constants (broadcast-common only at runtime), pinned by the isobmff drift tests",
+                "container-probe keeps its own box-type constants (no box-layer dependency at runtime), pinned by the isobmff drift tests",
             ),
             (
                 "src/isobmff.rs",
                 "pub(crate) const TYPE_MDAT: [u8; 4] = *b\"mdat\";",
-                "container-probe keeps its own box-type constants (broadcast-common only at runtime), pinned by the isobmff drift tests",
+                "container-probe keeps its own box-type constants (no box-layer dependency at runtime), pinned by the isobmff drift tests",
             ),
             (
                 "src/segment.rs",
                 "const TYPE_UUID: [u8; 4] = *b\"uuid\";",
-                "container-probe keeps its own box-type constants (broadcast-common only at runtime), pinned by the isobmff drift tests",
+                "container-probe keeps its own box-type constants (no box-layer dependency at runtime), pinned by the isobmff drift tests",
             ),
         ],
     },

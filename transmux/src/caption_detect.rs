@@ -214,13 +214,14 @@ impl CaptionDetector {
 
 fn mpeg2_cc_data(au: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
-    let (_, payloads) = crate::h262::picture_user_data_payloads(au);
+    let (_, payloads) = broadcast_bitstream::h262::picture_user_data_payloads(au);
     for payload in payloads {
         if payload.len() < MPEG2_USER_IDENTIFIER_LEN {
             continue;
         }
         let (identifier, body) = payload.split_at(MPEG2_USER_IDENTIFIER_LEN);
-        let is_atsc = identifier == crate::user_data::GA94_USER_IDENTIFIER.to_be_bytes();
+        let is_atsc =
+            identifier == broadcast_bitstream::user_data::GA94_USER_IDENTIFIER.to_be_bytes();
         if let Some((&type_code, cc)) = body.split_first()
             && is_atsc
             && type_code == MPEG2_ATSC_CC_USER_DATA_TYPE_CODE

@@ -46,7 +46,7 @@ use crate::collect::{Collected as Media, CollectedTrack as Track};
 use crate::error::{Error, Result};
 use crate::ir::{DemuxEvent, Sample, TrackId, TrackSpec};
 use crate::mp4_demux::{Mp4Demux, Mp4DemuxConfig, Mp4Input};
-use crate::mux_stage::{MuxInput, MuxOutput};
+use crate::mux_stage::{MuxChain, MuxInput, MuxOutput, Passthrough};
 use crate::segmenter::{Segmenter, choose_anchor};
 
 /// A repackaging driver: demux fragmented MP4 → optional track-select → optional
@@ -122,10 +122,44 @@ impl Repackage {
     /// window's leading hold passes the caller's cap. Propagates [`Mp4Demux`]
     /// errors and [`Segmenter`] errors.
     pub fn run(&self, fmp4: &[u8]) -> Result<RepackageOutput> {
+        self.run_inner::<Passthrough>(fmp4, None)
+    }
+
+    /// [`Repackage::run`] with `transform` inserted between the demux events
+    /// and the resegmenter.
+    ///
+    /// The transform may replace a track's [`TrackSpec`], emit a different
+    /// number of samples than it took, delay its output, and flush at end of
+    /// stream: the [chain](MuxChain) feeds it every demux event and releases
+    /// its output to the segmenter only once every track the `moov` named has
+    /// been re-announced, so the resegmented init segment describes the
+    /// transform's tracks, not the source's. Every track selection and trim
+    /// window applies to the transform's output exactly as it does to a
+    /// demuxer's.
+    ///
+    /// `transform` is per-run rather than a builder field, so [`Repackage`]
+    /// stays [`Clone`] and a caller keeps one configured repackager for
+    /// several inputs.
+    ///
+    /// # Errors
+    /// As [`Repackage::run`], plus the transform's own errors and
+    /// [`Error::TransformHoldExceeded`].
+    pub fn run_transformed<T>(&self, fmp4: &[u8], transform: T) -> Result<RepackageOutput>
+    where
+        T: for<'a> Stage<In<'a> = MuxInput, Out = MuxInput, Error = Error>,
+    {
+        self.run_inner(fmp4, Some(transform))
+    }
+
+    fn run_inner<T>(&self, fmp4: &[u8], transform: Option<T>) -> Result<RepackageOutput>
+    where
+        T: for<'a> Stage<In<'a> = MuxInput, Out = MuxInput, Error = Error>,
+    {
         let total_len = u64::try_from(fmp4.len()).unwrap_or(u64::MAX);
         let mut demux =
             Mp4Demux::seekable(Mp4DemuxConfig::default().with_total_len(Some(total_len)));
         let mut sink = RepackageSink::new(self);
+        sink.transform = transform;
         loop {
             let demand = demux.demand();
             let Some(offset) = demand.offset else {
@@ -142,12 +176,12 @@ impl Repackage {
                 Timestamp::ZERO,
             )?;
             sink.set_movie_timescale(demux.movie_timescale());
-            sink.announce_init(&demux);
+            sink.announce_init(&demux)?;
             sink.absorb(&mut demux)?;
         }
         demux.finish()?;
         sink.set_movie_timescale(demux.movie_timescale());
-        sink.announce_init(&demux);
+        sink.announce_init(&demux)?;
         sink.absorb(&mut demux)?;
         sink.finish()?;
         sink.outputs()
@@ -155,7 +189,10 @@ impl Repackage {
 }
 
 /// Split a demux stage's queued events into the repackaging stage.
-fn drain_demux(demux: &mut Mp4Demux, sink: &mut RepackageSink) -> Result<()> {
+fn drain_demux<T>(demux: &mut Mp4Demux, sink: &mut RepackageSink<T>) -> Result<()>
+where
+    T: for<'a> Stage<In<'a> = MuxInput, Out = MuxInput, Error = Error>,
+{
     while let Some(event) = demux.poll() {
         sink.event(event)?;
     }
@@ -439,7 +476,7 @@ fn relative_presentation(
 
 /// The one stage between the demuxer and the segmenter: it resolves the kept
 /// track set and feeds each kept sample on to the segmenter.
-struct RepackageSink {
+struct RepackageSink<T> {
     target_duration: core::time::Duration,
     select: Option<Vec<usize>>,
     movie_timescale: Option<Timescale>,
@@ -461,9 +498,17 @@ struct RepackageSink {
     pending: VecDeque<MuxOutput>,
     /// A streaming [`Repackage::trim`] window's hold, or `None` without one.
     window: Option<WindowHold>,
+    /// The caller's transform, until [`RepackageSink::announce_init`] knows
+    /// the track set it must settle.
+    transform: Option<T>,
+    /// The transform's chain, once the `moov`'s track set is known.
+    chain: Option<MuxChain<T>>,
 }
 
-impl RepackageSink {
+impl<T> RepackageSink<T>
+where
+    T: for<'a> Stage<In<'a> = MuxInput, Out = MuxInput, Error = Error>,
+{
     fn new(repackage: &Repackage) -> Self {
         Self {
             target_duration: repackage.target_duration,
@@ -480,6 +525,8 @@ impl RepackageSink {
             window: repackage
                 .trim
                 .map(|(start, end)| WindowHold::new(start, end, repackage.hold)),
+            transform: None,
+            chain: None,
         }
     }
 
@@ -501,38 +548,52 @@ impl RepackageSink {
         Ok(collect(&outputs))
     }
 
-    /// Translate one demux event into the muxer vocabulary.
+    /// Translate one demux event into the muxer vocabulary, through the
+    /// caller's transform when there is one.
     fn event(&mut self, event: DemuxEvent) -> Result<()> {
-        match event {
-            DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
-                self.feed(MuxInput::Track(Box::new(spec)), Timestamp::ZERO)
+        let Some(input) = MuxInput::from_demux(event) else {
+            return Ok(());
+        };
+        match self.chain.as_mut() {
+            Some(chain) => {
+                chain.feed(input)?;
+                self.drain_chain()
             }
-            DemuxEvent::Sample { track_id, sample } => self.feed(
-                MuxInput::Sample {
-                    track: track_id,
-                    sample,
-                },
-                Timestamp::ZERO,
-            ),
-            DemuxEvent::Discontinuity { .. } => {
-                self.feed(MuxInput::Discontinuity { track: None }, Timestamp::ZERO)
-            }
-            _ => Ok(()),
+            None => self.feed(input, Timestamp::ZERO),
+        }
+    }
+
+    /// Release the transform's output, in order, into this stage.
+    fn drain_chain(&mut self) -> Result<()> {
+        loop {
+            let Some(input) = self.chain.as_mut().and_then(MuxChain::poll) else {
+                return Ok(());
+            };
+            self.feed(input, Timestamp::ZERO)?;
         }
     }
 
     /// Announce every track the `moov` already names, so the segmenter is
     /// built for the whole track set even though [`Mp4Demux`] emits a track's
     /// [`TrackAdded`](DemuxEvent::TrackAdded) only alongside its first sample.
-    fn announce_init(&mut self, demux: &Mp4Demux) {
+    fn announce_init(&mut self, demux: &Mp4Demux) -> Result<()> {
         if self.init_announced || self.segmenter.is_some() || demux.movie_timescale().is_none() {
-            return;
+            return Ok(());
         }
         let specs: Vec<TrackSpec> = demux.init_tracks().cloned().collect();
         if specs.is_empty() {
-            return;
+            return Ok(());
         }
         self.init_announced = true;
+        if let Some(transform) = self.transform.take() {
+            let mut chain = MuxChain::new(transform, specs.iter().map(|spec| spec.track_id));
+            for spec in specs {
+                chain.feed(MuxInput::Track(Box::new(spec)))?;
+            }
+            self.chain = Some(chain);
+            self.drain_chain()?;
+            return Ok(());
+        }
         for spec in specs {
             let index = self.seen;
             self.seen += 1;
@@ -545,6 +606,7 @@ impl RepackageSink {
                 self.announced.push(spec);
             }
         }
+        Ok(())
     }
 
     /// Build the segmenter once the first kept sample proves the track set
@@ -759,7 +821,10 @@ impl RepackageSink {
     }
 }
 
-impl Stage for RepackageSink {
+impl<T> Stage for RepackageSink<T>
+where
+    T: for<'a> Stage<In<'a> = MuxInput, Out = MuxInput, Error = Error>,
+{
     type In<'a> = MuxInput;
     type Out = MuxOutput;
     type Error = Error;
@@ -770,12 +835,24 @@ impl Stage for RepackageSink {
                 // A track the `moov` already named was announced by
                 // `announce_init`; its `TrackAdded` carries the first sample's
                 // refinement and replaces that provisional spec.
-                if let Some(existing) = self
+                if let Some(index) = self
                     .announced
-                    .iter_mut()
-                    .find(|announced| announced.track_id == spec.track_id)
+                    .iter()
+                    .position(|announced| announced.track_id == spec.track_id)
                 {
-                    *existing = *spec;
+                    if self.announced[index] == *spec {
+                        return Ok(());
+                    }
+                    // A description that changes before the segmenter is built
+                    // is the announcement arriving late (a transform that
+                    // holds its output); once it is built, the init segment has
+                    // already been written and the change cannot be expressed.
+                    if self.segmenter.is_some() {
+                        return Err(Error::UnsupportedFeature(
+                            "repackage: a track's description changed after resegmenting started",
+                        ));
+                    }
+                    self.announced[index] = *spec;
                     return Ok(());
                 }
                 let index = self.seen;
@@ -815,6 +892,9 @@ impl Stage for RepackageSink {
                 Ok(())
             }
             MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(
+                "repackage: the resegmented init segment names every kept track",
+            )),
             MuxInput::Flush => self.finish(),
         }
     }
@@ -824,6 +904,10 @@ impl Stage for RepackageSink {
     }
 
     fn finish(&mut self) -> Result<()> {
+        if let Some(chain) = self.chain.as_mut() {
+            chain.finish()?;
+            self.drain_chain()?;
+        }
         self.resolve_window(true)?;
         if let Some(segmenter) = self.segmenter.as_mut() {
             segmenter.finish()?;

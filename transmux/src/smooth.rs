@@ -1006,6 +1006,9 @@ impl Stage for SmoothSegmenter {
                 }
                 Ok(())
             }
+            MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(
+                "smooth: the manifest's StreamIndex list is fixed for the session",
+            )),
             MuxInput::Sample { track, sample } => self.push_sample(track, sample),
             // A Smooth fragment states its own absolute start in `tfxd`, so a
             // decode-time jump needs no separate signalling.

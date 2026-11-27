@@ -9,6 +9,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 
 ### Added
 
+- The MPEG-2 video sequence layer (`mpeg2` feature), moved from `transmux`:
+  `mpeg2::{Mpeg2SeqHeader, SEQUENCE_HEADER_CODE}` (private fields with
+  `width()`/`height()` accessors) and `h262::{SequenceHeaderGeometry,
+  SequenceDisplayExtension}` with their parsers
+  (`find_sequence_header`, `parse_sequence_at`, `sample_aspect_ratio`) and the
+  `extension_and_user_data(2)` walk (`picture_user_data_payloads`,
+  `afd_from_mpeg2_user_data`). The presentational `DisplayGeometry` conversion
+  stays in `transmux`.
+- `user_data` (no codec feature), moved from `transmux`: `AfdSignal`,
+  `PictureUserData` (private fields with accessors and a constructor), the
+  T.35 / GA94 identifiers and field constants, and the one AFD / bar-data
+  decoder each (`afd_from_t35_payload`, `bar_data_from_t35_payload`,
+  `bar_data_from_ga94_payload`). The H.262, AVC and HEVC display paths share
+  them.
+- The MPEG-1/2/2.5 audio layer (`mpeg_audio`, feature `mpeg-audio`), moved
+  from `transmux`'s `mpeg_legacy`: `MpegAudioLayer`, `MpegAudioFrameHeader`
+  (private fields with accessors) and `MpegAudioFrameHeader::parse`, plus
+  `MPEG_AUDIO_SYNCWORD`. The frame header now exposes the MPEG version it
+  already decoded as the typed `MpegAudioVersion` (MPEG-1 / MPEG-2 / MPEG-2.5,
+  spec labels with `name()` + `Display`).
 - The AAC layer (`aac_asc`, `aac` feature), moved from `transmux`:
   `AudioObjectType`, `SamplingFrequencyIndex`, `ChannelConfiguration` (spec
   labels with `name()` + `Display`), `AudioSpecificConfig` with its `Parse` /
@@ -26,16 +46,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
   behind `isobmff`.
 - The MPEG-H Audio Stream framing (`mhas`, `mpegh` feature), moved from
   `transmux`: `walk_mhas_packets` and `find_mpegh3da_config`.
+- A `print_mpeg_audio_headers` example over `fixtures/audio/audio.mp3`: each
+  frame's version, layer, bitrate, sample rate and length, then the frame count.
+- A `legacy_fixtures` test over real captures: the committed MPEG-2 transport
+  stream's sequence header (320x240, 4:3, 25 Hz), a capture carrying two
+  sequence display descriptions plus AFD in MPEG-2 picture user data, and the
+  MP3 fixture as a 44-frame chain walked to its last byte.
 - A `print_adts_headers` example over `fixtures/audio/aac.adts`, an
   `audio_fixtures` test that walks that ADTS chain, a broadcast capture's AAC
   track and one committed AC-3 / E-AC-3 / DTS stream frame by frame, and the
   `broadcast_bitstream_aac_asc`, `broadcast_bitstream_adts`,
   `broadcast_bitstream_ac3`, `broadcast_bitstream_eac3`,
-  `broadcast_bitstream_dts_core` and `broadcast_bitstream_mhas` fuzz targets.
+  `broadcast_bitstream_dts_core` and `broadcast_bitstream_mhas` fuzz targets,
+  plus `broadcast_bitstream_mpeg2`, `broadcast_bitstream_mpeg_audio` and
+  `broadcast_bitstream_user_data`.
 
 - `annexb::start_code_positions` is crate-private: nothing outside the crate
   needs the allocation. `annexb::find_start_code_prefix` stays the one public
   scan primitive, so external callers lose no capability.
+
+### Fixed
+
+- An MPEG-2 video `sequence_header()` carrying a zero `horizontal_size_value`
+  or `vertical_size_value` is rejected with `Error::InvalidValue` instead of
+  yielding a zero geometry no decoder can use. H.262 §6.3.3 forbids either
+  value being zero (a zero would emulate a start-code prefix).
+  `Mpeg2SeqHeader::find` and `h262::parse_sequence_at` share the check, and
+  `broadcast-bitstream/tests/mpeg2_sequence_size_zero.rs` pins it with the
+  bytes that failed the fuzz smoke run.
 
 ### Changed
 

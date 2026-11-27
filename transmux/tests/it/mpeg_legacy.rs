@@ -9,10 +9,10 @@
 use broadcast_core::timescale::Timescale;
 use std::fs;
 
+use broadcast_bitstream::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use broadcast_core::{Parse, Serialize};
 use isobmff::init_segment::{MovieBox, SampleEntryVariant, StblChild};
 use test_fixtures::ffprobe;
-use transmux::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use transmux::pipeline::CodecConfig;
 
 fn timescale(value: u32) -> Timescale {
@@ -91,10 +91,14 @@ fn fmp4_mpeg2_video_config_and_dims() {
     // Dimensions must equal the value parsed from the in-band sequence header.
     let first = &track.samples[0].data;
     let sh = Mpeg2SeqHeader::find(first).expect("in-band sequence_header in first sample");
-    assert_eq!((sh.width, sh.height), (320, 240), "seq header is 320x240");
+    assert_eq!(
+        (sh.width(), sh.height()),
+        (320, 240),
+        "seq header is 320x240"
+    );
     assert_eq!(
         (width, height),
-        (sh.width, sh.height),
+        (sh.width(), sh.height()),
         "config dims == seq header"
     );
 }
@@ -135,10 +139,10 @@ fn fmp4_mpeg_audio_config() {
     let hdr = MpegAudioFrameHeader::parse(&track.samples[0].data)
         .expect("MPEG audio frame header in first sample");
     assert_eq!(layer, MpegAudioLayer::LayerIII, "MP3 = Layer III");
-    assert_eq!(layer, hdr.layer);
-    assert_eq!(sample_rate, hdr.sample_rate);
-    assert_eq!(channels, hdr.channels);
-    assert_eq!(hdr.sample_rate, 44100);
+    assert_eq!(layer, hdr.layer());
+    assert_eq!(sample_rate, hdr.sample_rate());
+    assert_eq!(channels, hdr.channels());
+    assert_eq!(hdr.sample_rate(), 44100);
 }
 
 // ── Test 3: fMP4 sample fidelity (demux → IR → CmafMuxStage → re-demux) ──────────
@@ -279,7 +283,7 @@ fn ts_demux_broadcast_pair() {
     let audio_ts = audio_ts.get();
     let samples_per_frame = MpegAudioFrameHeader::parse(&audio.samples[0].data)
         .unwrap()
-        .samples_per_frame;
+        .samples_per_frame();
     assert_eq!(samples_per_frame, 1152, "MP2 = 1152 samples/frame");
     for (i, s) in audio.samples.iter().enumerate() {
         // duration is one MP2 frame = samples_per_frame ticks at the audio
@@ -328,13 +332,13 @@ fn ts_config_from_real_es() {
 
     // Video config geometry recovered from the in-band sequence_header().
     let sh = Mpeg2SeqHeader::find(&video.samples[0].data).expect("in-band seq header");
-    assert_eq!((sh.width, sh.height), (320, 240));
+    assert_eq!((sh.width(), sh.height()), (320, 240));
 
     // Audio config from the first MP2 frame header.
     let hdr = MpegAudioFrameHeader::parse(&audio.samples[0].data).expect("mp2 frame header");
-    assert_eq!(hdr.layer, MpegAudioLayer::LayerII);
-    assert_eq!(hdr.sample_rate, 44100);
-    assert_eq!(hdr.channels, 1);
+    assert_eq!(hdr.layer(), MpegAudioLayer::LayerII);
+    assert_eq!(hdr.sample_rate(), 44100);
+    assert_eq!(hdr.channels(), 1);
 
     // The MPEG-2 video sample entry must round-trip through mp4v (build init +
     // re-parse) with an esds carrying OTI 0x61.

@@ -2,7 +2,6 @@
 mod absolute_timing;
 mod ac3_crc_check;
 mod ac3_syncframe_ranges;
-mod adts_container_probe_drift;
 mod any_stream;
 mod audio_config_facts;
 mod audio_metadata;
@@ -284,6 +283,9 @@ mod timeline_oracle;
 mod track_id_baseline;
 mod track_provenance;
 mod track_updated_causes;
+#[cfg(feature = "codec")]
+mod transcode;
+mod transform_property;
 mod trick_signalling;
 mod trickplay;
 mod truncation;
@@ -310,7 +312,6 @@ mod ts_mux_streaming;
 mod ts_psi;
 mod ts_sync_loss_degraded;
 mod ts_to_cmaf;
-mod user_data_t35;
 mod uuid_child_roundtrip;
 mod validate;
 #[cfg(feature = "matroska")]

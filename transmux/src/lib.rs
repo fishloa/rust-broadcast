@@ -191,7 +191,6 @@ pub mod error;
 pub mod flv;
 #[cfg(feature = "flv")]
 pub mod flv_stream;
-pub mod h262;
 pub mod interlace;
 pub mod ir;
 pub mod klv;
@@ -204,7 +203,6 @@ pub mod media;
 pub mod mkv_mux;
 pub mod mp4_demux;
 pub mod mpeg2_display;
-pub mod mpeg_legacy;
 pub mod mux_stage;
 #[cfg(test)]
 extern crate self as transmux;
@@ -223,6 +221,8 @@ pub mod repackage;
 pub mod segment_log;
 pub mod stitch;
 pub mod timeline;
+#[cfg(feature = "codec")]
+pub mod transcode;
 #[cfg(feature = "rtp")]
 pub use rtp_packet::rtcp;
 #[cfg(feature = "matroska")]
@@ -255,7 +255,6 @@ pub mod ts_demux;
 pub mod ts_hls;
 pub mod ts_mux;
 pub(crate) mod units;
-pub mod user_data;
 pub mod validate;
 
 pub use broadcast_common::klv::KlvItem;
@@ -290,7 +289,6 @@ pub use flv::{
 };
 #[cfg(feature = "flv")]
 pub use flv_stream::StreamingFlvDemux;
-pub use h262::{SequenceDisplayExtension, SequenceHeaderGeometry};
 pub use interlace::{video_picture_facts, video_scan};
 pub use ir::{
     ActiveFormat, AfdPersistence, AudioLanguage, AudioMetadata, AudioRole, AudioType,
@@ -313,9 +311,6 @@ pub use media::HlsPackager;
 pub use media::{CmafMuxStage, FragmentCut, PcrSample, SkippedTrack, TrackProtection};
 #[cfg(feature = "matroska")]
 pub use mkv_mux::MkvMuxStage;
-pub use mpeg_legacy::{
-    MPEG_AUDIO_SYNCWORD, Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer, SEQUENCE_HEADER_CODE,
-};
 pub use mpeg2_display::{Mpeg2DisplayTracker, Mpeg2Outcome};
 pub use nal_params::{avc_access_unit_dimensions, avc_sps_dimensions};
 pub use pipeline::{
@@ -392,6 +387,10 @@ pub use smooth_codec::track_spec_from_quality_level;
 pub use splice::{
     SpliceIndex, SpliceIndexBuilder, SplicePlan, SplicePoint, SpliceSample, SpliceStage,
     SpliceTrack, TrackSplice, snap_to_preceding_sync,
+};
+#[cfg(feature = "codec")]
+pub use transcode::{
+    TranscodeStage, codec_parameters_from_track, track_spec_from_codec_parameters,
 };
 pub use trickplay::TrickPlayStage;
 pub use ts_demux::{

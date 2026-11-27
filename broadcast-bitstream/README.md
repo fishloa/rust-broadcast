@@ -5,8 +5,8 @@ Codec bitstream parsers and stream-format conversion for `rust-broadcast`.
 **This crate reads codec facts. It never decodes or encodes media.** It is the
 layer below the container and muxing crates: a project that only wants to split
 an Annex B stream, classify NAL units, read an exp-Golomb field, or decode an
-AAC, AC-3/E-AC-3, DTS or MHAS header can depend on this crate alone instead of
-taking the whole muxing hub.
+AAC, AC-3/E-AC-3, DTS, MHAS, MPEG-2 video or MPEG audio header can depend on
+this crate alone instead of taking the whole muxing hub.
 
 What it holds today:
 
@@ -52,8 +52,17 @@ What it holds today:
   splitter, and the `ddts` builder behind `isobmff`.
 - **MPEG-H Audio Stream framing** ([`mhas`], `mpegh`) — the MHAS packet walk
   that locates the `mpegh3daConfig()` blob.
-
-MPEG-2 and MPEG audio arrive as features on top of this, one family at a time.
+- **MPEG-2 video** ([`mpeg2`], [`h262`], `mpeg2`) — the `sequence_header()`
+  picture geometry, the sequence and sequence-display extensions (coded size,
+  aspect ratio, frame rate, colour description, intended display rectangle), and
+  the `extension_and_user_data(2)` walk that separates picture-level user data
+  from the sequence's.
+- **MPEG-1/2/2.5 audio** ([`mpeg_audio`], `mpeg-audio`) — the MP3/MP2/MP1 frame
+  header: version, layer, bitrate, sample rate, channels, frame length and
+  samples per frame.
+- **AFD and bar data** ([`user_data`], no feature) — the T.35 and GA94
+  identifiers and the one AFD / bar-data decoder each, shared by the MPEG-2
+  picture user data, AVC SEI and HEVC prefix SEI paths.
 
 ## The recorded exception
 
@@ -73,8 +82,9 @@ MPEG-2 sequence headers, each landing as an additive release.
   plus `alloc` either way.
 - `h264`, `hevc`, `vvc` (all default) — the per-codec NAL unit-type enums and
   sequence parameter set decoders.
-- `aac`, `ac3`, `dts`, `mpegh` (all default) — the audio parsers. Each builds
-  without `isobmff`; only the box builders need it.
+- `aac`, `ac3`, `dts`, `mpegh`, `mpeg-audio` (all default) — the audio
+  parsers. Each builds without `isobmff`; only the box builders need it.
+- `mpeg2` (default) — the MPEG-2 video sequence header and display extensions.
 - `serde` — `Serialize` derives on the spec/field types.
 - `isobmff` — the codec-configuration glue over `isobmff`'s box newtypes
   (parameter-set decoding, RFC 6381 strings, `avcC` construction) and the HDR10
@@ -98,3 +108,7 @@ Run with `cargo run -p broadcast-bitstream --example <name>`:
 - `print_adts_headers` takes an ADTS elementary stream,
   e.g. `fixtures/audio/aac.adts`, and prints each frame's profile, sample rate,
   channel configuration and length, then the frame count.
+- `print_mpeg_audio_headers` takes an MP3 or MPEG-audio elementary stream,
+  e.g. `fixtures/audio/audio.mp3` (a leading ID3v2 tag is skipped), and prints
+  each frame's version, layer, bitrate, sample rate and frame length, then the
+  frame count.

@@ -1,19 +1,28 @@
-//! AFD and bar data parsing: the shared `afd_data()` / `bar_data()` structures
-//! wrapped by H.264/H.265 T.35 SEI payloads and by MPEG-2 picture
-//! `user_data()` (ETSI TS 101 154 Annex B, SMPTE ST 2016-1).
+//! AFD and bar data: the shared `afd_data()` / `bar_data()` structures carried
+//! by H.264/H.265 T.35 SEI payloads and by MPEG-2 picture `user_data()`
+//! (ETSI TS 101 154 Annex B, SMPTE ST 2016-1).
+//!
+//! The same structures arrive by three routes — a registered-ITU-T-T.35 SEI
+//! message (`afd_from_t35_payload`, `bar_data_from_t35_payload`) and the
+//! MPEG-2 `DVB1_data()` body after a `'GA94'` identifier
+//! (`bar_data_from_ga94_payload`) — and decode through one parser each, so a
+//! codec path can never read a different AFD than another.
 
-use broadcast_bitstream::facts::{ActiveFormatDescription, BarData};
-
+use crate::facts::{ActiveFormatDescription, BarData};
 use broadcast_core::wire::{be_u16, be_u32};
 
 /// `user_identifier` of `afd_data()` (TS 101 154 Table B.1).
 pub const DTG1_USER_IDENTIFIER: u32 = 0x4454_4731;
 /// `user_identifier` of `DVB1_data()` / `bar_data()` (TS 101 154 Table B.1).
 pub const GA94_USER_IDENTIFIER: u32 = 0x4741_3934;
+/// `itu_t_t35_country_code` of the USA (T.35, TS 101 154 Table B.1).
 pub const ITU_T_T35_COUNTRY_CODE_USA: u8 = 0xB5;
+/// `itu_t_t35_provider_code` of ATSC (TS 101 154 Table B.1).
 pub const ATSC_T35_PROVIDER_CODE: u16 = 0x0031;
 /// `user_data_type_code` of `bar_data()` (TS 101 154 Table B.4).
 pub const BAR_DATA_USER_DATA_TYPE_CODE: u8 = 0x06;
+/// SEI `payload_type` of `user_data_registered_itu_t_t35` (ITU-T H.264
+/// §7.3.2.3.1 / H.265 §7.3.5).
 pub const SEI_PAYLOAD_TYPE_USER_DATA_REGISTERED_ITU_T_T35: u32 = 4;
 /// `afd_data()` `active_format_flag` (bit 6 of the first payload byte, TS 101
 /// 154 Table B.2).
@@ -50,7 +59,9 @@ const BAR_RIGHT_FLAG_BIT: u8 = 0x10;
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum AfdSignal {
+    /// The message is present with `active_format_flag == 0`.
     NoFormat,
+    /// The message is present with an `active_format` code.
     Format(ActiveFormatDescription),
 }
 
@@ -68,9 +79,28 @@ broadcast_core::impl_spec_display!(AfdSignal);
 
 /// Parsed picture-level user data from one access unit.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PictureUserData {
-    pub afd: Option<AfdSignal>,
-    pub bar_data: Option<BarData>,
+    afd: Option<AfdSignal>,
+    bar_data: Option<BarData>,
+}
+
+impl PictureUserData {
+    /// Build from the AFD signal and bar data one picture carried (either may
+    /// be absent).
+    pub fn new(afd: Option<AfdSignal>, bar_data: Option<BarData>) -> Self {
+        Self { afd, bar_data }
+    }
+
+    /// The AFD signal this picture signalled, if any.
+    pub fn afd(&self) -> Option<&AfdSignal> {
+        self.afd.as_ref()
+    }
+
+    /// The bar data this picture signalled, if any.
+    pub fn bar_data(&self) -> Option<&BarData> {
+        self.bar_data.as_ref()
+    }
 }
 
 /// Parse an `afd_data()` structure from a T.35 payload (starting at the

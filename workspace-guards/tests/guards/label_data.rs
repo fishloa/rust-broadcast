@@ -179,6 +179,7 @@ pub const TABLE: &[Crate] = &[
         skip: &["Error", "AvcPicture"],
         expected: Some(&[
             "ActiveFormatDescription",
+            "AfdSignal",
             "AspectRatioIdc",
             "AudioObjectType",
             "AvcNalUnitType",
@@ -187,6 +188,8 @@ pub const TABLE: &[Crate] = &[
             "HeAacProfile",
             "HevcNalUnitType",
             "MatrixCoefficients",
+            "MpegAudioLayer",
+            "MpegAudioVersion",
             "NalCodec",
             "OverlapProcessOption",
             "PicStruct",
@@ -196,7 +199,7 @@ pub const TABLE: &[Crate] = &[
             "VideoFormat",
             "VideoScan",
         ]),
-        min_enums: Some(17),
+        min_enums: Some(20),
     },
     Crate {
         name: "broadcast-codec",

@@ -19,4 +19,5 @@ broadcast-loudness = { path = "../../broadcast-loudness" }
 codec-symphonia = { path = "../codec-symphonia" }
 test-fixtures = { path = "../../test-fixtures" }
 test-harness = { path = "../../test-harness" }
-transmux = { path = "../../transmux", default-features = false, features = ["std"] }
+transmux = { path = "../../transmux", default-features = false, features = ["std", "codec"] }
+broadcast-common = { path = "../../broadcast-common", default-features = false, features = ["std"] }

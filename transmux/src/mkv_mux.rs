@@ -439,6 +439,9 @@ impl Stage for MkvMuxStage {
                 Ok(())
             }
             MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(
+                "matroska: a track removed mid-stream is not in the segment's Tracks",
+            )),
             MuxInput::Flush => Ok(()),
         }
     }

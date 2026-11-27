@@ -77,6 +77,8 @@ example_args() {
             echo "fixtures/ts/h264-aac.ts" ;;
         broadcast-bitstream/print_adts_headers)
             echo "fixtures/audio/aac.adts" ;;
+        broadcast-bitstream/print_mpeg_audio_headers)
+            echo "fixtures/audio/audio.mp3" ;;
         isobmff/heif_info) echo "fixtures/heif/thumb.heic" ;;
         isobmff/build_avif) echo "fixtures/avif/plain.avif" ;;
         isobmff/heif_2025) echo "fixtures/heif/groups.mp4" ;;
@@ -107,6 +109,7 @@ example_args() {
         isobmff-tokio/read_sample) echo "fixtures/mp4/progressive/av-prog.mp4" ;;
         isobmff/read_tags)    echo "fixtures/mp4/progressive/av-prog.mp4" ;;
         isobmff/write_tags)   echo "fixtures/mp4/progressive/av-prog.mp4 $WORKDIR/tags.udta" ;;
+        transmux/transcode_pass_through) echo "$WORKDIR/transcode.cmaf" ;;
         dvr-runtime/list_programmes)
             echo "fixtures/ts/tnt-5w-12732v-isi6-10s.ts" ;;
         *) echo "" ;;

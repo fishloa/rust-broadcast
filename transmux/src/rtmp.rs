@@ -297,6 +297,9 @@ impl Stage for RtmpMuxStage {
                 }
                 self.stream.announce(*spec).map_err(RtmpFlvError::Flv)
             }
+            MuxInput::TrackRemoved { .. } => {
+                Err(RtmpFlvError::Flv(FlvError::TrackRemovedAfterStart))
+            }
             MuxInput::Sample { track, sample } => {
                 self.open()?;
                 let tags = self.stream.push(track, sample).map_err(RtmpFlvError::Flv)?;

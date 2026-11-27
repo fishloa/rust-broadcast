@@ -83,6 +83,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "broadcast-bitstream"
+version = "0.1.0"
+dependencies = [
+ "broadcast-core",
+ "isobmff",
+ "memchr",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "broadcast-codec"
 version = "0.1.0"
 dependencies = [
@@ -269,6 +280,7 @@ name = "codec-libav"
 version = "0.0.0"
 dependencies = [
  "broadcast-codec",
+ "broadcast-common",
  "broadcast-core",
  "broadcast-loudness",
  "codec-symphonia",
@@ -291,6 +303,7 @@ dependencies = [
 name = "container-probe"
 version = "0.6.0"
 dependencies = [
+ "broadcast-bitstream",
  "broadcast-core",
 ]
 
@@ -790,6 +803,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 name = "media-plane"
 version = "0.14.0"
 dependencies = [
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "broadcast-hls",
@@ -1302,6 +1316,7 @@ dependencies = [
 name = "test-fixtures"
 version = "0.1.0"
 dependencies = [
+ "broadcast-core",
  "headers",
  "hex",
  "http",
@@ -1314,6 +1329,7 @@ dependencies = [
 name = "test-harness"
 version = "0.1.0"
 dependencies = [
+ "broadcast-bitstream",
  "broadcast-common",
  "broadcast-core",
  "dash-runtime",
@@ -1422,6 +1438,8 @@ name = "transmux"
 version = "0.33.0"
 dependencies = [
  "aes",
+ "broadcast-bitstream",
+ "broadcast-codec",
  "broadcast-common",
  "broadcast-core",
  "broadcast-dash",
@@ -1435,7 +1453,6 @@ dependencies = [
  "dvb-si",
  "isobmff",
  "jiff",
- "memchr",
  "mpeg-pes",
  "mpeg-ps",
  "mpeg-ts",
