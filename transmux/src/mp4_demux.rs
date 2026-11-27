@@ -94,6 +94,7 @@ pub struct Mp4DemuxConfig {
     order: SampleOrder,
     read_window: Option<NonZeroUsize>,
     total_len: Option<u64>,
+    mode: isobmff::Mode,
 }
 
 impl Default for Mp4DemuxConfig {
@@ -103,6 +104,7 @@ impl Default for Mp4DemuxConfig {
             order: SampleOrder::DecodeTime,
             read_window: None,
             total_len: None,
+            mode: isobmff::Mode::Permissive,
         }
     }
 }
@@ -130,6 +132,23 @@ impl Mp4DemuxConfig {
     pub fn with_read_window(mut self, read_window: Option<NonZeroUsize>) -> Self {
         self.read_window = read_window;
         self
+    }
+
+    /// How strictly the reader treats a known fault.
+    ///
+    /// Best effort is the default: content still addressable past a fault is
+    /// delivered and the fault is published as [`DemuxEvent::Damage`]. A
+    /// validator asks for [`isobmff::Mode::Strict`].
+    #[must_use]
+    pub fn with_mode(mut self, mode: isobmff::Mode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    /// The reader's fault policy.
+    #[must_use]
+    pub fn mode(&self) -> isobmff::Mode {
+        self.mode
     }
 
     /// Set the total input length, when the caller knows it.
@@ -234,6 +253,7 @@ impl Mp4Demux {
             .with_total_len(config.total_len)
             .with_order(config.order)
             .with_source(Source::Seekable)
+            .with_mode(config.mode)
             .with_limits(config.limits);
         Self::create(config, SourceMode::Seekable, reader_config)
     }
@@ -245,6 +265,7 @@ impl Mp4Demux {
             .with_total_len(config.total_len)
             .with_order(SampleOrder::File)
             .with_source(Source::ForwardOnly)
+            .with_mode(config.mode)
             .with_limits(config.limits);
         Self::create(config, SourceMode::Sequential, reader_config)
     }

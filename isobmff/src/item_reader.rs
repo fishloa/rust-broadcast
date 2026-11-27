@@ -680,6 +680,9 @@ pub struct StillImage {
     handler_type: Option<[u8; BOX_TYPE_SIZE]>,
     total_len: Option<u64>,
     degraded: Vec<ImageFinding>,
+    /// Whether bytes were dropped that no box can describe, so the model
+    /// cannot reproduce its source exactly.
+    inexact: bool,
 }
 
 impl StillImage {
@@ -1154,8 +1157,14 @@ impl StillImage {
     /// the rebuilt `meta` body, and a [`ReemitOp::Copy`] for each payload the
     /// reader never read.
     pub fn reemit_plan(&self) -> Result<Vec<ReemitOp>> {
+        if self.inexact {
+            return Err(Error::InvalidInput(
+                "the model dropped bytes no box describes, so it cannot reproduce its source",
+            ));
+        }
         let meta_body = self.meta.to_body()?;
         let mut ops = Vec::new();
+        let mut emitted = 0u64;
         for top in &self.top_level {
             match &top.payload {
                 TopLevelPayload::Meta => {
@@ -1166,17 +1175,31 @@ impl StillImage {
                     }
                     ops.push(ReemitOp::Bytes(top.header.clone()));
                     ops.push(ReemitOp::Bytes(meta_body.clone()));
+                    emitted = emitted
+                        .saturating_add(top.header.len() as u64)
+                        .saturating_add(meta_body.len() as u64);
                 }
                 TopLevelPayload::Bytes(payload) => {
                     let mut bytes = top.header.clone();
                     bytes.extend_from_slice(payload);
+                    emitted = emitted.saturating_add(bytes.len() as u64);
                     ops.push(ReemitOp::Bytes(bytes));
                 }
                 TopLevelPayload::Copy(range) => {
+                    emitted = emitted
+                        .saturating_add(top.header.len() as u64)
+                        .saturating_add(range.len);
                     ops.push(ReemitOp::Bytes(top.header.clone()));
                     ops.push(ReemitOp::Copy(*range));
                 }
             }
+        }
+        if let Some(total) = self.total_len
+            && emitted != total
+        {
+            return Err(Error::InvalidInput(
+                "the model accounts for fewer bytes than its source holds",
+            ));
         }
         Ok(ops)
     }
@@ -1243,6 +1266,7 @@ impl StillImage {
         total_len: Option<u64>,
         limits: &Limits,
         degraded: Vec<ImageFinding>,
+        inexact: bool,
     ) -> Result<Self> {
         let mut iloc: Option<ItemLocationBox> = None;
         let mut iinf: Option<ItemInfoBox> = None;
@@ -1360,6 +1384,7 @@ impl StillImage {
             handler_type,
             total_len,
             degraded,
+            inexact,
         })
     }
 }
@@ -1672,6 +1697,7 @@ pub struct ItemReader {
     derived_current: Option<DerivedFetch>,
     degraded: Vec<ImageFinding>,
     reported_degraded: usize,
+    inexact: bool,
 }
 
 impl ItemReader {
@@ -1696,6 +1722,7 @@ impl ItemReader {
             derived_current: None,
             degraded: Vec::new(),
             reported_degraded: 0,
+            inexact: false,
         }
     }
 
@@ -1800,6 +1827,28 @@ impl ItemReader {
     /// addressed rather than read), and a file whose `meta` never arrived has
     /// nothing to model.
     fn input_ended(&mut self) -> Result<()> {
+        // Bytes the input never supplied past the last complete box are a tail
+        // no box describes.
+        let tail = match (&self.phase, self.config.total_len) {
+            (Phase::Header { offset, prefix, .. }, Some(total)) => {
+                let at = offset.saturating_add(prefix.len() as u64);
+                (at < total).then_some((at, total - at))
+            }
+            _ => None,
+        };
+        if let Some((at, len)) = tail {
+            let box_type = match &self.phase {
+                Phase::Header { prefix, .. } => fourcc_of(prefix),
+                _ => [0u8; BOX_TYPE_SIZE],
+            };
+            self.degraded.push(ImageFinding::UnrepresentableBox {
+                box_type,
+                offset: at,
+                reason: crate::error::OpaqueReason::BufferTooShort,
+            });
+            let _ = len;
+            self.inexact = true;
+        }
         if self.image.is_some() {
             self.phase = Phase::Loaded;
             self.pending = None;
@@ -1947,6 +1996,25 @@ impl ItemReader {
                 header_size: header_len,
             });
         }
+        // A box that declares more bytes than the input holds is read to the
+        // end of the input; the cut is reported and the bytes carried are
+        // exactly the ones there.
+        let mut size = size;
+        if let Some(total) = self.config.total_len
+            && offset.saturating_add(size) > total
+        {
+            size = total.saturating_sub(*offset);
+            if size < header_len as u64 {
+                return Err(Error::BoxSizeUnderflow {
+                    size,
+                    header_size: header_len,
+                });
+            }
+            self.degraded.push(ImageFinding::TruncatedBox {
+                box_type: fourcc,
+                offset: *offset,
+            });
+        }
         let body_len = size.saturating_sub(header_len as u64);
         let header = core::mem::take(prefix);
         let next_offset = offset.saturating_add(size);
@@ -2038,7 +2106,13 @@ impl ItemReader {
                     });
                 } else {
                     let payload_abs = box_start.saturating_add(header.len() as u64);
-                    let (record, idat) = parse_meta(bytes, payload_abs, &mut self.degraded)?;
+                    let (record, idat, tail) = parse_meta(
+                        bytes,
+                        payload_abs,
+                        self.config.mode() == crate::reader::Mode::Permissive,
+                        &mut self.degraded,
+                    )?;
+                    self.inexact |= tail;
                     if let Some(idat) = idat {
                         self.idat = Some(idat);
                     }
@@ -2078,6 +2152,7 @@ impl ItemReader {
             self.config.total_len,
             &self.config.limits,
             core::mem::take(&mut self.degraded),
+            self.inexact,
         )?;
         for (index, item) in image.items.iter().enumerate() {
             if item_needs_body(item) {
@@ -2271,11 +2346,17 @@ fn fourcc_of(prefix: &[u8]) -> [u8; BOX_TYPE_SIZE] {
     fourcc
 }
 
+/// One file-level `meta` box's parse: the record, the `idat` payload, and
+/// whether bytes no box describes were dropped.
+type MetaParse = (MetaRecord, Option<(u64, usize)>, bool);
+
 fn parse_meta(
     body: &[u8],
     payload_abs: u64,
+    tolerate: bool,
     degraded: &mut Vec<ImageFinding>,
-) -> Result<(MetaRecord, Option<(u64, usize)>)> {
+) -> Result<MetaParse> {
+    // The third element says whether bytes no box describes were dropped.
     if body.len() < FULLBOX_EXTRA_SIZE {
         return Err(Error::BufferTooShort(
             broadcast_core::error::BufferTooShort {
@@ -2291,23 +2372,26 @@ fn parse_meta(
     let mut children = Vec::new();
     let mut forms = Vec::new();
     let mut idat = None;
+    let mut tail = false;
     let mut rest = &body[FULLBOX_EXTRA_SIZE..];
     let children_start = payload_abs.saturating_add(FULLBOX_EXTRA_SIZE as u64);
     let mut consumed_total = 0usize;
     while !rest.is_empty() {
-        let Ok((child, used)) = parse_box(rest) else {
-            // The tail is too short to be a box, or a child overruns the box:
-            // it is carried in place and reported, never a failed file.
-            degraded.push(ImageFinding::UnrepresentableBox {
-                box_type: fourcc_of(rest),
-                offset: children_start.saturating_add(consumed_total as u64),
-                reason: crate::error::OpaqueReason::BufferTooShort,
-            });
-            let mut opaque = OpaqueBox::new(fourcc_of(rest), rest.to_vec());
-            opaque.to_end = true;
-            children.push(MetaChild::Opaque(opaque));
-            forms.push(BoxForm::ToEnd);
-            break;
+        let (child, used) = match parse_box(rest) {
+            Ok(parsed) => parsed,
+            // A tail too short to be a box, or a child that overruns its
+            // parent, costs those bytes: they are reported, and the model says
+            // it can no longer reproduce its source exactly.
+            Err(_) if tolerate => {
+                degraded.push(ImageFinding::UnrepresentableBox {
+                    box_type: fourcc_of(rest),
+                    offset: children_start.saturating_add(consumed_total as u64),
+                    reason: crate::error::OpaqueReason::BufferTooShort,
+                });
+                tail = true;
+                break;
+            }
+            Err(err) => return Err(err),
         };
         let absolute = children_start
             .saturating_add(consumed_total as u64)
@@ -2428,5 +2512,6 @@ fn parse_meta(
             forms,
         },
         idat,
+        tail,
     ))
 }

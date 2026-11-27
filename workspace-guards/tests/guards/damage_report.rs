@@ -231,6 +231,23 @@ fn a_listed_report_enum_without_a_damage_trips_the_guard() {
 }
 
 #[test]
+fn a_planted_finding_enum_in_the_isobmff_reader_trips_the_guard() {
+    let reader = READERS
+        .iter()
+        .find(|r| r.name == "isobmff")
+        .expect("the isobmff reader");
+    let planted = vec![(
+        "src/planted.rs".to_string(),
+        "pub enum BoxFinding { Skipped, Repaired }".to_string(),
+    )];
+    let found = problems(reader, &planted);
+    assert!(
+        found.iter().any(|p| p.contains("BoxFinding")),
+        "a planted private finding enum must trip the guard: {found:?}"
+    );
+}
+
+#[test]
 fn a_conversion_satisfies_the_guard() {
     let reader = READERS
         .iter()

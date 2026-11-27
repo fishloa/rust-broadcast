@@ -442,9 +442,13 @@ fn drive_still(bytes: &[u8]) -> (Option<String>, Option<StillImage>, usize) {
     }
 }
 
+/// One item as the still-image matrix compares it: identifier, type and data
+/// ranges.
+type ItemShape = (u32, [u8; 4], Vec<(u64, u64)>);
+
 /// What a still image addresses: every item's identifier, type and data
 /// ranges, in the order the model holds them.
-fn still_shape(image: &StillImage) -> Vec<(u32, [u8; 4], Vec<(u64, u64)>)> {
+fn still_shape(image: &StillImage) -> Vec<ItemShape> {
     image
         .items()
         .iter()

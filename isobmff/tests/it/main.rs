@@ -10,6 +10,7 @@ mod coverage;
 mod damage_matrix;
 mod degrade_nonstructural;
 mod esds_config;
+mod ffprobe_agreement;
 mod fixture_read_equality;
 mod fixture_scte35;
 mod fixture_v1_scte35_livesim;

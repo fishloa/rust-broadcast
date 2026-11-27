@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `Mp4DemuxConfig::with_mode`/`mode`: how strictly the MP4 demuxer's reader
+  treats a known fault. Best effort is the default (a fault that still leaves
+  media addressable is delivered and published as `DemuxEvent::Damage` beside
+  the existing `DemuxEvent::InputDegraded` view); a validator asks for
+  `isobmff::Mode::Strict`.
 - `DemuxEvent::Damage(broadcast_core::damage::Damage)`: every skip the
   streaming demuxers tolerate reaches the caller as the workspace's one
   damage report (see `broadcast_core::damage` and

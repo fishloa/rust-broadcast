@@ -1024,7 +1024,7 @@ pub struct FragmentInfo {
 }
 
 /// A fault the best-effort default tolerated, published once as
-/// [`Step::Damage`](crate::reader::Step::Damage) through [`Warning::to_damage`].
+/// [`Step::Damage`] through [`Warning::to_damage`].
 ///
 /// Each variant names the box or sample table row that carried the fault and
 /// the absolute file offset it starts at. A warning never invents a field
@@ -1366,6 +1366,33 @@ struct ReadyFragment {
 /// fault. A sample entry whose known four-CC fails additionally keeps the
 /// parser's message in [`SampleEntryInfo::error`](crate::reader::SampleEntryInfo)
 /// and is reported as [`Warning::UnparseableSampleEntry`].
+///
+/// # What is an error
+///
+/// Best effort is the default ([`Mode::Permissive`]): a fault that still
+/// leaves media addressable is carried and published as a
+/// [`Damage`](broadcast_core::damage::Damage) through [`Step::Damage`], and the
+/// caller's
+/// [`DamagePolicy`](broadcast_core::damage::DamagePolicy) decides whether that
+/// report also stops the read. What is left as an [`Error`] is what no reader
+/// can play past:
+///
+/// - no `moov` and no `moof` in a file that carries media: there is no track
+///   table at all;
+/// - a `moov` that states no track;
+/// - a still image, or a file of type declarations alone, is not this reader's:
+///   it finishes with [`Step::Done`];
+/// - a caller's [`Limits`] cap, which binds in both modes;
+/// - a fault of the caller's own making: [`Error::SupplyMismatch`], a backward
+///   seek over a [`Source::ForwardOnly`] input, or `supply` before a `step`;
+/// - [`Error::Damage`], raised only because the caller's policy asked to stop.
+///
+/// Everything else — a sample table whose counts disagree, an extent outside
+/// the file, a cut fragment, a track whose description cannot be read, a
+/// damaged `stss`/`ctts`/`sdtp`/edit list, a missing or zero header duration, a
+/// zero track timescale on a track with samples — costs only what it breaks
+/// and is reported. [`Mode::Strict`] is the opt-in that refuses each of them
+/// instead, for a validator.
 #[derive(Debug)]
 pub struct Reader {
     config: ReaderConfig,

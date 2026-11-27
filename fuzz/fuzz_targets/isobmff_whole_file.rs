@@ -53,10 +53,14 @@ struct Fragment {
 }
 
 fn drive(data: &[u8]) -> Option<Run> {
+    // A rewrite is exact only for what was read cleanly: the tolerant reader
+    // deliberately drops what a damaged table cannot address, and a plan built
+    // from those tables would describe samples the read never delivered.
     let mut reader = Reader::new(
         ReaderConfig::default()
             .with_total_len(Some(data.len() as u64))
             .with_order(SampleOrder::File)
+            .with_mode(isobmff::Mode::Strict)
             .with_limits(fuzz_limits()),
     );
     let mut tracks = Vec::new();

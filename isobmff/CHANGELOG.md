@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The reader takes a caller policy for what a report of skipped content means
+  (`ReaderConfig::with_damage_policy`, `ItemReaderConfig::with_damage_policy`,
+  `broadcast_core::damage::DamagePolicy`): the default publishes every report
+  and continues, `Disposition::Fail` stops the read with the same `Damage`
+  inside the new `Error::Damage`. `ReaderConfig::with_resync_scan_limit` bounds
+  how far the walk may scan for the next top-level box header after one declares
+  an impossible size (`None`, the default, scans to the end of the input).
+- `CursorState::tolerant` (crate-internal) reads a track's sample tables as far
+  as they go, reporting each table it had to do without and cutting the sample
+  count to the shortest extent every table agrees on.
+
+### Breaking
+
+- Best effort is now the default for **both** readers: `Mode::Permissive` is
+  the default of `Reader`/`ReaderConfig` and `Mode::Strict` is the explicit
+  opt-in a validator asks for. A caller that relied on strict-by-default must
+  call `with_mode(Mode::Strict)` (`media-doctor` does).
+- The readers publish the workspace's one report instead of their own
+  vocabulary: `Reader::step` yields `Step::Damage(Damage)` where it used to
+  yield `Step::Warning(Warning)`, and `DriverStep::Warning`/`Advance::Warning`
+  are now `Damage`; `ItemReader::step` gains `ItemStep::Damage`.
+  `reader::Warning`, `image_brands::ImageFinding` and
+  `image_brands::BrandFinding` stay as the typed detail and convert with
+  `to_damage()`/`From`, which is where the four-character code, byte range and
+  recoverability of each report are decided.
+- `ItemReaderConfig` is no longer `Copy` (it carries a `DamagePolicy`);
+  `Clone`/`PartialEq`/`Eq` remain.
+- `Reader::step` ends with `Error::InvalidInput` when a file carrying media
+  states no track at all, or carries a `moov`/`moof` nowhere. A still image and
+  a file of type declarations alone still finish with `Step::Done`.
+
 - `multiview`: the multiview view-attribute boxes with a defined syntax —
   `ProfileLevelAttribute` (`prfl`/`levl`), `ViewArrayOrder` (`ilvi`/`elvi`),
   `RectangularViewArray` (`rtvi`), `MultiviewSceneInfoBox` (`vwdi`) and

@@ -6064,7 +6064,7 @@ impl MovieBox {
                         if notes.as_deref().is_some_and(|notes| notes.degrades())
                             && !matches!(err, Error::LimitExceeded { .. }) =>
                     {
-                        if let Some(notes) = notes.as_deref_mut() {
+                        if let Some(notes) = &mut notes {
                             notes.missing(child.bytes, *b"mvhd");
                         }
                         order.push(child.four_cc());
@@ -6127,7 +6127,7 @@ impl MovieBox {
         let mvhd = match mvhd {
             Some(mvhd) => mvhd,
             None if notes.as_deref().is_some_and(|notes| notes.degrades()) => {
-                if let Some(notes) = notes.as_deref_mut() {
+                if let Some(notes) = &mut notes {
                     notes.missing(bytes, *b"mvhd");
                 }
                 MovieHeaderBox::default_header()

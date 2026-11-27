@@ -392,6 +392,14 @@ pub enum ImageFinding {
         /// The extent's declared length.
         length: u64,
     },
+    /// A box declared more bytes than the input holds; it was read to the end
+    /// of the input and the cut is reported.
+    TruncatedBox {
+        /// The box four-CC.
+        box_type: [u8; crate::box_types::BOX_TYPE_SIZE],
+        /// The box's absolute byte offset in the file.
+        offset: u64,
+    },
     /// A gain map metadata rational has a zero denominator, which no value can
     /// be divided by.
     GainMapZeroDenominator {
@@ -417,6 +425,7 @@ impl ImageFinding {
             Self::RegionNamesMissingImage { .. } => "region-names-missing-image",
             Self::RegionMaskReferenceCount { .. } => "region-mask-reference-count",
             Self::ItemDataDropped { .. } => "item-data-dropped",
+            Self::TruncatedBox { .. } => "truncated-box",
             Self::GainMapZeroDenominator { .. } => "tmap-zero-denominator",
             Self::UnrepresentableBox { .. } => "unrepresentable-box",
             Self::TrailingBytes { .. } => "trailing-bytes",

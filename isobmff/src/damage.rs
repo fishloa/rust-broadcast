@@ -9,7 +9,7 @@
 //!
 //! - `what` is the fault class, the same stable token the typed enum's
 //!   `name()` reports; for a box kept uninterpreted it is the parser's reason
-//!   class ([`OpaqueReason::name`]);
+//!   class ([`OpaqueReason::name`](crate::error::OpaqueReason::name));
 //! - `fourcc` is the four-character code of the box or atom involved;
 //! - the byte range is the fault's place in the input, with a zero length for
 //!   a point of loss;
@@ -181,6 +181,14 @@ impl ImageFinding {
                 Some(*b"meta"),
                 Some(DamageByteRange::new(offset, 0)),
                 true,
+                None,
+            ),
+            Self::TruncatedBox { box_type, offset } => (
+                DamageKind::InputTruncated,
+                Severity::Degraded,
+                Some(box_type),
+                Some(DamageByteRange::new(offset, 0)),
+                false,
                 None,
             ),
             Self::ItemDataDropped {

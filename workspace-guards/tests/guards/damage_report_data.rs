@@ -40,10 +40,12 @@ pub const READERS: &[Reader] = &[
         status: Status::Converted,
         reports: &["Event"],
     },
-    // Pending: #4191 converts the remaining readers to the one report.
+    // Lane rz2 converted the ISO BMFF readers: `Warning`, `ImageFinding` and
+    // `BrandFinding` convert to a `Damage`, `Reader::step` publishes
+    // `Step::Damage` and `ItemReader::step` publishes `ItemStep::Damage`.
     Reader {
         name: "isobmff",
-        status: Status::Pending(4191),
+        status: Status::Converted,
         reports: &["Warning", "ImageFinding", "BrandFinding"],
     },
     Reader {
