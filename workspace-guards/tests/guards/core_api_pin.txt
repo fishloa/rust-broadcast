@@ -42,6 +42,86 @@ cenc::CencScheme::to_four_cc
 cenc::FOURCC_LEN
 cenc::SCHEME_CBCS
 cenc::SCHEME_CENC
+damage::ByteRange
+damage::ByteRange::end
+damage::ByteRange::is_empty
+damage::ByteRange::len
+damage::ByteRange::new
+damage::ByteRange::start
+damage::Damage
+damage::Damage::at_byte_range
+damage::Damage::at_media_time
+damage::Damage::cause
+damage::Damage::for_track
+damage::Damage::fourcc
+damage::Damage::kind
+damage::Damage::location
+damage::Damage::new
+damage::Damage::recoverable_bytes
+damage::Damage::severity
+damage::Damage::what
+damage::Damage::with_cause
+damage::Damage::with_fourcc
+damage::Damage::with_location
+damage::Damage::with_ordinal
+damage::Damage::with_recoverable_bytes
+damage::DamageCause
+damage::DamageCause::BufferTooShort
+damage::DamageCause::CrcMismatch
+damage::DamageCause::FieldOverflow
+damage::DamageCause::InvalidField
+damage::DamageCause::InvalidSync
+damage::DamageCause::InvalidValue
+damage::DamageCause::LengthMismatch
+damage::DamageCause::ReservedBits
+damage::DamageCause::UnsupportedVersion
+damage::DamageCause::name
+damage::DamageError
+damage::DamageError::damage
+damage::DamageError::into_damage
+damage::DamageError::new
+damage::DamageKind
+damage::DamageKind::InputTruncated
+damage::DamageKind::LimitReached
+damage::DamageKind::MediaUnitDamaged
+damage::DamageKind::MediaUnitDropped
+damage::DamageKind::MetadataSkipped
+damage::DamageKind::MetadataUninterpreted
+damage::DamageKind::Resynchronised
+damage::DamageKind::TimelineRepaired
+damage::DamageKind::TrackDropped
+damage::DamageKind::name
+damage::DamageLocation
+damage::DamageLocation::byte_range
+damage::DamageLocation::media_time
+damage::DamageLocation::new
+damage::DamageLocation::ordinal
+damage::DamageLocation::track
+damage::DamageLocation::with_byte_range
+damage::DamageLocation::with_media_time
+damage::DamageLocation::with_ordinal
+damage::DamageLocation::with_track
+damage::DamagePolicy
+damage::DamagePolicy::admit
+damage::DamagePolicy::decision
+damage::DamagePolicy::fail_on
+damage::DamagePolicy::new
+damage::DamagePolicy::set_kind
+damage::DamagePolicy::set_severity
+damage::Disposition
+damage::Disposition::Fail
+damage::Disposition::Report
+damage::Disposition::name
+damage::MediaTimeRange
+damage::MediaTimeRange::at
+damage::MediaTimeRange::end
+damage::MediaTimeRange::new
+damage::MediaTimeRange::start
+damage::MediaTimeRange::timescale
+damage::Severity
+damage::Severity::Degraded
+damage::Severity::Informational
+damage::Severity::name
 error::BufferTooShort
 error::BufferTooShort::have
 error::BufferTooShort::need
@@ -91,6 +171,7 @@ macro impl_spec_display
 macro timescale
 mod bits
 mod cenc
+mod damage
 mod error
 mod len
 mod reserved

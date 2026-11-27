@@ -177,6 +177,14 @@ impl ProgramTracker {
             DemuxEvent::TrackRemoved { track_id, .. } => self.track_removed(track_id),
             DemuxEvent::TrackUpdated(spec) => self.track_updated(spec),
             DemuxEvent::TrackAbandoned { .. } => {}
+            DemuxEvent::Damage(damage) => {
+                let program = damage
+                    .location()
+                    .track()
+                    .and_then(|track| self.track_program.get(&TrackId::new(track)).copied());
+                self.pending
+                    .push_back(SessionEvent::Damage { program, damage });
+            }
             _ => {}
         }
     }
@@ -1262,6 +1270,83 @@ mod tests {
         let (_, before) = raw_demux_samples(&ts, false);
         assert!(before > 0, "premise: samples precede TracksResolved");
         assert_session_equals_raw_demux(&ts);
+    }
+
+    /// Every skip the TS demuxer tolerates reaches this layer as the one
+    /// damage report, carrying the program it belongs to, in order with the
+    /// samples around it.
+    #[test]
+    fn a_damaged_ts_reports_one_damage_event_with_its_program() {
+        const TS_PACKET: usize = 188;
+        let bytes = test_fixtures::read("ts/h264-aac-40s.ts");
+        let packets: Vec<usize> = (0..bytes.len() / TS_PACKET)
+            .map(|i| i * TS_PACKET)
+            .filter(|&offset| bytes[offset] == 0x47)
+            .collect();
+        let pid_at = |offset: usize| {
+            (u16::from(bytes[offset + 1] & 0x1F) << 8) | u16::from(bytes[offset + 2])
+        };
+        // The busiest PID is the video track; delete two of its consecutive
+        // packets past the middle.
+        let busiest = {
+            let mut counts: std::collections::BTreeMap<u16, usize> =
+                std::collections::BTreeMap::new();
+            for &offset in &packets {
+                let pid = pid_at(offset);
+                if pid != 0x1FFF {
+                    *counts.entry(pid).or_default() += 1;
+                }
+            }
+            let (&pid, _) = counts
+                .iter()
+                .max_by_key(|(_, n)| **n)
+                .expect("a payload PID");
+            pid
+        };
+        let of_pid: Vec<usize> = packets
+            .iter()
+            .copied()
+            .filter(|&offset| pid_at(offset) == busiest)
+            .collect();
+        let victim = of_pid[of_pid.len() / 2];
+        assert_eq!(pid_at(victim + TS_PACKET), busiest, "consecutive packets");
+        let mut damaged = bytes.clone();
+        damaged.drain(victim..victim + 2 * TS_PACKET);
+
+        let mut session = TsIngestSession::new();
+        session.feed(&damaged, Timestamp::ZERO).expect("infallible");
+        session.finish().expect("infallible");
+        let mut events = Vec::new();
+        while let Some(event) = session.poll() {
+            events.push(event);
+        }
+
+        let (index, program, damage) = events
+            .iter()
+            .enumerate()
+            .find_map(|(index, event)| match event {
+                SessionEvent::Damage { program, damage } => Some((index, program, damage)),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no damage event: {events:?}"));
+        assert!(
+            program.is_some(),
+            "the damaged track's program is named once it is announced"
+        );
+        assert!(damage.location().track().is_some());
+        assert!(damage.location().byte_range().is_some());
+        assert!(
+            events[..index]
+                .iter()
+                .any(|e| matches!(e, SessionEvent::Sample { .. })),
+            "samples precede the damage"
+        );
+        assert!(
+            events[index + 1..]
+                .iter()
+                .any(|e| matches!(e, SessionEvent::Sample { .. })),
+            "samples follow the damage"
+        );
     }
 
     /// The same on the private France TNT multiplex capture (several tracks

@@ -36,9 +36,12 @@ fn describe(
     actions: &mut Vec<crate::tshttp::Action>,
     deadline: Option<Timestamp>,
 ) -> String {
+    // The policy alone owns no demuxer, so the demuxer's own output (`Demux`
+    // and the damage reports derived from it) is the client's to produce and
+    // cannot appear in the policy-only trace; comparison starts past it.
     let ev: Vec<String> = events
         .drain(..)
-        .filter(|e| !matches!(e, Event::Demux(_)))
+        .filter(|e| !matches!(e, Event::Demux(_) | Event::Damage(_)))
         .map(|e| format!("{e:?}"))
         .collect();
     let ac: Vec<String> = actions.drain(..).map(|a| format!("{a:?}")).collect();

@@ -6,8 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Added
 
+### Added
+- `DemuxEvent::Damage(broadcast_core::damage::Damage)`: every skip the
+  streaming demuxers tolerate reaches the caller as the workspace's one
+  damage report (see `broadcast_core::damage` and
+  `docs/API-CONVENTIONS.md`). `InputDegradation::to_damage` converts the
+  existing degradation vocabulary into it. The TS demuxer now also reports
+  the PES units it used to drop without a word (a unit whose header does not
+  parse, a unit lost to a continuity gap, a bounded unit cut short at end of
+  input) and the access units dropped by the caller's PES unit limit, with
+  their byte range, track and media time.
 - `flv::OnMetadata` and `flv::parse_on_metadata`: the typed view of an FLV
   script tag's `onMetaData` properties (duration, width, height, frame rate,
   codec ids, audio sample rate and size, stereo, file size, encoder) with
