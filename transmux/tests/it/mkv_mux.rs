@@ -274,3 +274,176 @@ fn mkv_double_round_trip_is_stable() {
     .expect("second re-demux");
     assert_media_round_trips(&remuxed_once, &remuxed_twice);
 }
+
+// ── Issue #4154: a timeline break cuts a Cluster, a backwards one refuses ───
+
+/// Non-decreasing packet `pts_time` values ffprobe reads for one stream, or
+/// `None` when ffprobe is not installed (the test then skips loudly).
+fn ffprobe_pts(path: &std::path::Path, stream: &str) -> Option<Vec<f64>> {
+    if !test_fixtures::process::tool_available("ffprobe", "-version") {
+        eprintln!("skipping: ffprobe is not on PATH");
+        return None;
+    }
+    let mut command = std::process::Command::new("ffprobe");
+    command.args([
+        "-v",
+        "error",
+        "-select_streams",
+        stream,
+        "-show_entries",
+        "packet=pts_time",
+        "-of",
+        "csv=p=0",
+    ]);
+    command.arg(path);
+    let output =
+        test_fixtures::process::output_bounded(&mut command, std::time::Duration::from_secs(30))
+            .expect("run ffprobe");
+    assert!(
+        output.status.success(),
+        "ffprobe failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| line.trim().trim_end_matches(',').parse().ok())
+            .collect(),
+    )
+}
+
+fn scratch_path(name: &str) -> std::path::PathBuf {
+    let dir = std::env::var_os("CARGO_TARGET_TMPDIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| {
+            std::env::current_dir()
+                .expect("a working directory")
+                .join("test-artifacts")
+        });
+    std::fs::create_dir_all(&dir).expect("create the scratch directory");
+    dir.join(name)
+}
+
+fn assert_non_decreasing(name: &str, values: &[f64]) {
+    for pair in values.windows(2) {
+        assert!(
+            pair[1] >= pair[0],
+            "{name}: packet times must not step backwards: {} then {}",
+            pair[0],
+            pair[1]
+        );
+    }
+}
+
+#[test]
+fn a_forward_break_cuts_a_cluster_at_the_seam_and_stays_readable() {
+    let two = crate::discontinuity::forward();
+    let seam = crate::discontinuity::seam_matroska_ticks(&two);
+    let outputs = crate::discontinuity::drive(
+        &mut MkvMuxStage::new(std::time::Duration::from_millis(5_000)),
+        &two,
+        None,
+    )
+    .expect("a forward break is expressible");
+    let bytes = crate::mux_bytes::apply(outputs);
+
+    let clusters = crate::discontinuity::cluster_timestamps(&bytes);
+    assert!(
+        clusters.len() >= 2,
+        "the file must carry more than one Cluster, got {clusters:?}"
+    );
+    assert!(
+        clusters.contains(&seam),
+        "a Cluster must start at the break (tick {seam}), got {clusters:?}"
+    );
+
+    let remuxed = test_harness::collect::media_from_matroska(
+        &bytes,
+        test_harness::collect::CollectMode::Seekable,
+    )
+    .expect("the muxed file re-demuxes");
+    for track in &two.media.tracks {
+        let got = remuxed
+            .tracks
+            .iter()
+            .find(|candidate| candidate.spec.track_id == track.spec.track_id)
+            .expect("every track survives the break");
+        assert_eq!(
+            track.samples.len(),
+            got.samples.len(),
+            "every sample of track {:?} survives the break",
+            track.spec.track_id
+        );
+    }
+
+    let path = scratch_path(&format!("dc1-mkv-{}.mkv", std::process::id()));
+    std::fs::write(&path, &bytes).expect("write the muxed file");
+    let audio_index = two
+        .media
+        .tracks
+        .iter()
+        .position(|track| matches!(track.spec.config, CodecConfig::Aac { .. }))
+        .expect("the fixture carries AAC audio");
+    if let Some(audio) = ffprobe_pts(&path, "a:0") {
+        assert_non_decreasing("audio", &audio);
+        assert_eq!(
+            audio.len(),
+            two.media.tracks[audio_index].samples.len(),
+            "ffprobe reads every audio packet"
+        );
+        let split = two.split[audio_index];
+        let gap = audio[split] - audio[split - 1];
+        assert!(
+            gap > 1.0,
+            "the break must appear as a real jump in the audio timeline, gap {gap}"
+        );
+    }
+    let video_index = two
+        .media
+        .tracks
+        .iter()
+        .position(|track| matches!(track.spec.config, CodecConfig::Avc { .. }))
+        .expect("the fixture carries AVC video");
+    if let Some(video) = ffprobe_pts(&path, "v:0") {
+        assert_eq!(
+            video.len(),
+            two.media.tracks[video_index].samples.len(),
+            "ffprobe reads every video packet"
+        );
+        // A reordered (B-frame) stream's packets are in decode order, so the
+        // continuity the file must keep is that the whole second source sits
+        // after the whole first one, with the break's gap intact.
+        let split = two.split[video_index];
+        let first_end = video[..split]
+            .iter()
+            .copied()
+            .fold(f64::NEG_INFINITY, f64::max);
+        let second_start = video[split..].iter().copied().fold(f64::INFINITY, f64::min);
+        assert!(
+            second_start - first_end > 1.0,
+            "the second source must sit after the first with the break's gap: \
+             first ends {first_end}, second starts {second_start}"
+        );
+    }
+    let _ = std::fs::remove_file(&path);
+}
+
+#[test]
+fn a_backward_break_is_refused_with_a_typed_error() {
+    let two = crate::discontinuity::backwards();
+    let error = crate::discontinuity::drive(
+        &mut MkvMuxStage::new(std::time::Duration::from_millis(5_000)),
+        &two,
+        None,
+    )
+    .expect_err("a file's timeline cannot go backwards");
+    match error {
+        transmux::error::Error::UnsupportedFeature(reason) => {
+            assert!(
+                reason.starts_with("matroska:"),
+                "the refusal names the stage and the reason: {reason}"
+            );
+        }
+        other => panic!("expected a typed unsupported-feature refusal, got {other:?}"),
+    }
+}

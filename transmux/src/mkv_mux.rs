@@ -43,7 +43,18 @@
 //! `TimestampScale` is fixed at `TIMESTAMP_SCALE_NS` (1 ms per tick, the
 //! Matroska default): every track's samples are rescaled from their own
 //! [`TrackSpec`] timescale into that common tick.
-
+//!
+//! # Timeline discontinuity
+//!
+//! Matroska has no discontinuity element: a break is a new `Cluster`
+//! (RFC 9559 §11), whose `Timestamp` is absolute while its Blocks are relative
+//! to it (§12). [`MuxInput::Discontinuity`] therefore closes the open
+//! `Cluster` with [`Writer::cut_cluster`], so the next Block opens a new one at
+//! the post-break time. A break that would move a Block timestamp **backwards**
+//! is refused with [`Error::UnsupportedFeature`]: this stage writes a file,
+//! and its `Cues` and the patched `Info.Duration` describe one non-decreasing
+//! timeline.
+//!
 use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -306,6 +317,14 @@ pub struct MkvMuxStage {
     writer: Option<Writer>,
     out: VecDeque<MuxOutput>,
     started: bool,
+    /// A discontinuity awaits the sample that follows it: `Some(None)` for all
+    /// tracks, `Some(Some(track))` for one. The stage writes a file (Cues and
+    /// `Info.Duration` need a monotonic timeline), so a break that moves the
+    /// named track's Block timestamp backwards is refused rather than written.
+    pending_discontinuity: Option<Option<TrackId>>,
+    /// The last pushed Block's tick timestamp per announced track, parallel to
+    /// [`Self::tracks`].
+    last_ticks: Vec<Option<i64>>,
 }
 
 impl MkvMuxStage {
@@ -317,6 +336,8 @@ impl MkvMuxStage {
             writer: None,
             out: VecDeque::new(),
             started: false,
+            pending_discontinuity: None,
+            last_ticks: Vec::new(),
         }
     }
 
@@ -371,7 +392,19 @@ impl MkvMuxStage {
             .unwrap_or(u64::MAX)
             .saturating_add(1);
         self.tracks.push(map_track(&spec, number)?);
+        self.last_ticks.push(None);
         Ok(())
+    }
+
+    /// A sample's Block timestamp in Matroska ticks: its presentation time,
+    /// else its decode time, in the track's own timescale.
+    fn block_ticks(&self, index: usize, sample: &Sample) -> i64 {
+        let pts = sample
+            .timing
+            .and_then(|timing| timing.pts())
+            .or_else(|| sample.timing.and_then(|timing| timing.dts()))
+            .unwrap_or(0);
+        to_matroska_ticks(pts, self.tracks[index].timescale)
     }
 
     fn push(&mut self, track: TrackId, sample: Sample) -> Result<Vec<Write>> {
@@ -382,23 +415,23 @@ impl MkvMuxStage {
         else {
             return Err(Error::InvalidInput("mkv: sample for an unannounced track"));
         };
-        let Some(writer) = self.writer.as_mut() else {
-            return Err(Error::InvalidInput("mkv: the writer has not been started"));
-        };
         let track_timescale = self.tracks[index].timescale;
         let number = self.tracks[index].number;
+        let pts_ticks = self.block_ticks(index, &sample);
         let pts = sample
             .timing
             .and_then(|timing| timing.pts())
             .or_else(|| sample.timing.and_then(|timing| timing.dts()))
             .unwrap_or(0);
-        let pts_ticks = to_matroska_ticks(pts, track_timescale);
         let duration = sample
             .timing
             .and_then(|timing| timing.duration())
             .unwrap_or(0);
         let end_ticks = to_matroska_ticks(pts.saturating_add(i64::from(duration)), track_timescale);
         let ticks = u64::try_from(end_ticks.saturating_sub(pts_ticks)).unwrap_or(0);
+        let Some(writer) = self.writer.as_mut() else {
+            return Err(Error::InvalidInput("mkv: the writer has not been started"));
+        };
         Ok(writer.push_block(
             number,
             pts_ticks,
@@ -434,11 +467,37 @@ impl Stage for MkvMuxStage {
             MuxInput::Track(spec) => self.announce(*spec),
             MuxInput::Sample { track, sample } => {
                 self.start()?;
+                let index = self
+                    .tracks
+                    .iter()
+                    .position(|announced| announced.track_id == track)
+                    .ok_or(Error::InvalidInput("mkv: sample for an unannounced track"))?;
+                let ticks = self.block_ticks(index, &sample);
+                if let Some(pending) = self.pending_discontinuity
+                    && pending.is_none_or(|broken| broken == track)
+                {
+                    if self.last_ticks[index].is_some_and(|previous| ticks < previous) {
+                        return Err(Error::UnsupportedFeature(
+                            "matroska: a timeline discontinuity that moves a Block timestamp \
+                             backwards cannot be written to a file; Cues and Info.Duration \
+                             require a non-decreasing timeline",
+                        ));
+                    }
+                    self.pending_discontinuity = None;
+                }
                 let writes = self.push(track, sample)?;
+                self.last_ticks[index] = Some(ticks);
                 self.queue(writes);
                 Ok(())
             }
-            MuxInput::Discontinuity { .. } => Ok(()),
+            MuxInput::Discontinuity { track } => {
+                if let Some(writer) = self.writer.as_mut() {
+                    let writes = writer.cut_cluster()?;
+                    self.queue(writes);
+                }
+                self.pending_discontinuity = Some(track);
+                Ok(())
+            }
             MuxInput::TrackRemoved { .. } => Err(Error::UnsupportedFeature(
                 "matroska: a track removed mid-stream is not in the segment's Tracks",
             )),
