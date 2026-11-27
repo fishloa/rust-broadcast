@@ -121,6 +121,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `-f ts` output therefore remuxes a capture whose timeline breaks, where it
   used to fail, and `-f dash` keeps refusing one (a single-period MPD cannot
   signal a break).
+- `DisplayGeometry::from_mpeg2_es` and the MPEG-2 geometry probes reject a
+  `sequence_header()` with a zero size value (`broadcast-bitstream` now enforces
+  H.262 §6.3.3), so an invalid stream recovers no geometry instead of a 0-pixel
+  one; the TS/PS path then leaves the codec undecided as it does for a stream
+  with no sequence header, and an MP4 sample refines nothing.
 
 ### Breaking
 - `TsDemux`, `FlvDemux`, `RtmpDemux` and `RtpDepacketiser` (and their

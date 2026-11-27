@@ -5,9 +5,15 @@
 //! `esds` DecoderSpecificInfo a container carries) with the coded picture
 //! geometry, which is the config-recovery fact a demuxer needs. The rest of
 //! the sequence syntax — extensions included — is [`crate::h262`].
+//!
+//! §6.3.3 forbids a zero `horizontal_size_value` or `vertical_size_value` (a
+//! zero would emulate a start-code prefix), so a sequence header carrying
+//! either is rejected with [`Error::InvalidValue`] instead of yielding a
+//! geometry no decoder can use.
 
 use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use crate::error::{Error, Result};
+use broadcast_core::error::InvalidValue;
 use broadcast_core::len::need_in;
 
 /// The 32-bit `sequence_header_code` start code (`0x000001B3`) that prefixes a
@@ -58,7 +64,8 @@ impl Mpeg2SeqHeader {
     ///
     /// Scans `es` for the `0x000001B3` start code, then reads the two 12-bit
     /// size fields. Returns [`Error::InvalidInput`] if no sequence header is
-    /// present, or [`Error::BufferTooShort`] if it is truncated.
+    /// present, [`Error::BufferTooShort`] if it is truncated, or
+    /// [`Error::InvalidValue`] if either size value is zero (H.262 §6.3.3).
     pub fn find(es: &[u8]) -> Result<Self> {
         let start = find_start_code(es, SEQUENCE_HEADER_CODE[SEQUENCE_HEADER_CODE.len() - 1])
             .ok_or(Error::InvalidInput(
@@ -77,8 +84,25 @@ impl Mpeg2SeqHeader {
         let width = ((b[0] as u16) << NIBBLE_BITS) | ((b[1] as u16) >> NIBBLE_BITS);
         let height =
             (((b[1] & NIBBLE_MASK) as u16) << u8::BITS) | b[SEQ_SIZE_LOW_BYTE_INDEX] as u16;
+        check_size_value("horizontal_size_value", u64::from(width))?;
+        check_size_value("vertical_size_value", u64::from(height))?;
         Ok(Self { width, height })
     }
+}
+
+/// H.262 §6.3.3: neither `horizontal_size_value` nor `vertical_size_value` may
+/// be zero, because a zero would emulate a `00 00 01` start-code prefix. The
+/// sequence walk in [`crate::h262`] applies the same rule to the values it
+/// reads.
+pub(crate) fn check_size_value(field: &'static str, value: u64) -> Result<()> {
+    if value != 0 {
+        return Ok(());
+    }
+    Err(Error::InvalidValue(InvalidValue {
+        field,
+        value,
+        reason: "H.262 §6.3.3 forbids a zero size value (start-code emulation)",
+    }))
 }
 
 /// Find the byte offset of a `0x000001 <code>` start code in `data`, or `None`.

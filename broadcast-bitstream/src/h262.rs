@@ -31,7 +31,7 @@ use crate::annexb::{START_CODE_PREFIX_LEN, find_start_code_prefix};
 use crate::bitreader::BitReader;
 use crate::error::Result;
 use crate::facts::ActiveFormatDescription;
-use crate::mpeg2::SEQUENCE_HEADER_CODE;
+use crate::mpeg2::{SEQUENCE_HEADER_CODE, check_size_value};
 use crate::user_data::{AFD_ACTIVE_FORMAT_FLAG_BIT, AFD_CODE_MASK};
 
 /// `sequence_header_code` `0x000001B3` (H.262 §6.2.2.1, Table 6-1).
@@ -288,6 +288,8 @@ fn parse_sequence_header_body(body: &[u8]) -> Result<(u32, u32, u8, u8)> {
     let mut r = BitReader::from_rbsp(body, "MPEG-2 sequence_header")?;
     let width = r.read_bits(SIZE_VALUE_BITS, "horizontal_size_value")?;
     let height = r.read_bits(SIZE_VALUE_BITS, "vertical_size_value")?;
+    check_size_value("horizontal_size_value", width)?;
+    check_size_value("vertical_size_value", height)?;
     let aspect = r.read_bits(ASPECT_BITS, "aspect_ratio_information")?;
     let frame_rate = r.read_bits(FRAME_RATE_CODE_BITS, "frame_rate_code")?;
     Ok((
@@ -352,7 +354,8 @@ fn parse_sequence_display_extension_body(body: &[u8]) -> Result<SequenceDisplayE
 /// Parse the `sequence_header()` at `start` and the extensions that follow it
 /// (`sequence_extension()`, then `sequence_display_extension()`, in that
 /// order per H.262 §6.2.2.2). Absent extensions leave the base size and no
-/// display description.
+/// display description. A zero base size value is rejected with
+/// [`crate::error::Error::InvalidValue`] (H.262 §6.3.3).
 pub fn parse_sequence_at(es: &[u8], start: usize) -> Result<SequenceHeaderGeometry> {
     let body_end = section_body(es, start).len();
     let header_end = start + SEQUENCE_HEADER_CODE.len() + body_end;

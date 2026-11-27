@@ -65,6 +65,16 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
   needs the allocation. `annexb::find_start_code_prefix` stays the one public
   scan primitive, so external callers lose no capability.
 
+### Fixed
+
+- An MPEG-2 video `sequence_header()` carrying a zero `horizontal_size_value`
+  or `vertical_size_value` is rejected with `Error::InvalidValue` instead of
+  yielding a zero geometry no decoder can use. H.262 §6.3.3 forbids either
+  value being zero (a zero would emulate a start-code prefix).
+  `Mpeg2SeqHeader::find` and `h262::parse_sequence_at` share the check, and
+  `broadcast-bitstream/tests/mpeg2_sequence_size_zero.rs` pins it with the
+  bytes that failed the fuzz smoke run.
+
 ### Changed
 
 - The Annex B start-code scan (`annexb::find_start_code_prefix`) finds each `01`
