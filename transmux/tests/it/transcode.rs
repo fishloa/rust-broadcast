@@ -854,6 +854,8 @@ fn assert_is_monotonic(samples: &[Sample]) {
 fn ts_out_describes_the_encoder_and_loses_nothing() {
     let (specs, samples) = fixture();
     let audio = audio_spec(&specs);
+    let video = video_spec(&specs);
+    let plain = media_from_ts(&mux_ts(stage_inputs(&specs, &samples))).expect("plain re-demux");
     let (mut stage, counts) = stage_for(&audio);
     let outputs = drive(&mut stage, stage_inputs(&specs, &samples)).expect("transcode");
     let back = media_from_ts(&mux_ts(outputs)).expect("re-demux the TS output");
@@ -889,15 +891,60 @@ fn ts_out_describes_the_encoder_and_loses_nothing() {
         "every coded packet the encoder emitted is in the TS output"
     );
     assert_is_monotonic(&track.samples);
+
+    let plain_video = track_of(&plain, video.track_id);
+    let transformed_video = track_of(&back, video.track_id);
+    assert_eq!(
+        plain_video.samples.len(),
+        transformed_video.samples.len(),
+        "the untouched track keeps its sample count"
+    );
+    for (a, b) in plain_video
+        .samples
+        .iter()
+        .zip(transformed_video.samples.iter())
+    {
+        assert_eq!(a.data, b.data, "the untouched track is byte-identical");
+        assert_eq!(
+            a.timing, b.timing,
+            "the untouched track's timing is unchanged"
+        );
+    }
 }
 
 #[test]
 fn ll_hls_out_takes_the_encoder_track_and_loses_nothing() {
     let (specs, samples) = fixture();
     let audio = audio_spec(&specs);
+    let video = video_spec(&specs);
     let (mut stage, counts) = stage_for(&audio);
     let outputs = drive(&mut stage, stage_inputs(&specs, &samples)).expect("transcode");
     let (tracks, rest) = tracks_then_rest(outputs);
+
+    let untouched: Vec<Sample> = rest
+        .iter()
+        .filter_map(|input| match input {
+            MuxInput::Sample { track, sample } if *track == video.track_id => Some(sample.clone()),
+            _ => None,
+        })
+        .collect();
+    let source: Vec<Sample> = samples
+        .iter()
+        .filter(|(track, _)| *track == video.track_id)
+        .map(|(_, sample)| sample.clone())
+        .collect();
+    assert_eq!(
+        untouched.len(),
+        source.len(),
+        "the untouched track is whole"
+    );
+    for (a, b) in untouched.iter().zip(source.iter()) {
+        assert_eq!(a.data, b.data, "the untouched track is byte-identical");
+        assert_eq!(
+            a.timing, b.timing,
+            "the untouched track's timing is unchanged"
+        );
+    }
 
     let announced: Vec<TrackSpec> = tracks
         .iter()

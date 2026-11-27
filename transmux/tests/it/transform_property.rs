@@ -279,6 +279,70 @@ fn repackage_takes_a_spec_rewriting_stage() {
     }
 }
 
+/// A transform that never settles the track set is bounded by the caller's
+/// cap rather than left to grow: `MuxChain` holds whole samples, so it says so.
+#[test]
+fn a_chain_that_never_settles_is_bounded_by_its_callers_cap() {
+    use transmux::mux_stage::MuxChain;
+
+    let (specs, samples) = {
+        let data = test_fixtures::read("ts/h264-aac.ts");
+        let media = test_harness::collect::media_from_ts(&data).expect("demux");
+        let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
+        let mut samples = Vec::new();
+        for track in &media.tracks {
+            for sample in &track.samples {
+                samples.push((track.spec.track_id, sample.clone()));
+            }
+        }
+        (specs, samples)
+    };
+    let target = specs[1].track_id;
+    // Holds everything and never announces: the chain has no way to settle.
+    struct Queue(TrackId, VecDeque<MuxInput>);
+    impl Stage for Queue {
+        type In<'a> = MuxInput;
+        type Out = MuxInput;
+        type Error = transmux::Error;
+
+        fn feed(&mut self, input: MuxInput, _now: Timestamp) -> transmux::Result<()> {
+            match input {
+                MuxInput::Track(spec) if spec.track_id == self.0 => {}
+                other => self.1.push_back(other),
+            }
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<MuxInput> {
+            self.1.pop_front()
+        }
+
+        fn finish(&mut self) -> transmux::Result<()> {
+            Ok(())
+        }
+    }
+    let expected: Vec<TrackId> = specs.iter().map(|spec| spec.track_id).collect();
+    let mut chain = MuxChain::new(Queue(target, VecDeque::new()), expected).hold_limit(16);
+    let mut err = None;
+    for (track, sample) in &samples {
+        if *track == target {
+            continue;
+        }
+        if let Err(e) = chain.feed(MuxInput::Sample {
+            track: *track,
+            sample: sample.clone(),
+        }) {
+            err = Some(e);
+            break;
+        }
+    }
+    let err = err.expect("the chain refuses to hold more than its caller allows");
+    assert!(
+        matches!(err, transmux::Error::TransformHoldExceeded { limit: 16 }),
+        "the cap is the caller's, got {err:?}"
+    );
+}
+
 /// The untouched track's coded samples are byte-identical with and without the
 /// stage: a transform of one track leaves the others alone.
 #[test]
