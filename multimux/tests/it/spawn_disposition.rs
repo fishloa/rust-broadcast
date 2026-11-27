@@ -243,13 +243,13 @@ const DISPOSITION: &[(&str, &str, u32, &str)] = &[
     ),
     (
         "source/dash_pull/tests.rs",
-        "start",
+        "start_on",
         1,
         "test pull task; cancelled and aborted by the harness",
     ),
     (
         "source/dash_pull/tests.rs",
-        "start",
+        "start_on",
         2,
         "test collector task; stopped by the harness",
     ),
