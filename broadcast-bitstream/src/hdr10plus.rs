@@ -28,10 +28,14 @@
 //! symmetric: every parsed value, including the alignment padding bits, is
 //! re-emitted unchanged.
 
+use crate::annexb::iter_annexb_nals;
+use crate::bitreader::{bit_error, write_bits_checked};
 use crate::error::{Error, Result};
+use crate::nal::{
+    HEVC_NAL_HEADER_LEN, HEVC_PREFIX_SEI_NUT, NalCodec, hevc_prefix_sei_nal, nal_unit_type,
+    sei_messages,
+};
 use alloc::vec::Vec;
-use broadcast_bitstream::bitreader::{bit_error, write_bits_checked};
-use broadcast_bitstream::nal::HEVC_NAL_HEADER_LEN;
 use broadcast_core::bits::{BitReader, BitWriter};
 use broadcast_core::error::InvalidValue;
 use broadcast_core::len::{need_in, need_out};
@@ -106,9 +110,7 @@ const BEZIER_ANCHOR_BITS: u32 = 10;
 const COLOR_SATURATION_WEIGHT_BITS: u32 = 6;
 
 fn read(r: &mut BitReader<'_>, bits: u32, what: &'static str) -> Result<u64> {
-    r.read_bits(bits)
-        .map_err(|e| bit_error(what, e))
-        .map_err(Into::into)
+    r.read_bits(bits).map_err(|e| bit_error(what, e))
 }
 
 /// `overlap_process_option` (ST 2094-40 clause 6.7): how the rendered pixels
@@ -152,113 +154,596 @@ broadcast_core::impl_spec_display!(OverlapProcessOption);
 /// The extra pixel selector of a window with `WindowNumber` > 0: the bounding
 /// rectangle plus the concentric elliptical selector (ST 2094-40 clause 6;
 /// window rectangle from ST 2094-1).
+///
+/// `#[non_exhaustive]`: build it with [`WindowRegion::builder`].
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct WindowRegion {
+    upper_left_corner_x: u16,
+    upper_left_corner_y: u16,
+    lower_right_corner_x: u16,
+    lower_right_corner_y: u16,
+    center_of_ellipse_x: u16,
+    center_of_ellipse_y: u16,
+    rotation_angle: u8,
+    semimajor_axis_internal_ellipse: u16,
+    semimajor_axis_external_ellipse: u16,
+    semiminor_axis_external_ellipse: u16,
+    overlap_process_option: OverlapProcessOption,
+}
+
+impl WindowRegion {
+    /// A builder with every field zero and `overlap_process_option` the
+    /// weighted average (clause 6.7.2).
+    #[must_use]
+    pub fn builder() -> WindowRegionBuilder {
+        WindowRegionBuilder::default()
+    }
+
     /// `window_upper_left_corner_x`.
-    pub upper_left_corner_x: u16,
+    #[must_use]
+    pub fn upper_left_corner_x(&self) -> u16 {
+        self.upper_left_corner_x
+    }
+
     /// `window_upper_left_corner_y`.
-    pub upper_left_corner_y: u16,
+    #[must_use]
+    pub fn upper_left_corner_y(&self) -> u16 {
+        self.upper_left_corner_y
+    }
+
     /// `window_lower_right_corner_x`.
-    pub lower_right_corner_x: u16,
+    #[must_use]
+    pub fn lower_right_corner_x(&self) -> u16 {
+        self.lower_right_corner_x
+    }
+
     /// `window_lower_right_corner_y`.
-    pub lower_right_corner_y: u16,
+    #[must_use]
+    pub fn lower_right_corner_y(&self) -> u16 {
+        self.lower_right_corner_y
+    }
+
     /// `center_of_ellipse_x` (clause 6.2).
-    pub center_of_ellipse_x: u16,
+    #[must_use]
+    pub fn center_of_ellipse_x(&self) -> u16 {
+        self.center_of_ellipse_x
+    }
+
     /// `center_of_ellipse_y` (clause 6.2).
-    pub center_of_ellipse_y: u16,
+    #[must_use]
+    pub fn center_of_ellipse_y(&self) -> u16 {
+        self.center_of_ellipse_y
+    }
+
     /// `rotation_angle`, degrees clockwise, 0..=180 (clause 6.3).
-    pub rotation_angle: u8,
+    #[must_use]
+    pub fn rotation_angle(&self) -> u8 {
+        self.rotation_angle
+    }
+
     /// `semimajor_axis_internal_ellipse`, pixels (clause 6.4).
-    pub semimajor_axis_internal_ellipse: u16,
+    #[must_use]
+    pub fn semimajor_axis_internal_ellipse(&self) -> u16 {
+        self.semimajor_axis_internal_ellipse
+    }
+
     /// `semimajor_axis_external_ellipse`, pixels (clause 6.5).
-    pub semimajor_axis_external_ellipse: u16,
+    #[must_use]
+    pub fn semimajor_axis_external_ellipse(&self) -> u16 {
+        self.semimajor_axis_external_ellipse
+    }
+
     /// `semiminor_axis_external_ellipse`, pixels (clause 6.6).
-    pub semiminor_axis_external_ellipse: u16,
+    #[must_use]
+    pub fn semiminor_axis_external_ellipse(&self) -> u16 {
+        self.semiminor_axis_external_ellipse
+    }
+
     /// `overlap_process_option` (clause 6.7).
-    pub overlap_process_option: OverlapProcessOption,
+    #[must_use]
+    pub fn overlap_process_option(&self) -> OverlapProcessOption {
+        self.overlap_process_option
+    }
+
+    /// Replace `overlap_process_option` (clause 6.7).
+    #[must_use]
+    pub fn with_overlap_process_option(mut self, option: OverlapProcessOption) -> Self {
+        self.overlap_process_option = option;
+        self
+    }
+}
+
+/// Builder for [`WindowRegion`] (ST 2094-40 clause 6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WindowRegionBuilder {
+    upper_left_corner_x: u16,
+    upper_left_corner_y: u16,
+    lower_right_corner_x: u16,
+    lower_right_corner_y: u16,
+    center_of_ellipse_x: u16,
+    center_of_ellipse_y: u16,
+    rotation_angle: u8,
+    semimajor_axis_internal_ellipse: u16,
+    semimajor_axis_external_ellipse: u16,
+    semiminor_axis_external_ellipse: u16,
+    overlap_process_option: OverlapProcessOption,
+}
+
+impl WindowRegionBuilder {
+    /// `window_upper_left_corner_x`.
+    #[must_use]
+    pub fn upper_left_corner_x(mut self, value: u16) -> Self {
+        self.upper_left_corner_x = value;
+        self
+    }
+
+    /// `window_upper_left_corner_y`.
+    #[must_use]
+    pub fn upper_left_corner_y(mut self, value: u16) -> Self {
+        self.upper_left_corner_y = value;
+        self
+    }
+
+    /// `window_lower_right_corner_x`.
+    #[must_use]
+    pub fn lower_right_corner_x(mut self, value: u16) -> Self {
+        self.lower_right_corner_x = value;
+        self
+    }
+
+    /// `window_lower_right_corner_y`.
+    #[must_use]
+    pub fn lower_right_corner_y(mut self, value: u16) -> Self {
+        self.lower_right_corner_y = value;
+        self
+    }
+
+    /// `center_of_ellipse_x`.
+    #[must_use]
+    pub fn center_of_ellipse_x(mut self, value: u16) -> Self {
+        self.center_of_ellipse_x = value;
+        self
+    }
+
+    /// `center_of_ellipse_y`.
+    #[must_use]
+    pub fn center_of_ellipse_y(mut self, value: u16) -> Self {
+        self.center_of_ellipse_y = value;
+        self
+    }
+
+    /// `rotation_angle`.
+    #[must_use]
+    pub fn rotation_angle(mut self, value: u8) -> Self {
+        self.rotation_angle = value;
+        self
+    }
+
+    /// `semimajor_axis_internal_ellipse`.
+    #[must_use]
+    pub fn semimajor_axis_internal_ellipse(mut self, value: u16) -> Self {
+        self.semimajor_axis_internal_ellipse = value;
+        self
+    }
+
+    /// `semimajor_axis_external_ellipse`.
+    #[must_use]
+    pub fn semimajor_axis_external_ellipse(mut self, value: u16) -> Self {
+        self.semimajor_axis_external_ellipse = value;
+        self
+    }
+
+    /// `semiminor_axis_external_ellipse`.
+    #[must_use]
+    pub fn semiminor_axis_external_ellipse(mut self, value: u16) -> Self {
+        self.semiminor_axis_external_ellipse = value;
+        self
+    }
+
+    /// `overlap_process_option`.
+    #[must_use]
+    pub fn overlap_process_option(mut self, value: OverlapProcessOption) -> Self {
+        self.overlap_process_option = value;
+        self
+    }
+
+    /// The window selector these setters describe.
+    #[must_use]
+    pub fn build(self) -> WindowRegion {
+        WindowRegion {
+            upper_left_corner_x: self.upper_left_corner_x,
+            upper_left_corner_y: self.upper_left_corner_y,
+            lower_right_corner_x: self.lower_right_corner_x,
+            lower_right_corner_y: self.lower_right_corner_y,
+            center_of_ellipse_x: self.center_of_ellipse_x,
+            center_of_ellipse_y: self.center_of_ellipse_y,
+            rotation_angle: self.rotation_angle,
+            semimajor_axis_internal_ellipse: self.semimajor_axis_internal_ellipse,
+            semimajor_axis_external_ellipse: self.semimajor_axis_external_ellipse,
+            semiminor_axis_external_ellipse: self.semiminor_axis_external_ellipse,
+            overlap_process_option: self.overlap_process_option,
+        }
+    }
+}
+
+impl Default for WindowRegionBuilder {
+    fn default() -> Self {
+        Self {
+            upper_left_corner_x: 0,
+            upper_left_corner_y: 0,
+            lower_right_corner_x: 0,
+            lower_right_corner_y: 0,
+            center_of_ellipse_x: 0,
+            center_of_ellipse_y: 0,
+            rotation_angle: 0,
+            semimajor_axis_internal_ellipse: 0,
+            semimajor_axis_external_ellipse: 0,
+            semiminor_axis_external_ellipse: 0,
+            overlap_process_option: OverlapProcessOption::WeightedAverage,
+        }
+    }
 }
 
 /// A two-input sampled actual-peak-luminance table (ST 2094-40 clauses 7.2 and
 /// 8.2): `rows` x `columns` outputs, each a multiple of 1/15.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PeakLuminanceTable {
+    rows: u8,
+    columns: u8,
+    values: Vec<u8>,
+}
+
+impl PeakLuminanceTable {
+    /// A `rows` x `columns` table holding `values` in row-major order, each in
+    /// units of 1/15.
+    #[must_use]
+    pub fn new(rows: u8, columns: u8, values: Vec<u8>) -> Self {
+        Self {
+            rows,
+            columns,
+            values,
+        }
+    }
+
     /// `num_rows_*_actual_peak_luminance`, at most 25.
-    pub rows: u8,
+    #[must_use]
+    pub fn rows(&self) -> u8 {
+        self.rows
+    }
+
     /// `num_cols_*_actual_peak_luminance`, at most 25.
-    pub columns: u8,
+    #[must_use]
+    pub fn columns(&self) -> u8 {
+        self.columns
+    }
+
     /// `actual_peak_luminance[i][j]` in row-major order, in units of 1/15
     /// (0..=15); `rows * columns` entries.
-    pub values: Vec<u8>,
+    #[must_use]
+    pub fn values(&self) -> &[u8] {
+        &self.values
+    }
 }
 
 /// One `DistributionMaxRGB` point (ST 2094-40 clause 8.5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DistributionPoint {
+    percentage: u8,
+    percentile: u32,
+}
+
+impl DistributionPoint {
+    /// One `DistributionMaxRGB` point.
+    #[must_use]
+    pub fn new(percentage: u8, percentile: u32) -> Self {
+        Self {
+            percentage,
+            percentile,
+        }
+    }
+
     /// `distribution_maxrgb_percentages`, 0..=100.
-    pub percentage: u8,
+    #[must_use]
+    pub fn percentage(&self) -> u8 {
+        self.percentage
+    }
+
     /// `distribution_maxrgb_percentiles`, in units of 0.00001.
-    pub percentile: u32,
+    #[must_use]
+    pub fn percentile(&self) -> u32 {
+        self.percentile
+    }
 }
 
 /// `KneePoint` and `BezierCurveAnchors` (ST 2094-40 clauses 8.7.2-8.7.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct BezierToneMapping {
+    knee_point_x: u16,
+    knee_point_y: u16,
+    anchors: Vec<u16>,
+}
+
+impl BezierToneMapping {
+    /// The knee point and the curve anchors of a tone-mapping payload.
+    #[must_use]
+    pub fn new(knee_point_x: u16, knee_point_y: u16, anchors: Vec<u16>) -> Self {
+        Self {
+            knee_point_x,
+            knee_point_y,
+            anchors,
+        }
+    }
+
     /// `knee_point_x`, in units of 1/4095.
-    pub knee_point_x: u16,
+    #[must_use]
+    pub fn knee_point_x(&self) -> u16 {
+        self.knee_point_x
+    }
+
     /// `knee_point_y`, in units of 1/4095.
-    pub knee_point_y: u16,
+    #[must_use]
+    pub fn knee_point_y(&self) -> u16 {
+        self.knee_point_y
+    }
+
     /// `bezier_curve_anchors`, each in units of 1/1023 (at most 15).
-    pub anchors: Vec<u16>,
+    #[must_use]
+    pub fn anchors(&self) -> &[u16] {
+        &self.anchors
+    }
 }
 
 /// The `ColorVolumeTransform` items of one processing window (ST 2094-40
 /// clauses 8.3-8.8).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ColorVolumeTransform {
+    max_scl: [u32; MAXSCL_COMPONENTS],
+    average_max_rgb: u32,
+    distribution_max_rgb: Vec<DistributionPoint>,
+    fraction_bright_pixels: u16,
+    tone_mapping: Option<BezierToneMapping>,
+    color_saturation_weight: Option<u8>,
+}
+
+impl ColorVolumeTransform {
+    /// A transform with no tone mapping and no colour saturation weight.
+    #[must_use]
+    pub fn new(
+        max_scl: [u32; MAXSCL_COMPONENTS],
+        average_max_rgb: u32,
+        distribution_max_rgb: Vec<DistributionPoint>,
+        fraction_bright_pixels: u16,
+    ) -> Self {
+        Self {
+            max_scl,
+            average_max_rgb,
+            distribution_max_rgb,
+            fraction_bright_pixels,
+            tone_mapping: None,
+            color_saturation_weight: None,
+        }
+    }
+
     /// `maxscl[0..3]` (R, G, B), in units of 0.00001 (clause 8.3).
-    pub max_scl: [u32; MAXSCL_COMPONENTS],
+    #[must_use]
+    pub fn max_scl(&self) -> [u32; MAXSCL_COMPONENTS] {
+        self.max_scl
+    }
+
     /// `average_maxrgb`, in units of 0.00001 (clause 8.4).
-    pub average_max_rgb: u32,
+    #[must_use]
+    pub fn average_max_rgb(&self) -> u32 {
+        self.average_max_rgb
+    }
+
     /// `DistributionMaxRGB` (clause 8.5), at most 15 points.
-    pub distribution_max_rgb: Vec<DistributionPoint>,
+    #[must_use]
+    pub fn distribution_max_rgb(&self) -> &[DistributionPoint] {
+        &self.distribution_max_rgb
+    }
+
     /// `fraction_bright_pixels`, in units of 0.001 (clause 8.6).
-    pub fraction_bright_pixels: u16,
+    #[must_use]
+    pub fn fraction_bright_pixels(&self) -> u16 {
+        self.fraction_bright_pixels
+    }
+
     /// `tone_mapping_flag` and its payload (clause 8.7); `None` when the flag
     /// is clear.
-    pub tone_mapping: Option<BezierToneMapping>,
+    #[must_use]
+    pub fn tone_mapping(&self) -> Option<&BezierToneMapping> {
+        self.tone_mapping.as_ref()
+    }
+
     /// `color_saturation_weight`, in units of 1/8 (clause 8.8); `None` when
     /// `color_saturation_mapping_flag` is clear.
-    pub color_saturation_weight: Option<u8>,
+    #[must_use]
+    pub fn color_saturation_weight(&self) -> Option<u8> {
+        self.color_saturation_weight
+    }
+
+    /// Set the tone-mapping payload (clause 8.7).
+    #[must_use]
+    pub fn with_tone_mapping(mut self, tone_mapping: BezierToneMapping) -> Self {
+        self.tone_mapping = Some(tone_mapping);
+        self
+    }
+
+    /// Set `color_saturation_weight` (clause 8.8).
+    #[must_use]
+    pub fn with_color_saturation_weight(mut self, weight: u8) -> Self {
+        self.color_saturation_weight = Some(weight);
+        self
+    }
+
+    /// Replace the `maxscl` triple (clause 8.3).
+    #[must_use]
+    pub fn with_max_scl(mut self, max_scl: [u32; MAXSCL_COMPONENTS]) -> Self {
+        self.max_scl = max_scl;
+        self
+    }
+
+    /// Replace the `DistributionMaxRGB` points (clause 8.5).
+    #[must_use]
+    pub fn with_distribution_max_rgb(mut self, points: Vec<DistributionPoint>) -> Self {
+        self.distribution_max_rgb = points;
+        self
+    }
 }
 
 /// A processing window with `WindowNumber` > 0.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct AdditionalWindow {
+    region: WindowRegion,
+    color_volume: ColorVolumeTransform,
+}
+
+impl AdditionalWindow {
+    /// A window selector and its colour volume transform items.
+    #[must_use]
+    pub fn new(region: WindowRegion, color_volume: ColorVolumeTransform) -> Self {
+        Self {
+            region,
+            color_volume,
+        }
+    }
+
     /// Rectangle and elliptical selector.
-    pub region: WindowRegion,
+    #[must_use]
+    pub fn region(&self) -> &WindowRegion {
+        &self.region
+    }
+
     /// The window's colour volume transform items.
-    pub color_volume: ColorVolumeTransform,
+    #[must_use]
+    pub fn color_volume(&self) -> &ColorVolumeTransform {
+        &self.color_volume
+    }
 }
 
 /// HDR10+ dynamic metadata of one access unit: the T.35 payload of ST 2094-40
 /// Application #4.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Hdr10PlusMetadata {
+    application_version: u8,
+    targeted_system_display_maximum_luminance: u32,
+    targeted_system_display_actual_peak_luminance: Option<PeakLuminanceTable>,
+    primary_window: ColorVolumeTransform,
+    additional_windows: Vec<AdditionalWindow>,
+    mastering_display_actual_peak_luminance: Option<PeakLuminanceTable>,
+    alignment_padding: u8,
+}
+
+impl Hdr10PlusMetadata {
+    /// A single-window message with no peak-luminance tables and no padding.
+    #[must_use]
+    pub fn new(
+        application_version: u8,
+        targeted_system_display_maximum_luminance: u32,
+        primary_window: ColorVolumeTransform,
+    ) -> Self {
+        Self {
+            application_version,
+            targeted_system_display_maximum_luminance,
+            targeted_system_display_actual_peak_luminance: None,
+            primary_window,
+            additional_windows: Vec::new(),
+            mastering_display_actual_peak_luminance: None,
+            alignment_padding: 0,
+        }
+    }
+
     /// `application_version` (ST 2094-40 clause 5: 0 or 1).
-    pub application_version: u8,
+    #[must_use]
+    pub fn application_version(&self) -> u8 {
+        self.application_version
+    }
+
     /// `targeted_system_display_maximum_luminance`, the raw 27-bit field.
-    pub targeted_system_display_maximum_luminance: u32,
+    #[must_use]
+    pub fn targeted_system_display_maximum_luminance(&self) -> u32 {
+        self.targeted_system_display_maximum_luminance
+    }
+
     /// `TargetedSystemDisplayActualPeakLuminance` (clause 7.2).
-    pub targeted_system_display_actual_peak_luminance: Option<PeakLuminanceTable>,
+    #[must_use]
+    pub fn targeted_system_display_actual_peak_luminance(&self) -> Option<&PeakLuminanceTable> {
+        self.targeted_system_display_actual_peak_luminance.as_ref()
+    }
+
     /// Window 0, which covers the whole image.
-    pub primary_window: ColorVolumeTransform,
+    #[must_use]
+    pub fn primary_window(&self) -> &ColorVolumeTransform {
+        &self.primary_window
+    }
+
     /// Windows 1 and 2 (at most two).
-    pub additional_windows: Vec<AdditionalWindow>,
+    #[must_use]
+    pub fn additional_windows(&self) -> &[AdditionalWindow] {
+        &self.additional_windows
+    }
+
     /// `MasteringDisplayActualPeakLuminance` (clause 8.2).
-    pub mastering_display_actual_peak_luminance: Option<PeakLuminanceTable>,
+    #[must_use]
+    pub fn mastering_display_actual_peak_luminance(&self) -> Option<&PeakLuminanceTable> {
+        self.mastering_display_actual_peak_luminance.as_ref()
+    }
+
     /// Value of the unused low bits of the last payload byte (zero in every
     /// stream seen), kept so a re-serialization is byte-identical.
-    pub alignment_padding: u8,
+    #[must_use]
+    pub fn alignment_padding(&self) -> u8 {
+        self.alignment_padding
+    }
+
+    /// Set `TargetedSystemDisplayActualPeakLuminance` (clause 7.2).
+    #[must_use]
+    pub fn with_targeted_system_display_actual_peak_luminance(
+        mut self,
+        table: PeakLuminanceTable,
+    ) -> Self {
+        self.targeted_system_display_actual_peak_luminance = Some(table);
+        self
+    }
+
+    /// Set `MasteringDisplayActualPeakLuminance` (clause 8.2).
+    #[must_use]
+    pub fn with_mastering_display_actual_peak_luminance(
+        mut self,
+        table: PeakLuminanceTable,
+    ) -> Self {
+        self.mastering_display_actual_peak_luminance = Some(table);
+        self
+    }
+
+    /// Replace the extra processing windows (at most two).
+    #[must_use]
+    pub fn with_additional_windows(mut self, windows: Vec<AdditionalWindow>) -> Self {
+        self.additional_windows = windows;
+        self
+    }
+
+    /// Replace window 0.
+    #[must_use]
+    pub fn with_primary_window(mut self, primary_window: ColorVolumeTransform) -> Self {
+        self.primary_window = primary_window;
+        self
+    }
+
+    /// Set the value of the payload's trailing padding bits.
+    #[must_use]
+    pub fn with_alignment_padding(mut self, padding: u8) -> Self {
+        self.alignment_padding = padding;
+        self
+    }
 }
 
 fn read_lut(r: &mut BitReader<'_>, what: &'static str) -> Result<PeakLuminanceTable> {
@@ -397,7 +882,6 @@ fn write_color_volume(w: &mut BitWriter<'_>, c: &ColorVolumeTransform) -> Result
         FRACTION_BRIGHT_PIXELS_BITS,
         "fraction_bright_pixels",
     )
-    .map_err(Into::into)
 }
 
 fn read_transform_tail(r: &mut BitReader<'_>, c: &mut ColorVolumeTransform) -> Result<()> {
@@ -585,7 +1069,6 @@ fn write_region(w: &mut BitWriter<'_>, g: &WindowRegion) -> Result<()> {
         OVERLAP_PROCESS_OPTION_BITS,
         "overlap_process_option",
     )
-    .map_err(Into::into)
 }
 
 impl Hdr10PlusMetadata {
@@ -630,14 +1113,11 @@ impl Hdr10PlusMetadata {
     /// T.35 header.
     pub fn hevc_sei_nal_payloads(nal: &[u8]) -> Vec<Vec<u8>> {
         if nal.len() <= HEVC_NAL_HEADER_LEN
-            || broadcast_bitstream::nal::nal_unit_type(
-                broadcast_bitstream::nal::NalCodec::Hevc,
-                nal,
-            ) != Some(crate::hdr::HEVC_PREFIX_SEI_NUT)
+            || nal_unit_type(NalCodec::Hevc, nal) != Some(HEVC_PREFIX_SEI_NUT)
         {
             return Vec::new();
         }
-        broadcast_bitstream::nal::sei_messages(&nal[HEVC_NAL_HEADER_LEN..])
+        sei_messages(&nal[HEVC_NAL_HEADER_LEN..])
             .into_iter()
             .filter(|(t, p)| {
                 *t == SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35 && Self::has_t35_header(p)
@@ -662,8 +1142,7 @@ impl Hdr10PlusMetadata {
 
     /// Whether an Annex B access unit holds an HDR10+ prefix SEI NAL unit.
     pub fn annexb_access_unit_carries_hdr10plus(access_unit: &[u8]) -> bool {
-        broadcast_bitstream::annexb::iter_annexb_nals(access_unit)
-            .any(Self::hevc_sei_nal_carries_hdr10plus)
+        iter_annexb_nals(access_unit).any(Self::hevc_sei_nal_carries_hdr10plus)
     }
 
     /// Whether a 4-byte length-prefixed (ISO/IEC 14496-15:2017) sample holds an
@@ -695,7 +1174,7 @@ impl Hdr10PlusMetadata {
     /// this metadata.
     pub fn to_hevc_prefix_sei_nal(&self) -> Result<Vec<u8>> {
         let payload = self.try_to_bytes()?;
-        Ok(broadcast_bitstream::nal::hevc_prefix_sei_nal(&[(
+        Ok(hevc_prefix_sei_nal(&[(
             SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35,
             &payload,
         )]))
@@ -930,10 +1409,8 @@ mod tests {
 
     #[test]
     fn hevc_sei_nal_payloads_keeps_only_prefixed_t35_messages() {
-        let prefix = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[(
-            SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35,
-            &T35_HEADER_V1,
-        )]);
+        let prefix =
+            hevc_prefix_sei_nal(&[(SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35, &T35_HEADER_V1)]);
         let payloads = Hdr10PlusMetadata::hevc_sei_nal_payloads(&prefix);
         assert_eq!(payloads.len(), 1);
         assert_eq!(payloads[0], T35_HEADER_V1);
@@ -945,24 +1422,21 @@ mod tests {
             "a suffix SEI NAL is not a prefix SEI"
         );
 
-        let other_type = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[(6, &[0u8; 4])]);
+        let other_type = hevc_prefix_sei_nal(&[(6, &[0u8; 4])]);
         assert!(
             Hdr10PlusMetadata::hevc_sei_nal_payloads(&other_type).is_empty(),
             "a non-T.35 payloadType is not HDR10+"
         );
 
-        let t35_without_header = broadcast_bitstream::nal::hevc_prefix_sei_nal(&[(
-            SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35,
-            &[0u8; 4],
-        )]);
+        let t35_without_header =
+            hevc_prefix_sei_nal(&[(SEI_PAYLOAD_USER_DATA_REGISTERED_ITU_T_T35, &[0u8; 4])]);
         assert!(
             Hdr10PlusMetadata::hevc_sei_nal_payloads(&t35_without_header).is_empty(),
             "a T.35 message without the HDR10+ header is not HDR10+"
         );
 
         assert!(
-            Hdr10PlusMetadata::hevc_sei_nal_payloads(&[crate::hdr::HEVC_PREFIX_SEI_NUT << 1, 1])
-                .is_empty(),
+            Hdr10PlusMetadata::hevc_sei_nal_payloads(&[HEVC_PREFIX_SEI_NUT << 1, 1]).is_empty(),
             "a bare 2-byte NAL has no SEI body"
         );
     }

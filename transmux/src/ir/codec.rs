@@ -10,8 +10,8 @@ use bytes::Bytes;
 
 use broadcast_core::Serialize;
 
+use crate::aac_asc::EsdsBoxCodecInfo;
 use crate::aac_asc::HeAacProfile;
-use crate::codec_config_ext::EsdsBoxCodecInfo;
 use crate::error::{Error, Result};
 use crate::units::BITS_PER_KILOBIT;
 use isobmff::ac3::{Ac3SpecificBox, Ec3SpecificBox};

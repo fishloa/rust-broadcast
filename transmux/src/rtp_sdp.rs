@@ -28,8 +28,7 @@ use alloc::vec::Vec;
 use broadcast_bitstream::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
 use broadcast_core::Parse;
 use broadcast_core::error::InvalidValue;
-use broadcast_core::len::need_in;
-use isobmff::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use isobmff::avc_config::AVCConfigurationBox;
 use isobmff::mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, OTI_MPEG4_AUDIO,
     SLConfigDescriptor, STREAM_TYPE_AUDIO,
@@ -39,12 +38,6 @@ use isobmff::nalu_types::{AvcPps, AvcSps};
 /// `SLConfigDescriptor` `predefined = 2` (MP4 storage) — ISO/IEC 14496-14 §3.1.2.
 /// AAC sample size is always 16 bits in the sample entry (fMP4/CMAF convention).
 const AAC_SAMPLE_SIZE_BITS: u16 = 16;
-const SPS_PROFILE_LEVEL_LEN: usize = 4;
-const SPS_PROFILE_IDC_OFFSET: usize = 1;
-const SPS_PROFILE_COMPATIBILITY_OFFSET: usize = 2;
-const SPS_LEVEL_IDC_OFFSET: usize = 3;
-const BIT_DEPTH_LUMA_BIAS: u8 = 8;
-const BIT_DEPTH_CHROMA_BIAS: u8 = 8;
 
 /// Sample rate from the ASC: the explicit escape value if present, otherwise
 /// the ISO/IEC 14496-3 Table 1.10 frequency for the index — taken from the
@@ -122,7 +115,8 @@ pub fn aac_config_from_asc_bytes(asc_bytes: Vec<u8>) -> Result<CodecConfig> {
 /// SPS units (nal_unit_type 7) supply `profile_indication` /
 /// `profile_compatibility` / `level_indication` (SPS bytes `[1..4]` after the
 /// NAL header). At least one SPS is required. Base64-decodes and classifies
-/// each token, then delegates to [`avc_config_from_sps_pps`], the byte-level
+/// each token, then delegates to
+/// [`broadcast_bitstream::avc_config_from_sps_pps`], the byte-level
 /// building block a non-base64 caller (e.g. `broadcast_smooth`'s Annex B
 /// `CodecPrivateData`) can use directly.
 pub fn avc_config_from_sprop(sprop_parameter_sets: &str) -> Result<AVCConfigurationBox> {
@@ -143,74 +137,7 @@ pub fn avc_config_from_sprop(sprop_parameter_sets: &str) -> Result<AVCConfigurat
             _ => return Err(Error::InvalidInput("sprop NAL is neither SPS nor PPS")),
         }
     }
-    avc_config_from_sps_pps(sps, pps)
-}
-
-/// Build an `avcC` configuration box from already-classified SPS/PPS NAL
-/// units (the value-level building block behind [`avc_config_from_sprop`]).
-///
-/// `profile_indication`/`profile_compatibility`/`level_indication` are taken
-/// from the first SPS's bytes `[1..4]` (after the NAL header) — at least one
-/// SPS is required.
-///
-/// For a High profile SPS the record's `chroma_format`/
-/// `bit_depth_luma_minus8`/`bit_depth_chroma_minus8` trailer is filled in
-/// from the SPS itself: ISO/IEC 14496-15:2017 §5.3.3.1.2 makes those fields
-/// **conditionally present** on `AVCProfileIndication ∈ {100, 110, 122, 244}`,
-/// so an `avcC` built for a High profile stream without them is a
-/// configuration record that a strict reader parses differently from the wire
-/// (and an encoder's own SPS carries the values — `decode_avc_sps` already
-/// decodes them). RTSP cameras are overwhelmingly High profile
-/// (§8.1's `profile-level-id` examples notwithstanding), so every avcC built
-/// from their SDP lacked the trailer before this. A non-High profile keeps
-/// `None` fields (the trailer is absent from the wire).
-pub fn avc_config_from_sps_pps(sps: Vec<AvcSps>, pps: Vec<AvcPps>) -> Result<AVCConfigurationBox> {
-    let first_sps = sps
-        .first()
-        .ok_or(Error::InvalidInput("no SPS NAL unit supplied"))?;
-    need_in(
-        &first_sps.0,
-        SPS_PROFILE_LEVEL_LEN,
-        "SPS profile/level bytes",
-    )?;
-    let profile_indication = first_sps.0[SPS_PROFILE_IDC_OFFSET];
-    // Gate on the serializer's own emission set (the ISO/IEC 14496-15:2017
-    // §5.3.3.1.2 condition for `profile_idc` 100/110/122/244), reached through
-    // the shared `sps::is_high_profile` source of truth so the record and the
-    // wire can never disagree about the trailer's presence. The SPS is decoded
-    // rather than ignored on failure: it *is* the only place those three
-    // values exist, so a decode error means the trailer cannot be written, and
-    // writing the record without it would produce a configuration that a
-    // strict reader parses differently from the stream (the defect the gate
-    // exists to prevent). `is_high_profile` is the wider H.264 Table A-1 list
-    // that governs *parsing* the SPS syntax; the trailer's own condition is
-    // the narrower §5.3.3.1.2 set, so a profile in the wider list but outside
-    // the trailer set keeps `None` without decoding anything.
-    let ext = if isobmff::avc_config::AVCDecoderConfigurationRecord::has_high_profile_ext(
-        profile_indication,
-    ) {
-        Some(broadcast_bitstream::sps::decode_avc_sps(&first_sps.0)?)
-    } else {
-        None
-    };
-    let record = AVCDecoderConfigurationRecord {
-        configuration_version: 1,
-        profile_indication,
-        profile_compatibility: first_sps.0[SPS_PROFILE_COMPATIBILITY_OFFSET],
-        level_indication: first_sps.0[SPS_LEVEL_IDC_OFFSET],
-        length_size_minus_one: broadcast_bitstream::annexb::NAL_LENGTH_SIZE_MINUS_ONE,
-        sps,
-        pps,
-        chroma_format: ext.as_ref().map(|i| i.chroma_format_idc()),
-        bit_depth_luma_minus8: ext
-            .as_ref()
-            .map(|i| i.bit_depth_luma().saturating_sub(BIT_DEPTH_LUMA_BIAS)),
-        bit_depth_chroma_minus8: ext
-            .as_ref()
-            .map(|i| i.bit_depth_chroma().saturating_sub(BIT_DEPTH_CHROMA_BIAS)),
-        sps_ext: Vec::new(),
-    };
-    Ok(AVCConfigurationBox::new(record))
+    broadcast_bitstream::avc_config_from_sps_pps(sps, pps).map_err(Into::into)
 }
 
 /// Strip a leading `<pt> ` payload-type token from an SDP `a=fmtp`/`a=rtpmap`
@@ -330,6 +257,7 @@ mod tests {
     use broadcast_core::error::BufferTooShort;
 
     use super::*;
+    use broadcast_bitstream::avc_config_from_sps_pps;
     use broadcast_common::base64::base64_encode;
     use broadcast_core::Serialize;
 
@@ -435,26 +363,6 @@ mod tests {
         }
     }
 
-    /// A High profile SPS whose body cannot be decoded must be an **error**,
-    /// not a record silently missing §5.3.3.1.2's trailer: the trailer's three
-    /// values exist only in the SPS, and a record written without them is one
-    /// a strict reader parses differently from the stream.
-    #[test]
-    fn high_profile_sps_that_cannot_be_decoded_is_an_error() {
-        // A High profile SPS (profile_idc 100) truncated immediately after its
-        // profile/level bytes: everything the *record* copies is present, so
-        // the record could be built — but the chroma/bit-depth fields after it
-        // cannot be read.
-        let sps = alloc::vec![0x67u8, 100, 0x00, 0x1E];
-        let pps = alloc::vec![0x68u8, 0xCE, 0x3C, 0x80];
-        let err = avc_config_from_sps_pps(alloc::vec![AvcSps(sps)], alloc::vec![AvcPps(pps)])
-            .expect_err("a High profile SPS with no decodable body must not yield a record");
-        assert!(
-            matches!(err, Error::BufferTooShort(..) | Error::InvalidValue(..)),
-            "must be a structured decode error, got {err:?}"
-        );
-    }
-
     /// The trailer's condition is the record's own §5.3.3.1.2 set, which
     /// `AVCDecoderConfigurationRecord::has_high_profile_ext` owns, and which is
     /// deliberately narrower than the `sps::is_high_profile` list used to
@@ -555,7 +463,7 @@ mod tests {
     }
 
     #[test]
-    fn avc_config_from_sps_pps_matches_sprop_path() {
+    fn sprop_path_and_byte_path_build_the_same_box() {
         // The byte-level building block must produce the same box as the
         // base64/sprop entry point for the same underlying NAL bytes.
         let sps = alloc::vec![0x67u8, 0x42, 0xC0, 0x1E, 0xAB];
@@ -574,14 +482,6 @@ mod tests {
             via_sprop.config.profile_indication,
             via_bytes.config.profile_indication
         );
-    }
-
-    #[test]
-    fn avc_config_from_sps_pps_rejects_no_sps() {
-        assert!(matches!(
-            avc_config_from_sps_pps(Vec::new(), Vec::new()),
-            Err(crate::error::Error::InvalidInput(..))
-        ));
     }
 
     #[test]

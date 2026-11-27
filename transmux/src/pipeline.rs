@@ -273,7 +273,7 @@ fn srat_opaque(rate: isobmff::init_segment::SamplingRateBox) -> Result<OpaqueBox
 /// `pasp`, `colr`, `mdcv`, `clli`, all after the codec config box.
 fn avc_hevc_display_extra_boxes(
     display: Option<&crate::ir::DisplayGeometry>,
-    hdr: Option<&crate::hdr::HdrStaticMetadata>,
+    hdr: Option<&broadcast_bitstream::HdrStaticMetadata>,
     dovi: Option<&isobmff::dovi::DoviDecoderConfigurationRecord>,
 ) -> Result<Vec<isobmff::sample_entries::OpaqueBox>> {
     let mut extra_boxes = Vec::new();

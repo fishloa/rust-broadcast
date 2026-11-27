@@ -17,7 +17,7 @@
 //! - `FourCC="H264"`: the Annex-B-framed `CodecPrivateData` (start-code
 //!   delimited SPS+PPS) is split with [`broadcast_bitstream::annexb::iter_annexb_nals`] and
 //!   classified/assembled into an `avcC` via
-//!   [`crate::rtp_sdp::avc_config_from_sps_pps`].
+//!   [`broadcast_bitstream::avc_config_from_sps_pps`].
 //! - `FourCC="AACL"`/`"AACH"`: the `CodecPrivateData` bytes ARE the
 //!   `AudioSpecificConfig`, carried straight into `CodecConfig::Aac` via
 //!   [`crate::rtp_sdp::aac_config_from_asc_bytes`]; when absent, an ASC is
@@ -41,12 +41,12 @@ use broadcast_smooth::{QualityLevel, StreamType};
 
 use crate::aac_asc::{ChannelConfiguration, SamplingFrequencyIndex};
 use crate::error::{Error as CrateError, Result as CrateResult};
-use crate::nalu_ext::AvcSpsCodecInfo;
 use crate::pipeline::{CodecConfig, SubtitleFormat, TrackSpec};
-use crate::rtp_sdp::{aac_config_from_asc_bytes, avc_config_from_sps_pps};
+use crate::rtp_sdp::aac_config_from_asc_bytes;
 use crate::smooth::{FOURCC_AACH, FOURCC_AACL, FOURCC_AVC1, FOURCC_H264};
 use broadcast_bitstream::annexb::iter_annexb_nals;
 use broadcast_bitstream::nal::{AVC_NAL_PPS, AVC_NAL_SPS, NalCodec, nal_unit_type};
+use broadcast_bitstream::nalu_ext::AvcSpsCodecInfo;
 use isobmff::nalu_types::{AvcPps, AvcSps};
 use isobmff::subtitle_entries::{WvttSampleEntry, XmlSubtitleSampleEntry};
 
@@ -74,7 +74,7 @@ const WEBVTT_HEADER: &str = "WEBVTT";
 ///
 /// - [`StreamType::Video`]: `FourCC` `H264` (a.k.a. `AVC1`, [MS-SSTR]
 ///   §2.2.2.5) — splits the Annex-B `CodecPrivateData` into SPS/PPS NAL units
-///   and builds an `avcC` via [`crate::rtp_sdp::avc_config_from_sps_pps`];
+///   and builds an `avcC` via [`broadcast_bitstream::avc_config_from_sps_pps`];
 ///   geometry prefers the SPS-decoded coded dimensions (authoritative),
 ///   falling back to the `QualityLevel`'s `MaxWidth`/`MaxHeight` if the SPS
 ///   doesn't decode.
@@ -116,7 +116,7 @@ pub fn track_spec_from_quality_level(
                     _ => {}
                 }
             }
-            let config = avc_config_from_sps_pps(sps, pps)?;
+            let config = broadcast_bitstream::avc_config_from_sps_pps(sps, pps)?;
             let (width, height) = config
                 .config
                 .sps

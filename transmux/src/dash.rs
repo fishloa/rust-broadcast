@@ -99,13 +99,13 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use crate::aac_asc::AudioSpecificConfig;
-use crate::codec_config_ext::{EsdsBoxCodecInfo, HevcRecordCodecInfo, VvcRecordCodecInfo};
+use crate::aac_asc::{AudioSpecificConfig, EsdsBoxCodecInfo};
 use crate::error::{Error, Result};
 use crate::ir::{TrackId, TrackSpec};
-use crate::nalu_ext::AvcSpsCodecInfo;
 use crate::pipeline::CodecConfig;
 use crate::segment_log::{SegmentSummaryLog, TrackSummary};
+use broadcast_bitstream::codec_config_ext::{HevcRecordCodecInfo, VvcRecordCodecInfo};
+use broadcast_bitstream::nalu_ext::AvcSpsCodecInfo;
 use broadcast_bitstream::rfc6381::rfc6381_avc1;
 use broadcast_core::error::InvalidField;
 use broadcast_core::timescale::Timescale;

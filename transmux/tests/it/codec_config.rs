@@ -9,13 +9,13 @@
 //!    profile/compat/level bytes match SPS bytes exactly.
 
 use broadcast_bitstream::annexb::iter_annexb_nals;
+use broadcast_bitstream::nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo};
 use broadcast_bitstream::sps::{AvcSpsInfo, HevcSpsInfo};
 use broadcast_core::Serialize;
 use isobmff::{AVCDecoderConfigurationRecord, AvcSps, HevcNalUnit};
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
 use mpeg_ts::pid::Pid;
-use transmux::nalu_ext::{AvcSpsCodecInfo, HevcNalUnitCodecInfo};
 
 // ---- Helpers -----------------------------------------------------------------
 

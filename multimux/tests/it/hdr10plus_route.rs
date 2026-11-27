@@ -41,7 +41,8 @@ fn strip_hdr10plus_sei(sources: Vec<Source>) -> Vec<Source> {
                     ) as usize;
                     let end = at + NAL_LENGTH_PREFIX + len;
                     let nal = &sample.data[at + NAL_LENGTH_PREFIX..end];
-                    if !transmux::Hdr10PlusMetadata::hevc_sei_nal_carries_hdr10plus(nal) {
+                    if !broadcast_bitstream::Hdr10PlusMetadata::hevc_sei_nal_carries_hdr10plus(nal)
+                    {
                         out.extend_from_slice(&sample.data[at..end]);
                     }
                     at = end;
@@ -104,7 +105,9 @@ fn hdr10plus_seis_by_pts(media: &test_harness::collect::Collected) -> Vec<Vec<u8
             broadcast_bitstream::annexb::iter_length_prefixed_nals(&s.data)
                 .unwrap()
                 .into_iter()
-                .filter(|n| transmux::Hdr10PlusMetadata::hevc_sei_nal_carries_hdr10plus(n))
+                .filter(|n| {
+                    broadcast_bitstream::Hdr10PlusMetadata::hevc_sei_nal_carries_hdr10plus(n)
+                })
                 .map(<[u8]>::to_vec)
                 .collect::<Vec<_>>()
         })
