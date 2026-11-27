@@ -75,6 +75,9 @@ pub struct TimelineIndex {
 /// one-tick shortfall is trusted rather than rejected.
 const TIMELINE_T_TOLERANCE_TICKS: u64 = 1;
 
+/// Adjacent runs are compared in pairs: a break is between exactly two runs.
+const ADJACENT_RUNS: usize = 2;
+
 impl TimelineIndex {
     /// Build the run table.
     ///
@@ -177,7 +180,7 @@ impl TimelineIndex {
     #[must_use]
     pub fn boundaries(&self) -> Vec<TimelineBoundary> {
         let mut out = Vec::new();
-        for pair in self.runs.windows(2) {
+        for pair in self.runs.windows(ADJACENT_RUNS) {
             let (left, right) = (pair[0], pair[1]);
             let last_start = left
                 .time

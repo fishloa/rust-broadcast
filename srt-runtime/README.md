@@ -110,6 +110,20 @@ Runnable programs: `handshake_loopback` and `arq_loss_recovery` (`cargo run -p s
 - **`tsbpd`:** `TsbpdScheduler`. **`livecc`:** `LiveCC` and `MaxBwConfig` (MAXBW_SET, INPUTBW_SET, INPUTBW_ESTIMATED). **`filecc`:** `FileCc` (Slow Start then Congestion Avoidance).
 - **`crypto`, `km_refresh`** (feature `crypto`) and **`io`** (feature `tokio`) as in the features table. The tokio adapter is verified against a real libsrt peer including rendezvous.
 
+## Damage reports
+
+The delivery engine reports every packet it gave up on as `SrtEvent::Damage`,
+coalesced per contiguous sequence run, beside the `SocketStats` counters it
+already kept.
+
+Reported: a packet TSBPD delivered too late (or the `TLPKTDROP` sequence it
+walks past), a sender `DROPREQ` range, a peer `PeerError`, a packet outside the
+flow window, an encrypted packet with no key installed (or an AES-CTR failure),
+and a negotiated latency raised to the protocol floor.
+
+A handshake rejection or a handshake that never completes stays an error: the
+peer cannot be connected to.
+
 ## Design notes
 
 Sans-IO and clock-free (`tick()` and caller-supplied time), `#![forbid(unsafe_code)]`, `no_std` core, errors as structured `Error` (never a panic on hostile input; a `no_panic` test sweeps the parsers), `#[non_exhaustive]` enums, labelled spec enums. The tokio adapter bounds every IO and cancels its background tasks when the listener and all accepted connections drop.

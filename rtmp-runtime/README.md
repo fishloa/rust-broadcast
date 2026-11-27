@@ -97,6 +97,27 @@ With the `tokio` feature, `io::AsyncRtmpServer` binds a listener and drives one 
 - **`client::ClientSession`**: client handshake and the auto-advancing publish flow, then `send_audio`, `send_video`, `send_metadata`.
 - **Security defaults:** `ServerConfig::expected_stream_key = None` admits any publisher, so a server reachable from untrusted networks must set a key (compared in constant time). `Debug` never prints the stream key. In-progress message size is capped by `max_in_progress_bytes`.
 
+## Damage reports
+
+A session never loses content silently: `ServerEvent::Damage` (ingest) and
+`ClientEvent::Damage` (publish/play) carry the one report, in wire order with
+the events around it, and the session's `damage_policy` decides whether a report
+also ends it (`RtmpError::Damage`).
+
+Reported: a message an interrupting header or an `Abort` discarded, a message
+whose declared length exceeds what the session will buffer (consumed without
+being held, never a connection-ending error), media on a stream id the session
+never opened or before `publish`, a message type, user control event or command
+this engine does not decode, an AMF0 ECMA-Array whose declared count disagrees
+with its contents, an aggregate sub-message whose framing does not hold (the
+good ones before it are delivered), and input that ends inside a message. The
+tolerant FLV reader's `ResyncWalk::damage` reports the spans it jumped and the
+tail it lost.
+
+What stays an error: a chunk stream that cannot be framed at all, a chunk size
+outside the protocol's range, an unsupported handshake, and the unparsed-input
+backstop.
+
 ## Design notes
 
 Bytes-in, (bytes-out, events) engine with partial-input buffering, so it runs on any transport. Wire structures implement symmetric `Parse`/`Serialize`; a chunk `message length` over 24 bits is rejected (`FieldOverflow`) instead of truncated. `RtmpError` is `#[non_exhaustive]`.

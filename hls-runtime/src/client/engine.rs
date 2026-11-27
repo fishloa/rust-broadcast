@@ -405,6 +405,17 @@ pub enum SkipReason {
 }
 
 impl SkipReason {
+    /// Stable label of this reason — used by `Display`.
+    #[must_use]
+    pub const fn name(&self) -> &'static str {
+        match self {
+            SkipReason::NotFound => "not found",
+            SkipReason::Gone => "gone",
+            SkipReason::TimedOut => "timed out",
+            SkipReason::Unusable => "unusable",
+        }
+    }
+
     /// The label of a segment lost for this reason.
     #[must_use]
     pub const fn segment(self) -> &'static str {
@@ -427,6 +438,8 @@ impl SkipReason {
         }
     }
 }
+
+broadcast_core::impl_spec_display!(SkipReason);
 
 /// A driveable, sans-IO Low-Latency HLS (RFC 8216bis) playback client.
 ///
