@@ -257,6 +257,14 @@ impl Decoder for TrimmedDecoder {
         self.finished = false;
         self.drained = false;
     }
+
+    fn reconfigure(&mut self, parameters: CodecParameters) -> Result<(), CodecError> {
+        self.inner.reconfigure(parameters.clone())?;
+        self.trim = TrimStage::new(&parameters);
+        self.finished = false;
+        self.drained = false;
+        Ok(())
+    }
 }
 
 /// The samples of `frame` between two whole-frame boundaries.

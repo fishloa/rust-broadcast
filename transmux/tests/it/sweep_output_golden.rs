@@ -125,9 +125,9 @@ fn media_debug(media: &test_harness::collect::Collected) -> String {
         .replace("CollectedTrack", "Track")
         .replace("Collected", "Media");
     let s = legacy_pcr_debug(&legacy_pid_debug(&no_track_encryption_debug(
-        &no_protection_debug(&no_display_debug(&sample_timing_debug(
+        &no_protection_debug(&no_display_debug(&sample_timing_debug(&no_trim_debug(
             &legacy_data_config_debug(&rendered),
-        ))),
+        )))),
     )));
     match s.rfind(", degraded: [") {
         Some(i) => format!("{} }}", &s[..i]),
@@ -176,6 +176,47 @@ fn no_display_debug(s: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// Remove one `Debug` field (`, name: ` up to the next comma or closing brace
+/// at nesting depth 0) from a whole rendering.
+fn drop_debug_field(s: &str, field: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find(field) {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + field.len()..];
+        let mut depth = 0usize;
+        let mut end = after.len();
+        for (j, c) in after.char_indices() {
+            match c {
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' => depth = depth.saturating_sub(1),
+                '}' if depth == 0 => {
+                    end = after[..j].trim_end().len();
+                    break;
+                }
+                '}' => depth -= 1,
+                ',' if depth == 0 => {
+                    end = j;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `Sample::trim` and `TrackSpec::padding` are the IR's gapless trim. The
+/// goldens were captured before either field existed, and every hash must keep
+/// proving that the demuxed bytes and timing are unchanged; the trim itself is
+/// pinned value by value in `gapless.rs`.
+fn no_trim_debug(s: &str) -> String {
+    let s = drop_debug_field(s, ", trim: ");
+    drop_debug_field(&s, ", padding: ")
 }
 
 /// `CodecConfig::Data` used to render its TS fields directly (`Data {
@@ -497,9 +538,9 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
         &mut bad,
         "rtp-stream",
         fnv1a(
-            no_protection_debug(&no_display_debug(&sample_timing_debug(&format!(
-                "{samples:?}"
-            ))))
+            no_trim_debug(&no_protection_debug(&no_display_debug(
+                &sample_timing_debug(&format!("{samples:?}")),
+            )))
             .as_bytes(),
         ),
         0x22e1_7964_99e2_9ce6,

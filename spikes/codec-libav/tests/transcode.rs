@@ -4,20 +4,21 @@
 //! through a real decoder, a real encoder and `transmux::TranscodeStage`, is
 //! muxed, demuxed back, and decoded again for comparison. Nothing is faked.
 //!
-//! # The audio half's wall
+//! # The audio half
 //!
-//! libav's AAC encoder cannot complete the container round trip here, and the
-//! reason is the binding, not the stage: `ffmpeg-next` 8.1 exposes no extradata
-//! *setter* (which the adapter documents) and no extradata *getter* either, so
-//! the adapter's `Encoder::parameters` is fixed at open time and carries no
-//! `AudioSpecificConfig`. A track announced from empty extradata has an empty
-//! `esds`, so the re-demuxed feed cannot be decoded.
+//! `ffmpeg-next` 8.1 exposes no extradata getter, so the adapter reads
+//! `AVCodecContext.extradata` and the encoder's `initial_padding`/`trailing_padding`
+//! through the binding's raw pointer (`spikes/codec-libav/src/sys.rs`, one `SAFETY` argument). A
+//! transcoded AAC track therefore announces its `AudioSpecificConfig` and the
+//! encoder's priming, is muxed and demuxed, and decodes again.
 //! [`the_stage_transcodes_the_aac_track_with_libavs_decoder_and_encoder`]
-//! drives the whole pipeline anyway and checks everything up to that point,
-//! then says so instead of pretending.
+//! checks the packet count, the announced record, the sample count after the
+//! seam's own trim, and integrated loudness against the direct decode. The
+//! fragmented-MP4 init segment still has no edit list to re-state that trim, so
+//! the value is taken from the announced track rather than the re-demux.
 //!
-//! The video half completes the whole loop: an MPEG-2 video configuration is
-//! describable without a decoder configuration record (its `esds` is the
+//! The video half completes the whole loop too: an MPEG-2 video configuration
+//! is describable without a decoder configuration record (its `esds` is the
 //! canonical one for MPEG-2 Main Visual), so libav's `mpeg2video` encoder can
 //! be announced and its output decoded again.
 
@@ -46,6 +47,8 @@ const TS_AUDIO_FRAMES: usize = 131;
 const TS_VIDEO_FRAMES: usize = 75;
 /// Allowed loudness difference, in LU - the tolerance the spikes already use.
 const TOLERANCE_LU: f64 = 0.1;
+/// The encoder delay libav's AAC encoder reports, in samples (a frame).
+const AAC_ENCODER_DELAY: u32 = 1024;
 /// The AAC bit rate the encoder is asked for, in bits per second.
 const AAC_BIT_RATE: u64 = 128_000;
 /// The MPEG-2 video bit rate the encoder is asked for, in bits per second.
@@ -179,6 +182,40 @@ fn packets_for(outputs: &[MuxInput], track: TrackId) -> Vec<Sample> {
 /// Decode a track's coded samples through `registry`.
 fn decode(registry: &Registry, parameters: &CodecParameters, samples: &[Sample]) -> Vec<Frame> {
     let mut decoder = registry.decoder(parameters).expect("a libav decoder");
+    let mut frames = Vec::new();
+    for sample in samples {
+        let mut packet =
+            broadcast_codec::Packet::borrowed(&sample.data).with_key(sample.flags.is_sync);
+        if let Some(timing) = sample.timing {
+            if let Some(dts) = timing.dts() {
+                packet = packet.with_dts(dts);
+            }
+            if let Some(pts) = timing.pts() {
+                packet = packet.with_pts(pts);
+            }
+        }
+        decoder.send(packet).expect("send a packet");
+        while let Some(frame) = decoder.receive().expect("receive") {
+            frames.push(frame);
+        }
+    }
+    decoder.finish().expect("finish the decoder");
+    while let Some(frame) = decoder.receive().expect("drain") {
+        frames.push(frame);
+    }
+    frames
+}
+
+/// Decode a track's coded samples through `registry`, applying the container's
+/// gapless trim exactly as a real caller does.
+fn decode_trimmed(
+    registry: &Registry,
+    parameters: &CodecParameters,
+    samples: &[Sample],
+) -> Vec<Frame> {
+    let mut decoder = registry
+        .trimmed_decoder(parameters)
+        .expect("a trimmed libav decoder");
     let mut frames = Vec::new();
     for sample in samples {
         let mut packet =
@@ -372,32 +409,37 @@ fn the_stage_transcodes_the_aac_track_with_libavs_decoder_and_encoder() {
         "every packet the encoder emitted is in the output"
     );
 
+    // The encoder's own record and priming: an `AudioSpecificConfig` read from
+    // libav's extradata and the AAC encoder delay it reports, both carried on
+    // the track the stage announced. A fragmented-MP4 init segment has no edit
+    // list, so a re-demux cannot state the trim again; that is the muxer's
+    // documented gap, not the stage's.
     let output_parameters =
-        codec_parameters_from_track(&output_track.spec).expect("the output track converts");
-    if output_parameters.extradata().is_empty() {
-        eprintln!(
-            "OPEN: the libav AAC encoder reports no AudioSpecificConfig (ffmpeg-next 8.1 exposes \
-             no extradata getter), so the output track cannot be decoded again; the stage, the \
-             CMAF muxer and the demuxer all completed on {} packets",
-            packets.len()
-        );
-        return;
-    }
-    let output_frames = decode(&registry, &output_parameters, &output_track.samples);
-    let direct_frames = decode(&registry, &source, &samples_of(&samples, audio.track_id));
-    let trim = usize::try_from(output_parameters.initial_padding()).unwrap_or(0)
-        * audio_parameters.channels().count();
-    let trailing = output_parameters
-        .trailing_padding()
-        .map_or(0, |padding| usize::try_from(padding).unwrap_or(0))
-        * audio_parameters.channels().count();
+        codec_parameters_from_track(&track).expect("the announced track converts");
+    assert!(
+        !output_parameters.extradata().is_empty(),
+        "the encoder's AudioSpecificConfig reaches the announced track"
+    );
     assert_eq!(
-        decoded_samples(&output_frames) + trim + trailing,
+        output_parameters.initial_padding(),
+        AAC_ENCODER_DELAY,
+        "the encoder's priming is on the announced track"
+    );
+    let output_frames = decode_trimmed(&registry, &output_parameters, &output_track.samples);
+    let direct_frames = decode(&registry, &source, &samples_of(&samples, audio.track_id));
+    assert_eq!(
+        decoded_samples(&output_frames),
         decoded_samples(&direct_frames),
         "the decoded output matches the direct decode once the stated gapless trim is applied"
     );
     let source_lufs = integrated_lufs(&source, &direct_frames);
     let output_lufs = integrated_lufs(&output_parameters, &output_frames);
+    eprintln!(
+        "libav AAC round trip: packets={} decoded_out={} decoded_direct={} lufs_out={output_lufs:.3} lufs_direct={source_lufs:.3}",
+        packets.len(),
+        decoded_samples(&output_frames),
+        decoded_samples(&direct_frames),
+    );
     assert!(
         (source_lufs - output_lufs).abs() <= TOLERANCE_LU,
         "the transcode keeps loudness: {source_lufs:.3} LUFS in, {output_lufs:.3} LUFS out"

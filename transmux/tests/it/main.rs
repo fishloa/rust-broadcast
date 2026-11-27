@@ -96,6 +96,7 @@ mod fmp4_trex_defaults;
 mod follower_cut;
 mod frame_rate;
 mod g1_damaged_param_sets;
+mod gapless;
 mod garbled_input;
 mod golden;
 #[cfg(feature = "hls")]

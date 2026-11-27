@@ -9,6 +9,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html) with the
 
 ### Added
 
+- `Decoder::reconfigure`, which adopts new `CodecParameters` mid-stream after
+  the caller has drained: a decoder that still holds a frame refuses with
+  `CodecError::Full`, and one that cannot adopt the new parameters returns
+  `CodecError::CannotReconfigure` so the caller can build a fresh decoder. The
+  default implementation is that refusal, so existing implementations keep
+  compiling. `CodecError` gains the `CannotReconfigure` variant with a
+  `cannot_reconfigure` constructor, and `TrimStage`'s wrapper forwards the call
+  and rebuilds its trim from the new parameters.
+- `CodecParameters::configuration_record` and `ConfigurationRecord`
+  (`Absent`/`OutOfBand`/`InBand`), with `with_in_band_configuration`: an
+  encoder that writes its configuration record inside its first access unit
+  says so instead of reporting empty extradata. `with_extradata` now states
+  `OutOfBand`, `with_no_configuration_record` clears it again, and
+  `CodecId::requires_configuration_record` says which codecs need one at all
+  (MPEG-2 video, MPEG audio, PCM and an unnamed format do not). The
+  per-`CodecId` form of the record is documented on `CodecParameters` and on
+  `Encoder::parameters`.
 - `CodecParameters::initial_padding`/`with_initial_padding` and
   `trailing_padding`/`with_trailing_padding`: a lossy audio stream's gapless
   trim, in samples per channel. `initial_padding` is 0 when there is none or the

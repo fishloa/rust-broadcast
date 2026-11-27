@@ -53,6 +53,33 @@ pub trait Decoder {
 
     /// Drop every held packet and partial frame.
     fn reset(&mut self);
+
+    /// Adopt `parameters` mid-stream: a live source changed its resolution,
+    /// sample rate or parameter sets.
+    ///
+    /// The caller drains first: it calls [`Self::receive`] until it returns
+    /// `Ok(None)`, and a decoder that still holds a frame refuses with
+    /// [`CodecError::Full`] rather than lose it. On success
+    /// [`parameters`](Self::parameters) returns the new set and the next
+    /// [`Self::receive`] continues from where the old stream left off; coded
+    /// input that had not been decoded yet belonged to the old configuration
+    /// and is discarded, exactly as a stream switch discards a partial access
+    /// unit.
+    ///
+    /// A decoder that cannot change its configuration returns
+    /// [`CodecError::CannotReconfigure`] naming why, so the caller can build a
+    /// fresh decoder. The default implementation is that refusal.
+    ///
+    /// # Errors
+    /// [`CodecError::Full`] while output is still pending;
+    /// [`CodecError::CannotReconfigure`] when the decoder cannot adopt them;
+    /// [`CodecError::Failed`] when the decoder is unusable.
+    fn reconfigure(&mut self, parameters: CodecParameters) -> Result<(), CodecError> {
+        let _ = parameters;
+        Err(CodecError::cannot_reconfigure(
+            "a decoder that keeps the parameters it was built for",
+        ))
+    }
 }
 
 /// An encoder driven by [`send`](Self::send) and
@@ -84,5 +111,20 @@ pub trait Encoder {
     fn finish(&mut self) -> Result<(), CodecError>;
 
     /// What the encoder now knows it produces, or `None` before it does.
+    ///
+    /// The reported parameters name the output stream a caller announces
+    /// downstream, so the configuration record they need must be there or
+    /// said to be in-band: for each [`CodecId`](crate::CodecId), the record is
+    /// the one [`CodecParameters::extradata`] documents (an `avcC` body for
+    /// H.264, an `AudioSpecificConfig` for AAC, and so on). An encoder that
+    /// emits the record inside its first access unit reports
+    /// [`ConfigurationRecord::InBand`](crate::ConfigurationRecord::InBand)
+    /// rather than empty bytes, so a caller can derive it from that access
+    /// unit; one that states no record at all leaves
+    /// `configuration_record()` at `Absent`.
+    ///
+    /// The encoder may report different parameters as it learns more (for
+    /// example once its first picture or frame is encoded); a caller
+    /// re-announces only when they change.
     fn parameters(&self) -> Option<&CodecParameters>;
 }

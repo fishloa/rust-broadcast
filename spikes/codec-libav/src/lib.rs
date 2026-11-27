@@ -17,6 +17,19 @@
 //! front of every random-access access unit; a raw AAC access unit is wrapped
 //! in an ADTS header. Both transforms are this crate's own.
 //!
+//! **Reading back what an encoder produced.** The binding exposes no extradata
+//! getter either, so `sys::extradata` reads `AVCodecContext.extradata` through
+//! the binding's raw pointer (one `SAFETY` argument); the AAC encoder's
+//! `AudioSpecificConfig` therefore reaches the announced track. The same place
+//! reads the encoder's `initial_padding`/`trailing_padding`, which become the
+//! seam's gapless trim. An encoder with no extradata for a codec that needs a
+//! record declares in-band configuration, so the stage derives it from the
+//! first access unit.
+//!
+//! **No mid-stream reconfiguration.** [`Decoder::reconfigure`] is refused: the
+//! binding cannot hand a new configuration record to an open context, so the
+//! caller builds a fresh decoder instead.
+//!
 //! **Hardware decode.** libav offers hardware *acceleration modes* of an
 //! ordinary decoder, and the binding exposes no hardware-device API, so an
 //! acceleration mode is neither listed nor used here; a dedicated hardware

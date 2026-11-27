@@ -3,14 +3,23 @@
 use alloc::boxed::Box;
 use alloc::collections::VecDeque;
 
-use broadcast_codec::{CodecError, CodecParameters, Decoder, Encoder, Packet};
+use alloc::vec::Vec;
+
+use broadcast_codec::{CodecError, CodecParameters, ConfigurationRecord, Decoder, Encoder, Packet};
 use broadcast_common::Demand;
 use broadcast_common::stage::{Stage, Timestamp};
 
 use crate::error::{Error, Result};
-use crate::ir::{Sample, TrackId, TrackSpec};
+use crate::ir::{Sample, SampleTrim, TrackId, TrackSpec};
 use crate::mux_stage::MuxInput;
-use crate::transcode::bridge::{codec_parameters_from_track, track_spec_from_codec_parameters};
+use crate::transcode::bridge::{
+    codec_parameters_from_track, in_band_record, track_spec_from_codec_parameters,
+};
+
+/// Builds a decoder for new parameters, for a source change the current
+/// decoder cannot adopt itself.
+pub type DecoderFactory =
+    Box<dyn FnMut(&CodecParameters) -> core::result::Result<Box<dyn Decoder>, CodecError>>;
 
 /// The track's samples through a caller-supplied decoder and encoder.
 ///
@@ -23,8 +32,13 @@ pub struct TranscodeStage {
     track: TrackId,
     decoder: Box<dyn Decoder>,
     encoder: Box<dyn Encoder>,
+    /// Rebuilds the decoder when a source change cannot be adopted in place.
+    factory: Option<DecoderFactory>,
     /// The source parameters the decoder was built for.
     source: CodecParameters,
+    /// The first coded access unit since the last announcement: where an
+    /// encoder that writes its configuration record in-band put it.
+    first_unit: Option<Vec<u8>>,
     /// What downstream was last told this track is, once the encoder reported
     /// parameters.
     announced: Option<CodecParameters>,
@@ -46,8 +60,10 @@ impl TranscodeStage {
     /// The caller builds both, typically through a
     /// `broadcast_codec::Registry`; the decoder's own
     /// [`parameters`](Decoder::parameters) are what the source track is
-    /// checked against, so a source re-announcement that changes them is
-    /// refused rather than decoded with the wrong configuration.
+    /// checked against. A source re-announcement that changes them is handed
+    /// to [`Decoder::reconfigure`]; without [a factory](Self::factory), a
+    /// decoder that refuses it leaves the change
+    /// [`Error::TranscodeSourceChanged`].
     #[must_use]
     pub fn new(track: TrackId, decoder: Box<dyn Decoder>, encoder: Box<dyn Encoder>) -> Self {
         Self {
@@ -55,6 +71,8 @@ impl TranscodeStage {
             source: decoder.parameters().clone(),
             decoder,
             encoder,
+            factory: None,
+            first_unit: None,
             announced: None,
             pending: VecDeque::new(),
             pending_bytes: 0,
@@ -64,6 +82,20 @@ impl TranscodeStage {
             ready: VecDeque::new(),
             finished: false,
         }
+    }
+
+    /// Build a fresh decoder through `factory` when a source change is one
+    /// the current decoder cannot adopt in place.
+    ///
+    /// The factory receives the new source parameters and returns a decoder
+    /// built for them; the stage keeps the encoder, the announced output
+    /// track and the samples it holds. Without a factory, a decoder that
+    /// refuses [`Decoder::reconfigure`] leaves the source change
+    /// [`Error::TranscodeSourceChanged`].
+    #[must_use]
+    pub fn factory(mut self, factory: DecoderFactory) -> Self {
+        self.factory = Some(factory);
+        self
     }
 
     /// Bound the output samples held before the encoder reports its
@@ -91,7 +123,10 @@ impl TranscodeStage {
 
     /// One sample as the seam's coded access unit, in the source's time base.
     fn packet<'a>(&self, sample: &'a Sample) -> Packet<'a> {
-        let mut packet = Packet::borrowed(&sample.data).with_key(sample.flags.is_sync);
+        let mut packet = Packet::borrowed(&sample.data)
+            .with_key(sample.flags.is_sync)
+            .with_trim_start(sample.trim.start())
+            .with_trim_end(sample.trim.end());
         if let Some(timing) = sample.timing {
             if let Some(dts) = timing.dts() {
                 packet = packet.with_dts(dts);
@@ -103,17 +138,42 @@ impl TranscodeStage {
         packet
     }
 
+    /// The parameters the track is announced with: the encoder's, with the
+    /// in-band configuration record derived from the first access unit when
+    /// the encoder says it wrote one there.
+    fn announcement(&self, current: &CodecParameters) -> Result<Option<CodecParameters>> {
+        if current.configuration_record() != ConfigurationRecord::InBand {
+            return Ok(Some(current.clone()));
+        }
+        let Some(first) = self.first_unit.as_deref() else {
+            return Ok(None);
+        };
+        let Some(record) = in_band_record(current.codec(), first)? else {
+            if current.codec().requires_configuration_record() {
+                return Err(Error::TranscodeUnrepresentable {
+                    what: "the in-band configuration record of this codec",
+                });
+            }
+            return Ok(Some(current.clone().with_no_configuration_record()));
+        };
+        Ok(Some(current.clone().with_extradata(record)))
+    }
+
     /// Announce the track when the encoder has reported parameters (and
     /// re-announce only when they change), then release the samples it was
     /// withholding.
     fn publish(&mut self) -> Result<()> {
-        let Some(parameters) = self.encoder.parameters().cloned() else {
+        let Some(current) = self.encoder.parameters().cloned() else {
             return Ok(());
         };
-        if self.announced.as_ref() != Some(&parameters) {
+        if self.announced.as_ref() != Some(&current) {
+            let Some(parameters) = self.announcement(&current)? else {
+                return Ok(());
+            };
             let spec = track_spec_from_codec_parameters(self.track, &parameters)?;
             self.ready.push_back(MuxInput::Track(Box::new(spec)));
-            self.announced = Some(parameters);
+            self.announced = Some(current);
+            self.first_unit = None;
         }
         self.pending_bytes = 0;
         while let Some(sample) = self.pending.pop_front() {
@@ -131,13 +191,17 @@ impl TranscodeStage {
             let Some(packet) = self.encoder.receive().map_err(|e| self.codec_error(e))? else {
                 return Ok(());
             };
+            if self.first_unit.is_none() {
+                self.first_unit = Some(packet.data().to_vec());
+            }
             let sample = Sample::new(
                 packet.data().to_vec(),
                 packet.dts(),
                 packet.pts(),
                 None,
                 packet.key(),
-            )?;
+            )?
+            .with_trim(SampleTrim::new(packet.trim_start(), packet.trim_end()));
             // `publish` announces before it releases anything, so a sample
             // never reaches downstream ahead of the track description it
             // belongs to.
@@ -193,13 +257,40 @@ impl TranscodeStage {
         self.receive_encoded()
     }
 
-    /// A source re-announcement of this stage's track.
+    /// A source re-announcement of this stage's track: drain, then let the
+    /// decoder adopt the new parameters, or rebuild it through the factory.
     fn source_changed(&mut self, spec: &TrackSpec) -> Result<()> {
         let parameters = codec_parameters_from_track(spec)?;
         if parameters == self.source {
             return Ok(());
         }
-        Err(Error::TranscodeSourceChanged { track: self.track })
+        self.drain_decoded()?;
+        match self.decoder.reconfigure(parameters.clone()) {
+            Ok(()) => {
+                self.source = parameters;
+                Ok(())
+            }
+            Err(CodecError::CannotReconfigure { .. }) => {
+                let Some(factory) = self.factory.as_mut() else {
+                    return Err(Error::TranscodeSourceChanged { track: self.track });
+                };
+                match factory(&parameters) {
+                    Ok(decoder) => {
+                        self.decoder = decoder;
+                        self.source = parameters;
+                        Ok(())
+                    }
+                    Err(source) => Err(Error::Transcode {
+                        track: self.track,
+                        source,
+                    }),
+                }
+            }
+            Err(source) => Err(Error::Transcode {
+                track: self.track,
+                source,
+            }),
+        }
     }
 }
 

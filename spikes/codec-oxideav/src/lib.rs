@@ -327,6 +327,12 @@ impl Decoder for OxideavDecoder {
         self.timestamp = 0;
         self.reset_failure = self.inner.reset().err().map(map_error);
     }
+
+    fn reconfigure(&mut self, _parameters: CodecParameters) -> Result<(), CodecError> {
+        Err(CodecError::cannot_reconfigure(
+            "an OxideAV decoder opened for one stream's parameters",
+        ))
+    }
 }
 
 /// The seam's channel layout from an OxideAV channel count.

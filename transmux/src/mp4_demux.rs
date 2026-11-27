@@ -777,6 +777,7 @@ impl Mp4Demux {
                 .aux
                 .as_ref()
                 .map(|aux| Arc::new(SampleProtection::from(aux))),
+            trim: crate::ir::SampleTrim::NONE,
         };
         let added = {
             let state = self

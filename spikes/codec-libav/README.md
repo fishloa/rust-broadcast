@@ -33,12 +33,19 @@ This spike is not published and carries no release version.
 
 `ffmpeg-next` 8.1 does not expose every libav facility the adapter would use:
 
-- **No extradata setter.** A H.264 decoder is opened in libav's own in-band
-  mode and the `avcC` parameter sets are supplied in-band; a raw AAC access
-  unit is wrapped in an ADTS header. The adapter's own framing code does this.
-  Only H.264 is re-framed: a length-prefixed HEVC stream (an `hvcC` record)
-  cannot be supplied its parameter sets, so the listed HEVC decoder serves
-  in-band (Annex B) HEVC only.
+- **No extradata setter, but a raw read is possible.** A H.264 decoder is
+  opened in libav's own in-band mode and the `avcC` parameter sets are supplied
+  in-band; a raw AAC access unit is wrapped in an ADTS header. The adapter's
+  own framing code does this. Only H.264 is re-framed: a length-prefixed HEVC
+  stream (an `hvcC` record) cannot be supplied its parameter sets, so the
+  listed HEVC decoder serves in-band (Annex B) HEVC only.
+- **The encoder's output record and priming are read through one `unsafe`
+  pointer dereference.** `ffmpeg-next` 8.1 exposes no getter for
+  `AVCodecContext.extradata` or its `initial_padding`/`trailing_padding`, so
+  `src/sys.rs` reads those fields and copies the bytes out (`SAFETY` stated
+  there). An encoder with no extradata for a codec that needs a record is
+  announced as in-band configuration; the stage derives the record from the
+  first access unit.
 - **No hardware-device API.** libav's hardware *acceleration modes* of an
   ordinary decoder are neither listed nor used. A dedicated hardware codec that
   libav registers under its own name (for example the `h264_videotoolbox`

@@ -176,7 +176,10 @@ mod ts_demux_copies {
         assert!(x100 <= TS_BUDGET_X100, "{x100}/100 x input");
     }
 
-    const TS_BUDGET_X100: usize = 976; // 1008 before r04-O10, 944 after (midway)
+    // 976 -> 984 for the IR's per-sample gapless trim: `Sample` gained one
+    // 8-byte `SampleTrim` field (+8 bytes per sample, no extra payload copy),
+    // measured at 984/100 x input on this fixture.
+    const TS_BUDGET_X100: usize = 984; // 1008 before r04-O10, 944 after (midway)
 }
 
 mod rtp_stream_copies {

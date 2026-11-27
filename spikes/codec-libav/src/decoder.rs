@@ -326,6 +326,13 @@ impl Decoder for LibavDecoder {
         }
     }
 
+    fn reconfigure(&mut self, _parameters: CodecParameters) -> Result<(), CodecError> {
+        Err(CodecError::cannot_reconfigure(
+            "an open libav decoder: the binding exposes no extradata setter, so a new \
+             configuration record cannot be handed to the context",
+        ))
+    }
+
     fn reset(&mut self) {
         self.opened.flush();
         self.first_packet = true;
