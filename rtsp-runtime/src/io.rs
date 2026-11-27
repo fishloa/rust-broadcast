@@ -567,7 +567,9 @@ where
                     self.write(retry).await?;
                     cseq = retry_cseq;
                 }
-                ClientEvent::MediaData { .. } => {
+                // A damage report is media-class content: it is queued with
+                // the frames so the player sees it in wire order.
+                ClientEvent::MediaData { .. } | ClientEvent::Damage(_) => {
                     if self.pending_media.len() >= MAX_PENDING_MEDIA_FRAMES {
                         self.pending_media.pop_front();
                     }

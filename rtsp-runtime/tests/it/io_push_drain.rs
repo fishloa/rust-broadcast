@@ -11,7 +11,12 @@ async fn a_decode_error_swallowed_by_the_push_drain_still_surfaces_as_a_parse_er
         client_io,
         rtsp_runtime::RtspClientIoConfig::default().with_session(ClientSession::default()),
     );
-    server_io.write_all(b"GARBAGE\r\n\r\n").await.unwrap();
+    // A message head that cannot be parsed at all: terminal, unlike junk
+    // between interleaved frames, which is resynchronised over.
+    server_io
+        .write_all(b"RTSP/1.0 99999999999 OK\r\n\r\n")
+        .await
+        .unwrap();
     server_io.flush().await.unwrap();
 
     let _ = client.send_interleaved(0, b"rtp").await;

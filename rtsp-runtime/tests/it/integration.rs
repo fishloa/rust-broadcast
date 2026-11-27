@@ -465,8 +465,10 @@ fn terminal_error_still_returns_the_events_decoded_before_it() {
             .to_bytes()
             .unwrap(),
     );
-    stream.extend_from_slice(b"\x01\x02 this is not RTSP\r\nat all\r\n\r\n");
-    stream.extend(InterleavedFrame::new(0, vec![0x80, 9]).to_bytes().unwrap());
+    // A header block past the framing cap: the one thing a player cannot
+    // resynchronise past, so it is the terminal error.
+    stream.extend_from_slice(b"RTSP/1.0 200 OK\r\n");
+    stream.extend_from_slice(&vec![b'A'; 70 * 1024]);
 
     let out = session_awaiting_play().handle_data(&stream);
     assert!(out.error.is_some(), "the unparseable head is terminal");

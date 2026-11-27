@@ -6,6 +6,28 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Breaking
+
+- `ClientEvent` gains `Damage(Box<broadcast_core::damage::Damage>)`: the one
+  report of content the session skipped or resynchronised past, in wire order
+  with the events around it. `RtspClientConfig` gains `damage_policy`
+  (`with_damage_policy`); with `Fail` the session ends with
+  `Error::Damage` carrying the same report. `Error` gains `Damage`.
+- `SkippedMedia` gains a public `new(media_index, control)` constructor, and a
+  media section dropped from the play plan converts to a `Damage`
+  (`SkippedMedia::damage`, `From<&SkippedMedia>`).
+
+### Changed
+
+- Junk between interleaved `$` frames is resynchronised over rather than
+  ending the session: the client scans to the next frame, reports the bytes it
+  jumped over as one `Damage` (with their absolute byte range) and keeps
+  decoding the frames after it. A run of junk longer than a whole header block
+  (or a header block past the framing cap) is still a terminal
+  `Error::MessageParse`, because the framing is then gone. A response with no
+  or an unmatched `CSeq`, and an unusable `Session` or `Transport` header, are
+  now also reported as informational `MetadataSkipped` reports.
+
 ## [0.14.0] - 2026-11-22
 ### Breaking
 

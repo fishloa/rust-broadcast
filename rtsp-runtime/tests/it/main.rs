@@ -1,5 +1,6 @@
 mod client_accessors;
 mod client_push_methods;
+mod damage_report;
 mod dependency_features;
 mod golden_wire;
 mod integration;

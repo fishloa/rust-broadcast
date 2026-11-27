@@ -62,6 +62,36 @@ pub struct SkippedMedia {
     pub control: String,
 }
 
+impl SkippedMedia {
+    /// The media section at `media_index` whose control URL was `control`.
+    #[must_use]
+    pub fn new(media_index: usize, control: impl Into<String>) -> Self {
+        Self {
+            media_index,
+            control: control.into(),
+        }
+    }
+
+    /// The one damage report for this dropped track: the viewer loses the
+    /// whole stream a media section described, so the severity is degraded and
+    /// the media section's own position is the location.
+    #[must_use]
+    pub fn damage(&self) -> broadcast_core::damage::Damage {
+        broadcast_core::damage::Damage::new(
+            broadcast_core::damage::DamageKind::TrackDropped,
+            broadcast_core::damage::Severity::Degraded,
+            "RTSP media section",
+        )
+        .with_ordinal(u64::try_from(self.media_index).unwrap_or(u64::MAX))
+    }
+}
+
+impl From<&SkippedMedia> for broadcast_core::damage::Damage {
+    fn from(media: &SkippedMedia) -> Self {
+        media.damage()
+    }
+}
+
 /// The `SETUP`/`PLAY` plan derived from one `DESCRIBE` answer, and the channel
 /// bookkeeping of the `SETUP` answers.
 #[derive(Debug, Clone)]

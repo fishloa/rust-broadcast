@@ -40,6 +40,14 @@ pub const READERS: &[Reader] = &[
         status: Status::Converted,
         reports: &["Event"],
     },
+    // Lane dm3: the RTSP client resynchronises past junk between interleaved
+    // frames and reports it, plus the responses and headers it had to skip,
+    // as `ClientEvent::Damage`; a dropped media section converts to a report.
+    Reader {
+        name: "rtsp-runtime",
+        status: Status::Converted,
+        reports: &["ClientEvent"],
+    },
     // Lane dm3: the SRT delivery engine reports every packet run TSBPD gave
     // up on (too late, gap skipped, peer drop request) and every datum it
     // dropped before the scheduler saw it, as `SrtEvent::Damage`.
