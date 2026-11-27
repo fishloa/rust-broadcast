@@ -244,6 +244,136 @@ fn a_range_driver_reports_the_movie_metadata() {
     assert_eq!(title.as_deref(), Some("Test Tone"));
 }
 
+/// A player built on the range driver receives every report a damaged file
+/// produces, with the place, track and media time it has, and a policy that
+/// asks to fail stops at the first damaged report.
+#[test]
+fn damaged_files_reach_the_caller_as_damage_reports_and_can_stop_it() {
+    use broadcast_core::damage::{DamageKind, DamagePolicy, Severity};
+
+    let clean =
+        std::fs::read(test_fixtures::path("mp4/progressive/av-faststart.mp4")).expect("fixture");
+    // Three different damages: a cut media tail, a damaged sample table, and a
+    // box whose size cannot be believed.
+    let cases: [(&str, Vec<u8>); 3] = [
+        ("truncated", clean[..clean.len() * 3 / 4].to_vec()),
+        {
+            let mut bytes = clean.clone();
+            // A `stsz` entry count far past the samples the file holds.
+            let stsz = bytes.windows(4).position(|w| w == b"stsz").expect("stsz") - 4;
+            let count_at = stsz + 16;
+            bytes[count_at..count_at + 4].copy_from_slice(&0x00FF_FFFFu32.to_be_bytes());
+            ("sample table", bytes)
+        },
+        {
+            let mut bytes = clean.clone();
+            let ftyp = 0usize;
+            bytes[ftyp..ftyp + 4].copy_from_slice(&u32::MAX.to_be_bytes());
+            ("box size", bytes)
+        },
+    ];
+
+    for (what, bytes) in cases {
+        let mut reports = Vec::new();
+        let mut reader = RangeReader::new(
+            ReaderConfig::default().with_order(SampleOrder::File),
+            MIN_FETCH,
+        );
+        let mut server = Server {
+            bytes: &bytes,
+            requests: 0,
+        };
+        loop {
+            match reader.poll().expect("poll") {
+                RangeAction::Fetch { offset, len } => {
+                    let (body, total) = server.get(ByteRange { offset, len });
+                    reader
+                        .on_status(StatusCode::PARTIAL_CONTENT)
+                        .expect("partial content");
+                    reader.on_range(offset, &body, total).expect("range body");
+                }
+                RangeAction::Step(DriverStep::Damage(damage)) => reports.push(damage),
+                RangeAction::Step(_) => {}
+                RangeAction::Done => break,
+                _ => {}
+            }
+        }
+        assert!(
+            !reports.is_empty(),
+            "{what}: a damaged file reports what it skipped"
+        );
+        for report in &reports {
+            assert!(
+                report.location().byte_range().is_some(),
+                "{what}: every report names its place: {report:?}"
+            );
+            assert!(
+                !report.what().is_empty(),
+                "{what}: every report names the structure"
+            );
+        }
+
+        // The same input under a policy that refuses degraded content stops at
+        // the first report, which the error carries.
+        let mut reader = RangeReader::new(
+            ReaderConfig::default()
+                .with_order(SampleOrder::File)
+                .with_damage_policy(DamagePolicy::new().fail_on(Severity::Degraded)),
+            MIN_FETCH,
+        );
+        let mut server = Server {
+            bytes: &bytes,
+            requests: 0,
+        };
+        let mut stopped = None;
+        loop {
+            match reader.poll() {
+                Ok(RangeAction::Fetch { offset, len }) => {
+                    let (body, total) = server.get(ByteRange { offset, len });
+                    reader
+                        .on_status(StatusCode::PARTIAL_CONTENT)
+                        .expect("partial content");
+                    reader.on_range(offset, &body, total).expect("range body");
+                }
+                Ok(RangeAction::Step(_)) => {}
+                Ok(RangeAction::Done) => break,
+                Ok(_) => {}
+                Err(error) => {
+                    stopped = Some(format!("{error:?}"));
+                    break;
+                }
+            }
+        }
+        let stopped = stopped.expect("a policy that fails stops the damaged read");
+        assert!(
+            stopped.contains("Damage") || stopped.contains("damage"),
+            "{what}: the stop carries the report: {stopped}"
+        );
+        if let Some(report) = reports
+            .iter()
+            .find(|report| report.severity() == Severity::Degraded)
+        {
+            assert!(
+                stopped.contains(report.what()),
+                "{what}: the stop names the same structure ({}): {stopped}",
+                report.what()
+            );
+            assert!(matches!(
+                report.kind(),
+                DamageKind::MediaUnitDropped
+                    | DamageKind::InputTruncated
+                    | DamageKind::Resynchronised
+                    | DamageKind::TrackDropped
+                    | DamageKind::MetadataSkipped
+                    | DamageKind::MetadataUninterpreted
+                    | DamageKind::TimelineRepaired
+                    | DamageKind::MediaUnitDamaged
+                    | DamageKind::LimitReached
+            ));
+        }
+    }
+}
+
 #[test]
 fn the_range_driver_passes_a_warning_through() {
     use isobmff::reader::Mode;

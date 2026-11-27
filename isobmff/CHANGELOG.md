@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inside the new `Error::Damage`. `ReaderConfig::with_resync_scan_limit` bounds
   how far the walk may scan for the next top-level box header after one declares
   an impossible size (`None`, the default, scans to the end of the input).
+- `Reader::set_total_len`: a range-reading caller learns the input's length
+  from its first response, and a truncated input can only be reported as
+  truncated once the reader knows how long it is.
 - `CursorState::tolerant` (crate-internal) reads a track's sample tables as far
   as they go, reporting each table it had to do without and cutting the sample
   count to the shortest extent every table agrees on.

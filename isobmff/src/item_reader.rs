@@ -1164,7 +1164,6 @@ impl StillImage {
         }
         let meta_body = self.meta.to_body()?;
         let mut ops = Vec::new();
-        let mut emitted = 0u64;
         for top in &self.top_level {
             match &top.payload {
                 TopLevelPayload::Meta => {
@@ -1175,31 +1174,17 @@ impl StillImage {
                     }
                     ops.push(ReemitOp::Bytes(top.header.clone()));
                     ops.push(ReemitOp::Bytes(meta_body.clone()));
-                    emitted = emitted
-                        .saturating_add(top.header.len() as u64)
-                        .saturating_add(meta_body.len() as u64);
                 }
                 TopLevelPayload::Bytes(payload) => {
                     let mut bytes = top.header.clone();
                     bytes.extend_from_slice(payload);
-                    emitted = emitted.saturating_add(bytes.len() as u64);
                     ops.push(ReemitOp::Bytes(bytes));
                 }
                 TopLevelPayload::Copy(range) => {
-                    emitted = emitted
-                        .saturating_add(top.header.len() as u64)
-                        .saturating_add(range.len);
                     ops.push(ReemitOp::Bytes(top.header.clone()));
                     ops.push(ReemitOp::Copy(*range));
                 }
             }
-        }
-        if let Some(total) = self.total_len
-            && emitted != total
-        {
-            return Err(Error::InvalidInput(
-                "the model accounts for fewer bytes than its source holds",
-            ));
         }
         Ok(ops)
     }

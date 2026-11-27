@@ -1522,6 +1522,17 @@ impl Reader {
         }
     }
 
+    /// Record the input's total length, once the caller learns it.
+    ///
+    /// A range-reading caller knows the length from the first response (an
+    /// HTTP `Content-Range`, say), not when it builds the config. A box of
+    /// size 0 and a box that claims bytes past the end both need it, so
+    /// setting it as soon as it is known is what lets a truncated input be
+    /// reported as truncated.
+    pub fn set_total_len(&mut self, total_len: u64) {
+        self.config.total_len = Some(total_len);
+    }
+
     /// Bytes the reader has asked the caller to supply, under the
     /// `scan-counters` feature.
     #[cfg(feature = "scan-counters")]
@@ -2901,12 +2912,26 @@ impl Reader {
                 // and patch a zero movie timescale in one copy, then read
                 // that. The reports say which boxes were repaired.
                 repaired.extend_from_slice(bytes);
+                let before_repair = self.warnings.len();
                 sanitize_moov(&mut repaired, range.offset, &mut self.warnings);
+                let clamped = self.warnings[before_repair..].iter().any(|warning| {
+                    matches!(
+                        warning,
+                        Warning::ClampedBox { box_type, offset }
+                            if *box_type == *b"moov" && *offset == range.offset
+                    )
+                });
                 let mut retry = Vec::new();
                 match self.parse_moov(&repaired, range.offset, &mut retry) {
                     Ok(movie) => {
                         notes = retry;
                         movie
+                    }
+                    Err(_) if clamped => {
+                        // The box was already reported as clamped to what the
+                        // input holds; the bytes left cannot describe a movie,
+                        // so it is skipped like any other unreadable box.
+                        return Ok(());
                     }
                     Err(_) => return Err(err),
                 }

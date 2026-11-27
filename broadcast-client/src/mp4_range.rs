@@ -205,7 +205,12 @@ impl RangeReader {
                 got,
             });
         }
-        if total_len.is_some() {
+        if let Some(total) = total_len {
+            // A truncated input can only be reported as truncated when the
+            // reader knows how long the input is.
+            if self.total_len != Some(total) {
+                self.reader.set_total_len(total);
+            }
             self.total_len = total_len;
         }
         let window = Window {

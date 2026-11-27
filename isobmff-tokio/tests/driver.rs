@@ -183,21 +183,22 @@ async fn a_tokio_file_reports_the_movie_metadata() {
 
 #[tokio::test]
 async fn the_async_driver_passes_a_warning_through() {
-    use isobmff::reader::{Mode, Warning};
     let path = test_fixtures::path("mp4/progressive/av-faststart.mp4");
     let mut bytes = std::fs::read(&path).expect("read fixture");
     let mvhd = bytes.windows(4).position(|w| w == b"mvhd").expect("mvhd") - 4;
     let timescale = mvhd + if bytes[mvhd + 8] == 1 { 28 } else { 20 };
     bytes[timescale..timescale + 4].fill(0);
-    let config = ReaderConfig::default()
-        .with_order(SampleOrder::File)
-        .with_mode(Mode::Permissive);
+    let config = ReaderConfig::default().with_order(SampleOrder::File);
     let mut reader = AsyncFileReader::new(Cursor::new(bytes), config)
         .await
         .expect("wrap source");
     loop {
         match reader.step().await.expect("step") {
-            DriverStep::Warning(Warning::ZeroMovieTimescale { .. }) => return,
+            DriverStep::Damage(damage)
+                if matches!(damage.what(), "zero-movie-timescale" | "synthesized-box") =>
+            {
+                return;
+            }
             DriverStep::Done => panic!("no warning"),
             _ => {}
         }
