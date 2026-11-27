@@ -677,7 +677,7 @@ impl TrackInfo {
     /// The reader's track view for an already-parsed `trak`.
     ///
     /// It carries no movie metadata, so [`itunsmpb`](Self::itunsmpb) is always
-    /// `None`; use [`Reader`] or [`MovieBox`](crate::init_segment::MovieBox) for
+    /// `None`; use [`Reader`] or [`MovieBox`] for
     /// the file's item list.
     ///
     /// A caller that holds the whole `moov` (the whole-input demuxers) needs
